@@ -2,11 +2,11 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { REPOSITORY_TREE_AUTO_EXPAND_DELAY_MS } from '@/components/sessions/files/repositoryTree/repositoryTreeDragAndDropConfig';
+import { REPOSITORY_TREE_AUTO_EXPAND_DELAY_MS } from '@/components/workspaces/files/repositoryTree/repositoryTreeDragAndDropConfig';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { createStorageStoreMock } from '@/dev/testkit/mocks/storage';
 import { renderScreen } from '@/dev/testkit';
-import { installRepositoryTreeCommonModuleMocks } from './repositoryTreeTestHelpers';
+import { installRepositoryTreeCommonModuleMocks } from '@/components/workspaces/files/repositoryTree/repositoryTreeTestHelpers';
 
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;

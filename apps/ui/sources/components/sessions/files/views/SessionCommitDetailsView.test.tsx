@@ -12,6 +12,11 @@ import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTes
 const commitSessionId = 's1';
 const commitSha = 'abc';
 const diffFilesListSpy = vi.fn();
+const upsertSessionReviewCommentDraftSpy = vi.fn();
+const deleteSessionReviewCommentDraftSpy = vi.fn();
+const upsertWorkspaceReviewCommentDraftSpy = vi.fn();
+const deleteWorkspaceReviewCommentDraftSpy = vi.fn();
+let lastInlineRendererConfig: any = null;
 
 const sessionScmDiffCommitSpy = vi.fn(async (_sessionId: string, _request: { commit: string }) => ({
     success: true,
@@ -141,8 +146,10 @@ installSessionFilesViewCommonModuleMocks({
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
             storage: createStorageStoreMock({
-                upsertSessionReviewCommentDraft: () => {},
-                deleteSessionReviewCommentDraft: () => {},
+                upsertSessionReviewCommentDraft: (...args: unknown[]) => upsertSessionReviewCommentDraftSpy(...args),
+                deleteSessionReviewCommentDraft: (...args: unknown[]) => deleteSessionReviewCommentDraftSpy(...args),
+                upsertWorkspaceReviewCommentDraft: (...args: unknown[]) => upsertWorkspaceReviewCommentDraftSpy(...args),
+                deleteWorkspaceReviewCommentDraft: (...args: unknown[]) => deleteWorkspaceReviewCommentDraftSpy(...args),
             }),
             useSessions: () => sessionsMock,
             useSession: () => sessionMock,
@@ -150,6 +157,15 @@ installSessionFilesViewCommonModuleMocks({
             useSessionProjectScmSnapshot: () => stableSnapshot,
             useSessionProjectScmInFlightOperation: () => null,
             useSessionReviewCommentsDrafts: () => [],
+            useWorkspaceReviewCommentsDrafts: () => [{
+                id: 'workspace-draft',
+                filePath: 'src/a.ts',
+                source: 'diff',
+                anchor: { kind: 'diffLine', startLine: 1, side: 'after', oldLine: null, newLine: 1 },
+                snapshot: { selectedLines: [], beforeContext: [], afterContext: [] },
+                body: 'workspace',
+                createdAt: 1,
+            }],
             useSetting: (key: string) => {
                 if (key === 'wrapLinesInDiffs') return true;
                 if (key === 'showLineNumbers') return true;
@@ -231,6 +247,18 @@ vi.mock('@/components/ui/code/diff/reviewComments/DiffReviewCommentsViewer', () 
     DiffReviewCommentsViewer: 'DiffReviewCommentsViewer',
 }));
 
+vi.mock('@/components/ui/code/diff/reviewComments/useInlineUnifiedDiffReviewCommentsRenderer', () => ({
+    useInlineUnifiedDiffReviewCommentsRenderer: (config: any) => {
+        lastInlineRendererConfig = config;
+        return ({ file }: { file: { filePath?: string } }) =>
+            React.createElement('DiffReviewCommentsViewer', { filePath: file?.filePath ?? '' });
+    },
+}));
+
+vi.mock('@/sync/domains/session/resolveWorkspaceScopeForSession', () => ({
+    resolveWorkspaceScopeForSession: () => ({ serverId: 'server-1', machineId: 'm1', rootPath: '/repo' }),
+}));
+
 describe('SessionCommitDetailsView', () => {
     afterEach(async () => {
         while (mountedTrees.length > 0) {
@@ -247,6 +275,11 @@ describe('SessionCommitDetailsView', () => {
         sessionScmDiffCommitSpy.mockClear();
         sessionScmCommitBackoutSpy.mockClear();
         diffFilesListSpy.mockClear();
+        upsertSessionReviewCommentDraftSpy.mockClear();
+        deleteSessionReviewCommentDraftSpy.mockClear();
+        upsertWorkspaceReviewCommentDraftSpy.mockClear();
+        deleteWorkspaceReviewCommentDraftSpy.mockClear();
+        lastInlineRendererConfig = null;
         resetCommitDetailsStorageState();
     });
 
@@ -496,5 +529,33 @@ describe('SessionCommitDetailsView', () => {
         // and make scrolling down feel like it's fighting the user.
         expect(expandedKeys.has(files[4].key)).toBe(false);
         expect(expandedKeys.has(files[5].key)).toBe(true);
+    });
+
+    it('uses workspace-keyed review comment drafts + handlers when enabled', async () => {
+        reviewCommentsEnabled = true;
+
+        await renderCommitDetailsView();
+
+        expect(lastInlineRendererConfig?.enabled).toBe(true);
+        expect(lastInlineRendererConfig?.reviewCommentDrafts?.[0]?.id).toBe('workspace-draft');
+
+        lastInlineRendererConfig.onUpsertReviewCommentDraft({
+            id: 'draft-1',
+            filePath: 'src/a.ts',
+            source: 'diff',
+            anchor: { kind: 'diffLine', startLine: 1, side: 'after', oldLine: null, newLine: 1 },
+            snapshot: { selectedLines: [], beforeContext: [], afterContext: [] },
+            body: 'hello',
+            createdAt: 1,
+        });
+        expect(upsertWorkspaceReviewCommentDraftSpy).toHaveBeenCalledWith(
+            'server-1:m1:/repo',
+            expect.objectContaining({ id: 'draft-1' }),
+        );
+        expect(upsertSessionReviewCommentDraftSpy).toHaveBeenCalledTimes(0);
+
+        lastInlineRendererConfig.onDeleteReviewCommentDraft('draft-1');
+        expect(deleteWorkspaceReviewCommentDraftSpy).toHaveBeenCalledWith('server-1:m1:/repo', 'draft-1');
+        expect(deleteSessionReviewCommentDraftSpy).toHaveBeenCalledTimes(0);
     });
 });

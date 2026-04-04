@@ -18,6 +18,7 @@ const setExpandedSpy = vi.fn();
 const safePathSpy = vi.fn((value: string) => value === 'src/new-file.ts' || value === 'src/new-folder' || value === 'src/uploads');
 let sessionActive = true;
 let machineRpcTargetAvailable = true;
+let workspaceTargetAvailable = true;
 
 installSessionFilesViewCommonModuleMocks({
     modal: async () => {
@@ -74,8 +75,9 @@ vi.mock('@/components/sessions/files/useSessionFileUploadAvailability', () => ({
     useSessionFileUploadAvailability: () => machineRpcTargetAvailable,
 }));
 
-vi.mock('@/components/sessions/sourceControl/states', () => ({
+vi.mock('@/components/workspaces/scm/states', () => ({
     SourceControlSessionInactiveState: () => React.createElement('SourceControlSessionInactiveState'),
+    SourceControlUnavailableState: () => React.createElement('SourceControlUnavailableState'),
 }));
 
 vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => ({
@@ -104,37 +106,50 @@ vi.mock('@/sync/domains/input/suggestionFile', () => ({
 }));
 
 const mountCount = { current: 0 };
-vi.mock('@/components/sessions/files/content/RepositoryTreeList', () => ({
-    RepositoryTreeList: () => {
+vi.mock('@/components/projects/files/WorkspaceRepositoryTreeList', () => ({
+    WorkspaceRepositoryTreeList: () => {
         React.useEffect(() => {
             mountCount.current += 1;
         }, []);
-        return React.createElement('View', { testID: 'repository-tree-list' });
+        return React.createElement('View', { testID: 'workspace-repository-tree-list' });
     },
 }));
 
-vi.mock('@/components/sessions/files/content/ChangedFilesTreeList', () => ({
+vi.mock('@/components/workspaces/files/repositoryTree/ChangedFilesTreeList', () => ({
     ChangedFilesTreeList: () => React.createElement('ChangedFilesTreeList'),
 }));
 
-vi.mock('@/components/sessions/files/content/SearchResultsList', () => ({
+vi.mock('@/components/workspaces/files/repositoryTree/SearchResultsList', () => ({
     SearchResultsList: () => React.createElement('SearchResultsList'),
 }));
 
-vi.mock('@/components/sessions/files/content/ChangedFilesReview', () => ({
+vi.mock('@/components/workspaces/scm/review/ChangedFilesReview', () => ({
     ChangedFilesReview: () => React.createElement('ChangedFilesReview'),
 }));
 
-vi.mock('@/sync/ops', () => ({
-    sessionWriteFile: (...args: any[]) => writeFileSpy(...args),
-    sessionCreateDirectory: (...args: any[]) => createDirectorySpy(...args),
+vi.mock('@/sync/domains/session/resolveWorkspaceTargetForSession', () => ({
+    resolveWorkspaceTargetForSession: () => (
+        workspaceTargetAvailable
+            ? {
+                workspaceCacheKey: 'server:m1:/repo',
+                machineId: 'm1',
+                rootPath: '/repo',
+                serverId: 'server',
+            }
+            : null
+    ),
+}));
+
+vi.mock('@/sync/ops/workspaceFileSystem', () => ({
+    workspaceWriteFile: (...args: any[]) => writeFileSpy(...args),
+    workspaceCreateDirectory: (...args: any[]) => createDirectorySpy(...args),
 }));
 
 vi.mock('@/utils/path/isSafeWorkspaceRelativePath', () => ({
     isSafeWorkspaceRelativePath: (value: string) => safePathSpy(value),
 }));
 
-vi.mock('@/components/sessions/files/repositoryTree/computeExpandedPathsForReveal', () => ({
+vi.mock('@/components/workspaces/files/repositoryTree/computeExpandedPathsForReveal', () => ({
     computeExpandedPathsForReveal: ({ expandedPaths }: any) => expandedPaths,
 }));
 
@@ -146,6 +161,7 @@ describe('SessionRepositoryTreeBrowserView (create actions)', () => {
     beforeEach(() => {
         sessionActive = true;
         machineRpcTargetAvailable = true;
+        workspaceTargetAvailable = true;
         promptSpy.mockReset();
         alertSpy.mockClear();
         writeFileSpy.mockClear();
@@ -183,6 +199,18 @@ describe('SessionRepositoryTreeBrowserView (create actions)', () => {
 
     it('disables create actions when no machine RPC target is available', async () => {
         machineRpcTargetAvailable = false;
+
+        const screen = await renderRepositoryTreeBrowserView();
+
+        const createFileButton = screen.findByTestId('repository-tree-create-file');
+        const uploadMenu = screen.findByType('DropdownMenu' as any);
+        expect(uploadMenu.props.items.find((item: any) => item.id === 'repository-tree-upload-files')?.disabled).toBe(true);
+        expect(createFileButton?.props.disabled).toBe(true);
+    });
+
+    it('disables create and upload actions when no workspace target is resolvable', async () => {
+        machineRpcTargetAvailable = true;
+        workspaceTargetAvailable = false;
 
         const screen = await renderRepositoryTreeBrowserView();
 
@@ -269,7 +297,12 @@ describe('SessionRepositoryTreeBrowserView (create actions)', () => {
             screen.pressByTestId('repository-tree-create-file');
         });
 
-        expect(writeFileSpy).toHaveBeenCalledWith('s1', 'src/new-file.ts', '', null);
+        expect(writeFileSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ machineId: 'm1', rootPath: '/repo', serverId: 'server' }),
+            'src/new-file.ts',
+            '',
+            null,
+        );
         expect(onOpenFilePinned).toHaveBeenCalledWith('src/new-file.ts');
         expect(alertSpy).toHaveBeenCalledTimes(0);
     });
@@ -300,7 +333,10 @@ describe('SessionRepositoryTreeBrowserView (create actions)', () => {
             screen.pressByTestId('repository-tree-create-folder');
         });
 
-        expect(createDirectorySpy).toHaveBeenCalledWith('s1', 'src/new-folder');
+        expect(createDirectorySpy).toHaveBeenCalledWith(
+            expect.objectContaining({ machineId: 'm1', rootPath: '/repo', serverId: 'server' }),
+            'src/new-folder',
+        );
         expect(alertSpy).toHaveBeenCalledTimes(0);
     });
 });

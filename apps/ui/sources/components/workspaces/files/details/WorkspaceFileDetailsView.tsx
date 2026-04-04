@@ -1,13 +1,13 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 
-import { FileActionToolbar, type FileDiffMode } from '@/components/sessions/files/file/FileActionToolbar';
-import { FileBinaryState, FileErrorState, FileLoadingState } from '@/components/sessions/files/file/FileScreenState';
-import { FileContentPanel } from '@/components/sessions/files/file/FileContentPanel';
-import { FileEditorPanel } from '@/components/sessions/files/file/editor/FileEditorPanel';
-import { FileHeader } from '@/components/sessions/files/file/FileHeader';
-import { ScmChangeDiscardButton } from '@/components/sessions/sourceControl/changes/ScmChangeDiscardButton';
+import { FileActionToolbar, type FileDiffMode } from '@/components/workspaces/files/file/FileActionToolbar';
+import { FileBinaryState, FileErrorState, FileLoadingState } from '@/components/workspaces/files/file/FileScreenState';
+import { FileContentPanel } from '@/components/workspaces/files/file/FileContentPanel';
+import { FileEditorPanel } from '@/components/workspaces/files/file/editor/FileEditorPanel';
+import { FileHeader } from '@/components/workspaces/files/file/FileHeader';
 import { WorkspaceFileDownloadButton } from '@/components/workspaces/files/file/WorkspaceFileDownloadButton';
+import { WorkspaceAugmentedScmChangeDiscardButton } from '@/components/workspaces/files/details/sessionAugmentation/WorkspaceAugmentedScmChangeDiscardButton';
 
 import { useUnistyles, StyleSheet } from 'react-native-unistyles';
 import { layout } from '@/components/ui/layout/layout';
@@ -482,7 +482,7 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
                                     />
                                 ) : null}
                                 {sessionId && fileStatusForHeaderActions && scmWriteEnabled && (scmSnapshot?.capabilities?.writeDiscard === true) ? (
-                                    <ScmChangeDiscardButton
+                                    <WorkspaceAugmentedScmChangeDiscardButton
                                         sessionId={sessionId}
                                         sessionPath={sessionPath}
                                         snapshot={scmSnapshot ?? null}

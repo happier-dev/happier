@@ -1,7 +1,8 @@
 import * as React from 'react';
 
 import { flattenLazyDirectoryTree } from './flattenLazyDirectoryTree';
-import type { LazyDirectoryTreeEntry, LazyDirectoryTreeLoadResult } from './lazyDirectoryTreeTypes';
+import { reuseLazyDirectoryTreeNodes } from './reuseLazyDirectoryTreeNodes';
+import type { LazyDirectoryTreeEntry, LazyDirectoryTreeLoadResult, LazyDirectoryTreeNode } from './lazyDirectoryTreeTypes';
 
 function normalizeDirectoryPath(input: string): string {
     const trimmed = input.trim();
@@ -105,11 +106,13 @@ export function useLazyDirectoryTree(input: {
 
     const useExternalExpanded = Array.isArray(expandedPaths) && typeof onExpandedPathsChange === 'function';
     const expandedPathsRef = React.useRef(expandedPaths);
+    const onExpandedPathsChangeRef = React.useRef(onExpandedPathsChange);
     const useExternalExpandedRef = React.useRef(useExternalExpanded);
     React.useEffect(() => {
         expandedPathsRef.current = expandedPaths;
+        onExpandedPathsChangeRef.current = onExpandedPathsChange;
         useExternalExpandedRef.current = useExternalExpanded;
-    }, [expandedPaths, useExternalExpanded]);
+    }, [expandedPaths, onExpandedPathsChange, useExternalExpanded]);
 
     const [rootLoading, setRootLoading] = React.useState(false);
     const [rootError, setRootError] = React.useState<string | null>(null);
@@ -137,17 +140,21 @@ export function useLazyDirectoryTree(input: {
     const currentExpandedPaths = useExternalExpanded ? normalizedExternalExpandedPaths! : internalExpandedPaths;
     const expandedDirectories = React.useMemo(() => new Set<string>(currentExpandedPaths), [currentExpandedPaths]);
     const expandedCount = expandedDirectories.size;
+    const currentExpandedPathsRef = React.useRef(currentExpandedPaths);
+    React.useEffect(() => {
+        currentExpandedPathsRef.current = currentExpandedPaths;
+    }, [currentExpandedPaths]);
 
     const setExpandedPaths = React.useCallback((next: string[] | ((prev: string[]) => string[])) => {
-        if (useExternalExpanded) {
-            const resolvedPrev = currentExpandedPaths;
+        if (useExternalExpandedRef.current) {
+            const resolvedPrev = currentExpandedPathsRef.current;
             const resolvedNext = typeof next === 'function' ? next(resolvedPrev) : next;
-            onExpandedPathsChange!(normalizeExpandedPaths(resolvedNext));
+            onExpandedPathsChangeRef.current?.(normalizeExpandedPaths(resolvedNext));
             return;
         }
 
         setInternalExpandedPaths((prev) => normalizeExpandedPaths(typeof next === 'function' ? next(prev) : next));
-    }, [currentExpandedPaths, onExpandedPathsChange, useExternalExpanded]);
+    }, []);
 
     React.useEffect(() => {
         const seedExpandedPaths =
@@ -168,8 +175,17 @@ export function useLazyDirectoryTree(input: {
 
     const loadingRef = React.useRef<Set<string>>(new Set());
     const pendingForcedReloadsRef = React.useRef<Set<string>>(new Set());
+    const previousNodesRef = React.useRef<readonly LazyDirectoryTreeNode[]>([]);
+    const directoryEntriesByPathRef = React.useRef(directoryEntriesByPath);
+    const directoryErrorsRef = React.useRef(directoryErrors);
+    const rootDirectoryPathRef = React.useRef(rootDirectoryPath);
     const previousReloadTokenRef = React.useRef(reloadToken);
     const shouldForceReloadExpandedDirectories = reloadToken !== previousReloadTokenRef.current;
+    React.useEffect(() => {
+        directoryEntriesByPathRef.current = directoryEntriesByPath;
+        directoryErrorsRef.current = directoryErrors;
+        rootDirectoryPathRef.current = rootDirectoryPath;
+    }, [directoryEntriesByPath, directoryErrors, rootDirectoryPath]);
     React.useEffect(() => {
         previousReloadTokenRef.current = reloadToken;
     }, [reloadToken]);
@@ -216,8 +232,17 @@ export function useLazyDirectoryTree(input: {
             void warmDirectoryEntries(entry.path);
         }
     }, [warmChildDirectoriesLimit, warmDirectoryEntries]);
+    const loadDirectoryEntriesRef = React.useRef(loadDirectoryEntries);
+    const warmChildrenRef = React.useRef(warmChildren);
+    const expandedDirectoriesRef = React.useRef(expandedDirectories);
+    React.useEffect(() => {
+        loadDirectoryEntriesRef.current = loadDirectoryEntries;
+        warmChildrenRef.current = warmChildren;
+        expandedDirectoriesRef.current = expandedDirectories;
+    }, [expandedDirectories, loadDirectoryEntries, warmChildren]);
 
     const loadDirectory = React.useCallback(async (directoryPath: string, options?: Readonly<{ forceReload?: boolean }>) => {
+        const rootDirectoryPath = rootDirectoryPathRef.current;
         const clean = directoryPath === rootDirectoryPath ? rootDirectoryPath : normalizeDirectoryPath(directoryPath);
         if (!clean && clean !== rootDirectoryPath) return;
         if (loadingRef.current.has(clean)) {
@@ -226,11 +251,11 @@ export function useLazyDirectoryTree(input: {
             }
             return;
         }
-        if (options?.forceReload !== true && (directoryEntriesByPath.has(clean) || directoryErrors.has(clean))) {
+        if (options?.forceReload !== true && (directoryEntriesByPathRef.current.has(clean) || directoryErrorsRef.current.has(clean))) {
             return;
         }
 
-        const requestScopeKey = scopeKey;
+        const requestScopeKey = scopeKeyRef.current;
         loadingRef.current.add(clean);
         setLoadingDirectories((prev) => {
             const next = new Set(prev);
@@ -239,13 +264,13 @@ export function useLazyDirectoryTree(input: {
         });
 
         try {
-            const result = await loadDirectoryEntries(clean);
+            const result = await loadDirectoryEntriesRef.current(clean);
             if (scopeKeyRef.current !== requestScopeKey) {
                 return;
             }
             applyDirectoryLoadResult(clean, result);
             if (result.ok) {
-                warmChildren(result.entries);
+                warmChildrenRef.current(result.entries);
             }
         } finally {
             loadingRef.current.delete(clean);
@@ -258,7 +283,7 @@ export function useLazyDirectoryTree(input: {
                 void loadDirectory(clean, { forceReload: true });
             }
         }
-    }, [applyDirectoryLoadResult, directoryEntriesByPath, directoryErrors, loadDirectoryEntries, rootDirectoryPath, scopeKey, warmChildren]);
+    }, [applyDirectoryLoadResult]);
 
     React.useEffect(() => {
         if (!enabled) return;
@@ -301,7 +326,7 @@ export function useLazyDirectoryTree(input: {
         const clean = normalizeDirectoryPath(path);
         if (!clean) return;
 
-        const isExpanded = expandedDirectories.has(clean);
+        const isExpanded = expandedDirectoriesRef.current.has(clean);
         if (isExpanded) {
             setExpandedPaths((prev) => prev.filter((value) => normalizeDirectoryPath(value) !== clean));
             return;
@@ -309,7 +334,7 @@ export function useLazyDirectoryTree(input: {
 
         setExpandedPaths((prev) => [...prev, clean]);
         await loadDirectory(clean);
-    }, [expandedDirectories, loadDirectory, setExpandedPaths]);
+    }, [loadDirectory, setExpandedPaths]);
 
     const collapseAll = React.useCallback(() => {
         setExpandedPaths([]);
@@ -366,7 +391,7 @@ export function useLazyDirectoryTree(input: {
         };
     }, [enabled, expandedDirectories, loadDirectory, shouldForceReloadExpandedDirectories]);
 
-    const nodes = React.useMemo(() => {
+    const flattenedNodes = React.useMemo(() => {
         if (!enabled) return [];
         return flattenLazyDirectoryTree({
             directoryPath: rootDirectoryPath,
@@ -379,6 +404,12 @@ export function useLazyDirectoryTree(input: {
             visited: new Set<string>(),
         });
     }, [directoryEntriesByPath, directoryErrors, directoryTruncationByPath, enabled, expandedDirectories, loadingDirectories, rootDirectoryPath]);
+
+    const nodes = React.useMemo(() => {
+        const reusedNodes = reuseLazyDirectoryTreeNodes(flattenedNodes, previousNodesRef.current);
+        previousNodesRef.current = reusedNodes;
+        return reusedNodes;
+    }, [flattenedNodes]);
 
     return {
         rootLoading,

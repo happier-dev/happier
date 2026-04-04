@@ -84,7 +84,7 @@ vi.mock('@/components/projects/files/WorkspaceRepositoryTreeList', () => ({
     WorkspaceRepositoryTreeList: (props: any) => React.createElement('View', { ...props, testID: 'workspace-repository-tree-list' }),
 }));
 
-vi.mock('@/components/sessions/files/content/SearchResultsList', () => ({
+vi.mock('@/components/workspaces/files/repositoryTree/SearchResultsList', () => ({
     SearchResultsList: (props: any) => {
         const first = props.searchResults?.[0];
         return React.createElement('View' as any, {
@@ -99,6 +99,7 @@ let machineReachable = true;
 let sessionPath: string | null = null;
 let projectPath: string | null = '/repo';
 let machineRpcTargetAvailable = true;
+let workspaceTargetAvailable = true;
 const invalidateFromUserSpy = vi.fn();
 
 vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
@@ -109,22 +110,35 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     }),
 }));
 
-vi.mock('@/components/sessions/sourceControl/states', () => ({
+vi.mock('@/components/workspaces/scm/states', () => ({
     SourceControlSessionInactiveState: () =>
         React.createElement('View', { testID: 'source-control-session-inactive-state' }),
     SourceControlUnavailableState: (props: any) => React.createElement('View', { ...props, testID: 'source-control-unavailable-state' }),
 }));
 
-vi.mock('@/sync/ops', () => ({
-    sessionWriteFile: vi.fn(async () => ({ success: true })),
-    sessionCreateDirectory: vi.fn(async () => ({ success: true })),
+vi.mock('@/sync/domains/session/resolveWorkspaceTargetForSession', () => ({
+    resolveWorkspaceTargetForSession: () => (
+        workspaceTargetAvailable
+            ? {
+                workspaceCacheKey: 'server:m1:/repo',
+                machineId: 'm1',
+                rootPath: '/repo',
+                serverId: 'server',
+            }
+            : null
+    ),
+}));
+
+vi.mock('@/sync/ops/workspaceFileSystem', () => ({
+    workspaceWriteFile: vi.fn(async () => ({ success: true })),
+    workspaceCreateDirectory: vi.fn(async () => ({ success: true })),
 }));
 
 vi.mock('@/utils/path/isSafeWorkspaceRelativePath', () => ({
     isSafeWorkspaceRelativePath: () => true,
 }));
 
-vi.mock('@/components/sessions/files/repositoryTree/computeExpandedPathsForReveal', () => ({
+vi.mock('@/components/workspaces/files/repositoryTree/computeExpandedPathsForReveal', () => ({
     computeExpandedPathsForReveal: ({ expandedPaths }: any) => expandedPaths,
 }));
 
@@ -183,6 +197,7 @@ describe('SessionRepositoryTreeBrowserView', () => {
         sessionActive = true;
         machineReachable = true;
         machineRpcTargetAvailable = true;
+        workspaceTargetAvailable = true;
         sessionPath = null;
         projectPath = '/repo';
         invalidateFromUserSpy.mockReset();
@@ -271,16 +286,26 @@ describe('SessionRepositoryTreeBrowserView', () => {
         expect(screen.findAllByTestId('workspace-repository-tree-list')).toHaveLength(1);
     });
 
-    it('still renders the repository tree when the session is inactive and no machine target is available', async () => {
+    it('renders repository tree when the project mapping is missing but the workspace target is resolvable', async () => {
+        projectPath = null;
+
+        const { screen } = await renderRepositoryTreeBrowserView();
+
+        expect(screen.findByTestId('source-control-unavailable-state')).toBeNull();
+        expect(screen.findAllByTestId('workspace-repository-tree-list')).toHaveLength(1);
+    });
+
+    it('shows an unavailable state when the session has no resolvable workspace target', async () => {
         sessionActive = false;
         sessionPath = '';
         projectPath = '';
         machineRpcTargetAvailable = false;
+        workspaceTargetAvailable = false;
 
         const { screen } = await renderRepositoryTreeBrowserView();
 
         expect(screen.findByTestId('source-control-session-inactive-state')).toBeNull();
-        expect(screen.findAllByTestId('repository-tree-list')).toHaveLength(1);
+        expect(screen.findAllByTestId('source-control-unavailable-state')).toHaveLength(1);
     });
 
     it('warms SCM badges when machine RPC target availability flips to available', async () => {

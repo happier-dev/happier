@@ -66,6 +66,7 @@ export interface SessionsDomainSlice {
     sessionScmStatus: Record<string, ScmStatus | null>;
     sessionLastViewed: Record<string, number>;
     sessionRepositoryTreeExpandedPathsBySessionId: Record<string, string[]>;
+    workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey: Record<string, string[]>;
     reviewCommentsDraftsBySessionId: Record<string, ReviewCommentDraft[]>;
     reviewCommentsDraftsByWorkspaceCacheKey: Record<string, ReviewCommentDraft[]>;
     actionDraftsBySessionId: Record<string, SessionActionDraft[]>;
@@ -83,6 +84,9 @@ export interface SessionsDomainSlice {
     getSessionRepositoryTreeExpandedPaths: (sessionId: string) => string[];
     setSessionRepositoryTreeExpandedPaths: (sessionId: string, paths: string[]) => void;
     clearSessionRepositoryTreeExpandedPaths: (sessionId: string) => void;
+    getWorkspaceRepositoryTreeExpandedPaths: (scope: WorkspaceScopeBase) => string[];
+    setWorkspaceRepositoryTreeExpandedPaths: (scope: WorkspaceScopeBase, paths: string[]) => void;
+    clearWorkspaceRepositoryTreeExpandedPaths: (scope: WorkspaceScopeBase) => void;
     updateSessionDraft: (sessionId: string, draft: string | null) => void;
     upsertSessionReviewCommentDraft: (sessionId: string, draft: ReviewCommentDraft) => void;
     deleteSessionReviewCommentDraft: (sessionId: string, commentId: string) => void;

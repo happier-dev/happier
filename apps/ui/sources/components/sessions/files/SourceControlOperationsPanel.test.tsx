@@ -447,6 +447,50 @@ describe('SourceControlOperationsPanel', () => {
         expect(textContent).toContain('Pull remote changes before pushing local commits.');
     });
 
+    it('hides write controls and write-only hints when source control writes are disabled', async () => {
+        const { SourceControlOperationsPanel } = await import('./SourceControlOperationsPanel');
+
+        const screen = await renderScreen(<SourceControlOperationsPanel
+                    backendLabel="Git"
+                    commitActionLabel="Commit staged"
+                    capabilities={{ readLog: true, writeCommit: true, writeRemoteFetch: true, writeRemotePull: true, writeRemotePush: true }}
+                    scmWriteEnabled={false}
+                    theme={{ colors: { divider: '#000', text: '#fff', textSecondary: '#aaa', warning: '#f90', textDestructive: '#f00', success: '#0a0', input: { background: '#111' }, textLink: '#09f', surfaceHigh: '#222', surface: '#111' } }}
+                    currentSessionId="session-1"
+                    hasConflicts={false}
+                    scmOperationBusy={false}
+                    hasGlobalOperationInFlight={false}
+                    inFlightScmOperation={null}
+                    scmOperationStatus={null}
+                    commitAllowed={false}
+                    commitBlockedMessage="Enable experimental source control write operations in Settings."
+                    pullAllowed={false}
+                    pullBlockedMessage="Enable experimental source control write operations in Settings."
+                    pushAllowed={false}
+                    pushBlockedMessage="Enable experimental source control write operations in Settings."
+                    onCreateCommit={vi.fn()}
+                    onFetch={vi.fn()}
+                    onPull={vi.fn()}
+                    onPush={vi.fn()}
+                    historyLoading={false}
+                    historyEntries={[]}
+                    historyHasMore={false}
+                    onLoadMoreHistory={vi.fn()}
+                    onOpenCommit={vi.fn()}
+                    operationLog={[]}
+                    commitSelectionCount={2}
+                />);
+
+        const textContent = screen.getTextContent();
+        expect(textContent).not.toContain('Commit staged');
+        expect(textContent).not.toContain('Fetch');
+        expect(textContent).not.toContain('Pull');
+        expect(textContent).not.toContain('Push');
+        expect(textContent).not.toContain('Enable experimental source control write operations in Settings.');
+        expect(screen.tree.findAllByProps({ testID: 'scm-commit-message' })).toHaveLength(0);
+        expect(screen.tree.findAllByProps({ testID: 'scm-commit-submit' })).toHaveLength(0);
+    });
+
     it('labels operation log entries with current vs other session origin', async () => {
         const { SourceControlOperationsPanel } = await import('./SourceControlOperationsPanel');
         const now = Date.now();

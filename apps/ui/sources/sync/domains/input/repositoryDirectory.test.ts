@@ -12,11 +12,6 @@ import {
 const machineFilesystemListDirectoryMock = vi.fn();
 const readMachineTargetForSessionMock = vi.fn();
 const resolvePreferredServerIdForSessionIdMock = vi.fn();
-const sessionListDirectoryMock = vi.fn();
-
-vi.mock('@/sync/ops', () => ({
-    sessionListDirectory: (...args: unknown[]) => sessionListDirectoryMock(...args),
-}));
 
 vi.mock('@/sync/ops/machineFileBrowser', () => ({
     machineFilesystemListDirectory: (...args: unknown[]) => machineFilesystemListDirectoryMock(...args),
@@ -54,13 +49,6 @@ describe('listRepositoryDirectoryEntries', () => {
     it('preserves raw directory entry names for identity (no Unicode normalization)', async () => {
         readMachineTargetForSessionMock.mockReturnValue({ machineId: 'm1', basePath: '/repo' });
         resolvePreferredServerIdForSessionIdMock.mockReturnValue('server');
-        sessionListDirectoryMock.mockResolvedValue({
-            success: true,
-            entries: [
-                { name: 'Å.txt', type: 'file', size: 12, modified: 1700000000000 },
-                { name: 'a.txt', type: 'file' },
-            ],
-        });
         machineFilesystemListDirectoryMock.mockResolvedValue({
             ok: true,
             path: '/repo',
@@ -81,6 +69,16 @@ describe('listRepositoryDirectoryEntries', () => {
         expect(angular?.sizeBytes).toBe(12);
         expect(angular?.modifiedMs).toBe(1700000000000);
     });
+
+    it('does not fall back to a machine-only cache key when no preferred server is available', async () => {
+        readMachineTargetForSessionMock.mockReturnValue({ machineId: 'm1', basePath: '/repo' });
+        resolvePreferredServerIdForSessionIdMock.mockReturnValue(null);
+        machineFilesystemListDirectoryMock.mockClear();
+
+        const result = await listRepositoryDirectoryEntries({ sessionId: 's', directoryPath: '' });
+        expect(result).toEqual({ ok: false, error: 'unknown_error' });
+        expect(machineFilesystemListDirectoryMock).not.toHaveBeenCalled();
+    });
 });
 
 describe('warmRepositoryDirectoryCache', () => {
@@ -90,13 +88,7 @@ describe('warmRepositoryDirectoryCache', () => {
             return { machineId: 'm2', basePath: '/other' };
         });
         resolvePreferredServerIdForSessionIdMock.mockReturnValue('server');
-        sessionListDirectoryMock.mockResolvedValue({
-            success: true,
-            entries: [
-                { name: 'src', type: 'directory' },
-                { name: 'a.txt', type: 'file' },
-            ],
-        });
+        clearCachedRepositoryDirectoryEntries({ sessionId: 's' });
 
         let resolve!: (value: any) => void;
         const pending = new Promise((r) => {

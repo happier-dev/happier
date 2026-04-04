@@ -6,6 +6,27 @@ import { renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+let latestLazyDirectoryTreeInput: any = null;
+vi.mock('@/hooks/ui/filesystem/useLazyDirectoryTree', async (importOriginal) => {
+    const original: any = await importOriginal();
+    return {
+        ...original,
+        useLazyDirectoryTree: (input: any) => {
+            latestLazyDirectoryTreeInput = input;
+            return original.useLazyDirectoryTree(input);
+        },
+    };
+});
+
+vi.mock('@/sync/domains/session/resolveWorkspaceTargetForSession', () => ({
+    resolveWorkspaceTargetForSession: (sessionId: string) => ({
+        workspaceCacheKey: sessionId === 'session-2' ? 'server:m1:/repo2' : 'server:m1:/repo',
+        machineId: 'm1',
+        rootPath: sessionId === 'session-2' ? '/repo2' : '/repo',
+        serverId: 'server',
+    }),
+}));
+
 const listRepositoryDirectoryEntriesSpy = vi.fn<
     (input: { sessionId: string; directoryPath: string }) => Promise<{ ok: true; entries: Array<{ name: string; type: 'file' | 'directory' }> }>
 >();
@@ -22,6 +43,30 @@ vi.mock('@/sync/domains/input/repositoryDirectory', () => ({
 }));
 
 describe('useRepositoryTreeBrowser', () => {
+    it('uses workspaceCacheKey as the lazy-tree scopeKey when available', async () => {
+        latestLazyDirectoryTreeInput = null;
+        cachedDirectoryEntries.clear();
+
+        listRepositoryDirectoryEntriesSpy.mockResolvedValue({ ok: true, entries: [] });
+
+        const { useRepositoryTreeBrowser } = await import('./useRepositoryTreeBrowser');
+
+        function Test() {
+            const [expandedPaths, setExpandedPaths] = React.useState<string[]>([]);
+            useRepositoryTreeBrowser({
+                sessionId: 'session-1',
+                enabled: true,
+                expandedPaths,
+                onExpandedPathsChange: setExpandedPaths,
+            });
+            return null;
+        }
+
+        await renderScreen(<Test />);
+
+        expect(latestLazyDirectoryTreeInput?.scopeKey).toBe('server:m1:/repo');
+    });
+
     it('hydrates initial nodes from the directory cache while revalidating in the background', async () => {
         cachedDirectoryEntries.set('session-1:', [
             { name: 'cached.md', type: 'file' },

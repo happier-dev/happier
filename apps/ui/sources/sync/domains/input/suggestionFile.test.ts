@@ -172,4 +172,15 @@ describe('searchFiles', () => {
 
         expect(machineRipgrepMock).toHaveBeenCalledTimes(1);
     });
+
+    it('returns no results without falling back to a machine-only cache key when no preferred server is available', async () => {
+        readMachineTargetForSessionMock.mockReturnValue({ machineId: 'm1', basePath: '/repo' });
+        resolvePreferredServerIdForSessionIdMock.mockReturnValue(null);
+
+        const { searchFiles } = await import('./suggestionFile');
+        await expect(searchFiles('session-1', '', { limit: 10 })).resolves.toEqual([]);
+
+        expect(machineRipgrepMock).not.toHaveBeenCalled();
+        expect(machineFilesystemListDirectoryMock).not.toHaveBeenCalled();
+    });
 });

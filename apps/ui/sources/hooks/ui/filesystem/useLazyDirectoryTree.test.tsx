@@ -232,4 +232,66 @@ describe('useLazyDirectoryTree', () => {
         });
 
     });
+
+    it('reuses unchanged node objects when expanding a descendant directory', async () => {
+        const getCachedEntries = vi.fn(() => null);
+
+        const loadDirectoryEntries = vi.fn(async (directoryPath: string) => {
+            if (directoryPath === '') {
+                return {
+                    ok: true as const,
+                    entries: [{ name: '/', path: '/', type: 'directory' as const }],
+                };
+            }
+            if (directoryPath === '/') {
+                return {
+                    ok: true as const,
+                    entries: [{ name: 'Users', path: '/Users', type: 'directory' as const }],
+                };
+            }
+            if (directoryPath === '/Users') {
+                return {
+                    ok: true as const,
+                    entries: [{ name: 'leeroy', path: '/Users/leeroy', type: 'directory' as const }],
+                };
+            }
+            return { ok: true as const, entries: [] };
+        });
+
+        const { useLazyDirectoryTree } = await import('./useLazyDirectoryTree');
+
+        let api: any = null;
+
+        function Test() {
+            const [expandedPaths, setExpandedPaths] = React.useState<string[]>([]);
+            api = useLazyDirectoryTree({
+                scopeKey: 'machine-reference-stability-scope',
+                enabled: true,
+                rootDirectoryPath: '',
+                expandedPaths,
+                onExpandedPathsChange: setExpandedPaths,
+                getCachedEntries,
+                loadDirectoryEntries,
+            });
+            return null;
+        }
+
+        await renderScreen(<Test />);
+
+        await act(async () => {
+            await api.toggleDirectory('/');
+        });
+
+        await waitForNodePaths(api, ['/', '/Users']);
+        const rootNodeBeforeExpand = api.nodes.find((node: any) => node.path === '/');
+        expect(rootNodeBeforeExpand).toBeTruthy();
+
+        await act(async () => {
+            await api.toggleDirectory('/Users');
+        });
+
+        await waitForNodePaths(api, ['/', '/Users', '/Users/leeroy']);
+
+        expect(api.nodes.find((node: any) => node.path === '/')).toBe(rootNodeBeforeExpand);
+    });
 });

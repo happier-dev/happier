@@ -31,8 +31,7 @@ const sessionScmStashListSpy = vi.fn<
     (sessionId: string, request: ScmStashListRequest) => Promise<ScmStashListResponse>
 >(async (_sessionId, _request) => ({
     success: true,
-    managedCount: 1,
-    managedStashes: [{ stashRef: 'stash@{0}', kind: 'branch', branch: 'main', createdAt: Date.now() }],
+    stashes: [{ stashRef: 'stash@{0}', kind: 'branch', branch: 'main', createdAt: Date.now() }],
     totalCount: 1,
 }));
 const sessionScmStashShowSpy = vi.fn<
@@ -231,8 +230,7 @@ describe('SessionScmStashDetailsView', () => {
         await withControlledRetryTimers(async ({ advanceTimersByCount }) => {
             sessionScmStashListSpy.mockResolvedValue({
                 success: true,
-                managedCount: 1,
-                managedStashes: [{ stashRef: 'stash@{0}', kind: 'branch', branch: 'main', createdAt: Date.now() }],
+                stashes: [{ stashRef: 'stash@{0}', kind: 'branch', branch: 'main', createdAt: Date.now() }],
                 totalCount: 1,
             });
             sessionScmStashShowSpy
@@ -287,8 +285,7 @@ describe('SessionScmStashDetailsView', () => {
         await withControlledRetryTimers(async ({ advanceTimersByCount }) => {
             sessionScmStashListSpy.mockResolvedValue({
                 success: true,
-                managedCount: 1,
-                managedStashes: [{ stashRef: 'stash@{0}', kind: 'branch', branch: 'main', createdAt: Date.now() }],
+                stashes: [{ stashRef: 'stash@{0}', kind: 'branch', branch: 'main', createdAt: Date.now() }],
                 totalCount: 1,
             });
             sessionScmStashShowSpy.mockResolvedValue({
@@ -305,13 +302,12 @@ describe('SessionScmStashDetailsView', () => {
         });
     });
 
-    it('loads the clicked stash when switching between managed stash pills', async () => {
+    it('loads the clicked stash when switching between all stash pills including unmanaged entries', async () => {
         sessionScmStashListSpy.mockResolvedValue({
             success: true,
-            managedCount: 2,
-            managedStashes: [
+            stashes: [
                 { stashRef: 'stash@{0}', kind: 'branch', branch: 'main', createdAt: Date.now() },
-                { stashRef: 'stash@{1}', kind: 'branch', branch: 'feature', createdAt: Date.now() - 60_000 },
+                { stashRef: 'stash@{1}', kind: 'unmanaged', message: 'WIP on feature: unmanaged', createdAt: Date.now() - 60_000 },
             ],
             totalCount: 2,
         });

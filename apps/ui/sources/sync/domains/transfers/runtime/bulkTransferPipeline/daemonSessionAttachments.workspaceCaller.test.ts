@@ -5,6 +5,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 const state = vi.hoisted(() => ({
     createdCallerParams: null as any,
     calledMethods: [] as string[],
+    initRequest: null as any,
 }));
 
 vi.mock('@/sync/ops/sessionMachineTarget', () => ({
@@ -22,6 +23,7 @@ vi.mock('./workspaceFileTransferRpcCaller', () => ({
             call: async (callParams: any) => {
                 state.calledMethods.push(String(callParams.machineMethod ?? ''));
                 if (callParams.machineMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT) {
+                    state.initRequest = callParams.request;
                     return { success: true, uploadId: 'u1', chunkSizeBytes: 1, recipientPublicKeyBase64: 'k' };
                 }
                 if (callParams.machineMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK) {
@@ -51,6 +53,7 @@ describe('daemonSessionAttachments', () => {
     it('uses workspace transfer RPC (not session transfer fallback) for daemon bulk transfer calls', async () => {
         state.createdCallerParams = null;
         state.calledMethods = [];
+        state.initRequest = null;
 
         const { uploadDaemonSessionAttachmentFromReader } = await import('./daemonSessionAttachments');
         const result = await uploadDaemonSessionAttachmentFromReader({
@@ -78,5 +81,38 @@ describe('daemonSessionAttachments', () => {
             RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK,
             RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE,
         ]);
+        expect(state.calledMethods).not.toContain('session-rpc');
+    });
+
+    it('passes the session workspace root to the attachment upload init request', async () => {
+        state.createdCallerParams = null;
+        state.calledMethods = [];
+        state.initRequest = null;
+
+        const { uploadDaemonSessionAttachmentFromReader } = await import('./daemonSessionAttachments');
+        await uploadDaemonSessionAttachmentFromReader({
+            sessionId: 's1',
+            fileReader: {
+                sizeBytes: 2,
+                readBytes: async () => new Uint8Array(),
+                close: async () => {},
+            },
+            request: {
+                messageLocalId: 'm1',
+                fileName: 'a.txt',
+                sizeBytes: 2,
+                uploadLocation: 'workspace',
+                workspaceRelativeDir: '.happier/uploads',
+                vcsIgnoreStrategy: 'none',
+                vcsIgnoreWritesEnabled: false,
+            },
+        });
+
+        expect(state.initRequest).toMatchObject({
+            messageLocalId: 'm1',
+            fileName: 'a.txt',
+            workspaceRelativeDir: '.happier/uploads',
+            workspaceRootPath: '/repo',
+        });
     });
 });

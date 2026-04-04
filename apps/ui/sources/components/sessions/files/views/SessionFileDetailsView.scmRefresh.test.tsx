@@ -78,19 +78,19 @@ vi.mock('@/scm/diff/defaultMode', () => ({
   resolveDefaultDiffModeForFile: () => 'pending',
 }));
 
-vi.mock('@/components/sessions/files/file/FileHeader', () => ({
+vi.mock('@/components/workspaces/files/file/FileHeader', () => ({
   FileHeader: (props: any) => React.createElement('FileHeader', props, props.rightElement ?? null),
 }));
 
-vi.mock('@/components/sessions/files/file/FileActionToolbar', () => ({
+vi.mock('@/components/workspaces/files/file/FileActionToolbar', () => ({
   FileActionToolbar: (props: any) => React.createElement('FileActionToolbar', props),
 }));
 
-vi.mock('@/components/sessions/files/file/FileContentPanel', () => ({
+vi.mock('@/components/workspaces/files/file/FileContentPanel', () => ({
   FileContentPanel: (props: any) => React.createElement('FileContentPanel', props),
 }));
 
-vi.mock('@/components/sessions/files/file/editor/FileEditorPanel', () => ({
+vi.mock('@/components/workspaces/files/file/editor/FileEditorPanel', () => ({
   FileEditorPanel: (props: any) => React.createElement('FileEditorPanel', props),
 }));
 
@@ -98,7 +98,7 @@ vi.mock('@/components/sessions/sourceControl/changes/ScmChangeDiscardButton', ()
   ScmChangeDiscardButton: (props: any) => React.createElement('ScmChangeDiscardButton', props),
 }));
 
-vi.mock('@/components/sessions/files/file/FileScreenState', () => ({
+vi.mock('@/components/workspaces/files/file/FileScreenState', () => ({
   FileLoadingState: (props: any) => React.createElement('FileLoadingState', props),
   FileErrorState: (props: any) => React.createElement('FileErrorState', props),
   FileBinaryState: (props: any) => React.createElement('FileBinaryState', props),

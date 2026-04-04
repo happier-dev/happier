@@ -52,6 +52,8 @@ import {
     saveLastChangesCursorByAccountId,
     loadSessionReviewCommentsDrafts,
     saveSessionReviewCommentsDrafts,
+    loadWorkspaceReviewCommentsDrafts,
+    saveWorkspaceReviewCommentsDrafts,
     loadSessionActionDrafts,
     saveSessionActionDrafts,
 } from './persistence';
@@ -328,6 +330,69 @@ describe('persistence', () => {
                     error: null,
                 }],
             });
+        });
+    });
+
+    describe('workspace review comment drafts', () => {
+        it('roundtrips persisted drafts and drops invalid entries', () => {
+            saveWorkspaceReviewCommentsDrafts({
+                'srv1:m1:/repo': [{
+                    id: 'c1',
+                    filePath: 'src/a.ts',
+                    source: 'file',
+                    anchor: { kind: 'fileLine', startLine: 1 },
+                    snapshot: { selectedLines: ['x'], beforeContext: [], afterContext: [] },
+                    body: 'nit',
+                    createdAt: 1,
+                }],
+            });
+
+            store.set('workspace-review-comments-draft-v1', JSON.stringify({
+                'srv1:m1:/repo': [
+                    {
+                        id: 'c1',
+                        filePath: 'src/a.ts',
+                        source: 'file',
+                        anchor: { kind: 'fileLine', startLine: 1 },
+                        snapshot: { selectedLines: ['x'], beforeContext: [], afterContext: [] },
+                        body: 'nit',
+                        createdAt: 1,
+                    },
+                    { id: '', filePath: 'src/a.ts' },
+                ],
+                '   ': [{ id: 'x', filePath: 'src/a.ts', source: 'file', anchor: { kind: 'fileLine', startLine: 1 }, snapshot: { selectedLines: ['x'], beforeContext: [], afterContext: [] }, body: 'nit', createdAt: 1 }],
+            }));
+
+            expect(loadWorkspaceReviewCommentsDrafts()).toEqual({
+                'srv1:m1:/repo': [{
+                    id: 'c1',
+                    filePath: 'src/a.ts',
+                    source: 'file',
+                    anchor: { kind: 'fileLine', startLine: 1 },
+                    snapshot: { selectedLines: ['x'], beforeContext: [], afterContext: [] },
+                    body: 'nit',
+                    createdAt: 1,
+                }],
+            });
+        });
+
+        it('deletes the persisted key when saving an empty map', () => {
+            saveWorkspaceReviewCommentsDrafts({
+                'srv1:m1:/repo': [{
+                    id: 'c1',
+                    filePath: 'src/a.ts',
+                    source: 'file',
+                    anchor: { kind: 'fileLine', startLine: 1 },
+                    snapshot: { selectedLines: ['x'], beforeContext: [], afterContext: [] },
+                    body: 'nit',
+                    createdAt: 1,
+                }],
+            });
+            expect(store.get('workspace-review-comments-draft-v1')).toBeTruthy();
+
+            saveWorkspaceReviewCommentsDrafts({});
+            expect(store.get('workspace-review-comments-draft-v1')).toBeUndefined();
+            expect(loadWorkspaceReviewCommentsDrafts()).toEqual({});
         });
     });
 

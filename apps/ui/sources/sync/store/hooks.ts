@@ -583,6 +583,21 @@ export function useSessionRepositoryTreeExpandedPaths(sessionId: string | null):
   );
 }
 
+export function useWorkspaceRepositoryTreeExpandedPaths(scope: WorkspaceScopeBase | null): string[] {
+  const cacheKey = React.useMemo(() => {
+    if (!scope) return null;
+    try {
+      return buildWorkspaceCacheKey(scope);
+    } catch {
+      return null;
+    }
+  }, [scope]);
+
+  return getStorage()(
+    useShallow((state) => (cacheKey ? state.getWorkspaceRepositoryTreeExpandedPaths(scope as WorkspaceScopeBase) : []))
+  );
+}
+
 export function useLocalSetting<K extends keyof LocalSettings>(name: K): LocalSettings[K] {
   return getStorage()(useShallow((state) => state.localSettings[name]));
 }

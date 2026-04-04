@@ -408,6 +408,12 @@ export function saveSessionDrafts(drafts: Record<string, string>) {
 
 export type SessionReviewCommentDraftsBySessionId = Record<string, z.infer<typeof ReviewCommentDraftSchema>[]>;
 
+export type WorkspaceReviewCommentDraftsByWorkspaceCacheKey = Record<string, z.infer<typeof ReviewCommentDraftSchema>[]>;
+
+function workspaceReviewCommentsDraftsKey(): string {
+    return 'workspace-review-comments-draft-v1';
+}
+
 export function loadSessionReviewCommentsDrafts(): SessionReviewCommentDraftsBySessionId {
     const mmkv = getPersistenceStorage();
     const raw = mmkv.getString(sessionReviewCommentsDraftsKey());
@@ -442,6 +448,43 @@ export function saveSessionReviewCommentsDrafts(drafts: SessionReviewCommentDraf
         return;
     }
     mmkv.set(sessionReviewCommentsDraftsKey(), JSON.stringify(drafts));
+}
+
+export function loadWorkspaceReviewCommentsDrafts(): WorkspaceReviewCommentDraftsByWorkspaceCacheKey {
+    const mmkv = getPersistenceStorage();
+    const raw = mmkv.getString(workspaceReviewCommentsDraftsKey());
+    if (!raw) return {};
+    try {
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+
+        const out: WorkspaceReviewCommentDraftsByWorkspaceCacheKey = {};
+        for (const [rawWorkspaceCacheKey, rawDrafts] of Object.entries(parsed as Record<string, unknown>)) {
+            const workspaceCacheKey = typeof rawWorkspaceCacheKey === 'string' ? rawWorkspaceCacheKey.trim() : '';
+            if (!workspaceCacheKey) continue;
+            if (!Array.isArray(rawDrafts)) continue;
+
+            const drafts: z.infer<typeof ReviewCommentDraftSchema>[] = [];
+            for (const entry of rawDrafts) {
+                const entryParsed = ReviewCommentDraftSchema.safeParse(entry);
+                if (entryParsed.success) drafts.push(entryParsed.data);
+            }
+            if (drafts.length > 0) out[workspaceCacheKey] = drafts;
+        }
+        return out;
+    } catch (e) {
+        console.error('Failed to parse workspace review comment drafts', e);
+        return {};
+    }
+}
+
+export function saveWorkspaceReviewCommentsDrafts(drafts: WorkspaceReviewCommentDraftsByWorkspaceCacheKey): void {
+    const mmkv = getPersistenceStorage();
+    if (!drafts || typeof drafts !== 'object' || Object.keys(drafts).length === 0) {
+        mmkv.delete(workspaceReviewCommentsDraftsKey());
+        return;
+    }
+    mmkv.set(workspaceReviewCommentsDraftsKey(), JSON.stringify(drafts));
 }
 
 export type SessionActionDraftsBySessionId = Record<string, z.infer<typeof SessionActionDraftSchema>[]>;

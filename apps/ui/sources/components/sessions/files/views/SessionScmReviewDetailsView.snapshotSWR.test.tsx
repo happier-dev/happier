@@ -115,7 +115,7 @@ vi.mock('@/components/ui/scroll/ScrollEdgeIndicators', () => ({
     ScrollEdgeIndicators: () => null,
 }));
 
-vi.mock('@/components/sessions/files/content/ChangedFilesReview', () => ({
+vi.mock('@/components/workspaces/scm/review/ChangedFilesReview', () => ({
     ChangedFilesReview: () => React.createElement('ChangedFilesReview'),
 }));
 

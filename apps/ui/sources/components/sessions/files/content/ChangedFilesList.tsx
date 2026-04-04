@@ -6,8 +6,8 @@ import { Typography } from '@/constants/Typography';
 import type { SessionAttributedFile, SessionAttributionReliability, ChangedFilesViewMode } from '@/scm/scmAttribution';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 import { t } from '@/text';
-import { ChangedFilesSectionHeader } from '@/components/sessions/files/changedFiles/ChangedFilesSectionHeader';
-import { ScmChangeRow } from '@/components/sessions/sourceControl/changes/ScmChangeRow';
+import { ChangedFilesSectionHeader } from '@/components/workspaces/scm/review/ChangedFilesSectionHeader';
+import { ScmChangeRow } from '@/components/workspaces/scm/changes/ScmChangeRow';
 import { filterDirectoryLikeScmFileStatuses, isDirectoryLikeScmFileStatus } from '@/scm/isDirectoryLikeScmFileStatus';
 
 type ChangedFilesListProps = {

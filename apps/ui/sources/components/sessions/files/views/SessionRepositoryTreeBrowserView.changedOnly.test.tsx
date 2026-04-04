@@ -23,7 +23,7 @@ installSessionFilesViewCommonModuleMocks({
         return createPartialStorageModuleMock(importOriginal, {
             storage: { getState: () => ({ setSessionRepositoryTreeExpandedPaths: setExpandedPathsSpy }) } as any,
             useSession: () => ({ active: true, metadata: { machineId: 'm1' } }) as any,
-            useProjectForSession: () => ({ key: { machineId: 'm1', path: '/repo' } }) as any,
+            useProjectForSession: () => ({ key: { serverId: 'server', machineId: 'm1', rootPath: '/repo' } }) as any,
             useAllMachines: () => [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', platform: 'darwin', happyCliVersion: '0', happyHomeDir: '/tmp/.h', homeDir: '/tmp' } }] as any,
             useMachine: () => ({ id: 'm1' }) as any,
             useSessionRepositoryTreeExpandedPaths: () => ['src'],
@@ -60,8 +60,9 @@ vi.mock('@/hooks/session/files/useWorkspaceFileTransfers', () => ({
     }),
 }));
 
-vi.mock('@/components/sessions/sourceControl/states', () => ({
+vi.mock('@/components/workspaces/scm/states', () => ({
     SourceControlSessionInactiveState: () => React.createElement('SourceControlSessionInactiveState'),
+    SourceControlUnavailableState: () => React.createElement('SourceControlUnavailableState'),
 }));
 
 vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => ({
@@ -93,7 +94,11 @@ vi.mock('@/components/sessions/files/content/RepositoryTreeList', () => ({
     RepositoryTreeList: () => React.createElement('View', { testID: 'repository-tree-list' }),
 }));
 
-vi.mock('@/components/sessions/files/content/ChangedFilesTreeList', () => ({
+vi.mock('@/components/projects/files/WorkspaceRepositoryTreeList', () => ({
+    WorkspaceRepositoryTreeList: () => React.createElement('View', { testID: 'workspace-repository-tree-list' }),
+}));
+
+vi.mock('@/components/workspaces/files/repositoryTree/ChangedFilesTreeList', () => ({
     ChangedFilesTreeList: () => React.createElement('View', { testID: 'changed-files-tree-list' }),
 }));
 
@@ -101,20 +106,29 @@ vi.mock('@/components/sessions/files/views/repositoryTreeBrowser/RepositoryTreeC
     RepositoryTreeChangedFilesPane: () => React.createElement('View', { testID: 'repository-tree-changed-files-pane' }),
 }));
 
-vi.mock('@/components/sessions/files/content/SearchResultsList', () => ({
+vi.mock('@/components/workspaces/files/repositoryTree/SearchResultsList', () => ({
     SearchResultsList: () => React.createElement('SearchResultsList'),
 }));
 
-vi.mock('@/sync/ops', () => ({
-    sessionWriteFile: vi.fn(async () => ({ success: true })),
-    sessionCreateDirectory: vi.fn(async () => ({ success: true })),
+vi.mock('@/sync/domains/session/resolveWorkspaceTargetForSession', () => ({
+    resolveWorkspaceTargetForSession: () => ({
+        workspaceCacheKey: 'server:m1:/repo',
+        machineId: 'm1',
+        rootPath: '/repo',
+        serverId: 'server',
+    }),
+}));
+
+vi.mock('@/sync/ops/workspaceFileSystem', () => ({
+    workspaceWriteFile: vi.fn(async () => ({ success: true })),
+    workspaceCreateDirectory: vi.fn(async () => ({ success: true })),
 }));
 
 vi.mock('@/utils/path/isSafeWorkspaceRelativePath', () => ({
     isSafeWorkspaceRelativePath: () => true,
 }));
 
-vi.mock('@/components/sessions/files/repositoryTree/computeExpandedPathsForReveal', () => ({
+vi.mock('@/components/workspaces/files/repositoryTree/computeExpandedPathsForReveal', () => ({
     computeExpandedPathsForReveal: ({ expandedPaths }: any) => expandedPaths,
 }));
 
@@ -131,7 +145,7 @@ describe('SessionRepositoryTreeBrowserView (changed-only toggle)', () => {
     it('toggles between full repository tree and changed-only tree', async () => {
         const screen = await renderRepositoryTreeBrowserView();
 
-        expect(screen.findAllByTestId('repository-tree-list')).toHaveLength(1);
+        expect(screen.findAllByTestId('workspace-repository-tree-list')).toHaveLength(1);
         expect(screen.findAllByTestId('changed-files-tree-list')).toHaveLength(0);
         expect(screen.findAllByTestId('repository-tree-changed-files-pane')).toHaveLength(0);
 
@@ -141,7 +155,7 @@ describe('SessionRepositoryTreeBrowserView (changed-only toggle)', () => {
             screen.pressByTestId('repository-tree-filter-changed');
         });
 
-        expect(screen.findAllByTestId('repository-tree-list')).toHaveLength(0);
+        expect(screen.findAllByTestId('workspace-repository-tree-list')).toHaveLength(0);
         expect(screen.findAllByTestId('changed-files-tree-list')).toHaveLength(0);
         expect(screen.findAllByTestId('repository-tree-changed-files-pane')).toHaveLength(1);
     });

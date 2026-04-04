@@ -9,12 +9,12 @@ import { FileIcon } from '@/components/ui/media/FileIcon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useWorkspaceRepositoryTreeBrowser } from '@/hooks/workspaces/files/useWorkspaceRepositoryTreeBrowser';
-import { SourceControlUnavailableState } from '@/components/sessions/sourceControl/states';
+import { SourceControlUnavailableState } from '@/components/workspaces/scm/states';
 import { t } from '@/text';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
-import { useScmTreeBadgeIndex } from '@/components/sessions/files/repositoryTree/useScmTreeBadgeIndex';
+import { useScmTreeBadgeIndex } from '@/components/workspaces/files/repositoryTree/useScmTreeBadgeIndex';
 import { formatByteSize } from '@/utils/files/formatByteSize';
-import { WebDropTargetView } from '@/components/sessions/files/repositoryTree/WebDropTargetView';
+import { WebDropTargetView } from '@/components/workspaces/files/repositoryTree/WebDropTargetView';
 import { isWebFileDragEvent } from '@/utils/files/isWebFileDragEvent';
 import type { LazyDirectoryTreeNode } from '@/hooks/ui/filesystem/lazyDirectoryTreeTypes';
 
@@ -130,7 +130,7 @@ export function WorkspaceRepositoryTreeList(props: WorkspaceRepositoryTreeListPr
             emptyIconName="folder-outline"
             loadingLabel={t('common.loading')}
             inlineRetryLabel={t('errors.tryAgain')}
-            renderRow={({ node, index, totalCount }) => {
+            renderRow={({ node, showDivider }) => {
                 const badge = badgeIndex
                     ? (
                         node.type === 'file'
@@ -231,12 +231,11 @@ export function WorkspaceRepositoryTreeList(props: WorkspaceRepositoryTreeListPr
                 return (
                     <FilesystemBrowserRow
                         node={node}
-                        index={index}
-                        totalCount={totalCount}
                         title={node.type === 'directory' ? `${node.name}/` : node.name}
                         subtitle={subtitle}
                         icon={renderEntryIcon(node, theme)}
                         density="tight"
+                        showDivider={showDivider}
                         rightElement={right}
                         errorTitle={t('files.repositoryFolderLoadFailed')}
                         errorSubtitle={t('errors.tryAgain')}

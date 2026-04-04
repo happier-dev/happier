@@ -5,7 +5,7 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { Text } from '@/components/ui/text/Text';
-import { ChangedFilesReview } from '@/components/sessions/files/content/ChangedFilesReview';
+import { ChangedFilesReview } from '@/components/workspaces/scm/review/ChangedFilesReview';
 import { useChangedFilesData } from '@/hooks/session/files/useChangedFilesData';
 import { useProjectForSession, useProjectSessions, useSession, useSessionMessages, useSessionProjectScmOperationLog, useSessionProjectScmSnapshot, useSessionProjectScmSnapshotError, useSessionProjectScmTouchedPaths, useSetting } from '@/sync/domains/state/storage';
 import { scmStatusSync } from '@/scm/scmStatusSync';
@@ -20,7 +20,7 @@ import { useScmDiffCacheLimits } from '@/scm/diffCache/useScmDiffCacheLimits';
 import { useScmAdaptivePolling } from '@/scm/refresh/useScmAdaptivePolling';
 import { buildSnapshotSignature } from '@/scm/statusSync/projectState';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
-import { NotSourceControlRepositoryState, SourceControlUnavailableState } from '@/components/sessions/sourceControl/states';
+import { NotSourceControlRepositoryState, SourceControlUnavailableState } from '@/components/workspaces/scm/states';
 import { t } from '@/text';
 import { useLastNonNullValue } from '@/hooks/ui/useLastNonNullValue';
 import { resolveSessionWorkspacePath } from '@/sync/domains/session/resolveSessionWorkspacePath';

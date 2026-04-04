@@ -4,7 +4,7 @@ import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 import {
     installFilesContentCommonModuleMocks,
-} from './filesContentTestHelpers';
+} from '@/components/workspaces/scm/review/filesContentTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -62,7 +62,7 @@ vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: any) => React.createElement('Item', props),
 }));
 
-vi.mock('@/components/sessions/sourceControl/changes/ScmChangeRow', () => ({
+vi.mock('@/components/workspaces/scm/changes/ScmChangeRow', () => ({
     ScmChangeRow: (props: any) => React.createElement('ScmChangeRow', props),
 }));
 

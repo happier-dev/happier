@@ -40,7 +40,7 @@ describe('SourceControlOperationsHistorySection', () => {
     } as any;
 
     it('shows 5 commits initially when more can be loaded, then expands when requested', async () => {
-        const { SourceControlOperationsHistorySection } = await import('./SourceControlOperationsHistorySection');
+        const { SourceControlOperationsHistorySection } = await import('@/components/workspaces/scm/SourceControlOperationsHistorySection');
 
         const onLoadMoreHistory = vi.fn();
         const onOpenCommit = vi.fn();
@@ -72,7 +72,7 @@ describe('SourceControlOperationsHistorySection', () => {
     });
 
     it('does not hide commits when no more pages are available', async () => {
-        const { SourceControlOperationsHistorySection } = await import('./SourceControlOperationsHistorySection');
+        const { SourceControlOperationsHistorySection } = await import('@/components/workspaces/scm/SourceControlOperationsHistorySection');
 
         const screen = await renderScreen(<SourceControlOperationsHistorySection
                     theme={theme}

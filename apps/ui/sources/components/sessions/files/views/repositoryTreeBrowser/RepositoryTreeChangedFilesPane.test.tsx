@@ -55,7 +55,7 @@ vi.mock('@/components/sessions/files/content/ChangedFilesList', () => ({
     ChangedFilesList: (props: any) => React.createElement('ChangedFilesList', props),
 }));
 
-vi.mock('@/components/sessions/files/content/ChangedFilesReview', () => ({
+vi.mock('@/components/workspaces/scm/review/ChangedFilesReview', () => ({
     ChangedFilesReview: (props: any) => React.createElement('ChangedFilesReview', props),
 }));
 

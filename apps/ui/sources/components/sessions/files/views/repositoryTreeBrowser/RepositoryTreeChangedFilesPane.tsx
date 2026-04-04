@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { ChangedFilesList } from '@/components/sessions/files/content/ChangedFilesList';
-import { ChangedFilesReview } from '@/components/sessions/files/content/ChangedFilesReview';
+import { ChangedFilesReview } from '@/components/workspaces/scm/review/ChangedFilesReview';
 import { FilesToolbar } from '@/components/sessions/files/FilesToolbar';
 import { useChangedFilesData } from '@/hooks/session/files/useChangedFilesData';
 import { getDefaultChangedFilesViewMode, type ChangedFilesPresentation, type ChangedFilesViewMode, type SessionAttributedFile } from '@/scm/scmAttribution';

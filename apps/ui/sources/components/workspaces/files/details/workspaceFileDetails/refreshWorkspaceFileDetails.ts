@@ -3,7 +3,7 @@ import { config } from '@/config';
 import { callDaemonWorkspaceStatFileRpc, downloadDaemonWorkspaceFileToBase64 } from '@/sync/domains/transfers/runtime/bulkTransferPipeline';
 import { getImageMimeTypeFromPath, isBinaryContent, isKnownBinaryPath } from '@/scm/utils/filePresentation';
 import type { ScmDiffArea } from '@happier-dev/protocol';
-import type { FileDiffMode } from '@/components/sessions/files/file/FileActionToolbar';
+import type { FileDiffMode } from '@/components/workspaces/files/file/FileActionToolbar';
 import type { ScmEntryKind } from '@/sync/domains/state/storageTypes';
 import { buildAddedFileUnifiedDiff, decodeUtf8Base64 } from '@/scm/diff/fallbackUnifiedDiff';
 import { looksLikeUnifiedDiff } from '@/scm/diff/looksLikeUnifiedDiff';

@@ -1,12 +1,13 @@
 import * as React from 'react';
 
-import { sessionReadFile } from '@/sync/ops';
+import { workspaceReadFile } from '@/sync/ops/workspaceFileSystem';
 import { getImageMimeTypeFromPath } from '@/scm/utils/filePresentation';
 import { t } from '@/text';
 import { useSetting } from '@/sync/domains/state/storage';
 import { decodeBase64 } from '@/encryption/base64';
+import { useSessionWorkspaceTarget } from '@/hooks/session/useSessionWorkspaceTarget';
 
-import { ImagePreviewCache } from './imagePreviewCache';
+import { ImagePreviewCache } from '@/components/workspaces/files/imagePreview/imagePreviewCache';
 
 export type SessionImagePreviewState =
     | Readonly<{ status: 'disabled'; uri: null; error: null }>
@@ -56,6 +57,8 @@ export function useSessionImagePreview(input: Readonly<{
         typeof input.sizeBytes === 'number' && Number.isFinite(input.sizeBytes)
             ? Math.max(0, input.sizeBytes)
             : null;
+    const resolvedScope = useSessionWorkspaceTarget(enabled ? sessionId : null);
+    const cacheScopeId = resolvedScope?.workspaceCacheKey ?? sessionId;
 
     const mime = React.useMemo(() => resolveImageMimeType({ filePath, mimeType: input.mimeType }), [filePath, input.mimeType]);
     const canCache = Boolean(cacheKey);
@@ -91,8 +94,9 @@ export function useSessionImagePreview(input: Readonly<{
 
     const [state, setState] = React.useState<SessionImagePreviewState>(() => {
         if (!enabled || !mime) return { status: 'disabled', uri: null, error: null };
+        if (!resolvedScope) return { status: 'loading', uri: null, error: null };
         if (canCache) {
-            const cached = imagePreviewCache.get({ sessionId, signature: cacheKey!, filePath });
+            const cached = imagePreviewCache.get({ sessionId: cacheScopeId, signature: cacheKey!, filePath });
             if (cached?.status === 'loaded') return { status: 'loaded', uri: cached.uri, svgXml: cached.svgXml ?? null, error: null };
             if (cached?.status === 'error') return { status: 'error', uri: null, error: cached.error };
         }
@@ -104,6 +108,10 @@ export function useSessionImagePreview(input: Readonly<{
             setState({ status: 'disabled', uri: null, error: null });
             return;
         }
+        if (!resolvedScope) {
+            setState({ status: 'loading', uri: null, error: null });
+            return;
+        }
 
         const tooLarge =
             maxPreviewBytes > 0 &&
@@ -113,7 +121,7 @@ export function useSessionImagePreview(input: Readonly<{
             const errorMessage = t('files.imagePreviewTooLarge');
             if (canCache) {
                 imagePreviewCache.set(
-                    { sessionId, signature: cacheKey!, filePath },
+                    { sessionId: cacheScopeId, signature: cacheKey!, filePath },
                     { status: 'error', error: errorMessage },
                 );
             }
@@ -122,7 +130,7 @@ export function useSessionImagePreview(input: Readonly<{
         }
 
         if (canCache) {
-            const cached = imagePreviewCache.get({ sessionId, signature: cacheKey!, filePath });
+            const cached = imagePreviewCache.get({ sessionId: cacheScopeId, signature: cacheKey!, filePath });
             if (cached?.status === 'loaded') {
                 setState({ status: 'loaded', uri: cached.uri, svgXml: cached.svgXml ?? null, error: null });
                 return;
@@ -138,14 +146,18 @@ export function useSessionImagePreview(input: Readonly<{
 
         void (async () => {
             try {
-                const res = await sessionReadFile(sessionId, filePath);
+                const res = await workspaceReadFile({
+                    machineId: resolvedScope.machineId,
+                    rootPath: resolvedScope.rootPath,
+                    serverId: resolvedScope.serverId,
+                }, filePath);
                 if (cancelled) return;
                 if (!res.success || typeof res.content !== 'string' || res.content.trim().length === 0) {
                     const err = (res as any)?.error;
                     const errorMessage = typeof err === 'string' && err.trim().length > 0 ? err : t('files.fileReadFailed');
                     if (canCache) {
                         imagePreviewCache.set(
-                            { sessionId, signature: cacheKey!, filePath },
+                            { sessionId: cacheScopeId, signature: cacheKey!, filePath },
                             { status: 'error', error: errorMessage },
                         );
                     }
@@ -159,7 +171,7 @@ export function useSessionImagePreview(input: Readonly<{
                     const errorMessage = t('files.imagePreviewTooLarge');
                     if (canCache) {
                         imagePreviewCache.set(
-                            { sessionId, signature: cacheKey!, filePath },
+                            { sessionId: cacheScopeId, signature: cacheKey!, filePath },
                             { status: 'error', error: errorMessage },
                         );
                     }
@@ -169,7 +181,7 @@ export function useSessionImagePreview(input: Readonly<{
 
                 if (canCache) {
                     imagePreviewCache.set(
-                        { sessionId, signature: cacheKey!, filePath },
+                        { sessionId: cacheScopeId, signature: cacheKey!, filePath },
                         { status: 'loaded', uri, svgXml },
                     );
                 }
@@ -179,7 +191,7 @@ export function useSessionImagePreview(input: Readonly<{
                 const errorMessage = err instanceof Error ? err.message : t('files.fileReadFailed');
                 if (canCache) {
                     imagePreviewCache.set(
-                        { sessionId, signature: cacheKey!, filePath },
+                        { sessionId: cacheScopeId, signature: cacheKey!, filePath },
                         { status: 'error', error: errorMessage },
                     );
                 }
@@ -190,7 +202,7 @@ export function useSessionImagePreview(input: Readonly<{
         return () => {
             cancelled = true;
         };
-    }, [cacheKey, canCache, enabled, filePath, maxPreviewBytes, mime, sessionId, sizeBytes]);
+    }, [cacheKey, cacheScopeId, canCache, enabled, filePath, maxPreviewBytes, mime, resolvedScope, sizeBytes]);
 
     return state;
 }

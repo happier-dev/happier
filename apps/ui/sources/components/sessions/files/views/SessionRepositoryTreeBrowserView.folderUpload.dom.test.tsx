@@ -100,11 +100,11 @@ vi.mock('@/components/sessions/files/content/RepositoryTreeList', () => ({
     RepositoryTreeList: () => React.createElement('div'),
 }));
 
-vi.mock('@/components/sessions/files/content/ChangedFilesTreeList', () => ({
+vi.mock('@/components/workspaces/files/repositoryTree/ChangedFilesTreeList', () => ({
     ChangedFilesTreeList: () => React.createElement('div'),
 }));
 
-vi.mock('@/components/sessions/files/content/SearchResultsList', () => ({
+vi.mock('@/components/workspaces/files/repositoryTree/SearchResultsList', () => ({
     SearchResultsList: () => React.createElement('div'),
 }));
 
@@ -116,15 +116,15 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
     ItemRowActions: (props: any) => React.createElement('ItemRowActions', props),
 }));
 
-vi.mock('@/components/sessions/files/repositoryTree/RepositoryTreeDropOverlay', () => ({
+vi.mock('@/components/workspaces/files/repositoryTree/RepositoryTreeDropOverlay', () => ({
     RepositoryTreeDropOverlay: () => null,
 }));
 
-vi.mock('@/components/sessions/files/repositoryTree/RepositoryTreeTransferStatusBar', () => ({
+vi.mock('@/components/workspaces/files/repositoryTree/RepositoryTreeTransferStatusBar', () => ({
     RepositoryTreeTransferStatusBar: () => null,
 }));
 
-vi.mock('@/components/sessions/files/repositoryTree/WebDropTargetView', () => ({
+vi.mock('@/components/workspaces/files/repositoryTree/WebDropTargetView', () => ({
     WebDropTargetView: ({ children, testID, ...props }: any) =>
         React.createElement('div', { 'data-testid': testID, ...props }, children),
 }));
@@ -169,7 +169,7 @@ vi.mock('@/hooks/session/files/useWorkspaceFileTransfers', () => ({
     }),
 }));
 
-vi.mock('@/components/sessions/files/repositoryTree/showUploadConflictResolutionDialog', () => ({
+vi.mock('@/components/workspaces/files/repositoryTree/showUploadConflictResolutionDialog', () => ({
     showUploadConflictResolutionDialog: vi.fn(async () => 'keep_both'),
 }));
 
@@ -186,16 +186,25 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     }),
 }));
 
-vi.mock('@/sync/ops', () => ({
-    sessionWriteFile: vi.fn(async () => ({ success: true })),
-    sessionCreateDirectory: vi.fn(async () => ({ success: true })),
+vi.mock('@/sync/domains/session/resolveWorkspaceTargetForSession', () => ({
+    resolveWorkspaceTargetForSession: () => ({
+        workspaceCacheKey: 'server:m1:/repo',
+        machineId: 'm1',
+        rootPath: '/repo',
+        serverId: 'server',
+    }),
+}));
+
+vi.mock('@/sync/ops/workspaceFileSystem', () => ({
+    workspaceWriteFile: vi.fn(async () => ({ success: true })),
+    workspaceCreateDirectory: vi.fn(async () => ({ success: true })),
 }));
 
 vi.mock('@/utils/path/isSafeWorkspaceRelativePath', () => ({
     isSafeWorkspaceRelativePath: () => true,
 }));
 
-vi.mock('@/components/sessions/files/repositoryTree/computeExpandedPathsForReveal', () => ({
+vi.mock('@/components/workspaces/files/repositoryTree/computeExpandedPathsForReveal', () => ({
     computeExpandedPathsForReveal: ({ expandedPaths }: any) => expandedPaths,
 }));
 

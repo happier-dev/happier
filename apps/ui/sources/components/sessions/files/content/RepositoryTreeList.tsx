@@ -8,15 +8,15 @@ import { FileIcon } from '@/components/ui/media/FileIcon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useRepositoryTreeBrowser } from '@/hooks/session/files/useRepositoryTreeBrowser';
-import { SourceControlUnavailableState } from '@/components/sessions/sourceControl/states';
+import { SourceControlUnavailableState } from '@/components/workspaces/scm/states';
 import { t } from '@/text';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
-import { useScmTreeBadgeIndex } from '@/components/sessions/files/repositoryTree/useScmTreeBadgeIndex';
+import { useScmTreeBadgeIndex } from '@/components/workspaces/files/repositoryTree/useScmTreeBadgeIndex';
 import { formatByteSize } from '@/utils/files/formatByteSize';
-import { RepositoryTreeRowActionsMenu, type RepositoryTreeRowActionMenuItemId } from '@/components/sessions/files/repositoryTree/RepositoryTreeRowActionsMenu';
+import { RepositoryTreeRowActionsMenu, type RepositoryTreeRowActionMenuItemId } from '@/components/workspaces/files/repositoryTree/RepositoryTreeRowActionsMenu';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import { useRepositoryTreeRowActions } from '@/components/sessions/files/repositoryTree/useRepositoryTreeRowActions';
-import { WebDropTargetView } from '@/components/sessions/files/repositoryTree/WebDropTargetView';
+import { WebDropTargetView } from '@/components/workspaces/files/repositoryTree/WebDropTargetView';
 import { isWebFileDragEvent } from '@/utils/files/isWebFileDragEvent';
 import { useSessionFileTransferAvailabilityResolver } from '@/components/sessions/files/useSessionFileTransferAvailability';
 
@@ -141,7 +141,7 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
             emptyLabel={t('files.noFilesInProject')}
             style={{ flex: 1, minHeight: 0 }}
             contentContainerStyle={{ paddingBottom: 20 }}
-            renderRow={({ node, index, totalCount }) => {
+            renderRow={({ node, showDivider }) => {
                 const safePath = toTestIdSafeValue(node.path);
                 const rowTestId = `repository-tree-row-${safePath}`;
                 const badge = (() => {
@@ -265,12 +265,11 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
                 return (
                     <FilesystemBrowserRow
                         node={node}
-                        index={index}
-                        totalCount={totalCount}
                         title={node.type === 'directory' ? `${node.name}/` : node.name}
                         subtitle={subtitle}
                         icon={renderEntryIcon(node, theme)}
                         density="tight"
+                        showDivider={showDivider}
                         rightElement={right}
                         testID={rowTestId}
                         errorTitle={t('files.repositoryFolderLoadFailed')}

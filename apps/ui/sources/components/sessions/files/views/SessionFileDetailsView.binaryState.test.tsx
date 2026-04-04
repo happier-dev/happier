@@ -53,7 +53,7 @@ vi.mock('@expo/vector-icons', () => ({
   Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/components/sessions/files/file/FileHeader', () => ({
+vi.mock('@/components/workspaces/files/file/FileHeader', () => ({
   FileHeader: (props: any) => React.createElement('FileHeader', props, props.rightElement ?? null),
 }));
 
@@ -61,19 +61,19 @@ vi.mock('@/components/sessions/sourceControl/changes/ScmChangeDiscardButton', ()
   ScmChangeDiscardButton: (props: any) => React.createElement('ScmChangeDiscardButton', props),
 }));
 
-vi.mock('@/components/sessions/files/file/FileActionToolbar', () => ({
+vi.mock('@/components/workspaces/files/file/FileActionToolbar', () => ({
   FileActionToolbar: (props: any) => React.createElement('FileActionToolbar', props),
 }));
 
-vi.mock('@/components/sessions/files/file/FileContentPanel', () => ({
+vi.mock('@/components/workspaces/files/file/FileContentPanel', () => ({
   FileContentPanel: (props: any) => React.createElement('FileContentPanel', props),
 }));
 
-vi.mock('@/components/sessions/files/file/editor/FileEditorPanel', () => ({
+vi.mock('@/components/workspaces/files/file/editor/FileEditorPanel', () => ({
   FileEditorPanel: (props: any) => React.createElement('FileEditorPanel', props),
 }));
 
-vi.mock('@/components/sessions/files/file/FileScreenState', () => ({
+vi.mock('@/components/workspaces/files/file/FileScreenState', () => ({
   FileLoadingState: (props: any) => React.createElement('FileLoadingState', props),
   FileErrorState: (props: any) => React.createElement('FileErrorState', props),
   FileBinaryState: (props: any) => React.createElement('FileBinaryState', props),
@@ -173,7 +173,7 @@ const binarySnapshot: ScmWorkingSnapshot = {
     capabilities: { writeDiscard: true } as ScmWorkingSnapshot['capabilities'],
 };
 
-vi.mock('@/hooks/session/files/useWorkspaceFileTransfers', () => ({
+vi.mock('@/hooks/workspaces/transfers/useWorkspaceFileTransfers', () => ({
   useWorkspaceFileTransfers: () => ({
     uploadState: { status: 'idle' },
     downloadState: { status: 'idle' },
@@ -269,7 +269,7 @@ beforeEach(() => {
 });
 
 describe('SessionFileDetailsView (binary)', () => {
-  it('hides the download action when downloads are unavailable', async () => {
+  it('keeps the download action available when the workspace scope is available', async () => {
     downloadAvailabilityState.value = false;
     const { SessionFileDetailsView } = await import('./SessionFileDetailsView');
 
@@ -279,7 +279,7 @@ describe('SessionFileDetailsView (binary)', () => {
     await act(async () => {});
 
     expect(tree.findAllByType('FileHeader' as any).length).toBe(1);
-    expect(tree.findAllByProps({ testID: 'file-header-download', accessibilityRole: 'button' }).length).toBe(0);
+    expect(tree.findAllByProps({ testID: 'file-header-download', accessibilityRole: 'button' }).length).toBe(1);
   });
 
   it('renders header actions even when file content is binary', async () => {

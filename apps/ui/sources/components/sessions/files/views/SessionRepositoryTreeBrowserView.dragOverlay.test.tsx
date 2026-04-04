@@ -82,32 +82,41 @@ vi.mock('@/scm/scmStatusSync', () => ({
     scmStatusSync: { invalidateFromUser: () => {} },
 }));
 
-vi.mock('@/sync/ops', () => ({
-    sessionWriteFile: vi.fn(async () => ({ success: true })),
-    sessionCreateDirectory: vi.fn(async () => ({ success: true })),
+vi.mock('@/sync/domains/session/resolveWorkspaceTargetForSession', () => ({
+    resolveWorkspaceTargetForSession: () => ({
+        workspaceCacheKey: 'server:m1:/repo',
+        machineId: 'm1',
+        rootPath: '/repo',
+        serverId: 'server',
+    }),
+}));
+
+vi.mock('@/sync/ops/workspaceFileSystem', () => ({
+    workspaceWriteFile: vi.fn(async () => ({ success: true })),
+    workspaceCreateDirectory: vi.fn(async () => ({ success: true })),
 }));
 
 vi.mock('@/utils/path/isSafeWorkspaceRelativePath', () => ({
     isSafeWorkspaceRelativePath: () => true,
 }));
 
-vi.mock('@/components/sessions/files/repositoryTree/computeExpandedPathsForReveal', () => ({
+vi.mock('@/components/workspaces/files/repositoryTree/computeExpandedPathsForReveal', () => ({
     computeExpandedPathsForReveal: ({ expandedPaths }: any) => expandedPaths,
 }));
 
-vi.mock('@/components/sessions/files/content/RepositoryTreeList', () => ({
-    RepositoryTreeList: (props: any) => React.createElement('View', { ...props, testID: 'repository-tree-list' }),
+vi.mock('@/components/projects/files/WorkspaceRepositoryTreeList', () => ({
+    WorkspaceRepositoryTreeList: (props: any) => React.createElement('View', { ...props, testID: 'repository-tree-list' }),
 }));
 
-vi.mock('@/components/sessions/files/content/ChangedFilesTreeList', () => ({
+vi.mock('@/components/workspaces/files/repositoryTree/ChangedFilesTreeList', () => ({
     ChangedFilesTreeList: () => React.createElement('ChangedFilesTreeList'),
 }));
 
-vi.mock('@/components/sessions/files/repositoryTree/WebDropTargetView', () => ({
+vi.mock('@/components/workspaces/files/repositoryTree/WebDropTargetView', () => ({
     WebDropTargetView: (props: any) => React.createElement('View', props),
 }));
 
-vi.mock('@/components/sessions/files/content/SearchResultsList', () => ({
+vi.mock('@/components/workspaces/files/repositoryTree/SearchResultsList', () => ({
     SearchResultsList: () => React.createElement('SearchResultsList'),
 }));
 
@@ -126,7 +135,7 @@ vi.mock('@/utils/files/webDroppedEntries', () => ({
     readWebDroppedEntries: (...args: any[]) => readWebDroppedEntriesSpy(...args),
 }));
 
-vi.mock('@/components/sessions/files/repositoryTree/RepositoryTreeDropOverlay', () => ({
+vi.mock('@/components/workspaces/files/repositoryTree/RepositoryTreeDropOverlay', () => ({
     RepositoryTreeDropOverlay: (props: any) => React.createElement('View', { ...props, testID: 'repository-tree-drop-overlay' }),
 }));
 

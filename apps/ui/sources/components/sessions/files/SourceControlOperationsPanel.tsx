@@ -3,11 +3,11 @@ import { Platform, Pressable, View } from 'react-native';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { SourceControlOperationsHistorySection } from '@/components/sessions/files/SourceControlOperationsHistorySection';
+import { SourceControlOperationsHistorySection } from '@/components/workspaces/scm/SourceControlOperationsHistorySection';
 import { SourceControlOperationsLogSection } from '@/components/sessions/files/SourceControlOperationsLogSection';
 import { resolveSourceControlOperationSupport } from '@/components/sessions/files/sourceControlOperationSupport';
 import { ScmCommitSelectionSummaryRow } from '@/components/sessions/sourceControl/commitSelection/ScmCommitSelectionSummaryRow';
-import { ScmCommitComposerCard } from '@/components/sessions/sourceControl/commitComposer/ScmCommitComposerCard';
+import { ScmCommitComposerCard } from '@/components/workspaces/scm/commitComposer/ScmCommitComposerCard';
 import { Octicons } from '@expo/vector-icons';
 import type { ScmLogEntry } from '@happier-dev/protocol';
 import type { ScmProjectInFlightOperation, ScmProjectOperationLogEntry } from '@/sync/runtime/orchestration/projectManager';
@@ -16,6 +16,7 @@ import { t } from '@/text';
 type SourceControlOperationsPanelProps = {
     variant?: 'screen' | 'rail';
     hideCommitAction?: boolean;
+    scmWriteEnabled?: boolean;
     theme: any;
     backendLabel: string;
     commitActionLabel: string;
@@ -59,6 +60,7 @@ export function SourceControlOperationsPanel(props: SourceControlOperationsPanel
     const {
         variant = 'screen',
         hideCommitAction = false,
+        scmWriteEnabled = true,
         theme,
         backendLabel,
         commitActionLabel,
@@ -113,14 +115,21 @@ export function SourceControlOperationsPanel(props: SourceControlOperationsPanel
         supportsPush,
         supportsHistory,
     } = resolveSourceControlOperationSupport(capabilities);
+    const showWriteControls = scmWriteEnabled === true;
+    const visibleSupportsCommit = showWriteControls && supportsCommit;
+    const visibleSupportsFetch = showWriteControls && supportsFetch;
+    const visibleSupportsPull = showWriteControls && supportsPull;
+    const visibleSupportsPush = showWriteControls && supportsPush;
 
-    const showBlockedHints = Boolean(globalLockMessage)
-        || (supportsCommit && !commitAllowed && commitBlockedMessage)
-        || (supportsPull && !pullAllowed && pullBlockedMessage)
-        || (supportsPush && !pushAllowed && pushBlockedMessage);
+    const showBlockedHints = showWriteControls && (
+        Boolean(globalLockMessage)
+        || (visibleSupportsCommit && !commitAllowed && commitBlockedMessage)
+        || (visibleSupportsPull && !pullAllowed && pullBlockedMessage)
+        || (visibleSupportsPush && !pushAllowed && pushBlockedMessage)
+    );
 
     const showInlineCommitComposer =
-        supportsCommit
+        visibleSupportsCommit
         && typeof commitMessageDraft === 'string'
         && typeof onCommitMessageDraftChange === 'function'
         && typeof onCommitFromMessage === 'function';
@@ -292,12 +301,14 @@ export function SourceControlOperationsPanel(props: SourceControlOperationsPanel
                 </Text>
             )}
 
-            <ScmCommitSelectionSummaryRow
-                theme={theme}
-                count={commitSelectionCount}
-                onClear={onClearCommitSelection}
-                density={variant === 'rail' ? 'compact' : 'comfortable'}
-            />
+            {showWriteControls ? (
+                <ScmCommitSelectionSummaryRow
+                    theme={theme}
+                    count={commitSelectionCount}
+                    onClear={onClearCommitSelection}
+                    density={variant === 'rail' ? 'compact' : 'comfortable'}
+                />
+            ) : null}
 
             {hasConflicts && (
                 <Text
@@ -327,44 +338,46 @@ export function SourceControlOperationsPanel(props: SourceControlOperationsPanel
                 />
             ) : null}
 
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: showBlockedHints ? 8 : 12 }}>
-                {(supportsCommit && !showInlineCommitComposer && !hideCommitAction) && (
-                    <ActionChip
-                        variant="primary"
-                        label={commitActionLabel}
-                        iconName="check"
-                        disabled={scmOperationBusy || hasGlobalOperationInFlight || !commitAllowed}
-                        onPress={onCreateCommit}
-                    />
-                )}
-                {supportsFetch && (
-                    <ActionChip
-                        variant="secondary"
-                        label={t('files.sourceControlOperations.actions.fetch')}
-                        iconName="sync"
-                        disabled={scmOperationBusy || hasGlobalOperationInFlight}
-                        onPress={onFetch}
-                    />
-                )}
-                {supportsPull && (
-                    <ActionChip
-                        variant="secondary"
-                        label={t('files.sourceControlOperations.actions.pull')}
-                        iconName="arrow-down"
-                        disabled={scmOperationBusy || hasGlobalOperationInFlight || !pullAllowed}
-                        onPress={onPull}
-                    />
-                )}
-                {supportsPush && (
-                    <ActionChip
-                        variant="secondary"
-                        label={t('files.sourceControlOperations.actions.push')}
-                        iconName="arrow-up"
-                        disabled={scmOperationBusy || hasGlobalOperationInFlight || !pushAllowed}
-                        onPress={onPush}
-                    />
-                )}
-            </View>
+            {(visibleSupportsCommit || visibleSupportsFetch || visibleSupportsPull || visibleSupportsPush) ? (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: showBlockedHints ? 8 : 12 }}>
+                    {(visibleSupportsCommit && !showInlineCommitComposer && !hideCommitAction) && (
+                        <ActionChip
+                            variant="primary"
+                            label={commitActionLabel}
+                            iconName="check"
+                            disabled={scmOperationBusy || hasGlobalOperationInFlight || !commitAllowed}
+                            onPress={onCreateCommit}
+                        />
+                    )}
+                    {visibleSupportsFetch && (
+                        <ActionChip
+                            variant="secondary"
+                            label={t('files.sourceControlOperations.actions.fetch')}
+                            iconName="sync"
+                            disabled={scmOperationBusy || hasGlobalOperationInFlight}
+                            onPress={onFetch}
+                        />
+                    )}
+                    {visibleSupportsPull && (
+                        <ActionChip
+                            variant="secondary"
+                            label={t('files.sourceControlOperations.actions.pull')}
+                            iconName="arrow-down"
+                            disabled={scmOperationBusy || hasGlobalOperationInFlight || !pullAllowed}
+                            onPress={onPull}
+                        />
+                    )}
+                    {visibleSupportsPush && (
+                        <ActionChip
+                            variant="secondary"
+                            label={t('files.sourceControlOperations.actions.push')}
+                            iconName="arrow-up"
+                            disabled={scmOperationBusy || hasGlobalOperationInFlight || !pushAllowed}
+                            onPress={onPush}
+                        />
+                    )}
+                </View>
+            ) : null}
 
             {showBlockedHints && (
                 <View
@@ -381,13 +394,13 @@ export function SourceControlOperationsPanel(props: SourceControlOperationsPanel
                     {globalLockMessage ? (
                         <BlockedHint label={t('files.sourceControlOperations.blockedHints.lock')} message={globalLockMessage} />
                     ) : null}
-                    {(supportsCommit && !commitAllowed && commitBlockedMessage) && (
+                    {(visibleSupportsCommit && !commitAllowed && commitBlockedMessage) && (
                         <BlockedHint label={t('files.sourceControlOperations.blockedHints.commitBlocked')} message={commitBlockedMessage} />
                     )}
-                    {(supportsPull && !pullAllowed && pullBlockedMessage) && (
+                    {(visibleSupportsPull && !pullAllowed && pullBlockedMessage) && (
                         <BlockedHint label={t('files.sourceControlOperations.blockedHints.pullBlocked')} message={pullBlockedMessage} />
                     )}
-                    {(supportsPush && !pushAllowed && pushBlockedMessage) && (
+                    {(visibleSupportsPush && !pushAllowed && pushBlockedMessage) && (
                         <BlockedHint label={t('files.sourceControlOperations.blockedHints.pushBlocked')} message={pushBlockedMessage} />
                     )}
                 </View>

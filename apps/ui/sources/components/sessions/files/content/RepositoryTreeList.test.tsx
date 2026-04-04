@@ -8,7 +8,7 @@ import {
 } from '@/dev/testkit';
 import { clearCachedRepositoryDirectoryEntries } from '@/sync/domains/input/repositoryDirectory';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
-import { installFilesContentCommonModuleMocks } from './filesContentTestHelpers';
+import { installFilesContentCommonModuleMocks } from '@/components/workspaces/scm/review/filesContentTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -107,7 +107,7 @@ vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: any) => React.createElement('Item', props, props.rightElement),
 }));
 
-vi.mock('@/components/sessions/files/repositoryTree/WebDropTargetView', () => ({
+vi.mock('@/components/workspaces/files/repositoryTree/WebDropTargetView', () => ({
     WebDropTargetView: (props: any) => React.createElement('WebDropTargetView', props, props.children),
 }));
 
@@ -118,17 +118,48 @@ vi.mock('@/constants/Typography', () => ({
     },
 }));
 
-vi.mock('@/sync/ops', async (importOriginal) => {
-    const { createSyncOpsModuleMock } = await import('@/dev/testkit/mocks/syncOps');
-    return createSyncOpsModuleMock({
-        importOriginal,
-        overrides: {
-            sessionListDirectory: (sessionId: string, path: string) => sessionListDirectorySpy(sessionId, path),
-            sessionRenamePath: vi.fn(async () => ({ success: true as const })),
-            sessionStatFile: vi.fn(async () => ({ success: true as const, exists: false })),
-            sessionDeletePath: vi.fn(async () => ({ success: true as const })),
-        },
-    });
+vi.mock('@/sync/domains/session/resolveWorkspaceTargetForSession', () => ({
+    resolveWorkspaceTargetForSession: () => ({
+        workspaceCacheKey: 'server:m1:/repo',
+        machineId: 'm1',
+        rootPath: '/repo',
+        serverId: 'server',
+    }),
+}));
+
+vi.mock('@/sync/ops/workspaceFileSystem', () => ({
+    workspaceRenamePath: vi.fn(async () => ({ success: true as const })),
+    workspaceStatFile: vi.fn(async () => ({ success: true as const, exists: false })),
+    workspaceDeletePath: vi.fn(async () => ({ success: true as const })),
+}));
+
+vi.mock('@/sync/domains/input/repositoryDirectory', () => {
+    function sortRepositoryDirectoryEntries(entries: Array<{ name: string; type: 'file' | 'directory' | 'other' }>) {
+        return [...entries].sort((a, b) => {
+            const aDir = a.type === 'directory';
+            const bDir = b.type === 'directory';
+            if (aDir !== bDir) return aDir ? -1 : 1;
+            return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+        });
+    }
+
+    async function list(sessionId: string, directoryPath: string) {
+        const res = await sessionListDirectorySpy(sessionId, directoryPath);
+        if (!res.success) return { ok: false as const, error: 'unknown_error' as const };
+        return {
+            ok: true as const,
+            entries: sortRepositoryDirectoryEntries(res.entries.map((entry) => ({ name: entry.name, type: entry.type }))),
+        };
+    }
+
+    return {
+        getCachedRepositoryDirectoryEntries: () => null,
+        setCachedRepositoryDirectoryEntries: () => {},
+        clearCachedRepositoryDirectoryEntries: () => {},
+        warmRepositoryDirectoryCache: async (input: { sessionId: string; directoryPath: string }) => list(input.sessionId, input.directoryPath),
+        listRepositoryDirectoryEntries: async (input: { sessionId: string; directoryPath: string }) => list(input.sessionId, input.directoryPath),
+        sortRepositoryDirectoryEntries,
+    };
 });
 
 vi.mock('react-native-unistyles', async () => {

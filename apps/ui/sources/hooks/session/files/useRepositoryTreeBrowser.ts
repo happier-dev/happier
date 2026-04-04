@@ -9,6 +9,7 @@ import {
     type ListRepositoryDirectoryEntriesResult,
     type RepositoryDirectoryEntry,
 } from '@/sync/domains/input/repositoryDirectory';
+import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
 
 function joinPath(parent: string, name: string): string {
     const trimmedParent = parent.trim().replace(/\/+$/g, '');
@@ -45,6 +46,11 @@ export function useRepositoryTreeBrowser(input: {
     onExpandedPathsChange?: (paths: string[]) => void;
     reloadToken?: number;
 }) {
+    const scopeKey = React.useMemo(() => {
+        const target = resolveWorkspaceTargetForSession(input.sessionId);
+        return target?.workspaceCacheKey ?? input.sessionId;
+    }, [input.sessionId]);
+
     const getCachedEntries = React.useCallback((directoryPath: string) => {
         const cached = getCachedRepositoryDirectoryEntries({ sessionId: input.sessionId, directoryPath });
         return cached ? toLazyEntries(directoryPath, cached) : null;
@@ -61,7 +67,7 @@ export function useRepositoryTreeBrowser(input: {
     }, [input.sessionId]);
 
     return useLazyDirectoryTree({
-        scopeKey: input.sessionId,
+        scopeKey,
         enabled: input.enabled,
         rootDirectoryPath: '',
         expandedPaths: input.expandedPaths,

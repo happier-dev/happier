@@ -24,6 +24,7 @@ import {
     loadSessionPermissionModes,
     loadSessionActionDrafts,
     loadSessionReviewCommentsDrafts,
+    loadWorkspaceReviewCommentsDrafts,
     saveSessionDrafts,
     saveSessionLastViewed,
     saveSessionModelModeUpdatedAts,
@@ -32,6 +33,7 @@ import {
     saveSessionPermissionModes,
     saveSessionActionDrafts,
     saveSessionReviewCommentsDrafts,
+    saveWorkspaceReviewCommentsDrafts,
 } from '../../domains/state/persistence';
 import {
     resolveWarmCacheAccountScope,
@@ -60,6 +62,16 @@ import { applyAgentStateUpdateToSessionMessages } from './messages';
 import type { SessionMessages } from './messages';
 import { persistSessionPermissionData } from './sessionPermissionPersistence';
 import { resolveMergedSessionPermissionMode } from './resolveMergedSessionPermissionMode';
+import {
+    clearSessionRepositoryTreeExpandedPathsForState,
+    clearWorkspaceRepositoryTreeExpandedPathsForState,
+    deleteSessionRepositoryTreeExpansionForState,
+    getSessionRepositoryTreeExpandedPathsForState,
+    getWorkspaceRepositoryTreeExpandedPathsForState,
+    setSessionRepositoryTreeExpandedPathsForState,
+    setWorkspaceRepositoryTreeExpandedPathsForState,
+} from './sessions.repositoryTreeExpansion';
+import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
 
 type SessionModelMode = NonNullable<Session['modelMode']>;
 type ScmOperationLogEntry = import('../../runtime/orchestration/projectManager').ScmProjectOperationLogEntry;
@@ -92,6 +104,7 @@ export type SessionsDomain = {
     sessionScmStatus: Record<string, ScmStatus | null>;
     sessionLastViewed: Record<string, number>;
     sessionRepositoryTreeExpandedPathsBySessionId: Record<string, string[]>;
+    workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey: Record<string, string[]>;
     reviewCommentsDraftsBySessionId: Record<string, ReviewCommentDraft[]>;
     reviewCommentsDraftsByWorkspaceCacheKey: Record<string, ReviewCommentDraft[]>;
     actionDraftsBySessionId: Record<string, SessionActionDraft[]>;
@@ -113,6 +126,9 @@ export type SessionsDomain = {
     getSessionRepositoryTreeExpandedPaths: (sessionId: string) => string[];
     setSessionRepositoryTreeExpandedPaths: (sessionId: string, paths: string[]) => void;
     clearSessionRepositoryTreeExpandedPaths: (sessionId: string) => void;
+    getWorkspaceRepositoryTreeExpandedPaths: (scope: WorkspaceScopeBase) => string[];
+    setWorkspaceRepositoryTreeExpandedPaths: (scope: WorkspaceScopeBase, paths: string[]) => void;
+    clearWorkspaceRepositoryTreeExpandedPaths: (scope: WorkspaceScopeBase) => void;
     updateSessionDraft: (sessionId: string, draft: string | null) => void;
     markSessionOptimisticThinking: (sessionId: string) => void;
     clearSessionOptimisticThinking: (sessionId: string) => void;
@@ -290,8 +306,9 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
     let sessionModelModeUpdatedAts = loadSessionModelModeUpdatedAts();
     let sessionLastViewed = loadSessionLastViewed();
     let reviewCommentsDraftsBySessionId = loadSessionReviewCommentsDrafts();
-    let reviewCommentsDraftsByWorkspaceCacheKey: Record<string, ReviewCommentDraft[]> = {};
+    let reviewCommentsDraftsByWorkspaceCacheKey = loadWorkspaceReviewCommentsDrafts();
     let sessionRepositoryTreeExpandedPathsBySessionId: Record<string, string[]> = {};
+    let workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey: Record<string, string[]> = {};
     let actionDraftsBySessionId: Record<string, SessionActionDraft[]> = loadSessionActionDrafts();
 
     return {
@@ -303,6 +320,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
         sessionScmStatus: {},
         sessionLastViewed,
         sessionRepositoryTreeExpandedPathsBySessionId,
+        workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey,
         reviewCommentsDraftsBySessionId,
         reviewCommentsDraftsByWorkspaceCacheKey,
         actionDraftsBySessionId,
@@ -312,22 +330,81 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             return Object.values(state.sessions).filter(s => s.active);
         },
         getSessionRepositoryTreeExpandedPaths: (sessionId: string) => {
-            const state = get();
-            return state.sessionRepositoryTreeExpandedPathsBySessionId[sessionId] ?? [];
+            return getSessionRepositoryTreeExpandedPathsForState(get(), sessionId, resolveWorkspaceTargetForSession);
         },
         setSessionRepositoryTreeExpandedPaths: (sessionId: string, paths: string[]) => set((state) => {
-            const next = {
-                ...state.sessionRepositoryTreeExpandedPathsBySessionId,
-                [sessionId]: paths,
+            const nextExpansionState = setSessionRepositoryTreeExpandedPathsForState(
+                state,
+                sessionId,
+                paths,
+                resolveWorkspaceTargetForSession,
+            );
+            sessionRepositoryTreeExpandedPathsBySessionId =
+                nextExpansionState.sessionRepositoryTreeExpandedPathsBySessionId;
+            workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey =
+                nextExpansionState.workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey;
+            return {
+                ...state,
+                ...nextExpansionState,
             };
-            sessionRepositoryTreeExpandedPathsBySessionId = next;
-            return { ...state, sessionRepositoryTreeExpandedPathsBySessionId: next };
         }),
         clearSessionRepositoryTreeExpandedPaths: (sessionId: string) => set((state) => {
-            if (!(sessionId in state.sessionRepositoryTreeExpandedPathsBySessionId)) return state;
-            const { [sessionId]: _removed, ...rest } = state.sessionRepositoryTreeExpandedPathsBySessionId;
-            sessionRepositoryTreeExpandedPathsBySessionId = rest;
-            return { ...state, sessionRepositoryTreeExpandedPathsBySessionId: rest };
+            const currentExpansionState = {
+                sessionRepositoryTreeExpandedPathsBySessionId: state.sessionRepositoryTreeExpandedPathsBySessionId,
+                workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey:
+                    state.workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey,
+            };
+            const nextExpansionState = clearSessionRepositoryTreeExpandedPathsForState(
+                currentExpansionState,
+                sessionId,
+                resolveWorkspaceTargetForSession,
+            );
+            if (nextExpansionState === currentExpansionState) return state;
+            sessionRepositoryTreeExpandedPathsBySessionId =
+                nextExpansionState.sessionRepositoryTreeExpandedPathsBySessionId;
+            workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey =
+                nextExpansionState.workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey;
+            return {
+                ...state,
+                ...nextExpansionState,
+            };
+        }),
+        getWorkspaceRepositoryTreeExpandedPaths: (scope: WorkspaceScopeBase) => {
+            return getWorkspaceRepositoryTreeExpandedPathsForState(get(), scope);
+        },
+        setWorkspaceRepositoryTreeExpandedPaths: (scope: WorkspaceScopeBase, paths: string[]) => set((state) => {
+            const currentExpansionState = {
+                sessionRepositoryTreeExpandedPathsBySessionId: state.sessionRepositoryTreeExpandedPathsBySessionId,
+                workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey:
+                    state.workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey,
+            };
+            const nextExpansionState = setWorkspaceRepositoryTreeExpandedPathsForState(currentExpansionState, scope, paths);
+            if (nextExpansionState === currentExpansionState) return state;
+            sessionRepositoryTreeExpandedPathsBySessionId =
+                nextExpansionState.sessionRepositoryTreeExpandedPathsBySessionId;
+            workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey =
+                nextExpansionState.workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey;
+            return {
+                ...state,
+                ...nextExpansionState,
+            };
+        }),
+        clearWorkspaceRepositoryTreeExpandedPaths: (scope: WorkspaceScopeBase) => set((state) => {
+            const currentExpansionState = {
+                sessionRepositoryTreeExpandedPathsBySessionId: state.sessionRepositoryTreeExpandedPathsBySessionId,
+                workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey:
+                    state.workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey,
+            };
+            const nextExpansionState = clearWorkspaceRepositoryTreeExpandedPathsForState(currentExpansionState, scope);
+            if (nextExpansionState === currentExpansionState) return state;
+            sessionRepositoryTreeExpandedPathsBySessionId =
+                nextExpansionState.sessionRepositoryTreeExpandedPathsBySessionId;
+            workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey =
+                nextExpansionState.workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey;
+            return {
+                ...state,
+                ...nextExpansionState,
+            };
         }),
         applySessions: (sessions: (Omit<Session, 'presence'> & { presence?: "online" | number })[]) => set((state) => {
             const localNowMs = Date.now();
@@ -859,6 +936,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 : [...existing, draft];
             const merged = { ...state.reviewCommentsDraftsByWorkspaceCacheKey, [key]: next };
             reviewCommentsDraftsByWorkspaceCacheKey = merged;
+            saveWorkspaceReviewCommentsDrafts(merged);
             return { ...state, reviewCommentsDraftsByWorkspaceCacheKey: merged };
         }),
         deleteWorkspaceReviewCommentDraft: (workspaceCacheKey: string, commentId: string) => set((state) => {
@@ -870,6 +948,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             if (next.length > 0) merged[key] = next;
             else delete merged[key];
             reviewCommentsDraftsByWorkspaceCacheKey = merged;
+            saveWorkspaceReviewCommentsDrafts(merged);
             return { ...state, reviewCommentsDraftsByWorkspaceCacheKey: merged };
         }),
         clearWorkspaceReviewCommentDrafts: (workspaceCacheKey: string) => set((state) => {
@@ -879,6 +958,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             const merged = { ...state.reviewCommentsDraftsByWorkspaceCacheKey };
             delete merged[key];
             reviewCommentsDraftsByWorkspaceCacheKey = merged;
+            saveWorkspaceReviewCommentsDrafts(merged);
             return { ...state, reviewCommentsDraftsByWorkspaceCacheKey: merged };
         }),
 
@@ -1313,34 +1393,37 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             return finished;
         },
         deleteSession: (sessionId: string) => set((state) => {
-			            const optimisticTimeout = optimisticThinkingTimeoutBySessionId.get(sessionId);
-			            if (optimisticTimeout) {
-			                clearTimeout(optimisticTimeout);
-	                optimisticThinkingTimeoutBySessionId.delete(sessionId);
-	            }
+            const optimisticTimeout = optimisticThinkingTimeoutBySessionId.get(sessionId);
+            if (optimisticTimeout) {
+                clearTimeout(optimisticTimeout);
+                optimisticThinkingTimeoutBySessionId.delete(sessionId);
+            }
 
-                const graceTimeout = thinkingGraceTimeoutBySessionId.get(sessionId);
-                if (graceTimeout) {
-                    clearTimeout(graceTimeout);
-                    thinkingGraceTimeoutBySessionId.delete(sessionId);
-                }
+            const graceTimeout = thinkingGraceTimeoutBySessionId.get(sessionId);
+            if (graceTimeout) {
+                clearTimeout(graceTimeout);
+                thinkingGraceTimeoutBySessionId.delete(sessionId);
+            }
 
-	            // Remove session from sessions
-	            const { [sessionId]: deletedSession, ...remainingSessions } = state.sessions;
+            // Remove session from sessions
+            const { [sessionId]: deletedSession, ...remainingSessions } = state.sessions;
             const { [sessionId]: _deletedRenderable, ...remainingRenderables } = state.sessionListRenderables;
-            
+
             // Remove session messages if they exist
             const { [sessionId]: deletedMessages, ...remainingSessionMessages } = state.sessionMessages;
-            
+
             // Remove session source-control status if it exists
             const { [sessionId]: _deletedScmStatus, ...remainingScmStatus } = state.sessionScmStatus;
-            const { [sessionId]: _deletedTreeState, ...remainingTreeState } = state.sessionRepositoryTreeExpandedPathsBySessionId;
-            sessionRepositoryTreeExpandedPathsBySessionId = remainingTreeState;
+            const nextTreeExpansionState = deleteSessionRepositoryTreeExpansionForState(state, sessionId);
+            sessionRepositoryTreeExpandedPathsBySessionId =
+                nextTreeExpansionState.sessionRepositoryTreeExpandedPathsBySessionId;
+            workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey =
+                nextTreeExpansionState.workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey;
             const { [sessionId]: _deletedReviewDrafts, ...remainingReviewDrafts } = state.reviewCommentsDraftsBySessionId;
             reviewCommentsDraftsBySessionId = remainingReviewDrafts;
             const { [sessionId]: _deletedActionDrafts, ...remainingActionDrafts } = state.actionDraftsBySessionId;
             actionDraftsBySessionId = remainingActionDrafts;
-            
+
             // Clear drafts and permission modes from persistent storage
             const drafts = loadSessionDrafts();
             delete drafts[sessionId];
@@ -1385,7 +1468,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 sessionListRenderables: remainingRenderables,
                 sessionMessages: remainingSessionMessages,
                 sessionScmStatus: remainingScmStatus,
-                sessionRepositoryTreeExpandedPathsBySessionId: remainingTreeState,
+                ...nextTreeExpansionState,
                 reviewCommentsDraftsBySessionId: remainingReviewDrafts,
                 actionDraftsBySessionId: remainingActionDrafts,
                 sessionLastViewed: { ...sessionLastViewed },

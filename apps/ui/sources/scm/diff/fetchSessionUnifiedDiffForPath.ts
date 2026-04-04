@@ -5,7 +5,9 @@ import { isBinaryContent, isKnownBinaryPath } from '@/scm/utils/filePresentation
 import { buildAddedFileUnifiedDiff, decodeUtf8Base64 } from '@/scm/diff/fallbackUnifiedDiff';
 import { looksLikeUnifiedDiff } from '@/scm/diff/looksLikeUnifiedDiff';
 import { extractUnifiedDiffForSingleFile } from '@/scm/diff/extractUnifiedDiffForSingleFile';
-import { sessionReadFile, sessionScmDiffFile } from '@/sync/ops';
+import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
+import { sessionScmDiffFile } from '@/sync/ops';
+import { workspaceReadFile } from '@/sync/ops/workspaceFileSystem';
 
 export async function fetchSessionUnifiedDiffForPath(input: Readonly<{
     sessionId: string;
@@ -45,11 +47,18 @@ export async function fetchSessionUnifiedDiffForPath(input: Readonly<{
         && !isKnownBinaryPath(input.path);
 
     if (shouldTryNewFileFallback) {
-        const readRes = await sessionReadFile(input.sessionId, input.path);
-        if (readRes?.success && typeof readRes.content === 'string') {
-            const decoded = decodeUtf8Base64(readRes.content);
-            if (!isBinaryContent(decoded)) {
-                resolvedDiff = buildAddedFileUnifiedDiff({ filePath: input.path, newText: decoded });
+        const target = resolveWorkspaceTargetForSession(input.sessionId);
+        if (target) {
+            const readRes = await workspaceReadFile({
+                machineId: target.machineId,
+                rootPath: target.rootPath,
+                serverId: target.serverId,
+            }, input.path);
+            if (readRes?.success && typeof readRes.content === 'string') {
+                const decoded = decodeUtf8Base64(readRes.content);
+                if (!isBinaryContent(decoded)) {
+                    resolvedDiff = buildAddedFileUnifiedDiff({ filePath: input.path, newText: decoded });
+                }
             }
         }
     }

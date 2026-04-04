@@ -1,6 +1,5 @@
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
-import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
-import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
+import { resolveWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 import {
     buildUploadEntryPlan as buildWorkspaceUploadEntryPlan,
     useWorkspaceFileTransfers as useWorkspaceFileTransfersImpl,
@@ -11,18 +10,6 @@ import {
 } from '@/hooks/workspaces/transfers/useWorkspaceFileTransfers';
 
 export type { WorkspaceUploadEntry, UploadConflictStrategy, WorkspaceUploadState, WorkspaceDownloadState };
-
-function resolveWorkspaceScopeForSession(sessionId: string): WorkspaceScopeBase | null {
-    const machineTarget = readMachineTargetForSession(sessionId);
-    if (!machineTarget) return null;
-    const serverId = resolvePreferredServerIdForSessionId(sessionId);
-    if (!serverId) return null;
-    return {
-        serverId,
-        machineId: machineTarget.machineId,
-        rootPath: machineTarget.basePath,
-    };
-}
 
 export async function buildUploadEntryPlan(input: Readonly<{
     sessionId: string;

@@ -8,7 +8,7 @@ import {
     standardCleanup,
 } from '@/dev/testkit';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
-import { installFilesContentCommonModuleMocks } from './filesContentTestHelpers';
+import { installFilesContentCommonModuleMocks } from '@/components/workspaces/scm/review/filesContentTestHelpers';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -61,8 +61,8 @@ const {
         sessionStatFileSpy: vi.fn<(_sessionId: string, _path: string) => Promise<SessionStatFileLikeResult>>(
             async (_sessionId: string, _path: string) => ({ success: true, exists: false }),
         ),
-        sessionDeletePathSpy: vi.fn<(_sessionId: string, _path: string) => Promise<SessionDeletePathLikeResult>>(
-            async (_sessionId: string, _path: string) => ({ success: true }),
+        sessionDeletePathSpy: vi.fn<(_sessionId: string, _input: { path: string; recursive?: boolean }) => Promise<SessionDeletePathLikeResult>>(
+            async (_sessionId: string, _input: { path: string; recursive?: boolean }) => ({ success: true }),
         ),
         downloadAvailabilityState: { value: true },
         modalShowStrategy,
@@ -142,12 +142,51 @@ vi.mock('@/utils/ui/clipboard', () => ({
     setClipboardStringSafe: (value: string) => setClipboardStringSafeSpy(value),
 }));
 
-vi.mock('@/sync/ops', () => ({
-    sessionListDirectory: (sessionId: string, path: string) => sessionListDirectorySpy(sessionId, path),
-    sessionRenamePath: (sessionId: string, input: { from: string; to: string; overwrite?: boolean }) => sessionRenamePathSpy(sessionId, input),
-    sessionStatFile: (sessionId: string, path: string) => sessionStatFileSpy(sessionId, path),
-    sessionDeletePath: (sessionId: string, path: string) => sessionDeletePathSpy(sessionId, path),
+vi.mock('@/sync/domains/session/resolveWorkspaceTargetForSession', () => ({
+    resolveWorkspaceTargetForSession: () => ({
+        workspaceCacheKey: 'server:m1:/repo',
+        machineId: 'm1',
+        rootPath: '/repo',
+        serverId: 'server',
+    }),
 }));
+
+vi.mock('@/sync/ops/workspaceFileSystem', () => ({
+    workspaceRenamePath: (_target: unknown, input: { from: string; to: string; overwrite?: boolean }) =>
+        sessionRenamePathSpy('session-1', input),
+    workspaceStatFile: (_target: unknown, path: string) => sessionStatFileSpy('session-1', path),
+    workspaceDeletePath: (_target: unknown, input: { path: string; recursive?: boolean }) =>
+        sessionDeletePathSpy('session-1', input),
+}));
+
+vi.mock('@/sync/domains/input/repositoryDirectory', () => {
+    function sortRepositoryDirectoryEntries(entries: Array<{ name: string; type: 'file' | 'directory' | 'other' }>) {
+        return [...entries].sort((a, b) => {
+            const aDir = a.type === 'directory';
+            const bDir = b.type === 'directory';
+            if (aDir !== bDir) return aDir ? -1 : 1;
+            return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+        });
+    }
+
+    async function list(sessionId: string, directoryPath: string) {
+        const res = await sessionListDirectorySpy(sessionId, directoryPath);
+        if (!res.success) return { ok: false as const, error: 'unknown_error' as const };
+        return {
+            ok: true as const,
+            entries: sortRepositoryDirectoryEntries(res.entries.map((entry) => ({ name: entry.name, type: entry.type }))),
+        };
+    }
+
+    return {
+        getCachedRepositoryDirectoryEntries: () => null,
+        setCachedRepositoryDirectoryEntries: () => {},
+        clearCachedRepositoryDirectoryEntries: () => {},
+        warmRepositoryDirectoryCache: async (input: { sessionId: string; directoryPath: string }) => list(input.sessionId, input.directoryPath),
+        listRepositoryDirectoryEntries: async (input: { sessionId: string; directoryPath: string }) => list(input.sessionId, input.directoryPath),
+        sortRepositoryDirectoryEntries,
+    };
+});
 
 vi.mock('@/components/sessions/files/useSessionFileTransferAvailability', () => ({
     useSessionFileTransferAvailabilityResolver: () => (_transferSizeBytes?: number | null) => downloadAvailabilityState.value,
