@@ -34,12 +34,14 @@ vi.mock('@/sync/api/account/apiPairingAuth', () => ({
 
 let activeServerUrl = 'http://localhost:53288';
 let activeShareableServerUrl: string | null = null;
+let activeShareableServerUrlValidatedAgainstServerUrl: string | null = null;
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerUrl: () => activeServerUrl,
     getActiveServerSnapshot: () => ({
         serverId: 'srv-a',
         serverUrl: activeServerUrl,
         activeShareableServerUrl,
+        activeShareableServerUrlValidatedAgainstServerUrl,
         generation: 0,
     }),
 }));
@@ -54,12 +56,12 @@ vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
 
 describe('usePairingSession (pairing deep link server URL)', () => {
     beforeEach(() => {
-        vi.resetModules();
         pairingStartMock.mockClear();
         pairingStatusMock.mockClear();
         cachedCanonicalServerUrl = null;
         activeServerUrl = 'http://localhost:53288';
         activeShareableServerUrl = null;
+        activeShareableServerUrlValidatedAgainstServerUrl = null;
         appState.currentState = 'active';
     });
 
@@ -164,6 +166,7 @@ describe('usePairingSession (pairing deep link server URL)', () => {
         cachedCanonicalServerUrl = 'https://api.example.test';
         activeServerUrl = 'https://active.example.test';
         activeShareableServerUrl = 'https://relay.example.ts.net';
+        activeShareableServerUrlValidatedAgainstServerUrl = 'https://active.example.test';
 
         const { usePairingSession } = await import('./usePairingSession');
 
@@ -185,6 +188,39 @@ describe('usePairingSession (pairing deep link server URL)', () => {
             expect(deepLink).toBeTruthy();
             const url = new URL(deepLink!);
             expect(url.searchParams.get('server')).toBe('https://relay.example.ts.net');
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+        }
+    });
+
+    it('ignores an active shareable relay URL that was validated for a different upstream', async () => {
+        cachedCanonicalServerUrl = 'https://api.example.test';
+        activeServerUrl = 'https://active.example.test';
+        activeShareableServerUrl = 'https://relay.example.ts.net';
+        activeShareableServerUrlValidatedAgainstServerUrl = 'https://other.example.test';
+
+        const { usePairingSession } = await import('./usePairingSession');
+
+        let hookApi: ReturnType<typeof usePairingSession> | null = null;
+        function Probe() {
+            hookApi = usePairingSession({ enabled: true, isAuthenticated: true });
+            return null;
+        }
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        tree = (await renderScreen(<Probe />)).tree;
+        try {
+            await act(async () => {
+                const res = await hookApi!.startPairing();
+                expect(res.ok).toBe(true);
+            });
+
+            const deepLink = hookApi!.deepLink;
+            expect(deepLink).toBeTruthy();
+            const url = new URL(deepLink!);
+            expect(url.searchParams.get('server')).toBe('https://api.example.test');
         } finally {
             act(() => {
                 tree?.unmount();

@@ -4,7 +4,10 @@ import { createPairingSecret } from '@/auth/pairing/pairingSecret';
 import { buildPairingDeepLink } from '@/auth/pairing/pairingUrl';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { getCachedServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
-import { resolvePreferredShareableServerUrl } from '@/sync/domains/server/url/shareableServerUrl';
+import {
+    resolvePreferredShareableServerUrl,
+    resolveValidatedShareableServerUrl,
+} from '@/sync/domains/server/url/shareableServerUrl';
 import { isRuntimeActive } from '@/utils/runtime/isRuntimeActive';
 import {
     pairingStart,
@@ -82,8 +85,13 @@ export function usePairingSession(params: Readonly<{ enabled: boolean; isAuthent
                     ? cached.features.capabilities?.server?.canonicalServerUrl
                     : null;
             const canonical = typeof canonicalRaw === 'string' ? canonicalRaw.trim() : '';
+            const preferredShareableServerUrl = resolveValidatedShareableServerUrl({
+                shareableServerUrl: active.activeShareableServerUrl,
+                validatedAgainstServerUrl: active.activeShareableServerUrlValidatedAgainstServerUrl,
+                currentServerUrl: active.activeLocalRelayUrl ?? active.serverUrl,
+            });
             const serverUrl = resolvePreferredShareableServerUrl({
-                preferredShareableServerUrl: active.activeShareableServerUrl,
+                preferredShareableServerUrl: preferredShareableServerUrl,
                 canonicalServerUrl: canonical || null,
                 activeServerUrl: active.serverUrl,
             });

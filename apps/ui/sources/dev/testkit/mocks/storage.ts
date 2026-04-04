@@ -48,6 +48,7 @@ export function createStorageModuleStub<TOverrides extends object>(overrides: TO
         useArtifacts: () => [],
         useMachineListByServerId: () => ({}),
         useMachineListStatusByServerId: () => ({}),
+        useServerScopedMachine: () => null,
         useSocketStatus: () => ({
             status: 'connected',
             lastConnectedAt: null,
