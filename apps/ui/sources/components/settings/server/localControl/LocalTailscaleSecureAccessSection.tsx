@@ -17,6 +17,7 @@ import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
 import { getActiveServerSnapshot, setActiveShareableServerUrl } from '@/sync/domains/server/serverRuntime';
 import { buildLocalTailscaleSecureAccessSystemTaskSpec } from '@/components/systemTasks/specs/localControl/buildLocalTailscaleSecureAccessSystemTaskSpec';
+import { resolveValidatedShareableServerUrl } from '@/sync/domains/server/url/shareableServerUrl';
 
 type TailscaleResultData = Readonly<{
     tailscaleInstalled: boolean;
@@ -24,6 +25,12 @@ type TailscaleResultData = Readonly<{
     serveEnabled: boolean;
     shareableHttpsUrl: string | null;
     requiresApproval: Readonly<{ url: string }> | null;
+}>;
+
+type StartedTailscaleTask = Readonly<{
+    taskId: string;
+    serverId: string;
+    upstreamUrl: string;
 }>;
 
 function readTailscaleResultData(result: SystemTaskResult | null): TailscaleResultData | null {
@@ -123,13 +130,26 @@ export const LocalTailscaleSecureAccessSection = React.memo(function LocalTailsc
         return value.length > 0 ? value : null;
     }, [props.upstreamUrl]);
     const previousUpstreamUrlRef = React.useRef<string | null>(normalizedUpstreamUrl);
+    const startedTaskRef = React.useRef<StartedTailscaleTask | null>(null);
 
     React.useEffect(() => {
         const nextResult = readTailscaleResultData(snapshot?.result ?? null);
         if (nextResult) {
-            setLastResult(nextResult);
-            setLastErrorMessage(null);
-            setActiveShareableServerUrl(nextResult.shareableHttpsUrl);
+            const startedTask = startedTaskRef.current;
+            const shouldApplyResult =
+                startedTask != null
+                && startedTask.taskId === snapshot?.taskId
+                && startedTask.serverId === activeServerSnapshot.serverId
+                && startedTask.upstreamUrl === normalizedUpstreamUrl;
+
+            if (shouldApplyResult) {
+                setLastResult(nextResult);
+                setLastErrorMessage(null);
+                setActiveShareableServerUrl(nextResult.shareableHttpsUrl, {
+                    validatedAgainstServerUrl: normalizedUpstreamUrl,
+                });
+            }
+            startedTaskRef.current = null;
             return;
         }
 
@@ -138,14 +158,16 @@ export const LocalTailscaleSecureAccessSection = React.memo(function LocalTailsc
             if (message) {
                 setLastErrorMessage(message);
             }
+            startedTaskRef.current = null;
         }
-    }, [snapshot]);
+    }, [activeServerSnapshot.serverId, normalizedUpstreamUrl, snapshot]);
 
     React.useEffect(() => {
         if (previousUpstreamUrlRef.current === normalizedUpstreamUrl) {
             return;
         }
         previousUpstreamUrlRef.current = normalizedUpstreamUrl;
+        startedTaskRef.current = null;
         setLastResult(null);
         setLastErrorMessage(null);
         if (!normalizedUpstreamUrl) {
@@ -153,13 +175,37 @@ export const LocalTailscaleSecureAccessSection = React.memo(function LocalTailsc
         }
     }, [normalizedUpstreamUrl]);
 
+    React.useEffect(() => {
+        const validatedShareableUrl = resolveValidatedShareableServerUrl({
+            shareableServerUrl: activeServerSnapshot.activeShareableServerUrl,
+            validatedAgainstServerUrl: activeServerSnapshot.activeShareableServerUrlValidatedAgainstServerUrl,
+            currentServerUrl: normalizedUpstreamUrl,
+        });
+        if (!activeServerSnapshot.activeShareableServerUrl) {
+            return;
+        }
+        if (validatedShareableUrl) {
+            return;
+        }
+        setActiveShareableServerUrl(null);
+    }, [
+        activeServerSnapshot.activeShareableServerUrl,
+        activeServerSnapshot.activeShareableServerUrlValidatedAgainstServerUrl,
+        normalizedUpstreamUrl,
+    ]);
+
     const decoratedSnapshot = snapshot ?? null;
     const installUrl = readLatestPromptUrl(snapshot, 'tailscaleInstall');
     const loginActionUrl = readLatestPromptAnyUrl(snapshot, ['needsUserAction.openUrl', 'needsUserAction.scanQr']);
     const approvalUrl = lastResult?.requiresApproval?.url ?? readLatestPromptUrl(snapshot, 'tailscaleServeApproval');
     const hasUpstreamUrl = normalizedUpstreamUrl != null;
+    const persistedShareableHttpsUrl = resolveValidatedShareableServerUrl({
+        shareableServerUrl: activeServerSnapshot.activeShareableServerUrl,
+        validatedAgainstServerUrl: activeServerSnapshot.activeShareableServerUrlValidatedAgainstServerUrl,
+        currentServerUrl: normalizedUpstreamUrl,
+    });
     const shareableHttpsUrl = hasUpstreamUrl
-        ? (lastResult ? lastResult.shareableHttpsUrl : activeServerSnapshot.activeShareableServerUrl ?? null)
+        ? (lastResult ? lastResult.shareableHttpsUrl : persistedShareableHttpsUrl)
         : null;
     const isUnavailable = runner.mode === 'unavailable' || bridgeUnavailable;
     const isAwaitingPrompt = snapshot?.awaitingInput === true && taskId != null;
@@ -178,6 +224,11 @@ export const LocalTailscaleSecureAccessSection = React.memo(function LocalTailsc
             }));
             setBridgeUnavailable(false);
             setLastErrorMessage(null);
+            startedTaskRef.current = {
+                taskId: nextTaskId,
+                serverId: activeServerSnapshot.serverId,
+                upstreamUrl: normalizedUpstreamUrl,
+            };
             setTaskId(nextTaskId);
         } catch (error) {
             const message = readSystemTaskStartErrorMessage(error);
@@ -187,7 +238,7 @@ export const LocalTailscaleSecureAccessSection = React.memo(function LocalTailsc
                 ? t('settings.systemTaskBridgeUnavailable')
                 : (message ?? t('settings.systemTaskStartFailed')));
         }
-    }, [hasUpstreamUrl, isAwaitingPrompt, isUnavailable, normalizedUpstreamUrl, runner, taskId]);
+    }, [activeServerSnapshot.serverId, hasUpstreamUrl, isAwaitingPrompt, isUnavailable, normalizedUpstreamUrl, runner, taskId]);
 
     const cancel = React.useCallback(() => {
         if (!taskId) {

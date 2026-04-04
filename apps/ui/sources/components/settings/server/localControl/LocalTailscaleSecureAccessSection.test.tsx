@@ -1,14 +1,22 @@
 import * as React from 'react';
 import renderer from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createExpoRouterMock, renderScreen } from '@/dev/testkit';
+import { renderScreen } from '@/dev/testkit';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { installMachinesSettingsCommonModuleMocks } from '@/components/settings/machines/machinesSettingsTestHelpers';
 
 const openExternalUrlSpy = vi.hoisted(() => vi.fn(async (_url: string) => true));
 const setClipboardStringSafeSpy = vi.hoisted(() => vi.fn(async (_value: string) => true));
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 const setActiveServerShareableUrlSpy = vi.hoisted(() => vi.fn());
+const activeServerSnapshotState = vi.hoisted(() => ({
+    serverId: 'server-1',
+    serverUrl: 'https://relay.example.test',
+    activeShareableServerUrl: null as string | null,
+    activeShareableServerUrlValidatedAgainstServerUrl: null as string | null,
+    generation: 0,
+}));
 const expoRouterMock = createExpoRouterMock({
     router: {
         push: vi.fn(),
@@ -37,6 +45,7 @@ installMachinesSettingsCommonModuleMocks({
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key) => key });
     },
+    router: async () => expoRouterMock.module,
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
         return createModalModuleMock({
@@ -61,14 +70,9 @@ installMachinesSettingsCommonModuleMocks({
     },
 });
 
-vi.mock('expo-router', () => expoRouterMock.module);
-
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({
-        serverId: 'server-1',
-        serverUrl: 'https://relay.example.test',
-        activeShareableServerUrl: null,
-        generation: 0,
+        ...activeServerSnapshotState,
     }),
     setActiveShareableServerUrl: (value: string | null) => setActiveServerShareableUrlSpy(value),
 }));
@@ -106,6 +110,19 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 describe('LocalTailscaleSecureAccessSection', () => {
+    beforeEach(() => {
+        activeServerSnapshotState.serverId = 'server-1';
+        activeServerSnapshotState.serverUrl = 'https://relay.example.test';
+        activeServerSnapshotState.activeShareableServerUrl = null;
+        activeServerSnapshotState.activeShareableServerUrlValidatedAgainstServerUrl = null;
+        activeServerSnapshotState.generation = 0;
+        setClipboardStringSafeSpy.mockClear();
+        modalAlertSpy.mockClear();
+        setActiveServerShareableUrlSpy.mockClear();
+        expoRouterMock.spies.push.mockClear();
+        expoRouterMock.spies.replace.mockClear();
+    });
+
     it('does not render settings list chrome in wizard presentation', async () => {
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
 
@@ -625,5 +642,92 @@ describe('LocalTailscaleSecureAccessSection', () => {
 
         expect(screen.findByTestId('settings.localTailscale.status')?.props.subtitle).toBe('settings.localTailscale.statusUnavailable');
         expect(screen.findByTestId('settings.localTailscale.shareableUrl')).toBeNull();
+    });
+
+    it('does not persist a completed secure-access result after the upstream changes', async () => {
+        const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
+        const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
+
+        let nextTaskId = 1;
+        const listeners = new Map<string, {
+            onEvent: (payload: unknown) => void;
+            onResult: (payload: unknown) => void;
+        }>();
+
+        const runner = createSystemTaskRunner({
+            bridge: {
+                async start(spec) {
+                    SystemTaskSpecSchema.parse(spec);
+                    return `task_${nextTaskId++}:secureAccess.tailscale.v1`;
+                },
+                async subscribe(taskId, listenerSet) {
+                    listeners.set(taskId, listenerSet);
+                    return () => {
+                        listeners.delete(taskId);
+                    };
+                },
+                async cancel() {},
+                async respond() {},
+            },
+        });
+
+        const { LocalTailscaleSecureAccessSection } = await import('./LocalTailscaleSecureAccessSection');
+        const screen = await renderScreen(React.createElement(LocalTailscaleSecureAccessSection, {
+            runner,
+            upstreamUrl: 'http://127.0.0.1:3005',
+        }));
+
+        await screen.pressByTestIdAsync('settings.localTailscale.enable');
+
+        await renderer.act(async () => {
+            screen.tree.update(React.createElement(LocalTailscaleSecureAccessSection, {
+                runner,
+                upstreamUrl: 'http://127.0.0.1:41834',
+            }));
+        });
+
+        await renderer.act(async () => {
+            listeners.get('task_1:secureAccess.tailscale.v1')?.onResult({
+                protocolVersion: 1,
+                taskId: 'task_1:secureAccess.tailscale.v1',
+                ok: true,
+                data: {
+                    tailscaleInstalled: true,
+                    tailscaleLoggedIn: true,
+                    serveEnabled: true,
+                    shareableHttpsUrl: 'https://relay.example.ts.net',
+                    requiresApproval: null,
+                },
+            });
+        });
+
+        expect(setActiveServerShareableUrlSpy).not.toHaveBeenCalled();
+    });
+
+    it('clears a persisted shareable URL when it was validated for a different upstream', async () => {
+        activeServerSnapshotState.activeShareableServerUrl = 'https://relay.example.ts.net';
+        activeServerSnapshotState.activeShareableServerUrlValidatedAgainstServerUrl = 'http://127.0.0.1:3005';
+
+        const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
+        const runner = createSystemTaskRunner({
+            bridge: {
+                async start() {
+                    return 'task_1:secureAccess.tailscale.v1';
+                },
+                async subscribe() {
+                    return () => {};
+                },
+                async cancel() {},
+                async respond() {},
+            },
+        });
+
+        const { LocalTailscaleSecureAccessSection } = await import('./LocalTailscaleSecureAccessSection');
+        await renderScreen(React.createElement(LocalTailscaleSecureAccessSection, {
+            runner,
+            upstreamUrl: 'http://127.0.0.1:41834',
+        }));
+
+        expect(setActiveServerShareableUrlSpy).toHaveBeenCalledWith(null);
     });
 });
