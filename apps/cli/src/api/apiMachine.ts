@@ -15,7 +15,12 @@ import { encodeBase64, decodeBase64, encrypt, decrypt } from './encryption';
 import { backoff } from '@/utils/time';
 import { RpcHandlerManager } from './rpc/RpcHandlerManager';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import type { MachineTransferReceiveEnvelope, MachineTransferSendEnvelope } from '@happier-dev/protocol';
+import {
+    TRANSFER_RELAY_V2_SOCKET_EVENT,
+    type MachineTransferReceiveEnvelope,
+    type MachineTransferSendEnvelope,
+    type TransferRelayV2SendEnvelope,
+} from '@happier-dev/protocol';
 import { fetchChanges } from './changes';
 import { readLastChangesCursor, writeLastChangesCursor } from '@/persistence';
 import { resolveLoopbackHttpUrl } from './client/loopbackUrl';
@@ -23,6 +28,8 @@ import { resolveLoopbackHttpUrl } from './client/loopbackUrl';
 import type { DaemonToServerEvents, ServerToDaemonEvents } from './machine/socketTypes';
 import { registerMachineRpcHandlers, type MachineRpcHandlerDeps, type MachineRpcHandlers } from './machine/rpcHandlers';
 import { resolveMachineRpcWorkingDirectory } from './machine/resolveMachineRpcWorkingDirectory';
+import { createTransferSessionLifecycle } from '@/transfers/core/transferSessionLifecycle';
+import type { TransferRelayV2DownloadSessionOwner } from '@/machines/transfer/transferRelayV2DownloadSessionTransport';
 import type { Socket } from 'socket.io-client';
 import {
     createManagedConnectionSupervisor,
@@ -42,8 +49,13 @@ export class ApiMachineClient {
     private changesSyncInFlight: Promise<void> | null = null;
     private updateListeners = new Set<(update: Update) => boolean | void>();
     private machineTransferListeners = new Set<(payload: MachineTransferReceiveEnvelope) => void>();
+    private transferRelayV2Listeners = new Set<(payload: TransferRelayV2SendEnvelope) => void>();
     private connectionStateListeners = new Set<(state: ManagedConnectionState) => void>();
     private connectionSupervisor: ManagedConnectionSupervisor | null = null;
+    private readonly machineRpcWorkingDirectory: string;
+    private additionalAllowedReadDirs: string[] = [];
+    private additionalAllowedWriteDirs: string[] = [];
+    private readonly fileSystemTransferRelayOwner: TransferRelayV2DownloadSessionOwner;
     private currentConnectionState: ManagedConnectionState = {
         phase: 'idle',
         reason: null,
@@ -93,25 +105,23 @@ export class ApiMachineClient {
             logger: (msg, data) => logger.debug(msg, data)
         });
 
-        const machineRpcWorkingDirectory = resolveMachineRpcWorkingDirectory();
-        let additionalAllowedReadDirs: string[] = [];
-        let additionalAllowedWriteDirs: string[] = [];
-        registerSessionHandlers(this.rpcHandlerManager, machineRpcWorkingDirectory, {
-            setAdditionalAllowedReadDirs: (dirs) => {
-                additionalAllowedReadDirs = dirs;
-            },
-            setAdditionalAllowedWriteDirs: (dirs) => {
-                additionalAllowedWriteDirs = dirs;
-            },
+        this.machineRpcWorkingDirectory = resolveMachineRpcWorkingDirectory();
+        registerSessionHandlers(this.rpcHandlerManager, this.machineRpcWorkingDirectory);
+        const fileSystemHandlers = registerFileSystemHandlers(this.rpcHandlerManager, this.machineRpcWorkingDirectory, {
+            getAdditionalAllowedReadDirs: () => this.additionalAllowedReadDirs,
+            getAdditionalAllowedWriteDirs: () => this.additionalAllowedWriteDirs,
         });
-        registerFileSystemHandlers(this.rpcHandlerManager, machineRpcWorkingDirectory, {
-            getAdditionalAllowedReadDirs: () => additionalAllowedReadDirs,
-            getAdditionalAllowedWriteDirs: () => additionalAllowedWriteDirs,
-        });
-        registerMachineFileBrowserHandlers({ rpcHandlerManager: this.rpcHandlerManager, workingDirectory: machineRpcWorkingDirectory });
+        this.fileSystemTransferRelayOwner = {
+            store: fileSystemHandlers.bulkTransferStore,
+            lifecycle: createTransferSessionLifecycle({
+                store: fileSystemHandlers.bulkTransferStore,
+                chunkSizeBytes: configuration.filesTransferChunkBytes,
+            }),
+        };
+        registerMachineFileBrowserHandlers({ rpcHandlerManager: this.rpcHandlerManager, workingDirectory: this.machineRpcWorkingDirectory });
         // SCM must be machine-scoped so the UI can view diffs/logs and perform staging/commit operations
         // even when no session is currently active.
-        registerScmHandlers(this.rpcHandlerManager, machineRpcWorkingDirectory);
+        registerScmHandlers(this.rpcHandlerManager, this.machineRpcWorkingDirectory);
     }
 
     setRPCHandlers({
@@ -122,7 +132,10 @@ export class ApiMachineClient {
         requestShutdown,
         memory,
         machineTransferChannel,
+        transferRelayV2Channel,
         directPeerTransfer,
+        directTransferImport,
+        directTransferExport,
     }: MachineRpcHandlers, deps?: MachineRpcHandlerDeps) {
         registerMachineRpcHandlers({
             rpcHandlerManager: this.rpcHandlerManager,
@@ -134,9 +147,20 @@ export class ApiMachineClient {
                 requestShutdown,
                 ...(memory ? { memory } : {}),
                 ...(machineTransferChannel ? { machineTransferChannel } : {}),
+                ...(transferRelayV2Channel ? { transferRelayV2Channel } : {}),
                 ...(directPeerTransfer ? { directPeerTransfer } : {}),
+                ...(directTransferImport ? { directTransferImport } : {}),
+                ...(directTransferExport ? { directTransferExport } : {}),
             },
-            deps,
+            deps: {
+                ...deps,
+                workingDirectory: deps?.workingDirectory ?? this.machineRpcWorkingDirectory,
+                getAdditionalAllowedWriteDirs: deps?.getAdditionalAllowedWriteDirs ?? (() => this.additionalAllowedWriteDirs),
+                extraTransferRelayV2DownloadOwners: [
+                    this.fileSystemTransferRelayOwner,
+                    ...(deps?.extraTransferRelayV2DownloadOwners ?? []),
+                ],
+            },
         });
     }
 
@@ -154,6 +178,13 @@ export class ApiMachineClient {
         };
     }
 
+    onTransferRelayV2Envelope(listener: (payload: TransferRelayV2SendEnvelope) => void): () => void {
+        this.transferRelayV2Listeners.add(listener);
+        return () => {
+            this.transferRelayV2Listeners.delete(listener);
+        };
+    }
+
     onConnectionStateChange(listener: (state: ManagedConnectionState) => void): () => void {
         this.connectionStateListeners.add(listener);
         listener(this.currentConnectionState);
@@ -165,6 +196,11 @@ export class ApiMachineClient {
     sendMachineTransferEnvelope(payload: MachineTransferSendEnvelope): void {
         if (!this.socket) return;
         this.socket.emit(SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE, payload);
+    }
+
+    sendTransferRelayV2Envelope(payload: TransferRelayV2SendEnvelope): void {
+        if (!this.socket) return;
+        this.socket.emit(TRANSFER_RELAY_V2_SOCKET_EVENT, payload);
     }
 
     private dispatchUpdate(update: Update): boolean {
@@ -353,6 +389,18 @@ export class ApiMachineClient {
                     listener(data);
                 } catch (error) {
                     logger.warn('[API MACHINE] Machine transfer listener threw (ignored)', {
+                        message: error instanceof Error ? error.message : String(error),
+                    });
+                }
+            }
+        });
+
+        socket.on(TRANSFER_RELAY_V2_SOCKET_EVENT, (data: TransferRelayV2SendEnvelope) => {
+            for (const listener of this.transferRelayV2Listeners) {
+                try {
+                    listener(data);
+                } catch (error) {
+                    logger.warn('[API MACHINE] Transfer relay v2 listener threw (ignored)', {
                         message: error instanceof Error ? error.message : String(error),
                     });
                 }

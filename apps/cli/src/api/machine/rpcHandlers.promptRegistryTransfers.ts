@@ -5,6 +5,7 @@ import {
 } from '@happier-dev/protocol';
 
 import type { PromptRegistryRegistry } from '@/promptRegistries/createPromptRegistryAdapterRegistry';
+import { type TransferSessionStore } from '@/transfers/core/transferSessionStore';
 import { resolvePromptRegistryItemDownloadSource } from '@/transfers/targets/resolvePromptRegistryItemDownloadSource';
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
@@ -13,8 +14,10 @@ import { registerMachineDownloadTransferRpcHandlers } from './transfers/register
 export function registerMachinePromptRegistryTransferRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerManager;
   registry: PromptRegistryRegistry;
-}>): void {
-  registerMachineDownloadTransferRpcHandlers({
+}>): Readonly<{
+  downloadStore: TransferSessionStore;
+}> {
+  const downloadStore = registerMachineDownloadTransferRpcHandlers({
     rpcHandlerManager: params.rpcHandlerManager,
     methods: {
       init: RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_INIT,
@@ -45,4 +48,8 @@ export function registerMachinePromptRegistryTransferRpcHandlers(params: Readonl
     },
     initFailureMessage: 'Prompt registry download init failed',
   });
+
+  return {
+    downloadStore,
+  };
 }

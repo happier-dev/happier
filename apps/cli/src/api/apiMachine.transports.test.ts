@@ -181,4 +181,97 @@ describe('ApiMachineClient transports', () => {
       },
     ]);
   });
+
+  it('emits and receives relay v2 envelopes over the machine-scoped socket', async () => {
+    const machineSocket = createApiSessionSocketStub();
+    bindApiSessionSocketMock(mockIo, machineSocket);
+
+    const mod = await import('./apiMachine');
+    const { TRANSFER_RELAY_V2_SOCKET_EVENT } = await import('@happier-dev/protocol');
+
+    const machine: Machine = {
+      id: 'test-machine',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      metadata: null,
+      metadataVersion: 0,
+      daemonState: null,
+      daemonStateVersion: 0,
+    };
+
+    const client = new mod.ApiMachineClient('fake-token', machine);
+    const received: unknown[] = [];
+    client.onTransferRelayV2Envelope((payload) => {
+      received.push(payload);
+    });
+    client.connect();
+
+    client.sendTransferRelayV2Envelope({
+      scopeUserId: 'user-1',
+      sender: {
+        kind: 'machine',
+        machineId: 'test-machine',
+      },
+      recipient: {
+        kind: 'user',
+      },
+      envelope: {
+        transferId: 'transfer_1',
+        kind: 'ack',
+        nextSequence: 2,
+      },
+    });
+
+    expect(machineSocket.emit).toHaveBeenCalledWith(TRANSFER_RELAY_V2_SOCKET_EVENT, {
+      scopeUserId: 'user-1',
+      sender: {
+        kind: 'machine',
+        machineId: 'test-machine',
+      },
+      recipient: {
+        kind: 'user',
+      },
+      envelope: {
+        transferId: 'transfer_1',
+        kind: 'ack',
+        nextSequence: 2,
+      },
+    });
+
+    machineSocket.trigger(TRANSFER_RELAY_V2_SOCKET_EVENT, {
+      scopeUserId: 'user-1',
+      sender: {
+        kind: 'user',
+        socketId: 'socket-source',
+      },
+      recipient: {
+        kind: 'machine',
+        machineId: 'test-machine',
+      },
+      envelope: {
+        transferId: 'transfer_1',
+        kind: 'open',
+        recipientPublicKeyBase64: 'YQ==',
+      },
+    });
+
+    expect(received).toEqual([
+      {
+        scopeUserId: 'user-1',
+        sender: {
+          kind: 'user',
+          socketId: 'socket-source',
+        },
+        recipient: {
+          kind: 'machine',
+          machineId: 'test-machine',
+        },
+        envelope: {
+          transferId: 'transfer_1',
+          kind: 'open',
+          recipientPublicKeyBase64: 'YQ==',
+        },
+      },
+    ]);
+  });
 });

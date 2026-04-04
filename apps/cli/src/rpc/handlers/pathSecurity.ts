@@ -1,10 +1,30 @@
 import { realpathSync } from 'fs';
-import { basename, dirname, isAbsolute, relative, resolve, sep } from 'path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 
 export interface PathValidationResult {
     valid: boolean;
     error?: string;
     resolvedPath?: string;
+}
+
+function resolveRealPathBestEffort(path: string): string {
+    const resolved = resolve(path);
+    try {
+        return realpathSync(resolved);
+    } catch {
+        let current = dirname(resolved);
+        let relativeSuffix = basename(resolved);
+        while (current !== dirname(current)) {
+            try {
+                const realParent = realpathSync(current);
+                return resolve(realParent, relativeSuffix);
+            } catch {
+                relativeSuffix = join(basename(current), relativeSuffix);
+                current = dirname(current);
+            }
+        }
+        return resolved;
+    }
 }
 
 export function validateWorkspaceInspectionPath(targetPath: string): PathValidationResult {
@@ -52,14 +72,7 @@ export function validatePath(
 
     // Resolve and realpath the working directory to ensure comparisons stay consistent on platforms
     // where e.g. /var is a symlink to /private/var (macOS).
-    const resolvedWorkingDir = resolve(workingDirectory);
-    const realWorkingDir = (() => {
-        try {
-            return realpathSync(resolvedWorkingDir);
-        } catch {
-            return resolvedWorkingDir;
-        }
-    })();
+    const realWorkingDir = resolveRealPathBestEffort(workingDirectory);
 
     // Resolve the target against the real working dir to keep it on the same canonical root.
     const resolvedTarget = resolve(realWorkingDir, targetPath);
@@ -70,29 +83,8 @@ export function validatePath(
 
     // Resolve symlinks for the target when possible to prevent traversal via symlinks.
     // If the file doesn't exist yet, validate based on the realpath of its parent directory.
-    const resolveRealTarget = (): string => {
-        try {
-            return realpathSync(resolvedTarget);
-        } catch {
-            try {
-                const parent = realpathSync(dirname(resolvedTarget));
-                return resolve(parent, basename(resolvedTarget));
-            } catch {
-                return resolvedTarget;
-            }
-        }
-    };
-
-    const realTarget = resolveRealTarget();
-
-    const allowedDirs = [realWorkingDir, ...resolvedExtraDirs].map((dir) => {
-        try {
-            return realpathSync(dir);
-        } catch {
-            // Directory may not exist yet (e.g., upload dir before first upload).
-            return dir;
-        }
-    });
+    const realTarget = resolveRealPathBestEffort(resolvedTarget);
+    const allowedDirs = [realWorkingDir, ...resolvedExtraDirs].map((dir) => resolveRealPathBestEffort(dir));
 
     for (const dir of allowedDirs) {
         const rel = relative(dir, realTarget);

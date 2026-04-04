@@ -50,6 +50,13 @@ import { registerMachinePromptAssetsRpcHandlers } from './rpcHandlers.promptAsse
 import { registerMachinePromptAssetTransferRpcHandlers } from './rpcHandlers.promptAssetTransfers';
 import { registerMachinePromptRegistriesRpcHandlers } from './rpcHandlers.promptRegistries';
 import { registerMachinePromptRegistryTransferRpcHandlers } from './rpcHandlers.promptRegistryTransfers';
+import { registerMachineDirectTransferImportRpcHandlers } from './rpcHandlers.directTransferImports';
+import {
+  registerMachineDirectTransferExportRpcHandlers,
+  type DirectTransferExportPrepareRequest,
+} from './rpcHandlers.directTransferExports';
+import { registerTransferRelayV2DownloadSessionResponder } from '@/machines/transfer/transferRelayV2DownloadSessionTransport';
+import type { TransferRelayV2DownloadSessionOwner } from '@/machines/transfer/transferRelayV2DownloadSessionTransport';
 import { runReplaySummaryForDialog } from '@/session/replay/summary/runReplaySummaryForDialog';
 import { configuration } from '@/configuration';
 import { isAcpForkEligibleForProvider } from '@/agent/acp/acpForkEligibility';
@@ -58,6 +65,7 @@ import type {
   MachineTransferReceiveEnvelope,
   MachineTransferSendEnvelope,
   TransferEndpointCandidate,
+  TransferRelayV2SendEnvelope,
 } from '@happier-dev/protocol';
 import {
   applyOpenCodeSessionAffinityMetadata,
@@ -69,6 +77,8 @@ import { getAcpForkContinuationHandler } from '@/backends/catalog';
 import { dispatchProviderNativeFork } from '@/session/fork/providerNativeForkDispatch';
 import { createPromptAssetAdapterRegistry } from '@/promptAssets/createPromptAssetAdapterRegistry';
 import { createPromptRegistryAdapterRegistry } from '@/promptRegistries/createPromptRegistryAdapterRegistry';
+import type { DirectTransferImportOpenRequest } from '@/machines/transfer/directTransferImportSession';
+import { createTransferSessionLifecycle } from '@/transfers/core/transferSessionLifecycle';
 
 export type MachineRpcHandlers = {
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
@@ -81,14 +91,40 @@ export type MachineRpcHandlers = {
     onEnvelope: (listener: (payload: MachineTransferReceiveEnvelope) => void) => () => void;
     sendEnvelope: (payload: MachineTransferSendEnvelope) => void;
   }>;
+  transferRelayV2Channel?: Readonly<{
+    machineId: string;
+    onEnvelope: (listener: (payload: TransferRelayV2SendEnvelope) => void) => () => void;
+    sendEnvelope: (payload: TransferRelayV2SendEnvelope) => void;
+  }>;
   directPeerTransfer?: SessionHandoffDirectPeerTransferHandle;
+  directTransferImport?: Readonly<{
+    prepareImportSession: (input: DirectTransferImportOpenRequest) => Promise<Readonly<{
+      uploadId: string;
+      destDisplayPath: string;
+      expectedSizeBytes: number;
+      chunkSizeBytes: number;
+      recipientPublicKeyBase64: string;
+      expiresAt: number;
+      endpointCandidates: readonly TransferEndpointCandidate[];
+    }>>;
+  }>;
+  directTransferExport?: Readonly<{
+    prepareExportSession: (input: DirectTransferExportPrepareRequest) => Promise<Readonly<{
+      transferId: string;
+      endpointCandidates: readonly TransferEndpointCandidate[];
+      expiresAt: number;
+    }>>;
+  }>;
 };
 
 export type MachineRpcHandlerDeps = Readonly<{
   runReplaySummaryForDialog?: typeof runReplaySummaryForDialog;
   promptAssetsHomedir?: () => string;
   promptAssetsHappierHomeDir?: () => string;
-  }>;
+  workingDirectory?: string;
+  getAdditionalAllowedWriteDirs?: () => ReadonlyArray<string>;
+  extraTransferRelayV2DownloadOwners?: readonly TransferRelayV2DownloadSessionOwner[];
+}>;
 
 async function fetchForkChildSessionOrThrow(params: Readonly<{
   token: string;
@@ -163,7 +199,9 @@ export function registerMachineRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerManager;
   handlers: MachineRpcHandlers;
   deps?: MachineRpcHandlerDeps;
-}>): void {
+}>): Readonly<{
+  transferRelayV2DownloadOwners: readonly TransferRelayV2DownloadSessionOwner[];
+}> {
   const { rpcHandlerManager, handlers } = params;
   const { spawnSession, stopSession, requestShutdown } = handlers;
   const memoryWorker = handlers.memory ?? null;
@@ -400,7 +438,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
     rpcHandlerManager,
     adapterRegistry: promptAssetAdapterRegistry,
   });
-  registerMachinePromptAssetTransferRpcHandlers({
+  const promptAssetTransfers = registerMachinePromptAssetTransferRpcHandlers({
     rpcHandlerManager,
     adapterRegistry: promptAssetAdapterRegistry,
   });
@@ -413,15 +451,58 @@ export function registerMachineRpcHandlers(params: Readonly<{
       happierHomeDir: params.deps?.promptAssetsHappierHomeDir,
     },
   });
-  registerMachinePromptRegistryTransferRpcHandlers({
+  const promptRegistryTransfers = registerMachinePromptRegistryTransferRpcHandlers({
     rpcHandlerManager,
     registry: promptRegistryAdapterRegistry,
   });
+  const transferRelayV2DownloadOwners: readonly TransferRelayV2DownloadSessionOwner[] = [
+    ...(params.deps?.extraTransferRelayV2DownloadOwners ?? []),
+    {
+      store: promptAssetTransfers.downloadStore,
+      lifecycle: createTransferSessionLifecycle({
+        store: promptAssetTransfers.downloadStore,
+        chunkSizeBytes: configuration.filesTransferChunkBytes,
+      }),
+    },
+    {
+      store: promptRegistryTransfers.downloadStore,
+      lifecycle: createTransferSessionLifecycle({
+        store: promptRegistryTransfers.downloadStore,
+        chunkSizeBytes: configuration.filesTransferChunkBytes,
+      }),
+    },
+  ];
+  if (handlers.transferRelayV2Channel) {
+    registerTransferRelayV2DownloadSessionResponder({
+      machineId: handlers.transferRelayV2Channel.machineId,
+      transferRelayChannel: handlers.transferRelayV2Channel,
+      resolveSessionOwner: (transferId) => {
+        for (const owner of transferRelayV2DownloadOwners) {
+          if (owner.store.getDownloadSession(transferId)) {
+            return owner;
+          }
+        }
+        return null;
+      },
+    });
+  }
   registerMachineDirectSessionsRpcHandlers({
     rpcHandlerManager,
     spawnSession,
     stopSession,
   });
+  if (handlers.directTransferImport) {
+    registerMachineDirectTransferImportRpcHandlers({
+      rpcHandlerManager,
+      prepareImportSession: handlers.directTransferImport.prepareImportSession,
+    });
+  }
+  if (handlers.directTransferExport) {
+    registerMachineDirectTransferExportRpcHandlers({
+      rpcHandlerManager,
+      prepareExportSession: handlers.directTransferExport.prepareExportSession,
+    });
+  }
   registerMachineSessionHandoffRpcHandlers({
     rpcHandlerManager,
     stopSessionForHandoff: async (sessionId) => {
@@ -436,7 +517,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
     ...(handlers.directPeerTransfer ? { directPeerTransfer: handlers.directPeerTransfer } : {}),
   });
 
-	  rpcHandlerManager.registerHandler(RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY, async (raw: unknown) => {
+  rpcHandlerManager.registerHandler(RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY, async (raw: unknown) => {
     const parsed = SessionContinueWithReplayRpcParamsSchema.safeParse(raw);
     if (!parsed.success) {
       return {
@@ -1241,4 +1322,8 @@ export function registerMachineRpcHandlers(params: Readonly<{
       uploadUrl: typeof params?.uploadUrl === 'string' ? params.uploadUrl : null,
     };
   });
+
+  return {
+    transferRelayV2DownloadOwners,
+  };
 }

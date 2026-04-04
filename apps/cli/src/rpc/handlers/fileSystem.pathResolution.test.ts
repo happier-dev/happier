@@ -100,6 +100,32 @@ describe('registerFileSystemHandlers', () => {
     expect(writeFile).toHaveBeenCalledWith(resolve('/work/dir', 'sub', 'file.bin'), expect.any(Buffer));
   });
 
+  it('allows directory tree reads from configured additional read roots', async () => {
+    vi.clearAllMocks();
+    const mgr = createRpcHandlerManager();
+    registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, '/work/dir', {
+      getAdditionalAllowedReadDirs: () => ['/tmp/allowed'],
+    });
+
+    const getDirectoryTree = mgr.handlers.get(RPC_METHODS.GET_DIRECTORY_TREE);
+    if (!getDirectoryTree) throw new Error('expected getDirectoryTree handler');
+
+    vi.mocked(stat).mockResolvedValueOnce({
+      size: 1,
+      mtime: new Date(),
+      isDirectory: () => true,
+    } as any);
+
+    const result = await getDirectoryTree({ path: '/tmp/allowed', maxDepth: 0 });
+    expect(result).toMatchObject({
+      success: true,
+      tree: {
+        path: resolve('/tmp/allowed'),
+        type: 'directory',
+      },
+    });
+  });
+
   it('rejects reading files larger than the configured read limit', async () => {
     vi.clearAllMocks();
     const mgr = createRpcHandlerManager();

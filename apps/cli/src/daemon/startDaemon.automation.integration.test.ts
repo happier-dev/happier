@@ -103,6 +103,10 @@ vi.mock('@/api/api', () => ({
   isMachineContentPublicKeyMismatchError: vi.fn(() => false),
 }));
 
+vi.mock('@/api/client/serializeAxiosErrorForLog', () => ({
+  serializeAxiosErrorForLog: vi.fn(() => ({})),
+}));
+
 vi.mock('@/api/machine/ensureMachineRegistered', () => ({
   ensureMachineRegistered: vi.fn(async ({ machineId }: { machineId: string }) => ({
     machineId,

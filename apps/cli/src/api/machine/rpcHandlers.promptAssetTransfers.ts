@@ -27,7 +27,9 @@ type PromptAssetUploadFinalizeResponse =
 export function registerMachinePromptAssetTransferRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerManager;
   adapterRegistry: ReadonlyMap<string, PromptAssetAdapter>;
-}>): void {
+}>): Readonly<{
+  downloadStore: TransferSessionStore;
+}> {
   const store = new TransferSessionStore({ ttlMs: configuration.filesTransferSessionTtlMs });
 
   registerMachineDownloadTransferRpcHandlers({
@@ -118,4 +120,8 @@ export function registerMachinePromptAssetTransferRpcHandlers(params: Readonly<{
     }),
     enableChunkEncryption: true,
   });
+
+  return {
+    downloadStore: store,
+  };
 }

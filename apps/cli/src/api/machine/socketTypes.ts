@@ -1,6 +1,11 @@
 import type { SocketRpcCallPayload, SocketRpcCallResponse, SocketRpcRequestPayload, Update } from '../types';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import type { MachineTransferReceiveEnvelope, MachineTransferSendEnvelope } from '@happier-dev/protocol';
+import {
+  TRANSFER_RELAY_V2_SOCKET_EVENT,
+  type MachineTransferReceiveEnvelope,
+  type MachineTransferSendEnvelope,
+  type TransferRelayV2SendEnvelope,
+} from '@happier-dev/protocol';
 
 export interface ServerToDaemonEvents {
   update: (data: Update) => void;
@@ -9,6 +14,7 @@ export interface ServerToDaemonEvents {
   [SOCKET_RPC_EVENTS.UNREGISTERED]: (data: { method: string }) => void;
   [SOCKET_RPC_EVENTS.ERROR]: (data: { type: string; error: string }) => void;
   [SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE]: (data: MachineTransferReceiveEnvelope) => void;
+  [TRANSFER_RELAY_V2_SOCKET_EVENT]: (data: TransferRelayV2SendEnvelope) => void;
   auth: (data: { success: boolean; user: string }) => void;
   error: (data: { message: string }) => void;
 }
@@ -44,4 +50,5 @@ export interface DaemonToServerEvents {
     callback: (response: SocketRpcCallResponse) => void
   ) => void;
   [SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE]: (data: MachineTransferSendEnvelope) => void;
+  [TRANSFER_RELAY_V2_SOCKET_EVENT]: (data: TransferRelayV2SendEnvelope) => void;
 }

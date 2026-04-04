@@ -171,8 +171,6 @@ export function registerSessionHandlers(
             localId?: string;
             meta: Record<string, unknown>;
         }) => Promise<void> | void) | null;
-        setAdditionalAllowedReadDirs?: (dirs: string[]) => void;
-        setAdditionalAllowedWriteDirs?: (dirs: string[]) => void;
     }>,
 ) {
     registerBashHandler(rpcHandlerManager, workingDirectory);

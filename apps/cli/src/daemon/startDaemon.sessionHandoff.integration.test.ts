@@ -76,6 +76,14 @@ vi.mock('@/api/api', () => ({
     isMachineContentPublicKeyMismatchError: vi.fn(() => false),
 }));
 
+vi.mock('@/api/client/serializeAxiosErrorForLog', () => ({
+    serializeAxiosErrorForLog: vi.fn(() => ({})),
+}));
+
+vi.mock('@/rpc/handlers/registerSessionHandlers', () => ({
+    resolveCanonicalCodexBackendMode: vi.fn(() => 'codex'),
+}));
+
 vi.mock('@/api/machine/ensureMachineRegistered', () => ({
     ensureMachineRegistered: vi.fn(async ({ machineId }: { machineId: string }) => ({
         machineId,
@@ -353,27 +361,23 @@ describe('startDaemon session handoff wiring (integration)', () => {
         harness.requestDirectPeerTransferToFile.mockClear();
         delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED;
         delete process.env.HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED;
-    });
+        delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT;
+  });
 
-    it('forwards file-backed direct-peer publish requests into the daemon registry without inline fallback', async () => {
+  it('starts the direct peer HTTP server lazily on first publication instead of daemon boot', async () => {
         const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
 
         try {
-            const { startDirectPeerTransferServer } = await import('@/machines/transfer/directPeerTransport');
             const { startDaemon } = await import('./startDaemon');
             await startDaemon();
 
-            expect(startDirectPeerTransferServer).toHaveBeenCalledTimes(1);
-            const startedArgs = (startDirectPeerTransferServer as unknown as { mock: { calls: unknown[][] } }).mock.calls.at(0)?.[0] as {
-                resolveOnDemandTransfer?: (input: { transferId: string; transferToken: string; requestBody: unknown }) => Promise<unknown>;
-            } | undefined;
-            expect(startedArgs?.resolveOnDemandTransfer).toEqual(expect.any(Function));
-            await startedArgs?.resolveOnDemandTransfer?.({ transferId: 'on-demand-1', transferToken: 'token_1', requestBody: { ok: true } });
-            expect(harness.directPeerRegistry.resolveOnDemandTransferOnOpen).toHaveBeenCalledTimes(1);
+            const { startDirectPeerTransferServer } = await import('@/machines/transfer/directPeerTransport');
+            expect(startDirectPeerTransferServer).toHaveBeenCalledTimes(0);
 
             const handlers = harness.apiMachine.setRPCHandlers.mock.calls[0]?.[0];
             expect(handlers?.directPeerTransfer).toBeDefined();
             expect(handlers?.directPeerTransfer.requestPayloadFile).toEqual(expect.any(Function));
+
             const payloadSource = {
                 kind: 'file' as const,
                 filePath: '/tmp/handoff-payload.bin',
@@ -393,6 +397,14 @@ describe('startDaemon session handoff wiring (integration)', () => {
                 },
                 payloadSource,
             });
+
+            expect(startDirectPeerTransferServer).toHaveBeenCalledTimes(1);
+            const startedArgs = (startDirectPeerTransferServer as unknown as { mock: { calls: unknown[][] } }).mock.calls.at(0)?.[0] as {
+                resolveOnDemandTransfer?: (input: { transferId: string; transferToken: string; requestBody: unknown }) => Promise<unknown>;
+            } | undefined;
+            expect(startedArgs?.resolveOnDemandTransfer).toEqual(expect.any(Function));
+            await startedArgs?.resolveOnDemandTransfer?.({ transferId: 'on-demand-1', transferToken: 'token_1', requestBody: { ok: true } });
+            expect(harness.directPeerRegistry.resolveOnDemandTransferOnOpen).toHaveBeenCalledTimes(1);
 
             expect(harness.directPeerRegistry.publishTransfer).toHaveBeenCalledTimes(1);
             const publishedCall = harness.directPeerRegistry.publishTransfer.mock.calls.at(0);

@@ -1,6 +1,6 @@
 import fs from 'fs/promises';
 import os from 'os';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
 import { ApiClient, isMachineContentPublicKeyMismatchError } from '@/api/api';
@@ -35,14 +35,12 @@ import {
 import { createSessionAttachFile } from './sessionAttachFile';
 import { getDaemonShutdownExitCode, getDaemonShutdownWatchdogTimeoutMs } from './shutdownPolicy';
 import { shouldRetryMachineRegistrationError } from './machineRegistrationRetryPolicy';
+import type { SessionHandoffDirectPeerTransferHandle } from '@/api/machine/rpcHandlers.sessionHandoff';
+import type { PromptAssetReadRequest, PromptRegistryFetchItemRequestV1 } from '@happier-dev/protocol';
 
 import { isDaemonRunningCurrentlyInstalledHappyVersion, stopDaemon } from './controlClient';
 import { startDaemonControlServer } from './controlServer';
-import {
-  createDirectPeerTransferRegistry,
-  requestDirectPeerTransferToFile,
-  startDirectPeerTransferServer,
-} from '@/machines/transfer/directPeerTransport';
+import { createDirectTransferServerLifecycle } from '@/machines/transfer/directTransferServerLifecycle';
 import { resolveMachineTransferRuntimeConfig } from '@/machines/transfer/transferRuntimeConfig';
 import { reattachTrackedSessionsFromMarkers } from './sessions/reattachFromMarkers';
 import { createOnHappySessionWebhook } from './sessions/onHappySessionWebhook';
@@ -56,6 +54,7 @@ import { isSessionRunnerActive as isSessionRunnerActiveInDaemon } from './sessio
 import { startDaemonHeartbeatLoop } from './lifecycle/heartbeat';
 import { createSessionRunnerRespawnManager } from './processSupervision/sessionRunnerRespawn';
 import { publishShutdownStateBestEffort } from './lifecycle/publishShutdownState';
+import { createDaemonTransferRuntimeState } from './transferRuntimeState';
 import { projectPath } from '@/projectPath';
 import type { SessionHandoffLocalMetadataSource } from '@/session/handoff/metadata/runtimeLocalSessionHandoffMetadata';
 import { selectPreferredTmuxSessionName, TmuxUtilities, isTmuxAvailable } from '@/integrations/tmux';
@@ -65,6 +64,13 @@ import { validateEnvVarRecordStrict } from '@/terminal/runtime/envVarSanitizatio
 import { getPreferredHostName, initialMachineMetadata } from './machine/metadata';
 export { initialMachineMetadata } from './machine/metadata';
 import { createDaemonShutdownController } from './lifecycle/shutdown';
+import { createDaemonTransferRuntimeStatePublisher } from './transferRuntimeState';
+import { createPromptAssetAdapterRegistry } from '@/promptAssets/createPromptAssetAdapterRegistry';
+import { createPromptRegistryAdapterRegistry } from '@/promptRegistries/createPromptRegistryAdapterRegistry';
+import { resolvePromptAssetDownloadSource } from '@/transfers/targets/resolvePromptAssetDownloadSource';
+import { resolvePromptRegistryItemDownloadSource } from '@/transfers/targets/resolvePromptRegistryItemDownloadSource';
+import { resolveWorkspaceFileDownloadSource } from '@/transfers/targets/resolveWorkspaceFileDownloadSource';
+import { createFileTransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
 import { buildTmuxSpawnConfig, buildTmuxWindowEnv } from './platform/tmux/spawnConfig';
 export { buildTmuxSpawnConfig, buildTmuxWindowEnv } from './platform/tmux/spawnConfig';
 import { resolveWindowsRemoteSessionConsoleMode } from './platform/windows/windowsSessionConsoleMode';
@@ -1362,19 +1368,38 @@ export async function startDaemon(): Promise<void> {
       controlToken,
     });
     const directPeerRuntimeConfig = resolveMachineTransferRuntimeConfig();
+    const directTransferPromptAssetAdapterRegistry = createPromptAssetAdapterRegistry();
+    const directTransferPromptRegistryRegistry = createPromptRegistryAdapterRegistry();
     const directPeerFeatureEnabled = directPeerRuntimeConfig.directPeer.featureEnabled;
     const directPeerServerEnabled = directPeerRuntimeConfig.directPeer.serverEnabled;
-    let directPeerRegistry: ReturnType<typeof createDirectPeerTransferRegistry> | null = null;
+    const directPeerTransferListenerClasses: readonly ('loopback_http' | 'lan_http')[] =
+      directPeerRuntimeConfig.directPeer.bindHost === '127.0.0.1' || directPeerRuntimeConfig.directPeer.bindHost === '::1'
+      ? ['loopback_http' as const]
+      : ['lan_http' as const];
+    const directPeerAdvertisedHosts = directPeerTransferListenerClasses.includes('loopback_http')
+      ? ['127.0.0.1']
+      : directPeerRuntimeConfig.directPeer.advertisedHosts;
+    const directPeerServerLifecycle = directPeerServerEnabled
+      ? createDirectTransferServerLifecycle({
+        bindPort: directPeerRuntimeConfig.directPeer.bindPort,
+        bindHost: directPeerRuntimeConfig.directPeer.bindHost,
+        listenerClasses: directPeerTransferListenerClasses,
+        advertisedHosts: directPeerAdvertisedHosts,
+        idleStopMs: directPeerRuntimeConfig.directPeer.idleStopMs,
+        promptAssetUpload: {
+          adapterRegistry: directTransferPromptAssetAdapterRegistry,
+        },
+        onStateChange: (state) => {
+          void transferRuntimeStatePublisher?.publishDirectTransferServerLifecycleState(state);
+        },
+      })
+      : null;
     let stopDirectPeerServer: () => Promise<void> = async () => {};
-    if (directPeerServerEnabled) {
-      const { port: directPeerPort, stop } = await startDirectPeerTransferServer({
-        readPublishedTransfer: (input) => directPeerRegistry?.readPublishedTransfer(input) ?? null,
-        resolveOnDemandTransfer: async (input) => await directPeerRegistry?.resolveOnDemandTransferOnOpen(input) ?? null,
-      });
-      stopDirectPeerServer = stop;
-      directPeerRegistry = createDirectPeerTransferRegistry({
-        advertisedPort: directPeerPort,
-      });
+    let transferRuntimeStatePublisher: ReturnType<typeof createDaemonTransferRuntimeStatePublisher> | null = null;
+    if (directPeerServerLifecycle) {
+      stopDirectPeerServer = async () => {
+        await directPeerServerLifecycle.stop();
+      };
     }
 
     // Persist daemon.state.json after the control server is available so:
@@ -1401,12 +1426,22 @@ export async function startDaemon(): Promise<void> {
     writeDaemonStateOnce();
 
         // Prepare initial daemon state
-        const initialDaemonState: DaemonState = {
+      const initialTransferState = createDaemonTransferRuntimeState({
+        directPeer: directPeerRuntimeConfig.directPeer,
+      });
+      const initialDaemonState: DaemonState = {
           status: 'offline',
           pid: process.pid,
           httpPort: controlPort,
-          startedAt: Date.now()
-        };
+          startedAt: Date.now(),
+          transfer: initialTransferState,
+      };
+      transferRuntimeStatePublisher = createDaemonTransferRuntimeStatePublisher({
+        initialTransferState,
+        warn: (message, error) => {
+          logger.warn(message, error);
+        },
+      });
 
       const connectedServicesRefreshEnabled = parseBooleanEnv(process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED, true);
       if (connectedServicesRefreshEnabled) {
@@ -1553,6 +1588,9 @@ export async function startDaemon(): Promise<void> {
               : api.machineSyncClient(machine);
             apiMachine = connectedApiMachine;
             apiMachineForSessions = connectedApiMachine;
+            if (connectedApiMachine && transferRuntimeStatePublisher) {
+              await transferRuntimeStatePublisher.attachApiMachine(connectedApiMachine);
+            }
 
             // Set RPC handlers
             if (diagnosticSubsystemGates.disableAutomationWorker) {
@@ -1578,6 +1616,116 @@ export async function startDaemon(): Promise<void> {
               }
             })();
 
+            const directPeerTransferHandlers: SessionHandoffDirectPeerTransferHandle | null = directPeerServerLifecycle
+              ? {
+                  publishTransfer: ({ transferId, payload: _payload, payloadSource, onDemandScope }) => {
+                    if (!payloadSource) {
+                      throw new Error('Direct peer handoff publish requires a file-backed payload source');
+                    }
+                    return directPeerServerLifecycle.publishTransfer({
+                      transferId,
+                      payloadSource,
+                      ...(onDemandScope ? { onDemandScope } : {}),
+                    }).endpointCandidates;
+                  },
+                  requestPayloadFile: async ({ transferId, endpointCandidates, destinationPath, openBody, timeoutMs }) =>
+                    await directPeerServerLifecycle.requestPayloadFile({
+                      transferId,
+                      endpointCandidates,
+                      destinationPath,
+                      ...(openBody !== undefined ? { openBody } : {}),
+                      ...(typeof timeoutMs === 'number' ? { timeoutMs } : {}),
+                    }),
+                  clearPublishedTransfer: (transferId: string) => directPeerServerLifecycle.clearPublishedTransfer(transferId),
+                }
+                : null;
+
+            const directTransferExportHandlers = directPeerServerLifecycle
+              ? {
+                  prepareExportSession: async (
+                    input:
+                      | Readonly<{
+                        t: 'prompt_asset_download_v1';
+                        assetTypeId: string;
+                        scope: PromptAssetReadRequest['scope'];
+                        externalRef: PromptAssetReadRequest['externalRef'];
+                      }>
+                      | Readonly<{
+                        t: 'prompt_registry_download_v1';
+                        sourceId: string;
+                        itemId: string;
+                        configuredSources: PromptRegistryFetchItemRequestV1['configuredSources'];
+                      }>
+                      | Readonly<{
+                        t: 'workspace_file_download_v1';
+                        workingDirectory: string;
+                        path: string;
+                        asZip: boolean;
+                      }>,
+                  ) => {
+                    const resolvedSource = input.t === 'prompt_asset_download_v1'
+                      ? await resolvePromptAssetDownloadSource({
+                        adapterRegistry: directTransferPromptAssetAdapterRegistry,
+                        request: {
+                          assetTypeId: input.assetTypeId,
+                          scope: input.scope,
+                          externalRef: input.externalRef,
+                        },
+                      })
+                      : input.t === 'prompt_registry_download_v1'
+                        ? await resolvePromptRegistryItemDownloadSource({
+                          registry: directTransferPromptRegistryRegistry,
+                          request: {
+                            sourceId: input.sourceId,
+                            itemId: input.itemId,
+                            configuredSources: input.configuredSources,
+                          },
+                        })
+                        : input.t === 'workspace_file_download_v1'
+                          ? await resolveWorkspaceFileDownloadSource({
+                            workingDirectory: input.workingDirectory,
+                            path: input.path,
+                            asZip: input.asZip,
+                            sessionRpcTransferMaxBytes: null,
+                          })
+                        : { success: false as const, error: 'Unsupported direct transfer export request' };
+                    if (!resolvedSource.success) {
+                      throw new Error(resolvedSource.error);
+                    }
+                    const payloadSource = createFileTransferPayloadSource({
+                      filePath: resolvedSource.source.filePath,
+                      sizeBytes: resolvedSource.source.sizeBytes,
+                      name: resolvedSource.source.name,
+                      dispose: resolvedSource.source.deleteFileOnClose
+                        ? async () => {
+                          await fs.rm(resolvedSource.source.filePath, { force: true }).catch(() => undefined);
+                        }
+                        : undefined,
+                    });
+
+                    const transferId = `${
+                      input.t === 'prompt_asset_download_v1'
+                        ? 'prompt-asset-download'
+                        : input.t === 'prompt_registry_download_v1'
+                          ? 'prompt-registry-download'
+                          : 'workspace-file-download'
+                    }:${randomUUID()}`;
+                    const published = directPeerServerLifecycle.publishTransfer({
+                        transferId,
+                        payloadSource,
+                      });
+
+                    return {
+                      transferId: published.transferId,
+                      endpointCandidates: published.endpointCandidates,
+                      expiresAt: published.expiresAt,
+                      name: resolvedSource.source.name,
+                      sizeBytes: resolvedSource.source.sizeBytes,
+                    };
+                  },
+                }
+              : null;
+
             if (connectedApiMachine) {
               connectedApiMachine.setRPCHandlers({
                 spawnSession,
@@ -1592,30 +1740,23 @@ export async function startDaemon(): Promise<void> {
                   onEnvelope: (listener) => connectedApiMachine.onMachineTransferEnvelope(listener),
                   sendEnvelope: (payload) => connectedApiMachine.sendMachineTransferEnvelope(payload),
                 },
-                ...(directPeerRegistry
+                transferRelayV2Channel: {
+                  machineId,
+                  onEnvelope: (listener) => connectedApiMachine.onTransferRelayV2Envelope(listener),
+                  sendEnvelope: (payload) => connectedApiMachine.sendTransferRelayV2Envelope(payload),
+                },
+                ...(directPeerTransferHandlers ? { directPeerTransfer: directPeerTransferHandlers } : {}),
+                ...(directPeerServerLifecycle
                   ? {
-                      directPeerTransfer: {
-                        publishTransfer: ({ transferId, payload: _payload, payloadSource, onDemandScope }) => {
-                          if (!payloadSource) {
-                            throw new Error('Direct peer handoff publish requires a file-backed payload source');
-                          }
-                          return directPeerRegistry!.publishTransfer({
-                            transferId,
-                            payloadSource,
-                            ...(onDemandScope ? { onDemandScope } : {}),
-                          }).endpointCandidates;
-                        },
-                        requestPayloadFile: async ({ transferId, endpointCandidates, destinationPath, openBody, timeoutMs }) =>
-                          await requestDirectPeerTransferToFile({
-                            transferId,
-                            endpointCandidates,
-                            destinationPath,
-                            ...(openBody !== undefined ? { openBody } : {}),
-                            ...(typeof timeoutMs === 'number' ? { timeoutMs } : {}),
-                          }),
-                        clearPublishedTransfer: (transferId) => directPeerRegistry!.clearPublishedTransfer(transferId),
-                      },
-                    }
+                    directTransferImport: {
+                      prepareImportSession: directPeerServerLifecycle.prepareImportSession,
+                    },
+                  }
+                  : {}),
+                ...(directTransferExportHandlers
+                  ? {
+                    directTransferExport: directTransferExportHandlers,
+                  }
                   : {}),
               });
 

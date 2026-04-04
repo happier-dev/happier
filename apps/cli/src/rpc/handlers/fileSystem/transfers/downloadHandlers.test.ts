@@ -5,7 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope } from '@/machines/transfer/transferChunkEncryption';
+import {
+  createEncryptedTransferChunkEnvelope,
+  createTransferRecipientKeyPair,
+  decryptEncryptedTransferChunkEnvelope,
+} from '@/machines/transfer/transferChunkEncryption';
 
 import { configuration } from '@/configuration';
 import { registerFileSystemHandlers } from '@/rpc/handlers/fileSystem';
@@ -64,6 +68,27 @@ async function downloadAllChunks(input: {
   return Buffer.concat(chunks);
 }
 
+function createEncryptedUploadChunkRequest(input: Readonly<{
+  uploadId: string;
+  index: number;
+  payload: Buffer;
+  recipientPublicKeyBase64: string;
+}>) {
+  const encryptedChunk = createEncryptedTransferChunkEnvelope({
+    transferId: input.uploadId,
+    sequence: input.index,
+    payload: input.payload,
+    recipientPublicKeyBase64: input.recipientPublicKeyBase64,
+  });
+
+  return {
+    uploadId: input.uploadId,
+    index: input.index,
+    payloadBase64: encryptedChunk.payloadBase64,
+    encryptedDataKeyEnvelopeBase64: encryptedChunk.encryptedDataKeyEnvelopeBase64,
+  };
+}
+
 describe('file transfers (download)', () => {
   it('downloads a file in chunks', async () => {
     const workspace = mkdtempSync(join(tmpdir(), 'happier-files-download-'));
@@ -79,6 +104,65 @@ describe('file transfers (download)', () => {
 
     const bytes = await downloadAllChunks({ init, chunk, finalize, path: 'file.txt' });
     expect(bytes.toString('utf8')).toBe('hello\n');
+  });
+
+  it('allows downloading an os_temp attachment uploaded through registerFileSystemHandlers', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'happier-files-download-'));
+
+    const mgr = createRpcHandlerManager();
+    registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, workspace);
+
+    const uploadInit = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
+    const uploadChunk = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK);
+    const uploadFinalize = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE);
+    const downloadInit = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT);
+    const downloadChunk = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_CHUNK);
+    const downloadFinalize = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE);
+    if (!uploadInit || !uploadChunk || !uploadFinalize || !downloadInit || !downloadChunk || !downloadFinalize) {
+      throw new Error('expected upload and download handlers');
+    }
+
+    const uploadInitResp = await uploadInit({
+      t: 'session_attachment_upload_v1',
+      messageLocalId: 'message-1',
+      fileName: 'note.txt',
+      sizeBytes: 3,
+      uploadLocation: 'os_temp',
+      workspaceRelativeDir: '.happier/uploads',
+      vcsIgnoreStrategy: 'none',
+      vcsIgnoreWritesEnabled: false,
+    });
+    expect(uploadInitResp).toMatchObject({ success: true, recipientPublicKeyBase64: expect.any(String) });
+
+    await expect(uploadChunk(createEncryptedUploadChunkRequest({
+      uploadId: uploadInitResp.uploadId,
+      index: 0,
+      payload: Buffer.from('hey', 'utf8'),
+      recipientPublicKeyBase64: uploadInitResp.recipientPublicKeyBase64,
+    }))).resolves.toEqual({ success: true });
+
+    const uploadFinalizeResp = await uploadFinalize({ uploadId: uploadInitResp.uploadId });
+    expect(uploadFinalizeResp).toMatchObject({ success: true });
+
+    const recipientKeyPair = createTransferRecipientKeyPair();
+    const downloadInitResp = await downloadInit({
+      t: 'session_file_download_v1',
+      path: uploadFinalizeResp.path,
+      recipientPublicKeyBase64: recipientKeyPair.recipientPublicKeyBase64,
+    });
+    expect(downloadInitResp).toMatchObject({ success: true });
+
+    const downloadChunkResp = await downloadChunk({ downloadId: downloadInitResp.downloadId, index: 0 });
+    expect(downloadChunkResp).toMatchObject({ success: true, isLast: true });
+    expect(decryptEncryptedTransferChunkEnvelope({
+      transferId: downloadInitResp.downloadId,
+      sequence: 0,
+      payloadBase64: downloadChunkResp.payloadBase64 as string,
+      encryptedDataKeyEnvelopeBase64: downloadChunkResp.encryptedDataKeyEnvelopeBase64 as string,
+      recipientSecretKeySeed: recipientKeyPair.recipientSecretKeySeed,
+    }).toString('utf8')).toBe('hey');
+
+    await expect(downloadFinalize({ downloadId: downloadInitResp.downloadId })).resolves.toEqual({ success: true });
   });
 
   it('downloads a directory as a zip and excludes configured top-level dirs', async () => {

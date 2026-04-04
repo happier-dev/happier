@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { Machine } from '@/api/types';
 import { encodeBase64, encrypt } from '@/api/encryption';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { ApiMachineClient } from './apiMachine';
 
@@ -161,5 +162,62 @@ describe('ApiMachineClient spawn-happy-session handler', () => {
     expect(captured).not.toHaveProperty('workspaceId');
     expect(captured).not.toHaveProperty('workspaceLocationId');
     expect(captured).not.toHaveProperty('workspaceCheckoutId');
+  });
+
+  it('registers direct transfer export prepare handlers on the machine rpc registry', async () => {
+    const machine: Machine = {
+      id: 'machine-test',
+      encryptionKey: new Uint8Array(32).fill(7),
+      encryptionVariant: 'legacy',
+      metadata: null,
+      metadataVersion: 0,
+      daemonState: null,
+      daemonStateVersion: 0,
+    };
+
+    const client = new ApiMachineClient('token', machine);
+
+    let captured: unknown = null;
+    client.setRPCHandlers({
+      spawnSession: async () => ({ type: 'success', sessionId: 'session-1' }),
+      stopSession: async () => true,
+      requestShutdown: () => {},
+      directTransferExport: {
+        prepareExportSession: async (request) => {
+          captured = request;
+          return {
+            transferId: 'transfer-1',
+            endpointCandidates: [],
+            expiresAt: 5_000,
+            name: 'hello.txt',
+            sizeBytes: 5,
+          };
+        },
+      },
+    });
+
+    const rpc = (client as any).rpcHandlerManager;
+    const params = {
+      t: 'workspace_file_download_v1',
+      workingDirectory: '/repo',
+      path: '/repo/hello.txt',
+      asZip: false,
+    };
+    const encrypted = encodeBase64(encrypt(machine.encryptionKey, machine.encryptionVariant, params));
+
+    const result = await rpc.handleRequest({
+      method: `${machine.id}:${RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE}`,
+      params: encrypted,
+    });
+
+    expect(captured).toEqual(params);
+    expect(result).toEqual({
+      success: true,
+      transferId: 'transfer-1',
+      endpointCandidates: [],
+      expiresAt: 5_000,
+      name: 'hello.txt',
+      sizeBytes: 5,
+    });
   });
 });

@@ -110,7 +110,7 @@ export function registerDirectoryHandlers(
       const maxDepth = typeof data?.maxDepth === 'number' ? data.maxDepth : Number(data?.maxDepth ?? 0);
       logger.debug('Get directory tree request:', path, 'maxDepth:', maxDepth);
 
-      const validation = validatePath(path, deps.workingDirectory);
+      const validation = validatePath(path, deps.workingDirectory, deps.getAdditionalAllowedReadDirs());
       if (!validation.valid || !validation.resolvedPath) {
         return { success: false, error: validation.error ?? 'Access denied' };
       }
