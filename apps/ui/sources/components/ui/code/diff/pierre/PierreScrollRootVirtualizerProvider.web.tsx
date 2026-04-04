@@ -235,10 +235,13 @@ export function PierreScrollRootVirtualizerProvider(props: Readonly<{ children: 
         if (!anchor) return;
         if (!instance) return;
 
-        const raf: (cb: FrameRequestCallback) => number =
-            typeof globalThis.requestAnimationFrame === 'function'
-                ? globalThis.requestAnimationFrame.bind(globalThis)
-                : (cb) => globalThis.setTimeout(() => cb(Date.now()), 0);
+        const scheduleFrame = (cb: FrameRequestCallback) => {
+            if (typeof globalThis.requestAnimationFrame === 'function') {
+                globalThis.requestAnimationFrame(cb);
+                return;
+            }
+            globalThis.setTimeout(() => cb(Date.now()), 0);
+        };
 
         let cancelled = false;
         let attempts = 0;
@@ -277,7 +280,7 @@ export function PierreScrollRootVirtualizerProvider(props: Readonly<{ children: 
             // FlashList web can mount its internal scroll root after the first effect pass.
             // Probe briefly so we can rebind to the best nested list container once it mounts.
             if (attempts >= maxAttempts) return;
-            raf(() => bindToCurrentRoot());
+            scheduleFrame(() => bindToCurrentRoot());
         };
 
         bindToCurrentRoot();

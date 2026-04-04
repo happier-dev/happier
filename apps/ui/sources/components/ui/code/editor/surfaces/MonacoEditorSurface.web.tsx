@@ -142,7 +142,7 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
     const latestShowLineNumbersRef = React.useRef(props.showLineNumbers ?? true);
     const latestFontMetricsRef = React.useRef(resolveCodeEditorFontMetrics({ uiFontScale }));
     const pendingChangeRef = React.useRef<string | null>(null);
-    const changeTimerRef = React.useRef<number | null>(null);
+    const changeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const disposablesRef = React.useRef<Array<{ dispose?: () => void }> | null>(null);
 
     React.useEffect(() => {
