@@ -2,6 +2,7 @@ import './utils/env/env.mjs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveCliInvokerNameForPublicRing } from '@happier-dev/release-runtime/releaseRings';
 
 /**
  * Repo convenience: configure global hstack/happier shims to run from THIS monorepo checkout.
@@ -25,9 +26,11 @@ function main() {
   const hstackBin = join(cliRootDir, 'bin', 'hstack.mjs');
 
   const forwarded = process.argv.slice(2);
+  const repoCliAlias = resolveCliInvokerNameForPublicRing('publicdev');
   const argv = [
     'init',
     `--cli-root-dir=${cliRootDir}`,
+    `--cli-alias=${repoCliAlias}`,
     '--no-runtime',
     '--no-bootstrap',
     ...forwarded,
@@ -38,4 +41,3 @@ function main() {
 }
 
 main();
-

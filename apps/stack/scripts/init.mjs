@@ -69,6 +69,15 @@ async function writeExecutable(path, contents) {
   await writeFile(path, contents, { mode: 0o755 });
 }
 
+function parseCliAlias(argv) {
+  const raw = (parseArgValue(argv, 'cli-alias') ?? '').trim();
+  if (!raw) return '';
+  if (raw.includes('/') || raw.includes('\\')) {
+    throw new Error(`[init] invalid --cli-alias value: ${raw}`);
+  }
+  return raw;
+}
+
 function escapeForDoubleQuotes(s) {
   return String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
@@ -134,7 +143,7 @@ async function main() {
         banner('init', { subtitle: 'Initialize ~/.happier-stack (runtime + shims).' }),
         '',
         sectionTitle('usage:'),
-        `  ${cyan('hstack init')} [--canonical-home-dir=/path] [--home-dir=/path] [--workspace-dir=/path] [--runtime-dir=/path] [--storage-dir=/path] [--cli-root-dir=/path] [--tailscale-bin=/path] [--tailscale-cmd-timeout-ms=MS] [--tailscale-enable-timeout-ms=MS] [--tailscale-enable-timeout-ms-auto=MS] [--tailscale-reset-timeout-ms=MS] [--install-path] [--no-runtime] [--force-runtime] [--no-bootstrap] [--] [bootstrap args...]`,
+        `  ${cyan('hstack init')} [--canonical-home-dir=/path] [--home-dir=/path] [--workspace-dir=/path] [--runtime-dir=/path] [--storage-dir=/path] [--cli-root-dir=/path] [--cli-alias=name] [--tailscale-bin=/path] [--tailscale-cmd-timeout-ms=MS] [--tailscale-enable-timeout-ms=MS] [--tailscale-enable-timeout-ms-auto=MS] [--tailscale-reset-timeout-ms=MS] [--install-path] [--no-runtime] [--force-runtime] [--no-bootstrap] [--] [bootstrap args...]`,
         '',
         sectionTitle('what it does:'),
         bullets([
@@ -211,6 +220,8 @@ async function main() {
   if (cliRootDirOverride) {
     process.env.HAPPIER_STACK_CLI_ROOT_DIR = process.env.HAPPIER_STACK_CLI_ROOT_DIR ?? cliRootDirOverride;
   }
+
+  const cliAlias = parseCliAlias(argv);
 
   const tailscaleBinRaw = parseArgValue(argv, 'tailscale-bin');
   const tailscaleBinOverride = expandHome((tailscaleBinRaw ?? '').trim());
@@ -417,6 +428,13 @@ async function main() {
     happierShimPath,
     `#!/bin/bash\nset -euo pipefail\nexec "${hstackShimPath}" happier "$@"\n`
   );
+
+  if (cliAlias && cliAlias !== 'happier') {
+    await writeExecutable(
+      join(homeDir, 'bin', cliAlias),
+      `#!/bin/bash\nset -euo pipefail\nexec "${hstackShimPath}" happier "$@"\n`
+    );
+  }
 
   // Remove legacy `happy` shim if it exists (it conflicts with Happy stacks installs).
   await unlink(legacyHappyShimPath).catch(() => {});

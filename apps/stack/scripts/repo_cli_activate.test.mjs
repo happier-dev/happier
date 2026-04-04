@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,6 +33,12 @@ test('repo cli activate configures init with cli-root-dir pointing at this check
       homeEnv,
       new RegExp(`^HAPPIER_STACK_CLI_ROOT_DIR=${expectedCliRootDir.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}$`, 'm'),
       `expected init to persist cli root dir override in ${homeEnvPath}\n${homeEnv}`
+    );
+
+    assert.equal(
+      existsSync(join(homeDir, 'bin', 'hdev')),
+      true,
+      'expected repo cli activate to install the dev-channel hdev shim alias'
     );
   } finally {
     rmSync(homeDir, { recursive: true, force: true });
