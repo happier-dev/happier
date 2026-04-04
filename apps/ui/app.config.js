@@ -252,7 +252,6 @@ const baseExpoConfig = {
         icon: "./sources/assets/images/icon.png",
         scheme: resolvedScheme,
         userInterfaceStyle: "automatic",
-        newArchEnabled: true,
         notification: {
             icon: "./sources/assets/images/icon-notification.png",
             iosDisplayInForeground: true

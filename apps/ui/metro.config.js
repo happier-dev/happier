@@ -35,31 +35,12 @@ function parseEnvBool(raw) {
 
 const watchmanOverride = parseEnvBool(process.env.HAPPIER_UI_METRO_USE_WATCHMAN);
 
-// Metro defaults to Watchman. In large monorepos Watchman can hang during `watch-project` or enter recrawl
-// storms ("MustScanSubDirs UserDropped"), delaying Metro startup before bundling begins.
-//
-// - In CI, always force Watchman off for deterministic startup.
-// - For local dev, prefer reliability: default Watchman off, allow explicit opt-in per machine.
+// Keep Expo's default Watchman behavior for ordinary local development so the workspace watch set stays aligned
+// with Expo's defaults. Only force the slower Node crawler in non-interactive build contexts, or when explicitly
+// requested for machines where Watchman is unstable.
 const isCiRun = Boolean(process.env.CI);
-const shouldEnableWatchman = !isCiRun && watchmanOverride === true;
-const shouldDisableWatchman = isCiRun || watchmanOverride !== true;
-
-if (shouldDisableWatchman) {
-  config.resolver.useWatchman = false;
-  // `metro-file-map`'s watcher selection is driven by `watcher.useWatchman`, not
-  // `resolver.useWatchman`. Set both to avoid "Failed to start watch mode"
-  // timeouts in large monorepos where Watchman can be slow to initialize.
-  config.watcher = {
-    ...(config.watcher || {}),
-    useWatchman: false,
-  };
-} else if (shouldEnableWatchman) {
-  config.resolver.useWatchman = true;
-  config.watcher = {
-    ...(config.watcher || {}),
-    useWatchman: true,
-  };
-}
+const shouldUseWatchman = !isCiRun && !isStackRun && watchmanOverride !== false;
+config.resolver.useWatchman = shouldUseWatchman;
 
 function safeReadJson(filePath) {
   try {
@@ -190,18 +171,21 @@ for (const folder of watchedHoistedNodeModuleRoots) {
   }
 }
 
-// `packages/tests` contains UI e2e artifacts under `packages/tests/.project/**` which can grow very large.
-// When Metro falls back to the native `find` crawler (e.g. on machines without Watchman), scanning that tree
-// can exceed Node's max string length and crash the bundler. The UI runtime never needs to watch this package.
-const testsWorkspaceRoot = path.resolve(__dirname, "../../packages/tests");
-config.watchFolders = config.watchFolders.filter((folder) => folder !== testsWorkspaceRoot);
+const shouldPruneHeavyWorkspaceWatchFolders = !shouldUseWatchman;
+if (shouldPruneHeavyWorkspaceWatchFolders) {
+  // `packages/tests` contains UI e2e artifacts under `packages/tests/.project/**` which can grow very large.
+  // When Metro falls back to the native `find` crawler (e.g. on machines without Watchman), scanning that tree
+  // can exceed Node's max string length and crash the bundler. The UI runtime never needs to watch this package.
+  const testsWorkspaceRoot = path.resolve(__dirname, "../../packages/tests");
+  config.watchFolders = config.watchFolders.filter((folder) => folder !== testsWorkspaceRoot);
 
-// The UI runtime never imports `apps/docs` or `apps/website`, but those workspaces can contain very large build
-// artifacts (e.g. `.next/**`). When Metro falls back to the native `find` crawler, scanning them can crash with
-// `RangeError: Invalid string length`. Keep them out of the watcher set.
-const docsWorkspaceRoot = path.resolve(__dirname, "../docs");
-const websiteWorkspaceRoot = path.resolve(__dirname, "../website");
-config.watchFolders = config.watchFolders.filter((folder) => folder !== docsWorkspaceRoot && folder !== websiteWorkspaceRoot);
+  // The UI runtime never imports `apps/docs` or `apps/website`, but those workspaces can contain very large build
+  // artifacts (e.g. `.next/**`). When Metro falls back to the native `find` crawler, scanning them can crash with
+  // `RangeError: Invalid string length`. Keep them out of the watcher set when Watchman is unavailable.
+  const docsWorkspaceRoot = path.resolve(__dirname, "../docs");
+  const websiteWorkspaceRoot = path.resolve(__dirname, "../website");
+  config.watchFolders = config.watchFolders.filter((folder) => folder !== docsWorkspaceRoot && folder !== websiteWorkspaceRoot);
+}
 
 // Kokoro (kokoro-js) ships a `.web.js` prebundle that Metro cannot transform (it contains non-literal dynamic imports).
 // For Expo web, force Metro to resolve the package to its ESM entry and shim Node builtins that the ESM file imports

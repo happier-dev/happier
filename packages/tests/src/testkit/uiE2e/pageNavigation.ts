@@ -1,5 +1,7 @@
 import type { Page } from '@playwright/test';
 
+export { createAccountAndReachConnectMachineState, dismissSetupWizardIfVisible } from './createAccountAndReachConnectMachineState';
+
 export function normalizeLoopbackBaseUrl(input: string): string {
   try {
     const parsed = new URL(input);
