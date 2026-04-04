@@ -28,10 +28,11 @@ export async function runKilo(opts: StandardAcpProviderRunOptions & {
     machineMetadata: initialMachineMetadata,
     terminalDisplay: KiloTerminalDisplay,
     resolveRuntimeDirectory: ({ session, metadata }) => session.getMetadataSnapshot()?.path ?? metadata.path,
-    createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled }) => createKiloAcpRuntime({
+    createRuntime: ({ directory, machineId, session, transcriptSession, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled }) => createKiloAcpRuntime({
       directory,
       machineId,
       session,
+      transcriptSession,
       messageBuffer,
       mcpServers,
       permissionHandler,

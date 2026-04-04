@@ -7,6 +7,8 @@ import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import type { ApiClient } from '@/api/api';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
+import { createCurrentSessionTranscriptPort } from '@/api/session/createCurrentSessionTranscriptPort';
+import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
 import { connectionState } from '@/api/offline/serverConnectionErrors';
 import type { MachineMetadata, Metadata, PermissionMode } from '@/api/types';
 import { createProviderEnforcedPermissionHandler } from '@/agent/permissions/createProviderEnforcedPermissionHandler';
@@ -105,6 +107,7 @@ export type StandardAcpProviderConfig = {
     metadata: Metadata;
     machineId: string;
     session: ApiSessionClient;
+    transcriptSession: TranscriptSessionPort;
     messageBuffer: MessageBuffer;
     mcpServers: Record<string, import('@/agent').McpServerConfig>;
     permissionHandler: ProviderEnforcedPermissionHandler;
@@ -261,6 +264,7 @@ export async function runStandardAcpProvider(
     resolveRuntimeDirectory: config.resolveRuntimeDirectory,
   });
   const runtimeMetadata = runtimeContext.resolvedMetadata;
+  const transcriptSession = createCurrentSessionTranscriptPort(() => session);
 
   const messageBuffer = new MessageBuffer();
   const hasTTY = process.stdout.isTTY && process.stdin.isTTY;
@@ -317,6 +321,7 @@ export async function runStandardAcpProvider(
     metadata: runtimeMetadata,
     machineId,
     session,
+    transcriptSession,
     messageBuffer,
     mcpServers,
     permissionHandler,

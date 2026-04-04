@@ -3,6 +3,7 @@ import type { AgentBackend } from '@/agent/core';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import { createAcpRuntime } from '@/agent/acp/runtime/createAcpRuntime';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
+import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { logger } from '@/ui/logger';
 import { configuration } from '@/configuration';
@@ -19,6 +20,7 @@ import {
 export function createCodexAcpRuntime(params: {
   directory: string;
   session: ApiSessionClient;
+  transcriptSession?: TranscriptSessionPort;
   pushSender?: PermissionRequestPushSender;
   messageBuffer: MessageBuffer;
   mcpServers: Record<string, McpServerConfig>;
@@ -36,6 +38,7 @@ export function createCodexAcpRuntime(params: {
     directory: params.directory,
     happierSessionId: params.session.sessionId,
     session: params.session,
+    transcriptSession: params.transcriptSession,
     messageBuffer: params.messageBuffer,
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,

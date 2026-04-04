@@ -313,6 +313,7 @@ export class ApiSessionClient extends EventEmitter {
                 }),
             sendAcp: (provider, body, opts) => this.sendAgentMessage(provider as any, body as any, opts),
             streamedTranscriptSession: {
+                sendAgentMessageEphemeral: (provider, body, opts) => this.sendAgentMessageEphemeral(provider as any, body as any, opts),
                 sendAgentMessageCommitted: (provider, body, opts) => this.sendAgentMessageCommitted(provider as any, body as any, opts),
             },
             transcriptWriter,
@@ -1659,6 +1660,56 @@ export class ApiSessionClient extends EventEmitter {
         await this.enqueueMessageCommit(() =>
             this.commitSessionMessage({ message: payload, localId, sidechainId, requireCommit: true }),
         );
+    }
+
+    sendAgentMessageEphemeral(
+        provider: ACPProvider,
+        body: ACPMessageData,
+        opts: { localId: string; createdAt: number; updatedAt?: number; meta?: Record<string, unknown> },
+    ): void {
+        if (!this.socket.connected) {
+            return;
+        }
+
+        const { content, localId, sidechainId } = this.prepareAcpAgentMessage({
+            provider,
+            body,
+            meta: opts.meta,
+            localId: opts.localId,
+        });
+        const payload = this.buildOutboundSessionMessagePayload(content);
+        const createdAt =
+            typeof opts.createdAt === 'number' && Number.isFinite(opts.createdAt)
+                ? Math.max(0, Math.trunc(opts.createdAt))
+                : Date.now();
+        const metaUpdatedAt =
+            typeof opts.meta?.happierStreamSegmentV1 === 'object'
+            && opts.meta?.happierStreamSegmentV1
+            && typeof (opts.meta.happierStreamSegmentV1 as Record<string, unknown>).updatedAtMs === 'number'
+            && Number.isFinite((opts.meta.happierStreamSegmentV1 as Record<string, unknown>).updatedAtMs)
+                ? Math.trunc((opts.meta.happierStreamSegmentV1 as Record<string, unknown>).updatedAtMs as number)
+                : undefined;
+        const updatedAt =
+            typeof opts.updatedAt === 'number' && Number.isFinite(opts.updatedAt)
+                ? Math.max(createdAt, Math.trunc(opts.updatedAt))
+                : typeof metaUpdatedAt === 'number'
+                    ? Math.max(createdAt, metaUpdatedAt)
+                : Date.now();
+
+        try {
+            this.socket.emit('transcript-stream-segment', {
+                sid: this.sessionId,
+                message: {
+                    localId,
+                    ...(sidechainId ? { sidechainId } : {}),
+                    content: payload,
+                    createdAt,
+                    updatedAt,
+                },
+            });
+        } catch {
+            // best effort
+        }
     }
 
     async fetchRecentTranscriptTextItemsForAcpImport(opts?: { take?: number }): Promise<Array<{ role: 'user' | 'agent'; text: string }>> {

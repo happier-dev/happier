@@ -53,6 +53,52 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
     });
   });
 
+  it('emits live snapshots through the explicit transcript session port', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+
+    const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
+    const liveCalls: Array<{ body: ACPMessageData; meta?: Record<string, unknown> }> = [];
+    const session = createBasicSessionClientWithOverrides({
+      sendAgentMessageCommitted: async () => undefined,
+    });
+    const transcriptSession = {
+      sendAgentMessageEphemeral: vi.fn((_provider: string, body: ACPMessageData, opts: { meta?: Record<string, unknown> }) => {
+        liveCalls.push({ body, meta: opts.meta });
+      }),
+      sendAgentMessageCommitted: vi.fn(async () => undefined),
+    };
+
+    const runtime = createAcpRuntime({
+      provider: 'claude',
+      directory: '/tmp',
+      session,
+      transcriptSession: transcriptSession as any,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+    } as any);
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+
+    backend.emit({ type: 'model-output', textDelta: 'Hello' } satisfies AgentMessage);
+
+    await Promise.resolve();
+
+    expect(liveCalls).toHaveLength(1);
+    expect(liveCalls[0]).toMatchObject({
+      body: { type: 'message', message: 'Hello' },
+      meta: {
+        happierStreamSegmentV1: expect.objectContaining({
+          segmentState: 'streaming',
+        }),
+      },
+    });
+  });
+
   it('can emit each durable checkpoint immediately when stream checkpoint buffering is disabled', async () => {
     const previousCheckpointMs = process.env.HAPPIER_STREAM_CHECKPOINT_MS;
     const previousCheckpointMinChars = process.env.HAPPIER_STREAM_CHECKPOINT_MIN_CHARS;

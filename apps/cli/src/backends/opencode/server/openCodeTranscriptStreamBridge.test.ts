@@ -11,6 +11,7 @@ async function flushTranscriptCommitMicrotasks(): Promise<void> {
 function createSessionStub() {
   const durableCalls: Array<Record<string, unknown>> = [];
   const bestEffortCalls: Array<Record<string, unknown>> = [];
+  const liveCalls: Array<Record<string, unknown>> = [];
 
   const session = {
     sendAgentMessageCommitted: async (provider: unknown, body: unknown, opts: Record<string, unknown>) => {
@@ -19,9 +20,12 @@ function createSessionStub() {
     sendAgentMessage: (provider: unknown, body: unknown, opts: Record<string, unknown>) => {
       bestEffortCalls.push({ provider, body, ...opts });
     },
+    sendAgentMessageEphemeral: (provider: unknown, body: unknown, opts: Record<string, unknown>) => {
+      liveCalls.push({ provider, body, ...opts });
+    },
   };
 
-  return { session, durableCalls, bestEffortCalls };
+  return { session, durableCalls, bestEffortCalls, liveCalls };
 }
 
 describe('createOpenCodeTranscriptStreamBridge', () => {
@@ -97,6 +101,39 @@ describe('createOpenCodeTranscriptStreamBridge', () => {
       sidechainId: 'call_task_1',
       happierSidechainStreamKey: 'stream-child',
       happierStreamSegmentV1: expect.objectContaining({ segmentState: 'complete' }),
+    });
+  });
+
+  it('forwards live transcript snapshots with the OpenCode stream metadata merged in', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+
+    const { session, liveCalls } = createSessionStub();
+    const bridge = createOpenCodeTranscriptStreamBridge({
+      provider: 'opencode' as any,
+      session: session as any,
+    });
+
+    bridge.appendAssistantDelta({
+      deltaText: 'Hello',
+      streamKey: 'stream-live',
+      remoteSessionId: 'ses_live_1',
+      messageId: 'msg_live_1',
+      sidechainId: null,
+    });
+
+    expect(liveCalls).toHaveLength(1);
+    expect(liveCalls[0]).toMatchObject({
+      provider: 'opencode',
+      body: { type: 'message', message: 'Hello' },
+      meta: {
+        happierStreamKey: 'stream-live',
+        opencodeMessageId: 'msg_live_1',
+        opencodeRemoteSessionId: 'ses_live_1',
+        happierStreamSegmentV1: expect.objectContaining({
+          segmentState: 'streaming',
+        }),
+      },
     });
   });
 });

@@ -5,6 +5,7 @@ import { createCatalogProviderAcpRuntime } from '@/agent/acp/runtime/createCatal
 import { emitCanonicalTurnDiffTool } from '@/agent/runtime/emitCanonicalTurnDiffTool';
 import { TurnChangeSetCollector } from '@/agent/tools/diff/turnChangeSetCollector';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
+import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
 import type { PermissionMode } from '@/api/types';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { extractOpenCodeFileDiff } from '../utils/extractOpenCodeFileDiff';
@@ -13,6 +14,7 @@ export function createOpenCodeAcpRuntime(params: {
   directory: string;
   machineId: string;
   session: ApiSessionClient;
+  transcriptSession?: TranscriptSessionPort;
   messageBuffer: MessageBuffer;
   mcpServers: Record<string, McpServerConfig>;
   permissionHandler: AcpPermissionHandler;
@@ -34,6 +36,7 @@ export function createOpenCodeAcpRuntime(params: {
     loggerLabel: 'OpenCodeACP',
     directory: params.directory,
     session: params.session,
+    transcriptSession: params.transcriptSession,
     messageBuffer: params.messageBuffer,
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,

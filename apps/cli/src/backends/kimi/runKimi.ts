@@ -30,10 +30,11 @@ export async function runKimi(opts: StandardAcpProviderRunOptions & {
     supportsMcpServers: false,
     machineMetadata: initialMachineMetadata,
     terminalDisplay: KimiTerminalDisplay,
-    createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled }) => createKimiAcpRuntime({
+    createRuntime: ({ directory, machineId, session, transcriptSession, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled }) => createKimiAcpRuntime({
       directory,
       machineId,
       session,
+      transcriptSession,
       messageBuffer,
       mcpServers,
       permissionHandler,

@@ -20,6 +20,7 @@ import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
 import { getAgentModelConfig, type AgentId } from '@happier-dev/agents';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { createStreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
+import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
 
 const DEFAULT_SESSION_CONTROL_TIMEOUT_MS = 15_000;
 
@@ -179,6 +180,7 @@ export function createAcpRuntime(params: {
   directory: string;
   happierSessionId?: string;
   session: AcpRuntimeSessionClient;
+  transcriptSession?: TranscriptSessionPort;
   messageBuffer: MessageBuffer;
   mcpServers: Record<string, McpServerConfig>;
   permissionHandler: AcpPermissionHandler;
@@ -389,7 +391,7 @@ export function createAcpRuntime(params: {
   const toolCallIdQueue: string[] = [];
   const streamedTranscriptWriter = createStreamedTranscriptWriter({
     provider: params.provider,
-    session: params.session,
+    session: params.transcriptSession ?? params.session,
   });
 
   const clearToolCallCache = () => {

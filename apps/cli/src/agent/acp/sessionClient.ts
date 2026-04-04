@@ -1,4 +1,4 @@
-import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
+import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
 import type { Metadata } from '@/api/types';
 
 /**
@@ -8,13 +8,7 @@ import type { Metadata } from '@/api/types';
  * instead of the full `ApiSessionClient` concrete class to keep tests and adapters
  * lightweight and deterministic.
  */
-export type AcpReplaySidechainSessionClient = Readonly<{
-  sendAgentMessageCommitted: (
-    provider: ACPProvider,
-    body: ACPMessageData,
-    opts: { localId: string; meta?: Record<string, unknown> },
-  ) => Promise<void>;
-}>;
+export type AcpReplaySidechainSessionClient = Pick<TranscriptSessionPort, 'sendAgentMessageCommitted'>;
 
 export type AcpReplayHistorySessionClient = AcpReplaySidechainSessionClient & Readonly<{
   sendUserTextMessageCommitted: (
@@ -29,9 +23,6 @@ export type AcpReplayHistorySessionClient = AcpReplaySidechainSessionClient & Re
 
 export type AcpRuntimeSessionClient = AcpReplayHistorySessionClient & Readonly<{
   keepAlive: (thinking: boolean, mode: 'local' | 'remote') => void;
-  sendAgentMessage: (
-    provider: ACPProvider,
-    body: ACPMessageData,
-    opts?: { localId?: string; meta?: Record<string, unknown> },
-  ) => void;
+  sendAgentMessage: NonNullable<TranscriptSessionPort['sendAgentMessage']>;
+  sendAgentMessageEphemeral?: TranscriptSessionPort['sendAgentMessageEphemeral'];
 }>;

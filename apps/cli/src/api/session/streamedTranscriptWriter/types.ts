@@ -1,18 +1,7 @@
-import type { ACPMessageData, ACPProvider } from '../sessionMessageTypes';
+import type { TranscriptSessionPort } from '../transcriptPort';
 import type { StreamedTranscriptSegmentKind } from './segmentKey';
 
-export type StreamedTranscriptWriterSession = Readonly<{
-  sendAgentMessage?: (
-    provider: ACPProvider,
-    body: ACPMessageData,
-    opts?: { localId?: string; meta?: Record<string, unknown> },
-  ) => void;
-  sendAgentMessageCommitted: (
-    provider: ACPProvider,
-    body: ACPMessageData,
-    opts: { localId: string; meta?: Record<string, unknown> },
-  ) => Promise<void>;
-}>;
+export type StreamedTranscriptWriterSession = TranscriptSessionPort;
 
 export type StreamedTranscriptWriter = Readonly<{
   appendAssistantDelta: (deltaText: string, opts?: { sidechainId?: string | null }) => void;

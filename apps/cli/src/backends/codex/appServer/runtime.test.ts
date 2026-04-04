@@ -716,6 +716,33 @@ describe('createCodexAppServerRuntime', () => {
         );
     });
 
+    it('uses the explicit transcript session port for live and durable transcript snapshots', async () => {
+        const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-transcript-port-');
+
+        const session = {
+            updateMetadata: vi.fn(),
+            sendAgentMessageCommitted: vi.fn(async () => {}),
+            sendCodexMessage: vi.fn(),
+        };
+        const transcriptSession = {
+            sendAgentMessageEphemeral: vi.fn(),
+            sendAgentMessageCommitted: vi.fn(async () => {}),
+        };
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: session as any,
+            transcriptSession: transcriptSession as any,
+        } as any);
+
+        await runtime.startOrLoad({});
+        await runtime.sendPrompt('bridge-streams');
+
+        expect(transcriptSession.sendAgentMessageEphemeral).toHaveBeenCalled();
+        expect(transcriptSession.sendAgentMessageCommitted).toHaveBeenCalled();
+        expect(session.sendAgentMessageCommitted).not.toHaveBeenCalled();
+    });
+
     it('does not append the full final assistant text into streaming drafts when the final text diverges from earlier deltas', async () => {
         const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-divergent-final-');
 

@@ -1,6 +1,6 @@
 import { createKeyedStreamedTranscriptBridge } from '@/api/session/createKeyedStreamedTranscriptBridge';
-import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { ACPProvider } from '@/api/session/sessionMessageTypes';
+import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
 
 type FlushReason = 'tool-call-boundary' | 'turn-end' | 'abort';
 
@@ -31,7 +31,7 @@ function buildSidechainMeta(params: {
 
 export function createOpenCodeTranscriptStreamBridge(params: {
   provider: ACPProvider;
-  session: Pick<ApiSessionClient, 'sendAgentMessage' | 'sendAgentMessageCommitted'>;
+  session: TranscriptSessionPort;
   checkpointIntervalMs?: number | null;
   checkpointMinChars?: number | null;
 }) {
@@ -47,14 +47,28 @@ export function createOpenCodeTranscriptStreamBridge(params: {
     createSessionForStream: (args) => {
       const baseMeta = buildSidechainMeta(args);
       return {
-        sendAgentMessage: (provider, body, opts) =>
-          params.session.sendAgentMessage(provider, body, {
-            ...opts,
-            meta: {
-              ...baseMeta,
-              ...(opts?.meta ?? {}),
-            },
-          }),
+        sendAgentMessage:
+          typeof params.session.sendAgentMessage === 'function'
+            ? (provider, body, opts) =>
+                params.session.sendAgentMessage?.(provider, body, {
+                  ...opts,
+                  meta: {
+                    ...baseMeta,
+                    ...(opts?.meta ?? {}),
+                  },
+                })
+            : undefined,
+        sendAgentMessageEphemeral:
+          typeof params.session.sendAgentMessageEphemeral === 'function'
+            ? (provider, body, opts) =>
+                params.session.sendAgentMessageEphemeral?.(provider, body, {
+                  ...opts,
+                  meta: {
+                    ...baseMeta,
+                    ...(opts?.meta ?? {}),
+                  },
+                })
+            : undefined,
         sendAgentMessageCommitted: (provider, body, opts) =>
           params.session.sendAgentMessageCommitted(provider, body, {
             ...opts,

@@ -63,12 +63,13 @@ export async function runConfiguredAcpBackend(
         title: backend.title,
       }));
     },
-    createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled }) =>
+    createRuntime: ({ directory, machineId, session, transcriptSession, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled }) =>
       createConfiguredAcpRuntime({
         backend,
         loggerLabel: `${backend.title}ACP`,
         directory,
         session,
+        transcriptSession,
         messageBuffer,
         mcpServers,
         permissionHandler,

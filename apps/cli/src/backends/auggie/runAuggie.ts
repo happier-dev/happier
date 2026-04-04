@@ -35,13 +35,14 @@ export async function runAuggie(opts: StandardAcpProviderRunOptions & {
     beforeInitializeSession: ({ metadata }) => {
       (metadata as any).auggieAllowIndexing = allowIndexingFromEnv;
     },
-    createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled }) => {
+    createRuntime: ({ directory, machineId, session, transcriptSession, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled }) => {
       const metadataSnapshot = session.getMetadataSnapshot?.() ?? null;
       const allowIndexing = allowIndexingFromEnv || metadataSnapshot?.auggieAllowIndexing === true;
       return createAuggieAcpRuntime({
         directory,
         machineId,
         session,
+        transcriptSession,
         messageBuffer,
         mcpServers,
         permissionHandler,

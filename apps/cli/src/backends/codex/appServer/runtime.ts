@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { PermissionMode } from '@/api/types';
 import { createKeyedStreamedTranscriptBridge } from '@/api/session/createKeyedStreamedTranscriptBridge';
+import type { StreamedTranscriptWriterSession } from '@/api/session/streamedTranscriptWriter';
 import { configuration } from '@/configuration';
 import {
     resolveSessionRollbackPlan,
@@ -201,6 +202,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
     processEnv?: NodeJS.ProcessEnv;
     configOverrides?: ReadonlyArray<string>;
     session: RuntimeSession;
+    transcriptSession?: StreamedTranscriptWriterSession;
     onThinkingChange: (thinking: boolean) => void;
     permissionHandler?: PermissionHandlerSubset | null;
     getPermissionMode?: (() => PermissionMode) | null;
@@ -248,7 +250,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
         sidechainId: string | null;
     }>({
         provider: 'codex',
-        createSessionForStream: () => params.session,
+        createSessionForStream: () => params.transcriptSession ?? params.session,
     });
     const assistantTextByItemId = new Map<string, string>();
     const reasoningTextByItemId = new Map<string, string>();

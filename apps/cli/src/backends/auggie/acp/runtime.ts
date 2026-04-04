@@ -2,6 +2,7 @@ import type { McpServerConfig } from '@/agent';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import { createCatalogProviderAcpRuntime } from '@/agent/acp/runtime/createCatalogProviderAcpRuntime';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
+import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
 import type { PermissionMode } from '@/api/types';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 
@@ -12,6 +13,7 @@ export function createAuggieAcpRuntime(params: {
   directory: string;
   machineId: string;
   session: ApiSessionClient;
+  transcriptSession?: TranscriptSessionPort;
   messageBuffer: MessageBuffer;
   mcpServers: Record<string, McpServerConfig>;
   permissionHandler: AcpPermissionHandler;
@@ -27,6 +29,7 @@ export function createAuggieAcpRuntime(params: {
     loggerLabel: 'AuggieACP',
     directory: params.directory,
     session: params.session,
+    transcriptSession: params.transcriptSession,
     messageBuffer: params.messageBuffer,
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,

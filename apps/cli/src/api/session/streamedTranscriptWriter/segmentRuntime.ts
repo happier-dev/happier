@@ -10,8 +10,13 @@ export type StreamedTranscriptSegmentRuntime = {
   startedAtMs: number;
   accumulatedText: string;
   didWriteDurable: boolean;
+  didWriteLive: boolean;
   lastCheckpointAtMs: number;
   lastCheckpointTextLen: number;
+  lastLiveSnapshotAtMs: number;
+  lastLiveSnapshotTextLen: number;
+  lastLiveSnapshotText: string;
+  liveSnapshotTimer: ReturnType<typeof setTimeout> | null;
   isCommittingDurable: boolean;
   pendingDurableCommit: { state: StreamedTranscriptSegmentState; interruptedReason?: string } | null;
   idleWaiters: Array<() => void>;

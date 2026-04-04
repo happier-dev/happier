@@ -28,10 +28,11 @@ export async function runCopilot(opts: StandardAcpProviderRunOptions & {
     machineMetadata: initialMachineMetadata,
     terminalDisplay: CopilotTerminalDisplay,
     resolveRuntimeDirectory: ({ session, metadata }) => session.getMetadataSnapshot()?.path ?? metadata.path,
-    createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled }) => createCopilotAcpRuntime({
+    createRuntime: ({ directory, machineId, session, transcriptSession, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled }) => createCopilotAcpRuntime({
       directory,
       machineId,
       session,
+      transcriptSession,
       messageBuffer,
       mcpServers,
       permissionHandler,

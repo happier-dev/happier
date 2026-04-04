@@ -121,6 +121,60 @@ describe('DeferredApiSessionClient', () => {
     expect(calls).toEqual(['user', 'codex']);
   });
 
+  it('buffers transcript live and committed writes until attach then flushes them in order', async () => {
+    const deferred = new DeferredApiSessionClient({
+      placeholderSessionId: 'PID-1',
+      limits: { maxEntries: 10, maxBytes: 10_000 },
+    });
+
+    const calls: string[] = [];
+    const real = {
+      sessionId: 'sess_1',
+      rpcHandlerManager: { registerHandler: vi.fn(), invokeLocal: vi.fn(async () => ({})) },
+      sendSessionEvent: vi.fn(),
+      sendClaudeSessionMessage: vi.fn(),
+      sendAgentMessage: vi.fn(),
+      sendAgentMessageEphemeral: vi.fn((_provider: unknown, body: any) => {
+        calls.push(`live:${String(body?.message ?? '')}`);
+      }),
+      sendAgentMessageCommitted: vi.fn(async (_provider: unknown, body: any) => {
+        calls.push(`commit:${String(body?.message ?? '')}`);
+      }),
+      sendCodexMessage: vi.fn(),
+      sendUserTextMessage: vi.fn(),
+      updateMetadata: vi.fn(),
+      updateAgentState: vi.fn(),
+      keepAlive: vi.fn(),
+      getMetadataSnapshot: vi.fn(() => createMetadataStub()),
+      waitForMetadataUpdate: vi.fn(async () => true),
+      popPendingMessage: vi.fn(async () => true),
+      peekPendingMessageQueueV2Count: vi.fn(async () => 0),
+      discardPendingMessageQueueV2All: vi.fn(async () => 0),
+      discardCommittedMessageLocalIds: vi.fn(async () => 0),
+      sendSessionDeath: vi.fn(),
+      flush: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+    } as const;
+
+    (deferred as any).sendAgentMessageEphemeral(
+      'codex',
+      { type: 'message', message: 'Hello' },
+      { localId: 'segment-1', createdAt: 1, updatedAt: 2 },
+    );
+    const committedPromise = (deferred as any).sendAgentMessageCommitted(
+      'codex',
+      { type: 'message', message: 'Hello world' },
+      { localId: 'segment-1' },
+    );
+
+    expect(calls).toEqual([]);
+
+    await deferred.attach(real as any);
+    await committedPromise;
+
+    expect(calls).toEqual(['live:Hello', 'commit:Hello world']);
+  });
+
   it('flushes buffered calls best-effort when an early write fails (no hang, no abort)', async () => {
     const deferred = new DeferredApiSessionClient({
       placeholderSessionId: 'PID-1',

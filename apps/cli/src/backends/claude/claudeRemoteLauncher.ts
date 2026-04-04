@@ -365,6 +365,10 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             provider: 'claude' as any,
             session: {
                 sendAgentMessage: (provider, body, opts) => session.client.sendAgentMessage(provider, body, opts),
+                sendAgentMessageEphemeral:
+                    typeof client?.sendAgentMessageEphemeral === 'function'
+                        ? (provider, body, opts) => client.sendAgentMessageEphemeral(provider, body, opts)
+                        : undefined,
                 sendAgentMessageCommitted,
             },
         });

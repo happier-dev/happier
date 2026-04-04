@@ -156,6 +156,16 @@ export interface ClientToServerEvents {
     sid: string;
     run: ExecutionRunPublicState;
   }) => void
+  'transcript-stream-segment': (data: {
+    sid: string;
+    message: {
+      localId: string;
+      sidechainId?: string | null;
+      content: string | SessionMessageContent;
+      createdAt: number;
+      updatedAt: number;
+    };
+  }) => void
   'update-metadata': (data: { sid: string, expectedVersion: number, metadata: string }, cb: (answer: UpdateMetadataAckResponse) => void) => void,
   'update-state': (data: {
     sid: string,

@@ -119,6 +119,59 @@ describe('ApiSessionClient transcript vNext transport', () => {
     expect((client as any).sendTranscriptDraftDelta).toBeUndefined();
   });
 
+  it('emits live transcript stream segments on the session socket without waiting for durable ACKs', async () => {
+    vi.resetModules();
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true, id: 'm1', seq: 1, localId: 'segment-1', didWrite: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+
+    const { ApiSessionClient } = await import('./sessionClient');
+
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    (client as any).sendAgentMessageEphemeral(
+      'codex',
+      { type: 'message', message: 'Hello', sidechainId: 'sc-1' } as any,
+      {
+        localId: 'segment-1',
+        createdAt: 1_000,
+        meta: {
+          happierStreamSegmentV1: {
+            v: 1,
+            segmentKind: 'assistant',
+            segmentLocalId: 'segment-1',
+            segmentState: 'streaming',
+            startedAtMs: 1_000,
+            updatedAtMs: 1_025,
+          },
+        },
+      },
+    );
+
+    expect(sessionSocketStub.emitWithAck).not.toHaveBeenCalled();
+    expect(sessionSocketStub.emit).toHaveBeenCalledWith(
+      'transcript-stream-segment',
+      expect.objectContaining({
+        sid: 's1',
+        message: expect.objectContaining({
+          localId: 'segment-1',
+          sidechainId: 'sc-1',
+          createdAt: 1_000,
+          updatedAt: 1_025,
+          content: {
+            t: 'plain',
+            v: expect.objectContaining({
+              role: 'agent',
+              content: {
+                type: 'acp',
+                provider: 'codex',
+                data: { type: 'message', message: 'Hello', sidechainId: 'sc-1' },
+              },
+            }),
+          },
+        }),
+      }),
+    );
+  });
+
   it('clears materialized localId state when a durable stream checkpoint arrives as message-updated', async () => {
     vi.resetModules();
     sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true, id: 'm1', seq: 1, localId: 'segment-1', didWrite: true } });

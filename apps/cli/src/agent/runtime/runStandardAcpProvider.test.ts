@@ -223,6 +223,66 @@ describe('runStandardAcpProvider', () => {
     expect(capturedStartRuntimeBeforeFirstPrompt).toBe(true);
   });
 
+  it('passes a transcript session port that follows session swaps', async () => {
+    const harness = createHarness();
+    const initialSession = harness.session;
+    initialSession.sendAgentMessageCommitted = vi.fn(async () => undefined);
+    initialSession.sendAgentMessageEphemeral = vi.fn();
+
+    const swappedSession = {
+      ...initialSession,
+      sessionId: 'session-2',
+      sendAgentMessageCommitted: vi.fn(async () => undefined),
+      sendAgentMessageEphemeral: vi.fn(),
+    };
+
+    let swapSession: ((nextSession: any) => Promise<void> | void) | null = null;
+    harness.deps.initializeBackendRunSessionFn = async ({ onSessionSwap }: any) => {
+      swapSession = onSessionSwap;
+      return {
+        session: initialSession,
+        reconnectionHandle: null,
+        reportedSessionId: 'session-1',
+        attachedToExistingSession: false,
+      };
+    };
+
+    let transcriptSession: any = null;
+    harness.config.createRuntime = (params: any) => {
+      transcriptSession = params.transcriptSession;
+      return harness.runtime;
+    };
+
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      await swapSession?.(swappedSession);
+      await transcriptSession.sendAgentMessageCommitted(
+        'qwen',
+        { type: 'message', message: 'final text' },
+        { localId: 'segment-1' },
+      );
+      transcriptSession.sendAgentMessageEphemeral?.(
+        'qwen',
+        { type: 'message', message: 'live text' },
+        { localId: 'segment-1', createdAt: 1, updatedAt: 2 },
+      );
+    };
+
+    await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+
+    expect(initialSession.sendAgentMessageCommitted).not.toHaveBeenCalled();
+    expect(initialSession.sendAgentMessageEphemeral).not.toHaveBeenCalled();
+    expect(swappedSession.sendAgentMessageCommitted).toHaveBeenCalledWith(
+      'qwen',
+      { type: 'message', message: 'final text' },
+      { localId: 'segment-1' },
+    );
+    expect(swappedSession.sendAgentMessageEphemeral).toHaveBeenCalledWith(
+      'qwen',
+      { type: 'message', message: 'live text' },
+      { localId: 'segment-1', createdAt: 1, updatedAt: 2 },
+    );
+  });
+
   it('trims the initial resume id before enabling strict resume mode', async () => {
     const harness = createHarness();
     harness.opts.resume = '  resume-id  ';

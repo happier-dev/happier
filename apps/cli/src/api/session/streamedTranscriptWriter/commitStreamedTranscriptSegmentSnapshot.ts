@@ -1,45 +1,12 @@
 import { logger } from '@/ui/logger';
 
-import type { ACPMessageData, ACPProvider } from '../sessionMessageTypes';
+import type { ACPProvider } from '../sessionMessageTypes';
 import type { StreamedTranscriptWriterSession } from './types';
 import type { StreamedTranscriptSegmentRuntime, StreamedTranscriptSegmentState } from './segmentRuntime';
-
-function buildDurableSnapshotBody(segment: StreamedTranscriptSegmentRuntime): ACPMessageData {
-  return segment.kind === 'assistant'
-    ? {
-        type: 'message',
-        message: segment.accumulatedText,
-        ...(segment.sidechainId ? { sidechainId: segment.sidechainId } : {}),
-      }
-    : {
-        type: 'thinking',
-        text: segment.accumulatedText,
-        ...(segment.sidechainId ? { sidechainId: segment.sidechainId } : {}),
-      };
-}
-
-function buildDurableSnapshotMeta(params: {
-  segment: StreamedTranscriptSegmentRuntime;
-  state: StreamedTranscriptSegmentState;
-  interruptedReason?: string;
-  nowMs: number;
-}): Record<string, unknown> {
-  const { segment, state, interruptedReason, nowMs } = params;
-
-  return {
-    happierStreamSegmentV1: {
-      v: 1,
-      segmentKind: segment.kind,
-      segmentLocalId: segment.segmentLocalId,
-      segmentState: state,
-      startedAtMs: segment.startedAtMs,
-      updatedAtMs: nowMs,
-      ...(state === 'interrupted' && typeof interruptedReason === 'string' && interruptedReason
-        ? { interruptedReason }
-        : {}),
-    },
-  };
-}
+import {
+  buildStreamedTranscriptSegmentSnapshotBody,
+  buildStreamedTranscriptSegmentSnapshotMeta,
+} from './buildStreamedTranscriptSegmentSnapshot';
 
 export function commitStreamedTranscriptSegmentSnapshot(params: {
   provider: ACPProvider;
@@ -59,8 +26,8 @@ export function commitStreamedTranscriptSegmentSnapshot(params: {
 
   const nowMs = Date.now();
   const durableLocalId = segment.segmentLocalId;
-  const body = buildDurableSnapshotBody(segment);
-  const meta = buildDurableSnapshotMeta({ segment, state, interruptedReason, nowMs });
+  const body = buildStreamedTranscriptSegmentSnapshotBody(segment);
+  const meta = buildStreamedTranscriptSegmentSnapshotMeta({ segment, state, interruptedReason, nowMs });
 
   void session
     .sendAgentMessageCommitted(provider, body, { localId: durableLocalId, meta })

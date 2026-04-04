@@ -2,6 +2,7 @@ import type { McpServerConfig } from '@/agent';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import { createCatalogProviderAcpRuntime } from '@/agent/acp/runtime/createCatalogProviderAcpRuntime';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
+import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 
 import { maybeUpdateKimiSessionIdMetadata } from '@/backends/kimi/utils/kimiSessionIdMetadata';
@@ -11,6 +12,7 @@ export function createKimiAcpRuntime(params: {
   directory: string;
   machineId: string;
   session: ApiSessionClient;
+  transcriptSession?: TranscriptSessionPort;
   messageBuffer: MessageBuffer;
   mcpServers: Record<string, McpServerConfig>;
   permissionHandler: AcpPermissionHandler;
@@ -25,6 +27,7 @@ export function createKimiAcpRuntime(params: {
     loggerLabel: 'KimiACP',
     directory: params.directory,
     session: params.session,
+    transcriptSession: params.transcriptSession,
     messageBuffer: params.messageBuffer,
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,

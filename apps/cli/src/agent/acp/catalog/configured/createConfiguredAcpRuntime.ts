@@ -3,6 +3,7 @@ import { createAcpRuntime } from '@/agent/acp/runtime/createAcpRuntime';
 import type { McpServerConfig } from '@/agent';
 import type { AgentBackend } from '@/agent/core';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
+import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
 import type { PermissionMode } from '@/api/types';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { logger } from '@/ui/logger';
@@ -19,6 +20,7 @@ type CreateConfiguredAcpRuntimeParams = Readonly<{
   loggerLabel: string;
   directory: string;
   session: ApiSessionClient;
+  transcriptSession?: TranscriptSessionPort;
   pushSender?: PermissionRequestPushSender;
   messageBuffer: MessageBuffer;
   mcpServers: Record<string, McpServerConfig>;
@@ -51,6 +53,7 @@ export function createConfiguredAcpRuntime(params: CreateConfiguredAcpRuntimePar
     directory: params.directory,
     happierSessionId: params.session.sessionId,
     session: params.session,
+    transcriptSession: params.transcriptSession,
     messageBuffer: params.messageBuffer,
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,

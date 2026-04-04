@@ -23,11 +23,12 @@ export async function runPi(opts: StandardAcpProviderRunOptions & {
     machineMetadata: initialMachineMetadata,
     terminalDisplay: PiTerminalDisplay,
     resolvePermissionModeQueueKey: (permissionMode) => buildPiToolsForPermissionMode(permissionMode).join(','),
-    createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled }) =>
+    createRuntime: ({ directory, machineId, session, transcriptSession, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled }) =>
       createPiAcpRuntime({
         directory,
         machineId,
         session,
+        transcriptSession,
         messageBuffer,
         mcpServers,
         permissionHandler,

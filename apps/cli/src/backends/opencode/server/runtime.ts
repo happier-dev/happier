@@ -4,6 +4,7 @@ import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/Prov
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { Metadata, PermissionMode } from '@/api/types';
 import type { ACPProvider } from '@/api/session/sessionMessageTypes';
+import type { StreamedTranscriptWriterSession } from '@/api/session/streamedTranscriptWriter';
 import { configuration } from '@/configuration';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { logger } from '@/ui/logger';
@@ -115,6 +116,7 @@ export function createOpenCodeServerRuntime(params: {
   directory: string;
   env?: NodeJS.ProcessEnv;
   session: ApiSessionClient;
+  transcriptSession?: StreamedTranscriptWriterSession;
   messageBuffer: MessageBuffer;
   mcpServers: Record<string, McpServerConfig>;
   permissionHandler: ProviderEnforcedPermissionHandler;
@@ -1194,7 +1196,7 @@ export function createOpenCodeServerRuntime(params: {
 
   const transcriptStreamBridge = createOpenCodeTranscriptStreamBridge({
     provider,
-    session: params.session,
+    session: params.transcriptSession ?? params.session,
   });
 
   const clearStreamWriters = () => {

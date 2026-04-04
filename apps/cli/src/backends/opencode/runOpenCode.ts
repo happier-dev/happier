@@ -86,12 +86,13 @@ export async function runOpenCode(opts: StandardAcpProviderRunOptions & {
       mountRemoteUi = controller.mount;
       unmountRemoteUi = controller.unmount;
     },
-    createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled }) => {
+    createRuntime: ({ directory, machineId, session, transcriptSession, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled }) => {
       if (backendMode === 'acp') {
         return createOpenCodeAcpRuntime({
           directory,
           machineId,
           session,
+          transcriptSession,
           messageBuffer,
           mcpServers,
           permissionHandler,
@@ -104,6 +105,7 @@ export async function runOpenCode(opts: StandardAcpProviderRunOptions & {
       return createOpenCodeServerRuntime({
         directory,
         session,
+        transcriptSession,
         messageBuffer,
         mcpServers,
         permissionHandler,
