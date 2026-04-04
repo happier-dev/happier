@@ -21,7 +21,7 @@ function initGitWorkspace(): { workspace: string; head: string } {
 }
 
 describe('git RPC handlers (stash)', () => {
-    it('lists only managed stashes and reports counts', async () => {
+    it('lists all stashes and marks unmanaged entries explicitly', async () => {
         const { workspace, head } = initGitWorkspace();
 
         writeFileSync(join(workspace, 'unmanaged.txt'), 'unmanaged\n');
@@ -35,10 +35,12 @@ describe('git RPC handlers (stash)', () => {
 
         expect(list.success).toBe(true);
         expect(list.totalCount).toBe(2);
-        expect(list.managedCount).toBe(1);
-        expect(list.managedStashes).toHaveLength(1);
-        expect(list.managedStashes?.[0]?.stashRef).toMatch(/^stash@\{\d+\}$/);
-        expect(list.managedStashes?.[0]?.branch).toBe(head);
+        expect(list.stashes).toHaveLength(2);
+        const managed = list.stashes?.find((entry: any) => entry.kind === 'branch');
+        const unmanaged = list.stashes?.find((entry: any) => entry.kind === 'unmanaged');
+        expect(managed?.stashRef).toMatch(/^stash@\{\d+\}$/);
+        expect(managed?.branch).toBe(head);
+        expect(unmanaged?.message).toContain('unmanaged');
     });
 
     it('shows and drops a managed stash', async () => {

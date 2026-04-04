@@ -78,6 +78,23 @@ type GitStashListRow = {
     message: string;
 };
 
+function buildScmStashEntryFromGitRow(row: GitStashListRow): ScmStashEntry {
+    const marker = parseManagedStashMarker(row.message);
+    if (!marker) {
+        return {
+            stashRef: row.stashRef,
+            kind: 'unmanaged',
+            message: row.message,
+        };
+    }
+    return {
+        stashRef: row.stashRef,
+        kind: marker.kind,
+        branch: marker.branch,
+        message: row.message,
+    };
+}
+
 async function readGitStashList(context: ScmBackendContext): Promise<
     | { ok: true; rows: GitStashListRow[] }
     | { ok: false; errorCode: ScmOperationErrorCode; error: string; stdout?: string; stderr?: string }
@@ -140,6 +157,21 @@ export async function listGitManagedStashes(context: ScmBackendContext): Promise
         ok: true,
         totalCount: list.rows.length,
         managed,
+    };
+}
+
+export async function listGitStashes(context: ScmBackendContext): Promise<
+    | { ok: true; totalCount: number; stashes: ScmStashEntry[] }
+    | { ok: false; errorCode: ScmOperationErrorCode; error: string }
+> {
+    const list = await readGitStashList(context);
+    if (!list.ok) {
+        return { ok: false, errorCode: list.errorCode, error: list.error };
+    }
+    return {
+        ok: true,
+        totalCount: list.rows.length,
+        stashes: list.rows.map(buildScmStashEntryFromGitRow),
     };
 }
 
@@ -250,20 +282,22 @@ export async function gitStashList(input: {
     context: ScmBackendContext;
     request: ScmStashListRequest;
 }): Promise<ScmStashListResponse> {
-    const managed = await listGitManagedStashes(input.context);
-    if (!managed.ok) {
+    const stashes = await listGitStashes(input.context);
+    if (!stashes.ok) {
         return {
             success: false,
-            errorCode: managed.errorCode,
-            error: managed.error,
+            errorCode: stashes.errorCode,
+            error: stashes.error,
         };
     }
 
+    const managedStashes = stashes.stashes.filter((entry) => entry.kind !== 'unmanaged');
     return {
         success: true,
-        managedStashes: managed.managed,
-        managedCount: managed.managed.length,
-        totalCount: managed.totalCount,
+        stashes: stashes.stashes,
+        managedStashes,
+        managedCount: managedStashes.length,
+        totalCount: stashes.totalCount,
     };
 }
 
