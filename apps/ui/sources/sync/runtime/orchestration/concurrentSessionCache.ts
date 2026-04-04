@@ -313,6 +313,20 @@ function isManagedServerActive(entry: ManagedConcurrentServer): boolean {
     return managedServers.get(entry.id) === entry;
 }
 
+function isConcurrentMachineCacheUpdate(raw: unknown): boolean {
+    if (!raw || typeof raw !== 'object') {
+        return false;
+    }
+
+    const body = (raw as { body?: unknown }).body;
+    if (!body || typeof body !== 'object') {
+        return false;
+    }
+
+    const updateType = (body as { t?: unknown }).t;
+    return updateType === 'new-machine' || updateType === 'update-machine';
+}
+
 function queueRefresh(entry: ManagedConcurrentServer): void {
     if (!isManagedServerActive(entry)) return;
     if (entry.reachabilityState.phase !== 'online') return;
@@ -393,9 +407,6 @@ function createManagedServer(target: ConcurrentTarget, credentials: AuthCredenti
         refreshInFlight: null,
         refreshTimer: null,
     };
-    // NOTE: Do not refresh full snapshots on user-scoped socket `update` events.
-    // Those events can be high-frequency (presence/activity), and full refresh loops are
-    // expensive + noisy. Periodic refresh handles eventual consistency for non-active servers.
 
     entry.reachabilityUnsubscribe = subscribeServerReachabilityState(normalizedServerUrl, (state) => {
         if (!isManagedServerActive(entry)) return;
@@ -424,6 +435,12 @@ function createManagedServer(target: ConcurrentTarget, credentials: AuthCredenti
             });
             entry.socket = socket;
             entry.socketTransport = transport;
+            socket.on('update', (raw: unknown) => {
+                if (!isConcurrentMachineCacheUpdate(raw)) {
+                    return;
+                }
+                queueRefresh(entry);
+            });
 
             entry.detachSocketTransportListeners = [
                 transport.onConnected(() => {

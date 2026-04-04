@@ -147,6 +147,12 @@ vi.mock('@/activity/notifications/runtime/ActivityLocalNotificationRuntime', () 
     ActivityLocalNotificationRuntime: () => null,
 }));
 
+const ActivitySurfacesRuntime = vi.hoisted(() => vi.fn(() => null));
+
+vi.mock('@/activity/runtime/ActivitySurfacesRuntime', () => ({
+    ActivitySurfacesRuntime,
+}));
+
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
@@ -239,6 +245,7 @@ afterEach(() => {
     vi.resetModules();
     router.replace.mockReset();
     router.push.mockReset();
+    ActivitySurfacesRuntime.mockClear();
     lastNotificationResponse = null;
     platformState.os = 'web';
     isAuthenticated = true;
@@ -266,6 +273,7 @@ describe('RootLayout hooks order', () => {
                     tree!.update(React.createElement(RootLayout));
                 });
             }).not.toThrow();
+            expect(ActivitySurfacesRuntime).toHaveBeenCalled();
         } finally {
             if (tree) {
                 act(() => {

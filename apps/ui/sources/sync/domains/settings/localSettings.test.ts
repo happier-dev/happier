@@ -23,6 +23,20 @@ describe('localSettingsParse', () => {
         expect(parsed.localNotificationsShowPendingPermissionRequests).toBe(true);
         expect(parsed.localNotificationsShowPendingUserActionRequests).toBe(true);
         expect(parsed.localNotificationsForegroundBehavior).toBe('full');
+        expect(parsed.activitySurfacesEnabled).toBe(true);
+        expect(parsed.iosLiveActivitiesEnabled).toBe(true);
+        expect(parsed.iosWidgetsEnabled).toBe(true);
+        expect(parsed.liveActivitiesMode).toBe('focused');
+        expect(parsed.liveActivitiesMaxConcurrent).toBe(1);
+        expect(parsed.liveActivitiesShowPreviewText).toBe(true);
+        expect(parsed.liveActivitiesAllowActionButtons).toBe(true);
+        expect(parsed.liveActivitiesIncludeReady).toBe(true);
+        expect(parsed.liveActivitiesIncludeThinking).toBe(true);
+        expect(parsed.homeScreenWidgetsMode).toBe('summary');
+        expect(parsed.homeScreenWidgetsShowPreviewText).toBe(true);
+        expect(parsed.homeScreenWidgetsShowMachinePath).toBe(true);
+        expect(parsed.activitySurfaceTapTarget).toBe('open_session');
+        expect(parsed.activitySurfacePrivacyMode).toBe('title_only');
         expect(typeof (parsed as any).sidebarWidthPx).toBe('number');
         expect(typeof (parsed as any).sidebarWidthBasisPx).toBe('number');
         expect((parsed as any).bottomPaneHeightPx).toBe(320);
@@ -83,6 +97,20 @@ describe('localSettingsParse', () => {
             localNotificationsShowPendingPermissionRequests: false,
             localNotificationsShowPendingUserActionRequests: false,
             localNotificationsForegroundBehavior: 'silent',
+            activitySurfacesEnabled: false,
+            iosLiveActivitiesEnabled: false,
+            iosWidgetsEnabled: false,
+            liveActivitiesMode: 'running',
+            liveActivitiesMaxConcurrent: 4,
+            liveActivitiesShowPreviewText: false,
+            liveActivitiesAllowActionButtons: false,
+            liveActivitiesIncludeReady: false,
+            liveActivitiesIncludeThinking: false,
+            homeScreenWidgetsMode: 'attention',
+            homeScreenWidgetsShowPreviewText: false,
+            homeScreenWidgetsShowMachinePath: false,
+            activitySurfaceTapTarget: 'open_sessions',
+            activitySurfacePrivacyMode: 'include_preview',
         });
 
         expect(parsed.activityBadgesEnabled).toBe(false);
@@ -94,5 +122,19 @@ describe('localSettingsParse', () => {
         expect(parsed.localNotificationsShowPendingPermissionRequests).toBe(false);
         expect(parsed.localNotificationsShowPendingUserActionRequests).toBe(false);
         expect(parsed.localNotificationsForegroundBehavior).toBe('silent');
+        expect(parsed.activitySurfacesEnabled).toBe(false);
+        expect(parsed.iosLiveActivitiesEnabled).toBe(false);
+        expect(parsed.iosWidgetsEnabled).toBe(false);
+        expect(parsed.liveActivitiesMode).toBe('running');
+        expect(parsed.liveActivitiesMaxConcurrent).toBe(4);
+        expect(parsed.liveActivitiesShowPreviewText).toBe(false);
+        expect(parsed.liveActivitiesAllowActionButtons).toBe(false);
+        expect(parsed.liveActivitiesIncludeReady).toBe(false);
+        expect(parsed.liveActivitiesIncludeThinking).toBe(false);
+        expect(parsed.homeScreenWidgetsMode).toBe('attention');
+        expect(parsed.homeScreenWidgetsShowPreviewText).toBe(false);
+        expect(parsed.homeScreenWidgetsShowMachinePath).toBe(false);
+        expect(parsed.activitySurfaceTapTarget).toBe('open_sessions');
+        expect(parsed.activitySurfacePrivacyMode).toBe('include_preview');
     });
 });

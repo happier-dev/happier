@@ -3,7 +3,7 @@ import type { ApiEphemeralActivityUpdate } from '../api/types/apiTypes';
 import { ActivityUpdateAccumulator } from './activityUpdateAccumulator';
 
 type CapturedTimeout = {
-    handle: number;
+    handle: ReturnType<typeof setTimeout>;
     delay: number;
     callback: () => void;
     cleared: boolean;
@@ -13,10 +13,10 @@ function captureTimeoutCallbacks() {
     const callbacks: CapturedTimeout[] = [];
     let nextHandle = 1;
 
-    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((callback: TimerHandler, delay?: number) => {
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback: Parameters<typeof setTimeout>[0], delay?: number) => {
         const handle = nextHandle++;
         const entry: CapturedTimeout = {
-            handle,
+            handle: handle as unknown as ReturnType<typeof setTimeout>,
             delay: typeof delay === 'number' ? delay : 0,
             callback: () => {
                 if (entry.cleared) {
@@ -32,9 +32,9 @@ function captureTimeoutCallbacks() {
 
         callbacks.push(entry);
         return handle as unknown as ReturnType<typeof setTimeout>;
-    }) as typeof setTimeout);
+    });
 
-    vi.spyOn(globalThis, 'clearTimeout').mockImplementation(((handle: number) => {
+    vi.spyOn(globalThis, 'clearTimeout').mockImplementation(((handle: ReturnType<typeof setTimeout>) => {
         const entry = callbacks.find((candidate) => candidate.handle === handle);
         if (entry) {
             entry.cleared = true;

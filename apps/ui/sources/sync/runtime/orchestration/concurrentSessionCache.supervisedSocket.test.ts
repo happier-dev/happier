@@ -13,6 +13,16 @@ const appStateAddListener = vi.hoisted(() =>
     }),
 );
 const runtimeFetchSpy = vi.fn();
+const fetchAndApplySessionsSpy = vi.hoisted(() =>
+    vi.fn<(params: { applySessions: (sessions: unknown[]) => void }) => Promise<void>>(async ({ applySessions }) => {
+        applySessions([]);
+    }),
+);
+const fetchAndApplyMachinesSpy = vi.hoisted(() =>
+    vi.fn<(params: { applyMachines: (machines: unknown[]) => void }) => Promise<void>>(async ({ applyMachines }) => {
+        applyMachines([]);
+    }),
+);
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -69,6 +79,11 @@ function createSocketStub() {
         removeAllListeners: vi.fn(() => {
             listeners.clear();
         }),
+        emitServerEvent: (event: string, payload: unknown) => {
+            for (const listener of listeners.get(event) ?? []) {
+                listener(payload);
+            }
+        },
     };
     return socket;
 }
@@ -100,14 +115,10 @@ function mockConcurrentSessionCacheDeps() {
         decodeBase64: () => new Uint8Array(32),
     }));
     vi.doMock('@/sync/engine/sessions/sessionSnapshot', () => ({
-        fetchAndApplySessions: async ({ applySessions }: { applySessions: (sessions: unknown[]) => void }) => {
-            applySessions([]);
-        },
+        fetchAndApplySessions: (params: { applySessions: (sessions: unknown[]) => void }) => fetchAndApplySessionsSpy(params),
     }));
     vi.doMock('@/sync/engine/machines/syncMachines', () => ({
-        fetchAndApplyMachines: async ({ applyMachines }: { applyMachines: (machines: unknown[]) => void }) => {
-            applyMachines([]);
-        },
+        fetchAndApplyMachines: (params: { applyMachines: (machines: unknown[]) => void }) => fetchAndApplyMachinesSpy(params),
     }));
     vi.doMock('@/log', () => ({
         log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -158,6 +169,14 @@ beforeEach(() => {
     listServerProfilesSpy.mockReset();
     getActiveServerSnapshotSpy.mockReset();
     runtimeFetchSpy.mockReset();
+    fetchAndApplySessionsSpy.mockReset();
+    fetchAndApplySessionsSpy.mockImplementation(async ({ applySessions }: { applySessions: (sessions: unknown[]) => void }) => {
+        applySessions([]);
+    });
+    fetchAndApplyMachinesSpy.mockReset();
+    fetchAndApplyMachinesSpy.mockImplementation(async ({ applyMachines }: { applyMachines: (machines: unknown[]) => void }) => {
+        applyMachines([]);
+    });
     appStateHandlers.clear();
     appState.currentState = 'active';
     appStateAddListener.mockClear();
@@ -259,7 +278,7 @@ describe('concurrent session cache supervised sockets', () => {
         stopConcurrentSessionCacheSync();
     });
 
-    it('does not subscribe to socket.onAny or socket update events', async () => {
+    it('subscribes to machine updates without using socket.onAny', async () => {
         runtimeFetchSpy.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200, headers: new Headers() }));
         const fakeSocket = createSocketStub();
         ioSpy.mockReturnValue(fakeSocket);
@@ -282,7 +301,87 @@ describe('concurrent session cache supervised sockets', () => {
 
         expect(fakeSocket.onAny).not.toHaveBeenCalled();
         expect(fakeSocket.on).toHaveBeenCalledWith('connect', expect.any(Function));
-        expect(fakeSocket.on).not.toHaveBeenCalledWith('update', expect.any(Function));
+        expect(fakeSocket.on).toHaveBeenCalledWith('update', expect.any(Function));
+
+        stopConcurrentSessionCacheSync();
+    });
+
+    it('refreshes the remote machine cache when a machine update arrives on the concurrent socket', async () => {
+        runtimeFetchSpy.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200, headers: new Headers() }));
+        const fakeSocket = createSocketStub();
+        ioSpy.mockReturnValue(fakeSocket);
+        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
+        listServerProfilesSpy.mockReturnValue([
+            { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
+            { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
+        ]);
+        getActiveServerSnapshotSpy.mockReturnValue({
+            serverId: 'server-a',
+            serverUrl: 'https://stack-a.example.test',
+            kind: 'stack',
+            generation: 1,
+        });
+
+        let machineRefreshCount = 0;
+        fetchAndApplyMachinesSpy.mockImplementation(async ({ applyMachines }: { applyMachines: (machines: unknown[]) => void }) => {
+            machineRefreshCount += 1;
+            if (machineRefreshCount === 1) {
+                applyMachines([]);
+                return;
+            }
+
+            applyMachines([{
+                id: 'machine-1',
+                seq: 2,
+                createdAt: 1,
+                updatedAt: 2,
+                active: true,
+                activeAt: 2,
+                revokedAt: null,
+                metadata: null,
+                metadataVersion: 0,
+                daemonState: {
+                    transfer: {
+                        supported: { import: true, export: true },
+                        listenerClasses: {
+                            loopback_http: { enabled: true, configured: true, active: true },
+                            lan_http: { enabled: false, configured: false, active: false },
+                            tailscale_serve_https: { enabled: false, configured: false, active: false, available: false },
+                        },
+                        lifecycle: { mode: 'lazy_idle_shutdown', version: 1 },
+                    },
+                },
+                daemonStateVersion: 2,
+            }]);
+        });
+
+        mockConcurrentSessionCacheDeps();
+        await configureConcurrentSelection();
+
+        const { stopConcurrentSessionCacheSync } = await startConcurrentCacheAndWaitForReconcile();
+
+        await vi.waitFor(() => {
+            expect(machineRefreshCount).toBeGreaterThanOrEqual(1);
+        });
+
+        fakeSocket.emitServerEvent('update', {
+            id: 'update-1',
+            seq: 10,
+            createdAt: 10,
+            body: {
+                t: 'update-machine',
+                machineId: 'machine-1',
+                daemonState: { value: 'encrypted', version: 2 },
+            },
+        });
+
+        await new Promise<void>((resolve) => setTimeout(resolve, 700));
+
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        await vi.waitFor(() => {
+            expect(machineRefreshCount).toBeGreaterThanOrEqual(2);
+            expect(storage.getState().machineListByServerId['server-b']?.[0]?.daemonState?.transfer?.listenerClasses?.loopback_http?.active).toBe(true);
+        });
 
         stopConcurrentSessionCacheSync();
     });
