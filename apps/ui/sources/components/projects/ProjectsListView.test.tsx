@@ -15,6 +15,9 @@ const routerPushSpy = vi.hoisted(() => vi.fn());
 let machinesMock: Machine[] = [];
 let workspaceRefsV1Mock: any[] = [];
 let pinnedWorkspaceRefIdsV1Mock: string[] = [];
+let deviceTypeMock: 'phone' | 'tablet' = 'tablet';
+let paneScopesMock: Record<string, { right?: { activeTabId?: string | null } }> = {};
+let localSettingsMock: Record<string, unknown> = {};
 const setWorkspaceRefsV1Spy = vi.hoisted(() => vi.fn());
 const setPinnedWorkspaceRefIdsV1Spy = vi.hoisted(() => vi.fn());
 
@@ -53,6 +56,22 @@ vi.mock('expo-router', async () => {
     }).module;
 });
 
+vi.mock('@/utils/platform/responsive', () => ({
+    useDeviceType: () => deviceTypeMock,
+}));
+
+vi.mock('@/components/appShell/panes/AppPaneProvider', async () => {
+    const actual = await vi.importActual<typeof import('@/components/appShell/panes/AppPaneProvider')>(
+        '@/components/appShell/panes/AppPaneProvider',
+    );
+    return {
+        ...actual,
+        useOptionalAppPaneContext: () => ({
+            state: { scopes: paneScopesMock },
+        }),
+    };
+});
+
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({
@@ -78,6 +97,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
     return createPartialStorageModuleMock(importOriginal, {
         useAllMachines: () => machinesMock,
+        useLocalSetting: (key: string) => localSettingsMock[key],
         useSettingMutable: (key: string) => {
             if (key === 'workspaceRefsV1') return [workspaceRefsV1Mock, setWorkspaceRefsV1Spy];
             if (key === 'pinnedWorkspaceRefIdsV1') return [pinnedWorkspaceRefIdsV1Mock, setPinnedWorkspaceRefIdsV1Spy];
@@ -118,6 +138,9 @@ describe('ProjectsListView', () => {
         machinesMock = [];
         workspaceRefsV1Mock = [];
         pinnedWorkspaceRefIdsV1Mock = [];
+        deviceTypeMock = 'tablet';
+        paneScopesMock = {};
+        localSettingsMock = {};
         openMachinePathBrowserModalSpy.mockReset();
         workspaceListDirectorySpy.mockReset();
         modalAlertSpy.mockReset();
@@ -169,5 +192,71 @@ describe('ProjectsListView', () => {
         expect(setWorkspaceRefsV1Spy).toHaveBeenCalledTimes(0);
         expect(routerPushSpy).toHaveBeenCalledTimes(0);
         expect(modalAlertSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('opens the last active mobile project subroute from the projects list', async () => {
+        deviceTypeMock = 'phone';
+        workspaceRefsV1Mock = [{
+            id: 'wr_1',
+            serverId: 'server-1',
+            machineId: 'm1',
+            rootPath: '/repo',
+            label: 'Repo',
+            createdAtMs: 1,
+        }];
+        paneScopesMock = {
+            'project:wr_1': {
+                right: { activeTabId: 'git' },
+            },
+        };
+
+        const { ProjectsListView } = await import('./ProjectsListView');
+        const screen = await renderScreen(<ProjectsListView />);
+
+        await screen.pressByTestIdAsync('projects-list-item-wr_1');
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/projects/wr_1/git');
+    });
+
+    it('defaults mobile project opens to the files route when no last tab is remembered', async () => {
+        deviceTypeMock = 'phone';
+        workspaceRefsV1Mock = [{
+            id: 'wr_1',
+            serverId: 'server-1',
+            machineId: 'm1',
+            rootPath: '/repo',
+            label: 'Repo',
+            createdAtMs: 1,
+        }];
+
+        const { ProjectsListView } = await import('./ProjectsListView');
+        const screen = await renderScreen(<ProjectsListView />);
+
+        await screen.pressByTestIdAsync('projects-list-item-wr_1');
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/projects/wr_1/files');
+    });
+
+    it('reopens the remembered mobile worktree path from local project state', async () => {
+        deviceTypeMock = 'phone';
+        workspaceRefsV1Mock = [{
+            id: 'wr_1',
+            serverId: 'server-1',
+            machineId: 'm1',
+            rootPath: '/repo',
+            label: 'Repo',
+            createdAtMs: 1,
+        }];
+        localSettingsMock = {
+            projectLastMobileRouteByWorkspaceRefId: { wr_1: 'git' },
+            projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/repo/.worktrees/feature-auth' },
+        };
+
+        const { ProjectsListView } = await import('./ProjectsListView');
+        const screen = await renderScreen(<ProjectsListView />);
+
+        await screen.pressByTestIdAsync('projects-list-item-wr_1');
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/projects/wr_1/git?activeRootPath=%2Frepo%2F.worktrees%2Ffeature-auth');
     });
 });

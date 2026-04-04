@@ -65,9 +65,10 @@ describe('MarkdownView (tables)', () => {
         expect(scrollViews[0]!.props.horizontal).toBe(true);
         expect(scrollViews[0]!.props.showsHorizontalScrollIndicator).toBe(true);
 
-        const scrollShell = screen.findAllByType('View' as any).find((node) =>
-            Array.isArray(node.children) && node.children.includes(scrollViews[0]),
-        );
+        const scrollShell = screen.findAllByType('View' as any).find((node) => {
+            const style = Array.isArray(node.props?.style) ? node.props.style.flat() : [node.props?.style];
+            return style.some((entry: any) => entry?.overflow === 'visible');
+        });
         expect(scrollShell).toBeTruthy();
     }, 60_000);
 

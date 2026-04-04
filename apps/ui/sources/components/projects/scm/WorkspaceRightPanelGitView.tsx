@@ -258,7 +258,7 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
                             writeEnabled={scmWriteEnabled}
                             disabled={scmOperationBusy}
                             onRefreshSnapshot={refresh}
-                            onOpenWorkspacePath={props.onOpenWorkspacePath}
+                            onSelectWorkspacePath={props.onSelectWorkspacePath}
                             onRequestCreateWorktreeFromAnotherBranch={props.onRequestCreateWorktreeFromAnotherBranch}
                         />
                     )}

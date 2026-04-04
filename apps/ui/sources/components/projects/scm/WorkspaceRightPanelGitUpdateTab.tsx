@@ -42,7 +42,7 @@ export type WorkspaceRightPanelGitUpdateTabProps = Readonly<{
     snapshot: ScmWorkingSnapshot | null;
     disabled?: boolean;
     onRefreshSnapshot: () => Promise<void>;
-    onOpenWorkspacePath?: (path: string) => void;
+    onSelectWorkspacePath?: (path: string) => void;
     onRequestCreateWorktreeFromAnotherBranch?: () => void;
 }>;
 
@@ -212,16 +212,16 @@ export const WorkspaceRightPanelGitUpdateTab = React.memo((props: WorkspaceRight
             writeEnabled={scmWriteEnabled}
             disabled={disabled}
             onRefreshSnapshot={props.onRefreshSnapshot}
-            onOpenWorkspacePath={props.onOpenWorkspacePath}
+            onSelectWorkspacePath={props.onSelectWorkspacePath}
             onRequestCreateWorktreeFromAnotherBranch={props.onRequestCreateWorktreeFromAnotherBranch}
             testID="scm-branch-menu-trigger"
         />
     ), [
         disabled,
         props.machineId,
-        props.onOpenWorkspacePath,
         props.onRefreshSnapshot,
         props.onRequestCreateWorktreeFromAnotherBranch,
+        props.onSelectWorkspacePath,
         props.rootPath,
         scmWriteEnabled,
         snapshot,

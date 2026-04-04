@@ -6,6 +6,7 @@ import { repoScmBranchService } from '@/scm/repository/repoScmBranchService';
 import { repoScmWorktreeService } from '@/scm/repository/repoScmWorktreeService';
 import { useRepoScmBranchList } from '@/scm/repository/useRepoScmBranchList';
 import { buildWorkspaceScmBranchPopoverItems } from '@/components/workspaces/scm/branches/buildWorkspaceScmBranchPopoverItems';
+import { sortRepoWorktreeRows } from '@/components/workspaces/scm/worktrees/sortRepoWorktreeRows';
 import {
     hasUncommittedChanges,
     isBranchStashAlreadyExistsError,
@@ -26,7 +27,7 @@ export type WorkspaceSourceControlBranchMenuProps = Readonly<{
     writeEnabled?: boolean;
     disabled?: boolean;
     onRefreshSnapshot: () => Promise<void>;
-    onOpenWorkspacePath?: (path: string) => void;
+    onSelectWorkspacePath?: (path: string) => void;
     onRequestCreateWorktreeFromAnotherBranch?: () => void;
     testID?: string;
 }>;
@@ -64,15 +65,11 @@ export function WorkspaceSourceControlBranchMenu(props: WorkspaceSourceControlBr
 
     const worktreeRows = React.useMemo(() => {
         const worktrees = snapshot?.repo.worktrees ?? [];
-        return [...worktrees].sort((left, right) => {
-            if (left.isCurrent === true && right.isCurrent !== true) return -1;
-            if (left.isCurrent !== true && right.isCurrent === true) return 1;
-            return (left.branch ?? left.path).localeCompare(right.branch ?? right.path);
-        });
+        return sortRepoWorktreeRows(worktrees);
     }, [snapshot?.repo.worktrees]);
 
-    const openWorkspacePath = React.useCallback((path: string) => {
-        props.onOpenWorkspacePath?.(path);
+    const selectWorkspacePath = React.useCallback((path: string) => {
+        props.onSelectWorkspacePath?.(path);
     }, [props]);
 
     const readCachedBranches = React.useCallback(() => {
@@ -261,9 +258,9 @@ export function WorkspaceSourceControlBranchMenu(props: WorkspaceSourceControlBr
 
         await refreshWorkspaceState();
         if (response.worktreePath) {
-            openWorkspacePath(response.worktreePath);
+            selectWorkspacePath(response.worktreePath);
         }
-    }, [canCreateWorktrees, openWorkspacePath, props.machineId, props.rootPath, refreshWorkspaceState]);
+    }, [canCreateWorktrees, props.machineId, props.rootPath, refreshWorkspaceState, selectWorkspacePath]);
 
     const pruneWorktrees = React.useCallback(async () => {
         if (!canCreateWorktrees) return;
@@ -341,7 +338,7 @@ export function WorkspaceSourceControlBranchMenu(props: WorkspaceSourceControlBr
         }
         if (itemId.startsWith('worktree:open:')) {
             closeMenu();
-            openWorkspacePath(itemId.slice('worktree:open:'.length));
+            selectWorkspacePath(itemId.slice('worktree:open:'.length));
             return;
         }
         if (itemId.startsWith('worktree:remove:')) {
@@ -364,11 +361,11 @@ export function WorkspaceSourceControlBranchMenu(props: WorkspaceSourceControlBr
     }, [
         closeMenu,
         createWorktreeFromCurrentBranch,
-        openWorkspacePath,
         props.onRequestCreateWorktreeFromAnotherBranch,
         pruneWorktrees,
         publishBranch,
         removeWorktree,
+        selectWorkspacePath,
         switchBranch,
     ]);
 

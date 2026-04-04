@@ -17,14 +17,24 @@ const closeDetailsSpy = vi.fn();
 const openRightSpy = vi.fn();
 const setRightTabSpy = vi.fn();
 let isFocused = true;
+let navigationCanGoBack = true;
 let scopeState: any = {
     right: { isOpen: true, activeTabId: 'files', tabState: {} },
     details: { isOpen: false, tabs: [], activeTabKey: null, tabState: {} },
 };
+const paneScopeMock = {
+    get scopeState() {
+        return scopeState;
+    },
+    openRight: openRightSpy,
+    closeRight: closeRightSpy,
+    setRightTab: setRightTabSpy,
+    closeDetails: closeDetailsSpy,
+};
 
 const routerMock = createExpoRouterMock({
     params: { workspaceRefId: 'wr_1' },
-    navigation: { canGoBack: () => true },
+    navigation: { canGoBack: () => navigationCanGoBack },
     router: {
         push: routerPushSpy,
         back: routerBackSpy,
@@ -62,13 +72,7 @@ vi.mock('@/text', async () => {
 });
 
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
-    useAppPaneScope: () => ({
-        scopeState,
-        openRight: openRightSpy,
-        closeRight: closeRightSpy,
-        setRightTab: setRightTabSpy,
-        closeDetails: closeDetailsSpy,
-    }),
+    useAppPaneScope: () => paneScopeMock,
 }));
 
 vi.mock('@/components/projects/detail/useWorkspaceRefById', () => ({
@@ -94,6 +98,7 @@ describe('project route details lifecycle', () => {
 
     beforeEach(() => {
         isFocused = true;
+        navigationCanGoBack = true;
         scopeState = {
             right: { isOpen: true, activeTabId: 'files', tabState: {} },
             details: { isOpen: false, tabs: [], activeTabKey: null, tabState: {} },
@@ -157,5 +162,33 @@ describe('project route details lifecycle', () => {
         await screen.unmount();
 
         expect(closeDetailsSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back to the current non-details project route when details are unavailable', async () => {
+        navigationCanGoBack = false;
+        scopeState = {
+            right: { isOpen: true, activeTabId: 'git', tabState: {} },
+            details: { isOpen: false, tabs: [], activeTabKey: null, tabState: {} },
+        };
+
+        await renderScreen(<ProjectDetailsRoute />);
+
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/projects/wr_1/git');
+    });
+
+    it('stays on the details route when explicitly opened in worktrees mode without detail tabs', async () => {
+        navigationCanGoBack = false;
+        routerMock.state.router.setParams({
+            workspaceRefId: 'wr_1',
+            showWorktrees: '1',
+        });
+        scopeState = {
+            right: { isOpen: true, activeTabId: 'git', tabState: {} },
+            details: { isOpen: false, tabs: [], activeTabKey: null, tabState: {} },
+        };
+
+        await renderScreen(<ProjectDetailsRoute />);
+
+        expect(routerReplaceSpy).not.toHaveBeenCalled();
     });
 });

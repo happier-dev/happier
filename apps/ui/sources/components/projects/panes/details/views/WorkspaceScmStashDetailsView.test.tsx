@@ -95,7 +95,7 @@ describe('WorkspaceScmStashDetailsView', () => {
     }
 
     type PendingRetryTimer = Readonly<{
-        id: number;
+        id: ReturnType<typeof setTimeout>;
         delayMs: number;
         run: () => void;
     }>;
@@ -107,11 +107,11 @@ describe('WorkspaceScmStashDetailsView', () => {
         let nextTimerId = 1;
         let nowMs = 0;
 
-        const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((handler: TimerHandler, timeout?: number) => {
+        const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((handler: TimerHandler, timeout?: number) => {
             const timerId = nextTimerId++;
             const delayMs = typeof timeout === 'number' && Number.isFinite(timeout) ? timeout : 0;
             pendingTimers.push({
-                id: timerId,
+                id: timerId as unknown as ReturnType<typeof setTimeout>,
                 delayMs,
                 run: () => {
                     if (typeof handler === 'function') {
@@ -122,13 +122,13 @@ describe('WorkspaceScmStashDetailsView', () => {
                 },
             });
             return timerId as unknown as ReturnType<typeof setTimeout>;
-        }) as typeof setTimeout);
-        const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout').mockImplementation(((timerId: ReturnType<typeof setTimeout>) => {
+        });
+        const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout').mockImplementation((timerId: Parameters<typeof clearTimeout>[0]) => {
             const pendingIndex = pendingTimers.findIndex((timer) => timer.id === timerId);
             if (pendingIndex >= 0) {
                 pendingTimers.splice(pendingIndex, 1);
             }
-        }) as typeof clearTimeout);
+        });
         const dateNowSpy = vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
 
         try {

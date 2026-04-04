@@ -16,16 +16,17 @@ import { useDeviceType } from '@/utils/platform/responsive';
 import { WorkspaceRepositoryTreeBrowserView } from '@/components/projects/files/WorkspaceRepositoryTreeBrowserView';
 import { buildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
-import { useSettingMutable } from '@/sync/domains/state/storage';
-import { findWorkspaceRefByScope, upsertWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
 import { WorkspaceRightPanelGitView } from '@/components/projects/scm/WorkspaceRightPanelGitView';
 import { resolveProjectRightTabId, type ProjectRightTabId } from './resolveProjectRightTabId';
+import { buildProjectRouteHref } from './projectRouteState';
 import { storage } from '@/sync/domains/state/storage';
 import { computeExpandedPathsForReveal } from '@/components/workspaces/files/repositoryTree/computeExpandedPathsForReveal';
 
 export type ProjectRightPanelProps = Readonly<{
     workspaceRef: WorkspaceRefV1;
     scopeId: string;
+    activeRootPath: string;
+    onSelectRootPath: (path: string) => void;
     onRequestClose?: () => void;
 }>;
 
@@ -77,19 +78,22 @@ export const ProjectRightPanel = React.memo((props: ProjectRightPanelProps) => {
     const deviceType = useDeviceType();
     const pane = useAppPaneScope(props.scopeId);
     const scopeState = pane.scopeState;
-    const [workspaceRefsV1, setWorkspaceRefsV1] = useSettingMutable('workspaceRefsV1');
     const headerPaddingTop = 10;
 
     const activeTab: ProjectRightTabId = resolveProjectRightTabId(scopeState?.right.activeTabId);
-    const workspaceRouteBase = React.useMemo(() => `/projects/${encodeURIComponent(props.workspaceRef.id)}`, [props.workspaceRef.id]);
 
     const setActiveTab = React.useCallback((tabId: ProjectRightTabId) => {
         pane.openRight({ tabId });
         pane.setRightTab(tabId);
         if (deviceType !== 'phone') return;
         if (activeTab === tabId) return;
-        router.replace(`${workspaceRouteBase}/${tabId}`);
-    }, [activeTab, deviceType, pane, router, workspaceRouteBase]);
+        router.replace(buildProjectRouteHref({
+            workspaceRefId: props.workspaceRef.id,
+            segment: tabId,
+            activeRootPath: props.activeRootPath,
+            defaultRootPath: props.workspaceRef.rootPath,
+        }));
+    }, [activeTab, deviceType, pane, props.activeRootPath, props.workspaceRef.id, props.workspaceRef.rootPath, router]);
 
     React.useEffect(() => {
         if (!scopeState?.right.isOpen) return;
@@ -125,30 +129,6 @@ export const ProjectRightPanel = React.memo((props: ProjectRightPanelProps) => {
         });
     }, [pane]);
 
-    const openWorkspacePath = React.useCallback((rootPath: string) => {
-        const scope = {
-            serverId: props.workspaceRef.serverId,
-            machineId: props.workspaceRef.machineId,
-            rootPath,
-        };
-        const nowMs = Date.now();
-        const nextRefs = upsertWorkspaceRefByScope(Array.isArray(workspaceRefsV1) ? workspaceRefsV1 : [], {
-            scope,
-            nowMs,
-            patch: { lastOpenedAtMs: nowMs },
-        });
-        setWorkspaceRefsV1(nextRefs);
-        const targetRef = findWorkspaceRefByScope(nextRefs, scope);
-        if (!targetRef) return;
-        router.push(`/projects/${encodeURIComponent(targetRef.id)}`);
-    }, [
-        props.workspaceRef.machineId,
-        props.workspaceRef.serverId,
-        router,
-        setWorkspaceRefsV1,
-        workspaceRefsV1,
-    ]);
-
     const openReviewAllChanges = React.useCallback(() => {
         deferOnWeb(() => {
             pane.openDetailsTab(
@@ -182,11 +162,11 @@ export const ProjectRightPanel = React.memo((props: ProjectRightPanelProps) => {
             pathname: '/new',
             params: {
                 machineId: props.workspaceRef.machineId,
-                directory: props.workspaceRef.rootPath,
+                directory: props.activeRootPath,
                 worktree: 'new',
             },
         });
-    }, [props.workspaceRef.machineId, props.workspaceRef.rootPath, router]);
+    }, [props.activeRootPath, props.workspaceRef.machineId, router]);
 
     const openCommitInDetails = React.useCallback((sha: string) => {
         const safeSha = sha.trim().split(/\s+/)[0] ?? '';
@@ -206,7 +186,7 @@ export const ProjectRightPanel = React.memo((props: ProjectRightPanelProps) => {
         const scope = {
             serverId: props.workspaceRef.serverId,
             machineId: props.workspaceRef.machineId,
-            rootPath: props.workspaceRef.rootPath,
+            rootPath: props.activeRootPath,
         };
         const currentExpandedPaths = storage.getState().getWorkspaceRepositoryTreeExpandedPaths(scope);
         const nextExpandedPaths = computeExpandedPathsForReveal({
@@ -214,7 +194,7 @@ export const ProjectRightPanel = React.memo((props: ProjectRightPanelProps) => {
             fullPath,
         });
         storage.getState().setWorkspaceRepositoryTreeExpandedPaths(scope, nextExpandedPaths);
-    }, [props.workspaceRef.machineId, props.workspaceRef.rootPath, props.workspaceRef.serverId, setActiveTab]);
+    }, [props.activeRootPath, props.workspaceRef.machineId, props.workspaceRef.serverId, setActiveTab]);
 
     const rightPanelTabs = React.useMemo((): ReadonlyArray<SegmentedTab<ProjectRightTabId>> => ([
         { id: 'git', label: t('settings.sourceControl') },
@@ -224,8 +204,8 @@ export const ProjectRightPanel = React.memo((props: ProjectRightPanelProps) => {
     const workspaceCacheKey = React.useMemo(() => buildWorkspaceCacheKey({
         serverId: props.workspaceRef.serverId,
         machineId: props.workspaceRef.machineId,
-        rootPath: props.workspaceRef.rootPath,
-    }), [props.workspaceRef.machineId, props.workspaceRef.rootPath, props.workspaceRef.serverId]);
+        rootPath: props.activeRootPath,
+    }), [props.activeRootPath, props.workspaceRef.machineId, props.workspaceRef.serverId]);
 
     return (
         <View testID="project-right-panel-root" style={styles.container}>
@@ -257,13 +237,13 @@ export const ProjectRightPanel = React.memo((props: ProjectRightPanelProps) => {
                             <WorkspaceRightPanelGitView
                                 serverId={props.workspaceRef.serverId}
                                 machineId={props.workspaceRef.machineId}
-                                rootPath={props.workspaceRef.rootPath}
+                                rootPath={props.activeRootPath}
                                 onOpenFile={openFileInDetails}
                                 onOpenFilePinned={openFileInDetailsPinned}
                                 onOpenReviewAllChanges={openReviewAllChanges}
                                 onOpenStashDetails={openStashDetails}
                                 onOpenCommit={openCommitInDetails}
-                                onOpenWorkspacePath={openWorkspacePath}
+                                onSelectWorkspacePath={props.onSelectRootPath}
                                 onRequestCreateWorktreeFromAnotherBranch={openCreateWorktreeFlow}
                                 onRevealInFilesTree={revealInFilesTree}
                             />
@@ -275,7 +255,7 @@ export const ProjectRightPanel = React.memo((props: ProjectRightPanelProps) => {
                                 workspaceCacheKey={workspaceCacheKey}
                                 serverId={props.workspaceRef.serverId}
                                 machineId={props.workspaceRef.machineId}
-                                rootPath={props.workspaceRef.rootPath}
+                                rootPath={props.activeRootPath}
                                 onOpenFile={openFileInDetails}
                                 onOpenFilePinned={openFileInDetailsPinned}
                                 density="panel"

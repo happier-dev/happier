@@ -25,6 +25,7 @@ import {
     createInboxStackScreenOptions,
 } from '@/utils/navigation/createSocialStackScreenOptions';
 import { ActivityBadgeRuntime } from '@/activity/badges/ActivityBadgeRuntime';
+import { ActivitySurfacesRuntime } from '@/activity/runtime/ActivitySurfacesRuntime';
 import { ActivityLocalNotificationRuntime } from '@/activity/notifications/runtime/ActivityLocalNotificationRuntime';
 import { DesktopTrayRuntime } from '@/desktop/tray/DesktopTrayRuntime';
 import { DesktopTrayDaemonLifecycleRuntime } from '@/desktop/tray/DesktopTrayDaemonLifecycleRuntime';
@@ -227,6 +228,7 @@ export default function RootLayout() {
     return (
         <>
             <ActivityBadgeRuntime />
+            <ActivitySurfacesRuntime />
             <ActivityLocalNotificationRuntime />
             <DesktopTrayRuntime />
             <DesktopTrayDaemonLifecycleRuntime />

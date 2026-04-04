@@ -95,6 +95,8 @@ describe('ProjectRightPanel', () => {
             <ProjectRightPanel
                 workspaceRef={workspaceRef}
                 scopeId="project:wr_1"
+                activeRootPath="/repo"
+                onSelectRootPath={() => {}}
             />,
         );
 
@@ -121,6 +123,8 @@ describe('ProjectRightPanel', () => {
             <ProjectRightPanel
                 workspaceRef={workspaceRef}
                 scopeId="project:wr_1"
+                activeRootPath="/repo"
+                onSelectRootPath={() => {}}
                 onRequestClose={() => {}}
             />,
         );
@@ -134,5 +138,40 @@ describe('ProjectRightPanel', () => {
         expect(appPaneScopeMock.setRightTab).toHaveBeenCalledWith('files');
         expect(routerReplaceSpy).toHaveBeenCalledWith('/projects/wr_1/files');
         expect(screen.tree.findAll((node) => node.props?.testID === 'project-rightpanel-close')).toHaveLength(0);
+    });
+
+    it('preserves the selected worktree path in mobile route changes', async () => {
+        deviceTypeMock = 'phone';
+        routerReplaceSpy.mockClear();
+        appPaneScopeMock.openRight.mockClear();
+        appPaneScopeMock.setRightTab.mockClear();
+        const { ProjectRightPanel } = await import('./ProjectRightPanel');
+
+        const workspaceRef = {
+            id: 'wr_1',
+            serverId: 's1',
+            machineId: 'm1',
+            rootPath: '/repo',
+            createdAtMs: 1,
+        } satisfies WorkspaceRefV1;
+
+        const screen = await renderScreen(
+            <ProjectRightPanel
+                workspaceRef={workspaceRef}
+                scopeId="project:wr_1"
+                activeRootPath="/repo/.worktrees/feature-auth"
+                onSelectRootPath={() => {}}
+                onRequestClose={() => {}}
+            />,
+        );
+
+        const filesTab = screen.tree.findByProps({ testID: 'project-rightpanel-tab:files' });
+        await act(async () => {
+            filesTab.props.onPress();
+        });
+
+        expect(routerReplaceSpy).toHaveBeenCalledWith(
+            '/projects/wr_1/files?activeRootPath=%2Frepo%2F.worktrees%2Ffeature-auth',
+        );
     });
 });

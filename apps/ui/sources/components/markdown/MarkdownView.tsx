@@ -1,8 +1,7 @@
 import { MarkdownSpan, parseMarkdown } from './parseMarkdown';
 import * as React from 'react';
 import type { StyleProp, TextStyle } from 'react-native';
-import { Pressable, ScrollView, View, Platform } from 'react-native';
-import { ScrollView as GestureHandlerScrollView } from 'react-native-gesture-handler';
+import { Pressable, View, Platform } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Text } from '../ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -10,6 +9,7 @@ import { MermaidRenderer } from './MermaidRenderer';
 import { t } from '@/text';
 import { MarkdownSpansView } from './MarkdownSpansView';
 import { MarkdownCodeBlock } from './MarkdownCodeBlock';
+import { HorizontalOverflowScrollView } from '@/components/ui/scroll/HorizontalOverflowScrollView';
 
 // Option type for callback
 export type Option = {
@@ -254,32 +254,13 @@ function RenderTableBlock(props: {
 
   return (
       <View style={[style.tableContainer, props.first && style.first, props.last && style.last]}>
-          {/*
-           * Use RNGH ScrollView on native so horizontal pans reliably win gesture negotiation
-           * inside nested transcript lists on Android.
-           */}
-          {Platform.OS === 'web' ? (
-              <ScrollView
-                  testID="markdown-table-scroll"
-                  horizontal
-                  showsHorizontalScrollIndicator={Platform.OS === 'web'}
-                  nestedScrollEnabled={true}
-                  style={style.tableScrollView}
-              >
-                  {scrollContents}
-              </ScrollView>
-          ) : (
-              <GestureHandlerScrollView
-                  testID="markdown-table-scroll"
-                  horizontal
-                  showsHorizontalScrollIndicator={true}
-                  nestedScrollEnabled={true}
-                  disallowInterruption={true}
-                  style={style.tableScrollView}
-              >
-                  {scrollContents}
-              </GestureHandlerScrollView>
-          )}
+          <HorizontalOverflowScrollView
+              testID="markdown-table-scroll"
+              showsHorizontalScrollIndicator={Platform.OS === 'web'}
+              style={style.tableScrollView}
+          >
+              {scrollContents}
+          </HorizontalOverflowScrollView>
       </View>
   );
 }

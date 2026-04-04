@@ -11,7 +11,7 @@ import { ItemGroupTitleWithAction } from '@/components/ui/lists/ItemGroupTitleWi
 import { Item } from '@/components/ui/lists/Item';
 import { CenteredInfoTile } from '@/components/ui/lists/CenteredInfoTile';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
-import { useAllMachines, useSettingMutable } from '@/sync/domains/state/storage';
+import { useAllMachines, useLocalSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
 import { Modal } from '@/modal';
@@ -19,10 +19,14 @@ import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropd
 import { findWorkspaceRefByScope, upsertWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
 import { workspaceListDirectory } from '@/sync/ops/workspaceFileSystem';
 import { resolveMachineActionCandidates } from '@/utils/sessions/resolveMachineActionCandidates';
+import { useOptionalAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
+import { useDeviceType } from '@/utils/platform/responsive';
 
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 
 import { buildProjectsListGroups } from './projectsListGrouping';
+import { buildProjectPaneScopeId } from './detail/projectPaneScope';
+import { buildProjectRouteHref, resolveProjectRouteSegment } from './detail/projectRouteState';
 import { resolveWorkspaceRefDisplayName } from './resolveWorkspaceRefDisplayName';
 
 type AppTheme = ReturnType<typeof useUnistyles>['theme'];
@@ -81,9 +85,13 @@ const ProjectsListItemMenu = React.memo((props: ProjectsListItemMenuProps) => {
 export const ProjectsListView = React.memo(() => {
     const { theme } = useUnistyles();
     const router = useRouter();
+    const deviceType = useDeviceType();
+    const paneContext = useOptionalAppPaneContext();
     const activeServer = useActiveServerSnapshot();
     const allMachines = useAllMachines();
     const addFirstMachines = React.useMemo(() => resolveMachineActionCandidates(allMachines), [allMachines]);
+    const lastMobileRouteByWorkspaceRefId = useLocalSetting('projectLastMobileRouteByWorkspaceRefId');
+    const lastActiveRootPathByWorkspaceRefId = useLocalSetting('projectLastActiveRootPathByWorkspaceRefId');
 
     const [workspaceRefsV1, setWorkspaceRefsV1] = useSettingMutable('workspaceRefsV1');
     const [pinnedWorkspaceRefIdsV1, setPinnedWorkspaceRefIdsV1] = useSettingMutable('pinnedWorkspaceRefIdsV1');
@@ -101,8 +109,29 @@ export const ProjectsListView = React.memo(() => {
     }, [activeServer.serverId, pinnedWorkspaceRefIdsV1, workspaceRefsV1]);
 
     const handleOpenWorkspace = React.useCallback((workspaceRef: WorkspaceRefV1) => {
-        router.push(`/projects/${encodeURIComponent(workspaceRef.id)}`);
-    }, [router]);
+        if (deviceType !== 'phone') {
+            router.push(`/projects/${encodeURIComponent(workspaceRef.id)}`);
+            return;
+        }
+
+        const scopeId = buildProjectPaneScopeId(workspaceRef.id);
+        const rememberedRightTabId = paneContext?.state.scopes[scopeId]?.right?.activeTabId;
+        const persistedSegment = lastMobileRouteByWorkspaceRefId?.[workspaceRef.id];
+        const segment = resolveProjectRouteSegment(
+            rememberedRightTabId,
+            typeof persistedSegment === 'string' ? persistedSegment : null,
+        );
+        const persistedRootPath = lastActiveRootPathByWorkspaceRefId?.[workspaceRef.id];
+        const activeRootPath = typeof persistedRootPath === 'string' && persistedRootPath.trim().length > 0
+            ? persistedRootPath
+            : workspaceRef.rootPath;
+        router.push(buildProjectRouteHref({
+            workspaceRefId: workspaceRef.id,
+            segment,
+            activeRootPath,
+            defaultRootPath: workspaceRef.rootPath,
+        }));
+    }, [deviceType, lastActiveRootPathByWorkspaceRefId, lastMobileRouteByWorkspaceRefId, paneContext?.state.scopes, router]);
 
     const handleAddProjectToMachine = React.useCallback(async (machineId: string) => {
         const serverId = String(activeServer.serverId ?? '').trim();

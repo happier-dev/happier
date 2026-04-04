@@ -44,7 +44,7 @@ export type WorkspaceSourceControlViewProps = Readonly<{
     onOpenFilePinned?: (path: string) => void;
     onOpenReviewAllChanges?: () => void;
     onOpenStashDetails?: () => void;
-    onOpenWorkspacePath?: (path: string) => void;
+    onSelectWorkspacePath?: (path: string) => void;
     onRequestCreateWorktreeFromAnotherBranch?: () => void;
     onRevealInFilesTree?: (fullPath: string) => void;
 }>;
@@ -379,7 +379,7 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
                                         writeEnabled={scmWriteEnabled}
                                         disabled={branchSummaryDisabled}
                                         onRefreshSnapshot={refresh}
-                                        onOpenWorkspacePath={props.onOpenWorkspacePath}
+                                        onSelectWorkspacePath={props.onSelectWorkspacePath}
                                         onRequestCreateWorktreeFromAnotherBranch={props.onRequestCreateWorktreeFromAnotherBranch}
                                     />
                                 )}

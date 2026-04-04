@@ -191,10 +191,13 @@ const DetailsTabSurface = React.memo((props: Readonly<{ isActive: boolean; child
         // after tab activation, which can override the first restore write. Re-apply for a short,
         // bounded window so tab switches feel stable and scroll positions don't "jump" when the
         // tab becomes visible.
-        const raf: (cb: FrameRequestCallback) => number =
-            typeof globalThis.requestAnimationFrame === 'function'
-                ? globalThis.requestAnimationFrame.bind(globalThis)
-                : (cb) => globalThis.setTimeout(() => cb(Date.now()), 0);
+        const scheduleFrame = (cb: FrameRequestCallback) => {
+            if (typeof globalThis.requestAnimationFrame === 'function') {
+                globalThis.requestAnimationFrame(cb);
+                return;
+            }
+            globalThis.setTimeout(() => cb(Date.now()), 0);
+        };
         const apply = () => {
             for (let i = 0; i < snapshot.length; i += 1) {
                 const s = snapshot[i];
@@ -215,9 +218,9 @@ const DetailsTabSurface = React.memo((props: Readonly<{ isActive: boolean; child
                 ? performance.now()
                 : Date.now();
             if (now - startedAt >= maxMs) return;
-            raf(() => step());
+            scheduleFrame(() => step());
         };
-        raf(() => step());
+        scheduleFrame(() => step());
     }, [props.isActive]);
 
     const a11yHiddenProps =

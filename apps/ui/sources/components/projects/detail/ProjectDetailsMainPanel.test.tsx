@@ -2,8 +2,11 @@ import * as React from 'react';
 
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+let deviceTypeMock: 'phone' | 'tablet' | 'desktop' = 'tablet';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -39,37 +42,55 @@ vi.mock('@/components/ui/layout/useChromeSafeAreaInsets', () => ({
 }));
 
 vi.mock('@/utils/platform/responsive', () => ({
-    useDeviceType: () => 'tablet',
+    useDeviceType: () => deviceTypeMock,
 }));
 
 const workspaceDetailsPanelSpy = vi.hoisted(() => vi.fn());
+const workspaceScmSnapshotControllerSpy = vi.hoisted(() => vi.fn());
 vi.mock('@/components/projects/panes/WorkspaceDetailsPanel', () => ({
     WorkspaceDetailsPanel: (props: any) => {
         workspaceDetailsPanelSpy(props);
         return React.createElement('WorkspaceDetailsPanelStub', props);
     },
 }));
+vi.mock('@/hooks/workspaces/scm/useWorkspaceScmSnapshotController', () => ({
+    useWorkspaceScmSnapshotController: (scope: unknown) => {
+        workspaceScmSnapshotControllerSpy(scope);
+        return {
+            snapshot: { repo: { isRepo: true, worktrees: [] } },
+            loading: false,
+            error: null,
+            refresh: vi.fn(async () => {}),
+        };
+    },
+}));
 
 describe('ProjectDetailsMainPanel', () => {
     it('renders WorkspaceDetailsPanel for the project workspace', async () => {
+        deviceTypeMock = 'tablet';
         workspaceDetailsPanelSpy.mockClear();
+        workspaceScmSnapshotControllerSpy.mockClear();
         const { ProjectDetailsMainPanel } = await import('./ProjectDetailsMainPanel');
 
         await renderScreen(
             <ProjectDetailsMainPanel
                 scopeId="project:wr_1"
+                activeRootPath="/repo/.worktrees/feature-auth"
+                onSelectRootPath={() => {}}
                 workspaceRef={{
                     id: 'wr_1',
                     serverId: 's1',
                     machineId: 'm1',
                     rootPath: '/repo',
-                } as any}
+                    createdAtMs: 1,
+                } satisfies WorkspaceRefV1}
             />,
         );
 
         expect(workspaceDetailsPanelSpy).toHaveBeenCalledTimes(1);
         expect(workspaceDetailsPanelSpy).toHaveBeenCalledWith(expect.objectContaining({
             scopeId: 'project:wr_1',
+            activeRootPath: '/repo/.worktrees/feature-auth',
             workspaceRef: expect.objectContaining({
                 id: 'wr_1',
                 serverId: 's1',
@@ -77,5 +98,37 @@ describe('ProjectDetailsMainPanel', () => {
                 rootPath: '/repo',
             }),
         }));
+        expect(workspaceScmSnapshotControllerSpy).toHaveBeenCalledWith({
+            serverId: 's1',
+            machineId: 'm1',
+            rootPath: '/repo/.worktrees/feature-auth',
+        });
+    });
+
+    it('keeps the worktree list available on phone for the fullscreen details route', async () => {
+        deviceTypeMock = 'phone';
+        workspaceDetailsPanelSpy.mockClear();
+        const { ProjectDetailsMainPanel } = await import('./ProjectDetailsMainPanel');
+
+        await renderScreen(
+            <ProjectDetailsMainPanel
+                scopeId="project:wr_1"
+                activeRootPath="/repo/.worktrees/feature-auth"
+                onSelectRootPath={() => {}}
+                workspaceRef={{
+                    id: 'wr_1',
+                    serverId: 's1',
+                    machineId: 'm1',
+                    rootPath: '/repo',
+                    createdAtMs: 1,
+                } satisfies WorkspaceRefV1}
+            />,
+        );
+
+        const props = workspaceDetailsPanelSpy.mock.calls.at(-1)?.[0] as {
+            renderEmptyStateSupplementaryContent?: () => React.ReactNode;
+        };
+        expect(props.renderEmptyStateSupplementaryContent).toBeTypeOf('function');
+        expect(props.renderEmptyStateSupplementaryContent?.()).toBeTruthy();
     });
 });
