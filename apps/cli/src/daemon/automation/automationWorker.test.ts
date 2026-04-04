@@ -94,8 +94,6 @@ describe('automationWorker', () => {
       `happier-automation-worker-${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`,
     );
 
-    const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval');
-
     mockGet.mockRejectedValue(createAxios404('https://api.example.test/v2/automations/daemon/assignments'));
     mockPost.mockRejectedValue(createAxios404('https://api.example.test/v2/automations/runs/claim'));
 
@@ -114,11 +112,28 @@ describe('automationWorker', () => {
       } as NodeJS.ProcessEnv,
     });
 
-    // Drive a refresh directly to avoid relying on timers (and to surface any hangs deterministically).
-    await worker.refreshAssignments();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(mockGet).toHaveBeenCalledTimes(1);
 
-    expect(mockGet).toHaveBeenCalled();
-    expect(clearIntervalSpy).toHaveBeenCalled();
+    mockGet.mockClear();
+    await worker.refreshAssignments();
+    expect(mockGet).not.toHaveBeenCalled();
+
+    worker.handleServerUpdate({
+      id: 'u-1',
+      seq: 1,
+      createdAt: Date.now(),
+      body: {
+        t: 'automation-assignment-updated',
+        machineId: 'machine-1',
+        automationId: 'automation-1',
+        enabled: true,
+        updatedAt: Date.now(),
+      },
+    } as any);
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(mockGet).not.toHaveBeenCalled();
 
     worker.stop();
   }, 60_000);
@@ -189,6 +204,9 @@ describe('automationWorker', () => {
       } as NodeJS.ProcessEnv,
     });
 
+    await worker.refreshAssignments();
+    mockGet.mockClear();
+
     worker.pause();
     await worker.refreshAssignments();
     expect(mockGet).not.toHaveBeenCalled();
@@ -198,6 +216,46 @@ describe('automationWorker', () => {
     expect(mockGet).toHaveBeenCalledTimes(1);
 
     worker.stop();
+  });
+
+  it('does not keep refreshing assignments on a fixed interval after startup', async () => {
+    vi.useFakeTimers();
+    try {
+      process.env.HAPPIER_SERVER_URL = 'https://api.example.test';
+      process.env.HAPPIER_WEBAPP_URL = 'https://app.example.test';
+      process.env.HAPPIER_HOME_DIR = join(
+        os.tmpdir(),
+        `happier-automation-worker-${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`,
+      );
+
+      mockGet.mockResolvedValue({ data: { assignments: [] } });
+      mockPost.mockResolvedValue({ data: { run: null, automation: null } });
+
+      const { reloadConfiguration } = await import('@/configuration');
+      reloadConfiguration();
+
+      const { startAutomationWorker } = await import('./automationWorker');
+      const worker = startAutomationWorker({
+        token: 'token-1',
+        machineId: 'machine-1',
+        encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        spawnSession: vi.fn(async () => ({ type: 'error' as const, errorCode: 'SPAWN_FAILED' as const, errorMessage: 'noop' })),
+        env: {
+          HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '5000',
+          HAPPIER_AUTOMATION_CLAIM_POLL_MS: '1000',
+        } as NodeJS.ProcessEnv,
+      });
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mockGet).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(mockGet).toHaveBeenCalledTimes(1);
+
+      worker.stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('schedules claims near the nextRunAt instead of polling continuously', async () => {

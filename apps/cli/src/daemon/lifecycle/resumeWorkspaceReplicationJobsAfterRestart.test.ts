@@ -30,7 +30,7 @@ describe('resumeWorkspaceReplicationJobsAfterRestart', () => {
             const { createWorkspaceReplicationSourceOfferStore } = await import('@/workspaces/replication/transport/workspaceReplicationSourceOfferStore');
             const { createWorkspaceReplicationBlobPackPayloadSource } = await import('@/workspaces/replication/transport/createWorkspaceReplicationBlobPackPayloadSource');
             const { buildSessionHandoffWorkspaceBlobPackTransferId } = await import(
-                '@/session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationServerRouted',
+                '@/workspace/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationServerRouted',
             );
             const { resumeWorkspaceReplicationJobsAfterRestart } = await import('./resumeWorkspaceReplicationJobsAfterRestart');
 
