@@ -19,11 +19,13 @@ import {
 } from '@/agent/permissions/BasePermissionHandler';
 import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
 import type { ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';
-import type { AccountSettings } from '@happier-dev/protocol';
-import { parseHappierToolsShellBridgeCommand } from '@happier-dev/protocol';
+import {
+  extractShellCommand,
+  parseHappierToolsShellBridgeCommand,
+  type AccountSettings,
+} from '@happier-dev/protocol';
 import { isChangeTitleToolLikeName } from '@happier-dev/protocol/tools/v2';
 import { isDefaultWriteLikeToolName } from './writeLikeToolNameHeuristics';
-import { extractShellCommand } from './permissionToolIdentifier';
 import { resolveAgentRequestKind } from './requestKind';
 
 export type { PermissionResult, PendingRequest };

@@ -1,4 +1,4 @@
-import { extractShellCommand } from '@/agent/permissions/permissionToolIdentifier';
+import { extractShellCommand } from '@happier-dev/protocol';
 import { isShellCommandAllowed, splitShellCommandTopLevel } from '@/agent/permissions/shellCommandAllowlist';
 
 const READ_ONLY_SAFE_TOOL_NAMES = new Set([

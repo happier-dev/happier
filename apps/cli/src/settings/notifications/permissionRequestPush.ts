@@ -1,14 +1,14 @@
 import axios from 'axios';
-import type { AccountSettings } from '@happier-dev/protocol';
+import {
+  buildAgentRequestNotificationContent,
+  summarizeToolInputForNotification,
+  type AccountSettings,
+} from '@happier-dev/protocol';
 import type { PermissionMode } from '@/api/types';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { isDefaultWriteLikeToolName } from '@/agent/permissions/writeLikeToolNameHeuristics';
 import type { AgentRequestKind } from '@/agent/permissions/requestKind';
 import { dispatchActivityNotificationAsync } from '@/activity/notifications/dispatchActivityNotification';
-import {
-  buildAgentRequestNotificationContent,
-  summarizeToolInputForNotification,
-} from '@/activity/notifications/buildAgentRequestNotificationContent';
 import { logger } from '@/ui/logger';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
@@ -17,33 +17,6 @@ import { shouldSendPermissionRequestPushNotification, shouldSendUserActionReques
 export type PermissionRequestPushSender = Readonly<{
   sendToAllDevicesAsync: (title: string, body: string, data: Record<string, unknown>) => Promise<void>;
 }>;
-
-export function summarizeToolInputForPushNotification(toolName: string, toolInput: unknown): string | null {
-  return summarizeToolInputForNotification(toolName, toolInput);
-}
-
-export function buildAgentRequestPushNotification(params: Readonly<{
-  kind: AgentRequestKind;
-  sessionId: string;
-  requestId: string;
-  toolName: string;
-  toolDetails?: string | null;
-}>): Readonly<{ title: string; body: string; data: Record<string, unknown> }> {
-  return buildAgentRequestNotificationContent(params);
-}
-
-export function buildPermissionRequestPushNotification(params: Readonly<{
-  sessionId: string;
-  permissionId: string;
-  toolName: string;
-}>): Readonly<{ title: string; body: string; data: Record<string, unknown> }> {
-  return buildAgentRequestPushNotification({
-    kind: 'permission',
-    sessionId: params.sessionId,
-    requestId: params.permissionId,
-    toolName: params.toolName,
-  });
-}
 
 export async function sendAgentRequestPushNotificationAsync(params: Readonly<{
   pushSender: PermissionRequestPushSender;
@@ -63,7 +36,7 @@ export async function sendAgentRequestPushNotificationAsync(params: Readonly<{
 
   const details = typeof params.toolDetails === 'string' && params.toolDetails.trim()
     ? params.toolDetails.trim()
-    : summarizeToolInputForPushNotification(params.toolName, params.toolInput);
+    : summarizeToolInputForNotification(params.toolName, params.toolInput);
   try {
     const result = await dispatchActivityNotificationAsync({
       settings: params.settings,

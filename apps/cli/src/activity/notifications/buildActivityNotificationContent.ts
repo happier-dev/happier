@@ -1,10 +1,9 @@
-import { buildReadyNotificationContent } from '@happier-dev/protocol';
-
-import type { ActivityNotificationEvent } from './activityNotificationEvent';
 import {
   buildAgentRequestNotificationContent,
-  summarizeToolInputForNotification,
-} from './buildAgentRequestNotificationContent';
+  buildReadyNotificationContent,
+} from '@happier-dev/protocol';
+
+import type { ActivityNotificationEvent } from './activityNotificationEvent';
 
 export function buildActivityNotificationContent(
   event: ActivityNotificationEvent,
@@ -36,20 +35,18 @@ export function buildActivityNotificationContent(
   }
 
   const kind = event.topic === 'user_action_request' ? 'user_action' : 'permission';
-  const toolDetails = typeof event.toolDetails === 'string' && event.toolDetails.trim()
-    ? event.toolDetails.trim()
-    : summarizeToolInputForNotification(event.toolName, event.toolInput);
   const built = buildAgentRequestNotificationContent({
     kind,
     sessionId: event.sessionId,
     requestId: event.requestId,
     toolName: event.toolName,
-    toolDetails,
+    toolInput: event.toolInput,
+    toolDetails: event.toolDetails,
   });
   return {
     title: built.title,
     body: built.body,
     data: built.data,
-    toolDetails,
+    toolDetails: built.toolDetails,
   };
 }
