@@ -321,6 +321,18 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: [],
     representation: 'client',
   },
+  'app.ui.liveActivities': {
+    description: 'iOS Live Activities and Dynamic Island UI surfaces.',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'client',
+  },
+  'app.ui.homeScreenWidgets': {
+    description: 'iOS home screen widget UI surfaces.',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'client',
+  },
   bugReports: {
     description: 'Bug report submission and diagnostics capability.',
     defaultFailMode: 'fail_closed',

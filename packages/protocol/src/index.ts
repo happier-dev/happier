@@ -124,6 +124,26 @@ export {
 } from './account/settings/notificationChannels.js';
 
 export {
+  MAX_TRANSFER_SESSION_ID_LENGTH,
+  TransferSessionChunkEnvelopeSchema,
+  TransferSessionExportOpenResponseSchema,
+  TransferSessionIdSchema,
+  TransferSessionImportOpenResponseSchema,
+  TransferSessionLimitsSchema,
+  TransferSessionProtocolVersionSchema,
+  type TransferSessionChunkEnvelope,
+  type TransferSessionExportOpenResponse,
+  type TransferSessionId,
+  type TransferSessionImportOpenResponse,
+} from './transferSessions/index.js';
+
+export {
+  TRANSFER_RELAY_V2_SOCKET_EVENT,
+  TransferRelayV2SendEnvelopeSchema,
+  type TransferRelayV2SendEnvelope,
+} from './transferRelayV2/index.js';
+
+export {
   resolveNotificationChannelsV1FromAccountSettings,
 } from './account/settings/accountSettings.js';
 
@@ -189,6 +209,23 @@ export {
   type ActivityWebhookPayloadV1,
   type ActivityWebhookTopic,
 } from './activity/webhookPayload.js';
+export type {
+  AgentRequestKind,
+  AgentRequestSemanticSummary,
+} from './activity/agentRequestSummary.js';
+export {
+  buildAgentRequestNotificationContent,
+} from './activity/agentRequestNotificationContent.js';
+export {
+  buildAgentRequestSemanticSummary,
+  extractFirstUserActionQuestion,
+  formatPermissionRequestSummary,
+  summarizeToolInputForNotification,
+} from './activity/agentRequestSummary.js';
+export {
+  extractShellCommand,
+  stripShellCommandPreludeForDisplay,
+} from './activity/shellCommand.js';
 
 export {
   WorkspaceCheckoutKindSchema,

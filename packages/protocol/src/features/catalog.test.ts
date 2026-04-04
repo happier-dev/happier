@@ -45,6 +45,11 @@ describe('feature catalog', () => {
     expect(isFeatureId('attachments.uploads')).toBe(true);
   });
 
+  it('includes activity surfaces feature ids', () => {
+    expect(isFeatureId('app.ui.liveActivities')).toBe(true);
+    expect(isFeatureId('app.ui.homeScreenWidgets')).toBe(true);
+  });
+
   it('includes direct sessions feature id', () => {
     expect(isFeatureId('sessions.direct')).toBe(true);
   });
