@@ -379,6 +379,11 @@ const baseExpoConfig = {
                             description: "Shows multiple active sessions and their current attention state.",
                             supportedFamilies: ["systemSmall", "systemMedium", "systemLarge"],
                         },
+                        {
+                            name: "HappierFocusLiveActivity",
+                            displayName: "Happier Focus Live",
+                            description: "Shows the focused session on the Lock Screen and in the Dynamic Island.",
+                        },
                     ],
                 }
             ],
