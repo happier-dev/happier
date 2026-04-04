@@ -93,10 +93,18 @@ const androidEnableMinifyInReleaseBuilds = readBoolEnv('HAPPIER_ANDROID_ENABLE_M
 const androidEnableShrinkResourcesInReleaseBuilds = readBoolEnv('HAPPIER_ANDROID_ENABLE_SHRINK_RESOURCES', false);
 const androidGradleJvmArgsOverride = String(process.env.HAPPIER_ANDROID_GRADLE_JVMARGS ?? '').trim();
 const androidUsesCleartextTraffic = readBoolEnv('HAPPIER_ANDROID_USES_CLEARTEXT_TRAFFIC', true);
-const shouldUseAndroidBuildProperties =
+const expoAndroidBuildPropertiesPlugin = [
+    "expo-build-properties",
+    {
+        android: {
+            usesCleartextTraffic: androidUsesCleartextTraffic === true,
+        },
+    },
+];
+const shouldUseAndroidReleaseShrinkerPlugin =
     androidEnableMinifyInReleaseBuilds || androidEnableShrinkResourcesInReleaseBuilds;
 
-const androidBuildPropertiesPlugin = shouldUseAndroidBuildProperties
+const androidReleaseShrinkerPlugin = shouldUseAndroidReleaseShrinkerPlugin
     ? [
         require("./plugins/withAndroidReleaseShrinker.js"),
         {
@@ -286,7 +294,6 @@ const baseExpoConfig = {
             blockedPermissions: [
                 "android.permission.ACTIVITY_RECOGNITION"
             ],
-            usesCleartextTraffic: androidUsesCleartextTraffic,
             edgeToEdgeEnabled: true,
             package: androidPackage,
             googleServicesFile: "./google-services.json",
@@ -311,9 +318,10 @@ const baseExpoConfig = {
             favicon: "./sources/assets/images/favicon.png"
         },
         plugins: [
+            expoAndroidBuildPropertiesPlugin,
             require("./plugins/withEinkCompatibility.js"),
             require("./plugins/withAndroidReactNativeArchitectures.js"),
-            ...(androidBuildPropertiesPlugin ? [androidBuildPropertiesPlugin] : []),
+            ...(androidReleaseShrinkerPlugin ? [androidReleaseShrinkerPlugin] : []),
             [
                 "@sentry/react-native/expo",
                 {

@@ -14,6 +14,14 @@ function getPublicConfig() {
     return getConfig(getUiDir(), { skipSDKVersionRequirement: true, isPublicConfig: true }).exp;
 }
 
+function getPluginOptions(exp: ReturnType<typeof getPublicConfig>, pluginName: string) {
+    const pluginEntry = Array.isArray(exp.plugins)
+        ? exp.plugins.find((entry) => Array.isArray(entry) && entry[0] === pluginName)
+        : undefined;
+
+    return Array.isArray(pluginEntry) ? pluginEntry[1] : undefined;
+}
+
 function withCleanEnv<T>(fn: () => T): T {
     const keys = [
         'APP_ENV',
@@ -101,9 +109,15 @@ describe('app.config.js', () => {
         expect(exp.updates?.requestHeaders?.['expo-channel-name']).toBe('dev');
     });
 
-    it('enables Android cleartext traffic by default so LAN/local HTTP relays work in native builds', () => {
+    it('enables Android cleartext traffic by default through expo-build-properties so native manifests allow LAN/local HTTP relays', () => {
         const exp = withCleanEnv(() => getPublicConfig());
-        expect(exp.android).toEqual(expect.objectContaining({ usesCleartextTraffic: true }));
+        expect(getPluginOptions(exp, 'expo-build-properties')).toEqual(
+            expect.objectContaining({
+                android: expect.objectContaining({
+                    usesCleartextTraffic: true,
+                }),
+            })
+        );
     });
 
     it('allows disabling Android cleartext traffic explicitly via env override', () => {
@@ -111,7 +125,13 @@ describe('app.config.js', () => {
             process.env.HAPPIER_ANDROID_USES_CLEARTEXT_TRAFFIC = 'false';
             return getPublicConfig();
         });
-        expect(exp.android).toEqual(expect.objectContaining({ usesCleartextTraffic: false }));
+        expect(getPluginOptions(exp, 'expo-build-properties')).toEqual(
+            expect.objectContaining({
+                android: expect.objectContaining({
+                    usesCleartextTraffic: false,
+                }),
+            })
+        );
     });
 
     it('maps the internalpreview environment to the internal preview identity', () => {
