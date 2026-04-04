@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { ScmOperationErrorCodeSchema, ScmRequestBaseSchema } from './scm.js';
 
-export const ScmStashKindSchema = z.enum(['branch', 'transient']);
+export const ScmStashKindSchema = z.enum(['branch', 'transient', 'unmanaged']);
 export type ScmStashKind = z.infer<typeof ScmStashKindSchema>;
 
 export const ScmStashEntrySchema = z.object({
@@ -21,6 +21,7 @@ export type ScmStashListRequest = z.infer<typeof ScmStashListRequestSchema>;
 
 export const ScmStashListResponseSchema = z.object({
   success: z.boolean(),
+  stashes: z.array(ScmStashEntrySchema).optional(),
   managedStashes: z.array(ScmStashEntrySchema).optional(),
   managedCount: z.number().int().nonnegative().optional(),
   totalCount: z.number().int().nonnegative().optional(),
@@ -85,4 +86,3 @@ export const ScmStashShowResponseSchema = z.object({
   errorCode: ScmOperationErrorCodeSchema.optional(),
 });
 export type ScmStashShowResponse = z.infer<typeof ScmStashShowResponseSchema>;
-

@@ -46,6 +46,34 @@ describe('serverRoutedTransferPolicy', () => {
         expect(resolveServerRoutedTransferMaxBytesFromFeatures(features)).toBe(128);
     });
 
+    it('falls back to the default max-bytes when the server capability is missing', () => {
+        const features: FeaturesResponse = {
+            features: {
+                machines: {
+                    enabled: true,
+                    transfer: {
+                        enabled: true,
+                        directPeer: {
+                            enabled: true,
+                        },
+                        serverRouted: {
+                            enabled: true,
+                        },
+                    },
+                },
+            },
+            capabilities: {
+                machines: {
+                    transfer: {
+                        serverRouted: {},
+                    },
+                },
+            },
+        };
+
+        expect(resolveServerRoutedTransferMaxBytesFromFeatures(features)).toBe(2 * 1024 * 1024 * 1024);
+    });
+
     it('detects when a payload exceeds the configured size limit', () => {
         expect(isServerRoutedTransferOverSizeLimit(129, 128)).toBe(true);
         expect(isServerRoutedTransferOverSizeLimit(128, 128)).toBe(false);

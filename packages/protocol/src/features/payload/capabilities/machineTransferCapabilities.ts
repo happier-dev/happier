@@ -6,6 +6,13 @@ import { isRecord } from '../isRecord.js';
 export const MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY =
   'HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES';
 
+// Server-routed transfers must be bounded even when the env/capability is missing. The server
+// advertises a default capability, but CLI/daemon processes may also need a safe fallback.
+//
+// Keep these shared constants here (protocol) so server + transfers cannot drift.
+export const DEFAULT_MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES = 2 * 1024 * 1024 * 1024; // 2 GiB
+export const MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_HARD_MAX = 8 * 1024 * 1024 * 1024; // 8 GiB
+
 export function normalizeMachineTransferServerRoutedMaxBytes(raw: unknown): number | null {
   if (raw === null || raw === undefined) return null;
   const value =

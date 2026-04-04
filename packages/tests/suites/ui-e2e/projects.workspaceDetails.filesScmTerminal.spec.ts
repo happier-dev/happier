@@ -178,10 +178,13 @@ async function selectWorkspacePathFromPathBrowserModal(page: Page, absolutePath:
 
     await expect(modal).toHaveCount(1, { timeout: 1_000 });
 
-    // Ensure root is expanded so well-known top-level folders become visible quickly.
-    const rootToggle = page.getByTestId('path-browser-toggle:/').first();
-    await rootToggle.scrollIntoViewIfNeeded();
-    await rootToggle.click({ force: true });
+    // Some daemon filesystem policies expose a restricted set of browse roots (for example `/Users/<name>`)
+    // instead of a true `/` root. Expand `/` when available, but don't require it.
+    const rootToggle = page.getByTestId('path-browser-toggle:/');
+    if (await rootToggle.count()) {
+        await rootToggle.first().scrollIntoViewIfNeeded();
+        await rootToggle.first().click({ force: true });
+    }
 
     // Expand parent directories for the target path (portable across macOS/Linux).
     const normalizedPath = absolutePath.replace(/\\/g, '/').replace(/\/+$/g, '');
@@ -190,9 +193,11 @@ async function selectWorkspacePathFromPathBrowserModal(page: Page, absolutePath:
         let current = '';
         for (const segment of segments.slice(0, Math.max(0, segments.length - 1))) {
             current += `/${segment}`;
-            const toggle = page.getByTestId(`path-browser-toggle:${current}`).first();
-            await toggle.scrollIntoViewIfNeeded();
-            await toggle.click({ force: true });
+            const toggle = page.getByTestId(`path-browser-toggle:${current}`);
+            if (await toggle.count()) {
+                await toggle.first().scrollIntoViewIfNeeded();
+                await toggle.first().click({ force: true });
+            }
         }
     }
 
@@ -304,6 +309,8 @@ test.describe('ui e2e: projects (workspaces) details + files/scm/terminal', () =
         // the active server snapshot is fully resolved, and the Projects add flow requires a server id.
         await page.goto(`${uiBaseUrl}/new`, { waitUntil: 'domcontentloaded' });
         await expect(page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 180_000 });
+        // Desktop discoverability contract: the sidebar must expose a Projects entry point.
+        await expect(page.getByTestId('nav-projects')).toHaveCount(1, { timeout: 180_000 });
 
         // Keep the repo under HOME so the daemon's filesystem access policy (allowed directories) permits SCM ops.
         const homeDir = process.env.HOME ? resolve(process.env.HOME) : suiteDir;

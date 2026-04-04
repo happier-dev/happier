@@ -244,6 +244,14 @@ export const UpdateContainerSchema = z.object({
 
 export type UpdateContainer = z.infer<typeof UpdateContainerSchema>;
 
+export const TranscriptStreamSegmentEphemeralMessageSchema = z.object({
+  localId: z.string().min(1),
+  sidechainId: z.string().nullable().optional(),
+  content: SessionStoredMessageContentSchema,
+  createdAt: TimestampMsSchema,
+  updatedAt: TimestampMsSchema,
+}).passthrough();
+
 export const EphemeralUpdateSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('activity'),
@@ -256,6 +264,11 @@ export const EphemeralUpdateSchema = z.discriminatedUnion('type', [
     type: z.literal('execution-run-updated'),
     sessionId: z.string(),
     run: ExecutionRunPublicStateSchema,
+  }).passthrough(),
+  z.object({
+    type: z.literal('transcript-stream-segment'),
+    sessionId: z.string(),
+    message: TranscriptStreamSegmentEphemeralMessageSchema,
   }).passthrough(),
   z.object({
     type: z.literal('machine-activity'),

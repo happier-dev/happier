@@ -1,7 +1,6 @@
-import type { AppSessionTransferRoute } from '../route/resolveAppSessionTransferRoute.js';
 import type { MachineTransferStrategy } from '../route/resolveMachineTransferRoute.js';
 
-export type TransferRouteKind = MachineTransferStrategy | AppSessionTransferRoute;
+export type TransferRouteKind = MachineTransferStrategy | 'machine_rpc_direct';
 
 export type TransferRouteViabilityCacheKey = Readonly<{
     serverId: string;

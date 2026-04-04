@@ -85,6 +85,45 @@ describe('updates transcript vNext payloads', () => {
     expect(parsed.data.type).toBe('execution-run-updated');
   });
 
+  it('parses transcript-stream-segment ephemerals', () => {
+    const parsed = EphemeralUpdateSchema.safeParse({
+      type: 'transcript-stream-segment',
+      sessionId: 'sess_1',
+      message: {
+        localId: 'segment_1',
+        sidechainId: 'tool_1',
+        content: {
+          t: 'plain',
+          v: {
+            role: 'agent',
+            content: {
+              type: 'acp',
+              provider: 'codex',
+              data: { type: 'message', message: 'Hello' },
+            },
+            meta: {
+              happierStreamSegmentV1: {
+                v: 1,
+                segmentKind: 'assistant',
+                segmentLocalId: 'segment_1',
+                segmentState: 'streaming',
+                startedAtMs: 1_000,
+                updatedAtMs: 1_010,
+              },
+            },
+          },
+        },
+        createdAt: 1_000,
+        updatedAt: 1_010,
+      },
+    });
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.type).toBe('transcript-stream-segment');
+    expect(parsed.data.message.localId).toBe('segment_1');
+  });
+
   it('parses message ack responses with didUpdate', () => {
     const parsed = MessageAckResponseSchema.safeParse({
       ok: true,

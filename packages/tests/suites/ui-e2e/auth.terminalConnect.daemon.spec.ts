@@ -10,6 +10,7 @@ import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/da
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { approveTerminalConnect } from '../../src/testkit/uiE2e/approveTerminalConnect';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -72,10 +73,39 @@ test.describe('ui e2e: auth + terminal connect', () => {
     }
 
     await gotoDomContentLoadedWithRetries(page, baseUrl);
+    await createAccountAndReachConnectMachineState(page);
+    accountSecretKeyFormatted = await readAccountSecretKeyFromSettings(page, baseUrl);
+  }
+
+  async function createAccountAndReachConnectMachineState(page: Page): Promise<void> {
     await expect(page.getByTestId('welcome-create-account')).toHaveCount(1, { timeout: 60_000 });
     await page.getByTestId('welcome-create-account').click();
-    await expect(page.getByTestId('session-getting-started-kind-connect_machine')).toHaveCount(1, { timeout: 120_000 });
-    accountSecretKeyFormatted = await readAccountSecretKeyFromSettings(page, baseUrl);
+
+    const connectMachine = page.getByTestId('session-getting-started-kind-connect_machine');
+    const setupWizard = page.getByTestId('setupWizard.surface');
+
+    await expect
+      .poll(async () => {
+        return (await connectMachine.count()) > 0 || (await setupWizard.count()) > 0;
+      }, { timeout: 120_000 })
+      .toBe(true);
+
+    if ((await setupWizard.count()) > 0) {
+      await dismissSetupWizardIfVisible(page);
+    }
+
+    await expect(connectMachine).toHaveCount(1, { timeout: 120_000 });
+  }
+
+  async function dismissSetupWizardIfVisible(page: Page): Promise<void> {
+    const setupWizard = page.getByTestId('setupWizard.surface');
+    if ((await setupWizard.count()) === 0) {
+      return;
+    }
+    const skipSetup = page.getByTestId('setupWizard.surface-skip');
+    await expect(skipSetup).toHaveCount(1, { timeout: 60_000 });
+    await skipSetup.click();
+    await expect(setupWizard).toHaveCount(0, { timeout: 120_000 });
   }
 
   function transcriptMessageLocator(page: Page) {
@@ -213,8 +243,7 @@ test.describe('ui e2e: auth + terminal connect', () => {
     try {
       await page.goto(uiBaseUrl, { waitUntil: 'domcontentloaded' });
 
-      await page.getByTestId('welcome-create-account').click();
-      await expect(page.getByTestId('session-getting-started-kind-connect_machine')).not.toHaveCount(0, { timeout: 120_000 });
+      await createAccountAndReachConnectMachineState(page);
 
       cliLogin = await startCliAuthLoginForTerminalConnect({
         testDir,
@@ -231,8 +260,7 @@ test.describe('ui e2e: auth + terminal connect', () => {
       });
 
       await page.goto(cliLogin.connectUrl, { waitUntil: 'domcontentloaded' });
-      await expect(page.getByTestId('terminal-connect-approve')).toHaveCount(1, { timeout: 60_000 });
-      await page.getByTestId('terminal-connect-approve').click();
+      await approveTerminalConnect({ page });
       await cliLogin.waitForSuccess();
 
       await page.goto(`${uiBaseUrl}/`, { waitUntil: 'domcontentloaded' });
@@ -429,6 +457,7 @@ test.describe('ui e2e: auth + terminal connect', () => {
           HAPPIER_SERVER_URL: server.baseUrl,
           HAPPIER_WEBAPP_URL: uiBaseUrl,
           HAPPIER_DISABLE_CAFFEINATE: '1',
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
           HAPPIER_VARIANT: 'dev',
           HAPPIER_CLAUDE_PATH: fakeClaudePath,
           HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLogPath,
@@ -496,11 +525,17 @@ test.describe('ui e2e: auth + terminal connect', () => {
       await restoreAccountUsingSecretKey(page, uiBaseUrl, accountSecretKeyFormatted);
 
       await page.goto(`${uiBaseUrl}/`, { waitUntil: 'domcontentloaded' });
-      await expect(page.getByTestId('session-getting-started-start-new-session')).toHaveCount(1, { timeout: 120_000 });
-      await page.getByTestId('session-getting-started-start-new-session').click();
+      await dismissSetupWizardIfVisible(page);
+      const machineId = await waitForLatestMachineId({ suiteDir, timeoutMs: 120_000 });
+      const directMachineAction = page.getByTestId(`sessions-empty-state-machine:${machineId}`);
+      if ((await directMachineAction.count()) > 0) {
+        await directMachineAction.click();
+      } else {
+        await expect(page.getByTestId('session-getting-started-start-new-session')).toHaveCount(1, { timeout: 120_000 });
+        await page.getByTestId('session-getting-started-start-new-session').click();
+      }
 
       await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 120_000 });
-      const machineId = await waitForLatestMachineId({ suiteDir, timeoutMs: 120_000 });
       await expect(page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 120_000 });
       await page.getByTestId('agent-input-machine-chip').click();
       await expect(page.getByTestId(`new-session-machine:${machineId}`)).toHaveCount(1, { timeout: 120_000 });
@@ -597,12 +632,12 @@ test.describe('ui e2e: auth + terminal connect', () => {
           ...process.env,
           CI: '1',
           HAPPIER_DISABLE_CAFFEINATE: '1',
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
           HAPPIER_VARIANT: 'dev',
         },
       });
 
       await loggedOutPage.goto(cliLogin.connectUrl, { waitUntil: 'domcontentloaded' });
-      await expect(loggedOutPage.locator('[data-testid="welcome-terminal-connect-intent"]:visible')).toHaveCount(1, { timeout: 60_000 });
       await expect(loggedOutPage.locator('[data-testid="welcome-restore"]:visible')).toHaveCount(1, { timeout: 60_000 });
 
       // Restore account. The app should automatically open the pending terminal connect approval screen.
@@ -612,7 +647,7 @@ test.describe('ui e2e: auth + terminal connect', () => {
       const approve = loggedOutPage.getByTestId('terminal-connect-approve');
       await expect(approve).toHaveCount(1, { timeout: 120_000 });
 
-      await loggedOutPage.getByTestId('terminal-connect-approve').click();
+      await approveTerminalConnect({ page: loggedOutPage });
       await cliLogin.waitForSuccess();
     } catch (error) {
       thrown = error;

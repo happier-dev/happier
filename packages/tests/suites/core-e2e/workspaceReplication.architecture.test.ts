@@ -113,7 +113,7 @@ describe('workspace replication architecture closures', () => {
       'apps/cli/src/session/handoff/prepare',
       'apps/cli/src/session/handoff/metadata',
       'apps/cli/src/session/handoff/state',
-      'apps/cli/src/session/handoff/workspaceReplicationAdapter',
+      'apps/cli/src/workspace/handoff/workspaceReplicationAdapter',
       'apps/cli/src/api/machine',
     ]);
 

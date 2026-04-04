@@ -5,6 +5,9 @@ export type InitialAppUiPage = Pick<Page, 'getByTestId' | 'getByRole' | 'waitFor
 async function countVisible(page: InitialAppUiPage): Promise<number> {
   return (
     (await page.getByTestId('session-getting-started-kind-connect_machine').count())
+    + (await page.getByTestId('setupWizard.surface').count())
+    + (await page.getByTestId('setup.postAuth').count())
+    + (await page.getByTestId('setup.continueToAuth').count())
     + (await page.getByTestId('welcome-create-account').count())
     + (await page.getByTestId('welcome-signup-provider').count())
     + (await page.getByTestId('welcome-restore').count())

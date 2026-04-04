@@ -8,10 +8,10 @@ import {
 } from './scmStash.js';
 
 describe('scmStash protocol contracts', () => {
-  it('parses managed stash list responses', () => {
+  it('parses stash list responses including unmanaged stashes', () => {
     const parsed = ScmStashListResponseSchema.parse({
       success: true,
-      managedStashes: [
+      stashes: [
         {
           stashRef: 'stash@{0}',
           kind: 'branch',
@@ -19,13 +19,17 @@ describe('scmStash protocol contracts', () => {
           createdAt: Date.now(),
           message: '!!Happier<main>: WIP on main',
         },
+        {
+          stashRef: 'stash@{1}',
+          kind: 'unmanaged',
+          message: 'WIP on main: 1234567 unmanaged',
+        },
       ],
-      managedCount: 1,
       totalCount: 2,
     });
 
-    expect(parsed.managedStashes?.[0]?.stashRef).toBe('stash@{0}');
-    expect(parsed.managedCount).toBe(1);
+    expect(parsed.stashes?.[0]?.stashRef).toBe('stash@{0}');
+    expect(parsed.stashes?.[1]?.kind).toBe('unmanaged');
     expect(parsed.totalCount).toBe(2);
   });
 
@@ -60,4 +64,3 @@ describe('scmStash protocol contracts', () => {
     expect(parsed.errorCode).toBe(SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED);
   });
 });
-

@@ -63,6 +63,17 @@ describe('waitForInitialAppUi', () => {
     expect(page.reloadCalls).toBe(0);
   });
 
+  it('returns when the post-auth setup wizard is visible', async () => {
+    const page = createFakePage({
+      testIdCounts: {
+        'setupWizard.surface': [1],
+      },
+    });
+
+    await expect(waitForInitialAppUi({ page, timeoutMs: 50, reloadOnFailure: false })).resolves.toBeUndefined();
+    expect(page.reloadCalls).toBe(0);
+  });
+
   it('reloads once when the first pass never renders but the retry does', async () => {
     const nowSpy = vi.spyOn(Date, 'now');
     nowSpy
