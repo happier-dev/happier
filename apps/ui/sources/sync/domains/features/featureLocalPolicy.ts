@@ -23,6 +23,8 @@ const LOCAL_POLICY_BY_FEATURE: Readonly<Partial<Record<FeatureId, FeatureLocalPo
     'app.ui.storeReviewPrompts': () => true,
     'app.ui.sessionGettingStartedGuidance': () => true,
     'app.ui.changelog': () => true,
+    'app.ui.liveActivities': (settings) => resolveUiFeatureToggleEnabled(settings, 'app.ui.liveActivities'),
+    'app.ui.homeScreenWidgets': (settings) => resolveUiFeatureToggleEnabled(settings, 'app.ui.homeScreenWidgets'),
     bugReports: () => true,
     'scm.writeOperations': (settings) => resolveUiFeatureToggleEnabled(settings, 'scm.writeOperations'),
     'files.reviewComments': (settings) => resolveUiFeatureToggleEnabled(settings, 'files.reviewComments'),

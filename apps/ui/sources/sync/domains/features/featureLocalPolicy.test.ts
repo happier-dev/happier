@@ -40,6 +40,38 @@ describe('featureLocalPolicy', () => {
         })).toBe(false);
     });
 
+    it('disables app.ui.liveActivities by default when experiments are on', () => {
+        expect(resolveLocalFeaturePolicyEnabled('app.ui.liveActivities', {
+            ...settingsDefaults,
+            experiments: true,
+            featureToggles: {},
+        })).toBe(false);
+    });
+
+    it('enables app.ui.liveActivities when explicitly enabled', () => {
+        expect(resolveLocalFeaturePolicyEnabled('app.ui.liveActivities', {
+            ...settingsDefaults,
+            experiments: true,
+            featureToggles: { 'app.ui.liveActivities': true },
+        })).toBe(true);
+    });
+
+    it('disables app.ui.homeScreenWidgets by default when experiments are on', () => {
+        expect(resolveLocalFeaturePolicyEnabled('app.ui.homeScreenWidgets', {
+            ...settingsDefaults,
+            experiments: true,
+            featureToggles: {},
+        })).toBe(false);
+    });
+
+    it('enables app.ui.homeScreenWidgets when explicitly enabled', () => {
+        expect(resolveLocalFeaturePolicyEnabled('app.ui.homeScreenWidgets', {
+            ...settingsDefaults,
+            experiments: true,
+            featureToggles: { 'app.ui.homeScreenWidgets': true },
+        })).toBe(true);
+    });
+
     it('enables connectedServices.quotas when explicitly enabled', () => {
         expect(resolveLocalFeaturePolicyEnabled('connectedServices.quotas', {
             ...settingsDefaults,

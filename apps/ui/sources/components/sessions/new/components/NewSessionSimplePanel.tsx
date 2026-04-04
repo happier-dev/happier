@@ -223,8 +223,9 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
 
     return (
         <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            keyboardVerticalOffset={Platform.OS === 'ios' ? props.headerHeight + props.safeAreaBottom + 16 : 0}
+            behavior="translate-with-padding"
+            automaticOffset
+            keyboardVerticalOffset={16}
             style={shellStyle}
         >
             {content}

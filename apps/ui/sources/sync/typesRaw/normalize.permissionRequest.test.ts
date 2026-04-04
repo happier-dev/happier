@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeRawMessage } from './normalize';
-import { formatPermissionRequestSummary } from '@/components/tools/normalization/policy/permissionSummary';
+import { formatPermissionRequestSummary } from '@happier-dev/protocol';
 
 describe('typesRaw.normalizeRawMessage (permission-request)', () => {
   it('uses description as a permission title when options are missing', () => {

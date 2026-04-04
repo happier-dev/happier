@@ -431,6 +431,28 @@ export function useMachine(machineId: string): Machine | null {
   return getStorage()(useShallow((state) => state.machines[machineId] ?? null));
 }
 
+export function useServerScopedMachine(serverId: string | null | undefined, machineId: string): Machine | null {
+  return getStorage()(useShallow((state) => {
+    const normalizedMachineId = typeof machineId === 'string' ? machineId.trim() : '';
+    if (!normalizedMachineId) {
+      return null;
+    }
+
+    const normalizedServerId = typeof serverId === 'string' ? serverId.trim() : '';
+    if (normalizedServerId.length > 0) {
+      const scopedMachines = state.machineListByServerId?.[normalizedServerId];
+      if (Array.isArray(scopedMachines)) {
+        const scopedMachine = scopedMachines.find((candidate) => candidate.id === normalizedMachineId) ?? null;
+        if (scopedMachine) {
+          return scopedMachine;
+        }
+      }
+    }
+
+    return state.machines[normalizedMachineId] ?? null;
+  }));
+}
+
 export function useSessionListViewData(): SessionListViewItem[] | null {
   return getStorage()(
     useShallow((state) => state.sessionListViewData)

@@ -163,8 +163,6 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
     const {
         theme,
         styles,
-        safeAreaBottom,
-        headerHeight,
         newSessionSidePadding,
         newSessionBottomPadding,
         shouldBottomAnchor: shouldBottomAnchorOverride,
@@ -827,8 +825,9 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
 
     return (
         <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            keyboardVerticalOffset={Platform.OS === 'ios' ? headerHeight + safeAreaBottom + 16 : 0}
+            behavior="translate-with-padding"
+            automaticOffset
+            keyboardVerticalOffset={16}
             style={shellStyle}
         >
             {content}

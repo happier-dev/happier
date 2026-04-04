@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { computeAgentInputDefaultMaxHeight, computeNewSessionInputMaxHeight } from './inputMaxHeight';
+import {
+    computeAgentInputDefaultMaxHeight,
+    computeAgentInputKeyboardOpenPanelMaxHeight,
+    computeAgentInputKeyboardOpenVariableSectionMaxHeight,
+    computeNewSessionInputMaxHeight,
+} from './inputMaxHeight';
 
 describe('inputMaxHeight', () => {
     it('reduces default max height when keyboard is open (native)', () => {
@@ -57,4 +62,26 @@ describe('inputMaxHeight', () => {
             expect(computeNewSessionInputMaxHeight({ useEnhancedSessionWizard, screenHeight, keyboardHeight })).toBe(expected);
         },
     );
+
+    it('caps the overall native composer panel when the keyboard is open', () => {
+        expect(computeAgentInputKeyboardOpenPanelMaxHeight({ screenHeight: 900, keyboardHeight: 320 })).toBe(564);
+    });
+
+    it('does not cap the overall native composer panel when the keyboard is closed', () => {
+        expect(computeAgentInputKeyboardOpenPanelMaxHeight({ screenHeight: 900, keyboardHeight: 0 })).toBeUndefined();
+    });
+
+    it('reserves footer height from the variable composer section budget', () => {
+        expect(computeAgentInputKeyboardOpenVariableSectionMaxHeight({
+            panelMaxHeight: 564,
+            footerHeight: 72,
+        })).toBe(492);
+    });
+
+    it('clamps the variable section to a readable minimum when the footer is very tall', () => {
+        expect(computeAgentInputKeyboardOpenVariableSectionMaxHeight({
+            panelMaxHeight: 220,
+            footerHeight: 200,
+        })).toBe(120);
+    });
 });

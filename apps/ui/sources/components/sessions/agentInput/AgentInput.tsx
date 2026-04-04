@@ -1,6 +1,6 @@
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import * as React from 'react';
-import { View, Platform, useWindowDimensions, ViewStyle, ActivityIndicator, Pressable } from 'react-native';
+import { View, Platform, useWindowDimensions, ViewStyle, ActivityIndicator, Pressable, ScrollView } from 'react-native';
 import { layout } from '@/components/ui/layout/layout';
 import { MultiTextInput, KeyPressEvent } from '@/components/ui/forms/MultiTextInput';
 import { Typography } from '@/constants/Typography';
@@ -48,7 +48,11 @@ import { PathAndResumeRow } from './layout/PathAndResumeRow';
 import { getHasAnyAgentInputActions, shouldShowSecondaryControlRow } from './layout/actionBarLogic';
 import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { computeAgentInputDefaultMaxHeight } from './inputMaxHeight';
+import {
+    computeAgentInputDefaultMaxHeight,
+    computeAgentInputKeyboardOpenPanelMaxHeight,
+    computeAgentInputKeyboardOpenVariableSectionMaxHeight,
+} from './inputMaxHeight';
 import { getContextWarning } from './contextWarning';
 import { shouldRenderPermissionChip } from './permissionChipVisibility';
 import { type AgentInputContentPopoverConfig } from './components/AgentInputContentPopover';
@@ -249,6 +253,20 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingRight: 8,
         paddingVertical: 4,
         minHeight: 40,
+    },
+    nativeKeyboardPanelContent: {
+        minHeight: 0,
+    },
+    nativeKeyboardVariableSection: {
+        flexGrow: 0,
+        flexShrink: 1,
+        minHeight: 0,
+    },
+    nativeKeyboardVariableSectionContent: {
+        paddingBottom: 4,
+    },
+    nativeKeyboardFooterSection: {
+        flexShrink: 0,
     },
 
     // Overlay styles
@@ -624,6 +642,13 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             keyboardHeight,
         });
     }, [keyboardHeight, screenHeight]);
+    const keyboardOpenPanelMaxHeight = React.useMemo(() => {
+        if (Platform.OS === 'web') return undefined;
+        return computeAgentInputKeyboardOpenPanelMaxHeight({
+            screenHeight,
+            keyboardHeight,
+        });
+    }, [keyboardHeight, screenHeight]);
 
     const hasText = props.value.trim().length > 0;
     const hasSendableContent = hasText || props.hasSendableAttachments === true;
@@ -890,6 +915,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         edgeThreshold: 2,
     });
     const [permissionRequestsContentHeightPx, setPermissionRequestsContentHeightPx] = React.useState<number | null>(null);
+    const [actionFooterHeightPx, setActionFooterHeightPx] = React.useState(0);
     const permissionRequestsMaxHeightPx = React.useMemo(() => {
         const available = Math.max(1, screenHeight - keyboardHeight);
         const desired = Math.round(available * 0.34);
@@ -900,6 +926,13 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) return undefined;
         return Math.max(1, Math.min(Math.trunc(raw), permissionRequestsMaxHeightPx));
     }, [permissionRequestsContentHeightPx, permissionRequestsMaxHeightPx]);
+    const keyboardOpenVariableSectionMaxHeight = React.useMemo(() => {
+        if (typeof keyboardOpenPanelMaxHeight !== 'number') return undefined;
+        return computeAgentInputKeyboardOpenVariableSectionMaxHeight({
+            panelMaxHeight: keyboardOpenPanelMaxHeight,
+            footerHeight: actionFooterHeightPx,
+        });
+    }, [actionFooterHeightPx, keyboardOpenPanelMaxHeight]);
 
             const permissionModeOptions = React.useMemo(() => {
                 return getPermissionModeOptionsForSession(agentId, props.metadata ?? null);
@@ -1776,7 +1809,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
                 {/* Box 2: Action Area (Input + Send) */}
                 <WebDropTargetView
-                    style={[styles.unifiedPanel, props.panelStyle]}
+                    style={[
+                        styles.unifiedPanel,
+                        props.panelStyle,
+                        typeof keyboardOpenPanelMaxHeight === 'number' ? { maxHeight: keyboardOpenPanelMaxHeight } : null,
+                    ]}
                     onDragEnter={composerDropZoneHandlers.onDragEnter}
                     onDragLeave={composerDropZoneHandlers.onDragLeave}
                     onDragOver={composerDropZoneHandlers.onDragOver}
@@ -1790,105 +1827,96 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                             </View>
                         </View>
                     ) : null}
-                    {props.sessionId && (composerPermissionRequests.length > 0 || composerUserActionRequests.length > 0) && showComposerPermissionCards ? (
-                        <AgentInputPermissionRequests
-                            sessionId={props.sessionId}
-                            permissionRequests={composerPermissionRequests}
-                            userActionRequests={composerUserActionRequests}
-                            permissionLocationsById={permissionLocationsById}
-                            metadata={props.metadata || null}
-                            canApprovePermissions={canApprovePermissions}
-                            disabledReason={props.permissionDisabledReason}
-                            maxHeightPx={permissionRequestsMaxHeightPx}
-                            clampedHeightPx={permissionRequestsClampedHeightPx ?? permissionRequestsMaxHeightPx}
-                            onContentSizeChange={(_w, h) => {
-                                setPermissionRequestsContentHeightPx(h);
-                                permissionRequestsFades.onContentSizeChange?.(_w, h);
-                            }}
-                            onLayout={(e) => {
-                                permissionRequestsFades.onViewportLayout?.(e);
-                            }}
-                            onScroll={(e) => {
-                                permissionRequestsFades.onScroll?.(e);
-                            }}
-                            fadeVisibility={permissionRequestsFades.visibility}
-                        />
-                    ) : null}
-
-                    {props.attachments && props.attachments.length > 0 ? (
-                        <AgentInputAttachmentsRow attachments={props.attachments} />
-                    ) : null}
-                    {/* Input field */}
-                    <View
-                        ref={composerAnchorRef}
-                        collapsable={false}
-                        style={[styles.inputContainer, props.minHeight ? { minHeight: props.minHeight } : undefined]}
-                    >
-                        <MultiTextInput
-                            ref={inputRef}
-                            testID={props.sessionId ? AGENT_INPUT_TEST_IDS.sessionInput : AGENT_INPUT_TEST_IDS.newSessionInput}
-                            textStyle={props.sessionId ? styles.sessionInputText : styles.newSessionInputText}
-                            value={props.value}
-                            paddingTop={Platform.OS === 'web' ? 10 : 8}
-                            paddingBottom={Platform.OS === 'web' ? 10 : 8}
-                            onChangeText={props.onChangeText}
-                            placeholder={props.placeholder}
-                            onKeyPress={handleKeyPress}
-                            onStateChange={handleInputStateChange}
-                            maxHeight={props.inputMaxHeight ?? defaultInputMaxHeight}
-                            editable={!props.disabled}
-                            onFilesPasted={props.onAttachmentsAdded}
-                        />
-                    </View>
-
-                    {/* Action buttons below input */}
-                    <View style={styles.actionButtonsContainer}>
-                        <View
-                            style={[
-                                screenWidth < 420 ? styles.actionButtonsColumnNarrow : styles.actionButtonsColumn,
-                                isMobileLayoutWidth(screenWidth) ? styles.actionButtonsColumnMobile : null,
-                            ]}
-                        >{[
-                            // Row 1: Settings, Profile (FIRST), Agent, Abort, Source control status
-                            <View
-                                key="row1"
-                                style={[styles.actionButtonsRow, showSecondaryControlsRow ? styles.actionButtonsRowWithBelow : null]}
-                            >
-                                {actionBarShouldScroll ? (
-                                    <AgentInputScrollableChipRow
-                                        containerStyle={styles.actionButtonsLeftScroll}
-                                        contentStyle={styles.actionButtonsLeftScrollContent}
-                                        fadeColor={actionBarFadeColor}
-                                        indicatorColor={theme.colors.button.secondary.tint}
-                                        fadeLeftStyle={styles.actionButtonsFadeLeft}
-                                        fadeRightStyle={styles.actionButtonsFadeRight}
-                                    >
-                                        {renderedActionControlNodes as any}
-                                    </AgentInputScrollableChipRow>
-                                ) : (
-                                    <View style={[styles.actionButtonsLeft, screenWidth < 420 ? styles.actionButtonsLeftNarrow : null]}>
-                                        {renderedActionControlNodes as any}
-                                    </View>
-                                )}
-
-                                {/* Send/Voice button - aligned with first row */}
-                                <AgentInputSubmitButton
-                                    testID={props.sessionId ? AGENT_INPUT_TEST_IDS.sessionSend : AGENT_INPUT_TEST_IDS.newSessionSend}
+                    {Platform.OS === 'web' ? (
+                        <>
+                            {props.sessionId && (composerPermissionRequests.length > 0 || composerUserActionRequests.length > 0) && showComposerPermissionCards ? (
+                                <AgentInputPermissionRequests
                                     sessionId={props.sessionId}
-                                    submitAccessibilityLabel={props.submitAccessibilityLabel}
-                                    disabled={Boolean(props.disabled || props.isSendDisabled || props.isSending || (!hasSendableContent && !micPressHandler))}
-                                    isSending={props.isSending}
-                                    hasSendableContent={hasSendableContent}
-                                    micPressHandler={micPressHandler}
-                                    micActive={micActive}
-                                    onSend={handleSend}
+                                    permissionRequests={composerPermissionRequests}
+                                    userActionRequests={composerUserActionRequests}
+                                    permissionLocationsById={permissionLocationsById}
+                                    metadata={props.metadata || null}
+                                    canApprovePermissions={canApprovePermissions}
+                                    disabledReason={props.permissionDisabledReason}
+                                    maxHeightPx={permissionRequestsMaxHeightPx}
+                                    clampedHeightPx={permissionRequestsClampedHeightPx ?? permissionRequestsMaxHeightPx}
+                                    onContentSizeChange={(_w, h) => {
+                                        setPermissionRequestsContentHeightPx(h);
+                                        permissionRequestsFades.onContentSizeChange?.(_w, h);
+                                    }}
+                                    onLayout={(e) => {
+                                        permissionRequestsFades.onViewportLayout?.(e);
+                                    }}
+                                    onScroll={(e) => {
+                                        permissionRequestsFades.onScroll?.(e);
+                                    }}
+                                    fadeVisibility={permissionRequestsFades.visibility}
                                 />
-                                    </View>,
+                            ) : null}
 
-                                    // Row 2: machine, path, and resume controls.
-                                    // - wrap: dedicated line with chip wrapping
-                                    // - scroll: dedicated line with horizontal scrolling
-                                    // - collapsed: moved into the action menu
+                            {props.attachments && props.attachments.length > 0 ? (
+                                <AgentInputAttachmentsRow attachments={props.attachments} />
+                            ) : null}
+                            <View
+                                ref={composerAnchorRef}
+                                collapsable={false}
+                                style={[styles.inputContainer, props.minHeight ? { minHeight: props.minHeight } : undefined]}
+                            >
+                                <MultiTextInput
+                                    ref={inputRef}
+                                    testID={props.sessionId ? AGENT_INPUT_TEST_IDS.sessionInput : AGENT_INPUT_TEST_IDS.newSessionInput}
+                                    textStyle={props.sessionId ? styles.sessionInputText : styles.newSessionInputText}
+                                    value={props.value}
+                                    paddingTop={Platform.OS === 'web' ? 10 : 8}
+                                    paddingBottom={Platform.OS === 'web' ? 10 : 8}
+                                    onChangeText={props.onChangeText}
+                                    placeholder={props.placeholder}
+                                    onKeyPress={handleKeyPress}
+                                    onStateChange={handleInputStateChange}
+                                    maxHeight={props.inputMaxHeight ?? defaultInputMaxHeight}
+                                    editable={!props.disabled}
+                                    onFilesPasted={props.onAttachmentsAdded}
+                                />
+                            </View>
+                            <View style={styles.actionButtonsContainer}>
+                                <View
+                                    style={[
+                                        screenWidth < 420 ? styles.actionButtonsColumnNarrow : styles.actionButtonsColumn,
+                                        isMobileLayoutWidth(screenWidth) ? styles.actionButtonsColumnMobile : null,
+                                    ]}
+                                >{[
+                                    <View
+                                        key="row1"
+                                        style={[styles.actionButtonsRow, showSecondaryControlsRow ? styles.actionButtonsRowWithBelow : null]}
+                                    >
+                                        {actionBarShouldScroll ? (
+                                            <AgentInputScrollableChipRow
+                                                containerStyle={styles.actionButtonsLeftScroll}
+                                                contentStyle={styles.actionButtonsLeftScrollContent}
+                                                fadeColor={actionBarFadeColor}
+                                                indicatorColor={theme.colors.button.secondary.tint}
+                                                fadeLeftStyle={styles.actionButtonsFadeLeft}
+                                                fadeRightStyle={styles.actionButtonsFadeRight}
+                                            >
+                                                {renderedActionControlNodes as any}
+                                            </AgentInputScrollableChipRow>
+                                        ) : (
+                                            <View style={[styles.actionButtonsLeft, screenWidth < 420 ? styles.actionButtonsLeftNarrow : null]}>
+                                                {renderedActionControlNodes as any}
+                                            </View>
+                                        )}
+                                        <AgentInputSubmitButton
+                                            testID={props.sessionId ? AGENT_INPUT_TEST_IDS.sessionSend : AGENT_INPUT_TEST_IDS.newSessionSend}
+                                            sessionId={props.sessionId}
+                                            submitAccessibilityLabel={props.submitAccessibilityLabel}
+                                            disabled={Boolean(props.disabled || props.isSendDisabled || props.isSending || (!hasSendableContent && !micPressHandler))}
+                                            isSending={props.isSending}
+                                            hasSendableContent={hasSendableContent}
+                                            micPressHandler={micPressHandler}
+                                            micActive={micActive}
+                                            onSend={handleSend}
+                                        />
+                                    </View>,
                                     (showSecondaryControlsRow) ? (
                                         actionBarShouldScroll ? (
                                             <AgentInputScrollableChipRow
@@ -1957,9 +1985,191 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                 })}
                                             />
                                         )
-                            ) : null,
-                        ]}</View>
-                    </View>
+                                    ) : null,
+                                ]}</View>
+                            </View>
+                        </>
+                    ) : (
+                        <View style={styles.nativeKeyboardPanelContent}>
+                            <ScrollView
+                                style={[
+                                    styles.nativeKeyboardVariableSection,
+                                    typeof keyboardOpenVariableSectionMaxHeight === 'number'
+                                        ? { maxHeight: keyboardOpenVariableSectionMaxHeight }
+                                        : null,
+                                ]}
+                                contentContainerStyle={styles.nativeKeyboardVariableSectionContent}
+                                keyboardShouldPersistTaps="handled"
+                                alwaysBounceVertical={false}
+                            >
+                                {props.sessionId && (composerPermissionRequests.length > 0 || composerUserActionRequests.length > 0) && showComposerPermissionCards ? (
+                                    <AgentInputPermissionRequests
+                                        sessionId={props.sessionId}
+                                        permissionRequests={composerPermissionRequests}
+                                        userActionRequests={composerUserActionRequests}
+                                        permissionLocationsById={permissionLocationsById}
+                                        metadata={props.metadata || null}
+                                        canApprovePermissions={canApprovePermissions}
+                                        disabledReason={props.permissionDisabledReason}
+                                        maxHeightPx={permissionRequestsMaxHeightPx}
+                                        clampedHeightPx={permissionRequestsClampedHeightPx ?? permissionRequestsMaxHeightPx}
+                                        onContentSizeChange={(_w, h) => {
+                                            setPermissionRequestsContentHeightPx(h);
+                                            permissionRequestsFades.onContentSizeChange?.(_w, h);
+                                        }}
+                                        onLayout={(e) => {
+                                            permissionRequestsFades.onViewportLayout?.(e);
+                                        }}
+                                        onScroll={(e) => {
+                                            permissionRequestsFades.onScroll?.(e);
+                                        }}
+                                        fadeVisibility={permissionRequestsFades.visibility}
+                                    />
+                                ) : null}
+                                {props.attachments && props.attachments.length > 0 ? (
+                                    <AgentInputAttachmentsRow attachments={props.attachments} />
+                                ) : null}
+                                <View
+                                    ref={composerAnchorRef}
+                                    collapsable={false}
+                                    style={[styles.inputContainer, props.minHeight ? { minHeight: props.minHeight } : undefined]}
+                                >
+                                    <MultiTextInput
+                                        ref={inputRef}
+                                        testID={props.sessionId ? AGENT_INPUT_TEST_IDS.sessionInput : AGENT_INPUT_TEST_IDS.newSessionInput}
+                                        textStyle={props.sessionId ? styles.sessionInputText : styles.newSessionInputText}
+                                        value={props.value}
+                                        paddingTop={8}
+                                        paddingBottom={8}
+                                        onChangeText={props.onChangeText}
+                                        placeholder={props.placeholder}
+                                        onKeyPress={handleKeyPress}
+                                        onStateChange={handleInputStateChange}
+                                        maxHeight={props.inputMaxHeight ?? defaultInputMaxHeight}
+                                        editable={!props.disabled}
+                                        onFilesPasted={props.onAttachmentsAdded}
+                                    />
+                                </View>
+                            </ScrollView>
+                            <View
+                                style={styles.nativeKeyboardFooterSection}
+                                onLayout={(event) => {
+                                    setActionFooterHeightPx(Math.trunc(event.nativeEvent.layout.height));
+                                }}
+                            >
+                                <View style={styles.actionButtonsContainer}>
+                                    <View
+                                        style={[
+                                            screenWidth < 420 ? styles.actionButtonsColumnNarrow : styles.actionButtonsColumn,
+                                            isMobileLayoutWidth(screenWidth) ? styles.actionButtonsColumnMobile : null,
+                                        ]}
+                                    >{[
+                                        <View
+                                            key="row1"
+                                            style={[styles.actionButtonsRow, showSecondaryControlsRow ? styles.actionButtonsRowWithBelow : null]}
+                                        >
+                                            {actionBarShouldScroll ? (
+                                                <AgentInputScrollableChipRow
+                                                    containerStyle={styles.actionButtonsLeftScroll}
+                                                    contentStyle={styles.actionButtonsLeftScrollContent}
+                                                    fadeColor={actionBarFadeColor}
+                                                    indicatorColor={theme.colors.button.secondary.tint}
+                                                    fadeLeftStyle={styles.actionButtonsFadeLeft}
+                                                    fadeRightStyle={styles.actionButtonsFadeRight}
+                                                >
+                                                    {renderedActionControlNodes as any}
+                                                </AgentInputScrollableChipRow>
+                                            ) : (
+                                                <View style={[styles.actionButtonsLeft, screenWidth < 420 ? styles.actionButtonsLeftNarrow : null]}>
+                                                    {renderedActionControlNodes as any}
+                                                </View>
+                                            )}
+                                            <AgentInputSubmitButton
+                                                testID={props.sessionId ? AGENT_INPUT_TEST_IDS.sessionSend : AGENT_INPUT_TEST_IDS.newSessionSend}
+                                                sessionId={props.sessionId}
+                                                submitAccessibilityLabel={props.submitAccessibilityLabel}
+                                                disabled={Boolean(props.disabled || props.isSendDisabled || props.isSending || (!hasSendableContent && !micPressHandler))}
+                                                isSending={props.isSending}
+                                                hasSendableContent={hasSendableContent}
+                                                micPressHandler={micPressHandler}
+                                                micActive={micActive}
+                                                onSend={handleSend}
+                                            />
+                                        </View>,
+                                        (showSecondaryControlsRow) ? (
+                                            actionBarShouldScroll ? (
+                                                <AgentInputScrollableChipRow
+                                                    key="row2"
+                                                    containerStyle={styles.actionButtonsLeftScroll}
+                                                    contentStyle={styles.actionButtonsScrollViewportContent}
+                                                    fadeColor={actionBarFadeColor}
+                                                    indicatorColor={theme.colors.button.secondary.tint}
+                                                    fadeLeftStyle={styles.actionButtonsFadeLeft}
+                                                    fadeRightStyle={styles.actionButtonsFadeRight}
+                                                >
+                                                    <PathAndResumeRow
+                                                        styles={{
+                                                            pathRow: styles.pathRow,
+                                                            actionButtonsLeft: styles.actionButtonsLeftScrollInline,
+                                                            actionChip: styles.actionChip,
+                                                            actionChipIconOnly: styles.actionChipIconOnly,
+                                                            actionChipPressed: styles.actionChipPressed,
+                                                            actionChipText: styles.actionChipText,
+                                                        }}
+                                                        fillAvailableWidth={false}
+                                                        leadingControls={secondaryLeadingControlsForWrap}
+                                                        showChipLabels={showChipLabels}
+                                                        iconColor={theme.colors.button.secondary.tint}
+                                                        currentPath={props.currentPath}
+                                                        pathChipAnchorRef={pathChipAnchorRef}
+                                                        emptyPathLabel={t('newSession.selectPathTitle')}
+                                                        onPathClick={handlePathPress}
+                                                        resumeSessionId={props.resumeSessionId}
+                                                        resumeChipAnchorRef={resumeChipAnchorRef}
+                                                        onResumeClick={handleResumePress}
+                                                        resumeLabelTitle={t('newSession.resume.chipOptional', {
+                                                            agent: t(getAgentCore(props.agentType ?? DEFAULT_AGENT_ID).displayNameKey),
+                                                        })}
+                                                        resumeLabelOptional={t('newSession.resume.chipOptional', {
+                                                            agent: t(getAgentCore(props.agentType ?? DEFAULT_AGENT_ID).displayNameKey),
+                                                        })}
+                                                    />
+                                                </AgentInputScrollableChipRow>
+                                            ) : (
+                                                <PathAndResumeRow
+                                                    key="row2"
+                                                    styles={{
+                                                        pathRow: styles.pathRow,
+                                                        actionButtonsLeft: styles.actionButtonsLeft,
+                                                        actionChip: styles.actionChip,
+                                                        actionChipIconOnly: styles.actionChipIconOnly,
+                                                        actionChipPressed: styles.actionChipPressed,
+                                                        actionChipText: styles.actionChipText,
+                                                    }}
+                                                    leadingControls={secondaryLeadingControlsForWrap}
+                                                    showChipLabels={showChipLabels}
+                                                    iconColor={theme.colors.button.secondary.tint}
+                                                    currentPath={props.currentPath}
+                                                    pathChipAnchorRef={pathChipAnchorRef}
+                                                    emptyPathLabel={t('newSession.selectPathTitle')}
+                                                    onPathClick={handlePathPress}
+                                                    resumeSessionId={props.resumeSessionId}
+                                                    resumeChipAnchorRef={resumeChipAnchorRef}
+                                                    onResumeClick={handleResumePress}
+                                                    resumeLabelTitle={t('newSession.resume.chipOptional', {
+                                                        agent: t(getAgentCore(props.agentType ?? DEFAULT_AGENT_ID).displayNameKey),
+                                                    })}
+                                                    resumeLabelOptional={t('newSession.resume.chipOptional', {
+                                                        agent: t(getAgentCore(props.agentType ?? DEFAULT_AGENT_ID).displayNameKey),
+                                                    })}
+                                                />
+                                            )
+                                        ) : null,
+                                    ]}</View>
+                                </View>
+                            </View>
+                        </View>
+                    )}
                 </WebDropTargetView>
             </View>
         </View>

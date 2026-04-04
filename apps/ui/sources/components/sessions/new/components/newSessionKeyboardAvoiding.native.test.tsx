@@ -1,0 +1,281 @@
+import * as React from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+
+import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+const mockEnv = vi.hoisted(() => ({
+    platform: 'ios' as 'ios' | 'android',
+}));
+
+installNewSessionComponentsCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: mockEnv.platform,
+                select: (value: any) => value[mockEnv.platform] ?? value.native ?? value.default,
+            },
+            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('View', props, props.children),
+            ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('ScrollView', props, props.children),
+            Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('Text', props, props.children),
+            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('Pressable', props, props.children),
+            useWindowDimensions: () => ({ width: 390, height: 844 }),
+            Dimensions: {
+                get: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }),
+            },
+        });
+    },
+});
+
+vi.mock('react-native-keyboard-controller', () => ({
+    KeyboardAvoidingView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement('KeyboardAvoidingView', props, props.children),
+}));
+
+vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
+    useKeyboardHeight: () => 0,
+}));
+
+vi.mock('@/components/sessions/agentInput', () => ({
+    AgentInput: () => null,
+}));
+
+vi.mock('@/components/sessions/attachments/AttachmentFilePicker', () => ({
+    AttachmentFilePicker: () => null,
+}));
+
+vi.mock('@/components/ui/popover', () => ({
+    PopoverBoundaryProvider: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement(React.Fragment, null, props.children),
+}));
+
+vi.mock('@/components/sessions/new/attachments/useNewSessionAttachmentsController', () => ({
+    useNewSessionAttachmentsController: () => ({
+        attachmentsUploadsEnabled: false,
+        filePickerRef: { current: null },
+        hasSendableAttachments: false,
+        agentInputAttachments: [],
+        addWebFiles: () => {},
+        addPickedAttachments: () => {},
+        extraActionChips: [],
+        handleSend: () => {},
+    }),
+}));
+
+vi.mock('@/components/sessions/new/components/MachineSelector', () => ({
+    MachineSelector: () => null,
+}));
+
+vi.mock('@/components/sessions/new/components/PathSelector', () => ({
+    PathSelector: () => null,
+}));
+
+vi.mock('@/components/sessions/new/components/WizardSectionHeaderRow', () => ({
+    WizardSectionHeaderRow: () => null,
+}));
+
+vi.mock('@/components/profiles/ProfilesList', () => ({
+    ProfilesList: () => null,
+}));
+
+vi.mock('@/components/ui/lists/Item', () => ({
+    Item: () => null,
+}));
+
+vi.mock('@/components/ui/lists/ItemGroup', () => ({
+    ItemGroup: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement('ItemGroup', props, props.children),
+}));
+
+vi.mock('@/components/sessions/new/components/CliNotDetectedBanner', () => ({
+    CliNotDetectedBanner: () => null,
+}));
+
+vi.mock('@/components/machines/InstallableDepInstaller', () => ({
+    InstallableDepInstaller: () => null,
+}));
+
+vi.mock('@/components/ui/text/Text', () => ({
+    Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
+}));
+
+vi.mock('expo-linear-gradient', () => ({
+    LinearGradient: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement('LinearGradient', props, props.children),
+}));
+
+vi.mock('color', () => ({
+    default: () => ({
+        alpha: () => ({ rgb: () => ({ string: () => 'rgba(0,0,0,0.08)' }) }),
+    }),
+}));
+
+afterEach(() => {
+    standardCleanup();
+    mockEnv.platform = 'ios';
+});
+
+function buildSimplePanel() {
+    return import('./NewSessionSimplePanel').then(({ NewSessionSimplePanel }) => (
+        <NewSessionSimplePanel
+            popoverBoundaryRef={{ current: null } as any}
+            headerHeight={44}
+            safeAreaTop={0}
+            safeAreaBottom={34}
+            newSessionTopPadding={20}
+            newSessionSidePadding={16}
+            newSessionBottomPadding={8}
+            containerStyle={{}}
+            sessionPrompt=""
+            setSessionPrompt={() => {}}
+            handleCreateSession={() => {}}
+            canCreate={true}
+            isCreating={false}
+            emptyAutocompletePrefixes={[]}
+            emptyAutocompleteSuggestions={async () => []}
+            sessionPromptInputMaxHeight={200}
+            agentInputExtraActionChips={[]}
+            agentType="codex"
+            handleAgentClick={() => {}}
+            permissionMode="default"
+            handlePermissionModeChange={() => {}}
+            modelMode="default"
+            setModelMode={() => {}}
+            modelOptions={[{ value: 'default', label: 'Default', description: '' }]}
+            connectionStatus={undefined}
+            machineName={undefined}
+            selectedPath=""
+            showResumePicker={false}
+            resumeSessionId={null}
+            isResumeSupportChecking={false}
+            useProfiles={false}
+            selectedProfileId={null}
+        />
+    ));
+}
+
+function buildWizard() {
+    return import('./NewSessionWizard').then(({ NewSessionWizard }) => (
+        <NewSessionWizard
+            popoverBoundaryRef={{ current: null } as any}
+            layout={{
+                theme: {
+                    colors: {
+                        divider: '#ddd',
+                        shadow: { color: '#000' },
+                        groupped: { background: '#fff' },
+                        text: '#000',
+                        textSecondary: '#666',
+                        input: { background: '#fff' },
+                        button: { secondary: { tint: '#000' } },
+                        warning: '#d97706',
+                        box: { warning: { background: '#fff8e1', border: '#f5d38f' } },
+                    },
+                } as any,
+                styles: {
+                    container: { flex: 1 },
+                } as any,
+                safeAreaBottom: 34,
+                headerHeight: 44,
+                newSessionSidePadding: 0,
+                newSessionBottomPadding: 0,
+            }}
+            profiles={{
+                useProfiles: false,
+                profiles: [],
+                favoriteProfileIds: [],
+                setFavoriteProfileIds: () => {},
+                selectedProfileId: null,
+                onPressDefaultEnvironment: () => {},
+                onPressProfile: () => {},
+                selectedMachineId: 'machine-1',
+                getProfileDisabled: () => false,
+                getProfileSubtitleExtra: () => null,
+                handleAddProfile: () => {},
+                openProfileEdit: () => {},
+                handleDuplicateProfile: () => {},
+                handleDeleteProfile: () => {},
+                suppressNextSecretAutoPromptKeyRef: { current: null },
+                openSecretRequirementModal: () => {},
+                profilesGroupTitles: { favorites: 'Favorites', custom: 'Custom', builtIn: 'Built in' },
+                getSecretOverrideReady: () => true,
+                getSecretSatisfactionForProfile: () => ({ isSatisfied: true }),
+            } as any}
+            agent={{
+                cliAvailability: { available: {}, isLoaded: true } as any,
+                tmuxRequested: false,
+                enabledAgentIds: ['codex'] as any,
+                isAgentSelectable: () => true,
+                isCliBannerDismissed: () => true,
+                dismissCliBanner: () => {},
+                agentType: 'codex' as any,
+                setAgentType: () => {},
+                modelOptions: [{ value: 'default', label: 'Default', description: '' }] as any,
+                setModelMode: () => {},
+                selectedIndicatorColor: '#000',
+                profileMap: new Map(),
+                permissionMode: 'default',
+                handlePermissionModeChange: () => {},
+            } as any}
+            machine={{
+                machines: [],
+                serverId: 'server-1',
+                selectedMachine: null,
+                recentMachines: [],
+                favoriteMachineItems: [],
+                useMachinePickerSearch: false,
+                onRefreshMachines: () => {},
+                setSelectedMachineId: () => {},
+                getBestPathForMachine: () => '/tmp',
+                setSelectedPath: () => {},
+                favoriteMachines: [],
+                setFavoriteMachines: () => {},
+                selectedPath: '/tmp',
+                recentPaths: [],
+                usePathPickerSearch: false,
+                favoriteDirectories: [],
+                setFavoriteDirectories: () => {},
+            }}
+            footer={{
+                sessionPrompt: '',
+                setSessionPrompt: () => {},
+                handleCreateSession: () => {},
+                canCreate: true,
+                isCreating: false,
+                emptyAutocompletePrefixes: [],
+                emptyAutocompleteSuggestions: async () => [],
+                inputMaxHeight: 200,
+            }}
+        />
+    ));
+}
+
+describe('new-session native keyboard avoiding', () => {
+    it.each(['ios', 'android'] as const)('uses automatic offset for the simple panel on %s', async (platform) => {
+        mockEnv.platform = platform;
+        const screen = await renderScreen(await buildSimplePanel());
+
+        const keyboardAvoidingView = screen.tree.root.findByType('KeyboardAvoidingView' as any);
+        expect(keyboardAvoidingView.props.automaticOffset).toBe(true);
+        expect(keyboardAvoidingView.props.behavior).toBe('translate-with-padding');
+        expect(keyboardAvoidingView.props.keyboardVerticalOffset).toBe(16);
+    });
+
+    it.each(['ios', 'android'] as const)('uses automatic offset for the wizard on %s', async (platform) => {
+        mockEnv.platform = platform;
+        const screen = await renderScreen(await buildWizard());
+
+        const keyboardAvoidingView = screen.tree.root.findByType('KeyboardAvoidingView' as any);
+        expect(keyboardAvoidingView.props.automaticOffset).toBe(true);
+        expect(keyboardAvoidingView.props.behavior).toBe('translate-with-padding');
+        expect(keyboardAvoidingView.props.keyboardVerticalOffset).toBe(16);
+    });
+});

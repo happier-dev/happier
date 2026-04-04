@@ -39,3 +39,21 @@ export function computeNewSessionInputMaxHeight(params: {
             : 900;
     return clampNumber(Math.round(available * ratio), 120, cap);
 }
+
+export function computeAgentInputKeyboardOpenPanelMaxHeight(params: {
+    screenHeight: number;
+    keyboardHeight: number;
+}): number | undefined {
+    const available = computeAvailableHeight(params.screenHeight, params.keyboardHeight);
+    if (available <= 0 || params.keyboardHeight <= 0) return undefined;
+    return clampNumber(Math.round(available - 16), 220, 680);
+}
+
+export function computeAgentInputKeyboardOpenVariableSectionMaxHeight(params: {
+    panelMaxHeight: number;
+    footerHeight: number;
+}): number {
+    const safePanel = Number.isFinite(params.panelMaxHeight) ? Math.max(0, params.panelMaxHeight) : 0;
+    const safeFooter = Number.isFinite(params.footerHeight) ? Math.max(0, Math.trunc(params.footerHeight)) : 0;
+    return clampNumber(safePanel - safeFooter, 120, safePanel || 120);
+}

@@ -8,22 +8,23 @@ afterEach(() => {
 
 function mockSessionsDomainBoundaries() {
     vi.doMock('../../domains/state/persistence', () => ({
-        loadSettings: () => ({
+        loadSettings: vi.fn(() => ({
             settings: { groupInactiveSessionsByProject: false },
             version: null,
-        }),
-        loadLocalSettings: () => ({}),
-        loadPendingSettings: () => ({}),
-        loadPurchases: () => ({}),
-        loadProfile: () => ({ id: 'account_a' }),
-        loadSessionDrafts: () => ({}),
-        loadSessionLastViewed: () => ({}),
-        loadSessionModelModeUpdatedAts: () => ({}),
-        loadSessionModelModes: () => ({}),
-        loadSessionPermissionModeUpdatedAts: () => ({}),
-        loadSessionPermissionModes: () => ({}),
-        loadSessionActionDrafts: () => ({}),
-        loadSessionReviewCommentsDrafts: () => ({}),
+        })),
+        loadLocalSettings: vi.fn(() => ({})),
+        loadPendingSettings: vi.fn(() => ({})),
+        loadPurchases: vi.fn(() => ({})),
+        loadProfile: vi.fn(() => ({ id: 'account_a' })),
+        loadSessionDrafts: vi.fn(() => ({})),
+        loadSessionLastViewed: vi.fn(() => ({})),
+        loadSessionModelModeUpdatedAts: vi.fn(() => ({})),
+        loadSessionModelModes: vi.fn(() => ({})),
+        loadSessionPermissionModeUpdatedAts: vi.fn(() => ({})),
+        loadSessionPermissionModes: vi.fn(() => ({})),
+        loadSessionActionDrafts: vi.fn(() => ({})),
+        loadSessionReviewCommentsDrafts: vi.fn(() => ({})),
+        loadWorkspaceReviewCommentsDrafts: vi.fn(() => ({})),
         saveSessionDrafts: vi.fn(),
         saveSessionLastViewed: vi.fn(),
         saveSessionModelModeUpdatedAts: vi.fn(),
@@ -32,6 +33,7 @@ function mockSessionsDomainBoundaries() {
         saveSessionPermissionModes: vi.fn(),
         saveSessionActionDrafts: vi.fn(),
         saveSessionReviewCommentsDrafts: vi.fn(),
+        saveWorkspaceReviewCommentsDrafts: vi.fn(),
         saveSettings: vi.fn(),
         saveLocalSettings: vi.fn(),
         savePendingSettings: vi.fn(),
@@ -63,7 +65,7 @@ function mockSessionsDomainBoundaries() {
     vi.doMock('@/sync/domains/models/modelOptions', () => ({
         isModelSelectableForSession: vi.fn(() => true),
     }));
-    vi.doMock('@/agents/catalog/catalog', () => ({
+    vi.doMock('@/agents/registry/registryCore', () => ({
         AGENT_IDS: [],
         DEFAULT_AGENT_ID: 'openai',
         resolveAgentIdFromFlavor: vi.fn(() => null),
@@ -116,16 +118,16 @@ describe('sessions domain: thinking grace', () => {
         let nowMs = Date.parse('2026-02-05T00:00:00.000Z');
 
         vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
-        vi.spyOn(globalThis, 'setTimeout').mockImplementation((((callback: TimerHandler) => {
+        vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback: Parameters<typeof setTimeout>[0]) => {
             const timeoutId = nextTimeoutId++;
             if (typeof callback === 'function') {
                 scheduledTimeouts.set(timeoutId, callback as () => void);
             }
             return timeoutId as unknown as ReturnType<typeof setTimeout>;
-        }) as typeof setTimeout));
-        vi.spyOn(globalThis, 'clearTimeout').mockImplementation((((timeoutId: ReturnType<typeof setTimeout>) => {
+        });
+        vi.spyOn(globalThis, 'clearTimeout').mockImplementation((timeoutId: Parameters<typeof clearTimeout>[0]) => {
             scheduledTimeouts.delete(timeoutId as unknown as number);
-        }) as typeof clearTimeout));
+        });
 
         const { createReducer } = await import('../../reducer/reducer');
         const { createSessionsDomain } = await import('./sessions');
