@@ -1,5 +1,16 @@
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { getAppEnvironmentConfig } = require('./appVariantConfig.cjs');
+const path = require('node:path');
+const { createRequire } = require('node:module');
+
+const appConfigRequire = createRequire(__filename);
+
+function requireFromAppConfig(modulePath) {
+    const resolvedPath = path.isAbsolute(modulePath)
+        ? modulePath
+        : path.resolve(__dirname, modulePath);
+    return appConfigRequire(resolvedPath);
+}
+
+const { getAppEnvironmentConfig } = requireFromAppConfig('./appVariantConfig.cjs');
 
 function normalizeVariantOverride(raw) {
     const value = String(raw ?? '').trim().toLowerCase();
@@ -33,7 +44,7 @@ function resolveOptionalAppLocalConfigModule() {
     for (const candidatePath of candidates) {
         try {
             // eslint-disable-next-line @typescript-eslint/no-var-requires
-            const mod = require(candidatePath);
+            const mod = requireFromAppConfig(candidatePath);
             return mod && typeof mod === 'object' && 'default' in mod ? mod.default : mod;
         } catch (error) {
             if (explicitPath) {
@@ -76,7 +87,7 @@ const appVariantOverride = normalizeVariantOverride(process.env.HAPPIER_APP_VARI
 const packageJsonVersion = (() => {
     try {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const pkg = require('./package.json');
+        const pkg = requireFromAppConfig('./package.json');
         const v = pkg && typeof pkg.version === 'string' ? pkg.version.trim() : '';
         return v;
     } catch {
@@ -212,6 +223,11 @@ const iosBackgroundAudioOverride = parseOptionalBoolean(
     process.env.EXPO_PUBLIC_IOS_BACKGROUND_AUDIO ?? process.env.EXPO_IOS_BACKGROUND_AUDIO
 );
 const iosBackgroundAudioEnabled = iosBackgroundAudioOverride ?? true;
+const iosLiveActivitiesFrequentUpdates =
+    parseOptionalBoolean(
+        process.env.EXPO_PUBLIC_IOS_LIVE_ACTIVITIES_FREQUENT_UPDATES
+            ?? process.env.EXPO_IOS_LIVE_ACTIVITIES_FREQUENT_UPDATES
+    ) ?? false;
 
 // Native model packs (Sherpa-ONNX) are download-on-demand. Expo "public" env vars are embedded
 // at bundle time, so we provide a dev-safe default mapping that can be overridden in EAS/env.
@@ -346,6 +362,26 @@ const baseExpoConfig = {
             "expo-updates",
             "expo-asset",
             "expo-localization",
+            [
+                "expo-widgets",
+                {
+                    frequentUpdates: iosLiveActivitiesFrequentUpdates,
+                    widgets: [
+                        {
+                            name: "HappierFocusWidget",
+                            displayName: "Happier Focus",
+                            description: "Shows the current focus session and quick actions at a glance.",
+                            supportedFamilies: ["systemSmall", "systemMedium", "systemLarge", "accessoryRectangular"],
+                        },
+                        {
+                            name: "HappierSessionsWidget",
+                            displayName: "Happier Sessions",
+                            description: "Shows multiple active sessions and their current attention state.",
+                            supportedFamilies: ["systemSmall", "systemMedium", "systemLarge"],
+                        },
+                    ],
+                }
+            ],
             "expo-mail-composer",
             "expo-secure-store",
             "expo-web-browser",

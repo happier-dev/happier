@@ -126,6 +126,13 @@ describe('apps/ui/metro.config.js (Expo resolution fallbacks)', () => {
         });
     });
 
+    it('keeps Expo CLI runtime port dependencies resolvable from the workspace install', () => {
+        const expoPortUtilPath = require.resolve('@expo/cli/build/src/utils/port.js');
+        expect(() =>
+            require.resolve('freeport-async', { paths: [path.dirname(expoPortUtilPath)] }),
+        ).not.toThrow();
+    });
+
     it('allows cache busting Metro via HAPPIER_UI_METRO_CACHE_VERSION_BUST', () => {
         process.env.HAPPIER_UI_METRO_CACHE_VERSION_BUST = 'test-bust';
 

@@ -12,8 +12,15 @@
     "package.json",
     "README.md"
   ],
-  "dependencies": {
-    "expo-modules-core": "*"
+  "devDependencies": {
+    "expo-modules-core": "55.0.20"
+  },
+  "peerDependencies": {
+    "expo": "*"
+  },
+  "peerDependenciesMeta": {
+    "expo": {
+      "optional": true
+    }
   }
 }
-

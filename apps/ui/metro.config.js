@@ -35,12 +35,14 @@ function parseEnvBool(raw) {
 
 const watchmanOverride = parseEnvBool(process.env.HAPPIER_UI_METRO_USE_WATCHMAN);
 
-// Keep Expo's default Watchman behavior for ordinary local development so the workspace watch set stays aligned
-// with Expo's defaults. Only force the slower Node crawler in non-interactive build contexts, or when explicitly
-// requested for machines where Watchman is unstable.
+// Keep Watchman opt-in. This app has historically hit Watchman startup / recrawl issues in the monorepo, so local
+// development defaults to Metro's Node crawler unless a machine explicitly opts in.
 const isCiRun = Boolean(process.env.CI);
-const shouldUseWatchman = !isCiRun && !isStackRun && watchmanOverride !== false;
+const shouldUseWatchman = !isCiRun && !isStackRun && watchmanOverride === true;
 config.resolver.useWatchman = shouldUseWatchman;
+if (config.watcher && Object.prototype.hasOwnProperty.call(config.watcher, 'unstable_workerThreads')) {
+  delete config.watcher.unstable_workerThreads;
+}
 
 function safeReadJson(filePath) {
   try {
@@ -171,21 +173,9 @@ for (const folder of watchedHoistedNodeModuleRoots) {
   }
 }
 
-const shouldPruneHeavyWorkspaceWatchFolders = !shouldUseWatchman;
-if (shouldPruneHeavyWorkspaceWatchFolders) {
-  // `packages/tests` contains UI e2e artifacts under `packages/tests/.project/**` which can grow very large.
-  // When Metro falls back to the native `find` crawler (e.g. on machines without Watchman), scanning that tree
-  // can exceed Node's max string length and crash the bundler. The UI runtime never needs to watch this package.
-  const testsWorkspaceRoot = path.resolve(__dirname, "../../packages/tests");
-  config.watchFolders = config.watchFolders.filter((folder) => folder !== testsWorkspaceRoot);
-
-  // The UI runtime never imports `apps/docs` or `apps/website`, but those workspaces can contain very large build
-  // artifacts (e.g. `.next/**`). When Metro falls back to the native `find` crawler, scanning them can crash with
-  // `RangeError: Invalid string length`. Keep them out of the watcher set when Watchman is unavailable.
-  const docsWorkspaceRoot = path.resolve(__dirname, "../docs");
-  const websiteWorkspaceRoot = path.resolve(__dirname, "../website");
-  config.watchFolders = config.watchFolders.filter((folder) => folder !== docsWorkspaceRoot && folder !== websiteWorkspaceRoot);
-}
+// Keep Expo's default workspace watch roots even when Watchman is disabled so the config stays aligned with Expo's
+// dependency graph expectations. Large artifact trees are excluded via Metro block lists above instead of removing
+// whole workspaces from the watch set.
 
 // Kokoro (kokoro-js) ships a `.web.js` prebundle that Metro cannot transform (it contains non-literal dynamic imports).
 // For Expo web, force Metro to resolve the package to its ESM entry and shim Node builtins that the ESM file imports

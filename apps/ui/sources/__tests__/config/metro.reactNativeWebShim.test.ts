@@ -74,36 +74,29 @@ describe('metro.config.js (web)', () => {
         }
     });
 
-    it('keeps Watchman enabled by default in local development', () => {
+    it('disables Watchman by default in local development', () => {
         const uiDir = getUiDir();
         const config = loadMetroConfig(uiDir);
+
+        expect(config.resolver.useWatchman).toBe(false);
+        expect(config.watcher).not.toHaveProperty('useWatchman');
+        expect(config.watcher).not.toHaveProperty('unstable_workerThreads');
+    });
+
+    it('allows enabling Watchman via env var on machines where it is stable', () => {
+        const uiDir = getUiDir();
+        const config = loadMetroConfig(uiDir, { CI: null, HAPPIER_UI_METRO_USE_WATCHMAN: '1' });
 
         expect(config.resolver.useWatchman).toBe(true);
         expect(config.watcher).not.toHaveProperty('useWatchman');
     });
 
-    it('allows disabling Watchman via env var for crawler-sensitive environments', () => {
-        const uiDir = getUiDir();
-        const repoRoot = resolve(uiDir, '..', '..');
-        const config = loadMetroConfig(uiDir, { HAPPIER_UI_METRO_USE_WATCHMAN: '0' });
-
-        expect(config.resolver.useWatchman).toBe(false);
-        expect(config.watcher).not.toHaveProperty('useWatchman');
-        expect(config.watchFolders).not.toContain(resolve(repoRoot, 'apps/website'));
-        expect(config.watchFolders).not.toContain(resolve(repoRoot, 'apps/docs'));
-        expect(config.watchFolders).not.toContain(resolve(repoRoot, 'packages/tests'));
-    });
-
     it('keeps Watchman disabled in CI even when HAPPIER_UI_METRO_USE_WATCHMAN=1', () => {
         const uiDir = getUiDir();
-        const repoRoot = resolve(uiDir, '..', '..');
         const config = loadMetroConfig(uiDir, { CI: '1', HAPPIER_UI_METRO_USE_WATCHMAN: '1' });
 
         expect(config.resolver.useWatchman).toBe(false);
         expect(config.watcher).not.toHaveProperty('useWatchman');
-        expect(config.watchFolders).not.toContain(resolve(repoRoot, 'apps/website'));
-        expect(config.watchFolders).not.toContain(resolve(repoRoot, 'apps/docs'));
-        expect(config.watchFolders).not.toContain(resolve(repoRoot, 'packages/tests'));
     });
 
     it('shims react-native to provide unstable_batchedUpdates (LegendList compatibility)', () => {

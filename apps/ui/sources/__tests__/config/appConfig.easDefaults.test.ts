@@ -1,5 +1,6 @@
 import { getConfig } from '@expo/config';
 import { describe, expect, it } from 'vitest';
+import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -10,7 +11,28 @@ function getUiDir(): string {
     return join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 }
 
+function clearDynamicConfigModuleCache(): void {
+    const uiDir = getUiDir();
+    const nodeRequire = createRequire(import.meta.url);
+    const cacheTargets = [
+        join(uiDir, 'app.config.js'),
+        join(uiDir, 'appVariantConfig.cjs'),
+        join(uiDir, 'app.local.js'),
+        join(uiDir, 'sources', '__tests__', 'config', 'fixtures', 'app.local.fixture.cjs'),
+    ];
+
+    for (const target of cacheTargets) {
+        try {
+            const resolved = nodeRequire.resolve(target);
+            delete nodeRequire.cache[resolved];
+        } catch {
+            // Ignore files that are absent in the current test setup.
+        }
+    }
+}
+
 function getPublicConfig() {
+    clearDynamicConfigModuleCache();
     return getConfig(getUiDir(), { skipSDKVersionRequirement: true, isPublicConfig: true }).exp;
 }
 
@@ -40,6 +62,8 @@ function withCleanEnv<T>(fn: () => T): T {
         'EXPO_PUBLIC_IOS_BACKGROUND_AUDIO',
         'EXPO_IOS_BACKGROUND_AUDIO',
         'HAPPIER_ANDROID_USES_CLEARTEXT_TRAFFIC',
+        'EXPO_PUBLIC_IOS_LIVE_ACTIVITIES_FREQUENT_UPDATES',
+        'EXPO_IOS_LIVE_ACTIVITIES_FREQUENT_UPDATES',
         'HAPPIER_EXPO_DEVCLIENT_LAUNCH_MODE',
         'HAPPIER_EXPO_DEVCLIENT_SILENT_LAUNCH',
         'HAPPIER_EXPO_USE_NATIVE_DEBUG',
@@ -221,7 +245,7 @@ describe('app.config.js', () => {
 
     it('does not set newArchEnabled because SDK 55+ always enables the new architecture', () => {
         const exp = withCleanEnv(() => getPublicConfig());
-        expect(exp.newArchEnabled).toBeUndefined();
+        expect('newArchEnabled' in exp).toBe(false);
     });
 
     it('uses EXPO_PUBLIC_EAS_PROJECT_ID with highest precedence for updates linkage', () => {
@@ -334,6 +358,46 @@ describe('app.config.js', () => {
 
         expect(pluginNames).not.toContain('expo-location');
         expect(pluginNames).not.toContain('expo-calendar');
+    });
+
+    it('configures expo-widgets with the canonical public widget and live-activity kinds', () => {
+        const exp = withCleanEnv(() => getPublicConfig());
+        const widgetPlugin = (exp.plugins ?? []).find((entry: any) => Array.isArray(entry) && entry[0] === 'expo-widgets');
+
+        expect(widgetPlugin).toEqual([
+            'expo-widgets',
+            expect.objectContaining({
+                widgets: [
+                    expect.objectContaining({
+                        name: 'HappierFocusWidget',
+                        displayName: 'Happier Focus',
+                    }),
+                    expect.objectContaining({
+                        name: 'HappierSessionsWidget',
+                        displayName: 'Happier Sessions',
+                    }),
+                    expect.objectContaining({
+                        name: 'HappierFocusLiveActivity',
+                        displayName: 'Happier Focus Live',
+                    }),
+                ],
+            }),
+        ]);
+    });
+
+    it('maps the live-activity frequent-updates flag through the expo-widgets plugin config', () => {
+        const exp = withCleanEnv(() => {
+            process.env.EXPO_IOS_LIVE_ACTIVITIES_FREQUENT_UPDATES = 'true';
+            return getPublicConfig();
+        });
+        const widgetPlugin = (exp.plugins ?? []).find((entry: any) => Array.isArray(entry) && entry[0] === 'expo-widgets');
+
+        expect(widgetPlugin).toEqual([
+            'expo-widgets',
+            expect.objectContaining({
+                frequentUpdates: true,
+            }),
+        ]);
     });
 
     it('includes iOS privacy purpose strings required by App Store static analysis', () => {

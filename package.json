@@ -119,16 +119,16 @@
     "test:providers:all:extended": "yarn workspace @happier-dev/tests providers:all:extended",
     "typecheck:inner": "yarn workspace @happier-dev/protocol typecheck && yarn workspace @happier-dev/transfers typecheck && yarn workspace @happier-dev/agents typecheck && yarn workspace @happier-dev/connection-supervisor typecheck && yarn workspace @happier-dev/bootstrap typecheck && yarn workspace @happier-dev/app typecheck && yarn workspace @happier-dev/cli typecheck && yarn --cwd apps/server typecheck && yarn workspace @happier-dev/tests typecheck",
     "typecheck": "node scripts/runWithHeartbeat.mjs --label typecheck -- yarn -s typecheck:inner",
-  "ui": "yarn workspace @happier-dev/app start",
-  "ui:web": "yarn workspace @happier-dev/app web",
-  "ui:ios": "yarn workspace @happier-dev/app ios",
-  "ui:android": "yarn workspace @happier-dev/app android",
-  "ui:tauri": "node ./apps/stack/scripts/tauri_dev.mjs",
-  "tauri:qa": "yarn --cwd apps/ui tauri:qa",
-  "tauri:mcp:server": "yarn --cwd apps/ui tauri:mcp:server",
-  "tauri:mcp:cli": "yarn --cwd apps/ui tauri:mcp:cli",
-  "tauri:mcp:session:start": "yarn --cwd apps/ui tauri:mcp:session:start",
-  "server": "yarn --cwd apps/server dev",
+    "ui": "yarn workspace @happier-dev/app start",
+    "ui:web": "yarn workspace @happier-dev/app web",
+    "ui:ios": "yarn workspace @happier-dev/app ios",
+    "ui:android": "yarn workspace @happier-dev/app android",
+    "ui:tauri": "node ./apps/stack/scripts/tauri_dev.mjs",
+    "tauri:qa": "yarn --cwd apps/ui tauri:qa",
+    "tauri:mcp:server": "yarn --cwd apps/ui tauri:mcp:server",
+    "tauri:mcp:cli": "yarn --cwd apps/ui tauri:mcp:cli",
+    "tauri:mcp:session:start": "yarn --cwd apps/ui tauri:mcp:session:start",
+    "server": "yarn --cwd apps/server dev",
     "server:light": "yarn --cwd apps/server dev:light",
     "server:build": "yarn --cwd apps/server build",
     "server:start": "yarn --cwd apps/server start",
@@ -174,19 +174,32 @@
     ],
     "nohoist": [
       "**/zod",
+      "**/@config-plugins/*",
+      "**/@config-plugins/*/**",
+      "**/@expo/*",
+      "**/@expo/*/**",
+      "**/expo",
+      "**/expo/**",
+      "**/expo-*",
+      "**/expo-*/**",
       "**/react",
       "**/react-dom",
       "**/react-native",
       "**/react-native/**",
+      "**/@config-plugins/react-native-webrtc",
+      "**/@config-plugins/react-native-webrtc/**",
       "**/react-native-edge-to-edge/**",
       "**/react-native-incall-manager/**"
     ]
   },
   "resolutions": {
-    "@tauri-apps/api": "2.8.0"
+    "@tauri-apps/api": "2.8.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
   },
   "devDependencies": {
-    "@sentry/cli": "^3.2.2"
+    "@sentry/cli": "^3.2.2",
+    "freeport-async": "^2.0.0"
   },
   "packageManager": "yarn@1.22.22"
 }
