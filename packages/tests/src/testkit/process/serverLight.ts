@@ -499,7 +499,7 @@ export function resolveServerStartLaunchSpec(params: {
 
     return {
       command: process.execPath,
-      args: ['--import', tsxHookPath, sourceEntrypoint],
+      args: ['--preserve-symlinks', '--preserve-symlinks-main', '--import', tsxHookPath, sourceEntrypoint],
       cwd: resolveServerWorkspaceDir(rootDir),
       env: {
         TSX_TSCONFIG_PATH: resolveServerTsconfigPath(rootDir),

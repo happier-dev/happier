@@ -36,6 +36,7 @@ test.describe('ui e2e: prompts registries route', () => {
         EXPO_PUBLIC_DEBUG: '1',
         EXPO_PUBLIC_HAPPY_SERVER_URL: server.baseUrl,
         EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
+        EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_ALLOW: 'prompts.library,prompts.assets.external,prompts.skills.registries',
       },
     });
 

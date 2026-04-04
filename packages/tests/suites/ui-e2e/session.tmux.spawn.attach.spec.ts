@@ -15,7 +15,7 @@ import { ensureCliDistSnapshotEntrypoint } from '../../src/testkit/process/cliDi
 import { repoRootDir } from '../../src/testkit/paths';
 import { acknowledgeTerminalConnectSuccessIfPresent } from '../../src/testkit/uiE2e/acknowledgeTerminalConnectSuccessIfPresent';
 import { openNewSessionMachineSelection } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
-import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 
 type TerminalAttachmentInfoV1 = {
     version: 1;
@@ -253,8 +253,7 @@ test.describe('ui e2e: tmux spawn → attach', () => {
         await page.setViewportSize({ width: 1440, height: 900 });
         await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
 
-        await page.getByTestId('welcome-create-account').click();
-        await expect(page.getByTestId('session-getting-started-kind-connect_machine')).not.toHaveCount(0, { timeout: 120_000 });
+        await createAccountAndReachConnectMachineState({ page });
 
         const testDir = resolve(join(suiteDir, 't1-tmux-spawn-attach'));
         await mkdir(testDir, { recursive: true });

@@ -9,7 +9,7 @@ import { createRunDirs } from '../../src/testkit/runDir';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { acknowledgeTerminalConnectSuccessIfPresent } from '../../src/testkit/uiE2e/acknowledgeTerminalConnectSuccessIfPresent';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
-import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { spawnSessionFromDaemon } from '../../src/testkit/uiE2e/spawnSessionFromDaemon';
 import { setUiFeatureToggle } from '../../src/testkit/uiE2e/setUiFeatureToggle';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
@@ -117,8 +117,7 @@ test.describe('ui e2e: session subagents agents panel', () => {
         : (await createAccountByRole.count()) ? createAccountByRole
           : null;
     if (createAccount) {
-      await createAccount.click({ timeout: 60_000, force: true });
-      await expect(page.getByTestId('session-getting-started-kind-connect_machine')).not.toHaveCount(0, { timeout: 120_000 });
+      await createAccountAndReachConnectMachineState({ page });
     }
 
     const testDir = resolve(join(suiteDir, 't1-agents-panel'));

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
-import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
@@ -13,8 +13,7 @@ const run = createRunDirs({ runLabel: 'ui-e2e' });
 async function createAccountIfNeeded(page: Page): Promise<void> {
     const createAccount = page.getByTestId('welcome-create-account');
     if (await createAccount.count()) {
-        await createAccount.click({ timeout: 60_000, force: true });
-        await expect(page.getByTestId('session-getting-started-kind-connect_machine')).not.toHaveCount(0, { timeout: 120_000 });
+        await createAccountAndReachConnectMachineState({ page });
     }
 }
 

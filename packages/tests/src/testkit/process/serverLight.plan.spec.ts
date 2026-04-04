@@ -212,4 +212,18 @@ describe("startServerLight planning helpers", () => {
       TSX_TSCONFIG_PATH: expect.stringContaining(`/apps/server/tsconfig.json`),
     });
   });
+
+  it("preserves symlink resolution when using the direct server source entrypoint", () => {
+    const launch = resolveServerStartLaunchSpec({
+      provider: "sqlite",
+      env: { HAPPIER_E2E_PROVIDER_USE_SERVER_SOURCE_ENTRYPOINT: "1" },
+    });
+
+    expect(launch.args).toEqual(
+      expect.arrayContaining([
+        "--preserve-symlinks",
+        "--preserve-symlinks-main",
+      ]),
+    );
+  });
 });
