@@ -23,6 +23,7 @@ import { getSessionParticipantUserIds } from "@/app/share/sessionParticipants";
 import { parseIntEnv } from "@/config/env";
 import { parseSessionMessageSidechainId } from "@/app/session/parseSessionMessageSidechainId";
 import { ExecutionRunPublicStateSchema } from "@happier-dev/protocol";
+import { TranscriptStreamSegmentEphemeralMessageSchema } from "@happier-dev/protocol/updates";
 import { refreshSessionParticipantBadgePushes } from "@/app/activity/refreshAccountActivityBadgePushes";
 import { didSessionActivityBadgeContributionChange } from "@/app/activity/accountActivityBadge";
 import { canPublishFromSessionScopedSocket } from "./sessionScopedBinding";
@@ -349,6 +350,58 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
             }
         } catch (error) {
             log({ module: 'websocket', level: 'error' }, `Error in execution-run-updated handler: ${error}`);
+        }
+    });
+
+    socket.on('transcript-stream-segment', async (data: any) => {
+        try {
+            websocketEventsCounter.inc({ event_type: 'transcript-stream-segment' });
+
+            const sid = typeof data?.sid === 'string' ? String(data.sid).trim() : '';
+            if (!sid) return;
+
+            if (!await canPublishFromSessionScopedSocket({
+                socket,
+                connection,
+                sessionId: sid,
+                requireMachineBinding: true,
+            })) {
+                return;
+            }
+
+            const access = await checkSessionAccess(userId, sid);
+            if (!access) return;
+            if (!requireAccessLevel(access, 'edit')) {
+                return;
+            }
+            if (!access.isOwner) {
+                return;
+            }
+
+            const parsedMessage = TranscriptStreamSegmentEphemeralMessageSchema.strip().safeParse(data?.message);
+            if (!parsedMessage.success) {
+                return;
+            }
+
+            const participantUserIds = await getSessionParticipantUserIds({ sessionId: sid });
+            if (!participantUserIds || participantUserIds.length === 0) return;
+
+            const payload = {
+                type: 'transcript-stream-segment' as const,
+                sessionId: sid,
+                message: parsedMessage.data,
+            };
+
+            for (const participantUserId of participantUserIds) {
+                eventRouter.emitEphemeral({
+                    userId: participantUserId,
+                    payload,
+                    recipientFilter: { type: 'all-interested-in-session', sessionId: sid },
+                    skipSenderConnection: participantUserId === userId ? connection : undefined,
+                });
+            }
+        } catch (error) {
+            log({ module: 'websocket', level: 'error' }, `Error in transcript-stream-segment handler: ${error}`);
         }
     });
 

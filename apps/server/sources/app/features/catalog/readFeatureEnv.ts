@@ -1,5 +1,10 @@
 import { parseBooleanEnv, parseIntEnv } from '../../../config/env';
-import { MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY, normalizeMachineTransferServerRoutedMaxBytes } from '@happier-dev/protocol';
+import {
+  DEFAULT_MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES,
+  MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY,
+  MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_HARD_MAX,
+  normalizeMachineTransferServerRoutedMaxBytes,
+} from '@happier-dev/protocol';
 import { FEATURE_ENV_KEYS } from './featureEnvSchema';
 
 export type AutomationsFeatureEnv = Readonly<{
@@ -244,17 +249,12 @@ export function readSessionHandoffFeatureEnv(env: NodeJS.ProcessEnv): SessionHan
 }
 
 export function readMachineTransferFeatureEnv(env: NodeJS.ProcessEnv): MachineTransferFeatureEnv {
-  // Keep these values in sync with the CLI/server-routed transfer policy in
-  // `packages/transfers/src/policy/serverRoutedTransferPolicy.ts`.
-  const DEFAULT_SERVER_ROUTED_TRANSFER_MAX_BYTES = 2 * 1024 * 1024 * 1024; // 2 GiB
-  const SERVER_ROUTED_TRANSFER_MAX_BYTES_HARD_MAX = 8 * 1024 * 1024 * 1024; // 8 GiB
-
   const configuredServerRoutedMaxBytes = normalizeMachineTransferServerRoutedMaxBytes(
     env[FEATURE_ENV_KEYS.machinesTransferServerRoutedMaxBytes] ?? env[MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY],
   );
   const resolvedServerRoutedMaxBytes = Math.min(
-    configuredServerRoutedMaxBytes ?? DEFAULT_SERVER_ROUTED_TRANSFER_MAX_BYTES,
-    SERVER_ROUTED_TRANSFER_MAX_BYTES_HARD_MAX,
+    configuredServerRoutedMaxBytes ?? DEFAULT_MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES,
+    MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_HARD_MAX,
   );
 
   return {

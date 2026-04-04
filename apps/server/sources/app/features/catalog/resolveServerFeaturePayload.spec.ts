@@ -244,6 +244,35 @@ describe("resolveServerFeaturePayload", () => {
         expect(payload.capabilities.server.retention?.enabled).toBe(true);
     });
 
+    it("deep-merges nested feature branches from different resolvers", () => {
+        const payload = resolveServerFeaturePayload(
+            {} as NodeJS.ProcessEnv,
+            [
+                fromPartial({
+                    features: {
+                        setup: {
+                            relay: {
+                                allowCustomRelayUrl: { enabled: false },
+                            },
+                        },
+                    },
+                }),
+                fromPartial({
+                    features: {
+                        setup: {
+                            relayAccess: {
+                                allowTailscale: { enabled: false },
+                            },
+                        },
+                    },
+                }),
+            ],
+        );
+
+        expect(readOptionalPath(payload, ["features", "setup", "relay", "allowCustomRelayUrl", "enabled"])).toBe(false);
+        expect(readOptionalPath(payload, ["features", "setup", "relayAccess", "allowTailscale", "enabled"])).toBe(false);
+    });
+
     it("includes setup surface policy gates, and build-policy denies can disable them", () => {
         const payloadAllowed = resolveServerFeaturePayload(
             {} as NodeJS.ProcessEnv,

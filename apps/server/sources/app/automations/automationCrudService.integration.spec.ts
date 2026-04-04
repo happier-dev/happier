@@ -19,6 +19,7 @@ function buildTemplateEnvelope(existingSessionId?: string): string {
 describe("automationCrudService (integration)", () => {
     let harness: LightSqliteHarness;
     let ioTo: ReturnType<typeof vi.fn>;
+    let emit: ReturnType<typeof vi.fn>;
 
     beforeAll(async () => {
         harness = await createLightSqliteHarness({ tempDirPrefix: "happier-automation-crud-service-" });
@@ -30,7 +31,7 @@ describe("automationCrudService (integration)", () => {
 
     beforeEach(() => {
         ioTo = vi.fn();
-        const emit = vi.fn();
+        emit = vi.fn();
         ioTo.mockReturnValue({ emit });
         eventRouter.setIo({ to: ioTo } as any);
     });
@@ -205,6 +206,71 @@ describe("automationCrudService (integration)", () => {
             orderBy: [{ dueAt: "asc" }],
         });
         expect(afterRunNow).toHaveLength(2);
+    });
+
+    it("notifies removed machines when assignments change", async () => {
+        const account = await db.account.create({
+            data: { publicKey: "pk-automation-crud-assignment-removal" },
+            select: { id: true },
+        });
+        await db.machine.createMany({
+            data: [
+                {
+                    id: "machine-1",
+                    accountId: account.id,
+                    metadata: "{}",
+                },
+                {
+                    id: "machine-2",
+                    accountId: account.id,
+                    metadata: "{}",
+                },
+            ],
+        });
+
+        const created = await createAutomation({
+            accountId: account.id,
+            input: {
+                name: "Assignment removal",
+                description: null,
+                enabled: true,
+                schedule: { kind: "interval", everyMs: 60_000, timezone: null },
+                targetType: "new_session",
+                templateCiphertext: buildTemplateEnvelope(),
+                assignments: [
+                    { machineId: "machine-1", enabled: true, priority: 0 },
+                    { machineId: "machine-2", enabled: true, priority: 0 },
+                ],
+            },
+        });
+
+        ioTo.mockClear();
+        emit.mockClear();
+
+        await updateAutomation({
+            accountId: account.id,
+            automationId: created.id,
+            input: {
+                assignments: [{ machineId: "machine-2", enabled: true, priority: 0 }],
+            },
+        });
+
+        expect(ioTo.mock.calls.some(([target]) =>
+            Array.isArray(target)
+            && target.includes(`machine:machine-1:${account.id}`)
+            && target.includes(`user-scoped:${account.id}`),
+        )).toBe(true);
+        expect(emit).toHaveBeenCalledWith(
+            "update",
+            expect.objectContaining({
+                body: expect.objectContaining({
+                    t: "automation-assignment-updated",
+                    machineId: "machine-1",
+                    automationId: created.id,
+                    enabled: false,
+                }),
+            }),
+        );
     });
 
     it("updates queued run dueAt (and nextRunAt) when schedule is changed", async () => {

@@ -95,6 +95,37 @@ function emitAssignmentUpdates(params: {
     }
 }
 
+function buildAssignmentUpdateRows(params: {
+    previousAssignments: ReadonlyArray<{ machineId: string; enabled: boolean; updatedAt?: Date }>;
+    nextAssignments: ReadonlyArray<{ machineId: string; enabled: boolean; updatedAt?: Date }>;
+}): Array<{ machineId: string; enabled: boolean; updatedAt?: Date }> {
+    const nextByMachineId = new Map(
+        params.nextAssignments.map((assignment) => [assignment.machineId, assignment] as const),
+    );
+    const rows: Array<{ machineId: string; enabled: boolean; updatedAt?: Date }> = [];
+    const seenMachineIds = new Set<string>();
+
+    for (const assignment of params.previousAssignments) {
+        const nextAssignment = nextByMachineId.get(assignment.machineId);
+        rows.push(nextAssignment ?? {
+            machineId: assignment.machineId,
+            enabled: false,
+            updatedAt: assignment.updatedAt,
+        });
+        seenMachineIds.add(assignment.machineId);
+    }
+
+    for (const assignment of params.nextAssignments) {
+        if (seenMachineIds.has(assignment.machineId)) {
+            continue;
+        }
+        rows.push(assignment);
+        seenMachineIds.add(assignment.machineId);
+    }
+
+    return rows;
+}
+
 export async function listAutomations(params: { accountId: string }): Promise<AutomationListItem[]> {
     const rows = await db.automation.findMany({
         where: { accountId: params.accountId },
@@ -364,7 +395,10 @@ export async function updateAutomation(params: {
                 accountId: params.accountId,
                 automationId: updated.id,
                 cursor,
-                assignments: assignmentRows,
+                assignments: buildAssignmentUpdateRows({
+                    previousAssignments: existing.assignments,
+                    nextAssignments: assignmentRows,
+                }),
             });
             if (nextRun) {
                 emitAutomationRunUpdated({
@@ -417,7 +451,10 @@ export async function deleteAutomation(params: { accountId: string; automationId
                 accountId: params.accountId,
                 automationId: existing.id,
                 cursor,
-                assignments: existing.assignments,
+                assignments: buildAssignmentUpdateRows({
+                    previousAssignments: existing.assignments,
+                    nextAssignments: [],
+                }),
             });
         });
 

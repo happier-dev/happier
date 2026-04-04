@@ -62,7 +62,7 @@ export function resolveServerFeaturePayload(
     for (const resolver of resolvers) {
         const partial = resolver(env);
         if (partial.features && typeof partial.features === 'object') {
-            Object.assign(mergedFeatures, partial.features as Record<string, unknown>);
+            Object.assign(mergedFeatures, mergeDeep(mergedFeatures, partial.features as Record<string, unknown>));
         }
         if (partial.capabilities && typeof partial.capabilities === 'object') {
             const patch = partial.capabilities as Record<string, unknown>;

@@ -515,3 +515,86 @@ describe("sessionUpdateHandler (execution-run-updated)", () => {
         }));
     });
 });
+
+describe("sessionUpdateHandler (transcript-stream-segment)", () => {
+    beforeEach(() => {
+        emitEphemeral.mockReset();
+        websocketEventsCounterInc.mockReset();
+        checkSessionAccess.mockReset();
+        requireAccessLevel.mockReset();
+        getSessionParticipantUserIds.mockReset();
+        accessKeyFindUnique.mockReset();
+        accessKeyFindUnique.mockResolvedValue({ machineId: "m1" });
+        checkSessionAccess.mockResolvedValue({
+            userId: "u1",
+            sessionId: "s1",
+            level: "edit",
+            isOwner: true,
+        } as any);
+        requireAccessLevel.mockReturnValue(true);
+        getSessionParticipantUserIds.mockResolvedValue(["u1", "u2"]);
+    });
+
+    it("broadcasts transcript stream segment ephemerals to all session participants", async () => {
+        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
+
+        const socket = createFakeSocket();
+        (socket as any).data = {
+            machineId: "m1",
+            sessionScopedBinding: {
+                sessionId: "s1",
+                machineId: "m1",
+                proof: "machine-access-key",
+            },
+        };
+        const connection = { connectionType: "session-scoped", socket: socket as any, userId: "u1", sessionId: "s1" } as any;
+        sessionUpdateHandler("u1", socket as any, connection);
+
+        const handler = getSocketHandler(socket, "transcript-stream-segment");
+        await handler({
+            sid: "s1",
+            message: {
+                localId: "segment-1",
+                sidechainId: "tool_1",
+                content: {
+                    t: "plain",
+                    v: {
+                        role: "agent",
+                        content: {
+                            type: "acp",
+                            provider: "codex",
+                            data: { type: "message", message: "Hello" },
+                        },
+                        meta: {
+                            happierStreamSegmentV1: {
+                                v: 1,
+                                segmentKind: "assistant",
+                                segmentLocalId: "segment-1",
+                                segmentState: "streaming",
+                                startedAtMs: 1_000,
+                                updatedAtMs: 1_010,
+                            },
+                        },
+                    },
+                },
+                createdAt: 1_000,
+                updatedAt: 1_010,
+            },
+        });
+
+        expect(getSessionParticipantUserIds).toHaveBeenCalledWith({ sessionId: "s1" });
+        expect(emitEphemeral).toHaveBeenCalledTimes(2);
+        expect(emitEphemeral).toHaveBeenCalledWith(expect.objectContaining({
+            userId: "u1",
+            payload: expect.objectContaining({
+                type: "transcript-stream-segment",
+                sessionId: "s1",
+                message: expect.objectContaining({
+                    localId: "segment-1",
+                    sidechainId: "tool_1",
+                }),
+            }),
+            recipientFilter: { type: "all-interested-in-session", sessionId: "s1" },
+        }));
+    });
+});
