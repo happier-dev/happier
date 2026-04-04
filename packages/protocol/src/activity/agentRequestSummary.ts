@@ -41,11 +41,17 @@ function firstStringFromUnknown(value: unknown): string | null {
 function normalizeToolLabel(toolName: string): string {
   const raw = toolName.trim();
   if (!raw) return 'tool operation';
+  if (isAskUserQuestionToolName(raw)) return 'AskUserQuestion';
   const lower = raw.toLowerCase();
   if (lower === 'unknown' || lower === 'unknown tool' || lower === 'other') {
     return 'tool operation';
   }
   return raw;
+}
+
+function isAskUserQuestionToolName(toolName: string): boolean {
+  const normalized = toolName.trim().toLowerCase();
+  return normalized === 'askuserquestion' || normalized === 'ask_user_question';
 }
 
 function extractFirstPathFromArray(
@@ -93,7 +99,7 @@ function extractFilePathLike(input: unknown): string | null {
 }
 
 function extractQuestionTexts(toolName: string, toolInput: unknown): string[] {
-  if (toolName !== 'AskUserQuestion') return [];
+  if (!isAskUserQuestionToolName(toolName)) return [];
   const obj = asRecord(toolInput);
   const questions = Array.isArray(obj?.questions) ? obj.questions : [];
   const texts: string[] = [];
@@ -180,7 +186,7 @@ export function extractFirstUserActionQuestion(toolName: string, toolInput: unkn
 
 export function summarizeToolInputForNotification(toolName: string, toolInput: unknown): string | null {
   const summary = buildAgentRequestSemanticSummary({
-    kind: toolName === 'AskUserQuestion' ? 'user_action' : 'permission',
+    kind: isAskUserQuestionToolName(toolName) ? 'user_action' : 'permission',
     toolName,
     toolInput,
   });

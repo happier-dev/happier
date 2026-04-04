@@ -50,6 +50,14 @@
       "types": "./dist/changes.d.ts",
       "default": "./dist/changes.js"
     },
+    "./transferRelayV2": {
+      "types": "./dist/transferRelayV2/index.d.ts",
+      "default": "./dist/transferRelayV2/index.js"
+    },
+    "./transferSessions": {
+      "types": "./dist/transferSessions/index.d.ts",
+      "default": "./dist/transferSessions/index.js"
+    },
     "./updates": {
       "types": "./dist/updates.d.ts",
       "default": "./dist/updates.js"
