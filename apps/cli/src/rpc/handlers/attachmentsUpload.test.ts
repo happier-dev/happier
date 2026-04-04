@@ -13,8 +13,8 @@ import {
 } from '@/machines/transfer/transferChunkEncryption';
 
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
-import { SESSION_RPC_FILE_TRANSFER_SIZE_LIMIT_ERROR } from '@/transfers/policy/sessionRpcTransferPolicy';
-import { registerSessionTransferRpcHandlers } from '@/transfers/rpc/registerSessionTransferRpcHandlers';
+import { SERVER_ROUTED_FILE_TRANSFER_SIZE_LIMIT_ERROR } from '@/transfers/policy/serverRoutedTransferPolicy';
+import { registerBulkTransferRpcHandlers } from '@/transfers/rpc/registerBulkTransferRpcHandlers';
 import { restoreProcessEnv, snapshotProcessEnv } from '@/testkit/env/envSnapshot';
 
 type Handler = (data: unknown) => Promise<unknown> | unknown;
@@ -78,7 +78,7 @@ describe('attachments upload (chunked)', () => {
           writeAllowedDirs.current = [...dirs];
         },
       });
-      registerSessionTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+      registerBulkTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
         workingDirectory,
         getAdditionalAllowedReadDirs: () => readAllowedDirs.current,
         getAdditionalAllowedWriteDirs: () => writeAllowedDirs.current,
@@ -127,7 +127,7 @@ describe('attachments upload (chunked)', () => {
           writeAllowedDirs.current = [...dirs];
         },
       });
-      registerSessionTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+      registerBulkTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
         workingDirectory,
         getAdditionalAllowedReadDirs: () => readAllowedDirs.current,
         getAdditionalAllowedWriteDirs: () => writeAllowedDirs.current,
@@ -150,7 +150,7 @@ describe('attachments upload (chunked)', () => {
         vcsIgnoreWritesEnabled: false,
       });
 
-      expect(initRes).toEqual({ success: false, error: SESSION_RPC_FILE_TRANSFER_SIZE_LIMIT_ERROR });
+      expect(initRes).toEqual({ success: false, error: SERVER_ROUTED_FILE_TRANSFER_SIZE_LIMIT_ERROR });
       expect(readAllowedDirs.current).toEqual([]);
       expect(writeAllowedDirs.current).toEqual([]);
       await expect(readFile(join(workingDirectory, '.gitignore'), 'utf8')).resolves.toBe('# existing\n');
@@ -178,7 +178,7 @@ describe('attachments upload (chunked)', () => {
           writeAllowedDirs.current = [...dirs];
         },
       });
-      registerSessionTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+      registerBulkTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
         workingDirectory,
         getAdditionalAllowedReadDirs: () => readAllowedDirs.current,
         getAdditionalAllowedWriteDirs: () => writeAllowedDirs.current,
@@ -224,7 +224,7 @@ describe('attachments upload (chunked)', () => {
           writeAllowedDirs.current = [...dirs];
         },
       });
-      registerSessionTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+      registerBulkTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
         workingDirectory,
         getAdditionalAllowedReadDirs: () => readAllowedDirs.current,
         getAdditionalAllowedWriteDirs: () => writeAllowedDirs.current,
@@ -272,7 +272,7 @@ describe('attachments upload (chunked)', () => {
           writeAllowedDirs.current = [...dirs];
         },
       });
-      registerSessionTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+      registerBulkTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
         workingDirectory,
         getAdditionalAllowedReadDirs: () => readAllowedDirs.current,
         getAdditionalAllowedWriteDirs: () => writeAllowedDirs.current,
@@ -323,7 +323,7 @@ describe('attachments upload (chunked)', () => {
           writeAllowedDirs.current = [...dirs];
         },
       });
-      registerSessionTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+      registerBulkTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
         workingDirectory,
         getAdditionalAllowedReadDirs: () => readAllowedDirs.current,
         getAdditionalAllowedWriteDirs: () => writeAllowedDirs.current,
@@ -370,7 +370,7 @@ describe('attachments upload (chunked)', () => {
           writeAllowedDirs.current = [...dirs];
         },
       });
-      registerSessionTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+      registerBulkTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
         workingDirectory,
         getAdditionalAllowedReadDirs: () => readAllowedDirs.current,
         getAdditionalAllowedWriteDirs: () => writeAllowedDirs.current,
@@ -423,6 +423,76 @@ describe('attachments upload (chunked)', () => {
     }
   });
 
+  it('resolves workspace attachment uploads relative to explicit workspaceRootPath instead of the handler working directory', async () => {
+    const handlerWorkingDirectory = await mkdtemp(join(tmpdir(), 'happier-attach-home-root-'));
+    const sessionWorkspaceRoot = await mkdtemp(join(tmpdir(), 'happier-attach-session-root-'));
+    const readAllowedDirs: { current: string[] } = { current: [] };
+    const writeAllowedDirs: { current: string[] } = { current: [] };
+
+    try {
+      await mkdir(join(sessionWorkspaceRoot, '.git'), { recursive: true });
+      await writeFile(join(sessionWorkspaceRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf8');
+
+      const mgr = createRpcHandlerManager();
+      const pathAllowanceRegistry = createTransferPathAllowanceRegistry({
+        onReadDirsChange: (dirs) => {
+          readAllowedDirs.current = [...dirs];
+        },
+        onWriteDirsChange: (dirs) => {
+          writeAllowedDirs.current = [...dirs];
+        },
+      });
+      registerBulkTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+        workingDirectory: handlerWorkingDirectory,
+        getAdditionalAllowedReadDirs: () => readAllowedDirs.current,
+        getAdditionalAllowedWriteDirs: () => writeAllowedDirs.current,
+        attachmentUpload: {
+          pathAllowanceRegistry,
+        },
+      });
+
+      const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
+      const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK);
+      const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE);
+      if (!init || !chunk || !finalize) {
+        throw new Error('expected attachment upload handlers to be registered');
+      }
+
+      const initResult: any = await init({
+        t: 'session_attachment_upload_v1',
+        messageLocalId: 'message-4',
+        fileName: 'hello.txt',
+        sizeBytes: 5,
+        uploadLocation: 'workspace',
+        workspaceRootPath: sessionWorkspaceRoot,
+        workspaceRelativeDir: '.happier/uploads',
+        vcsIgnoreStrategy: 'none',
+        vcsIgnoreWritesEnabled: false,
+      });
+      expect(initResult).toMatchObject({ success: true, recipientPublicKeyBase64: expect.any(String) });
+
+      expect(await chunk(createEncryptedUploadChunkRequest({
+        uploadId: initResult.uploadId,
+        index: 0,
+        payload: Buffer.from('hello', 'utf8'),
+        recipientPublicKeyBase64: initResult.recipientPublicKeyBase64,
+      }))).toEqual({ success: true });
+
+      const finalizeResult: any = await finalize({ uploadId: initResult.uploadId });
+      expect(finalizeResult).toMatchObject({
+        success: true,
+        path: expect.stringMatching(/^\.happier\/uploads\/messages\/message-4\/[0-9a-f]{8}-hello\.txt$/),
+        sizeBytes: 5,
+      });
+
+      await expect(readFile(resolve(sessionWorkspaceRoot, finalizeResult.path), 'utf8')).resolves.toBe('hello');
+      await expect(stat(resolve(handlerWorkingDirectory, finalizeResult.path))).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(handlerWorkingDirectory, { recursive: true, force: true }).catch(() => {});
+      await rm(sessionWorkspaceRoot, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
   it('supports os_temp attachment uploads and subsequent file download through the dedicated transfer handlers', async () => {
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-attach-os-temp-'));
     const readAllowedDirs: { current: string[] } = { current: [] };
@@ -438,7 +508,7 @@ describe('attachments upload (chunked)', () => {
           writeAllowedDirs.current = [...dirs];
         },
       });
-      registerSessionTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+      registerBulkTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
         workingDirectory,
         getAdditionalAllowedReadDirs: () => readAllowedDirs.current,
         getAdditionalAllowedWriteDirs: () => writeAllowedDirs.current,
@@ -527,7 +597,7 @@ describe('attachments upload (chunked)', () => {
           writeAllowedDirs.current = [...dirs];
         },
       });
-      registerSessionTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+      registerBulkTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
         workingDirectory,
         getAdditionalAllowedReadDirs: () => readAllowedDirs.current,
         getAdditionalAllowedWriteDirs: () => writeAllowedDirs.current,

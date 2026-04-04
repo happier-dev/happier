@@ -49,6 +49,7 @@ describe('registerMachineFileBrowserHandlers', () => {
 
     registerMachineFileBrowserHandlers({
       rpcHandlerManager: registrar,
+      workingDirectory: root,
       deps: {
         resolveRoots: async () => [{ id: root, label: root, path: root }],
         maxEntries: 200,
@@ -90,12 +91,15 @@ describe('registerMachineFileBrowserHandlers', () => {
   it('uses the injected platform consistently for both roots and directory browsing', async () => {
     const { handlers, registrar } = createRegistrar();
     const seenPlatforms: Array<NodeJS.Platform | undefined> = [];
+    const seenWorkingDirectories: Array<string | undefined> = [];
 
     registerMachineFileBrowserHandlers({
       rpcHandlerManager: registrar,
+      workingDirectory: '/tmp',
       deps: {
         resolveRoots: async (input) => {
           seenPlatforms.push(input?.platform);
+          seenWorkingDirectories.push(input?.workingDirectory);
           return [{ id: '/', label: '/', path: '/' }];
         },
         maxEntries: 200,
@@ -114,5 +118,6 @@ describe('registerMachineFileBrowserHandlers', () => {
     await listDirectory({ path: '/', includeFiles: false });
 
     expect(seenPlatforms).toEqual(['win32', 'win32']);
+    expect(seenWorkingDirectories).toEqual(['/tmp', '/tmp']);
   });
 });

@@ -5,17 +5,17 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-const CANONICAL_SESSION_TRANSFER_RPC_TOKENS = [
+const CANONICAL_BULK_TRANSFER_RPC_TOKENS = [
     'RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_',
     'RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_',
 ] as const;
 
-const CANONICAL_SESSION_TRANSFER_RPC_LITERAL_PREFIXES = [
+const CANONICAL_BULK_TRANSFER_RPC_LITERAL_PREFIXES = [
     'daemon.bulkTransfer.upload.',
     'daemon.bulkTransfer.download.',
 ] as const;
 
-const LEGACY_SESSION_TRANSFER_RPC_TOKENS = [
+const LEGACY_BULK_TRANSFER_RPC_TOKENS = [
     ['DAEMON_SESSION_', 'FILES_'].join(''),
     ['DAEMON_SESSION_ATTACHMENTS_', 'UPLOAD_'].join(''),
     ['ATTACHMENTS_', 'CONFIGURE'].join(''),
@@ -61,7 +61,7 @@ function isProductionTsFile(filePath: string): boolean {
     return true;
 }
 
-describe('session transfer rpc family (import-boundary)', () => {
+describe('bulk transfer rpc family (import-boundary)', () => {
     it('confines canonical DAEMON_BULK_TRANSFER_* tokens to the transfer substrate', async () => {
         const cliRoot = fileURLToPath(new URL('../../..', import.meta.url)); // apps/cli/src
         const transfersRoot = fileURLToPath(new URL('..', import.meta.url)); // apps/cli/src/transfers
@@ -72,11 +72,11 @@ describe('session transfer rpc family (import-boundary)', () => {
         for (const filePath of files) {
             const content = await readFile(filePath, 'utf8');
 
-            for (const prefix of CANONICAL_SESSION_TRANSFER_RPC_LITERAL_PREFIXES) {
+            for (const prefix of CANONICAL_BULK_TRANSFER_RPC_LITERAL_PREFIXES) {
                 expect(content).not.toContain(prefix);
             }
 
-            for (const token of LEGACY_SESSION_TRANSFER_RPC_TOKENS) {
+            for (const token of LEGACY_BULK_TRANSFER_RPC_TOKENS) {
                 expect(content).not.toContain(token);
             }
 
@@ -84,7 +84,7 @@ describe('session transfer rpc family (import-boundary)', () => {
             if (filePath.startsWith(transfersRoot) || filePath.startsWith(rpcHandlersRoot)) {
                 continue;
             }
-            for (const token of CANONICAL_SESSION_TRANSFER_RPC_TOKENS) {
+            for (const token of CANONICAL_BULK_TRANSFER_RPC_TOKENS) {
                 expect(content).not.toContain(token);
             }
         }

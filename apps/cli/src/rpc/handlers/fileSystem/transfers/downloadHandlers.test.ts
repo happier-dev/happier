@@ -10,7 +10,7 @@ import { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope }
 import { configuration } from '@/configuration';
 import { registerFileSystemHandlers } from '@/rpc/handlers/fileSystem';
 import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
-import { SESSION_RPC_FILE_TRANSFER_SIZE_LIMIT_ERROR } from '@/transfers/policy/sessionRpcTransferPolicy';
+import { SERVER_ROUTED_FILE_TRANSFER_SIZE_LIMIT_ERROR } from '@/transfers/policy/serverRoutedTransferPolicy';
 import { registerBulkTransferDownloadRpcHandlers } from '@/transfers/rpc/registerBulkTransferDownloadRpcHandlers';
 
 type Handler = (data: any) => Promise<any>;
@@ -216,7 +216,7 @@ describe('file transfers (download)', () => {
       recipientPublicKeyBase64: recipientKeyPair.recipientPublicKeyBase64,
     })).resolves.toEqual({
       success: false,
-      error: SESSION_RPC_FILE_TRANSFER_SIZE_LIMIT_ERROR,
+      error: SERVER_ROUTED_FILE_TRANSFER_SIZE_LIMIT_ERROR,
     });
   });
 
@@ -263,7 +263,7 @@ describe('file transfers (download)', () => {
       recipientPublicKeyBase64: recipientKeyPair.recipientPublicKeyBase64,
     })).resolves.toEqual({
       success: false,
-      error: SESSION_RPC_FILE_TRANSFER_SIZE_LIMIT_ERROR,
+      error: SERVER_ROUTED_FILE_TRANSFER_SIZE_LIMIT_ERROR,
     });
   });
 

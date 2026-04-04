@@ -32,6 +32,17 @@ describe('validateMachineBrowsePath', () => {
     })).toMatchObject({ valid: false });
   });
 
+  it('accepts absolute windows paths within the allowed root on windows platforms', () => {
+    expect(validateMachineBrowsePath({
+      targetPath: 'C:\\work\\repo',
+      roots: [{ id: 'C:\\', label: 'C:', path: 'C:\\' }],
+      platform: 'win32',
+    })).toEqual({
+      valid: true,
+      resolvedPath: 'C:\\work\\repo',
+    });
+  });
+
   it('rejects symlinked directories that escape an allowed root', () => {
     const workspace = mkdtempSync(join(tmpdir(), 'happier-machine-browse-root-'));
     const outside = mkdtempSync(join(tmpdir(), 'happier-machine-browse-outside-'));

@@ -4,8 +4,8 @@ import { registerReadFileHandler } from './readFileHandler';
 import { registerWriteFileHandler } from './writeFileHandler';
 import { registerDirectoryHandlers } from './directoryHandlers';
 import { registerPathMutationHandlers } from './pathMutationHandlers';
-import { registerSessionTransferRpcHandlers } from '@/transfers/rpc/registerSessionTransferRpcHandlers';
-import { resolveSessionRpcTransferMaxBytes } from '@/transfers/policy/sessionRpcTransferPolicy';
+import { registerBulkTransferRpcHandlers } from '@/transfers/rpc/registerBulkTransferRpcHandlers';
+import { resolveServerRoutedTransferMaxBytes } from '@/transfers/policy/serverRoutedTransferPolicy';
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 
 function normalizeAllowedDirectories(getDirectories?: () => ReadonlyArray<string>): string[] {
@@ -40,11 +40,11 @@ export function registerFileSystemHandlers(
     getAdditionalAllowedReadDirs: () => normalizeAllowedDirectories(getAdditionalAllowedReadDirs),
   });
   registerPathMutationHandlers(rpcHandlerManager, { workingDirectory });
-  registerSessionTransferRpcHandlers(rpcHandlerManager, {
+  registerBulkTransferRpcHandlers(rpcHandlerManager, {
     workingDirectory,
     getAdditionalAllowedReadDirs,
     getAdditionalAllowedWriteDirs,
-    sessionRpcTransferMaxBytes: resolveSessionRpcTransferMaxBytes(),
+    sessionRpcTransferMaxBytes: resolveServerRoutedTransferMaxBytes(),
     attachmentUpload: {
       pathAllowanceRegistry,
     },

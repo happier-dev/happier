@@ -1,5 +1,5 @@
 import { realpathSync } from 'node:fs'
-import { isAbsolute, posix, win32 } from 'node:path'
+import { posix, win32 } from 'node:path'
 
 import type { MachineFileBrowserRoot } from '@happier-dev/protocol'
 
@@ -42,6 +42,7 @@ export function validateMachineBrowsePath(input: ValidateMachineBrowsePathInput)
   if (!rawPath) {
     return { valid: false, error: 'Path is required' }
   }
+  const isAbsolute = platform === 'win32' ? win32.isAbsolute : posix.isAbsolute
   if (!isAbsolute(rawPath)) {
     return { valid: false, error: 'Path must be absolute' }
   }

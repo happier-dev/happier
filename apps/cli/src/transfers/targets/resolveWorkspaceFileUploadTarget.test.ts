@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import { SESSION_RPC_FILE_TRANSFER_SIZE_LIMIT_ERROR } from '../policy/sessionRpcTransferPolicy';
+import { SERVER_ROUTED_FILE_TRANSFER_SIZE_LIMIT_ERROR } from '../policy/serverRoutedTransferPolicy';
 import { resolveWorkspaceFileUploadTarget } from './resolveWorkspaceFileUploadTarget';
 
 const createdPaths = new Set<string>();
@@ -133,7 +133,7 @@ describe('resolveWorkspaceFileUploadTarget', () => {
             }),
         ).toEqual({
             success: false,
-            error: SESSION_RPC_FILE_TRANSFER_SIZE_LIMIT_ERROR,
+            error: SERVER_ROUTED_FILE_TRANSFER_SIZE_LIMIT_ERROR,
         });
     });
 

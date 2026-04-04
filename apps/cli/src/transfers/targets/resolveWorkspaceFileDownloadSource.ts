@@ -10,8 +10,8 @@ import type { DownloadTransferSource } from './downloadTransferSource';
 import { buildZipArchive } from '../download/buildZipArchive';
 import {
     isServerRoutedTransferOverSizeLimit,
-    SESSION_RPC_FILE_TRANSFER_SIZE_LIMIT_ERROR,
-} from '../policy/sessionRpcTransferPolicy';
+    SERVER_ROUTED_FILE_TRANSFER_SIZE_LIMIT_ERROR,
+} from '../policy/serverRoutedTransferPolicy';
 
 export type WorkspaceFileDownloadSource = DownloadTransferSource;
 
@@ -47,7 +47,7 @@ export async function resolveWorkspaceFileDownloadSource(input: Readonly<{
             return { success: false, error: 'Download is only supported for files' };
         }
         if (isServerRoutedTransferOverSizeLimit(sourceStats.size, input.sessionRpcTransferMaxBytes ?? null)) {
-            return { success: false, error: SESSION_RPC_FILE_TRANSFER_SIZE_LIMIT_ERROR };
+            return { success: false, error: SERVER_ROUTED_FILE_TRANSFER_SIZE_LIMIT_ERROR };
         }
         if (sourceStats.size > configuration.filesDownloadMaxFileBytes) {
             return { success: false, error: 'File exceeds download size limit' };
@@ -78,7 +78,7 @@ export async function resolveWorkspaceFileDownloadSource(input: Readonly<{
         const zipStats = await stat(zipPath);
         if (isServerRoutedTransferOverSizeLimit(zipStats.size, input.sessionRpcTransferMaxBytes ?? null)) {
             await rm(zipPath, { force: true });
-            return { success: false, error: SESSION_RPC_FILE_TRANSFER_SIZE_LIMIT_ERROR };
+            return { success: false, error: SERVER_ROUTED_FILE_TRANSFER_SIZE_LIMIT_ERROR };
         }
         if (zipStats.size > configuration.filesDownloadMaxFileBytes) {
             await rm(zipPath, { force: true });

@@ -8,6 +8,7 @@ import { resolveMachineBrowseRoots } from './resolveMachineBrowseRoots'
 
 type RegisterMachineFileBrowserHandlersParams = Readonly<{
   rpcHandlerManager: RpcHandlerRegistrar
+  workingDirectory: string
   deps?: Readonly<{
     resolveRoots?: typeof resolveMachineBrowseRoots
     maxEntries?: number
@@ -22,18 +23,19 @@ export function registerMachineFileBrowserHandlers(params: RegisterMachineFileBr
   const maxEntries = params.deps?.maxEntries ?? config.maxEntries
   const statConcurrency = params.deps?.statConcurrency ?? config.statConcurrency
   const platform = params.deps?.platform ?? process.platform
+  const workingDirectory = params.workingDirectory
 
   params.rpcHandlerManager.registerHandler(
     RPC_METHODS.DAEMON_FILESYSTEM_LIST_ROOTS,
     async () => await listMachineBrowseRoots({
-      resolveRoots: async () => await resolveRoots({ platform }),
+      resolveRoots: async () => await resolveRoots({ platform, workingDirectory }),
     }),
   )
 
   params.rpcHandlerManager.registerHandler(
     RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY,
     async (raw) => {
-      const roots = await resolveRoots({ platform })
+      const roots = await resolveRoots({ platform, workingDirectory })
       return await listMachineBrowseDirectory({
         raw,
         roots,

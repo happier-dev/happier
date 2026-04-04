@@ -35,6 +35,7 @@ type BulkTransferUploadInitRequest =
       fileName: string;
       sizeBytes: number;
       uploadLocation?: AttachmentUploadLocation;
+      workspaceRootPath?: string;
       workspaceRelativeDir?: string;
       vcsIgnoreStrategy?: AttachmentVcsIgnoreStrategy;
       vcsIgnoreWritesEnabled?: boolean;
@@ -88,6 +89,16 @@ function normalizeMessageLocalIdSegment(value: unknown): string | null {
   if (trimmed.includes('\0')) return null;
   // Must be a single safe path segment.
   if (trimmed.includes('/') || trimmed.includes('\\')) return null;
+  return trimmed;
+}
+
+function normalizeAttachmentWorkspaceRootPath(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (!trimmed.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(trimmed) && !trimmed.startsWith('\\\\')) {
+    return null;
+  }
   return trimmed;
 }
 
@@ -179,10 +190,22 @@ export function registerBulkTransferUploadRpcHandlers(
         };
       }
 
+      const attachmentWorkingDirectory = (() => {
+        if (config.uploadLocation !== 'workspace') return deps.workingDirectory;
+        if (request.workspaceRootPath == null) return deps.workingDirectory;
+        return normalizeAttachmentWorkspaceRootPath(request.workspaceRootPath);
+      })();
+      if (!attachmentWorkingDirectory) {
+        return {
+          kind: 'rejected',
+          response: { success: false, error: 'Invalid workspaceRootPath' },
+        };
+      }
+
       const resolvedTarget = resolveConfiguredAttachmentTransferTarget({
         config,
         tempUploadRoot,
-        workingDirectory: deps.workingDirectory,
+        workingDirectory: attachmentWorkingDirectory,
       });
 
       if (!resolvedTarget.success) {
@@ -219,7 +242,7 @@ export function registerBulkTransferUploadRpcHandlers(
       });
 
       const target = resolveWorkspaceFileUploadTarget({
-        workingDirectory: deps.workingDirectory,
+        workingDirectory: attachmentWorkingDirectory,
         path,
         sizeBytes: request.sizeBytes,
         overwrite: false,
@@ -238,7 +261,7 @@ export function registerBulkTransferUploadRpcHandlers(
 
       try {
         await ensureAttachmentIgnoreRule({
-          workingDirectory: deps.workingDirectory,
+          workingDirectory: attachmentWorkingDirectory,
           config,
         });
       } catch {

@@ -15,7 +15,7 @@ function normalizeTransferDirectories(getDirectories?: DirectorySupplier): strin
     : [];
 }
 
-export function registerSessionTransferRpcHandlers(
+export function registerBulkTransferRpcHandlers(
   rpcHandlerManager: RpcHandlerRegistrar,
   deps: Readonly<{
     workingDirectory: string;

@@ -10,7 +10,7 @@ import { configuration } from '@/configuration';
 import { createEncryptedTransferChunkEnvelope } from '@/machines/transfer/transferChunkEncryption';
 import { registerFileSystemHandlers } from '@/rpc/handlers/fileSystem';
 import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
-import { SESSION_RPC_FILE_TRANSFER_SIZE_LIMIT_ERROR } from '@/transfers/policy/sessionRpcTransferPolicy';
+import { SERVER_ROUTED_FILE_TRANSFER_SIZE_LIMIT_ERROR } from '@/transfers/policy/serverRoutedTransferPolicy';
 import { registerBulkTransferUploadRpcHandlers } from '@/transfers/rpc/registerBulkTransferUploadRpcHandlers';
 
 type Handler = (data: any) => Promise<any>;
@@ -322,7 +322,7 @@ describe('file transfers (upload)', () => {
       }),
     ).resolves.toEqual({
       success: false,
-      error: SESSION_RPC_FILE_TRANSFER_SIZE_LIMIT_ERROR,
+      error: SERVER_ROUTED_FILE_TRANSFER_SIZE_LIMIT_ERROR,
     });
   });
 
@@ -345,7 +345,7 @@ describe('file transfers (upload)', () => {
       }),
     ).resolves.toEqual({
       success: false,
-      error: SESSION_RPC_FILE_TRANSFER_SIZE_LIMIT_ERROR,
+      error: SERVER_ROUTED_FILE_TRANSFER_SIZE_LIMIT_ERROR,
     });
   });
 });

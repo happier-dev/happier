@@ -3,8 +3,8 @@ import { validatePath } from '@/rpc/handlers/pathSecurity';
 
 import {
     isServerRoutedTransferOverSizeLimit,
-    SESSION_RPC_FILE_TRANSFER_SIZE_LIMIT_ERROR,
-} from '../policy/sessionRpcTransferPolicy';
+    SERVER_ROUTED_FILE_TRANSFER_SIZE_LIMIT_ERROR,
+} from '../policy/serverRoutedTransferPolicy';
 import { finalizeWorkspaceFileUpload } from './finalizeWorkspaceFileUpload';
 import type { UploadTransferTarget } from './uploadTransferTarget';
 
@@ -43,7 +43,7 @@ export function resolveWorkspaceFileUploadTarget(input: Readonly<{
         return { success: false, error: 'Invalid sizeBytes' };
     }
     if (isServerRoutedTransferOverSizeLimit(sizeBytes, input.sessionRpcTransferMaxBytes ?? null)) {
-        return { success: false, error: SESSION_RPC_FILE_TRANSFER_SIZE_LIMIT_ERROR };
+        return { success: false, error: SERVER_ROUTED_FILE_TRANSFER_SIZE_LIMIT_ERROR };
     }
     if (sizeBytes > configuration.filesUploadMaxFileBytes) {
         return { success: false, error: 'File exceeds upload size limit' };

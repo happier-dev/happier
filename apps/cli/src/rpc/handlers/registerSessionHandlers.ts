@@ -3,7 +3,6 @@ import type { PermissionMode } from '@/api/types';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { Metadata } from '@/api/types';
 import type { CodexBackendMode } from '@happier-dev/agents';
-import { configuration } from '@/configuration';
 import {
     AcpConfigOptionOverridesV1,
     type AgentRuntimeDescriptorV1,
@@ -18,10 +17,7 @@ export { resolveCanonicalCodexBackendMode } from './codexBackendMode';
 import { registerCapabilitiesHandlers } from './capabilities';
 import { registerPreviewEnvHandler } from './previewEnv';
 import { registerBashHandler } from './bash';
-import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
-import { resolveSessionRpcTransferMaxBytes } from '@/transfers/policy/sessionRpcTransferPolicy';
-import { registerSessionTransferRpcHandlers } from '@/transfers/rpc/registerSessionTransferRpcHandlers';
-import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
+import { registerSessionLogTailHandler } from './sessionLogTail';
 import { registerRipgrepHandler } from './ripgrep';
 import { registerDifftasticHandler } from './difftastic';
 import { registerSessionUserMessageSendHandler } from './sessionUserMessageSend';
@@ -179,31 +175,11 @@ export function registerSessionHandlers(
         setAdditionalAllowedWriteDirs?: (dirs: string[]) => void;
     }>,
 ) {
-    const pathAllowanceRegistry = createTransferPathAllowanceRegistry({
-        onReadDirsChange: (dirs) => {
-            opts?.setAdditionalAllowedReadDirs?.([...dirs]);
-        },
-        onWriteDirsChange: (dirs) => {
-            opts?.setAdditionalAllowedWriteDirs?.([...dirs]);
-        },
-    });
-    const transferStore = new TransferSessionStore({ ttlMs: configuration.filesTransferSessionTtlMs });
-    const sessionRpcTransferMaxBytes = resolveSessionRpcTransferMaxBytes();
-
     registerBashHandler(rpcHandlerManager, workingDirectory);
     // Checklist-based machine capability registry (replaces legacy detect-cli / detect-capabilities / dep-status).
     registerCapabilitiesHandlers(rpcHandlerManager);
     registerPreviewEnvHandler(rpcHandlerManager);
-    registerSessionTransferRpcHandlers(rpcHandlerManager, {
-        workingDirectory,
-        store: transferStore,
-        getAdditionalAllowedReadDirs: () => [...pathAllowanceRegistry.getAdditionalAllowedReadDirs()],
-        getAdditionalAllowedWriteDirs: () => [...pathAllowanceRegistry.getAdditionalAllowedWriteDirs()],
-        sessionRpcTransferMaxBytes,
-        attachmentUpload: {
-            pathAllowanceRegistry,
-        },
-    });
+    registerSessionLogTailHandler(rpcHandlerManager, { getSessionMetadata: opts?.getSessionMetadata });
     registerRipgrepHandler(rpcHandlerManager, workingDirectory);
     registerDifftasticHandler(rpcHandlerManager, workingDirectory);
     registerSessionUserMessageSendHandler(rpcHandlerManager, {

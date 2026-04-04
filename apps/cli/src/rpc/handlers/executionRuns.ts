@@ -70,6 +70,11 @@ export function registerExecutionRunHandlers(
     }) => AgentBackend;
     sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
     streamedTranscriptSession?: Readonly<{
+      sendAgentMessageEphemeral?: (
+        provider: ACPProvider,
+        body: ACPMessageData,
+        opts: { localId: string; meta?: Record<string, unknown>; createdAt: number; updatedAt: number },
+      ) => void | Promise<void>;
       sendAgentMessageCommitted: (
         provider: ACPProvider,
         body: ACPMessageData,

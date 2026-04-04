@@ -3,24 +3,21 @@ import { describe, expect, it } from 'vitest';
 import { resolveMachineBrowseRoots } from './resolveMachineBrowseRoots';
 
 describe('resolveMachineBrowseRoots', () => {
-  it('returns a single posix root on non-windows platforms', async () => {
+  it('returns the machine working directory root on non-windows platforms', async () => {
     const roots = await resolveMachineBrowseRoots({
       platform: 'darwin',
+      workingDirectory: '/Users/alice',
     });
 
-    expect(roots).toEqual([{ id: '/', label: '/', path: '/' }]);
+    expect(roots).toEqual([{ id: '/Users/alice', label: '/Users/alice', path: '/Users/alice' }]);
   });
 
-  it('returns accessible windows drive roots', async () => {
+  it('returns the machine working directory root on windows platforms', async () => {
     const roots = await resolveMachineBrowseRoots({
       platform: 'win32',
-      driveLetters: ['C', 'D', 'E'],
-      canAccessRoot: async (root) => root !== 'D:\\',
+      workingDirectory: 'C:\\Users\\Alice',
     });
 
-    expect(roots).toEqual([
-      { id: 'C:\\', label: 'C:', path: 'C:\\' },
-      { id: 'E:\\', label: 'E:', path: 'E:\\' },
-    ]);
+    expect(roots).toEqual([{ id: 'C:\\Users\\Alice', label: 'C:\\Users\\Alice', path: 'C:\\Users\\Alice' }]);
   });
 });
