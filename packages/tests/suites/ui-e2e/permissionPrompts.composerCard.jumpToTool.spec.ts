@@ -8,7 +8,7 @@ import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '.
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { acknowledgeTerminalConnectSuccessIfPresent } from '../../src/testkit/uiE2e/acknowledgeTerminalConnectSuccessIfPresent';
-import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { repoRootDir } from '../../src/testkit/paths';
 
@@ -132,8 +132,7 @@ test.describe('ui e2e: permission prompts (composer card)', () => {
     let thrown: unknown = null;
     try {
       await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
-      await page.getByTestId('welcome-create-account').click();
-      await expect(page.getByTestId('session-getting-started-kind-connect_machine')).not.toHaveCount(0, { timeout: 120_000 });
+      await createAccountAndReachConnectMachineState({ page });
 
       cliLogin = await startCliAuthLoginForTerminalConnect({
         testDir,

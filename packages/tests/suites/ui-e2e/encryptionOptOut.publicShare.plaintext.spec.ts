@@ -7,7 +7,7 @@ import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/da
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
-import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 import { acknowledgeTerminalConnectSuccessIfPresent } from '../../src/testkit/uiE2e/acknowledgeTerminalConnectSuccessIfPresent';
 import { runCliJson } from '../../src/testkit/uiE2e/cliJson';
@@ -129,8 +129,7 @@ test.describe('ui e2e: plaintext mode + public share', () => {
     try {
       await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
       await waitForInitialAppUi({ page, timeoutMs: 120_000 });
-      await page.getByTestId('welcome-create-account').click();
-      await expect(page.getByTestId('session-getting-started-kind-connect_machine')).not.toHaveCount(0, { timeout: 120_000 });
+      await createAccountAndReachConnectMachineState({ page });
 
       cliLogin = await startCliAuthLoginForTerminalConnect({
         testDir,
