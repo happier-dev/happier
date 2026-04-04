@@ -66,25 +66,25 @@ import {
   parseSessionHandoffProviderBundleTransferId,
   type SessionHandoffProviderBundleTransferPublication,
 } from '../../session/handoff/sessionHandoffProviderBundleTransferPublication';
-import { validateSessionHandoffWorkspaceTransferSourcePath } from '../../session/handoff/validateSessionHandoffWorkspaceTransferSourcePath';
-import { validateSessionHandoffWorkspaceTransferStrategy } from '../../session/handoff/validateSessionHandoffWorkspaceTransferStrategy';
+import { validateSessionHandoffWorkspaceTransferSourcePath } from '../../workspace/handoff/validateSessionHandoffWorkspaceTransferSourcePath';
+import { validateSessionHandoffWorkspaceTransferStrategy } from '../../workspace/handoff/validateSessionHandoffWorkspaceTransferStrategy';
 import {
   createSessionHandoffWorkspaceReplicationAdapter,
   createSessionHandoffWorkspaceReplicationBlobPackPayloadSource,
   parseSessionHandoffWorkspaceBlobPackTransferId,
   resolveSessionHandoffWorkspaceReplicationSourceOffer,
   type SessionHandoffWorkspaceReplicationMetadata,
-} from '../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter';
+} from '../../workspace/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter';
 import {
   createSessionHandoffWorkspaceReplicationDirectPeerOnDemandScope,
   parseSessionHandoffWorkspaceDirectPeerBlobPackTransferId,
-} from '../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationDirectPeer';
-import { assertSafeHandoffWorkspaceReplicationPackId } from '../../session/handoff/workspaceReplicationAdapter/assertSafeHandoffWorkspaceReplicationPackId';
+} from '../../workspace/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationDirectPeer';
+import { assertSafeHandoffWorkspaceReplicationPackId } from '../../workspace/handoff/workspaceReplicationAdapter/assertSafeHandoffWorkspaceReplicationPackId';
 import {
   parseSessionHandoffWorkspaceManifestTransferId,
   buildSessionHandoffWorkspaceManifestTransferId,
-} from '../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationServerRouted';
-import { readWorkspaceReplicationManifestFromFile } from '../../session/handoff/workspaceReplicationAdapter/workspaceReplicationManifestFile';
+} from '../../workspace/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationServerRouted';
+import { readWorkspaceReplicationManifestFromFile } from '../../workspace/handoff/workspaceReplicationAdapter/workspaceReplicationManifestFile';
 import { parseWorkspaceReplicationBlobPackRequestV1 } from '../../workspaces/replication/transport/workspaceReplicationBlobPackRequestV1';
 import { buildWorkspaceReplicationManifestDigestIndex } from '../../workspaces/replication/transport/workspaceReplicationManifestIndex';
 import { assertWorkspaceReplicationBlobPackRequestWithinLimits } from '../../workspaces/replication/transport/assertWorkspaceReplicationBlobPackRequestWithinLimits';

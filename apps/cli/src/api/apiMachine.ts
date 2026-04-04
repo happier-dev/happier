@@ -108,7 +108,7 @@ export class ApiMachineClient {
             getAdditionalAllowedReadDirs: () => additionalAllowedReadDirs,
             getAdditionalAllowedWriteDirs: () => additionalAllowedWriteDirs,
         });
-        registerMachineFileBrowserHandlers({ rpcHandlerManager: this.rpcHandlerManager });
+        registerMachineFileBrowserHandlers({ rpcHandlerManager: this.rpcHandlerManager, workingDirectory: machineRpcWorkingDirectory });
         // SCM must be machine-scoped so the UI can view diffs/logs and perform staging/commit operations
         // even when no session is currently active.
         registerScmHandlers(this.rpcHandlerManager, machineRpcWorkingDirectory);

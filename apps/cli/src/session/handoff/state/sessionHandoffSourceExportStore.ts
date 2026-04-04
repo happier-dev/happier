@@ -1,5 +1,5 @@
 import { mkdir, readFile, stat } from 'node:fs/promises';
-import { join, relative, resolve, sep } from 'node:path';
+import { join, posix, relative, resolve, sep, win32 } from 'node:path';
 
 import { z } from 'zod';
 
@@ -10,8 +10,8 @@ import { SessionHandoffProviderBundleSchema } from '../sessionHandoffProviderBun
 import { buildSessionHandoffProviderBundleTransferId } from '../sessionHandoffProviderBundleTransferPublication';
 import {
   buildSessionHandoffWorkspaceManifestTransferId,
-} from '../workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationServerRouted';
-import { writeWorkspaceReplicationManifestToFile } from '../workspaceReplicationAdapter/workspaceReplicationManifestFile';
+} from '@/workspace/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationServerRouted';
+import { writeWorkspaceReplicationManifestToFile } from '@/workspace/handoff/workspaceReplicationAdapter/workspaceReplicationManifestFile';
 import { resolveTransferPayloadManifestHash } from '@/machines/transfer/transferPayloadSource';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 
@@ -98,7 +98,7 @@ function resolvePathRelativeToActiveServerDir(activeServerDir: string, filePath:
   const resolvedRoot = resolve(activeServerDir);
   const resolvedFile = resolve(filePath);
   const rel = relative(resolvedRoot, resolvedFile);
-  if (rel.startsWith('..') || rel.includes(`..${sep}`)) {
+  if (rel === '' || posix.isAbsolute(rel) || win32.isAbsolute(rel) || rel.startsWith('..') || rel.includes(`..${sep}`)) {
     // Fail closed: we only persist paths rooted under activeServerDir to avoid escape attacks and
     // to keep the record relocatable across runs.
     throw new Error(`Invalid handoff file path (outside activeServerDir): ${filePath}`);

@@ -39,7 +39,7 @@ import {
   buildSessionHandoffWorkspaceManifestTransferId,
   parseSessionHandoffWorkspaceBlobPackTransferId,
 } from './sessionHandoffWorkspaceReplicationServerRouted';
-import type { SessionHandoffProviderBundleTransferPublication } from '../sessionHandoffProviderBundleTransferPublication';
+import type { SessionHandoffProviderBundleTransferPublication } from '@/session/handoff/sessionHandoffProviderBundleTransferPublication';
 
 type DirectPeerTransferPublisher = Readonly<{
   publishTransfer: (input: Readonly<{

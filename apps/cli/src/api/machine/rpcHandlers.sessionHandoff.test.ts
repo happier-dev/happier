@@ -2937,7 +2937,7 @@ function createLoopbackMachineTransferChannels() {
 	        workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
 	      },
 	    }));
-	    vi.doMock('../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter', () => ({
+	    vi.doMock('../../workspace/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter', () => ({
 	      createSessionHandoffWorkspaceReplicationAdapter,
 	    }));
 
@@ -3029,7 +3029,7 @@ function createLoopbackMachineTransferChannels() {
       expect(createState).not.toHaveBeenCalled();
     } finally {
       vi.doUnmock('@/configuration');
-      vi.doUnmock('../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter');
+      vi.doUnmock('../../workspace/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter');
       vi.resetModules();
     }
   });
@@ -3103,7 +3103,7 @@ function createLoopbackMachineTransferChannels() {
     } as any;
 
 	    vi.resetModules();
-	    vi.doMock('../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter', () => ({
+	    vi.doMock('../../workspace/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter', () => ({
 	      createSessionHandoffWorkspaceReplicationAdapter,
 	      resolveSessionHandoffWorkspaceReplicationSourceOffer: resolveSourceOffer,
 	    }));
@@ -3225,7 +3225,7 @@ function createLoopbackMachineTransferChannels() {
       const persisted = await prepareJobStore.findByHandoffId(started.handoffId);
       expect(persisted?.workspaceReplicationJobId).toBe('job_wsrepl_1');
     } finally {
-      vi.doUnmock('../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter');
+      vi.doUnmock('../../workspace/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter');
       vi.resetModules();
     }
   });
@@ -3289,7 +3289,7 @@ function createLoopbackMachineTransferChannels() {
     } as any;
 
     vi.resetModules();
-    vi.doMock('../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter', () => ({
+    vi.doMock('../../workspace/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter', () => ({
       createSessionHandoffWorkspaceReplicationAdapter,
       resolveSessionHandoffWorkspaceReplicationSourceOffer: resolveSourceOffer,
     }));
@@ -3377,7 +3377,7 @@ function createLoopbackMachineTransferChannels() {
       }));
     } finally {
       vi.doUnmock('@/configuration');
-      vi.doUnmock('../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter');
+      vi.doUnmock('../../workspace/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter');
       vi.resetModules();
     }
   });
@@ -4208,7 +4208,7 @@ function createLoopbackMachineTransferChannels() {
 	      });
 
 	      vi.resetModules();
-	      vi.doUnmock('../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter');
+	      vi.doUnmock('../../workspace/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter');
 	      vi.doMock('@/configuration', async () => {
 	        const actual = await vi.importActual<typeof import('@/configuration')>('@/configuration');
 	        return {
@@ -4601,7 +4601,7 @@ function createLoopbackMachineTransferChannels() {
 	      });
 
 	      vi.resetModules();
-	      vi.doUnmock('../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter');
+	      vi.doUnmock('../../workspace/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter');
 	      vi.doMock('@/configuration', async () => {
 	        const actual = await vi.importActual<typeof import('@/configuration')>('@/configuration');
 	        return {
@@ -4860,7 +4860,7 @@ function createLoopbackMachineTransferChannels() {
       });
 
       vi.resetModules();
-      vi.doUnmock('../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter');
+      vi.doUnmock('../../workspace/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter');
       vi.doMock('@/configuration', async () => {
         const actual = await vi.importActual<typeof import('@/configuration')>('@/configuration');
         return {
@@ -6521,7 +6521,7 @@ function createLoopbackMachineTransferChannels() {
 	      const { createSessionHandoffPrepareTargetJobStore } = await import('../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore');
 	      const { registerMachineSessionHandoffRpcHandlers: registerSourceHandlers } = await import('./rpcHandlers.sessionHandoff');
 	      const { buildSessionHandoffWorkspaceManifestTransferId } = await import(
-	        '../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationServerRouted',
+	        '../../workspace/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationServerRouted',
 	      );
 
 	      registerSourceHandlers({
@@ -6606,7 +6606,7 @@ function createLoopbackMachineTransferChannels() {
           const { createSessionHandoffSourceExportStore } = await import('../../session/handoff/state/sessionHandoffSourceExportStore');
           const { createWorkspaceReplicationPackIdForDigests } = await import('@/workspaces/replication/transport/workspaceReplicationPackId');
           const { buildSessionHandoffWorkspaceBlobPackTransferId } = await import(
-            '../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationServerRouted',
+            '../../workspace/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationServerRouted',
           );
 
           registerSourceHandlers({
@@ -6701,7 +6701,7 @@ function createLoopbackMachineTransferChannels() {
           const { createSessionHandoffSourceExportStore } = await import('../../session/handoff/state/sessionHandoffSourceExportStore');
           const { createWorkspaceReplicationPackIdForDigests } = await import('@/workspaces/replication/transport/workspaceReplicationPackId');
           const { buildSessionHandoffWorkspaceBlobPackTransferId } = await import(
-            '../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationServerRouted',
+            '../../workspace/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationServerRouted',
           );
 
           registerSourceHandlers({

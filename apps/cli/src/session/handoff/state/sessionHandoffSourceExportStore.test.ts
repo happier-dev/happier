@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { readWorkspaceReplicationManifestFromFile } from '../workspaceReplicationAdapter/workspaceReplicationManifestFile';
+import { readWorkspaceReplicationManifestFromFile } from '@/workspace/handoff/workspaceReplicationAdapter/workspaceReplicationManifestFile';
 import { createSessionHandoffSourceExportStore } from './sessionHandoffSourceExportStore';
 
 describe('sessionHandoffSourceExportStore', () => {
