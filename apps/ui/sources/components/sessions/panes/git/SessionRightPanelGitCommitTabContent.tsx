@@ -1,10 +1,9 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { computeExpandedPathsForReveal } from '@/components/sessions/files/repositoryTree/computeExpandedPathsForReveal';
+import { computeExpandedPathsForReveal } from '@/components/workspaces/files/repositoryTree/computeExpandedPathsForReveal';
 import { SessionRightPanelGitCommitTab } from '@/components/sessions/panes/git/SessionRightPanelGitCommitTab';
-import { ScmCommitSelectionToggleButton } from '@/components/sessions/sourceControl/commitSelection/ScmCommitSelectionToggleButton';
 import { ScmChangeDiscardButton } from '@/components/sessions/sourceControl/changes/ScmChangeDiscardButton';
-import { ScmChangeOverflowMenu } from '@/components/sessions/sourceControl/changes/ScmChangeOverflowMenu';
+import { ScmChangeOverflowMenu } from '@/components/workspaces/scm/changes/ScmChangeOverflowMenu';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 import { getDefaultChangedFilesViewMode } from '@/scm/scmAttribution';
 import { storage } from '@/sync/domains/state/storage';
@@ -115,22 +114,6 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
         changedFiles: changed.allRepositoryChangedFiles,
     });
 
-    const renderCommitSelectionAction = React.useCallback((file: ScmFileStatus) => {
-        const selectedForCommit = isSelectedForCommit(file);
-        return (
-            <ScmCommitSelectionToggleButton
-                sessionId={props.sessionId}
-                sessionPath={props.sessionPath}
-                snapshot={props.scmSnapshot}
-                scmWriteEnabled={props.scmWriteEnabled}
-                commitStrategy={props.scmCommitStrategy}
-                file={file}
-                selectedForCommit={selectedForCommit}
-                surface="files"
-            />
-        );
-    }, [isSelectedForCommit, props.scmCommitStrategy, props.scmSnapshot, props.scmWriteEnabled, props.sessionId, props.sessionPath]);
-
     const noop = React.useCallback(() => {}, []);
     const noopFile = React.useCallback((_file: ScmFileStatus) => {}, []);
     const renderNull = React.useCallback((_file: ScmFileStatus) => null, []);
@@ -206,7 +189,7 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
             onFilePress={(file) => props.openFileInDetails(file.fullPath)}
             onFilePressPinned={(file) => props.openFileInDetailsPinned(file.fullPath)}
             onToggleSelectionForFile={commitSelectionUiEnabled ? toggleCommitSelectionForFile : noopFile}
-            renderFileActions={commitSelectionUiEnabled ? renderCommitSelectionAction : renderNull}
+            renderFileActions={renderNull}
             renderFileTrailingActions={renderTrailingActions}
             commitDraftMessage={props.commitDraftMessage}
             onCommitDraftMessageChange={props.onCommitDraftMessageChange}

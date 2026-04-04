@@ -47,7 +47,7 @@ vi.mock('@/components/sessions/sourceControl/changes/ScmChangeDiscardButton', ()
     ScmChangeDiscardButton: () => React.createElement('ScmChangeDiscardButton'),
 }));
 
-vi.mock('@/components/sessions/sourceControl/changes/ScmChangeOverflowMenu', () => ({
+vi.mock('@/components/workspaces/scm/changes/ScmChangeOverflowMenu', () => ({
     ScmChangeOverflowMenu: () => React.createElement('ScmChangeOverflowMenu'),
 }));
 
@@ -140,5 +140,59 @@ describe('SessionRightPanelGitCommitTabContent', () => {
 
         expect(commitTabRenderSpy).toHaveBeenCalled();
         expect(commitTabRenderSpy.mock.calls.at(-1)?.[0].changedFilesViewMode).toBe('turn');
+    });
+
+    it('does not pass leading changed-file action buttons when commit selection UI is enabled', async () => {
+        useChangedFilesDataSpy.mockClear();
+        commitTabRenderSpy.mockClear();
+        useDerivedSessionChangeSetSpy.mockReturnValue({
+            turnChangeSets: [],
+            latestTurnChangeSet: null,
+            latestTurnScopedChangeSet: null,
+            sessionChangeSet: null,
+            latestTurnDiffByPath: null,
+            providerDiffByPath: null,
+        });
+
+        const { SessionRightPanelGitCommitTabContent } = await import('./SessionRightPanelGitCommitTabContent');
+
+        await renderScreen(<SessionRightPanelGitCommitTabContent
+                    theme={{}}
+                    sessionId="s1"
+                    sessionPath="/tmp/repo"
+                    scmSnapshot={{ capabilities: {} } as any}
+                    touchedPaths={[]}
+                    operationLog={[]}
+                    projectSessionIds={[]}
+                    commitSelectionPaths={[]}
+                    commitSelectionPatches={[]}
+                    scmCommitStrategy="atomic"
+                    scmWriteEnabled={true}
+                    inFlightScmOperation={null}
+                    hasGlobalOperationInFlight={false}
+                    scmOperationBusy={false}
+                    scmOperationStatus={null}
+                    backendLabel="Git"
+                    commitActionLabel="Commit"
+                    hasConflicts={false}
+                    commitAllowedForComposer={true}
+                    commitBlockedMessageForComposer={null}
+                    commitWriteEnabled={true}
+                    commitSelectionUiEnabled={true}
+                    commitDraftMessage=""
+                    onCommitDraftMessageChange={vi.fn()}
+                    onCommitFromMessage={vi.fn()}
+                    commitMessageGeneratorEnabled={false}
+                    onGenerateCommitMessageSuggestion={async () => ({ ok: true, message: '' })}
+                    onOpenFilesSidebar={vi.fn()}
+                    onOpenReviewAllChanges={vi.fn()}
+                    onOpenStashDetails={vi.fn()}
+                    openFileInDetails={vi.fn()}
+                    openFileInDetailsPinned={vi.fn()}
+                />);
+
+        expect(commitTabRenderSpy).toHaveBeenCalled();
+        const props = commitTabRenderSpy.mock.calls.at(-1)?.[0];
+        expect(props.renderFileActions({ fullPath: 'src/a.ts' })).toBeNull();
     });
 });

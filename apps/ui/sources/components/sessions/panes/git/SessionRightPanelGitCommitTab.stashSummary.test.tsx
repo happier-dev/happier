@@ -31,15 +31,15 @@ installSessionGitPaneCommonModuleMocks({
     },
 });
 
-vi.mock('@/components/sessions/files/SourceControlBranchSummary', () => ({
+vi.mock('@/components/workspaces/scm/SourceControlBranchSummary', () => ({
     SourceControlBranchSummary: (props: any) => React.createElement('SourceControlBranchSummary', props),
 }));
 
-vi.mock('@/components/sessions/sourceControl/commitComposer/ScmCommitComposerCard', () => ({
+vi.mock('@/components/workspaces/scm/commitComposer/ScmCommitComposerCard', () => ({
     ScmCommitComposerCard: (props: any) => React.createElement('ScmCommitComposerCard', props),
 }));
 
-vi.mock('@/components/sessions/sourceControl/changes/ScmChangeRow', () => ({
+vi.mock('@/components/workspaces/scm/changes/ScmChangeRow', () => ({
     ScmChangeRow: (props: any) => React.createElement('ScmChangeRow', props),
 }));
 
@@ -56,8 +56,10 @@ describe('SessionRightPanelGitCommitTab (stash summary)', () => {
     it('renders stash summary row immediately from the snapshot stash count before the live stash RPC resolves', async () => {
         stashListMock.mockResolvedValue({
             success: true,
-            managedCount: 2,
-            managedStashes: [],
+            stashes: [
+                { stashRef: 'stash@{0}', kind: 'branch', branch: 'main' },
+                { stashRef: 'stash@{1}', kind: 'unmanaged', message: 'WIP on main: unmanaged' },
+            ],
             totalCount: 2,
         });
 
@@ -110,7 +112,13 @@ describe('SessionRightPanelGitCommitTab (stash summary)', () => {
                     onCommitFromMessage={() => {}}
                     commitMessageGeneratorEnabled={false}
                     onGenerateCommitMessageSuggestion={async () => ({ ok: true, message: '' })}
-                    scmStatusFiles={null}
+                    scmStatusFiles={{
+                        branch: 'main',
+                        includedFiles: [],
+                        pendingFiles: [],
+                        totalIncluded: 0,
+                        totalPending: 0,
+                    } as any}
                     showCommitComposer={false}
                     onOpenStashDetails={onOpenStashDetails}
                 />);
@@ -121,6 +129,8 @@ describe('SessionRightPanelGitCommitTab (stash summary)', () => {
         if (!row) {
             throw new Error('Unable to find stash summary row');
         }
+        const branchSummary = screen.findByType('SourceControlBranchSummary' as any);
+        expect((branchSummary.props as any).branchTrigger).toBeTruthy();
         const rowChildren = React.Children.toArray(row.props.children);
         const trailingSummary = rowChildren[1];
         if (!React.isValidElement<{ children?: React.ReactNode }>(trailingSummary)) {
@@ -141,8 +151,7 @@ describe('SessionRightPanelGitCommitTab (stash summary)', () => {
     it('renders stash summary row when stash read is available even if write operations are disabled', async () => {
         stashListMock.mockResolvedValue({
             success: true,
-            managedCount: 1,
-            managedStashes: [{ stashRef: 'stash@{0}', kind: 'branch', branch: 'main' }],
+            stashes: [{ stashRef: 'stash@{0}', kind: 'branch', branch: 'main' }],
             totalCount: 1,
         });
 
@@ -208,11 +217,10 @@ describe('SessionRightPanelGitCommitTab (stash summary)', () => {
         expect(onOpenStashDetails).toHaveBeenCalledTimes(1);
     });
 
-    it('renders stash summary row when managed stashes exist and opens details on press', async () => {
+    it('renders stash summary row when stashes exist and opens details on press', async () => {
         stashListMock.mockResolvedValue({
             success: true,
-            managedCount: 1,
-            managedStashes: [{ stashRef: 'stash@{0}', kind: 'branch', branch: 'main' }],
+            stashes: [{ stashRef: 'stash@{0}', kind: 'unmanaged', message: 'WIP on main: unmanaged' }],
             totalCount: 1,
         });
 

@@ -1,14 +1,7 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
-import { Octicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
-import type { ScmBranchListEntry } from '@happier-dev/protocol';
-
-import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
 import { usePublishBranchAction } from '@/hooks/session/sourceControl/usePublishBranchAction';
 import { Modal } from '@/modal';
 import { repoScmBranchService } from '@/scm/repository/repoScmBranchService';
@@ -19,15 +12,16 @@ import { sessionScmBranchCheckout, sessionScmBranchCreate } from '@/sync/ops';
 import { useSetting } from '@/sync/domains/state/storage';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
-import { showSwitchBranchWithChangesDialog } from './SwitchBranchWithChangesDialog';
+import { showSwitchBranchWithChangesDialog } from '@/components/workspaces/scm/branches/SwitchBranchWithChangesDialog';
 import { t } from '@/text';
 import { scmStatusSync } from '@/scm/scmStatusSync';
-import { buildSourceControlBranchMenuItems } from './buildSourceControlBranchMenuItems';
+import { buildWorkspaceScmBranchPopoverItems } from '@/components/workspaces/scm/branches/buildWorkspaceScmBranchPopoverItems';
+import { WorkspaceScmBranchPopover } from '@/components/workspaces/scm/branches/WorkspaceScmBranchPopover';
 import {
     hasUncommittedChanges,
     isBranchStashAlreadyExistsError,
     normalizeBranchSwitchSetting,
-} from './branchMenuPredicates';
+} from '@/components/workspaces/scm/branches/branchMenuPredicates';
 import { handleSourceControlBranchMenuSelect } from './handleSourceControlBranchMenuSelect';
 
 export type SourceControlBranchMenuProps = Readonly<{
@@ -115,8 +109,8 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
     });
     const loading = phase !== 'idle';
 
-    const items = React.useMemo(() => {
-        return buildSourceControlBranchMenuItems({
+    const { branchItems, worktreeItems } = React.useMemo(() => {
+        return buildWorkspaceScmBranchPopoverItems({
             branches,
             canCheckout,
             canCreateWorktrees,
@@ -145,8 +139,6 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
         worktreeRows,
     ]);
 
-    const closeMenu = React.useCallback(() => setOpen(false), []);
-
     const createBranch = React.useCallback(async (name: string) => {
         if (!canCreate) return;
         const trimmed = name.trim();
@@ -161,6 +153,8 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
         setOpen(true);
         void refresh('loading');
     }, [canCreate, props.sessionId, refresh]);
+
+    const closeMenu = React.useCallback(() => setOpen(false), []);
 
     const switchBranch = React.useCallback(async (targetBranch: string) => {
         if (!canCheckout) return;
@@ -342,47 +336,17 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
         switchBranch,
     ]);
 
-    const selectedId = currentBranch ? `branch:${currentBranch}` : null;
-    const triggerTestId = props.testID ?? 'scm-branch-menu-trigger';
-
     return (
-        <DropdownMenu
+        <WorkspaceScmBranchPopover
             open={open}
             onOpenChange={setOpen}
-            closeOnSelect={false}
-            matchTriggerWidth={false}
-            items={items}
-            onSelect={onSelect}
-            selectedId={selectedId}
-            search
-            searchPlaceholder={t('files.branchMenu.searchPlaceholder')}
-            emptyLabel={t('files.branchMenu.empty')}
-            onCreateItem={canCreate ? createBranch : null}
-            createItemDisplay={(query) => ({
-                title: t('files.branchMenu.create.title'),
-                subtitle: t('files.branchMenu.create.subtitle', { name: query.trim() }),
-                disabled: !query.trim(),
-            })}
-            trigger={({ toggle }) => (
-                <Pressable
-                    testID={triggerTestId}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('files.branchMenu.openA11y')}
-                    onPress={toggle}
-                    disabled={disabled}
-                    style={({ pressed }) => ({
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        gap: 6,
-                        opacity: disabled ? 0.6 : pressed ? 0.82 : 1,
-                    })}
-                >
-                    <Text numberOfLines={1} style={{ fontSize: 14, color: theme.colors.text, ...Typography.default('semiBold') }}>
-                        {currentBranch || t('files.detachedHead')}
-                    </Text>
-                    <Octicons name={open ? 'chevron-up' : 'chevron-down'} size={14} color={theme.colors.textSecondary} />
-                </Pressable>
-            )}
+            currentBranch={currentBranch}
+            disabled={disabled}
+            branchItems={branchItems}
+            worktreeItems={worktreeItems}
+            onSelectItem={onSelect}
+            onCreateBranch={canCreate ? createBranch : null}
+            testID={props.testID}
         />
     );
 }

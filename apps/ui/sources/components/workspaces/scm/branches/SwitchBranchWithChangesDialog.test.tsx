@@ -5,7 +5,7 @@ import {
     installSourceControlBranchMenuCommonModuleMocks,
     resetSourceControlBranchMenuCommonModuleMockState,
     sourceControlBranchMenuModuleState,
-} from './sourceControlBranchMenuTestHelpers';
+} from '@/components/sessions/sourceControl/branches/sourceControlBranchMenuTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;

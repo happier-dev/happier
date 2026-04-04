@@ -139,7 +139,7 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => true,
 }));
 
-vi.mock('@/components/sessions/sourceControl/states', () => ({
+vi.mock('@/components/workspaces/scm/states', () => ({
     NotSourceControlRepositoryState: () => React.createElement('NotSourceControlRepositoryState'),
     SourceControlUnavailableState: () => React.createElement('SourceControlUnavailableState'),
     SourceControlSessionInactiveState: () => React.createElement('SourceControlSessionInactiveState'),
@@ -169,20 +169,20 @@ vi.mock('@/scm/scmStatusSync', () => ({
     },
 }));
 
-vi.mock('@/components/sessions/panes/git/SessionRightPanelGitSubTabsBar', () => ({
-    SessionRightPanelGitSubTabsBar: () => React.createElement('SubTabs'),
+vi.mock('@/components/workspaces/scm/WorkspaceScmSubTabsBar', () => ({
+    WorkspaceScmSubTabsBar: () => React.createElement('SubTabs'),
 }));
 
 vi.mock('@/components/sessions/panes/git/SessionRightPanelGitCommitTabContent', () => ({
     SessionRightPanelGitCommitTabContent: () => React.createElement('CommitTab'),
 }));
 
-vi.mock('@/components/sessions/panes/git/SessionRightPanelGitUpdateTab', () => ({
-    SessionRightPanelGitUpdateTab: () => React.createElement('UpdateTab'),
+vi.mock('@/components/workspaces/scm/WorkspaceScmUpdateTab', () => ({
+    WorkspaceScmUpdateTab: () => React.createElement('UpdateTab'),
 }));
 
-vi.mock('@/components/sessions/panes/git/SessionRightPanelGitHistoryTab', () => ({
-    SessionRightPanelGitHistoryTab: () => React.createElement('HistoryTab'),
+vi.mock('@/components/workspaces/scm/WorkspaceScmHistoryTab', () => ({
+    WorkspaceScmHistoryTab: () => React.createElement('HistoryTab'),
 }));
 
 describe('SessionRightPanelGitView (history lazy load)', () => {

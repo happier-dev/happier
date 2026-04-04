@@ -8,10 +8,11 @@ import { t } from '@/text';
 
 export type GitSubTabId = 'commit' | 'update' | 'history';
 
-export type SessionRightPanelGitSubTabsBarProps = Readonly<{
+export type WorkspaceScmSubTabsBarProps = Readonly<{
     tabs: ReadonlyArray<{ id: GitSubTabId; label: string }>;
     activeSubTabId: GitSubTabId;
     onSelectSubTab: (subTabId: GitSubTabId) => void;
+    testIDPrefix?: string;
 }>;
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -50,13 +51,16 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-export const SessionRightPanelGitSubTabsBar = React.memo((props: SessionRightPanelGitSubTabsBarProps) => {
+export const WorkspaceScmSubTabsBar = React.memo((props: WorkspaceScmSubTabsBarProps) => {
     const styles = stylesheet;
     useUnistyles();
+    const testIDPrefix = typeof props.testIDPrefix === 'string' && props.testIDPrefix.trim().length > 0
+        ? props.testIDPrefix.trim()
+        : 'session-rightpanel-git-subtab:';
 
     const Tab = (p: { id: GitSubTabId; label: string }) => (
         <Pressable
-            testID={`session-rightpanel-git-subtab:${p.id}`}
+            testID={`${testIDPrefix}${p.id}`}
             onPress={() => props.onSelectSubTab(p.id)}
             style={[styles.tab, props.activeSubTabId === p.id ? styles.tabActive : null]}
             accessibilityRole="button"

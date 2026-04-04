@@ -2,12 +2,12 @@ import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import type { ScmLogEntry } from '@happier-dev/protocol';
 
-import { SourceControlOperationsHistorySection } from '@/components/sessions/files/SourceControlOperationsHistorySection';
+import { SourceControlOperationsHistorySection } from '@/components/workspaces/scm/SourceControlOperationsHistorySection';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 
-export type SessionRightPanelGitHistoryTabProps = Readonly<{
+export type WorkspaceScmHistoryTabProps = Readonly<{
     theme: any;
     historyLoading: boolean;
     historyEntries: ScmLogEntry[];
@@ -16,7 +16,7 @@ export type SessionRightPanelGitHistoryTabProps = Readonly<{
     onOpenCommit: (sha: string) => void;
 }>;
 
-export const SessionRightPanelGitHistoryTab = React.memo((props: SessionRightPanelGitHistoryTabProps) => {
+export const WorkspaceScmHistoryTab = React.memo((props: WorkspaceScmHistoryTabProps) => {
     const scrollFades = useScrollEdgeFades({
         enabledEdges: { top: true, bottom: true },
         overflowThreshold: 1,

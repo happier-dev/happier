@@ -3,7 +3,7 @@ import { Octicons } from '@expo/vector-icons';
 
 import type { ScmBranchListEntry } from '@happier-dev/protocol';
 
-import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import type { SelectableMenuItem } from '@/components/ui/forms/dropdown/selectableMenuTypes';
 import { t } from '@/text';
 
 export type RepoWorktreeRow = Readonly<{
@@ -13,7 +13,7 @@ export type RepoWorktreeRow = Readonly<{
     isMain?: boolean;
 }>;
 
-export function buildSourceControlBranchMenuItems(input: Readonly<{
+export function buildWorkspaceScmBranchPopoverItems(input: Readonly<{
     branches: ReadonlyArray<ScmBranchListEntry>;
     canCheckout: boolean;
     canCreateWorktrees: boolean;
@@ -26,26 +26,15 @@ export function buildSourceControlBranchMenuItems(input: Readonly<{
     loading: boolean;
     worktreeRows: ReadonlyArray<RepoWorktreeRow>;
     checkIconColor: string;
-}>): ReadonlyArray<DropdownMenuItem> {
-    const {
-        branches,
-        canCheckout,
-        canCreateWorktrees,
-        canLaunchWorktreeSession,
-        canPublish,
-        canReadBranches,
-        currentBranch,
-        hasMachineTarget,
-        includeRemotes,
-        loading,
-        worktreeRows,
-        checkIconColor,
-    } = input;
+}>): Readonly<{
+    branchItems: ReadonlyArray<SelectableMenuItem>;
+    worktreeItems: ReadonlyArray<SelectableMenuItem>;
+}> {
+    const branchItems: SelectableMenuItem[] = [];
+    const worktreeItems: SelectableMenuItem[] = [];
 
-    const out: DropdownMenuItem[] = [];
-
-    if (canPublish) {
-        out.push({
+    if (input.canPublish) {
+        branchItems.push({
             id: 'publish',
             title: t('files.branchMenu.publish.title'),
             subtitle: t('files.branchMenu.publish.subtitle'),
@@ -53,47 +42,47 @@ export function buildSourceControlBranchMenuItems(input: Readonly<{
         });
     }
 
-    if (canCreateWorktrees) {
-        out.push({
+    if (input.canCreateWorktrees) {
+        worktreeItems.push({
             id: 'worktree:create-current-branch',
             title: t('files.branchMenu.worktrees.createFromCurrentBranchTitle'),
-            subtitle: currentBranch
-                ? t('files.branchMenu.worktrees.createFromCurrentBranchSubtitle', { branch: currentBranch })
+            subtitle: input.currentBranch
+                ? t('files.branchMenu.worktrees.createFromCurrentBranchSubtitle', { branch: input.currentBranch })
                 : t('files.branchMenu.worktrees.createFromCurrentBranchDetachedSubtitle'),
             category: t('files.branchMenu.category.actions'),
-            disabled: !hasMachineTarget || !currentBranch,
+            disabled: !input.hasMachineTarget || !input.currentBranch,
         });
-        out.push({
+        worktreeItems.push({
             id: 'worktree:create-from-another-branch',
             title: t('files.branchMenu.worktrees.createFromAnotherBranchTitle'),
             subtitle: t('files.branchMenu.worktrees.createFromAnotherBranchSubtitle'),
             category: t('files.branchMenu.category.actions'),
         });
-        out.push({
+        worktreeItems.push({
             id: 'worktree:prune',
             title: t('files.branchMenu.worktrees.pruneTitle'),
             subtitle: t('files.branchMenu.worktrees.pruneSubtitle'),
             category: t('files.branchMenu.category.actions'),
-            disabled: !hasMachineTarget,
+            disabled: !input.hasMachineTarget,
         });
     }
 
-    if (canLaunchWorktreeSession && worktreeRows.length > 0) {
-        for (const worktree of worktreeRows) {
+    if (input.canLaunchWorktreeSession && input.worktreeRows.length > 0) {
+        for (const worktree of input.worktreeRows) {
             const title = worktree.branch ?? worktree.path;
-            out.push({
+            worktreeItems.push({
                 id: `worktree:open:${worktree.path}`,
                 title,
                 subtitle: worktree.path,
                 category: t('files.branchMenu.category.worktrees'),
                 disabled: worktree.isCurrent === true,
-                rightElement: worktree.isCurrent ? (
-                    <Octicons name="check" size={14} color={checkIconColor} />
+                right: worktree.isCurrent ? (
+                    <Octicons name="check" size={14} color={input.checkIconColor} />
                 ) : null,
             });
 
-            if (canCreateWorktrees && worktree.isCurrent !== true && worktree.isMain !== true) {
-                out.push({
+            if (input.canCreateWorktrees && worktree.isCurrent !== true && worktree.isMain !== true) {
+                worktreeItems.push({
                     id: `worktree:remove:${worktree.path}`,
                     title: t('files.branchMenu.worktrees.removeTitle'),
                     subtitle: t('files.branchMenu.worktrees.removeSubtitle', { target: worktree.branch ?? worktree.path }),
@@ -103,50 +92,49 @@ export function buildSourceControlBranchMenuItems(input: Readonly<{
         }
     }
 
-    if (loading && branches.length === 0) {
-        out.push({
+    if (input.loading && input.branches.length === 0) {
+        branchItems.push({
             id: 'loading',
             title: t('common.loading'),
             disabled: true,
             category: t('files.branchMenu.category.branches'),
         });
-        return out;
+        return { branchItems, worktreeItems };
     }
 
-    if (!canReadBranches) {
-        out.push({
+    if (!input.canReadBranches) {
+        branchItems.push({
             id: 'unsupported',
             title: t('files.branchMenu.unavailable'),
             disabled: true,
             category: t('files.branchMenu.category.branches'),
         });
-        return out;
+        return { branchItems, worktreeItems };
     }
 
-    for (const branch of branches) {
-        const isCurrent = branch.isCurrent === true || (currentBranch ? branch.name === currentBranch : false);
-        out.push({
+    for (const branch of input.branches) {
+        const isCurrent = branch.isCurrent === true || (input.currentBranch ? branch.name === input.currentBranch : false);
+        branchItems.push({
             id: `branch:${branch.name}`,
             title: branch.name,
             subtitle: branch.upstream ? t('files.branchMenu.branch.upstream', { upstream: branch.upstream }) : undefined,
             category: branch.type === 'remote'
                 ? t('files.branchMenu.category.remote')
                 : t('files.branchMenu.category.local'),
-            disabled: !canCheckout || isCurrent,
-            rightElement: isCurrent ? (
-                <Octicons name="check" size={14} color={checkIconColor} />
+            disabled: !input.canCheckout || isCurrent,
+            right: isCurrent ? (
+                <Octicons name="check" size={14} color={input.checkIconColor} />
             ) : null,
         });
     }
 
-    out.push({
-        id: includeRemotes ? 'remotes_off' : 'remotes_on',
-        title: includeRemotes ? t('files.branchMenu.remotes.hide') : t('files.branchMenu.remotes.show'),
+    branchItems.push({
+        id: input.includeRemotes ? 'remotes_off' : 'remotes_on',
+        title: input.includeRemotes ? t('files.branchMenu.remotes.hide') : t('files.branchMenu.remotes.show'),
         subtitle: t('files.branchMenu.remotes.subtitle'),
         category: t('files.branchMenu.category.options'),
-        disabled: !canReadBranches,
+        disabled: !input.canReadBranches,
     });
 
-    return out;
+    return { branchItems, worktreeItems };
 }
-

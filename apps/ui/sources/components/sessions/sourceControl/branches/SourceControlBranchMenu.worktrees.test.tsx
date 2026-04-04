@@ -4,8 +4,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import {
     installSourceControlBranchMenuCommonModuleMocks,
+    listSourceControlBranchMenuItemIds,
     openSourceControlBranchMenu,
     resetSourceControlBranchMenuCommonModuleMockState,
+    selectSourceControlBranchMenuItem,
     sourceControlBranchMenuModuleState,
 } from './sourceControlBranchMenuTestHelpers';
 
@@ -49,13 +51,12 @@ describe('SourceControlBranchMenu worktrees', () => {
                 />);
 
         await openSourceControlBranchMenu(screen);
-        const menu = screen.findByType('DropdownMenu' as any);
-
-        expect(menu.props.items.some((item: any) => item.id === 'worktree:open:/repo/.worktrees/feature-auth')).toBe(true);
-
+        expect(listSourceControlBranchMenuItemIds(screen)).not.toContain('worktree:open:/repo/.worktrees/feature-auth');
+        const segmented = screen.findByType('SegmentedTabBar' as any);
         await act(async () => {
-            await menu.props.onSelect('worktree:open:/repo/.worktrees/feature-auth');
+            segmented.props.onSelectTab('worktrees');
         });
+        await selectSourceControlBranchMenuItem(screen, 'worktree:open:/repo/.worktrees/feature-auth');
 
         expect(sourceControlBranchMenuModuleState.routerPushSpy).toHaveBeenCalledWith({
             pathname: '/new',
@@ -98,10 +99,12 @@ describe('SourceControlBranchMenu worktrees', () => {
                     } as any}
                 />);
 
-        const menu = screen.findByType('DropdownMenu' as any);
+        await openSourceControlBranchMenu(screen);
+        const segmented = screen.findByType('SegmentedTabBar' as any);
         await act(async () => {
-            await menu.props.onSelect('worktree:create-current-branch');
+            segmented.props.onSelectTab('worktrees');
         });
+        await selectSourceControlBranchMenuItem(screen, 'worktree:create-current-branch');
 
         expect(sourceControlBranchMenuModuleState.createWorktreeForMachinePathMock).toHaveBeenCalledWith({
             machineId: 'machine-1',
@@ -150,10 +153,12 @@ describe('SourceControlBranchMenu worktrees', () => {
                     } as any}
                 />);
 
-        const menu = screen.findByType('DropdownMenu' as any);
+        await openSourceControlBranchMenu(screen);
+        const segmented = screen.findByType('SegmentedTabBar' as any);
         await act(async () => {
-            await menu.props.onSelect('worktree:create-current-branch');
+            segmented.props.onSelectTab('worktrees');
         });
+        await selectSourceControlBranchMenuItem(screen, 'worktree:create-current-branch');
 
         expect(sourceControlBranchMenuModuleState.routerPushSpy).toHaveBeenCalledWith({
             pathname: '/new',
@@ -192,10 +197,12 @@ describe('SourceControlBranchMenu worktrees', () => {
                     } as any}
                 />);
 
-        const menu = screen.findByType('DropdownMenu' as any);
+        await openSourceControlBranchMenu(screen);
+        const segmented = screen.findByType('SegmentedTabBar' as any);
         await act(async () => {
-            await menu.props.onSelect('worktree:prune');
+            segmented.props.onSelectTab('worktrees');
         });
+        await selectSourceControlBranchMenuItem(screen, 'worktree:prune');
 
         expect(sourceControlBranchMenuModuleState.pruneWorktreesForMachinePathMock).toHaveBeenCalledWith({
             machineId: 'machine-1',
@@ -230,10 +237,12 @@ describe('SourceControlBranchMenu worktrees', () => {
                     } as any}
                 />);
 
-        const menu = screen.findByType('DropdownMenu' as any);
+        await openSourceControlBranchMenu(screen);
+        const segmented = screen.findByType('SegmentedTabBar' as any);
         await act(async () => {
-            await menu.props.onSelect('worktree:create-from-another-branch');
+            segmented.props.onSelectTab('worktrees');
         });
+        await selectSourceControlBranchMenuItem(screen, 'worktree:create-from-another-branch');
 
         expect(sourceControlBranchMenuModuleState.routerPushSpy).toHaveBeenCalledWith({
             pathname: '/new',
@@ -243,6 +252,57 @@ describe('SourceControlBranchMenu worktrees', () => {
                 worktree: 'new',
             },
         });
+    });
+
+    it('segments branches and worktrees inside the branch popover', async () => {
+        sourceControlBranchMenuModuleState.useSettingMock.mockImplementation(() => 'always_bring');
+        sourceControlBranchMenuModuleState.fetchBranchesForSessionMock.mockResolvedValue([
+            { name: 'main', type: 'local', isCurrent: true, upstream: null },
+            { name: 'feature/auth', type: 'local', isCurrent: false, upstream: null },
+        ]);
+
+        const { SourceControlBranchMenu } = await import('./SourceControlBranchMenu');
+
+        const screen = await renderScreen(<SourceControlBranchMenu
+                    sessionId="s1"
+                    currentBranch="main"
+                    snapshot={{
+                        repo: {
+                            isRepo: true,
+                            rootPath: '/repo',
+                            backendId: 'git',
+                            mode: '.git',
+                            worktrees: [
+                                { path: '/repo', branch: 'main', isCurrent: true, isMain: true },
+                                { path: '/repo/.worktrees/feature-auth', branch: 'feature/auth', isCurrent: false },
+                            ],
+                        },
+                        branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
+                        capabilities: { readBranches: true, writeBranchCheckout: true, worktreeCreate: true },
+                        totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0, includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
+                        fetchedAt: Date.now(),
+                        projectKey: 'p1',
+                        hasConflicts: false,
+                        entries: [],
+                        stashCount: 0,
+                    } as any}
+                />);
+
+        await openSourceControlBranchMenu(screen);
+
+        const segmented = screen.findByType('SegmentedTabBar' as any);
+        expect(segmented.props.activeTabId).toBe('branches');
+
+        const results = screen.findByType('SelectableMenuResults' as any);
+        expect(results.props.categories.some((category: any) => category.items.some((item: any) => item.id === 'branch:feature/auth'))).toBe(true);
+        expect(results.props.categories.some((category: any) => category.items.some((item: any) => item.id === 'worktree:open:/repo/.worktrees/feature-auth'))).toBe(false);
+
+        await act(async () => {
+            segmented.props.onSelectTab('worktrees');
+        });
+
+        const nextResults = screen.findByType('SelectableMenuResults' as any);
+        expect(nextResults.props.categories.some((category: any) => category.items.some((item: any) => item.id === 'worktree:open:/repo/.worktrees/feature-auth'))).toBe(true);
     });
 
     it('removes a sibling worktree through the shared repo worktree service after confirmation', async () => {
@@ -278,13 +338,12 @@ describe('SourceControlBranchMenu worktrees', () => {
                 />);
 
         await openSourceControlBranchMenu(screen);
-        const menu = screen.findByType('DropdownMenu' as any);
-
-        expect(menu.props.items.some((item: any) => item.id === 'worktree:remove:/repo/.worktrees/feature-auth')).toBe(true);
-
+        const segmented = screen.findByType('SegmentedTabBar' as any);
         await act(async () => {
-            await menu.props.onSelect('worktree:remove:/repo/.worktrees/feature-auth');
+            segmented.props.onSelectTab('worktrees');
         });
+        expect(listSourceControlBranchMenuItemIds(screen)).toContain('worktree:remove:/repo/.worktrees/feature-auth');
+        await selectSourceControlBranchMenuItem(screen, 'worktree:remove:/repo/.worktrees/feature-auth');
 
         expect(sourceControlBranchMenuModuleState.removeWorktreeForMachinePathMock).toHaveBeenCalledWith({
             machineId: 'machine-1',

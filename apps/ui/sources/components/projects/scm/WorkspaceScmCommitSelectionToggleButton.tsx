@@ -20,7 +20,9 @@ import { t } from '@/text';
 import { tracking } from '@/track';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 
-async function applyWorkspaceFileStageAction(input: Readonly<{
+type OcticonName = keyof typeof Octicons.glyphMap;
+
+export async function applyWorkspaceFileStageAction(input: Readonly<{
     scope: WorkspaceScopeBase;
     filePath: string;
     snapshot: ScmWorkingSnapshot | null;
@@ -173,7 +175,7 @@ export const WorkspaceScmCommitSelectionToggleButton = React.memo((props: Worksp
     const { theme } = useUnistyles();
     const [busy, setBusy] = React.useState(false);
 
-    const iconName = props.selectedForCommit ? 'check' : 'plus';
+    const iconName: OcticonName = props.selectedForCommit ? 'check' : 'plus';
     const iconColor = props.selectedForCommit ? theme.colors.success : theme.colors.textSecondary;
     const supported = React.useMemo(() => {
         if (isAtomicCommitStrategy(props.commitStrategy)) return true;
@@ -193,8 +195,17 @@ export const WorkspaceScmCommitSelectionToggleButton = React.memo((props: Worksp
                 props.selectedForCommit ? t('files.commitSelection.removeFromCommit') : t('files.commitSelection.addToCommit')
             }
             disabled={disabled}
-            onPress={(e: any) => {
-                e?.stopPropagation?.();
+            onPress={(event) => {
+                const maybeEvent = event as unknown as {
+                    stopPropagation?: () => void;
+                    nativeEvent?: { stopPropagation?: () => void };
+                };
+                try {
+                    maybeEvent.stopPropagation?.();
+                } catch {}
+                try {
+                    maybeEvent.nativeEvent?.stopPropagation?.();
+                } catch {}
                 void (async () => {
                     setBusy(true);
                     try {
@@ -228,7 +239,7 @@ export const WorkspaceScmCommitSelectionToggleButton = React.memo((props: Worksp
             {busy ? (
                 <ActivityIndicator size="small" color={theme.colors.textSecondary} />
             ) : (
-                <Octicons name={iconName as any} size={14} color={iconColor} />
+                <Octicons name={iconName} size={14} color={iconColor} />
             )}
         </Pressable>
     );

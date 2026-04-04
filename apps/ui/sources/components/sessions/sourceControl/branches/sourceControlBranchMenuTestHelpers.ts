@@ -128,6 +128,22 @@ export function installSourceControlBranchMenuCommonModuleMocks(
         DropdownMenu: (props: Record<string, unknown>) => React.createElement('DropdownMenu', props),
     }));
 
+    vi.mock('@/components/ui/popover', () => ({
+        Popover: (props: Record<string, any>) => React.createElement(
+            'Popover',
+            props,
+            props.open && typeof props.children === 'function' ? props.children({}) : null,
+        ),
+    }));
+
+    vi.mock('@/components/ui/navigation/SegmentedTabBar', () => ({
+        SegmentedTabBar: (props: Record<string, unknown>) => React.createElement('SegmentedTabBar', props),
+    }));
+
+    vi.mock('@/components/ui/forms/dropdown/SelectableMenuResults', () => ({
+        SelectableMenuResults: (props: Record<string, unknown>) => React.createElement('SelectableMenuResults', props),
+    }));
+
     vi.mock('@/components/ui/text/Text', () => ({
         Text: 'Text',
         TextInput: (props: Record<string, unknown>) => React.createElement('TextInput', props),
@@ -239,10 +255,46 @@ export function installSourceControlBranchMenuCommonModuleMocks(
 
 export async function openSourceControlBranchMenu(screen: {
     findByType: (type: unknown) => { props: { onOpenChange?: (open: boolean) => unknown } };
+    findByProps: (props: Record<string, unknown>) => { props: { onPress?: () => unknown } };
 }) {
-    const menu = screen.findByType('DropdownMenu' as any);
+    try {
+        const trigger = screen.findByProps({ testID: 'scm-branch-menu-trigger' });
+        await act(async () => {
+            await trigger.props.onPress?.();
+        });
+    } catch {
+        const menu = screen.findByType('DropdownMenu' as any);
+        await act(async () => {
+            await menu.props.onOpenChange?.(true);
+        });
+    }
+    await flushHookEffects({ cycles: 1 });
+}
+
+export function listSourceControlBranchMenuItemIds(screen: {
+    findByType: (type: unknown) => { props: { categories?: ReadonlyArray<{ items: ReadonlyArray<{ id: string }> }> } };
+}): string[] {
+    const results = screen.findByType('SelectableMenuResults' as any);
+    return (results.props.categories ?? []).flatMap((category: { items: ReadonlyArray<{ id: string }> }) =>
+        category.items.map((item) => item.id),
+    );
+}
+
+export async function selectSourceControlBranchMenuItem(
+    screen: {
+        findByType: (type: unknown) => { props: { categories?: ReadonlyArray<{ items: ReadonlyArray<{ id: string }> }>; onPressItem?: (item: { id: string }) => unknown } };
+    },
+    itemId: string,
+) {
+    const results = screen.findByType('SelectableMenuResults' as any);
+    const item = (results.props.categories ?? [])
+        .flatMap((category: { items: ReadonlyArray<{ id: string }> }) => category.items)
+        .find((candidate: { id: string }) => candidate.id === itemId);
+    if (!item) {
+        throw new Error(`Branch menu item not found: ${itemId}`);
+    }
     await act(async () => {
-        await menu.props.onOpenChange?.(true);
+        await results.props.onPressItem?.(item);
     });
     await flushHookEffects({ cycles: 1 });
 }

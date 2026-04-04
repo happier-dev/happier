@@ -133,7 +133,7 @@ vi.mock('@/scm/scmStatusSync', () => ({
     scmStatusSync: { invalidateFromUserAndAwait: invalidateFromUserAndAwaitSpy },
 }));
 
-vi.mock('@/components/sessions/sourceControl/commitComposer/ScmCommitComposerCard', () => ({
+vi.mock('@/components/workspaces/scm/commitComposer/ScmCommitComposerCard', () => ({
     ScmCommitComposerCard: (props: any) => React.createElement('ScmCommitComposerCard', props),
 }));
 
@@ -153,7 +153,7 @@ vi.mock('@/components/sessions/files/content/ChangedFilesList', () => ({
     ChangedFilesList: (props: any) => React.createElement('ChangedFilesList', props),
 }));
 
-vi.mock('@/components/sessions/files/SourceControlBranchSummary', () => ({
+vi.mock('@/components/workspaces/scm/SourceControlBranchSummary', () => ({
     SourceControlBranchSummary: (props: any) => React.createElement('SourceControlBranchSummary', props),
 }));
 
@@ -169,7 +169,7 @@ vi.mock('@/components/sessions/sourceControl/changes/ScmChangeDiscardButton', ()
     ScmChangeDiscardButton: (props: any) => React.createElement('ScmChangeDiscardButton', props),
 }));
 
-vi.mock('@/components/sessions/sourceControl/changes/ScmChangeOverflowMenu', () => ({
+vi.mock('@/components/workspaces/scm/changes/ScmChangeOverflowMenu', () => ({
     ScmChangeOverflowMenu: (props: any) => React.createElement('ScmChangeOverflowMenu', props),
 }));
 
@@ -202,13 +202,13 @@ vi.mock('@/utils/system/fireAndForget', () => ({
     fireAndForget: () => {},
 }));
 
-vi.mock('@/components/sessions/sourceControl/states', () => ({
+vi.mock('@/components/workspaces/scm/states', () => ({
     SourceControlUnavailableState: () => React.createElement('SourceControlUnavailableState'),
     NotSourceControlRepositoryState: () => React.createElement('NotSourceControlRepositoryState'),
     SourceControlSessionInactiveState: () => React.createElement('SourceControlSessionInactiveState'),
 }));
 
-vi.mock('@/components/sessions/files/repositoryTree/computeExpandedPathsForReveal', () => ({
+vi.mock('@/components/workspaces/files/repositoryTree/computeExpandedPathsForReveal', () => ({
     computeExpandedPathsForReveal: (args: any) => args.expandedPaths,
 }));
 

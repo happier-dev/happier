@@ -16,11 +16,10 @@ export function hasUncommittedChanges(snapshot: ScmWorkingSnapshot | null): bool
 }
 
 export function isBranchStashAlreadyExistsError(
-    response: Readonly<{ success: boolean; errorCode?: string; error?: string }>
+    response: Readonly<{ success: boolean; errorCode?: string; error?: string }>,
 ): boolean {
     if (response.success) return false;
     if (response.errorCode !== SCM_OPERATION_ERROR_CODES.INVALID_REQUEST) return false;
     const message = typeof response.error === 'string' ? response.error.toLowerCase() : '';
     return message.includes('stash') && message.includes('already') && message.includes('branch');
 }
-

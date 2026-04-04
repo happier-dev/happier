@@ -4,7 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
-import { NotSourceControlRepositoryState, SourceControlSessionInactiveState, SourceControlUnavailableState } from '@/components/sessions/sourceControl/states';
+import { NotSourceControlRepositoryState, SourceControlSessionInactiveState, SourceControlUnavailableState } from '@/components/workspaces/scm/states';
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
 import { useSessionResumeAction } from '@/components/sessions/model/SessionResumeContext';
 import { emitSessionResumeRequest } from '@/components/sessions/model/sessionResumeRequests';
@@ -35,13 +35,14 @@ import {
 import type { ScmStatusFiles } from '@/scm/scmStatusFiles';
 import { t } from '@/text';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
-import { SessionRightPanelGitSubTabsBar } from './SessionRightPanelGitSubTabsBar';
+import { WorkspaceScmSubTabsBar } from '@/components/workspaces/scm/WorkspaceScmSubTabsBar';
+import { SourceControlBranchMenu } from '@/components/sessions/sourceControl/branches/SourceControlBranchMenu';
 import { SessionRightPanelGitCommitTabContent } from './SessionRightPanelGitCommitTabContent';
-import { SessionRightPanelGitHistoryTab } from './SessionRightPanelGitHistoryTab';
-import { SessionRightPanelGitUpdateTab } from './SessionRightPanelGitUpdateTab';
+import { WorkspaceScmHistoryTab } from '@/components/workspaces/scm/WorkspaceScmHistoryTab';
+import { WorkspaceScmUpdateTab } from '@/components/workspaces/scm/WorkspaceScmUpdateTab';
 import { useSessionRightPanelGitTabState } from './useSessionRightPanelGitTabState';
 import { useSessionRightPanelGitOpenDetails } from './useSessionRightPanelGitOpenDetails';
-import type { SourceControlRemoteAction } from '@/components/sessions/sourceControl/remoteActions/SourceControlRemoteActionsRail';
+import type { SourceControlRemoteAction } from '@/components/workspaces/scm/SourceControlRemoteActionsRail';
 
 export type SessionRightPanelGitViewProps = Readonly<{
     sessionId: string;
@@ -474,21 +475,27 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     );
 
     const updateTab = (
-        <SessionRightPanelGitUpdateTab
+        <WorkspaceScmUpdateTab
             theme={theme}
-            sessionId={props.sessionId}
-            scmSnapshot={effectiveScmSnapshot}
-            scmWriteEnabled={scmWriteEnabled}
-            disabled={scmOperationBusy || hasGlobalOperationInFlight || isLockedByOtherSession}
             actions={remoteActions}
             hint={remoteHint}
             scmStatusFiles={scmStatusFilesSummary}
             showBranchSummary={displayActiveGitSubTab === 'update'}
+            branchTrigger={scmStatusFilesSummary ? (
+                <SourceControlBranchMenu
+                    sessionId={props.sessionId}
+                    currentBranch={scmStatusFilesSummary.branch ?? null}
+                    snapshot={effectiveScmSnapshot}
+                    writeEnabled={scmWriteEnabled}
+                    disabled={scmOperationBusy || publishBusy || hasGlobalOperationInFlight || isLockedByOtherSession}
+                    testID="scm-branch-menu-trigger"
+                />
+            ) : null}
         />
     );
 
     const historyTab = (
-        <SessionRightPanelGitHistoryTab
+        <WorkspaceScmHistoryTab
             theme={theme}
             historyLoading={historyLoading}
             historyEntries={historyEntries}
@@ -500,7 +507,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
 
     return (
         <View style={{ flex: 1 }}>
-            <SessionRightPanelGitSubTabsBar
+            <WorkspaceScmSubTabsBar
                 tabs={availableTabs}
                 activeSubTabId={displayActiveGitSubTab}
                 onSelectSubTab={setActiveGitSubTab}

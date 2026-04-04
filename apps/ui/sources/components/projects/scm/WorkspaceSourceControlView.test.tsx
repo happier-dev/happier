@@ -2,6 +2,9 @@ import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import type { machineScmCommitCreate } from '@/sync/ops/scm/machineScm';
+import type { machineScmChangeDiscard } from '@/sync/ops/scm/machineScm';
+import type { ScmStashListResponse } from '@happier-dev/protocol';
 
 import { renderScreen } from '@/dev/testkit';
 
@@ -13,8 +16,16 @@ const removeWorkspaceScmCommitSelectionPatchSpy = vi.fn();
 const clearWorkspaceScmCommitSelectionPathsSpy = vi.fn();
 const clearWorkspaceScmCommitSelectionPatchesSpy = vi.fn();
 const refreshSpy = vi.fn(async () => {});
+const machineScmStashListSpy = vi.fn(async (): Promise<ScmStashListResponse> => ({
+    success: true,
+    stashes: [],
+    totalCount: 0,
+}));
+type MachineScmChangeDiscard = typeof machineScmChangeDiscard;
+const machineScmChangeDiscardSpy = vi.fn<MachineScmChangeDiscard>(async () => ({ success: true } as any));
 
-const machineScmCommitCreateSpy = vi.fn(async () => ({ success: true, commitSha: 'abc' }));
+type MachineScmCommitCreate = typeof machineScmCommitCreate;
+const machineScmCommitCreateSpy = vi.fn<MachineScmCommitCreate>(async () => ({ success: true, commitSha: 'abc' }));
 
 vi.mock('react-native-reanimated', () => ({}));
 
@@ -30,7 +41,7 @@ vi.mock('@/text', async () => {
 
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
+    return createModalModuleMock({ confirmResult: true }).module;
 });
 
 vi.mock('react-native-unistyles', async () => {
@@ -45,19 +56,19 @@ vi.mock('react-native', async () => {
         Pressable: (props: any) => React.createElement('Pressable', props, props.children),
         ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
         FlatList: (props: any) => {
-            const data = Array.isArray(props.data) ? props.data : [];
+            const data = Array.isArray(props.data) ? (props.data as ReadonlyArray<unknown>) : [];
             const header = props.ListHeaderComponent ? props.ListHeaderComponent : null;
             const empty = data.length === 0 && props.ListEmptyComponent ? props.ListEmptyComponent : null;
+            const items = data.map((item: unknown, index: number) => React.createElement(
+                'FlatListItem',
+                { key: props.keyExtractor ? props.keyExtractor(item, index) : String(index) },
+                props.renderItem ? props.renderItem({ item, index }) : null,
+            ));
+            const children = [header, empty, ...items] as React.ReactNode[];
             return React.createElement(
                 'FlatList',
                 props,
-                header,
-                empty,
-                ...data.map((item, index) => React.createElement(
-                    'FlatListItem',
-                    { key: props.keyExtractor ? props.keyExtractor(item, index) : String(index) },
-                    props.renderItem ? props.renderItem({ item, index }) : null,
-                )),
+                ...(children as [React.ReactNode, ...React.ReactNode[]]),
             );
         },
         Text: (props: any) => React.createElement('Text', props, props.children),
@@ -71,11 +82,13 @@ vi.mock('react-native', async () => {
 });
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: () => true,
+    useFeatureEnabled: () => scmWriteEnabledMock,
 }));
 
 vi.mock('@/sync/ops/scm/machineScm', () => ({
-    machineScmCommitCreate: (...args: any[]) => machineScmCommitCreateSpy(...args),
+    machineScmCommitCreate: (...args: Parameters<typeof machineScmCommitCreateSpy>) => machineScmCommitCreateSpy(...args),
+    machineScmStashList: (...args: Parameters<typeof machineScmStashListSpy>) => machineScmStashListSpy(...args),
+    machineScmChangeDiscard: (...args: Parameters<typeof machineScmChangeDiscardSpy>) => machineScmChangeDiscardSpy(...args),
 }));
 
 vi.mock('@/hooks/workspaces/scm/useWorkspaceScmSnapshotController', () => ({
@@ -91,6 +104,7 @@ let commitSelectionPaths: string[] = [];
 let commitSelectionPatches: Array<{ path: string; patch: string }> = [];
 let scmCommitStrategySetting: string | null = 'atomic';
 let workspaceSnapshotMock: ScmWorkingSnapshot | null = null;
+let scmWriteEnabledMock = true;
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
@@ -169,11 +183,112 @@ function createSnapshot(): ScmWorkingSnapshot {
 }
 
 describe('WorkspaceSourceControlView', () => {
+    it('renders the shared branch, review, and remote-action affordances', async () => {
+        workspaceSnapshotMock = createSnapshot();
+        commitSelectionPaths = [];
+        commitSelectionPatches = [];
+        scmCommitStrategySetting = 'atomic';
+
+        const { WorkspaceSourceControlView } = await import('./WorkspaceSourceControlView');
+
+        const tree = (await renderScreen(
+            <WorkspaceSourceControlView
+                serverId="server"
+                machineId="m1"
+                rootPath="/repo"
+                onOpenFile={() => {}}
+                onOpenReviewAllChanges={() => {}}
+            />
+        )).tree;
+
+        expect(tree.findByProps({ testID: 'scm-branch-menu-trigger' })).toBeTruthy();
+        expect(tree.findByProps({ testID: 'workspace-scm-open-review' })).toBeTruthy();
+        expect(tree.findByProps({ accessibilityLabel: 'files.sourceControlOperations.actions.fetch' })).toBeTruthy();
+        expect(tree.findByProps({ accessibilityLabel: 'files.sourceControlOperations.actions.pull' })).toBeTruthy();
+        expect(tree.findByProps({ accessibilityLabel: 'files.sourceControlOperations.actions.push' })).toBeTruthy();
+    });
+
+    it('opens the workspace review surface from the shared toolbar action', async () => {
+        workspaceSnapshotMock = createSnapshot();
+        commitSelectionPaths = [];
+        commitSelectionPatches = [];
+        scmCommitStrategySetting = 'atomic';
+        const onOpenReviewAllChanges = vi.fn();
+
+        const { WorkspaceSourceControlView } = await import('./WorkspaceSourceControlView');
+
+        const tree = (await renderScreen(
+            <WorkspaceSourceControlView
+                serverId="server"
+                machineId="m1"
+                rootPath="/repo"
+                onOpenFile={() => {}}
+                onOpenReviewAllChanges={onOpenReviewAllChanges}
+            />
+        )).tree;
+
+        const reviewButton = tree.findByProps({ testID: 'workspace-scm-open-review' });
+        act(() => {
+            reviewButton.props.onPress();
+        });
+
+        expect(onOpenReviewAllChanges).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses the live total stash count instead of the raw snapshot stash count', async () => {
+        workspaceSnapshotMock = {
+            ...createSnapshot(),
+            capabilities: {
+                ...createSnapshot().capabilities,
+                readStash: true,
+            } as any,
+            stashCount: 17,
+        };
+        machineScmStashListSpy.mockResolvedValueOnce({
+            success: true,
+            stashes: [
+                { stashRef: 'stash@{0}', kind: 'branch', branch: 'main', createdAt: 1 },
+                { stashRef: 'stash@{1}', kind: 'unmanaged', message: 'WIP on main: unmanaged', createdAt: 2 },
+            ],
+            totalCount: 2,
+        });
+
+        const { WorkspaceSourceControlView } = await import('./WorkspaceSourceControlView');
+
+        const tree = (await renderScreen(
+            <WorkspaceSourceControlView
+                serverId="server"
+                machineId="m1"
+                rootPath="/repo"
+                onOpenFile={() => {}}
+                onOpenStashDetails={() => {}}
+            />
+        )).tree;
+
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        const stashRow = tree.findByProps({ testID: 'workspace-scm-open-stash' });
+        const stashRowChildren = React.Children.toArray(stashRow.props.children);
+        const trailingSummary = stashRowChildren[1];
+        if (!React.isValidElement<{ children?: React.ReactNode }>(trailingSummary)) {
+            throw new Error('Unable to find workspace stash summary count container');
+        }
+        const trailingSummaryChildren = React.Children.toArray(trailingSummary.props.children);
+        const trailingCount = trailingSummaryChildren[0];
+        if (!React.isValidElement<{ children?: React.ReactNode }>(trailingCount)) {
+            throw new Error('Unable to find workspace stash count text');
+        }
+        expect(trailingCount.props.children).toBe('2');
+    });
+
     it('renders commit composer and stage toggles (atomic)', async () => {
         workspaceSnapshotMock = createSnapshot();
         commitSelectionPaths = [];
         commitSelectionPatches = [];
         scmCommitStrategySetting = 'atomic';
+        scmWriteEnabledMock = true;
 
         const { WorkspaceSourceControlView } = await import('./WorkspaceSourceControlView');
 
@@ -188,14 +303,15 @@ describe('WorkspaceSourceControlView', () => {
 
         expect(tree.findByProps({ testID: 'scm-commit-message' })).toBeTruthy();
         expect(tree.findByProps({ testID: 'scm-commit-submit' })).toBeTruthy();
-        expect(tree.findByProps({ testID: 'scm-commit-selection-toggle-src_a.ts' })).toBeTruthy();
+        expect(tree.findAllByProps({ testID: 'scm-commit-selection-toggle-src_a.ts' })).toHaveLength(0);
     });
 
-    it('stages a file by updating workspace commit selection (atomic)', async () => {
+    it('hides write controls when source control writes are disabled', async () => {
         workspaceSnapshotMock = createSnapshot();
         commitSelectionPaths = [];
         commitSelectionPatches = [];
         scmCommitStrategySetting = 'atomic';
+        scmWriteEnabledMock = false;
 
         const { WorkspaceSourceControlView } = await import('./WorkspaceSourceControlView');
 
@@ -208,9 +324,36 @@ describe('WorkspaceSourceControlView', () => {
             />
         )).tree;
 
-        const toggle = tree.findByProps({ testID: 'scm-commit-selection-toggle-src_a.ts' });
+        expect(tree.findAllByProps({ accessibilityLabel: 'files.sourceControlOperations.actions.fetch' })).toHaveLength(0);
+        expect(tree.findAllByProps({ accessibilityLabel: 'files.sourceControlOperations.actions.pull' })).toHaveLength(0);
+        expect(tree.findAllByProps({ accessibilityLabel: 'files.sourceControlOperations.actions.push' })).toHaveLength(0);
+        expect(tree.findAllByProps({ testID: 'scm-commit-message' })).toHaveLength(0);
+        expect(tree.findAllByProps({ testID: 'scm-commit-submit' })).toHaveLength(0);
+        expect(tree.findAllByProps({ testID: 'scm-commit-selection-toggle-src_a.ts' })).toHaveLength(0);
+        expect(tree.findAll((node) => typeof node.props?.children === 'string' && String(node.props.children).includes('Enable experimental source control write operations in Settings.'))).toHaveLength(0);
+    });
+
+    it('stages a file by updating workspace commit selection (atomic)', async () => {
+        workspaceSnapshotMock = createSnapshot();
+        commitSelectionPaths = [];
+        commitSelectionPatches = [];
+        scmCommitStrategySetting = 'atomic';
+        scmWriteEnabledMock = true;
+
+        const { WorkspaceSourceControlView } = await import('./WorkspaceSourceControlView');
+
+        const tree = (await renderScreen(
+            <WorkspaceSourceControlView
+                serverId="server"
+                machineId="m1"
+                rootPath="/repo"
+                onOpenFile={() => {}}
+            />
+        )).tree;
+
+        const row = tree.findByProps({ testID: 'scm-change-row-src_a.ts' });
         await act(async () => {
-            toggle.props.onPress({ stopPropagation: vi.fn() });
+            row.props.onKeyDown({ key: ' ', preventDefault: vi.fn(), stopPropagation: vi.fn() });
             await Promise.resolve();
         });
 
@@ -251,10 +394,49 @@ describe('WorkspaceSourceControlView', () => {
         });
 
         expect(machineScmCommitCreateSpy).toHaveBeenCalledTimes(1);
-        expect(machineScmCommitCreateSpy.mock.calls[0]?.[0]).toBe('m1');
-        expect(machineScmCommitCreateSpy.mock.calls[0]?.[1]).toMatchObject({ cwd: '/repo', message: 'Test commit' });
+        const [machineId, request] = machineScmCommitCreateSpy.mock.calls[0]!;
+        expect(machineId).toBe('m1');
+        expect(request).toMatchObject({ cwd: '/repo', message: 'Test commit' });
         expect(refreshSpy).toHaveBeenCalled();
         expect(clearWorkspaceScmCommitSelectionPathsSpy).toHaveBeenCalled();
         expect(clearWorkspaceScmCommitSelectionPatchesSpy).toHaveBeenCalled();
+    });
+
+    it('discards a changed file via machine RPC when the discard button is pressed', async () => {
+        workspaceSnapshotMock = createSnapshot();
+        commitSelectionPaths = [];
+        commitSelectionPatches = [];
+        scmCommitStrategySetting = 'atomic';
+        scmWriteEnabledMock = true;
+        machineScmChangeDiscardSpy.mockClear();
+
+        const { WorkspaceSourceControlView } = await import('./WorkspaceSourceControlView');
+
+        const tree = (await renderScreen(
+            <WorkspaceSourceControlView
+                serverId="server"
+                machineId="m1"
+                rootPath="/repo"
+                onOpenFile={() => {}}
+            />
+        )).tree;
+
+        const discardButton = tree.findByProps({ testID: 'workspace-scm-discard-src_a.ts' });
+        await act(async () => {
+            discardButton.props.onPress?.({ stopPropagation: vi.fn() });
+            await Promise.resolve();
+        });
+
+        expect(machineScmChangeDiscardSpy).toHaveBeenCalledTimes(1);
+        const firstCall = machineScmChangeDiscardSpy.mock.calls[0];
+        expect(firstCall).toBeTruthy();
+        const machineId = firstCall?.[0];
+        const request = firstCall?.[1];
+        expect(machineId).toBe('m1');
+        expect(request).toMatchObject({
+            cwd: '/repo',
+            entries: [{ path: 'src/a.ts', kind: 'modified' }],
+        });
+        expect(refreshSpy).toHaveBeenCalled();
     });
 });

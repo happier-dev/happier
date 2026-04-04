@@ -1,27 +1,25 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 
-import { SourceControlBranchSummary } from '@/components/sessions/files/SourceControlBranchSummary';
+import { SourceControlBranchSummary } from '@/components/workspaces/scm/SourceControlBranchSummary';
 import type { ScmStatusFiles } from '@/scm/scmStatusFiles';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
-import { SourceControlRemoteActionsRail, type SourceControlRemoteAction } from '@/components/sessions/sourceControl/remoteActions/SourceControlRemoteActionsRail';
+import { SourceControlRemoteActionsRail, type SourceControlRemoteAction } from '@/components/workspaces/scm/SourceControlRemoteActionsRail';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 
-export type SessionRightPanelGitUpdateTabProps = Readonly<{
+export type WorkspaceScmUpdateTabProps = Readonly<{
     theme: any;
-    sessionId: string;
-    scmSnapshot: ScmWorkingSnapshot | null;
-    scmWriteEnabled?: boolean;
-    disabled?: boolean;
     actions: readonly SourceControlRemoteAction[];
     hint?: string | null;
     scmStatusFiles: ScmStatusFiles | null;
     showBranchSummary?: boolean;
+    branchTrigger?: React.ReactNode;
+    branchSummaryActionSlot?: React.ReactNode;
 }>;
 
-export const SessionRightPanelGitUpdateTab = React.memo((props: SessionRightPanelGitUpdateTabProps) => {
+export const WorkspaceScmUpdateTab = React.memo((props: WorkspaceScmUpdateTabProps) => {
     const scrollFades = useScrollEdgeFades({
         enabledEdges: { top: true, bottom: true },
         overflowThreshold: 1,
@@ -43,10 +41,8 @@ export const SessionRightPanelGitUpdateTab = React.memo((props: SessionRightPane
                         theme={props.theme}
                         scmStatusFiles={props.scmStatusFiles}
                         variant="rail"
-                        sessionId={props.sessionId}
-                        scmSnapshot={props.scmSnapshot}
-                        scmWriteEnabled={props.scmWriteEnabled}
-                        disabled={props.disabled}
+                        branchTrigger={props.branchTrigger}
+                        actionSlot={props.branchSummaryActionSlot}
                     />
                 ) : null}
                 <SourceControlRemoteActionsRail theme={props.theme} actions={props.actions} hint={props.hint} />

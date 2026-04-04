@@ -11,6 +11,7 @@ const publishBranchMock = vi.hoisted(() => vi.fn(async () => true));
 const usePublishBranchActionMock = vi.hoisted(() => vi.fn());
 let activeGitSubTab: 'commit' | 'update' | 'history' = 'update';
 let scmSnapshotMock: any = null;
+let scmWriteEnabledMock = true;
 
 vi.mock('react-native-reanimated', () => ({}));
 
@@ -107,14 +108,14 @@ vi.mock('@/hooks/session/files/useFilesScmOperations', () => ({
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: () => true,
+    useFeatureEnabled: () => scmWriteEnabledMock,
 }));
 
 vi.mock('@/hooks/session/sourceControl/usePublishBranchAction', () => ({
     usePublishBranchAction: (...args: any[]) => usePublishBranchActionMock(...args),
 }));
 
-vi.mock('@/components/sessions/sourceControl/states', () => ({
+vi.mock('@/components/workspaces/scm/states', () => ({
     NotSourceControlRepositoryState: () => React.createElement('NotSourceControlRepositoryState'),
     SourceControlUnavailableState: () => React.createElement('SourceControlUnavailableState'),
     SourceControlSessionInactiveState: () => React.createElement('SourceControlSessionInactiveState'),
@@ -150,12 +151,12 @@ vi.mock('./SessionRightPanelGitCommitTabContent', () => ({
     SessionRightPanelGitCommitTabContent: () => React.createElement('CommitTab'),
 }));
 
-vi.mock('./SessionRightPanelGitUpdateTab', () => ({
-    SessionRightPanelGitUpdateTab: (props: any) => React.createElement('UpdateTab', { ...props, testID: 'session-right-panel-git-update-tab' }),
+vi.mock('@/components/workspaces/scm/WorkspaceScmUpdateTab', () => ({
+    WorkspaceScmUpdateTab: (props: any) => React.createElement('UpdateTab', { ...props, testID: 'session-right-panel-git-update-tab' }),
 }));
 
-vi.mock('./SessionRightPanelGitHistoryTab', () => ({
-    SessionRightPanelGitHistoryTab: () => React.createElement('HistoryTab'),
+vi.mock('@/components/workspaces/scm/WorkspaceScmHistoryTab', () => ({
+    WorkspaceScmHistoryTab: () => React.createElement('HistoryTab'),
 }));
 
 function createScmSnapshot(overrides?: Partial<NonNullable<typeof scmSnapshotMock>>) {
@@ -198,6 +199,7 @@ describe('SessionRightPanelGitView (remote action visibility)', () => {
         publishBranchMock.mockClear();
         activeGitSubTab = 'update';
         scmSnapshotMock = createScmSnapshot();
+        scmWriteEnabledMock = true;
         usePublishBranchActionMock.mockReturnValue({
             canPublish: true,
             publishBusy: false,
@@ -217,6 +219,7 @@ describe('SessionRightPanelGitView (remote action visibility)', () => {
         const actions = (updateTab.props as any).actions as Array<{ key: string }>;
         expect(actions.map((a) => a.key)).toEqual(['fetch', 'publish']);
         expect((updateTab.props as any).hint).toBeNull();
+        expect((updateTab.props as any).branchTrigger).toBeTruthy();
     });
 
     it('does not render a workspace rail when remote update actions are unavailable', async () => {
@@ -243,5 +246,17 @@ describe('SessionRightPanelGitView (remote action visibility)', () => {
         const screen = await renderScreen(<SessionRightPanelGitView sessionId="s1" scopeId="session:s1" />);
 
         expect(screen.findAllByTestId('session-right-panel-git-update-tab')).toHaveLength(1);
+    });
+
+    it('hides the update tab when source control writes are disabled', async () => {
+        activeGitSubTab = 'update';
+        scmWriteEnabledMock = false;
+
+        const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
+
+        const screen = await renderScreen(<SessionRightPanelGitView sessionId="s1" scopeId="session:s1" />);
+
+        expect(screen.findAllByTestId('session-right-panel-git-update-tab')).toHaveLength(0);
+        expect(screen.findByTestId('session-rightpanel-git-surface:commit')).toBeTruthy();
     });
 });

@@ -31,7 +31,7 @@ vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
 
-vi.mock('@/components/sessions/files/SourceControlBranchSummary', () => ({
+vi.mock('@/components/workspaces/scm/SourceControlBranchSummary', () => ({
     SourceControlBranchSummary: (props: any) => React.createElement('SourceControlBranchSummary', props),
 }));
 
@@ -39,11 +39,11 @@ vi.mock('@/components/sessions/sourceControl/commitSelection/ScmChangesSelection
     ScmChangesSelectionHeaderRow: (props: any) => React.createElement('ScmChangesSelectionHeaderRow', props),
 }));
 
-vi.mock('@/components/sessions/sourceControl/commitComposer/ScmCommitComposerCard', () => ({
+vi.mock('@/components/workspaces/scm/commitComposer/ScmCommitComposerCard', () => ({
     ScmCommitComposerCard: (props: any) => React.createElement('ScmCommitComposerCard', props),
 }));
 
-vi.mock('@/components/sessions/sourceControl/changes/ScmChangeRow', () => ({
+vi.mock('@/components/workspaces/scm/changes/ScmChangeRow', () => ({
     ScmChangeRow: (props: any) => React.createElement('ScmChangeRow', props),
 }));
 

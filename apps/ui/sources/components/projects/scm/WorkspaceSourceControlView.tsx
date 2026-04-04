@@ -3,15 +3,18 @@ import { ActivityIndicator, FlatList, Platform, Pressable, View } from 'react-na
 import { useUnistyles } from 'react-native-unistyles';
 import { Octicons } from '@expo/vector-icons';
 
-import { NotSourceControlRepositoryState, SourceControlUnavailableState } from '@/components/sessions/sourceControl/states';
+import { NotSourceControlRepositoryState, SourceControlUnavailableState } from '@/components/workspaces/scm/states';
+import { SourceControlBranchSummary } from '@/components/workspaces/scm/SourceControlBranchSummary';
+import { SourceControlRemoteActionsRail } from '@/components/workspaces/scm/SourceControlRemoteActionsRail';
 import { buildWorkspaceChangedFilesData } from '@/hooks/workspaces/scm/buildWorkspaceChangedFilesData';
 import { useWorkspaceScmSnapshotController } from '@/hooks/workspaces/scm/useWorkspaceScmSnapshotController';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
-import { ScmChangeRow } from '@/components/sessions/sourceControl/changes/ScmChangeRow';
-import { ScmCommitComposerCard } from '@/components/sessions/sourceControl/commitComposer/ScmCommitComposerCard';
+import { ScmChangeRow } from '@/components/workspaces/scm/changes/ScmChangeRow';
+import { ScmChangeOverflowMenu } from '@/components/workspaces/scm/changes/ScmChangeOverflowMenu';
+import { ScmCommitComposerCard } from '@/components/workspaces/scm/commitComposer/ScmCommitComposerCard';
 import { SCM_COMMIT_STRATEGIES, type ScmCommitStrategy } from '@/scm/settings/commitStrategy';
 import { countCommitSelectionItems } from '@/scm/operations/commitSelectionHints';
 import { isAtomicCommitStrategy } from '@/scm/settings/commitStrategy';
@@ -24,8 +27,14 @@ import {
 } from '@/sync/domains/state/storage';
 import { buildCommitSelectionPathHints } from '@/scm/operations/commitSelectionHints';
 import { evaluateScmOperationPreflight } from '@/scm/core/operationPolicy';
-import { WorkspaceScmCommitSelectionToggleButton } from './WorkspaceScmCommitSelectionToggleButton';
+import { machineScmStashList } from '@/sync/ops/scm/machineScm';
+import { resolveSnapshotScmStashCount, useScmStashSummaryCount } from '@/scm/stash/useScmStashSummaryCount';
+import { tracking } from '@/track';
+import { WorkspaceSourceControlBranchMenu } from './WorkspaceSourceControlBranchMenu';
+import { applyWorkspaceFileStageAction } from './WorkspaceScmCommitSelectionToggleButton';
+import { WorkspaceScmChangeDiscardButton } from './WorkspaceScmChangeDiscardButton';
 import { executeWorkspaceScmCommit } from './executeWorkspaceScmCommit';
+import { executeWorkspaceScmRemoteOperation } from './executeWorkspaceScmRemoteOperation';
 
 export type WorkspaceSourceControlViewProps = Readonly<{
     serverId: string;
@@ -33,6 +42,11 @@ export type WorkspaceSourceControlViewProps = Readonly<{
     rootPath: string;
     onOpenFile: (path: string) => void;
     onOpenFilePinned?: (path: string) => void;
+    onOpenReviewAllChanges?: () => void;
+    onOpenStashDetails?: () => void;
+    onOpenWorkspacePath?: (path: string) => void;
+    onRequestCreateWorktreeFromAnotherBranch?: () => void;
+    onRevealInFilesTree?: (fullPath: string) => void;
 }>;
 
 function matchesQuery(filePath: string, query: string): boolean {
@@ -56,12 +70,24 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
     const commitSelectionPaths = useWorkspaceScmCommitSelectionPaths(scope);
     const commitSelectionPatches = useWorkspaceScmCommitSelectionPatches(scope);
     const scmCommitStrategySetting = useSetting('scmCommitStrategy');
+    const scmRemoteConfirmPolicy = useSetting('scmRemoteConfirmPolicy');
+    const scmPushRejectPolicy = useSetting('scmPushRejectPolicy');
     const scmCommitStrategy: ScmCommitStrategy = React.useMemo(() => {
         if (typeof scmCommitStrategySetting !== 'string') return 'atomic';
         return SCM_COMMIT_STRATEGIES.includes(scmCommitStrategySetting as ScmCommitStrategy)
             ? (scmCommitStrategySetting as ScmCommitStrategy)
             : 'atomic';
     }, [scmCommitStrategySetting]);
+    const normalizedRemoteConfirmPolicy = React.useMemo(() => {
+        return scmRemoteConfirmPolicy === 'always' || scmRemoteConfirmPolicy === 'push_only' || scmRemoteConfirmPolicy === 'never'
+            ? scmRemoteConfirmPolicy
+            : 'never';
+    }, [scmRemoteConfirmPolicy]);
+    const normalizedPushRejectPolicy = React.useMemo(() => {
+        return scmPushRejectPolicy === 'auto_fetch' || scmPushRejectPolicy === 'prompt_fetch' || scmPushRejectPolicy === 'manual'
+            ? scmPushRejectPolicy
+            : 'manual';
+    }, [scmPushRejectPolicy]);
     const scmWriteEnabled = useFeatureEnabled('scm.writeOperations');
 
     const { scmStatusFiles, changedFilesCount, allRepositoryChangedFiles } = React.useMemo(
@@ -124,6 +150,122 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
     }, [commitSelectionPathHints, scmCommitStrategy, scmWriteEnabled, scope.rootPath, snapshot]);
     const commitAllowed = commitPreflight.allowed;
     const commitBlockedMessage = commitPreflight.allowed ? null : commitPreflight.message;
+    const pullPreflight = React.useMemo(() => {
+        return evaluateScmOperationPreflight({
+            intent: 'pull',
+            scmWriteEnabled,
+            sessionPath: scope.rootPath,
+            snapshot,
+            commitStrategy: scmCommitStrategy,
+        });
+    }, [scmCommitStrategy, scmWriteEnabled, scope.rootPath, snapshot]);
+    const pushPreflight = React.useMemo(() => {
+        return evaluateScmOperationPreflight({
+            intent: 'push',
+            scmWriteEnabled,
+            sessionPath: scope.rootPath,
+            snapshot,
+            commitStrategy: scmCommitStrategy,
+        });
+    }, [scmCommitStrategy, scmWriteEnabled, scope.rootPath, snapshot]);
+
+    const remoteActions = React.useMemo(() => {
+        if (scmWriteEnabled !== true) return [];
+        if (!snapshot?.repo.isRepo) return [];
+        const actions: Array<React.ComponentProps<typeof SourceControlRemoteActionsRail>['actions'][number]> = [];
+        if (snapshot.capabilities?.writeRemoteFetch === true) {
+            actions.push({
+                key: 'fetch',
+                iconName: 'sync',
+                label: t('files.sourceControlOperations.actions.fetch'),
+                disabled: scmOperationBusy,
+                onPress: () => {
+                    void executeWorkspaceScmRemoteOperation({
+                        kind: 'fetch',
+                        scope,
+                        scmSnapshot: snapshot,
+                        scmWriteEnabled,
+                        scmCommitStrategy,
+                        scmRemoteConfirmPolicy: normalizedRemoteConfirmPolicy,
+                        scmPushRejectPolicy: normalizedPushRejectPolicy,
+                        refreshScmData: refresh,
+                        setScmOperationBusy,
+                        setScmOperationStatus,
+                        tracking,
+                    });
+                },
+            });
+        }
+        if (snapshot.capabilities?.writeRemotePull === true) {
+            actions.push({
+                key: 'pull',
+                iconName: 'arrow-down',
+                label: t('files.sourceControlOperations.actions.pull'),
+                disabled: scmOperationBusy || !pullPreflight.allowed,
+                onPress: () => {
+                    void executeWorkspaceScmRemoteOperation({
+                        kind: 'pull',
+                        scope,
+                        scmSnapshot: snapshot,
+                        scmWriteEnabled,
+                        scmCommitStrategy,
+                        scmRemoteConfirmPolicy: normalizedRemoteConfirmPolicy,
+                        scmPushRejectPolicy: normalizedPushRejectPolicy,
+                        refreshScmData: refresh,
+                        setScmOperationBusy,
+                        setScmOperationStatus,
+                        tracking,
+                    });
+                },
+            });
+        }
+        if (snapshot.capabilities?.writeRemotePush === true) {
+            actions.push({
+                key: 'push',
+                iconName: 'arrow-up',
+                label: t('files.sourceControlOperations.actions.push'),
+                disabled: scmOperationBusy || !pushPreflight.allowed,
+                onPress: () => {
+                    void executeWorkspaceScmRemoteOperation({
+                        kind: 'push',
+                        scope,
+                        scmSnapshot: snapshot,
+                        scmWriteEnabled,
+                        scmCommitStrategy,
+                        scmRemoteConfirmPolicy: normalizedRemoteConfirmPolicy,
+                        scmPushRejectPolicy: normalizedPushRejectPolicy,
+                        refreshScmData: refresh,
+                        setScmOperationBusy,
+                        setScmOperationStatus,
+                        tracking,
+                    });
+                },
+            });
+        }
+        return actions;
+    }, [
+        pullPreflight.allowed,
+        pushPreflight.allowed,
+        refresh,
+        scmCommitStrategy,
+        scmOperationBusy,
+        normalizedPushRejectPolicy,
+        normalizedRemoteConfirmPolicy,
+        scmWriteEnabled,
+        scope,
+        snapshot,
+    ]);
+
+    const branchSummaryDisabled = scmOperationBusy;
+    const stashCount = useScmStashSummaryCount({
+        enabled: snapshot?.capabilities?.readStash === true,
+        snapshotCount: resolveSnapshotScmStashCount(snapshot),
+        refreshKey: `${props.machineId}:${props.rootPath}:${snapshot?.fetchedAt ?? 0}`,
+        load: React.useCallback(
+            async () => await machineScmStashList(props.machineId, { cwd: props.rootPath }),
+            [props.machineId, props.rootPath],
+        ),
+    });
 
     const handleClearSelection = React.useCallback(() => {
         storage.getState().clearWorkspaceScmCommitSelectionPaths(scope);
@@ -186,89 +328,211 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
                 ListHeaderComponent={(
                     <View
                         style={{
-                            padding: 16,
                             borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
                             borderBottomColor: theme.colors.divider,
                         }}
                     >
-                        <View
-                            style={{
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                backgroundColor: theme.colors.input.background,
-                                borderRadius: 10,
-                                paddingHorizontal: 12,
-                                paddingVertical: 8,
-                                borderWidth: 1,
-                                borderColor: theme.colors.divider,
-                            }}
-                        >
-                            <Octicons name="search" size={16} color={theme.colors.textSecondary} style={{ marginRight: 8 }} />
-                            <TextInput
-                                value={searchQuery}
-                                onChangeText={setSearchQuery}
-                                placeholder={t('files.searchPlaceholder')}
-                                style={{
-                                    flex: 1,
-                                    fontSize: 16,
-                                    ...Typography.default(),
-                                }}
-                                placeholderTextColor={theme.colors.input.placeholder}
-                                autoCapitalize="none"
-                                autoCorrect={false}
+                        {stashCount > 0 && props.onOpenStashDetails ? (
+                            <Pressable
+                                testID="workspace-scm-open-stash"
+                                accessibilityRole="button"
+                                accessibilityLabel={t('files.stash.summaryA11y')}
+                                onPress={props.onOpenStashDetails}
+                                style={({ pressed }) => ({
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    gap: 10,
+                                    paddingHorizontal: 12,
+                                    paddingVertical: 10,
+                                    borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
+                                    borderBottomColor: theme.colors.divider,
+                                    backgroundColor: theme.colors.surface,
+                                    opacity: pressed ? 0.85 : 1,
+                                })}
+                            >
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+                                    <Octicons name="archive" size={14} color={theme.colors.textSecondary} />
+                                    <Text numberOfLines={1} style={{ fontSize: 12, color: theme.colors.text, ...Typography.default('semiBold') }}>
+                                        {t('files.stash.summaryTitle')}
+                                    </Text>
+                                </View>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                                    <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.mono('semiBold') }}>
+                                        {String(stashCount)}
+                                    </Text>
+                                    <Octicons name="chevron-right" size={14} color={theme.colors.textSecondary} />
+                                </View>
+                            </Pressable>
+                        ) : null}
+                        {scmStatusFiles ? (
+                            <SourceControlBranchSummary
+                                theme={theme}
+                                scmStatusFiles={scmStatusFiles}
+                                variant="rail"
+                                branchTrigger={(
+                                    <WorkspaceSourceControlBranchMenu
+                                        machineId={props.machineId}
+                                        rootPath={props.rootPath}
+                                        currentBranch={scmStatusFiles.branch}
+                                        snapshot={snapshot}
+                                        writeEnabled={scmWriteEnabled}
+                                        disabled={branchSummaryDisabled}
+                                        onRefreshSnapshot={refresh}
+                                        onOpenWorkspacePath={props.onOpenWorkspacePath}
+                                        onRequestCreateWorktreeFromAnotherBranch={props.onRequestCreateWorktreeFromAnotherBranch}
+                                    />
+                                )}
                             />
+                        ) : null}
+                        <SourceControlRemoteActionsRail
+                            theme={theme}
+                            actions={remoteActions}
+                            hint={remoteActions.length > 0
+                                ? (
+                                    !pullPreflight.allowed
+                                        ? pullPreflight.message
+                                        : !pushPreflight.allowed
+                                            ? pushPreflight.message
+                                            : null
+                                )
+                                : null}
+                        />
+                        <View style={{ paddingHorizontal: 16, paddingTop: 16 }}>
+                            <View
+                                style={{
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    backgroundColor: theme.colors.input.background,
+                                    borderRadius: 10,
+                                    paddingHorizontal: 12,
+                                    paddingVertical: 8,
+                                    borderWidth: 1,
+                                    borderColor: theme.colors.divider,
+                                }}
+                            >
+                                <Octicons name="search" size={16} color={theme.colors.textSecondary} style={{ marginRight: 8 }} />
+                                <TextInput
+                                    value={searchQuery}
+                                    onChangeText={setSearchQuery}
+                                    placeholder={t('files.searchPlaceholder')}
+                                    style={{
+                                        flex: 1,
+                                        fontSize: 16,
+                                        ...Typography.default(),
+                                    }}
+                                    placeholderTextColor={theme.colors.input.placeholder}
+                                    autoCapitalize="none"
+                                    autoCorrect={false}
+                                />
+                            </View>
+                        </View>
+
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, gap: 10, paddingHorizontal: 16, paddingBottom: 12 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, minWidth: 0, flex: 1 }}>
+                                <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default('semiBold') }}>
+                                    {t('files.toolbar.changedFiles')}
+                                </Text>
+                                <Text style={{ fontSize: 11, color: theme.colors.textSecondary, ...Typography.mono('semiBold') }}>
+                                    {String(changedFilesCount)}
+                                </Text>
+                            </View>
+                            {props.onOpenReviewAllChanges ? (
+                                <Pressable
+                                    testID="workspace-scm-open-review"
+                                    accessibilityRole="button"
+                                    accessibilityLabel={t('files.toolbar.review')}
+                                    onPress={props.onOpenReviewAllChanges}
+                                    style={({ pressed }) => ({
+                                        flexDirection: 'row',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        paddingHorizontal: 10,
+                                        height: 30,
+                                        borderRadius: 10,
+                                        borderWidth: 1,
+                                        borderColor: theme.colors.divider,
+                                        backgroundColor: theme.colors.surface,
+                                        opacity: pressed ? 0.78 : 1,
+                                        gap: 6,
+                                    })}
+                                >
+                                    <Octicons name="diff" size={14} color={theme.colors.textSecondary} />
+                                    <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default('semiBold') }}>
+                                        {t('files.toolbar.review')}
+                                    </Text>
+                                </Pressable>
+                            ) : null}
                             <Pressable
                                 accessibilityRole="button"
                                 accessibilityLabel={t('common.refresh')}
+                                testID="workspace-scm-refresh"
                                 onPress={() => {
                                     void refresh();
                                 }}
                                 style={({ pressed }) => ({
-                                    width: 34,
-                                    height: 34,
+                                    width: 30,
+                                    height: 30,
                                     borderRadius: 10,
                                     borderWidth: 1,
                                     borderColor: theme.colors.divider,
-                                    backgroundColor: theme.colors.surfaceHigh ?? theme.colors.surface,
+                                    backgroundColor: theme.colors.surface,
                                     alignItems: 'center',
                                     justifyContent: 'center',
                                     opacity: pressed ? 0.78 : 1,
-                                    marginLeft: 8,
                                 })}
                             >
                                 <Octicons name="sync" size={14} color={theme.colors.textSecondary} />
                             </Pressable>
                         </View>
-
-                        <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginTop: 10 }}>
-                            <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default('semiBold') }}>
-                                {t('files.toolbar.changedFiles')}
-                            </Text>
-                            <Text style={{ fontSize: 11, color: theme.colors.textSecondary, ...Typography.mono('semiBold') }}>
-                                {String(changedFilesCount)}
-                            </Text>
-                        </View>
                     </View>
                 )}
                 renderItem={({ item: file, index }) => {
+                    const canDiscard = scmWriteEnabled === true && snapshot?.capabilities?.writeDiscard === true;
+                    const revealInTree = props.onRevealInFilesTree
+                        ? () => props.onRevealInFilesTree?.(file.fullPath)
+                        : undefined;
                     return (
                         <ScmChangeRow
                             theme={theme}
                             file={file}
                             density="compact"
-                            leadingElement={(
-                                <WorkspaceScmCommitSelectionToggleButton
-                                    scope={scope}
-                                    snapshot={snapshot}
-                                    scmWriteEnabled={scmWriteEnabled === true}
-                                    commitStrategy={scmCommitStrategy}
-                                    file={file}
-                                    selectedForCommit={isSelectedForCommit(file)}
-                                    onAfterToggle={refresh}
-                                />
-                            )}
                             onPress={() => openFile(file)}
                             onPressPinned={() => openFilePinned(file)}
+                            onToggleSelection={() => {
+                                void applyWorkspaceFileStageAction({
+                                    scope,
+                                    filePath: file.fullPath,
+                                    snapshot,
+                                    scmWriteEnabled: scmWriteEnabled === true,
+                                    commitStrategy: scmCommitStrategy,
+                                    stage: !isSelectedForCommit(file),
+                                    surface: 'files',
+                                    onAfterToggle: refresh,
+                                });
+                            }}
+                            trailingElement={(
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                    {canDiscard ? (
+                                        <WorkspaceScmChangeDiscardButton
+                                            scope={scope}
+                                            machineId={props.machineId}
+                                            rootPath={props.rootPath}
+                                            snapshot={snapshot ?? null}
+                                            scmWriteEnabled={scmWriteEnabled === true}
+                                            commitStrategy={scmCommitStrategy}
+                                            file={file}
+                                            surface="files"
+                                            onAfterDiscard={refresh}
+                                        />
+                                    ) : null}
+                                    <ScmChangeOverflowMenu
+                                        title={file.fileName}
+                                        filePath={file.fullPath}
+                                        onRevealInTree={revealInTree}
+                                    />
+                                </View>
+                            )}
                             showDivider={index < filteredChangedFiles.length - 1}
                         />
                     );
@@ -287,30 +551,32 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
                 )}
             />
 
-            <View
-                style={{
-                    borderTopWidth: Platform.select({ ios: 0.33, default: 1 }),
-                    borderTopColor: theme.colors.divider,
-                    backgroundColor: theme.colors.surface,
-                }}
-            >
-                <ScmCommitComposerCard
-                    theme={theme}
-                    commitActionLabel={t('common.commit')}
-                    draftMessage={commitDraftMessage}
-                    onDraftMessageChange={setCommitDraftMessage}
-                    busy={scmOperationBusy}
-                    status={scmOperationStatus}
-                    commitAllowed={commitAllowed}
-                    commitBlockedMessage={commitBlockedMessage}
-                    onCommitFromMessage={handleCommitFromMessage}
-                    selectionCount={repositorySelectedCount}
-                    onClearSelection={repositorySelectedCount > 0 ? handleClearSelection : undefined}
-                    onSelectAllSelection={isAtomicCommitStrategy(scmCommitStrategy) ? handleSelectAll : undefined}
-                    variant="railFooter"
-                    commitMessageGeneratorEnabled={false}
-                />
-            </View>
+            {(scmWriteEnabled === true && snapshot?.capabilities?.writeCommit === true) ? (
+                <View
+                    style={{
+                        borderTopWidth: Platform.select({ ios: 0.33, default: 1 }),
+                        borderTopColor: theme.colors.divider,
+                        backgroundColor: theme.colors.surface,
+                    }}
+                >
+                    <ScmCommitComposerCard
+                        theme={theme}
+                        commitActionLabel={t('common.commit')}
+                        draftMessage={commitDraftMessage}
+                        onDraftMessageChange={setCommitDraftMessage}
+                        busy={scmOperationBusy}
+                        status={scmOperationStatus}
+                        commitAllowed={commitAllowed}
+                        commitBlockedMessage={commitBlockedMessage}
+                        onCommitFromMessage={handleCommitFromMessage}
+                        selectionCount={repositorySelectedCount}
+                        onClearSelection={repositorySelectedCount > 0 ? handleClearSelection : undefined}
+                        onSelectAllSelection={isAtomicCommitStrategy(scmCommitStrategy) ? handleSelectAll : undefined}
+                        variant="railFooter"
+                        commitMessageGeneratorEnabled={false}
+                    />
+                </View>
+            ) : null}
         </View>
     );
 });

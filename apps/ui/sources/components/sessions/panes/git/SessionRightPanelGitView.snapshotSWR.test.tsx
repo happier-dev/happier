@@ -121,7 +121,7 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => true,
 }));
 
-vi.mock('@/components/sessions/sourceControl/states', () => ({
+vi.mock('@/components/workspaces/scm/states', () => ({
     NotSourceControlRepositoryState: () => React.createElement('NotSourceControlRepositoryState'),
     SourceControlUnavailableState: () => React.createElement('SourceControlUnavailableState'),
     SourceControlSessionInactiveState: () => React.createElement('SourceControlSessionInactiveState'),
@@ -160,12 +160,12 @@ vi.mock('./SessionRightPanelGitCommitTabContent', () => ({
     SessionRightPanelGitCommitTabContent: () => React.createElement('CommitTab', { testID: 'session-right-panel-git-commit-tab' }),
 }));
 
-vi.mock('./SessionRightPanelGitUpdateTab', () => ({
-    SessionRightPanelGitUpdateTab: () => React.createElement('UpdateTab', { testID: 'session-right-panel-git-update-tab' }),
+vi.mock('@/components/workspaces/scm/WorkspaceScmUpdateTab', () => ({
+    WorkspaceScmUpdateTab: () => React.createElement('UpdateTab', { testID: 'session-right-panel-git-update-tab' }),
 }));
 
-vi.mock('./SessionRightPanelGitHistoryTab', () => ({
-    SessionRightPanelGitHistoryTab: () => React.createElement('HistoryTab', { testID: 'session-right-panel-git-history-tab' }),
+vi.mock('@/components/workspaces/scm/WorkspaceScmHistoryTab', () => ({
+    WorkspaceScmHistoryTab: () => React.createElement('HistoryTab', { testID: 'session-right-panel-git-history-tab' }),
 }));
 
 function createTimeoutCapture() {

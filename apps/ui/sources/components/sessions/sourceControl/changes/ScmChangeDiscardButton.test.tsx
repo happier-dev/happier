@@ -2,7 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
-import { installSourceControlChangesCommonModuleMocks } from './sourceControlChangesTestHelpers';
+import { installSourceControlChangesCommonModuleMocks } from '@/components/workspaces/scm/changes/sourceControlChangesTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;

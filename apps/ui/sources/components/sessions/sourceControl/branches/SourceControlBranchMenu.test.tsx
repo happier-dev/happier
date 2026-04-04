@@ -3,8 +3,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import {
     installSourceControlBranchMenuCommonModuleMocks,
+    listSourceControlBranchMenuItemIds,
     openSourceControlBranchMenu,
     resetSourceControlBranchMenuCommonModuleMockState,
+    selectSourceControlBranchMenuItem,
     sourceControlBranchMenuModuleState,
 } from './sourceControlBranchMenuTestHelpers';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -44,10 +46,14 @@ describe('SourceControlBranchMenu', () => {
                 />);
 
         await openSourceControlBranchMenu(screen);
-        const menu = screen.findByType('DropdownMenu' as any);
+        const itemIds = listSourceControlBranchMenuItemIds(screen);
+        const results = screen.findByType('SelectableMenuResults' as any);
+        const branchItem = results.props.categories
+            .flatMap((category: any) => category.items)
+            .find((item: any) => item.id === 'branch:feature/test');
 
-        expect(menu.props.items.some((item: any) => item.id === 'publish')).toBe(false);
-        expect(menu.props.items.find((item: any) => item.id === 'branch:feature/test')?.disabled).toBe(true);
+        expect(itemIds.includes('publish')).toBe(false);
+        expect(branchItem?.disabled).toBe(true);
         expect(sourceControlBranchMenuModuleState.fetchBranchesForSessionMock).toHaveBeenCalledWith({
             sessionId: 's1',
             includeRemotes: false,
@@ -81,9 +87,7 @@ describe('SourceControlBranchMenu', () => {
                 />);
 
         await openSourceControlBranchMenu(screen);
-        const menu = screen.findByType('DropdownMenu' as any);
-
-        expect(menu.props.items.some((item: any) => item.id === 'branch:cached-branch')).toBe(true);
+        expect(listSourceControlBranchMenuItemIds(screen)).toContain('branch:cached-branch');
         expect(sourceControlBranchMenuModuleState.fetchBranchesForSessionMock).toHaveBeenCalledWith({
             sessionId: 's1',
             includeRemotes: false,
@@ -122,9 +126,7 @@ describe('SourceControlBranchMenu', () => {
                 await sourceControlBranchMenuModuleState.fetchBranchesForSessionMock.mock.results[0]?.value;
             } catch {}
         });
-        const menu = screen.findByType('DropdownMenu' as any);
-
-        expect(menu.props.items.some((item: any) => item.id === 'branch:cached-branch')).toBe(true);
+        expect(listSourceControlBranchMenuItemIds(screen)).toContain('branch:cached-branch');
         expect(sourceControlBranchMenuModuleState.modalAlertSpy).toHaveBeenCalledWith('common.error', 'refresh failed');
     });
 
@@ -152,9 +154,7 @@ describe('SourceControlBranchMenu', () => {
                     disabled={false}
                 />);
 
-        const menu = screen.findByType('DropdownMenu' as any);
-
-        expect(menu.props.matchTriggerWidth).toBe(false);
+        expect(screen.findByType('Popover' as any).props.maxWidthCap).toBe(420);
     });
 
     it('switches branches using bring_changes when setting is always_bring', async () => {
@@ -163,7 +163,10 @@ describe('SourceControlBranchMenu', () => {
             if (key === 'scmAskBeforeOverwritingBranchStash') return true;
             return undefined;
         });
-        sourceControlBranchMenuModuleState.fetchBranchesForSessionMock.mockResolvedValue([]);
+        sourceControlBranchMenuModuleState.fetchBranchesForSessionMock.mockResolvedValue([
+            { name: 'main', type: 'local', isCurrent: true, upstream: null },
+            { name: 'feature/test', type: 'local', isCurrent: false, upstream: null },
+        ]);
         sourceControlBranchMenuModuleState.sessionScmBranchCreateMock.mockResolvedValue({ success: true });
         sourceControlBranchMenuModuleState.sessionScmBranchCheckoutMock.mockResolvedValue({ success: true });
 
@@ -186,10 +189,8 @@ describe('SourceControlBranchMenu', () => {
                     disabled={false}
                 />);
 
-        const menu = screen.findByType('DropdownMenu' as any);
-        await act(async () => {
-            await menu.props.onSelect('branch:feature/test');
-        });
+        await openSourceControlBranchMenu(screen);
+        await selectSourceControlBranchMenuItem(screen, 'branch:feature/test');
 
         expect(sourceControlBranchMenuModuleState.sessionScmBranchCheckoutMock).toHaveBeenCalledWith('s1', {
             name: 'feature/test',
@@ -222,10 +223,8 @@ describe('SourceControlBranchMenu', () => {
                     disabled={false}
                 />);
 
-        const menu = screen.findByType('DropdownMenu' as any);
-        await act(async () => {
-            await menu.props.onSelect('publish');
-        });
+        await openSourceControlBranchMenu(screen);
+        await selectSourceControlBranchMenuItem(screen, 'publish');
 
         expect(sourceControlBranchMenuModuleState.publishBranchMock).toHaveBeenCalledTimes(1);
     });

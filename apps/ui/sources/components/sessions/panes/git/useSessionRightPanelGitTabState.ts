@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import type { GitSubTabId } from './SessionRightPanelGitSubTabsBar';
+import type { GitSubTabId } from '@/components/workspaces/scm/WorkspaceScmSubTabsBar';
 
 type PaneLike = Readonly<{
     scopeState: unknown;

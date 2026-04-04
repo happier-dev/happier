@@ -1,11 +1,12 @@
 import * as React from 'react';
 import { FlatList, Platform, Pressable, ScrollView, View } from 'react-native';
-import { Octicons } from '@expo/vector-icons';
+import { Ionicons, Octicons } from '@expo/vector-icons';
 
-import { SourceControlBranchSummary } from '@/components/sessions/files/SourceControlBranchSummary';
+import { SourceControlBranchSummary } from '@/components/workspaces/scm/SourceControlBranchSummary';
 import { ChangedFilesList } from '@/components/sessions/files/content/ChangedFilesList';
-import { ScmCommitComposerCard } from '@/components/sessions/sourceControl/commitComposer/ScmCommitComposerCard';
-import { ScmChangeRow } from '@/components/sessions/sourceControl/changes/ScmChangeRow';
+import { SourceControlBranchMenu } from '@/components/sessions/sourceControl/branches/SourceControlBranchMenu';
+import { ScmCommitComposerCard } from '@/components/workspaces/scm/commitComposer/ScmCommitComposerCard';
+import { ScmChangeRow } from '@/components/workspaces/scm/changes/ScmChangeRow';
 import { Text } from '@/components/ui/text/Text';
 import type { ScmFileStatus, ScmStatusFiles } from '@/scm/scmStatusFiles';
 import type { ScmProjectInFlightOperation } from '@/sync/runtime/orchestration/projectManager';
@@ -18,7 +19,9 @@ import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 import { createAdvancedDebounce } from '@/utils/timing/debounce';
 import { filterDirectoryLikeScmFileStatuses } from '@/scm/isDirectoryLikeScmFileStatus';
+import { usePublishBranchAction } from '@/hooks/session/sourceControl/usePublishBranchAction';
 import { sessionScmStashList } from '@/sync/ops';
+import { resolveSnapshotScmStashCount, useScmStashSummaryCount } from '@/scm/stash/useScmStashSummaryCount';
 
 export type SessionRightPanelGitCommitTabProps = Readonly<{
     theme: any;
@@ -83,6 +86,7 @@ export const SessionRightPanelGitCommitTab = React.memo((props: SessionRightPane
             <CommitChangesSurface
                 theme={props.theme}
                 sessionId={props.sessionId}
+                sessionPath={props.sessionPath}
                 scmStatusFiles={props.scmStatusFiles}
                 scmSnapshot={props.scmSnapshot}
                 scmWriteEnabled={props.scmWriteEnabled}
@@ -220,6 +224,7 @@ const CommitComposerFooter = React.memo((props: Readonly<{
 type CommitChangesSurfaceProps = Readonly<{
     theme: any;
     sessionId: string;
+    sessionPath: string | null;
     scmStatusFiles: ScmStatusFiles | null;
     scmSnapshot: ScmWorkingSnapshot | null;
     scmWriteEnabled?: boolean;
@@ -252,11 +257,6 @@ type CommitChangesSurfaceProps = Readonly<{
     onOpenStashDetails?: () => void;
 }>;
 
-function resolveSnapshotManagedStashCount(snapshot: ScmWorkingSnapshot | null): number {
-    const value = snapshot?.stashCount;
-    return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
-}
-
 const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
     const repositoryMode = props.changedFilesViewMode === 'repository';
     const repositoryChangedFiles = React.useMemo(() => {
@@ -269,55 +269,23 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
         edgeThreshold: 1,
     });
 
-    const canReadManagedStashes = props.scmSnapshot?.capabilities?.readStash === true;
-    const snapshotManagedStashCount = React.useMemo(
-        () => resolveSnapshotManagedStashCount(props.scmSnapshot),
+    const canReadStashes = props.scmSnapshot?.capabilities?.readStash === true;
+    const snapshotStashCount = React.useMemo(
+        () => resolveSnapshotScmStashCount(props.scmSnapshot),
         [props.scmSnapshot],
     );
-    const [managedStashCount, setManagedStashCount] = React.useState(snapshotManagedStashCount);
-
-    React.useEffect(() => {
-        if (!canReadManagedStashes) {
-            setManagedStashCount(0);
-            return;
-        }
-        setManagedStashCount(snapshotManagedStashCount);
-    }, [canReadManagedStashes, snapshotManagedStashCount]);
-
-    React.useEffect(() => {
-        let active = true;
-        if (!canReadManagedStashes) {
-            setManagedStashCount(0);
-            return () => {
-                active = false;
-            };
-        }
-
-        void (async () => {
-            try {
-                const response = await sessionScmStashList(props.sessionId, {});
-                if (!active) return;
-                if (!response.success) {
-                    setManagedStashCount(snapshotManagedStashCount);
-                    return;
-                }
-                const count =
-                    typeof response.managedCount === 'number'
-                        ? response.managedCount
-                        : Array.isArray(response.managedStashes)
-                            ? response.managedStashes.length
-                            : 0;
-                setManagedStashCount(count);
-            } catch {
-                if (!active) return;
-                setManagedStashCount(snapshotManagedStashCount);
-            }
-        })();
-
-        return () => {
-            active = false;
-        };
-    }, [canReadManagedStashes, props.sessionId, props.scmSnapshot?.fetchedAt, snapshotManagedStashCount]);
+    const stashCount = useScmStashSummaryCount({
+        enabled: canReadStashes,
+        snapshotCount: snapshotStashCount,
+        refreshKey: `${props.sessionId}:${props.scmSnapshot?.fetchedAt ?? 0}`,
+        load: React.useCallback(async () => await sessionScmStashList(props.sessionId, {}), [props.sessionId]),
+    });
+    const { canPublish, publishBusy, publishBranch } = usePublishBranchAction({
+        sessionId: props.sessionId,
+        snapshot: props.scmSnapshot,
+        writeEnabled: props.scmWriteEnabled === true && Boolean(props.sessionPath),
+        disabled: props.scmOperationBusy || props.hasGlobalOperationInFlight,
+    });
 
     const renderModeChip = React.useCallback((params: Readonly<{
         mode: ChangedFilesViewMode;
@@ -369,10 +337,48 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
             props.inFlightScmOperation && props.inFlightScmOperation.sessionId !== props.sessionId,
         );
         const branchActionsDisabled = props.scmOperationBusy || props.hasGlobalOperationInFlight || lockedByOtherSession;
+        const branchTrigger = props.scmStatusFiles ? (
+            <SourceControlBranchMenu
+                sessionId={props.sessionId}
+                currentBranch={props.scmStatusFiles.branch ?? null}
+                snapshot={props.scmSnapshot}
+                writeEnabled={props.scmWriteEnabled}
+                disabled={branchActionsDisabled || publishBusy}
+                testID="scm-branch-menu-trigger"
+            />
+        ) : null;
+        const publishActionSlot = canPublish ? (
+            <Pressable
+                testID="scm-publish-branch"
+                accessibilityRole="button"
+                accessibilityLabel={t('files.branchMenu.publish.title')}
+                onPress={() => {
+                    void publishBranch();
+                }}
+                disabled={publishBusy || branchActionsDisabled}
+                style={({ pressed }) => ({
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 6,
+                    paddingHorizontal: 10,
+                    paddingVertical: 6,
+                    borderRadius: 999,
+                    borderWidth: 1,
+                    borderColor: props.theme.colors.textLink,
+                    backgroundColor: props.theme.colors.surfaceHigh,
+                    opacity: publishBusy || branchActionsDisabled ? 0.6 : pressed ? 0.85 : 1,
+                })}
+            >
+                <Ionicons name="cloud-upload-outline" size={14} color={props.theme.colors.textLink} />
+                <Text style={{ fontSize: 12, color: props.theme.colors.textLink, ...Typography.default('semiBold') }}>
+                    {t('files.branchMenu.publish.short')}
+                </Text>
+            </Pressable>
+        ) : null;
 
         return (
             <>
-                {managedStashCount > 0 && props.onOpenStashDetails ? (
+                {stashCount > 0 && props.onOpenStashDetails ? (
                     <Pressable
                         testID="scm-stash-summary-row"
                         accessibilityRole="button"
@@ -402,7 +408,7 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
                         </View>
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                             <Text style={{ fontSize: 12, color: props.theme.colors.textSecondary, ...Typography.mono('semiBold') }}>
-                                {String(managedStashCount)}
+                                {String(stashCount)}
                             </Text>
                             <Octicons name="chevron-right" size={14} color={props.theme.colors.textSecondary} />
                         </View>
@@ -413,10 +419,8 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
                         theme={props.theme}
                         scmStatusFiles={props.scmStatusFiles}
                         variant="rail"
-                        sessionId={props.sessionId}
-                        scmSnapshot={props.scmSnapshot}
-                        scmWriteEnabled={props.scmWriteEnabled}
-                        disabled={branchActionsDisabled}
+                        branchTrigger={branchTrigger}
+                        actionSlot={publishActionSlot}
                     />
                 ) : null}
                 <View
@@ -476,7 +480,7 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
     }, [
         availableModes,
         repositoryChangedFiles.length,
-        managedStashCount,
+        stashCount,
         props.onOpenStashDetails,
         props.onOpenReviewAllChanges,
         props.changedFilesViewMode,
@@ -489,6 +493,9 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
         props.scmOperationBusy,
         props.sessionId,
         props.theme,
+        canPublish,
+        publishBranch,
+        publishBusy,
         renderModeChip,
     ]);
 
