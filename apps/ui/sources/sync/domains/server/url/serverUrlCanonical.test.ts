@@ -14,9 +14,16 @@ describe('serverUrlCanonical', () => {
         ).toBe('https://admin:secret@example.com:8443/api');
     });
 
-    it('accepts hostnames without a scheme and defaults to https', () => {
+    it('accepts remote hostnames without a scheme and defaults to https', () => {
         expect(canonicalizeServerUrl('api.happier.dev')).toBe('https://api.happier.dev');
         expect(canonicalizeServerUrl('example.com:8443/path')).toBe('https://example.com:8443/path');
+    });
+
+    it('accepts localish hostnames without a scheme and defaults to http', () => {
+        expect(canonicalizeServerUrl('localhost:3005')).toBe('http://localhost:3005');
+        expect(canonicalizeServerUrl('192.168.1.20:3005')).toBe('http://192.168.1.20:3005');
+        expect(canonicalizeServerUrl('happier-dev.local:3005/path')).toBe('http://happier-dev.local:3005/path');
+        expect(canonicalizeServerUrl('my-nas:3005/path')).toBe('http://my-nas:3005/path');
     });
 
     it('rejects non-http protocols', () => {
