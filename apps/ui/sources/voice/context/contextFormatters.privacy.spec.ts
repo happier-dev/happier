@@ -330,11 +330,11 @@ describe('voice context privacy (opt-out defaults)', () => {
     expect(out).toContain('Ask the human for the missing input.');
   });
 
-  it('creates a short human-facing AskUserQuestion summary without leaking redacted payloads', () => {
+  it('creates a short human-facing ask_user_question summary without leaking redacted payloads', () => {
     const out = summarizeAgentRequestForVoiceHuman(
       'user_action',
       'req_question',
-      'AskUserQuestion',
+      'ask_user_question',
       {
         questions: [
           {

@@ -1,3 +1,4 @@
+import { formatPermissionRequestSummary, isAskUserQuestionToolName } from "@happier-dev/protocol";
 import { Session } from "@/sync/domains/state/storageTypes";
 import { Message } from "@/sync/domains/messages/messageTypes";
 import { trimIdent } from "@/utils/strings/trimIdent";
@@ -6,8 +7,6 @@ import { resolveAgentRequestKind, type AgentRequestKind } from "@/utils/sessions
 import { redactVoicePathLikeData, redactVoicePathLikeString } from '@/voice/shared/redactVoicePathLikeData';
 import { resolveVoiceSessionLabel } from "@/voice/context/resolveVoiceSessionLabel";
 import { resolveVoiceToolResultHumanSummary } from "@/voice/context/resolveVoiceToolResultHumanSummary";
-import { formatPermissionRequestSummary } from "@/components/tools/normalization/policy/permissionSummary";
-
 interface SessionMetadata {
     summary?: { text?: string };
     path?: string;
@@ -65,7 +64,7 @@ function collectUserActionSummary(
     toolArgs: unknown,
     prefs: Readonly<{ voiceShareFilePaths: boolean }>,
 ): string | null {
-    if (toolName !== 'AskUserQuestion') return null;
+    if (!isAskUserQuestionToolName(toolName)) return null;
     const questions = Array.isArray((toolArgs as { questions?: unknown })?.questions)
         ? (toolArgs as { questions: ReadonlyArray<AskUserQuestionLike> }).questions
         : null;

@@ -18,6 +18,20 @@ describe('buildLocalSettingsSnapshot', () => {
             sessionsRightPaneDefaultOpen: true,
             detailsPaneTabsBehavior: 'persistent',
             editorFocusModeEnabled: true,
+            activitySurfacesEnabled: false,
+            iosLiveActivitiesEnabled: false,
+            iosWidgetsEnabled: true,
+            liveActivitiesMode: 'running',
+            liveActivitiesMaxConcurrent: 4,
+            liveActivitiesShowPreviewText: false,
+            liveActivitiesAllowActionButtons: false,
+            liveActivitiesIncludeReady: false,
+            liveActivitiesIncludeThinking: true,
+            homeScreenWidgetsMode: 'attention',
+            homeScreenWidgetsShowPreviewText: false,
+            homeScreenWidgetsShowMachinePath: false,
+            activitySurfaceTapTarget: 'open_sessions',
+            activitySurfacePrivacyMode: 'include_preview',
             rightPaneWidthPx: 360,
             rightPaneWidthBasisPx: 800,
             detailsPaneWidthPx: 420,
@@ -40,6 +54,20 @@ describe('buildLocalSettingsSnapshot', () => {
         expect(snapshot.properties.local_setting__sessionsRightPaneDefaultOpen).toBe(true);
         expect(snapshot.properties.local_setting__detailsPaneTabsBehavior).toBe('persistent');
         expect(snapshot.properties.local_setting__editorFocusModeEnabled).toBe(true);
+        expect(snapshot.properties.local_setting__activitySurfacesEnabled).toBe(false);
+        expect(snapshot.properties.local_setting__iosLiveActivitiesEnabled).toBe(false);
+        expect(snapshot.properties.local_setting__iosWidgetsEnabled).toBe(true);
+        expect(snapshot.properties.local_setting__liveActivitiesMode).toBe('running');
+        expect(snapshot.properties.local_setting__liveActivitiesMaxConcurrent).toBe(4);
+        expect(snapshot.properties.local_setting__liveActivitiesShowPreviewText).toBe(false);
+        expect(snapshot.properties.local_setting__liveActivitiesAllowActionButtons).toBe(false);
+        expect(snapshot.properties.local_setting__liveActivitiesIncludeReady).toBe(false);
+        expect(snapshot.properties.local_setting__liveActivitiesIncludeThinking).toBe(true);
+        expect(snapshot.properties.local_setting__homeScreenWidgetsMode).toBe('attention');
+        expect(snapshot.properties.local_setting__homeScreenWidgetsShowPreviewText).toBe(false);
+        expect(snapshot.properties.local_setting__homeScreenWidgetsShowMachinePath).toBe(false);
+        expect(snapshot.properties.local_setting__activitySurfaceTapTarget).toBe('open_sessions');
+        expect(snapshot.properties.local_setting__activitySurfacePrivacyMode).toBe('include_preview');
         expect(snapshot.properties.local_setting__rightPaneWidthPx).toBe('large');
         expect(snapshot.properties.local_setting__detailsPaneWidthPx).toBe('medium');
         expect(snapshot.properties.local_setting__bottomPaneHeightPx).toBe('small');
@@ -49,4 +77,3 @@ describe('buildLocalSettingsSnapshot', () => {
         expect(snapshot.properties.local_derived__uiFontScaleBucket).toBe('large');
     });
 });
-
