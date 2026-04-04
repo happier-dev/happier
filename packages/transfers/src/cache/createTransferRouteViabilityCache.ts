@@ -61,10 +61,13 @@ export type TransferRouteViabilityCache = Readonly<{
 }>;
 
 function toStorageKey(key: TransferRouteViabilityCacheKey): string {
+    const normalizedRouteKind = key.routeKind === 'server_routed_stream'
+        ? 'server_relay_stream'
+        : key.routeKind;
     return [
         key.serverId,
         key.targetMachineId,
-        key.routeKind,
+        normalizedRouteKind,
         key.endpointFingerprint ?? '',
     ].join('\u0000');
 }
@@ -136,10 +139,13 @@ export function createTransferRouteViabilityCache(
         routeKind?: TransferRouteKind;
         endpointFingerprint?: string;
     }>): void {
+        const normalizedInvalidateRouteKind = key.routeKind === 'server_routed_stream'
+            ? 'server_relay_stream'
+            : key.routeKind;
         for (const [storageKey, entry] of entries) {
             if (entry.key.serverId !== key.serverId) continue;
             if (entry.key.targetMachineId !== key.targetMachineId) continue;
-            if (key.routeKind && entry.key.routeKind !== key.routeKind) continue;
+            if (normalizedInvalidateRouteKind && toStorageKey({ ...entry.key, routeKind: normalizedInvalidateRouteKind }) !== storageKey) continue;
             if (key.endpointFingerprint !== undefined && entry.key.endpointFingerprint !== key.endpointFingerprint) continue;
             entries.delete(storageKey);
         }

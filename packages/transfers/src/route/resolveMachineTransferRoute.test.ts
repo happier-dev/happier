@@ -37,11 +37,12 @@ describe('resolveMachineTransferRoute', () => {
     it('prefers direct peer when it is both enabled and currently available', () => {
         expect(resolveMachineTransferRoute({
             serverFeatures: createServerFeatures(),
-            preferredStrategies: ['direct_peer', 'server_routed_stream'],
+            preferredStrategies: ['direct_peer', 'server_relay_stream'] as never,
             directPeerAvailable: true,
         })).toEqual({
             kind: 'selected',
             strategy: 'direct_peer',
+            allowServerRelayFallback: true,
             allowServerRoutedFallback: true,
         });
     });
@@ -49,11 +50,25 @@ describe('resolveMachineTransferRoute', () => {
     it('falls back to server-routed transfer when direct peer is unavailable', () => {
         expect(resolveMachineTransferRoute({
             serverFeatures: createServerFeatures(),
-            preferredStrategies: ['direct_peer', 'server_routed_stream'],
+            preferredStrategies: ['direct_peer', 'server_relay_stream'] as never,
             directPeerAvailable: false,
         })).toEqual({
             kind: 'selected',
-            strategy: 'server_routed_stream',
+            strategy: 'server_relay_stream',
+            allowServerRelayFallback: true,
+            allowServerRoutedFallback: true,
+        });
+    });
+
+    it('accepts the legacy server_routed_stream strategy name but resolves to canonical relay naming', () => {
+        expect(resolveMachineTransferRoute({
+            serverFeatures: createServerFeatures(),
+            preferredStrategies: ['direct_peer', 'server_routed_stream'] as never,
+            directPeerAvailable: false,
+        })).toEqual({
+            kind: 'selected',
+            strategy: 'server_relay_stream',
+            allowServerRelayFallback: true,
             allowServerRoutedFallback: true,
         });
     });
@@ -76,7 +91,7 @@ describe('resolveMachineTransferRoute', () => {
                     },
                 },
             }),
-            preferredStrategies: ['direct_peer', 'server_routed_stream'],
+            preferredStrategies: ['direct_peer', 'server_relay_stream'] as never,
             directPeerAvailable: true,
         })).toEqual({
             kind: 'unavailable',

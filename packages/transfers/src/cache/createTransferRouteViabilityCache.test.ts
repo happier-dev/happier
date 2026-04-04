@@ -135,4 +135,29 @@ describe('createTransferRouteViabilityCache', () => {
             endpointFingerprint: undefined,
         });
     });
+
+    it('treats the legacy server_routed_stream route kind as the canonical relay route kind', () => {
+        const cache = createTransferRouteViabilityCache({
+            now,
+            positiveTtlMs: 10_000,
+            negativeTtlMs: 2_000,
+        });
+
+        cache.recordViable({
+            serverId: 'server-1',
+            targetMachineId: 'machine-1',
+            routeKind: 'server_routed_stream' as never,
+        });
+
+        expect(cache.read({
+            serverId: 'server-1',
+            targetMachineId: 'machine-1',
+            routeKind: 'server_relay_stream' as never,
+        })).toEqual({
+            status: 'viable',
+            checkedAt: 1_000,
+            expiresAt: 11_000,
+            endpointFingerprint: undefined,
+        });
+    });
 });

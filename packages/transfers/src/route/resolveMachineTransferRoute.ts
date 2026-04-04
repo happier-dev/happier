@@ -1,6 +1,8 @@
 import { readServerEnabledBit, type FeaturesResponse } from '@happier-dev/protocol';
 
-export type MachineTransferStrategy = 'direct_peer' | 'server_routed_stream';
+export type CanonicalMachineTransferStrategy = 'direct_peer' | 'server_relay_stream';
+export type LegacyMachineTransferStrategy = 'server_routed_stream';
+export type MachineTransferStrategy = CanonicalMachineTransferStrategy | LegacyMachineTransferStrategy;
 
 export type MachineTransferUnavailableReasonCode =
     | 'server_features_unavailable'
@@ -11,6 +13,7 @@ export type MachineTransferNegotiationResult =
     | Readonly<{
         kind: 'selected';
         strategy: MachineTransferStrategy;
+        allowServerRelayFallback: boolean;
         allowServerRoutedFallback: boolean;
     }>
     | Readonly<{
@@ -23,6 +26,13 @@ type ResolveMachineTransferRouteInput = Readonly<{
     preferredStrategies: readonly MachineTransferStrategy[];
     directPeerAvailable: boolean;
 }>;
+
+function normalizeMachineTransferStrategy(strategy: MachineTransferStrategy): CanonicalMachineTransferStrategy {
+    if (strategy === 'server_routed_stream') {
+        return 'server_relay_stream';
+    }
+    return strategy;
+}
 
 export function resolveMachineTransferRoute(
     input: ResolveMachineTransferRouteInput,
@@ -40,17 +50,20 @@ export function resolveMachineTransferRoute(
     const serverRoutedEnabled = readServerEnabledBit(input.serverFeatures, 'machines.transfer.serverRouted') === true;
 
     for (const strategy of input.preferredStrategies) {
-        if (strategy === 'direct_peer' && directPeerEnabled && input.directPeerAvailable) {
+        const normalizedStrategy = normalizeMachineTransferStrategy(strategy);
+        if (normalizedStrategy === 'direct_peer' && directPeerEnabled && input.directPeerAvailable) {
             return {
                 kind: 'selected',
                 strategy: 'direct_peer',
+                allowServerRelayFallback: serverRoutedEnabled,
                 allowServerRoutedFallback: serverRoutedEnabled,
             };
         }
-        if (strategy === 'server_routed_stream' && serverRoutedEnabled) {
+        if (normalizedStrategy === 'server_relay_stream' && serverRoutedEnabled) {
             return {
                 kind: 'selected',
-                strategy: 'server_routed_stream',
+                strategy: 'server_relay_stream',
+                allowServerRelayFallback: true,
                 allowServerRoutedFallback: true,
             };
         }
@@ -62,7 +75,8 @@ export function resolveMachineTransferRoute(
 
     return {
         kind: 'selected',
-        strategy: 'server_routed_stream',
+        strategy: 'server_relay_stream',
+        allowServerRelayFallback: true,
         allowServerRoutedFallback: true,
     };
 }

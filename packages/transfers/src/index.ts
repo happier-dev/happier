@@ -16,10 +16,15 @@ export {
 } from './cache/fingerprintTransferEndpoints.js';
 export {
     resolveMachineTransferRoute,
+    type CanonicalMachineTransferStrategy,
+    type LegacyMachineTransferStrategy,
     type MachineTransferNegotiationResult,
     type MachineTransferStrategy,
     type MachineTransferUnavailableReasonCode,
 } from './route/resolveMachineTransferRoute.js';
+export {
+    type TransferRouteKind,
+} from './cache/createTransferRouteViabilityCache.js';
 export {
     isServerRoutedTransferOverSizeLimit,
     resolveServerRoutedTransferMaxBytesFromEnv,
