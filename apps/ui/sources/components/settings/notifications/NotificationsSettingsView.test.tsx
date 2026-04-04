@@ -9,6 +9,10 @@ import {
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 
+const platformState = vi.hoisted(() => ({
+    os: 'ios' as 'ios' | 'web' | 'android',
+}));
+
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -62,6 +66,20 @@ const localSettingsState = {
     localNotificationsShowPendingPermissionRequests: true,
     localNotificationsShowPendingUserActionRequests: true,
     localNotificationsForegroundBehavior: 'silent',
+    activitySurfacesEnabled: true,
+    iosLiveActivitiesEnabled: true,
+    iosWidgetsEnabled: true,
+    liveActivitiesMode: 'focused',
+    liveActivitiesMaxConcurrent: 1,
+    liveActivitiesShowPreviewText: true,
+    liveActivitiesAllowActionButtons: true,
+    liveActivitiesIncludeReady: true,
+    liveActivitiesIncludeThinking: true,
+    homeScreenWidgetsMode: 'summary',
+    homeScreenWidgetsShowPreviewText: true,
+    homeScreenWidgetsShowMachinePath: true,
+    activitySurfaceTapTarget: 'open_session',
+    activitySurfacePrivacyMode: 'title_only',
 };
 
 type NotificationsSettingsScreen = Awaited<ReturnType<typeof renderSettingsView>>;
@@ -84,6 +102,16 @@ function createPassthroughComponentMock(tag: string) {
 }
 
 installSettingsViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                get OS() {
+                    return platformState.os;
+                },
+            },
+        });
+    },
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
         return createModalModuleMock({
@@ -160,6 +188,7 @@ vi.mock('@/components/ui/forms/Switch', () => ({
 
 describe('NotificationsSettingsView', () => {
     beforeEach(() => {
+        platformState.os = 'ios';
         applySettingsMock.mockReset();
         applyLocalSettingsMock.mockReset();
         modalPromptMock.mockReset();
@@ -201,11 +230,15 @@ describe('NotificationsSettingsView', () => {
         expect(routerPushMock).toHaveBeenCalledWith('/settings/notifications/push');
     });
 
-    it('renders device-local badge/local sections alongside the remote push section', async () => {
+    it('renders the activity-surface section alongside the badge and notification sections', async () => {
         const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
 
         const screen = await renderSettingsView(<NotificationsSettingsView />);
         const groupTitles = [
+            'settingsNotifications.activitySurfaces.title',
+            'settingsNotifications.activitySurfaces.shared.title',
+            'settingsNotifications.activitySurfaces.liveActivities.title',
+            'settingsNotifications.activitySurfaces.widgets.title',
             'settingsNotifications.badges.title',
             'settingsNotifications.local.title',
             'settingsNotifications.push.title',
@@ -215,6 +248,10 @@ describe('NotificationsSettingsView', () => {
         ].map((title) => screen.findGroup(title)?.props.title);
 
         expect(groupTitles).toEqual([
+            'settingsNotifications.activitySurfaces.title',
+            'settingsNotifications.activitySurfaces.shared.title',
+            'settingsNotifications.activitySurfaces.liveActivities.title',
+            'settingsNotifications.activitySurfaces.widgets.title',
             'settingsNotifications.badges.title',
             'settingsNotifications.local.title',
             'settingsNotifications.push.title',
@@ -230,10 +267,67 @@ describe('NotificationsSettingsView', () => {
         const screen = await renderSettingsView(<NotificationsSettingsView />);
 
         expect(screen.findByTestId('settings-notifications-screen')).toBeTruthy();
+        expect(screen.findRow('settings-notifications-activity-surfaces-enabled')).toBeTruthy();
         expect(screen.findRow('settings-notifications-badges-enabled')).toBeTruthy();
         expect(screen.findRow('settings-notifications-local-enabled')).toBeTruthy();
         expect(screen.findRow('settings-notifications-push-enabled')).toBeTruthy();
         expect(screen.findRow('settings-notifications-add-webhook')).toBeTruthy();
+    });
+
+    it('writes the activity surfaces master toggle through the local settings writer', async () => {
+        const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+        const activitySurfacesItem = requireRow(screen, 'settings-notifications-activity-surfaces-enabled');
+
+        await act(async () => {
+            activitySurfacesItem.props.rightElement.props.onValueChange(false);
+        });
+
+        expect(applyLocalSettingsMock).toHaveBeenCalledWith({ activitySurfacesEnabled: false });
+    });
+
+    it('writes the live activities mode through the local settings writer', async () => {
+        const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+        const liveActivitiesModeItem = requireRowByTitle(screen, 'settingsNotifications.activitySurfaces.liveActivities.focusedTitle');
+
+        await act(async () => {
+            liveActivitiesModeItem.props.onPress();
+        });
+
+        expect(applyLocalSettingsMock).toHaveBeenCalledWith({ liveActivitiesMode: 'focused' });
+    });
+
+    it('writes the widget mode through the local settings writer', async () => {
+        const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+        const widgetsModeItem = requireRowByTitle(screen, 'settingsNotifications.activitySurfaces.widgets.summaryTitle');
+
+        await act(async () => {
+            widgetsModeItem.props.onPress();
+        });
+
+        expect(applyLocalSettingsMock).toHaveBeenCalledWith({ homeScreenWidgetsMode: 'summary' });
+    });
+
+    it('does not show the removed frequent-updates toggle', async () => {
+        const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+
+        expect(screen.findRowByTitle('settingsNotifications.activitySurfaces.liveActivities.preferMoreFrequentUpdatesTitle')).toBeFalsy();
+    });
+
+    it('hides the activity surfaces section on non-iOS platforms', async () => {
+        platformState.os = 'web';
+        const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+
+        expect(screen.findRow('settings-notifications-activity-surfaces-enabled')).toBeFalsy();
     });
 
     it('writes device-local badge settings through the local settings writer', async () => {

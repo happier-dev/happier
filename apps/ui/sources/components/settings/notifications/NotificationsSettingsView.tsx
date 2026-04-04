@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { Ionicons } from '@expo/vector-icons';
+import { Platform } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
@@ -12,8 +13,10 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { Modal } from '@/modal';
 
 import { useLocalSettings, useSettings } from '@/sync/domains/state/storage';
+import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { useApplyLocalSettings, useApplySettings } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
+import { ActivitySurfacesSettingsSection } from './ActivitySurfacesSettingsSection';
 
 import {
     DEFAULT_NOTIFICATIONS_SETTINGS_V1,
@@ -31,8 +34,6 @@ import {
     removeNotificationChannelById,
     updateNotificationChannelById,
 } from './notificationChannels';
-
-type ForegroundBehavior = 'full' | 'silent' | 'off';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -89,7 +90,7 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
         applyRemoteNotificationSettings(notifications, nextChannels);
     }, [applyRemoteNotificationSettings, notifications]);
 
-    const setLocalSetting = React.useCallback((delta: Record<string, boolean | ForegroundBehavior>) => {
+    const setLocalSetting = React.useCallback((delta: Partial<LocalSettings>) => {
         applyLocalSettings(delta);
     }, [applyLocalSettings]);
 
@@ -209,6 +210,13 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
 
     return (
         <ItemList style={{ paddingTop: 0 }} testID="settings-notifications-screen">
+            {Platform.OS === 'ios' ? (
+                <ActivitySurfacesSettingsSection
+                    localSettings={localSettings}
+                    setLocalSetting={setLocalSetting}
+                />
+            ) : null}
+
             <ItemGroup
                 title={t('settingsNotifications.badges.title')}
                 footer={t('settingsNotifications.badges.footer')}

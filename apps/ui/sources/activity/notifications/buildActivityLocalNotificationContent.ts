@@ -2,9 +2,10 @@ import {
     PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS,
     PUSH_NOTIFICATION_CATEGORY_IDS,
     buildReadyNotificationContent,
+    extractFirstUserActionQuestion,
+    formatPermissionRequestSummary,
 } from '@happier-dev/protocol';
-
-import { formatPermissionRequestSummary } from '@/components/tools/normalization/policy/permissionSummary';
+import { buildActivityPreviewText } from '@/activity/attention/buildActivityPreviewText';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
@@ -31,18 +32,6 @@ function resolveSessionNotificationTitle(session: Session | null | undefined): s
     return t('notifications.activity.defaultSessionTitle');
 }
 
-function summarizeReadyPreviewText(messages?: Message[]): string | null {
-    const latestAssistantText = Array.isArray(messages)
-        ? [...messages]
-            .filter((message): message is Extract<Message, { kind: 'agent-text' }> => message?.kind === 'agent-text')
-            .sort((left, right) => left.createdAt - right.createdAt)
-            .at(-1)
-            ?.text
-        : null;
-    const normalized = typeof latestAssistantText === 'string' ? latestAssistantText.trim() : '';
-    return normalized || null;
-}
-
 function summarizePermissionBody(toolName: string, toolArgs: unknown): string {
     const summary = formatPermissionRequestSummary({
         toolName,
@@ -50,21 +39,6 @@ function summarizePermissionBody(toolName: string, toolArgs: unknown): string {
     }).replace(/^Permission required:\s*/i, '').trim();
 
     return summary || t('notifications.activity.permissionFallbackBody');
-}
-
-function extractFirstUserActionQuestion(toolName: string, toolArgs: unknown): string | null {
-    if (toolName !== 'AskUserQuestion') return null;
-
-    const questions = Array.isArray((toolArgs as { questions?: unknown })?.questions)
-        ? (toolArgs as { questions: ReadonlyArray<{ question?: unknown }> }).questions
-        : [];
-
-    for (const question of questions) {
-        const text = typeof question?.question === 'string' ? question.question.trim() : '';
-        if (text) return text;
-    }
-
-    return null;
 }
 
 function summarizeAgentRequestBody(requestKind: AgentRequestKind, toolName: string, toolArgs: unknown): string {
@@ -94,7 +68,7 @@ export function buildActivityLocalNotificationContent(params: Readonly<{
             waitingForCommandLabel: title,
             fallbackBody: t('notifications.activity.readyFallbackBody'),
             includeMessageText: params.includeReadyMessageText,
-            messageText: summarizeReadyPreviewText(params.event.messages),
+            messageText: buildActivityPreviewText({ messages: params.event.messages }),
         });
 
         return {

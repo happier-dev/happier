@@ -168,4 +168,35 @@ describe('buildActivityLocalNotificationContent', () => {
             },
         });
     });
+
+    it('extracts the first question for snake_case ask-user-question notifications', async () => {
+        const { buildActivityLocalNotificationContent } = await import('./buildActivityLocalNotificationContent');
+
+        const notification = buildActivityLocalNotificationContent({
+            event: {
+                kind: 'agent-request',
+                sessionId: 'session-4',
+                requestId: 'req-3',
+                requestKind: 'user_action',
+                toolName: 'ask_user_question',
+                toolArgs: {
+                    questions: [
+                        {
+                            question: 'Which branch should I use?',
+                        },
+                    ],
+                },
+            },
+            session: {
+                id: 'session-4',
+                metadata: {},
+            } as any,
+            serverUrl: 'https://stack.example.test',
+        });
+
+        expect(notification).toMatchObject({
+            title: 'Session',
+            body: 'Which branch should I use?',
+        });
+    });
 });

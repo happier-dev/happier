@@ -62,4 +62,29 @@ describe('buildActivityBadgeState', () => {
             showNonNumericDot: true,
         });
     });
+
+    it('respects badge filters and does not count queued input when that badge reason is disabled', () => {
+        const state = buildActivityBadgeState({
+            sessions: [
+                {
+                    id: 's1',
+                    seq: 5,
+                    active: true,
+                    pendingCount: 2,
+                    lastViewedSessionSeq: 5,
+                    metadata: { path: '', host: '' },
+                } as any,
+            ],
+            numericInboxCount: 0,
+            hasNonNumericInboxAttention: false,
+            sessionOptions: {
+                showQueuedUserInput: false,
+            },
+        });
+
+        expect(state).toEqual({
+            count: 0,
+            showNonNumericDot: false,
+        });
+    });
 });

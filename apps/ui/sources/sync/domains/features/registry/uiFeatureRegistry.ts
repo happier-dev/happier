@@ -214,6 +214,26 @@ export const UI_FEATURE_REGISTRY = {
     'app.ui.changelog': {
         settingsToggle: undefined,
     },
+    'app.ui.liveActivities': {
+        settingsToggle: {
+            showInSettings: true,
+            isExperimental: true,
+            defaultEnabled: false,
+            titleKey: 'settingsFeatures.expLiveActivities',
+            subtitleKey: 'settingsFeatures.expLiveActivitiesSubtitle',
+            icon: { ioniconName: 'phone-portrait-outline', color: '#34C759' },
+        },
+    },
+    'app.ui.homeScreenWidgets': {
+        settingsToggle: {
+            showInSettings: true,
+            isExperimental: true,
+            defaultEnabled: false,
+            titleKey: 'settingsFeatures.expHomeScreenWidgets',
+            subtitleKey: 'settingsFeatures.expHomeScreenWidgetsSubtitle',
+            icon: { ioniconName: 'grid-outline', color: '#007AFF' },
+        },
+    },
     bugReports: {
         settingsToggle: undefined,
     },
