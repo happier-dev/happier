@@ -1,27 +1,27 @@
 ---
-title: Synced and direct sessions
+title: Happier and direct sessions
 description: Browse provider sessions, open them directly in Happier, and decide when to keep them direct or sync them into Happier.
 ---
 
 Happier supports two user-facing session modes:
 
-- **Synced**: the session is managed by Happier and available across your devices
+- **Happier**: the session is managed by Happier and available across your devices
 - **Direct**: the session stays linked to the provider on a specific machine
 
 This page explains how to choose between them, how provider-session browsing works, and when to use **Take over** vs **Take over + Sync**.
 
 ## The difference in one sentence
 
-- **Synced** sessions use Happier as the source of truth.
+- **Happier** sessions use Happier as the source of truth.
 - **Direct** sessions use the provider on your machine as the source of truth.
 
 That distinction matters more than “is this session saved somewhere?” because both modes can have durable history.
 
-## Synced sessions
+## Happier sessions
 
-Use **Synced** when you want Happier to own the session experience.
+Use **Happier** when you want Happier to own the session experience.
 
-Synced sessions are best when you want:
+Happier sessions are best when you want:
 
 - the same session visible across devices
 - Happier-native resume and sharing workflows
@@ -99,11 +99,11 @@ That is why direct sessions are useful for:
 - sessions started locally in a terminal
 - provider histories you want to inspect before deciding whether to sync them
 
-## Starting a new session: Synced or Direct
+## Starting a new session: Happier or Direct
 
 The new-session screen now lets you choose the storage mode for supported providers.
 
-- Choose **Synced** when you want a normal Happier-native session from the start
+- Choose **Happier** when you want a normal Happier-native session from the start
 - Choose **Direct** when you want the provider session to stay provider-backed from the start
 
 The chip is available only when:
@@ -134,7 +134,7 @@ Choose **Take over + Sync** when you want to convert the workflow into a Happier
 This means:
 
 - Happier imports the transcript from the provider
-- the session switches into the **Synced** mode
+- the session switches into the **Happier** mode
 - Happier becomes the canonical transcript going forward
 
 Use this when you want long-term Happier continuity instead of a provider-linked session.
@@ -161,7 +161,7 @@ This is useful when you want visibility without changing the session’s ownersh
 
 ### I want a session that feels fully native to Happier
 
-Start it as **Synced**, or open it direct first and then use **Take over + Sync**.
+Start it as **Happier**, or open it direct first and then use **Take over + Sync**.
 
 ## Handing off direct sessions between machines
 
@@ -170,7 +170,7 @@ Direct sessions can also participate in **session handoff** when the provider su
 When you hand off a direct session, Happier lets you choose one of two target modes:
 
 - **Keep direct**
-- **Convert to synced**
+- **Convert to Happier**
 
 ### Keep direct
 
@@ -182,15 +182,15 @@ This is the right choice when:
 - the provider supports direct handoff for that session
 - you mainly want to move ownership to a different machine
 
-### Convert to synced
+### Convert to Happier
 
-Choose **Convert to synced** when you want to stop treating the provider session as the canonical source of truth.
+Choose **Convert to Happier** when you want to stop treating the provider session as the canonical source of truth.
 
 This is the right choice when:
 
 - you started from a provider-native session
 - you now want Happier to own the session moving forward
-- you want future continuity to behave like a normal synced Happier session
+- you want future continuity to behave like a normal Happier-managed session
 
 For the full cross-machine workflow, see [Session handoff](./session-handoff).
 
@@ -202,10 +202,10 @@ For **Direct** sessions:
 - live follow/tail stops
 - takeover is unavailable until the machine reconnects
 
-For **Synced** sessions:
+For **Happier** sessions:
 
-- Happier still has the synced transcript
-- the session remains visible in Happier as a normal synced session
+- Happier still has the transcript
+- the session remains visible in Happier as a normal Happier session
 
 ## Subagents in direct sessions
 
@@ -234,11 +234,11 @@ Once the direct session is locally controlled again, the full Happier control su
 - steering/send
 - stop/cancel actions
 
-### Inactive but resumable synced sessions
+### Inactive but resumable Happier sessions
 
 This is different from a linked direct session.
 
-For an inactive synced session that is still resumable and whose machine is reachable, Happier can resume the session first and then start a Subagent from the Agents surface.
+For an inactive Happier session that is still resumable and whose machine is reachable, Happier can resume the session first and then start a Subagent from the Agents surface.
 
 ## Titles, activity states, and provider-specific detail
 
@@ -287,7 +287,7 @@ See also: [OpenCode](/docs/providers/opencode)
 
 The important mental model is:
 
-- **Synced** = transcript managed by Happier
+- **Happier** = transcript managed by Happier
 - **Direct** = transcript managed by the provider on the machine
 
 Direct sessions are not the same as “unsaved”.

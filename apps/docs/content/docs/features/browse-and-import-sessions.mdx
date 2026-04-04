@@ -78,7 +78,7 @@ This is the best option when you mainly want to browse, inspect, monitor, or lig
 Use **Take over + Sync** when you want:
 
 - Happier to own the transcript moving forward
-- a session that behaves like a normal Happier synced session
+- a session that behaves like a normal Happier-managed session
 - cross-device continuity through Happier
 - a clean transition from provider-native history into Happier-native history
 
@@ -111,7 +111,7 @@ After you browse and open a provider session, users can usually:
 
 Depending on the provider and session state, users may also be able to:
 
-- resume it from Happier once it is a synced Happier session with valid resume metadata
+- resume it from Happier once it is a Happier-managed session with valid resume metadata
 - continue sending prompts
 - move from observe-only mode into a controlled mode
 
@@ -121,7 +121,7 @@ When a user chooses **Take over + Sync**:
 
 1. Happier reads the provider transcript
 2. Happier imports that history into the Happier session
-3. The session changes from **Direct** to **Synced**
+3. The session changes from **Direct** to **Happier**
 4. Future work continues as a Happier-managed session
 
 This is why the feature is more than “view logs”.
@@ -151,7 +151,7 @@ If the machine goes offline:
 - direct follow/tail stops
 - direct takeover controls are unavailable until the machine returns
 
-If the session has already been **synced/imported** into Happier, the synced Happier session remains available as a normal Happier session.
+If the session has already been imported into Happier, the Happier-managed session remains available as a normal Happier session.
 
 ## Search and filtering
 
@@ -192,7 +192,7 @@ Browse the OpenCode source, open the session directly, and sync it later only if
 
 - [Resume inactive sessions](./session-resume)
 - [Resume a provider session (Resume ID)](./resume-provider-sessions)
-- [Synced and direct sessions](./direct-sessions)
+- [Happier and direct sessions](./direct-sessions)
 - [Connected services](./connected-services)
 - [Profiles](./profiles)
 - [Codex](../providers/codex)

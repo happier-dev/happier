@@ -15,7 +15,7 @@ This is different from:
 
 - [Session forking & replay](/docs/features/session-forking), which creates a branch
 - [Attach to a running session](/docs/features/attach-to-session), which reopens a session from a terminal on the same machine
-- [Synced and direct sessions](/docs/features/direct-sessions), which explains where the transcript lives
+- [Happier and direct sessions](/docs/features/direct-sessions), which explains where the transcript lives
 
 ## Where to start a handoff
 
@@ -64,18 +64,18 @@ Current status:
 
 Session handoff works with both user-facing session models:
 
-- Synced sessions
+- Happier sessions
 - Direct sessions
 
-See [Synced and direct sessions](/docs/features/direct-sessions).
+See [Happier and direct sessions](/docs/features/direct-sessions).
 
-### Synced sessions
+### Happier sessions
 
-For a synced session, handoff moves the live owner to another machine while keeping the same Happier-managed session.
+For a Happier session, handoff moves the live owner to another machine while keeping the same Happier-managed session.
 
 This is the simplest case:
 
-- same synced session
+- same Happier session
 - new owning machine
 - same transcript and session id
 
@@ -86,11 +86,11 @@ For a direct session, handoff shows an extra target-mode choice.
 You can choose:
 
 - Keep direct
-- Convert to synced
+- Convert to Happier
 
 Use Keep direct when you want the target machine to keep following the provider-backed session.
 
-Use Convert to synced when you want to move out of the machine-bound direct model and let Happier own the session going forward.
+Use Convert to Happier when you want to move out of the machine-bound direct model and let Happier own the session going forward.
 
 ## Workspace transfer
 
@@ -223,9 +223,9 @@ Examples:
 
 Use Keep direct when the provider-backed ownership model is still what you want and the provider supports direct handoff.
 
-### Convert a direct session into a synced session
+### Convert a direct session into a Happier session
 
-Use Convert to synced when you started from a provider-native session but now want Happier to own the transcript and future continuity.
+Use Convert to Happier when you started from a provider-native session but now want Happier to own the transcript and future continuity.
 
 ### Move the session but leave the target workspace alone
 
@@ -262,7 +262,7 @@ The action can be unavailable when:
 
 ## Related guides
 
-- [Synced and direct sessions](./direct-sessions)
+- [Happier and direct sessions](./direct-sessions)
 - [Session settings](./session-settings)
 - [Connected services](./connected-services)
 - [Provider authentication](./provider-authentication)

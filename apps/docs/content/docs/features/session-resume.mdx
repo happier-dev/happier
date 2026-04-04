@@ -23,7 +23,7 @@ In Happier, resume is a strict workflow:
 
 That strict behavior matters because it keeps one session identity and one transcript source of truth.
 
-When a synced Happier session resumes, Happier continues the existing session. It does **not** create a second imported-history pass just because you resumed it.
+When a Happier-managed session resumes, Happier continues the existing session. It does **not** create a second imported-history pass just because you resumed it.
 
 ## When a session is resumable
 
@@ -166,7 +166,7 @@ For those sessions:
 
 - browsing/opening happens through the **Direct** sessions flow
 - syncing/importing happens through **Take over + Sync**
-- normal Happier resume applies after the session is a synced Happier session and has valid vendor-resume metadata
+- normal Happier resume applies after the session is a Happier-managed session and has valid vendor-resume metadata
 
 ## Things to check if resume is unavailable
 
@@ -182,7 +182,7 @@ If a session does not resume, check:
 ## Related guides
 
 - [Attach to a running session](./attach-to-session)
-- [Synced and direct sessions](./direct-sessions)
+- [Happier and direct sessions](./direct-sessions)
 - [Browse and import provider sessions](./browse-and-import-sessions)
 - [CLI](../clients/cli)
 - [Codex](../providers/codex)
