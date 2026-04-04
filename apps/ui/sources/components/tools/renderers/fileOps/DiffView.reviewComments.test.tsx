@@ -10,6 +10,11 @@ import { installFileOpsRendererCommonModuleMocks } from './fileOpsRendererTestHe
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const diffFilesListSpy = vi.fn();
+const upsertSessionReviewCommentDraftSpy = vi.fn();
+const deleteSessionReviewCommentDraftSpy = vi.fn();
+const upsertWorkspaceReviewCommentDraftSpy = vi.fn();
+const deleteWorkspaceReviewCommentDraftSpy = vi.fn();
+let lastInlineRendererConfig: any = null;
 
 installFileOpsRendererCommonModuleMocks({
     storage: async () => {
@@ -21,8 +26,16 @@ installFileOpsRendererCommonModuleMocks({
                 if (key === 'filesDiffFileListVirtualizationMinFiles') return 999;
                 return undefined;
             },
-            useSessionReviewCommentsDrafts: () => [],
-            storage: { getState: () => ({ upsertSessionReviewCommentDraft: () => {}, deleteSessionReviewCommentDraft: () => {} }) },
+            useSessionReviewCommentsDrafts: () => [{ id: 'session-draft', filePath: 'src/a.ts', source: 'diff', anchor: { kind: 'diffLine', startLine: 1, side: 'after', oldLine: null, newLine: 1 }, snapshot: { selectedLines: [], beforeContext: [], afterContext: [] }, body: 'session', createdAt: 1 }],
+            useWorkspaceReviewCommentsDrafts: () => [{ id: 'workspace-draft', filePath: 'src/a.ts', source: 'diff', anchor: { kind: 'diffLine', startLine: 1, side: 'after', oldLine: null, newLine: 1 }, snapshot: { selectedLines: [], beforeContext: [], afterContext: [] }, body: 'workspace', createdAt: 1 }],
+            storage: {
+                getState: () => ({
+                    upsertSessionReviewCommentDraft: (...args: unknown[]) => upsertSessionReviewCommentDraftSpy(...args),
+                    deleteSessionReviewCommentDraft: (...args: unknown[]) => deleteSessionReviewCommentDraftSpy(...args),
+                    upsertWorkspaceReviewCommentDraft: (...args: unknown[]) => upsertWorkspaceReviewCommentDraftSpy(...args),
+                    deleteWorkspaceReviewCommentDraft: (...args: unknown[]) => deleteWorkspaceReviewCommentDraftSpy(...args),
+                }),
+            },
         });
     },
 });
@@ -44,6 +57,10 @@ vi.mock('@/components/tools/shell/presentation/ToolHeaderActionsContext', () => 
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureId === 'files.reviewComments',
+}));
+
+vi.mock('@/sync/domains/session/resolveWorkspaceScopeForSession', () => ({
+    resolveWorkspaceScopeForSession: () => ({ serverId: 'server-1', machineId: 'm1', rootPath: '/repo' }),
 }));
 
 vi.mock('@/components/ui/code/model/diff/diffViewModel', () => ({
@@ -73,9 +90,22 @@ vi.mock('@/sync/domains/settings/settings', async (importOriginal) => {
     };
 });
 
+vi.mock('@/components/ui/code/diff/reviewComments/useInlineUnifiedDiffReviewCommentsRenderer', () => ({
+    useInlineUnifiedDiffReviewCommentsRenderer: (config: any) => {
+        lastInlineRendererConfig = config;
+        return ({ file }: { file: { filePath?: string } }) =>
+            React.createElement('DiffReviewCommentsViewer', { filePath: file?.filePath ?? '' });
+    },
+}));
+
 describe('DiffView (review comments)', () => {
     it('passes a renderInlineUnifiedDiff override when review comments are enabled and sessionId is available', async () => {
         diffFilesListSpy.mockClear();
+        upsertSessionReviewCommentDraftSpy.mockClear();
+        deleteSessionReviewCommentDraftSpy.mockClear();
+        upsertWorkspaceReviewCommentDraftSpy.mockClear();
+        deleteWorkspaceReviewCommentDraftSpy.mockClear();
+        lastInlineRendererConfig = null;
         const { DiffView } = await import('./DiffView');
 
         const tool = makeToolCall({
@@ -89,6 +119,28 @@ describe('DiffView (review comments)', () => {
 
         const props = diffFilesListSpy.mock.calls[0]?.[0];
         expect(typeof props?.renderInlineUnifiedDiff).toBe('function');
+
+        expect(lastInlineRendererConfig?.enabled).toBe(true);
+        expect(lastInlineRendererConfig?.reviewCommentDrafts?.[0]?.id).toBe('workspace-draft');
+
+        lastInlineRendererConfig.onUpsertReviewCommentDraft({
+            id: 'draft-1',
+            filePath: 'src/a.ts',
+            source: 'diff',
+            anchor: { kind: 'diffLine', startLine: 1, side: 'after', oldLine: null, newLine: 1 },
+            snapshot: { selectedLines: [], beforeContext: [], afterContext: [] },
+            body: 'hello',
+            createdAt: 1,
+        });
+        expect(upsertWorkspaceReviewCommentDraftSpy).toHaveBeenCalledWith(
+            'server-1:m1:/repo',
+            expect.objectContaining({ id: 'draft-1' }),
+        );
+        expect(upsertSessionReviewCommentDraftSpy).toHaveBeenCalledTimes(0);
+
+        lastInlineRendererConfig.onDeleteReviewCommentDraft('draft-1');
+        expect(deleteWorkspaceReviewCommentDraftSpy).toHaveBeenCalledWith('server-1:m1:/repo', 'draft-1');
+        expect(deleteSessionReviewCommentDraftSpy).toHaveBeenCalledTimes(0);
 
         const node = props.renderInlineUnifiedDiff({
             file: props.files[0],

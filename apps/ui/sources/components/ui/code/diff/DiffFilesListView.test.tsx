@@ -407,4 +407,70 @@ describe('DiffFilesListView', () => {
             globalWindowContainer.window = prevWindow;
         }
     });
+
+    it('falls back to FlatList on web when FlashList hits a recycler commit layout update loop', async () => {
+        const globalWindowContainer = globalThis as unknown as { window?: unknown };
+        const prevWindow = globalWindowContainer.window;
+        const listeners = new Map<string, EventListenerOrEventListenerObject[]>();
+        try {
+            globalWindowContainer.window = {
+                addEventListener: (type: string, fn: EventListenerOrEventListenerObject) => {
+                    const arr = listeners.get(type) ?? [];
+                    arr.push(fn);
+                    listeners.set(type, arr);
+                },
+                removeEventListener: (type: string, fn: EventListenerOrEventListenerObject) => {
+                    const arr = listeners.get(type) ?? [];
+                    listeners.set(type, arr.filter((f) => f !== fn));
+                },
+            };
+
+            const { DiffFilesListView } = await import('./DiffFilesListView');
+
+            const files: any[] = [
+                { key: 'k1', filePath: 'src/a.ts', added: 1, removed: 0, unifiedDiff: 'a\n', kind: null },
+            ];
+
+            const screen = await renderScreen(<DiffFilesListView
+                        files={files}
+                        expandedKeys={new Set()}
+                        onToggleExpanded={() => {}}
+                        canRenderInlineDiffs={true}
+                        wrapLines={true}
+                        showLineNumbers={true}
+                        showPrefix={true}
+                        virtualizeFileList
+                    />);
+
+            expect(screen.findAllByType('FlashList' as any)).toHaveLength(1);
+            expect(listeners.get('error')?.length ?? 0).toBeGreaterThan(0);
+
+            const errorMessage = 'Maximum update depth exceeded. This can happen when a component repeatedly calls setState inside componentWillUpdate or componentDidUpdate. React limits the number of nested updates to prevent infinite loops.';
+            const handler = (listeners.get('error') ?? [])[0];
+            const fakeEvent = {
+                message: errorMessage,
+                error: {
+                    message: errorMessage,
+                    stack: [
+                        'Error: Maximum update depth exceeded',
+                        '    at getRootForUpdatedFiber (bundle:15941:169)',
+                        '    at dispatchSetState (bundle:17871:7)',
+                        '    at Object.commitLayout (bundle:594088:11)',
+                        '    at commitHookLayoutEffects (bundle:19716:58)',
+                    ].join('\n'),
+                },
+                preventDefault: vi.fn(),
+                stopImmediatePropagation: vi.fn(),
+            } as unknown as ErrorEvent;
+
+            await act(async () => {
+                (handler as EventListener)(fakeEvent);
+            });
+
+            expect(screen.findAllByType('FlatList' as any).length).toBeGreaterThan(0);
+            expect(screen.findAllByType('FlashList' as any)).toHaveLength(0);
+        } finally {
+            globalWindowContainer.window = prevWindow;
+        }
+    });
 });

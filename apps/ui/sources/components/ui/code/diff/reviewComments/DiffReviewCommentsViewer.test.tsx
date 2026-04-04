@@ -42,7 +42,7 @@ vi.mock('@/components/ui/code/diff/useInlineDiffVirtualizationThresholds', () =>
     useInlineDiffVirtualizationThresholds: () => thresholds,
 }));
 
-vi.mock('@/components/sessions/reviews/comments/useCodeLinesReviewComments', () => ({
+vi.mock('@/components/ui/code/reviewComments/useCodeLinesReviewComments', () => ({
     useCodeLinesReviewComments: () => null,
 }));
 

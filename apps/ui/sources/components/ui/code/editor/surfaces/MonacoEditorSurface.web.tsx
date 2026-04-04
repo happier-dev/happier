@@ -353,9 +353,6 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
 
     const borderStyle = {
         flex: 1,
-        borderWidth: 1,
-        borderColor: theme.colors.divider,
-        borderRadius: 10,
         overflow: 'hidden' as const,
     };
 
@@ -375,7 +372,6 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
                         disableUiFontScaling
                         style={{
                             flex: 1,
-                            padding: 10,
                             color: theme.colors.text,
                             backgroundColor: theme.colors.surfaceHighest,
                             fontFamily:

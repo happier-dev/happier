@@ -58,4 +58,42 @@ describe('Text (selectability scope)', () => {
     const rnText = screen.findByType('RNText' as any);
     expect(rnText.props.selectable).toBe(false);
   });
+
+  it('clamps focused input font size to 16px on iOS web to prevent Safari zoom-on-focus', async () => {
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)' } as any);
+    const { TextInput } = await import('./Text');
+
+    const screen = await renderScreen(<TextInput style={{ fontSize: 14 }} value="" onChangeText={() => {}} />);
+    const input = screen.findByType('RNTextInput' as any);
+    expect(input.props.style).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        fontSize: 16,
+      }),
+    ]));
+  });
+
+  it('preserves the requested input font size on non-iOS web', async () => {
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (X11; Linux x86_64)' } as any);
+    const { TextInput } = await import('./Text');
+
+    const screen = await renderScreen(<TextInput style={{ fontSize: 14 }} value="" onChangeText={() => {}} />);
+    const input = screen.findByType('RNTextInput' as any);
+    expect(input.props.style).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        fontSize: 14,
+      }),
+    ]));
+  });
+
+  it('removes the default web focus outline from the shared text input wrapper', async () => {
+    const { TextInput } = await import('./Text');
+
+    const screen = await renderScreen(<TextInput value="" onChangeText={() => {}} />);
+    const input = screen.findByType('RNTextInput' as any);
+    expect(input.props.style).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        outlineStyle: 'none',
+      }),
+    ]));
+  });
 });

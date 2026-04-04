@@ -1,5 +1,7 @@
 import * as React from 'react';
 import {
+    Platform,
+    StyleSheet,
     Text as RNText,
     TextInput as RNTextInput,
     type TextInputProps as RNTextInputProps,
@@ -13,6 +15,13 @@ import { useLocalSetting } from '@/sync/store/hooks';
 import { scaleTextStyle } from './uiFontScale';
 
 const TextSelectabilityContext = React.createContext<boolean>(false);
+
+function isIosWeb(): boolean {
+    if (Platform.OS !== 'web') return false;
+    if (typeof navigator === 'undefined') return false;
+    const ua = typeof navigator.userAgent === 'string' ? navigator.userAgent : '';
+    return /iphone|ipad|ipod/i.test(ua);
+}
 
 export function TextSelectabilityScope(props: Readonly<{ selectable: boolean; children: React.ReactNode }>) {
     return (
@@ -95,6 +104,15 @@ export const TextInput = React.memo(
             if (defaultStyle) out.push(defaultStyle);
             if (Array.isArray(scaledStyle)) out.push(...scaledStyle);
             else if (scaledStyle) out.push(scaledStyle);
+            if (Platform.OS === 'web') {
+                out.push({ outlineStyle: 'none' });
+            }
+            if (isIosWeb()) {
+                const resolvedFontSize = Number(StyleSheet.flatten(out as any)?.fontSize ?? 0);
+                if (resolvedFontSize > 0 && resolvedFontSize < 16) {
+                    out.push({ fontSize: 16 });
+                }
+            }
             return out;
         }, [defaultStyle, scaledStyle]);
 

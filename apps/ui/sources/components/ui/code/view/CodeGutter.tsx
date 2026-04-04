@@ -33,10 +33,9 @@ export function CodeGutter(props: { line: CodeLine; showLineNumbers?: boolean })
 
 const stylesheet = StyleSheet.create((theme) => ({
     gutter: {
-        width: 64,
         flexDirection: 'row',
         justifyContent: 'space-between',
-        paddingRight: 8,
+        paddingRight: 18,
         paddingLeft: 4,
     },
     gutterText: {
