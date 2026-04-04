@@ -75,6 +75,7 @@ const machineRipgrepMock = vi.hoisted(() => vi.fn<(machineId: string, args: read
 })));
 const modalPromptMock = vi.hoisted(() => vi.fn<(...args: any[]) => Promise<string | null>>(async () => null));
 const modalAlertMock = vi.hoisted(() => vi.fn());
+const itemRenderCounts = vi.hoisted(() => new Map<string, number>());
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -146,8 +147,19 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
-    // Render icon + rightElement so tests can locate nested toggle pressables by testID.
-    Item: (props: any) => React.createElement('Item', props, props.icon ?? null, props.rightElement ?? null, props.subtitle ?? null),
+    // Keep interactive rows pressable in the host tree so tests can detect nested toggle controls.
+    Item: (props: any) => {
+        if (typeof props.testID === 'string') {
+            itemRenderCounts.set(props.testID, (itemRenderCounts.get(props.testID) ?? 0) + 1);
+        }
+        return React.createElement(
+            props.onPress || props.onLongPress || props.onContextMenu ? 'Pressable' : 'Item',
+            props,
+            props.icon ?? null,
+            props.rightElement ?? null,
+            props.subtitle ?? null,
+        );
+    },
 }));
 
 vi.mock('@/sync/store/hooks', () => ({
@@ -206,6 +218,7 @@ describe('MachinePathBrowserModal', () => {
         machineRipgrepMock.mockClear();
         modalPromptMock.mockClear();
         modalAlertMock.mockClear();
+        itemRenderCounts.clear();
     });
 
     it('expands the machine root and confirms the selected folder', async () => {
@@ -399,6 +412,58 @@ describe('MachinePathBrowserModal', () => {
         vi.useRealTimers();
     });
 
+    it('disables confirm while a deep search error is surfaced', async () => {
+        vi.useFakeTimers();
+        const onPickPath = vi.fn();
+        const { MachinePathBrowserView } = await import('./MachinePathBrowserModal');
+
+        listMachineFileBrowserRootsMock.mockClear();
+        listMachineFileBrowserDirectoryEntriesMock.mockReset();
+        listMachineFileBrowserDirectoryEntriesMock.mockResolvedValueOnce({
+            ok: true as const,
+            entries: [{ name: 'Users', path: '/Users', type: 'directory' as const }],
+            truncated: false,
+        });
+
+        machineRipgrepMock.mockResolvedValueOnce({
+            success: false,
+            error: "Access denied: Path '/' is outside the allowed directories",
+            exitCode: 1,
+        });
+
+        const screen = await renderScreen(
+            <MachinePathBrowserView
+                machineId="machine-1"
+                includeFiles={false}
+                selectionMode="directory"
+                variant="modal"
+                interaction="confirm"
+                onPickPath={onPickPath}
+            />,
+        );
+
+        await waitForTestId(screen, getPathBrowserToggleTestId('/'));
+        await screen.pressByTestIdAsync(getPathBrowserToggleTestId('/'));
+        await waitForTestId(screen, getPathBrowserRowTestId('/Users'));
+        await screen.pressByTestIdAsync(getPathBrowserRowTestId('/Users'));
+
+        const confirmBefore = screen.findByTestId(PATH_BROWSER_CONFIRM_TEST_ID);
+        expect(confirmBefore?.props.disabled).toBe(false);
+
+        await act(async () => {
+            screen.changeTextByTestId('path-browser-search', '/');
+        });
+        await act(async () => {
+            vi.advanceTimersByTime(200);
+        });
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        const confirmAfter = screen.findByTestId(PATH_BROWSER_CONFIRM_TEST_ID);
+        expect(confirmAfter?.props.disabled).toBe(true);
+
+        vi.useRealTimers();
+    });
+
     it('renders nested directories when expanding a child folder', async () => {
         const { MachinePathBrowserModal } = await import('./MachinePathBrowserModal');
 
@@ -427,6 +492,28 @@ describe('MachinePathBrowserModal', () => {
         expect(screen.findByTestId(getPathBrowserRowTestId('/Users/leeroy'))).toBeTruthy();
     });
 
+    it('does not rerender unchanged ancestor rows when expanding a descendant directory', async () => {
+        const { MachinePathBrowserModal } = await import('./MachinePathBrowserModal');
+
+        const screen = await renderScreen(<MachinePathBrowserModal
+                    machineId="machine-1"
+                    onResolve={vi.fn()}
+                    onClose={vi.fn()}
+                />);
+
+        await waitForTestId(screen, getPathBrowserToggleTestId('/'));
+        await screen.pressByTestIdAsync(getPathBrowserToggleTestId('/'));
+        await waitForTestId(screen, getPathBrowserRowTestId('/Users'));
+
+        const rootRenderCountAfterRootExpand = itemRenderCounts.get(getPathBrowserRowTestId('/')) ?? 0;
+        expect(rootRenderCountAfterRootExpand).toBeGreaterThan(0);
+
+        await screen.pressByTestIdAsync(getPathBrowserToggleTestId('/Users'));
+        await waitForTestId(screen, getPathBrowserRowTestId('/Users/leeroy'));
+
+        expect(itemRenderCounts.get(getPathBrowserRowTestId('/')) ?? 0).toBe(rootRenderCountAfterRootExpand);
+    });
+
     it('stops web toggle events from bubbling to the row while expanding the directory', async () => {
         const { MachinePathBrowserModal } = await import('./MachinePathBrowserModal');
 
@@ -441,6 +528,13 @@ describe('MachinePathBrowserModal', () => {
         await act(async () => {
             const rootToggle = screen.findByTestId(getPathBrowserToggleTestId('/'));
             expect(rootToggle).toBeTruthy();
+            const ancestorTypes: string[] = [];
+            let ancestor = rootToggle?.parent ?? null;
+            while (ancestor) {
+                ancestorTypes.push(String(ancestor.type));
+                ancestor = ancestor.parent ?? null;
+            }
+            expect(ancestorTypes).not.toContain('Pressable');
             rootToggle?.props.onMouseDownCapture?.({ stopPropagation });
             invokeTestInstanceHandler(rootToggle, 'onPress', { stopPropagation, nativeEvent: { stopPropagation } });
         });
@@ -621,6 +715,35 @@ describe('MachinePathBrowserModal', () => {
         expect(footerButtons.every((node) => node.props.size === 'normal')).toBe(true);
     });
 
+    it('requests body-owned scrolling when rendered through shared modal chrome', async () => {
+        const { MachinePathBrowserView } = await import('./MachinePathBrowserModal');
+        let chrome: unknown = null;
+        const setChrome = vi.fn((next: unknown) => {
+            chrome = next;
+        });
+
+        await renderScreen(<MachinePathBrowserView
+                    machineId="machine-1"
+                    variant="modal"
+                    interaction="confirm"
+                    setChrome={setChrome}
+                    onPickPath={vi.fn()}
+                    onRequestClose={vi.fn()}
+                />);
+
+        expect(setChrome).toHaveBeenCalled();
+        expect(chrome).toEqual(expect.objectContaining({
+            kind: 'card',
+            scrollHost: 'body',
+            dimensions: {
+                size: 'lg',
+                width: 560,
+                maxHeightRatio: 0.96,
+                viewportMargin: { horizontal: 12, vertical: 12 },
+            },
+        }));
+    });
+
     it('creates a folder under the selected directory via the header action', async () => {
         modalPromptMock.mockResolvedValueOnce('new-folder');
         const { MachinePathBrowserModal } = await import('./MachinePathBrowserModal');
@@ -689,8 +812,7 @@ describe('MachinePathBrowserModal', () => {
         );
     });
 
-    it('opens a context menu on long press and creates a folder in the pressed directory', async () => {
-        modalPromptMock.mockResolvedValueOnce('child');
+    it('uses context-menu semantics instead of row long-press on web to avoid delayed tap selection', async () => {
         const { MachinePathBrowserModal } = await import('./MachinePathBrowserModal');
 
         const screen = await renderScreen(<MachinePathBrowserModal
@@ -703,17 +825,11 @@ describe('MachinePathBrowserModal', () => {
         await screen.pressByTestIdAsync(getPathBrowserToggleTestId('/'));
 
         const usersRow = await waitForTestId(screen, getPathBrowserRowTestId('/Users'));
-        await act(async () => {
-            invokeTestInstanceHandler(usersRow, 'onLongPress');
-        });
-
-        await waitForTestId(screen, 'dropdown-option-create-folder');
-        await screen.pressByTestIdAsync('dropdown-option-create-folder');
-
-        expect(machineCreateDirectoryMock).toHaveBeenCalledWith(
-            'machine-1',
-            '/Users/child',
-            expect.anything(),
-        );
+        expect(usersRow).toBeTruthy();
+        if (!usersRow) {
+            return;
+        }
+        expect(usersRow.props.onContextMenu).toBeTypeOf('function');
+        expect(usersRow.props.onLongPress).toBeUndefined();
     });
 });

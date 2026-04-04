@@ -1166,6 +1166,57 @@ describe('Popover (web)', () => {
         expect(width).toBe(120);
     });
 
+    it('uses the effective boundary width and left edge for top/bottom portal popovers when boundary layout is requested', async () => {
+        const { Popover } = await import('./Popover');
+
+        const anchorRef = {
+            current: {
+                measureInWindow: (cb: any) => {
+                    queueMicrotask(() => cb(84, 200, 120, 40));
+                },
+            },
+        } as any;
+
+        const boundaryRef = {
+            current: {
+                getBoundingClientRect: () => ({
+                    left: 0,
+                    top: 0,
+                    width: 360,
+                    height: 640,
+                    x: 0,
+                    y: 0,
+                }),
+            },
+        } as any;
+
+        const screen = await renderScreen(React.createElement(Popover, {
+            open: true,
+            anchorRef,
+            boundaryRef,
+            placement: 'bottom',
+            edgePadding: { horizontal: 12 },
+            portal: {
+                web: { target: 'boundary' },
+                matchAnchorWidth: false,
+                topBottomLayout: 'boundary',
+            },
+            backdrop: false,
+            children: () => React.createElement('PopoverChild'),
+        }));
+
+        await act(async () => {
+            await flushRetryPositioning();
+        });
+
+        const contentView = findPopoverContentView(screen);
+        expect(contentView).toBeTruthy();
+
+        const style = flattenStyle(contentView?.props?.style);
+        expect(style.left).toBe(12);
+        expect(style.width).toBe(336);
+    });
+
     it('keeps retrying portal anchor measurement for multiple frames on web (prevents invisible popovers that only appear after a second click)', async () => {
         const { Popover } = await import('./Popover');
 

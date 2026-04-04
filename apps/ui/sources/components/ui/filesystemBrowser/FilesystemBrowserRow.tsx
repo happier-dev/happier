@@ -9,8 +9,6 @@ import type { FilesystemBrowserNode, FilesystemBrowserWrapContentInput } from '.
 
 export type FilesystemBrowserRowProps = Readonly<{
     node: FilesystemBrowserNode;
-    index: number;
-    totalCount: number;
     title: string;
     subtitle?: React.ReactNode;
     icon: React.ReactNode;
@@ -22,6 +20,7 @@ export type FilesystemBrowserRowProps = Readonly<{
     selected?: boolean;
     testID?: string;
     density?: ItemProps['density'];
+    showDivider?: boolean;
     basePaddingLeft?: number;
     depthIndent?: number;
     paddingRight?: number;
@@ -35,7 +34,7 @@ export type FilesystemBrowserRowProps = Readonly<{
 export function FilesystemBrowserRow(props: FilesystemBrowserRowProps): React.ReactElement {
     const { theme } = useUnistyles();
     const paddingLeft = (props.basePaddingLeft ?? 12) + Math.min(6, Math.max(0, props.node.depth)) * (props.depthIndent ?? 12);
-    const showDivider = props.index < props.totalCount - 1;
+    const showDivider = props.showDivider === true;
 
     const content = props.node.type === 'error'
         ? (

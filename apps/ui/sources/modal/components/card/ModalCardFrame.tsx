@@ -14,6 +14,7 @@ type ModalCardFrameProps = Readonly<{
     subtitle?: React.ReactNode;
     actions?: React.ReactNode;
     footer?: React.ReactNode;
+    scrollHost?: 'overlay' | 'body';
     onClose?: () => void;
     size?: ModalCardSizePreset;
     testID?: string;
@@ -46,6 +47,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 export function ModalCardFrame(props: ModalCardFrameProps) {
     useUnistyles();
     const styles = stylesheet;
+    const scrollHost = props.scrollHost ?? 'overlay';
     const dimensions = useModalCardDimensions({
         ...props.dimensions,
         size: props.size ?? props.dimensions?.size,
@@ -69,6 +71,11 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
                     width: dimensions.width,
                     maxWidth: dimensions.width,
                 },
+                scrollHost === 'body'
+                    ? {
+                        height: dimensions.maxHeight,
+                    }
+                    : null,
                 props.style,
             ]}
         >

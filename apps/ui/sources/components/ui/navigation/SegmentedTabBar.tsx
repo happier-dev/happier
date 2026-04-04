@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
+import type { StyleProp, TextStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { shadowLevelStyle } from '@/shadowElevation';
@@ -18,6 +19,8 @@ export type SegmentedTabBarProps<T extends string = string> = Readonly<{
     testIDPrefix?: string;
     /** Compact mode with reduced padding and smaller font */
     compact?: boolean;
+    /** Optional active-label style override for specific consumers */
+    activeLabelStyle?: StyleProp<TextStyle>;
 }>;
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -96,6 +99,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                                     styles.tabLabel,
                                     compact ? styles.tabLabelCompact : null,
                                     active ? styles.tabLabelActive : null,
+                                    active ? props.activeLabelStyle : null,
                                 ]}
                             >
                                 {tab.label}

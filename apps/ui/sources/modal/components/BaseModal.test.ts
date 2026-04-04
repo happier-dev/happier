@@ -67,6 +67,22 @@ describe('BaseModal (web)', () => {
         expect(style.justifyContent).toBe('center');
     });
 
+    it('supports a top-aligned web placement mode for fullscreen-like screens nested in the modal shell', async () => {
+        const { BaseModal } = await import('./BaseModal');
+        const screen = await renderBaseModalScreen(BaseModal, { webPlacement: 'top' });
+
+        const container = screen.findAllByType('KeyboardAvoidingView' as any)?.[0];
+        const style = flattenStyleProp(container?.props?.style);
+        expect(style.minHeight).toBe('100%');
+        expect(style.justifyContent).toBe('flex-start');
+
+        const child = screen.findByType('Child' as any);
+        const contentWrapper = (child as any)?.parent?.parent;
+        const contentStyle = flattenStyleProp(contentWrapper?.props?.style);
+        expect(contentStyle.flex).toBe(1);
+        expect(contentStyle.alignItems).toBe('stretch');
+    });
+
     it('renders using Radix Dialog instead of react-native Modal', async () => {
         const { BaseModal } = await import('./BaseModal');
         const screen = await renderBaseModalScreen(BaseModal);

@@ -127,8 +127,8 @@ describe('machineRpcWithServerScope', () => {
         const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
         const result = await machineRpcWithServerScope({
             machineId: 'machine-1',
-            method: RPC_METHODS.LIST_DIRECTORY,
-            payload: { path: '/tmp' },
+            method: RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_INIT,
+            payload: { kind: 'prompt-assets', id: 'asset-a' },
         });
 
         expect(result).toEqual({ decoded: true });

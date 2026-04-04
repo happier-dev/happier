@@ -16,6 +16,10 @@ const inboxState = vi.hoisted(() => ({
     hasContent: false,
 }));
 
+const sessionsAttentionState = vi.hoisted(() => ({
+    hasAttention: false,
+}));
+
 installNavigationCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -49,6 +53,10 @@ vi.mock('@/hooks/inbox/useInboxHasContent', () => ({
     useInboxHasContent: () => inboxState.hasContent,
 }));
 
+vi.mock('@/hooks/session/useSessionsHaveAttention', () => ({
+    useSessionsHaveAttention: () => sessionsAttentionState.hasAttention,
+}));
+
 vi.mock('@/hooks/server/useFriendsEnabled', () => ({
     useFriendsEnabled: () => true,
 }));
@@ -73,6 +81,19 @@ describe('TabBar', () => {
     beforeEach(() => {
         friendRequestsState.items = [];
         inboxState.hasContent = false;
+        sessionsAttentionState.hasAttention = false;
+    });
+
+    it('renders tabs in settings, friends, projects, sessions, inbox order', async () => {
+        const { TabBar } = await import('./TabBar');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        tree = (await renderScreen(<TabBar activeTab="sessions" onTabPress={() => {}} />)).tree;
+
+        const tabIds = tree!.findAll((node) => typeof node.props?.testID === 'string' && node.props.testID.startsWith('tabbar-tab-'))
+            .map((node) => String(node.props.testID).replace('tabbar-tab-', ''));
+
+        expect(tabIds).toEqual(['settings', 'friends', 'projects', 'sessions', 'inbox']);
     });
 
     it('shows friend request counts on the friends tab and a dot for inbox content', async () => {
@@ -91,5 +112,19 @@ describe('TabBar', () => {
         expect(allTextNodes.some((node) => String(node.props.children) === '2')).toBe(true);
         expect(hasIndicatorDot(inboxTab!)).toBe(true);
         expect(hasTextChild(inboxTab!, '2')).toBe(false);
+    });
+
+    it('shows a dot on the sessions tab when sessions need attention', async () => {
+        sessionsAttentionState.hasAttention = true;
+        const { TabBar } = await import('./TabBar');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        tree = (await renderScreen(<TabBar activeTab="inbox" onTabPress={() => {}} />)).tree;
+
+        const sessionsTab = tree!
+            .findAll((node) => typeof node.props?.testID === 'string' && node.props.testID === 'tabbar-tab-sessions')[0];
+
+        expect(sessionsTab).toBeTruthy();
+        expect(hasIndicatorDot(sessionsTab!)).toBe(true);
     });
 });

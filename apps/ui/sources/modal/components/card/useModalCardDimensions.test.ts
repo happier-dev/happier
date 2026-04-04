@@ -12,4 +12,21 @@ describe('resolveModalCardDimensions', () => {
         expect(dimensions.width).toBe(500);
         expect(dimensions.maxHeight).toBeGreaterThan(0);
     });
+
+    it('supports tighter viewport margins for mobile-sized modal cards', () => {
+        const dimensions = resolveModalCardDimensions(
+            { width: 441, height: 956 },
+            {
+                size: 'lg',
+                width: 560,
+                maxHeightRatio: 0.96,
+                viewportMargin: { horizontal: 12, vertical: 12 },
+            },
+        );
+
+        expect(dimensions).toEqual({
+            width: 417,
+            maxHeight: 860,
+        });
+    });
 });

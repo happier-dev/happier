@@ -18,9 +18,20 @@ function areDimensionOptionsEqual(
 ): boolean {
     if (a === b) return true;
     if (!a || !b) return false;
+    const aViewportMargin = a.viewportMargin as Record<string, unknown> | number | null | undefined;
+    const bViewportMargin = b.viewportMargin as Record<string, unknown> | number | null | undefined;
+    const viewportMarginEqual = (() => {
+        if (aViewportMargin === bViewportMargin) return true;
+        if (typeof aViewportMargin === 'number' || typeof bViewportMargin === 'number') {
+            return aViewportMargin === bViewportMargin;
+        }
+        return (aViewportMargin?.horizontal ?? null) === (bViewportMargin?.horizontal ?? null)
+            && (aViewportMargin?.vertical ?? null) === (bViewportMargin?.vertical ?? null);
+    })();
     return a.size === b.size
         && a.width === b.width
-        && a.maxHeightRatio === b.maxHeightRatio;
+        && a.maxHeightRatio === b.maxHeightRatio
+        && viewportMarginEqual;
 }
 
 function areChromeConfigsEqual(
@@ -37,6 +48,7 @@ function areChromeConfigsEqual(
             && areReactNodesStructurallyEqual(a.leading, b.leading)
             && areReactNodesStructurallyEqual(a.actions, b.actions)
             && areReactNodesStructurallyEqual(a.footer, b.footer)
+            && a.scrollHost === b.scrollHost
             && a.testID === b.testID
             && a.titleTestID === b.titleTestID
             && a.subtitleTestID === b.subtitleTestID
@@ -75,6 +87,7 @@ function mergeChromeConfig(
             subtitle: override.subtitle !== undefined ? override.subtitle : base.subtitle,
             actions: override.actions !== undefined ? override.actions : base.actions,
             footer: override.footer !== undefined ? override.footer : base.footer,
+            scrollHost: override.scrollHost !== undefined ? override.scrollHost : base.scrollHost,
             testID: override.testID !== undefined ? override.testID : base.testID,
             titleTestID: override.titleTestID !== undefined ? override.titleTestID : base.titleTestID,
             subtitleTestID: override.subtitleTestID !== undefined ? override.subtitleTestID : base.subtitleTestID,
@@ -119,6 +132,7 @@ export function CustomModal({ config, onClose, showBackdrop = true, zIndexBase }
             closeOnBackdrop={config.closeOnBackdrop ?? true}
             showBackdrop={showBackdrop}
             zIndexBase={zIndexBase}
+            webPortalTarget={config.webPortalTarget ?? null}
         >
             {chrome ? (
                 <ModalCardFrame
@@ -127,6 +141,7 @@ export function CustomModal({ config, onClose, showBackdrop = true, zIndexBase }
                     subtitle={chrome.subtitle}
                     actions={chrome.actions}
                     footer={chrome.footer}
+                    scrollHost={chrome.scrollHost}
                     testID={chrome.testID}
                     titleTestID={chrome.titleTestID}
                     subtitleTestID={chrome.subtitleTestID}

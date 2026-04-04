@@ -33,7 +33,7 @@ export function FilesystemBrowser(props: FilesystemBrowserProps): React.ReactEle
                     flex: 1,
                     justifyContent: 'center',
                     alignItems: 'center',
-                    paddingTop: 40,
+                    paddingVertical: 20,
                 }}
             >
                 <ActivityIndicator size="small" color={theme.colors.textSecondary} />
@@ -81,7 +81,7 @@ export function FilesystemBrowser(props: FilesystemBrowserProps): React.ReactEle
                     flex: 1,
                     justifyContent: 'center',
                     alignItems: 'center',
-                    paddingTop: 40,
+                    paddingVertical: 20,
                     paddingHorizontal: 20,
                 }}
             >
@@ -91,7 +91,7 @@ export function FilesystemBrowser(props: FilesystemBrowserProps): React.ReactEle
                         fontSize: 16,
                         color: theme.colors.textSecondary,
                         textAlign: 'center',
-                        marginTop: 16,
+                        marginTop: 5,
                         ...Typography.default(),
                     }}
                 >

@@ -47,6 +47,7 @@ function SelfChromeModal(props: CustomModalInjectedProps & Readonly<{ label: str
         props.setChrome?.({
             kind: 'card',
             title: 'Self chrome',
+            scrollHost: 'body',
             dimensions: { size: 'md' },
         });
     }, [props.setChrome]);
@@ -119,6 +120,7 @@ describe('CustomModal', () => {
                 subtitle: 'Pick a session to resume',
                 actions: chromeActions,
                 footer: chromeFooter,
+                scrollHost: 'body',
                 closeButtonTestID: 'chrome-close',
                 dimensions: {
                     size: 'lg',
@@ -133,6 +135,7 @@ describe('CustomModal', () => {
         expect(modalCardFrame.props.subtitle).toBe('Pick a session to resume');
         expect(modalCardFrame.props.actions).toBe(chromeActions);
         expect(modalCardFrame.props.footer).toBe(chromeFooter);
+        expect(modalCardFrame.props.scrollHost).toBe('body');
         expect(modalCardFrame.props.closeButtonTestID).toBe('chrome-close');
         expect(screen.findByType(ChromeModal).props.label).toBe('browse');
 
@@ -153,6 +156,7 @@ describe('CustomModal', () => {
 
         const modalCardFrame = screen.findByType(ModalCardFrame);
         expect(modalCardFrame.props.title).toBe('Self chrome');
+        expect(modalCardFrame.props.scrollHost).toBe('body');
         expect(screen.findByType(SelfChromeModal).props.label).toBe('self');
     });
 
@@ -166,6 +170,7 @@ describe('CustomModal', () => {
                 title: 'Base title',
                 subtitle: 'Base subtitle',
                 actions: React.createElement('BaseActions'),
+                scrollHost: 'body',
                 testID: 'base-test',
                 dimensions: { size: 'lg' },
             },
@@ -175,6 +180,7 @@ describe('CustomModal', () => {
         expect(modalCardFrame.props.title).toBe('Base title');
         expect(modalCardFrame.props.subtitle).toBe('Base subtitle');
         expect(modalCardFrame.props.actions?.type).toBe('BaseActions');
+        expect(modalCardFrame.props.scrollHost).toBe('body');
         expect(modalCardFrame.props.footer?.type).toBe('PatchedFooter');
     });
 

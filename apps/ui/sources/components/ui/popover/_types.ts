@@ -34,6 +34,12 @@ export type PopoverPortalOptions = Readonly<{
      * Defaults to 'center' for menus/tooltips.
      */
     anchorAlignVertical?: 'start' | 'center' | 'end';
+    /**
+     * Layout strategy for top/bottom placements in portal mode.
+     * - anchored: position and size the popover relative to the anchor
+     * - boundary: align the popover to the effective boundary's left edge and width
+     */
+    topBottomLayout?: 'anchored' | 'boundary';
 }>;
 
 export type PopoverBackdropOptions = Readonly<{
@@ -88,4 +94,3 @@ export type PopoverRenderProps = Readonly<{
     maxWidth: number;
     placement: ResolvedPopoverPlacement;
 }>;
-

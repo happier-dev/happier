@@ -7,7 +7,7 @@ import { Text } from '@/components/ui/text/Text';
 import { useLocalSetting } from '@/sync/domains/state/storage';
 import { getClipboardStringTrimmedSafe } from '@/utils/ui/clipboard';
 import { XtermWebViewSurface, type XtermWebViewSurfaceHandle } from '@/components/terminal/xterm/webview/XtermWebViewSurface.native';
-import type { EmbeddedTerminalRendererHandle } from '@/components/sessions/terminal/embeddedTerminalRendererHandle';
+import type { EmbeddedTerminalRendererHandle } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
 import { EmbeddedTerminalPaneFrame } from './EmbeddedTerminalPaneFrame';
 import { embeddedTerminalPaneStyles } from './embeddedTerminalPaneStyles';
 import type { EmbeddedTerminalPaneController } from './types';

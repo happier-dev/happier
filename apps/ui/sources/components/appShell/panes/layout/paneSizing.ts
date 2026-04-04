@@ -19,19 +19,49 @@ export const PANE_SIZING_DEFAULTS = {
     },
 } as const;
 
+function resolveScaledPreferredPaneSizePx(input: Readonly<{
+    preferredSizePx: number;
+    basisContainerSizePx: number;
+    containerSizePx: number;
+    skipScalingWhenPreferredSizePxMatches?: number;
+}>): number {
+    // Some panes want a fixed default width/height across viewport sizes until the user
+    // explicitly chooses a different size. When the preferred size matches that default marker,
+    // bypass basis scaling but still let the outer resolver clamp the final size.
+    if (
+        typeof input.skipScalingWhenPreferredSizePxMatches === 'number'
+        && Number.isFinite(input.skipScalingWhenPreferredSizePxMatches)
+        && input.preferredSizePx === input.skipScalingWhenPreferredSizePxMatches
+    ) {
+        return input.preferredSizePx;
+    }
+
+    const basis = input.basisContainerSizePx;
+    if (!Number.isFinite(basis) || basis <= 0) return input.preferredSizePx;
+
+    const ratio = input.containerSizePx / basis;
+    if (!Number.isFinite(ratio) || ratio <= 0) return input.preferredSizePx;
+
+    return input.preferredSizePx * ratio;
+}
+
 export function resolveScaledPaneWidthPx(input: Readonly<{
     preferredWidthPx: number;
     basisContainerWidthPx: number;
     containerWidthPx: number;
     minPx: number;
     maxPx: number;
+    skipScalingWhenPreferredWidthPxMatches?: number;
 }>): number {
     const clamp = (value: number) => Math.min(input.maxPx, Math.max(input.minPx, value));
-    const basis = input.basisContainerWidthPx;
-    if (!Number.isFinite(basis) || basis <= 0) return clamp(input.preferredWidthPx);
-    const ratio = input.containerWidthPx / basis;
-    if (!Number.isFinite(ratio) || ratio <= 0) return clamp(input.preferredWidthPx);
-    return clamp(input.preferredWidthPx * ratio);
+    return clamp(
+        resolveScaledPreferredPaneSizePx({
+            preferredSizePx: input.preferredWidthPx,
+            basisContainerSizePx: input.basisContainerWidthPx,
+            containerSizePx: input.containerWidthPx,
+            skipScalingWhenPreferredSizePxMatches: input.skipScalingWhenPreferredWidthPxMatches,
+        })
+    );
 }
 
 export function resolveScaledPaneWidthPxUncapped(input: Readonly<{
@@ -39,15 +69,19 @@ export function resolveScaledPaneWidthPxUncapped(input: Readonly<{
     basisContainerWidthPx: number;
     containerWidthPx: number;
     minPx: number;
+    skipScalingWhenPreferredWidthPxMatches?: number;
 }>): number {
     const clampMin = (value: number) => Math.max(input.minPx, value);
-    const basis = input.basisContainerWidthPx;
     const prefer = input.preferredWidthPx;
     if (!Number.isFinite(prefer)) return input.minPx;
-    if (!Number.isFinite(basis) || basis <= 0) return clampMin(prefer);
-    const ratio = input.containerWidthPx / basis;
-    if (!Number.isFinite(ratio) || ratio <= 0) return clampMin(prefer);
-    return clampMin(prefer * ratio);
+    return clampMin(
+        resolveScaledPreferredPaneSizePx({
+            preferredSizePx: prefer,
+            basisContainerSizePx: input.basisContainerWidthPx,
+            containerSizePx: input.containerWidthPx,
+            skipScalingWhenPreferredSizePxMatches: input.skipScalingWhenPreferredWidthPxMatches,
+        })
+    );
 }
 
 export function resolveScaledPaneHeightPx(input: Readonly<{
@@ -56,13 +90,17 @@ export function resolveScaledPaneHeightPx(input: Readonly<{
     containerHeightPx: number;
     minPx: number;
     maxPx: number;
+    skipScalingWhenPreferredHeightPxMatches?: number;
 }>): number {
     const clamp = (value: number) => Math.min(input.maxPx, Math.max(input.minPx, value));
-    const basis = input.basisContainerHeightPx;
-    if (!Number.isFinite(basis) || basis <= 0) return clamp(input.preferredHeightPx);
-    const ratio = input.containerHeightPx / basis;
-    if (!Number.isFinite(ratio) || ratio <= 0) return clamp(input.preferredHeightPx);
-    return clamp(input.preferredHeightPx * ratio);
+    return clamp(
+        resolveScaledPreferredPaneSizePx({
+            preferredSizePx: input.preferredHeightPx,
+            basisContainerSizePx: input.basisContainerHeightPx,
+            containerSizePx: input.containerHeightPx,
+            skipScalingWhenPreferredSizePxMatches: input.skipScalingWhenPreferredHeightPxMatches,
+        })
+    );
 }
 
 export function resolveScaledPaneHeightPxUncapped(input: Readonly<{
@@ -70,15 +108,19 @@ export function resolveScaledPaneHeightPxUncapped(input: Readonly<{
     basisContainerHeightPx: number;
     containerHeightPx: number;
     minPx: number;
+    skipScalingWhenPreferredHeightPxMatches?: number;
 }>): number {
     const clampMin = (value: number) => Math.max(input.minPx, value);
-    const basis = input.basisContainerHeightPx;
     const prefer = input.preferredHeightPx;
     if (!Number.isFinite(prefer)) return input.minPx;
-    if (!Number.isFinite(basis) || basis <= 0) return clampMin(prefer);
-    const ratio = input.containerHeightPx / basis;
-    if (!Number.isFinite(ratio) || ratio <= 0) return clampMin(prefer);
-    return clampMin(prefer * ratio);
+    return clampMin(
+        resolveScaledPreferredPaneSizePx({
+            preferredSizePx: prefer,
+            basisContainerSizePx: input.basisContainerHeightPx,
+            containerSizePx: input.containerHeightPx,
+            skipScalingWhenPreferredSizePxMatches: input.skipScalingWhenPreferredHeightPxMatches,
+        })
+    );
 }
 
 function clamp(value: number, min: number, max: number): number {

@@ -192,6 +192,43 @@ describe('ModalCardFrame', () => {
         );
     });
 
+    it('can constrain the card to the viewport when the modal body owns scrolling', async () => {
+        const { renderScreen } = await import('@/dev/testkit');
+        const { ModalCardFrame } = await import('./ModalCardFrame');
+
+        windowState.width = 920;
+        windowState.height = 620;
+
+        const screen = await renderScreen(
+            React.createElement(
+                ModalCardFrame,
+                {
+                    children: React.createElement('Child'),
+                    title: 'Modal title',
+                    testID: 'modal-card-frame',
+                    scrollHost: 'body',
+                    dimensions: { size: 'lg' },
+                },
+            ),
+        );
+
+        const container = screen.findByTestId('modal-card-frame');
+        if (container == null) {
+            throw new Error('expected modal card frame to exist');
+        }
+        expect(container.props.style).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    width: 840,
+                    maxWidth: 840,
+                }),
+                expect.objectContaining({
+                    height: 527,
+                }),
+            ]),
+        );
+    });
+
     it('marks the card container as a modal card boundary on web (so backdrop clicks can dismiss without swallowing inner clicks)', async () => {
         const { renderScreen } = await import('@/dev/testkit');
         const { ModalCardFrame } = await import('./ModalCardFrame');

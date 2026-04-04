@@ -11,6 +11,7 @@ import { useInboxAvailable } from '@/hooks/inbox/useInboxAvailable';
 import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
 import { Text } from '@/components/ui/text/Text';
 import { useFriendRequests } from '@/sync/domains/state/storage';
+import { useSessionsHaveAttention } from '@/hooks/session/useSessionsHaveAttention';
 import type { TabType } from './tabTypes';
 import { resolveTabBarTabs } from './resolveTabBarTabs';
 
@@ -93,6 +94,7 @@ export const TabBar = React.memo(({ activeTab, onTabPress }: TabBarProps) => {
     const friendRequests = useFriendRequests();
     const inboxEnabled = useInboxAvailable();
     const inboxHasContent = useInboxHasContent();
+    const sessionsHaveAttention = useSessionsHaveAttention();
 
     const tabs: { key: TabType; icon: any; label: string }[] = React.useMemo(() => {
         const tabKeys = resolveTabBarTabs({ inboxEnabled, friendsEnabled });
@@ -140,6 +142,9 @@ export const TabBar = React.memo(({ activeTab, onTabPress }: TabBarProps) => {
                                             {friendRequests.length > 99 ? '99+' : friendRequests.length}
                                         </Text>
                                     </View>
+                                )}
+                                {tab.key === 'sessions' && sessionsHaveAttention && (
+                                    <View style={styles.indicatorDot} />
                                 )}
                                 {tab.key === 'inbox' && inboxHasContent && (
                                     <View style={styles.indicatorDot} />

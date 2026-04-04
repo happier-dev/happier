@@ -35,9 +35,10 @@ describe('guardedMachineRpc', () => {
     });
 
     it('recognizes guarded methods', () => {
-        expect(isGuardedMachineRpcMethod(RPC_METHODS.LIST_DIRECTORY)).toBe(true);
         expect(isGuardedMachineRpcMethod(RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_INIT)).toBe(true);
         expect(isGuardedMachineRpcMethod(RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_INIT)).toBe(true);
+        expect(isGuardedMachineRpcMethod(RPC_METHODS.LIST_DIRECTORY)).toBe(false);
+        expect(isGuardedMachineRpcMethod('ripgrep')).toBe(false);
         expect(isGuardedMachineRpcMethod('daemon.bulkTransfer.start')).toBe(true);
         expect(isGuardedMachineRpcMethod('daemon.ping')).toBe(false);
     });
@@ -48,8 +49,8 @@ describe('guardedMachineRpc', () => {
         await callGuardedMachineRpcWithPolicy({
             machineId: 'm1',
             serverId: 'server-a',
-            method: RPC_METHODS.LIST_DIRECTORY,
-            payload: { path: '/tmp' },
+            method: RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_INIT,
+            payload: { kind: 'prompt-assets', id: 'asset-a' },
         });
 
         expect(getReadyServerFeaturesMock).toHaveBeenCalledWith({
@@ -59,7 +60,7 @@ describe('guardedMachineRpc', () => {
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'm1',
             serverId: 'server-a',
-            method: RPC_METHODS.LIST_DIRECTORY,
+            method: RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_INIT,
             preferScoped: true,
         }));
     });
@@ -80,14 +81,14 @@ describe('guardedMachineRpc', () => {
         await callGuardedMachineRpcWithPolicy({
             machineId: 'm1',
             serverId: 'server-a',
-            method: RPC_METHODS.LIST_DIRECTORY,
-            payload: { path: '/tmp' },
+            method: RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_INIT,
+            payload: { kind: 'prompt-assets', id: 'asset-a' },
         });
 
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'm1',
             serverId: 'server-a',
-            method: RPC_METHODS.LIST_DIRECTORY,
+            method: RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_INIT,
         }));
         const call = machineRpcWithServerScopeMock.mock.calls.at(-1)?.[0];
         expect(call?.preferScoped).not.toBe(true);
@@ -109,8 +110,8 @@ describe('guardedMachineRpc', () => {
         await callGuardedMachineRpcWithPolicy({
             machineId: 'm1',
             serverId: 'server-a',
-            method: RPC_METHODS.LIST_DIRECTORY,
-            payload: { path: '/tmp' },
+            method: RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_INIT,
+            payload: { kind: 'prompt-assets', id: 'asset-a' },
         });
 
         const call = machineRpcWithServerScopeMock.mock.calls.at(-1)?.[0];
@@ -123,8 +124,8 @@ describe('guardedMachineRpc', () => {
         await callGuardedMachineRpcWithPolicy({
             machineId: 'm1',
             serverId: 'server-a',
-            method: RPC_METHODS.LIST_DIRECTORY,
-            payload: { path: '/tmp' },
+            method: RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_INIT,
+            payload: { kind: 'prompt-assets', id: 'asset-a' },
         });
 
         const call = machineRpcWithServerScopeMock.mock.calls.at(-1)?.[0];

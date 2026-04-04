@@ -12,6 +12,7 @@ export type ModalCardDimensionOptions = Readonly<{
     size?: ModalCardSizePreset;
     width?: number;
     maxHeightRatio?: number;
+    viewportMargin?: number | Readonly<{ horizontal?: number; vertical?: number }>;
 }>;
 
 type ModalCardDimensionPreset = Readonly<{
@@ -55,12 +56,24 @@ export function resolveModalCardDimensions(
     options: ModalCardDimensionOptions = {},
 ): ModalCardDimensions {
     const preset = MODAL_CARD_PRESETS[options.size ?? 'md'];
-    const horizontalMargin = 80;
+    const viewportMargin = (() => {
+        if (typeof options.viewportMargin === 'number') {
+            return {
+                horizontal: options.viewportMargin,
+                vertical: options.viewportMargin,
+            };
+        }
+
+        return {
+            horizontal: options.viewportMargin?.horizontal ?? 40,
+            vertical: options.viewportMargin?.vertical ?? 0,
+        };
+    })();
     const hasWindowWidth = Number.isFinite(windowDimensions.width) && windowDimensions.width > 0;
     const hasWindowHeight = Number.isFinite(windowDimensions.height) && windowDimensions.height > 0;
 
     const availableWidth = hasWindowWidth
-        ? Math.max(0, Math.floor(windowDimensions.width - horizontalMargin))
+        ? Math.max(0, Math.floor(windowDimensions.width - viewportMargin.horizontal * 2))
         : preset.maxWidth;
 
     const width = options.width != null
@@ -70,7 +83,10 @@ export function resolveModalCardDimensions(
         : clamp(availableWidth, preset.minWidth, preset.maxWidth);
 
     const availableHeight = hasWindowHeight
-        ? Math.floor(windowDimensions.height * (options.maxHeightRatio ?? preset.heightRatio))
+        ? Math.min(
+            Math.max(0, Math.floor(windowDimensions.height - viewportMargin.vertical * 2)),
+            Math.floor(windowDimensions.height * (options.maxHeightRatio ?? preset.heightRatio)),
+        )
         : preset.maxHeight;
 
     const maxHeight = clamp(availableHeight, preset.minHeight, preset.maxHeight);

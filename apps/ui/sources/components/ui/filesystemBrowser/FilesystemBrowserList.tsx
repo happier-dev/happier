@@ -10,6 +10,60 @@ import type { FilesystemBrowserListProps } from './filesystemBrowserTypes';
 
 export function FilesystemBrowserList(props: FilesystemBrowserListProps): React.ReactElement {
     const { theme } = useUnistyles();
+    const listHeaderComponent = React.useMemo(() => (
+        props.rootLoading ? (
+            <View
+                style={{
+                    paddingHorizontal: 12,
+                    paddingVertical: 10,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 10,
+                }}
+            >
+                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
+                    {props.loadingLabel}
+                </Text>
+            </View>
+        ) : props.rootError ? (
+            <View
+                testID={props.listHeaderTestID}
+                style={{
+                    paddingHorizontal: 12,
+                    paddingVertical: 10,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 10,
+                }}
+            >
+                <Ionicons name="alert-circle-outline" size={16} color={theme.colors.textSecondary} />
+                <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
+                    {props.inlineRetryLabel}
+                </Text>
+                <View style={{ flex: 1 }} />
+                <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={props.inlineRetryLabel}
+                    onPress={() => {
+                        void props.retryRoot();
+                    }}
+                    style={{ paddingHorizontal: 10, paddingVertical: 6 }}
+                >
+                    <Text style={{ fontSize: 12, color: theme.colors.textLink, ...Typography.default('semiBold') }}>
+                        {props.inlineRetryLabel}
+                    </Text>
+                </Pressable>
+            </View>
+        ) : null
+    ), [props.inlineRetryLabel, props.listHeaderTestID, props.loadingLabel, props.retryRoot, props.rootError, props.rootLoading, theme.colors.textLink, theme.colors.textSecondary]);
+
+    const renderItem = React.useCallback(({ item: node, index }: { item: FilesystemBrowserListProps['nodes'][number]; index: number }) => (
+        props.renderRow({
+            node,
+            showDivider: index < props.nodes.length - 1,
+        })
+    ), [props.nodes.length, props.renderRow]);
 
     return (
         <FlatList
@@ -18,54 +72,8 @@ export function FilesystemBrowserList(props: FilesystemBrowserListProps): React.
             keyExtractor={(node) => `${node.type}:${node.path}`}
             style={props.style}
             contentContainerStyle={props.contentContainerStyle}
-            ListHeaderComponent={
-                props.rootLoading ? (
-                    <View
-                        style={{
-                            paddingHorizontal: 12,
-                            paddingVertical: 10,
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            gap: 10,
-                        }}
-                    >
-                        <ActivityIndicator size="small" color={theme.colors.textSecondary} />
-                        <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
-                            {props.loadingLabel}
-                        </Text>
-                    </View>
-                ) : props.rootError ? (
-                    <View
-                        testID={props.listHeaderTestID}
-                        style={{
-                            paddingHorizontal: 12,
-                            paddingVertical: 10,
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            gap: 10,
-                        }}
-                    >
-                        <Ionicons name="alert-circle-outline" size={16} color={theme.colors.textSecondary} />
-                        <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
-                            {props.inlineRetryLabel}
-                        </Text>
-                        <View style={{ flex: 1 }} />
-                        <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel={props.inlineRetryLabel}
-                            onPress={() => {
-                                void props.retryRoot();
-                            }}
-                            style={{ paddingHorizontal: 10, paddingVertical: 6 }}
-                        >
-                            <Text style={{ fontSize: 12, color: theme.colors.textLink, ...Typography.default('semiBold') }}>
-                                {props.inlineRetryLabel}
-                            </Text>
-                        </Pressable>
-                    </View>
-                ) : null
-            }
-            renderItem={({ item: node, index }) => props.renderRow({ node, index, totalCount: props.nodes.length })}
+            ListHeaderComponent={listHeaderComponent}
+            renderItem={renderItem}
             initialNumToRender={props.initialNumToRender}
             maxToRenderPerBatch={props.maxToRenderPerBatch}
             windowSize={props.windowSize}

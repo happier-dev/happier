@@ -206,7 +206,7 @@ function PopoverBackdropEffectLayer(props: Readonly<{
     const effectStyles = spotlightStyles ?? [fullScreenStyle];
 
     if (props.backdropEffect === 'blur') {
-        const webBlurPx = typeof props.backdropBlurOnWeb?.px === 'number' ? props.backdropBlurOnWeb.px : 12;
+        const webBlurPx = typeof props.backdropBlurOnWeb?.px === 'number' ? props.backdropBlurOnWeb.px : 2;
         const webBlurTint = props.backdropBlurOnWeb?.tintColor ?? 'rgba(0,0,0,0.10)';
         if (Platform.OS !== 'web') {
             try {

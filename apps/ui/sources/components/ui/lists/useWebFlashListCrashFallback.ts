@@ -8,12 +8,29 @@ type WebErrorListenerWindow = Readonly<{
 
 type FlashListCrashSignature = Readonly<{ message: string; stack: string }>;
 
-const isKnownFlashListWebCrash = (signature: FlashListCrashSignature): boolean => {
+const isKnownFlashListWebLayoutCrash = (signature: FlashListCrashSignature): boolean => {
     const text = (signature.message ?? '').toLowerCase();
     if (!text) return false;
     // This error string is emitted by FlashList/RecyclerListView on web when virtualization requests
     // layout metadata for an index that has not been measured yet.
     return text.includes('not enough layouts') && text.includes('index out of bounds');
+};
+
+const isKnownFlashListWebCommitLayoutLoop = (signature: FlashListCrashSignature): boolean => {
+    const message = (signature.message ?? '').toLowerCase();
+    if (!message.includes('maximum update depth exceeded')) return false;
+
+    const stack = (signature.stack ?? '').toLowerCase();
+    if (!stack) return false;
+
+    // FlashList web can trip a RecyclerListView layout-effect loop whose stack includes the internal
+    // `Object.commitLayout` frame before React reports the nested update error.
+    return stack.includes('object.commitlayout')
+        && (stack.includes('commithooklayouteffects') || stack.includes('commitlayouteffectonfiber'));
+};
+
+const isKnownFlashListWebCrash = (signature: FlashListCrashSignature): boolean => {
+    return isKnownFlashListWebLayoutCrash(signature) || isKnownFlashListWebCommitLayoutLoop(signature);
 };
 
 const defaultShouldFallback = (signature: FlashListCrashSignature): boolean => {

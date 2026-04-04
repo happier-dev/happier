@@ -1,6 +1,7 @@
 import type { ComponentProps } from 'react';
 import { ReactNode, ComponentType } from 'react';
 import type { ModalCardDimensionOptions } from './components/card/useModalCardDimensions';
+import type { ModalPortalTarget } from './portal/ModalPortalTarget';
 
 export type ModalType = 'alert' | 'confirm' | 'prompt' | 'custom';
 
@@ -13,6 +14,7 @@ export interface AlertButton {
 export interface BaseModalConfig {
     id: string;
     type: ModalType;
+    webPortalTarget?: ModalPortalTarget;
 }
 
 export interface AlertModalConfig extends BaseModalConfig {
@@ -67,6 +69,13 @@ export type CustomModalChromeCardConfig = Readonly<{
     subtitle?: ReactNode;
     actions?: ReactNode;
     footer?: ReactNode;
+    /**
+     * Controls which layer owns vertical overflow:
+     * - `overlay`: the outer BaseModal overlay scrolls (default)
+     * - `body`: the modal card is constrained to the viewport and the modal body is expected
+     *   to provide its own internal scroll region when needed
+     */
+    scrollHost?: 'overlay' | 'body';
     testID?: string;
     titleTestID?: string;
     subtitleTestID?: string;

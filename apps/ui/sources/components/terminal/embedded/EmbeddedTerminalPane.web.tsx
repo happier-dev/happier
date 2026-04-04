@@ -3,7 +3,7 @@ import * as React from 'react';
 import { resolveCodeEditorFontMetrics } from '@/components/ui/code/editor/codeEditorFontMetrics';
 import { useLocalSetting } from '@/sync/domains/state/storage';
 import { XtermTerminalView, type XtermTerminalHandle } from '@/components/terminal/xterm/XtermTerminalView.web';
-import type { EmbeddedTerminalRendererHandle } from '@/components/sessions/terminal/embeddedTerminalRendererHandle';
+import type { EmbeddedTerminalRendererHandle } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
 import { EmbeddedTerminalPaneFrame } from './EmbeddedTerminalPaneFrame';
 import type { EmbeddedTerminalPaneController } from './types';
 

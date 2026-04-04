@@ -127,6 +127,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
     const matchAnchorWidthOnPortal = props.portal?.matchAnchorWidth ?? true;
     const anchorAlignOnPortal = props.portal?.anchorAlign ?? 'start';
     const anchorAlignVerticalOnPortal = props.portal?.anchorAlignVertical ?? 'center';
+    const topBottomLayoutOnPortal = props.portal?.topBottomLayout ?? 'anchored';
 
     const shouldPortalWeb = Platform.OS === 'web' && Boolean(portalWeb);
     const shouldPortalNative = Platform.OS !== 'web' && Boolean(portalNative) && Boolean(overlayPortal);
@@ -559,7 +560,12 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                     ? availableRight
                     : resolvedPlacement === 'left'
                         ? availableLeft
-                        : effectiveBoundaryRect.width - gap * 2;
+                        : (
+                            topBottomLayoutOnPortal === 'boundary'
+                            && (resolvedPlacement === 'top' || resolvedPlacement === 'bottom')
+                                ? effectiveBoundaryRect.width
+                                : effectiveBoundaryRect.width - gap * 2
+                        );
 
             const nextMaxHeight = Math.max(0, Math.min(maxHeightCap, Math.floor(maxHeightAvailable)));
             const nextMaxWidth = Math.max(0, Math.min(maxWidthCap, Math.floor(maxWidthAvailable)));
@@ -613,7 +619,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         scheduleFrame(() => {
             void measureWithRetries(0);
         });
-    }, [anchorRef, boundaryRef, edgeInsets.horizontal, edgeInsets.vertical, gap, maxHeightCap, maxWidthCap, open, placement, shouldPortalNative, shouldPortalWeb, windowHeight, windowWidth, portalTarget]);
+    }, [anchorRef, boundaryRef, edgeInsets.horizontal, edgeInsets.vertical, gap, maxHeightCap, maxWidthCap, open, placement, shouldPortalNative, shouldPortalWeb, topBottomLayoutOnPortal, windowHeight, windowWidth, portalTarget]);
 
     React.useLayoutEffect(() => {
         if (!open) return;
@@ -764,6 +770,9 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                 // container width (left:0,right:0) and capped by maxWidth. The closest equivalent
                 // in portal+fixed mode is to optionally cap width to anchor width.
                 if (computed.placement === 'top' || computed.placement === 'bottom') {
+                    if (topBottomLayoutOnPortal === 'boundary') {
+                        return Math.min(computed.maxWidth, Math.floor(boundaryRect.width));
+                    }
                     return matchAnchorWidthOnPortal
                         ? Math.min(computed.maxWidth, Math.floor(anchorRectState.width))
                         : computed.maxWidth;
@@ -780,6 +789,9 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                     return anchorRectState.x + anchorRectState.width + gap;
                 }
                 // top/bottom
+                if (topBottomLayoutOnPortal === 'boundary') {
+                    return boundaryRect.x;
+                }
                 const desiredLeftRaw = (() => {
                     switch (anchorAlignOnPortal) {
                         case 'end':

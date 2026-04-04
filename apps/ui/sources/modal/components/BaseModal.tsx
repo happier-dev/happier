@@ -11,7 +11,9 @@ import {
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { requireRadixDismissableLayer } from '@/utils/web/radixCjs';
+import { requireReactDOM } from '@/utils/web/reactDomCjs';
 import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
+import type { ModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { ModalBoundaryProvider } from '@/modal/context/ModalBoundaryContext';
 import { t } from '@/text';
 import { createBackdropNativeStyle, createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
@@ -131,6 +133,8 @@ interface BaseModalProps {
     closeOnBackdrop?: boolean;
     showBackdrop?: boolean;
     zIndexBase?: number;
+    webPlacement?: 'auto' | 'top';
+    webPortalTarget?: ModalPortalTarget;
 }
 
 export function BaseModal({
@@ -140,6 +144,8 @@ export function BaseModal({
     closeOnBackdrop = true,
     showBackdrop = true,
     zIndexBase,
+    webPlacement = 'auto',
+    webPortalTarget = null,
 }: BaseModalProps) {
     const { theme } = useUnistyles();
     const insets = useChromeSafeAreaInsets();
@@ -246,7 +252,7 @@ export function BaseModal({
             zIndex: baseZ,
             ...createBackdropWebStyle({
                 backgroundColor: theme.colors.overlay.scrimWizard as unknown as string,
-                blurPx: 12,
+                blurPx: 2,
             }),
         };
 
@@ -288,7 +294,7 @@ export function BaseModal({
             minHeight: '100%',
             display: 'flex',
             flexDirection: 'column',
-            justifyContent: 'center',
+            justifyContent: webPlacement === 'top' ? 'flex-start' : 'center',
             alignItems: 'center',
             paddingTop: insets.top,
             paddingBottom: insets.bottom,
@@ -300,7 +306,16 @@ export function BaseModal({
             display: 'contents',
         } as unknown as ViewStyle;
 
-        return (
+        const topPlacementContentStyle = webPlacement === 'top'
+            ? ({
+                flex: 1,
+                minHeight: '100%',
+                alignSelf: 'stretch',
+                alignItems: 'stretch',
+            } as unknown as ViewStyle)
+            : null;
+
+        const webModalNode = (
             <>
                 {showBackdrop ? (
                     <div
@@ -351,6 +366,7 @@ export function BaseModal({
                                         pointerEvents="auto"
                                         style={[
                                             styles.content,
+                                            topPlacementContentStyle,
                                             {
                                                 opacity: fadeAnim,
                                             }
@@ -371,6 +387,19 @@ export function BaseModal({
                 </DismissableLayerBranch>
             </>
         );
+
+        if (webPortalTarget) {
+            try {
+                const ReactDOM = requireReactDOM();
+                if (ReactDOM?.createPortal) {
+                    return ReactDOM.createPortal(webModalNode, webPortalTarget);
+                }
+            } catch {
+                // Fall back to inline rendering if the portal target is unusable in the current runtime.
+            }
+        }
+
+        return webModalNode;
     }
 
     // IMPORTANT:

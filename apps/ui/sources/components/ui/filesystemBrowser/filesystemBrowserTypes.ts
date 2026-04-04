@@ -7,8 +7,7 @@ export type FilesystemBrowserNode = LazyDirectoryTreeNode;
 
 export type FilesystemBrowserRowRenderInput = Readonly<{
     node: FilesystemBrowserNode;
-    index: number;
-    totalCount: number;
+    showDivider: boolean;
 }>;
 
 export type FilesystemBrowserWrapContentInput = Readonly<{

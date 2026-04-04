@@ -1,12 +1,11 @@
 import * as React from 'react';
-import { FlatList, Platform, Pressable, View, useWindowDimensions, type GestureResponderEvent } from 'react-native';
+import { FlatList, Platform, Pressable, View, useWindowDimensions } from 'react-native';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Modal, type CustomModalInjectedProps } from '@/modal';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { FilesystemBrowser } from '@/components/ui/filesystemBrowser/FilesystemBrowser';
-import { FilesystemBrowserRow } from '@/components/ui/filesystemBrowser/FilesystemBrowserRow';
 import type { FilesystemBrowserNode } from '@/components/ui/filesystemBrowser/filesystemBrowserTypes';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
@@ -33,13 +32,8 @@ import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { FilesystemBrowserToolbarChrome, type FilesystemBrowserToolbarAction } from '@/components/ui/filesystemBrowser/FilesystemBrowserToolbarChrome';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 
-import {
-    getPathBrowserRowTestId,
-    getPathBrowserToggleTestId,
-    PATH_BROWSER_CONFIRM_TEST_ID,
-    PATH_BROWSER_CREATE_FOLDER_TEST_ID,
-    PATH_BROWSER_MODAL_TEST_ID,
-} from './pathBrowserTestIds';
+import { PATH_BROWSER_CONFIRM_TEST_ID, PATH_BROWSER_CREATE_FOLDER_TEST_ID, PATH_BROWSER_MODAL_TEST_ID } from './pathBrowserTestIds';
+import { MachinePathBrowserListRow } from './MachinePathBrowserListRow';
 
 export type MachinePathBrowserModalProps = CustomModalInjectedProps & Readonly<{
     machineId: string;
@@ -84,19 +78,6 @@ export type MachinePathBrowserViewProps = Readonly<{
     onPickPath: (path: string) => void;
     onRequestClose?: () => void;
 }>;
-
-function stopToggleEventPropagation(event: unknown): void {
-    const maybeEvent = event as {
-        stopPropagation?: () => void;
-        nativeEvent?: { stopPropagation?: () => void };
-    };
-    try {
-        maybeEvent.stopPropagation?.();
-    } catch {}
-    try {
-        maybeEvent.nativeEvent?.stopPropagation?.();
-    } catch {}
-}
 
 const styles = StyleSheet.create((theme) => ({
     container: {
@@ -152,30 +133,6 @@ const styles = StyleSheet.create((theme) => ({
         fontSize: 13,
         color: theme.colors.textSecondary,
         ...Typography.default(),
-    },
-    directoryIconWrap: {
-        width: 18,
-        height: 18,
-        position: 'relative',
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    directoryToggle: {
-        position: 'absolute',
-        // Keep the disclosure affordance on the left of the folder icon (not as a right-side row chevron).
-        left: -2,
-        top: 2,
-        width: 16,
-        height: 16,
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 2,
-    },
-    directoryFolderIcon: {
-        position: 'absolute',
-        right: -1,
-        top: 1,
-        zIndex: 1,
     },
     headerActions: {
         flexDirection: 'row',
@@ -565,6 +522,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
     }, [nodesByPath, rootDirectoryPath, selectedPath]);
 
     const deepSearchEnabled = deepSearchRootDirectoryPath !== '' && searchQuery.trim().length > 0;
+    const enableRowLongPressContextMenu = enableContextMenu && Platform.OS !== 'web';
 
     React.useEffect(() => {
         if (!deepSearchEnabled) {
@@ -794,7 +752,14 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
 
     const selectedNodeIndex = React.useMemo(() => {
         if (!selectedPath) return -1;
-        return nodes.findIndex((node) => node.type === 'directory' && node.path === selectedPath);
+        const indexByPath = new Map<string, number>();
+        for (let index = 0; index < nodes.length; index += 1) {
+            const node = nodes[index];
+            if (node?.type === 'directory') {
+                indexByPath.set(node.path, index);
+            }
+        }
+        return indexByPath.get(selectedPath) ?? -1;
     }, [nodes, selectedPath]);
 
     const scrollSelectedPathIntoView = React.useCallback((index: number) => {
@@ -845,9 +810,10 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
 
     const selectedDirectoryPath = React.useMemo(() => {
         if (!selectedPath) return null;
-        const node = nodes.find((candidate) => candidate.type === 'directory' && candidate.path === selectedPath) ?? null;
+        const node = nodesByPath.get(selectedPath);
+        if (node?.type !== 'directory') return null;
         return node ? node.path : null;
-    }, [nodes, selectedPath]);
+    }, [nodesByPath, selectedPath]);
 
     const closeContextMenu = React.useCallback(() => {
         setContextMenuDirectoryPath(null);
@@ -862,6 +828,66 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         contextMenuAnchorRef.current = anchorNode;
         setContextMenuDirectoryPath(directoryPath);
     }, [selectionMode]);
+
+    const selectPath = React.useCallback((path: string) => {
+        shouldAutoSelectInitialPathRef.current = false;
+        shouldAutoScrollInitialSelectionRef.current = false;
+        setSelectedPath(path);
+    }, []);
+
+    const pickPathImmediately = React.useCallback((path: string) => {
+        shouldAutoSelectInitialPathRef.current = false;
+        shouldAutoScrollInitialSelectionRef.current = false;
+        props.onPickPath(path);
+    }, [props.onPickPath]);
+
+    const toggleDirectoryPath = React.useCallback((path: string) => {
+        void toggleDirectory(path);
+    }, [toggleDirectory]);
+
+    const browserRetryRoot = React.useCallback(() => {
+        if (deepSearchEnabled) {
+            setDeepSearchReloadNonce((n) => n + 1);
+            return;
+        }
+        return retryRoot();
+    }, [deepSearchEnabled, retryRoot]);
+
+    const browserStyle = React.useMemo(() => ({ flex: 1, minHeight: 0 }), []);
+    const browserContentContainerStyle = React.useMemo(
+        () => ({ paddingVertical: variant === 'modal' ? 16 : 0 }),
+        [variant],
+    );
+    const renderBrowserRow = React.useCallback(({ node, showDivider }: { node: FilesystemBrowserNode; showDivider: boolean }) => (
+        <MachinePathBrowserListRow
+            node={node}
+            showDivider={showDivider}
+            selected={
+                selectedPath === node.path
+                    && (selectionMode === 'file' ? node.type === 'file' : node.type === 'directory')
+            }
+            selectionMode={selectionMode}
+            interaction={interaction}
+            enableContextMenu={enableContextMenu}
+            enableRowLongPressContextMenu={enableRowLongPressContextMenu}
+            onToggleDirectory={toggleDirectoryPath}
+            onOpenContextMenu={openContextMenu}
+            onRetryDirectory={retryDirectory}
+            onSelectPath={selectPath}
+            onPickPathImmediately={pickPathImmediately}
+        />
+    ), [
+        enableContextMenu,
+        enableRowLongPressContextMenu,
+        interaction,
+        openContextMenu,
+        pickPathImmediately,
+        retryDirectory,
+        selectPath,
+        selectedPath,
+        selectionMode,
+        toggleDirectoryPath,
+    ]);
 
     const createFolderInDirectory = React.useCallback(async (directoryPath: string) => {
         if (!enableContextMenu) return;
@@ -928,6 +954,8 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
 
     const chromeFooter = React.useMemo(() => {
         if (!useCardChrome || interaction !== 'confirm') return null;
+        const effectiveError = deepSearchEnabled ? deepSearchError : rootError;
+        const confirmDisabled = !selectedPath || Boolean(effectiveError);
         return (
             <View style={styles.footer}>
                 <Text numberOfLines={1} style={styles.selectionText}>
@@ -939,11 +967,22 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                     title={t('common.use')}
                     size="normal"
                     onPress={handleConfirm}
-                    disabled={!selectedPath}
+                    disabled={confirmDisabled}
                 />
             </View>
         );
-    }, [handleClose, handleConfirm, interaction, selectedPath, styles.footer, styles.selectionText, useCardChrome]);
+    }, [
+        deepSearchEnabled,
+        deepSearchError,
+        handleClose,
+        handleConfirm,
+        interaction,
+        rootError,
+        selectedPath,
+        styles.footer,
+        styles.selectionText,
+        useCardChrome,
+    ]);
 
     const chromeSetter = useCardChrome ? props.setChrome : undefined;
     const chrome = React.useMemo(() => ({
@@ -953,7 +992,13 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         testID: PATH_BROWSER_MODAL_TEST_ID,
         actions: chromeActions,
         footer: chromeFooter,
-        dimensions: { width: 560, maxHeightRatio: 0.92, size: 'md' as const },
+        scrollHost: 'body' as const,
+        dimensions: {
+            width: 560,
+            maxHeightRatio: 0.96,
+            size: 'lg' as const,
+            viewportMargin: { horizontal: 12, vertical: 12 } as const,
+        },
     }), [chromeActions, chromeFooter, props.title, selectedPath]);
 
     useModalCardChrome(chromeSetter, chrome);
@@ -1125,149 +1170,16 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                     nodes={nodes}
                     rootLoading={deepSearchEnabled ? deepSearchLoading : rootLoading}
                     rootError={deepSearchEnabled ? deepSearchError : rootError}
-                    retryRoot={deepSearchEnabled ? (() => setDeepSearchReloadNonce((n) => n + 1)) : retryRoot}
+                    retryRoot={browserRetryRoot}
                     loadingLabel={t('common.loading')}
                     loadingLabelCentered={t('common.loading')}
                     inlineRetryLabel={t('common.retry')}
                     emptyLabel={t('newSession.pathPicker.emptySuggested')}
-                    style={{ flex: 1, minHeight: 0 }}
-                    contentContainerStyle={{ paddingBottom: variant === 'modal' ? 16 : 0 }}
+                    style={browserStyle}
+                    contentContainerStyle={browserContentContainerStyle}
                     listRef={browserListRef}
                     onScrollToIndexFailed={handleScrollToIndexFailed}
-                    renderRow={({ node, index, totalCount }) => {
-                        const rowBasePaddingLeft = 36;
-                        const rowDepthIndent = 12;
-                        const rowPaddingLeft = rowBasePaddingLeft + Math.min(6, Math.max(0, node.depth)) * rowDepthIndent;
-                        const selected = selectedPath === node.path && (
-                            selectionMode === 'file' ? node.type === 'file' : node.type === 'directory'
-                        );
-                        const contextMenuRowAnchorRef = React.createRef<View>();
-                        const handleTogglePress = (event?: GestureResponderEvent) => {
-                            stopToggleEventPropagation(event);
-                            void toggleDirectory(node.path);
-                        };
-                        const handleOpenContextMenu = (event?: unknown) => {
-                            stopToggleEventPropagation(event);
-                            const maybeEvent = event as { preventDefault?: () => void; stopPropagation?: () => void };
-                            maybeEvent.preventDefault?.();
-                            maybeEvent.stopPropagation?.();
-                            openContextMenu(node.path, contextMenuRowAnchorRef.current);
-                        };
-                        const handleRowLongPress = () => {
-                            openContextMenu(node.path, contextMenuRowAnchorRef.current);
-                        };
-                        const rightElement = selected
-                            ? <Ionicons name="checkmark-circle" size={18} color={theme.colors.button.primary.background} />
-                            : undefined;
-
-                        const icon = node.type === 'directory'
-                            ? (
-                                <View style={styles.directoryIconWrap}>
-                                    <Pressable
-                                        testID={getPathBrowserToggleTestId(node.path)}
-                                        {...(Platform.OS === 'web'
-                                            ? ({ onMouseDownCapture: stopToggleEventPropagation } as any)
-                                            : {})}
-                                        onPressIn={stopToggleEventPropagation}
-                                        onPress={handleTogglePress}
-                                        hitSlop={10}
-                                        style={styles.directoryToggle}
-                                    >
-                                        <Ionicons
-                                            name={node.isExpanded ? 'chevron-down' : 'chevron-forward'}
-                                            size={16}
-                                            color={theme.colors.textSecondary}
-                                        />
-                                    </Pressable>
-                                    <Ionicons
-                                        name={node.isExpanded ? 'folder-open-outline' : 'folder-outline'}
-                                        size={16}
-                                        color={theme.colors.textLink}
-                                        style={styles.directoryFolderIcon}
-                                    />
-                                </View>
-                            )
-                            : node.type === 'file'
-                                ? <Ionicons name="document-outline" size={18} color={theme.colors.textLink} />
-                                : <Ionicons name="folder-outline" size={18} color={theme.colors.textLink} />;
-
-                        return (
-                            <FilesystemBrowserRow
-                                node={node}
-                                index={index}
-                                totalCount={totalCount}
-                                title={
-                                    node.type === 'info' && node.infoKind === 'truncated'
-                                        ? t('newSession.pathPicker.truncatedDirectoryInfo', { count: node.entryCount ?? 0 })
-                                        : node.name || node.path
-                                }
-                                subtitle={node.type === 'error' ? node.errorMessage : undefined}
-                                icon={icon}
-                                testID={getPathBrowserRowTestId(node.path)}
-                                selected={selected}
-                                rightElement={rightElement}
-                                onContextMenu={node.type === 'directory' && enableContextMenu ? handleOpenContextMenu : undefined}
-                                onLongPress={node.type === 'directory' && enableContextMenu ? handleRowLongPress : undefined}
-                                basePaddingLeft={rowBasePaddingLeft}
-                                depthIndent={rowDepthIndent}
-                                density="tight"
-                                errorTitle={t('errors.tryAgain')}
-                                errorSubtitle={node.errorMessage}
-	                                onRetryError={(errorNode) => {
-	                                    if (errorNode.parentDirectoryPath) {
-                                        void retryDirectory(errorNode.parentDirectoryPath);
-                                    }
-                                }}
-                                onPress={() => {
-                                    if (node.type === 'directory') {
-                                        if (selectionMode === 'file') {
-                                            void toggleDirectory(node.path);
-                                            return;
-                                        }
-                                        if (interaction === 'immediate') {
-                                            shouldAutoSelectInitialPathRef.current = false;
-                                            shouldAutoScrollInitialSelectionRef.current = false;
-                                            props.onPickPath(node.path);
-                                            return;
-                                        }
-                                        shouldAutoSelectInitialPathRef.current = false;
-                                        shouldAutoScrollInitialSelectionRef.current = false;
-                                        setSelectedPath(node.path);
-                                        return;
-                                    }
-                                    if (node.type === 'file') {
-                                        if (selectionMode !== 'file') return;
-                                        if (interaction === 'immediate') {
-                                            shouldAutoSelectInitialPathRef.current = false;
-                                            shouldAutoScrollInitialSelectionRef.current = false;
-                                            props.onPickPath(node.path);
-                                            return;
-                                        }
-                                        shouldAutoSelectInitialPathRef.current = false;
-                                        shouldAutoScrollInitialSelectionRef.current = false;
-                                        setSelectedPath(node.path);
-                                    }
-                                }}
-                                wrapContent={({ content }) => (
-                                    <View collapsable={false}>
-                                        <View
-                                            ref={contextMenuRowAnchorRef}
-                                            collapsable={false}
-                                            pointerEvents="none"
-                                            style={{
-                                                position: 'absolute',
-                                                left: rowPaddingLeft,
-                                                top: 0,
-                                                bottom: 0,
-                                                width: 1,
-                                            }}
-                                        />
-                                        {content}
-                                    </View>
-                                )}
-                            />
-                        );
-                    }}
+                    renderRow={renderBrowserRow}
                 />
                 <DropdownMenu
                     open={enableContextMenu && contextMenuDirectoryPath != null}
@@ -1311,7 +1223,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                         title={t('common.use')}
                         size="normal"
                         onPress={handleConfirm}
-                        disabled={!selectedPath}
+                        disabled={!selectedPath || Boolean(deepSearchEnabled ? deepSearchError : rootError)}
                     />
                 </View>
             ) : null}
