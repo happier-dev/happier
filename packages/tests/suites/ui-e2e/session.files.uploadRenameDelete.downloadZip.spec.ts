@@ -8,7 +8,7 @@ import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '.
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
-import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { acknowledgeTerminalConnectSuccessIfPresent } from '../../src/testkit/uiE2e/acknowledgeTerminalConnectSuccessIfPresent';
 import { clickScopedButtonByTestIdOrRole } from '../../src/testkit/uiE2e/clickScopedButtonByTestIdOrRole';
 import { spawnSessionFromDaemon } from '../../src/testkit/uiE2e/spawnSessionFromDaemon';
@@ -265,8 +265,7 @@ test.describe('ui e2e: Files upload + rename/delete + download (+ zip)', () => {
         await waitForInitialAppUi({ page, browserDiagnostics });
         await maybeDismissDetectedClisModal(page, 1_000).catch(() => {});
         await maybeDismissAgentPickerPopover(page).catch(() => {});
-        await page.getByTestId('welcome-create-account').first().click();
-        await expect(page.getByTestId('session-getting-started-kind-connect_machine')).toHaveCount(1, { timeout: 120_000 });
+        await createAccountAndReachConnectMachineState({ page, useFirstCreateButton: true });
 
       await mkdir(testDir, { recursive: true });
 
