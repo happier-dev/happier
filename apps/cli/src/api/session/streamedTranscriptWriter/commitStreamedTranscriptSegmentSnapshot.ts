@@ -76,6 +76,7 @@ export function commitStreamedTranscriptSegmentSnapshot(params: {
     });
 
   segment.didWriteDurable = true;
+  segment.lastDurableText = segment.accumulatedText;
   segment.lastCheckpointAtMs = nowMs;
   segment.lastCheckpointTextLen = segment.accumulatedText.length;
 }

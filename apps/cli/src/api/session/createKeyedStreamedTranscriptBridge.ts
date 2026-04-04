@@ -15,8 +15,11 @@ type KeyedStreamArgs = Readonly<{
 export function createKeyedStreamedTranscriptBridge<TArgs extends KeyedStreamArgs>(params: Readonly<{
   provider: ACPProvider;
   createSessionForStream: (args: TArgs) => StreamedTranscriptWriterSession;
+  initialCheckpointDelayMs?: number | null;
   checkpointIntervalMs?: number | null;
   checkpointMinChars?: number | null;
+  liveSnapshotIntervalMs?: number | null;
+  liveSnapshotMinChars?: number | null;
 }>) {
   const writerByStreamKey = new Map<string, StreamedTranscriptWriter>();
 
@@ -27,8 +30,11 @@ export function createKeyedStreamedTranscriptBridge<TArgs extends KeyedStreamArg
     const writer = createStreamedTranscriptWriter({
       provider: params.provider,
       session: params.createSessionForStream(args),
+      initialCheckpointDelayMs: params.initialCheckpointDelayMs,
       checkpointIntervalMs: params.checkpointIntervalMs,
       checkpointMinChars: params.checkpointMinChars,
+      liveSnapshotIntervalMs: params.liveSnapshotIntervalMs,
+      liveSnapshotMinChars: params.liveSnapshotMinChars,
     });
     writerByStreamKey.set(args.streamKey, writer);
     return writer;

@@ -4,6 +4,7 @@ import { logger } from '@/ui/logger';
 
 import type { ACPProvider } from '../sessionMessageTypes';
 import {
+  resolveInitialCheckpointDelayMs,
   resolveCheckpointIntervalMs,
   resolveCheckpointMinChars,
   resolveLiveSnapshotIntervalMs,
@@ -30,6 +31,7 @@ export function createStreamedTranscriptWriter(params: {
   provider: ACPProvider;
   session: StreamedTranscriptWriterSession;
   makeLocalId?: () => string;
+  initialCheckpointDelayMs?: number | null;
   checkpointIntervalMs?: number | null;
   checkpointMinChars?: number | null;
   liveSnapshotIntervalMs?: number | null;
@@ -39,6 +41,7 @@ export function createStreamedTranscriptWriter(params: {
   const session = params.session;
   const makeLocalId = typeof params.makeLocalId === 'function' ? params.makeLocalId : () => randomUUID();
 
+  const initialCheckpointDelayMs = resolveInitialCheckpointDelayMs(params.initialCheckpointDelayMs);
   const checkpointIntervalMs = resolveCheckpointIntervalMs(params.checkpointIntervalMs);
   const checkpointMinChars = resolveCheckpointMinChars(params.checkpointMinChars);
   const liveSnapshotIntervalMs = resolveLiveSnapshotIntervalMs(params.liveSnapshotIntervalMs);
@@ -47,6 +50,7 @@ export function createStreamedTranscriptWriter(params: {
   const segments = new Map<SegmentKey, SegmentRuntime>();
 
   const commitDurableSnapshot = (segment: SegmentRuntime, opts: { state: SegmentState; interruptedReason?: string }) => {
+    clearDurableCheckpointTimer(segment);
     commitStreamedTranscriptSegmentSnapshot({
       provider,
       session,
@@ -71,11 +75,13 @@ export function createStreamedTranscriptWriter(params: {
       accumulatedText: '',
       didWriteDurable: false,
       didWriteLive: false,
+      lastDurableText: '',
       lastCheckpointAtMs: 0,
       lastCheckpointTextLen: 0,
       lastLiveSnapshotAtMs: 0,
       lastLiveSnapshotTextLen: 0,
       lastLiveSnapshotText: '',
+      durableCheckpointTimer: null,
       liveSnapshotTimer: null,
       isCommittingDurable: false,
       pendingDurableCommit: null,
@@ -94,6 +100,49 @@ export function createStreamedTranscriptWriter(params: {
     if (!segment.liveSnapshotTimer) return;
     clearTimeout(segment.liveSnapshotTimer);
     segment.liveSnapshotTimer = null;
+  };
+
+  const clearDurableCheckpointTimer = (segment: SegmentRuntime) => {
+    if (!segment.durableCheckpointTimer) return;
+    clearTimeout(segment.durableCheckpointTimer);
+    segment.durableCheckpointTimer = null;
+  };
+
+  const hasDirtyDurableText = (segment: SegmentRuntime) => segment.accumulatedText !== segment.lastDurableText;
+
+  const getDirtyAppendChars = (segment: SegmentRuntime) => {
+    if (!segment.accumulatedText.startsWith(segment.lastDurableText)) return checkpointMinChars;
+    return segment.accumulatedText.length - segment.lastDurableText.length;
+  };
+
+  const commitScheduledDurableSnapshot = (segment: SegmentRuntime) => {
+    if (!segments.has(segment.key)) return;
+    if (!hasDirtyDurableText(segment)) return;
+    commitDurableSnapshot(segment, { state: 'streaming' });
+  };
+
+  const scheduleDurableCheckpoint = (segment: SegmentRuntime) => {
+    if (!hasDirtyDurableText(segment)) {
+      clearDurableCheckpointTimer(segment);
+      return;
+    }
+    if (segment.durableCheckpointTimer) return;
+
+    const elapsedMs = segment.didWriteDurable ? Date.now() - segment.lastCheckpointAtMs : 0;
+    const targetDelayMs = segment.didWriteDurable ? checkpointIntervalMs : initialCheckpointDelayMs;
+    const delayMs = targetDelayMs <= 0 ? 0 : Math.max(0, targetDelayMs - elapsedMs);
+
+    if (delayMs <= 0) {
+      commitScheduledDurableSnapshot(segment);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      segment.durableCheckpointTimer = null;
+      commitScheduledDurableSnapshot(segment);
+    }, delayMs);
+    timer.unref?.();
+    segment.durableCheckpointTimer = timer;
   };
 
   const emitLiveSnapshot = (segment: SegmentRuntime, opts: { state: SegmentState; interruptedReason?: string }) => {
@@ -191,29 +240,43 @@ export function createStreamedTranscriptWriter(params: {
     scheduleLiveSnapshot(segment);
   };
 
+  const maybeCommitDurableStreamingSnapshot = (segment: SegmentRuntime) => {
+    if (!hasDirtyDurableText(segment)) {
+      clearDurableCheckpointTimer(segment);
+      return;
+    }
+
+    if (!segment.didWriteDurable) {
+      scheduleDurableCheckpoint(segment);
+      return;
+    }
+
+    const addedChars = getDirtyAppendChars(segment);
+    if (checkpointIntervalMs === 0) {
+      if (addedChars >= checkpointMinChars) {
+        commitDurableSnapshot(segment, { state: 'streaming' });
+        return;
+      }
+      scheduleDurableCheckpoint(segment);
+      return;
+    }
+
+    const elapsedMs = Date.now() - segment.lastCheckpointAtMs;
+    if (elapsedMs >= checkpointIntervalMs && addedChars >= checkpointMinChars) {
+      commitDurableSnapshot(segment, { state: 'streaming' });
+      return;
+    }
+
+    scheduleDurableCheckpoint(segment);
+  };
+
   const appendDelta = (kind: SegmentKind, deltaText: string, sidechainId: string | null) => {
     if (!deltaText) return;
 
     const segment = getOrCreateSegment(kind, sidechainId);
     segment.accumulatedText += deltaText;
     maybeEmitLiveStreamingSnapshot(segment);
-
-    if (!segment.didWriteDurable) {
-      commitDurableSnapshot(segment, { state: 'streaming' });
-      return;
-    }
-
-    const nowMs = Date.now();
-    if (checkpointIntervalMs === 0) {
-      if (segment.accumulatedText.length - segment.lastCheckpointTextLen >= checkpointMinChars) {
-        commitDurableSnapshot(segment, { state: 'streaming' });
-      }
-      return;
-    }
-
-    if (nowMs - segment.lastCheckpointAtMs < checkpointIntervalMs) return;
-    if (segment.accumulatedText.length - segment.lastCheckpointTextLen < checkpointMinChars) return;
-    commitDurableSnapshot(segment, { state: 'streaming' });
+    maybeCommitDurableStreamingSnapshot(segment);
   };
 
   const overrideSegmentText = (kind: SegmentKind, text: string, sidechainId: string | null): boolean => {
@@ -221,6 +284,7 @@ export function createStreamedTranscriptWriter(params: {
     if (!segment) return false;
     segment.accumulatedText = text;
     maybeEmitLiveStreamingSnapshot(segment);
+    maybeCommitDurableStreamingSnapshot(segment);
     return true;
   };
 
@@ -232,6 +296,7 @@ export function createStreamedTranscriptWriter(params: {
     const drainPromises: Promise<void>[] = [];
 
     for (const segment of segments.values()) {
+      clearDurableCheckpointTimer(segment);
       clearLiveSnapshotTimer(segment);
       emitLiveSnapshot(segment, { state, interruptedReason: opts.interruptedReason });
       commitDurableSnapshot(segment, { state, interruptedReason: opts.interruptedReason });
