@@ -7,15 +7,24 @@ test('EAS local builds disable expo doctor step by default', () => {
   const env = createEasLocalBuildEnv({ baseEnv: {}, platform: 'ios' });
   assert.equal(env.EAS_BUILD_DISABLE_EXPO_DOCTOR_STEP, '1');
   assert.equal(env.FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT, '30');
+  assert.equal(env.RCT_USE_RN_DEP, '0');
+  assert.equal(env.RCT_USE_PREBUILT_RNCORE, '0');
 });
 
 test('EAS local builds do not override explicit expo doctor setting', () => {
   const env = createEasLocalBuildEnv({
-    baseEnv: { EAS_BUILD_DISABLE_EXPO_DOCTOR_STEP: '0', FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT: '5' },
+    baseEnv: {
+      EAS_BUILD_DISABLE_EXPO_DOCTOR_STEP: '0',
+      FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT: '5',
+      RCT_USE_RN_DEP: '1',
+      RCT_USE_PREBUILT_RNCORE: '1',
+    },
     platform: 'ios',
   });
   assert.equal(env.EAS_BUILD_DISABLE_EXPO_DOCTOR_STEP, '0');
   assert.equal(env.FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT, '5');
+  assert.equal(env.RCT_USE_RN_DEP, '1');
+  assert.equal(env.RCT_USE_PREBUILT_RNCORE, '1');
 });
 
 test('EAS local builds do not set fastlane xcode settings timeout for android', () => {

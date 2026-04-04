@@ -87,6 +87,19 @@ export function createEasLocalBuildEnv(opts) {
       env.FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT = '30';
     }
 
+    // EAS local iOS builds currently fail to compile some React Native codegen targets (for example
+    // `ReactCommon/react/bridging/Dynamic.h` -> `#include <folly/dynamic.h>`) when using the
+    // prebuilt React Native dependencies (`ReactNativeDependencies.xcframework`).
+    //
+    // Disable the prebuilt mode for local builds by default so local iteration is reliable.
+    // Cloud builds can still opt into prebuilt by setting these explicitly.
+    if (!Object.prototype.hasOwnProperty.call(env, 'RCT_USE_RN_DEP')) {
+      env.RCT_USE_RN_DEP = '0';
+    }
+    if (!Object.prototype.hasOwnProperty.call(env, 'RCT_USE_PREBUILT_RNCORE')) {
+      env.RCT_USE_PREBUILT_RNCORE = '0';
+    }
+
     // Xcode’s export pipeline can invoke `/usr/bin/rsync` (openrsync) which internally spawns a
     // server-side `rsync` process via PATH. If Homebrew rsync appears before `/usr/bin`, the two
     // implementations can mismatch and fail with:
