@@ -62,6 +62,7 @@ describe('createStreamedTranscriptWriter', () => {
       provider: 'codex' as any,
       session: session as any,
       makeLocalId: () => 'segment-1',
+      initialCheckpointDelayMs: 0,
       checkpointIntervalMs: 1_000,
       checkpointMinChars: 999,
       liveSnapshotIntervalMs: 40,
@@ -119,6 +120,7 @@ describe('createStreamedTranscriptWriter', () => {
       provider: 'codex' as any,
       session: session as any,
       makeLocalId: () => 'segment-1',
+      initialCheckpointDelayMs: 0,
       checkpointIntervalMs: 10_000,
       checkpointMinChars: 999,
       liveSnapshotIntervalMs: 5_000,
@@ -275,6 +277,7 @@ describe('createStreamedTranscriptWriter', () => {
       provider: 'codex' as any,
       session: session as any,
       makeLocalId: () => ids.shift() ?? 'missing',
+      initialCheckpointDelayMs: 0,
       checkpointIntervalMs: 1_000,
       checkpointMinChars: 1,
     });
@@ -310,6 +313,7 @@ describe('createStreamedTranscriptWriter', () => {
       provider: 'codex' as any,
       session: session as any,
       makeLocalId: () => 'segment-1',
+      initialCheckpointDelayMs: 0,
       checkpointIntervalMs: 0,
       checkpointMinChars: 1,
     });
@@ -346,6 +350,7 @@ describe('createStreamedTranscriptWriter', () => {
       provider: 'codex' as any,
       session: session as any,
       makeLocalId: () => ids.shift() ?? 'missing',
+      initialCheckpointDelayMs: 0,
       checkpointIntervalMs: 10_000,
       checkpointMinChars: 999,
     });
@@ -386,6 +391,7 @@ describe('createStreamedTranscriptWriter', () => {
       provider: 'codex' as any,
       session: session as any,
       makeLocalId: () => 'l1',
+      initialCheckpointDelayMs: 0,
       checkpointIntervalMs: 10_000,
       checkpointMinChars: 999,
     });
@@ -414,6 +420,7 @@ describe('createStreamedTranscriptWriter', () => {
       provider: 'codex' as any,
       session: session as any,
       makeLocalId: () => 'segment-1',
+      initialCheckpointDelayMs: 0,
       checkpointIntervalMs: 10_000,
       checkpointMinChars: 999,
     });
@@ -443,6 +450,7 @@ describe('createStreamedTranscriptWriter', () => {
       provider: 'codex' as any,
       session: session as any,
       makeLocalId: () => 'segment-1',
+      initialCheckpointDelayMs: 0,
       checkpointIntervalMs: 10_000,
       checkpointMinChars: 999,
     });
@@ -468,6 +476,7 @@ describe('createStreamedTranscriptWriter', () => {
       provider: 'codex' as any,
       session: session as any,
       makeLocalId: () => 'l1',
+      initialCheckpointDelayMs: 0,
       checkpointIntervalMs: 1_000,
       checkpointMinChars: 1,
     });
@@ -516,6 +525,7 @@ describe('createStreamedTranscriptWriter', () => {
       provider: 'codex' as any,
       session: session as any,
       makeLocalId: () => 'l1',
+      initialCheckpointDelayMs: 0,
       checkpointIntervalMs: 1_000,
       checkpointMinChars: 1,
     });
