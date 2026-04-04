@@ -155,22 +155,47 @@ json_lookup_asset_url() {
 resolve_exe_name() {
   if [[ "${PRODUCT}" == "server" ]]; then
     echo "happier-server"
-  else
-    echo "happier"
+    return
   fi
+  if [[ "${PRODUCT}" == "stack" ]]; then
+    echo "hstack"
+    return
+  fi
+  echo "happier"
 }
 
 resolve_install_name() {
   if [[ "${PRODUCT}" == "server" ]]; then
     echo "Happier Server"
+    return
+  fi
+  if [[ "${PRODUCT}" == "stack" ]]; then
+    echo "Happier Stack"
+    return
   else
     echo "Happier CLI"
   fi
 }
 
-resolve_installed_binary() {
+resolve_shim_name() {
+  if [[ "${PRODUCT}" == "cli" ]]; then
+    cli_shim_name "${CHANNEL}"
+    return
+  fi
+
   local exe
   exe="$(resolve_exe_name)"
+  case "${CHANNEL}" in
+    stable) echo "${exe}" ;;
+    preview) echo "${exe}-preview" ;;
+    publicdev) echo "${exe}-dev" ;;
+    *) return 1 ;;
+  esac
+}
+
+resolve_installed_binary() {
+  local exe
+  exe="$(resolve_shim_name)"
   local candidate="${INSTALL_DIR}/bin/${exe}"
   if [[ -x "${candidate}" ]]; then
     printf '%s' "${candidate}"
@@ -188,12 +213,14 @@ resolve_installed_binary() {
 action_check() {
   local exe
   exe="$(resolve_exe_name)"
+  local shim
+  shim="$(resolve_shim_name)"
   local name
   name="$(resolve_install_name)"
 
   local ok="1"
-  local binary_path="${INSTALL_DIR}/bin/${exe}"
-  local shim_path="${BIN_DIR}/${exe}"
+  local binary_path="${INSTALL_DIR}/bin/${shim}"
+  local shim_path="${BIN_DIR}/${shim}"
 
   info "${name} check"
   say "- product: ${PRODUCT}"
@@ -210,11 +237,11 @@ action_check() {
   fi
 
   local resolved=""
-  resolved="$(command -v "${exe}" 2>/dev/null || true)"
+  resolved="$(command -v "${shim}" 2>/dev/null || true)"
   if [[ -n "${resolved}" ]]; then
     say "- command: ${resolved}"
   else
-    warn "Command not found on PATH: ${exe}"
+    warn "Command not found on PATH: ${shim}"
   fi
 
   local resolved_binary=""
@@ -283,6 +310,8 @@ action_restart() {
 action_uninstall() {
   local exe
   exe="$(resolve_exe_name)"
+  local shim
+  shim="$(resolve_shim_name)"
   local name
   name="$(resolve_install_name)"
 
@@ -292,10 +321,29 @@ action_uninstall() {
     "${binary}" daemon service uninstall >/dev/null 2>&1 || true
   fi
 
-  rm -f "${BIN_DIR}/${exe}" "${INSTALL_DIR}/bin/${exe}.new" "${INSTALL_DIR}/bin/${exe}.previous" || true
-  rm -f "${INSTALL_DIR}/bin/${exe}" || true
+  rm -f "${BIN_DIR}/${shim}" "${INSTALL_DIR}/bin/${shim}.new" "${INSTALL_DIR}/bin/${shim}.previous" || true
+  rm -f "${INSTALL_DIR}/bin/${shim}" || true
   if [[ "${PRODUCT}" == "cli" ]]; then
-    rm -rf "${INSTALL_DIR}/cli" || true
+    local root=""
+    root="$(cli_managed_install_root "${CHANNEL}")" || {
+      echo "Unsupported CLI channel: ${CHANNEL}" >&2
+      exit 1
+    }
+    rm -rf "${INSTALL_DIR}/${root}" || true
+  elif [[ "${PRODUCT}" == "server" ]]; then
+    local root=""
+    root="$(server_managed_install_root "${CHANNEL}")" || {
+      echo "Unsupported server channel: ${CHANNEL}" >&2
+      exit 1
+    }
+    rm -rf "${INSTALL_DIR}/${root}" || true
+  elif [[ "${PRODUCT}" == "stack" ]]; then
+    local root=""
+    root="$(stack_managed_install_root "${CHANNEL}")" || {
+      echo "Unsupported stack channel: ${CHANNEL}" >&2
+      exit 1
+    }
+    rm -rf "${INSTALL_DIR}/${root}" || true
   fi
   if [[ "${PURGE_INSTALL_DIR}" == "1" ]]; then
     rm -rf "${INSTALL_DIR}" || true
@@ -374,6 +422,24 @@ cli_shim_name() {
     stable) echo "happier" ;;
     preview) echo "hprev" ;;
     publicdev) echo "hdev" ;;
+    *) return 1 ;;
+  esac
+}
+
+server_managed_install_root() {
+  case "$1" in
+    stable) echo "server" ;;
+    preview) echo "server-preview" ;;
+    publicdev) echo "server-dev" ;;
+    *) return 1 ;;
+  esac
+}
+
+stack_managed_install_root() {
+  case "$1" in
+    stable) echo "stack" ;;
+    preview) echo "stack-preview" ;;
+    publicdev) echo "stack-dev" ;;
     *) return 1 ;;
   esac
 }
@@ -942,6 +1008,7 @@ mkdir -p "${INSTALL_DIR}/bin" "${BIN_DIR}"
 TARGET_BIN="${INSTALL_DIR}/bin/${EXE_NAME}"
 DISPLAY_BINARY_PATH="${TARGET_BIN}"
 DISPLAY_SHIM_PATH="${BIN_DIR}/${EXE_NAME}"
+INSTALL_SHIM_PATH="${TARGET_BIN}"
 CLI_USED_LEGACY_FALLBACK="0"
 
 if [[ "${PRODUCT}" == "cli" ]]; then
@@ -984,17 +1051,60 @@ if [[ "${PRODUCT}" == "cli" ]]; then
     chmod +x "${TARGET_BIN}"
   fi
 else
-  STAGED_BIN="${TARGET_BIN}.new"
-  PREVIOUS_BIN="${TARGET_BIN}.previous"
-  cp "${PAYLOAD_BINARY_PATH}" "${STAGED_BIN}"
-  chmod +x "${STAGED_BIN}"
-  if [[ -f "${TARGET_BIN}" ]]; then
-    cp "${TARGET_BIN}" "${PREVIOUS_BIN}" >/dev/null 2>&1 || true
-    chmod +x "${PREVIOUS_BIN}" >/dev/null 2>&1 || true
+  SHIM_NAME="$(resolve_shim_name)" || {
+    echo "Unsupported channel: ${CHANNEL}" >&2
+    exit 1
+  }
+  DISPLAY_SHIM_PATH="${BIN_DIR}/${SHIM_NAME}"
+  INSTALL_SHIM_PATH="${INSTALL_DIR}/bin/${SHIM_NAME}"
+
+  if [[ "${PRODUCT}" == "server" || "${PRODUCT}" == "stack" ]]; then
+    MANAGED_ROOT=""
+    if [[ "${PRODUCT}" == "server" ]]; then
+      MANAGED_ROOT="$(server_managed_install_root "${CHANNEL}")" || {
+        echo "Unsupported server channel: ${CHANNEL}" >&2
+        exit 1
+      }
+    else
+      MANAGED_ROOT="$(stack_managed_install_root "${CHANNEL}")" || {
+        echo "Unsupported stack channel: ${CHANNEL}" >&2
+        exit 1
+      }
+    fi
+
+    VERSION_DIR="${INSTALL_DIR}/${MANAGED_ROOT}/versions/${VERSION}"
+    mkdir -p "${VERSION_DIR}"
+    PAYLOAD_DIRNAME="$(basename "${PAYLOAD_ROOT}")"
+    PAYLOAD_DEST="${VERSION_DIR}/${PAYLOAD_DIRNAME}"
+    rm -rf "${PAYLOAD_DEST}" || true
+    cp -R "${PAYLOAD_ROOT}" "${VERSION_DIR}/"
+
+    mkdir -p "${INSTALL_DIR}/${MANAGED_ROOT}"
+    ln -sfn "${PAYLOAD_DEST}" "${INSTALL_DIR}/${MANAGED_ROOT}/current"
+
+    DISPLAY_BINARY_PATH="${INSTALL_DIR}/${MANAGED_ROOT}/current/${EXE_NAME}"
+
+    cat > "${INSTALL_SHIM_PATH}" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+cd "${INSTALL_DIR}/${MANAGED_ROOT}/current"
+exec "./${EXE_NAME}" "\$@"
+EOF
+    chmod +x "${INSTALL_SHIM_PATH}"
+  else
+    STAGED_BIN="${TARGET_BIN}.new"
+    PREVIOUS_BIN="${TARGET_BIN}.previous"
+    cp "${PAYLOAD_BINARY_PATH}" "${STAGED_BIN}"
+    chmod +x "${STAGED_BIN}"
+    if [[ -f "${TARGET_BIN}" ]]; then
+      cp "${TARGET_BIN}" "${PREVIOUS_BIN}" >/dev/null 2>&1 || true
+      chmod +x "${PREVIOUS_BIN}" >/dev/null 2>&1 || true
+    fi
+    # Avoid ETXTBSY when replacing a running executable: swap the directory entry atomically.
+    mv -f "${STAGED_BIN}" "${TARGET_BIN}"
+    chmod +x "${TARGET_BIN}"
+    INSTALL_SHIM_PATH="${TARGET_BIN}"
   fi
-  # Avoid ETXTBSY when replacing a running executable: swap the directory entry atomically.
-  mv -f "${STAGED_BIN}" "${TARGET_BIN}"
-  chmod +x "${TARGET_BIN}"
 fi
 
 if [[ "${PRODUCT}" == "cli" && "${CLI_USED_LEGACY_FALLBACK}" != "1" ]]; then
@@ -1005,7 +1115,7 @@ if [[ "${PRODUCT}" == "cli" && "${CLI_USED_LEGACY_FALLBACK}" != "1" ]]; then
     ln -sf "${DISPLAY_BINARY_PATH}" "${DISPLAY_SHIM_PATH}"
   fi
 else
-  ln -sf "${TARGET_BIN}" "${DISPLAY_SHIM_PATH}"
+  ln -sf "${INSTALL_SHIM_PATH}" "${DISPLAY_SHIM_PATH}"
 fi
 
 append_path_hint
