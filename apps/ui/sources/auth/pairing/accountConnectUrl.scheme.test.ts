@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 describe('accountConnectUrl scheme override', () => {
-    it('builds and parses account deep links using the configured app scheme', async () => {
+    it('builds with the configured scheme and parses first-party Happier schemes', async () => {
         vi.resetModules();
         vi.doMock('expo-constants', () => ({
             default: {
@@ -15,8 +15,9 @@ describe('accountConnectUrl scheme override', () => {
 
         expect(buildAccountConnectDeepLink({ publicKeyB64Url: 'abc123' })).toBe('happier-dev:///account?abc123');
         expect(parseAccountConnectDeepLink('happier-dev:///account?abc123')).toEqual({ publicKeyB64Url: 'abc123' });
-
-        // Fail closed: production-scheme links should not parse in dev-scheme builds.
-        expect(parseAccountConnectDeepLink('happier:///account?abc123')).toBeNull();
+        expect(parseAccountConnectDeepLink('happier:///account?abc123')).toEqual({ publicKeyB64Url: 'abc123' });
+        expect(parseAccountConnectDeepLink('happier-internaldev:///account?abc123')).toEqual({ publicKeyB64Url: 'abc123' });
+        expect(parseAccountConnectDeepLink('happier-custom:///account?abc123')).toEqual({ publicKeyB64Url: 'abc123' });
+        expect(parseAccountConnectDeepLink('otherapp:///account?abc123')).toBeNull();
     });
 });

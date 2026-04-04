@@ -1,11 +1,11 @@
-import { resolveAppUrlProtocol, resolveAppUrlScheme } from '@/utils/url/appScheme';
+import { isAcceptedHappierUrlProtocol, resolveAppUrlScheme } from '@/utils/url/appScheme';
 
 export type ParsedAccountConnectDeepLink = Readonly<{
     publicKeyB64Url: string;
 }>;
 
 function isValidAccountLinkTarget(url: URL): boolean {
-    if (url.protocol !== resolveAppUrlProtocol()) return false;
+    if (!isAcceptedHappierUrlProtocol(url.protocol)) return false;
 
     const pathname = url.pathname ?? '';
     const hostname = url.hostname ?? '';

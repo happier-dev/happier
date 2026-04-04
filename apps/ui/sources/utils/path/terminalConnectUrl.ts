@@ -1,4 +1,4 @@
-import { resolveAppUrlScheme } from '@/utils/url/appScheme';
+import { isAcceptedHappierUrlProtocol, resolveAppUrlScheme } from '@/utils/url/appScheme';
 
 export type ParsedTerminalConnectUrl = Readonly<{
     publicKeyB64Url: string;
@@ -73,13 +73,19 @@ export function buildTerminalConnectWebHref(params: Readonly<{
 }
 
 export function parseTerminalConnectUrl(url: string): ParsedTerminalConnectUrl | null {
-    const terminalPrefix = `${resolveAppUrlScheme()}://terminal?`;
     const raw = String(url ?? '');
-    if (!raw.startsWith(terminalPrefix)) {
+    let parsed: URL | null = null;
+    try {
+        parsed = new URL(raw);
+    } catch {
+        parsed = null;
+    }
+
+    if (!parsed || !isAcceptedHappierUrlProtocol(parsed.protocol) || parsed.hostname !== 'terminal') {
         return parseTerminalConnectWebUrl(raw);
     }
 
-    const tail = raw.slice(terminalPrefix.length);
+    const tail = raw.slice(`${parsed.protocol}//terminal?`.length);
     if (!tail) return null;
 
     // Legacy format: happier://terminal?<publicKeyB64Url>

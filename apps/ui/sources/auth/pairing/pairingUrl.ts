@@ -1,4 +1,4 @@
-import { resolveAppUrlProtocol, resolveAppUrlScheme } from '@/utils/url/appScheme';
+import { isAcceptedHappierUrlProtocol, resolveAppUrlScheme } from '@/utils/url/appScheme';
 
 type PairingDeepLinkPayload = {
     pairId: string;
@@ -7,7 +7,7 @@ type PairingDeepLinkPayload = {
 };
 
 function isValidPairingLinkTarget(url: URL): boolean {
-    if (url.protocol !== resolveAppUrlProtocol()) return false;
+    if (!isAcceptedHappierUrlProtocol(url.protocol)) return false;
 
     const pathname = url.pathname ?? '';
     const hostname = url.hostname ?? '';
