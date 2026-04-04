@@ -1,9 +1,9 @@
+import { extractShellCommand, stripShellCommandPreludeForDisplay } from '@happier-dev/protocol';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
 import { t } from '@/text';
 import { ICON_TERMINAL, ICON_EXIT } from '../icons';
 import type { KnownToolDefinition } from '../_types';
-import { extractShellCommand, stripShellCommandPreludeForDisplay } from '../../normalization/parse/shellCommand';
 import { extractHappierToolsShellBridgeCommand } from '../../normalization/parse/happierToolsShellBridge';
 import { getHappierToolsShellBridgeDisplay } from '../../normalization/parse/happierToolsShellBridgeDisplay';
 import { BashInputV2Schema, BashResultV2Schema, ExitPlanModeInputV2Schema } from '@happier-dev/protocol';

@@ -48,10 +48,6 @@ vi.mock('@/agents/catalog/permissionUiCopy', () => ({
     }),
 }));
 
-vi.mock('@/components/tools/normalization/policy/permissionSummary', () => ({
-    formatPermissionRequestSummary: () => 'SUMMARY',
-}));
-
 describe('PermissionFooter summary visibility', () => {
     it('does not render when approvals are disabled due to inactive session', async () => {
         const screen = await renderScreen(React.createElement(PermissionFooter, {

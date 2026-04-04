@@ -1,9 +1,9 @@
+import { extractShellCommand, stripShellCommandPreludeForDisplay } from '@happier-dev/protocol';
 import * as React from 'react';
 import { ToolCall } from '@/sync/domains/messages/messageTypes';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { CommandView } from '@/components/sessions/transcript/CommandView';
 import { Metadata } from '@/sync/domains/state/storageTypes';
-import { extractShellCommand, stripShellCommandPreludeForDisplay } from '../../normalization/parse/shellCommand';
 import { maybeParseJson } from '../../normalization/parse/parseJson';
 import { extractStdStreams, tailTextWithEllipsis } from '../../normalization/parse/stdStreams';
 import { CodeView } from '@/components/ui/media/CodeView';

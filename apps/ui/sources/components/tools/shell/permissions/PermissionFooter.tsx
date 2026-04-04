@@ -1,3 +1,4 @@
+import { extractShellCommand, formatPermissionRequestSummary } from '@happier-dev/protocol';
 import React, { useState } from 'react';
 import { View, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -8,9 +9,7 @@ import { t } from '@/text';
 import { resolveAgentIdForPermissionUi } from '@/agents/catalog/resolve';
 import { getPermissionFooterCopy } from '@/agents/catalog/permissionUiCopy';
 import { getAgentBehavior } from '@/agents/catalog/catalog';
-import { extractShellCommand } from '@/components/tools/normalization/parse/shellCommand';
 import { parseParenIdentifier } from '@/components/tools/normalization/parse/parseParenIdentifier';
-import { formatPermissionRequestSummary } from '@/components/tools/normalization/policy/permissionSummary';
 import { Text } from '@/components/ui/text/Text';
 
 
