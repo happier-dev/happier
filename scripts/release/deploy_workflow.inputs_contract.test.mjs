@@ -34,3 +34,12 @@ test('deploy workflow does not include cli/stack targets (npm publish is handled
   assert.doesNotMatch(raw, /deploy production cli/);
   assert.doesNotMatch(raw, /deploy preview cli/);
 });
+
+test('deploy workflow allows manual dispatch from deploy branches so protected environments remain reachable', async () => {
+  const { raw } = await loadWorkflow('deploy.yml');
+  assert.match(
+    raw,
+    /case "\$\{GITHUB_REF_NAME\}" in[\s\S]*deploy\/\*\)/,
+    'deploy.yml should allow workflow_dispatch from deploy/* refs because protected deploy environments only accept deploy branches'
+  );
+});
