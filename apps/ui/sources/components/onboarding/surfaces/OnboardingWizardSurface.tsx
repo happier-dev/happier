@@ -869,6 +869,130 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         stepId,
     ]);
 
+    const activeReachabilityRemediationEndpoint = React.useMemo(() => {
+        if (stepId === 'relay_enter_url') {
+            return relayEnterUrlEndpointForReadiness;
+        }
+        if (stepId === 'confirm_switch_relay' && relaySwitchDecision === 'switch') {
+            return confirmSwitchRelayEndpointForReadiness;
+        }
+        return null;
+    }, [confirmSwitchRelayEndpointForReadiness, relayEnterUrlEndpointForReadiness, relaySwitchDecision, stepId]);
+
+    const activeReachabilityRemediation = React.useMemo<EndpointReachabilityRemediation | null>(() => {
+        if (!activeReachabilityRemediationEndpoint) {
+            return null;
+        }
+        const readiness = relayReadinessByEndpoint.get(activeReachabilityRemediationEndpoint);
+        if (!readiness?.probeResult) {
+            return null;
+        }
+        return resolveEndpointReachabilityRemediation({
+            endpointUrl: activeReachabilityRemediationEndpoint,
+            readiness: readiness.probeResult,
+            platformOs: Platform.OS,
+            isDesktopShell: props.isDesktopShell,
+        });
+    }, [activeReachabilityRemediationEndpoint, props.isDesktopShell, relayReadinessByEndpoint]);
+
+    const isActiveReachabilityRemediationPending = React.useMemo(() => {
+        if (!activeReachabilityRemediationEndpoint) {
+            return false;
+        }
+        if (getEndpointReachabilityProvider(activeReachabilityRemediationEndpoint) !== 'tailscale') {
+            return false;
+        }
+        const readiness = relayReadinessByEndpoint.get(activeReachabilityRemediationEndpoint);
+        return readiness == null || readiness.status === 'checking';
+    }, [activeReachabilityRemediationEndpoint, relayReadinessByEndpoint]);
+
+    const handleReachabilityRemediationAction = React.useCallback(async (
+        actionId: EndpointReachabilityRemediationAction['id'],
+    ) => {
+        const remediation = activeReachabilityRemediation;
+        const endpoint = activeReachabilityRemediationEndpoint;
+        if (!remediation || !endpoint) {
+            return;
+        }
+        const action = remediation.actions.find((candidate) => candidate.id === actionId);
+        if (!action) {
+            return;
+        }
+
+        if (action.kind === 'retry') {
+            setReachabilityRemediationError(null);
+            retryEndpoint(endpoint);
+            return;
+        }
+
+        if (action.kind === 'external-url') {
+            const opened = await openExternalUrl(action.url, { platformOS: Platform.OS });
+            if (!opened) {
+                await Modal.alert(t('common.error'), t('server.reachabilityRemediation.failedToOpenInstallLink'));
+            }
+            return;
+        }
+
+        if (action.kind === 'callback' && action.callbackSlot === 'tailscale.ensureReady') {
+            try {
+                setReachabilityRemediationError(null);
+                const taskId = await systemTaskRunner.start(createTailscaleEnsureReadyTaskSpec({
+                    installPolicy: 'installIfMissing',
+                    loginPolicy: 'interactive',
+                    mode: 'normalUser',
+                }));
+                handledTailscaleEnsureReadyTaskIdRef.current = null;
+                reachabilityRemediationRetryEndpointRef.current = endpoint;
+                setTailscaleEnsureReadyTaskId(taskId);
+            } catch (error) {
+                const message = readSystemTaskStartErrorMessage(error);
+                setReachabilityRemediationError(
+                    isSystemTaskBridgeUnavailableError(error)
+                        ? t('settings.systemTaskBridgeUnavailable')
+                        : (message ?? t('settings.systemTaskStartFailed')),
+                );
+            }
+        }
+    }, [
+        activeReachabilityRemediation,
+        activeReachabilityRemediationEndpoint,
+        retryEndpoint,
+        systemTaskRunner,
+    ]);
+
+    React.useEffect(() => {
+        const result = tailscaleEnsureReadySnapshot?.result;
+        if (!result) {
+            return;
+        }
+        if (handledTailscaleEnsureReadyTaskIdRef.current === tailscaleEnsureReadySnapshot.taskId) {
+            return;
+        }
+        handledTailscaleEnsureReadyTaskIdRef.current = tailscaleEnsureReadySnapshot.taskId;
+        if (!result.ok) {
+            const message = typeof result.error?.message === 'string' ? result.error.message.trim() : '';
+            setReachabilityRemediationError(message || t('settings.systemTaskStartFailed'));
+            setTailscaleEnsureReadyTaskId(null);
+            return;
+        }
+        const endpoint = reachabilityRemediationRetryEndpointRef.current;
+        setReachabilityRemediationError(null);
+        if (endpoint) {
+            retryEndpoint(endpoint);
+        }
+        setTailscaleEnsureReadyTaskId(null);
+    }, [retryEndpoint, tailscaleEnsureReadySnapshot]);
+
+    React.useEffect(() => {
+        if (activeReachabilityRemediation) {
+            return;
+        }
+        if (tailscaleEnsureReadyTaskId) {
+            return;
+        }
+        setReachabilityRemediationError(null);
+    }, [activeReachabilityRemediation, tailscaleEnsureReadyTaskId]);
+
     const primaryDisabled =
         (stepId === 'relay_select' && (
             state.context.relaySelection.choiceId == null
@@ -881,6 +1005,22 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
                 )
             )
         ))
+        || (
+            stepId === 'relay_enter_url'
+            && (
+                activeReachabilityRemediation != null
+                || isActiveReachabilityRemediationPending
+            )
+        )
+        || (
+            stepId === 'confirm_switch_relay'
+            && relaySwitchDecision === 'switch'
+            && (
+                activeReachabilityRemediation != null
+                || isActiveReachabilityRemediationPending
+                || (tailscaleEnsureReadyTaskId != null && tailscaleEnsureReadySnapshot?.result == null)
+            )
+        )
         || (stepId === 'host_relay_local' && !localRelayRuntimeStatus?.relayUrl)
         || (stepId === 'host_relay_remote' && !normalizeServerUrl(String(state.context.relaySelection.serverUrl ?? '').trim()));
 
