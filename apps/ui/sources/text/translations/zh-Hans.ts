@@ -1492,56 +1492,56 @@ export const zhHans: TranslationStructure = {
     machineSetupRemotePromptReplaceAction: "替换已保存的密钥",
     machineSetupRemotePromptApproveAction: "批准配对",
     localRelayRuntime: {
-      title: 'Local Relay runtime',
-      statusTitle: 'Status',
-      statusChecking: 'Checking local Relay runtime',
-      statusNotInstalled: 'Not installed on this computer yet',
-      statusStopped: 'Installed, but not currently running',
-      statusRunningHealthy: 'Running and responding normally',
-      statusRunningNeedsAttention: 'Running, but health checks need attention',
-      versionTitle: 'Installed version',
-      relayUrlTitle: 'Local Relay URL',
-      installOrUpdateAction: 'Install or update Relay runtime',
-      startAction: 'Start Relay runtime',
-      stopAction: 'Stop Relay runtime',
-      refreshAction: 'Refresh Relay status',
-      footer: 'Manage the self-hosted Relay running on this computer before you connect other devices.',
-      progressTitle: 'Updating local Relay runtime',
-      progressStepInspect: 'Inspect local Relay runtime',
-      progressStepHealth: 'Check Relay health',
-      progressStepInstall: 'Install Relay runtime',
-      progressStepStart: 'Start Relay runtime',
-      progressStepStop: 'Stop Relay runtime',
+      title: '本地 Relay 运行时',
+      statusTitle: '状态',
+      statusChecking: '正在检查本地 Relay 运行时',
+      statusNotInstalled: '这台电脑上尚未安装',
+      statusStopped: '已安装，但当前未运行',
+      statusRunningHealthy: '正在运行且响应正常',
+      statusRunningNeedsAttention: '正在运行，但健康检查需要关注',
+      versionTitle: '已安装版本',
+      relayUrlTitle: '本地 Relay URL',
+      installOrUpdateAction: '安装或更新 Relay 运行时',
+      startAction: '启动 Relay 运行时',
+      stopAction: '停止 Relay 运行时',
+      refreshAction: '刷新 Relay 状态',
+      footer: '在连接其他设备之前，先管理这台电脑上运行的自托管 Relay。',
+      progressTitle: '正在更新本地 Relay 运行时',
+      progressStepInspect: '检查本地 Relay 运行时',
+      progressStepHealth: '检查 Relay 健康状态',
+      progressStepInstall: '安装 Relay 运行时',
+      progressStepStart: '启动 Relay 运行时',
+      progressStepStop: '停止 Relay 运行时',
     },
     localTailscale: {
-      title: 'Private access with Tailscale',
-      statusTitle: 'Status',
-      statusUnavailable: 'Start the local Relay runtime first',
-      statusIdle: 'Not enabled yet',
-      statusWorking: 'Configuring secure private access',
-      statusReady: 'Ready to use from other tailnet devices',
+      title: '通过 Tailscale 的私密访问',
+      statusTitle: '状态',
+      statusUnavailable: '请先启动本地 Relay 运行时',
+      statusIdle: '尚未启用',
+      statusWorking: '正在配置安全的私密访问',
+      statusReady: '已可供其他 tailnet 设备使用',
       statusInstallRequired: '安装 Tailscale 以继续',
       statusLoginRequired: '登录 Tailscale 以继续',
-      statusNeedsApproval: 'Waiting for Tailscale approval',
-      shareableUrlTitle: 'Shareable private URL',
-      approvalTitle: 'Approval required',
-      approvalSubtitle: 'Finish the Tailscale approval flow, then come back here.',
+      statusNeedsApproval: '正在等待 Tailscale 批准',
+      shareableUrlTitle: '可分享的私密 URL',
+      approvalTitle: '需要批准',
+      approvalSubtitle: '完成 Tailscale 批准流程后再返回这里。',
       installTitle: '需要安装',
       installSubtitle: '安装 Tailscale 后再返回这里。',
       loginTitle: '需要登录',
       loginSubtitle: '完成 Tailscale 登录流程后再返回这里。',
-      enableAction: 'Enable private access with Tailscale',
-      refreshAction: 'Re-check private access',
-      openApprovalAction: 'Open Tailscale approval',
+      enableAction: '启用通过 Tailscale 的私密访问',
+      refreshAction: '重新检查私密访问',
+      openApprovalAction: '打开 Tailscale 批准',
       openInstallAction: '打开 Tailscale 下载',
       openLoginAction: '打开 Tailscale 登录',
-      footer: 'This keeps access tailnet-private. Your phone or other computer must also join the same tailnet.',
-      progressTitle: 'Configuring Tailscale secure access',
-      progressStepDetect: 'Check Tailscale availability',
-      progressStepInstall: 'Install Tailscale',
-      progressStepLogin: 'Sign in to Tailscale',
-      progressStepServeEnable: 'Enable private Relay access',
-      progressStepVerifyUrl: 'Verify the shareable URL',
+      footer: '这会将访问限制在 tailnet 内。你的手机或其他电脑也必须加入同一个 tailnet。',
+      progressTitle: '正在配置 Tailscale 安全访问',
+      progressStepDetect: '检查 Tailscale 可用性',
+      progressStepInstall: '安装 Tailscale',
+      progressStepLogin: '登录 Tailscale',
+      progressStepServeEnable: '启用 Relay 私密访问',
+      progressStepVerifyUrl: '验证可分享 URL',
     },
     systemTaskStepPrepare: "准备任务",
     systemTaskStepInstallRuntime: "安装运行时",
@@ -2389,10 +2389,10 @@ export const zhHans: TranslationStructure = {
   },
 
   settingsDesktop: {
-    title: 'Desktop',
-    footer: 'Controls Tauri desktop integrations on this computer.',
-    startOnLoginTitle: 'Launch at login',
-    startOnLoginSubtitle: 'Start Happier automatically when you sign in to this computer.',
+    title: '桌面',
+    footer: '管理这台电脑上的 Tauri 桌面集成。',
+    startOnLoginTitle: '登录时启动',
+    startOnLoginSubtitle: '当你登录这台电脑时自动启动 Happier。',
   },
 
   settingsNotifications: {
@@ -2640,18 +2640,18 @@ export const zhHans: TranslationStructure = {
     installInfoSeeSetupGuide: "查看设置指南",
     installInfoUseProviderCliInstaller: "使用提供商的 CLI 安装器",
     setup: {
-        selectionFooter: 'Choose one or more providers, then complete them one at a time on the selected machine.',
-        startTitle: 'Set up providers',
-        startDescription: 'Queue the selected providers and walk through install and sign-in in a single canonical flow.',
-        queueTitle: 'Provider setup queue',
+        selectionFooter: '选择一个或多个提供商，然后在所选机器上逐个完成设置。',
+        startTitle: '设置提供商',
+        startDescription: '将所选提供商加入队列，并通过单一的标准流程完成安装与登录。',
+        queueTitle: '提供商设置队列',
         queueDescription: ({ provider }: { provider: string }) => `Finish ${provider}, then continue to the next provider in the queue.`,
-        activeDescription: 'Current provider in the setup queue',
-        activeStatus: 'In progress',
-        completedStatus: 'Completed',
-        skippedStatus: 'Skipped',
-        skipAction: 'Skip this provider',
-        completedTitle: 'Provider setup complete',
-        completedDescription: 'You have reached the end of the selected provider queue.',
+        activeDescription: '设置队列中的当前提供商',
+        activeStatus: '进行中',
+        completedStatus: '已完成',
+        skippedStatus: '已跳过',
+        skipAction: '跳过此提供商',
+        completedTitle: '提供商设置完成',
+        completedDescription: '你已到达所选提供商队列的末尾。',
     },
     cliSourcePreference: {
       title: "CLI 来源偏好",
@@ -2766,7 +2766,7 @@ export const zhHans: TranslationStructure = {
                         subtitle: "启用 Claude Code 调试日志（等同于 --debug）。"
                     },
                     claudeRemoteVerboseEnabled: {
-                        title: "Verbose",
+                        title: "详细",
                         subtitle: "启用详细日志（等同于 --verbose）。"
                     },
                     claudeRemoteDebugCategories: {
@@ -4005,25 +4005,25 @@ export const zhHans: TranslationStructure = {
     saveServerGroup: "保存组",
     serverGroupMustHaveServer: "Relay 组至少需要包含一个 Relay。",
     relayDrift: {
-        bannerDifferentRelayTitle: 'Your background service is connected to a different Relay',
+        bannerDifferentRelayTitle: '你的后台服务已连接到其他 Relay',
         bannerDifferentRelayDescription: ({ activeRelayUrl, daemonRelayUrl }: { activeRelayUrl: string; daemonRelayUrl: string }) => `App: ${activeRelayUrl} · Background service: ${daemonRelayUrl}`,
-        bannerNeedsAuthTitle: 'Your background service needs to sign in to this Relay',
+        bannerNeedsAuthTitle: '你的后台服务需要登录到此 Relay',
         bannerNeedsAuthDescription: ({ activeRelayUrl }: { activeRelayUrl: string }) => `The app is using ${activeRelayUrl}, but the background service still needs approval or sign-in.`,
-        bannerNotConfiguredTitle: 'Your background service is not connected to this Relay yet',
+        bannerNotConfiguredTitle: '你的后台服务尚未连接到此 Relay',
         bannerNotConfiguredDescription: ({ activeRelayUrl }: { activeRelayUrl: string }) => `The app is using ${activeRelayUrl}, but this computer has not finished connecting the background service.`,
-        bannerNotInstalledTitle: 'Your background service is not installed for this Relay',
+        bannerNotInstalledTitle: '你的后台服务尚未为此 Relay 安装',
         bannerNotInstalledDescription: ({ activeRelayUrl }: { activeRelayUrl: string }) =>
             `The app is using ${activeRelayUrl}, but this computer still needs to install the background service for it.`,
-        bannerNotRunningTitle: 'Your background service is installed but not running',
+        bannerNotRunningTitle: '你的后台服务已安装但未运行',
         bannerNotRunningDescription: ({ activeRelayUrl }: { activeRelayUrl: string }) =>
             `The app is using ${activeRelayUrl}, but the background service is stopped and needs to be started again.`,
-        repairAction: 'Connect background service to this Relay',
+        repairAction: '将后台服务连接到此 Relay',
         progressTitle: '正在将后台服务连接到此 Relay',
         progressStepPrepare: '准备后台服务',
         progressStepConfigureRelay: '更新 Relay 连接',
         progressStepAuthenticate: '完成登录和授权',
         progressStepFinish: '完成修复',
-        statusUnknown: 'Unknown',
+        statusUnknown: '未知',
     },
     retention: {
         title: "数据保留策略",
@@ -6562,21 +6562,21 @@ settingsSession: {
 
           title: {
 
-              connectMachine: 'Set up this computer',
+              connectMachine: '设置这台电脑',
 
-              startDaemon: 'Reconnect this computer',
+              startDaemon: '重新连接这台电脑',
 
-              createSession: 'Create a session',
+              createSession: '创建会话',
 
-              selectSession: 'Select a session',
+              selectSession: '选择会话',
 
-              loading: 'Loading…',
+              loading: '加载中…',
 
           },
         cliFollowUpTitle: '终端备用路径（可选）',
         manualDisclosure: {
-            show: 'Show manual terminal steps',
-            hide: 'Hide manual terminal steps',
+            show: '显示手动终端步骤',
+            hide: '隐藏手动终端步骤',
         },
 
           subtitle: {
@@ -6589,11 +6589,11 @@ settingsSession: {
 
                   `Use the desktop setup flow to reconnect the background service for ${targetLabel}. Open the manual steps only if you are already on that computer.`,
 
-              createSession: 'Start a new session with the + button, or from your terminal.',
+              createSession: '使用 + 按钮或从终端启动一个新会话。',
 
-              selectSession: 'Pick a session from the sidebar to view it here.',
+              selectSession: '从侧边栏选择一个会话并在这里查看。',
 
-              loading: 'Fetching your machines and sessions…',
+              loading: '正在获取你的机器和会话…',
 
           },
 
@@ -6601,91 +6601,91 @@ settingsSession: {
 
               openSetup: {
 
-                  title: 'Use the desktop setup flow',
+                  title: '使用桌面设置流程',
 
-                  description: 'This is the recommended path. It configures the relay, installs the background service, and keeps the rest of setup in the app.',
+                  description: '这是推荐路径。它会配置 Relay、安装后台服务，并将其余设置留在应用中完成。',
 
               },
 
               startDaemonOpenSetup: {
 
-                  description: 'Use the desktop setup flow to reconnect or repair the background service on this computer before you fall back to terminal commands.',
+                  description: '在退回到终端命令之前，请先使用桌面设置流程重新连接或修复这台电脑上的后台服务。',
 
               },
 
               installCli: {
 
-                  title: 'Install the CLI',
+                  title: '安装 CLI',
 
-                  description: 'Run this once on the machine you want to connect.',
+                  description: '在你要连接的机器上运行一次即可。',
 
-                  copyLabel: 'Install command',
+                  copyLabel: '安装命令',
 
               },
 
               serverSetup: {
 
-                  title: 'Set the active Relay',
+                  title: '设置当前 Relay',
 
-                  description: 'One-time, so the next commands target the right Relay.',
+                  description: '只需执行一次，这样后续命令就会指向正确的 Relay。',
 
-                  copyLabel: 'Relay setup',
+                  copyLabel: 'Relay 设置',
 
               },
 
               authLogin: {
 
-                  title: 'Sign in',
+                  title: '登录',
 
-                  description: 'This prints a QR / link to connect your terminal to your account.',
+                  description: '这会输出一个二维码或链接，用于将你的终端连接到账号。',
 
-                  copyLabel: 'Auth login',
+                  copyLabel: '认证登录',
 
               },
 
               daemonInstall: {
 
-                  title: 'Install the background service (recommended)',
+                  title: '安装后台服务（推荐）',
 
-                  description: 'Keeps Happier ready in the background for remote starts.',
+                  description: '让 Happier 在后台保持就绪，以便远程启动。',
 
-                  copyLabel: 'Daemon install',
+                  copyLabel: '守护进程安装',
 
               },
 
               startDaemonInstall: {
 
-                  description: 'Installs an always-on user service and starts it.',
+                  description: '安装一个始终运行的用户服务并启动它。',
 
               },
 
               daemonStart: {
 
-                  title: 'Start the background service once',
+                  title: '启动一次后台服务',
 
-                  description: 'Use this if you only need it running right now.',
+                  description: '如果你只需要它现在运行，请使用这个。',
 
-                  copyLabel: 'Daemon start',
+                  copyLabel: '守护进程启动',
 
               },
 
               createSession: {
 
-                  title: 'Create a session',
+                  title: '创建会话',
 
-                  description: 'Use the + button in the app, or run one of these from your terminal.',
+                  description: '使用应用中的 + 按钮，或在终端中运行以下命令之一。',
 
-                  copyLabel: 'Create session',
+                  copyLabel: '创建会话',
 
               },
 
               startSession: {
 
-                  title: 'Start a session from your computer',
+                  title: '从你的电脑启动会话',
 
-                  description: 'Or use the + button in the app.',
+                  description: '或者使用应用中的 + 按钮。',
 
-                  copyLabel: 'Start session',
+                  copyLabel: '启动会话',
 
               },
 
@@ -6695,32 +6695,32 @@ settingsSession: {
 
 
   setupOnboarding: {
-          screenTitle: 'Set up this computer',
+          screenTitle: '设置这台电脑',
           webDesktopOnlyTitle: '需要桌面应用',
           webDesktopOnlyBody: '请在桌面应用中设置此电脑。网页版可以显示状态，但无法安装或配置后台服务。',
-          preAuthTitle: 'Choose your Relay before you sign in',
-          preAuthBody: 'Pick the Relay you want to use on this computer before you create, restore, or sign in to an account.',
-          preAuthContinueHint: 'When you continue, Happier will take you back to sign in against the selected Relay and then return here to finish setup.',
+          preAuthTitle: '登录前先选择你的 Relay',
+          preAuthBody: '在创建、恢复或登录账号之前，先选择你想在这台电脑上使用的 Relay。',
+          preAuthContinueHint: '继续后，Happier 会带你返回到针对所选 Relay 的登录流程，然后再回到这里完成设置。',
     currentRelayTitle: '已选择的 Relay',
     currentRelayDescription: ({ relayUrl }: { relayUrl: string }) => `Selected Relay: ${relayUrl}`,
-    savedRelaysTitle: 'Saved Relays',
-    customRelayUrlLabel: 'Relay URL',
-    relayNameLabel: 'Relay name',
+    savedRelaysTitle: '已保存的 Relay',
+    customRelayUrlLabel: 'Relay 地址',
+    relayNameLabel: 'Relay 名称',
     addAndUseRelay: '添加 Relay',
     changeRelayAction: '使用其他 Relay URL',
           continueToAuth: '使用已选择的 Relay 继续',
-          continueWithLocalRelayAction: 'Continue with this local Relay',
-    postAuthTitle: 'Finish setting up this computer',
-    postAuthBody: 'You are signed in. Continue with the local setup flow to make this computer ready for the selected Relay.',
-    controlPanelTitle: 'Readiness summary',
-    activeRelaySummaryTitle: 'Active Relay',
-    thisComputerSummaryTitle: 'This computer',
-    nextActionSummaryTitle: 'Next action',
-    thisComputerReady: 'Ready for this Relay',
-    nextActionReady: 'Create your first session or add another computer below.',
-    resumeIntentTitle: 'Continue setup on this computer',
-          resumeIntentBody: 'Sign in or create an account to continue setting up this computer for the selected Relay.',
-          openSetupAction: 'Set up this computer',
+          continueWithLocalRelayAction: '继续使用这个本地 Relay',
+    postAuthTitle: '完成这台电脑的设置',
+    postAuthBody: '你已登录。继续本地设置流程，让这台电脑为所选 Relay 做好准备。',
+    controlPanelTitle: '就绪摘要',
+    activeRelaySummaryTitle: '当前 Relay',
+    thisComputerSummaryTitle: '这台电脑',
+    nextActionSummaryTitle: '下一步操作',
+    thisComputerReady: '已为此 Relay 就绪',
+    nextActionReady: '创建你的第一个会话，或在下方添加另一台电脑。',
+    resumeIntentTitle: '继续设置这台电脑',
+          resumeIntentBody: '登录或创建账号，以继续为所选 Relay 设置这台电脑。',
+          openSetupAction: '设置这台电脑',
       },
 
   review: {

@@ -1576,21 +1576,21 @@ export const es: TranslationStructure = {
       statusIdle: 'Aún no está activado',
       statusWorking: 'Configurando acceso privado seguro',
       statusReady: 'Listo para usarse desde otros dispositivos del tailnet',
-      statusInstallRequired: 'Install Tailscale to continue',
-      statusLoginRequired: 'Sign in to Tailscale to continue',
+      statusInstallRequired: 'Instala Tailscale para continuar',
+      statusLoginRequired: 'Inicia sesión en Tailscale para continuar',
       statusNeedsApproval: 'Esperando la aprobación de Tailscale',
       shareableUrlTitle: 'URL privada compartible',
       approvalTitle: 'Se requiere aprobación',
       approvalSubtitle: 'Termina el flujo de aprobación de Tailscale y vuelve aquí.',
-      installTitle: 'Install required',
-      installSubtitle: 'Install Tailscale, then come back here.',
-      loginTitle: 'Sign-in required',
-      loginSubtitle: 'Complete the Tailscale sign-in flow, then come back here.',
+      installTitle: 'Instalación requerida',
+      installSubtitle: 'Instala Tailscale y luego vuelve aquí.',
+      loginTitle: 'Se requiere iniciar sesión',
+      loginSubtitle: 'Completa el inicio de sesión en Tailscale y luego vuelve aquí.',
       enableAction: 'Activar acceso privado con Tailscale',
       refreshAction: 'Volver a comprobar el acceso privado',
       openApprovalAction: 'Abrir la aprobación de Tailscale',
-      openInstallAction: 'Open Tailscale download',
-      openLoginAction: 'Open Tailscale sign-in',
+      openInstallAction: 'Abrir descarga de Tailscale',
+      openLoginAction: 'Abrir inicio de sesión de Tailscale',
       footer: 'Esto mantiene el acceso privado dentro del tailnet. Tu teléfono u otro ordenador también deben unirse al mismo tailnet.',
       progressTitle: 'Configurando el acceso seguro con Tailscale',
       progressStepDetect: 'Comprobar la disponibilidad de Tailscale',
@@ -2482,10 +2482,10 @@ export const es: TranslationStructure = {
   },
 
   settingsDesktop: {
-    title: 'Desktop',
-    footer: 'Controls Tauri desktop integrations on this computer.',
-    startOnLoginTitle: 'Launch at login',
-    startOnLoginSubtitle: 'Start Happier automatically when you sign in to this computer.',
+    title: 'Escritorio',
+    footer: 'Controla las integraciones de escritorio de Tauri en este ordenador.',
+    startOnLoginTitle: 'Iniciar al acceder',
+    startOnLoginSubtitle: 'Inicia Happier automáticamente cuando inicies sesión en este ordenador.',
   },
 
   settingsNotifications: {
@@ -2870,7 +2870,7 @@ export const es: TranslationStructure = {
                         subtitle: "Activa los logs de depuración de Claude Code (equivalente a --debug)."
                     },
                     claudeRemoteVerboseEnabled: {
-                        title: "Verbose",
+                        title: "Detallado",
                         subtitle: "Activa el registro verboso (equivalente a --verbose)."
                     },
                     claudeRemoteDebugCategories: {

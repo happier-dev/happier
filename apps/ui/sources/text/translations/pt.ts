@@ -2604,10 +2604,10 @@ export const pt: TranslationStructure = {
   },
 
   settingsDesktop: {
-    title: 'Desktop',
-    footer: 'Controls Tauri desktop integrations on this computer.',
-    startOnLoginTitle: 'Launch at login',
-    startOnLoginSubtitle: 'Start Happier automatically when you sign in to this computer.',
+    title: 'Área de trabalho',
+    footer: 'Controla as integrações de desktop do Tauri neste computador.',
+    startOnLoginTitle: 'Iniciar ao entrar',
+    startOnLoginSubtitle: 'Inicie o Happier automaticamente ao entrar neste computador.',
   },
 
   settingsNotifications: {
@@ -2992,7 +2992,7 @@ export const pt: TranslationStructure = {
                         subtitle: "Ativa logs de debug do Claude Code (equivalente a --debug)."
                     },
                     claudeRemoteVerboseEnabled: {
-                        title: "Verbose",
+                        title: "Detalhado",
                         subtitle: "Ativa logging verboso (equivalente a --verbose)."
                     },
                     claudeRemoteDebugCategories: {

@@ -1874,21 +1874,21 @@ localTailscale: {
       statusIdle: 'まだ有効化されていません',
       statusWorking: '安全なプライベートアクセスを設定しています',
       statusReady: '他の tailnet デバイスから使用できます',
-      statusInstallRequired: 'Install Tailscale to continue',
-      statusLoginRequired: 'Sign in to Tailscale to continue',
+      statusInstallRequired: '続行するには Tailscale をインストールしてください',
+      statusLoginRequired: '続行するには Tailscale にサインインしてください',
       statusNeedsApproval: 'Tailscale の承認を待っています',
       shareableUrlTitle: '共有可能なプライベート URL',
       approvalTitle: '承認が必要です',
       approvalSubtitle: 'Tailscale の承認フローを完了してから、ここに戻ってください。',
-      installTitle: 'Install required',
-      installSubtitle: 'Install Tailscale, then come back here.',
-      loginTitle: 'Sign-in required',
-      loginSubtitle: 'Complete the Tailscale sign-in flow, then come back here.',
+      installTitle: 'インストールが必要です',
+      installSubtitle: 'Tailscale をインストールしてから、ここに戻ってください。',
+      loginTitle: 'サインインが必要です',
+      loginSubtitle: 'Tailscale のサインインを完了してから、ここに戻ってください。',
       enableAction: 'Tailscale でプライベートアクセスを有効化',
       refreshAction: 'プライベートアクセスを再確認',
       openApprovalAction: 'Tailscale の承認を開く',
-      openInstallAction: 'Open Tailscale download',
-      openLoginAction: 'Open Tailscale sign-in',
+      openInstallAction: 'Tailscale のダウンロードを開く',
+      openLoginAction: 'Tailscale のサインインを開く',
       footer: 'これによりアクセスは tailnet 内に限定されます。スマホや別のコンピューターも同じ tailnet に参加している必要があります。',
       progressTitle: 'Tailscale の安全なアクセスを設定しています',
       progressStepDetect: 'Tailscale の利用可否を確認',
@@ -2767,10 +2767,10 @@ localTailscale: {
   },
 
   settingsDesktop: {
-    title: 'Desktop',
-    footer: 'Controls Tauri desktop integrations on this computer.',
-    startOnLoginTitle: 'Launch at login',
-    startOnLoginSubtitle: 'Start Happier automatically when you sign in to this computer.',
+    title: 'デスクトップ',
+    footer: 'このコンピューター上の Tauri デスクトップ連携を管理します。',
+    startOnLoginTitle: 'ログイン時に起動',
+    startOnLoginSubtitle: 'このコンピューターにサインインしたときに Happier を自動的に起動します。',
   },
 
   settingsNotifications: {
@@ -3154,7 +3154,7 @@ localTailscale: {
                         subtitle: "Claude Code のデバッグログを有効にします（--debug と同等）。"
                     },
                     claudeRemoteVerboseEnabled: {
-                        title: "Verbose",
+                        title: "詳細",
                         subtitle: "詳細ログを有効にします（--verbose と同等）。"
                     },
                     claudeRemoteDebugCategories: {
@@ -3174,7 +3174,7 @@ localTailscale: {
                                 subtitle: "フックのライフサイクルとコマンド実行。"
                             },
                             file: {
-                                title: "Files",
+                                title: "ファイル",
                                 subtitle: "ファイル操作とファイル関連ヘルパー。"
                             },
                             '1p': {
