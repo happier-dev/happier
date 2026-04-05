@@ -558,7 +558,11 @@ describe('OnboardingWizardSurface', () => {
         expect(nextProps?.onWizardRequestProviderDetails).toBe(firstProps?.onWizardRequestProviderDetails);
         expect((nextProps as { serverProfileId?: unknown } | null)?.serverProfileId).toEqual(expect.any(String));
 
-        expect(screen.findByType('LocalRelayAccessControlSection' as never)).toBeTruthy();
+        const localRelayAccessSection = screen.findByType('LocalRelayAccessControlSection' as never) as unknown as {
+            props: { target?: { kind: 'local' } | { kind: 'ssh'; ssh: { target: string; auth: 'agent' | 'keyfile' | 'password' } } };
+        };
+        expect(localRelayAccessSection).toBeTruthy();
+        expect(localRelayAccessSection.props.target).toEqual({ kind: 'local' });
     });
 
     it('settles after a single relay access provider sync effect', async () => {
@@ -601,7 +605,11 @@ describe('OnboardingWizardSurface', () => {
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        expect(screen.findByType('LocalRelayAccessControlSection' as never)).toBeTruthy();
+        const localRelayAccessSection = screen.findByType('LocalRelayAccessControlSection' as never) as unknown as {
+            props: { target?: { kind: 'local' } | { kind: 'ssh'; ssh: { target: string; auth: 'agent' | 'keyfile' | 'password' } } };
+        };
+        expect(localRelayAccessSection).toBeTruthy();
+        expect(localRelayAccessSection.props.target).toEqual({ kind: 'local' });
         expect(relayAccessWizardMockState.effectSelectionNotificationCount).toBe(1);
     });
 
@@ -2251,7 +2259,18 @@ describe('OnboardingWizardSurface', () => {
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         const remoteChecklistProps = remoteSshChecklistMock.spy.mock.calls.at(-1)?.[0] as {
-            onCompleted?: (payload: { machineId: string | null; relayRuntimeUrl: string | null; mode: string }) => void;
+            onCompleted?: (payload: {
+                machineId: string | null;
+                relayRuntimeUrl: string | null;
+                relayAccessTarget?: {
+                    kind: 'ssh';
+                    ssh: {
+                        target: string;
+                        auth: 'agent' | 'keyfile' | 'password';
+                    };
+                } | null;
+                mode: string;
+            }) => void;
             onRequestAdvance?: () => void;
         } | undefined;
         expect(remoteChecklistProps).toBeTruthy();
@@ -2260,6 +2279,13 @@ describe('OnboardingWizardSurface', () => {
             remoteChecklistProps?.onCompleted?.({
                 machineId: 'mach-remote',
                 relayRuntimeUrl: 'https://remote-relay.example.test',
+                relayAccessTarget: {
+                    kind: 'ssh',
+                    ssh: {
+                        target: 'root@remote.example.test',
+                        auth: 'agent',
+                    },
+                },
                 mode: 'remoteRelayHost',
             });
         });
@@ -2271,6 +2297,15 @@ describe('OnboardingWizardSurface', () => {
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         expect(screen.findByType('LocalRelayAccessControlSection' as never)).toBeTruthy();
+        expect((screen.findByType('LocalRelayAccessControlSection' as never) as unknown as {
+            props: { target?: { kind: 'local' } | { kind: 'ssh'; ssh: { target: string; auth: 'agent' | 'keyfile' | 'password' } } };
+        }).props.target).toEqual({
+            kind: 'ssh',
+            ssh: {
+                target: 'root@remote.example.test',
+                auth: 'agent',
+            },
+        });
         expect(screen.findByTestId('onboarding-wizard-confirmSwitchRelay')).toBeNull();
 
         const continueAfterRelayAccess = screen.findByTestId('onboarding-wizard-primary')!;

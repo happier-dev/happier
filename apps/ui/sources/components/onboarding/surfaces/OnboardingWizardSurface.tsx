@@ -24,6 +24,7 @@ import { isWebQrScannerSupported } from '@/utils/platform/qrScannerSupport';
 import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
 import type { RelayHostLocalChecklistRuntimeStatus } from '../checklists/relayHostLocal/types';
 import type { RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
+import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 
 import { WizardLogotype } from '../ui/WizardLogotype';
 import { WizardChoiceRow } from '../ui/WizardChoiceRow';
@@ -136,6 +137,8 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
     const [relaySwitchDecision, setRelaySwitchDecision] = React.useState<RelaySwitchDecision>('switch');
     type LocalRelayRuntimeStatus = RelayHostLocalChecklistRuntimeStatus | null;
     const [localRelayRuntimeStatus, setLocalRelayRuntimeStatus] = React.useState<LocalRelayRuntimeStatus>(null);
+    const [relayAccessTarget, setRelayAccessTarget] = React.useState<RelayAccessTaskTarget | null>(null);
+    const defaultRelayAccessTarget = React.useMemo<RelayAccessTaskTarget>(() => ({ kind: 'local' }), []);
     const [state, dispatch] = React.useReducer(
         wizardReducer,
         null,
@@ -176,6 +179,7 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         if (!relayUrl) {
             return;
         }
+        setRelayAccessTarget({ kind: 'local' });
         const profile = upsertServerProfileOnly({
             serverUrl: relayUrl,
             source: 'url',
@@ -574,6 +578,7 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
     const handleRemoteRelayRuntimeCompletedChange = React.useCallback((payload: Readonly<{
         machineId: string | null;
         relayRuntimeUrl: string | null;
+        relayAccessTarget: RelayAccessTaskTarget | null;
         mode: 'remoteMachine' | 'remoteRelayHost';
     }>) => {
         const relayUrl = typeof payload.relayRuntimeUrl === 'string' ? payload.relayRuntimeUrl.trim() : '';
@@ -582,6 +587,7 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         }
 
         setRelaySwitchDecision('switch');
+        setRelayAccessTarget(payload.relayAccessTarget);
         const relayProfile = upsertServerProfileOnly({
             serverUrl: relayUrl,
             source: 'url',
@@ -1135,6 +1141,7 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         onUrlDraftChange: setUrlDraft,
         relaySelectionServerUrl,
         serverProfileId: state.context.relaySelection.relayProfileId ?? null,
+        relayAccessTarget: relayAccessTarget ?? defaultRelayAccessTarget,
         lastKnownSnapshotRelayUrl: lastKnownSnapshotRelayUrlRef.current || '',
         relaySwitchDecision,
         onRelaySwitchDecisionChange: setRelaySwitchDecision,

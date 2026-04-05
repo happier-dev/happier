@@ -480,6 +480,13 @@ describe('RemoteSshChecklistStep', () => {
         const completed: Array<{
             machineId: string | null;
             relayRuntimeUrl: string | null;
+            relayAccessTarget: Readonly<{
+                kind: 'ssh';
+                ssh: Readonly<{
+                    target: string;
+                    auth: 'agent' | 'keyfile' | 'password';
+                }>;
+            } | null>;
             mode: string;
         }> = [];
         let primary: { onPress: (() => void) | (() => Promise<void>); disabled: boolean } | null = null;
@@ -520,6 +527,13 @@ describe('RemoteSshChecklistStep', () => {
         expect(completed).toEqual([
             expect.objectContaining({
                 relayRuntimeUrl: 'https://public-relay.example.test',
+                relayAccessTarget: {
+                    kind: 'ssh',
+                    ssh: {
+                        target: 'dev@example.test',
+                        auth: 'agent',
+                    },
+                },
             }),
         ]);
         expect(screen.getTextContent()).toContain('https://public-relay.example.test');
@@ -548,6 +562,13 @@ describe('RemoteSshChecklistStep', () => {
         const completed: Array<{
             machineId: string | null;
             relayRuntimeUrl: string | null;
+            relayAccessTarget: Readonly<{
+                kind: 'ssh';
+                ssh: Readonly<{
+                    target: string;
+                    auth: 'agent' | 'keyfile' | 'password';
+                }>;
+            } | null>;
             mode: string;
         }> = [];
         let primary: { onPress: (() => void) | (() => Promise<void>); disabled: boolean } | null = null;

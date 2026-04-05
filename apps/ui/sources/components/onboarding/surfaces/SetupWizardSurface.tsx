@@ -181,6 +181,7 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
         machineId: string | null;
     }> | null>(null);
     const [relayAccessTarget, setRelayAccessTarget] = React.useState<RelayAccessTaskTarget | null>(null);
+    const defaultRelayAccessTarget = React.useMemo<RelayAccessTaskTarget>(() => ({ kind: 'local' }), []);
     const [localMachineId, setLocalMachineId] = React.useState<string | null>(null);
     const [remoteMachineId, setRemoteMachineId] = React.useState<string | null>(null);
     const [remoteSetupIntent, setRemoteSetupIntent] = React.useState<RemoteSetupIntent>(initialRemoteIntent);
@@ -477,8 +478,8 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
     }, [setRelayRuntimeCandidate]);
 
     const handleRelayShareUrlPasteChange = React.useCallback((value: string) => {
-        setRelayRuntimeCandidate(value, null, relayAccessTarget);
-    }, [relayAccessTarget, setRelayRuntimeCandidate]);
+        setRelayRuntimeCandidate(value, null, relayAccessTarget ?? defaultRelayAccessTarget);
+    }, [defaultRelayAccessTarget, relayAccessTarget, setRelayRuntimeCandidate]);
 
     let body: React.ReactNode = null;
     if (stepId === 'setup_chooser') {
@@ -574,7 +575,7 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
                     : null,
                 relayUrl: relayCandidateUrl,
                 serverProfileId: state.context.relaySelection.relayProfileId ?? null,
-                relayAccessTarget: relayAccessTarget ?? { kind: 'local' },
+                relayAccessTarget: relayAccessTarget ?? defaultRelayAccessTarget,
                 providerMachineId,
                 providerSelectionProviderIds,
                 selectedProviderIds,

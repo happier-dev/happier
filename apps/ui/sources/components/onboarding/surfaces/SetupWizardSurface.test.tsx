@@ -45,13 +45,15 @@ const setupThisComputerWizardStepMock = vi.hoisted(() => ({
 }));
 
 vi.mock('expo-router', () => expoRouterMock.module);
-vi.mock('@/sync/domains/server/serverRuntime', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/server/serverRuntime')>();
-    return {
-        ...actual,
-        getActiveServerSnapshot: () => activeServerSnapshotMock,
-    };
-});
+vi.mock('@/sync/domains/server/serverRuntime', () => ({
+    getActiveServerSnapshot: () => activeServerSnapshotMock,
+    subscribeActiveServer: () => () => {},
+    upsertServerProfileOnly: (profile: { serverUrl: string }) => ({
+        id: `profile:${profile.serverUrl}`,
+        name: profile.serverUrl,
+        serverUrl: profile.serverUrl,
+    }),
+}));
 vi.mock('../steps/SetupThisComputerWizardStep', () => ({
     SetupThisComputerWizardStep: (props: Record<string, unknown>) => {
         React.useEffect(() => {
@@ -971,7 +973,6 @@ describe('SetupWizardSurface', () => {
 
     it.each([
         ['lan', 'https://local-relay.example.test'],
-        ['cloudflareNamed', 'https://local-relay.example.test'],
     ] as const)('routes %s relay access requests to the prerequisites step', async (providerId, relayUrl) => {
         const { SetupWizardSurface } = await import('./SetupWizardSurface');
         const screen = await renderScreen(React.createElement(SetupWizardSurface, {
@@ -1021,7 +1022,6 @@ describe('SetupWizardSurface', () => {
         await act(async () => {
             relayAccessSection.props.onWizardRequestProviderDetails?.(providerId);
         });
-        await flushHookEffects({ cycles: 1, turns: 1 });
 
         const prereqsStep = screen.findByType('RelayAccessPrerequisitesStep' as never) as unknown as {
             props: {

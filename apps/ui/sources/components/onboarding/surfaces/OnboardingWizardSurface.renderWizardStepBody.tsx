@@ -14,6 +14,7 @@ import { WebDesktopRelayHostHandoffContent } from '@/components/onboarding/steps
 import { WebDesktopBackgroundServiceHandoffContent } from '@/components/onboarding/steps/webDesktop/WebDesktopBackgroundServiceHandoffContent';
 import { LocalRelayAccessControlSection } from '@/components/settings/server/localControl/LocalRelayAccessControlSection';
 import type { RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
+import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 import { RelayAccessPrerequisitesStep } from '@/components/onboarding/steps/relayAccess/RelayAccessPrerequisitesStep';
 
 import { RestoreIndexEmbedded } from '@/components/onboarding/restore/RestoreIndexEmbedded';
@@ -71,6 +72,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
 
     relaySelectionServerUrl: string | null;
     serverProfileId: string | null;
+    relayAccessTarget: RelayAccessTaskTarget;
     lastKnownSnapshotRelayUrl: string;
 
     relaySwitchDecision: RelaySwitchDecision;
@@ -249,6 +251,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
             <LocalRelayAccessControlSection
                 upstreamUrl={upstreamUrl}
                 serverProfileId={params.serverProfileId}
+                target={params.relayAccessTarget}
                 presentation="wizard"
                 onWizardPrimaryChange={params.onWizardPrimaryChange}
                 onRequestAdvance={params.onRelayAccessAdvance}
@@ -267,6 +270,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
                 providerId={params.relayAccessProviderId}
                 upstreamUrl={upstreamUrl}
                 serverProfileId={params.serverProfileId}
+                target={params.relayAccessTarget}
                 onWizardPrimaryChange={params.onWizardPrimaryChange}
                 onRequestAdvance={params.onRelayAccessAdvance}
             />

@@ -381,6 +381,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
             const completion = {
                 machineId: completedMachineId,
                 relayRuntimeUrl: completionRelayUrl,
+                relayAccessTarget: completionRelayAccessTargetRef.current,
                 mode: props.mode,
             } as const;
 
@@ -397,6 +398,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
                 completion: {
                     machineId: completion.machineId,
                     relayRuntimeUrl: completion.relayRuntimeUrl,
+                    relayAccessTarget: completion.relayAccessTarget,
                 },
             });
 
