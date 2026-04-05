@@ -40,6 +40,10 @@ function collectExpectedUiInstallScopeWorkspaces() {
   return new Set(['ui', ...requiresBuiltDist]);
 }
 
+function resolveCanonicalUiInstallScope() {
+    return [...collectExpectedUiInstallScopeWorkspaces()].sort().join(',');
+}
+
 test('apps/ui/eas.json defines internaldev profiles for OTA-native debug dev-client validation', () => {
   const easPath = path.join(repoRoot, 'apps', 'ui', 'eas.json');
   const raw = fs.readFileSync(easPath, 'utf8');
@@ -54,6 +58,11 @@ test('apps/ui/eas.json defines internaldev profiles for OTA-native debug dev-cli
       .split(',')
       .map((token) => token.trim())
       .filter(Boolean),
+  );
+  assert.deepEqual(
+    [...installScopeTokens].sort(),
+    [...collectExpectedUiInstallScopeWorkspaces()].sort(),
+    'apps/ui/eas.json should define the canonical UI install scope token set',
   );
   for (const workspace of collectExpectedUiInstallScopeWorkspaces()) {
     assert.equal(
@@ -94,4 +103,29 @@ test('apps/ui/eas.json defines internaldev profiles for OTA-native debug dev-cli
   assert.equal(internaldevStore?.env?.EXPO_APP_BUNDLE_ID, 'dev.happier.app.dev.internal');
   assert.equal(internaldevStore?.env?.EXPO_ANDROID_PACKAGE, 'dev.happier.app.internaldev');
   assert.equal(internaldevStore?.env?.EXPO_APP_SCHEME, 'happier-internaldev');
+});
+
+test('UI GitHub workflows keep their install scope aligned with apps/ui eas.json', () => {
+  const expectedScope = String(
+    JSON.parse(fs.readFileSync(path.join(repoRoot, 'apps', 'ui', 'eas.json'), 'utf8'))?.build?.base?.env?.HAPPIER_INSTALL_SCOPE ?? '',
+  );
+  const workflowPaths = [
+    path.join(repoRoot, '.github', 'workflows', 'build-ui-mobile-local.yml'),
+    path.join(repoRoot, '.github', 'workflows', 'publish-ui-mobile-dev.yml'),
+    path.join(repoRoot, '.github', 'workflows', 'promote-ui.yml'),
+    path.join(repoRoot, '.github', 'workflows', 'build-tauri.yml'),
+  ];
+
+  for (const workflowPath of workflowPaths) {
+    const raw = fs.readFileSync(workflowPath, 'utf8');
+    const matches = [...raw.matchAll(/HAPPIER_INSTALL_SCOPE:\s*"([^"]+)"/g)];
+    assert.ok(matches.length > 0, `${path.basename(workflowPath)} should define HAPPIER_INSTALL_SCOPE`);
+    for (const [, scope = ''] of matches) {
+      assert.equal(
+        scope,
+        expectedScope,
+        `${path.basename(workflowPath)} should use the canonical UI install scope from apps/ui/eas.json`,
+      );
+    }
+  }
 });

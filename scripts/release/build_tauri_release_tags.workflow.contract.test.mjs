@@ -46,7 +46,7 @@ test('build-tauri latest.json generator uses ui-desktop-* release tags and publi
   const raw = await loadWorkflow('build-tauri.yml');
 
   assert.match(raw, /node scripts\/pipeline\/run\.mjs tauri-prepare-assets/);
-  assert.match(raw, /HAPPIER_INSTALL_SCOPE:\s*\"ui,protocol,agents\"/);
+  assert.match(raw, /HAPPIER_INSTALL_SCOPE:\s*\"ui,protocol,agents,cli-common,release-runtime,transfers,connection-supervisor\"/);
 
   const script = await loadFile('scripts/pipeline/tauri/prepare-publish-assets.mjs');
   assert.match(script, /ui-desktop-preview/);

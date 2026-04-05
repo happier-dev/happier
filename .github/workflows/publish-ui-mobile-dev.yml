@@ -127,7 +127,7 @@ jobs:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
           # Keep builds mobile-focused (desktop/web builds happen elsewhere).
-          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents"
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,cli-common,release-runtime,transfers,connection-supervisor"
           # Dev lane uses preview-like embedded policy and does not need web-asset vendoring.
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
         run: yarn install --frozen-lockfile --ignore-engines
@@ -245,7 +245,7 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents"
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,cli-common,release-runtime,transfers,connection-supervisor"
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
         run: yarn install --frozen-lockfile --ignore-engines
 
@@ -311,7 +311,7 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents"
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,cli-common,release-runtime,transfers,connection-supervisor"
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
         run: yarn install --frozen-lockfile --ignore-engines
 

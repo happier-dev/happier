@@ -233,7 +233,7 @@ jobs:
           npm_config_production: "false"
           HAPPIER_EMBEDDED_POLICY_ENV: ${{ inputs.environment == 'production' && 'production' || 'preview' }}
           # Speed up installs for mobile-only and unit-test flows (desktop/web builds happen elsewhere).
-          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents"
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,cli-common,release-runtime,transfers,connection-supervisor"
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
         run: yarn install --frozen-lockfile --ignore-engines
 
