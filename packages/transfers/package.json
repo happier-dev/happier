@@ -27,6 +27,7 @@
     "@happier-dev/protocol": "0.0.0"
   },
   "devDependencies": {
+    "@types/node": ">=20",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
   }
