@@ -55,49 +55,20 @@ on:
           - ota
           - native
           - native_submit
-      expo_builder:
-        description: "Deploy (Expo) — Native build runner (eas_cloud uses Expo build servers; eas_local builds on GitHub runners)"
-        required: true
-        default: eas_cloud
-        type: choice
-        options:
-          - eas_cloud
-          - eas_local
-      expo_profile:
-        description: "Deploy (Expo) — EAS build profile (auto: preview→preview, production→production). Use *-apk profiles to produce installable Android APKs and publish to GitHub Releases."
-        required: true
-        default: auto
-        type: choice
-        options:
-          - auto
-          - preview
-          - preview-apk
-          - production
-          - production-apk
-      expo_platform:
-        description: "Deploy (Expo) — Native build platform"
-        required: true
-        default: all
-        type: choice
-        options:
-          - ios
-          - android
-          - all
       expo_update_message:
         description: "Deploy (Expo) — Optional EAS update message (ota); defaults to a generated message when unset"
         required: false
         default: ""
         type: string
-      desktop_build:
-        description: "Deploy (Desktop) — Build Tauri desktop bundles (macOS/Windows/Linux)"
+      desktop_mode:
+        description: "Deploy (Desktop) — Desktop bundle mode"
         required: true
-        default: false
-        type: boolean
-      desktop_publish_release:
-        description: "Deploy (Desktop) — Upload desktop bundles to GitHub Releases"
-        required: true
-        default: true
-        type: boolean
+        default: none
+        type: choice
+        options:
+          - none
+          - build_only
+          - build_and_publish
   workflow_call:
     inputs:
       environment:
@@ -202,7 +173,10 @@ jobs:
     outputs:
       source_ref: ${{ steps.resolve.outputs.ref }}
       release_sha: ${{ steps.release_sha.outputs.sha }}
+      expo_builder: ${{ steps.ui_options.outputs.expo_builder }}
       expo_profile: ${{ steps.expo_profile.outputs.profile }}
+      expo_platform: ${{ steps.ui_options.outputs.expo_platform }}
+      desktop_mode: ${{ steps.ui_options.outputs.desktop_mode }}
       deploy_ref: ${{ steps.deploy_meta.outputs.ref }}
       deploy_sha: ${{ steps.deploy_meta.outputs.sha }}
     steps:
@@ -285,6 +259,44 @@ jobs:
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
         run: yarn install --frozen-lockfile --ignore-engines
 
+      - name: Resolve effective UI build options
+        id: ui_options
+        run: |
+          set -euo pipefail
+
+          expo_builder="${{ inputs.expo_builder }}"
+          if [ -z "${expo_builder}" ]; then
+            expo_builder="eas_cloud"
+          fi
+
+          expo_profile="${{ inputs.expo_profile }}"
+          if [ -z "${expo_profile}" ]; then
+            expo_profile="auto"
+          fi
+
+          expo_platform="${{ inputs.expo_platform }}"
+          if [ -z "${expo_platform}" ]; then
+            expo_platform="all"
+          fi
+
+          desktop_mode="${{ inputs.desktop_mode }}"
+          if [ -z "${desktop_mode}" ]; then
+            if [ "${{ inputs.desktop_build }}" = "true" ]; then
+              if [ "${{ inputs.desktop_publish_release }}" = "true" ]; then
+                desktop_mode="build_and_publish"
+              else
+                desktop_mode="build_only"
+              fi
+            else
+              desktop_mode="none"
+            fi
+          fi
+
+          echo "expo_builder=${expo_builder}" >> "$GITHUB_OUTPUT"
+          echo "expo_profile=${expo_profile}" >> "$GITHUB_OUTPUT"
+          echo "expo_platform=${expo_platform}" >> "$GITHUB_OUTPUT"
+          echo "desktop_mode=${desktop_mode}" >> "$GITHUB_OUTPUT"
+
       - name: Bump app version (source ref)
         id: bump_app
         run: |
@@ -339,8 +351,8 @@ jobs:
           set -euo pipefail
           env_name="${{ inputs.environment }}"
           action="${{ inputs.expo_action }}"
-          builder="${{ inputs.expo_builder }}"
-          profile="${{ inputs.expo_profile }}"
+          builder="${{ steps.ui_options.outputs.expo_builder }}"
+          profile="${{ steps.ui_options.outputs.expo_profile }}"
 
           if [ "${profile}" = "auto" ]; then
             profile="${env_name}"
@@ -356,7 +368,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Expo native build + optional APK release + optional submit (pipeline)
-        if: ${{ (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') && inputs.expo_builder == 'eas_cloud' }}
+        if: ${{ (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') && steps.ui_options.outputs.expo_builder == 'eas_cloud' }}
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           APP_ENV: ${{ inputs.environment }}
@@ -367,7 +379,7 @@ jobs:
           node scripts/pipeline/run.mjs ui-mobile-release \
             --environment "${{ inputs.environment }}" \
             --action "${{ inputs.expo_action }}" \
-            --platform "${{ inputs.expo_platform }}" \
+            --platform "${{ steps.ui_options.outputs.expo_platform }}" \
             --profile "${{ steps.expo_profile.outputs.profile }}" \
             --build-json "/tmp/eas_build.json" \
             --out-dir "dist/ui-mobile" \
@@ -438,7 +450,7 @@ jobs:
 
   expo_local_build:
     name: Expo native build (local runners)
-    if: ${{ (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') && inputs.expo_builder == 'eas_local' }}
+    if: ${{ (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') && needs.promote.outputs.expo_builder == 'eas_local' }}
     needs: [promote]
     permissions:
       contents: read
@@ -447,14 +459,14 @@ jobs:
     with:
       source_ref: ${{ needs.promote.outputs.release_sha }}
       environment: ${{ inputs.environment }}
-      platform: ${{ inputs.expo_platform }}
+      platform: ${{ needs.promote.outputs.expo_platform }}
       profile: ${{ needs.promote.outputs.expo_profile }}
       action: ${{ inputs.expo_action == 'native_submit' && 'build_and_submit' || 'build_only' }}
-      publish_apk_release: ${{ ((inputs.expo_platform == 'android' || inputs.expo_platform == 'all') && endsWith(needs.promote.outputs.expo_profile, '-apk')) && 'auto' || 'false' }}
+      publish_apk_release: ${{ ((needs.promote.outputs.expo_platform == 'android' || needs.promote.outputs.expo_platform == 'all') && endsWith(needs.promote.outputs.expo_profile, '-apk')) && 'auto' || 'false' }}
 
   desktop:
     name: Desktop bundles (Tauri)
-    if: ${{ inputs.desktop_build == true }}
+    if: ${{ needs.promote.outputs.desktop_mode != 'none' }}
     needs: [promote]
     permissions:
       contents: write
@@ -463,4 +475,4 @@ jobs:
     with:
       environment: ${{ inputs.environment }}
       source_ref: ${{ needs.promote.outputs.release_sha }}
-      publish_release: ${{ inputs.desktop_publish_release }}
+      publish_release: ${{ needs.promote.outputs.desktop_mode == 'build_and_publish' }}
