@@ -153,6 +153,40 @@ const runtimeFetchMock = vi.hoisted(() => vi.fn(async (input: RequestInfo | URL,
     }
     return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
 }));
+const systemTaskRunnerState = vi.hoisted(() => {
+    const state = {
+        nextResult: null as import('@happier-dev/protocol').SystemTaskResult | null,
+        startMock: vi.fn(async (_spec: unknown) => 'task_prepare_tailscale_1'),
+        cancelMock: vi.fn(async () => {}),
+        respondMock: vi.fn(async () => {}),
+        getSnapshotMock: vi.fn((taskId: string) => {
+            const result = state.nextResult;
+            if (!result || result.taskId !== taskId) {
+                return null;
+            }
+            return {
+                taskId,
+                status: result.ok ? 'succeeded' : 'failed',
+                currentStepId: null,
+                latestMessage: result.ok ? null : result.error.message,
+                awaitingInput: false,
+                cancelRequested: false,
+                events: [],
+                result,
+            };
+        }),
+        subscribeMock: vi.fn((taskId: string, _listenerOrOnEvent?: unknown, onResult?: (result: import('@happier-dev/protocol').SystemTaskResult) => void) => {
+            const result = state.nextResult;
+            if (result && typeof onResult === 'function') {
+                queueMicrotask(() => {
+                    onResult({ ...result, taskId });
+                });
+            }
+            return () => {};
+        }),
+    };
+    return state;
+});
 
 const remoteSshChecklistMock = vi.hoisted(() => {
     const spy = vi.fn();
@@ -247,6 +281,65 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
 vi.mock('@/utils/system/runtimeFetch', () => ({
     runtimeFetch: (input: RequestInfo | URL, init?: RequestInit) => runtimeFetchMock(input, init),
 }));
+vi.mock('@/components/systemTasks', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/components/systemTasks')>();
+    return {
+        ...actual,
+        getDefaultSystemTaskRunner: () => ({
+            mode: 'tauri' as const,
+            start: systemTaskRunnerState.startMock,
+            cancel: systemTaskRunnerState.cancelMock,
+            respond: systemTaskRunnerState.respondMock,
+            getSnapshot: systemTaskRunnerState.getSnapshotMock,
+            subscribe: systemTaskRunnerState.subscribeMock,
+        }),
+        useSystemTaskSnapshot: (runner: {
+            subscribe: (taskId: string, onEvent?: ((event: unknown) => void) | undefined, onResult?: ((result: import('@happier-dev/protocol').SystemTaskResult) => void) | undefined) => () => void;
+        }, taskId: string | null) => {
+            const [snapshot, setSnapshot] = React.useState<import('@/components/systemTasks/types').SystemTaskRunState | null>(null);
+
+            React.useEffect(() => {
+                if (!taskId) {
+                    setSnapshot(null);
+                    return;
+                }
+
+                let disposed = false;
+                setSnapshot({
+                    taskId,
+                    status: 'running',
+                    currentStepId: null,
+                    latestMessage: null,
+                    awaitingInput: false,
+                    cancelRequested: false,
+                    events: [],
+                    result: null,
+                });
+
+                const unsubscribe = runner.subscribe(taskId, undefined, (result) => {
+                    if (disposed) return;
+                    setSnapshot({
+                        taskId,
+                        status: result.ok ? 'succeeded' : 'failed',
+                        currentStepId: null,
+                        latestMessage: result.ok ? null : result.error.message,
+                        awaitingInput: false,
+                        cancelRequested: false,
+                        events: [],
+                        result,
+                    });
+                });
+
+                return () => {
+                    disposed = true;
+                    unsubscribe();
+                };
+            }, [runner, taskId]);
+
+            return snapshot;
+        },
+    };
+});
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
     isSameServerUrl: (left: string, right: string) => left === right,
     normalizeServerUrl: (value: string) => value,
@@ -380,6 +473,12 @@ describe('OnboardingWizardSurface', () => {
         clearPendingSetupIntentMock.mockReset();
         setActiveServerAndSwitchMock.mockReset();
         upsertActivateAndSwitchServerMock.mockReset();
+        systemTaskRunnerState.nextResult = null;
+        systemTaskRunnerState.startMock.mockReset();
+        systemTaskRunnerState.cancelMock.mockReset();
+        systemTaskRunnerState.respondMock.mockReset();
+        systemTaskRunnerState.getSnapshotMock.mockReset();
+        systemTaskRunnerState.subscribeMock.mockReset();
         getOrCreateHappierCloudServerProfileMock.mockReset();
         expoRouterMock.spies.push.mockReset();
         expoRouterMock.spies.replace.mockReset();
@@ -2317,6 +2416,135 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findByTestId('onboarding-wizard-confirmSwitchRelay')).toBeTruthy();
     });
 
+    it('blocks switching to an unreachable tailscale relay until desktop remediation succeeds', async () => {
+        const previousFetchImpl = runtimeFetchMock.getMockImplementation();
+        let relayReachable = false;
+        runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input);
+            if (
+                url.includes('https://remote-relay.example.ts.net')
+                && url.endsWith('/health')
+            ) {
+                return relayReachable
+                    ? new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } })
+                    : new Response(JSON.stringify({ ok: false }), { status: 500, headers: { 'content-type': 'application/json' } });
+            }
+            return previousFetchImpl
+                ? previousFetchImpl(input, init)
+                : new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+        });
+        systemTaskRunnerState.startMock.mockResolvedValueOnce('task_prepare_tailscale_1');
+        systemTaskRunnerState.nextResult = {
+            protocolVersion: 1,
+            taskId: 'task_prepare_tailscale_1',
+            ok: true,
+            data: {
+                tailscaleInstalled: true,
+                tailscaleLoggedIn: true,
+                authUrl: null,
+            },
+        };
+
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        const startButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await startButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const remoteRow = screen.findByTestId('onboarding-wizard-relay:remoteComputer')!;
+        await act(async () => {
+            await remoteRow.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const continueToPlanButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await continueToPlanButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const remoteChecklistProps = remoteSshChecklistMock.spy.mock.calls.at(-1)?.[0] as {
+            onCompleted?: (payload: {
+                machineId: string | null;
+                relayRuntimeUrl: string | null;
+                relayAccessTarget?: {
+                    kind: 'ssh';
+                    ssh: {
+                        target: string;
+                        auth: 'agent' | 'keyfile' | 'password';
+                    };
+                } | null;
+                mode: string;
+            }) => void;
+            onRequestAdvance?: () => void;
+        } | undefined;
+
+        await act(async () => {
+            remoteChecklistProps?.onCompleted?.({
+                machineId: 'mach-remote',
+                relayRuntimeUrl: 'https://remote-relay.example.ts.net',
+                relayAccessTarget: {
+                    kind: 'ssh',
+                    ssh: {
+                        target: 'root@remote.example.test',
+                        auth: 'agent',
+                    },
+                },
+                mode: 'remoteRelayHost',
+            });
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        await act(async () => {
+            remoteChecklistProps?.onRequestAdvance?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const continueAfterRelayAccess = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await continueAfterRelayAccess.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 4, turns: 4 });
+
+        expect(screen.findByTestId('onboarding-wizard-confirmSwitchRelay')).toBeTruthy();
+        expect(screen.findByTestId('server-settings-add-reachability-remediation')).toBeTruthy();
+        expect(screen.findByTestId('onboarding-wizard-primary')?.props.disabled).toBe(true);
+
+        relayReachable = true;
+        const remediationButton = screen.findByTestId('server-settings-add-remediation-action-prepare_tailscale')!;
+        await act(async () => {
+            const handler = remediationButton.props.action ?? remediationButton.props.onPress;
+            await handler?.();
+        });
+        await flushHookEffects({ cycles: 6, turns: 6 });
+
+        expect(systemTaskRunnerState.startMock).toHaveBeenCalledWith({
+            kind: 'tailscale.ensureReady.v1',
+            params: {
+                installPolicy: 'installIfMissing',
+                loginPolicy: 'interactive',
+                mode: 'normalUser',
+            },
+        });
+        expect(screen.findByTestId('onboarding-wizard-primary')?.props.disabled).toBe(false);
+
+        runtimeFetchMock.mockImplementation(previousFetchImpl ?? (async (input: RequestInfo | URL, init?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } })));
+    });
+
     it('shows the relay footer hint when Happier Cloud is selected', async () => {
         const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
         const screen = await renderScreen(
@@ -2792,6 +3020,63 @@ describe('OnboardingWizardSurface', () => {
         expect(typedRelayRow?.props.badge).toBe('common.unreachable');
         expect(typedRelayRow?.props.menuActions?.some((action: any) => action.id === 'retry')).toBe(true);
         expect(screen.findByProps({ testID: 'onboarding-wizard-relay:customUrl' } as never)?.props.selected).toBe(false);
+        expect(screen.findByTestId('onboarding-wizard-primary')?.props.disabled).toBe(true);
+
+        runtimeFetchMock.mockImplementation(previousFetchImpl ?? (async (input: RequestInfo | URL, init?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } })));
+    });
+
+    it('shows desktop tailscale remediation when a typed tailscale relay is unreachable', async () => {
+        const previousFetchImpl = runtimeFetchMock.getMockImplementation();
+        runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input);
+            if (
+                url.includes('https://typed-relay.example.ts.net')
+                && url.endsWith('/health')
+            ) {
+                return new Response(JSON.stringify({ ok: false }), { status: 500, headers: { 'content-type': 'application/json' } });
+            }
+            return previousFetchImpl
+                ? previousFetchImpl(input, init)
+                : new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+        });
+
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                initialStepId: 'relay_select',
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const customRelayRow = screen.findByTestId('onboarding-wizard-relay:customUrl')!;
+        await act(async () => {
+            await customRelayRow.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const continueToUrlEntry = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await continueToUrlEntry.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const relayInput = screen.findByTestId('onboarding-wizard-relay-url-input')!;
+        await act(async () => {
+            relayInput.props.onChangeText?.('https://typed-relay.example.ts.net');
+        });
+        await flushHookEffects({ cycles: 4, turns: 4 });
+
+        expect(screen.findByTestId('server-settings-add-reachability-remediation')).toBeTruthy();
+        expect(screen.findByTestId('server-settings-add-remediation-action-prepare_tailscale')).toBeTruthy();
         expect(screen.findByTestId('onboarding-wizard-primary')?.props.disabled).toBe(true);
 
         runtimeFetchMock.mockImplementation(previousFetchImpl ?? (async (input: RequestInfo | URL, init?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } })));
