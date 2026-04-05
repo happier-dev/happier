@@ -247,6 +247,7 @@ FROM deps-alpine AS docs-builder
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 COPY apps/docs ./apps/docs
+COPY apps/ui/sources/assets/fonts ./apps/ui/sources/assets/fonts
 RUN yarn workspace docs postinstall:real && yarn workspace docs build
 
 FROM node:${NODE_VERSION}-alpine AS docs
