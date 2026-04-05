@@ -9,6 +9,7 @@ import { Typography } from '@/constants/Typography';
 import type { FileItem } from '@/sync/domains/input/suggestionFile';
 import { t } from '@/text';
 import { normalizeRepoPathParts } from '@/utils/path/normalizeRepoPathParts';
+import { InlineRepoPathLabel } from '@/components/ui/path/InlineRepoPathLabel';
 
 type SearchResultsListProps = {
     theme: any;
@@ -145,36 +146,28 @@ export const SearchResultsList = React.memo(({
             }
             contentContainerStyle={{ paddingBottom: 20 }}
             renderItem={({ item: file, index }) => {
-                const { dir, name } = normalizeRepoPathParts({
-                    fileName: file.fileName,
-                    filePath: file.filePath,
-                    fullPath: file.fullPath,
-                });
-                const left = dir ? `${dir}/` : '';
-                const right = file.fileType === 'folder' ? `${name}/` : name;
                 return (
                     <Item
-                        title={left}
-                        titleStyle={{
-                            color: theme.colors.textSecondary,
-                            ...Typography.default(),
-                        }}
-                        rightElement={
-                            right ? (
-                                <Text
-                                    style={{
-                                        fontSize: 13,
-                                        color: theme.colors.text,
-                                        ...Typography.default('semiBold'),
-                                        maxWidth: 220,
-                                    }}
-                                    numberOfLines={1}
-                                    ellipsizeMode="middle"
-                                >
-                                    {right}
-                                </Text>
-                            ) : null
-                        }
+                        title={(
+                            <InlineRepoPathLabel
+                                fileName={file.fileName}
+                                filePath={file.filePath}
+                                fullPath={file.fullPath}
+                                nameSuffix={file.fileType === 'folder' ? '/' : undefined}
+                                nameMaxWidth={220}
+                                pathTextStyle={{
+                                    fontSize: 13,
+                                    color: theme.colors.textSecondary,
+                                    ...Typography.default(),
+                                }}
+                                nameTextStyle={{
+                                    fontSize: 13,
+                                    color: theme.colors.text,
+                                    ...Typography.default('semiBold'),
+                                }}
+                            />
+                        )}
+                        rightElement={null}
                         icon={renderFileIconForSearch(file, theme)}
                         density="compact"
                         onPress={file.fileType === 'file' ? () => onFilePress(file) : undefined}

@@ -10,9 +10,12 @@ import { useWorkspaceScmSnapshotController } from '@/hooks/workspaces/scm/useWor
 import { NotSourceControlRepositoryState } from '@/components/workspaces/scm/states/NotSourceControlRepositoryState';
 import { SourceControlUnavailableState } from '@/components/workspaces/scm/states/SourceControlUnavailableState';
 import { useSetting } from '@/sync/domains/state/storage';
+import { useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
 import { ChangedFilesReview } from '@/components/workspaces/scm/review/ChangedFilesReview';
 import { fetchWorkspaceUnifiedDiffForPath } from '@/scm/diff/fetchWorkspaceUnifiedDiffForPath';
 import type { ScmReviewUnifiedDiffFetcher } from '@/components/workspaces/scm/review/scmReviewDiffFetcher';
+import { useWorkspaceReviewCommentDraftHandlers } from '@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceReviewCommentDraftHandlers';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 
 export type WorkspaceScmReviewDetailsViewProps = Readonly<{
     scopeId: string;
@@ -34,6 +37,9 @@ export const WorkspaceScmReviewDetailsView = React.memo((props: WorkspaceScmRevi
         machineId: props.machineId,
         rootPath: props.rootPath,
     }), [props.machineId, props.rootPath, props.serverId]);
+    const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments') === true;
+    const reviewCommentDrafts = useWorkspaceReviewCommentsDrafts(scope);
+    const reviewDraftHandlers = useWorkspaceReviewCommentDraftHandlers(scope);
     const { snapshot, loading, error, refresh } = useWorkspaceScmSnapshotController(scope);
 
     const maxFiles = React.useMemo(() => {
@@ -101,6 +107,11 @@ export const WorkspaceScmReviewDetailsView = React.memo((props: WorkspaceScmRevi
                 onFilePress={(file) => props.onOpenFile?.(file.fullPath)}
                 onFilePressPinned={(file) => props.onOpenFilePinned?.(file.fullPath)}
                 rowDensity="compact"
+                reviewCommentsEnabled={reviewCommentsEnabled}
+                reviewCommentDrafts={reviewCommentDrafts}
+                onUpsertReviewCommentDraft={reviewDraftHandlers.onUpsertReviewCommentDraft}
+                onDeleteReviewCommentDraft={reviewDraftHandlers.onDeleteReviewCommentDraft}
+                onReviewCommentError={reviewDraftHandlers.onReviewCommentError}
                 workspaceScope={scope}
                 fetchUnifiedDiffForPath={fetchUnifiedDiffForPath}
             />

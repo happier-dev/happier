@@ -147,6 +147,42 @@ describe('ScmChangeRow', () => {
     expect(textContent.join(' ')).not.toContain('/README.md');
   });
 
+  it('right-aligns the directory segment against the filename and truncates it from the head', async () => {
+    const { ScmChangeRow } = await import('./ScmChangeRow');
+    const theme = {
+      colors: {
+        surface: '#fff',
+        surfaceHigh: '#f8f8f8',
+        divider: '#ddd',
+        text: '#111',
+        textSecondary: '#666',
+        success: '#0a0',
+        danger: '#a00',
+        warning: '#b60',
+        info: '#09f',
+      },
+    } as any;
+
+    let tree!: renderer.ReactTestRenderer;
+    tree = (await renderScreen(<ScmChangeRow
+          theme={theme}
+          file={{
+            fileName: 'jsonlForwardReader.ts',
+            filePath: 'apps/cli/src/api/directSessions/filePaging',
+            fullPath: 'apps/cli/src/api/directSessions/filePaging/jsonlForwardReader.ts',
+            status: 'modified',
+            isIncluded: false,
+            linesAdded: 0,
+            linesRemoved: 0,
+          } as any}
+          onPress={() => {}}
+        />)).tree;
+
+    const pathText = tree.findAllByType('Text' as any).find((node) => node.props.children === 'apps/cli/src/api/directSessions/filePaging/')!;
+    expect(pathText.props.ellipsizeMode).toBe('head');
+    expect(pathText.props.style.textAlign).toBe('right');
+  });
+
   it('uses surfaceHigh background when highlighted', async () => {
     const { ScmChangeRow } = await import('./ScmChangeRow');
     const theme = {

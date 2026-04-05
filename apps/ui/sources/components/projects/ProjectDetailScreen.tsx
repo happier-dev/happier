@@ -12,22 +12,31 @@ import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/st
 import { useDeviceType } from '@/utils/platform/responsive';
 import { AppPaneScopeHost } from '@/components/appShell/panes/AppPaneScopeHost';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { useResolvedRepoWorktreeSelection } from '@/components/workspaces/scm/worktrees/useResolvedRepoWorktreeSelection';
+import { findVisibleRepoWorktreeByPath } from '@/components/workspaces/scm/worktrees/repoWorktreeIdentity';
 import { buildProjectPaneScopeId } from './detail/projectPaneScope';
+import { PROJECT_ROUTE_ROOT_SENTINEL } from './detail/projectRouteState';
 import { resolveProjectRightTabId } from './detail/resolveProjectRightTabId';
 import { useWorkspaceRefById } from './detail/useWorkspaceRefById';
 import { ProjectRightPanel } from './detail/ProjectRightPanel';
 import { ProjectDetailsMainPanel } from './detail/ProjectDetailsMainPanel';
+import { ProjectWorktreeRecoveryToast } from './detail/ProjectWorktreeRecoveryToast';
+import { useProjectOverviewMode } from './detail/useProjectOverviewMode';
 
 export const ProjectDetailScreen = React.memo((props: Readonly<{
     workspaceRefId: string;
     activeRootPath?: string | null;
+    showWorktrees?: boolean;
     onSelectRootPath?: (path: string) => void;
+    onSetShowWorktrees?: (nextValue: boolean) => void;
 }>) => {
     const { theme } = useUnistyles();
     const deviceType = useDeviceType();
     const multiPaneEnabled = useLocalSetting('uiMultiPanePanelsEnabled') !== false;
     const lastActiveRootPathByWorkspaceRefId = useLocalSetting('projectLastActiveRootPathByWorkspaceRefId');
+    const lastActiveWorktreeIdByWorkspaceRefId = useLocalSetting('projectLastActiveWorktreeIdByWorkspaceRefId');
     const [, setLastActiveRootPathByWorkspaceRefId] = useLocalSettingMutable('projectLastActiveRootPathByWorkspaceRefId');
+    const [, setLastActiveWorktreeIdByWorkspaceRefId] = useLocalSettingMutable('projectLastActiveWorktreeIdByWorkspaceRefId');
     const scopeId = React.useMemo(() => buildProjectPaneScopeId(props.workspaceRefId), [props.workspaceRefId]);
     const pane = useAppPaneScope(scopeId);
     const workspaceRef = useWorkspaceRefById(props.workspaceRefId);
@@ -38,7 +47,6 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
         const value = lastActiveRootPathByWorkspaceRefId?.[workspaceRef.id];
         return typeof value === 'string' && value.trim().length > 0 ? value : null;
     }, [lastActiveRootPathByWorkspaceRefId, workspaceRef]);
-
     React.useEffect(() => {
         if (!workspaceRef) return;
         if (controlledActiveRootPath != null) return;
@@ -68,6 +76,13 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
         pane.openRight({ tabId: preferredTab });
         pane.setRightTab(preferredTab);
     }, [deviceType, multiPaneEnabled, pane, workspaceRef]);
+
+    const detailsState = pane.scopeState?.details ?? null;
+    const { forceOverviewMode } = useProjectOverviewMode({
+        showWorktrees: props.showWorktrees,
+        onSetShowWorktrees: props.onSetShowWorktrees,
+        detailsState,
+    });
 
     if (!workspaceRef) {
         return (
@@ -106,11 +121,33 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
         );
     }
 
-    const resolvedActiveRootPath = controlledActiveRootPath ?? localActiveRootPath ?? persistedActiveRootPath ?? workspaceRef.rootPath;
+    const requestedActiveRootPath = controlledActiveRootPath ?? localActiveRootPath ?? persistedActiveRootPath ?? workspaceRef.rootPath;
+    const {
+        requestedRootPath,
+        resolvedRootPath: resolvedActiveRootPath,
+        resolvedWorktreeId: resolvedActiveWorktreeId,
+        didRecoverMissingWorktree,
+        availableWorktrees,
+    } = useResolvedRepoWorktreeSelection({
+        serverId: workspaceRef.serverId,
+        machineId: workspaceRef.machineId,
+        defaultRootPath: workspaceRef.rootPath,
+        requestedRootPath: requestedActiveRootPath,
+        requestedWorktreeId: controlledActiveRootPath == null && localActiveRootPath == null && typeof lastActiveWorktreeIdByWorkspaceRefId?.[workspaceRef.id] === 'string'
+            && lastActiveWorktreeIdByWorkspaceRefId[workspaceRef.id] !== PROJECT_ROUTE_ROOT_SENTINEL
+            ? lastActiveWorktreeIdByWorkspaceRefId[workspaceRef.id]
+            : null,
+    });
+    const recoveryToastKey = didRecoverMissingWorktree
+        ? `${workspaceRef.id}:${requestedRootPath}`
+        : null;
 
     const handleSelectRootPath = React.useCallback((path: string) => {
         const trimmedPath = path.trim();
         if (!trimmedPath) return;
+        const nextWorktreeId = trimmedPath === workspaceRef.rootPath
+            ? null
+            : (findVisibleRepoWorktreeByPath(availableWorktrees, trimmedPath)?.id ?? null);
         if (controlledActiveRootPath == null) {
             setLocalActiveRootPath(trimmedPath);
         }
@@ -118,31 +155,85 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
             ...(lastActiveRootPathByWorkspaceRefId ?? {}),
             [props.workspaceRefId]: trimmedPath,
         });
+        setLastActiveWorktreeIdByWorkspaceRefId({
+            ...(lastActiveWorktreeIdByWorkspaceRefId ?? {}),
+            [props.workspaceRefId]: nextWorktreeId ?? PROJECT_ROUTE_ROOT_SENTINEL,
+        });
         props.onSelectRootPath?.(trimmedPath);
-    }, [controlledActiveRootPath, lastActiveRootPathByWorkspaceRefId, props, setLastActiveRootPathByWorkspaceRefId]);
+    }, [
+        availableWorktrees,
+        controlledActiveRootPath,
+        lastActiveRootPathByWorkspaceRefId,
+        lastActiveWorktreeIdByWorkspaceRefId,
+        props.onSelectRootPath,
+        props.workspaceRefId,
+        setLastActiveRootPathByWorkspaceRefId,
+        setLastActiveWorktreeIdByWorkspaceRefId,
+        workspaceRef.rootPath,
+    ]);
+
+    React.useEffect(() => {
+        if (!workspaceRef) return;
+        if (requestedRootPath === resolvedActiveRootPath) return;
+
+        setLastActiveRootPathByWorkspaceRefId({
+            ...(lastActiveRootPathByWorkspaceRefId ?? {}),
+            [props.workspaceRefId]: resolvedActiveRootPath,
+        });
+        setLastActiveWorktreeIdByWorkspaceRefId({
+            ...(lastActiveWorktreeIdByWorkspaceRefId ?? {}),
+            [props.workspaceRefId]: resolvedActiveWorktreeId ?? PROJECT_ROUTE_ROOT_SENTINEL,
+        });
+
+        if (controlledActiveRootPath == null) {
+            setLocalActiveRootPath(resolvedActiveRootPath);
+        }
+
+        if (controlledActiveRootPath != null) {
+            props.onSelectRootPath?.(resolvedActiveRootPath);
+        }
+    }, [
+        controlledActiveRootPath,
+        lastActiveRootPathByWorkspaceRefId,
+        lastActiveWorktreeIdByWorkspaceRefId,
+        props.onSelectRootPath,
+        props.workspaceRefId,
+        requestedRootPath,
+        resolvedActiveRootPath,
+        resolvedActiveWorktreeId,
+        setLastActiveRootPathByWorkspaceRefId,
+        setLastActiveWorktreeIdByWorkspaceRefId,
+        workspaceRef,
+    ]);
 
     return (
-        <AppPaneScopeHost
-            scopeId={scopeId}
-            detailsPaneEnabled={false}
-            main={(
-                <ProjectDetailsMainPanel
-                    scopeId={scopeId}
-                    workspaceRef={workspaceRef}
-                    activeRootPath={resolvedActiveRootPath}
-                    onSelectRootPath={handleSelectRootPath}
-                />
-            )}
-            rightPane={(
-                <ProjectRightPanel
-                    scopeId={scopeId}
-                    workspaceRef={workspaceRef}
-                    activeRootPath={resolvedActiveRootPath}
-                    onSelectRootPath={handleSelectRootPath}
-                />
-            )}
-            detailsPane={null}
-            bottomPane={null}
-        />
+        <View style={{ flex: 1 }}>
+            <AppPaneScopeHost
+                scopeId={scopeId}
+                detailsPaneEnabled={false}
+                main={(
+                    <ProjectDetailsMainPanel
+                        scopeId={scopeId}
+                        workspaceRef={workspaceRef}
+                        activeRootPath={resolvedActiveRootPath}
+                        activeWorktreeId={resolvedActiveWorktreeId}
+                        forceOverviewMode={forceOverviewMode}
+                        onSelectRootPath={handleSelectRootPath}
+                    />
+                )}
+                rightPane={(
+                    <ProjectRightPanel
+                        scopeId={scopeId}
+                        workspaceRef={workspaceRef}
+                        activeRootPath={resolvedActiveRootPath}
+                        activeWorktreeId={resolvedActiveWorktreeId}
+                        onSelectRootPath={handleSelectRootPath}
+                    />
+                )}
+                detailsPane={null}
+                bottomPane={null}
+            />
+            <ProjectWorktreeRecoveryToast recoveryToastKey={recoveryToastKey} />
+        </View>
     );
 });

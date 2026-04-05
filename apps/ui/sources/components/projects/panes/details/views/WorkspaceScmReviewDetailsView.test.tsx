@@ -39,8 +39,43 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
             if (key === 'scmReviewMaxFiles') return 25;
             return original.useSetting?.(key);
         },
+        useWorkspaceReviewCommentsDrafts: () => [
+            {
+                id: 'draft-1',
+                filePath: 'src/a.ts',
+                source: 'diff',
+                anchor: {
+                    kind: 'diffLine',
+                    startLine: 5,
+                    side: 'after',
+                    oldLine: 1,
+                    newLine: 1,
+                },
+                snapshot: {
+                    selectedLines: ['+export const a = 2;'],
+                    beforeContext: ['-export const a = 1;'],
+                    afterContext: [],
+                },
+                body: 'Please verify this change.',
+                createdAt: 1,
+            },
+        ],
     };
 });
+
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: (featureId: string) => featureId === 'files.reviewComments',
+}));
+
+const reviewDraftHandlers = {
+    onUpsertReviewCommentDraft: vi.fn(),
+    onDeleteReviewCommentDraft: vi.fn(),
+    onReviewCommentError: vi.fn(),
+};
+
+vi.mock('@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceReviewCommentDraftHandlers', () => ({
+    useWorkspaceReviewCommentDraftHandlers: () => reviewDraftHandlers,
+}));
 
 const useWorkspaceScmSnapshotControllerSpy = vi.fn();
 const workspaceSnapshotMock = {
@@ -141,13 +176,25 @@ describe('WorkspaceScmReviewDetailsView', () => {
             machineId: 'm1',
             rootPath: '/repo',
         });
-        expect(changedFilesReviewSpy).toHaveBeenCalledWith(expect.objectContaining({
+        const reviewProps = changedFilesReviewSpy.mock.calls[0]?.[0];
+        expect(reviewProps).toEqual(expect.objectContaining({
             sessionId: 'project:wr_1',
             changedFilesViewMode: 'repository',
             allRepositoryChangedFiles: [expect.objectContaining({ fullPath: 'src/a.ts' })],
             repositoryOnlyFiles: [expect.objectContaining({ fullPath: 'src/a.ts' })],
             sessionAttributedFiles: [],
             turnAttributedFiles: [],
+            reviewCommentsEnabled: true,
+            reviewCommentDrafts: [
+                expect.objectContaining({
+                    id: 'draft-1',
+                    filePath: 'src/a.ts',
+                    body: 'Please verify this change.',
+                }),
+            ],
+            onUpsertReviewCommentDraft: reviewDraftHandlers.onUpsertReviewCommentDraft,
+            onDeleteReviewCommentDraft: reviewDraftHandlers.onDeleteReviewCommentDraft,
+            onReviewCommentError: reviewDraftHandlers.onReviewCommentError,
             workspaceScope: {
                 serverId: 's1',
                 machineId: 'm1',
@@ -155,9 +202,6 @@ describe('WorkspaceScmReviewDetailsView', () => {
             },
             fetchUnifiedDiffForPath: expect.any(Function),
         }));
-
-        const reviewProps = changedFilesReviewSpy.mock.calls[0]?.[0];
-        expect(reviewProps).toBeTruthy();
 
         const result = await reviewProps.fetchUnifiedDiffForPath({
             path: 'src/a.ts',

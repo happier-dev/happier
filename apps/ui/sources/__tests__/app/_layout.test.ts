@@ -149,7 +149,7 @@ vi.mock('@/activity/notifications/runtime/ActivityLocalNotificationRuntime', () 
 
 const ActivitySurfacesRuntime = vi.hoisted(() => vi.fn(() => null));
 
-vi.mock('@/activity/runtime/ActivitySurfacesRuntime', () => ({
+vi.mock('@/activity/adapters/ios/runtime/ActivitySurfacesRuntime', () => ({
     ActivitySurfacesRuntime,
 }));
 

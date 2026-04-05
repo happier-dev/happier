@@ -66,7 +66,7 @@ vi.mock('@/hooks/workspaces/scm/useWorkspaceScmSnapshotController', () => ({
 }));
 
 describe('ProjectDetailsMainPanel', () => {
-    it('renders WorkspaceDetailsPanel for the project workspace', async () => {
+    it('keeps the main project surface anchored to the base root while sourcing the worktree list from the base repo snapshot', async () => {
         deviceTypeMock = 'tablet';
         workspaceDetailsPanelSpy.mockClear();
         workspaceScmSnapshotControllerSpy.mockClear();
@@ -76,6 +76,7 @@ describe('ProjectDetailsMainPanel', () => {
             <ProjectDetailsMainPanel
                 scopeId="project:wr_1"
                 activeRootPath="/repo/.worktrees/feature-auth"
+                activeWorktreeId="gitwt_feature"
                 onSelectRootPath={() => {}}
                 workspaceRef={{
                     id: 'wr_1',
@@ -91,6 +92,7 @@ describe('ProjectDetailsMainPanel', () => {
         expect(workspaceDetailsPanelSpy).toHaveBeenCalledWith(expect.objectContaining({
             scopeId: 'project:wr_1',
             activeRootPath: '/repo/.worktrees/feature-auth',
+            displayPathOverride: '/repo',
             workspaceRef: expect.objectContaining({
                 id: 'wr_1',
                 serverId: 's1',
@@ -101,7 +103,7 @@ describe('ProjectDetailsMainPanel', () => {
         expect(workspaceScmSnapshotControllerSpy).toHaveBeenCalledWith({
             serverId: 's1',
             machineId: 'm1',
-            rootPath: '/repo/.worktrees/feature-auth',
+            rootPath: '/repo',
         });
     });
 
@@ -114,6 +116,7 @@ describe('ProjectDetailsMainPanel', () => {
             <ProjectDetailsMainPanel
                 scopeId="project:wr_1"
                 activeRootPath="/repo/.worktrees/feature-auth"
+                activeWorktreeId="gitwt_feature"
                 onSelectRootPath={() => {}}
                 workspaceRef={{
                     id: 'wr_1',

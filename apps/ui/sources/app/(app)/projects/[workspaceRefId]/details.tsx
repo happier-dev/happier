@@ -4,17 +4,16 @@ import { useIsFocused } from '@react-navigation/native';
 import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
-import { deferOnWeb } from '@/utils/platform/deferOnWeb';
-import { t } from '@/text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { ProjectDetailScreen } from '@/components/projects/ProjectDetailScreen';
-import { ProjectMobileHeaderActions } from '@/components/projects/detail/ProjectMobileHeaderActions';
 import { buildProjectPaneScopeId } from '@/components/projects/detail/projectPaneScope';
 import { ProjectDetailsMainPanel } from '@/components/projects/detail/ProjectDetailsMainPanel';
+import { useProjectRouteActions } from '@/components/projects/detail/useProjectRouteActions';
+import { useProjectRouteHeaderOptions } from '@/components/projects/detail/useProjectRouteHeaderOptions';
+import { ProjectWorktreeRecoveryToast } from '@/components/projects/detail/ProjectWorktreeRecoveryToast';
 import {
     buildProjectRouteHref,
     readProjectRouteStringParam,
-    resolveProjectRouteHeaderTitle,
     resolveProjectRouteSegment,
 } from '@/components/projects/detail/projectRouteState';
 import { useProjectMobileRoutePersistence } from '@/components/projects/detail/useProjectMobileRoutePersistence';
@@ -26,6 +25,7 @@ export default function ProjectDetailsScreenRoute() {
     const isFocused = useIsFocused();
     const params = useLocalSearchParams<{
         workspaceRefId?: string | string[];
+        worktreeId?: string | string[];
         activeRootPath?: string | string[];
         showWorktrees?: string | string[];
     }>();
@@ -49,51 +49,48 @@ export default function ProjectDetailsScreenRoute() {
     const persistedRouteSegment = detailsIsOpen || hasDetails ? 'details' : fallbackSegment;
     const {
         resolvedActiveRootPath,
+        resolvedActiveWorktreeId,
+        recoveryToastKey,
         setRouteActiveRootPath,
     } = useProjectMobileRoutePersistence({
         workspaceRef,
+        routeSegment: 'details',
+        showWorktrees,
+        rawWorktreeId: params.worktreeId,
         rawActiveRootPath: params.activeRootPath,
         persistedRouteSegment,
     });
 
-    const openTerminal = React.useCallback(() => {
-        deferOnWeb(() => {
-            pane.openDetailsTab(
-                {
-                    key: 'terminal',
-                    kind: 'terminal',
-                    title: t('settings.terminal'),
-                    resource: { kind: 'terminal' },
-                },
-                { intent: 'pinned' },
-            );
-        });
-    }, [pane]);
+    const routeActions = useProjectRouteActions({
+        workspaceRef,
+        activeRootPath: resolvedActiveRootPath,
+        activeWorktreeId: resolvedActiveWorktreeId,
+        showWorktrees,
+        pane,
+    });
 
-    const screenOptions = React.useMemo(() => ({
-        headerShown: true,
-        headerTitle: resolveProjectRouteHeaderTitle(workspaceRef, resolvedActiveRootPath),
-        headerBackTitle: t('common.back'),
-        headerRight: () => (
-            <ProjectMobileHeaderActions
-                showWorktreesButton={false}
-                onOpenTerminal={openTerminal}
-            />
-        ),
-    }), [openTerminal, resolvedActiveRootPath, workspaceRef]);
+    const screenOptions = useProjectRouteHeaderOptions({
+        workspaceRef,
+        activeRootPath: resolvedActiveRootPath,
+        testIdPrefix: 'project-mobile-header',
+        showWorktreesButton: true,
+        onToggleWorktrees: () => routeActions.replaceOverviewVisibility({
+            segment: 'details',
+            visible: !showWorktrees,
+        }),
+        onOpenTerminal: () => routeActions.openTerminal({
+            segment: 'details',
+            exitOverview: true,
+        }),
+    });
 
     const returnToProject = React.useCallback(() => {
         safeRouterBack({
             router,
             navigation,
-            fallbackHref: buildProjectRouteHref({
-                workspaceRefId: workspaceRef.id,
-                segment: fallbackSegment,
-                activeRootPath: resolvedActiveRootPath,
-                defaultRootPath: workspaceRef.rootPath,
-            }),
+            fallbackHref: routeActions.buildHref({ segment: fallbackSegment }),
         });
-    }, [fallbackSegment, navigation, resolvedActiveRootPath, router, workspaceRef.id, workspaceRef.rootPath]);
+    }, [fallbackSegment, navigation, routeActions, router]);
 
     React.useEffect(() => {
         hasMountedRef.current = true;
@@ -139,10 +136,13 @@ export default function ProjectDetailsScreenRoute() {
                     scopeId={scopeId}
                     workspaceRef={workspaceRef}
                     activeRootPath={resolvedActiveRootPath}
+                    activeWorktreeId={resolvedActiveWorktreeId}
+                    forceOverviewMode={showWorktrees}
                     onSelectRootPath={setRouteActiveRootPath}
                     onRequestClose={onRequestClose}
                 />
             </React.Suspense>
+            <ProjectWorktreeRecoveryToast recoveryToastKey={recoveryToastKey} />
         </View>
     );
 }

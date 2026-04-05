@@ -6,6 +6,7 @@ import { repoScmBranchService } from '@/scm/repository/repoScmBranchService';
 import { repoScmWorktreeService } from '@/scm/repository/repoScmWorktreeService';
 import { useRepoScmBranchList } from '@/scm/repository/useRepoScmBranchList';
 import { buildWorkspaceScmBranchPopoverItems } from '@/components/workspaces/scm/branches/buildWorkspaceScmBranchPopoverItems';
+import { filterVisibleRepoWorktreeRows } from '@/components/workspaces/scm/worktrees/filterVisibleRepoWorktreeRows';
 import { sortRepoWorktreeRows } from '@/components/workspaces/scm/worktrees/sortRepoWorktreeRows';
 import {
     hasUncommittedChanges,
@@ -65,7 +66,7 @@ export function WorkspaceSourceControlBranchMenu(props: WorkspaceSourceControlBr
 
     const worktreeRows = React.useMemo(() => {
         const worktrees = snapshot?.repo.worktrees ?? [];
-        return sortRepoWorktreeRows(worktrees);
+        return sortRepoWorktreeRows(filterVisibleRepoWorktreeRows(worktrees));
     }, [snapshot?.repo.worktrees]);
 
     const selectWorkspacePath = React.useCallback((path: string) => {

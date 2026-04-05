@@ -24,7 +24,7 @@ vi.mock('@/sync/ops/scm/machineScm', () => ({
     machineScmDiffFile: (...args: any[]) => machineScmDiffFileSpy(...args),
 }));
 
-vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline', () => ({
+vi.mock('@/sync/domains/transfers/runtime/transferSubstrate', () => ({
     callDaemonWorkspaceStatFileRpc: (...args: any[]) => workspaceStatFileSpy(...args),
     downloadDaemonWorkspaceFileToBase64: (...args: any[]) => workspaceReadFileSpy(...args),
 }));

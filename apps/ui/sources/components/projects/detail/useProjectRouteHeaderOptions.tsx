@@ -1,0 +1,72 @@
+import * as React from 'react';
+import { Pressable } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { useUnistyles } from 'react-native-unistyles';
+
+import { t } from '@/text';
+import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
+
+import { ProjectHeaderActions } from './ProjectHeaderActions';
+import { resolveProjectRouteHeaderTitle } from './projectRouteState';
+
+export function useProjectRouteHeaderOptions(params: Readonly<{
+    workspaceRef: WorkspaceRefV1 | null;
+    activeRootPath?: string | null;
+    testIdPrefix: string;
+    showWorktreesButton: boolean;
+    onToggleWorktrees?: () => void;
+    onOpenTerminal: () => void;
+}>): Readonly<Record<string, unknown>> {
+    const router = useRouter();
+    const navigation = useNavigation();
+    const { theme } = useUnistyles();
+
+    const handleBack = React.useCallback(() => {
+        safeRouterBack({
+            router,
+            navigation,
+            fallbackHref: '/projects',
+        });
+    }, [navigation, router]);
+
+    return React.useMemo(() => ({
+        headerShown: true,
+        headerTitle: params.workspaceRef && params.activeRootPath
+            ? resolveProjectRouteHeaderTitle(params.workspaceRef, params.activeRootPath)
+            : t('projects.detail.groupTitle'),
+        headerBackTitle: t('common.back'),
+        headerBackVisible: false,
+        headerLeft: () => (
+            <Pressable
+                testID={`${params.testIdPrefix}-back`}
+                onPress={handleBack}
+                hitSlop={15}
+                accessibilityRole="button"
+                accessibilityLabel={t('common.back')}
+                style={{ paddingHorizontal: 12, paddingVertical: 6 }}
+            >
+                <Ionicons name="arrow-back" size={24} color={theme.colors.header.tint} />
+            </Pressable>
+        ),
+        headerRight: () => (
+            <ProjectHeaderActions
+                testIdPrefix={params.testIdPrefix}
+                showWorktreesButton={params.showWorktreesButton}
+                onOpenWorktrees={params.onToggleWorktrees}
+                onOpenTerminal={params.onOpenTerminal}
+            />
+        ),
+    }), [
+        handleBack,
+        params.activeRootPath,
+        params.onOpenTerminal,
+        params.onToggleWorktrees,
+        params.showWorktreesButton,
+        params.testIdPrefix,
+        params.workspaceRef,
+        theme.colors.header.tint,
+    ]);
+}

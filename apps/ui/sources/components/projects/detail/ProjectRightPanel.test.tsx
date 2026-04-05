@@ -124,6 +124,7 @@ describe('ProjectRightPanel', () => {
                 workspaceRef={workspaceRef}
                 scopeId="project:wr_1"
                 activeRootPath="/repo"
+                activeWorktreeId={null}
                 onSelectRootPath={() => {}}
                 onRequestClose={() => {}}
             />,
@@ -136,7 +137,7 @@ describe('ProjectRightPanel', () => {
 
         expect(appPaneScopeMock.openRight).toHaveBeenCalledWith({ tabId: 'files' });
         expect(appPaneScopeMock.setRightTab).toHaveBeenCalledWith('files');
-        expect(routerReplaceSpy).toHaveBeenCalledWith('/projects/wr_1/files');
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/projects/wr_1/files?worktreeId=%40root');
         expect(screen.tree.findAll((node) => node.props?.testID === 'project-rightpanel-close')).toHaveLength(0);
     });
 
@@ -160,6 +161,7 @@ describe('ProjectRightPanel', () => {
                 workspaceRef={workspaceRef}
                 scopeId="project:wr_1"
                 activeRootPath="/repo/.worktrees/feature-auth"
+                activeWorktreeId="gitwt_feature"
                 onSelectRootPath={() => {}}
                 onRequestClose={() => {}}
             />,
@@ -171,7 +173,7 @@ describe('ProjectRightPanel', () => {
         });
 
         expect(routerReplaceSpy).toHaveBeenCalledWith(
-            '/projects/wr_1/files?activeRootPath=%2Frepo%2F.worktrees%2Ffeature-auth',
+            '/projects/wr_1/files?worktreeId=gitwt_feature',
         );
     });
 });

@@ -83,4 +83,24 @@ describe('WorkspaceWorktreeListSection', () => {
 
         expect(onSelectRootPath).toHaveBeenCalledWith('/repo/.worktrees/feature-auth');
     });
+
+    it('hides prunable worktrees and still shows the main repository row', async () => {
+        const onSelectRootPath = vi.fn();
+        const { WorkspaceWorktreeListSection } = await import('./WorkspaceWorktreeListSection');
+
+        const screen = await renderScreen(
+            <WorkspaceWorktreeListSection
+                worktrees={[
+                    { path: '/repo', branch: 'main', isCurrent: false, isMain: true },
+                    { path: '/repo/.worktrees/feature-auth', branch: 'feature/auth', isCurrent: true },
+                    { path: '/repo/.worktrees/deleted', branch: 'deleted', isCurrent: false, isPrunable: true },
+                ]}
+                selectedRootPath="/repo/.worktrees/feature-auth"
+                onSelectRootPath={onSelectRootPath}
+            />,
+        );
+
+        expect(screen.tree.findByProps({ testID: 'workspace-worktree-row:/repo' })).toBeTruthy();
+        expect(screen.tree.findAllByProps({ testID: 'workspace-worktree-row:/repo/.worktrees/deleted' })).toHaveLength(0);
+    });
 });

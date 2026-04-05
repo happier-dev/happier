@@ -283,7 +283,7 @@ describe('WorkspaceSourceControlView', () => {
         expect(trailingCount.props.children).toBe('2');
     });
 
-    it('renders commit composer and stage toggles (atomic)', async () => {
+    it('renders commit composer and stage toggles when write operations are enabled', async () => {
         workspaceSnapshotMock = createSnapshot();
         commitSelectionPaths = [];
         commitSelectionPatches = [];
@@ -303,7 +303,7 @@ describe('WorkspaceSourceControlView', () => {
 
         expect(tree.findByProps({ testID: 'scm-commit-message' })).toBeTruthy();
         expect(tree.findByProps({ testID: 'scm-commit-submit' })).toBeTruthy();
-        expect(tree.findAllByProps({ testID: 'scm-commit-selection-toggle-src_a.ts' })).toHaveLength(0);
+        expect(tree.findByProps({ testID: 'scm-commit-selection-toggle-src_a.ts' })).toBeTruthy();
     });
 
     it('hides write controls when source control writes are disabled', async () => {

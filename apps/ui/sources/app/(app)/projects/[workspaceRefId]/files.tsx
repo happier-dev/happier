@@ -4,18 +4,14 @@ import { useIsFocused } from '@react-navigation/native';
 import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
-import { deferOnWeb } from '@/utils/platform/deferOnWeb';
-import { t } from '@/text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { ProjectDetailScreen } from '@/components/projects/ProjectDetailScreen';
 import { buildProjectPaneScopeId } from '@/components/projects/detail/projectPaneScope';
-import { ProjectMobileHeaderActions } from '@/components/projects/detail/ProjectMobileHeaderActions';
 import { ProjectRightPanel } from '@/components/projects/detail/ProjectRightPanel';
-import {
-    buildProjectRouteHref,
-    readProjectRouteStringParam,
-    resolveProjectRouteHeaderTitle,
-} from '@/components/projects/detail/projectRouteState';
+import { useProjectRouteActions } from '@/components/projects/detail/useProjectRouteActions';
+import { useProjectRouteHeaderOptions } from '@/components/projects/detail/useProjectRouteHeaderOptions';
+import { ProjectWorktreeRecoveryToast } from '@/components/projects/detail/ProjectWorktreeRecoveryToast';
+import { readProjectRouteStringParam } from '@/components/projects/detail/projectRouteState';
 import { useProjectMobileRoutePersistence } from '@/components/projects/detail/useProjectMobileRoutePersistence';
 import { useWorkspaceRefById } from '@/components/projects/detail/useWorkspaceRefById';
 
@@ -23,7 +19,11 @@ export default function ProjectFilesScreenRoute() {
     const router = useRouter();
     const navigation = useNavigation();
     const isFocused = useIsFocused();
-    const params = useLocalSearchParams<{ workspaceRefId?: string | string[]; activeRootPath?: string | string[] }>();
+    const params = useLocalSearchParams<{
+        workspaceRefId?: string | string[];
+        worktreeId?: string | string[];
+        activeRootPath?: string | string[];
+    }>();
     const workspaceRefId = readProjectRouteStringParam(params.workspaceRefId) ?? '';
 
     const workspaceRef = useWorkspaceRefById(workspaceRefId);
@@ -36,45 +36,32 @@ export default function ProjectFilesScreenRoute() {
     const pane = useAppPaneScope(scopeId);
     const {
         resolvedActiveRootPath,
+        resolvedActiveWorktreeId,
+        recoveryToastKey,
         setRouteActiveRootPath,
     } = useProjectMobileRoutePersistence({
         workspaceRef,
+        routeSegment: 'files',
+        rawWorktreeId: params.worktreeId,
         rawActiveRootPath: params.activeRootPath,
         persistedRouteSegment: 'files',
     });
 
-    const openTerminal = React.useCallback(() => {
-        deferOnWeb(() => {
-            pane.openDetailsTab(
-                {
-                    key: 'terminal',
-                    kind: 'terminal',
-                    title: t('settings.terminal'),
-                    resource: { kind: 'terminal' },
-                },
-                { intent: 'pinned' },
-            );
-        });
-    }, [pane]);
+    const routeActions = useProjectRouteActions({
+        workspaceRef,
+        activeRootPath: resolvedActiveRootPath,
+        activeWorktreeId: resolvedActiveWorktreeId,
+        pane,
+    });
 
-    const screenOptions = React.useMemo(() => ({
-        headerShown: true,
-        headerTitle: resolveProjectRouteHeaderTitle(workspaceRef, resolvedActiveRootPath),
-        headerBackTitle: t('common.back'),
-        headerRight: () => (
-            <ProjectMobileHeaderActions
-                showWorktreesButton
-                onOpenWorktrees={() => router.push(buildProjectRouteHref({
-                    workspaceRefId: workspaceRef.id,
-                    segment: 'details',
-                    activeRootPath: resolvedActiveRootPath,
-                    defaultRootPath: workspaceRef.rootPath,
-                    showWorktrees: true,
-                }))}
-                onOpenTerminal={openTerminal}
-            />
-        ),
-    }), [openTerminal, resolvedActiveRootPath, router, workspaceRef]);
+    const screenOptions = useProjectRouteHeaderOptions({
+        workspaceRef,
+        activeRootPath: resolvedActiveRootPath,
+        testIdPrefix: 'project-mobile-header',
+        showWorktreesButton: true,
+        onToggleWorktrees: () => routeActions.openWorktreesInDetails('push'),
+        onOpenTerminal: () => routeActions.openTerminal(),
+    });
     const openRight = pane.openRight;
     const closeRight = pane.closeRight;
     const setRightTab = pane.setRightTab;
@@ -109,26 +96,17 @@ export default function ProjectFilesScreenRoute() {
         if (!key) return;
         if (lastPushedDetailsKeyRef.current === key) return;
         lastPushedDetailsKeyRef.current = key;
-        router.push(buildProjectRouteHref({
-            workspaceRefId: workspaceRef.id,
-            segment: 'details',
-            activeRootPath: resolvedActiveRootPath,
-            defaultRootPath: workspaceRef.rootPath,
-        }));
-    }, [activeDetailsKey, detailsIsOpen, detailsTabs, isFocused, resolvedActiveRootPath, router, workspaceRef.id, workspaceRef.rootPath]);
+        routeActions.navigateToSegment({ segment: 'details', method: 'push' });
+    }, [activeDetailsKey, detailsIsOpen, detailsTabs, isFocused, routeActions]);
 
     const onRequestClose = React.useCallback(() => {
         closeRight();
         safeRouterBack({
             router,
             navigation,
-            fallbackHref: buildProjectRouteHref({
-                workspaceRefId: workspaceRef.id,
-                activeRootPath: resolvedActiveRootPath,
-                defaultRootPath: workspaceRef.rootPath,
-            }),
+            fallbackHref: routeActions.buildHref(),
         });
-    }, [closeRight, navigation, resolvedActiveRootPath, router, workspaceRef.id, workspaceRef.rootPath]);
+    }, [closeRight, navigation, routeActions, router]);
 
     return (
         <View testID="project-files-screen" style={{ flex: 1 }}>
@@ -142,10 +120,12 @@ export default function ProjectFilesScreenRoute() {
                     workspaceRef={workspaceRef}
                     scopeId={scopeId}
                     activeRootPath={resolvedActiveRootPath}
+                    activeWorktreeId={resolvedActiveWorktreeId}
                     onSelectRootPath={setRouteActiveRootPath}
                     onRequestClose={onRequestClose}
                 />
             </React.Suspense>
+            <ProjectWorktreeRecoveryToast recoveryToastKey={recoveryToastKey} />
         </View>
     );
 }

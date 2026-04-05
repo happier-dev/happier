@@ -11,7 +11,25 @@ import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel
 const projectRightPanelSpy = vi.hoisted(() => vi.fn());
 const projectDetailsMainPanelSpy = vi.hoisted(() => vi.fn());
 const setLocalSettingSpy = vi.hoisted(() => vi.fn());
+const routerBackSpy = vi.hoisted(() => vi.fn());
+const routerReplaceSpy = vi.hoisted(() => vi.fn());
 let localSettingsMock: Record<string, unknown> = {};
+const workspaceScmSnapshotControllerSpy = vi.hoisted(() => vi.fn());
+let paneScopeStateMock: {
+    right: { isOpen: boolean; activeTabId: string | null };
+    details?: { isOpen: boolean; tabs: Array<{ key: string }> };
+} = {
+    right: { isOpen: true, activeTabId: 'git' },
+    details: { isOpen: false, tabs: [] },
+};
+const paneScopeSubscribers = new Set<() => void>();
+
+function setPaneScopeState(nextState: typeof paneScopeStateMock): void {
+    paneScopeStateMock = nextState;
+    for (const subscriber of paneScopeSubscribers) {
+        subscriber();
+    }
+}
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -39,6 +57,25 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key) => key });
 });
 
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({
+        router: {
+            back: routerBackSpy,
+            replace: routerReplaceSpy,
+        },
+        navigation: {
+            canGoBack: () => true,
+        },
+    }).module;
+});
+
+vi.mock('@react-navigation/native', () => ({
+    useNavigation: () => ({
+        canGoBack: () => true,
+    }),
+}));
+
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
@@ -54,15 +91,29 @@ vi.mock('@/sync/domains/state/storage', async () => {
 
 vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => 'desktop',
+    useHeaderHeight: () => 48,
 }));
 
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
-    useAppPaneScope: () => ({
-        scopeState: { right: { isOpen: true, activeTabId: 'git' } },
-        openRight: vi.fn(),
-        closeRight: vi.fn(),
-        setRightTab: vi.fn(),
-    }),
+    useAppPaneScope: () => {
+        const scopeState = React.useSyncExternalStore(
+            (subscriber) => {
+                paneScopeSubscribers.add(subscriber);
+                return () => {
+                    paneScopeSubscribers.delete(subscriber);
+                };
+            },
+            () => paneScopeStateMock,
+            () => paneScopeStateMock,
+        );
+        return {
+            scopeState,
+            openRight: vi.fn(),
+            closeRight: vi.fn(),
+            setRightTab: vi.fn(),
+            openDetailsTab: vi.fn(),
+        };
+    },
 }));
 
 vi.mock('@/components/appShell/panes/AppPaneScopeHost', () => ({
@@ -86,6 +137,28 @@ vi.mock('./detail/useWorkspaceRefById', () => ({
     useWorkspaceRefById: () => workspaceRef,
 }));
 
+vi.mock('@/hooks/workspaces/scm/useWorkspaceScmSnapshotController', () => ({
+    useWorkspaceScmSnapshotController: (scope: unknown) => {
+        workspaceScmSnapshotControllerSpy(scope);
+        return {
+            snapshot: {
+                repo: {
+                    isRepo: true,
+                    worktrees: [
+                        { id: 'gitwt_main', path: '/repo', branch: 'main', isCurrent: true, isMain: true },
+                        { id: 'gitwt_feature', path: '/repo/.worktrees/feature-auth', branch: 'feature/auth', isCurrent: false },
+                        { id: 'gitwt_persisted', path: '/repo/.worktrees/feature-persisted', branch: 'feature/persisted', isCurrent: false },
+                        { id: 'gitwt_hydrated', path: '/repo/.worktrees/feature-hydrated', branch: 'feature/hydrated', isCurrent: false },
+                    ],
+                },
+            },
+            loading: false,
+            error: null,
+            refresh: vi.fn(async () => {}),
+        };
+    },
+}));
+
 vi.mock('./detail/ProjectRightPanel', () => ({
     ProjectRightPanel: (props: Record<string, unknown>) => {
         projectRightPanelSpy(props);
@@ -102,10 +175,15 @@ vi.mock('./detail/ProjectDetailsMainPanel', () => ({
 
 describe('ProjectDetailScreen active worktree selection', () => {
     it('keeps the main panel and right panel in sync when the active worktree changes', async () => {
+        setPaneScopeState({
+            right: { isOpen: true, activeTabId: 'git' },
+            details: { isOpen: false, tabs: [] },
+        });
         localSettingsMock = {};
         setLocalSettingSpy.mockClear();
         projectRightPanelSpy.mockClear();
         projectDetailsMainPanelSpy.mockClear();
+        workspaceScmSnapshotControllerSpy.mockClear();
         const { ProjectDetailScreen } = await import('./ProjectDetailScreen');
 
         const screen = await renderScreen(<ProjectDetailScreen workspaceRefId="wr_1" />);
@@ -131,14 +209,22 @@ describe('ProjectDetailScreen active worktree selection', () => {
     });
 
     it('prefers the persisted active worktree path when the screen is uncontrolled', async () => {
+        setPaneScopeState({
+            right: { isOpen: true, activeTabId: 'git' },
+            details: { isOpen: false, tabs: [] },
+        });
         localSettingsMock = {
             projectLastActiveRootPathByWorkspaceRefId: {
                 wr_1: '/repo/.worktrees/feature-persisted',
+            },
+            projectLastActiveWorktreeIdByWorkspaceRefId: {
+                wr_1: 'gitwt_persisted',
             },
         };
         setLocalSettingSpy.mockClear();
         projectRightPanelSpy.mockClear();
         projectDetailsMainPanelSpy.mockClear();
+        workspaceScmSnapshotControllerSpy.mockClear();
         const { ProjectDetailScreen } = await import('./ProjectDetailScreen');
 
         const screen = await renderScreen(<ProjectDetailScreen workspaceRefId="wr_1" />);
@@ -150,7 +236,68 @@ describe('ProjectDetailScreen active worktree selection', () => {
         expect(mainPanel.props.activeRootPath).toBe('/repo/.worktrees/feature-persisted');
     });
 
+    it('falls back to the base project root when a persisted worktree path no longer exists', async () => {
+        setPaneScopeState({
+            right: { isOpen: true, activeTabId: 'git' },
+            details: { isOpen: false, tabs: [] },
+        });
+        localSettingsMock = {
+            projectLastActiveRootPathByWorkspaceRefId: {
+                wr_1: '/repo/.worktrees/deleted-worktree',
+            },
+            projectLastActiveWorktreeIdByWorkspaceRefId: {
+                wr_1: 'gitwt_deleted',
+            },
+        };
+        setLocalSettingSpy.mockClear();
+        projectRightPanelSpy.mockClear();
+        projectDetailsMainPanelSpy.mockClear();
+        workspaceScmSnapshotControllerSpy.mockClear();
+        const { ProjectDetailScreen } = await import('./ProjectDetailScreen');
+
+        const screen = await renderScreen(<ProjectDetailScreen workspaceRefId="wr_1" />);
+
+        const rightPanel = screen.tree.findByType('ProjectRightPanelStub' as never);
+        const mainPanel = screen.tree.findByType('ProjectDetailsMainPanelStub' as never);
+        const recoveryToast = screen.tree.findByProps({ testID: 'project-worktree-recovery-toast' });
+
+        expect(rightPanel.props.activeRootPath).toBe('/repo');
+        expect(mainPanel.props.activeRootPath).toBe('/repo');
+        expect(recoveryToast).toBeTruthy();
+        expect(setLocalSettingSpy).toHaveBeenCalledWith({
+            wr_1: '/repo',
+        });
+    });
+
+    it('repairs a controlled invalid worktree path through onSelectRootPath so route-backed screens recover', async () => {
+        setPaneScopeState({
+            right: { isOpen: true, activeTabId: 'git' },
+            details: { isOpen: false, tabs: [] },
+        });
+        localSettingsMock = {};
+        setLocalSettingSpy.mockClear();
+        projectRightPanelSpy.mockClear();
+        projectDetailsMainPanelSpy.mockClear();
+        workspaceScmSnapshotControllerSpy.mockClear();
+        const onSelectRootPath = vi.fn();
+        const { ProjectDetailScreen } = await import('./ProjectDetailScreen');
+
+        await renderScreen(
+            <ProjectDetailScreen
+                workspaceRefId="wr_1"
+                activeRootPath="/repo/.worktrees/deleted-worktree"
+                onSelectRootPath={onSelectRootPath}
+            />,
+        );
+
+        expect(onSelectRootPath).toHaveBeenCalledWith('/repo');
+    });
+
     it('adopts a persisted active worktree path when local settings hydrate after mount', async () => {
+        setPaneScopeState({
+            right: { isOpen: true, activeTabId: 'git' },
+            details: { isOpen: false, tabs: [] },
+        });
         localSettingsMock = {};
         setLocalSettingSpy.mockClear();
         projectRightPanelSpy.mockClear();
@@ -167,6 +314,9 @@ describe('ProjectDetailScreen active worktree selection', () => {
             projectLastActiveRootPathByWorkspaceRefId: {
                 wr_1: '/repo/.worktrees/feature-hydrated',
             },
+            projectLastActiveWorktreeIdByWorkspaceRefId: {
+                wr_1: 'gitwt_hydrated',
+            },
         };
         const secondOnSelectRootPath = () => {};
 
@@ -178,5 +328,113 @@ describe('ProjectDetailScreen active worktree selection', () => {
 
         expect(screen.tree.findByType('ProjectRightPanelStub' as never).props.activeRootPath)
             .toBe('/repo/.worktrees/feature-hydrated');
+    });
+
+    it('keeps the main repository selected when the user explicitly switches back from a worktree', async () => {
+        setPaneScopeState({
+            right: { isOpen: true, activeTabId: 'git' },
+            details: { isOpen: false, tabs: [] },
+        });
+        localSettingsMock = {
+            projectLastActiveRootPathByWorkspaceRefId: {
+                wr_1: '/repo/.worktrees/feature-persisted',
+            },
+            projectLastActiveWorktreeIdByWorkspaceRefId: {
+                wr_1: 'gitwt_persisted',
+            },
+        };
+        setLocalSettingSpy.mockClear();
+        projectRightPanelSpy.mockClear();
+        projectDetailsMainPanelSpy.mockClear();
+        const { ProjectDetailScreen } = await import('./ProjectDetailScreen');
+
+        const screen = await renderScreen(<ProjectDetailScreen workspaceRefId="wr_1" />);
+        let rightPanel = screen.tree.findByType('ProjectRightPanelStub' as never);
+
+        expect(rightPanel.props.activeRootPath).toBe('/repo/.worktrees/feature-persisted');
+
+        await act(async () => {
+            rightPanel.props.onSelectRootPath('/repo');
+        });
+
+        rightPanel = screen.tree.findByType('ProjectRightPanelStub' as never);
+        expect(rightPanel.props.activeRootPath).toBe('/repo');
+        expect(setLocalSettingSpy).toHaveBeenCalledWith({
+            wr_1: '/repo',
+        });
+        expect(setLocalSettingSpy).toHaveBeenCalledWith({
+            wr_1: '@root',
+        });
+    });
+
+    it('forwards explicit overview mode to the main panel on desktop', async () => {
+        setPaneScopeState({
+            right: { isOpen: true, activeTabId: 'git' },
+            details: { isOpen: false, tabs: [] },
+        });
+        localSettingsMock = {};
+        setLocalSettingSpy.mockClear();
+        projectRightPanelSpy.mockClear();
+        projectDetailsMainPanelSpy.mockClear();
+        routerBackSpy.mockClear();
+        routerReplaceSpy.mockClear();
+        const { ProjectDetailScreen } = await import('./ProjectDetailScreen');
+
+        const screen = await renderScreen(
+            <ProjectDetailScreen
+                workspaceRefId="wr_1"
+                showWorktrees
+            />,
+        );
+
+        expect(screen.tree.findByType('ProjectDetailsMainPanelStub' as never).props.forceOverviewMode).toBe(true);
+    });
+
+    it('keeps explicit overview visible when it is opened while details already exist', async () => {
+        setPaneScopeState({
+            right: { isOpen: true, activeTabId: 'git' },
+            details: { isOpen: true, tabs: [{ key: 'file:a' }] },
+        });
+        const onSetShowWorktrees = vi.fn();
+        const { ProjectDetailScreen } = await import('./ProjectDetailScreen');
+
+        const screen = await renderScreen(
+            <ProjectDetailScreen
+                workspaceRefId="wr_1"
+                showWorktrees
+                onSetShowWorktrees={onSetShowWorktrees}
+            />,
+        );
+
+        expect(screen.tree.findByType('ProjectDetailsMainPanelStub' as never).props.forceOverviewMode).toBe(true);
+        expect(onSetShowWorktrees).not.toHaveBeenCalled();
+    });
+
+    it('automatically exits overview mode once a details tab is available', async () => {
+        setPaneScopeState({
+            right: { isOpen: true, activeTabId: 'git' },
+            details: { isOpen: false, tabs: [] },
+        });
+        const onSetShowWorktrees = vi.fn();
+        const { ProjectDetailScreen } = await import('./ProjectDetailScreen');
+
+        const screen = await renderScreen(
+            <ProjectDetailScreen
+                workspaceRefId="wr_1"
+                showWorktrees
+                onSetShowWorktrees={onSetShowWorktrees}
+            />,
+        );
+
+        await act(async () => {
+            setPaneScopeState({
+                right: { isOpen: true, activeTabId: 'git' },
+                details: { isOpen: true, tabs: [{ key: 'terminal' }] },
+            });
+            await Promise.resolve();
+        });
+
+        expect(screen.tree.findByType('ProjectDetailsMainPanelStub' as never).props.forceOverviewMode).toBe(false);
+        expect(onSetShowWorktrees).toHaveBeenCalledWith(false);
     });
 });

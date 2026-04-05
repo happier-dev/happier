@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import { Ionicons, Octicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -13,7 +14,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { PaneDetailsTabsPanel } from '@/components/appShell/panes/details/PaneDetailsTabsPanel';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { useDeviceType } from '@/utils/platform/responsive';
-import { useAllMachines, useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/storage';
+import { useAllMachines, useLocalSetting, useLocalSettingMutable, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
@@ -36,6 +37,10 @@ export type WorkspaceDetailsPanelProps = Readonly<{
     workspaceRef: WorkspaceRefV1;
     scopeId: string;
     activeRootPath?: string;
+    displayPathOverride?: string;
+    forceOverviewMode?: boolean;
+    showTerminalHeaderAction?: boolean;
+    showFocusModeToggle?: boolean;
     sessionIdForAugmentation?: string | null;
     /**
      * Optional override for the close action. Used by fullscreen/mobile routes that render the same
@@ -87,11 +92,13 @@ function isTerminalResource(value: unknown): value is Readonly<{ kind: 'terminal
 
 export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelProps) => {
     const { theme } = useUnistyles();
+    const router = useRouter();
     const insets = useChromeSafeAreaInsets();
     const pane = useAppPaneScope(props.scopeId);
     const deviceType = useDeviceType();
     const requestClose = props.onRequestClose ?? pane.closeDetails;
     const effectiveRootPath = props.activeRootPath ?? props.workspaceRef.rootPath;
+    const displayPath = props.displayPathOverride ?? props.workspaceRef.rootPath;
 
     const editorFocusModeEnabled = useLocalSetting('editorFocusModeEnabled');
     const [, setEditorFocusModeEnabled] = useLocalSettingMutable('editorFocusModeEnabled');
@@ -104,6 +111,8 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
     }), [effectiveRootPath, props.workspaceRef.machineId, props.workspaceRef.serverId]);
 
     const workspaceCacheKey = React.useMemo(() => buildWorkspaceCacheKey(workspaceScope), [workspaceScope]);
+    const workspaceReviewCommentDrafts = useWorkspaceReviewCommentsDrafts(workspaceScope);
+    const hasWorkspaceReviewCommentDrafts = workspaceReviewCommentDrafts.length > 0;
 
     const machineName = React.useMemo(() => {
         const machine = allMachines.find((m) => m.id === props.workspaceRef.machineId) ?? null;
@@ -143,7 +152,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
             <ItemGroup title={t('projects.detail.groupTitle')}>
                 <Item title={t('projects.detail.fields.name')} detail={displayName} mode="info" />
                 <Item title={t('projects.detail.fields.machine')} detail={machineName} mode="info" />
-                <Item title={t('projects.detail.fields.path')} detail={effectiveRootPath} mode="info" copy={effectiveRootPath} />
+                <Item title={t('projects.detail.fields.path')} detail={displayPath} mode="info" copy={displayPath} />
             </ItemGroup>
             {props.renderEmptyStateSupplementaryContent ? props.renderEmptyStateSupplementaryContent() : null}
             <View style={{ alignItems: 'center', paddingHorizontal: 24, paddingTop: 6 }}>
@@ -152,17 +161,17 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
                 </Text>
             </View>
         </ItemList>
-    ), [displayName, effectiveRootPath, machineName, props, theme.colors.textSecondary]);
+    ), [displayName, displayPath, machineName, props, theme.colors.textSecondary]);
 
     const renderWorkspaceInfo = React.useCallback(() => (
         <ItemList testID="project-details-workspace-info" containerStyle={{ paddingTop: 12 }}>
             <ItemGroup title={t('projects.detail.groupTitle')}>
                 <Item title={t('projects.detail.fields.name')} detail={displayName} mode="info" />
                 <Item title={t('projects.detail.fields.machine')} detail={machineName} mode="info" />
-                <Item title={t('projects.detail.fields.path')} detail={effectiveRootPath} mode="info" copy={effectiveRootPath} />
+                <Item title={t('projects.detail.fields.path')} detail={displayPath} mode="info" copy={displayPath} />
             </ItemGroup>
         </ItemList>
-    ), [displayName, effectiveRootPath, machineName]);
+    ), [displayName, displayPath, machineName]);
 
     function readOptionalString(value: unknown): string | null {
         if (typeof value !== 'string') return null;
@@ -222,7 +231,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
                         workspaceRefId={props.workspaceRef.id}
                         workspaceCacheKey={workspaceCacheKey}
                         machineId={props.workspaceRef.machineId}
-                        rootPath={props.workspaceRef.rootPath}
+                        rootPath={effectiveRootPath}
                         serverId={props.workspaceRef.serverId}
                         sha={sha}
                         presentation={deviceType === 'phone' ? 'screen' : 'panel'}
@@ -241,7 +250,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
                         workspaceRefId={props.workspaceRef.id}
                         workspaceCacheKey={workspaceCacheKey}
                         machineId={props.workspaceRef.machineId}
-                        rootPath={props.workspaceRef.rootPath}
+                        rootPath={effectiveRootPath}
                         serverId={props.workspaceRef.serverId}
                         onOpenFile={(path) => openFileTab(path, 'default')}
                         onOpenFilePinned={(path) => openFileTab(path, 'pinned')}
@@ -258,7 +267,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
                         workspaceRefId={props.workspaceRef.id}
                         workspaceCacheKey={workspaceCacheKey}
                         machineId={props.workspaceRef.machineId}
-                        rootPath={props.workspaceRef.rootPath}
+                        rootPath={effectiveRootPath}
                         serverId={props.workspaceRef.serverId}
                         onOpenFile={(path) => openFileTab(path, 'default')}
                         onOpenFilePinned={(path) => openFileTab(path, 'pinned')}
@@ -306,25 +315,45 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
     ]);
 
     const renderHeaderActions = React.useCallback(() => {
-        const openTerminal = () => {
-            deferOnWeb(() => {
-                pane.openDetailsTab(
-                    {
-                        key: 'terminal',
-                        kind: 'terminal',
-                        title: t('settings.terminal'),
-                        resource: { kind: 'terminal' },
-                    },
-                    { intent: 'pinned' },
-                );
+        const openNewSessionWithReviewComments = () => {
+            router.push({
+                pathname: '/new',
+                params: {
+                    machineId: props.workspaceRef.machineId,
+                    directory: effectiveRootPath,
+                    spawnServerId: props.workspaceRef.serverId,
+                },
             });
         };
         return (
             <>
                 {props.renderHeaderActionsPrefix ? props.renderHeaderActionsPrefix({ iconButtonStyle, iconColor: theme.colors.textSecondary }) : null}
-                {deviceType !== 'phone' ? (
+                {hasWorkspaceReviewCommentDrafts ? (
                     <Pressable
-                        onPress={openTerminal}
+                        onPress={openNewSessionWithReviewComments}
+                        testID="workspace-details-open-review-comments-session"
+                        style={iconButtonStyle}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('newSession.title')}
+                    >
+                        <Ionicons name="chatbox-ellipses-outline" size={18} color={theme.colors.textSecondary} />
+                    </Pressable>
+                ) : null}
+                {props.showTerminalHeaderAction !== false && deviceType !== 'phone' ? (
+                    <Pressable
+                        onPress={() => {
+                            deferOnWeb(() => {
+                                pane.openDetailsTab(
+                                    {
+                                        key: 'terminal',
+                                        kind: 'terminal',
+                                        title: t('settings.terminal'),
+                                        resource: { kind: 'terminal' },
+                                    },
+                                    { intent: 'pinned' },
+                                );
+                            });
+                        }}
                         testID="workspace-details-open-terminal"
                         style={iconButtonStyle}
                         accessibilityRole="button"
@@ -333,7 +362,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
                         <Ionicons name="terminal-outline" size={18} color={theme.colors.textSecondary} />
                     </Pressable>
                 ) : null}
-                {Platform.OS === 'web' ? (
+                {props.showFocusModeToggle !== false && Platform.OS === 'web' ? (
                     <Pressable
                         onPress={() => setEditorFocusModeEnabled(!editorFocusModeEnabled)}
                         style={iconButtonStyle}
@@ -366,13 +395,18 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
     }, [
         editorFocusModeEnabled,
         iconButtonStyle,
+        hasWorkspaceReviewCommentDrafts,
         pane,
         props.onRequestClose,
         props.renderHeaderActionsPrefix,
+        props.workspaceRef.machineId,
+        props.workspaceRef.serverId,
         requestClose,
+        router,
         setEditorFocusModeEnabled,
         theme.colors.textSecondary,
         deviceType,
+        effectiveRootPath,
     ]);
 
     return (
@@ -381,6 +415,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
             paddingTop={insets.top}
             headerPaddingTop={10}
             testIds={{ root: 'workspace-details-panel-root' }}
+            forceEmptyState={props.forceOverviewMode}
             renderTabContent={renderTabContent}
             renderHeaderActions={renderHeaderActions}
             renderEmptyState={renderEmptyState}

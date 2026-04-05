@@ -1,11 +1,12 @@
 import * as React from 'react';
-import { ActivityIndicator, Platform, Pressable, ScrollView, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, View } from 'react-native';
 import { Octicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { DiffFilesListView } from '@/components/ui/code/diff/DiffFilesListView';
 import { DiffPresentationStyleToggleButton } from '@/components/ui/code/diff/DiffPresentationStyleToggleButton';
 import { buildDiffBlocks, buildDiffFileEntries } from '@/components/ui/code/model/diff/diffViewModel';
+import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Text } from '@/components/ui/text/Text';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
@@ -19,7 +20,6 @@ import { resolveScmStashEntries } from '@/scm/stash/useScmStashSummaryCount';
 import { resolveScmStashIconName, resolveScmStashPrimaryLabel, resolveScmStashSecondaryLabel } from '@/scm/stash/stashPresentation';
 import { useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
-import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 
 import { useScmDiffExpandedKeys } from '@/components/workspaces/scm/review/useScmDiffExpandedKeys';
 import { type ScmStashDetailsAdapter } from './scmStashAdapter';
@@ -47,7 +47,6 @@ export type ScmStashDetailsCoreProps = Readonly<{
     onOpenFile?: (filePath: string) => void;
     onOpenFilePinned?: (filePath: string) => void;
     rootTestId?: string;
-    stashPillTestIdPrefix?: string;
     restoreButtonTestId?: string;
     discardButtonTestId?: string;
 }>;
@@ -64,6 +63,15 @@ function formatStashTimestamp(value: number | null | undefined): string | null {
     } catch {
         return null;
     }
+}
+
+function resolveStashSelectorSubtitle(entry: ScmStashEntry): string | null {
+    const secondary = resolveScmStashSecondaryLabel(entry);
+    const timestamp = formatStashTimestamp(entry.createdAt);
+    if (secondary && timestamp) {
+        return `${secondary} • ${timestamp}`;
+    }
+    return secondary ?? timestamp;
 }
 
 export const ScmStashDetailsCore = React.memo((props: ScmStashDetailsCoreProps) => {
@@ -83,6 +91,7 @@ export const ScmStashDetailsCore = React.memo((props: ScmStashDetailsCoreProps) 
     const [stashesError, setStashesError] = React.useState<string | null>(null);
     const [stashes, setStashes] = React.useState<ScmStashEntry[]>([]);
     const [selectedStashRef, setSelectedStashRef] = React.useState<string | null>(null);
+    const [stashSelectorOpen, setStashSelectorOpen] = React.useState(false);
     const [diffState, setDiffState] = React.useState<StashDiffState>(() => ({
         stashRef: null,
         loading: false,
@@ -336,6 +345,20 @@ export const ScmStashDetailsCore = React.memo((props: ScmStashDetailsCoreProps) 
         if (!selectedStashRef) return null;
         return stashes.find((stash) => stash.stashRef === selectedStashRef) ?? null;
     }, [selectedStashRef, stashes]);
+    const stashSelectorItems = React.useMemo<ReadonlyArray<DropdownMenuItem>>(() => {
+        return stashes.map((stash) => ({
+            id: stash.stashRef,
+            title: resolveScmStashPrimaryLabel(stash),
+            subtitle: resolveStashSelectorSubtitle(stash) ?? undefined,
+            icon: (
+                <Octicons
+                    name={resolveScmStashIconName(stash)}
+                    size={18}
+                    color={theme.colors.textSecondary}
+                />
+            ),
+        }));
+    }, [stashes, theme.colors.textSecondary]);
 
     const ensureCanMutate = React.useCallback(() => {
         if (!scmWriteEnabled) {
@@ -405,7 +428,6 @@ export const ScmStashDetailsCore = React.memo((props: ScmStashDetailsCoreProps) 
     }, [ensureCanMutate, loadStashes, props.adapter, props.onAfterMutation, selectedStashRef]);
 
     const rootTestId = props.rootTestId;
-    const stashPillTestIdPrefix = props.stashPillTestIdPrefix ?? 'scm-stash-pill';
 
     if (isLoadingStashes && stashes.length === 0) {
         return (
@@ -443,26 +465,34 @@ export const ScmStashDetailsCore = React.memo((props: ScmStashDetailsCoreProps) 
             >
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
                     <View style={{ flex: 1, minWidth: 0 }}>
-                        <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default('semiBold') }}>
-                            {t('files.stash.detailsTitle')}
-                        </Text>
-                        {selectedStash ? (
-                            <>
-                                <Text style={{ marginTop: 4, fontSize: 12, color: theme.colors.text, ...Typography.mono('semiBold') }}>
-                                    {resolveScmStashPrimaryLabel(selectedStash)}
-                                </Text>
-                                {resolveScmStashSecondaryLabel(selectedStash) ? (
-                                    <Text style={{ marginTop: 4, fontSize: 12, color: theme.colors.textSecondary, ...Typography.mono() }}>
-                                        {resolveScmStashSecondaryLabel(selectedStash)}
-                                    </Text>
-                                ) : null}
-                            </>
-                        ) : null}
-                        {selectedStash?.createdAt ? (
-                            <Text style={{ marginTop: 4, fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
-                                {formatStashTimestamp(selectedStash.createdAt) ?? ''}
-                            </Text>
-                        ) : null}
+                        <DropdownMenu
+                            open={stashSelectorOpen}
+                            onOpenChange={setStashSelectorOpen}
+                            selectedId={selectedStashRef}
+                            items={stashSelectorItems}
+                            onSelect={(itemId) => {
+                                setSelectedStashRef(itemId);
+                                setStashSelectorOpen(false);
+                            }}
+                            variant="selectable"
+                            search={false}
+                            showCategoryTitles={false}
+                            rowKind="item"
+                            itemRowProps={{ density: 'compact' }}
+                            matchTriggerWidth={true}
+                            connectToTrigger={true}
+                            itemTrigger={{
+                                title: t('files.stash.detailsTitle'),
+                                icon: (
+                                    <Octicons
+                                        name={selectedStash ? resolveScmStashIconName(selectedStash) : 'archive'}
+                                        size={18}
+                                        color={theme.colors.textSecondary}
+                                    />
+                                ),
+                                itemProps: { density: 'compact' },
+                            }}
+                        />
                     </View>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                         <Pressable
@@ -519,53 +549,6 @@ export const ScmStashDetailsCore = React.memo((props: ScmStashDetailsCoreProps) 
                         </Pressable>
                     </View>
                 </View>
-
-                {stashes.length > 1 ? (
-                    <ScrollView
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={{ paddingVertical: 2, gap: 8 }}
-                        style={{ flexGrow: 0 }}
-                    >
-                        {stashes.map((stash) => {
-                            const isSelected = stash.stashRef === selectedStashRef;
-                            const safeId = toTestIdSafeValue(stash.stashRef);
-                            return (
-                                <Pressable
-                                    key={stash.stashRef}
-                                    testID={`${stashPillTestIdPrefix}-${safeId}`}
-                                    accessibilityRole="button"
-                                    accessibilityLabel={t('files.stash.selectA11y', { stash: stash.stashRef })}
-                                    onPress={() => setSelectedStashRef(stash.stashRef)}
-                                    style={({ pressed }) => ({
-                                        flexDirection: 'row',
-                                        alignItems: 'center',
-                                        gap: 6,
-                                        paddingHorizontal: 10,
-                                        height: 28,
-                                        borderRadius: 999,
-                                        borderWidth: 1,
-                                        borderColor: isSelected ? theme.colors.textLink : theme.colors.divider,
-                                        backgroundColor: isSelected ? theme.colors.surfaceHighest ?? theme.colors.surfaceHigh : theme.colors.surface,
-                                        opacity: pressed ? 0.85 : 1,
-                                    })}
-                                >
-                                    <Octicons
-                                        name={resolveScmStashIconName(stash)}
-                                        size={13}
-                                        color={theme.colors.textSecondary}
-                                    />
-                                    <Text
-                                        numberOfLines={1}
-                                        style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.mono('semiBold') }}
-                                    >
-                                        {resolveScmStashPrimaryLabel(stash)}
-                                    </Text>
-                                </Pressable>
-                            );
-                        })}
-                    </ScrollView>
-                ) : null}
 
                 {stashesError ? (
                     <Text style={{ fontSize: 12, color: theme.colors.warning, ...Typography.default() }}>

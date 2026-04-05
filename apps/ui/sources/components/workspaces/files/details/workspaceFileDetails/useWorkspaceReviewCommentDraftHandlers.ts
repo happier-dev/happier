@@ -10,6 +10,7 @@ import { buildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope
 export function useWorkspaceReviewCommentDraftHandlers(scope: WorkspaceScopeBase | null | undefined): Readonly<{
     onUpsertReviewCommentDraft: (draft: ReviewCommentDraft) => void;
     onDeleteReviewCommentDraft: (commentId: string) => void;
+    clearReviewCommentDrafts: () => void;
     onReviewCommentError: (message: string) => void;
 }> {
     const cacheKey = React.useMemo(() => {
@@ -31,9 +32,14 @@ export function useWorkspaceReviewCommentDraftHandlers(scope: WorkspaceScopeBase
         storage.getState().deleteWorkspaceReviewCommentDraft(cacheKey, commentId);
     }, [cacheKey]);
 
+    const clearReviewCommentDrafts = React.useCallback(() => {
+        if (!cacheKey) return;
+        storage.getState().clearWorkspaceReviewCommentDrafts(cacheKey);
+    }, [cacheKey]);
+
     const onReviewCommentError = React.useCallback((message: string) => {
         Modal.alert(t('common.error'), message);
     }, []);
 
-    return { onUpsertReviewCommentDraft, onDeleteReviewCommentDraft, onReviewCommentError };
+    return { onUpsertReviewCommentDraft, onDeleteReviewCommentDraft, clearReviewCommentDrafts, onReviewCommentError };
 }

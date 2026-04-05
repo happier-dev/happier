@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 
 import { createModalModuleMock, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
-import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -204,7 +203,7 @@ describe('WorkspaceScmStashDetailsView', () => {
         expect(machineScmStashDropSpy).toHaveBeenCalledWith('m1', expect.objectContaining({ cwd: '/repo', stashRef: 'stash@{0}' }));
     });
 
-    it('loads the clicked stash when switching between all stash pills including unmanaged entries', async () => {
+    it('switches between stashes from the dropdown trigger and shows stash metadata in the subtitle', async () => {
         machineScmStashListSpy.mockResolvedValueOnce({
             success: true,
             stashes: [
@@ -229,13 +228,29 @@ describe('WorkspaceScmStashDetailsView', () => {
         await settle();
         machineScmStashShowSpy.mockClear();
 
-        const unmanagedPill = screen.tree.findByProps({ testID: `workspace-stash-pill-${toTestIdSafeValue('stash@{1}')}` });
+        const stashSelector = screen.tree.findByProps({ title: 'files.stash.detailsTitle' });
+        expect(stashSelector.props.title).toBe('files.stash.detailsTitle');
+        expect(String(stashSelector.props.subtitle ?? '')).toContain('stash@{0}');
+
         await act(async () => {
-            unmanagedPill.props.onPress?.();
+            stashSelector.props.onPress?.();
+            await new Promise<void>((resolve) => {
+                setTimeout(resolve, 0);
+            });
+            await settle();
+        });
+
+        const unmanagedOption = screen.tree.findByProps({
+            testID: `dropdown-option-${String('stash@{1}').replace(/[^a-zA-Z0-9_-]/g, '_')}`,
+        });
+        await act(async () => {
+            unmanagedOption.props.onPress?.();
             await settle();
         });
 
         expect(machineScmStashShowSpy).toHaveBeenCalledWith('m1', expect.objectContaining({ cwd: '/repo', stashRef: 'stash@{1}' }));
+        const updatedSelector = screen.tree.findByProps({ title: 'files.stash.detailsTitle' });
+        expect(String(updatedSelector.props.subtitle ?? '')).toContain('stash@{1}');
     });
 
     it('retries the stash list when the backend is transiently unavailable', async () => {

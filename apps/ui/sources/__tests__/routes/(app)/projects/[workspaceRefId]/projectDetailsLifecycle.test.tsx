@@ -54,6 +54,9 @@ const workspaceRefMock = {
 
 vi.mock('@react-navigation/native', () => ({
     useIsFocused: () => isFocused,
+    useNavigation: () => ({
+        canGoBack: () => navigationCanGoBack,
+    }),
 }));
 
 vi.mock('react-native', async () => {
@@ -129,7 +132,7 @@ describe('project route details lifecycle', () => {
 
         const screen = await renderScreen(<ProjectFilesRoute />);
         expect(routerPushSpy).toHaveBeenCalledTimes(1);
-        expect(routerPushSpy).toHaveBeenLastCalledWith('/projects/wr_1/details');
+        expect(routerPushSpy).toHaveBeenLastCalledWith('/projects/wr_1/details?worktreeId=%40root');
 
         scopeState = {
             right: { isOpen: true, activeTabId: 'files', tabState: {} },
@@ -144,7 +147,7 @@ describe('project route details lifecycle', () => {
         await screen.update(<ProjectFilesRoute />);
 
         expect(routerPushSpy).toHaveBeenCalledTimes(2);
-        expect(routerPushSpy).toHaveBeenLastCalledWith('/projects/wr_1/details');
+        expect(routerPushSpy).toHaveBeenLastCalledWith('/projects/wr_1/details?worktreeId=%40root');
     });
 
     it('closes details pane state when the fullscreen details route unmounts', async () => {
@@ -173,7 +176,7 @@ describe('project route details lifecycle', () => {
 
         await renderScreen(<ProjectDetailsRoute />);
 
-        expect(routerReplaceSpy).toHaveBeenCalledWith('/projects/wr_1/git');
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/projects/wr_1/git?worktreeId=%40root');
     });
 
     it('stays on the details route when explicitly opened in worktrees mode without detail tabs', async () => {
@@ -190,5 +193,19 @@ describe('project route details lifecycle', () => {
         await renderScreen(<ProjectDetailsRoute />);
 
         expect(routerReplaceSpy).not.toHaveBeenCalled();
+    });
+
+    it('forwards explicit worktree overview mode to the details main panel', async () => {
+        routerMock.state.router.setParams({
+            workspaceRefId: 'wr_1',
+            showWorktrees: '1',
+        });
+        scopeState = {
+            right: { isOpen: true, activeTabId: 'git', tabState: {} },
+            details: { isOpen: false, tabs: [], activeTabKey: null, tabState: {} },
+        };
+
+        const screen = await renderScreen(<ProjectDetailsRoute />);
+        expect(screen.root.findByType('ProjectDetailsMainPanelStub' as never).props.forceOverviewMode).toBe(true);
     });
 });

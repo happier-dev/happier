@@ -6,7 +6,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
-import { normalizeRepoPathParts } from '@/utils/path/normalizeRepoPathParts';
+import { InlineRepoPathLabel } from '@/components/ui/path/InlineRepoPathLabel';
 const PATH_SEPARATOR = '/';
 type Theme = Readonly<{
     colors: Readonly<{
@@ -100,12 +100,6 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
         } as const;
     }, [paddingVertical, props.highlighted, props.showDivider, theme.colors.divider, theme.colors.surface, theme.colors.surfaceHigh, theme.colors.textSecondary]);
 
-    const { dir, name } = React.useMemo(() => {
-        return normalizeRepoPathParts({ fileName: file.fileName, filePath: file.filePath, fullPath: file.fullPath });
-    }, [file.fileName, file.filePath, file.fullPath]);
-    const hasDir = Boolean(dir);
-    const dirLabel = hasDir ? `${dir}${PATH_SEPARATOR}` : null;
-
     const onKeyDown = React.useCallback((event: any) => {
         if (!isWeb) return;
         const key = String(event?.key ?? '');
@@ -153,39 +147,22 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
                 </Text>
             </View>
 
-            <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'baseline' }}>
-                {dirLabel ? (
-                    <Text
-                        numberOfLines={1}
-                        ellipsizeMode={isWeb ? 'clip' : 'tail'}
-                        style={{
-                            flex: 1,
-                            minWidth: 0,
-                            fontSize: 13,
-                            color: theme.colors.textSecondary,
-                            ...Typography.default(),
-                        }}
-                    >
-                        {dirLabel}
-                    </Text>
-                ) : (
-                    // Keep the filename aligned to the right even for root-level files.
-                    <View style={{ flex: 1, minWidth: 0 }} />
-                )}
-                <Text
-                    numberOfLines={1}
-                    ellipsizeMode="middle"
-                    style={{
-                        flexShrink: 0,
-                        maxWidth: '70%' as any,
-                        fontSize: 13,
-                        color: theme.colors.text ?? theme.colors.textSecondary,
-                        ...Typography.default('semiBold'),
-                    }}
-                >
-                    {name}
-                </Text>
-            </View>
+            <InlineRepoPathLabel
+                fileName={file.fileName}
+                filePath={file.filePath}
+                fullPath={file.fullPath}
+                nameMaxWidth="70%"
+                pathTextStyle={{
+                    fontSize: 13,
+                    color: theme.colors.textSecondary,
+                    ...Typography.default(),
+                }}
+                nameTextStyle={{
+                    fontSize: 13,
+                    color: theme.colors.text ?? theme.colors.textSecondary,
+                    ...Typography.default('semiBold'),
+                }}
+            />
 
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
                 <Text style={{ fontSize: 11, color: theme.colors.success ?? theme.colors.textSecondary, ...Typography.default('semiBold') }}>

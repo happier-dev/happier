@@ -3,8 +3,10 @@ import { describe, expect, it } from 'vitest';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 
 import {
+    PROJECT_ROUTE_ROOT_SENTINEL,
+    PROJECT_ROUTE_WORKTREE_ID_QUERY_PARAM,
     buildProjectRouteHref,
-    readProjectRouteActiveRootPath,
+    readProjectRouteWorktreeSelection,
     resolveProjectRouteSegment,
     resolveProjectRouteHeaderTitle,
 } from './projectRouteState';
@@ -20,55 +22,64 @@ const workspaceRef: WorkspaceRefV1 = {
 };
 
 describe('projectRouteState', () => {
-    it('reads the active root path param with a fallback to the workspace root', () => {
-        expect(readProjectRouteActiveRootPath('/Users/test/repo/.worktrees/feature-auth', workspaceRef.rootPath))
-            .toBe('/Users/test/repo/.worktrees/feature-auth');
-        expect(readProjectRouteActiveRootPath(undefined, workspaceRef.rootPath))
-            .toBe('/Users/test/repo');
+    it('reads explicit root and persisted route selections', () => {
+        expect(readProjectRouteWorktreeSelection({
+            rawWorktreeId: PROJECT_ROUTE_ROOT_SENTINEL,
+            defaultRootPath: workspaceRef.rootPath,
+        })).toEqual({
+            requestedRootPath: '/Users/test/repo',
+            requestedWorktreeId: null,
+        });
+        expect(readProjectRouteWorktreeSelection({
+            defaultRootPath: workspaceRef.rootPath,
+            persistedActiveRootPath: '/Users/test/repo/.worktrees/feature-auth',
+            persistedWorktreeId: 'gitwt_feature',
+        })).toEqual({
+            requestedRootPath: '/Users/test/repo/.worktrees/feature-auth',
+            requestedWorktreeId: 'gitwt_feature',
+        });
     });
 
-    it('falls back to a persisted active root path before the workspace root', () => {
-        expect(readProjectRouteActiveRootPath(
-            undefined,
-            workspaceRef.rootPath,
-            '/Users/test/repo/.worktrees/feature-auth',
-        )).toBe('/Users/test/repo/.worktrees/feature-auth');
+    it('can use a persisted path to provisionally resolve an explicit worktree id', () => {
+        expect(readProjectRouteWorktreeSelection({
+            rawWorktreeId: 'gitwt_feature',
+            defaultRootPath: workspaceRef.rootPath,
+            persistedActiveRootPath: '/Users/test/repo/.worktrees/feature-auth',
+            persistedWorktreeId: 'gitwt_feature',
+        })).toEqual({
+            requestedRootPath: '/Users/test/repo/.worktrees/feature-auth',
+            requestedWorktreeId: 'gitwt_feature',
+        });
     });
 
-    it('ignores an empty persisted active root path and falls back to the workspace root', () => {
-        expect(readProjectRouteActiveRootPath(
-            undefined,
-            workspaceRef.rootPath,
-            '   ',
-        )).toBe(workspaceRef.rootPath);
-    });
-
-    it('builds project route hrefs without a query param for the primary root', () => {
+    it('builds project route hrefs with an explicit root sentinel for the primary root', () => {
         expect(buildProjectRouteHref({
             workspaceRefId: workspaceRef.id,
             segment: 'git',
             activeRootPath: workspaceRef.rootPath,
             defaultRootPath: workspaceRef.rootPath,
-        })).toBe('/projects/wr_1/git');
+        })).toBe(`/projects/wr_1/git?${PROJECT_ROUTE_WORKTREE_ID_QUERY_PARAM}=%40root`);
     });
 
-    it('builds project route hrefs with an encoded active root path when a worktree is selected', () => {
+    it('builds project route hrefs with an encoded worktree id when a worktree is selected', () => {
         expect(buildProjectRouteHref({
             workspaceRefId: workspaceRef.id,
             segment: 'files',
             activeRootPath: '/Users/test/repo/.worktrees/feature-auth',
             defaultRootPath: workspaceRef.rootPath,
-        })).toBe('/projects/wr_1/files?activeRootPath=%2FUsers%2Ftest%2Frepo%2F.worktrees%2Ffeature-auth');
+            activeWorktreeId: 'gitwt_feature',
+        })).toBe(`/projects/wr_1/files?${PROJECT_ROUTE_WORKTREE_ID_QUERY_PARAM}=gitwt_feature`);
     });
 
-    it('can include the worktrees details mode query param without dropping the active root path', () => {
+    it('can include the worktrees details mode query param without dropping the active worktree id', () => {
         expect(buildProjectRouteHref({
             workspaceRefId: workspaceRef.id,
             segment: 'details',
             activeRootPath: '/Users/test/repo/.worktrees/feature-auth',
             defaultRootPath: workspaceRef.rootPath,
+            activeWorktreeId: 'gitwt_feature',
             showWorktrees: true,
-        })).toBe('/projects/wr_1/details?activeRootPath=%2FUsers%2Ftest%2Frepo%2F.worktrees%2Ffeature-auth&showWorktrees=1');
+        })).toBe(`/projects/wr_1/details?${PROJECT_ROUTE_WORKTREE_ID_QUERY_PARAM}=gitwt_feature&showWorktrees=1`);
     });
 
     it('adds the selected worktree label to the mobile header title', () => {

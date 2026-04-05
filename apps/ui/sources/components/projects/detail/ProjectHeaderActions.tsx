@@ -24,7 +24,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-export const ProjectMobileHeaderActions = React.memo((props: Readonly<{
+export const ProjectHeaderActions = React.memo((props: Readonly<{
+    testIdPrefix: string;
     showWorktreesButton: boolean;
     onOpenWorktrees?: () => void;
     onOpenTerminal: () => void;
@@ -36,7 +37,7 @@ export const ProjectMobileHeaderActions = React.memo((props: Readonly<{
         <View style={styles.container}>
             {props.showWorktreesButton && props.onOpenWorktrees ? (
                 <Pressable
-                    testID="project-mobile-header-open-worktrees"
+                    testID={`${props.testIdPrefix}-open-worktrees`}
                     onPress={props.onOpenWorktrees}
                     style={styles.iconButton}
                     accessibilityRole="button"
@@ -46,7 +47,7 @@ export const ProjectMobileHeaderActions = React.memo((props: Readonly<{
                 </Pressable>
             ) : null}
             <Pressable
-                testID="project-mobile-header-open-terminal"
+                testID={`${props.testIdPrefix}-open-terminal`}
                 onPress={props.onOpenTerminal}
                 style={styles.iconButton}
                 accessibilityRole="button"

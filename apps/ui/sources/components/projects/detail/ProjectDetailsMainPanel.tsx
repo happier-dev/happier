@@ -15,6 +15,8 @@ export type ProjectDetailsMainPanelProps = Readonly<{
     workspaceRef: WorkspaceRefV1;
     scopeId: string;
     activeRootPath: string;
+    activeWorktreeId?: string | null;
+    forceOverviewMode?: boolean;
     onSelectRootPath: (path: string) => void;
     onRequestClose?: () => void;
 }>;
@@ -25,8 +27,8 @@ export const ProjectDetailsMainPanel = React.memo((props: ProjectDetailsMainPane
     const workspaceScope = React.useMemo(() => ({
         serverId: props.workspaceRef.serverId,
         machineId: props.workspaceRef.machineId,
-        rootPath: props.activeRootPath,
-    }), [props.activeRootPath, props.workspaceRef.machineId, props.workspaceRef.serverId]);
+        rootPath: props.workspaceRef.rootPath,
+    }), [props.workspaceRef.machineId, props.workspaceRef.rootPath, props.workspaceRef.serverId]);
     const { snapshot } = useWorkspaceScmSnapshotController(workspaceScope);
 
     const renderHeaderActionsPrefix = React.useCallback((params: WorkspaceDetailsPanelHeaderActionRenderParams) => {
@@ -39,6 +41,7 @@ export const ProjectDetailsMainPanel = React.memo((props: ProjectDetailsMainPane
                         segment: 'git',
                         activeRootPath: props.activeRootPath,
                         defaultRootPath: props.workspaceRef.rootPath,
+                        activeWorktreeId: props.activeWorktreeId,
                     }))}
                     style={params.iconButtonStyle}
                     accessibilityRole="button"
@@ -52,6 +55,7 @@ export const ProjectDetailsMainPanel = React.memo((props: ProjectDetailsMainPane
                         segment: 'files',
                         activeRootPath: props.activeRootPath,
                         defaultRootPath: props.workspaceRef.rootPath,
+                        activeWorktreeId: props.activeWorktreeId,
                     }))}
                     style={params.iconButtonStyle}
                     accessibilityRole="button"
@@ -61,7 +65,7 @@ export const ProjectDetailsMainPanel = React.memo((props: ProjectDetailsMainPane
                 </Pressable>
             </>
         );
-    }, [deviceType, props.activeRootPath, props.workspaceRef.id, props.workspaceRef.rootPath, router]);
+    }, [deviceType, props.activeRootPath, props.activeWorktreeId, props.workspaceRef.id, props.workspaceRef.rootPath, router]);
 
     const renderEmptyStateSupplementaryContent = React.useCallback(() => {
         if (snapshot?.repo.isRepo !== true) return null;
@@ -79,6 +83,10 @@ export const ProjectDetailsMainPanel = React.memo((props: ProjectDetailsMainPane
             workspaceRef={props.workspaceRef}
             scopeId={props.scopeId}
             activeRootPath={props.activeRootPath}
+            displayPathOverride={props.workspaceRef.rootPath}
+            forceOverviewMode={props.forceOverviewMode}
+            showTerminalHeaderAction={false}
+            showFocusModeToggle={false}
             onRequestClose={props.onRequestClose}
             renderHeaderActionsPrefix={renderHeaderActionsPrefix}
             renderEmptyStateSupplementaryContent={renderEmptyStateSupplementaryContent}

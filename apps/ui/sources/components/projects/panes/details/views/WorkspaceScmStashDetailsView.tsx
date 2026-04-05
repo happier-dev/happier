@@ -27,7 +27,6 @@ export const WorkspaceScmStashDetailsView = React.memo((props: WorkspaceScmStash
         <ScmStashDetailsCore
             adapter={adapter}
             scopeResetKey={`workspace:${props.workspaceCacheKey}`}
-            stashPillTestIdPrefix="workspace-stash-pill"
             rootTestId="workspace-scm-stash-details-root"
             onOpenFile={props.onOpenFile}
             onOpenFilePinned={props.onOpenFilePinned}

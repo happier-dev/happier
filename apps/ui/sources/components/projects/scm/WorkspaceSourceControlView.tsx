@@ -31,7 +31,7 @@ import { machineScmStashList } from '@/sync/ops/scm/machineScm';
 import { resolveSnapshotScmStashCount, useScmStashSummaryCount } from '@/scm/stash/useScmStashSummaryCount';
 import { tracking } from '@/track';
 import { WorkspaceSourceControlBranchMenu } from './WorkspaceSourceControlBranchMenu';
-import { applyWorkspaceFileStageAction } from './WorkspaceScmCommitSelectionToggleButton';
+import { applyWorkspaceFileStageAction, WorkspaceScmCommitSelectionToggleButton } from './WorkspaceScmCommitSelectionToggleButton';
 import { WorkspaceScmChangeDiscardButton } from './WorkspaceScmChangeDiscardButton';
 import { executeWorkspaceScmCommit } from './executeWorkspaceScmCommit';
 import { executeWorkspaceScmRemoteOperation } from './executeWorkspaceScmRemoteOperation';
@@ -497,6 +497,17 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
                             theme={theme}
                             file={file}
                             density="compact"
+                            leadingElement={scmWriteEnabled === true ? (
+                                <WorkspaceScmCommitSelectionToggleButton
+                                    scope={scope}
+                                    snapshot={snapshot ?? null}
+                                    scmWriteEnabled={true}
+                                    commitStrategy={scmCommitStrategy}
+                                    file={file}
+                                    selectedForCommit={isSelectedForCommit(file)}
+                                    onAfterToggle={refresh}
+                                />
+                            ) : null}
                             onPress={() => openFile(file)}
                             onPressPinned={() => openFilePinned(file)}
                             onToggleSelection={() => {

@@ -25,8 +25,10 @@ import {
     createInboxStackScreenOptions,
 } from '@/utils/navigation/createSocialStackScreenOptions';
 import { ActivityBadgeRuntime } from '@/activity/badges/ActivityBadgeRuntime';
-import { ActivitySurfacesRuntime } from '@/activity/runtime/ActivitySurfacesRuntime';
+import { ActivitySurfacesRuntime } from '@/activity/adapters/ios/runtime/ActivitySurfacesRuntime';
 import { ActivityLocalNotificationRuntime } from '@/activity/notifications/runtime/ActivityLocalNotificationRuntime';
+import { DesktopActivityOverlayRuntime } from '@/activity/adapters/desktop/runtime/DesktopActivityOverlayRuntime';
+import { isDesktopActivityOverlayWindowContext } from '@/activity/adapters/desktop/runtime/isDesktopActivityOverlayWindowContext';
 import { DesktopTrayRuntime } from '@/desktop/tray/DesktopTrayRuntime';
 import { DesktopTrayDaemonLifecycleRuntime } from '@/desktop/tray/DesktopTrayDaemonLifecycleRuntime';
 import { useNotificationResponseRouting } from '@/activity/notifications/runtime/useNotificationResponseRouting';
@@ -63,6 +65,7 @@ export default function RootLayout() {
     const friendsIdentityReady = friendsIdentityReadiness.isReady;
     const debugRouterEnabled = process.env.EXPO_PUBLIC_DEBUG === '1';
     const happierVoiceSupported = useHappierVoiceSupport();
+    const isDesktopOverlayWindow = isDesktopActivityOverlayWindowContext();
 
     useWebInitialRouteReconcile({ routerPathname: pathname });
 
@@ -135,7 +138,7 @@ export default function RootLayout() {
     }, [shouldRedirect]);
 
     useNotificationResponseRouting({
-        enabled: auth.isAuthenticated,
+        enabled: auth.isAuthenticated && !isDesktopOverlayWindow,
         refreshAuth: auth.refreshFromActiveServer,
     });
 
@@ -227,11 +230,16 @@ export default function RootLayout() {
 
     return (
         <>
-            <ActivityBadgeRuntime />
-            <ActivitySurfacesRuntime />
-            <ActivityLocalNotificationRuntime />
-            <DesktopTrayRuntime />
-            <DesktopTrayDaemonLifecycleRuntime />
+            {!isDesktopOverlayWindow ? (
+                <>
+                    <ActivityBadgeRuntime />
+                    <ActivitySurfacesRuntime />
+                    <ActivityLocalNotificationRuntime />
+                    <DesktopTrayRuntime />
+                    <DesktopTrayDaemonLifecycleRuntime />
+                    <DesktopActivityOverlayRuntime />
+                </>
+            ) : null}
             {debugRouterEnabled && Platform.OS === 'web' ? (
                 <View
                     testID="debug-router-pathname"
@@ -284,6 +292,12 @@ export default function RootLayout() {
                 name="settings"
                 options={{
                     // Nested navigator; per-settings-screen headers are configured in `settings/_layout.tsx`.
+                    headerShown: false,
+                }}
+            />
+            <Stack.Screen
+                name="desktop/activity-overlay"
+                options={{
                     headerShown: false,
                 }}
             />

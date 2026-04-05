@@ -26,6 +26,7 @@ export type ProjectRightPanelProps = Readonly<{
     workspaceRef: WorkspaceRefV1;
     scopeId: string;
     activeRootPath: string;
+    activeWorktreeId?: string | null;
     onSelectRootPath: (path: string) => void;
     onRequestClose?: () => void;
 }>;
@@ -92,8 +93,9 @@ export const ProjectRightPanel = React.memo((props: ProjectRightPanelProps) => {
             segment: tabId,
             activeRootPath: props.activeRootPath,
             defaultRootPath: props.workspaceRef.rootPath,
+            activeWorktreeId: props.activeWorktreeId,
         }));
-    }, [activeTab, deviceType, pane, props.activeRootPath, props.workspaceRef.id, props.workspaceRef.rootPath, router]);
+    }, [activeTab, deviceType, pane, props.activeRootPath, props.activeWorktreeId, props.workspaceRef.id, props.workspaceRef.rootPath, router]);
 
     React.useEffect(() => {
         if (!scopeState?.right.isOpen) return;

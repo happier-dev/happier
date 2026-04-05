@@ -92,6 +92,7 @@ export const ProjectsListView = React.memo(() => {
     const addFirstMachines = React.useMemo(() => resolveMachineActionCandidates(allMachines), [allMachines]);
     const lastMobileRouteByWorkspaceRefId = useLocalSetting('projectLastMobileRouteByWorkspaceRefId');
     const lastActiveRootPathByWorkspaceRefId = useLocalSetting('projectLastActiveRootPathByWorkspaceRefId');
+    const lastActiveWorktreeIdByWorkspaceRefId = useLocalSetting('projectLastActiveWorktreeIdByWorkspaceRefId');
 
     const [workspaceRefsV1, setWorkspaceRefsV1] = useSettingMutable('workspaceRefsV1');
     const [pinnedWorkspaceRefIdsV1, setPinnedWorkspaceRefIdsV1] = useSettingMutable('pinnedWorkspaceRefIdsV1');
@@ -122,6 +123,7 @@ export const ProjectsListView = React.memo(() => {
             typeof persistedSegment === 'string' ? persistedSegment : null,
         );
         const persistedRootPath = lastActiveRootPathByWorkspaceRefId?.[workspaceRef.id];
+        const persistedWorktreeId = lastActiveWorktreeIdByWorkspaceRefId?.[workspaceRef.id];
         const activeRootPath = typeof persistedRootPath === 'string' && persistedRootPath.trim().length > 0
             ? persistedRootPath
             : workspaceRef.rootPath;
@@ -130,8 +132,9 @@ export const ProjectsListView = React.memo(() => {
             segment,
             activeRootPath,
             defaultRootPath: workspaceRef.rootPath,
+            activeWorktreeId: typeof persistedWorktreeId === 'string' ? persistedWorktreeId : null,
         }));
-    }, [deviceType, lastActiveRootPathByWorkspaceRefId, lastMobileRouteByWorkspaceRefId, paneContext?.state.scopes, router]);
+    }, [deviceType, lastActiveRootPathByWorkspaceRefId, lastActiveWorktreeIdByWorkspaceRefId, lastMobileRouteByWorkspaceRefId, paneContext?.state.scopes, router]);
 
     const handleAddProjectToMachine = React.useCallback(async (machineId: string) => {
         const serverId = String(activeServer.serverId ?? '').trim();
@@ -249,20 +252,18 @@ export const ProjectsListView = React.memo(() => {
             containerStyle={{ paddingTop: 12 }}
         >
             {!hasAnyProjects ? (
-                <ItemGroup>
-                    <CenteredInfoTile
-                        icon={(
-                            <Ionicons
-                                name="folder-open-outline"
-                                size={48}
-                                color={theme.colors.textSecondary}
-                                style={{ marginBottom: 12 }}
-                            />
-                        )}
-                        title={t('projects.emptyTitle')}
-                        description={t('projects.emptyDescription')}
-                    />
-                </ItemGroup>
+                <CenteredInfoTile
+                    icon={(
+                        <Ionicons
+                            name="folder-open-outline"
+                            size={48}
+                            color={theme.colors.textSecondary}
+                            style={{ marginBottom: 12 }}
+                        />
+                    )}
+                    title={t('projects.emptyTitle')}
+                    description={t('projects.emptyDescription')}
+                />
             ) : null}
 
             {groups.pinned.length > 0 ? (

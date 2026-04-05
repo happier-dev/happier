@@ -215,7 +215,7 @@ describe('ProjectsListView', () => {
 
         await screen.pressByTestIdAsync('projects-list-item-wr_1');
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/projects/wr_1/git');
+        expect(routerPushSpy).toHaveBeenCalledWith('/projects/wr_1/git?worktreeId=%40root');
     });
 
     it('defaults mobile project opens to the files route when no last tab is remembered', async () => {
@@ -234,7 +234,7 @@ describe('ProjectsListView', () => {
 
         await screen.pressByTestIdAsync('projects-list-item-wr_1');
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/projects/wr_1/files');
+        expect(routerPushSpy).toHaveBeenCalledWith('/projects/wr_1/files?worktreeId=%40root');
     });
 
     it('reopens the remembered mobile worktree path from local project state', async () => {
@@ -250,6 +250,7 @@ describe('ProjectsListView', () => {
         localSettingsMock = {
             projectLastMobileRouteByWorkspaceRefId: { wr_1: 'git' },
             projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/repo/.worktrees/feature-auth' },
+            projectLastActiveWorktreeIdByWorkspaceRefId: { wr_1: 'gitwt_feature' },
         };
 
         const { ProjectsListView } = await import('./ProjectsListView');
@@ -257,6 +258,6 @@ describe('ProjectsListView', () => {
 
         await screen.pressByTestIdAsync('projects-list-item-wr_1');
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/projects/wr_1/git?activeRootPath=%2Frepo%2F.worktrees%2Ffeature-auth');
+        expect(routerPushSpy).toHaveBeenCalledWith('/projects/wr_1/git?worktreeId=gitwt_feature');
     });
 });

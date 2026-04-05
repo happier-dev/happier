@@ -30,6 +30,7 @@ import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
 import { MultiTextInput, type MultiTextInputHandle } from '@/components/ui/forms/MultiTextInput';
 import { DetectedClisList } from '@/components/machines/DetectedClisList';
+import { MachineTransferExposureSection } from '@/components/machines/MachineTransferExposureSection';
 import { useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { resolveTerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
@@ -1075,6 +1076,8 @@ export default function MachineDetailScreen() {
                             subtitle={String(machine.daemonStateVersion)}
                         />
                 </ItemGroup>
+
+                <MachineTransferExposureSection daemonState={machine.daemonState ?? null} />
 
                 {/* Execution runs */}
                 {executionRunsState.status !== 'idle' && (

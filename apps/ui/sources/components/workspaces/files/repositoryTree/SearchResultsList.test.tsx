@@ -110,7 +110,7 @@ describe('SearchResultsList', () => {
         expect(onFilePress).toHaveBeenCalledTimes(0);
     });
 
-    it('renders file path on the left and file name on the right (matches changed-files layout)', async () => {
+    it('renders a single inline repo path label with the directory truncating from the head', async () => {
         const { SearchResultsList } = await import('./SearchResultsList');
 
         const file = {
@@ -130,8 +130,11 @@ describe('SearchResultsList', () => {
                 />)).tree;
 
         const item = tree!.findByType('Item' as any);
-        expect(item.props.title).toBe('src/');
-        expect(item.props.rightElement?.type).toBe('Text');
-        expect(String(item.props.rightElement?.props?.children)).toBe('a.ts');
+        expect(React.isValidElement(item.props.title)).toBe(true);
+        expect(item.props.rightElement).toBeNull();
+        const title = item.props.title;
+        expect(title.props.filePath).toBe('src/');
+        expect(title.props.fileName).toBe('/a.ts');
+        expect(title.props.nameMaxWidth).toBe(220);
     });
 });

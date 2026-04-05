@@ -11,6 +11,7 @@ export type RepoWorktreeRow = Readonly<{
     branch: string | null;
     isCurrent?: boolean;
     isMain?: boolean;
+    isPrunable?: boolean;
 }>;
 
 export function buildWorkspaceScmBranchPopoverItems(input: Readonly<{

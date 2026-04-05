@@ -101,10 +101,6 @@ vi.mock('@/encryption/base64', () => ({
     encodeBase64: () => 'x',
 }));
 
-vi.mock('@/sync/http/client', () => ({
-    serverFetch: vi.fn(async () => ({ ok: false, status: 404, json: async () => ({}) })),
-}));
-
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerUrl: () => 'https://stack.example.test',
     getActiveServerSnapshot: () => ({ serverId: 'srv', serverUrl: 'https://stack.example.test', generation: 0 }),

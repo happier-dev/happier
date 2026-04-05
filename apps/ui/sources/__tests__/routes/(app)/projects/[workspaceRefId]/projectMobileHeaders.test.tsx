@@ -26,7 +26,7 @@ let paneScopeStateMock: {
 const routerMock = createExpoRouterMock({
     params: {
         workspaceRefId: 'wr_1',
-        activeRootPath: '/Users/test/repo/.worktrees/feature-auth',
+        worktreeId: 'gitwt_feature',
     },
     navigation: { canGoBack: () => true },
     stackOptionsCapture,
@@ -57,6 +57,9 @@ vi.mock('react-native', async () => {
 
 vi.mock('@react-navigation/native', () => ({
     useIsFocused: () => true,
+    useNavigation: () => ({
+        canGoBack: () => true,
+    }),
 }));
 
 vi.mock('expo-router', () => routerMock.module);
@@ -99,6 +102,23 @@ vi.mock('@/components/projects/detail/useWorkspaceRefById', () => ({
     useWorkspaceRefById: () => workspaceRefMock,
 }));
 
+vi.mock('@/hooks/workspaces/scm/useWorkspaceScmSnapshotController', () => ({
+    useWorkspaceScmSnapshotController: () => ({
+        snapshot: {
+            repo: {
+                isRepo: true,
+                worktrees: [
+                    { id: 'gitwt_main', path: '/Users/test/repo', branch: 'main', isCurrent: true, isMain: true },
+                    { id: 'gitwt_feature', path: '/Users/test/repo/.worktrees/feature-auth', branch: 'feature/auth', isCurrent: false },
+                ],
+            },
+        },
+        loading: false,
+        error: null,
+        refresh: vi.fn(async () => {}),
+    }),
+}));
+
 vi.mock('@/components/projects/detail/ProjectRightPanel', () => ({
     ProjectRightPanel: (props: Record<string, unknown>) => React.createElement('ProjectRightPanelStub', props),
 }));
@@ -118,6 +138,7 @@ describe('project mobile route headers', () => {
         stackOptionsCapture.reset();
         paneOpenDetailsTabSpy.mockClear();
         routerMock.spies.push.mockClear();
+        routerMock.spies.replace.mockClear();
     });
 
     afterEach(() => {
@@ -150,12 +171,15 @@ describe('project mobile route headers', () => {
         expect(setLocalSettingSpy).toHaveBeenCalledWith(expected);
     });
 
-    it('does not overwrite the remembered active root path just by opening a route with an activeRootPath query param', async () => {
+    it('hydrates the remembered active worktree state from a worktreeId query param', async () => {
         const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/git')).default as React.ComponentType;
         await renderScreen(<Screen />);
 
-        expect(setLocalSettingSpy).not.toHaveBeenCalledWith({
+        expect(setLocalSettingSpy).toHaveBeenCalledWith({
             wr_1: '/Users/test/repo/.worktrees/feature-auth',
+        });
+        expect(setLocalSettingSpy).toHaveBeenCalledWith({
+            wr_1: 'gitwt_feature',
         });
     });
 
@@ -176,10 +200,10 @@ describe('project mobile route headers', () => {
     });
 
     it.each([
-        ['git', '@/app/(app)/projects/[workspaceRefId]/git', true],
-        ['files', '@/app/(app)/projects/[workspaceRefId]/files', true],
-        ['details', '@/app/(app)/projects/[workspaceRefId]/details', false],
-    ])('configures mobile header actions for the %s route', async (_name, moduleId, expectsWorktreesButton) => {
+        ['git', '@/app/(app)/projects/[workspaceRefId]/git', 'push', '/projects/wr_1/details?worktreeId=gitwt_feature&showWorktrees=1'],
+        ['files', '@/app/(app)/projects/[workspaceRefId]/files', 'push', '/projects/wr_1/details?worktreeId=gitwt_feature&showWorktrees=1'],
+        ['details', '@/app/(app)/projects/[workspaceRefId]/details', 'replace', '/projects/wr_1/details?worktreeId=gitwt_feature&showWorktrees=1'],
+    ])('configures mobile header actions for the %s route', async (_name, moduleId, navigationMethod, expectedHref) => {
         const Screen = (await import(moduleId)).default as React.ComponentType;
         await renderScreen(<Screen />);
 
@@ -190,13 +214,15 @@ describe('project mobile route headers', () => {
 
         expect(headerTree.root.findByProps({ testID: 'project-mobile-header-open-terminal' })).toBeTruthy();
         const worktreeButtons = headerTree.root.findAllByProps({ testID: 'project-mobile-header-open-worktrees' });
-        expect(worktreeButtons.length > 0).toBe(expectsWorktreesButton);
+        expect(worktreeButtons.length > 0).toBe(true);
 
-        if (expectsWorktreesButton) {
-            await act(async () => {
-                worktreeButtons[0]!.props.onPress();
-            });
-            expect(routerMock.spies.push).toHaveBeenCalledWith('/projects/wr_1/details?activeRootPath=%2FUsers%2Ftest%2Frepo%2F.worktrees%2Ffeature-auth&showWorktrees=1');
+        await act(async () => {
+            worktreeButtons[0]!.props.onPress();
+        });
+        if (navigationMethod === 'replace') {
+            expect(routerMock.spies.replace).toHaveBeenCalledWith(expectedHref);
+        } else {
+            expect(routerMock.spies.push).toHaveBeenCalledWith(expectedHref);
         }
 
         const terminalButton = headerTree.root.findByProps({ testID: 'project-mobile-header-open-terminal' });

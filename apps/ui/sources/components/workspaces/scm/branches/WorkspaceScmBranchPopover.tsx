@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { Pressable, ScrollView, View } from 'react-native';
 import { Octicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -118,7 +118,6 @@ export function WorkspaceScmBranchPopover(props: WorkspaceScmBranchPopoverProps)
                 maxHeightCap={480}
                 maxWidthCap={420}
                 portal={{ web: { target: 'body' }, native: true }}
-                closeOnAnchorPress
             >
                 {() => (
                     <View
@@ -167,7 +166,13 @@ export function WorkspaceScmBranchPopover(props: WorkspaceScmBranchPopoverProps)
                                 }}
                             />
                         </View>
-                        <View style={{ paddingBottom: 8, maxHeight: 360 }}>
+                        <ScrollView
+                            style={{ maxHeight: 360 }}
+                            contentContainerStyle={{ paddingBottom: 8 }}
+                            keyboardShouldPersistTaps="handled"
+                            nestedScrollEnabled
+                            testID="workspace-scm-branch-popover-scroll"
+                        >
                             <SelectableMenuResults
                                 categories={filteredCategories}
                                 selectedIndex={selectedIndex}
@@ -176,7 +181,7 @@ export function WorkspaceScmBranchPopover(props: WorkspaceScmBranchPopoverProps)
                                 rowVariant="slim"
                                 emptyLabel={t('files.branchMenu.empty')}
                             />
-                        </View>
+                        </ScrollView>
                     </View>
                 )}
             </Popover>

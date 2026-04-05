@@ -10,6 +10,7 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 import type { RepoWorktreeRow } from '../branches/buildWorkspaceScmBranchPopoverItems';
+import { filterVisibleRepoWorktreeRows } from './filterVisibleRepoWorktreeRows';
 import { sortRepoWorktreeRows } from './sortRepoWorktreeRows';
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -52,7 +53,7 @@ export const WorkspaceWorktreeListSection = React.memo((props: Readonly<{
     const [searchQuery, setSearchQuery] = React.useState('');
 
     const sortedWorktrees = React.useMemo(
-        () => sortRepoWorktreeRows(props.worktrees),
+        () => sortRepoWorktreeRows(filterVisibleRepoWorktreeRows(props.worktrees)),
         [props.worktrees],
     );
     const filteredWorktrees = React.useMemo(
