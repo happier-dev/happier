@@ -7,6 +7,9 @@ import path from 'node:path';
 
 import { buildRollingReleaseEditArgs } from './lib/gh-release-commands.mjs';
 
+const DEFAULT_RELEASE_UPLOAD_RETRIES = 3;
+const DEFAULT_RELEASE_UPLOAD_RETRY_DELAY_MS = 2_000;
+
 function fail(message) {
   console.error(message);
   process.exit(1);
@@ -61,6 +64,51 @@ function parseBool(value, name) {
   if (raw === 'true') return true;
   if (raw === 'false') return false;
   fail(`${name} must be 'true' or 'false' (got: ${value})`);
+}
+
+/**
+ * @param {string} name
+ * @param {number} defaultValue
+ * @returns {number}
+ */
+function readPositiveIntegerEnv(name, defaultValue) {
+  const raw = String(process.env[name] ?? '').trim();
+  if (!raw) return defaultValue;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    fail(`${name} must be a positive integer (got: ${raw || '<empty>'})`);
+  }
+  return parsed;
+}
+
+/**
+ * @param {number} ms
+ */
+function sleepSync(ms) {
+  const buf = new SharedArrayBuffer(4);
+  Atomics.wait(new Int32Array(buf), 0, 0, ms);
+}
+
+/**
+ * @param {unknown} err
+ * @returns {string}
+ */
+function formatExecError(err) {
+  if (err instanceof Error) {
+    const stderr = 'stderr' in err ? String(err.stderr ?? '') : '';
+    const stdout = 'stdout' in err ? String(err.stdout ?? '') : '';
+    return `${stderr}\n${stdout}\n${err.message}`;
+  }
+  return String(err);
+}
+
+/**
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+function isTransientReleaseUploadError(err) {
+  const raw = formatExecError(err);
+  return /release not found/i.test(raw) || /404/i.test(raw);
 }
 
 /**
@@ -218,6 +266,14 @@ function main() {
   }
 
   const ghToken = String(process.env.GH_TOKEN ?? '').trim();
+  const uploadRetries = readPositiveIntegerEnv(
+    'HAPPIER_PIPELINE_GH_RELEASE_UPLOAD_RETRIES',
+    DEFAULT_RELEASE_UPLOAD_RETRIES,
+  );
+  const uploadRetryDelayMs = readPositiveIntegerEnv(
+    'HAPPIER_PIPELINE_GH_RELEASE_UPLOAD_RETRY_DELAY_MS',
+    DEFAULT_RELEASE_UPLOAD_RETRY_DELAY_MS,
+  );
   /** @type {Record<string, string>} */
   const ghEnv = {};
   if (repo) ghEnv.GH_REPO = repo;
@@ -362,7 +418,23 @@ function main() {
   }
 
   for (const spec of uploadSpecs) {
-    run('gh', ['release', 'upload', tag, spec, ...clobberFlag], { env: ghEnv, dryRun });
+    let uploaded = false;
+    for (let attempt = 1; attempt <= uploadRetries; attempt += 1) {
+      try {
+        run('gh', ['release', 'upload', tag, spec, ...clobberFlag], { env: ghEnv, dryRun });
+        uploaded = true;
+        break;
+      } catch (err) {
+        if (!dryRun && isTransientReleaseUploadError(err) && attempt < uploadRetries) {
+          sleepSync(uploadRetryDelayMs);
+          continue;
+        }
+        throw err;
+      }
+    }
+    if (!uploaded) {
+      fail(`Failed to upload release asset after ${uploadRetries} attempts: ${spec}`);
+    }
   }
 }
 
