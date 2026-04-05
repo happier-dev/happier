@@ -7,6 +7,8 @@ import {
     type FeaturesResponse,
 } from '@happier-dev/protocol';
 
+export const SESSION_ROUTED_FILE_TRANSFER_TOO_LARGE_ERROR = 'File exceeds the server-routed transfer size limit';
+
 export function resolveServerRoutedTransferMaxBytesFromEnv(
     env: NodeJS.ProcessEnv = process.env,
 ): number | null {

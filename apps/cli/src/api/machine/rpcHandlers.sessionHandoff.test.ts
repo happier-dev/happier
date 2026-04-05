@@ -1928,6 +1928,359 @@ function createLoopbackMachineTransferChannels() {
     }
   });
 
+  it('persists local handoff-back metadata for the resumed remote session during sync_changes prepare-target', async () => {
+    const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-local-metadata-'));
+    const savePreparedTargetLocalMetadata = vi.fn(async () => {});
+
+    try {
+      vi.resetModules();
+      vi.doMock('@/configuration', () => ({
+        configuration: {
+          activeServerDir,
+          activeServerId: 'test_session_handoff_local_metadata',
+          workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
+          workspaceReplicationBlobPackMaxBlobs: 64,
+          workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
+        },
+      }));
+      const prepareTargetWorkspace = vi.fn(async (_params: any) => ({
+        importedWorkspace: {
+          targetPath: '/repo/source-current',
+        },
+        currentTargetManifest: {
+          entries: [],
+        },
+        sourceOffer: null,
+      }));
+      vi.doMock('../../workspace/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter', () => ({
+        createSessionHandoffWorkspaceReplicationAdapter: () => ({
+          createReplicationTransfers: () => ({}) as any,
+          createState: vi.fn(async () => ({ workspaceReplicationMetadata: undefined })),
+          resolveSourceOffer: vi.fn(async () => ({
+            mode: 'sync_changes',
+            manifest: { entries: [] },
+            blobIndex: [],
+          })),
+          prepareSourceWorkspaceTransfer: vi.fn(async () => ({
+            handoffMetadataV2: {
+              workspaceReplicationSourceRootPath: '/repo/source-current',
+              workspaceReplicationManifestTransferPublication: {
+                transferId: 'session-handoff:test:workspace-manifest',
+              },
+            },
+            workspaceReplicationMetadata: {
+              sourceRootPath: '/repo/source-current',
+              manifest: {
+                entries: [],
+              },
+            },
+          })),
+          prepareTargetWorkspace,
+          persistBaselineFromManifest: vi.fn(async () => {}),
+        }),
+        resolveSessionHandoffWorkspaceReplicationSourceOffer: vi.fn(async () => ({
+          mode: 'sync_changes',
+          manifest: { entries: [] },
+          blobIndex: [],
+        })),
+      }));
+      const { registerMachineSessionHandoffRpcHandlers: registerHandlers } = await import('./rpcHandlers.sessionHandoff');
+
+      const registered = new Map<string, (params: unknown) => Promise<any>>();
+      const rpcHandlerManager = {
+        registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+          registered.set(method, handler);
+        },
+      } as any;
+
+      registerHandlers({
+        rpcHandlerManager,
+        loadSessionMetadata: async () => ({
+          machineId: 'machine_source',
+          path: '/repo/source-current',
+          flavor: 'claude',
+          claudeSessionId: 'claude_session_source',
+          handoffV1: {
+            v: 1,
+            sourceMachineId: 'machine_target',
+            targetMachineId: 'machine_source',
+            sourceWorkspaceRootPath: '/repo/original-source-root',
+            targetWorkspaceRootPath: '/repo/source-current',
+          },
+        }),
+        exportSessionBundle: async () => ({
+          providerBundle: {
+            providerId: 'claude',
+            remoteSessionId: 'claude_session_source',
+            transcriptBase64: 'e30K',
+          },
+          targetPath: '/repo/source-current',
+        }),
+        importSessionBundle: async (_bundle: any, directory: string) => ({
+          remoteSessionId: 'claude_session_target',
+          directSource: {
+            kind: 'claudeConfig',
+            configDir: null,
+            projectId: null,
+          },
+          resume: buildClaudeResumePlan({
+            directory,
+            resume: 'claude_session_target',
+            transcriptStorage: 'direct',
+          }),
+        }),
+        savePreparedTargetLocalMetadata: savePreparedTargetLocalMetadata as any,
+      } as any);
+
+      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+      expect(start).toBeDefined();
+      expect(prepare).toBeDefined();
+      expect(resultGet).toBeDefined();
+
+      const started = await start!({
+        sessionId: 'sess_local_handoff_back',
+        sourceMachineId: 'machine_source',
+        targetMachineId: 'machine_target',
+        sessionStorageMode: 'direct',
+        preferredTransportStrategies: ['server_routed_stream'],
+        negotiatedTransportStrategy: 'server_routed_stream',
+        workspaceTransfer: {
+          enabled: true,
+          strategy: 'sync_changes',
+          conflictPolicy: 'replace_existing',
+          includeIgnoredMode: 'exclude',
+          ignoredIncludeGlobs: [],
+        },
+      });
+      expect(started.handoffMetadataV2).toMatchObject({
+        workspaceReplicationHandoffBackTargetRootPath: '/repo/original-source-root',
+      });
+
+      let prepared = await prepare!({
+        handoffId: started.handoffId,
+        sourceMachineId: 'machine_source',
+        targetMachineId: 'machine_target',
+        negotiatedTransportStrategy: 'server_routed_stream',
+        sourceSessionStorageMode: 'direct',
+        targetPath: '/repo/source-current',
+        handoffMetadataV2: {
+          workspaceReplicationSourceRootPath: '/repo/source-current',
+          workspaceReplicationHandoffBackTargetRootPath: '/repo/original-source-root',
+          workspaceReplicationManifestTransferPublication: {
+            transferId: 'session-handoff:test:workspace-manifest',
+          },
+        },
+        workspaceTransfer: {
+          enabled: true,
+          strategy: 'sync_changes',
+          conflictPolicy: 'replace_existing',
+          includeIgnoredMode: 'exclude',
+          ignoredIncludeGlobs: [],
+        },
+      });
+      if (prepared.status.status !== 'ready_for_cutover') {
+        await vi.waitFor(async () => {
+          prepared = await resultGet!({ handoffId: started.handoffId });
+          expect(prepared.status.status).toBe('ready_for_cutover');
+        });
+      }
+      await vi.waitFor(() => {
+        expect(savePreparedTargetLocalMetadata).toHaveBeenCalledTimes(1);
+      });
+
+      expect(savePreparedTargetLocalMetadata).toHaveBeenCalledWith({
+        remoteSessionId: 'claude_session_target',
+        exportMetadataOverlay: {
+          handoffV1: expect.objectContaining({
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            providerId: 'claude',
+            sessionStorageBefore: 'direct',
+            sessionStorageAfter: 'direct',
+            transportStrategy: 'server_routed_stream',
+            sourceWorkspaceRootPath: '/repo/original-source-root',
+            targetWorkspaceRootPath: '/repo/source-current',
+          }),
+        },
+      });
+    } finally {
+      vi.doUnmock('../../workspace/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter');
+      await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('persists local handoff metadata from workspaceReplicationSourceRootPath when sync_changes has no explicit handoff-back target root yet', async () => {
+    const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-local-metadata-fallback-'));
+    const savePreparedTargetLocalMetadata = vi.fn(async () => {});
+
+    try {
+      vi.resetModules();
+      vi.doMock('@/configuration', () => ({
+        configuration: {
+          activeServerDir,
+          activeServerId: 'test_session_handoff_local_metadata_fallback',
+          workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
+          workspaceReplicationBlobPackMaxBlobs: 64,
+          workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
+        },
+      }));
+      const prepareTargetWorkspace = vi.fn(async (_params: any) => ({
+        importedWorkspace: {
+          targetPath: '/repo/target-current',
+        },
+        currentTargetManifest: {
+          entries: [],
+        },
+        sourceOffer: null,
+      }));
+      vi.doMock('../../workspace/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter', () => ({
+        createSessionHandoffWorkspaceReplicationAdapter: () => ({
+          createReplicationTransfers: () => ({}) as any,
+          createState: vi.fn(async () => ({ workspaceReplicationMetadata: undefined })),
+          resolveSourceOffer: vi.fn(async () => ({
+            mode: 'sync_changes',
+            manifest: { entries: [] },
+            blobIndex: [],
+          })),
+          prepareSourceWorkspaceTransfer: vi.fn(async () => ({
+            handoffMetadataV2: {
+              workspaceReplicationSourceRootPath: '/repo/original-source-root',
+              workspaceReplicationManifestTransferPublication: {
+                transferId: 'session-handoff:test:workspace-manifest',
+              },
+            },
+            workspaceReplicationMetadata: {
+              sourceRootPath: '/repo/original-source-root',
+              manifest: {
+                entries: [],
+              },
+            },
+          })),
+          prepareTargetWorkspace,
+          persistBaselineFromManifest: vi.fn(async () => {}),
+        }),
+        resolveSessionHandoffWorkspaceReplicationSourceOffer: vi.fn(async () => ({
+          mode: 'sync_changes',
+          manifest: { entries: [] },
+          blobIndex: [],
+        })),
+      }));
+      const { registerMachineSessionHandoffRpcHandlers: registerHandlers } = await import('./rpcHandlers.sessionHandoff');
+
+      const registered = new Map<string, (params: unknown) => Promise<any>>();
+      const rpcHandlerManager = {
+        registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+          registered.set(method, handler);
+        },
+      } as any;
+
+      registerHandlers({
+        rpcHandlerManager,
+        loadSessionMetadata: async () => ({
+          machineId: 'machine_source',
+          path: '/repo/original-source-root',
+          flavor: 'claude',
+          claudeSessionId: 'claude_session_source',
+        }),
+        exportSessionBundle: async () => ({
+          providerBundle: {
+            providerId: 'claude',
+            remoteSessionId: 'claude_session_source',
+            transcriptBase64: 'e30K',
+          },
+          targetPath: '/repo/original-source-root',
+        }),
+        importSessionBundle: async (_bundle: any, directory: string) => ({
+          remoteSessionId: 'claude_session_target',
+          directSource: {
+            kind: 'claudeConfig',
+            configDir: null,
+            projectId: null,
+          },
+          resume: buildClaudeResumePlan({
+            directory,
+            resume: 'claude_session_target',
+            transcriptStorage: 'direct',
+          }),
+        }),
+        savePreparedTargetLocalMetadata: savePreparedTargetLocalMetadata as any,
+      } as any);
+
+      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+      expect(start).toBeDefined();
+      expect(prepare).toBeDefined();
+      expect(resultGet).toBeDefined();
+
+      const started = await start!({
+        sessionId: 'sess_local_handoff_first_round',
+        sourceMachineId: 'machine_source',
+        targetMachineId: 'machine_target',
+        sessionStorageMode: 'direct',
+        preferredTransportStrategies: ['server_routed_stream'],
+        negotiatedTransportStrategy: 'server_routed_stream',
+        workspaceTransfer: {
+          enabled: true,
+          strategy: 'sync_changes',
+          conflictPolicy: 'replace_existing',
+          includeIgnoredMode: 'exclude',
+          ignoredIncludeGlobs: [],
+        },
+      });
+      expect(started.handoffMetadataV2).not.toHaveProperty('workspaceReplicationHandoffBackTargetRootPath');
+      expect(started.handoffMetadataV2).toMatchObject({
+        workspaceReplicationSourceRootPath: '/repo/original-source-root',
+      });
+
+      let prepared = await prepare!({
+        handoffId: started.handoffId,
+        sourceMachineId: 'machine_source',
+        targetMachineId: 'machine_target',
+        negotiatedTransportStrategy: 'server_routed_stream',
+        sourceSessionStorageMode: 'direct',
+        targetPath: '/repo/target-current',
+        handoffMetadataV2: {
+          workspaceReplicationSourceRootPath: '/repo/original-source-root',
+          workspaceReplicationManifestTransferPublication: {
+            transferId: 'session-handoff:test:workspace-manifest',
+          },
+        },
+        workspaceTransfer: {
+          enabled: true,
+          strategy: 'sync_changes',
+          conflictPolicy: 'replace_existing',
+          includeIgnoredMode: 'exclude',
+          ignoredIncludeGlobs: [],
+        },
+      });
+      if (prepared.status.status !== 'ready_for_cutover') {
+        await vi.waitFor(async () => {
+          prepared = await resultGet!({ handoffId: started.handoffId });
+          expect(prepared.status.status).toBe('ready_for_cutover');
+        });
+      }
+      await vi.waitFor(() => {
+        expect(savePreparedTargetLocalMetadata).toHaveBeenCalledTimes(1);
+      });
+
+      expect(savePreparedTargetLocalMetadata).toHaveBeenCalledWith({
+        remoteSessionId: 'claude_session_target',
+        exportMetadataOverlay: {
+          handoffV1: expect.objectContaining({
+            sourceWorkspaceRootPath: '/repo/original-source-root',
+            targetWorkspaceRootPath: '/repo/target-current',
+          }),
+        },
+      });
+    } finally {
+      vi.doUnmock('../../workspace/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter');
+      await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
   it('surfaces workspaceReplicationHandoffBackTargetRootPath when session metadata indicates a sync_changes handoff back to the prior source machine', async () => {
     vi.resetModules();
 
@@ -2007,6 +2360,82 @@ function createLoopbackMachineTransferChannels() {
       });
     } finally {
       await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('surfaces workspaceReplicationHandoffBackTargetRootPath from workspaceReplicationSourceRootPath when handoffV1 metadata is unavailable for a sync_changes handoff back', async () => {
+    vi.resetModules();
+
+    const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-start-v2-handoff-back-fallback-'));
+    const published = await createPublishedDirectPeerPayloadRouter();
+    try {
+      vi.doMock('@/configuration', () => ({
+        configuration: {
+          activeServerDir,
+          activeServerId: 'server_test',
+          workspaceReplicationBlobPackTargetBytes: 1024 * 1024,
+          workspaceReplicationBlobPackMaxBlobs: 1024,
+          workspaceReplicationBlobPackMaxSingleBlobBytes: 1024 * 1024,
+        },
+      }));
+
+      const exportSessionBundle: ExportSessionBundle = async () => ({
+        providerBundle: {
+          providerId: 'claude' as const,
+          remoteSessionId: 'claude_session_1',
+          transcriptBase64: 'e30K',
+        },
+        targetPath: '/home/guest/wsrepl-large-replication-9',
+      });
+      const registered = new Map<string, (params: unknown) => Promise<any>>();
+      const rpcHandlerManager = {
+        registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+          registered.set(method, handler);
+        },
+      } as any;
+
+      const { registerMachineSessionHandoffRpcHandlers: registerHandlers } = await import('./rpcHandlers.sessionHandoff');
+      registerHandlers({
+        rpcHandlerManager,
+        loadSessionMetadata: async () => ({
+          machineId: 'machine_source',
+          path: '/home/guest/wsrepl-large-replication-9',
+          flavor: 'claude',
+          claudeSessionId: 'claude_session_1',
+          workspaceReplicationSourceRootPath: '/repo/./wsrepl-large',
+        }),
+        exportSessionBundle,
+        directPeerTransfer: {
+          publishTransfer: published.publishTransfer,
+          requestPayloadFile: published.requestPayloadFile as any,
+          clearPublishedTransfer: vi.fn(),
+        },
+      });
+
+      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+      expect(start).toBeDefined();
+
+      const result = await start!({
+        sessionId: 'sess_handoff_back_hint_fallback',
+        sourceMachineId: 'machine_source',
+        targetMachineId: 'machine_target',
+        sessionStorageMode: 'persisted',
+        preferredTransportStrategies: ['direct_peer'],
+        negotiatedTransportStrategy: 'direct_peer',
+        workspaceTransfer: {
+          enabled: true,
+          strategy: 'sync_changes',
+          conflictPolicy: 'replace_existing',
+          includeIgnoredMode: 'exclude',
+          ignoredIncludeGlobs: [],
+        },
+      });
+
+      expect(result.handoffMetadataV2).toMatchObject({
+        workspaceReplicationHandoffBackTargetRootPath: '/repo/wsrepl-large',
+      });
+    } finally {
+      await rm(activeServerDir, { recursive: true }).catch(() => undefined);
     }
   });
 
@@ -2199,12 +2628,15 @@ function createLoopbackMachineTransferChannels() {
         },
       });
 
-      // start() can legitimately acknowledge before workspace export artifacts have been persisted.
-      // Ensure source export has finished before asserting on source_cleanup baseline persistence.
+      // start() can acknowledge before the durable source-export record has been rewritten with
+      // workspace manifest metadata. Wait for the canonical durable record, not just file presence.
+      const { createSessionHandoffSourceExportStore } = await import('../../session/handoff/state/sessionHandoffSourceExportStore');
+      const sourceExportStore = createSessionHandoffSourceExportStore({ activeServerDir });
       await vi.waitFor(async () => {
-        await access(join(activeServerDir, 'session-handoff', started.handoffId, 'provider-bundle.json'));
-        await access(join(activeServerDir, 'session-handoff', started.handoffId, 'workspace-manifest.txt'));
-        await access(join(activeServerDir, 'session-handoff', started.handoffId, 'source-export.json'));
+        const persisted = await sourceExportStore.load(started.handoffId);
+        expect(persisted?.providerBundle).toBeDefined();
+        expect(persisted?.workspaceManifest).toBeDefined();
+        expect(persisted?.workspaceSourceRootPath).toBe(sourcePath);
       }, { timeout: 10_000 });
 
       await commit!({
@@ -3382,6 +3814,164 @@ function createLoopbackMachineTransferChannels() {
     }
   });
 
+  it('prefers workspaceReplicationHandoffBackTargetRootPath over the rebased source targetPath during sync_changes prepare-target', async () => {
+    const sourcePath = '/Users/tester/projects/demo';
+    const handoffBackTargetRootPath = '/repo/original-source-root';
+    const registered = new Map<string, (params: unknown) => Promise<any>>();
+    const createState = vi.fn(async () => ({
+      workspaceReplicationMetadata: undefined,
+    }));
+    const resolveSourceOffer = vi.fn(async () => null);
+    const prepareSourceWorkspaceTransfer = vi.fn(async () => ({
+      handoffMetadataV2: {
+        workspaceReplicationSourceRootPath: sourcePath,
+        workspaceReplicationHandoffBackTargetRootPath: handoffBackTargetRootPath,
+        workspaceReplicationManifestTransferPublication: {
+          transferId: 'session-handoff:test:workspace-manifest',
+        },
+      },
+      workspaceReplicationMetadata: {
+        sourceRootPath: sourcePath,
+        manifest: {
+          entries: [],
+        },
+      },
+    }));
+    const prepareTargetWorkspace = vi.fn(async (params: any) => {
+      await params.onWorkspaceReplicationJobStarted?.('job_wsrepl_1');
+      return {
+        importedWorkspace: {
+          targetPath: handoffBackTargetRootPath,
+        },
+        currentTargetManifest: null,
+        sourceOffer: null,
+      };
+    });
+    const createSessionHandoffWorkspaceReplicationAdapter = vi.fn(() => ({
+      createReplicationTransfers: () => ({}) as any,
+      createState,
+      resolveSourceOffer,
+      prepareSourceWorkspaceTransfer,
+      prepareTargetWorkspace,
+    }));
+    const importSessionBundle = vi.fn(async () => ({
+      remoteSessionId: 'claude_session_target',
+      directSource: {
+        kind: 'claudeConfig',
+        configDir: null,
+        projectId: null,
+      },
+      resume: buildClaudeResumePlan({
+        directory: handoffBackTargetRootPath,
+        resume: 'claude_session_target',
+        transcriptStorage: 'persisted',
+      }),
+    }));
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    vi.resetModules();
+    vi.doMock('../../workspace/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter', () => ({
+      createSessionHandoffWorkspaceReplicationAdapter,
+      resolveSessionHandoffWorkspaceReplicationSourceOffer: resolveSourceOffer,
+    }));
+
+    try {
+      const { registerMachineSessionHandoffRpcHandlers: registerHandlers } = await import('./rpcHandlers.sessionHandoff');
+      registerHandlers({
+        rpcHandlerManager,
+        loadSessionMetadata: async () => ({
+          machineId: 'machine_source',
+          path: sourcePath,
+          homeDir: '/Users/tester',
+          flavor: 'claude',
+          claudeSessionId: 'claude_session_1',
+          handoffV1: {
+            v: 1,
+            sourceMachineId: 'machine_target',
+            targetMachineId: 'machine_source',
+            sourceWorkspaceRootPath: handoffBackTargetRootPath,
+            targetWorkspaceRootPath: sourcePath,
+          },
+        }),
+        exportSessionBundle: async () => ({
+          providerBundle: {
+            providerId: 'claude',
+            remoteSessionId: 'claude_session_1',
+            transcriptBase64: 'e30K',
+          },
+          targetPath: sourcePath,
+          workspaceExportArtifacts: {
+            manifest: {
+              entries: [],
+              fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
+            },
+            sourceControllerMetadata: {
+              scmBackendId: 'git',
+            },
+          },
+          blobProvider: {
+            getBlobFilePath: () => `${sourcePath}/README.md`,
+          },
+        }),
+        importSessionBundle,
+      });
+
+      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+      expect(start).toBeDefined();
+      expect(prepare).toBeDefined();
+      expect(resultGet).toBeDefined();
+
+      const workspaceTransfer = {
+        enabled: true as const,
+        strategy: 'sync_changes' as const,
+        conflictPolicy: 'replace_existing' as const,
+        includeIgnoredMode: 'exclude' as const,
+        ignoredIncludeGlobs: [],
+      };
+      const started = await start!({
+        sessionId: 'sess_adapter_prepare_targetpath_handoff_back',
+        sourceMachineId: 'machine_source',
+        targetMachineId: 'machine_target',
+        sessionStorageMode: 'persisted',
+        preferredTransportStrategies: ['server_routed_stream'],
+        negotiatedTransportStrategy: 'server_routed_stream',
+        workspaceTransfer,
+      });
+
+      let prepared = await prepare!({
+        handoffId: started.handoffId,
+        sourceMachineId: 'machine_source',
+        targetMachineId: 'machine_target',
+        negotiatedTransportStrategy: 'server_routed_stream',
+        sourceSessionStorageMode: 'persisted',
+        targetPath: '/Users/other-user/Documents/demo',
+        workspaceTransfer,
+        ...(started.handoffMetadataV2 ? { handoffMetadataV2: started.handoffMetadataV2 } : {}),
+      });
+
+      if (prepared.status.status !== 'ready_for_cutover') {
+        await vi.waitFor(async () => {
+          prepared = await resultGet!({ handoffId: started.handoffId });
+          expect(prepared.status.status).toBe('ready_for_cutover');
+        });
+      }
+
+      expect(prepareTargetWorkspace).toHaveBeenCalledWith(expect.objectContaining({
+        targetPath: handoffBackTargetRootPath,
+      }));
+    } finally {
+      vi.doUnmock('@/configuration');
+      vi.doUnmock('../../workspace/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter');
+      vi.resetModules();
+    }
+  });
+
   it('persists canonical workspace replication artifacts across repeated target preparation retries', async () => {
     const registered = new Map<string, (params: unknown) => Promise<any>>();
     const importSessionBundle = vi.fn(async () => ({
@@ -3485,7 +4075,7 @@ function createLoopbackMachineTransferChannels() {
     });
   });
 
-  it('returns direct_peer_transfer_unavailable for direct-peer prepare payloads that omit endpoint candidates', async () => {
+  it('returns pending and then awaiting_recovery for direct-peer prepare payloads that omit endpoint candidates', async () => {
     const registered = new Map<string, (params: unknown) => Promise<any>>();
     const rpcHandlerManager = {
       registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
@@ -3503,9 +4093,11 @@ function createLoopbackMachineTransferChannels() {
     });
 
     const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+    const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
     expect(prepare).toBeDefined();
+    expect(statusGet).toBeDefined();
 
-    await expect(prepare!({
+    const prepared = await prepare!({
       handoffId: 'handoff_missing_transfer_source',
       sourceMachineId: 'machine_source',
       targetMachineId: 'machine_target',
@@ -3517,13 +4109,27 @@ function createLoopbackMachineTransferChannels() {
           transferId: 'session-handoff:handoff_missing_transfer_source:provider-bundle-file',
           sizeBytes: 0,
           manifestHash: `sha256:${'0'.repeat(64)}`,
-          // Intentionally omit endpointCandidates to force `direct_peer_transfer_unavailable`.
+          // Intentionally omit endpointCandidates so the direct-peer prepare settles into awaiting_recovery.
+          },
         },
-      },
-    })).resolves.toEqual({
-      ok: false,
-      errorCode: 'direct_peer_transfer_unavailable',
-      error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
+    });
+
+    expect(prepared).toMatchObject({
+      handoffId: 'handoff_missing_transfer_source',
+      status: expect.objectContaining({
+        status: 'pending',
+        transportStrategy: 'direct_peer',
+      }),
+    });
+
+    await vi.waitFor(async () => {
+      await expect(statusGet!({ handoffId: 'handoff_missing_transfer_source' })).resolves.toMatchObject({
+        handoffId: 'handoff_missing_transfer_source',
+        status: expect.objectContaining({
+          status: 'awaiting_recovery',
+          transportStrategy: 'direct_peer',
+        }),
+      });
     });
   });
 
@@ -5128,7 +5734,9 @@ function createLoopbackMachineTransferChannels() {
       });
 
       expect(result).toBeDefined();
-      expect(requestPayloadFile).toHaveBeenCalledTimes(2);
+      await vi.waitFor(() => {
+        expect(requestPayloadFile).toHaveBeenCalledTimes(2);
+      });
       expect(
         requestPayloadFile.mock.calls.map(([input]) => input.transferId).sort(),
       ).toEqual([manifestTransferId, providerBundleTransferId].sort());
@@ -5648,7 +6256,9 @@ function createLoopbackMachineTransferChannels() {
 	    });
 
     const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+    const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
     expect(prepare).toBeDefined();
+    expect(statusGet).toBeDefined();
 
     await expect(prepare!({
       handoffId: 'handoff_server_routed_legacy_inline_fallback',
@@ -5719,7 +6329,9 @@ function createLoopbackMachineTransferChannels() {
     });
 
     const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+    const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
     expect(prepare).toBeDefined();
+    expect(statusGet).toBeDefined();
 
     const handoffId = 'handoff_invalid_server_routed_inline_fallback';
     const providerBundleTransferId = `session-handoff:${handoffId}:provider-bundle-file`;
@@ -5767,9 +6379,27 @@ function createLoopbackMachineTransferChannels() {
       });
     }
 
-	    await expect(preparePromise).rejects.toThrow();
-	    expect(importSessionBundle).not.toHaveBeenCalled();
-	  });
+    const prepared = await preparePromise;
+    expect(prepared).toMatchObject({
+      handoffId,
+      status: expect.objectContaining({
+        status: 'pending',
+        transportStrategy: 'server_routed_stream',
+      }),
+    });
+
+    await vi.waitFor(async () => {
+      await expect(statusGet!({ handoffId })).resolves.toMatchObject({
+        handoffId,
+        status: expect.objectContaining({
+          status: 'awaiting_recovery',
+          phase: 'staging_target',
+        }),
+      });
+    });
+
+    expect(importSessionBundle).not.toHaveBeenCalled();
+  });
 
   it('fails closed when the server-routed transfer payload does not satisfy the canonical handoff schemas', async () => {
     const registered = new Map<string, (params: unknown) => Promise<any>>();
@@ -5866,8 +6496,26 @@ function createLoopbackMachineTransferChannels() {
       },
     });
 
-	    await expect(preparePromise).rejects.toThrow();
-	    expect(importSessionBundle).not.toHaveBeenCalled();
+    const prepared = await preparePromise;
+    expect(prepared).toMatchObject({
+      handoffId,
+      status: expect.objectContaining({
+        status: 'pending',
+        transportStrategy: 'server_routed_stream',
+      }),
+    });
+
+    await vi.waitFor(async () => {
+      await expect(statusGet!({ handoffId })).resolves.toMatchObject({
+        handoffId,
+        status: expect.objectContaining({
+          status: 'awaiting_recovery',
+          transportStrategy: 'server_routed_stream',
+        }),
+      });
+    });
+
+    expect(importSessionBundle).not.toHaveBeenCalled();
 	  });
 
   it('fails closed when the server-routed workspace replication manifest payload uses the legacy non-streaming format', async () => {
@@ -6035,7 +6683,7 @@ function createLoopbackMachineTransferChannels() {
 	    expect(importSessionBundle).not.toHaveBeenCalled();
 	  });
 
-  it('publishes direct-peer endpoint candidates on start and reuses same-daemon payload sources before re-requesting them', async () => {
+	  it('publishes direct-peer endpoint candidates on start and reuses same-daemon payload sources before re-requesting them', async () => {
     const registered = new Map<string, (params: unknown) => Promise<any>>();
     const requestPayloadFile = vi.fn(async () => {
       throw new Error('same-daemon prepare should reuse stored payload source');
@@ -6167,6 +6815,174 @@ function createLoopbackMachineTransferChannels() {
 	    await expect(access(publishedPayloadSource.filePath)).resolves.toBeUndefined();
 	  });
 
+  it('completes a non-deferred cross-daemon direct-peer workspace prepare without server-routed fallback', async () => {
+    vi.resetModules();
+
+    const sourcePath = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-direct-peer-cross-daemon-source-'));
+    const sourceActiveServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-direct-peer-cross-daemon-source-server-'));
+    const targetActiveServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-direct-peer-cross-daemon-target-server-'));
+    const targetPath = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-direct-peer-cross-daemon-target-workspace-'));
+    await writeFile(join(sourcePath, 'README.md'), 'cross-daemon direct-peer\n', 'utf8');
+
+    const workspaceTransfer = {
+      enabled: true as const,
+      strategy: 'sync_changes' as const,
+      conflictPolicy: 'replace_existing' as const,
+      includeIgnoredMode: 'exclude' as const,
+      ignoredIncludeGlobs: [],
+    };
+    const sourceRegistered = new Map<string, (params: unknown) => Promise<any>>();
+    const targetRegistered = new Map<string, (params: unknown) => Promise<any>>();
+    const importSessionBundle = vi.fn(async (_bundle: unknown, directory: string) => ({
+      remoteSessionId: 'claude_session_target',
+      directSource: {
+        kind: 'claudeConfig',
+        configDir: null,
+        projectId: null,
+      },
+      resume: buildClaudeResumePlan({
+        directory,
+        resume: 'claude_session_target',
+        transcriptStorage: 'persisted',
+      }),
+    }));
+    const published = await createPublishedDirectPeerPayloadRouter();
+
+    try {
+      vi.doMock('@/configuration', async () => {
+        const actual = await vi.importActual<typeof import('@/configuration')>('@/configuration');
+        return {
+          ...actual,
+          configuration: {
+            ...actual.configuration,
+            activeServerDir: sourceActiveServerDir,
+            activeServerId: 'test_direct_peer_cross_daemon_source',
+            workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
+            workspaceReplicationBlobPackMaxBlobs: 64,
+            workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
+          },
+        };
+      });
+      const { registerMachineSessionHandoffRpcHandlers: registerSourceHandlers } = await import('./rpcHandlers.sessionHandoff');
+      registerSourceHandlers({
+        rpcHandlerManager: {
+          registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+            sourceRegistered.set(method, handler);
+          },
+        } as any,
+        loadSessionMetadata: async () => ({
+          machineId: 'machine_source',
+          path: sourcePath,
+          flavor: 'claude',
+          claudeSessionId: 'claude_session_source',
+        }),
+        exportSessionBundle: async () => ({
+          providerBundle: {
+            providerId: 'claude',
+            remoteSessionId: 'claude_session_source',
+            transcriptBase64: 'e30K',
+          },
+          targetPath: sourcePath,
+        }),
+        directPeerTransfer: {
+          publishTransfer: published.publishTransfer,
+          requestPayloadFile: published.requestPayloadFile,
+          clearPublishedTransfer: vi.fn(),
+        } as any,
+      });
+
+      vi.resetModules();
+      vi.doMock('@/configuration', async () => {
+        const actual = await vi.importActual<typeof import('@/configuration')>('@/configuration');
+        return {
+          ...actual,
+          configuration: {
+            ...actual.configuration,
+            activeServerDir: targetActiveServerDir,
+            activeServerId: 'test_direct_peer_cross_daemon_target',
+            workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
+            workspaceReplicationBlobPackMaxBlobs: 64,
+            workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
+          },
+        };
+      });
+      const { registerMachineSessionHandoffRpcHandlers: registerTargetHandlers } = await import('./rpcHandlers.sessionHandoff');
+      registerTargetHandlers({
+        rpcHandlerManager: {
+          registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+            targetRegistered.set(method, handler);
+          },
+        } as any,
+        importSessionBundle,
+        directPeerTransfer: {
+          publishTransfer: vi.fn(() => []),
+          requestPayloadFile: published.requestPayloadFile,
+          clearPublishedTransfer: vi.fn(),
+        } as any,
+      });
+
+      const start = sourceRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+      const prepare = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+      const resultGet = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+      expect(start).toBeDefined();
+      expect(prepare).toBeDefined();
+      expect(resultGet).toBeDefined();
+
+      const started = await start!({
+        sessionId: 'sess_direct_peer_cross_daemon_prepare',
+        sourceMachineId: 'machine_source',
+        targetMachineId: 'machine_target',
+        sessionStorageMode: 'persisted',
+        preferredTransportStrategies: ['direct_peer'],
+        negotiatedTransportStrategy: 'direct_peer',
+        workspaceTransfer,
+      });
+
+      expect(started.endpointCandidates.length).toBeGreaterThan(0);
+      expect(started.handoffMetadataV2?.providerBundleTransferPublication?.endpointCandidates?.length ?? 0).toBeGreaterThan(0);
+      expect(started.handoffMetadataV2?.workspaceReplicationManifestTransferPublication?.endpointCandidates?.length ?? 0).toBeGreaterThan(0);
+
+      let prepared = await prepare!({
+        handoffId: started.handoffId,
+        sourceMachineId: 'machine_source',
+        targetMachineId: 'machine_target',
+        negotiatedTransportStrategy: 'direct_peer',
+        allowServerRoutedFallback: false,
+        sourceSessionStorageMode: 'persisted',
+        targetPath,
+        endpointCandidates: started.endpointCandidates,
+        workspaceTransfer,
+        ...(started.handoffMetadataV2 ? { handoffMetadataV2: started.handoffMetadataV2 } : {}),
+      });
+
+      if (prepared.status.status !== 'ready_for_cutover') {
+        await vi.waitFor(async () => {
+          prepared = await resultGet!({ handoffId: started.handoffId });
+          expect(prepared.status.status).toBe('ready_for_cutover');
+        }, { timeout: 10_000 });
+      }
+
+      expect(prepared.status.transportStrategy).toBe('direct_peer');
+      expect(importSessionBundle).toHaveBeenCalledWith(
+        {
+          providerId: 'claude',
+          remoteSessionId: 'claude_session_source',
+          transcriptBase64: 'e30K',
+        },
+        prepared.resume.directory,
+        'persisted',
+      );
+    } finally {
+      vi.doUnmock('@/configuration');
+      vi.resetModules();
+      await published.dispose();
+      await rm(sourcePath, { recursive: true, force: true }).catch(() => undefined);
+      await rm(sourceActiveServerDir, { recursive: true, force: true }).catch(() => undefined);
+      await rm(targetActiveServerDir, { recursive: true, force: true }).catch(() => undefined);
+      await rm(targetPath, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
   it('fails closed when a source export leaks a legacy codex backend field instead of canonical affinity', async () => {
     const registered = new Map<string, (params: unknown) => Promise<any>>();
     const publishTransfer = vi.fn(
@@ -6267,9 +7083,11 @@ function createLoopbackMachineTransferChannels() {
       });
 
       const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
       expect(prepare).toBeDefined();
+      expect(statusGet).toBeDefined();
 
-      await expect(prepare!({
+      const prepared = await prepare!({
         handoffId: 'handoff_invalid_direct_peer_payload',
         sourceMachineId: 'machine_source',
         targetMachineId: 'machine_target',
@@ -6301,7 +7119,25 @@ function createLoopbackMachineTransferChannels() {
             }),
           },
         ],
-      })).rejects.toThrow();
+      });
+
+      expect(prepared).toMatchObject({
+        handoffId: 'handoff_invalid_direct_peer_payload',
+        status: expect.objectContaining({
+          status: 'pending',
+          transportStrategy: 'direct_peer',
+        }),
+      });
+
+      await vi.waitFor(async () => {
+        await expect(statusGet!({ handoffId: 'handoff_invalid_direct_peer_payload' })).resolves.toMatchObject({
+          handoffId: 'handoff_invalid_direct_peer_payload',
+          status: expect.objectContaining({
+            status: 'awaiting_recovery',
+            transportStrategy: 'direct_peer',
+          }),
+        });
+      });
 
       expect(importSessionBundle).not.toHaveBeenCalled();
     } finally {
@@ -6348,9 +7184,11 @@ function createLoopbackMachineTransferChannels() {
       });
 
       const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
       expect(prepare).toBeDefined();
+      expect(statusGet).toBeDefined();
 
-      await expect(prepare!({
+      const prepared = await prepare!({
         handoffId: 'handoff_invalid_direct_peer_workspace_artifacts',
         sourceMachineId: 'machine_source',
         targetMachineId: 'machine_target',
@@ -6380,7 +7218,25 @@ function createLoopbackMachineTransferChannels() {
             expiresAt: Date.now() + 30_000,
           },
         ],
-      })).rejects.toThrow();
+      });
+
+      expect(prepared).toMatchObject({
+        handoffId: 'handoff_invalid_direct_peer_workspace_artifacts',
+        status: expect.objectContaining({
+          status: 'pending',
+          transportStrategy: 'direct_peer',
+        }),
+      });
+
+      await vi.waitFor(async () => {
+        await expect(statusGet!({ handoffId: 'handoff_invalid_direct_peer_workspace_artifacts' })).resolves.toMatchObject({
+          handoffId: 'handoff_invalid_direct_peer_workspace_artifacts',
+          status: expect.objectContaining({
+            status: 'awaiting_recovery',
+            transportStrategy: 'direct_peer',
+          }),
+        });
+      });
 
       expect(importSessionBundle).not.toHaveBeenCalled();
     } finally {
@@ -6413,9 +7269,11 @@ function createLoopbackMachineTransferChannels() {
     });
 
     const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+    const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
     expect(prepare).toBeDefined();
+    expect(statusGet).toBeDefined();
 
-    await expect(prepare!({
+    const prepared = await prepare!({
       handoffId: 'handoff_direct_peer_forbidden_fallback',
       sourceMachineId: 'machine_source',
       targetMachineId: 'machine_target',
@@ -6446,10 +7304,24 @@ function createLoopbackMachineTransferChannels() {
           expiresAt: Date.now() + 30_000,
         },
       ],
-    })).resolves.toEqual({
-      ok: false,
-      errorCode: 'direct_peer_transfer_unavailable',
-      error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
+    });
+
+    expect(prepared).toMatchObject({
+      handoffId: 'handoff_direct_peer_forbidden_fallback',
+      status: expect.objectContaining({
+        status: 'pending',
+        transportStrategy: 'direct_peer',
+      }),
+    });
+
+    await vi.waitFor(async () => {
+      await expect(statusGet!({ handoffId: 'handoff_direct_peer_forbidden_fallback' })).resolves.toMatchObject({
+        handoffId: 'handoff_direct_peer_forbidden_fallback',
+        status: expect.objectContaining({
+          status: 'awaiting_recovery',
+          transportStrategy: 'direct_peer',
+        }),
+      });
     });
 
 	    expect(requestPayloadFile).toHaveBeenCalledTimes(1);

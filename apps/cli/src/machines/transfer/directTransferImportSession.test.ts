@@ -256,4 +256,110 @@ describe('direct transfer import session manager', () => {
       await rm(homeDir, { recursive: true, force: true }).catch(() => undefined);
     }
   });
+
+  it('keeps finalize successful even if transfer activity callbacks fail', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-direct-transfer-import-callback-failure-'));
+
+    try {
+      const manager = createDirectTransferImportSessionManager({
+        ttlMs: 10_000,
+        onActiveSessionCountChanged: () => {
+          throw new Error('active-session observer failed');
+        },
+        onActivity: () => {
+          throw new Error('activity observer failed');
+        },
+      });
+
+      const payload = Buffer.from('callback-safe', 'utf8');
+      const open = await manager.openTrustedImportSession({
+        workingDirectory,
+        t: 'session_file_upload_v1',
+        path: 'payload.txt',
+        sizeBytes: payload.length,
+        overwrite: true,
+      });
+
+      expect(open).toEqual({
+        success: true,
+        response: expect.objectContaining({
+          uploadId: expect.any(String),
+          recipientPublicKeyBase64: expect.any(String),
+        }),
+      });
+
+      if (!open.success) {
+        throw new Error(open.error);
+      }
+
+      const encryptedChunk = createEncryptedTransferChunkEnvelope({
+        transferId: open.response.uploadId,
+        sequence: 0,
+        payload,
+        recipientPublicKeyBase64: open.response.recipientPublicKeyBase64,
+      });
+
+      expect(await manager.writeImportTransferChunk({
+        uploadId: open.response.uploadId,
+        index: 0,
+        payloadBase64: encryptedChunk.payloadBase64,
+        encryptedDataKeyEnvelopeBase64: encryptedChunk.encryptedDataKeyEnvelopeBase64,
+      })).toEqual({ success: true });
+
+      const finalized = await manager.finalizeImportTransferSession({ uploadId: open.response.uploadId });
+      expect(finalized).toMatchObject({
+        success: true,
+        sha256: expect.any(String),
+      });
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('cleans up active import sessions and invalidates their upload ids when the manager closes', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-direct-transfer-import-close-'));
+
+    try {
+      const manager = createDirectTransferImportSessionManager({
+        ttlMs: 10_000,
+      });
+
+      const payload = Buffer.from('close-cleanup', 'utf8');
+      const open = await manager.openTrustedImportSession({
+        workingDirectory,
+        t: 'session_file_upload_v1',
+        path: 'payload.txt',
+        sizeBytes: payload.length,
+        overwrite: true,
+      });
+
+      expect(open).toEqual({
+        success: true,
+        response: expect.objectContaining({
+          uploadId: expect.any(String),
+          recipientPublicKeyBase64: expect.any(String),
+        }),
+      });
+
+      if (!open.success) {
+        throw new Error(open.error);
+      }
+
+      expect(manager.countActiveImportSessions()).toBe(1);
+
+      await manager.close();
+
+      expect(manager.countActiveImportSessions()).toBe(0);
+      await expect(manager.writeImportTransferChunk({
+        uploadId: open.response.uploadId,
+        index: 0,
+        contentBase64: payload.toString('base64'),
+      })).resolves.toEqual({
+        success: false,
+        error: 'Upload session not found',
+      });
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
 });

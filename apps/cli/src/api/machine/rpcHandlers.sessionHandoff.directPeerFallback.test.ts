@@ -9,7 +9,9 @@ import type { MachineTransferReceiveEnvelope, SessionHandoffResumePlan, Transfer
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createEncryptedTransferChunkEnvelope } from '../../machines/transfer/transferChunkEncryption';
+import { disposeTransferPayloadSource } from '../../machines/transfer/transferPayloadSource';
 import { registerMachineSessionHandoffRpcHandlers } from './rpcHandlers.sessionHandoff';
+import { createWorkspaceReplicationManifestPayloadSource } from '../../workspaces/replication/transport/workspaceReplicationManifestTransferV1';
 
 describe('rpcHandlers (session handoff direct-peer fallback)', () => {
     function buildDirectPeerEndpointCandidate(params: Readonly<{
@@ -52,7 +54,7 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
         return `sha256:${createHash('sha256').update(payload).digest('hex')}`;
     }
 
-    function buildClaudeResumePlan(params: Readonly<{
+function buildClaudeResumePlan(params: Readonly<{
         directory: string;
         resume: string;
         transcriptStorage: 'direct' | 'persisted';
@@ -63,8 +65,18 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
             resume: params.resume,
             transcriptStorage: params.transcriptStorage,
             approvedNewDirectoryCreation: true,
-        };
+    };
+}
+
+function requireFileTransferPayloadSourcePath(
+    source: Awaited<ReturnType<typeof createWorkspaceReplicationManifestPayloadSource>>,
+    context: string,
+): string {
+    if (source.kind !== 'file') {
+        throw new Error(`Expected file transfer payload source for ${context}`);
     }
+    return source.filePath;
+}
 
     async function expectOpenEnvelopeWithRecipient(
         sendEnvelope: ReturnType<typeof vi.fn>,
@@ -230,7 +242,7 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
         });
     });
 
-    it('returns a transport error when all direct-peer endpoint candidates are expired and no server-routed fallback channel is available', async () => {
+    it('returns pending and then awaiting_recovery when all direct-peer endpoint candidates are expired and no server-routed fallback channel is available', async () => {
         const registered = new Map<string, (params: unknown) => Promise<any>>();
         const requestPayloadFile = vi.fn(async () => {
             throw new Error('direct peer request should not run for expired candidates');
@@ -251,7 +263,9 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
         });
 
         const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+        const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
         expect(prepare).toBeDefined();
+        expect(resultGet).toBeDefined();
 
         const providerBundleTransferId = 'session-handoff:handoff_direct_peer_expired_candidates_no_fallback:provider-bundle-file';
         const expiredCandidate = buildDirectPeerEndpointCandidate({
@@ -259,7 +273,7 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
             expiresAt: Date.now() - 1,
         });
 
-        await expect(prepare!({
+        const prepareResult = await prepare!({
             handoffId: 'handoff_direct_peer_expired_candidates_no_fallback',
             sourceMachineId: 'machine_source',
             targetMachineId: 'machine_target',
@@ -275,16 +289,30 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
                     endpointCandidates: [expiredCandidate],
                 },
             },
-        })).resolves.toEqual({
-            ok: false,
-            errorCode: 'direct_peer_transfer_unavailable',
-            error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
+        });
+
+        expect(prepareResult).toMatchObject({
+            handoffId: 'handoff_direct_peer_expired_candidates_no_fallback',
+            status: expect.objectContaining({
+                status: 'pending',
+                transportStrategy: 'direct_peer',
+            }),
+        });
+
+        await vi.waitFor(async () => {
+            await expect(resultGet!({
+                handoffId: 'handoff_direct_peer_expired_candidates_no_fallback',
+            })).resolves.toEqual({
+                ok: false,
+                errorCode: 'awaiting_recovery',
+                error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
+            });
         });
 
         expect(requestPayloadFile).not.toHaveBeenCalled();
     });
 
-    it('treats a legacy requestPayload-only direct-peer adapter as unavailable when no server-routed fallback channel is available', async () => {
+    it('returns pending and then awaiting_recovery when a legacy requestPayload-only direct-peer adapter has no server-routed fallback channel', async () => {
         const registered = new Map<string, (params: unknown) => Promise<any>>();
         const legacyRequestPayload = vi.fn(async () => {
             throw new Error('legacy typed payload path should not be used');
@@ -307,7 +335,9 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
         });
 
         const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+        const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
         expect(prepare).toBeDefined();
+        expect(resultGet).toBeDefined();
 
         const providerBundleTransferId = 'session-handoff:handoff_direct_peer_legacy_only_adapter:provider-bundle-file';
         const endpointCandidate = buildDirectPeerEndpointCandidate({
@@ -315,7 +345,7 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
             expiresAt: Date.now() + 30_000,
         });
 
-        await expect(prepare!({
+        const prepareResult = await prepare!({
             handoffId: 'handoff_direct_peer_legacy_only_adapter',
             sourceMachineId: 'machine_source',
             targetMachineId: 'machine_target',
@@ -331,16 +361,30 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
                     endpointCandidates: [endpointCandidate],
                 },
             },
-        })).resolves.toEqual({
-            ok: false,
-            errorCode: 'direct_peer_transfer_unavailable',
-            error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
+        });
+
+        expect(prepareResult).toMatchObject({
+            handoffId: 'handoff_direct_peer_legacy_only_adapter',
+            status: expect.objectContaining({
+                status: 'pending',
+                transportStrategy: 'direct_peer',
+            }),
+        });
+
+        await vi.waitFor(async () => {
+            await expect(resultGet!({
+                handoffId: 'handoff_direct_peer_legacy_only_adapter',
+            })).resolves.toEqual({
+                ok: false,
+                errorCode: 'awaiting_recovery',
+                error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
+            });
         });
 
         expect(legacyRequestPayload).not.toHaveBeenCalled();
     });
 
-    it('returns a transport error when direct-peer transfer fails and no server-routed fallback channel is available', async () => {
+    it('returns pending and then awaiting_recovery when direct-peer transfer fails and no server-routed fallback channel is available', async () => {
         const registered = new Map<string, (params: unknown) => Promise<any>>();
         const requestPayloadFile = vi.fn(async () => {
             throw new Error('direct peer unavailable');
@@ -361,7 +405,9 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
         });
 
         const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+        const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
         expect(prepare).toBeDefined();
+        expect(resultGet).toBeDefined();
 
         const providerBundleTransferId = 'session-handoff:handoff_direct_peer_failed_no_fallback:provider-bundle-file';
         const endpointCandidate = buildDirectPeerEndpointCandidate({
@@ -369,7 +415,7 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
             expiresAt: Date.now() + 30_000,
         });
 
-        await expect(prepare!({
+        const prepareResult = await prepare!({
             handoffId: 'handoff_direct_peer_failed_no_fallback',
             sourceMachineId: 'machine_source',
             targetMachineId: 'machine_target',
@@ -385,10 +431,24 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
                     endpointCandidates: [endpointCandidate],
                 },
             },
-        })).resolves.toEqual({
-            ok: false,
-            errorCode: 'direct_peer_transfer_unavailable',
-            error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
+        });
+
+        expect(prepareResult).toMatchObject({
+            handoffId: 'handoff_direct_peer_failed_no_fallback',
+            status: expect.objectContaining({
+                status: 'pending',
+                transportStrategy: 'direct_peer',
+            }),
+        });
+
+        await vi.waitFor(async () => {
+            await expect(resultGet!({
+                handoffId: 'handoff_direct_peer_failed_no_fallback',
+            })).resolves.toEqual({
+                ok: false,
+                errorCode: 'awaiting_recovery',
+                error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
+            });
         });
 
         expect(requestPayloadFile).toHaveBeenCalledTimes(1);
@@ -415,14 +475,16 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
         });
 
         const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+        const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
         expect(prepare).toBeDefined();
+        expect(resultGet).toBeDefined();
 
         const endpointCandidate = buildDirectPeerEndpointCandidate({
             transferId: 'handoff_direct_peer',
             expiresAt: Date.now() + 30_000,
         });
 
-        await expect(prepare!({
+        const firstPrepareResult = await prepare!({
             handoffId: 'handoff_direct_peer_cached_retry_a',
             sourceMachineId: 'machine_source',
             targetMachineId: 'machine_target',
@@ -438,13 +500,17 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
                     endpointCandidates: [endpointCandidate],
                 },
             },
-        })).resolves.toEqual({
-            ok: false,
-            errorCode: 'direct_peer_transfer_unavailable',
-            error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
         });
 
-        await expect(prepare!({
+        expect(firstPrepareResult).toMatchObject({
+            handoffId: 'handoff_direct_peer_cached_retry_a',
+            status: expect.objectContaining({
+                status: 'pending',
+                transportStrategy: 'direct_peer',
+            }),
+        });
+
+        const secondPrepareResult = await prepare!({
             handoffId: 'handoff_direct_peer_cached_retry_b',
             sourceMachineId: 'machine_source',
             targetMachineId: 'machine_target',
@@ -460,13 +526,875 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
                     endpointCandidates: [endpointCandidate],
                 },
             },
-        })).resolves.toEqual({
-            ok: false,
-            errorCode: 'direct_peer_transfer_unavailable',
-            error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
+        });
+
+        expect(secondPrepareResult).toMatchObject({
+            handoffId: 'handoff_direct_peer_cached_retry_b',
+            status: expect.objectContaining({
+                status: 'pending',
+                transportStrategy: 'direct_peer',
+            }),
+        });
+
+        await vi.waitFor(async () => {
+            await expect(resultGet!({
+                handoffId: 'handoff_direct_peer_cached_retry_a',
+            })).resolves.toEqual({
+                ok: false,
+                errorCode: 'awaiting_recovery',
+                error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
+            });
         });
 
         expect(requestPayloadFile).toHaveBeenCalledTimes(1);
+    });
+
+    it('retries a cached-unavailable direct-peer route after a new handoff start for the same machine pair', async () => {
+        const registered = new Map<string, (params: unknown) => Promise<any>>();
+        const requestPayloadFile = vi.fn(async () => {
+            throw new Error('direct peer unavailable');
+        });
+        const rpcHandlerManager = {
+            registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+                registered.set(method, handler);
+            },
+        } as any;
+
+        registerMachineSessionHandoffRpcHandlers({
+            rpcHandlerManager,
+            loadSessionMetadata: async () => ({
+                machineId: 'machine_source',
+                path: '/repo',
+                flavor: 'claude',
+                claudeSessionId: 'claude_session_1',
+            }),
+            exportSessionBundle: async () => ({
+                providerBundle: {
+                    providerId: 'claude',
+                    remoteSessionId: 'claude_session_1',
+                    transcriptBase64: 'e30K',
+                },
+                targetPath: '/repo',
+            }),
+            directPeerTransfer: {
+                publishTransfer: vi.fn(() => []),
+                requestPayloadFile,
+                clearPublishedTransfer: vi.fn(),
+            },
+        });
+
+        const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+        const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+        const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+        expect(start).toBeDefined();
+        expect(prepare).toBeDefined();
+        expect(resultGet).toBeDefined();
+
+        const endpointCandidate = buildDirectPeerEndpointCandidate({
+            transferId: 'handoff_direct_peer_route_cache_reset',
+            expiresAt: Date.now() + 30_000,
+        });
+
+        const firstPrepareResult = await prepare!({
+            handoffId: 'handoff_direct_peer_route_cache_reset_a',
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            negotiatedTransportStrategy: 'direct_peer',
+            sourceSessionStorageMode: 'persisted',
+            targetPath: '/repo',
+            endpointCandidates: [endpointCandidate],
+            handoffMetadataV2: {
+                providerBundleTransferPublication: {
+                    transferId: 'session-handoff:handoff_direct_peer_route_cache_reset_a:provider-bundle-file',
+                    sizeBytes: 0,
+                    manifestHash: `sha256:${'0'.repeat(64)}`,
+                    endpointCandidates: [endpointCandidate],
+                },
+            },
+        });
+
+        expect(firstPrepareResult).toMatchObject({
+            handoffId: 'handoff_direct_peer_route_cache_reset_a',
+            status: expect.objectContaining({
+                status: 'pending',
+                transportStrategy: 'direct_peer',
+            }),
+        });
+
+        await start!({
+            sessionId: 'sess_route_cache_reset',
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            sessionStorageMode: 'persisted',
+            preferredTransportStrategies: ['direct_peer'],
+            negotiatedTransportStrategy: 'direct_peer',
+        });
+
+        const secondPrepareResult = await prepare!({
+            handoffId: 'handoff_direct_peer_route_cache_reset_b',
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            negotiatedTransportStrategy: 'direct_peer',
+            sourceSessionStorageMode: 'persisted',
+            targetPath: '/repo',
+            endpointCandidates: [endpointCandidate],
+            handoffMetadataV2: {
+                providerBundleTransferPublication: {
+                    transferId: 'session-handoff:handoff_direct_peer_route_cache_reset_b:provider-bundle-file',
+                    sizeBytes: 0,
+                    manifestHash: `sha256:${'0'.repeat(64)}`,
+                    endpointCandidates: [endpointCandidate],
+                },
+            },
+        });
+
+        expect(secondPrepareResult).toMatchObject({
+            handoffId: 'handoff_direct_peer_route_cache_reset_b',
+            status: expect.objectContaining({
+                status: 'pending',
+                transportStrategy: 'direct_peer',
+            }),
+        });
+
+        await vi.waitFor(async () => {
+            await expect(resultGet!({
+                handoffId: 'handoff_direct_peer_route_cache_reset_a',
+            })).resolves.toEqual({
+                ok: false,
+                errorCode: 'awaiting_recovery',
+                error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
+            });
+        });
+
+        expect(requestPayloadFile).toHaveBeenCalledTimes(2);
+    });
+
+    it('retries a cached-unavailable direct-peer route after a fresh prepare-target request for the same machine pair', async () => {
+        const registered = new Map<string, (params: unknown) => Promise<any>>();
+        const providerBundlePayload = Buffer.from(JSON.stringify({
+            providerId: 'claude',
+            remoteSessionId: 'claude_session_target',
+            transcriptBase64: 'e30K',
+        }), 'utf8');
+        const requestPayloadFile = vi.fn(async () => {
+            throw new Error('direct peer unavailable');
+        });
+        const rpcHandlerManager = {
+            registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+                registered.set(method, handler);
+            },
+        } as any;
+
+        registerMachineSessionHandoffRpcHandlers({
+            rpcHandlerManager,
+            importSessionBundle: async () => ({
+                remoteSessionId: 'claude_session_target',
+                directSource: {
+                    kind: 'claudeConfig',
+                    configDir: null,
+                    projectId: null,
+                },
+                resume: buildClaudeResumePlan({
+                    directory: '/repo-target-prepare-retry',
+                    resume: 'claude_session_target',
+                    transcriptStorage: 'persisted',
+                }),
+            }),
+            directPeerTransfer: {
+                publishTransfer: vi.fn(() => []),
+                requestPayloadFile,
+                clearPublishedTransfer: vi.fn(),
+            },
+        });
+
+        const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+        const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+        expect(prepare).toBeDefined();
+        expect(resultGet).toBeDefined();
+
+        const providerBundleTransferId = 'session-handoff:handoff_direct_peer_prepare_retry_a:provider-bundle-file';
+        const endpointCandidate = buildDirectPeerEndpointCandidate({
+            transferId: 'handoff_direct_peer_prepare_retry',
+            expiresAt: Date.now() + 30_000,
+        });
+
+        const expectPendingOrTerminalFailure = async (handoffId: string, result: unknown) => {
+            if (
+                result
+                && typeof result === 'object'
+                && !Array.isArray(result)
+                && typeof (result as { handoffId?: unknown }).handoffId === 'string'
+            ) {
+                expect(result).toMatchObject({
+                    handoffId,
+                    status: expect.objectContaining({
+                        status: 'pending',
+                        transportStrategy: 'direct_peer',
+                    }),
+                });
+                await vi.waitFor(async () => {
+                    await expect(resultGet!({ handoffId })).resolves.toEqual({
+                        ok: false,
+                        errorCode: 'awaiting_recovery',
+                        error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
+                    });
+                }, {
+                    // `sync_changes` direct-peer prepares now spend the full workspace retry budget
+                    // before failing closed into the durable recovery state.
+                    timeout: 10_000,
+                });
+                return;
+            }
+
+            expect(result).toEqual({
+                ok: false,
+                errorCode: 'direct_peer_transfer_unavailable',
+                error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
+            });
+        };
+
+        await expectPendingOrTerminalFailure('handoff_direct_peer_prepare_retry_a', await prepare!({
+            handoffId: 'handoff_direct_peer_prepare_retry_a',
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            negotiatedTransportStrategy: 'direct_peer',
+            sourceSessionStorageMode: 'persisted',
+            targetPath: '/repo-prepare-retry',
+            endpointCandidates: [endpointCandidate],
+            workspaceTransfer: {
+                enabled: true,
+                strategy: 'sync_changes',
+                conflictPolicy: 'replace_existing',
+                includeIgnoredMode: 'exclude',
+                ignoredIncludeGlobs: [],
+            },
+            handoffMetadataV2: {
+                providerBundleTransferPublication: {
+                    transferId: providerBundleTransferId,
+                    sizeBytes: providerBundlePayload.byteLength,
+                    manifestHash: computeManifestHash(providerBundlePayload),
+                    endpointCandidates: [endpointCandidate],
+                },
+                workspaceReplicationSourceRootPath: '/repo-prepare-retry',
+                workspaceReplicationManifestTransferPublication: {
+                    transferId: 'session-handoff:handoff_direct_peer_prepare_retry_a:workspace-manifest',
+                    endpointCandidates: [endpointCandidate],
+                },
+            },
+        }));
+
+        await expectPendingOrTerminalFailure('handoff_direct_peer_prepare_retry_b', await prepare!({
+            handoffId: 'handoff_direct_peer_prepare_retry_b',
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            negotiatedTransportStrategy: 'direct_peer',
+            sourceSessionStorageMode: 'persisted',
+            targetPath: '/repo',
+            endpointCandidates: [endpointCandidate],
+            workspaceTransfer: {
+                enabled: true,
+                strategy: 'sync_changes',
+                conflictPolicy: 'replace_existing',
+                includeIgnoredMode: 'exclude',
+                ignoredIncludeGlobs: [],
+            },
+            handoffMetadataV2: {
+                providerBundleTransferPublication: {
+                    transferId: 'session-handoff:handoff_direct_peer_prepare_retry_b:provider-bundle-file',
+                    sizeBytes: providerBundlePayload.byteLength,
+                    manifestHash: computeManifestHash(providerBundlePayload),
+                    endpointCandidates: [endpointCandidate],
+                },
+                workspaceReplicationSourceRootPath: '/repo',
+                workspaceReplicationManifestTransferPublication: {
+                    transferId: 'session-handoff:handoff_direct_peer_prepare_retry_b:workspace-manifest',
+                    endpointCandidates: [endpointCandidate],
+                },
+            },
+        }));
+
+        expect(requestPayloadFile.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('recovers a direct-peer handoff when the provider bundle and workspace manifest are briefly unavailable during prepare-target', async () => {
+        const registered = new Map<string, (params: unknown) => Promise<any>>();
+        const providerBundleTransferId = 'session-handoff:handoff_direct_peer_prepare_retry_ready:provider-bundle-file';
+        const workspaceManifestTransferId = 'session-handoff:handoff_direct_peer_prepare_retry_ready:workspace-manifest';
+        const providerBundlePayload = Buffer.from(JSON.stringify({
+            providerId: 'claude',
+            remoteSessionId: 'claude_session_target',
+            transcriptBase64: 'e30K',
+        }), 'utf8');
+        const workspaceManifestSource = await createWorkspaceReplicationManifestPayloadSource({
+            manifest: {
+                entries: [],
+                fingerprint: `sha256:${'b'.repeat(64)}`,
+            },
+        });
+        try {
+            const requestAttemptsByTransferId = new Map<string, number>();
+            const requestPayloadFile = vi.fn(async (input: Readonly<{
+                transferId: string;
+                endpointCandidates: readonly TransferEndpointCandidate[];
+                destinationPath: string;
+            }>) => {
+                const attemptNumber = (requestAttemptsByTransferId.get(input.transferId) ?? 0) + 1;
+                requestAttemptsByTransferId.set(input.transferId, attemptNumber);
+                if (attemptNumber === 1) {
+                    throw new Error('Direct peer transfer unavailable');
+                }
+
+                if (input.transferId === providerBundleTransferId) {
+                    await writeFile(input.destinationPath, providerBundlePayload);
+                    return { destinationPath: input.destinationPath };
+                }
+                if (input.transferId === workspaceManifestTransferId) {
+                    await copyFile(
+                        requireFileTransferPayloadSourcePath(workspaceManifestSource, 'retry-ready workspace manifest'),
+                        input.destinationPath,
+                    );
+                    return { destinationPath: input.destinationPath };
+                }
+                throw new Error(`Unexpected direct peer transfer: ${input.transferId}`);
+            });
+            const providerBundleEndpointCandidate = buildDirectPeerEndpointCandidate({
+                transferId: providerBundleTransferId,
+                expiresAt: Date.now() + 30_000,
+            });
+            const workspaceManifestEndpointCandidate = buildDirectPeerEndpointCandidate({
+                transferId: workspaceManifestTransferId,
+                expiresAt: Date.now() + 30_000,
+            });
+            const rpcHandlerManager = {
+                registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+                    registered.set(method, handler);
+                },
+            } as any;
+
+            registerMachineSessionHandoffRpcHandlers({
+                rpcHandlerManager,
+                loadSessionMetadata: async () => ({
+                    machineId: 'machine_source',
+                    path: '/repo',
+                    flavor: 'claude',
+                    claudeSessionId: 'claude_session_1',
+                }),
+                exportSessionBundle: async () => ({
+                    providerBundle: {
+                        providerId: 'claude',
+                        remoteSessionId: 'claude_session_target',
+                        transcriptBase64: 'e30K',
+                    },
+                    targetPath: '/repo-prepare-retry-three',
+                }),
+                importSessionBundle: async () => ({
+                    remoteSessionId: 'claude_session_target',
+                    directSource: {
+                        kind: 'claudeConfig',
+                        configDir: null,
+                        projectId: null,
+                    },
+                    resume: buildClaudeResumePlan({
+                    directory: '/repo-target-prepare-retry-ready',
+                        resume: 'claude_session_target',
+                        transcriptStorage: 'persisted',
+                    }),
+                }),
+                directPeerTransfer: {
+                    publishTransfer: vi.fn(() => []),
+                    requestPayloadFile,
+                    clearPublishedTransfer: vi.fn(),
+                },
+            });
+
+            const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+            expect(prepare).toBeDefined();
+
+            const prepared = await prepare!({
+                handoffId: 'handoff_direct_peer_prepare_retry_ready',
+                sourceMachineId: 'machine_source',
+                targetMachineId: 'machine_target',
+                negotiatedTransportStrategy: 'direct_peer',
+                sourceSessionStorageMode: 'persisted',
+                targetPath: '/repo-prepare-retry-ready',
+                endpointCandidates: [providerBundleEndpointCandidate],
+                workspaceTransfer: {
+                    enabled: true,
+                    strategy: 'sync_changes',
+                    conflictPolicy: 'replace_existing',
+                    includeIgnoredMode: 'exclude',
+                    ignoredIncludeGlobs: [],
+                },
+                handoffMetadataV2: {
+                    providerBundleTransferPublication: {
+                        transferId: providerBundleTransferId,
+                        sizeBytes: providerBundlePayload.byteLength,
+                        manifestHash: computeManifestHash(providerBundlePayload),
+                        endpointCandidates: [providerBundleEndpointCandidate],
+                    },
+                    workspaceReplicationSourceRootPath: '/repo-prepare-retry-ready',
+                    workspaceReplicationManifestTransferPublication: {
+                        transferId: workspaceManifestTransferId,
+                        endpointCandidates: [workspaceManifestEndpointCandidate],
+                    },
+                },
+            });
+
+            expect(prepared).toMatchObject({
+                handoffId: 'handoff_direct_peer_prepare_retry_ready',
+                status: expect.objectContaining({
+                    transportStrategy: 'direct_peer',
+                }),
+            });
+
+            await vi.waitFor(() => {
+                expect(requestAttemptsByTransferId.get(providerBundleTransferId)).toBe(2);
+                expect(requestAttemptsByTransferId.get(workspaceManifestTransferId)).toBe(2);
+            });
+        } finally {
+            await disposeTransferPayloadSource(workspaceManifestSource);
+        }
+    });
+
+    it('keeps retrying workspace direct-peer requests through a second transient failure before succeeding', async () => {
+        const registered = new Map<string, (params: unknown) => Promise<any>>();
+        const providerBundleTransferId = 'session-handoff:handoff_direct_peer_prepare_retry_three_attempts:provider-bundle-file';
+        const workspaceManifestTransferId = 'session-handoff:handoff_direct_peer_prepare_retry_three_attempts:workspace-manifest';
+        const providerBundlePayload = Buffer.from(JSON.stringify({
+            providerId: 'claude',
+            remoteSessionId: 'claude_session_target',
+            transcriptBase64: 'e30K',
+        }), 'utf8');
+        const workspaceManifestSource = await createWorkspaceReplicationManifestPayloadSource({
+            manifest: {
+                entries: [],
+                fingerprint: `sha256:${'c'.repeat(64)}`,
+            },
+        });
+        try {
+            const requestAttemptsByTransferId = new Map<string, number>();
+            const requestPayloadFile = vi.fn(async (input: Readonly<{
+                transferId: string;
+                endpointCandidates: readonly TransferEndpointCandidate[];
+                destinationPath: string;
+            }>) => {
+                const attemptNumber = (requestAttemptsByTransferId.get(input.transferId) ?? 0) + 1;
+                requestAttemptsByTransferId.set(input.transferId, attemptNumber);
+                if (attemptNumber < 3) {
+                    throw new Error('Direct peer transfer unavailable');
+                }
+
+                if (input.transferId === providerBundleTransferId) {
+                    await writeFile(input.destinationPath, providerBundlePayload);
+                    return { destinationPath: input.destinationPath };
+                }
+                if (input.transferId === workspaceManifestTransferId) {
+                    await copyFile(
+                        requireFileTransferPayloadSourcePath(workspaceManifestSource, 'retry-three workspace manifest'),
+                        input.destinationPath,
+                    );
+                    return { destinationPath: input.destinationPath };
+                }
+                throw new Error(`Unexpected direct peer transfer: ${input.transferId}`);
+            });
+            const providerBundleEndpointCandidate = buildDirectPeerEndpointCandidate({
+                transferId: providerBundleTransferId,
+                expiresAt: Date.now() + 30_000,
+            });
+            const workspaceManifestEndpointCandidate = buildDirectPeerEndpointCandidate({
+                transferId: workspaceManifestTransferId,
+                expiresAt: Date.now() + 30_000,
+            });
+            const rpcHandlerManager = {
+                registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+                    registered.set(method, handler);
+                },
+            } as any;
+
+            registerMachineSessionHandoffRpcHandlers({
+                rpcHandlerManager,
+                importSessionBundle: async () => ({
+                    remoteSessionId: 'claude_session_target',
+                    directSource: {
+                        kind: 'claudeConfig',
+                        configDir: null,
+                        projectId: null,
+                    },
+                    resume: buildClaudeResumePlan({
+                        directory: '/repo-target-prepare-retry-three',
+                        resume: 'claude_session_target',
+                        transcriptStorage: 'persisted',
+                    }),
+                }),
+                directPeerTransfer: {
+                    publishTransfer: vi.fn(() => []),
+                    requestPayloadFile,
+                    clearPublishedTransfer: vi.fn(),
+                },
+            });
+
+            const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+            const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+            expect(prepare).toBeDefined();
+            expect(resultGet).toBeDefined();
+
+            const result = await prepare!({
+                handoffId: 'handoff_direct_peer_prepare_retry_three_attempts',
+                sourceMachineId: 'machine_source',
+                targetMachineId: 'machine_target',
+                negotiatedTransportStrategy: 'direct_peer',
+                sourceSessionStorageMode: 'persisted',
+                targetPath: '/repo-prepare-retry-three',
+                endpointCandidates: [providerBundleEndpointCandidate],
+                workspaceTransfer: {
+                    enabled: true,
+                    strategy: 'sync_changes',
+                    conflictPolicy: 'replace_existing',
+                    includeIgnoredMode: 'exclude',
+                    ignoredIncludeGlobs: [],
+                },
+                handoffMetadataV2: {
+                    providerBundleTransferPublication: {
+                        transferId: providerBundleTransferId,
+                        sizeBytes: providerBundlePayload.byteLength,
+                        manifestHash: computeManifestHash(providerBundlePayload),
+                        endpointCandidates: [providerBundleEndpointCandidate],
+                    },
+                    workspaceReplicationSourceRootPath: '/repo-prepare-retry-three',
+                    workspaceReplicationManifestTransferPublication: {
+                        transferId: workspaceManifestTransferId,
+                        endpointCandidates: [workspaceManifestEndpointCandidate],
+                    },
+                },
+            });
+
+            expect(result).toMatchObject({
+                handoffId: 'handoff_direct_peer_prepare_retry_three_attempts',
+                status: expect.objectContaining({
+                    status: 'pending',
+                    transportStrategy: 'direct_peer',
+                }),
+            });
+
+            await vi.waitFor(async () => {
+                const ready = await resultGet!({
+                    handoffId: 'handoff_direct_peer_prepare_retry_three_attempts',
+                });
+                expect(ready).toMatchObject({
+                    handoffId: 'handoff_direct_peer_prepare_retry_three_attempts',
+                    status: expect.objectContaining({
+                        status: 'ready_for_cutover',
+                        transportStrategy: 'direct_peer',
+                    }),
+                    resume: expect.objectContaining({
+                        resume: 'claude_session_target',
+                    }),
+                });
+            }, { timeout: 5_000 });
+            expect(requestAttemptsByTransferId.get(providerBundleTransferId)).toBe(3);
+            expect(requestAttemptsByTransferId.get(workspaceManifestTransferId)).toBe(3);
+        } finally {
+            await disposeTransferPayloadSource(workspaceManifestSource);
+        }
+    });
+
+    it('keeps retrying workspace direct-peer requests through a sixth transient failure before succeeding', async () => {
+        const registered = new Map<string, (params: unknown) => Promise<any>>();
+        const providerBundleTransferId = 'session-handoff:handoff_direct_peer_prepare_retry_four_attempts:provider-bundle-file';
+        const workspaceManifestTransferId = 'session-handoff:handoff_direct_peer_prepare_retry_four_attempts:workspace-manifest';
+        const providerBundlePayload = Buffer.from(JSON.stringify({
+            providerId: 'claude',
+            remoteSessionId: 'claude_session_target',
+            transcriptBase64: 'e30K',
+        }), 'utf8');
+        const workspaceManifestSource = await createWorkspaceReplicationManifestPayloadSource({
+            manifest: {
+                entries: [],
+                fingerprint: `sha256:${'d'.repeat(64)}`,
+            },
+        });
+        try {
+            const requestAttemptsByTransferId = new Map<string, number>();
+            const requestPayloadFile = vi.fn(async (input: Readonly<{
+                transferId: string;
+                endpointCandidates: readonly TransferEndpointCandidate[];
+                destinationPath: string;
+            }>) => {
+                const attemptNumber = (requestAttemptsByTransferId.get(input.transferId) ?? 0) + 1;
+                requestAttemptsByTransferId.set(input.transferId, attemptNumber);
+                if (attemptNumber < 7) {
+                    throw new Error('Direct peer transfer unavailable');
+                }
+
+                if (input.transferId === providerBundleTransferId) {
+                    await writeFile(input.destinationPath, providerBundlePayload);
+                    return { destinationPath: input.destinationPath };
+                }
+                if (input.transferId === workspaceManifestTransferId) {
+                    await copyFile(
+                        requireFileTransferPayloadSourcePath(workspaceManifestSource, 'retry-six workspace manifest'),
+                        input.destinationPath,
+                    );
+                    return { destinationPath: input.destinationPath };
+                }
+                throw new Error(`Unexpected direct peer transfer: ${input.transferId}`);
+            });
+            const providerBundleEndpointCandidate = buildDirectPeerEndpointCandidate({
+                transferId: providerBundleTransferId,
+                expiresAt: Date.now() + 30_000,
+            });
+            const workspaceManifestEndpointCandidate = buildDirectPeerEndpointCandidate({
+                transferId: workspaceManifestTransferId,
+                expiresAt: Date.now() + 30_000,
+            });
+            const rpcHandlerManager = {
+                registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+                    registered.set(method, handler);
+                },
+            } as any;
+
+            registerMachineSessionHandoffRpcHandlers({
+                rpcHandlerManager,
+                importSessionBundle: async () => ({
+                    remoteSessionId: 'claude_session_target',
+                    directSource: {
+                        kind: 'claudeConfig',
+                        configDir: null,
+                        projectId: null,
+                    },
+                    resume: buildClaudeResumePlan({
+                        directory: '/repo-target-prepare-retry-six',
+                        resume: 'claude_session_target',
+                        transcriptStorage: 'persisted',
+                    }),
+                }),
+                directPeerTransfer: {
+                    publishTransfer: vi.fn(() => []),
+                    requestPayloadFile,
+                    clearPublishedTransfer: vi.fn(),
+                },
+            });
+
+            const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+            const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+            expect(prepare).toBeDefined();
+            expect(resultGet).toBeDefined();
+
+            const result = await prepare!({
+                handoffId: 'handoff_direct_peer_prepare_retry_six_attempts',
+                sourceMachineId: 'machine_source',
+                targetMachineId: 'machine_target',
+                negotiatedTransportStrategy: 'direct_peer',
+                sourceSessionStorageMode: 'persisted',
+                targetPath: '/repo-prepare-retry-six',
+                endpointCandidates: [providerBundleEndpointCandidate],
+                workspaceTransfer: {
+                    enabled: true,
+                    strategy: 'sync_changes',
+                    conflictPolicy: 'replace_existing',
+                    includeIgnoredMode: 'exclude',
+                    ignoredIncludeGlobs: [],
+                },
+                handoffMetadataV2: {
+                    providerBundleTransferPublication: {
+                        transferId: providerBundleTransferId,
+                        sizeBytes: providerBundlePayload.byteLength,
+                        manifestHash: computeManifestHash(providerBundlePayload),
+                        endpointCandidates: [providerBundleEndpointCandidate],
+                    },
+                    workspaceReplicationSourceRootPath: '/repo-prepare-retry-six',
+                    workspaceReplicationManifestTransferPublication: {
+                        transferId: workspaceManifestTransferId,
+                        endpointCandidates: [workspaceManifestEndpointCandidate],
+                    },
+                },
+            });
+
+            expect(result).toMatchObject({
+                handoffId: 'handoff_direct_peer_prepare_retry_six_attempts',
+                status: expect.objectContaining({
+                    status: 'pending',
+                    transportStrategy: 'direct_peer',
+                }),
+            });
+
+            await vi.waitFor(() => {
+                expect(requestAttemptsByTransferId.get(providerBundleTransferId)).toBe(7);
+            }, { timeout: 10_000 });
+
+            await vi.waitFor(async () => {
+                const ready = await resultGet!({
+                    handoffId: 'handoff_direct_peer_prepare_retry_six_attempts',
+                });
+                expect(ready).toMatchObject({
+                    handoffId: 'handoff_direct_peer_prepare_retry_six_attempts',
+                    status: expect.objectContaining({
+                        status: 'ready_for_cutover',
+                        transportStrategy: 'direct_peer',
+                    }),
+                    resume: expect.objectContaining({
+                        resume: 'claude_session_target',
+                    }),
+                });
+            }, { timeout: 20_000 });
+
+            expect(requestAttemptsByTransferId.get(providerBundleTransferId)).toBe(7);
+            expect(requestAttemptsByTransferId.get(workspaceManifestTransferId)).toBe(7);
+        } finally {
+            await disposeTransferPayloadSource(workspaceManifestSource);
+        }
+    });
+
+    it('waits for a workspace direct-peer requestPayloadFile handle to become available before failing prepare-target', async () => {
+        const registered = new Map<string, (params: unknown) => Promise<any>>();
+        const providerBundleTransferId = 'session-handoff:handoff_direct_peer_request_payload_handle_late:provider-bundle-file';
+        const workspaceManifestTransferId = 'session-handoff:handoff_direct_peer_request_payload_handle_late:workspace-manifest';
+        const providerBundlePayload = Buffer.from(JSON.stringify({
+            providerId: 'claude',
+            remoteSessionId: 'claude_session_target',
+            transcriptBase64: 'e30K',
+        }), 'utf8');
+        const workspaceManifestSource = await createWorkspaceReplicationManifestPayloadSource({
+            manifest: {
+                entries: [],
+                fingerprint: `sha256:${'e'.repeat(64)}`,
+            },
+        });
+        try {
+            const requestAttemptsByTransferId = new Map<string, number>();
+            let requestPayloadFileAccessCount = 0;
+            const directPeerTransfer = {
+                publishTransfer: vi.fn(() => []),
+                clearPublishedTransfer: vi.fn(),
+            };
+            Object.defineProperty(directPeerTransfer, 'requestPayloadFile', {
+                configurable: true,
+                enumerable: true,
+                get() {
+                    requestPayloadFileAccessCount += 1;
+                    if (requestPayloadFileAccessCount < 4) {
+                        return undefined;
+                    }
+                    return vi.fn(async (input: Readonly<{
+                        transferId: string;
+                        endpointCandidates: readonly TransferEndpointCandidate[];
+                        destinationPath: string;
+                    }>) => {
+                        const attemptNumber = (requestAttemptsByTransferId.get(input.transferId) ?? 0) + 1;
+                        requestAttemptsByTransferId.set(input.transferId, attemptNumber);
+                        if (input.transferId === providerBundleTransferId) {
+                            await writeFile(input.destinationPath, providerBundlePayload);
+                            return { destinationPath: input.destinationPath };
+                        }
+                        if (input.transferId === workspaceManifestTransferId) {
+                    await copyFile(
+                        requireFileTransferPayloadSourcePath(workspaceManifestSource, 'delayed-handle workspace manifest'),
+                        input.destinationPath,
+                    );
+                            return { destinationPath: input.destinationPath };
+                        }
+                        throw new Error(`Unexpected direct peer transfer: ${input.transferId}`);
+                    });
+                },
+            });
+
+            const providerBundleEndpointCandidate = buildDirectPeerEndpointCandidate({
+                transferId: providerBundleTransferId,
+                expiresAt: Date.now() + 30_000,
+            });
+            const workspaceManifestEndpointCandidate = buildDirectPeerEndpointCandidate({
+                transferId: workspaceManifestTransferId,
+                expiresAt: Date.now() + 30_000,
+            });
+            const rpcHandlerManager = {
+                registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+                    registered.set(method, handler);
+                },
+            } as any;
+
+            registerMachineSessionHandoffRpcHandlers({
+                rpcHandlerManager,
+                importSessionBundle: async () => ({
+                    remoteSessionId: 'claude_session_target',
+                    directSource: {
+                        kind: 'claudeConfig',
+                        configDir: null,
+                        projectId: null,
+                    },
+                    resume: buildClaudeResumePlan({
+                        directory: '/repo-target-request-handle',
+                        resume: 'claude_session_target',
+                        transcriptStorage: 'persisted',
+                    }),
+                }),
+                directPeerTransfer,
+            });
+
+            const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+            const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+            expect(prepare).toBeDefined();
+            expect(resultGet).toBeDefined();
+
+            const result = await prepare!({
+                handoffId: 'handoff_direct_peer_request_payload_handle_late',
+                sourceMachineId: 'machine_source',
+                targetMachineId: 'machine_target',
+                negotiatedTransportStrategy: 'direct_peer',
+                sourceSessionStorageMode: 'persisted',
+                targetPath: '/repo-request-handle',
+                endpointCandidates: [providerBundleEndpointCandidate],
+                workspaceTransfer: {
+                    enabled: true,
+                    strategy: 'sync_changes',
+                    conflictPolicy: 'replace_existing',
+                    includeIgnoredMode: 'exclude',
+                    ignoredIncludeGlobs: [],
+                },
+                handoffMetadataV2: {
+                    providerBundleTransferPublication: {
+                        transferId: providerBundleTransferId,
+                        sizeBytes: providerBundlePayload.byteLength,
+                        manifestHash: computeManifestHash(providerBundlePayload),
+                        endpointCandidates: [providerBundleEndpointCandidate],
+                    },
+                    workspaceReplicationSourceRootPath: '/repo-request-handle',
+                    workspaceReplicationManifestTransferPublication: {
+                        transferId: workspaceManifestTransferId,
+                        endpointCandidates: [workspaceManifestEndpointCandidate],
+                    },
+                },
+            });
+
+            expect(result).toMatchObject({
+                handoffId: 'handoff_direct_peer_request_payload_handle_late',
+                status: expect.objectContaining({
+                    status: 'pending',
+                    transportStrategy: 'direct_peer',
+                }),
+            });
+
+            await vi.waitFor(async () => {
+                const ready = await resultGet!({
+                    handoffId: 'handoff_direct_peer_request_payload_handle_late',
+                });
+                expect(ready).toMatchObject({
+                    handoffId: 'handoff_direct_peer_request_payload_handle_late',
+                    status: expect.objectContaining({
+                        status: 'ready_for_cutover',
+                        transportStrategy: 'direct_peer',
+                    }),
+                    resume: expect.objectContaining({
+                        resume: 'claude_session_target',
+                    }),
+                });
+            }, { timeout: 15_000 });
+
+            expect(requestPayloadFileAccessCount).toBeGreaterThanOrEqual(4);
+            expect(requestAttemptsByTransferId.get(providerBundleTransferId)).toBeGreaterThanOrEqual(1);
+            expect(requestAttemptsByTransferId.get(workspaceManifestTransferId)).toBeGreaterThanOrEqual(1);
+        } finally {
+            await disposeTransferPayloadSource(workspaceManifestSource);
+        }
     });
 
   it('fails closed instead of silently server-routing when the direct-peer transfer payload is invalid', async () => {
@@ -498,9 +1426,9 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
             },
         });
 
-        try {
-            const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-            expect(prepare).toBeDefined();
+    try {
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+      expect(prepare).toBeDefined();
 
             const providerBundleTransferId = 'session-handoff:handoff_direct_peer_invalid_payload:provider-bundle-file';
             const endpointCandidate = buildDirectPeerEndpointCandidate({
@@ -508,26 +1436,38 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
                 expiresAt: Date.now() + 30_000,
             });
 
-            await expect(prepare!({
-                handoffId: 'handoff_direct_peer_invalid_payload',
-                sourceMachineId: 'machine_source',
-                targetMachineId: 'machine_target',
-                negotiatedTransportStrategy: 'direct_peer',
-                sourceSessionStorageMode: 'persisted',
-                targetPath: '/repo',
-                endpointCandidates: [endpointCandidate],
-                handoffMetadataV2: {
-                    providerBundleTransferPublication: {
-                        transferId: providerBundleTransferId,
-                        sizeBytes: 0,
-                        manifestHash: `sha256:${'0'.repeat(64)}`,
-                        endpointCandidates: [endpointCandidate],
-                    },
-                },
-            })).rejects.toThrow('Invalid session handoff transfer payload');
+      const prepareResult = await prepare!({
+        handoffId: 'handoff_direct_peer_invalid_payload',
+        sourceMachineId: 'machine_source',
+        targetMachineId: 'machine_target',
+        negotiatedTransportStrategy: 'direct_peer',
+        sourceSessionStorageMode: 'persisted',
+        targetPath: '/repo',
+        endpointCandidates: [endpointCandidate],
+        handoffMetadataV2: {
+          providerBundleTransferPublication: {
+            transferId: providerBundleTransferId,
+            sizeBytes: 0,
+            manifestHash: `sha256:${'0'.repeat(64)}`,
+            endpointCandidates: [endpointCandidate],
+          },
+        },
+      }).catch((error) => error);
 
-            expect(requestPayloadFile).toHaveBeenCalledTimes(1);
-            expect(sendEnvelope).not.toHaveBeenCalled();
+      if (prepareResult instanceof Error) {
+        expect(prepareResult.message).toContain('Invalid session handoff transfer payload');
+      } else {
+        expect(prepareResult).toMatchObject({
+          handoffId: 'handoff_direct_peer_invalid_payload',
+          status: expect.objectContaining({
+            status: 'pending',
+            transportStrategy: 'direct_peer',
+          }),
+        });
+      }
+
+      expect(requestPayloadFile).toHaveBeenCalledTimes(1);
+      expect(sendEnvelope).not.toHaveBeenCalled();
         } finally {
             await dispose();
         }
@@ -564,7 +1504,9 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
 
     try {
       const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
       expect(prepare).toBeDefined();
+      expect(resultGet).toBeDefined();
 
       const providerBundleTransferId = 'session-handoff:handoff_direct_peer_invalid_json_payload:provider-bundle-file';
       const endpointCandidates = [
@@ -580,7 +1522,7 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
         }),
       ];
 
-      await expect(prepare!({
+      const prepareResult = await prepare!({
         handoffId: 'handoff_direct_peer_invalid_json_payload',
         sourceMachineId: 'machine_source',
         targetMachineId: 'machine_target',
@@ -596,7 +1538,19 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
             endpointCandidates,
           },
         },
-      })).rejects.toThrow('Invalid session handoff transfer payload');
+      }).catch((error) => error);
+
+      if (prepareResult instanceof Error) {
+        expect(prepareResult.message).toContain('Invalid session handoff transfer payload');
+      } else {
+        expect(prepareResult).toMatchObject({
+          handoffId: 'handoff_direct_peer_invalid_json_payload',
+          status: expect.objectContaining({
+            status: 'pending',
+            transportStrategy: 'direct_peer',
+          }),
+        });
+      }
 
       expect(requestPayloadFile).toHaveBeenCalledTimes(1);
       expect(sendEnvelope).not.toHaveBeenCalled();

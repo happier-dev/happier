@@ -41,10 +41,12 @@ import type { PromptAssetReadRequest, PromptRegistryFetchItemRequestV1 } from '@
 import { isDaemonRunningCurrentlyInstalledHappyVersion, stopDaemon } from './controlClient';
 import { startDaemonControlServer } from './controlServer';
 import { createDirectTransferServerLifecycle } from '@/machines/transfer/directTransferServerLifecycle';
-import { resolveMachineTransferRuntimeConfig } from '@/machines/transfer/transferRuntimeConfig';
+import { createTailscaleTransferServeLifecycle } from '@/machines/transfer/tailscaleTransferServeLifecycle';
+import { isLoopbackTransferBindHost, resolveMachineTransferRuntimeConfig } from '@/machines/transfer/transferRuntimeConfig';
 import { reattachTrackedSessionsFromMarkers } from './sessions/reattachFromMarkers';
 import { createOnHappySessionWebhook } from './sessions/onHappySessionWebhook';
 import { buildHandoffSessionMetadataFromTrackedSession } from './sessions/buildHandoffSessionMetadataFromTrackedSession';
+import { createLocalSessionHandoffMetadataStore } from '@/session/handoff/metadata/localSessionHandoffMetadataStore';
 import { createOnChildExited } from './sessions/onChildExited';
 import { waitForVisibleConsoleSessionWebhook } from './sessions/visibleConsoleSpawnWaiter';
 import { createStopSession } from './sessions/stopSession';
@@ -55,6 +57,7 @@ import { startDaemonHeartbeatLoop } from './lifecycle/heartbeat';
 import { createSessionRunnerRespawnManager } from './processSupervision/sessionRunnerRespawn';
 import { publishShutdownStateBestEffort } from './lifecycle/publishShutdownState';
 import { createDaemonTransferRuntimeState } from './transferRuntimeState';
+import { resolveTailscaleTransferListenerState } from './resolveTailscaleTransferListenerState';
 import { projectPath } from '@/projectPath';
 import type { SessionHandoffLocalMetadataSource } from '@/session/handoff/metadata/runtimeLocalSessionHandoffMetadata';
 import { selectPreferredTmuxSessionName, TmuxUtilities, isTmuxAvailable } from '@/integrations/tmux';
@@ -416,18 +419,47 @@ export async function startDaemon(): Promise<void> {
             trackedSessions: pidToTrackedSession.values(),
           });
         };
+        const localSessionHandoffMetadataStore = createLocalSessionHandoffMetadataStore({
+          activeServerDir: configuration.activeServerDir,
+        });
 
         // Helper functions
         const getCurrentChildren = () => Array.from(pidToTrackedSession.values());
         const loadLocalSessionMetadataForHandoff = async (sessionId: string): Promise<SessionHandoffLocalMetadataSource | null> => {
-            for (const trackedSession of pidToTrackedSession.values()) {
-                if (trackedSession.happySessionId !== sessionId) {
-                    continue;
+          const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+          if (!normalizedSessionId) {
+            return null;
+          }
+
+          for (const trackedSession of pidToTrackedSession.values()) {
+            const candidateSessionIds = [
+              trackedSession.happySessionId,
+              trackedSession.vendorResumeId,
+              trackedSession.spawnOptions?.resume,
+            ]
+              .filter((candidate): candidate is string => typeof candidate === 'string')
+              .map((candidate) => candidate.trim())
+              .filter((candidate) => candidate.length > 0);
+
+            if (!candidateSessionIds.includes(normalizedSessionId)) {
+              continue;
             }
+
+            const handoffVendorResumeId =
+              typeof trackedSession.vendorResumeId === 'string' && trackedSession.vendorResumeId.trim().length > 0
+                ? trackedSession.vendorResumeId.trim()
+                : typeof trackedSession.spawnOptions?.resume === 'string' && trackedSession.spawnOptions.resume.trim().length > 0
+                  ? trackedSession.spawnOptions.resume.trim()
+                  : '';
+            const localExportMetadataOverlay =
+              handoffVendorResumeId
+                ? await localSessionHandoffMetadataStore.loadByVendorResumeId(handoffVendorResumeId)
+                : null;
             return buildHandoffSessionMetadataFromTrackedSession({
               trackedSession,
               machineId,
               fallbackHomeDir: os.homedir(),
+              localExportMetadataOverlay,
             });
           }
           return null;
@@ -1372,13 +1404,18 @@ export async function startDaemon(): Promise<void> {
     const directTransferPromptRegistryRegistry = createPromptRegistryAdapterRegistry();
     const directPeerFeatureEnabled = directPeerRuntimeConfig.directPeer.featureEnabled;
     const directPeerServerEnabled = directPeerRuntimeConfig.directPeer.serverEnabled;
-    const directPeerTransferListenerClasses: readonly ('loopback_http' | 'lan_http')[] =
-      directPeerRuntimeConfig.directPeer.bindHost === '127.0.0.1' || directPeerRuntimeConfig.directPeer.bindHost === '::1'
+    const directPeerLocalListenerClasses: readonly ('loopback_http' | 'lan_http')[] =
+      isLoopbackTransferBindHost(directPeerRuntimeConfig.directPeer.bindHost)
       ? ['loopback_http' as const]
       : ['lan_http' as const];
-    const directPeerAdvertisedHosts = directPeerTransferListenerClasses.includes('loopback_http')
+    const directPeerTransferListenerClasses = [
+      ...directPeerLocalListenerClasses,
+      ...(directPeerRuntimeConfig.tailscaleServe.enabled ? ['tailscale_serve_https' as const] : []),
+    ] as const;
+    const directPeerAdvertisedHosts = directPeerLocalListenerClasses.includes('loopback_http')
       ? ['127.0.0.1']
       : directPeerRuntimeConfig.directPeer.advertisedHosts;
+    let tailscaleTransferServeLifecycle: ReturnType<typeof createTailscaleTransferServeLifecycle> | null = null;
     const directPeerServerLifecycle = directPeerServerEnabled
       ? createDirectTransferServerLifecycle({
         bindPort: directPeerRuntimeConfig.directPeer.bindPort,
@@ -1389,12 +1426,15 @@ export async function startDaemon(): Promise<void> {
         promptAssetUpload: {
           adapterRegistry: directTransferPromptAssetAdapterRegistry,
         },
+        resolveTailscaleServeHttpsBaseUrl: () => tailscaleTransferServeLifecycle?.getHttpsBaseUrlWithServePath() ?? null,
         onStateChange: (state) => {
           void transferRuntimeStatePublisher?.publishDirectTransferServerLifecycleState(state);
+          void tailscaleTransferServeLifecycle?.observeDirectTransferServerLifecycleState(state);
         },
       })
       : null;
     let stopDirectPeerServer: () => Promise<void> = async () => {};
+    let stopTailscaleTransferServeLifecycle: () => Promise<void> = async () => {};
     let transferRuntimeStatePublisher: ReturnType<typeof createDaemonTransferRuntimeStatePublisher> | null = null;
     if (directPeerServerLifecycle) {
       stopDirectPeerServer = async () => {
@@ -1426,8 +1466,16 @@ export async function startDaemon(): Promise<void> {
     writeDaemonStateOnce();
 
         // Prepare initial daemon state
+      const initialTailscaleTransferListenerState = await resolveTailscaleTransferListenerState({
+        enabled: directPeerRuntimeConfig.tailscaleServe.enabled,
+        transferPort: directPeerRuntimeConfig.directPeer.bindPort,
+        servePath: directPeerRuntimeConfig.tailscaleServe.servePath,
+        httpsPort: directPeerRuntimeConfig.tailscaleServe.httpsPort,
+        env: process.env,
+      });
       const initialTransferState = createDaemonTransferRuntimeState({
         directPeer: directPeerRuntimeConfig.directPeer,
+        tailscaleServe: initialTailscaleTransferListenerState,
       });
       const initialDaemonState: DaemonState = {
           status: 'offline',
@@ -1442,6 +1490,23 @@ export async function startDaemon(): Promise<void> {
           logger.warn(message, error);
         },
       });
+      if (directPeerServerLifecycle && directPeerRuntimeConfig.tailscaleServe.enabled) {
+        tailscaleTransferServeLifecycle = createTailscaleTransferServeLifecycle({
+          enabled: directPeerRuntimeConfig.tailscaleServe.enabled,
+          servePath: directPeerRuntimeConfig.tailscaleServe.servePath,
+          httpsPort: directPeerRuntimeConfig.tailscaleServe.httpsPort,
+          env: process.env,
+          onListenerStateChange: (state) => {
+            void transferRuntimeStatePublisher?.publishTailscaleTransferListenerState(state);
+          },
+          warn: (message, error) => {
+            logger.warn(message, error);
+          },
+        });
+        stopTailscaleTransferServeLifecycle = async () => {
+          await tailscaleTransferServeLifecycle?.stop();
+        };
+      }
 
       const connectedServicesRefreshEnabled = parseBooleanEnv(process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED, true);
       if (connectedServicesRefreshEnabled) {
@@ -1618,15 +1683,15 @@ export async function startDaemon(): Promise<void> {
 
             const directPeerTransferHandlers: SessionHandoffDirectPeerTransferHandle | null = directPeerServerLifecycle
               ? {
-                  publishTransfer: ({ transferId, payload: _payload, payloadSource, onDemandScope }) => {
+                  publishTransfer: async ({ transferId, payload: _payload, payloadSource, onDemandScope }) => {
                     if (!payloadSource) {
                       throw new Error('Direct peer handoff publish requires a file-backed payload source');
                     }
-                    return directPeerServerLifecycle.publishTransfer({
+                    return (await directPeerServerLifecycle.publishTransferWhenReady({
                       transferId,
                       payloadSource,
                       ...(onDemandScope ? { onDemandScope } : {}),
-                    }).endpointCandidates;
+                    })).endpointCandidates;
                   },
                   requestPayloadFile: async ({ transferId, endpointCandidates, destinationPath, openBody, timeoutMs }) =>
                     await directPeerServerLifecycle.requestPayloadFile({
@@ -1710,7 +1775,7 @@ export async function startDaemon(): Promise<void> {
                           ? 'prompt-registry-download'
                           : 'workspace-file-download'
                     }:${randomUUID()}`;
-                    const published = directPeerServerLifecycle.publishTransfer({
+                    const published = await directPeerServerLifecycle.publishTransferWhenReady({
                         transferId,
                         payloadSource,
                       });
@@ -1732,6 +1797,12 @@ export async function startDaemon(): Promise<void> {
                 stopSession,
                 isSessionActive: isSessionAlreadyRunning,
                 loadLocalSessionMetadata: loadLocalSessionMetadataForHandoff,
+                savePreparedTargetLocalMetadata: async ({ remoteSessionId, exportMetadataOverlay }) => {
+                  await localSessionHandoffMetadataStore.saveByVendorResumeId({
+                    vendorResumeId: remoteSessionId,
+                    exportMetadataOverlay,
+                  });
+                },
                 requestShutdown: () => {
                   void beforeShutdown().finally(() => requestShutdown('happier-app'));
                 },
@@ -1758,6 +1829,8 @@ export async function startDaemon(): Promise<void> {
                     directTransferExport: directTransferExportHandlers,
                   }
                   : {}),
+              }, {
+                emitDirectSessionTranscriptUpdate: (payload) => connectedApiMachine.emitDirectSessionTranscriptUpdate(payload),
               });
 
               connectedApiMachine.onUpdate((update) => {
@@ -1988,6 +2061,7 @@ export async function startDaemon(): Promise<void> {
       }
 
       await stopDirectPeerServer();
+      await stopTailscaleTransferServeLifecycle();
       await stopControlServer();
           await stopCaffeinate();
           if (daemonLockHandle) {

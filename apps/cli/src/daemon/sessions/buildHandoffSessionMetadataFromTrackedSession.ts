@@ -17,6 +17,14 @@ function asMetadataRecord(value: unknown): Metadata | null {
     return value as Metadata;
 }
 
+function normalizeOptionalString(value: unknown): string | null {
+    if (typeof value !== 'string') {
+        return null;
+    }
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+}
+
 function resolveTrackedSessionFallbackMetadata(params: Readonly<{
     trackedSession: TrackedSession;
     machineId?: string;
@@ -54,10 +62,20 @@ export function buildHandoffSessionMetadataFromTrackedSession(params: Readonly<{
     trackedSession: TrackedSession;
     machineId?: string;
     fallbackHomeDir?: string;
+    localExportMetadataOverlay?: Record<string, unknown> | null;
 }>): SessionHandoffLocalMetadataSource | null {
-    const metadata =
+    const localExportMetadataOverlay = asMetadataRecord(params.localExportMetadataOverlay);
+    const baseMetadata =
         asMetadataRecord(params.trackedSession.happySessionMetadataFromLocalWebhook)
         ?? resolveTrackedSessionFallbackMetadata(params);
+    const metadata = baseMetadata
+        ? {
+            ...baseMetadata,
+            ...(localExportMetadataOverlay ?? {}),
+        }
+        : localExportMetadataOverlay
+            ? { ...localExportMetadataOverlay }
+        : null;
     if (!metadata) {
         return null;
     }
@@ -68,10 +86,9 @@ export function buildHandoffSessionMetadataFromTrackedSession(params: Readonly<{
     >> = {
         ...(pickSessionHandoffRuntimeLocalMetadata(metadata) ?? {}),
     };
-    const vendorResumeId =
-        typeof params.trackedSession.vendorResumeId === 'string' && params.trackedSession.vendorResumeId.trim().length > 0
-            ? params.trackedSession.vendorResumeId.trim()
-            : '';
+    const vendorResumeId = normalizeOptionalString(params.trackedSession.vendorResumeId)
+        ?? normalizeOptionalString(params.trackedSession.spawnOptions?.resume)
+        ?? '';
     if (!vendorResumeId) {
         return createSessionHandoffMetadataSplit({
             exportMetadata: metadata,

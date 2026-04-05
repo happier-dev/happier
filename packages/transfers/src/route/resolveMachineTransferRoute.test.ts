@@ -73,6 +73,32 @@ describe('resolveMachineTransferRoute', () => {
         });
     });
 
+    it('fails closed for legacy server_routed_stream preferences when server-routed transfer is disabled', () => {
+        expect(resolveMachineTransferRoute({
+            serverFeatures: createServerFeatures({
+                features: {
+                    machines: {
+                        enabled: true,
+                        transfer: {
+                            enabled: true,
+                            directPeer: {
+                                enabled: true,
+                            },
+                            serverRouted: {
+                                enabled: false,
+                            },
+                        },
+                    },
+                },
+            }),
+            preferredStrategies: ['server_routed_stream'],
+            directPeerAvailable: true,
+        })).toEqual({
+            kind: 'unavailable',
+            reasonCode: 'server_routed_transfer_disabled',
+        });
+    });
+
     it('fails closed when machine transfer is disabled', () => {
         expect(resolveMachineTransferRoute({
             serverFeatures: createServerFeatures({

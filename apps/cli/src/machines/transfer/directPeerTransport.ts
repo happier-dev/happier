@@ -8,6 +8,7 @@ import { estimateJsonUtf8BytesBounded } from '@/transfers/shared/estimateJsonUtf
 import fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import {
+  normalizeDirectPeerTransferEndpointBaseUrl,
   TransferChunkEnvelopeSchema,
   TransferEndpointCandidateSchema,
   type TransferEndpointCandidate,
@@ -99,6 +100,8 @@ const ENCRYPTED_TRANSFER_DATA_KEY_ENVELOPE_HARD_MAX_BYTES = 1024;
 const DIRECT_PEER_OPEN_BODY_HARD_MAX_BYTES = 1024 * 1024;
 // Above this threshold, stream the JSON body instead of materializing one request buffer.
 const DIRECT_PEER_OPEN_BODY_STREAMING_THRESHOLD_BYTES = 8 * 1024;
+const DIRECT_PEER_REQUEST_RETRY_ATTEMPTS = 3;
+const DIRECT_PEER_REQUEST_RETRY_DELAY_MS = 150;
 const DIRECT_TRANSFER_CORS_ALLOW_METHODS = 'GET,POST,PUT,OPTIONS';
 const DIRECT_TRANSFER_CORS_ALLOW_HEADERS = [
   'authorization',
@@ -178,28 +181,13 @@ function extractDirectPeerRequestAuth(candidate: TransferEndpointCandidate): Rea
     ? candidate.authorizationToken.trim()
     : '';
   try {
-    const parsed = new URL(candidate.url);
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      throw new Error('Invalid direct peer endpoint candidate');
-    }
-    // Never allow credentialed URLs to propagate.
-    parsed.username = '';
-    parsed.password = '';
-    // Direct-peer candidates must not rely on query params for auth or routing. Strip any query/hash.
-    parsed.search = '';
-    parsed.hash = '';
-    // Only accept base transfer endpoints: /machine-transfers/direct/<transferKey>
-    // This avoids sending auth headers to attacker-controlled URLs that smuggle additional segments.
-    const segments = parsed.pathname.split('/').filter((segment) => segment.length > 0);
-    if (segments.length !== 3 || segments[0] !== 'machine-transfers' || segments[1] !== 'direct' || segments[2].length === 0) {
-      throw new Error('Invalid direct peer endpoint candidate');
-    }
+    const requestUrl = normalizeDirectPeerTransferEndpointBaseUrl(candidate.url);
     const authorizationToken = explicitAuthorizationToken;
     if (!authorizationToken) {
-      return { requestUrl: parsed.toString() };
+      return { requestUrl };
     }
     return {
-      requestUrl: parsed.toString(),
+      requestUrl,
       ...(authorizationToken
         ? {
             authorizationHeader: `${DIRECT_PEER_AUTH_SCHEME} ${authorizationToken}`,
@@ -1040,11 +1028,36 @@ function createInvalidDirectPeerTransferResponseError(transferId: string): Error
   return new Error(`Invalid direct peer transfer response for ${transferId}`);
 }
 
-function isDirectPeerTransferProtocolError(error: unknown): boolean {
+export function isDirectPeerTransferProtocolError(error: unknown): boolean {
   return error instanceof Error && (
     error.message.startsWith('Invalid direct peer transfer response for ')
     || error.message.startsWith('Direct peer transfer manifest mismatch for ')
   );
+}
+
+function isRetryableDirectPeerTransferRequestError(error: unknown): boolean {
+  if (isDirectPeerTransferProtocolError(error)) {
+    return false;
+  }
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  if (error.name === 'AbortError' || error.name === 'TimeoutError') {
+    return true;
+  }
+  if (error.message.includes('status 503')) {
+    return true;
+  }
+  return error.message.includes('fetch failed');
+}
+
+function waitForDirectPeerTransferRetryDelay(delayMs: number): Promise<void> {
+  if (!Number.isFinite(delayMs) || delayMs <= 0) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
 }
 
 function estimateBase64DecodedBytes(value: string): number {
@@ -1384,6 +1397,7 @@ export function createDirectPeerTransferApp(params: Readonly<{
         200: DirectPeerTransferResponseSchema,
         400: z.object({ ok: z.literal(false), error: z.string() }).strict(),
         401: z.object({ ok: z.literal(false), error: z.string() }).strict(),
+        503: z.object({ ok: z.literal(false), error: z.string() }).strict(),
         404: z.object({ ok: z.literal(false), error: z.string() }).strict(),
       },
     },
@@ -1408,11 +1422,11 @@ export function createDirectPeerTransferApp(params: Readonly<{
 	      transferToken,
 	      transferTokenDigest,
 	    });
-	    if (!payloadSource && params.resolveOnDemandTransfer) {
-	      try {
-	        // Validate recipient key before any on-demand resolution work (blob pack building, hashing, IO).
-	        if (request.headers[DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER].length > DIRECT_PEER_RECIPIENT_PUBLIC_KEY_BASE64_HARD_MAX_CHARS) {
-	          throw new Error('Oversized recipient public key');
+    if (!payloadSource && params.resolveOnDemandTransfer) {
+      try {
+        // Validate recipient key before any on-demand resolution work (blob pack building, hashing, IO).
+        if (request.headers[DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER].length > DIRECT_PEER_RECIPIENT_PUBLIC_KEY_BASE64_HARD_MAX_CHARS) {
+          throw new Error('Oversized recipient public key');
 	        }
 	        parseTransferRecipientPublicKeyBase64(request.headers[DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER]);
 	      } catch {
@@ -1425,7 +1439,11 @@ export function createDirectPeerTransferApp(params: Readonly<{
           transferToken,
           requestBody: request.body,
         });
-      } catch {
+      } catch (error) {
+        if (error instanceof Error && error.message === 'Direct peer transfer not ready') {
+          reply.code(503);
+          return { ok: false as const, error: error.message };
+        }
         reply.code(400);
         return { ok: false as const, error: 'Invalid direct peer transfer request' };
       }
@@ -1653,122 +1671,138 @@ async function requestDirectPeerTransfer<TPayload>(params: Readonly<{
     if (parsedCandidate.data.kind !== 'http' && parsedCandidate.data.kind !== 'https') {
       continue;
     }
+    let auth: Readonly<{
+      requestUrl: string;
+      authorizationHeader?: string;
+    }>;
+    let headers: Record<string, string>;
+    let candidateOpenBodyTransmission: DirectPeerOpenRequestBodyTransmission | undefined;
     try {
-      const auth = extractDirectPeerRequestAuth(parsedCandidate.data);
-      const headers: Record<string, string> = {
-        [DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER]: recipientKeyPair.recipientPublicKeyBase64,
-      };
-      if (auth.authorizationHeader) {
-        headers.authorization = auth.authorizationHeader;
-      }
-      const candidateOpenBodyTransmission = resolveOpenBodyTransmission();
-      if (candidateOpenBodyTransmission !== undefined) {
-        headers['content-type'] = 'application/json';
-      }
-      const openRequestInit: RequestInit & { duplex?: 'half' } = {
-        method: 'POST',
-        headers,
-        signal: AbortSignal.timeout(requestTimeoutMs),
-      };
-      if (candidateOpenBodyTransmission?.kind === 'bytes') {
-        openRequestInit.body = candidateOpenBodyTransmission.body;
-      } else if (candidateOpenBodyTransmission?.kind === 'stream') {
-        openRequestInit.body = candidateOpenBodyTransmission.body();
-        openRequestInit.duplex = 'half';
-      }
-      const openResponse = await fetchFn(`${auth.requestUrl}/open`, openRequestInit);
-      if (!openResponse.ok) {
-        lastError = new Error(`Direct peer request failed with status ${openResponse.status}`);
-        continue;
-      }
-      if (!isJsonContentType(openResponse.headers.get('content-type'))) {
-        throw createInvalidDirectPeerTransferResponseError(params.transferId);
-      }
-      let json: unknown;
-      json = await readJsonResponseWithBodyLimit({
-        response: openResponse,
-        maxBodyBytes: Math.min(
-          DIRECT_PEER_OPEN_RESPONSE_MAX_BYTES,
-          resolveDirectPeerJsonBodyMaxBytes(params.maxInMemoryPayloadBytes),
-        ),
-        onInvalidJson: () => createInvalidDirectPeerTransferResponseError(params.transferId),
-        onOverLimit: () => new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${params.maxInMemoryPayloadBytes}`),
-      });
-      const parsed = DirectPeerTransferResponseSchema.safeParse(json);
-      json = null;
-      if (!parsed.success || parsed.data.transferId !== params.transferId) {
-        throw createInvalidDirectPeerTransferResponseError(params.transferId);
-      }
-      if (parsed.data.totalChunks > readDirectPeerMaxTotalChunks()) {
-        throw new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${params.maxInMemoryPayloadBytes}`);
-      }
-      for (let sequence = 0; sequence < parsed.data.totalChunks; sequence += 1) {
-        const chunkResponse = await fetchFn(`${auth.requestUrl}/chunks/${sequence}`, {
-          method: 'GET',
-          headers: {
-            ...headers,
-            ...(auth.authorizationHeader ? { authorization: auth.authorizationHeader } : {}),
-          },
+      auth = extractDirectPeerRequestAuth(parsedCandidate.data);
+    } catch {
+      continue;
+    }
+    headers = {
+      [DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER]: recipientKeyPair.recipientPublicKeyBase64,
+    };
+    if (auth.authorizationHeader) {
+      headers.authorization = auth.authorizationHeader;
+    }
+    candidateOpenBodyTransmission = resolveOpenBodyTransmission();
+    if (candidateOpenBodyTransmission !== undefined) {
+      headers['content-type'] = 'application/json';
+    }
+
+    for (let attempt = 0; attempt < DIRECT_PEER_REQUEST_RETRY_ATTEMPTS; attempt += 1) {
+      try {
+        const openRequestInit: RequestInit & { duplex?: 'half' } = {
+          method: 'POST',
+          headers,
           signal: AbortSignal.timeout(requestTimeoutMs),
-        });
-        if (!chunkResponse.ok) {
-          throw new Error(`Direct peer request failed with status ${chunkResponse.status}`);
+        };
+        if (candidateOpenBodyTransmission?.kind === 'bytes') {
+          openRequestInit.body = candidateOpenBodyTransmission.body;
+        } else if (candidateOpenBodyTransmission?.kind === 'stream') {
+          openRequestInit.body = candidateOpenBodyTransmission.body();
+          openRequestInit.duplex = 'half';
         }
-        if (!isJsonContentType(chunkResponse.headers.get('content-type'))) {
+        const openResponse = await fetchFn(`${auth.requestUrl}/open`, openRequestInit);
+        if (!openResponse.ok) {
+          throw new Error(`Direct peer request failed with status ${openResponse.status}`);
+        }
+        if (!isJsonContentType(openResponse.headers.get('content-type'))) {
           throw createInvalidDirectPeerTransferResponseError(params.transferId);
         }
-        let chunkJson: unknown;
-        chunkJson = await readJsonResponseWithBodyLimit({
-          response: chunkResponse,
-          maxBodyBytes: resolveDirectPeerJsonBodyMaxBytes(params.maxInMemoryPayloadBytes),
+        let json: unknown;
+        json = await readJsonResponseWithBodyLimit({
+          response: openResponse,
+          maxBodyBytes: Math.min(
+            DIRECT_PEER_OPEN_RESPONSE_MAX_BYTES,
+            resolveDirectPeerJsonBodyMaxBytes(params.maxInMemoryPayloadBytes),
+          ),
           onInvalidJson: () => createInvalidDirectPeerTransferResponseError(params.transferId),
           onOverLimit: () => new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${params.maxInMemoryPayloadBytes}`),
         });
-        const parsedChunk = TransferChunkEnvelopeSchema.safeParse(chunkJson);
-        chunkJson = null;
-        if (
-          !parsedChunk.success
-          || parsedChunk.data.transferId !== params.transferId
-          || parsedChunk.data.sequence !== sequence
-          || !parsedChunk.data.encryptedDataKeyEnvelopeBase64
-        ) {
+        const parsed = DirectPeerTransferResponseSchema.safeParse(json);
+        json = null;
+        if (!parsed.success || parsed.data.transferId !== params.transferId) {
           throw createInvalidDirectPeerTransferResponseError(params.transferId);
         }
-        const payloadBase64 = parsedChunk.data.payloadBase64;
-        const encryptedDataKeyEnvelopeBase64 = parsedChunk.data.encryptedDataKeyEnvelopeBase64;
-        const payloadBase64TrimmedLength = resolveBase64TrimmedLength(payloadBase64);
-        const encryptedDataKeyEnvelopeBase64TrimmedLength = resolveBase64TrimmedLength(encryptedDataKeyEnvelopeBase64);
-        const estimatedEncryptedPayloadBytes = estimateBase64DecodedBytes(payloadBase64);
-        const estimatedDataKeyEnvelopeBytes = estimateBase64DecodedBytes(encryptedDataKeyEnvelopeBase64);
-
-        const maxEncryptedBytes = params.maxInMemoryPayloadBytes + ENCRYPTED_TRANSFER_CHUNK_OVERHEAD_BYTES;
-        // Fail closed before decrypting so untrusted peers can't force huge base64 decodes.
-        // Note: decrypting requires decoding both payload bytes and the data-key envelope.
-        const maxEncodedChars = Math.ceil(maxEncryptedBytes / 3) * 4;
-        const maxDataKeyEnvelopeEncodedChars = Math.ceil(ENCRYPTED_TRANSFER_DATA_KEY_ENVELOPE_HARD_MAX_BYTES / 3) * 4;
-        if (
-          payloadBase64TrimmedLength > maxEncodedChars
-          || estimatedEncryptedPayloadBytes > maxEncryptedBytes
-          || estimatedDataKeyEnvelopeBytes > ENCRYPTED_TRANSFER_DATA_KEY_ENVELOPE_HARD_MAX_BYTES
-          || encryptedDataKeyEnvelopeBase64TrimmedLength > maxDataKeyEnvelopeEncodedChars
-        ) {
+        if (parsed.data.totalChunks > readDirectPeerMaxTotalChunks()) {
           throw new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${params.maxInMemoryPayloadBytes}`);
         }
-        await params.onChunk(decryptEncryptedTransferChunkEnvelope({
-          transferId: params.transferId,
-          sequence,
-          payloadBase64,
-          encryptedDataKeyEnvelopeBase64,
-          recipientSecretKeySeed: recipientKeyPair.recipientSecretKeySeed,
-        }));
+        for (let sequence = 0; sequence < parsed.data.totalChunks; sequence += 1) {
+          const chunkResponse = await fetchFn(`${auth.requestUrl}/chunks/${sequence}`, {
+            method: 'GET',
+            headers: {
+              ...headers,
+              ...(auth.authorizationHeader ? { authorization: auth.authorizationHeader } : {}),
+            },
+            signal: AbortSignal.timeout(requestTimeoutMs),
+          });
+          if (!chunkResponse.ok) {
+            throw new Error(`Direct peer request failed with status ${chunkResponse.status}`);
+          }
+          if (!isJsonContentType(chunkResponse.headers.get('content-type'))) {
+            throw createInvalidDirectPeerTransferResponseError(params.transferId);
+          }
+          let chunkJson: unknown;
+          chunkJson = await readJsonResponseWithBodyLimit({
+            response: chunkResponse,
+            maxBodyBytes: resolveDirectPeerJsonBodyMaxBytes(params.maxInMemoryPayloadBytes),
+            onInvalidJson: () => createInvalidDirectPeerTransferResponseError(params.transferId),
+            onOverLimit: () => new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${params.maxInMemoryPayloadBytes}`),
+          });
+          const parsedChunk = TransferChunkEnvelopeSchema.safeParse(chunkJson);
+          chunkJson = null;
+          if (
+            !parsedChunk.success
+            || parsedChunk.data.transferId !== params.transferId
+            || parsedChunk.data.sequence !== sequence
+            || !parsedChunk.data.encryptedDataKeyEnvelopeBase64
+          ) {
+            throw createInvalidDirectPeerTransferResponseError(params.transferId);
+          }
+          const payloadBase64 = parsedChunk.data.payloadBase64;
+          const encryptedDataKeyEnvelopeBase64 = parsedChunk.data.encryptedDataKeyEnvelopeBase64;
+          const payloadBase64TrimmedLength = resolveBase64TrimmedLength(payloadBase64);
+          const encryptedDataKeyEnvelopeBase64TrimmedLength = resolveBase64TrimmedLength(encryptedDataKeyEnvelopeBase64);
+          const estimatedEncryptedPayloadBytes = estimateBase64DecodedBytes(payloadBase64);
+          const estimatedDataKeyEnvelopeBytes = estimateBase64DecodedBytes(encryptedDataKeyEnvelopeBase64);
+
+          const maxEncryptedBytes = params.maxInMemoryPayloadBytes + ENCRYPTED_TRANSFER_CHUNK_OVERHEAD_BYTES;
+          // Fail closed before decrypting so untrusted peers can't force huge base64 decodes.
+          // Note: decrypting requires decoding both payload bytes and the data-key envelope.
+          const maxEncodedChars = Math.ceil(maxEncryptedBytes / 3) * 4;
+          const maxDataKeyEnvelopeEncodedChars = Math.ceil(ENCRYPTED_TRANSFER_DATA_KEY_ENVELOPE_HARD_MAX_BYTES / 3) * 4;
+          if (
+            payloadBase64TrimmedLength > maxEncodedChars
+            || estimatedEncryptedPayloadBytes > maxEncryptedBytes
+            || estimatedDataKeyEnvelopeBytes > ENCRYPTED_TRANSFER_DATA_KEY_ENVELOPE_HARD_MAX_BYTES
+            || encryptedDataKeyEnvelopeBase64TrimmedLength > maxDataKeyEnvelopeEncodedChars
+          ) {
+            throw new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${params.maxInMemoryPayloadBytes}`);
+          }
+          await params.onChunk(decryptEncryptedTransferChunkEnvelope({
+            transferId: params.transferId,
+            sequence,
+            payloadBase64,
+            encryptedDataKeyEnvelopeBase64,
+            recipientSecretKeySeed: recipientKeyPair.recipientSecretKeySeed,
+          }));
+        }
+        return await params.onFinish(parsed.data.manifestHash);
+      } catch (error) {
+        await params.onAbort?.();
+        if (isDirectPeerTransferProtocolError(error)) {
+          throw error;
+        }
+        lastError = error instanceof Error ? error : new Error('Direct peer transfer request failed');
+        if (attempt + 1 >= DIRECT_PEER_REQUEST_RETRY_ATTEMPTS || !isRetryableDirectPeerTransferRequestError(error)) {
+          break;
+        }
+        await waitForDirectPeerTransferRetryDelay(DIRECT_PEER_REQUEST_RETRY_DELAY_MS * (attempt + 1));
       }
-      return await params.onFinish(parsed.data.manifestHash);
-    } catch (error) {
-      await params.onAbort?.();
-      if (isDirectPeerTransferProtocolError(error)) {
-        throw error;
-      }
-      lastError = error instanceof Error ? error : new Error('Direct peer transfer request failed');
     }
   }
 

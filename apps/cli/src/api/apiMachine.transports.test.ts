@@ -16,6 +16,10 @@ const { configurationMock, mockIo } = vi.hoisted(() => ({
   })),
 }));
 
+const registerFileSystemHandlersMock = vi.hoisted(() => vi.fn(() => ({
+  bulkTransferStore: {},
+})));
+
 vi.mock('socket.io-client', () => ({
   io: mockIo,
 }));
@@ -34,7 +38,7 @@ vi.mock('@/ui/logger', () => ({
 
 vi.mock('@/rpc/handlers/registerSessionHandlers', () => ({ registerSessionHandlers: vi.fn() }));
 vi.mock('@/rpc/handlers/scm', () => ({ registerScmHandlers: vi.fn() }));
-vi.mock('@/rpc/handlers/fileSystem', () => ({ registerFileSystemHandlers: vi.fn() }));
+vi.mock('@/rpc/handlers/fileSystem', () => ({ registerFileSystemHandlers: registerFileSystemHandlersMock }));
 vi.mock('@/rpc/handlers/machineFileBrowser/registerMachineFileBrowserHandlers', () => ({ registerMachineFileBrowserHandlers: vi.fn() }));
 vi.mock('./machine/rpcHandlers', () => ({ registerMachineRpcHandlers: vi.fn() }));
 vi.mock('./rpc/RpcHandlerManager', () => ({
@@ -59,6 +63,8 @@ describe('ApiMachineClient transports', () => {
   beforeEach(() => {
     configurationMock.apiServerUrl = 'http://localhost:3005';
     configurationMock.socketIoTransports = ['websocket', 'polling'];
+    registerFileSystemHandlersMock.mockReset();
+    registerFileSystemHandlersMock.mockReturnValue({ bulkTransferStore: {} });
     bindApiSessionSocketMock(mockIo, createApiSessionSocketStub());
   });
 
@@ -273,5 +279,52 @@ describe('ApiMachineClient transports', () => {
         },
       },
     ]);
+  });
+
+  it('emits direct-session transcript delta updates over the machine-scoped socket', async () => {
+    const machineSocket = createApiSessionSocketStub();
+    bindApiSessionSocketMock(mockIo, machineSocket);
+
+    const mod = await import('./apiMachine');
+
+    const machine: Machine = {
+      id: 'test-machine',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      metadata: null,
+      metadataVersion: 0,
+      daemonState: null,
+      daemonStateVersion: 0,
+    };
+
+    const client = new mod.ApiMachineClient('fake-token', machine);
+    client.connect();
+
+    client.emitDirectSessionTranscriptUpdate({
+      type: 'direct-session-transcript-delta',
+      sessionId: 'session-1',
+      items: [
+        {
+          id: 'a2',
+          createdAtMs: 1_050,
+          localId: 'direct-2',
+          raw: {
+            type: 'assistant',
+            uuid: 'a2',
+            message: { model: 'm', content: [{ type: 'text', text: 'hello from push' }] },
+          },
+        },
+      ],
+      nextCursor: 'cursor-2',
+      truncated: false,
+    });
+
+    expect(machineSocket.emit).toHaveBeenCalledWith('direct-session-transcript-delta', expect.objectContaining({
+      sessionId: 'session-1',
+      truncated: false,
+      items: expect.arrayContaining([
+        expect.objectContaining({ id: 'a2' }),
+      ]),
+    }));
   });
 });

@@ -3,6 +3,52 @@ import { describe, expect, it } from 'vitest';
 import { resolveSessionHandoffExportMetadata } from './runtimeLocalSessionHandoffMetadata';
 
 describe('resolveSessionHandoffExportMetadata', () => {
+    it('supplements same-machine remote metadata with a local handoff overlay when the remote snapshot has dropped handoffV1', () => {
+        const localHandoffV1 = {
+            v: 1,
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            providerId: 'claude',
+            sessionStorageBefore: 'direct',
+            sessionStorageAfter: 'direct',
+            transportStrategy: 'direct_peer',
+            completedAtMs: 1,
+            sourceWorkspaceRootPath: '/repo-source-root',
+            targetWorkspaceRootPath: '/repo-target-root',
+        };
+
+        const resolved = resolveSessionHandoffExportMetadata({
+            remoteMetadata: {
+                machineId: 'machine_target',
+                path: '/repo-target-root',
+                homeDir: '/Users/target',
+                flavor: 'claude',
+            },
+            localMetadata: {
+                exportMetadata: {
+                    machineId: 'machine_target',
+                    path: '/repo-target-root',
+                    homeDir: '/Users/target',
+                    flavor: 'claude',
+                    handoffV1: localHandoffV1,
+                },
+                runtimeLocalMetadata: {
+                    claudeSessionId: 'sess-handoff-direct',
+                },
+            },
+            preferredLocalExportMachineId: 'machine_target',
+        });
+
+        expect(resolved).toEqual({
+            machineId: 'machine_target',
+            path: '/repo-target-root',
+            homeDir: '/Users/target',
+            flavor: 'claude',
+            handoffV1: localHandoffV1,
+            claudeSessionId: 'sess-handoff-direct',
+        });
+    });
+
     it('preserves newer remote portable metadata while overlaying local runtime metadata', () => {
         const resolved = resolveSessionHandoffExportMetadata({
             remoteMetadata: {

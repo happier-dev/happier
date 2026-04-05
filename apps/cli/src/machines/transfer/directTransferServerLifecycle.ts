@@ -33,6 +33,7 @@ export type DirectTransferServerLifecycleState = Readonly<{
 
 export type DirectTransferServerLifecycle = Readonly<{
   publishTransfer: (input: DirectTransferPublishInput) => PublishedDirectPeerTransfer;
+  publishTransferWhenReady: (input: DirectTransferPublishInput) => Promise<PublishedDirectPeerTransfer>;
   prepareImportSession: (input: DirectTransferImportOpenRequest) => Promise<Readonly<{
     uploadId: string;
     destDisplayPath: string;
@@ -60,6 +61,79 @@ type StartDirectPeerTransferServer = typeof startDirectPeerTransferServer;
 type CreateDirectPeerTransferRegistry = typeof createDirectPeerTransferRegistry;
 type RequestDirectPeerTransferToFile = typeof requestDirectPeerTransferToFile;
 
+function stripTrailingSlashes(value: string): string {
+  return value.replace(/\/+$/, '');
+}
+
+function normalizeTailscaleServeHttpsBaseUrl(raw: string): string | null {
+  const trimmed = String(raw ?? '').trim();
+  if (!trimmed) return null;
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'https:') {
+      return null;
+    }
+    parsed.username = '';
+    parsed.password = '';
+    parsed.search = '';
+    parsed.hash = '';
+    return stripTrailingSlashes(parsed.toString());
+  } catch {
+    return null;
+  }
+}
+
+function joinBaseUrlWithPathPrefix(baseUrl: string, pathname: string): string {
+  const normalizedBase = stripTrailingSlashes(baseUrl);
+  const normalizedPath = pathname.startsWith('/') ? pathname : `/${pathname}`;
+  return `${normalizedBase}${normalizedPath}`;
+}
+
+function appendTailscaleServeEndpointCandidates(params: Readonly<{
+  listenerClasses: readonly DirectTransferListenerClass[];
+  endpointCandidates: readonly TransferEndpointCandidate[];
+  resolveTailscaleServeHttpsBaseUrl?: (() => string | null) | null;
+}>): readonly TransferEndpointCandidate[] {
+  if (!params.listenerClasses.includes('tailscale_serve_https')) {
+    return params.endpointCandidates;
+  }
+  const baseUrl = normalizeTailscaleServeHttpsBaseUrl(params.resolveTailscaleServeHttpsBaseUrl?.() ?? '');
+  if (!baseUrl) {
+    return params.endpointCandidates;
+  }
+
+  const merged: TransferEndpointCandidate[] = [...params.endpointCandidates];
+  for (const candidate of params.endpointCandidates) {
+    if (candidate.kind !== 'http') {
+      continue;
+    }
+    let pathname = '';
+    try {
+      pathname = new URL(candidate.url).pathname;
+    } catch {
+      continue;
+    }
+    if (!pathname.startsWith('/machine-transfers/')) {
+      continue;
+    }
+    merged.push({
+      ...candidate,
+      kind: 'https',
+      url: joinBaseUrlWithPathPrefix(baseUrl, pathname),
+    });
+  }
+
+  // Dedupe exact candidates.
+  const seen = new Set<string>();
+  return merged.filter((entry) => {
+    const key = `${entry.kind}:${entry.url}:${entry.authorizationToken ?? ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export function createDirectTransferServerLifecycle(params: Readonly<{
   bindPort: number;
   bindHost?: string;
@@ -71,6 +145,7 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
   startServer?: StartDirectPeerTransferServer;
   requestPayloadFile?: RequestDirectPeerTransferToFile;
   onStateChange?: (state: DirectTransferServerLifecycleState) => void;
+  resolveTailscaleServeHttpsBaseUrl?: (() => string | null) | null;
   promptAssetUpload?: Parameters<StartDirectPeerTransferServer>[0] extends infer T
     ? T extends Readonly<object>
       ? T extends { promptAssetUpload?: infer P }
@@ -99,12 +174,19 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
     registry.hasPublishedTransfers() || activeImportSessionCount > 0;
 
   const emitState = (status: DirectTransferServerLifecycleState['status']): void => {
-    params.onStateChange?.({
-      status,
-      listenerClasses: params.listenerClasses,
-      ...(server ? { port: server.port } : {}),
-      publishedTransferCount: registry?.countPublishedTransfers?.() ?? 0,
-    });
+    if (!params.onStateChange) {
+      return;
+    }
+    try {
+      params.onStateChange({
+        status,
+        listenerClasses: params.listenerClasses,
+        ...(server ? { port: server.port } : {}),
+        publishedTransferCount: registry?.countPublishedTransfers?.() ?? 0,
+      });
+    } catch {
+      // Best-effort only; lifecycle observers must never break transfer request handling.
+    }
   };
 
   const clearIdleTimer = (): void => {
@@ -206,7 +288,28 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
       }
       const published = registry.publishTransfer(input);
       emitState('running');
-      return published;
+      return {
+        ...published,
+        endpointCandidates: appendTailscaleServeEndpointCandidates({
+          listenerClasses: params.listenerClasses,
+          endpointCandidates: published.endpointCandidates,
+          resolveTailscaleServeHttpsBaseUrl: params.resolveTailscaleServeHttpsBaseUrl,
+        }),
+      };
+    },
+    publishTransferWhenReady: async (input) => {
+      clearIdleTimer();
+      await ensureServerStarted();
+      const published = registry.publishTransfer(input);
+      emitState('running');
+      return {
+        ...published,
+        endpointCandidates: appendTailscaleServeEndpointCandidates({
+          listenerClasses: params.listenerClasses,
+          endpointCandidates: published.endpointCandidates,
+          resolveTailscaleServeHttpsBaseUrl: params.resolveTailscaleServeHttpsBaseUrl,
+        }),
+      };
     },
     prepareImportSession: async (input) => {
       clearIdleTimer();
@@ -216,14 +319,19 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
         throw new Error(prepared.error);
       }
       emitState('running');
-      return {
-        ...prepared.response,
+      const endpointCandidates = appendTailscaleServeEndpointCandidates({
+        listenerClasses: params.listenerClasses,
         endpointCandidates: buildDirectTransferImportSessionEndpointCandidates({
           advertisedPort: started.port,
           uploadId: prepared.response.uploadId,
           expiresAt: prepared.response.expiresAt,
           advertisedHosts: params.advertisedHosts,
         }),
+        resolveTailscaleServeHttpsBaseUrl: params.resolveTailscaleServeHttpsBaseUrl,
+      });
+      return {
+        ...prepared.response,
+        endpointCandidates,
       };
     },
     requestPayloadFile: async (input) => await requestPayloadFile(input),

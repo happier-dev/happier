@@ -1,4 +1,4 @@
-import type { DaemonState } from '@/api/types';
+import type { DaemonState, DaemonTransferListenerState } from '@/api/types';
 import type { DirectTransferServerLifecycleState } from '@/machines/transfer/directTransferServerLifecycle';
 
 type DirectPeerRuntimeConfig = Readonly<{
@@ -35,6 +35,7 @@ function createListenerState(params: Readonly<{
 
 export function createDaemonTransferRuntimeState(params: Readonly<{
   directPeer: DirectPeerRuntimeConfig;
+  tailscaleServe?: DaemonTransferListenerState;
 }>): NonNullable<DaemonState['transfer']> {
   const directPeerSupported = params.directPeer.featureEnabled && params.directPeer.serverEnabled;
   const loopbackConfigured = directPeerSupported;
@@ -57,10 +58,12 @@ export function createDaemonTransferRuntimeState(params: Readonly<{
         active: false,
       }),
       tailscale_serve_https: createListenerState({
-        enabled: false,
-        configured: false,
-        active: false,
-        available: false,
+        enabled: params.tailscaleServe?.enabled ?? false,
+        configured: params.tailscaleServe?.configured ?? false,
+        active: params.tailscaleServe?.active ?? false,
+        ...(typeof params.tailscaleServe?.available === 'boolean'
+          ? { available: params.tailscaleServe.available }
+          : { available: false }),
       }),
     },
     lifecycle: {
@@ -103,9 +106,26 @@ function applyDirectTransferServerLifecycleState(
       },
       tailscale_serve_https: {
         ...initialTransferState.listenerClasses.tailscale_serve_https,
-        active: initialTransferState.listenerClasses.tailscale_serve_https.enabled
-          ? resolveListenerActive(lifecycleState, 'tailscale_serve_https')
-          : false,
+      },
+    },
+  };
+}
+
+function applyTailscaleTransferListenerState(
+  transferState: NonNullable<DaemonState['transfer']>,
+  tailscaleServe: DaemonTransferListenerState,
+): NonNullable<DaemonState['transfer']> {
+  return {
+    ...transferState,
+    listenerClasses: {
+      ...transferState.listenerClasses,
+      tailscale_serve_https: {
+        enabled: tailscaleServe.enabled,
+        configured: tailscaleServe.configured,
+        active: tailscaleServe.active,
+        ...(typeof tailscaleServe.available === 'boolean'
+          ? { available: tailscaleServe.available }
+          : {}),
       },
     },
   };
@@ -117,34 +137,48 @@ export function createDaemonTransferRuntimeStatePublisher(params: Readonly<{
 }>): Readonly<{
   attachApiMachine: (apiMachine: DaemonTransferRuntimeStatePublisherApiMachine | null) => Promise<void>;
   publishDirectTransferServerLifecycleState: (state: DirectTransferServerLifecycleState) => Promise<void>;
+  publishTailscaleTransferListenerState: (state: DaemonTransferListenerState) => Promise<void>;
 }> {
   let apiMachine: DaemonTransferRuntimeStatePublisherApiMachine | null = null;
-  let pendingLifecycleState: DirectTransferServerLifecycleState | null = null;
+  let latestDirectLifecycleState: DirectTransferServerLifecycleState | null = null;
+  let latestTailscaleTransferListenerState: DaemonTransferListenerState | null = null;
+  let hasPendingState = false;
   let flushInFlight: Promise<void> | null = null;
 
-  const flushPendingState = async (): Promise<void> => {
-    if (!apiMachine || !pendingLifecycleState) {
-      return;
+  const flushPendingState = async (): Promise<boolean> => {
+    if (!apiMachine || !hasPendingState) {
+      return false;
     }
-    const lifecycleState = pendingLifecycleState;
-    pendingLifecycleState = null;
+    hasPendingState = false;
     try {
       await apiMachine.updateDaemonState((state) => {
         const baseState: DaemonState = state ?? {
           status: 'running',
           transfer: params.initialTransferState,
         };
+        let transferState = baseState.transfer ?? params.initialTransferState;
+        if (latestDirectLifecycleState) {
+          transferState = applyDirectTransferServerLifecycleState(
+            transferState,
+            latestDirectLifecycleState,
+          );
+        }
+        if (latestTailscaleTransferListenerState) {
+          transferState = applyTailscaleTransferListenerState(
+            transferState,
+            latestTailscaleTransferListenerState,
+          );
+        }
         return {
           ...baseState,
-          transfer: applyDirectTransferServerLifecycleState(
-            baseState.transfer ?? params.initialTransferState,
-            lifecycleState,
-          ),
+          transfer: transferState,
         };
       });
+      return true;
     } catch (error) {
-      pendingLifecycleState = lifecycleState;
+      hasPendingState = true;
       params.warn?.('[DAEMON RUN] Failed to publish direct transfer daemon state', error);
+      return false;
     }
   };
 
@@ -153,8 +187,11 @@ export function createDaemonTransferRuntimeStatePublisher(params: Readonly<{
       return await flushInFlight;
     }
     flushInFlight = (async () => {
-      while (apiMachine && pendingLifecycleState) {
-        await flushPendingState();
+      while (apiMachine && hasPendingState) {
+        const didFlush = await flushPendingState();
+        if (!didFlush) {
+          break;
+        }
       }
     })().finally(() => {
       flushInFlight = null;
@@ -169,7 +206,14 @@ export function createDaemonTransferRuntimeStatePublisher(params: Readonly<{
     },
 
     async publishDirectTransferServerLifecycleState(state) {
-      pendingLifecycleState = state;
+      latestDirectLifecycleState = state;
+      hasPendingState = true;
+      await scheduleFlush();
+    },
+
+    async publishTailscaleTransferListenerState(state) {
+      latestTailscaleTransferListenerState = state;
+      hasPendingState = true;
       await scheduleFlush();
     },
   };

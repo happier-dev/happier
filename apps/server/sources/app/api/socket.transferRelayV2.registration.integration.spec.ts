@@ -13,12 +13,19 @@ vi.mock('@/utils/process/shutdown', () => ({
 }));
 
 const eventRouterSetIoMock = vi.hoisted(() => vi.fn());
+const eventRouterEmitEphemeralMock = vi.hoisted(() => vi.fn());
+const buildMachineActivityEphemeralMock = vi.hoisted(() => vi.fn(() => ({
+  t: 'machine-activity',
+  machineId: 'mock-machine',
+  active: true,
+  activeAt: 0,
+})));
 vi.mock('@/app/events/eventRouter', () => ({
-  buildMachineActivityEphemeral: vi.fn(),
+  buildMachineActivityEphemeral: buildMachineActivityEphemeralMock,
   eventRouter: {
     setIo: (...args: unknown[]) => eventRouterSetIoMock(...args),
     addConnection: vi.fn(),
-    emitEphemeral: vi.fn(),
+    emitEphemeral: (...args: unknown[]) => eventRouterEmitEphemeralMock(...args),
   },
 }));
 
@@ -114,5 +121,76 @@ describe('startSocket transfer relay v2 registration', () => {
     expect(machineTransferHandlerMock).toHaveBeenCalledWith('user-1', socket, expect.objectContaining({ io: fakeServer }));
     expect(transferRelayV2HandlerMock).toHaveBeenCalledTimes(1);
     expect(transferRelayV2HandlerMock).toHaveBeenCalledWith('user-1', socket, expect.objectContaining({ io: fakeServer }));
+  });
+
+  it('waits for the socket room join before publishing machine online status', async () => {
+    const fakeServer = {
+      on: vi.fn(),
+      use: vi.fn(),
+      close: vi.fn(),
+      to: vi.fn(() => ({ emit: vi.fn() })),
+    };
+    serverCtor.mockReturnValue(fakeServer);
+
+    const { startSocket } = await import('./socket');
+    const app = { server: {} } as any;
+    startSocket(app);
+
+    const connectionHandler = fakeServer.on.mock.calls.find(([event]) => event === 'connection')?.[1] as
+      | ((socket: any) => Promise<void>)
+      | undefined;
+    expect(connectionHandler).toBeTypeOf('function');
+
+    let resolveJoin!: () => void;
+    const joinPromise = new Promise<void>((resolve) => {
+      resolveJoin = resolve;
+    });
+
+    const socket = {
+      id: 'socket-1',
+      data: {
+        userId: 'user-1',
+        clientType: 'machine-scoped',
+        clientPurpose: 'transfer',
+        machineId: 'm-1',
+      },
+      emit: vi.fn(),
+      on: vi.fn(),
+      join: vi.fn(() => joinPromise),
+      timeout: vi.fn(() => ({ emitWithAck: vi.fn() })),
+      connected: true,
+      handshake: {
+        address: '127.0.0.1',
+        headers: {
+          'user-agent': 'happier-test-agent',
+        },
+      },
+      conn: {
+        transport: { name: 'websocket' },
+        remotePort: 1234,
+      },
+      disconnect: vi.fn(),
+    } as any;
+
+    const connectionPromise = connectionHandler!(socket);
+    await Promise.resolve();
+
+    expect(socket.join).toHaveBeenCalledWith(['machine:m-1:user-1']);
+    expect(eventRouterEmitEphemeralMock).not.toHaveBeenCalled();
+
+    resolveJoin();
+    await connectionPromise;
+    await Promise.resolve();
+
+    expect(buildMachineActivityEphemeralMock).toHaveBeenCalledWith('m-1', true, expect.any(Number));
+    expect(eventRouterEmitEphemeralMock).toHaveBeenCalledTimes(1);
+    expect(eventRouterEmitEphemeralMock).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 'user-1',
+      payload: expect.objectContaining({
+        t: 'machine-activity',
+        active: true,
+      }),
+      recipientFilter: { type: 'user-scoped-only' },
+    }));
   });
 });

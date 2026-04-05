@@ -14,6 +14,12 @@ const globalTransferBytesByKey = new Map<MachineTransferKey, number>();
 const globalBlockedTransfers = new Set<MachineTransferKey>();
 const globalTransferScopeByKey = new Map<MachineTransferKey, MachineTransferScopeKey>();
 const globalTransferSocketsByKey = new Map<MachineTransferKey, Set<string>>();
+const globalTransferParticipantsByKey = new Map<MachineTransferKey, Readonly<{
+  userId: string;
+  sourceMachineId: string;
+  targetMachineId: string;
+  transferId: string;
+}>>();
 
 function buildMachineTransferScopeKey(params: Readonly<{
   userId: string;
@@ -35,6 +41,7 @@ function clearMachineTransferKey(key: MachineTransferKey): void {
   globalBlockedTransfers.delete(key);
   globalTransferBytesByKey.delete(key);
   globalTransferSocketsByKey.delete(key);
+  globalTransferParticipantsByKey.delete(key);
   const scopeKey = globalTransferScopeByKey.get(key);
   if (scopeKey) {
     globalTransferScopeByKey.delete(key);
@@ -161,8 +168,8 @@ export function machineTransferHandler(
     if (parsed.data.envelope.kind === 'finish' || parsed.data.envelope.kind === 'abort') {
       clearMachineTransferKey(transferKey);
       socketTransferKeys.delete(transferKey);
-    } else if (parsed.data.envelope.kind === 'chunk') {
-      if (payloadSizeBytes === null) {
+    } else if (parsed.data.envelope.kind === 'open' || parsed.data.envelope.kind === 'chunk') {
+      if (parsed.data.envelope.kind === 'chunk' && payloadSizeBytes === null) {
         socket.emit(SOCKET_RPC_EVENTS.ERROR, {
           type: 'machine-transfer',
           error: 'Invalid machine transfer payload',
@@ -206,11 +213,17 @@ export function machineTransferHandler(
       const sockets = globalTransferSocketsByKey.get(transferKey) ?? new Set<string>();
       sockets.add(socket.id);
       globalTransferSocketsByKey.set(transferKey, sockets);
+      globalTransferParticipantsByKey.set(transferKey, {
+        userId,
+        sourceMachineId,
+        targetMachineId,
+        transferId,
+      });
       socketTransferKeys.add(transferKey);
 
       const priorBytes = globalTransferBytesByKey.get(transferKey) ?? 0;
-      const nextBytes = priorBytes + payloadSizeBytes;
-      if (typeof ctx.serverRoutedTransferMaxBytes === 'number') {
+      const nextBytes = parsed.data.envelope.kind === 'chunk' ? priorBytes + (payloadSizeBytes ?? 0) : priorBytes;
+      if (parsed.data.envelope.kind === 'chunk' && typeof ctx.serverRoutedTransferMaxBytes === 'number') {
         if (nextBytes > ctx.serverRoutedTransferMaxBytes) {
           globalBlockedTransfers.add(transferKey);
           globalTransferBytesByKey.set(transferKey, nextBytes);
@@ -244,10 +257,27 @@ export function machineTransferHandler(
 
   socket.on('disconnect', () => {
     for (const transferKey of socketTransferKeys) {
+      if (globalBlockedTransfers.has(transferKey)) {
+        clearMachineTransferKey(transferKey);
+        continue;
+      }
+
       const sockets = globalTransferSocketsByKey.get(transferKey);
       if (!sockets) continue;
       sockets.delete(socket.id);
       if (sockets.size === 0) {
+        const transfer = globalTransferParticipantsByKey.get(transferKey);
+        if (transfer) {
+          emitMachineTransferAbort({
+            io: ctx.io,
+            userId: transfer.userId,
+            deliverToMachineId: transfer.targetMachineId,
+            sourceMachineId: transfer.sourceMachineId,
+            targetMachineId: transfer.targetMachineId,
+            transferId: transfer.transferId,
+            reason: 'machine_transfer_socket_disconnected',
+          });
+        }
         clearMachineTransferKey(transferKey);
       } else {
         globalTransferSocketsByKey.set(transferKey, sockets);

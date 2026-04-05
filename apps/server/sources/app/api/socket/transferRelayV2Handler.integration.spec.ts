@@ -179,4 +179,116 @@ describe('transferRelayV2Handler', () => {
       },
     }));
   });
+
+  it('emits an abort to the recipient room when the last relay socket disconnects mid-transfer', async () => {
+    const { transferRelayV2Handler } = await import('./transferRelayV2Handler');
+    const emit = vi.fn();
+    const to = vi.fn(() => ({ emit }));
+    const socket = createFakeSocket({ emit: vi.fn(), id: 'source-socket' }) as any;
+    socket.data = {
+      clientType: 'machine-scoped',
+      machineId: 'machine-source',
+    };
+
+    transferRelayV2Handler('user-1', socket, {
+      io: { to } as any,
+      serverRelayTransferMaxActiveTransfersPerSocket: 1,
+    });
+
+    const relayHandler = getSocketHandler(socket, TRANSFER_RELAY_V2_SOCKET_EVENT);
+    const disconnectHandler = getSocketHandler(socket, 'disconnect');
+
+    await relayHandler({
+      scopeUserId: 'user-1',
+      sender: {
+        kind: 'machine',
+        machineId: 'machine-source',
+      },
+      recipient: {
+        kind: 'user',
+      },
+      envelope: {
+        transferId: 'transfer_disconnect',
+        kind: 'chunk',
+        sequence: 1,
+        payloadBase64: Buffer.from('a', 'utf8').toString('base64'),
+      },
+    });
+
+    emit.mockClear();
+
+    await disconnectHandler();
+
+    expect(to).toHaveBeenCalledWith('user:user-1');
+    expect(emit).toHaveBeenCalledWith(TRANSFER_RELAY_V2_SOCKET_EVENT, {
+      scopeUserId: 'user-1',
+      sender: {
+        kind: 'machine',
+        machineId: 'machine-source',
+      },
+      recipient: {
+        kind: 'user',
+      },
+      envelope: {
+        transferId: 'transfer_disconnect',
+        kind: 'abort',
+        reason: 'relay_socket_disconnected',
+      },
+    });
+  });
+
+  it('emits an abort to the recipient room when the last relay socket disconnects after an open envelope', async () => {
+    const { transferRelayV2Handler } = await import('./transferRelayV2Handler');
+    const emit = vi.fn();
+    const to = vi.fn(() => ({ emit }));
+    const socket = createFakeSocket({ emit: vi.fn(), id: 'source-socket' }) as any;
+    socket.data = {
+      clientType: 'machine-scoped',
+      machineId: 'machine-source',
+    };
+
+    transferRelayV2Handler('user-1', socket, {
+      io: { to } as any,
+    });
+
+    const relayHandler = getSocketHandler(socket, TRANSFER_RELAY_V2_SOCKET_EVENT);
+    const disconnectHandler = getSocketHandler(socket, 'disconnect');
+
+    await relayHandler({
+      scopeUserId: 'user-1',
+      sender: {
+        kind: 'machine',
+        machineId: 'machine-source',
+      },
+      recipient: {
+        kind: 'user',
+      },
+      envelope: {
+        transferId: 'transfer_open_disconnect',
+        kind: 'open',
+        recipientPublicKeyBase64: Buffer.from('recipient-key-material', 'utf8').toString('base64'),
+      },
+    });
+
+    emit.mockClear();
+
+    await disconnectHandler();
+
+    expect(to).toHaveBeenCalledWith('user:user-1');
+    expect(emit).toHaveBeenCalledWith(TRANSFER_RELAY_V2_SOCKET_EVENT, {
+      scopeUserId: 'user-1',
+      sender: {
+        kind: 'machine',
+        machineId: 'machine-source',
+      },
+      recipient: {
+        kind: 'user',
+      },
+      envelope: {
+        transferId: 'transfer_open_disconnect',
+        kind: 'abort',
+        reason: 'relay_socket_disconnected',
+      },
+    });
+  });
 });

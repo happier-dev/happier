@@ -8,6 +8,12 @@ import {
   SessionRunnerRespawnDescriptorV1Schema,
 } from './processSupervision/sessionRunnerRespawnDescriptor';
 
+function normalizeOptionalString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 export function adoptSessionsFromMarkers(params: {
   markers: DaemonSessionMarker[];
   happyProcesses: HappyProcessInfo[];
@@ -49,6 +55,7 @@ export function adoptSessionsFromMarkers(params: {
       happySessionId: marker.happySessionId,
       happySessionMetadataFromLocalWebhook: marker.metadata,
       ...(spawnOptions ? { spawnOptions } : {}),
+      ...(normalizeOptionalString(spawnOptions?.resume) ? { vendorResumeId: normalizeOptionalString(spawnOptions?.resume) } : {}),
       pid: marker.pid,
       processCommandHash: marker.processCommandHash,
       reattachedFromDiskMarker: true,

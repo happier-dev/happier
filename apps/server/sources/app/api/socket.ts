@@ -236,7 +236,7 @@ export function startSocket(app: Fastify) {
 
         // Join Socket.IO rooms for multi-process fanout (Phase 5).
         // Note: we keep the existing in-memory routing for now; rooms are a forward-compat hook.
-        socket.join(getSocketRooms({
+        await socket.join(getSocketRooms({
             userId,
             clientType: metadata.clientType,
             sessionId,

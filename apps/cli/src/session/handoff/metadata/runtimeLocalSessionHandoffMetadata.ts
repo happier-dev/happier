@@ -108,6 +108,14 @@ export function resolveSessionHandoffExportMetadata(input: Readonly<{
             && normalizeMetadataMachineId(localSplit.exportMetadata) === preferredLocalExportMachineId
             && normalizeMetadataMachineId(input.remoteMetadata) !== preferredLocalExportMachineId,
         );
+    const shouldSupplementRemoteExportMetadata =
+        Boolean(
+            localSplit
+            && input.remoteMetadata
+            && preferredLocalExportMachineId
+            && normalizeMetadataMachineId(localSplit.exportMetadata) === preferredLocalExportMachineId
+            && normalizeMetadataMachineId(input.remoteMetadata) === preferredLocalExportMachineId,
+        );
     const baseMetadata = input.remoteMetadata
         ? shouldPreferLocalExportMetadata
             ? {
@@ -118,6 +126,11 @@ export function resolveSessionHandoffExportMetadata(input: Readonly<{
                 // (it drives sync-changes handoff-back root resolution).
                 ...(input.remoteMetadata.handoffV1 !== undefined ? { handoffV1: input.remoteMetadata.handoffV1 } : {}),
             }
+            : shouldSupplementRemoteExportMetadata
+                ? {
+                    ...cloneMetadataRecord(localSplit!.exportMetadata),
+                    ...input.remoteMetadata,
+                }
             : input.remoteMetadata
         : localSplit?.exportMetadata;
     if (!baseMetadata) {

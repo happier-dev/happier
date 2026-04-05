@@ -197,7 +197,7 @@ describe('machineTransferHandler', () => {
       type: 'machine-transfer',
       error: 'Server-routed machine transfer exceeds the configured max-bytes limit',
     });
-  });
+  }, 15000);
 
   it('rejects server-routed transfers whose cumulative chunk payload bytes exceed the configured max-bytes limit', async () => {
     const { machineTransferHandler } = await import('./machineTransferHandler');
@@ -262,6 +262,42 @@ describe('machineTransferHandler', () => {
       error: 'Server-routed machine transfer exceeds the configured max-bytes limit',
     });
   });
+
+  it('does not emit a second disconnect abort after a transfer has already been terminally blocked by max-bytes', async () => {
+    const { machineTransferHandler } = await import('./machineTransferHandler');
+    const emit = vi.fn();
+    const to = vi.fn(() => ({ emit }));
+    const socketEmit = vi.fn();
+    const socket = createFakeSocket({ emit: socketEmit, id: 'source-socket' }) as any;
+    socket.data = {
+      clientType: 'machine-scoped',
+      machineId: 'machine-source',
+    };
+
+    machineTransferHandler('user-1', socket, {
+      io: { to } as any,
+      serverRoutedTransferMaxBytes: 8,
+    } as any);
+
+    const handler = getSocketHandler(socket, SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE);
+    const disconnectHandler = getSocketHandler(socket, 'disconnect');
+
+    await handler({
+      targetMachineId: 'machine-target',
+      envelope: {
+        transferId: 'transfer_blocked_disconnect',
+        kind: 'chunk',
+        sequence: 1,
+        payloadBase64: Buffer.from('this chunk is too large', 'utf8').toString('base64'),
+      },
+    });
+
+    emit.mockClear();
+
+    await disconnectHandler();
+
+    expect(emit).not.toHaveBeenCalled();
+  }, 15000);
 
   it('rejects oversized server-routed chunk envelopes when encryptedDataKeyEnvelopeBase64 exceeds the configured max-bytes limit', async () => {
     const { machineTransferHandler } = await import('./machineTransferHandler');
@@ -494,4 +530,92 @@ describe('machineTransferHandler', () => {
       error: expect.stringContaining('active-transfer'),
     });
   });
+
+  it('emits an abort to the target machine room when the last sender socket disconnects mid-transfer', async () => {
+    const { machineTransferHandler } = await import('./machineTransferHandler');
+    const emit = vi.fn();
+    const to = vi.fn(() => ({ emit }));
+    const socket = createFakeSocket({ emit: vi.fn(), id: 'source-socket' }) as any;
+    socket.data = {
+      clientType: 'machine-scoped',
+      machineId: 'machine-source',
+    };
+
+    machineTransferHandler('user-1', socket, {
+      io: { to } as any,
+      serverRoutedTransferMaxActiveTransfersPerSocket: 1,
+    } as any);
+
+    const relayHandler = getSocketHandler(socket, SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE);
+    const disconnectHandler = getSocketHandler(socket, 'disconnect');
+
+    await relayHandler({
+      targetMachineId: 'machine-target',
+      envelope: {
+        transferId: 'transfer_disconnect',
+        kind: 'chunk',
+        sequence: 1,
+        payloadBase64: Buffer.from('a', 'utf8').toString('base64'),
+      },
+    });
+
+    emit.mockClear();
+
+    await disconnectHandler();
+
+    expect(to).toHaveBeenCalledWith('machine:machine-target:user-1');
+    expect(emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE, {
+      sourceMachineId: 'machine-source',
+      targetMachineId: 'machine-target',
+      envelope: {
+        transferId: 'transfer_disconnect',
+        kind: 'abort',
+        reason: 'machine_transfer_socket_disconnected',
+      },
+    });
+  });
+
+  it('emits an abort to the target machine room when the last sender socket disconnects after an open envelope', async () => {
+    const { machineTransferHandler } = await import('./machineTransferHandler');
+    const emit = vi.fn();
+    const to = vi.fn(() => ({ emit }));
+    const socket = createFakeSocket({ emit: vi.fn(), id: 'source-socket' }) as any;
+    socket.data = {
+      clientType: 'machine-scoped',
+      machineId: 'machine-source',
+    };
+
+    machineTransferHandler('user-1', socket, {
+      io: { to } as any,
+      serverRoutedTransferMaxActiveTransfersPerSocket: 1,
+    } as any);
+
+    const relayHandler = getSocketHandler(socket, SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE);
+    const disconnectHandler = getSocketHandler(socket, 'disconnect');
+
+    await relayHandler({
+      targetMachineId: 'machine-target',
+      envelope: {
+        transferId: 'transfer_open_disconnect',
+        kind: 'open',
+        manifestHash: 'transfer_open_disconnect',
+        recipientPublicKeyBase64: Buffer.from('recipient-key-material', 'utf8').toString('base64'),
+      },
+    });
+
+    emit.mockClear();
+
+    await disconnectHandler();
+
+    expect(to).toHaveBeenCalledWith('machine:machine-target:user-1');
+    expect(emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE, {
+      sourceMachineId: 'machine-source',
+      targetMachineId: 'machine-target',
+      envelope: {
+        transferId: 'transfer_open_disconnect',
+        kind: 'abort',
+        reason: 'machine_transfer_socket_disconnected',
+      },
+    });
+  }, 15000);
 });

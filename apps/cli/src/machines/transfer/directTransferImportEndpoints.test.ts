@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createEncryptedTransferChunkEnvelope } from './transferChunkEncryption';
 import { createDirectPeerTransferApp } from './directPeerTransport';
@@ -437,6 +437,161 @@ describe('direct transfer import endpoints', () => {
     } finally {
       await app.close();
       await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('returns a structured 400 keepSession failure for absolute-path collisions and still allows abort', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-transfer-import-collision-'));
+    const destinationPath = resolve(join(tempDir, 'existing.txt'));
+    const payload = Buffer.from('new\n', 'utf8');
+    const importSessionManager = createDirectTransferImportSessionManager({
+      ttlMs: 10_000,
+    });
+    const app = createDirectPeerTransferApp({
+      readPublishedTransfer: () => null,
+      importSessionManager,
+    });
+
+    try {
+      await writeFile(destinationPath, 'old\n', 'utf8');
+      await app.ready();
+
+      const openAuthorization = importSessionManager.issueImportOpenAuthorizationToken({
+        t: 'session_file_upload_v1',
+        workingDirectory: tempDir,
+        path: destinationPath,
+        sizeBytes: payload.length,
+        overwrite: false,
+      });
+
+      const open = await app.inject({
+        method: 'POST',
+        url: '/machine-transfers/direct/imports/open',
+        headers: {
+          authorization: `Bearer ${openAuthorization.authorizationToken}`,
+        },
+        payload: {
+          t: 'session_file_upload_v1',
+          workingDirectory: tempDir,
+          path: destinationPath,
+          sizeBytes: payload.length,
+          overwrite: false,
+        },
+      });
+      expect(open.statusCode).toBe(200);
+      const opened = open.json() as { uploadId: string; recipientPublicKeyBase64: string };
+
+      const encryptedChunk = createEncryptedTransferChunkEnvelope({
+        transferId: opened.uploadId,
+        sequence: 0,
+        payload,
+        recipientPublicKeyBase64: opened.recipientPublicKeyBase64,
+      });
+
+      const chunk = await app.inject({
+        method: 'PUT',
+        url: `/machine-transfers/direct/imports/${opened.uploadId}/chunks/0`,
+        payload: {
+          payloadBase64: encryptedChunk.payloadBase64,
+          encryptedDataKeyEnvelopeBase64: encryptedChunk.encryptedDataKeyEnvelopeBase64,
+        },
+      });
+      expect(chunk.statusCode).toBe(200);
+      expect(chunk.json()).toEqual({ success: true });
+
+      const finalize = await app.inject({
+        method: 'POST',
+        url: `/machine-transfers/direct/imports/${opened.uploadId}/finalize`,
+      });
+      expect(finalize.statusCode).toBe(400);
+      expect(finalize.json()).toEqual({
+        success: false,
+        error: 'Destination already exists',
+        keepSession: true,
+      });
+
+      const abort = await app.inject({
+        method: 'POST',
+        url: `/machine-transfers/direct/imports/${opened.uploadId}/abort`,
+      });
+      expect(abort.statusCode).toBe(200);
+      expect(abort.json()).toEqual({ success: true });
+      await expect(readFile(destinationPath, 'utf8')).resolves.toBe('old\n');
+    } finally {
+      await app.close();
+      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('maps keepSession finalize failures from the import session manager to a structured 400 response', async () => {
+    const abortImportTransferSession = vi.fn(async () => {});
+    const importSessionManager = {
+      issueImportOpenAuthorizationToken: () => ({
+        authorizationToken: 'unused-token',
+        expiresAt: 1_000,
+      }),
+      openTrustedImportSession: async () => ({
+        success: true as const,
+        response: {
+          uploadId: 'unused-upload-id',
+          destDisplayPath: 'unused.txt',
+          expectedSizeBytes: 1,
+          chunkSizeBytes: 1,
+          recipientPublicKeyBase64: 'recipient-public-key',
+          expiresAt: 1_000,
+        },
+      }),
+      openImportSession: async () => ({
+        success: true as const,
+        response: {
+          uploadId: 'unused-upload-id',
+          destDisplayPath: 'unused.txt',
+          expectedSizeBytes: 1,
+          chunkSizeBytes: 1,
+          recipientPublicKeyBase64: 'recipient-public-key',
+          expiresAt: 1_000,
+        },
+      }),
+      writeImportTransferChunk: async () => ({ success: true as const }),
+      finalizeImportTransferSession: async () => ({
+        success: false as const,
+        error: 'Destination already exists',
+        keepSession: true,
+      }),
+      abortImportTransferSession,
+      cleanupExpiredImportSessions: () => {},
+      countActiveImportSessions: () => 0,
+      close: async () => {},
+    } satisfies DirectTransferImportSessionManager;
+
+    const app = createDirectPeerTransferApp({
+      readPublishedTransfer: () => null,
+      importSessionManager,
+    });
+
+    try {
+      await app.ready();
+
+      const finalize = await app.inject({
+        method: 'POST',
+        url: '/machine-transfers/direct/imports/upload-123/finalize',
+      });
+      expect(finalize.statusCode).toBe(400);
+      expect(finalize.json()).toEqual({
+        success: false,
+        error: 'Destination already exists',
+        keepSession: true,
+      });
+
+      const abort = await app.inject({
+        method: 'POST',
+        url: '/machine-transfers/direct/imports/upload-123/abort',
+      });
+      expect(abort.statusCode).toBe(200);
+      expect(abort.json()).toEqual({ success: true });
+      expect(abortImportTransferSession).toHaveBeenCalledWith({ uploadId: 'upload-123' });
+    } finally {
+      await app.close();
     }
   });
 });

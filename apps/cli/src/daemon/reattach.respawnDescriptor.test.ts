@@ -45,6 +45,7 @@ describe('adoptSessionsFromMarkers respawn descriptor', () => {
       terminal: { mode: 'plain' },
       transcriptStorage: 'direct',
     });
+    expect(map.get(123)?.vendorResumeId).toBe('vendor-sess-123');
   });
 
   it('does not set spawnOptions when marker does not include respawn descriptor', () => {

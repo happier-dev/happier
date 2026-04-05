@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { rm } from 'node:fs/promises';
 
 type ShutdownSource = 'happier-app' | 'happier-cli' | 'os-signal' | 'exception';
 type BuildHappyCliSubprocessLaunchSpec = typeof import('@/utils/spawnHappyCLI').buildHappyCliSubprocessLaunchSpec;
@@ -386,7 +387,7 @@ describe('startDaemon session handoff wiring (integration)', () => {
                 dispose: vi.fn(async () => {}),
             };
 
-            const endpointCandidates = handlers.directPeerTransfer.publishTransfer({
+            const endpointCandidates = await handlers.directPeerTransfer.publishTransfer({
                 transferId: 'handoff_rns',
                 payload: {
                     providerBundle: {
@@ -424,6 +425,7 @@ describe('startDaemon session handoff wiring (integration)', () => {
                 },
             ]);
         } finally {
+            await rm('/tmp/server/session-handoff/local-metadata', { recursive: true, force: true }).catch(() => undefined);
             exitSpy.mockRestore();
         }
     });
@@ -506,6 +508,7 @@ describe('startDaemon session handoff wiring (integration)', () => {
 
         try {
             const onHappySessionWebhookModule = await import('./sessions/onHappySessionWebhook');
+            const { createLocalSessionHandoffMetadataStore } = await import('@/session/handoff/metadata/localSessionHandoffMetadataStore');
             type TrackedSessionRef = {
                 startedBy: string;
                 pid: number;
@@ -575,6 +578,26 @@ describe('startDaemon session handoff wiring (integration)', () => {
                     },
                 },
             });
+            const localSessionHandoffMetadataStore = createLocalSessionHandoffMetadataStore({
+                activeServerDir: '/tmp/server',
+            });
+            await localSessionHandoffMetadataStore.saveByVendorResumeId({
+                vendorResumeId: 'sess-handoff-direct',
+                exportMetadataOverlay: {
+                    handoffV1: {
+                        v: 1,
+                        sourceMachineId: 'machine_source',
+                        targetMachineId: 'machine-session-handoff',
+                        providerId: 'claude',
+                        sessionStorageBefore: 'direct',
+                        sessionStorageAfter: 'direct',
+                        transportStrategy: 'direct_peer',
+                        completedAtMs: 1,
+                        sourceWorkspaceRootPath: '/repo-source-origin',
+                        targetWorkspaceRootPath: '/repo-source-current',
+                    },
+                },
+            });
 
             await expect(handlers?.loadLocalSessionMetadata?.('sess_handoff_pre_webhook')).resolves.toEqual(
                 expect.objectContaining({
@@ -583,6 +606,12 @@ describe('startDaemon session handoff wiring (integration)', () => {
                         path: '/repo-source-current',
                         homeDir: '/Users/target',
                         flavor: 'claude',
+                        handoffV1: expect.objectContaining({
+                            sourceMachineId: 'machine_source',
+                            targetMachineId: 'machine-session-handoff',
+                            sourceWorkspaceRootPath: '/repo-source-origin',
+                            targetWorkspaceRootPath: '/repo-source-current',
+                        }),
                     }),
                     runtimeLocalMetadata: expect.objectContaining({
                         claudeSessionId: 'sess-handoff-direct',
@@ -604,6 +633,289 @@ describe('startDaemon session handoff wiring (integration)', () => {
         }
     });
 
+    it('loads persisted local handoff metadata via spawnOptions.resume when vendorResumeId is missing on the tracked session', async () => {
+        const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+
+        try {
+            const onHappySessionWebhookModule = await import('./sessions/onHappySessionWebhook');
+            const { createLocalSessionHandoffMetadataStore } = await import('@/session/handoff/metadata/localSessionHandoffMetadataStore');
+            type TrackedSessionRef = {
+                startedBy: string;
+                pid: number;
+                happySessionId?: string;
+                happySessionMetadataFromLocalWebhook?: Record<string, unknown>;
+                vendorResumeId?: string;
+                spawnOptions?: Record<string, unknown>;
+            };
+            const trackedSessionCapture: { current: Map<number, TrackedSessionRef> | null } = { current: null };
+            vi.mocked(onHappySessionWebhookModule.createOnHappySessionWebhook).mockImplementation(({ pidToTrackedSession }) => {
+                trackedSessionCapture.current = pidToTrackedSession as Map<number, TrackedSessionRef>;
+                return vi.fn();
+            });
+
+            const { startDaemon } = await import('./startDaemon');
+            await startDaemon();
+
+            const handlers = harness.apiMachine.setRPCHandlers.mock.calls[0]?.[0] as {
+                loadLocalSessionMetadata?: (sessionId: string) => Promise<unknown>;
+            } | undefined;
+
+            expect(handlers?.loadLocalSessionMetadata).toEqual(expect.any(Function));
+
+            const trackedSessions = trackedSessionCapture.current;
+            if (!trackedSessions) {
+                throw new Error('Expected tracked session map from webhook wiring');
+            }
+            trackedSessions.set(3661, {
+                startedBy: 'daemon',
+                pid: 3661,
+                happySessionId: 'sess_handoff_resume_fallback',
+                happySessionMetadataFromLocalWebhook: {
+                    machineId: 'machine-session-handoff',
+                    path: '/repo-source-current',
+                    homeDir: '/Users/target',
+                    flavor: 'claude',
+                },
+                spawnOptions: {
+                    directory: '/repo-source-current',
+                    backendTarget: {
+                        kind: 'builtInAgent',
+                        agentId: 'claude',
+                    },
+                    resume: 'sess-handoff-direct-fallback',
+                    transcriptStorage: 'direct',
+                    environmentVariables: {
+                        HOME: '/Users/target',
+                        CLAUDE_CONFIG_DIR: '/tmp/claude-config',
+                    },
+                },
+            });
+            const localSessionHandoffMetadataStore = createLocalSessionHandoffMetadataStore({
+                activeServerDir: '/tmp/server',
+            });
+            await localSessionHandoffMetadataStore.saveByVendorResumeId({
+                vendorResumeId: 'sess-handoff-direct-fallback',
+                exportMetadataOverlay: {
+                    handoffV1: {
+                        v: 1,
+                        sourceMachineId: 'machine_source',
+                        targetMachineId: 'machine-session-handoff',
+                        providerId: 'claude',
+                        sessionStorageBefore: 'direct',
+                        sessionStorageAfter: 'direct',
+                        transportStrategy: 'direct_peer',
+                        completedAtMs: 1,
+                        sourceWorkspaceRootPath: '/repo-source-origin',
+                        targetWorkspaceRootPath: '/repo-source-current',
+                    },
+                },
+            });
+
+            await expect(handlers?.loadLocalSessionMetadata?.('sess_handoff_resume_fallback')).resolves.toEqual(
+                expect.objectContaining({
+                    exportMetadata: expect.objectContaining({
+                        machineId: 'machine-session-handoff',
+                        path: '/repo-source-current',
+                        handoffV1: expect.objectContaining({
+                            sourceMachineId: 'machine_source',
+                            targetMachineId: 'machine-session-handoff',
+                            sourceWorkspaceRootPath: '/repo-source-origin',
+                            targetWorkspaceRootPath: '/repo-source-current',
+                        }),
+                    }),
+                    runtimeLocalMetadata: expect.objectContaining({
+                        claudeSessionId: 'sess-handoff-direct-fallback',
+                        directSessionV1: expect.objectContaining({
+                            remoteSessionId: 'sess-handoff-direct-fallback',
+                        }),
+                    }),
+                }),
+            );
+        } finally {
+            exitSpy.mockRestore();
+        }
+    });
+
+    it('loads persisted local handoff metadata even when the tracked session no longer has a webhook snapshot', async () => {
+        const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+
+        try {
+            const onHappySessionWebhookModule = await import('./sessions/onHappySessionWebhook');
+            const { createLocalSessionHandoffMetadataStore } = await import('@/session/handoff/metadata/localSessionHandoffMetadataStore');
+            type TrackedSessionRef = {
+                startedBy: string;
+                pid: number;
+                happySessionId?: string;
+                happySessionMetadataFromLocalWebhook?: Record<string, unknown>;
+                vendorResumeId?: string;
+                spawnOptions?: Record<string, unknown>;
+            };
+            const trackedSessionCapture: { current: Map<number, TrackedSessionRef> | null } = { current: null };
+            vi.mocked(onHappySessionWebhookModule.createOnHappySessionWebhook).mockImplementation(({ pidToTrackedSession }) => {
+                trackedSessionCapture.current = pidToTrackedSession as Map<number, TrackedSessionRef>;
+                return vi.fn();
+            });
+
+            const { startDaemon } = await import('./startDaemon');
+            await startDaemon();
+
+            const handlers = harness.apiMachine.setRPCHandlers.mock.calls[0]?.[0] as {
+                loadLocalSessionMetadata?: (sessionId: string) => Promise<unknown>;
+            } | undefined;
+
+            expect(handlers?.loadLocalSessionMetadata).toEqual(expect.any(Function));
+
+            const trackedSessions = trackedSessionCapture.current;
+            if (!trackedSessions) {
+                throw new Error('Expected tracked session map from webhook wiring');
+            }
+            trackedSessions.set(4662, {
+                startedBy: 'daemon',
+                pid: 4662,
+                happySessionId: 'sess_handoff_overlay_only',
+                vendorResumeId: 'sess-handoff-direct-overlay',
+            });
+            const localSessionHandoffMetadataStore = createLocalSessionHandoffMetadataStore({
+                activeServerDir: '/tmp/server',
+            });
+            await localSessionHandoffMetadataStore.saveByVendorResumeId({
+                vendorResumeId: 'sess-handoff-direct-overlay',
+                exportMetadataOverlay: {
+                    machineId: 'machine-session-handoff',
+                    path: '/repo-source-current',
+                    homeDir: '/Users/target',
+                    flavor: 'claude',
+                    handoffV1: {
+                        v: 1,
+                        sourceMachineId: 'machine_source',
+                        targetMachineId: 'machine-session-handoff',
+                        providerId: 'claude',
+                        sessionStorageBefore: 'direct',
+                        sessionStorageAfter: 'direct',
+                        transportStrategy: 'direct_peer',
+                        completedAtMs: 1,
+                        sourceWorkspaceRootPath: '/repo-source-origin',
+                        targetWorkspaceRootPath: '/repo-source-current',
+                    },
+                },
+            });
+
+            await expect(handlers?.loadLocalSessionMetadata?.('sess_handoff_overlay_only')).resolves.toEqual(
+                expect.objectContaining({
+                    exportMetadata: expect.objectContaining({
+                        machineId: 'machine-session-handoff',
+                        path: '/repo-source-current',
+                        homeDir: '/Users/target',
+                        flavor: 'claude',
+                        handoffV1: expect.objectContaining({
+                            sourceMachineId: 'machine_source',
+                            targetMachineId: 'machine-session-handoff',
+                        }),
+                    }),
+                    runtimeLocalMetadata: expect.objectContaining({
+                        claudeSessionId: 'sess-handoff-direct-overlay',
+                    }),
+                }),
+            );
+        } finally {
+            exitSpy.mockRestore();
+        }
+    });
+
+    it('loads persisted local handoff metadata when the tracked session is only identifiable by vendorResumeId', async () => {
+        const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+
+        try {
+            const onHappySessionWebhookModule = await import('./sessions/onHappySessionWebhook');
+            const { createLocalSessionHandoffMetadataStore } = await import('@/session/handoff/metadata/localSessionHandoffMetadataStore');
+            type TrackedSessionRef = {
+                startedBy: string;
+                pid: number;
+                happySessionId?: string;
+                happySessionMetadataFromLocalWebhook?: Record<string, unknown>;
+                vendorResumeId?: string;
+                spawnOptions?: Record<string, unknown>;
+            };
+            const trackedSessionCapture: { current: Map<number, TrackedSessionRef> | null } = { current: null };
+            vi.mocked(onHappySessionWebhookModule.createOnHappySessionWebhook).mockImplementation(({ pidToTrackedSession }) => {
+                trackedSessionCapture.current = pidToTrackedSession as Map<number, TrackedSessionRef>;
+                return vi.fn();
+            });
+
+            const { startDaemon } = await import('./startDaemon');
+            await startDaemon();
+
+            const handlers = harness.apiMachine.setRPCHandlers.mock.calls[0]?.[0] as {
+                loadLocalSessionMetadata?: (sessionId: string) => Promise<unknown>;
+            } | undefined;
+
+            expect(handlers?.loadLocalSessionMetadata).toEqual(expect.any(Function));
+
+            const trackedSessions = trackedSessionCapture.current;
+            if (!trackedSessions) {
+                throw new Error('Expected tracked session map from webhook wiring');
+            }
+            trackedSessions.set(5663, {
+                startedBy: 'daemon',
+                pid: 5663,
+                vendorResumeId: 'sess-handoff-direct-vendor-only',
+                spawnOptions: {
+                    directory: '/repo-source-current',
+                    backendTarget: {
+                        kind: 'builtInAgent',
+                        agentId: 'claude',
+                    },
+                    resume: 'sess-handoff-direct-vendor-only',
+                    transcriptStorage: 'direct',
+                    environmentVariables: {
+                        HOME: '/Users/target',
+                        CLAUDE_CONFIG_DIR: '/tmp/claude-config',
+                    },
+                },
+            });
+            const localSessionHandoffMetadataStore = createLocalSessionHandoffMetadataStore({
+                activeServerDir: '/tmp/server',
+            });
+            await localSessionHandoffMetadataStore.saveByVendorResumeId({
+                vendorResumeId: 'sess-handoff-direct-vendor-only',
+                exportMetadataOverlay: {
+                    machineId: 'machine-session-handoff',
+                    path: '/repo-source-current',
+                    homeDir: '/Users/target',
+                    flavor: 'claude',
+                    handoffV1: {
+                        v: 1,
+                        sourceMachineId: 'machine_source',
+                        targetMachineId: 'machine-session-handoff',
+                        providerId: 'claude',
+                        sessionStorageBefore: 'direct',
+                        sessionStorageAfter: 'direct',
+                        transportStrategy: 'direct_peer',
+                        completedAtMs: 1,
+                        sourceWorkspaceRootPath: '/repo-source-origin',
+                        targetWorkspaceRootPath: '/repo-source-current',
+                    },
+                },
+            });
+
+            await expect(handlers?.loadLocalSessionMetadata?.('sess-handoff-direct-vendor-only')).resolves.toEqual(
+                expect.objectContaining({
+                    exportMetadata: expect.objectContaining({
+                        machineId: 'machine-session-handoff',
+                        path: '/repo-source-current',
+                        homeDir: '/Users/target',
+                        flavor: 'claude',
+                    }),
+                    runtimeLocalMetadata: expect.objectContaining({
+                        claudeSessionId: 'sess-handoff-direct-vendor-only',
+                    }),
+                }),
+            );
+        } finally {
+            exitSpy.mockRestore();
+        }
+    });
+
     it('fails closed when a direct-peer publish request omits the file-backed payload source', async () => {
         const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
 
@@ -614,7 +926,7 @@ describe('startDaemon session handoff wiring (integration)', () => {
             const handlers = harness.apiMachine.setRPCHandlers.mock.calls[0]?.[0];
             expect(handlers?.directPeerTransfer).toBeDefined();
 
-            expect(() => handlers.directPeerTransfer.publishTransfer({
+            await expect(handlers.directPeerTransfer.publishTransfer({
                 transferId: 'handoff_missing_payload_source',
                 payload: {
                     providerBundle: {
@@ -623,7 +935,7 @@ describe('startDaemon session handoff wiring (integration)', () => {
                         transcriptBase64: 'e30K',
                     },
                 },
-            })).toThrow('Direct peer handoff publish requires a file-backed payload source');
+            })).rejects.toThrow('Direct peer handoff publish requires a file-backed payload source');
             expect(harness.directPeerRegistry.publishTransfer).not.toHaveBeenCalled();
         } finally {
             exitSpy.mockRestore();

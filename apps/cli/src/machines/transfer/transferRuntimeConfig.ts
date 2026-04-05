@@ -27,6 +27,9 @@ const TRANSFER_MAX_ACTIVE_TRANSFERS_HARD_MAX = 10_000;
 const DEFAULT_TRANSFER_CHUNK_BYTES = 256 * 1024;
 const DEFAULT_TRANSFER_OPEN_PAYLOAD_MAX_BYTES = 64 * 1024;
 const TRANSFER_OPEN_PAYLOAD_HARD_MAX_BYTES = 64 * 1024;
+const DEFAULT_TRANSFER_TAILSCALE_SERVE_ENABLED = false;
+const DEFAULT_TRANSFER_TAILSCALE_SERVE_PATH = '/__happier/transfer';
+const DEFAULT_TRANSFER_TAILSCALE_SERVE_HTTPS_PORT = 443;
 
 function parsePositiveInt(rawValue: string | undefined, fallback: number): number {
   const raw = String(rawValue ?? '').trim();
@@ -42,6 +45,20 @@ function parseNonNegativeInt(rawValue: string | undefined, fallback: number): nu
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed) || parsed < 0) return fallback;
   return parsed;
+}
+
+function normalizeServePath(value: string | undefined): string {
+  const raw = String(value ?? '').trim();
+  if (!raw || raw === '/') {
+    return '/';
+  }
+  const prefixed = raw.startsWith('/') ? raw : `/${raw}`;
+  return prefixed.replace(/\/+$/, '') || '/';
+}
+
+export function isLoopbackTransferBindHost(bindHost: string): boolean {
+  const normalizedBindHost = bindHost.trim().toLowerCase();
+  return normalizedBindHost === '127.0.0.1' || normalizedBindHost === '::1' || normalizedBindHost === 'localhost';
 }
 
 export function resolveDirectPeerFeatureEnabled(): boolean {
@@ -64,7 +81,7 @@ export function resolveDirectPeerAdvertisedHosts(networkInterfacesFn: typeof net
   }
 
   const bindHost = resolveDirectPeerTransferBindHost();
-  if (bindHost === '127.0.0.1' || bindHost === '::1' || bindHost === 'localhost') {
+  if (isLoopbackTransferBindHost(bindHost)) {
     return ['127.0.0.1'];
   }
 
@@ -157,6 +174,24 @@ export function resolveDirectPeerTransferBindHost(): string {
   return process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_HOST ?? DEFAULT_DIRECT_PEER_BIND_HOST;
 }
 
+export function resolveTransferTailscaleServeEnabled(): boolean {
+  return parseBooleanEnv(
+    process.env.HAPPIER_MACHINE_TRANSFER_TAILSCALE_SERVE_ENABLED,
+    DEFAULT_TRANSFER_TAILSCALE_SERVE_ENABLED,
+  );
+}
+
+export function resolveTransferTailscaleServePath(): string {
+  return normalizeServePath(process.env.HAPPIER_MACHINE_TRANSFER_TAILSCALE_SERVE_PATH ?? DEFAULT_TRANSFER_TAILSCALE_SERVE_PATH);
+}
+
+export function resolveTransferTailscaleServeHttpsPort(): number {
+  return readPositiveIntEnv(
+    'HAPPIER_MACHINE_TRANSFER_TAILSCALE_SERVE_HTTPS_PORT',
+    DEFAULT_TRANSFER_TAILSCALE_SERVE_HTTPS_PORT,
+  ) ?? DEFAULT_TRANSFER_TAILSCALE_SERVE_HTTPS_PORT;
+}
+
 export function resolveServerRoutedTransferTimeoutMs(): number {
   return Math.min(
     readPositiveIntEnv('HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS', DEFAULT_TRANSFER_TIMEOUT_MS),
@@ -207,6 +242,11 @@ export function resolveMachineTransferRuntimeConfig(options?: Readonly<{
     featureEnabled: boolean;
     serverEnabled: boolean;
   }>;
+  tailscaleServe: Readonly<{
+    enabled: boolean;
+    servePath: string;
+    httpsPort: number;
+  }>;
   serverRouted: Readonly<{
     timeoutMs: number;
     maxActiveTransfers: number;
@@ -230,6 +270,11 @@ export function resolveMachineTransferRuntimeConfig(options?: Readonly<{
       bindHost: resolveDirectPeerTransferBindHost(),
       featureEnabled: resolveDirectPeerFeatureEnabled(),
       serverEnabled: resolveDirectPeerServerEnabled(),
+    },
+    tailscaleServe: {
+      enabled: resolveTransferTailscaleServeEnabled(),
+      servePath: resolveTransferTailscaleServePath(),
+      httpsPort: resolveTransferTailscaleServeHttpsPort(),
     },
     serverRouted: {
       timeoutMs: resolveServerRoutedTransferTimeoutMs(),

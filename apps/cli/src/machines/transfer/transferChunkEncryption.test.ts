@@ -1,7 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { TRANSFER_CHUNK_HARD_MAX_BYTES } from './transferChunkSizeLimit';
-import { decryptEncryptedTransferChunkEnvelope, parseTransferRecipientPublicKeyBase64 } from './transferChunkEncryption';
+import {
+  createEncryptedTransferChunkEnvelope,
+  decryptEncryptedTransferChunkEnvelope,
+  parseTransferRecipientPublicKeyBase64,
+} from './transferChunkEncryption';
+
+import {
+  createDeterministicRandomBytesFromBase64,
+  transferChunkEncryptionVectors,
+} from '@happier-dev/protocol';
 
 describe('decryptEncryptedTransferChunkEnvelope', () => {
   it('fails closed before base64 decoding when payloadBase64 exceeds the hard max bytes', () => {
@@ -87,5 +96,31 @@ describe('parseTransferRecipientPublicKeyBase64', () => {
 
     expect(fromSpy).toHaveBeenCalledTimes(258);
     fromSpy.mockRestore();
+  });
+});
+
+describe('transfer chunk encryption vectors', () => {
+  it.each(transferChunkEncryptionVectors)('matches the shared Node/Web vector %s', (vector) => {
+    const envelope = createEncryptedTransferChunkEnvelope({
+      transferId: vector.transferId,
+      sequence: vector.sequence,
+      payload: Buffer.from(vector.payloadUtf8, 'utf8'),
+      recipientPublicKeyBase64: vector.recipientPublicKeyBase64,
+      randomBytes: createDeterministicRandomBytesFromBase64(vector.randomBytesBase64),
+    });
+
+    expect(envelope).toEqual({
+      payloadBase64: vector.payloadBase64,
+      encryptedDataKeyEnvelopeBase64: vector.encryptedDataKeyEnvelopeBase64,
+    });
+    expect(
+      decryptEncryptedTransferChunkEnvelope({
+        transferId: vector.transferId,
+        sequence: vector.sequence,
+        payloadBase64: vector.payloadBase64,
+        encryptedDataKeyEnvelopeBase64: vector.encryptedDataKeyEnvelopeBase64,
+        recipientSecretKeySeed: Uint8Array.from(Buffer.from(vector.recipientSecretKeySeedBase64, 'base64')),
+      }).toString('utf8'),
+    ).toBe(vector.payloadUtf8);
   });
 });

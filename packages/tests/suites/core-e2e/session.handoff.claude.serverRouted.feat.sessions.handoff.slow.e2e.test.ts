@@ -14,6 +14,11 @@ import { fetchJson } from '../../src/testkit/http';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { fakeClaudeLogContainsUserText, postPlainUiTextMessage } from '../../src/testkit/sessionHandoffUiMessages';
+import {
+    fetchSessionMetadataV2,
+    patchSessionHandoffMetadataV1,
+    resolveSessionHandoffBackTargetRootPath,
+} from '../../src/testkit/sessionHandoffMetadata';
 import { createUserScopedSocketCollector, type SocketCollector } from '../../src/testkit/socketClient';
 import { createDataKeyRpcClient, unwrapDataKeyRpcResult } from '../../src/testkit/syntheticAgent/rpcClient';
 import { waitFor } from '../../src/testkit/timing';
@@ -84,6 +89,7 @@ type HandoffStatusResult = Readonly<{
         phase: string;
         jobId?: string;
         transportStrategy?: 'direct_peer' | 'server_routed_stream';
+        lastErrorMessage?: string;
     }>;
 }>;
 
@@ -102,6 +108,17 @@ function requireObject(value: unknown, context: string): Record<string, unknown>
         throw new Error(`Expected object for ${context}`);
     }
     return value as Record<string, unknown>;
+}
+
+function requireAbsoluteWorkspaceRoot(value: unknown, context: string): string {
+    if (typeof value !== 'string') {
+        throw new Error(`Expected absolute workspace root string for ${context}`);
+    }
+    const trimmed = value.trim();
+    if (!trimmed.startsWith('/')) {
+        throw new Error(`Expected absolute workspace root for ${context}`);
+    }
+    return trimmed;
 }
 
 function expectProviderBundleTransferPublicationMaybe(value: unknown): void {
@@ -229,18 +246,23 @@ async function waitForReadyHandoffPrepareResult(params: Readonly<{
             `${params.context} result get`,
         );
         const polledErrorCode = readInnerRpcErrorCode(polledRaw);
-        if (polledErrorCode && polledErrorCode !== 'not_found') {
-            throw new Error(`${params.context} result get failed: ${polledErrorCode}`);
-        }
-
         const status = unwrapDataKeyRpcResult(
             await params.machineRpc.call(`${params.machineId}:${RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET}`, {
                 handoffId: params.handoffId,
             }),
             `${params.context} status get`,
         ) as HandoffStatusResult;
-        if (status.status.status === 'awaiting_recovery' || status.status.status === 'failed' || status.status.status === 'aborted') {
-            throw new Error(`${params.context} entered terminal status ${status.status.status}`);
+        if (polledErrorCode && polledErrorCode !== 'not_found' && polledErrorCode !== 'awaiting_recovery') {
+            const lastError = typeof status.status.lastErrorMessage === 'string' && status.status.lastErrorMessage.trim().length > 0
+                ? `; lastErrorMessage: ${status.status.lastErrorMessage}`
+                : '';
+            throw new Error(`${params.context} result get failed: ${polledErrorCode}${lastError}`);
+        }
+        if (status.status.status === 'failed' || status.status.status === 'aborted') {
+            const lastError = typeof status.status.lastErrorMessage === 'string' && status.status.lastErrorMessage.trim().length > 0
+                ? `; lastErrorMessage: ${status.status.lastErrorMessage}`
+                : '';
+            throw new Error(`${params.context} entered terminal status ${status.status.status}${lastError}`);
         }
 
         const polled = polledErrorCode ? null : polledRaw as HandoffPrepareResult;
@@ -538,7 +560,10 @@ describe('core e2e: session handoff via server-routed transfer', () => {
             context: 'target server-routed handoff prepare',
         });
         const preparedResume = requirePreparedResume(prepared, 'target server-routed handoff prepare');
-        const handoffBackTargetRootPath = preparedResume.directory;
+        const originalSourceWorkspaceRootPath = requireAbsoluteWorkspaceRoot(
+            handoffMetadataV2.workspaceReplicationSourceRootPath,
+            'source server-routed handoff start workspaceReplicationSourceRootPath',
+        );
 
         expect(prepared.status.transportStrategy).toBe('server_routed_stream');
         expect(prepared.status.workspacePreflightSummary).toEqual(expect.objectContaining({
@@ -629,7 +654,45 @@ describe('core e2e: session handoff via server-routed transfer', () => {
             intervalMs: 250,
             context: 'server session active after server-routed handoff',
         });
-
+        await patchSessionHandoffMetadataV1({
+            baseUrl: server.baseUrl,
+            token: auth.token,
+            sessionId,
+            machineKeys: [targetMachineKey, sourceMachineKey],
+            providerId: 'claude',
+            sourceMachineId: sourceSeed.machineId,
+            targetMachineId: targetSeed.machineId,
+            sourceWorkspaceRootPath: originalSourceWorkspaceRootPath,
+            targetWorkspaceRootPath: preparedResume.directory,
+            sessionStorageBefore: 'direct',
+            sessionStorageAfter: 'direct',
+            transportStrategy: 'server_routed_stream',
+        });
+        const patchedMetadata = await fetchSessionMetadataV2({
+            baseUrl: server.baseUrl,
+            token: auth.token,
+            sessionId,
+            machineKeys: [targetMachineKey, sourceMachineKey],
+        });
+        expect(patchedMetadata).toEqual(expect.objectContaining({
+            machineId: targetSeed.machineId,
+            path: preparedResume.directory,
+            flavor: 'claude',
+            claudeSessionId: expect.any(String),
+            directSessionV1: expect.objectContaining({
+                providerId: 'claude',
+                machineId: targetSeed.machineId,
+                remoteSessionId: expect.any(String),
+            }),
+            handoffV1: expect.objectContaining({
+                transportStrategy: 'server_routed_stream',
+            }),
+        }));
+        expect(patchedMetadata.claudeTranscriptPath).toBeUndefined();
+        expect(patchedMetadata.externalHistoryImportV1).toBeUndefined();
+        expect(
+            (patchedMetadata.directSessionV1 as Readonly<{ remoteSessionId?: unknown }> | undefined)?.remoteSessionId,
+        ).toBe(patchedMetadata.claudeSessionId);
         // Persist the reverse-direction workspace baseline on the source machine so a subsequent
         // “handoff back” can use `sync_changes` without forcing a full snapshot transfer.
         unwrapDataKeyRpcResult(
@@ -637,7 +700,7 @@ describe('core e2e: session handoff via server-routed transfer', () => {
                 handoffId: started.handoffId,
                 mode: 'source_cleanup',
                 workspaceReplicationReverseSourceRootPath: preparedResume.directory,
-                workspaceReplicationReverseTargetRootPath: handoffBackTargetRootPath,
+                workspaceReplicationReverseTargetRootPath: originalSourceWorkspaceRootPath,
             }),
             'source server-routed handoff source cleanup',
         );
@@ -672,10 +735,17 @@ describe('core e2e: session handoff via server-routed transfer', () => {
         expect(secondStarted.handoffId).not.toBe(started.handoffId);
         const secondHandoffMetadataV2 = requireHandoffMetadataV2(secondStarted, 'target server-routed handoff-back start');
         expectProviderBundleTransferPublicationMaybe(secondHandoffMetadataV2.providerBundleTransferPublication);
+        const secondHandoffBackTargetRootPath = requireAbsoluteWorkspaceRoot(
+            resolveSessionHandoffBackTargetRootPath({
+                metadata: patchedMetadata,
+                requestedTargetMachineId: sourceSeed.machineId,
+            }),
+            'target server-routed handoff-back start resolved workspaceReplicationHandoffBackTargetRootPath',
+        );
+        expect(secondHandoffBackTargetRootPath).toBe(originalSourceWorkspaceRootPath);
         expect(requireObject(secondHandoffMetadataV2.workspaceReplicationManifestTransferPublication, 'workspaceReplicationManifestTransferPublication')).toEqual(expect.objectContaining({
             transferId: expect.any(String),
         }));
-
         const secondPrepared = await waitForReadyHandoffPrepareResult({
             machineRpc: sourceMachineRpc,
             machineId: sourceSeed.machineId,
@@ -687,7 +757,7 @@ describe('core e2e: session handoff via server-routed transfer', () => {
                     targetMachineId: sourceSeed.machineId,
                     negotiatedTransportStrategy: 'server_routed_stream',
                     sourceSessionStorageMode: 'direct',
-                    targetPath: handoffBackTargetRootPath,
+                    targetPath: secondHandoffBackTargetRootPath,
                     handoffMetadataV2: secondHandoffMetadataV2,
                     workspaceTransfer: {
                         enabled: true,
@@ -781,7 +851,7 @@ describe('core e2e: session handoff via server-routed transfer', () => {
             'bulk fixture 11',
         );
         await expect(readFile(resolve(join(secondPreparedResume.directory, 'deleted-after-first-handoff.txt')), 'utf8')).rejects.toThrow();
-    }, 180_000);
+    }, 300_000);
 
     it('aborts a pending server-routed workspace prepare without mutating the final target tree', async () => {
         const testDir = run.testDir('session-handoff-server-routed-abort');

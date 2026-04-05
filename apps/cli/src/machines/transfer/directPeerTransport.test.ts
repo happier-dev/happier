@@ -99,6 +99,48 @@ describe('direct peer machine transfer', () => {
     }
   });
 
+  it('responds to browser preflight requests for direct-open routes with loopback-safe CORS headers', async () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
+
+    const { createDirectPeerTransferApp, createDirectPeerTransferRegistry } = await import('./directPeerTransport');
+
+    const registry = createDirectPeerTransferRegistry({
+      advertisedPort: 46001,
+      now: () => 1_000,
+    });
+    registry.publishTransfer({
+      transferId: 'transfer_open_preflight',
+      payload: Buffer.from('payload', 'utf8'),
+    });
+
+    const app = createDirectPeerTransferApp({
+      readPublishedTransfer: registry.readPublishedTransfer,
+    });
+
+    try {
+      await app.ready();
+
+      const response = await app.inject({
+        method: 'OPTIONS',
+        url: buildDirectPeerOpenUrl('transfer_open_preflight'),
+        headers: {
+          origin: 'https://app.happier.dev',
+          'access-control-request-method': 'POST',
+          'access-control-request-headers': 'authorization,x-happier-transfer-recipient-public-key',
+        },
+      });
+
+      expect(response.statusCode).toBe(204);
+      expect(response.headers['access-control-allow-origin']).toBe('https://app.happier.dev');
+      expect(response.headers['access-control-allow-methods']).toContain('POST');
+      expect(response.headers['access-control-allow-headers']).toContain('authorization');
+      expect(response.headers['access-control-allow-headers']).toContain('x-happier-transfer-recipient-public-key');
+      expect(response.headers.vary).toContain('Origin');
+    } finally {
+      await app.close();
+    }
+  });
+
   it('rejects publish when the published transfer registry max-entries cap is exceeded', async () => {
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_PUBLISHED_TRANSFER_REGISTRY_MAX_ENTRIES = '1';
@@ -980,6 +1022,42 @@ describe('direct peer machine transfer', () => {
     }
   });
 
+  it('responds with a retryable 503 when an on-demand direct-peer transfer is not ready yet', async () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
+
+    const { createDirectPeerTransferApp } = await import('./directPeerTransport');
+    const { deriveBoxPublicKeyFromSeed } = await import('@happier-dev/protocol');
+
+    const recipientSecretKeySeed = new Uint8Array(32).fill(7);
+    const recipientPublicKeyBase64 = Buffer.from(deriveBoxPublicKeyFromSeed(recipientSecretKeySeed)).toString('base64');
+    const resolveOnDemandTransfer = vi.fn(async () => {
+      throw new Error('Direct peer transfer not ready');
+    });
+
+    const app = createDirectPeerTransferApp({
+      readPublishedTransfer: () => null,
+      resolveOnDemandTransfer,
+    });
+
+    try {
+      await app.ready();
+      const response = await app.inject({
+        method: 'POST',
+        url: buildDirectPeerOpenUrl('transfer_not_ready'),
+        headers: {
+          authorization: 'Bearer test-token',
+          'x-happier-transfer-recipient-public-key': recipientPublicKeyBase64,
+        },
+      });
+
+      expect(response.statusCode).toBe(503);
+      expect(response.json()).toEqual({ ok: false, error: 'Direct peer transfer not ready' });
+      expect(resolveOnDemandTransfer).toHaveBeenCalledTimes(1);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('does not extend direct-peer transfer TTL via expiry skew (skew is requester-only)', async () => {
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_TTL_MS = '10';
@@ -1696,6 +1774,83 @@ describe('direct peer machine transfer', () => {
     await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
   });
 
+  it('retries a retryable 503 direct-peer open response before failing the transfer', async () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
+
+    const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-retry-503-'));
+    const destinationPath = join(tempDir, 'payload-destination.bin');
+    const payload = Buffer.from('payload-after-503-retry', 'utf8');
+    let recipientPublicKeyBase64 = '';
+    let openAttempts = 0;
+
+    const fetchFn: typeof fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const headers = init?.headers as Record<string, string> | undefined;
+      const url = String(input);
+      if (url.endsWith('/open')) {
+        openAttempts += 1;
+        recipientPublicKeyBase64 = headers?.['x-happier-transfer-recipient-public-key'] ?? recipientPublicKeyBase64;
+        if (openAttempts === 1) {
+          return new Response(JSON.stringify({
+            ok: false,
+            error: 'Direct peer transfer not ready',
+          }), {
+            status: 503,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        return new Response(JSON.stringify({
+          transferId: 'transfer_retry_503',
+          manifestHash: createTransferManifestHash(payload),
+          totalChunks: 1,
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (url.endsWith('/chunks/0')) {
+        return new Response(JSON.stringify({
+          transferId: 'transfer_retry_503',
+          kind: 'chunk',
+          sequence: 0,
+          ...createEncryptedTransferChunkEnvelope({
+            transferId: 'transfer_retry_503',
+            sequence: 0,
+            payload,
+            recipientPublicKeyBase64,
+            randomBytes: (length) => new Uint8Array(length).fill(9),
+          }),
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      throw new Error(`Unexpected fetch URL: ${url}`);
+    });
+
+    try {
+      await requestDirectPeerTransferToFile({
+        transferId: 'transfer_retry_503',
+        endpointCandidates: [{
+          kind: 'http',
+          url: 'http://127.0.0.1:46001/machine-transfers/direct/transfer_retry_503',
+          authorizationToken: 'test-token',
+          expiresAt: 10_000,
+        }],
+        fetchFn,
+        now: () => 5_000,
+        destinationPath,
+      });
+
+      expect(openAttempts).toBe(2);
+      await expect(readFile(destinationPath)).resolves.toEqual(payload);
+    } finally {
+      await rm(tempDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
   it('does not use Buffer.concat while fetching a direct-peer payload (small-only API must stay bounded)', async () => {
     const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
     const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
@@ -1774,6 +1929,73 @@ describe('direct peer machine transfer', () => {
       await expect(readFile(destinationPath)).resolves.toEqual(payload);
     } finally {
       Buffer.concat = originalConcat;
+      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('accepts direct-peer endpoint candidates with a path prefix (for example Tailscale Serve)', async () => {
+    const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+
+    const payload = Buffer.from('payload-from-prefixed-endpoint', 'utf8');
+    let recipientPublicKeyBase64 = '';
+
+    const fetchFn: typeof fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const headers = init?.headers as Record<string, string> | undefined;
+
+      if (url === 'https://example.ts.net/__happier/transfer/machine-transfers/direct/transfer_prefixed/open') {
+        recipientPublicKeyBase64 = headers?.['x-happier-transfer-recipient-public-key'] ?? '';
+        return new Response(JSON.stringify({
+          transferId: 'transfer_prefixed',
+          manifestHash: createTransferManifestHash(payload),
+          totalChunks: 1,
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+
+      if (url === 'https://example.ts.net/__happier/transfer/machine-transfers/direct/transfer_prefixed/chunks/0') {
+        return new Response(JSON.stringify({
+          transferId: 'transfer_prefixed',
+          kind: 'chunk',
+          sequence: 0,
+          ...createEncryptedTransferChunkEnvelope({
+            transferId: 'transfer_prefixed',
+            sequence: 0,
+            payload,
+            recipientPublicKeyBase64,
+            randomBytes: (length) => new Uint8Array(length).fill(7),
+          }),
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+
+      throw new Error(`Unexpected fetch URL: ${url}`);
+    });
+
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-prefixed-'));
+    const destinationPath = join(tempDir, 'payload-destination.bin');
+
+    try {
+      await requestDirectPeerTransferToFile({
+        transferId: 'transfer_prefixed',
+        endpointCandidates: [{
+          kind: 'https',
+          url: 'https://example.ts.net/__happier/transfer/machine-transfers/direct/transfer_prefixed',
+          authorizationToken: 'test-token',
+          expiresAt: 10_000,
+        }],
+        fetchFn,
+        now: () => 5_000,
+        destinationPath,
+      });
+
+      await expect(readFile(destinationPath)).resolves.toEqual(payload);
+    } finally {
       await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
     }
   });
@@ -1936,9 +2158,76 @@ describe('direct peer machine transfer', () => {
         destinationPath,
       });
 
-      expect(recipientPublicKeyBase64ByAttempt).toHaveLength(2);
-      expect(recipientPublicKeyBase64ByAttempt[0]).toBe(recipientPublicKeyBase64ByAttempt[1]);
+      expect(recipientPublicKeyBase64ByAttempt.length).toBeGreaterThan(1);
+      expect(new Set(recipientPublicKeyBase64ByAttempt).size).toBe(1);
       expect(openBodySerializationCount).toBe(1);
+      await expect(readFile(destinationPath)).resolves.toEqual(payload);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+});
+
+  it('retries a transiently unavailable direct-peer candidate before failing the transfer', async () => {
+    const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+
+    const payload = Buffer.from('payload-for-transient-candidate-retry', 'utf8');
+    let openAttempts = 0;
+    const fetchFn: typeof fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const headers = init?.headers as Record<string, string> | undefined;
+      if (url.includes('/candidate-1/open')) {
+        openAttempts += 1;
+        if (openAttempts === 1) {
+          throw new Error('fetch failed');
+        }
+        return new Response(JSON.stringify({
+          transferId: 'transfer_transient_candidate_retry',
+          manifestHash: createTransferManifestHash(payload),
+          totalChunks: 1,
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (url.includes('/candidate-1/chunks/0')) {
+        const recipientPublicKeyBase64 = headers?.['x-happier-transfer-recipient-public-key'] ?? '';
+        return new Response(JSON.stringify({
+          transferId: 'transfer_transient_candidate_retry',
+          kind: 'chunk',
+          sequence: 0,
+          ...createEncryptedTransferChunkEnvelope({
+            transferId: 'transfer_transient_candidate_retry',
+            sequence: 0,
+            payload,
+            recipientPublicKeyBase64,
+            randomBytes: (length) => new Uint8Array(length).fill(11),
+          }),
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      throw new Error(`Unexpected fetch URL: ${url}`);
+    });
+
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-transient-retry-'));
+    const destinationPath = join(tempDir, 'payload-destination.bin');
+
+    try {
+      await requestDirectPeerTransferToFile({
+        transferId: 'transfer_transient_candidate_retry',
+        endpointCandidates: [{
+          kind: 'http',
+          url: 'http://127.0.0.1:46001/machine-transfers/direct/candidate-1',
+          authorizationToken: 'test-token',
+          expiresAt: 10_000,
+        }],
+        fetchFn,
+        now: () => 5_000,
+        destinationPath,
+      });
+
       await expect(readFile(destinationPath)).resolves.toEqual(payload);
     } finally {
       await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);

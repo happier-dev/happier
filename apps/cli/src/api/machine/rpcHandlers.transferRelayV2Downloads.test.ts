@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { TransferRelayV2SendEnvelope } from '@happier-dev/protocol';
 import { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope } from '@/machines/transfer/transferChunkEncryption';
@@ -193,6 +193,88 @@ describe('rpcHandlers relay-v2 download wiring', () => {
                     manifestHash: expect.stringMatching(/^sha256:/),
                 },
             });
+        } finally {
+            rmSync(homeDir, { recursive: true, force: true });
+        }
+    });
+
+    it('replaces the relay-v2 download responder when machine RPC handlers are registered again', async () => {
+        const homeDir = mkdtempSync(join(tmpdir(), 'happier-prompt-relay-home-reconnect-'));
+
+        try {
+            mkdirSync(join(homeDir, '.agents', 'skills', 'reviewer'), { recursive: true });
+            writeFileSync(join(homeDir, '.agents', 'skills', 'reviewer', 'SKILL.md'), '# Reviewer\n', 'utf8');
+            writeFileSync(join(homeDir, '.agents', 'skills', 'reviewer', 'notes.txt'), 'Remember this\n', 'utf8');
+
+            const mgr = createRpcHandlerManager();
+            const relay = createTransferRelayChannelHarness('machine-1');
+
+            registerMachineRpcHandlers({
+                rpcHandlerManager: mgr as any,
+                handlers: {
+                    spawnSession: async () => ({ type: 'error', errorCode: 'unknown', errorMessage: 'not implemented' }) as any,
+                    stopSession: async () => true,
+                    requestShutdown: () => {},
+                    transferRelayV2Channel: relay.channel,
+                },
+                deps: {
+                    promptAssetsHomedir: () => homeDir,
+                },
+            });
+
+            registerMachineRpcHandlers({
+                rpcHandlerManager: mgr as any,
+                handlers: {
+                    spawnSession: async () => ({ type: 'error', errorCode: 'unknown', errorMessage: 'not implemented' }) as any,
+                    stopSession: async () => true,
+                    requestShutdown: () => {},
+                    transferRelayV2Channel: relay.channel,
+                },
+                deps: {
+                    promptAssetsHomedir: () => homeDir,
+                },
+            });
+
+            const init = mgr.handlers.get(RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_INIT);
+            if (!init) throw new Error('expected prompt asset download init handler');
+
+            const recipientKeyPair = createTransferRecipientKeyPair();
+            const initResponse = await init({
+                assetTypeId: 'agents.skill',
+                scope: 'user',
+                externalRef: { skillName: 'reviewer' },
+                recipientPublicKeyBase64: recipientKeyPair.recipientPublicKeyBase64,
+            });
+            expect(initResponse).toMatchObject({ success: true, downloadId: expect.any(String) });
+
+            relay.emitFromUser({
+                scopeUserId: 'user-1',
+                sender: {
+                    kind: 'user',
+                    socketId: 'socket-1',
+                },
+                recipient: {
+                    kind: 'machine',
+                    machineId: 'machine-1',
+                },
+                envelope: {
+                    transferId: initResponse.downloadId,
+                    kind: 'open',
+                    recipientPublicKeyBase64: recipientKeyPair.recipientPublicKeyBase64,
+                },
+            });
+
+            await waitForSentCount(relay.sent, 1);
+            await vi.waitFor(() => {
+                expect(relay.sent.some((payload) => (
+                    payload.envelope.transferId === initResponse.downloadId
+                    && payload.envelope.kind === 'chunk'
+                ))).toBe(true);
+            });
+            expect(relay.sent.some((payload) => (
+                payload.envelope.transferId === initResponse.downloadId
+                && payload.envelope.kind === 'abort'
+            ))).toBe(false);
         } finally {
             rmSync(homeDir, { recursive: true, force: true });
         }

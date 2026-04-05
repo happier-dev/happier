@@ -136,6 +136,43 @@ describe('createTransferRouteViabilityCache', () => {
         });
     });
 
+    it('keeps route viability entries isolated by server id across restart boundaries', () => {
+        const cache = createTransferRouteViabilityCache({
+            now,
+            positiveTtlMs: 10_000,
+            negativeTtlMs: 2_000,
+        });
+        const serverOneKey = {
+            serverId: 'server-1',
+            targetMachineId: 'machine-1',
+            routeKind: 'direct_peer',
+            endpointFingerprint: 'fingerprint-a',
+        } as const;
+        const serverTwoKey = {
+            serverId: 'server-2',
+            targetMachineId: 'machine-1',
+            routeKind: 'direct_peer',
+            endpointFingerprint: 'fingerprint-a',
+        } as const;
+
+        cache.recordUnavailable(serverOneKey, 'network_error');
+        cache.recordViable(serverTwoKey);
+
+        cache.invalidate({
+            serverId: 'server-1',
+            targetMachineId: 'machine-1',
+            routeKind: 'direct_peer',
+        });
+
+        expect(cache.read(serverOneKey)).toEqual({ status: 'unknown' });
+        expect(cache.read(serverTwoKey)).toEqual({
+            status: 'viable',
+            checkedAt: 1_000,
+            expiresAt: 11_000,
+            endpointFingerprint: 'fingerprint-a',
+        });
+    });
+
     it('treats the legacy server_routed_stream route kind as the canonical relay route kind', () => {
         const cache = createTransferRouteViabilityCache({
             now,

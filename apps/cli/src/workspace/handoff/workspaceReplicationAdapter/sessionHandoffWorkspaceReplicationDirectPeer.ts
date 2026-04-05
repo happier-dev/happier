@@ -61,7 +61,7 @@ type DirectPeerTransferPublisher = Readonly<{
     payload: Readonly<Record<never, never>>;
     payloadSource?: TransferPayloadSource;
     onDemandScope?: DirectPeerOnDemandTransferScope;
-  }>) => readonly TransferEndpointCandidate[];
+  }>) => readonly TransferEndpointCandidate[] | Promise<readonly TransferEndpointCandidate[]>;
 }>;
 
 export type PublishedSessionHandoffWorkspaceReplicationDirectPeerTransfers = Readonly<{
@@ -92,7 +92,7 @@ export async function publishSessionHandoffWorkspaceReplicationDirectPeerTransfe
   const tokenCarrierPayloadSource = createBufferTransferPayloadSource(Buffer.from('{}', 'utf8'));
 
   const endpointCandidates = [
-    ...input.directPeerTransfer.publishTransfer({
+    ...await input.directPeerTransfer.publishTransfer({
       transferId: manifestTransferId,
       payload: {},
       payloadSource: tokenCarrierPayloadSource,

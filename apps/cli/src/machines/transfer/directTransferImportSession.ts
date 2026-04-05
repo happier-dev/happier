@@ -132,11 +132,25 @@ export function createDirectTransferImportSessionManager(params?: Readonly<{
   const activeImportSessionIds = new Set<string>();
 
   const publishActiveSessionCount = (): void => {
-    params?.onActiveSessionCountChanged?.(activeImportSessionIds.size);
+    if (!params?.onActiveSessionCountChanged) {
+      return;
+    }
+    try {
+      params.onActiveSessionCountChanged(activeImportSessionIds.size);
+    } catch {
+      // Best-effort only; observer failures must never break transfer finalization.
+    }
   };
 
   const emitActivity = (): void => {
-    params?.onActivity?.();
+    if (!params?.onActivity) {
+      return;
+    }
+    try {
+      params.onActivity();
+    } catch {
+      // Best-effort only; observer failures must never break transfer finalization.
+    }
   };
 
   const trackActiveImportSession = (uploadId: string): void => {

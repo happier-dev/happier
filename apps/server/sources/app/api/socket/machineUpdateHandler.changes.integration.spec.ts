@@ -4,6 +4,7 @@ import { createInTxHarness } from "../testkit/txHarness";
 import { createFakeSocket, getSocketHandler } from "../testkit/socketHarness";
 
 const emitUpdate = vi.fn();
+const emitEphemeral = vi.fn();
 const buildUpdateMachineUpdate = vi.fn((_machineId: string, updSeq: number, updId: string) => ({
     id: updId,
     seq: updSeq,
@@ -11,7 +12,7 @@ const buildUpdateMachineUpdate = vi.fn((_machineId: string, updSeq: number, updI
 }));
 
 vi.mock("@/app/events/eventRouter", () => ({
-    eventRouter: { emitUpdate, emitEphemeral: vi.fn() },
+    eventRouter: { emitUpdate, emitEphemeral },
     buildUpdateMachineUpdate,
     buildMachineActivityEphemeral: vi.fn(() => ({ t: "machine-activity" })),
 }));
@@ -117,9 +118,37 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
             expect.any(String),
             undefined,
             { value: "new-state", version: 3 },
+            expect.objectContaining({
+                active: true,
+                activeAt: expect.any(Number),
+            }),
         );
         expect(emitUpdate).toHaveBeenCalledTimes(1);
         expect(callback).toHaveBeenCalledWith({ result: "success", version: 3, daemonState: "new-state" });
+    });
+
+    it("publishes daemonState updates with active machine freshness for browser consumers", async () => {
+        const { machineUpdateHandler } = await import("./machineUpdateHandler");
+
+        const socket = createFakeSocket();
+        machineUpdateHandler("u1", socket as any);
+        const handler = getSocketHandler(socket, "machine-update-state");
+
+        const callback = vi.fn();
+        await handler({ machineId: "m3", daemonState: "online", expectedVersion: 2 }, callback);
+
+        expect(buildUpdateMachineUpdate).toHaveBeenCalledWith(
+            "m3",
+            321,
+            expect.any(String),
+            undefined,
+            { value: "online", version: 3 },
+            expect.objectContaining({
+                active: true,
+                activeAt: expect.any(Number),
+            }),
+        );
+        expect(callback).toHaveBeenCalledWith({ result: "success", version: 3, daemonState: "online" });
     });
 
     it("rejects metadata updates for revoked machines", async () => {
@@ -138,5 +167,47 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
         expect(markAccountChanged).not.toHaveBeenCalled();
         expect(emitUpdate).not.toHaveBeenCalled();
         expect(callback).toHaveBeenCalledWith(expect.objectContaining({ result: "error" }));
+    });
+
+    it("rebroadcasts validated direct-session transcript delta ephemerals", async () => {
+        const { machineUpdateHandler } = await import("./machineUpdateHandler");
+
+        const socket = createFakeSocket({
+            data: {
+                clientType: "machine-scoped",
+                machineId: "m1",
+            },
+        });
+        machineUpdateHandler("u1", socket as any);
+        const handler = getSocketHandler(socket, "direct-session-transcript-delta");
+
+        await handler({
+            type: "direct-session-transcript-delta",
+            sessionId: "sess-1",
+            items: [
+                {
+                    id: "a2",
+                    createdAtMs: 1_050,
+                    localId: "direct-2",
+                    raw: {
+                        type: "assistant",
+                        uuid: "a2",
+                        message: { model: "m", content: [{ type: "text", text: "hello from push" }] },
+                    },
+                },
+            ],
+            nextCursor: "cursor-2",
+            truncated: false,
+        });
+
+        expect(emitEphemeral).toHaveBeenCalledWith(expect.objectContaining({
+            userId: "u1",
+            payload: expect.objectContaining({
+                type: "direct-session-transcript-delta",
+                sessionId: "sess-1",
+                truncated: false,
+            }),
+            recipientFilter: { type: "all-interested-in-session", sessionId: "sess-1" },
+        }));
     });
 });

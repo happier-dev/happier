@@ -36,7 +36,11 @@ import {
   ServerRoutedInvalidOpenRequestError,
   ServerRoutedAbortTransferError,
 } from '../../machines/transfer/serverRoutedTransport';
-import type { DirectPeerOnDemandTransferScope } from '../../machines/transfer/directPeerTransport';
+import {
+  type DirectPeerOnDemandTransferScope,
+  isDirectPeerTransferProtocolError,
+} from '../../machines/transfer/directPeerTransport';
+import { requestDirectPeerTransferToFileWithRetry } from '../../machines/transfer/requestDirectPeerTransferToFileWithRetry';
 import { rewriteDirectPeerEndpointCandidatesForTransferId } from '../../machines/transfer/rewriteDirectPeerEndpointCandidatesForTransferId';
 import { createMachineTransferRouteCache } from '../../machines/transfer/transferRouteCache';
 import {
@@ -152,7 +156,7 @@ export type SessionHandoffDirectPeerTransferHandle = Readonly<{
     payload: Readonly<Record<never, never>>;
     payloadSource?: TransferPayloadSource;
     onDemandScope?: DirectPeerOnDemandTransferScope;
-  }>) => readonly TransferEndpointCandidate[];
+  }>) => readonly TransferEndpointCandidate[] | Promise<readonly TransferEndpointCandidate[]>;
   requestPayloadFile?: (input: Readonly<{
     transferId: string;
     endpointCandidates: readonly TransferEndpointCandidate[];
@@ -216,14 +220,44 @@ function resolveWorkspaceReplicationHandoffBackTargetRootPath(input: Readonly<{
   if (input.workspaceTransfer?.enabled !== true) return null;
   if (input.workspaceTransfer.strategy !== 'sync_changes') return null;
 
+  const metadataSourceRootPath =
+    typeof input.metadata.workspaceReplicationSourceRootPath === 'string'
+      ? normalizeHandoffWorkspaceRootPath(input.metadata.workspaceReplicationSourceRootPath)
+      : null;
   const handoff = asRecord(input.metadata.handoffV1);
-  if (!handoff) return null;
+  if (!handoff) {
+    return metadataSourceRootPath;
+  }
 
   const priorSourceMachineId = typeof handoff.sourceMachineId === 'string' ? handoff.sourceMachineId.trim() : '';
-  if (!priorSourceMachineId) return null;
-  if (priorSourceMachineId !== input.requestedTargetMachineId) return null;
+  if (!priorSourceMachineId || priorSourceMachineId !== input.requestedTargetMachineId) {
+    return metadataSourceRootPath;
+  }
 
-  return normalizeHandoffWorkspaceRootPath(handoff.sourceWorkspaceRootPath);
+  const handoffBackTargetRootPath = normalizeHandoffWorkspaceRootPath(handoff.sourceWorkspaceRootPath);
+  if (handoffBackTargetRootPath) {
+    return handoffBackTargetRootPath;
+  }
+
+  return metadataSourceRootPath;
+}
+
+function resolvePrepareTargetWorkspaceRootPath(input: Readonly<{
+  requestedTargetPath: string;
+  workspaceTransfer: SessionHandoffPrepareTargetRequest['workspaceTransfer'] | undefined;
+  handoffMetadataV2: SessionHandoffMetadataV2 | undefined;
+  homeDir: string;
+}>): string {
+  const handoffBackTargetRootPath =
+    input.workspaceTransfer?.enabled === true
+    && input.workspaceTransfer.strategy === 'sync_changes'
+      ? normalizeHandoffWorkspaceRootPath(input.handoffMetadataV2?.workspaceReplicationHandoffBackTargetRootPath)
+      : null;
+
+  return normalizeSessionHandoffTargetPathForLocalMachine({
+    requestedTargetPath: handoffBackTargetRootPath ?? input.requestedTargetPath,
+    homeDir: input.homeDir,
+  });
 }
 
 function directPeerTransferUnavailable() {
@@ -232,6 +266,17 @@ function directPeerTransferUnavailable() {
     errorCode: 'direct_peer_transfer_unavailable',
     error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
   } as const;
+}
+
+function isSessionHandoffDirectPeerProtocolError(error: unknown): boolean {
+  if (isDirectPeerTransferProtocolError(error)) {
+    return true;
+  }
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return error.message === 'Invalid session handoff transfer payload'
+    || error.message.startsWith('Direct peer transfer manifest mismatch for ');
 }
 
 function missingHandoffMetadataV2() {
@@ -542,11 +587,65 @@ async function waitForPrepareJobFastPath(runPromise: Promise<void>): Promise<'co
   ]);
 }
 
-function isDirectPeerTransferProtocolError(error: unknown): boolean {
-  if (error instanceof SyntaxError) return true;
-  if (!(error instanceof Error)) return false;
-  return error.message === 'Invalid session handoff transfer payload'
-    || error.message.startsWith('Direct peer transfer manifest mismatch for ');
+async function requestDirectPeerPayloadFileWithWorkspaceRetry(params: Readonly<{
+  request: SessionHandoffPrepareTargetRequest;
+  transferId: string;
+  endpointCandidates: readonly TransferEndpointCandidate[];
+  destinationPath: string;
+  timeoutMs?: number;
+  directPeerTransfer: SessionHandoffDirectPeerTransferHandle;
+  invalidateDirectPeerRouteCacheForHandoffMachines?: (machineIds: readonly (string | undefined)[]) => void;
+}>): Promise<Readonly<{ destinationPath: string }>> {
+  if (params.request.workspaceTransfer?.enabled !== true) {
+    const requestPayloadFile = params.directPeerTransfer.requestPayloadFile;
+    if (!requestPayloadFile) {
+      throw new Error(directPeerTransferUnavailable().error);
+    }
+    return await requestPayloadFile({
+      transferId: params.transferId,
+      endpointCandidates: params.endpointCandidates,
+      destinationPath: params.destinationPath,
+      ...(typeof params.timeoutMs === 'number' ? { timeoutMs: params.timeoutMs } : {}),
+    });
+  }
+
+  const maxAttempts = params.request.workspaceTransfer?.strategy === 'transfer_snapshot' ? 12 : 8;
+  const retryDelayMs = 250;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const requestPayloadFile = params.directPeerTransfer.requestPayloadFile;
+    if (requestPayloadFile) {
+      return await requestDirectPeerTransferToFileWithRetry({
+        requestTransferToFile: requestPayloadFile,
+        transferId: params.transferId,
+        endpointCandidates: params.endpointCandidates,
+        destinationPath: params.destinationPath,
+        ...(typeof params.timeoutMs === 'number' ? { timeoutMs: params.timeoutMs } : {}),
+        maxAttempts,
+        retryDelayMs: 250,
+        onRetry: async () => {
+          params.invalidateDirectPeerRouteCacheForHandoffMachines?.([
+            params.request.sourceMachineId,
+            params.request.targetMachineId,
+          ]);
+        },
+      });
+    }
+
+    if (attempt >= maxAttempts) {
+      break;
+    }
+
+    params.invalidateDirectPeerRouteCacheForHandoffMachines?.([
+      params.request.sourceMachineId,
+      params.request.targetMachineId,
+    ]);
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, retryDelayMs * attempt);
+    });
+  }
+
+  throw new Error(directPeerTransferUnavailable().error);
 }
 
 async function requestServerRoutedPrepareProviderBundle(params: Readonly<{
@@ -590,6 +689,7 @@ async function resolvePrepareProviderBundle(params: Readonly<{
   machineTransferChannel?: Parameters<typeof registerMachineSessionHandoffRpcHandlers>[0]['machineTransferChannel'];
   directPeerTransfer?: SessionHandoffDirectPeerTransferHandle;
   transferRouteCache?: ReturnType<typeof createMachineTransferRouteCache>;
+  invalidateDirectPeerRouteCacheForHandoffMachines?: (machineIds: readonly (string | undefined)[]) => void;
 }>): Promise<SessionHandoffProviderBundle | undefined> {
   const transferPublication = params.handoffMetadataV2?.providerBundleTransferPublication;
   if (!transferPublication) {
@@ -613,7 +713,9 @@ async function resolvePrepareProviderBundle(params: Readonly<{
         sourceMachineId: params.request.sourceMachineId,
         machineTransferChannel: params.machineTransferChannel,
       })
-      : params.actualTransportStrategy === 'direct_peer' && transferEndpointCandidates && params.directPeerTransfer?.requestPayloadFile
+      : params.actualTransportStrategy === 'direct_peer'
+        && transferEndpointCandidates
+        && (params.request.workspaceTransfer?.enabled === true || params.directPeerTransfer?.requestPayloadFile)
         ? await (async (): Promise<SessionHandoffProviderBundle> => {
           const endpointCandidates = transferEndpointCandidates.filter((candidate) => candidate.expiresAt >= Date.now());
           if (endpointCandidates.length === 0) {
@@ -626,11 +728,17 @@ async function resolvePrepareProviderBundle(params: Readonly<{
             }
             throw new Error(directPeerTransferUnavailable().error);
           }
+          if (params.request.workspaceTransfer?.enabled === true) {
+            params.invalidateDirectPeerRouteCacheForHandoffMachines?.([
+              params.request.sourceMachineId,
+              params.request.targetMachineId,
+            ]);
+          }
           const cachedRoute = params.transferRouteCache?.readDirectPeerRoute({
             remoteMachineId: params.request.sourceMachineId,
             endpointCandidates,
           });
-          if (cachedRoute?.status === 'unavailable') {
+          if (cachedRoute?.status === 'unavailable' && params.request.workspaceTransfer?.enabled !== true) {
             if (canFallbackToServerRouted && params.machineTransferChannel) {
               return await requestServerRoutedPrepareProviderBundle({
                 transferId: transferPublication.transferId,
@@ -648,11 +756,14 @@ async function resolvePrepareProviderBundle(params: Readonly<{
           const payloadFilePath = join(temporaryDirectory, 'provider-bundle.json');
           try {
             try {
-              await params.directPeerTransfer!.requestPayloadFile!({
+              await requestDirectPeerPayloadFileWithWorkspaceRetry({
+                request: params.request,
                 transferId: transferPublication.transferId,
                 endpointCandidates,
                 destinationPath: payloadFilePath,
-                ...(timeoutMs ? { timeoutMs } : {}),
+                ...(typeof timeoutMs === 'number' ? { timeoutMs } : {}),
+                directPeerTransfer: params.directPeerTransfer!,
+                invalidateDirectPeerRouteCacheForHandoffMachines: params.invalidateDirectPeerRouteCacheForHandoffMachines,
               });
               params.transferRouteCache?.recordDirectPeerRouteViable({
                 remoteMachineId: params.request.sourceMachineId,
@@ -660,7 +771,7 @@ async function resolvePrepareProviderBundle(params: Readonly<{
               });
               return await readSessionHandoffProviderBundleFile(payloadFilePath);
             } catch (error) {
-              if (isDirectPeerTransferProtocolError(error)) {
+              if (isSessionHandoffDirectPeerProtocolError(error)) {
                 throw error;
               }
               params.transferRouteCache?.recordDirectPeerRouteUnavailable(
@@ -699,6 +810,7 @@ async function resolvePrepareWorkspaceReplicationMetadata(params: Readonly<{
   handoffMetadataV2?: SessionHandoffMetadataV2;
   machineTransferChannel?: Parameters<typeof registerMachineSessionHandoffRpcHandlers>[0]['machineTransferChannel'];
   directPeerTransfer?: SessionHandoffDirectPeerTransferHandle;
+  invalidateDirectPeerRouteCacheForHandoffMachines?: (machineIds: readonly (string | undefined)[]) => void;
 }>): Promise<SessionHandoffWorkspaceReplicationMetadata | undefined> {
   if (params.workspaceTransfer?.enabled !== true) {
     return undefined;
@@ -758,8 +870,7 @@ async function resolvePrepareWorkspaceReplicationMetadata(params: Readonly<{
                   transferId: transferPublication.transferId,
                 })
               : undefined);
-          const requestedFilePayload = params.directPeerTransfer?.requestPayloadFile;
-          if (!endpointCandidates?.length || !requestedFilePayload) {
+          if (!endpointCandidates?.length) {
             throw new Error(`Direct peer transfer is unavailable for ${transferPublication.transferId}`);
           }
           const filteredEndpointCandidates = endpointCandidates.filter((candidate) => candidate.expiresAt >= Date.now());
@@ -769,12 +880,18 @@ async function resolvePrepareWorkspaceReplicationMetadata(params: Readonly<{
             typeof configuration.filesTransferSessionTtlMs === 'number' && configuration.filesTransferSessionTtlMs > 0
               ? configuration.filesTransferSessionTtlMs
               : undefined;
-	          if (filteredEndpointCandidates.length === 0) {
-	            if (canFallbackToServerRouted && params.machineTransferChannel) {
-	              const temporaryServerRoutedDirectory =
-	                await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-manifest-server-routed-'));
-	              const serverRoutedPath = join(temporaryServerRoutedDirectory, 'workspace-manifest.txt');
-	              try {
+          if (params.request.workspaceTransfer?.enabled === true) {
+            params.invalidateDirectPeerRouteCacheForHandoffMachines?.([
+              params.request.sourceMachineId,
+              params.request.targetMachineId,
+            ]);
+          }
+          if (filteredEndpointCandidates.length === 0) {
+            if (canFallbackToServerRouted && params.machineTransferChannel) {
+              const temporaryServerRoutedDirectory =
+                await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-manifest-server-routed-'));
+              const serverRoutedPath = join(temporaryServerRoutedDirectory, 'workspace-manifest.txt');
+              try {
 	                const openBody =
 	                  typeof timeoutMs === 'number'
 	                    ? {
@@ -805,18 +922,21 @@ async function resolvePrepareWorkspaceReplicationMetadata(params: Readonly<{
           const payloadFilePath = join(temporaryDirectory, 'workspace-manifest.txt');
           try {
             try {
-              const received = await requestedFilePayload({
+              const received = await requestDirectPeerPayloadFileWithWorkspaceRetry({
+                request: params.request,
                 transferId: transferPublication.transferId,
                 endpointCandidates: filteredEndpointCandidates,
                 destinationPath: payloadFilePath,
-                ...(timeoutMs ? { timeoutMs } : {}),
+                ...(typeof timeoutMs === 'number' ? { timeoutMs } : {}),
+                directPeerTransfer: params.directPeerTransfer!,
+                invalidateDirectPeerRouteCacheForHandoffMachines: params.invalidateDirectPeerRouteCacheForHandoffMachines,
               });
               return await readWorkspaceReplicationManifestFromFile({
                 transferId: transferPublication.transferId,
                 filePath: received.destinationPath,
               });
             } catch (error) {
-              if (isDirectPeerTransferProtocolError(error)) {
+              if (isSessionHandoffDirectPeerProtocolError(error)) {
                 throw error;
               }
 	              if (canFallbackToServerRouted && params.machineTransferChannel) {
@@ -871,6 +991,10 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerManager;
   loadLocalSessionMetadata?: (sessionId: string) => Promise<SessionHandoffLocalMetadataSource | null>;
   loadSessionMetadata?: (sessionId: string) => Promise<Record<string, unknown> | null>;
+  savePreparedTargetLocalMetadata?: (input: Readonly<{
+    remoteSessionId: string;
+    exportMetadataOverlay: Record<string, unknown>;
+  }>) => Promise<void> | void;
   stopSessionForHandoff?: (sessionId: string) => Promise<'stopped' | 'already_inactive' | 'failed'>;
   exportSessionBundle?: (metadata: Record<string, unknown>) => Promise<Readonly<{
     providerBundle: SessionHandoffProviderBundle;
@@ -904,9 +1028,18 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
   const transferRouteCache = createMachineTransferRouteCache({
     serverId: configuration.activeServerId,
   });
+  const invalidateDirectPeerRouteCacheForHandoffMachines = (machineIds: readonly (string | undefined)[]): void => {
+    for (const machineId of machineIds) {
+      const normalizedMachineId = typeof machineId === 'string' ? machineId.trim() : '';
+      if (!normalizedMachineId) {
+        continue;
+      }
+      transferRouteCache.invalidateDirectPeerRoutesForMachine(normalizedMachineId);
+    }
+  };
   const workspaceReplicationAdapter = createSessionHandoffWorkspaceReplicationAdapter();
   const workspaceReplicationTransfers = workspaceReplicationAdapter.createReplicationTransfers(
-    params.directPeerTransfer?.requestPayloadFile
+    params.directPeerTransfer
       ? {
           requestDirectPeerTransferToFile: async ({
             transferId,
@@ -915,21 +1048,34 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
             openBody,
             timeoutMs,
           }) => {
-            const received = await params.directPeerTransfer!.requestPayloadFile!({
-              transferId,
-              endpointCandidates,
-              destinationPath,
-              ...(openBody !== undefined ? { openBody } : {}),
-              ...(typeof timeoutMs === 'number' ? { timeoutMs } : {}),
-            });
-            const payloadSource = createFileTransferPayloadSource({
-              filePath: received.destinationPath,
-            });
-            return {
-              destinationPath: received.destinationPath,
-              manifestHash: await resolveTransferPayloadManifestHash(payloadSource),
-              sizeBytes: await resolveTransferPayloadSizeBytes(payloadSource),
-            };
+            const maxAttempts = 12;
+            const retryDelayMs = 250;
+            for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+              const requestPayloadFile = params.directPeerTransfer?.requestPayloadFile;
+              if (requestPayloadFile) {
+                const received = await requestPayloadFile({
+                  transferId,
+                  endpointCandidates,
+                  destinationPath,
+                  ...(openBody !== undefined ? { openBody } : {}),
+                  ...(typeof timeoutMs === 'number' ? { timeoutMs } : {}),
+                });
+                const payloadSource = createFileTransferPayloadSource({
+                  filePath: received.destinationPath,
+                });
+                return {
+                  destinationPath: received.destinationPath,
+                  manifestHash: await resolveTransferPayloadManifestHash(payloadSource),
+                  sizeBytes: await resolveTransferPayloadSizeBytes(payloadSource),
+                };
+              }
+              if (attempt < maxAttempts) {
+                await new Promise<void>((resolve) => {
+                  setTimeout(resolve, retryDelayMs * attempt);
+                });
+              }
+            }
+            throw new Error(directPeerTransferUnavailable().error);
           },
         }
       : {},
@@ -1241,7 +1387,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 			          ? (
 			              providerBundleTransferPublication?.endpointCandidates?.length
 			                ? [...providerBundleTransferPublication.endpointCandidates]
-			                : [...params.directPeerTransfer.publishTransfer({
+			                : [...await params.directPeerTransfer.publishTransfer({
 			                    transferId: persistedProviderBundle.transferId,
 			                    payload: {},
 			                    payloadSource: providerBundlePayloadSource,
@@ -1507,6 +1653,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     if (!workspaceTransferStrategyValidation.ok) {
       return workspaceTransferStrategyValidation;
     }
+    invalidateDirectPeerRouteCacheForHandoffMachines([parsed.data.sourceMachineId, parsed.data.targetMachineId]);
 
     const workspaceReplicationHandoffBackTargetRootPath =
       resolveWorkspaceReplicationHandoffBackTargetRootPath({
@@ -1695,7 +1842,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 
 		          let cachedWorkspaceScope: DirectPeerOnDemandTransferScope | null = null;
 		          const carrierCandidates = [
-		            ...params.directPeerTransfer.publishTransfer({
+		            ...await params.directPeerTransfer.publishTransfer({
 		              transferId: providerBundleCarrierTransferId,
 		              payload: {},
 		              payloadSource: providerBundleCarrierPayloadSource,
@@ -1868,7 +2015,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 
 	        let cachedWorkspaceScope: DirectPeerOnDemandTransferScope | null = null;
 		        const carrierCandidates = [
-		          ...params.directPeerTransfer.publishTransfer({
+		          ...await params.directPeerTransfer.publishTransfer({
 	            transferId: providerBundleTransferId,
 	            payload: {},
 	            payloadSource: providerBundlePayloadSource,
@@ -2284,7 +2431,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
             const canUseDirectPeerForProviderBundle =
               Boolean(localProviderBundle)
               || (
-                typeof directPeerRequester === 'function'
+                (typeof directPeerRequester === 'function' || resolvedWorkspaceTransfer?.enabled === true)
                 && hasUsableProviderEndpointCandidates
               );
             const canUseDirectPeerForWorkspaceManifest =
@@ -2292,7 +2439,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
               || !needsWorkspaceReplicationMetadata
               || Boolean(localWorkspaceReplicationMetadata)
               || (
-                typeof directPeerRequester === 'function'
+                (typeof directPeerRequester === 'function' || resolvedWorkspaceTransfer?.enabled === true)
                 && hasUsableManifestEndpointCandidates
               );
 
@@ -2315,6 +2462,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
               machineTransferChannel: params.machineTransferChannel,
               directPeerTransfer: params.directPeerTransfer,
               transferRouteCache,
+              invalidateDirectPeerRouteCacheForHandoffMachines,
             });
           if (!resolvedProviderBundle) {
             throw new Error('Invalid session handoff provider bundle');
@@ -2330,6 +2478,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
               handoffMetadataV2: persistedHandoffMetadataV2,
               machineTransferChannel: params.machineTransferChannel,
               directPeerTransfer: params.directPeerTransfer,
+              invalidateDirectPeerRouteCacheForHandoffMachines,
             });
 	          const {
 	            currentTargetManifest,
@@ -2341,16 +2490,19 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 		            handoffId: parsed.data.handoffId,
 		            sourceMachineId: parsed.data.sourceMachineId,
 		            targetMachineId: parsed.data.targetMachineId,
-		            targetPath: normalizeSessionHandoffTargetPathForLocalMachine({
-		              requestedTargetPath: parsed.data.targetPath,
-		              homeDir: os.homedir(),
-		            }),
-		            workspaceTransfer: resolvedWorkspaceTransfer,
-		            metadata: persistedWorkspaceReplicationMetadata,
-		            directPeerManifestEndpointCandidates:
+		            targetPath: resolvePrepareTargetWorkspaceRootPath({
+                  requestedTargetPath: parsed.data.targetPath,
+                  workspaceTransfer: resolvedWorkspaceTransfer,
+                  handoffMetadataV2: persistedHandoffMetadataV2,
+                  homeDir: os.homedir(),
+                }),
+	            workspaceTransfer: resolvedWorkspaceTransfer,
+	            metadata: persistedWorkspaceReplicationMetadata,
+	            directPeerManifestEndpointCandidates:
 		              persistedHandoffMetadataV2?.workspaceReplicationManifestTransferPublication?.endpointCandidates
 		              ?? localWorkspaceManifestEndpointCandidates,
 	            machineTransferChannel: params.machineTransferChannel,
+	            allowServerRoutedFallback: canFallbackToServerRouted,
 	            transfers: workspaceReplicationTransfers,
 	            blobPackTargetBytes: configuration.workspaceReplicationBlobPackTargetBytes,
 	            blobPackMaxBlobs: configuration.workspaceReplicationBlobPackMaxBlobs,
@@ -2465,6 +2617,37 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
             ...(imported.agentRuntimeDescriptorV1 ? { agentRuntimeDescriptorV1: imported.agentRuntimeDescriptorV1 } : {}),
             resume: imported.resume,
           };
+          const handoffBackTargetRootPath =
+            normalizeHandoffWorkspaceRootPath(
+              parsed.data.handoffMetadataV2?.workspaceReplicationHandoffBackTargetRootPath,
+            )
+            ?? normalizeHandoffWorkspaceRootPath(
+              parsed.data.handoffMetadataV2?.workspaceReplicationSourceRootPath,
+            );
+          const importedTargetWorkspaceRootPath = normalizeHandoffWorkspaceRootPath(imported.resume.directory);
+          if (
+            params.savePreparedTargetLocalMetadata
+            && handoffBackTargetRootPath
+            && importedTargetWorkspaceRootPath
+          ) {
+            await params.savePreparedTargetLocalMetadata({
+              remoteSessionId: imported.remoteSessionId,
+              exportMetadataOverlay: {
+                handoffV1: {
+                  v: 1,
+                  sourceMachineId: parsed.data.sourceMachineId,
+                  targetMachineId: parsed.data.targetMachineId,
+                  providerId: imported.resume.agent,
+                  sessionStorageBefore: parsed.data.sourceSessionStorageMode,
+                  sessionStorageAfter: imported.resume.transcriptStorage,
+                  transportStrategy: actualTransportStrategy,
+                  completedAtMs: Date.now(),
+                  sourceWorkspaceRootPath: handoffBackTargetRootPath,
+                  targetWorkspaceRootPath: importedTargetWorkspaceRootPath,
+                },
+              },
+            });
+          }
           const afterImportJob = await prepareJobStore.read(jobId);
           if (afterImportJob?.cancelRequestedAtMs) {
             const abortedAtMs = Date.now();
@@ -2535,19 +2718,10 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
         return completedJob.prepareTargetResult;
       }
       if (completedJob?.status.status === 'awaiting_recovery' && completedJob.lastErrorMessage) {
-        if (isMachineTransferTimeoutErrorMessage(completedJob.lastErrorMessage)) {
-          return {
-            handoffId: parsed.data.handoffId,
-            status: pendingStatus,
-          };
-        }
-        if (completedJob.lastErrorMessage === directPeerTransferUnavailable().error) {
-          return directPeerTransferUnavailable();
-        }
-        if (completedJob.lastErrorMessage === missingHandoffMetadataV2().error) {
-          return missingHandoffMetadataV2();
-        }
-        throw new Error(completedJob.lastErrorMessage);
+        return {
+          handoffId: parsed.data.handoffId,
+          status: pendingStatus,
+        };
       }
       if (completedJob) {
         return {
@@ -2563,19 +2737,10 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
         return timedOutJob.prepareTargetResult;
       }
       if (timedOutJob.status.status === 'awaiting_recovery' && timedOutJob.lastErrorMessage) {
-        if (isMachineTransferTimeoutErrorMessage(timedOutJob.lastErrorMessage)) {
-          return {
-            handoffId: parsed.data.handoffId,
-            status: pendingStatus,
-          };
-        }
-        if (timedOutJob.lastErrorMessage === directPeerTransferUnavailable().error) {
-          return directPeerTransferUnavailable();
-        }
-        if (timedOutJob.lastErrorMessage === missingHandoffMetadataV2().error) {
-          return missingHandoffMetadataV2();
-        }
-        throw new Error(timedOutJob.lastErrorMessage);
+        return {
+          handoffId: parsed.data.handoffId,
+          status: pendingStatus,
+        };
       }
       return {
         handoffId: parsed.data.handoffId,
@@ -2732,6 +2897,12 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
       }));
       status.jobId = jobId;
     }
+    invalidateDirectPeerRouteCacheForHandoffMachines([
+      persistedJob?.prepareTargetRequest?.sourceMachineId,
+      persistedJob?.prepareTargetRequest?.targetMachineId,
+      persistedSourceExport?.sourceMachineId,
+      persistedSourceExport?.targetMachineId,
+    ]);
     await disposeEphemeralServerRoutedPayloadSourcesForHandoff(parsed.data.handoffId);
     params.directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffProviderBundleTransferId(parsed.data.handoffId));
     params.directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffWorkspaceManifestTransferId({ handoffId: parsed.data.handoffId }));
@@ -2804,6 +2975,12 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
       }));
       status.jobId = jobId;
     }
+    invalidateDirectPeerRouteCacheForHandoffMachines([
+      persistedJob?.prepareTargetRequest?.sourceMachineId,
+      persistedJob?.prepareTargetRequest?.targetMachineId,
+      persistedSourceExport?.sourceMachineId,
+      persistedSourceExport?.targetMachineId,
+    ]);
     await disposeEphemeralServerRoutedPayloadSourcesForHandoff(parsed.data.handoffId);
     params.directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffProviderBundleTransferId(parsed.data.handoffId));
     params.directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffWorkspaceManifestTransferId({ handoffId: parsed.data.handoffId }));

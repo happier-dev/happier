@@ -41,6 +41,39 @@ describe('createMachineTransferRouteCache', () => {
         })).toEqual({ status: 'unknown' });
     });
 
+    it('treats direct-peer auth token rotation as a different cache key even when the endpoint URL is stable', () => {
+        const cache = createMachineTransferRouteCache({
+            serverId: 'server-1',
+            now,
+            positiveTtlMs: 30_000,
+            negativeTtlMs: 5_000,
+        });
+
+        cache.recordDirectPeerRouteUnavailable({
+            remoteMachineId: 'machine-source',
+            endpointCandidates: [
+                {
+                    kind: 'http',
+                    url: 'http://127.0.0.1:46001/machine-transfers/direct/a',
+                    authorizationToken: 'token-a',
+                    expiresAt: 10_000,
+                },
+            ],
+        }, 'authorization_failed');
+
+        expect(cache.readDirectPeerRoute({
+            remoteMachineId: 'machine-source',
+            endpointCandidates: [
+                {
+                    kind: 'http',
+                    url: 'http://127.0.0.1:46001/machine-transfers/direct/a',
+                    authorizationToken: 'token-b',
+                    expiresAt: 11_000,
+                },
+            ],
+        })).toEqual({ status: 'unknown' });
+    });
+
     it('keeps machine-rpc-direct cache entries distinct by target machine', () => {
         const cache = createMachineTransferRouteCache({
             serverId: 'server-1',
@@ -66,6 +99,28 @@ describe('createMachineTransferRouteCache', () => {
             status: 'unavailable',
             failureReason: 'machine_rpc_direct_unavailable',
         }));
+    });
+
+    it('can invalidate machine-rpc-direct cache entries for a single machine', () => {
+        const cache = createMachineTransferRouteCache({
+            serverId: 'server-1',
+            now,
+            positiveTtlMs: 30_000,
+            negativeTtlMs: 5_000,
+        });
+
+        cache.recordMachineRpcDirectRouteUnavailable(
+            {
+                remoteMachineId: 'machine-target',
+            },
+            'machine_rpc_direct_unavailable',
+        );
+
+        cache.invalidateMachineRpcDirectRoutesForMachine('machine-target');
+
+        expect(cache.readMachineRpcDirectRoute({
+            remoteMachineId: 'machine-target',
+        })).toEqual({ status: 'unknown' });
     });
 
     it('keeps machine-rpc-direct cache entries distinct from direct-peer endpoint cache entries', () => {

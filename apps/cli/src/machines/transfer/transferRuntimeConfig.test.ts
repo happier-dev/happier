@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { resolveMachineTransferRuntimeConfig } from './transferRuntimeConfig';
+import { isLoopbackTransferBindHost, resolveMachineTransferRuntimeConfig } from './transferRuntimeConfig';
 
 describe('resolveMachineTransferRuntimeConfig', () => {
   afterEach(() => {
@@ -10,6 +10,9 @@ describe('resolveMachineTransferRuntimeConfig', () => {
     delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_HOST;
     delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT;
     delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_IDLE_STOP_MS;
+    delete process.env.HAPPIER_MACHINE_TRANSFER_TAILSCALE_SERVE_ENABLED;
+    delete process.env.HAPPIER_MACHINE_TRANSFER_TAILSCALE_SERVE_PATH;
+    delete process.env.HAPPIER_MACHINE_TRANSFER_TAILSCALE_SERVE_HTTPS_PORT;
     delete process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS;
   });
 
@@ -66,5 +69,33 @@ describe('resolveMachineTransferRuntimeConfig', () => {
     expect(resolved.directPeer.bindHost).toBe('127.0.0.1');
     expect(resolved.directPeer.bindPort).toBe(46001);
     expect(resolved.directPeer.advertisedHosts).toEqual(['127.0.0.1']);
+    expect(resolved.tailscaleServe).toEqual({
+      enabled: false,
+      servePath: '/__happier/transfer',
+      httpsPort: 443,
+    });
+  });
+
+  it('reads transfer-specific tailscale serve runtime config from the canonical resolver', () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_TAILSCALE_SERVE_ENABLED = 'true';
+    process.env.HAPPIER_MACHINE_TRANSFER_TAILSCALE_SERVE_PATH = 'machine-transfer';
+    process.env.HAPPIER_MACHINE_TRANSFER_TAILSCALE_SERVE_HTTPS_PORT = '8443';
+
+    const resolved = resolveMachineTransferRuntimeConfig({
+      networkInterfacesFn: () => ({}),
+    });
+
+    expect(resolved.tailscaleServe).toEqual({
+      enabled: true,
+      servePath: '/machine-transfer',
+      httpsPort: 8443,
+    });
+  });
+
+  it('treats localhost as loopback-safe for transfer bind-host posture decisions', () => {
+    expect(isLoopbackTransferBindHost('localhost')).toBe(true);
+    expect(isLoopbackTransferBindHost('  LOCALHOST  ')).toBe(true);
+    expect(isLoopbackTransferBindHost('127.0.0.1')).toBe(true);
+    expect(isLoopbackTransferBindHost('0.0.0.0')).toBe(false);
   });
 });

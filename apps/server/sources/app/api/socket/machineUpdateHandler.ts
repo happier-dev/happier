@@ -8,6 +8,7 @@ import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { afterTx, inTx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { recordMachineAlive } from "@/app/presence/presenceRecorder";
+import { DirectSessionTranscriptDeltaEphemeralSchema } from "@happier-dev/protocol";
 
 export function machineUpdateHandler(userId: string, socket: Socket) {
     socket.on('machine-alive', async (data: {
@@ -49,6 +50,35 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
             });
         } catch (error) {
             log({ module: 'websocket', level: 'error' }, `Error in machine-alive: ${error}`);
+        }
+    });
+
+    socket.on('direct-session-transcript-delta', async (data: unknown) => {
+        try {
+            websocketEventsCounter.inc({ event_type: 'direct-session-transcript-delta' });
+
+            const clientType = typeof (socket.data as any)?.clientType === 'string'
+                ? (socket.data as any).clientType
+                : '';
+            const machineId = typeof (socket.data as any)?.machineId === 'string'
+                ? (socket.data as any).machineId
+                : '';
+            if (clientType !== 'machine-scoped' || !machineId) {
+                return;
+            }
+
+            const parsed = DirectSessionTranscriptDeltaEphemeralSchema.strip().safeParse(data);
+            if (!parsed.success) {
+                return;
+            }
+
+            eventRouter.emitEphemeral({
+                userId,
+                payload: parsed.data as any,
+                recipientFilter: { type: 'all-interested-in-session', sessionId: parsed.data.sessionId },
+            });
+        } catch (error) {
+            log({ module: 'websocket', level: 'error' }, `Error in direct-session-transcript-delta handler: ${error}`);
         }
     });
 
@@ -155,13 +185,14 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
                     return null;
                 }
 
+                const activeAt = Date.now();
                 const { count } = await tx.machine.updateMany({
                     where: { accountId: userId, id: machineId, daemonStateVersion: expectedVersion, revokedAt: null },
                     data: {
                         daemonState,
                         daemonStateVersion: expectedVersion + 1,
                         active: true,
-                        lastActiveAt: new Date(),
+                        lastActiveAt: new Date(activeAt),
                     },
                 });
 
@@ -181,7 +212,17 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
                 const cursor = await markAccountChanged(tx, { accountId: userId, kind: 'machine', entityId: machineId });
                 const daemonStateUpdate = { value: daemonState, version: expectedVersion + 1 };
                 afterTx(tx, () => {
-                    const updatePayload = buildUpdateMachineUpdate(machineId, cursor, randomKeyNaked(12), undefined, daemonStateUpdate);
+                    const updatePayload = buildUpdateMachineUpdate(
+                        machineId,
+                        cursor,
+                        randomKeyNaked(12),
+                        undefined,
+                        daemonStateUpdate,
+                        {
+                            active: true,
+                            activeAt,
+                        },
+                    );
                     eventRouter.emitUpdate({
                         userId,
                         payload: updatePayload,

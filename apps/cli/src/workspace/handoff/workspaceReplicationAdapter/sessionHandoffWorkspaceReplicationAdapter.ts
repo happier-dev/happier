@@ -11,6 +11,7 @@ import type {
 import { relative, resolve, sep } from 'node:path';
 
 import { rewriteDirectPeerEndpointCandidatesForTransferId } from '@/machines/transfer/rewriteDirectPeerEndpointCandidatesForTransferId';
+import { requestDirectPeerTransferToFileWithRetry } from '@/machines/transfer/requestDirectPeerTransferToFileWithRetry';
 import type { TransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
 import type { ScmSourceControllerWorkspaceExportArtifacts } from '@/scm/sourceController/workspaceExportArtifacts';
 import { buildWorkspaceExportArtifactsWithSourceController } from '@/scm/sourceController/workspaceTransferResolution';
@@ -46,7 +47,7 @@ type DirectPeerTransferPublisher = Readonly<{
     transferId: string;
     payload: Readonly<Record<never, never>>;
     payloadSource?: TransferPayloadSource;
-  }>) => readonly TransferEndpointCandidate[];
+  }>) => readonly TransferEndpointCandidate[] | Promise<readonly TransferEndpointCandidate[]>;
 }>;
 
 type MachineTransferChannel = Readonly<{
@@ -65,6 +66,20 @@ export type SessionHandoffWorkspaceReplicationSourceOffer =
 
 function isMissingPathError(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT';
+}
+
+function isDirectPeerTransferUnavailableError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return (
+    error.name === 'AbortError'
+    || error.name === 'TimeoutError'
+    || error.message.includes('status 401')
+    || error.message.includes('status 404')
+    || error.message.includes('status 503')
+    || error.message.includes('fetch failed')
+  );
 }
 
 function resolveSafeWorkspaceFilePath(params: Readonly<{
@@ -219,6 +234,7 @@ export async function prepareSessionHandoffWorkspaceTarget(input: Readonly<{
   metadata?: SessionHandoffWorkspaceReplicationMetadata;
   directPeerManifestEndpointCandidates?: readonly TransferEndpointCandidate[];
   machineTransferChannel?: MachineTransferChannel;
+  allowServerRoutedFallback?: boolean;
   transfers: WorkspaceReplicationTransfers;
   blobPackTargetBytes: number;
   blobPackMaxBlobs: number;
@@ -355,27 +371,54 @@ export async function prepareSessionHandoffWorkspaceTarget(input: Readonly<{
               throw new Error('Direct peer transfer is unavailable for workspace replication');
             }
             const safePackId = assertSafeWorkspaceReplicationPackId(packId);
-            const transferId = buildSessionHandoffWorkspaceDirectPeerBlobPackTransferId({
-              handoffId: input.handoffId,
-              packId: safePackId,
-            });
-            await input.transfers.requestDirectPeerBlobPackToFile({
+          const transferId = buildSessionHandoffWorkspaceDirectPeerBlobPackTransferId({
+            handoffId: input.handoffId,
+            packId: safePackId,
+          });
+            const directPeerEndpointCandidates = rewriteDirectPeerEndpointCandidatesForTransferId({
+              endpointCandidates,
               transferId,
-              endpointCandidates: rewriteDirectPeerEndpointCandidatesForTransferId({
-                endpointCandidates,
-                transferId,
-              }),
-              destinationPath,
-              openBody: {
-                t: 'workspace_replication_blob_pack_v1',
-                packId: safePackId,
-                digests: [...digests],
-              },
-              ...(typeof input.serverRoutedTransferTimeoutMs === 'number'
-                ? { timeoutMs: input.serverRoutedTransferTimeoutMs }
-                : {}),
             });
-            return;
+            const openBody = {
+              t: 'workspace_replication_blob_pack_v1',
+              packId: safePackId,
+              digests: [...digests],
+            };
+            try {
+              await requestDirectPeerTransferToFileWithRetry({
+                requestTransferToFile: input.transfers.requestDirectPeerBlobPackToFile,
+                transferId,
+                endpointCandidates: directPeerEndpointCandidates,
+                destinationPath,
+                openBody,
+                ...(typeof input.serverRoutedTransferTimeoutMs === 'number'
+                  ? { timeoutMs: input.serverRoutedTransferTimeoutMs }
+                  : {}),
+              });
+              return;
+            } catch (error) {
+              if (
+                input.allowServerRoutedFallback === true
+                && input.machineTransferChannel
+                && isDirectPeerTransferUnavailableError(error)
+              ) {
+                await input.transfers.requestServerRoutedBlobPackToFile({
+                  transferId: buildSessionHandoffWorkspaceBlobPackTransferId({
+                    handoffId: input.handoffId,
+                    packId: safePackId,
+                  }),
+                  sourceMachineId: input.sourceMachineId,
+                  machineTransferChannel: input.machineTransferChannel,
+                  destinationPath,
+                  openBody,
+                  ...(typeof input.serverRoutedTransferTimeoutMs === 'number'
+                    ? { timeoutMs: input.serverRoutedTransferTimeoutMs }
+                    : {}),
+                });
+                return;
+              }
+              throw error;
+            }
           }
           throw new Error(`Unexpected workspace blob-pack request for ${packId} (${input.actualTransportStrategy})`);
         },

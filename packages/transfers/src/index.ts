@@ -29,4 +29,5 @@ export {
     isServerRoutedTransferOverSizeLimit,
     resolveServerRoutedTransferMaxBytesFromEnv,
     resolveServerRoutedTransferMaxBytesFromFeatures,
+    SESSION_ROUTED_FILE_TRANSFER_TOO_LARGE_ERROR,
 } from './policy/serverRoutedTransferPolicy.js';

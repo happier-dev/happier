@@ -26,6 +26,7 @@ export type MachineTransferRouteCache = Readonly<{
     readMachineRpcDirectRoute: (input: MachineRpcDirectRouteInput) => TransferRouteViabilityRecord;
     recordMachineRpcDirectRouteViable: (input: MachineRpcDirectRouteInput) => void;
     recordMachineRpcDirectRouteUnavailable: (input: MachineRpcDirectRouteInput, failureReason: string) => void;
+    invalidateMachineRpcDirectRoutesForMachine: (remoteMachineId: string) => void;
 }>;
 
 export function createMachineTransferRouteCache(params: Readonly<{
@@ -83,6 +84,13 @@ export function createMachineTransferRouteCache(params: Readonly<{
         },
         recordMachineRpcDirectRouteUnavailable(input, failureReason) {
             cache.recordUnavailable(buildMachineRpcDirectCacheKey(input), failureReason);
+        },
+        invalidateMachineRpcDirectRoutesForMachine(remoteMachineId) {
+            cache.invalidate({
+                serverId: params.serverId,
+                targetMachineId: remoteMachineId,
+                routeKind: 'machine_rpc_direct',
+            });
         },
     };
 }
