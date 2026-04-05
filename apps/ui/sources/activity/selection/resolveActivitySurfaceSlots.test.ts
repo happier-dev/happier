@@ -153,4 +153,58 @@ describe('resolveActivitySurfaceSlots', () => {
         expect(slots.primarySession?.sessionId).toBe('permission');
         expect(slots.overflowCount).toBe(0);
     });
+
+    it('can include quiet active sessions without forcing in attention-required sessions', () => {
+        const overview = buildActivityOverviewSnapshot({
+            sessions: [
+                createSessionFixture({
+                    id: 'permission',
+                    active: true,
+                    presence: 'online',
+                    pendingPermissionRequestCount: 1,
+                }),
+                createSessionFixture({
+                    id: 'quiet-active',
+                    active: true,
+                    presence: 'online',
+                    metadata: {
+                        path: '/Users/tester/project/quiet-active',
+                        host: 'tester.local',
+                        homeDir: '/Users/tester',
+                        summary: { text: 'Quiet active work', updatedAt: 2 },
+                    },
+                }),
+                createSessionFixture({
+                    id: 'quiet-inactive',
+                    active: false,
+                    presence: 'offline',
+                    metadata: {
+                        path: '/Users/tester/project/quiet-inactive',
+                        host: 'tester.local',
+                        homeDir: '/Users/tester',
+                        summary: { text: 'Quiet inactive work', updatedAt: 1 },
+                    },
+                }),
+            ],
+            nowMs: 1_000,
+        });
+
+        const slots = resolveActivitySurfaceSlots({
+            overview,
+            selection: {
+                surfaceId: 'desktop_overlay',
+                enabled: true,
+                mode: 'running',
+                selectionReason: 'all_eligible',
+                maxSelected: null,
+                includeUrgent: false,
+                includeReady: false,
+                includeThinking: false,
+                includeQuietActive: true,
+            },
+        });
+
+        expect(slots.selectedSessions.map((candidate) => candidate.sessionId)).toEqual(['quiet-active']);
+        expect(slots.primarySession?.sessionId).toBe('quiet-active');
+    });
 });

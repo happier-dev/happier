@@ -1,15 +1,22 @@
 import type { SessionActivityAttention } from '@/activity/attention/activityAttentionTypes';
 
-import type { ActivitySurfaceSlots, ResolveActivitySurfaceSlotsParams } from './activitySurfaceSelectionTypes';
+import type {
+    ActivitySurfaceSelectionSpec,
+    ActivitySurfaceSlots,
+    ResolveActivitySurfaceSlotsParams,
+} from './activitySurfaceSelectionTypes';
 
-function isUrgentCandidate(candidate: SessionActivityAttention, includeReady: boolean): boolean {
+function isUrgentCandidate(candidate: SessionActivityAttention, selection: Pick<
+    ActivitySurfaceSelectionSpec,
+    'includeUrgent' | 'includeReady'
+>): boolean {
     switch (candidate.attentionState) {
         case 'permission_required':
         case 'action_required':
         case 'pending':
-            return true;
+            return selection.includeUrgent;
         case 'unread':
-            return includeReady;
+            return selection.includeReady;
         case 'thinking':
         case 'quiet':
         default:
@@ -17,15 +24,23 @@ function isUrgentCandidate(candidate: SessionActivityAttention, includeReady: bo
     }
 }
 
-function isRunningCandidate(candidate: SessionActivityAttention, params: Readonly<{
-    includeReady: boolean;
-    includeThinking: boolean;
-}>): boolean {
-    if (isUrgentCandidate(candidate, params.includeReady)) {
+function isRunningCandidate(candidate: SessionActivityAttention, selection: Pick<
+    ActivitySurfaceSelectionSpec,
+    'includeUrgent' | 'includeReady' | 'includeThinking' | 'includeQuietActive'
+>): boolean {
+    if (isUrgentCandidate(candidate, selection)) {
         return true;
     }
 
-    return params.includeThinking && candidate.attentionState === 'thinking';
+    if (selection.includeThinking && candidate.attentionState === 'thinking') {
+        return true;
+    }
+
+    return (
+        selection.includeQuietActive &&
+        candidate.attentionState === 'quiet' &&
+        candidate.session.active === true
+    );
 }
 
 function resolveEligibleSessions(
@@ -38,30 +53,21 @@ function resolveEligibleSessions(
     switch (params.selection.mode) {
         case 'focused':
             return params.overview.candidates.filter((candidate) =>
-                isRunningCandidate(candidate, {
-                    includeReady: params.selection.includeReady,
-                    includeThinking: params.selection.includeThinking,
-                }),
+                isRunningCandidate(candidate, params.selection),
             );
         case 'attention':
             return params.overview.candidates.filter((candidate) =>
-                isUrgentCandidate(candidate, params.selection.includeReady),
+                isUrgentCandidate(candidate, params.selection),
             );
         case 'running':
             return params.overview.candidates.filter((candidate) =>
-                isRunningCandidate(candidate, {
-                    includeReady: params.selection.includeReady,
-                    includeThinking: params.selection.includeThinking,
-                }),
+                isRunningCandidate(candidate, params.selection),
             );
         case 'summary':
             return params.overview.candidates.filter((candidate) => candidate.hasAttention);
         default:
             return params.overview.candidates.filter((candidate) =>
-                isRunningCandidate(candidate, {
-                    includeReady: params.selection.includeReady,
-                    includeThinking: params.selection.includeThinking,
-                }),
+                isRunningCandidate(candidate, params.selection),
             );
     }
 }

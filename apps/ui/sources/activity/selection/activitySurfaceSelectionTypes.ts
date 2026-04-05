@@ -11,8 +11,10 @@ export type ActivitySurfaceSelectionSpec = Readonly<{
     mode: ActivitySurfaceSelectionMode;
     selectionReason: ActivitySurfaceSelectionReason;
     maxSelected: number | null;
+    includeUrgent: boolean;
     includeReady: boolean;
     includeThinking: boolean;
+    includeQuietActive: boolean;
 }>;
 
 export type ResolveActivitySurfaceSlotsParams = Readonly<{
@@ -41,8 +43,10 @@ export function createLiveActivitySelectionSpec(policy: ActivitySurfacePolicy): 
         maxSelected: policy.liveActivities.strategy === 'session_specific'
             ? policy.liveActivities.maxConcurrent
             : 1,
+        includeUrgent: true,
         includeReady: policy.liveActivities.includeReady,
         includeThinking: policy.liveActivities.includeThinking,
+        includeQuietActive: false,
     };
 }
 
@@ -53,7 +57,9 @@ export function createWidgetSelectionSpec(policy: ActivitySurfacePolicy): Activi
         mode: policy.widgets.mode,
         selectionReason: 'all_eligible',
         maxSelected: null,
+        includeUrgent: true,
         includeReady: true,
         includeThinking: true,
+        includeQuietActive: false,
     };
 }

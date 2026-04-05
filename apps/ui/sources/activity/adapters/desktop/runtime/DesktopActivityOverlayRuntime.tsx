@@ -4,7 +4,7 @@ import { router } from 'expo-router';
 import { parseActivityInteraction } from '@/activity/actions/parseActivityInteraction';
 import { resolveActivitySurfacePolicy } from '@/activity/attention/resolveActivitySurfacePolicy';
 import { buildDesktopActivityOverlayModel } from '@/activity/adapters/desktop/presentation/buildDesktopActivityOverlayModel';
-import { buildActivitySurfaceSnapshot } from '@/activity/presentation/activitySurfaceSnapshot';
+import { buildDesktopActivityOverlaySnapshot } from '@/activity/adapters/desktop/presentation/buildDesktopActivityOverlaySnapshot';
 import { useAllSessions, useLocalSettings } from '@/sync/domains/state/storage';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -46,8 +46,12 @@ export function DesktopActivityOverlayRuntime(): React.ReactElement | null {
         [localSettings],
     );
     const snapshot = React.useMemo(
-        () => buildActivitySurfaceSnapshot({ sessions, policy: activityPolicy }),
-        [activityPolicy, sessions],
+        () => buildDesktopActivityOverlaySnapshot({
+            sessions,
+            activityPolicy,
+            desktopPolicy,
+        }),
+        [activityPolicy, desktopPolicy, sessions],
     );
     const model = React.useMemo(
         () => buildDesktopActivityOverlayModel({
