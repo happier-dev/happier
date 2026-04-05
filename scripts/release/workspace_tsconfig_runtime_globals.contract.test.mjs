@@ -49,3 +49,14 @@ test('transfers packaged postinstall build declares the Web and Node runtime glo
     'packages/transfers/package.json should declare @types/node for its Node-typed postinstall build'
   );
 });
+
+test('agents packaged postinstall build declares the Web runtime globals it uses', async () => {
+  const tsconfig = await readJson('packages/agents/tsconfig.json');
+  const libs = tsconfig?.compilerOptions?.lib;
+
+  assert.ok(Array.isArray(libs), 'packages/agents/tsconfig.json should declare compilerOptions.lib');
+  assert.ok(
+    libs.includes('DOM'),
+    'packages/agents/tsconfig.json should include DOM so isolated package builds typecheck URL'
+  );
+});
