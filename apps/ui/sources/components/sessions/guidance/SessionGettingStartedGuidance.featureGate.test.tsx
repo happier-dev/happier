@@ -42,10 +42,20 @@ vi.mock('@/hooks/session/useConnectTerminal', () => ({
     }),
 }));
 
-vi.mock('@/hooks/session/useVisibleSessionListSummary', () => ({
-    useVisibleSessionListSummary: () => ({
-        sessionsReady: true,
-        sessionCount: 0,
+vi.mock('@/hooks/session/useVisibleSessionListSummaryState', () => ({
+    useVisibleSessionListSummaryState: () => ({
+        selection: {
+            enabled: true,
+            presentation: 'grouped',
+            activeServerId: 's1',
+            allowedServerIds: ['s1'],
+            explicit: false,
+            activeTarget: { kind: 'server', id: 's1', serverId: 's1' },
+        },
+        summary: {
+            sessionsReady: true,
+            sessionCount: 0,
+        },
     }),
 }));
 
