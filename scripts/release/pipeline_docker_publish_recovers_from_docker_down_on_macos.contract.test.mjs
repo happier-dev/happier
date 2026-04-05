@@ -113,3 +113,88 @@ test('docker publish attempts to start Docker Desktop on macOS when docker info 
   assert.match(out, /\bOPEN -a Docker\b/);
   assert.match(out, /^BUILD\b/m);
 });
+
+test('docker publish honors configured Docker Desktop startup timeout before failing', () => {
+  if (process.platform !== 'darwin') {
+    return;
+  }
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-pipeline-docker-timeout-'));
+  const binDir = path.join(dir, 'bin');
+  fs.mkdirSync(binDir, { recursive: true });
+
+  const dockerPath = path.join(binDir, 'docker');
+  writeExecutable(
+    dockerPath,
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'if [ "${1-}" = "info" ]; then',
+      '  echo "Cannot connect to the Docker daemon at unix:///Users/example/.docker/run/docker.sock. Is the docker daemon running?" >&2',
+      '  exit 1',
+      'fi',
+      'if [ "${1-}" = "login" ]; then',
+      '  echo "LOGIN $*"',
+      '  cat >/dev/null || true',
+      '  exit 0',
+      'fi',
+      'echo "unexpected docker subcommand: ${1-}" >&2',
+      'exit 1',
+      '',
+    ].join('\n'),
+  );
+
+  const openPath = path.join(binDir, 'open');
+  writeExecutable(
+    openPath,
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'echo "OPEN $*"',
+      'exit 0',
+      '',
+    ].join('\n'),
+  );
+
+  const env = {
+    ...process.env,
+    DOCKERHUB_USERNAME: 'happierdev',
+    DOCKERHUB_TOKEN: 'docker-token',
+    HAPPIER_PIPELINE_DOCKER_START_TIMEOUT_MS: '50',
+    HAPPIER_PIPELINE_DOCKER_START_POLL_INTERVAL_MS: '5',
+    PATH: `${binDir}:${process.env.PATH ?? ''}`,
+  };
+
+  let failure = null;
+  try {
+    execFileSync(
+      process.execPath,
+      [
+        path.join(repoRoot, 'scripts', 'pipeline', 'docker', 'publish-images.mjs'),
+        '--channel',
+        'preview',
+        '--sha',
+        '0123456789abcdef0123456789abcdef01234567',
+        '--push-latest',
+        'false',
+        '--build-relay',
+        'true',
+        '--build-dev-box',
+        'false',
+      ],
+      {
+        cwd: repoRoot,
+        env,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 20_000,
+      },
+    );
+  } catch (err) {
+    failure = err;
+  }
+
+  assert.ok(failure, 'expected Docker publish preflight to fail when the daemon never becomes ready');
+  assert.equal(failure?.status, 1);
+  assert.match(String(failure?.stderr ?? ''), /\[pipeline\] docker preflight failed: Docker daemon is not responding\./);
+});

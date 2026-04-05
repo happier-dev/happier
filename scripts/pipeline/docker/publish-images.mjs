@@ -15,6 +15,8 @@ function fail(message) {
 const MULTIARCH_BUILDER_NAME = 'happier-multiarch';
 const MULTIARCH_BUILDER_FALLBACK_NAME = 'happier-multiarch-docker-container';
 const DEFAULT_BUILD_RETRIES = 2;
+const DEFAULT_DOCKER_START_TIMEOUT_MS = 3 * 60_000;
+const DEFAULT_DOCKER_START_POLL_INTERVAL_MS = 1_000;
 
 /**
  * @param {number} ms
@@ -33,6 +35,21 @@ function parseBool(value, name) {
   if (raw === 'true') return true;
   if (raw === 'false') return false;
   fail(`${name} must be 'true' or 'false' (got: ${value})`);
+}
+
+/**
+ * @param {string} name
+ * @param {number} defaultValue
+ * @returns {number}
+ */
+function readPositiveIntegerEnv(name, defaultValue) {
+  const raw = String(process.env[name] ?? '').trim();
+  if (!raw) return defaultValue;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    fail(`${name} must be a positive integer (got: ${raw || '<empty>'})`);
+  }
+  return parsed;
 }
 
 /**
@@ -205,6 +222,14 @@ async function runDockerBuildxBuildWithRetry(opts) {
  * @param {{ dryRun: boolean }} opts
  */
 function dockerPreflight(opts) {
+  const startupTimeoutMs = readPositiveIntegerEnv(
+    'HAPPIER_PIPELINE_DOCKER_START_TIMEOUT_MS',
+    DEFAULT_DOCKER_START_TIMEOUT_MS,
+  );
+  const pollIntervalMs = readPositiveIntegerEnv(
+    'HAPPIER_PIPELINE_DOCKER_START_POLL_INTERVAL_MS',
+    DEFAULT_DOCKER_START_POLL_INTERVAL_MS,
+  );
   console.log('[pipeline] docker preflight: docker info');
   try {
     run('docker', ['info'], { dryRun: opts.dryRun, stdio: 'pipe', timeoutMs: 10_000 });
@@ -219,14 +244,14 @@ function dockerPreflight(opts) {
         console.warn(`[pipeline] docker preflight: failed to start Docker Desktop via open: ${openMsg}`);
       }
 
-      const deadlineMs = Date.now() + 60_000;
+      const deadlineMs = Date.now() + startupTimeoutMs;
       while (Date.now() < deadlineMs) {
         try {
           run('docker', ['info'], { dryRun: false, stdio: 'pipe', timeoutMs: 10_000 });
           console.warn('[pipeline] docker preflight: Docker is up');
           return;
         } catch {
-          sleepSync(1_000);
+          sleepSync(pollIntervalMs);
         }
       }
     }
