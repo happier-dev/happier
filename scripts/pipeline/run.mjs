@@ -3979,8 +3979,9 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
 
             // Plan: compute changed components (main..dev) and resolve bump/publish plan.
             console.log('[pipeline] release: fetching origin main/dev/preview for plan');
-            const fetchTagsArg = dryRun ? '--no-tags' : '--tags';
-            execFileSync('git', ['fetch', 'origin', 'main', 'dev', 'preview', '--prune', fetchTagsArg], {
+            // Release planning only needs branch refs. Rolling tags move during publishing,
+            // so syncing tags here can fail with "would clobber existing tag" on healthy repos.
+            execFileSync('git', ['fetch', 'origin', 'main', 'dev', 'preview', '--prune', '--no-tags'], {
               cwd: repoRoot,
               env: process.env,
               stdio: 'inherit',

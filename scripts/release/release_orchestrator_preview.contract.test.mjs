@@ -243,3 +243,18 @@ test('release workflow can pass a top-level release message down to promote-ui f
   assert.match(raw, /deploy_ui:[\s\S]*?uses:\s*\.\/\.github\/workflows\/promote-ui\.yml/);
   assert.match(raw, /expo_update_message:\s*\$\{\{\s*inputs\.release_message\s*\}\}/);
 });
+
+test('local release planning fetches branches without syncing rolling tags', async () => {
+  const run = await loadFile('scripts/pipeline/run.mjs');
+
+  assert.match(
+    run,
+    /execFileSync\('git', \['fetch', 'origin', 'main', 'dev', 'preview', '--prune', '--no-tags'\]/,
+    'local release planning should fetch only branches; rolling tags move independently and must not break planning',
+  );
+  assert.doesNotMatch(
+    run,
+    /const fetchTagsArg = dryRun \? '--no-tags' : '--tags';/,
+    'local release planning should not switch to --tags during mutating runs',
+  );
+});
