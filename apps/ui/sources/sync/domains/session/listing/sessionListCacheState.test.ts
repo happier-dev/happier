@@ -9,6 +9,7 @@ import {
     resolveSessionListCachedSessionServerIdFromState,
 } from './sessionListCacheState';
 import {
+    findServerScopedSessionListCacheSession,
     listServerScopedSessionListCacheServers,
     listServerScopedSessionListCacheSessions,
 } from './serverScopedSessionListCache';
@@ -64,6 +65,26 @@ describe('sessionListCacheState', () => {
             session: { id: 's2', updatedAt: 7 },
         });
         expect(findSessionListCachedSession(state, 'missing')).toBeNull();
+    });
+
+    it('reuses the side-server cache entry object when the active list has no match', () => {
+        const state: any = {
+            sessionListViewData: [],
+            sessionListViewDataByServerId: {
+                'side-server': [
+                    {
+                        type: 'session',
+                        serverId: 'side-server',
+                        serverName: 'Side',
+                        session: { id: 's2', updatedAt: 7 },
+                    },
+                ],
+            },
+        };
+
+        const scopedMatch = findServerScopedSessionListCacheSession(state.sessionListViewDataByServerId, 's2');
+
+        expect(findSessionListCachedSession(state, 's2')).toBe(scopedMatch);
     });
 
     it('resolves the direct session-map serverId before cached list data', () => {
