@@ -23,6 +23,16 @@ export type VisibleSessionListSummary = Readonly<{
     sessionCount: number;
 }>;
 
+const EMPTY_VISIBLE_SESSION_LIST_SUMMARY: VisibleSessionListSummary = Object.freeze({
+    sessionsReady: true,
+    sessionCount: 0,
+});
+
+const LOADING_VISIBLE_SESSION_LIST_SUMMARY: VisibleSessionListSummary = Object.freeze({
+    sessionsReady: false,
+    sessionCount: 0,
+});
+
 function toServerLabel(item: SessionListViewItem): string {
     const name = String(item.serverName ?? '').trim();
     if (name) return name;
@@ -198,11 +208,15 @@ export function resolveVisibleSessionListSummary(
 ): VisibleSessionListSummary {
     const countForSource = (source: ReadonlyArray<SessionListViewItem> | null): VisibleSessionListSummary => {
         if (source === null) {
-            return { sessionsReady: false, sessionCount: 0 };
+            return LOADING_VISIBLE_SESSION_LIST_SUMMARY;
+        }
+        const sessionCount = countSessionItemsByStorageFilter(source, storageFilter);
+        if (sessionCount === 0) {
+            return EMPTY_VISIBLE_SESSION_LIST_SUMMARY;
         }
         return {
             sessionsReady: true,
-            sessionCount: countSessionItemsByStorageFilter(source, storageFilter),
+            sessionCount,
         };
     };
 
@@ -231,6 +245,9 @@ export function resolveVisibleSessionListSummary(
     }
 
     if (hasResolvedSelectedSource) {
+        if (sessionCount === 0) {
+            return EMPTY_VISIBLE_SESSION_LIST_SUMMARY;
+        }
         return { sessionsReady: true, sessionCount };
     }
 

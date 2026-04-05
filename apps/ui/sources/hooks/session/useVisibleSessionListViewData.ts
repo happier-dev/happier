@@ -43,12 +43,18 @@ export function useVisibleSessionListViewData(storageFilter: SessionListStorageF
             pinnedSessionKeysV1,
             sessionListGroupOrderV1: sessionListOrderingModeV1 === 'custom' ? normalizedGroupOrder : sessionListGroupOrderV1,
             sessionListOrderingModeV1,
-            presentation: selection.presentation,
+            presentation: {
+                enabled: selection.enabled,
+                presentation: selection.presentation,
+                selectedServerIds: selection.allowedServerIds,
+            },
         });
         if (!visible || storageFilter === 'all') return visible;
         return filterSessionListViewDataByStorageKind(visible, storageFilter);
     }, [
         hideInactiveSessions,
+        selection.allowedServerIds,
+        selection.enabled,
         pinnedSessionKeysV1,
         normalizedGroupOrder,
         selection.presentation,

@@ -16,6 +16,7 @@ import { showSwitchBranchWithChangesDialog } from '@/components/workspaces/scm/b
 import { t } from '@/text';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { buildWorkspaceScmBranchPopoverItems } from '@/components/workspaces/scm/branches/buildWorkspaceScmBranchPopoverItems';
+import { filterVisibleRepoWorktreeRows } from '@/components/workspaces/scm/worktrees/filterVisibleRepoWorktreeRows';
 import { WorkspaceScmBranchPopover } from '@/components/workspaces/scm/branches/WorkspaceScmBranchPopover';
 import {
     hasUncommittedChanges,
@@ -62,7 +63,7 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
 
     const worktreeRows = React.useMemo(() => {
         const worktrees = snapshot?.repo.worktrees ?? [];
-        return [...worktrees].sort((left, right) => {
+        return [...filterVisibleRepoWorktreeRows(worktrees)].sort((left, right) => {
             if (left.isCurrent === true && right.isCurrent !== true) return -1;
             if (left.isCurrent !== true && right.isCurrent === true) return 1;
             return (left.branch ?? left.path).localeCompare(right.branch ?? right.path);

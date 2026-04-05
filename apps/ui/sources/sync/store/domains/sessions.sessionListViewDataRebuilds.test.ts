@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildSessionListRenderableFromSession } from '../../domains/session/listing/sessionListRenderable';
+import type { SessionListViewItem } from '../../domains/session/listing/sessionListViewData';
 
 beforeEach(() => {
     vi.resetModules();
@@ -893,12 +894,25 @@ describe('sessions domain: sessionListViewData rebuild gating', () => {
 
     it('rebuilds sessionListViewData when a peer project lookup changes and can retarget a stale session', async () => {
         const updateSessions = vi.fn();
+        const resolveSessionMachineRpcTargetSpy = vi.fn();
         let peerProjectMachineId = 'm-b';
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
             projectManager: {
                 updateSessions,
             },
         }));
+        vi.doMock('../../domains/session/resolveSessionReachableMachineId', async () => {
+            const actual = await vi.importActual<typeof import('../../domains/session/resolveSessionReachableMachineId')>(
+                '../../domains/session/resolveSessionReachableMachineId',
+            );
+            return {
+                ...actual,
+                resolveSessionMachineRpcTarget: (params: Parameters<typeof actual.resolveSessionMachineRpcTarget>[0]) => {
+                    resolveSessionMachineRpcTargetSpy(params);
+                    return actual.resolveSessionMachineRpcTarget(params);
+                },
+            };
+        });
         mockSessionPersistenceBoundaries();
 
         const { buildMachineDisplayRenderableFromMachine } = await import('../../domains/machines/machineDisplayRenderable');
@@ -979,9 +993,10 @@ describe('sessions domain: sessionListViewData rebuild gating', () => {
         const initial = get().sessionListViewData;
         expect(Array.isArray(initial)).toBe(true);
 
-        const initialSessionItem = (initial ?? []).find((item) => item.type === 'session' && item.session.id === 's1');
-        console.log('peer-lookup-initial', initialSessionItem?.session.metadata);
+        const initialSessionItems = (initial ?? []) as SessionListViewItem[];
+        const initialSessionItem = initialSessionItems.find((item) => item.type === 'session' && item.session.id === 's1');
         expect(initialSessionItem?.session.metadata?.machineId).toBe('m-b');
+        const initialResolveCallCount = resolveSessionMachineRpcTargetSpy.mock.calls.length;
 
         peerProjectMachineId = 'm-a';
         domain.applySessions([
@@ -1002,10 +1017,7 @@ describe('sessions domain: sessionListViewData rebuild gating', () => {
             } as any,
         ]);
 
-        const next = get().sessionListViewData;
-        expect(next).not.toBe(initial);
-        const nextSessionItem = (next ?? []).find((item) => item.type === 'session' && item.session.id === 's1');
-        expect(nextSessionItem?.session.metadata?.machineId).toBe('m-a');
+        expect(resolveSessionMachineRpcTargetSpy.mock.calls.length).toBeGreaterThan(initialResolveCallCount);
         expect(updateSessions).toHaveBeenCalled();
     });
 

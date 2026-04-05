@@ -314,7 +314,7 @@ describe('resolveVisibleSessionListSummary', () => {
     });
 
     it('reports loading when no selected source has hydrated yet', () => {
-        expect(resolveVisibleSessionListSummary({
+        const first = resolveVisibleSessionListSummary({
             enabled: true,
             activeServerId: 'server-a',
             activeData: null,
@@ -322,7 +322,19 @@ describe('resolveVisibleSessionListSummary', () => {
                 'server-b': null,
             },
             selectedServerIds: ['server-b'],
-        })).toEqual({
+        });
+        const second = resolveVisibleSessionListSummary({
+            enabled: true,
+            activeServerId: 'server-a',
+            activeData: null,
+            byServerId: {
+                'server-b': null,
+            },
+            selectedServerIds: ['server-b'],
+        });
+
+        expect(first).toBe(second);
+        expect(first).toEqual({
             sessionsReady: false,
             sessionCount: 0,
         });

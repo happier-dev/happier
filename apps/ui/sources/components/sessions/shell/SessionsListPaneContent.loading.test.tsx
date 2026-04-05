@@ -68,6 +68,9 @@ describe('SessionsListPaneContent (loading)', () => {
         const { SessionsListPaneContent } = await import('./SessionsListPaneContent');
         const screen = await renderScreen(
             <SessionsListPaneContent storageKind="persisted" fallbackGuidanceVariant="sidebar" />,
+            {
+                flushOptions: { cycles: 0 },
+            },
         );
 
         expect(screen.findByType('ActivityIndicator' as any)).toBeTruthy();

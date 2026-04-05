@@ -1,10 +1,14 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
+import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { readDisplayMachineIdForSession, readDisplayPathForSession } from '@/sync/ops/sessionMachineTarget';
+
+type RecentPathSessionSource = Pick<Session, 'id' | 'createdAt' | 'updatedAt' | 'metadata'>
+    | Pick<SessionListRenderableSession, 'id' | 'createdAt' | 'updatedAt' | 'metadata'>;
 
 export function getRecentPathsForMachine(params: {
     machineId: string;
     recentMachinePaths: ReadonlyArray<Readonly<{ machineId: string; path: string }>>;
-    sessions: ReadonlyArray<Session | string> | null | undefined;
+    sessions: ReadonlyArray<RecentPathSessionSource | string> | null | undefined;
 }): string[] {
     const paths: string[] = [];
     const pathSet = new Set<string>();

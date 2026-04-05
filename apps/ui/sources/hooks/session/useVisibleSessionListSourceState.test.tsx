@@ -35,7 +35,7 @@ const sourceState = vi.hoisted(() => ({
             serverId: 'srv-a',
             serverName: 'Server A',
         },
-    ] as ReadonlyArray<SessionListViewItem>,
+    ] as SessionListViewItem[],
     byServerId: {
         'srv-a': [
             {
@@ -84,8 +84,8 @@ const sourceState = vi.hoisted(() => ({
                 serverId: 'srv-b',
                 serverName: 'Server B',
             },
-        ] as ReadonlyArray<SessionListViewItem>,
-    } as Record<string, ReadonlyArray<SessionListViewItem>>,
+        ] as SessionListViewItem[],
+    } as Record<string, SessionListViewItem[]>,
 }));
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
@@ -137,7 +137,7 @@ describe('useVisibleSessionListSourceState', () => {
                 serverId: 'srv-a',
                 serverName: 'Server A',
             },
-        ];
+        ] as SessionListViewItem[];
         sourceState.byServerId = {
             'srv-a': [
                 {
@@ -162,7 +162,7 @@ describe('useVisibleSessionListSourceState', () => {
                     serverId: 'srv-a',
                     serverName: 'Server A',
                 },
-            ],
+            ] as SessionListViewItem[],
             'srv-b': [
                 {
                     type: 'session',
@@ -186,8 +186,8 @@ describe('useVisibleSessionListSourceState', () => {
                     serverId: 'srv-b',
                     serverName: 'Server B',
                 },
-            ],
-        };
+            ] as SessionListViewItem[],
+        } as Record<string, SessionListViewItem[]>;
     });
 
     it('returns the canonical selection together with the resolved visible source', async () => {

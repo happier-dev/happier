@@ -1,10 +1,14 @@
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { readDisplayMachineIdForSession } from '@/sync/ops/sessionMachineTarget';
+
+type RecentMachineSessionSource = Pick<Session, 'id' | 'createdAt' | 'updatedAt' | 'metadata'>
+    | Pick<SessionListRenderableSession, 'id' | 'createdAt' | 'updatedAt' | 'metadata'>;
 
 export function getRecentMachinesFromSessions(params: {
     machines: Machine[];
-    sessions: Array<Session | string> | null | undefined;
+    sessions: Array<RecentMachineSessionSource | string> | null | undefined;
 }): Machine[] {
     if (!params.sessions || params.machines.length === 0) return [];
 

@@ -12,7 +12,7 @@ const summaryState = vi.hoisted(() => ({
         explicit: false,
         activeTarget: { kind: 'server', id: 'srv-a', serverId: 'srv-a' },
     } as any,
-    activeData: null as ReadonlyArray<SessionListViewItem> | null,
+    activeData: null as SessionListViewItem[] | null,
     byServerId: {
         'srv-a': [
             {
@@ -37,7 +37,7 @@ const summaryState = vi.hoisted(() => ({
                 serverId: 'srv-a',
                 serverName: 'Server A',
             },
-        ] as ReadonlyArray<SessionListViewItem>,
+        ] as SessionListViewItem[],
     },
 }));
 
