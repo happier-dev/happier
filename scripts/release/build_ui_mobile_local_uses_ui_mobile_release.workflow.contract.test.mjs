@@ -9,6 +9,7 @@ test('build-ui-mobile-local workflow delegates local builds to ui-mobile-release
   const src = fs.readFileSync(path.join(repoRoot, '.github', 'workflows', 'build-ui-mobile-local.yml'), 'utf8');
   assert.match(src, /node scripts\/pipeline\/run\.mjs ui-mobile-release/);
   assert.match(src, /--native-build-mode local/);
+  assert.match(src, /--action "\$\{\{\s*inputs\.action == 'build_and_submit' && 'native_submit' \|\| 'native'\s*\}\}"/);
   assert.match(src, /--publish-apk-release false/);
   assert.match(src, /-\s+internaldev\b/);
   assert.match(src, /-\s+internalpreview\b/);
@@ -19,4 +20,5 @@ test('build-ui-mobile-local workflow delegates local builds to ui-mobile-release
   assert.match(src, /-\s+ota\b/);
   assert.doesNotMatch(src, /inputs\.environment == 'publicdev'/);
   assert.doesNotMatch(src, /\benv_name\b[\s\S]*?"publicdev"/);
+  assert.doesNotMatch(src, /node scripts\/pipeline\/run\.mjs expo-submit/);
 });

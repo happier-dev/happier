@@ -208,11 +208,13 @@ test('publish-github-release delegates release creation + asset upload to the pi
 
 test('promote-ui native_submit uses the shared Expo submit script (handles preview credential gaps)', async () => {
   const promoteUi = await loadWorkflow('promote-ui.yml');
-  assert.match(promoteUi, /node scripts\/pipeline\/run\.mjs ui-mobile-release/);
-  assert.match(promoteUi, /--action "\$\{\{ inputs\.expo_action \}\}"/);
+  assert.match(promoteUi, /uses:\s*\.\/\.github\/workflows\/build-ui-mobile-local\.yml/);
+  assert.match(promoteUi, /action:\s*\$\{\{\s*inputs\.expo_action == 'native_submit' && 'build_and_submit' \|\| 'build_only'\s*\}\}/);
 
   const buildUiMobileLocal = await loadWorkflow('build-ui-mobile-local.yml');
-  assert.match(buildUiMobileLocal, /node scripts\/pipeline\/run\.mjs expo-submit/);
+  assert.match(buildUiMobileLocal, /node scripts\/pipeline\/run\.mjs ui-mobile-release/);
+  assert.match(buildUiMobileLocal, /--action "\$\{\{\s*inputs\.action == 'build_and_submit' && 'native_submit' \|\| 'native'\s*\}\}"/);
+  assert.doesNotMatch(buildUiMobileLocal, /node scripts\/pipeline\/run\.mjs expo-submit/);
 
   const run = await loadFile('scripts/pipeline/run.mjs');
   assert.match(run, /path\.join\(repoRoot,\s*'scripts',\s*'pipeline',\s*'expo',\s*'submit\.mjs'\)/);

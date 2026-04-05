@@ -19,7 +19,7 @@ async function loadMobileReleaseEnvironmentsModule() {
 test('promote-ui publishes mobile assets under ui-mobile-* GitHub release tags', async () => {
   const raw = await loadWorkflow('promote-ui.yml');
 
-  assert.match(raw, /node scripts\/pipeline\/run\.mjs ui-mobile-release/);
+  assert.match(raw, /uses:\s*\.\/\.github\/workflows\/build-ui-mobile-local\.yml/);
 
   const { resolveMobileReleaseMetadata } = await loadMobileReleaseEnvironmentsModule();
   assert.equal(resolveMobileReleaseMetadata({ environment: 'production', appVersion: '1.2.3' }).tag, 'ui-mobile-v1.2.3');
@@ -39,7 +39,7 @@ test('promote-ui publishes mobile assets under ui-mobile-* GitHub release tags',
 test('promote-ui labels mobile releases as UI Mobile for clarity', async () => {
   const raw = await loadWorkflow('promote-ui.yml');
 
-  assert.match(raw, /node scripts\/pipeline\/run\.mjs ui-mobile-release/);
+  assert.match(raw, /uses:\s*\.\/\.github\/workflows\/build-ui-mobile-local\.yml/);
 
   const { resolveMobileReleaseMetadata } = await loadMobileReleaseEnvironmentsModule();
   assert.equal(resolveMobileReleaseMetadata({ environment: 'production', appVersion: '1.2.3' }).title, 'Happier UI Mobile v1.2.3');
