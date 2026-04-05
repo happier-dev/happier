@@ -60,3 +60,26 @@ test('agents packaged postinstall build declares the Web runtime globals it uses
     'packages/agents/tsconfig.json should include DOM so isolated package builds typecheck URL'
   );
 });
+
+test('release-runtime packaged postinstall build declares the Web and Node runtime globals it uses', async () => {
+  const tsconfig = await readJson('packages/release-runtime/tsconfig.json');
+  const packageJson = await readJson('packages/release-runtime/package.json');
+  const libs = tsconfig?.compilerOptions?.lib;
+  const types = tsconfig?.compilerOptions?.types;
+
+  assert.ok(Array.isArray(libs), 'packages/release-runtime/tsconfig.json should declare compilerOptions.lib');
+  assert.ok(
+    libs.includes('DOM'),
+    'packages/release-runtime/tsconfig.json should include DOM so isolated package builds typecheck fetch/URL'
+  );
+  assert.ok(Array.isArray(types), 'packages/release-runtime/tsconfig.json should declare compilerOptions.types');
+  assert.ok(
+    types.includes('node'),
+    'packages/release-runtime/tsconfig.json should include node types so isolated package builds typecheck Buffer/node:* imports'
+  );
+  assert.equal(
+    packageJson?.devDependencies?.['@types/node'],
+    '>=20',
+    'packages/release-runtime/package.json should declare @types/node for its Node-typed postinstall build'
+  );
+});
