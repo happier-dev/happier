@@ -173,10 +173,7 @@ fn show_main_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
 }
 
 #[cfg(desktop)]
-fn navigate_main_window_to_path<R: Runtime>(
-    app: &AppHandle<R>,
-    path: &str,
-) -> tauri::Result<()> {
+fn navigate_main_window_to_path<R: Runtime>(app: &AppHandle<R>, path: &str) -> tauri::Result<()> {
     show_main_window(app)?;
     if let Some(window) = app.get_webview_window("main") {
         let script = build_navigation_script(path);
@@ -195,7 +192,10 @@ fn build_navigation_script(path: &str) -> String {
 
 #[cfg(desktop)]
 fn should_include_resolve_setup_action(status: DesktopTrayStatus) -> bool {
-    !matches!(status, DesktopTrayStatus::Healthy | DesktopTrayStatus::Connecting)
+    !matches!(
+        status,
+        DesktopTrayStatus::Healthy | DesktopTrayStatus::Connecting
+    )
 }
 
 #[cfg(test)]
@@ -266,21 +266,15 @@ fn build_menu<R: Runtime>(
         .build(app)?;
     let resolve_setup_item =
         MenuItemBuilder::with_id(RESOLVE_SETUP_MENU_ID, "Resolve setup…").build(app)?;
-    let start_daemon_service_item = MenuItemBuilder::with_id(
-        START_DAEMON_SERVICE_MENU_ID,
-        "Start background service",
-    )
-    .build(app)?;
-    let stop_daemon_service_item = MenuItemBuilder::with_id(
-        STOP_DAEMON_SERVICE_MENU_ID,
-        "Stop background service",
-    )
-    .build(app)?;
-    let restart_daemon_service_item = MenuItemBuilder::with_id(
-        RESTART_DAEMON_SERVICE_MENU_ID,
-        "Restart background service",
-    )
-    .build(app)?;
+    let start_daemon_service_item =
+        MenuItemBuilder::with_id(START_DAEMON_SERVICE_MENU_ID, "Start background service")
+            .build(app)?;
+    let stop_daemon_service_item =
+        MenuItemBuilder::with_id(STOP_DAEMON_SERVICE_MENU_ID, "Stop background service")
+            .build(app)?;
+    let restart_daemon_service_item =
+        MenuItemBuilder::with_id(RESTART_DAEMON_SERVICE_MENU_ID, "Restart background service")
+            .build(app)?;
     let show_main_window_item =
         MenuItemBuilder::with_id(SHOW_MAIN_WINDOW_MENU_ID, "Open Happier").build(app)?;
     let open_setup_item = MenuItemBuilder::with_id(OPEN_SETUP_MENU_ID, "Open Setup").build(app)?;
@@ -357,15 +351,27 @@ mod tests {
 
     #[test]
     fn resolve_setup_action_is_enabled_for_all_nonhealthy_statuses() {
-        assert!(!should_include_resolve_setup_action(DesktopTrayStatus::Healthy));
-        assert!(!should_include_resolve_setup_action(DesktopTrayStatus::Connecting));
+        assert!(!should_include_resolve_setup_action(
+            DesktopTrayStatus::Healthy
+        ));
+        assert!(!should_include_resolve_setup_action(
+            DesktopTrayStatus::Connecting
+        ));
         assert!(should_include_resolve_setup_action(
             DesktopTrayStatus::AttentionRequired
         ));
-        assert!(should_include_resolve_setup_action(DesktopTrayStatus::ServerUnreachable));
-        assert!(should_include_resolve_setup_action(DesktopTrayStatus::AuthRequired));
-        assert!(should_include_resolve_setup_action(DesktopTrayStatus::ServerError));
-        assert!(should_include_resolve_setup_action(DesktopTrayStatus::NoMachine));
+        assert!(should_include_resolve_setup_action(
+            DesktopTrayStatus::ServerUnreachable
+        ));
+        assert!(should_include_resolve_setup_action(
+            DesktopTrayStatus::AuthRequired
+        ));
+        assert!(should_include_resolve_setup_action(
+            DesktopTrayStatus::ServerError
+        ));
+        assert!(should_include_resolve_setup_action(
+            DesktopTrayStatus::NoMachine
+        ));
         assert!(should_include_resolve_setup_action(
             DesktopTrayStatus::MachineOffline
         ));

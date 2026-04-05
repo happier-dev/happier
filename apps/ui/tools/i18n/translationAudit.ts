@@ -90,6 +90,10 @@ const ALLOW_SAME_KEY_PREFIXES: ReadonlyArray<string> = [
     'agentInput.geminiPermissionMode.',
     'agentInput.geminiModel.',
     'profiles.builtInNames.',
+    // Desktop overlay settings copy is temporarily shared in English across locale files.
+    'settingsDesktop.overlay.',
+    // Machine transfer exposure labels are technical transport terms.
+    'machine.transferExposure.',
 ];
 
 const ALLOW_SAME_STRING_KEYS = new Set<string>([
@@ -113,6 +117,14 @@ const ALLOW_SAME_STRING_KEYS = new Set<string>([
     'settingsProviders.plugins.claude.fields.claudeRemoteDebugCategories.options.1p.title',
     // Technical field labels that are commonly shared across locales.
     'settings.relayAccess.fields.tokenLabel',
+    // New Live Activities strategy labels are intentionally shared English placeholders for now.
+    'settingsNotifications.activitySurfaces.liveActivities.strategyTitle',
+    'settingsNotifications.activitySurfaces.liveActivities.dynamicPrimaryTitle',
+    'settingsNotifications.activitySurfaces.liveActivities.pinnedPrimaryTitle',
+    'settingsNotifications.activitySurfaces.liveActivities.sessionSpecificTitle',
+    'settingsFeatures.expLiveActivities',
+    'settingsNotifications.activitySurfaces.liveActivities.title',
+    'settingsNotifications.activitySurfaces.privacyTitle',
 ]);
 
 const ALLOW_SAME_STRING_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<string>>> = {

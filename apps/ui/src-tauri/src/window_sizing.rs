@@ -11,17 +11,8 @@ use std::{
 
 #[cfg(desktop)]
 use tauri::{
-    path::BaseDirectory,
-    App,
-    AppHandle,
-    LogicalPosition,
-    LogicalSize,
-    Manager,
-    PhysicalPosition,
-    PhysicalSize,
-    Runtime,
-    State,
-    WindowEvent,
+    path::BaseDirectory, App, AppHandle, LogicalPosition, LogicalSize, Manager, PhysicalPosition,
+    PhysicalSize, Runtime, State, WindowEvent,
 };
 
 #[cfg(desktop)]
@@ -248,7 +239,10 @@ fn physical_size_to_rect(pos: PhysicalPosition<i32>, size: PhysicalSize<u32>) ->
 }
 
 #[cfg(desktop)]
-fn normalize_persisted_rect_to_logical(persisted: &PersistedWindowState, scale_factor: f64) -> Rect {
+fn normalize_persisted_rect_to_logical(
+    persisted: &PersistedWindowState,
+    scale_factor: f64,
+) -> Rect {
     let scale = if scale_factor.is_finite() && scale_factor > 0.0 {
         scale_factor
     } else {
@@ -271,7 +265,10 @@ fn normalize_persisted_rect_to_logical(persisted: &PersistedWindowState, scale_f
 }
 
 #[cfg(desktop)]
-fn resolve_launch_window_rect(monitor_rect: Rect, persisted: Option<&PersistedWindowState>) -> Rect {
+fn resolve_launch_window_rect(
+    monitor_rect: Rect,
+    persisted: Option<&PersistedWindowState>,
+) -> Rect {
     if let Some(persisted) = persisted {
         return clamp_window_rect_to_monitor(
             Rect {
@@ -297,7 +294,10 @@ fn resolve_launch_window_rect(monitor_rect: Rect, persisted: Option<&PersistedWi
 }
 
 #[cfg(desktop)]
-fn resolve_initial_window_mode(persisted_mode: Option<WindowMode>, has_main_state: bool) -> WindowMode {
+fn resolve_initial_window_mode(
+    persisted_mode: Option<WindowMode>,
+    has_main_state: bool,
+) -> WindowMode {
     if let Some(mode) = persisted_mode {
         return mode;
     }
@@ -410,7 +410,9 @@ pub fn register<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
             height: monitor_rect.height / scale_factor,
         };
         match initial_mode {
-            WindowMode::Main => apply_main_window_rect(&window, monitor_logical, persisted.clone(), scale_factor),
+            WindowMode::Main => {
+                apply_main_window_rect(&window, monitor_logical, persisted.clone(), scale_factor)
+            }
             WindowMode::PreAuth => apply_preauth_window_rect(&window, monitor_logical),
         }
     }
@@ -443,7 +445,9 @@ pub fn register<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
         };
-        if now.duration_since(*guard) < WRITE_DEBOUNCE && !matches!(event, WindowEvent::CloseRequested { .. }) {
+        if now.duration_since(*guard) < WRITE_DEBOUNCE
+            && !matches!(event, WindowEvent::CloseRequested { .. })
+        {
             return;
         }
         *guard = now;
@@ -580,10 +584,7 @@ mod tests {
 
     #[test]
     fn resolve_initial_window_mode_defaults_to_main_when_main_state_exists() {
-        assert_eq!(
-            resolve_initial_window_mode(None, true),
-            WindowMode::Main
-        );
+        assert_eq!(resolve_initial_window_mode(None, true), WindowMode::Main);
     }
 
     #[test]
@@ -650,8 +651,16 @@ mod tests {
             height: 300.0,
         };
         let clamped = clamp_window_rect_to_monitor(rect, monitor);
-        assert!((clamped.width - 300.0).abs() < 0.1, "width={}", clamped.width);
-        assert!((clamped.height - 300.0).abs() < 0.1, "height={}", clamped.height);
+        assert!(
+            (clamped.width - 300.0).abs() < 0.1,
+            "width={}",
+            clamped.width
+        );
+        assert!(
+            (clamped.height - 300.0).abs() < 0.1,
+            "height={}",
+            clamped.height
+        );
     }
 
     #[test]
@@ -686,7 +695,11 @@ mod tests {
             height: 1000.0,
         };
         let rect = resolve_launch_window_rect(monitor, None);
-        assert!((rect.width - MAX_WINDOW_WIDTH_PX).abs() < 0.1, "width={}", rect.width);
+        assert!(
+            (rect.width - MAX_WINDOW_WIDTH_PX).abs() < 0.1,
+            "width={}",
+            rect.width
+        );
         assert!((rect.height - 850.0).abs() < 0.1, "height={}", rect.height);
         assert!(rect.x >= monitor.x);
         assert!(rect.y >= monitor.y);

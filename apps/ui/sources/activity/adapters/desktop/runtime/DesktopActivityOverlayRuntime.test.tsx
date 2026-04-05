@@ -144,6 +144,65 @@ describe('DesktopActivityOverlayRuntime', () => {
         expect(listenDesktopActivityOverlayInteractionMock).toHaveBeenCalledTimes(1);
     }, 120_000);
 
+    it('uses the desktop overlay selection path instead of widget mode when choosing visible sessions', async () => {
+        sessionsState.value = [
+            {
+                id: 'session-1',
+                seq: 4,
+                lastViewedSessionSeq: 2,
+                active: true,
+                presence: 'online',
+                thinking: false,
+                pendingPermissionRequestCount: 1,
+                pendingUserActionRequestCount: 0,
+                metadata: {
+                    summary: { text: 'Primary session', updatedAt: 1 },
+                    path: '/Users/tester/project',
+                    host: 'tester.local',
+                    homeDir: '/Users/tester',
+                },
+            },
+            {
+                id: 'session-2',
+                seq: 5,
+                lastViewedSessionSeq: 5,
+                active: true,
+                presence: 'online',
+                thinking: true,
+                pendingPermissionRequestCount: 0,
+                pendingUserActionRequestCount: 0,
+                metadata: {
+                    summary: { text: 'Thinking session', updatedAt: 2 },
+                    path: '/Users/tester/project-two',
+                    host: 'tester.local',
+                    homeDir: '/Users/tester',
+                },
+            },
+        ];
+        localSettingsState.value = {
+            ...localSettingsState.value,
+            widgetsPresetMode: 'attention',
+            desktopOverlayVisibilityMode: 'active_sessions',
+            desktopOverlayShowWhenRunning: true,
+            desktopOverlayShowWhenAttentionRequired: true,
+            desktopOverlayShowWhenReady: true,
+        };
+
+        const { DesktopActivityOverlayRuntime } = await import('./DesktopActivityOverlayRuntime');
+        await renderScreen(React.createElement(DesktopActivityOverlayRuntime));
+
+        expect(syncDesktopActivityOverlayMock).toHaveBeenCalledWith(expect.objectContaining({
+            model: expect.objectContaining({
+                expanded: expect.objectContaining({
+                    rows: expect.arrayContaining([
+                        expect.objectContaining({ sessionId: 'session-1' }),
+                        expect.objectContaining({ sessionId: 'session-2' }),
+                    ]),
+                }),
+            }),
+        }));
+    });
+
     it('does not synchronize when not running on tauri', async () => {
         isTauriDesktopMock.mockReturnValue(false);
         const { DesktopActivityOverlayRuntime } = await import('./DesktopActivityOverlayRuntime');

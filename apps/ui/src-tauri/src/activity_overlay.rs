@@ -6,17 +6,8 @@ use std::sync::{Arc, Mutex};
 
 #[cfg(desktop)]
 use tauri::{
-    App,
-    AppHandle,
-    Emitter,
-    LogicalPosition,
-    LogicalSize,
-    Manager,
-    Runtime,
-    State,
-    WebviewUrl,
-    WebviewWindow,
-    WebviewWindowBuilder,
+    App, AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Runtime, State, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder,
 };
 
 #[cfg(desktop)]
@@ -26,21 +17,13 @@ mod storage;
 
 #[cfg(desktop)]
 use self::placement::{
-    clamp,
-    resolve_overlay_monitor_rect,
-    resolve_overlay_placement,
-    sanitize_dimension,
-    sanitize_offset,
-    Rect,
+    clamp, resolve_overlay_monitor_rect, resolve_overlay_placement, sanitize_dimension,
+    sanitize_offset, Rect,
 };
 #[cfg(desktop)]
 use self::storage::{
-    clear_persisted_drag_offsets,
-    persist_drag_offsets,
-    read_persisted_drag_offsets,
-    resolve_drag_offsets_path,
-    sanitize_drag_offsets,
-    PersistedOverlayDragOffsets,
+    clear_persisted_drag_offsets, persist_drag_offsets, read_persisted_drag_offsets,
+    resolve_drag_offsets_path, sanitize_drag_offsets, PersistedOverlayDragOffsets,
 };
 
 #[cfg(desktop)]
@@ -447,7 +430,9 @@ fn apply_overlay_state<R: Runtime>(
             .0
             .lock()
             .map_err(|_| "Desktop activity overlay state mutex poisoned".to_string())?;
-        guard.last_window_state = Some(DesktopActivityOverlayWindowStatePayload::from_sync_payload(&payload));
+        guard.last_window_state = Some(
+            DesktopActivityOverlayWindowStatePayload::from_sync_payload(&payload),
+        );
         return Ok(());
     }
 
@@ -558,6 +543,8 @@ mod tests {
     fn validates_overlay_command_caller_against_allowed_labels() {
         let command_name = "desktop_activity_overlay_sync";
         assert!(validate_overlay_command_caller(command_name, "main", &["main"]).is_ok());
-        assert!(validate_overlay_command_caller(command_name, "activity_overlay", &["main"]).is_err());
+        assert!(
+            validate_overlay_command_caller(command_name, "activity_overlay", &["main"]).is_err()
+        );
     }
 }

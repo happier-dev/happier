@@ -190,8 +190,12 @@ fn monitor_child_output_with_emitters(
                         }
                         Some(OutputPayload::Result(result)) => {
                             let result = rewrite_result_task_id(result, &task_id);
-                            emitted_final_result =
-                                complete_task_and_emit_result(&state, &task_id, result, &emit_result);
+                            emitted_final_result = complete_task_and_emit_result(
+                                &state,
+                                &task_id,
+                                result,
+                                &emit_result,
+                            );
                             break;
                         }
                         None => {}
@@ -695,8 +699,12 @@ mod tests {
             .insert_running_task("task_1", child.clone())
             .expect("task should insert");
 
-        let emit_event = std::sync::Arc::new(|_task_id: &str, _event: &crate::system_tasks::protocol::SystemTaskEvent| {});
-        let emit_result = std::sync::Arc::new(|_task_id: &str, _result: &crate::system_tasks::protocol::SystemTaskResult| {});
+        let emit_event = std::sync::Arc::new(
+            |_task_id: &str, _event: &crate::system_tasks::protocol::SystemTaskEvent| {},
+        );
+        let emit_result = std::sync::Arc::new(
+            |_task_id: &str, _result: &crate::system_tasks::protocol::SystemTaskResult| {},
+        );
         monitor_child_output_with_emitters(
             state.clone(),
             "task_1".to_string(),
@@ -783,7 +791,10 @@ mod tests {
             None => std::env::remove_var("HOME"),
         }
 
-        assert_eq!(normalized, std::fs::canonicalize(&log_path).expect("canonicalize should work"));
+        assert_eq!(
+            normalized,
+            std::fs::canonicalize(&log_path).expect("canonicalize should work")
+        );
         let _ = fs::remove_dir_all(temp_dir);
     }
 
