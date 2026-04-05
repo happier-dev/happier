@@ -1,9 +1,108 @@
+import { z } from "zod";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createEnvReset } from "../../testkit/env";
 import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 
 const resetEnv = createEnvReset();
+
+const LegacyPreviewFeaturesResponseSchema = z.object({
+    features: z.object({
+        bugReports: z.object({
+            enabled: z.boolean(),
+            providerUrl: z.string().url().nullable(),
+            defaultIncludeDiagnostics: z.boolean(),
+            maxArtifactBytes: z.number().int().positive(),
+            acceptedArtifactKinds: z.array(z.string().min(1)).min(1),
+            uploadTimeoutMs: z.number().int().positive(),
+            contextWindowMs: z.number().int().min(1000),
+        }),
+        automations: z.object({
+            enabled: z.boolean(),
+            existingSessionTarget: z.boolean(),
+        }),
+        sharing: z.object({
+            session: z.object({ enabled: z.boolean() }),
+            public: z.object({ enabled: z.boolean() }),
+            contentKeys: z.object({ enabled: z.boolean() }),
+            pendingQueueV2: z.object({ enabled: z.boolean() }),
+        }),
+        voice: z.object({
+            enabled: z.boolean(),
+            configured: z.boolean(),
+            provider: z.enum(["elevenlabs"]).nullable(),
+        }),
+        social: z.object({
+            friends: z.object({
+                enabled: z.boolean(),
+                allowUsername: z.boolean(),
+                requiredIdentityProviderId: z.string().nullable(),
+            }),
+        }),
+        oauth: z.object({
+            providers: z.record(z.string(), z.object({ enabled: z.boolean(), configured: z.boolean() })),
+        }),
+        auth: z.object({
+            signup: z.object({
+                methods: z.array(z.object({ id: z.string(), enabled: z.boolean() })),
+            }),
+            login: z.object({
+                requiredProviders: z.array(z.string()),
+            }),
+            recovery: z.object({
+                providerReset: z.object({
+                    enabled: z.boolean(),
+                    providers: z.array(z.string()),
+                }),
+            }),
+            ui: z.object({
+                autoRedirect: z.object({
+                    enabled: z.boolean(),
+                    providerId: z.string().nullable(),
+                }),
+                recoveryKeyReminder: z.object({
+                    enabled: z.boolean(),
+                }),
+            }),
+            providers: z.record(
+                z.string(),
+                z.object({
+                    enabled: z.boolean(),
+                    configured: z.boolean(),
+                    ui: z
+                        .object({
+                            displayName: z.string(),
+                            iconHint: z.string().nullable().optional(),
+                            connectButtonColor: z.string().nullable().optional(),
+                            supportsProfileBadge: z.boolean().optional(),
+                            badgeIconName: z.string().nullable().optional(),
+                        })
+                        .optional(),
+                    restrictions: z.object({
+                        usersAllowlist: z.boolean(),
+                        orgsAllowlist: z.boolean(),
+                        orgMatch: z.enum(["any", "all"]),
+                    }),
+                    offboarding: z.object({
+                        enabled: z.boolean(),
+                        intervalSeconds: z.number().int().min(1),
+                        mode: z.enum(["per-request-cache"]),
+                        source: z.string().min(1),
+                    }),
+                }),
+            ),
+            misconfig: z.array(
+                z.object({
+                    code: z.string(),
+                    message: z.string(),
+                    kind: z.string().optional(),
+                    providerId: z.string().optional(),
+                    envVars: z.array(z.string()).optional(),
+                }),
+            ),
+        }),
+    }),
+});
 
 async function getFeaturesPayload() {
     const { featuresRoutes } = await import("./featuresRoutes");
@@ -139,6 +238,39 @@ describe("featuresRoutes", () => {
             expect(payload.features.voice.happierVoice.enabled).toBe(true);
             expect(payload.capabilities.voice.configured).toBe(true);
             expect(payload.capabilities.voice.provider).toBe("elevenlabs");
+        });
+    });
+
+    describe("legacy mobile compatibility", () => {
+        it("aliases split capabilities back onto feature fields for older mobile clients", async () => {
+            resetEnv({
+                NODE_ENV: "production",
+                HAPPIER_FEATURE_VOICE__ENABLED: "1",
+                ELEVENLABS_API_KEY: "el_key",
+                ELEVENLABS_AGENT_ID_PROD: "agent_1",
+                REVENUECAT_SECRET_KEY: "rc_secret",
+                HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED: "1",
+                HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME: "1",
+                AUTH_ANONYMOUS_SIGNUP_ENABLED: "0",
+                AUTH_SIGNUP_PROVIDERS: "github",
+                HAPPIER_FEATURE_AUTH_RECOVERY__PROVIDER_RESET_ENABLED: "1",
+                GITHUB_CLIENT_ID: "id",
+                GITHUB_CLIENT_SECRET: "secret",
+                GITHUB_REDIRECT_URL: "https://example.com/v1/oauth/github/callback",
+            });
+
+            const payload = await getFeaturesPayload();
+            const parsed = LegacyPreviewFeaturesResponseSchema.safeParse(payload);
+
+            expect(parsed.success).toBe(true);
+            if (!parsed.success) return;
+
+            expect(parsed.data.features.voice.configured).toBe(true);
+            expect(parsed.data.features.voice.provider).toBe("elevenlabs");
+            expect(parsed.data.features.social.friends.allowUsername).toBe(true);
+            expect(parsed.data.features.oauth.providers.github?.configured).toBe(true);
+            expect(parsed.data.features.auth.recovery.providerReset.enabled).toBe(true);
+            expect(parsed.data.features.automations.existingSessionTarget).toBe(false);
         });
     });
 
