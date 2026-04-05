@@ -66,12 +66,12 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 }));
 
 describe('RelayHostLocalChecklistStep', () => {
-    it('runs secure access setup against the local relay runtime URL (not the active cloud relay)', async () => {
+    it('keeps the checklist focused on relay runtime tasks when the relay is already installed', async () => {
         const { RelayHostLocalChecklistStep } = await import('./RelayHostLocalChecklistStep');
         const stableSnapshot = {
             taskId: 'task_1',
             status: 'succeeded',
-            currentStepId: 'tailscale.verifyUrl',
+            currentStepId: 'relay.status.health',
             latestMessage: null,
             awaitingInput: false,
             cancelRequested: false,
@@ -102,14 +102,12 @@ describe('RelayHostLocalChecklistStep', () => {
 
         expect(screen.findByTestId('relay-host-local-checklist-row-installRelayRuntime')).toBeTruthy();
         expect(screen.findByTestId('relay-host-local-checklist-row-startRelayRuntime')).toBeTruthy();
-        expect(screen.findByTestId('relay-host-local-checklist-row-enableSecureAccess')).toBeTruthy();
+        expect(screen.findByTestId('relay-host-local-checklist-row-enableSecureAccess')).toBeNull();
         expect(primaryState.label).toBe('common.continue');
 
         await act(async () => {
             await primaryState.onPress();
         });
-        expect(runner.start).toHaveBeenCalledTimes(1);
-        const spec = runner.start.mock.calls[0]?.[0] as any;
-        expect(spec?.params?.upstreamUrl).toBe('http://localhost:53288');
+        expect(runner.start).toHaveBeenCalledTimes(0);
     });
 });

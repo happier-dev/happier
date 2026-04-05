@@ -4,6 +4,7 @@ import { act } from 'react-test-renderer';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import type { PendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect.shared';
 import { installTerminalRouteCommonModuleMocks } from './terminalRouteTestHelpers';
+import { TERMINAL_CONNECT_WEB_BOOTSTRAP_STORAGE_KEY } from '@/utils/path/terminalConnectWebBootstrap';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -141,5 +142,38 @@ describe('TerminalConnectScreen hash parsing', () => {
         const publicKeyItem = renderedItems.find((item) => item.props?.title === 'terminal.publicKey');
         expect(publicKeyItem).toBeTruthy();
         expect(publicKeyItem?.props?.detail).toBe('abcdefghijkl...');
+    });
+
+    it('parses key from bootstrapped sessionStorage when the hash was stripped before router init', async () => {
+        getPendingTerminalConnectMock.mockReturnValue(null);
+
+        const storage = new Map<string, string>();
+        storage.set(TERMINAL_CONNECT_WEB_BOOTSTRAP_STORAGE_KEY, '#server=https%3A%2F%2Fexample.test&key=abcdefghijklmnop');
+
+        globalWindow.window = {
+            location: {
+                hash: '',
+                pathname: '/terminal/connect',
+                search: '',
+                href: 'https://ui.example.test/terminal/connect',
+            },
+            history: { replaceState: vi.fn() },
+            sessionStorage: {
+                getItem: (key: string) => storage.get(key) ?? null,
+                setItem: (key: string, value: string) => storage.set(key, value),
+                removeItem: (key: string) => storage.delete(key),
+            } as unknown as Storage,
+        } as unknown as Window;
+
+        const Screen = (await import('@/app/(app)/terminal/connect')).default;
+
+        const screen = await renderScreen(<Screen />);
+        await act(async () => {});
+
+        const renderedItems = screen.findAllByType('Item' as any);
+        const publicKeyItem = renderedItems.find((item) => item.props?.title === 'terminal.publicKey');
+        expect(publicKeyItem).toBeTruthy();
+        expect(publicKeyItem?.props?.detail).toBe('abcdefghijkl...');
+        expect(storage.has(TERMINAL_CONNECT_WEB_BOOTSTRAP_STORAGE_KEY)).toBe(false);
     });
 });

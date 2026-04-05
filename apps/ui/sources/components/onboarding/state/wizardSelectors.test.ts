@@ -162,7 +162,7 @@ describe('wizardSelectors', () => {
             'setup_chooser',
             'host_relay_local',
             'relay_access',
-            'relay_access_url',
+            'relay_access_prereqs',
             'confirm_switch_relay',
             'done',
         ]);
@@ -179,7 +179,7 @@ describe('wizardSelectors', () => {
             'setup_chooser',
             'host_relay_local',
             'relay_access',
-            'relay_access_cloudflare',
+            'relay_access_prereqs',
             'confirm_switch_relay',
             'done',
         ]);
@@ -203,8 +203,8 @@ describe('wizardSelectors', () => {
             },
         })).toEqual([
             'setup_chooser',
-            'relay_access',
             'remote_ssh_setup',
+            'relay_access',
             'confirm_switch_relay',
             'providers_optional',
             'done',
@@ -220,20 +220,11 @@ describe('wizardSelectors', () => {
             },
         })).toEqual([
             'setup_chooser',
-            'relay_access',
-            'relay_access_url',
             'remote_ssh_setup',
+            'relay_access',
+            'relay_access_prereqs',
             'confirm_switch_relay',
             'providers_optional',
-            'done',
-        ]);
-
-        expect(getVisibleWizardStepIds({
-            ...setupContext,
-            setupAction: 'tailscale',
-        })).toEqual([
-            'setup_chooser',
-            'secure_access_tailscale',
             'done',
         ]);
     });

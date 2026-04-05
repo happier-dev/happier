@@ -100,7 +100,7 @@ installPickerCommonModuleMocks({
             importOriginal,
             overrides: {
                 useAllMachines: () => [pickerMachine],
-                useSessions: () => [],
+                useAllSessionListRenderables: () => [],
                 useSetting: (key: string) => {
                     if (key === 'recentMachinePaths') return [];
                     if (key === 'usePathPickerSearch') return false;

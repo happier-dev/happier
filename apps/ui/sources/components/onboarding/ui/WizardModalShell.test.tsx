@@ -154,4 +154,24 @@ describe('WizardModalShell', () => {
         const layout = screen.findByType('WizardCardLayout' as never);
         expect(layout.props.scrollable).toBe(false);
     });
+
+    it('allows callers to disable the internal scrim even when not nested in a BaseModal (for embedded window surfaces)', async () => {
+        const { WizardModalShell } = await import('./WizardModalShell');
+
+        const screen = await renderScreen(
+            React.createElement(WizardModalShell, {
+                testID: 'wizard-shell',
+                stepIndex: 0,
+                stepCount: 1,
+                title: 'Title',
+                subtitle: 'Subtitle',
+                showScrim: false,
+                onPrimary: () => {},
+                children: React.createElement('View', { testID: 'wizard-shell-body' }),
+            }),
+        );
+
+        const layout = screen.findByType('WizardCardLayout' as never);
+        expect(layout.props.showScrim).toBe(false);
+    });
 });

@@ -16,8 +16,7 @@ export type WizardStepId =
     | 'host_relay_local'
     | 'host_relay_remote'
     | 'relay_access'
-    | 'relay_access_url'
-    | 'relay_access_cloudflare'
+    | 'relay_access_prereqs'
     | 'auth'
     | 'auth_restore'
     | 'auth_secret_key'
@@ -26,7 +25,6 @@ export type WizardStepId =
     | 'setup_this_computer'
     | 'remote_ssh_setup'
     | 'confirm_switch_relay'
-    | 'secure_access_tailscale'
     | 'providers_optional'
     | 'done';
 
@@ -52,7 +50,7 @@ export type WizardContext = Readonly<{
     relayLockConfirmationPending: boolean;
     relaySwitchConfirmationPending: boolean;
     authIntent: WizardAuthIntent;
-    setupAction: 'local' | 'relayLocal' | 'remote' | 'tailscale' | null;
+    setupAction: 'local' | 'relayLocal' | 'remote' | null;
 }>;
 
 export type WizardStepKind = 'entry' | 'choice' | 'auth' | 'recovery' | 'setup' | 'finish';
@@ -93,5 +91,5 @@ export type WizardAction =
     | Readonly<{ type: 'wizard/setRelayLockConfirmationPending'; pending: boolean }>
     | Readonly<{ type: 'wizard/setRelaySwitchConfirmationPending'; pending: boolean }>
     | Readonly<{ type: 'wizard/setAuthIntent'; authIntent: WizardAuthIntent }>
-    | Readonly<{ type: 'wizard/setSetupAction'; setupAction: 'local' | 'relayLocal' | 'remote' | 'tailscale' | null }>
+    | Readonly<{ type: 'wizard/setSetupAction'; setupAction: 'local' | 'relayLocal' | 'remote' | null }>
     | Readonly<{ type: 'wizard/setScanStepEnabled'; enabled: boolean }>;

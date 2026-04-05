@@ -15,6 +15,7 @@ const onboardingVisible = (stepId: WizardStepId) => (context: WizardContext): bo
         case 'confirm_relay_lock':
         case 'host_relay_local':
         case 'relay_access':
+        case 'relay_access_prereqs':
         case 'background_service_handoff':
         case 'auth':
         case 'auth_restore':
@@ -51,12 +52,12 @@ const setupVisible = (stepId: WizardStepId) => (context: WizardContext): boolean
             if (!url) return false;
             return context.setupAction === 'relayLocal' || context.setupAction === 'remote';
         }
-        case 'relay_access_url':
-        case 'relay_access_cloudflare': {
+        case 'relay_access_prereqs': {
             const url = typeof context.relaySelection.serverUrl === 'string' ? context.relaySelection.serverUrl.trim() : '';
             if (!url) return false;
             if (context.platform !== 'desktop' || !context.canRunSystemTasks) return false;
             if (context.setupAction !== 'relayLocal' && context.setupAction !== 'remote') return false;
+            if (context.relayAccessProviderId !== 'lan' && context.relayAccessProviderId !== 'cloudflareNamed') return false;
             return true;
         }
         case 'confirm_switch_relay': {
@@ -70,8 +71,6 @@ const setupVisible = (stepId: WizardStepId) => (context: WizardContext): boolean
             return context.setupAction === 'remote';
         case 'providers_optional':
             return context.setupAction === 'local' || context.setupAction === 'remote';
-        case 'secure_access_tailscale':
-            return context.setupAction === 'tailscale';
         case 'done':
             return context.setupAction != null;
         default:
@@ -221,56 +220,6 @@ const wizardStepRegistryEntries = [
         },
     },
     {
-        id: 'relay_access',
-        titleKey: 'setupOnboarding.relayAccessWizardTitle',
-        subtitleKey: 'settings.relayAccess.footer',
-        kind: 'setup',
-        surface: 'setup',
-        canSkip: true,
-        visibleWhen: (context) => {
-            const url = typeof context.relaySelection.serverUrl === 'string' ? context.relaySelection.serverUrl.trim() : '';
-            if (!url) return false;
-            if (context.mode === 'onboarding') {
-                return context.platform === 'desktop' && context.canRunSystemTasks && context.relaySelection.choiceId === 'thisComputer';
-            }
-            return setupVisible('relay_access')(context);
-        },
-    },
-    {
-        id: 'relay_access_url',
-        titleKey: 'setupOnboarding.relayAccessUrlTitle',
-        subtitleKey: 'setupOnboarding.relayAccessUrlSubtitle',
-        kind: 'setup',
-        surface: 'setup',
-        canSkip: true,
-        visibleWhen: (context) => {
-            if (context.relayAccessProviderId !== 'lan') return false;
-            const url = typeof context.relaySelection.serverUrl === 'string' ? context.relaySelection.serverUrl.trim() : '';
-            if (!url) return false;
-            if (context.mode === 'onboarding') {
-                return context.platform === 'desktop' && context.canRunSystemTasks && context.relaySelection.choiceId === 'thisComputer';
-            }
-            return setupVisible('relay_access_url')(context);
-        },
-    },
-    {
-        id: 'relay_access_cloudflare',
-        titleKey: 'setupOnboarding.relayAccessCloudflareTitle',
-        subtitleKey: 'setupOnboarding.relayAccessCloudflareSubtitle',
-        kind: 'setup',
-        surface: 'setup',
-        canSkip: true,
-        visibleWhen: (context) => {
-            if (context.relayAccessProviderId !== 'cloudflareNamed') return false;
-            const url = typeof context.relaySelection.serverUrl === 'string' ? context.relaySelection.serverUrl.trim() : '';
-            if (!url) return false;
-            if (context.mode === 'onboarding') {
-                return context.platform === 'desktop' && context.canRunSystemTasks && context.relaySelection.choiceId === 'thisComputer';
-            }
-            return setupVisible('relay_access_cloudflare')(context);
-        },
-    },
-    {
         id: 'host_relay_remote',
         titleKey: 'setupOnboarding.relayOnRemoteComputerTitle',
         subtitleKey: 'setupOnboarding.relayOnRemoteComputerSubtitle',
@@ -284,15 +233,6 @@ const wizardStepRegistryEntries = [
         },
     },
     {
-        id: 'secure_access_tailscale',
-        titleKey: 'settings.localTailscale.title',
-        subtitleKey: 'settings.localTailscale.footer',
-        kind: 'setup',
-        surface: 'setup',
-        canSkip: true,
-        visibleWhen: setupVisible('secure_access_tailscale'),
-    },
-    {
         id: 'remote_ssh_setup',
         titleKey: 'settings.machineSetupSshMachineTitle',
         subtitleKey: 'settings.machineSetupSshMachineSubtitle',
@@ -300,6 +240,45 @@ const wizardStepRegistryEntries = [
         surface: 'setup',
         canSkip: false,
         visibleWhen: setupVisible('remote_ssh_setup'),
+    },
+    {
+        id: 'relay_access',
+        titleKey: 'setupOnboarding.relayAccessWizardTitle',
+        subtitleKey: 'settings.relayAccess.footer',
+        kind: 'setup',
+        surface: 'setup',
+        canSkip: true,
+        visibleWhen: (context) => {
+            const url = typeof context.relaySelection.serverUrl === 'string' ? context.relaySelection.serverUrl.trim() : '';
+            if (!url) return false;
+            if (context.mode === 'onboarding') {
+                return context.platform === 'desktop'
+                    && context.canRunSystemTasks
+                    && (context.relaySelection.choiceId === 'thisComputer' || context.relaySelection.choiceId === 'remoteComputer');
+            }
+            return setupVisible('relay_access')(context);
+        },
+    },
+    {
+        id: 'relay_access_prereqs',
+        titleKey: 'setupOnboarding.relayAccessWizardTitle',
+        subtitleKey: 'settings.relayAccess.footer',
+        kind: 'setup',
+        surface: 'setup',
+        canSkip: true,
+        visibleWhen: (context) => {
+            const url = typeof context.relaySelection.serverUrl === 'string' ? context.relaySelection.serverUrl.trim() : '';
+            if (!url) return false;
+            if (context.relayAccessProviderId !== 'lan' && context.relayAccessProviderId !== 'cloudflareNamed') {
+                return false;
+            }
+            if (context.mode === 'onboarding') {
+                return context.platform === 'desktop'
+                    && context.canRunSystemTasks
+                    && (context.relaySelection.choiceId === 'thisComputer' || context.relaySelection.choiceId === 'remoteComputer');
+            }
+            return setupVisible('relay_access_prereqs')(context);
+        },
     },
     {
         id: 'confirm_switch_relay',

@@ -1,6 +1,7 @@
 export {
   parseTailscaleServeHttpsBaseUrlForPort,
   extractTailscaleServeHttpsUrl,
+  tailscaleServeHttpsUrlForOwnedConfigFromStatus,
   tailscaleServeHttpsUrlForInternalServerUrlFromStatus,
   tailscaleServeStatusMatchesInternalServerUrl,
 } from './serveStatus.js';
@@ -17,6 +18,7 @@ export {
   runTailscaleFunnelEnable,
   runTailscaleFunnelReset,
   runTailscaleFunnelStatus,
+  runTailscaleServeDisable,
   runTailscaleServeEnable,
   runTailscaleServeReset,
   runTailscaleServeStatus,

@@ -14,12 +14,14 @@ import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMe
 import { useSetting } from '@/sync/store/hooks';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { parseSshTarget } from '@happier-dev/protocol';
+import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 import type { RemoteHost } from '@/sync/domains/remoteHosts/remoteHostModel';
 import { getRemoteHostLocalOverridesStore } from '@/sync/domains/remoteHosts/remoteHostLocalOverrides';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { createDefaultSshCredentialsDraft, isSshCredentialsDraftReady } from '@/components/ssh/sshCredentialsDraft';
 import type { SecretString } from '@/sync/encryption/secretSettings';
+import { isLoopbackServerUrl } from '@/sync/domains/server/url/serverUrlClassification';
 
 import { buildRemoteSshChecklistItems } from './buildRemoteSshChecklistItems';
 import { mapRemoteSshTaskToChecklistExecution } from './mapRemoteSshTaskToChecklistExecution';
@@ -78,6 +80,62 @@ function toPlanChecklistItem(
     };
 }
 
+function resolveRemoteRelayCompletionUrl(params: Readonly<{
+    publicRelayUrl?: string | null;
+    relayRuntimeUrl?: string | null;
+}>): string | null {
+    const publicRelayUrl = typeof params.publicRelayUrl === 'string' ? params.publicRelayUrl.trim() : '';
+    if (publicRelayUrl.length > 0 && !isLoopbackServerUrl(publicRelayUrl)) {
+        return publicRelayUrl;
+    }
+
+    const relayRuntimeUrl = typeof params.relayRuntimeUrl === 'string' ? params.relayRuntimeUrl.trim() : '';
+    if (relayRuntimeUrl.length > 0 && !isLoopbackServerUrl(relayRuntimeUrl)) {
+        return relayRuntimeUrl;
+    }
+
+    return null;
+}
+
+function buildRelayAccessTargetFromResolvedFormState(params: Readonly<{
+    sshUsername: string;
+    sshHost: string;
+    sshPort: string;
+    sshAuth: 'agent' | 'keyfile' | 'password';
+    sshPassword: string;
+    identityFilePath: string;
+}>): RelayAccessTaskTarget | null {
+    const username = params.sshUsername.trim();
+    const host = params.sshHost.trim();
+    if (!host) {
+        return null;
+    }
+
+    const target = username ? `${username}@${host}` : host;
+    const portText = params.sshPort.trim();
+    const port = portText ? Number.parseInt(portText, 10) : Number.NaN;
+    const password = params.sshPassword.trim();
+    const identityFile = params.identityFilePath.trim();
+
+    if (params.sshAuth === 'keyfile' && !identityFile) {
+        return null;
+    }
+    if (params.sshAuth === 'password' && !password) {
+        return null;
+    }
+
+    return {
+        kind: 'ssh',
+        ssh: {
+            target,
+            auth: params.sshAuth,
+            ...(Number.isInteger(port) && port > 0 ? { port } : {}),
+            ...(params.sshAuth === 'keyfile' ? { identityFile } : {}),
+            ...(params.sshAuth === 'password' ? { password } : {}),
+        },
+    };
+}
+
 export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep(props: Readonly<{
     testID?: string;
     mode: RemoteSshChecklistMode;
@@ -94,6 +152,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
     onCompleted?: (payload: Readonly<{
         machineId: string | null;
         relayRuntimeUrl: string | null;
+        relayAccessTarget: RelayAccessTaskTarget | null;
         mode: RemoteSshChecklistMode;
     }>) => void;
     onCancel?: () => void;
@@ -110,6 +169,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
     const [selectedSavedRemoteHostId, setSelectedSavedRemoteHostId] = React.useState<string>(SAVED_REMOTE_HOST_NEW_ID);
     const savedDraftRef = React.useRef<SshCredentialsDraft>(draft);
     const completionHandledRef = React.useRef(false);
+    const completionRelayAccessTargetRef = React.useRef<RelayAccessTaskTarget | null>(null);
     const runContextRef = React.useRef<Readonly<{
         selectedSavedRemoteHostId: string;
         saveHost: boolean;
@@ -260,6 +320,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         _publishSnapshot: (snapshot: SystemTaskRunState | null) => void,
     ) => {
         const formState = await resolveRemoteSshFormStateForExecution(plan.installRelayRuntime);
+        completionRelayAccessTargetRef.current = buildRelayAccessTargetFromResolvedFormState(formState);
         await start(formState);
     }, [resolveRemoteSshFormStateForExecution, start]);
 
@@ -303,6 +364,12 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         const relayUrl = typeof relayRuntime?.relayUrl === 'string' ? relayRuntime.relayUrl.trim() : '';
         return relayUrl.length > 0 ? relayUrl : null;
     }, [activeTaskSnapshot]);
+    const completionRelayUrl = React.useMemo(() => {
+        return resolveRemoteRelayCompletionUrl({
+            publicRelayUrl: props.publicRelayUrl,
+            relayRuntimeUrl: relayRuntimeResult,
+        });
+    }, [props.publicRelayUrl, relayRuntimeResult]);
 
     React.useEffect(() => {
         if (phase !== 'execution') {
@@ -313,7 +380,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
             setPhase('complete');
             const completion = {
                 machineId: completedMachineId,
-                relayRuntimeUrl: relayRuntimeResult,
+                relayRuntimeUrl: completionRelayUrl,
                 mode: props.mode,
             } as const;
 
@@ -344,6 +411,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         props.mode,
         props.onCompleted,
         relayRuntimeResult,
+        completionRelayUrl,
         remoteHostsManagementEnabled,
         remoteHostsSecretMaterialEnabled,
         remoteHostsV1,
@@ -558,8 +626,8 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
                 <View style={styles.heading}>
                     <Text style={styles.title}>{copy.completeTitle}</Text>
                     <Text style={styles.subtitle}>
-                        {relayRuntimeResult
-                            ? `${copy.completeSubtitle} ${relayRuntimeResult}`
+                        {completionRelayUrl
+                            ? `${copy.completeSubtitle} ${completionRelayUrl}`
                             : copy.completeSubtitle}
                     </Text>
                 </View>

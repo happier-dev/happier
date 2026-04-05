@@ -16,7 +16,13 @@ export default React.memo(function PreviewMachinePickerScreen() {
     const { theme } = useUnistyles();
     const router = useRouter();
     const navigation = useNavigation();
-    const params = useLocalSearchParams<{ selectedId?: string }>();
+    const params = useLocalSearchParams<{
+        agentType?: string;
+        dataId?: string;
+        machineId?: string;
+        selectedId?: string;
+        spawnServerId?: string;
+    }>();
     const machines = useAllMachines();
     const [favoriteMachines, setFavoriteMachines] = useSettingMutable('favoriteMachines');
 
@@ -64,6 +70,13 @@ export default React.memo(function PreviewMachinePickerScreen() {
             navigation: navigation as any,
             router,
             routeParams: { previewMachineId },
+            replaceParams: {
+                ...(typeof params.agentType === 'string' && params.agentType.trim().length > 0 ? { agentType: params.agentType } : {}),
+                ...(typeof params.dataId === 'string' && params.dataId.trim().length > 0 ? { dataId: params.dataId } : {}),
+                ...(typeof params.machineId === 'string' && params.machineId.trim().length > 0 ? { machineId: params.machineId } : {}),
+                ...(typeof params.spawnServerId === 'string' && params.spawnServerId.trim().length > 0 ? { spawnServerId: params.spawnServerId } : {}),
+                previewMachineId,
+            },
         });
     }, [navigation, router]);
 

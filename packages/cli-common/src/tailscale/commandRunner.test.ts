@@ -165,6 +165,153 @@ describe('runTailscaleServeEnable', () => {
     expect(result.httpsUrl).toBeNull();
     expect(result.rawStatus).toContain('login.tailscale.com/f/serve?node=node-123');
   });
+
+  it('pins the https port and owned path when enabling serve', async () => {
+    const runner = vi.fn<TailscaleCommandRunner>()
+      .mockResolvedValueOnce({
+        command: '/bin/tailscale',
+        args: ['serve', '--bg', '--https=8443', '--set-path=/__happier/transfer', 'http://127.0.0.1:46001'],
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        command: '/bin/tailscale',
+        args: ['serve', 'status'],
+        exitCode: 0,
+        stdout: 'https://machine.tailnet.ts.net:8443\n|-- /__happier/transfer proxy http://127.0.0.1:46001',
+        stderr: '',
+      });
+
+    const result = await runTailscaleServeEnable(
+      {
+        env: {},
+        upstreamUrl: 'http://127.0.0.1:46001',
+        httpsPort: 8443,
+        servePath: '/__happier/transfer',
+      },
+      {
+        resolveTailscaleBin: vi.fn(async () => '/bin/tailscale'),
+        runCommand: runner,
+      },
+    );
+
+    expect(runner).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      command: '/bin/tailscale',
+      args: ['serve', '--bg', '--https=8443', '--set-path=/__happier/transfer', 'http://127.0.0.1:46001'],
+    }));
+    expect(result).toEqual({
+      approvalUrl: null,
+      httpsUrl: 'https://machine.tailnet.ts.net:8443',
+      rawStatus: 'https://machine.tailnet.ts.net:8443\n|-- /__happier/transfer proxy http://127.0.0.1:46001',
+    });
+  });
+
+  it('returns the https URL for the owned path and https port when status includes other mappings for the same upstream', async () => {
+    const runner = vi.fn<TailscaleCommandRunner>()
+      .mockResolvedValueOnce({
+        command: '/bin/tailscale',
+        args: ['serve', '--bg', '--https=8443', '--set-path=/__happier/transfer', 'http://127.0.0.1:46001'],
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        command: '/bin/tailscale',
+        args: ['serve', 'status'],
+        exitCode: 0,
+        stdout: [
+          'https://machine.tailnet.ts.net',
+          '|-- / proxy http://127.0.0.1:46001',
+          '',
+          'https://machine.tailnet.ts.net:8443',
+          '|-- /__happier/transfer proxy http://127.0.0.1:46001',
+        ].join('\n'),
+        stderr: '',
+      });
+
+    const result = await runTailscaleServeEnable(
+      {
+        env: {},
+        upstreamUrl: 'http://127.0.0.1:46001',
+        httpsPort: 8443,
+        servePath: '/__happier/transfer',
+      },
+      {
+        resolveTailscaleBin: vi.fn(async () => '/bin/tailscale'),
+        runCommand: runner,
+      },
+    );
+
+    expect(result.httpsUrl).toBe('https://machine.tailnet.ts.net:8443');
+  });
+
+  it('does not fall back to a different serve path on the same upstream', async () => {
+    const runner = vi.fn<TailscaleCommandRunner>()
+      .mockResolvedValueOnce({
+        command: '/bin/tailscale',
+        args: ['serve', '--bg', '--https=8443', '--set-path=/__happier/transfer', 'http://127.0.0.1:46001'],
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        command: '/bin/tailscale',
+        args: ['serve', 'status'],
+        exitCode: 0,
+        stdout: [
+          'https://other.tailnet.ts.net:8443',
+          '|-- / proxy http://127.0.0.1:46001',
+        ].join('\n'),
+        stderr: '',
+      });
+
+    const result = await runTailscaleServeEnable(
+      {
+        env: {},
+        upstreamUrl: 'http://127.0.0.1:46001',
+        httpsPort: 8443,
+        servePath: '/__happier/transfer',
+      },
+      {
+        resolveTailscaleBin: vi.fn(async () => '/bin/tailscale'),
+        runCommand: runner,
+      },
+    );
+
+    expect(result.httpsUrl).toBeNull();
+  });
+});
+
+describe('runTailscaleServeDisable', () => {
+  it('disables only the owned https path instead of resetting all serve config', async () => {
+    const mod = await import('./commandRunner.js');
+    const runner = vi.fn<TailscaleCommandRunner>().mockResolvedValueOnce({
+      command: '/bin/tailscale',
+      args: ['serve', '--https=8443', '--set-path=/__happier/transfer', 'off'],
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+    });
+
+    await mod.runTailscaleServeDisable(
+      {
+        env: {},
+        httpsPort: 8443,
+        servePath: '/__happier/transfer',
+      },
+      {
+        resolveTailscaleBin: vi.fn(async () => '/bin/tailscale'),
+        runCommand: runner,
+      },
+    );
+
+    expect(runner).toHaveBeenCalledTimes(1);
+    expect(runner).toHaveBeenCalledWith(expect.objectContaining({
+      command: '/bin/tailscale',
+      args: ['serve', '--https=8443', '--set-path=/__happier/transfer', 'off'],
+    }));
+  });
 });
 
 describe('runTailscaleStatusJson', () => {

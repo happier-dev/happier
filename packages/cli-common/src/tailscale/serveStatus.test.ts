@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   extractTailscaleServeHttpsUrl,
   parseTailscaleServeHttpsBaseUrlForPort,
+  tailscaleServeHttpsUrlForOwnedConfigFromStatus,
   tailscaleServeHttpsUrlForInternalServerUrlFromStatus,
   tailscaleServeStatusMatchesInternalServerUrl,
 } from './serveStatus.js';
@@ -49,6 +50,57 @@ describe('tailscaleServeHttpsUrlForInternalServerUrlFromStatus', () => {
   });
 });
 
+describe('tailscaleServeHttpsUrlForOwnedConfigFromStatus', () => {
+  it('requires the owned serve path when multiple mappings target the same transfer port', () => {
+    const status = [
+      'https://machine.tailnet.ts.net',
+      '|-- / proxy http://127.0.0.1:46001',
+      '|-- /__happier/transfer proxy http://127.0.0.1:46001',
+      '',
+    ].join('\n');
+
+    expect(tailscaleServeHttpsUrlForOwnedConfigFromStatus({
+      serveStatusText: status,
+      internalServerUrl: 'http://127.0.0.1:46001',
+      servePath: '/__happier/transfer',
+      httpsPort: 443,
+    })).toBe('https://machine.tailnet.ts.net');
+  });
+
+  it('returns null when only a different serve path targets the same transfer port', () => {
+    const status = [
+      'https://machine.tailnet.ts.net',
+      '|-- / proxy http://127.0.0.1:46001',
+      '',
+    ].join('\n');
+
+    expect(tailscaleServeHttpsUrlForOwnedConfigFromStatus({
+      serveStatusText: status,
+      internalServerUrl: 'http://127.0.0.1:46001',
+      servePath: '/__happier/transfer',
+      httpsPort: 443,
+    })).toBeNull();
+  });
+
+  it('requires the owned https port when multiple serve listeners proxy the same transfer path', () => {
+    const status = [
+      'https://machine.tailnet.ts.net',
+      '|-- /__happier/transfer proxy http://127.0.0.1:46001',
+      '',
+      'https://machine.tailnet.ts.net:8443',
+      '|-- /__happier/transfer proxy http://127.0.0.1:46001',
+      '',
+    ].join('\n');
+
+    expect(tailscaleServeHttpsUrlForOwnedConfigFromStatus({
+      serveStatusText: status,
+      internalServerUrl: 'http://127.0.0.1:46001',
+      servePath: '/__happier/transfer',
+      httpsPort: 8443,
+    })).toBe('https://machine.tailnet.ts.net:8443');
+  });
+});
+
 describe('extractTailscaleServeHttpsUrl', () => {
   it('returns the first normalized https URL from serve status', () => {
     const status = [
@@ -71,5 +123,15 @@ describe('tailscaleServeStatusMatchesInternalServerUrl', () => {
     ].join('\n');
 
     expect(tailscaleServeStatusMatchesInternalServerUrl(status, 'http://127.0.0.1:53545')).toBe(true);
+  });
+
+  it('matches a loopback IPv6 internal URL for the same proxied port', () => {
+    const status = [
+      'https://my-machine.tailnet.ts.net',
+      '|-- / proxy http://[::1]:53545',
+      '',
+    ].join('\n');
+
+    expect(tailscaleServeStatusMatchesInternalServerUrl(status, 'http://[::1]:53545')).toBe(true);
   });
 });

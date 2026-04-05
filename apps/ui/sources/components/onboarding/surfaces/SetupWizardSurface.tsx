@@ -10,11 +10,13 @@ import { Text } from '@/components/ui/text/Text';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { getPendingSetupIntent, setPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
 import { upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
+import { upsertServerProfileOnly } from '@/sync/domains/server/serverRuntime';
 import { t, tLoose } from '@/text';
 import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
 import { getProviderCliSetupSupportedIds, type AgentId } from '@happier-dev/agents';
 import type { RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
+import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 
 import { createWizardState, wizardReducer } from '../state/wizardReducer';
 import { canSkipWizardStep, getWizardProgress } from '../state/wizardSelectors';
@@ -39,7 +41,7 @@ export type SetupWizardSurfaceProps = Readonly<{
 }>;
 
 type SetupAction = WizardContext['setupAction'];
-type SetupChooserAction = 'local' | 'relayLocal' | 'remote' | 'tailscale';
+type SetupChooserAction = 'local' | 'relayLocal' | 'remote';
 export type RemoteSetupIntent = 'remoteMachine' | 'remoteRelayHost';
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -80,6 +82,7 @@ export type SetupWizardSurfaceStyles = typeof stylesheet;
 export type RemoteRelayRuntimeCompletion = Readonly<{
     machineId: string | null;
     relayRuntimeUrl: string | null;
+    relayAccessTarget: RelayAccessTaskTarget | null;
     mode: RemoteSetupIntent;
 }>;
 
@@ -120,8 +123,6 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
                 return 'relayLocal';
             case 'remote_ssh_setup':
                 return 'remote';
-            case 'secure_access_tailscale':
-                return 'tailscale';
             default:
                 return null;
         }
@@ -179,7 +180,7 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
         relayUrl: string;
         machineId: string | null;
     }> | null>(null);
-    const [, setPendingRelayShareUrl] = React.useState<string | null>(null);
+    const [relayAccessTarget, setRelayAccessTarget] = React.useState<RelayAccessTaskTarget | null>(null);
     const [localMachineId, setLocalMachineId] = React.useState<string | null>(null);
     const [remoteMachineId, setRemoteMachineId] = React.useState<string | null>(null);
     const [remoteSetupIntent, setRemoteSetupIntent] = React.useState<RemoteSetupIntent>(initialRemoteIntent);
@@ -266,22 +267,37 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
     const clearRelayRuntimeCandidate = React.useCallback(() => {
         setRelaySwitchDecision('keep');
         setPendingRelayRuntime(null);
+        setRelayAccessTarget(null);
         dispatch({
             type: 'wizard/setRelaySelection',
             relaySelection: { choiceId: null, serverUrl: null, locked: false },
         });
     }, []);
 
-    const setRelayRuntimeCandidate = React.useCallback((relayUrl: string | null, machineId: string | null) => {
+    const setRelayRuntimeCandidate = React.useCallback((
+        relayUrl: string | null,
+        machineId: string | null,
+        nextRelayAccessTarget: RelayAccessTaskTarget | null,
+    ) => {
         const normalized = String(relayUrl ?? '').trim();
         if (!normalized) {
             clearRelayRuntimeCandidate();
             return;
         }
+        const profile = upsertServerProfileOnly({
+            serverUrl: normalized,
+            source: 'url',
+        });
         setPendingRelayRuntime({ relayUrl: normalized, machineId });
+        setRelayAccessTarget(nextRelayAccessTarget);
         dispatch({
             type: 'wizard/setRelaySelection',
-            relaySelection: { choiceId: 'customUrl', serverUrl: normalized, locked: true },
+            relaySelection: {
+                choiceId: 'customUrl',
+                serverUrl: normalized,
+                relayProfileId: profile.id,
+                locked: true,
+            },
         });
     }, [clearRelayRuntimeCandidate]);
 
@@ -345,9 +361,6 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
                 dispatch({ type: 'wizard/goToStep', stepId: 'remote_ssh_setup' });
                 return;
             }
-            if (action === 'tailscale') {
-                dispatch({ type: 'wizard/goToStep', stepId: 'secure_access_tailscale' });
-            }
             return;
         }
 
@@ -364,6 +377,14 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
             return;
         }
         if (stepId === 'relay_access') {
+            if (typeof relayCandidateUrl === 'string' && relayCandidateUrl.trim().length > 0) {
+                dispatch({ type: 'wizard/goToStep', stepId: 'confirm_switch_relay' });
+                return;
+            }
+            dispatch({ type: 'wizard/goToStep', stepId: action === 'relayLocal' ? 'done' : afterProvidersStepId });
+            return;
+        }
+        if (stepId === 'relay_access_prereqs') {
             if (typeof relayCandidateUrl === 'string' && relayCandidateUrl.trim().length > 0) {
                 dispatch({ type: 'wizard/goToStep', stepId: 'confirm_switch_relay' });
                 return;
@@ -417,7 +438,7 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
             router.replace('/');
             return;
         }
-        if (stepId === 'providers_optional' || stepId === 'secure_access_tailscale') {
+        if (stepId === 'providers_optional') {
             dispatch({ type: 'wizard/goToStep', stepId: 'done' });
             return;
         }
@@ -433,32 +454,31 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
         dispatch({ type: 'wizard/setRelayAccessProviderId', providerId });
         dispatch({
             type: 'wizard/goToStep',
-            stepId: providerId === 'cloudflareNamed' ? 'relay_access_cloudflare' : 'relay_access_url',
+            stepId: 'relay_access_prereqs',
         });
     }, [dispatch]);
 
     const handleLocalRelayStatusChange = React.useCallback((status: unknown) => {
         const relayUrl = (status as { relayUrl?: unknown } | null | undefined)?.relayUrl;
-        setRelayRuntimeCandidate(typeof relayUrl === 'string' ? relayUrl : null, null);
+        setRelayRuntimeCandidate(typeof relayUrl === 'string' ? relayUrl : null, null, { kind: 'local' });
     }, [setRelayRuntimeCandidate]);
 
     const handleRemoteRelayRuntimeCompletedChange = React.useCallback((payload: RemoteRelayRuntimeCompletion) => {
         setRemoteMachineId(payload.machineId);
         const relayUrl = typeof payload.relayRuntimeUrl === 'string' ? payload.relayRuntimeUrl.trim() : '';
         if (relayUrl.length > 0) {
-            setRelayRuntimeCandidate(relayUrl, payload.machineId);
+            setRelayRuntimeCandidate(relayUrl, payload.machineId, payload.relayAccessTarget);
             persistRemoteSetupIntent('remoteRelayHost', relayUrl, payload.machineId);
         }
     }, [persistRemoteSetupIntent, setRelayRuntimeCandidate]);
 
     const handleRelayUrlPasteChange = React.useCallback((value: string) => {
-        setRelayRuntimeCandidate(value, null);
+        setRelayRuntimeCandidate(value, null, { kind: 'local' });
     }, [setRelayRuntimeCandidate]);
 
     const handleRelayShareUrlPasteChange = React.useCallback((value: string) => {
-        const normalized = String(value ?? '').trim();
-        setPendingRelayShareUrl(normalized.length > 0 ? normalized : null);
-    }, []);
+        setRelayRuntimeCandidate(value, null, relayAccessTarget);
+    }, [relayAccessTarget, setRelayRuntimeCandidate]);
 
     let body: React.ReactNode = null;
     if (stepId === 'setup_chooser') {
@@ -466,10 +486,6 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
         const showRemoteMachine = scope !== 'relay' && setupPolicy.machine.allowRemoteSshMachineSetup;
         const showRelayHosting = scope !== 'machine' && setupPolicy.relay.allowLocalRelayHost;
         const showRemoteRelayHosting = scope !== 'machine' && setupPolicy.relay.allowRemoteSshRelayHost;
-        const showTailscale =
-            scope !== 'machine'
-            && setupPolicy.relay.allowLocalRelayHost
-            && setupPolicy.relayAccess.allowTailscale;
 
         body = (
             <>
@@ -515,16 +531,6 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
                             subtitle={t('setupOnboarding.relayOnRemoteComputerSubtitle')}
                         />
                     ) : null}
-                    {showTailscale ? (
-                        <WizardChoiceRow
-                            testID={`${testIDPrefix}-branch:tailscale`}
-                            selected={action === 'tailscale'}
-                            onPress={() => chooseAction('tailscale')}
-                            icon="shield-checkmark-outline"
-                            title={t('settings.localTailscale.title')}
-                            subtitle={t('settings.localTailscale.footer')}
-                        />
-                    ) : null}
                 </View>
                 <Text style={styles.branchHint}>{t('setupOnboarding.postAuthBody')}</Text>
             </>
@@ -567,6 +573,8 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
                     ? String(activeServerSnapshot.activeLocalRelayUrl).trim()
                     : null,
                 relayUrl: relayCandidateUrl,
+                serverProfileId: state.context.relaySelection.relayProfileId ?? null,
+                relayAccessTarget: relayAccessTarget ?? { kind: 'local' },
                 providerMachineId,
                 providerSelectionProviderIds,
                 selectedProviderIds,
@@ -595,8 +603,6 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
         primaryOverride?.label
         ?? (stepId === 'setup_chooser'
             ? t('common.continue')
-            : stepId === 'secure_access_tailscale'
-                ? t('common.done')
             : stepId === 'done'
                 ? t('common.done')
                 : t('common.continue'));

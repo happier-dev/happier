@@ -77,6 +77,9 @@ vi.mock('../ui/WizardTerminalHandoff', () => ({
 vi.mock('../steps/ProvidersLogoMultiSelect', () => ({
     ProvidersLogoMultiSelect: (props: Record<string, unknown>) => React.createElement('ProvidersLogoMultiSelect', props),
 }));
+vi.mock('../steps/relayAccess/RelayAccessPrerequisitesStep', () => ({
+    RelayAccessPrerequisitesStep: (props: Record<string, unknown>) => React.createElement('RelayAccessPrerequisitesStep', props),
+}));
 vi.mock('../steps/WizardProviderSetupStep', () => ({
     WizardProviderSetupStep: (props: Record<string, unknown>) => React.createElement('WizardProviderSetupStep', props),
 }));
@@ -95,9 +98,6 @@ vi.mock('@/components/settings/server/useRelayDriftBanner', () => ({
 }));
 vi.mock('@/components/settings/server/RelayDriftActionCard', () => ({
     RelayDriftActionCard: (props: Record<string, unknown>) => React.createElement('RelayDriftActionCard', props),
-}));
-vi.mock('@/components/settings/server/localControl/LocalTailscaleSecureAccessSection', () => ({
-    LocalTailscaleSecureAccessSection: (props: Record<string, unknown>) => React.createElement('LocalTailscaleSecureAccessSection', props),
 }));
 vi.mock('@/components/settings/server/localControl/LocalRelayAccessControlSection', () => ({
     LocalRelayAccessControlSection: (props: Record<string, unknown>) => React.createElement('LocalRelayAccessControlSection', props),
@@ -230,20 +230,6 @@ describe('SetupWizardSurface', () => {
         }
     });
 
-    it('hides Tailscale secure access when setup surface policy denies it', async () => {
-        const previousDeny = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
-        process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = 'setup.relayAccess.allowTailscale';
-        try {
-            const { SetupWizardSurface } = await import('./SetupWizardSurface');
-            const screen = await renderScreen(React.createElement(SetupWizardSurface, { isDesktopShell: true }));
-
-            expect(screen.findByTestId('setupWizard-branch:tailscale')).toBeNull();
-        } finally {
-            if (previousDeny === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
-            else process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = previousDeny;
-        }
-    });
-
     it('persists the remote machine branch as soon as it is selected', async () => {
         const { SetupWizardSurface } = await import('./SetupWizardSurface');
         const screen = await renderScreen(React.createElement(SetupWizardSurface, {
@@ -304,11 +290,8 @@ describe('SetupWizardSurface', () => {
             scope: 'relay',
         }));
 
-        expect(screen.findByTestId('setupWizard-branch:relayLocal')).toBeTruthy();
-        expect(screen.findByTestId('setupWizard-branch:remoteRelay')).toBeTruthy();
         expect(screen.findByTestId('setupWizard-branch:local')).toBeFalsy();
         expect(screen.findByTestId('setupWizard-branch:remote')).toBeFalsy();
-        expect(screen.findByTestId('setupWizard-branch:tailscale')).toBeTruthy();
     });
 
     it('guides the user from branch selection into the local setup step', async () => {
@@ -837,33 +820,6 @@ describe('SetupWizardSurface', () => {
         vi.resetModules();
     });
 
-    it('guides web users selecting secure access (Tailscale) to continue on desktop', async () => {
-        vi.resetModules();
-        vi.doMock('react-native', installReactNativeWebMock({ Platform: { OS: 'web' } }));
-
-        const { SetupWizardSurface } = await import('./SetupWizardSurface');
-        const screen = await renderScreen(React.createElement(SetupWizardSurface, {
-            isDesktopShell: false,
-        }));
-
-        const tailscaleBranch = screen.findByTestId('setupWizard-branch:tailscale');
-        await act(async () => {
-            const handler = tailscaleBranch?.props.action ?? tailscaleBranch?.props.onPress;
-            await handler?.();
-        });
-
-        const continueButton = screen.findByTestId('setupWizard.surface-primary');
-        await act(async () => {
-            const handler = continueButton?.props.action ?? continueButton?.props.onPress;
-            await handler?.();
-        });
-
-        expect(screen.findByTestId('setupWizard-web-tailscale-handoff')).toBeTruthy();
-        expect(screen.findAllByType('LocalTailscaleSecureAccessSection' as never)).toHaveLength(0);
-
-        vi.resetModules();
-    });
-
     it('guides web users through local relay hosting via terminal handoff and explicit relay URL paste', async () => {
         vi.resetModules();
         vi.doMock('react-native', installReactNativeWebMock({ Platform: { OS: 'web' } }));
@@ -999,6 +955,7 @@ describe('SetupWizardSurface', () => {
         };
         expect(relayAccessSection).toBeTruthy();
         expect(relayAccessSection.props.presentation).toBe('wizard');
+        expect(relayAccessSection.props.serverProfileId).toEqual(expect.any(String));
         expect(typeof relayAccessSection.props.onWizardPrimaryChange).toBe('function');
         expect(typeof relayAccessSection.props.onRequestAdvance).toBe('function');
         expect(screen.findByTestId('setupWizard-confirmSwitchRelay')).toBeNull();
@@ -1010,6 +967,78 @@ describe('SetupWizardSurface', () => {
         });
 
         expect(screen.findByTestId('setupWizard-confirmSwitchRelay')).toBeTruthy();
+    });
+
+    it.each([
+        ['lan', 'https://local-relay.example.test'],
+        ['cloudflareNamed', 'https://local-relay.example.test'],
+    ] as const)('routes %s relay access requests to the prerequisites step', async (providerId, relayUrl) => {
+        const { SetupWizardSurface } = await import('./SetupWizardSurface');
+        const screen = await renderScreen(React.createElement(SetupWizardSurface, {
+            isDesktopShell: true,
+        }));
+
+        const relayBranch = screen.findByTestId('setupWizard-branch:relayLocal');
+        await act(async () => {
+            const handler = relayBranch?.props.action ?? relayBranch?.props.onPress;
+            await handler?.();
+        });
+
+        const continueToHost = screen.findByTestId('setupWizard.surface-primary');
+        await act(async () => {
+            const handler = continueToHost?.props.action ?? continueToHost?.props.onPress;
+            await handler?.();
+        });
+
+        const localRelaySection = screen.findByType('RelayHostLocalChecklistStep' as never) as unknown as {
+            props: { onStatusChange?: (status: unknown) => void };
+        };
+        await act(async () => {
+            localRelaySection.props.onStatusChange?.({
+                relayUrl,
+            });
+        });
+
+        const continueAfterHosted = screen.findByTestId('setupWizard.surface-primary');
+        await act(async () => {
+            const handler = continueAfterHosted?.props.action ?? continueAfterHosted?.props.onPress;
+            await handler?.();
+        });
+
+        const relayAccessSection = screen.findByType('LocalRelayAccessControlSection' as never) as unknown as {
+            props: {
+                onWizardRequestProviderDetails?: (nextProviderId: 'lan' | 'cloudflareNamed') => void;
+                target?: Readonly<{ kind: 'local' }> | Readonly<{
+                    kind: 'ssh';
+                    ssh: Readonly<{
+                        target: string;
+                        auth: 'agent' | 'keyfile' | 'password';
+                    }>;
+                }>;
+            };
+        };
+        expect(relayAccessSection.props.target).toEqual({ kind: 'local' });
+        await act(async () => {
+            relayAccessSection.props.onWizardRequestProviderDetails?.(providerId);
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const prereqsStep = screen.findByType('RelayAccessPrerequisitesStep' as never) as unknown as {
+            props: {
+                providerId?: string;
+                upstreamUrl?: string | null;
+                target?: Readonly<{ kind: 'local' }> | Readonly<{
+                    kind: 'ssh';
+                    ssh: Readonly<{
+                        target: string;
+                        auth: 'agent' | 'keyfile' | 'password';
+                    }>;
+                }>;
+            };
+        };
+        expect(prereqsStep.props.providerId).toBe(providerId);
+        expect(prereqsStep.props.upstreamUrl).toBe(relayUrl);
+        expect(prereqsStep.props.target).toEqual({ kind: 'local' });
     });
 
     it('keeps the current relay by default on the confirmation step', async () => {
@@ -1168,13 +1197,33 @@ describe('SetupWizardSurface', () => {
         });
 
         const remoteSection = screen.findByType('RemoteSshChecklistStep' as never) as unknown as {
-            props: { onCompleted?: (payload: { machineId: string | null; relayRuntimeUrl: string | null; mode: string }) => void };
+            props: {
+                onCompleted?: (payload: {
+                    machineId: string | null;
+                    relayRuntimeUrl: string | null;
+                    relayAccessTarget?: {
+                        kind: 'ssh';
+                        ssh: {
+                            target: string;
+                            auth: 'agent' | 'keyfile' | 'password';
+                        };
+                    } | null;
+                    mode: string;
+                }) => void;
+            };
         };
 
         await act(async () => {
             remoteSection.props.onCompleted?.({
                 machineId: 'mach-1',
                 relayRuntimeUrl: 'https://remote-relay.example.test',
+                relayAccessTarget: {
+                    kind: 'ssh',
+                    ssh: {
+                        target: 'root@remote.example.test',
+                        auth: 'agent',
+                    },
+                },
                 mode: 'remoteRelayHost',
             });
         });
@@ -1185,7 +1234,24 @@ describe('SetupWizardSurface', () => {
             await handler?.();
         });
 
-        expect(screen.findByType('LocalRelayAccessControlSection' as never)).toBeTruthy();
+        const relayAccessSection = screen.findByType('LocalRelayAccessControlSection' as never) as unknown as {
+            props: {
+                target?: Readonly<{ kind: 'local' }> | Readonly<{
+                    kind: 'ssh';
+                    ssh: Readonly<{
+                        target: string;
+                        auth: 'agent' | 'keyfile' | 'password';
+                    }>;
+                }>;
+            };
+        };
+        expect(relayAccessSection.props.target).toEqual({
+            kind: 'ssh',
+            ssh: {
+                target: 'root@remote.example.test',
+                auth: 'agent',
+            },
+        });
 
         const continueAfterRelayAccess = screen.findByTestId('setupWizard.surface-primary');
         await act(async () => {
@@ -1259,13 +1325,27 @@ describe('SetupWizardSurface', () => {
         });
 
         const remoteSection = screen.findByType('RemoteSshChecklistStep' as never) as unknown as {
-            props: { onCompleted?: (payload: { machineId: string | null; relayRuntimeUrl: string | null; mode: string }) => void };
+            props: {
+                onCompleted?: (payload: {
+                    machineId: string | null;
+                    relayRuntimeUrl: string | null;
+                    relayAccessTarget?: {
+                        kind: 'ssh';
+                        ssh: {
+                            target: string;
+                            auth: 'agent' | 'keyfile' | 'password';
+                        };
+                    } | null;
+                    mode: string;
+                }) => void;
+            };
         };
 
         await act(async () => {
             remoteSection.props.onCompleted?.({
                 machineId: 'mach-remote',
                 relayRuntimeUrl: null,
+                relayAccessTarget: null,
                 mode: 'remoteMachine',
             });
         });

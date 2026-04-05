@@ -6,7 +6,7 @@ import { delimiter, join } from 'node:path';
 import { resolveWindowsCommandOnPath } from '../process/index.js';
 import {
   extractTailscaleServeHttpsUrl,
-  tailscaleServeHttpsUrlForInternalServerUrlFromStatus,
+  tailscaleServeHttpsUrlForOwnedConfigFromStatus,
 } from './serveStatus.js';
 import { parseTailscaleStatusJson, type TailscaleStatusSnapshot } from './statusSnapshot.js';
 
@@ -67,6 +67,13 @@ export type RunTailscaleServeEnableParams = RunTailscaleParams &
   Readonly<{
     upstreamUrl: string;
     servePath?: string;
+    httpsPort?: number;
+  }>;
+
+export type RunTailscaleServeDisableParams = RunTailscaleParams &
+  Readonly<{
+    servePath?: string;
+    httpsPort?: number;
   }>;
 
 export type RunTailscaleServeEnableResult = Readonly<{
@@ -97,6 +104,13 @@ function normalizeTimeoutMs(value: unknown, defaultMs: number): number {
   if (!Number.isFinite(numeric)) return defaultMs;
   if (numeric <= 0) return 0;
   return Math.trunc(numeric);
+}
+
+function normalizeServeHttpsPort(value: unknown): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 443;
+  const normalized = Math.trunc(numeric);
+  return normalized > 0 ? normalized : 443;
 }
 
 export function sanitizeTailscaleEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
@@ -473,9 +487,16 @@ export async function runTailscaleServeEnable(
   const timeoutMs = normalizeTimeoutMs(params.timeoutMs, 30_000);
   const upstreamUrl = String(params.upstreamUrl ?? '').trim();
   const servePath = String(params.servePath ?? '/').trim() || '/';
+  const httpsPort = normalizeServeHttpsPort(params.httpsPort);
+  // Preserve compatibility with older `tailscale serve --bg <url>` while still supporting
+  // pinned ports and paths when explicitly requested.
   const args = ['serve', '--bg'];
-  if (servePath !== '/') {
-    args.push(`--set-path=${servePath}`);
+  const shouldPinPortOrPath = params.httpsPort !== undefined || servePath !== '/';
+  if (shouldPinPortOrPath) {
+    args.push(`--https=${httpsPort}`);
+    if (servePath !== '/') {
+      args.push(`--set-path=${servePath}`);
+    }
   }
   args.push(upstreamUrl);
 
@@ -518,9 +539,38 @@ export async function runTailscaleServeEnable(
   return {
     approvalUrl: null,
     httpsUrl:
-      tailscaleServeHttpsUrlForInternalServerUrlFromStatus(status, upstreamUrl) ?? extractTailscaleServeHttpsUrl(status),
+      tailscaleServeHttpsUrlForOwnedConfigFromStatus({
+        serveStatusText: status,
+        internalServerUrl: upstreamUrl,
+        servePath,
+        httpsPort,
+      }),
     rawStatus: status,
   };
+}
+
+export async function runTailscaleServeDisable(
+  params: RunTailscaleServeDisableParams = {},
+  deps: RunTailscaleDeps = {},
+): Promise<void> {
+  const command = await resolveCommand(params, deps);
+  const runner = deps.runCommand ?? runCommand;
+  const env = sanitizeTailscaleEnv(params.env ?? process.env);
+  const timeoutMs = normalizeTimeoutMs(params.timeoutMs, 15_000);
+  const servePath = String(params.servePath ?? '/').trim() || '/';
+  const httpsPort = normalizeServeHttpsPort(params.httpsPort);
+  const args = ['serve', `--https=${httpsPort}`];
+  if (servePath !== '/') {
+    args.push(`--set-path=${servePath}`);
+  }
+  args.push('off');
+
+  await runner({
+    command,
+    args,
+    env,
+    timeoutMs,
+  });
 }
 
 export async function runTailscaleServeReset(params: RunTailscaleParams = {}, deps: RunTailscaleDeps = {}): Promise<void> {

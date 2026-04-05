@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { View, Pressable, Platform } from 'react-native';
 import { Stack, useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { Typography } from '@/constants/Typography';
-import { useAllMachines, useSessions, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
+import { useAllMachines, useAllSessionListRenderables, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
@@ -28,7 +28,7 @@ export default React.memo(function PathPickerScreen() {
         spawnServerId?: string;
     }>();
     const machines = useAllMachines();
-    const sessions = useSessions();
+    const sessions = useAllSessionListRenderables();
     const recentMachinePaths = useSetting('recentMachinePaths');
     const usePathPickerSearch = useSetting('usePathPickerSearch');
     const [favoriteDirectoriesRaw, setFavoriteDirectories] = useSettingMutable('favoriteDirectories');

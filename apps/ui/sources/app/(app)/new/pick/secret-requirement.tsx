@@ -41,11 +41,14 @@ export default React.memo(function SecretRequirementPickerScreen() {
     const router = useRouter();
     const navigation = useNavigation();
     const params = useLocalSearchParams<{
+        agentType?: string;
+        dataId?: string;
         profileId?: string;
         secretEnvVarName?: string;
         secretEnvVarNames?: string;
         machineId?: string;
         revertOnCancel?: string;
+        spawnServerId?: string;
         selectedSecretIdByEnvVarName?: string;
     }>();
 
@@ -95,6 +98,14 @@ export default React.memo(function SecretRequirementPickerScreen() {
             navigation: navigation as any,
             router,
             routeParams: { secretRequirementResultId: id },
+            replaceParams: {
+                ...(typeof params.agentType === 'string' && params.agentType.trim().length > 0 ? { agentType: params.agentType } : {}),
+                ...(typeof params.dataId === 'string' && params.dataId.trim().length > 0 ? { dataId: params.dataId } : {}),
+                ...(typeof params.machineId === 'string' && params.machineId.trim().length > 0 ? { machineId: params.machineId } : {}),
+                ...(typeof params.profileId === 'string' && params.profileId.trim().length > 0 ? { profileId: params.profileId } : {}),
+                ...(typeof params.spawnServerId === 'string' && params.spawnServerId.trim().length > 0 ? { spawnServerId: params.spawnServerId } : {}),
+                secretRequirementResultId: id,
+            },
         });
         if (returnMode === 'dispatch') {
             safeRouterBack({ router, navigation, fallbackHref: '/new' });

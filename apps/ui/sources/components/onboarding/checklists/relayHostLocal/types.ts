@@ -2,8 +2,7 @@ import type { SystemTaskResult, SystemTaskRunState, SystemTaskRunner } from '@/c
 
 export type RelayHostLocalChecklistItemId =
     | 'installRelayRuntime'
-    | 'startRelayRuntime'
-    | 'enableSecureAccess';
+    | 'startRelayRuntime';
 
 export type RelayHostLocalChecklistItem = Readonly<{
     id: RelayHostLocalChecklistItemId;

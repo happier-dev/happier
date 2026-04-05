@@ -44,7 +44,7 @@ installPickerCommonModuleMocks({
             importOriginal,
             overrides: {
                 useAllMachines: () => [],
-                useSessions: () => [],
+                useAllSessionListRenderables: () => [],
                 useSetting: () => false,
                 useSettingMutable: () => [[], vi.fn()],
             },

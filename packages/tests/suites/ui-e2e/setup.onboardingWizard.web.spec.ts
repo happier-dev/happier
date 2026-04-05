@@ -236,6 +236,10 @@ test.describe('ui e2e: web onboarding wizard', () => {
 
         await page.getByTestId('onboarding-wizard-primary').click();
         await expect(page.getByTestId('onboarding-wizard-relay-url-input')).toHaveCount(1, { timeout: 120_000 });
+        await page.getByTestId('onboarding-wizard-relay-url-input').fill(server?.baseUrl ?? '');
+        await expect(page.getByTestId('onboarding-wizard-primary')).toBeEnabled({ timeout: 120_000 });
+        await page.getByTestId('onboarding-wizard-primary').click();
+        await expect(page.getByTestId('welcome-create-account')).toHaveCount(1, { timeout: 120_000 });
     });
 
     test('web onboarding renders a centered modal card on desktop viewports', async ({ page }) => {

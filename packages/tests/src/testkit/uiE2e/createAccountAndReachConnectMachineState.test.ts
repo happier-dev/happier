@@ -71,6 +71,18 @@ describe('createAccountAndReachConnectMachineState', () => {
     await expect(createAccountAndReachConnectMachineState({ page })).resolves.toBeUndefined();
   });
 
+  it('accepts an already-visible connect-machine state without requiring create-account first', async () => {
+    const page = createFakePage({
+      testIdCounts: {
+        'welcome-create-account': [0],
+        'session-getting-started-kind-connect_machine': [1, 1],
+        'setupWizard.surface': [0],
+      },
+    });
+
+    await expect(createAccountAndReachConnectMachineState({ page })).resolves.toBeUndefined();
+  });
+
   it('dismisses setup wizard only when visible', async () => {
     const page = createFakePage({
       testIdCounts: {

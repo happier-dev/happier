@@ -100,7 +100,7 @@ describe('TerminalConnectScreen safe navigation', () => {
         };
     });
 
-    it('falls back to replace(/) when router cannot go back (success)', async () => {
+    it('replaces with / after approving terminal connect', async () => {
         const Screen = (await import('@/app/(app)/terminal/connect')).default;
 
         await renderScreen(<Screen />);

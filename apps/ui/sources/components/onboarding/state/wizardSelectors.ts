@@ -20,7 +20,7 @@ export function canSkipWizardStep(context: WizardContext, stepId: WizardStepId):
     return getWizardStepDefinition(stepId).canSkip;
 }
 
-export function getSelectedSetupAction(context: WizardContext): 'local' | 'relayLocal' | 'remote' | 'tailscale' | null {
+export function getSelectedSetupAction(context: WizardContext): 'local' | 'relayLocal' | 'remote' | null {
     return context.setupAction;
 }
 

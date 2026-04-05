@@ -4,11 +4,13 @@ import { StyleSheet as UnistylesStyleSheet, useUnistyles } from 'react-native-un
 
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
 import { getDefaultSystemTaskRunner, SystemTaskProgressCard } from '@/components/systemTasks';
+import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 import { MachineSetupTextField } from '@/components/ui/forms/MachineSetupTextField';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { Modal } from '@/modal';
 import { createBackdropNativeStyle, createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
+import { setActiveShareableServerUrl, setServerProfileShareableUrl } from '@/sync/domains/server/serverRuntime';
 
 import { useLocalRelayAccessControl } from '@/components/settings/server/localControl/useLocalRelayAccessControl';
 
@@ -44,6 +46,8 @@ export type RelayAccessLanUrlStepProps = Readonly<{
     testID?: string;
     runner?: SystemTaskRunner;
     upstreamUrl?: string | null;
+    serverProfileId?: string | null;
+    target?: RelayAccessTaskTarget;
     onWizardPrimaryChange?: (state: Readonly<{
         label: string;
         disabled: boolean;
@@ -63,7 +67,7 @@ export const RelayAccessLanUrlStep = React.memo(function RelayAccessLanUrlStep(p
         isUnavailable,
         lastErrorMessage,
         snapshot,
-    } = useLocalRelayAccessControl({ runner, upstreamUrl: props.upstreamUrl ?? null });
+    } = useLocalRelayAccessControl({ runner, upstreamUrl: props.upstreamUrl ?? null, target: props.target });
 
     const [urlDraft, setUrlDraft] = React.useState('');
     const [advanceAfterSaveRequested, setAdvanceAfterSaveRequested] = React.useState(false);
@@ -102,6 +106,22 @@ export const RelayAccessLanUrlStep = React.memo(function RelayAccessLanUrlStep(p
         });
         return () => props.onWizardPrimaryChange?.(null);
     }, [handlePrimaryPress, isBusy, isUnavailable, props.onWizardPrimaryChange, urlDraft]);
+
+    React.useEffect(() => {
+        if (!snapshot) {
+            return;
+        }
+        const shareUrl = snapshot.status?.shareUrl ?? null;
+        if (props.serverProfileId) {
+            setServerProfileShareableUrl(props.serverProfileId, shareUrl, {
+                validatedAgainstServerUrl: props.upstreamUrl ?? null,
+            });
+            return;
+        }
+        setActiveShareableServerUrl(shareUrl, {
+            validatedAgainstServerUrl: props.upstreamUrl ?? null,
+        });
+    }, [props.serverProfileId, props.upstreamUrl, snapshot]);
 
     React.useEffect(() => {
         if (!advanceAfterSaveRequested) return;

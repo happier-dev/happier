@@ -96,6 +96,13 @@ export default function ResumeBrowsePickerScreen() {
                                 navigation,
                                 router,
                                 routeParams: { resumeSessionId: remoteSessionId },
+                                replaceParams: {
+                                    ...(typeof params.agentType === 'string' && params.agentType.trim().length > 0 ? { agentType: params.agentType } : {}),
+                                    ...(typeof params.dataId === 'string' && params.dataId.trim().length > 0 ? { dataId: params.dataId } : {}),
+                                    ...(typeof params.machineId === 'string' && params.machineId.trim().length > 0 ? { machineId: params.machineId } : {}),
+                                    ...(typeof params.spawnServerId === 'string' && params.spawnServerId.trim().length > 0 ? { spawnServerId: params.spawnServerId } : {}),
+                                    resumeSessionId: remoteSessionId,
+                                },
                             });
                             if (returnMode === 'dispatch') {
                                 safeRouterBack({ router, navigation, fallbackHref: '/new' });

@@ -47,6 +47,8 @@ export type WizardModalShellProps = Readonly<{
     title?: React.ReactNode;
     subtitle?: React.ReactNode;
     children: React.ReactNode;
+    layoutPresentation?: 'auto' | 'card' | 'fullscreen';
+    showScrim?: boolean;
     stepIndex: number;
     stepCount: number;
     headerHint?: React.ReactNode;
@@ -186,6 +188,7 @@ export function WizardModalShell(props: WizardModalShellProps) {
     const { width: windowWidth } = useWindowDimensions();
     const rawInsets = useChromeSafeAreaInsets();
     const isInsideModalBoundary = useIsInsideModalBoundary();
+    const layoutPresentation = props.layoutPresentation ?? 'auto';
     const insets = React.useMemo(() => {
         // On native, BaseModal already applies safe-area padding at the overlay container level.
         // Avoid double-applying insets inside the wizard chrome.
@@ -197,8 +200,10 @@ export function WizardModalShell(props: WizardModalShellProps) {
     const showSkip = props.showSkip ?? true;
     const showBack = props.showBack ?? true;
     const skipDisabled = props.skipDisabled ?? false;
-    const wantsFullscreen = shouldUseWizardFullscreenPresentation(windowWidth);
-    const shouldDisableInternalScrim = isInsideModalBoundary;
+    const wantsFullscreen =
+        layoutPresentation === 'fullscreen'
+        || (layoutPresentation === 'auto' && shouldUseWizardFullscreenPresentation(windowWidth));
+    const shouldDisableInternalScrim = isInsideModalBoundary || props.showScrim === false;
     const shouldUseInternalScrollHost = props.scrollable ?? !isInsideModalBoundary;
     const headerPaddingTop = (wantsFullscreen ? 12 : 18) + insets.top;
     const footerPaddingBottom = (wantsFullscreen ? 16 : styles.footer.paddingBottom) + insets.bottom;
@@ -221,6 +226,7 @@ export function WizardModalShell(props: WizardModalShellProps) {
             <WizardCardLayout
                 testID={props.testID}
                 scrollable={shouldUseInternalScrollHost}
+                presentation={layoutPresentation}
                 showScrim={shouldDisableInternalScrim ? false : true}
             >
                 <View

@@ -32,7 +32,7 @@ describe('buildRelayHostLocalChecklistItems', () => {
         expect(items[1]?.defaultSelected).toBe(true);
     });
 
-    it('adds the optional secure-access row when the runtime relay URL is available and marks it satisfied once secure access exists', () => {
+    it('keeps the checklist focused on relay runtime install and start even when a relay url already exists', () => {
         const status: RelayHostLocalChecklistRuntimeStatus = {
             installed: true,
             version: '1.2.3',
@@ -47,12 +47,21 @@ describe('buildRelayHostLocalChecklistItems', () => {
             currentShareableUrl: 'https://relay.example.test',
         });
 
-        expect(items).toHaveLength(3);
-        const tailscale = items.find((item) => item.id === 'enableSecureAccess');
-        expect(tailscale).toMatchObject({
-            satisfied: true,
-            disabled: true,
-            defaultSelected: false,
-        });
+        expect(items).toHaveLength(2);
+        expect(items).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                id: 'installRelayRuntime',
+                satisfied: true,
+                disabled: true,
+                defaultSelected: false,
+            }),
+            expect.objectContaining({
+                id: 'startRelayRuntime',
+                satisfied: true,
+                disabled: true,
+                defaultSelected: false,
+            }),
+        ]));
+        expect(items.find((item) => item.id === 'enableSecureAccess')).toBeUndefined();
     });
 });

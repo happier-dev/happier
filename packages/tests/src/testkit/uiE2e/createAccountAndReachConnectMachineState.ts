@@ -22,12 +22,32 @@ export async function createAccountAndReachConnectMachineState(params: Readonly<
 }>): Promise<void> {
   const createAccount = params.page.getByTestId('welcome-create-account');
   const createButton = params.useFirstCreateButton === true ? createAccount.first() : createAccount;
-
-  await expect.poll(async () => await createButton.count(), { timeout: 60_000 }).toBe(1);
-  await createButton.click();
-
   const connectMachine = params.page.getByTestId('session-getting-started-kind-connect_machine');
   const setupWizard = params.page.getByTestId('setupWizard.surface');
+
+  let initialState: 'create-account' | 'connect-machine' | 'setup-wizard' | null = null;
+  await expect
+    .poll(async () => {
+      if ((await createButton.count()) > 0) {
+        initialState = 'create-account';
+        return true;
+      }
+      if ((await connectMachine.count()) > 0) {
+        initialState = 'connect-machine';
+        return true;
+      }
+      if ((await setupWizard.count()) > 0) {
+        initialState = 'setup-wizard';
+        return true;
+      }
+      initialState = null;
+      return false;
+    }, { timeout: 60_000 })
+    .toBe(true);
+
+  if (initialState === 'create-account') {
+    await createButton.click();
+  }
 
   await expect
     .poll(async () => {

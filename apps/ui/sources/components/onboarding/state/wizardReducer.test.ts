@@ -72,8 +72,8 @@ describe('wizardReducer', () => {
     });
 
     it('stores the setup action selection without disturbing other context', () => {
-        const state = wizardReducer(makeState(), { type: 'wizard/setSetupAction', setupAction: 'tailscale' });
-        expect(state.context.setupAction).toBe('tailscale');
+        const state = wizardReducer(makeState(), { type: 'wizard/setSetupAction', setupAction: 'relayLocal' });
+        expect(state.context.setupAction).toBe('relayLocal');
         expect(state.context.relaySelection).toEqual(onboardingContext.relaySelection);
         expect(state.context.authIntent).toBe('standard');
     });

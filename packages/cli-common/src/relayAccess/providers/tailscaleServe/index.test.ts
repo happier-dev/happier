@@ -9,6 +9,7 @@ vi.mock('../../../tailscale/index.js', async () => {
     runTailscaleStatusJson: vi.fn(),
     runTailscaleServeStatus: vi.fn(),
     runTailscaleServeEnable: vi.fn(),
+    runTailscaleServeDisable: vi.fn(),
     runTailscaleServeReset: vi.fn(),
   };
 });
@@ -89,5 +90,18 @@ describe('tailscaleServeRelayAccessProvider', () => {
       state: 'enabled',
       shareUrl: 'https://machine.tailnet.ts.net',
     });
+  });
+
+  it('disables only the configured serve mount instead of resetting all serve config', async () => {
+    const { runTailscaleServeDisable, runTailscaleServeReset } = await import('../../../tailscale/index.js');
+    vi.mocked(runTailscaleServeDisable).mockResolvedValue(undefined);
+
+    await tailscaleServeRelayAccessProvider.disable?.({
+      config: { providerId: 'tailscaleServe' },
+      ctx: { env: process.env, upstreamUrl: 'http://127.0.0.1:3005' },
+    });
+
+    expect(runTailscaleServeDisable).toHaveBeenCalledTimes(1);
+    expect(runTailscaleServeReset).not.toHaveBeenCalled();
   });
 });

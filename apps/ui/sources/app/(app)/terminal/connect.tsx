@@ -15,6 +15,7 @@ import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
 import { normalizeServerUrl, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
 import { clearPendingTerminalConnect, getPendingTerminalConnect, setPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 import { buildTerminalConnectDeepLink, parseTerminalConnectUrl } from '@/utils/path/terminalConnectUrl';
+import { consumeTerminalConnectWebBootstrapHash } from '@/utils/path/terminalConnectWebBootstrap';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { useUnistyles } from 'react-native-unistyles';
@@ -34,14 +35,21 @@ export default function TerminalConnectScreen() {
 
     const { processAuthUrl, isLoading } = useConnectTerminal({
         onSuccess: () => {
-            navigateBackOrToHome();
+            router.replace('/');
         }
     });
 
     // Extract key from hash on web platform
     useEffect(() => {
         if (Platform.OS === 'web' && typeof window !== 'undefined' && !hashProcessed) {
-            const parsed = parseTerminalConnectUrl(window.location.href);
+            let parsed = parseTerminalConnectUrl(window.location.href);
+            if (!parsed && window.sessionStorage) {
+                const bootstrappedHash = consumeTerminalConnectWebBootstrapHash(window.sessionStorage);
+                if (bootstrappedHash) {
+                    const suffix = bootstrappedHash.startsWith('#') ? bootstrappedHash : `#${bootstrappedHash}`;
+                    parsed = parseTerminalConnectUrl(`${window.location.href}${suffix}`);
+                }
+            }
             if (parsed?.publicKeyB64Url) {
                 setPublicKey(parsed.publicKeyB64Url);
 

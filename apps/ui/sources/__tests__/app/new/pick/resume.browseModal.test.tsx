@@ -5,6 +5,7 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
+import type { NewSessionResumeSelectionContentProps } from '@/components/sessions/new/components/NewSessionResumeSelectionContent';
 import {
     createNavigationMock,
     createRouterMock,
@@ -18,7 +19,7 @@ const routerMock = createRouterMock();
 const navigationMock = createNavigationMock();
 const openDirectSessionsResumeIdPickerModalMock = vi.hoisted(() => vi.fn<(args: unknown) => Promise<string | null>>(async () => 'session-picked'));
 
-const resumeSelectionContentPropsRef = { current: null as Record<string, unknown> | null };
+const resumeSelectionContentPropsRef = { current: null as NewSessionResumeSelectionContentProps | null };
 
 installPickerCommonModuleMocks({
     reactNative: async () =>
@@ -39,6 +40,7 @@ installPickerCommonModuleMocks({
                 navigation: navigationMock,
                 params: {
                     agentType: 'claude',
+                    dataId: 'draft-1',
                     currentResumeId: '',
                     machineId: 'machine-2',
                     spawnServerId: 'server-2',
@@ -101,9 +103,7 @@ describe('ResumePickerScreen browse modal', () => {
 
         const props = resumeSelectionContentPropsRef.current;
         expect(props?.resumeBrowse).toBeTruthy();
-        const onBrowse = props?.resumeBrowse && typeof props.resumeBrowse === 'object'
-            ? (props.resumeBrowse as { onBrowse?: () => Promise<string | null> }).onBrowse
-            : null;
+        const onBrowse = props?.resumeBrowse?.onBrowse ?? null;
         expect(typeof onBrowse).toBe('function');
         const result = await onBrowse?.();
 
@@ -120,5 +120,40 @@ describe('ResumePickerScreen browse modal', () => {
         expect(routerMock.replace).not.toHaveBeenCalledWith(expect.objectContaining({
             pathname: '/new/pick/resume-browse',
         }));
+    });
+
+    it('preserves the new-session context when it has to replace back to /new', async () => {
+        navigationMock.getState = () => ({
+            index: 0,
+            routes: [
+                {
+                    key: 'resume-picker-route',
+                    name: '(app)/new/pick/resume',
+                    path: '/new/pick/resume',
+                },
+            ],
+        });
+
+        const ResumePickerScreen = (await import('@/app/(app)/new/pick/resume')).default;
+
+        await renderScreen(React.createElement(ResumePickerScreen));
+
+        const props = resumeSelectionContentPropsRef.current;
+        expect(typeof props?.onSave).toBe('function');
+
+        await props?.onSave?.('session-picked');
+
+        expect(routerMock.replace).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                agentType: 'claude',
+                dataId: 'draft-1',
+                machineId: 'machine-2',
+                spawnServerId: 'server-2',
+                resumeSessionId: 'session-picked',
+            },
+        });
+        expect(routerMock.setParams).not.toHaveBeenCalled();
+        expect(routerMock.back).not.toHaveBeenCalled();
     });
 });

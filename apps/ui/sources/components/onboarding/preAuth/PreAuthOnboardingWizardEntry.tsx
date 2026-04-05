@@ -38,6 +38,7 @@ import {
 } from '@/components/onboarding';
 import { OnboardingWizardSurface } from '@/components/onboarding/surfaces/OnboardingWizardSurface';
 import { shouldUseWizardFullscreenPresentation } from '@/components/onboarding/ui/wizardPresentation';
+import { runtimeFetch } from '@/utils/system/runtimeFetch';
 
 export type PreAuthOnboardingWizardEntryProps = Readonly<{
     testID?: string;
@@ -226,7 +227,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
             const timeoutMs = 15000;
             const timer = setTimeout(() => controller.abort(), timeoutMs);
             try {
-                const res = await fetch(`${serverUrl}/v1/auth/mtls`, { method: 'POST', signal: controller.signal });
+                const res = await runtimeFetch(`${serverUrl}/v1/auth/mtls`, { method: 'POST', signal: controller.signal });
                 const json = await res.json().catch(() => null);
                 if (!res.ok || !json || typeof json.token !== 'string') {
                     await Modal.alert(t('common.error'), t('errors.operationFailed'));
@@ -325,6 +326,8 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
             testID={props.testID ?? 'onboarding-wizard'}
             layout={isLandscape ? 'landscape' : 'portrait'}
             isDesktopShell={isDesktopShell}
+            wizardChromeMode={isDesktopShell ? 'embedded' : 'overlay'}
+            wizardLayoutPresentation={isDesktopShell ? 'fullscreen' : undefined}
             authEntryOptions={authEntryOptions}
             initialStepId={resolvedInitialStepId}
             onCreateAccount={createAccount}
@@ -336,8 +339,9 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
     );
 
     // On web, render the pre-auth onboarding wizard inside BaseModal so the scrim/backdrop always
-    // covers the full viewport (and matches other overlay surfaces like popovers).
-    if (Platform.OS === 'web') {
+    // covers the full viewport (and matches other overlay surfaces like popovers). On Tauri desktop
+    // we render it directly inside the window, avoiding an extra modal surface.
+    if (Platform.OS === 'web' && !isDesktopShell) {
         return (
             <BaseModal
                 visible

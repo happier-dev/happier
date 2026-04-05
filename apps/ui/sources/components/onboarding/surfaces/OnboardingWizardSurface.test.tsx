@@ -14,6 +14,9 @@ const relayAccessWizardMockState = vi.hoisted(() => ({
     providerId: 'lan' as 'lan' | 'cloudflareNamed',
     latestProps: null as Record<string, unknown> | null,
     renderedDetailsStep: null as null | 'lan' | 'cloudflareNamed',
+    emitSelectedProviderFromEffect: false,
+    effectSelectionProviderId: 'lan' as 'lan' | 'cloudflareNamed',
+    effectSelectionNotificationCount: 0,
 }));
 
 vi.mock('@/components/onboarding/steps/relayAccess/RelayAccessLanUrlStep', () => ({
@@ -111,7 +114,10 @@ const serverProfilesSubscriptionMock = vi.hoisted(() => {
 });
 const modalConfirmMock = vi.hoisted(() => vi.fn(async (_title?: string, _message?: string, _options?: unknown) => true));
 const webQrScannerSupportedMock = vi.hoisted(() => ({ value: false }));
-const webMobileLikeQrScannerHostMock = vi.hoisted(() => ({ value: false }));
+const webMobileLikeQrScannerHostMock = vi.hoisted(() => ({
+    value: false,
+    lastArgs: null as null | { width: number; height: number },
+}));
 const setActiveServerAndSwitchMock = vi.hoisted(() => vi.fn(async () => true));
 const upsertActivateAndSwitchServerMock = vi.hoisted(() => vi.fn(async () => true));
 const getResetToDefaultServerIdMock = vi.hoisted(() => vi.fn(() => 'cloud-profile'));
@@ -208,7 +214,10 @@ vi.mock('@/utils/platform/qrScannerSupport', () => ({
     isWebQrScannerSupported: () => webQrScannerSupportedMock.value,
 }));
 vi.mock('@/utils/platform/webMobileHeuristics', () => ({
-    isWebMobileLikeQrScannerHost: () => webMobileLikeQrScannerHostMock.value,
+    isWebMobileLikeQrScannerHost: (args: { width: number; height: number }) => {
+        webMobileLikeQrScannerHostMock.lastArgs = args;
+        return webMobileLikeQrScannerHostMock.value;
+    },
 }));
 vi.mock('../checklists/remoteSsh/RemoteSshChecklistStep', () => remoteSshChecklistMock.module);
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -221,6 +230,11 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => activeServerSnapshotMock,
     subscribeActiveServer: (listener: (snapshot: typeof activeServerSnapshotMock) => void) => activeServerSubscriptionMock.subscribe(listener),
     isActiveServerSelectionExplicit: () => false,
+    upsertServerProfileOnly: (profile: { serverUrl: string }) => ({
+        id: `profile:${profile.serverUrl}`,
+        name: profile.serverUrl,
+        serverUrl: profile.serverUrl,
+    }),
 }));
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getResetToDefaultServerId: () => getResetToDefaultServerIdMock(),
@@ -278,6 +292,17 @@ vi.mock('../checklists/relayHostLocal/RelayHostLocalChecklistStep', () => ({
 vi.mock('@/components/settings/server/localControl/LocalRelayAccessControlSection', () => ({
     LocalRelayAccessControlSection: (props: Record<string, unknown>) => {
         relayAccessWizardMockState.latestProps = props;
+        const selectedProviderId = (
+            (props.wizardSelectedProviderId as 'lan' | 'cloudflareNamed' | null | undefined)
+            ?? relayAccessWizardMockState.effectSelectionProviderId
+        );
+        React.useEffect(() => {
+            if (!relayAccessWizardMockState.emitSelectedProviderFromEffect) {
+                return;
+            }
+            relayAccessWizardMockState.effectSelectionNotificationCount += 1;
+            (props.onWizardSelectedProviderIdChange as ((providerId: 'lan' | 'cloudflareNamed') => void) | undefined)?.(selectedProviderId);
+        }, [props.onWizardSelectedProviderIdChange, selectedProviderId]);
         return React.createElement('LocalRelayAccessControlSection', props);
     },
 }));
@@ -360,6 +385,7 @@ describe('OnboardingWizardSurface', () => {
         expoRouterMock.spies.replace.mockReset();
         webQrScannerSupportedMock.value = false;
         webMobileLikeQrScannerHostMock.value = false;
+        webMobileLikeQrScannerHostMock.lastArgs = null;
         activeServerSnapshotMock.serverId = 'relay-profile';
         activeServerSnapshotMock.serverUrl = '';
         activeServerSnapshotMock.activeLocalRelayUrl = null;
@@ -369,6 +395,9 @@ describe('OnboardingWizardSurface', () => {
         modalConfirmMock.mockImplementation(async () => true);
         removeServerProfileUiActionMock.mockReset();
         serverProfilesSubscriptionMock.reset();
+        relayAccessWizardMockState.emitSelectedProviderFromEffect = false;
+        relayAccessWizardMockState.effectSelectionProviderId = 'lan';
+        relayAccessWizardMockState.effectSelectionNotificationCount = 0;
     });
 
     it('labels the welcome action as start and the relay selection action as next', async () => {
@@ -397,7 +426,35 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findByType(WizardModalShell as never).props.skipLabel).toBe('common.next');
     });
 
-    it('routes relay access LAN choice to the dedicated relay access URL step', async () => {
+    it('uses the physical screen size (not the window size) for web QR-scanner heuristics on desktop shells', async () => {
+        const originalScreen = (globalThis as unknown as { screen?: unknown }).screen;
+        Object.defineProperty(globalThis, 'screen', {
+            value: { width: 1440, height: 900, availWidth: 1440, availHeight: 900 },
+            configurable: true,
+        });
+
+        webQrScannerSupportedMock.value = true;
+
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        expect(webMobileLikeQrScannerHostMock.lastArgs).toEqual({ width: 1440, height: 900 });
+
+        Object.defineProperty(globalThis, 'screen', { value: originalScreen, configurable: true });
+    });
+
+    it('routes relay access LAN choice to the shared prereqs step', async () => {
         relayAccessWizardMockState.providerId = 'lan';
         relayAccessWizardMockState.renderedDetailsStep = null;
         relayAccessWizardMockState.latestProps = null;
@@ -436,14 +493,119 @@ describe('OnboardingWizardSurface', () => {
             });
             await flushHookEffects({ cycles: 2, turns: 2 });
 
-            expect(screen.findByType(WizardModalShell as never).props.title).toBe('setupOnboarding.relayAccessUrlTitle');
+            expect(screen.findByType(WizardModalShell as never).props.title).toBe('setupOnboarding.relayAccessWizardTitle');
             expect(relayAccessWizardMockState.renderedDetailsStep).toBe('lan');
         } finally {
             selectionSpy.mockRestore();
         }
     });
 
-    it('routes relay access Cloudflare choice to the dedicated Cloudflare tunnel step', async () => {
+    it('keeps relay access wizard callbacks stable across parent rerenders', async () => {
+        activeServerSnapshotMock.serverUrl = 'https://api.happier.dev';
+        activeServerSnapshotMock.activeLocalRelayUrl = 'http://localhost:53288';
+
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                initialStepId: 'relay_select',
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        const thisComputerRow = screen.findByTestId('onboarding-wizard-relay:thisComputer')!;
+        await act(async () => {
+            await thisComputerRow.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        const continueButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await continueButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const continueAfterRelayHosting = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await continueAfterRelayHosting.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const firstProps = relayAccessWizardMockState.latestProps as {
+            onWizardSelectedProviderIdChange: unknown;
+            onWizardRequestProviderDetails: unknown;
+        } | null;
+        expect(firstProps).toBeTruthy();
+
+        await act(async () => {
+            (firstProps?.onWizardSelectedProviderIdChange as ((providerId: 'lan' | 'cloudflareNamed') => void) | undefined)?.('cloudflareNamed');
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const nextProps = relayAccessWizardMockState.latestProps as {
+            onWizardSelectedProviderIdChange: unknown;
+            onWizardRequestProviderDetails: unknown;
+        } | null;
+        expect(nextProps).toBeTruthy();
+        expect(nextProps?.onWizardSelectedProviderIdChange).toBe(firstProps?.onWizardSelectedProviderIdChange);
+        expect(nextProps?.onWizardRequestProviderDetails).toBe(firstProps?.onWizardRequestProviderDetails);
+        expect((nextProps as { serverProfileId?: unknown } | null)?.serverProfileId).toEqual(expect.any(String));
+
+        expect(screen.findByType('LocalRelayAccessControlSection' as never)).toBeTruthy();
+    });
+
+    it('settles after a single relay access provider sync effect', async () => {
+        activeServerSnapshotMock.serverUrl = 'https://api.happier.dev';
+        activeServerSnapshotMock.activeLocalRelayUrl = 'http://localhost:53288';
+        relayAccessWizardMockState.emitSelectedProviderFromEffect = true;
+        relayAccessWizardMockState.effectSelectionProviderId = 'lan';
+
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                initialStepId: 'relay_select',
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        const thisComputerRow = screen.findByTestId('onboarding-wizard-relay:thisComputer')!;
+        await act(async () => {
+            await thisComputerRow.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        const continueButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await continueButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 3, turns: 3 });
+
+        const continueAfterRelayHosting = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await continueAfterRelayHosting.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByType('LocalRelayAccessControlSection' as never)).toBeTruthy();
+        expect(relayAccessWizardMockState.effectSelectionNotificationCount).toBe(1);
+    });
+
+    it('routes relay access Cloudflare choice to the shared prereqs step', async () => {
         relayAccessWizardMockState.providerId = 'cloudflareNamed';
         relayAccessWizardMockState.renderedDetailsStep = null;
         relayAccessWizardMockState.latestProps = null;
@@ -482,7 +644,7 @@ describe('OnboardingWizardSurface', () => {
             });
             await flushHookEffects({ cycles: 2, turns: 2 });
 
-            expect(screen.findByType(WizardModalShell as never).props.title).toBe('setupOnboarding.relayAccessCloudflareTitle');
+            expect(screen.findByType(WizardModalShell as never).props.title).toBe('setupOnboarding.relayAccessWizardTitle');
             expect(relayAccessWizardMockState.renderedDetailsStep).toBe('cloudflareNamed');
         } finally {
             selectionSpy.mockRestore();
@@ -1507,7 +1669,7 @@ describe('OnboardingWizardSurface', () => {
         )));
     });
 
-    it('routes desktop users to the relay access step when selecting "On this computer" and the local relay bind URL is reachable', async () => {
+    it('still routes desktop users to the local relay hosting checklist when selecting "On this computer" and the local relay bind URL is reachable', async () => {
         activeServerSnapshotMock.serverUrl = 'https://api.happier.dev';
         activeServerSnapshotMock.activeLocalRelayUrl = 'http://localhost:53288';
 
@@ -1540,13 +1702,8 @@ describe('OnboardingWizardSurface', () => {
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        const relayAccessSection = screen.findByType('LocalRelayAccessControlSection' as never) as unknown as {
-            props: Record<string, unknown>;
-        };
-        expect(relayAccessSection).toBeTruthy();
-        expect(relayAccessSection.props.presentation).toBe('wizard');
-        expect(typeof relayAccessSection.props.onWizardPrimaryChange).toBe('function');
-        expect(typeof relayAccessSection.props.onRequestAdvance).toBe('function');
+        expect(screen.findByTestId('onboarding-wizard-relay-host-local')).toBeTruthy();
+        expect(screen.findAllByType('LocalRelayAccessControlSection' as never)).toHaveLength(0);
     });
 
     it('does not treat *.localhost URLs as a true local relay runtime bind URL for the "On this computer" fast-path', async () => {
@@ -2058,6 +2215,71 @@ describe('OnboardingWizardSurface', () => {
         };
         visit(primaryOnRemote);
         expect(textNodes.join(' ')).toContain('Run remote setup');
+    });
+
+    it('routes remote relay hosting through relay access before prompting to switch', async () => {
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        const startButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await startButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const remoteRow = screen.findByTestId('onboarding-wizard-relay:remoteComputer')!;
+        await act(async () => {
+            await remoteRow.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const continueToPlanButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await continueToPlanButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const remoteChecklistProps = remoteSshChecklistMock.spy.mock.calls.at(-1)?.[0] as {
+            onCompleted?: (payload: { machineId: string | null; relayRuntimeUrl: string | null; mode: string }) => void;
+            onRequestAdvance?: () => void;
+        } | undefined;
+        expect(remoteChecklistProps).toBeTruthy();
+
+        await act(async () => {
+            remoteChecklistProps?.onCompleted?.({
+                machineId: 'mach-remote',
+                relayRuntimeUrl: 'https://remote-relay.example.test',
+                mode: 'remoteRelayHost',
+            });
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        await act(async () => {
+            remoteChecklistProps?.onRequestAdvance?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByType('LocalRelayAccessControlSection' as never)).toBeTruthy();
+        expect(screen.findByTestId('onboarding-wizard-confirmSwitchRelay')).toBeNull();
+
+        const continueAfterRelayAccess = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await continueAfterRelayAccess.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByTestId('onboarding-wizard-confirmSwitchRelay')).toBeTruthy();
     });
 
     it('shows the relay footer hint when Happier Cloud is selected', async () => {

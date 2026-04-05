@@ -2,7 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import type { SystemTaskRunState, SystemTaskRunner } from '@/components/systemTasks/types';
 import type { SystemTaskSpec } from '@happier-dev/protocol';
 import { getStorage } from '@/sync/domains/state/storageStore';
@@ -456,6 +456,140 @@ describe('RemoteSshChecklistStep', () => {
         expect((spec?.params as any)?.serviceMode).toBe('none');
         expect((spec?.params as any)?.relayRuntime?.enabled).toBe(true);
         expect(screen.findByTestId('remote-ssh-step-execution')).toBeTruthy();
+    });
+
+    it('prefers the explicit public relay URL when completing remote relay hosting', async () => {
+        const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
+        const runnerHarness = createRunner({
+            snapshot: {
+                status: 'running',
+                currentStepId: 'relay.runtime.install',
+                latestMessage: 'Done',
+                awaitingInput: false,
+                events: [],
+                result: {
+                    ok: true,
+                    data: {
+                        relayRuntime: {
+                            relayUrl: 'http://127.0.0.1:53288',
+                        },
+                    },
+                },
+            } as any,
+        });
+        const completed: Array<{
+            machineId: string | null;
+            relayRuntimeUrl: string | null;
+            mode: string;
+        }> = [];
+        let primary: { onPress: (() => void) | (() => Promise<void>); disabled: boolean } | null = null;
+
+        const screen = await renderScreen(React.createElement(RemoteSshChecklistStep, {
+            testID: 'remote-ssh-step',
+            mode: 'remoteRelayHost',
+            relayUrl: 'https://relay.example.test',
+            publicRelayUrl: 'https://public-relay.example.test',
+            runner: runnerHarness.runner,
+            initialDraft: {
+                username: 'dev',
+                host: 'example.test',
+            },
+            onCompleted: (payload) => {
+                completed.push(payload);
+            },
+            onWizardPrimaryChange: (state) => {
+                primary = state as any;
+            },
+        }));
+
+        const requirePrimary = () => {
+            if (!primary) {
+                throw new Error('Expected wizard primary override');
+            }
+            return primary;
+        };
+
+        await act(async () => {
+            await (requirePrimary().onPress as any)?.();
+        });
+        await act(async () => {
+            await (requirePrimary().onPress as any)?.();
+        });
+        await flushHookEffects({ cycles: 3, turns: 3 });
+
+        expect(completed).toEqual([
+            expect.objectContaining({
+                relayRuntimeUrl: 'https://public-relay.example.test',
+            }),
+        ]);
+        expect(screen.getTextContent()).toContain('https://public-relay.example.test');
+        expect(screen.getTextContent()).not.toContain('http://127.0.0.1:53288');
+    });
+
+    it('does not emit a loopback relay URL when remote relay hosting only discovers a local bind URL', async () => {
+        const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
+        const runnerHarness = createRunner({
+            snapshot: {
+                status: 'running',
+                currentStepId: 'relay.runtime.install',
+                latestMessage: 'Done',
+                awaitingInput: false,
+                events: [],
+                result: {
+                    ok: true,
+                    data: {
+                        relayRuntime: {
+                            relayUrl: 'http://127.0.0.1:53288',
+                        },
+                    },
+                },
+            } as any,
+        });
+        const completed: Array<{
+            machineId: string | null;
+            relayRuntimeUrl: string | null;
+            mode: string;
+        }> = [];
+        let primary: { onPress: (() => void) | (() => Promise<void>); disabled: boolean } | null = null;
+
+        const screen = await renderScreen(React.createElement(RemoteSshChecklistStep, {
+            testID: 'remote-ssh-step',
+            mode: 'remoteRelayHost',
+            relayUrl: 'https://relay.example.test',
+            runner: runnerHarness.runner,
+            initialDraft: {
+                username: 'dev',
+                host: 'example.test',
+            },
+            onCompleted: (payload) => {
+                completed.push(payload);
+            },
+            onWizardPrimaryChange: (state) => {
+                primary = state as any;
+            },
+        }));
+
+        const requirePrimary = () => {
+            if (!primary) {
+                throw new Error('Expected wizard primary override');
+            }
+            return primary;
+        };
+
+        await act(async () => {
+            await (requirePrimary().onPress as any)?.();
+        });
+        await act(async () => {
+            await (requirePrimary().onPress as any)?.();
+        });
+        await flushHookEffects({ cycles: 3, turns: 3 });
+
+        expect(completed).toEqual([
+            expect.objectContaining({
+                relayRuntimeUrl: null,
+            }),
+        ]);
+        expect(screen.getTextContent()).not.toContain('127.0.0.1:53288');
     });
 
     it('allows deselecting relay runtime install from the plan and forwards that choice into the bootstrap task spec', async () => {

@@ -26,9 +26,9 @@ import {
 } from './utils/tui/args.mjs';
 import {
   buildTuiChildArgs,
-  buildTauriPaneEnv,
   resolveTauriPaneSpawnConfig,
   shouldStartTauriPane,
+  waitForTauriPaneExpoReady,
 } from './utils/tui/tauri_mode.mjs';
 import { terminateProcessGroup } from './utils/proc/terminate.mjs';
 import { getProcessGroupId } from './utils/proc/ownership.mjs';
@@ -573,6 +573,7 @@ async function main() {
   let sawDaemonAuthRequired = false;
   let daemonAutostartInProgress = false;
   let daemonAutostartLastAttemptAtMs = 0;
+  let tauriLaunchState = { cancelled: false };
 
   const wantsPty = process.platform !== 'win32' && (await commandExists('script', { cwd: rootDir }));
   // In TUI mode, we intentionally do not forward keyboard input to the child process (stdin is ignored),
@@ -642,7 +643,12 @@ async function main() {
     return proc;
   };
 
-  const spawnTauriChild = () => {
+  const cancelPendingTauriLaunch = () => {
+    tauriLaunchState.cancelled = true;
+    tauriLaunchState = { cancelled: false };
+  };
+
+  const spawnTauriProcess = ({ expoPort = null, skipExpoWait = false } = {}) => {
     if (!withTauri || !shouldStartTauriPane(rawForwardedArgs)) {
       return null;
     }
@@ -650,6 +656,8 @@ async function main() {
     const { invocation, env: tauriEnv } = resolveTauriPaneSpawnConfig({
       rootDir,
       env: childEnv,
+      expoPort,
+      skipExpoWait,
       resolveUserHomeDir: () => {
         try {
           return String(os.userInfo()?.homedir ?? '').trim();
@@ -692,8 +700,54 @@ async function main() {
     return proc;
   };
 
+  const spawnTauriChild = async () => {
+    if (!withTauri || !shouldStartTauriPane(rawForwardedArgs)) {
+      return null;
+    }
+
+    const tauriIdx = paneIndexById.get('tauri');
+    const tauriPane = panes[tauriIdx];
+    const launchState = { cancelled: false };
+    tauriLaunchState = launchState;
+
+    if (!stackName) {
+      tauriChild = spawnTauriProcess();
+      return tauriChild;
+    }
+
+    pushLine(tauriPane, '[tauri-dev] waiting for the TUI-managed Expo dev server...');
+    scheduleRender();
+
+    const expoReady = await waitForTauriPaneExpoReady({
+      stackName,
+      env: childEnv,
+      isCancelled: () => launchState.cancelled,
+    });
+    if (launchState.cancelled || tauriLaunchState !== launchState) {
+      return null;
+    }
+    if (!expoReady.ok) {
+      const detail =
+        expoReady.reason === 'timeout'
+          ? 'timed out waiting for the TUI-managed Expo dev server; Tauri was not started.'
+          : expoReady.reason === 'cancelled'
+            ? 'launch cancelled before Expo became ready.'
+            : 'could not resolve the TUI-managed Expo dev server; Tauri was not started.';
+      pushLine(tauriPane, `[tauri-dev] ${detail}`);
+      scheduleRender();
+      return null;
+    }
+
+    tauriChild = spawnTauriProcess({
+      expoPort: expoReady.port,
+      skipExpoWait: true,
+    });
+    return tauriChild;
+  };
+
   child = spawnForwardedChild();
-  let tauriChild = spawnTauriChild();
+  let tauriChild = null;
+  void spawnTauriChild();
 
   async function refreshSummary() {
     const idx = paneIndexById.get('summary');
@@ -1045,6 +1099,7 @@ async function main() {
     process.stdout.write('\x1b[2J\x1b[H\x1b[?25h');
     process.stdout.write(`[restart] stopping stack processes...\n`);
 
+    cancelPendingTauriLaunch();
     const childPid = Number(child?.pid);
     if (child && child.exitCode == null && Number.isFinite(childPid) && childPid > 1) {
       const [childPgid, selfPgid] = await Promise.all([getProcessGroupId(childPid), getProcessGroupId(process.pid)]);
@@ -1100,7 +1155,8 @@ async function main() {
 
     process.stdout.write(`[restart] starting stack...\n\n`);
     child = spawnForwardedChild();
-    tauriChild = spawnTauriChild();
+    tauriChild = null;
+    void spawnTauriChild();
 
     paused = false;
     handoff.restoreForTui();
@@ -1441,6 +1497,7 @@ async function main() {
     } catch {
       // ignore
     }
+    cancelPendingTauriLaunch();
     const childPid = Number(child?.pid);
     if (child.exitCode == null && Number.isFinite(childPid) && childPid > 1) {
       // Ensure the child is actually gone before stack infra cleanup, otherwise a still-running

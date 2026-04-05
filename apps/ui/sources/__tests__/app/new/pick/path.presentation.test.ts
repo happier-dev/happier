@@ -54,7 +54,7 @@ installPickerCommonModuleMocks({
             overrides: {
                 // Boundary fixture: this picker only needs the selected machine homeDir.
                 useAllMachines: (() => [{ id: 'm1', metadata: { homeDir: '/home' } }]) as any,
-                useSessions: () => [],
+                useAllSessionListRenderables: () => [],
                 useSetting: (key: string) => {
                     if (key === 'recentMachinePaths') return [];
                     if (key === 'usePathPickerSearch') return false;

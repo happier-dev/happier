@@ -141,7 +141,7 @@ installNewPickRouteCommonModuleMocks({
                     daemonStateVersion: 0,
                 },
             ]),
-            useSessions: () => [],
+            useAllSessionListRenderables: () => [],
             useSetting: (key: string) => {
                 if (key === 'useMachinePickerSearch') return false;
                 return (state.settings as any)[key];

@@ -107,36 +107,68 @@ test.describe('ui e2e: tailscale secure access (deterministic runner)', () => {
         await expect(page.getByTestId('setupWizard.surface-skip')).toHaveCount(1, { timeout: 120_000 });
     }
 
-    test('shows a shareable https url when secure access completes', async ({ page }) => {
-        test.setTimeout(420_000);
-
-        await openAuthedSetupWizard(page);
-
-        await expect(page.getByTestId('setupWizard.surface-branch:tailscale')).toHaveCount(1, { timeout: 180_000 });
-        await page.getByTestId('setupWizard.surface-branch:tailscale').click();
+    async function openRelayLocalSetup(page: Page) {
+        await expect(page.getByTestId('setupWizard-branch:relayLocal')).toHaveCount(1, { timeout: 180_000 });
+        await page.getByTestId('setupWizard-branch:relayLocal').click();
         await page.getByTestId('setupWizard.surface-primary').click();
+    }
 
-        await expect(page.getByTestId('settings.localTailscale.enable')).toHaveCount(1, { timeout: 180_000 });
-        await page.getByTestId('settings.localTailscale.enable').click();
-
-        await expect(page.getByTestId('settings.localTailscale.shareableUrl')).toHaveCount(1, { timeout: 180_000 });
-    });
-
-    test('surfaces a tailnet approval url when serve needs approval', async ({ page }) => {
+    test('keeps the local relay host step visible even when it is already satisfied', async ({ page }) => {
         test.setTimeout(420_000);
 
-        await openAuthedSetupWizard(page);
-
-        await page.evaluate(() => {
-            (window as any).__HAPPIER_DEV_SYSTEM_TASK_SCENARIOS__ = {
-                'secureAccess.tailscale.v1': 'approval',
+        await page.addInitScript(() => {
+            (window as typeof window & {
+                __HAPPIER_DEV_SYSTEM_TASK_SCENARIOS__?: Record<string, unknown>;
+            }).__HAPPIER_DEV_SYSTEM_TASK_SCENARIOS__ = {
+                'relay.runtime.status.v1': 'ready',
             };
         });
 
-        await page.getByTestId('setupWizard.surface-branch:tailscale').click();
+        await openAuthedSetupWizard(page);
+        await openRelayLocalSetup(page);
+
+        await expect(page.getByTestId('setupWizard-relay-host-local')).toBeVisible({ timeout: 120_000 });
+        await expect(page.getByTestId('setupWizard-relay-host-local-checklist-row-installRelayRuntime')).toBeVisible({ timeout: 120_000 });
+        await expect(page.getByTestId('setupWizard-relay-host-local-checklist-row-startRelayRuntime')).toBeVisible({ timeout: 120_000 });
+        await expect(page.getByTestId('setupWizard-relay-host-local-checklist-row-enableSecureAccess')).toHaveCount(0);
+
+        await page.getByTestId('setupWizard.surface-primary').click();
+        await expect(page.getByTestId('settings.server.relayAccess.choice:tailscaleServe')).toHaveCount(1, { timeout: 120_000 });
+    });
+
+    test('routes LAN relay access through the prerequisites step before finishing', async ({ page }) => {
+        test.setTimeout(420_000);
+
+        await openAuthedSetupWizard(page);
+        await openRelayLocalSetup(page);
+
+        await expect(page.getByTestId('settings.server.relayAccess.choice:lan')).toHaveCount(1, { timeout: 120_000 });
+        await page.getByTestId('settings.server.relayAccess.choice:lan').click();
         await page.getByTestId('setupWizard.surface-primary').click();
 
-        await page.getByTestId('settings.localTailscale.enable').click();
-        await expect(page.getByTestId('settings.localTailscale.openApproval')).toHaveCount(1, { timeout: 180_000 });
+        await expect(page.getByTestId('setupWizard-relay-access-prereqs')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('setupWizard-relay-access-prereqs-url')).toHaveCount(1, { timeout: 120_000 });
+
+        await page.getByTestId('setupWizard-relay-access-prereqs-url').fill('https://relay.example.test');
+        await page.getByTestId('setupWizard.surface-primary').click();
+
+        await expect(page.getByTestId('setupWizard-confirmSwitchRelay')).toHaveCount(1, { timeout: 120_000 });
+    });
+
+    test('starts deterministic Tailscale secure access from the relay-access step and advances on success', async ({ page }) => {
+        test.setTimeout(420_000);
+
+        await openAuthedSetupWizard(page);
+        await openRelayLocalSetup(page);
+
+        await expect(page.getByTestId('settings.server.relayAccess.choice:tailscaleServe')).toHaveCount(1, { timeout: 120_000 });
+        await page.getByTestId('settings.server.relayAccess.choice:tailscaleServe').click();
+        await page.getByTestId('setupWizard.surface-primary').click();
+
+        await expect(page.getByTestId('system-task-progress-card')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('system-task-progress-checklist-step-done-tailscale-detect')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('system-task-progress-checklist-step-done-tailscale-login')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('system-task-progress-checklist-step-done-tailscale-serve-enable')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('setupWizard-confirmSwitchRelay')).toHaveCount(1, { timeout: 120_000 });
     });
 });

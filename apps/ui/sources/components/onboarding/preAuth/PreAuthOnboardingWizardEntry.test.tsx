@@ -1,5 +1,6 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 
@@ -12,6 +13,14 @@ const routerMocks = vi.hoisted(() => ({
     push: vi.fn(),
     replace: vi.fn(),
     back: vi.fn(),
+}));
+
+const loginMock = vi.hoisted(() => vi.fn());
+const loginWithCredentialsMock = vi.hoisted(() => vi.fn());
+const runtimeFetchMock = vi.hoisted(() => vi.fn());
+const buildDataKeyCredentialsForTokenMock = vi.hoisted(() => vi.fn(async (token: string) => ({ token, secret: 'secret' })));
+const serverRuntimeState = vi.hoisted(() => ({
+    serverUrl: null as string | null,
 }));
 
 vi.mock('react-native', async () => {
@@ -41,9 +50,13 @@ vi.mock('@/modal/components/BaseModal', () => ({
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({
         isAuthenticated: false,
-        login: vi.fn(),
-        loginWithCredentials: vi.fn(),
+        login: loginMock,
+        loginWithCredentials: loginWithCredentialsMock,
     }),
+}));
+
+vi.mock('@/auth/flows/buildDataKeyCredentialsForToken', () => ({
+    buildDataKeyCredentialsForToken: (token: string) => buildDataKeyCredentialsForTokenMock(token),
 }));
 
 vi.mock('@/components/account/auth/useAuthEntryOptions', () => ({
@@ -80,8 +93,9 @@ vi.mock('@/utils/platform/responsive', () => ({
     useIsLandscape: () => false,
 }));
 
+const tauriDesktopState = vi.hoisted(() => ({ value: false }));
 vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => false,
+    isTauriDesktop: () => tauriDesktopState.value,
 }));
 
 vi.mock('@/sync/domains/pending/pendingSetupIntent', () => ({
@@ -89,9 +103,15 @@ vi.mock('@/sync/domains/pending/pendingSetupIntent', () => ({
     clearPendingSetupIntent: () => {},
 }));
 
+vi.mock('@/utils/system/runtimeFetch', () => ({
+    runtimeFetch: (...args: unknown[]) => runtimeFetchMock(...args),
+}));
+
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({
-        serverUrl: null,
+        serverId: 'server-a',
+        serverUrl: serverRuntimeState.serverUrl,
+        generation: 1,
     }),
 }));
 
@@ -117,6 +137,12 @@ describe('PreAuthOnboardingWizardEntry', () => {
         process.env.EXPO_PUBLIC_DEBUG = '1';
         reactNativeState.windowWidth = 390;
         reactNativeState.windowHeight = 844;
+        tauriDesktopState.value = false;
+        serverRuntimeState.serverUrl = null;
+        loginMock.mockReset();
+        loginWithCredentialsMock.mockReset();
+        runtimeFetchMock.mockReset();
+        buildDataKeyCredentialsForTokenMock.mockClear();
         routerMocks.push.mockReset();
         routerMocks.replace.mockReset();
         routerMocks.back.mockReset();
@@ -151,6 +177,19 @@ describe('PreAuthOnboardingWizardEntry', () => {
         expect(modal.props.webPlacement).toBe('top');
     });
 
+    it('does not wrap the onboarding wizard in BaseModal on Tauri desktop (window owns the surface)', async () => {
+        tauriDesktopState.value = true;
+
+        const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
+        const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
+
+        expect(screen.findAllByType('BaseModal' as never)).toHaveLength(0);
+        const wizard = screen.findByType('OnboardingWizardSurface' as never);
+        expect(wizard).toBeTruthy();
+        expect(wizard.props.wizardChromeMode).toBe('embedded');
+        expect(wizard.props.wizardLayoutPresentation).toBe('fullscreen');
+    });
+
     it('routes the change-relay action to the wizard relay selection step', async () => {
         const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
         const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
@@ -159,5 +198,34 @@ describe('PreAuthOnboardingWizardEntry', () => {
         await wizard.props.onChangeRelayViaServerConfig?.();
 
         expect(routerMocks.replace).toHaveBeenCalledWith('/?happier_wizard_step=relay_select');
+    });
+
+    it('uses runtimeFetch instead of global fetch for web mtls login', async () => {
+        serverRuntimeState.serverUrl = 'https://api.example.test';
+
+        const fetchMock = vi.fn(async () => {
+            throw new Error('Unexpected global fetch call');
+        });
+        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+        runtimeFetchMock.mockResolvedValue(new Response(JSON.stringify({ token: 'mtls-token' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+        }));
+
+        const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
+        const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
+        const wizard = screen.findByType('OnboardingWizardSurface' as never);
+
+        await act(async () => {
+            await wizard.props.onLoginWithMtls?.();
+        });
+
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(runtimeFetchMock).toHaveBeenCalledWith('https://api.example.test/v1/auth/mtls', {
+            method: 'POST',
+            signal: expect.any(AbortSignal),
+        });
+        expect(buildDataKeyCredentialsForTokenMock).toHaveBeenCalledWith('mtls-token');
+        expect(loginWithCredentialsMock).toHaveBeenCalledWith({ token: 'mtls-token', secret: 'secret' });
     });
 });

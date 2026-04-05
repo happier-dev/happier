@@ -2,8 +2,8 @@ import type { RelayAccessProvider } from '../../types.js';
 
 import {
     extractTailscaleServeHttpsUrl,
+    runTailscaleServeDisable,
     runTailscaleServeEnable,
-    runTailscaleServeReset,
     runTailscaleServeStatus,
     runTailscaleStatusJson,
 } from '../../../tailscale/index.js';
@@ -70,7 +70,7 @@ export const tailscaleServeRelayAccessProvider: RelayAccessProvider = {
         if (config.providerId !== 'tailscaleServe') {
             return;
         }
-        await runTailscaleServeReset(
+        await runTailscaleServeDisable(
             { env: ctx.env },
             {
                 ...(ctx.runCommand ? { runCommand: ctx.runCommand } : {}),

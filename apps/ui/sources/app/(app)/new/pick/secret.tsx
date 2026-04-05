@@ -14,7 +14,13 @@ export default React.memo(function SecretPickerScreen() {
     const { theme } = useUnistyles();
     const router = useRouter();
     const navigation = useNavigation();
-    const params = useLocalSearchParams<{ selectedId?: string }>();
+    const params = useLocalSearchParams<{
+        agentType?: string;
+        dataId?: string;
+        machineId?: string;
+        selectedId?: string;
+        spawnServerId?: string;
+    }>();
     const selectedId = typeof params.selectedId === 'string' ? params.selectedId : '';
 
     const [secrets, setSecrets] = useSettingMutable('secrets');
@@ -24,6 +30,13 @@ export default React.memo(function SecretPickerScreen() {
             navigation: navigation as any,
             router,
             routeParams: { secretId },
+            replaceParams: {
+                ...(typeof params.agentType === 'string' && params.agentType.trim().length > 0 ? { agentType: params.agentType } : {}),
+                ...(typeof params.dataId === 'string' && params.dataId.trim().length > 0 ? { dataId: params.dataId } : {}),
+                ...(typeof params.machineId === 'string' && params.machineId.trim().length > 0 ? { machineId: params.machineId } : {}),
+                ...(typeof params.spawnServerId === 'string' && params.spawnServerId.trim().length > 0 ? { spawnServerId: params.spawnServerId } : {}),
+                secretId,
+            },
         });
         if (returnMode === 'dispatch') {
             safeRouterBack({ router, navigation, fallbackHref: '/new' });

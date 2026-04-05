@@ -17,7 +17,6 @@ import {
 } from '@/components/systemTasks/planChecklist';
 import { getDefaultSystemTaskRunner } from '@/components/systemTasks';
 import { buildLocalRelayRuntimeSystemTaskSpec } from '@/components/systemTasks/specs/localControl/buildLocalRelayRuntimeSystemTaskSpec';
-import { buildLocalTailscaleSecureAccessSystemTaskSpec } from '@/components/systemTasks/specs/localControl/buildLocalTailscaleSecureAccessSystemTaskSpec';
 import { useLocalRelayRuntimeControl } from '@/components/settings/server/localControl/useLocalRelayRuntimeControl';
 import { Modal } from '@/modal';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
@@ -41,7 +40,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-type RelayHostLocalChecklistItemId = 'installRelayRuntime' | 'startRelayRuntime' | 'enableSecureAccess';
+ type RelayHostLocalChecklistItemId = 'installRelayRuntime' | 'startRelayRuntime';
 
 type RelayHostLocalChecklistExecutionUpdate = Partial<Record<RelayHostLocalChecklistItemId, PlanChecklistExecutionState>>;
 
@@ -70,17 +69,11 @@ function renderRuntimeDetails(
     );
 }
 
-function resolveTaskSpec(itemId: RelayHostLocalChecklistItemId, runtimeRelayUrl: string | null) {
+function resolveTaskSpec(itemId: RelayHostLocalChecklistItemId) {
     if (itemId === 'installRelayRuntime') {
         return buildLocalRelayRuntimeSystemTaskSpec('relay.runtime.installOrUpdate.v1');
     }
-    if (itemId === 'startRelayRuntime') {
-        return buildLocalRelayRuntimeSystemTaskSpec('relay.runtime.start.v1');
-    }
-    if (!runtimeRelayUrl) {
-        throw new Error('Missing upstream URL for Tailscale secure access.');
-    }
-    return buildLocalTailscaleSecureAccessSystemTaskSpec({ upstreamUrl: runtimeRelayUrl });
+    return buildLocalRelayRuntimeSystemTaskSpec('relay.runtime.start.v1');
 }
 
 export function RelayHostLocalChecklistStep(props: Readonly<{
@@ -103,7 +96,6 @@ export function RelayHostLocalChecklistStep(props: Readonly<{
     const currentShareableUrl = activeServerSnapshot.activeShareableServerUrl
         ? String(activeServerSnapshot.activeShareableServerUrl).trim()
         : null;
-    const runtimeRelayUrl = status?.relayUrl ? String(status.relayUrl).trim() : null;
     const requestAdvanceRef = React.useRef(props.onRequestAdvance);
     const wizardPrimaryChangeRef = React.useRef(props.onWizardPrimaryChange);
 
@@ -135,7 +127,7 @@ export function RelayHostLocalChecklistStep(props: Readonly<{
     const buildExecutionPlan = React.useCallback((selectedIds: readonly string[]) => {
         const selectedSet = new Set(selectedIds);
         const plan: RelayHostLocalChecklistItemId[] = [];
-        for (const id of ['installRelayRuntime', 'startRelayRuntime', 'enableSecureAccess'] as const) {
+        for (const id of ['installRelayRuntime', 'startRelayRuntime'] as const) {
             if (!selectedSet.has(id)) continue;
             const item = items.find((candidate) => candidate.id === id);
             if (item?.satisfied) continue;
@@ -149,7 +141,7 @@ export function RelayHostLocalChecklistStep(props: Readonly<{
     const sequential = useSequentialSystemTaskChecklistExecution<RelayHostLocalChecklistItemId>({
         runner,
         errorTitle: t('common.error'),
-        buildSpec: (itemId) => resolveTaskSpec(itemId, runtimeRelayUrl),
+        buildSpec: (itemId) => resolveTaskSpec(itemId),
         mapSnapshotToExecutionState: (snapshot) => mapSystemTaskSnapshotToPlanChecklistExecutionState(snapshot, { errorTitle: t('common.error') }),
         onExecutionStateChange: (update) => {
             publishExecutionUpdateRef.current(update);

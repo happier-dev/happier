@@ -3,14 +3,13 @@ import { View } from 'react-native';
 
 import type { AgentId } from '@happier-dev/agents';
 import type { RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
+import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { t, tLoose } from '@/text';
 
 import { SshCredentialsFields } from '@/components/ssh/SshCredentialsFields';
 import { LocalRelayAccessControlSection } from '@/components/settings/server/localControl/LocalRelayAccessControlSection';
-import { RelayAccessLanUrlStep } from '@/components/onboarding/steps/relayAccess/RelayAccessLanUrlStep';
-import { RelayAccessCloudflareNamedTunnelStep } from '@/components/onboarding/steps/relayAccess/RelayAccessCloudflareNamedTunnelStep';
-import { SecureAccessTailscaleStep } from '@/components/onboarding/steps/SecureAccessTailscaleStep';
+import { RelayAccessPrerequisitesStep } from '@/components/onboarding/steps/relayAccess/RelayAccessPrerequisitesStep';
 import { WizardTerminalHandoff } from '@/components/onboarding/ui/WizardTerminalHandoff';
 import { SetupThisComputerWizardStep } from '@/components/onboarding/steps/SetupThisComputerWizardStep';
 import {
@@ -50,6 +49,8 @@ export function renderSetupStepBody(params: Readonly<{
     activeServerUrl: string | null;
     activeLocalRelayUrl: string | null;
     relayUrl: string | null;
+    serverProfileId: string | null;
+    relayAccessTarget: RelayAccessTaskTarget;
     providerMachineId: string | null;
     providerSelectionProviderIds: readonly AgentId[];
     selectedProviderIds: readonly AgentId[];
@@ -149,7 +150,9 @@ export function renderSetupStepBody(params: Readonly<{
             }
             return (
                 <LocalRelayAccessControlSection
+                    target={params.relayAccessTarget}
                     upstreamUrl={params.relayUrl}
+                    serverProfileId={params.serverProfileId}
                     presentation="wizard"
                     onWizardPrimaryChange={params.onWizardPrimaryChange}
                     onRequestAdvance={params.onRequestAdvance}
@@ -158,20 +161,14 @@ export function renderSetupStepBody(params: Readonly<{
                     wizardSelectedProviderId={params.relayAccessProviderId}
                 />
             );
-        case 'relay_access_url':
+        case 'relay_access_prereqs':
             return (
-                <RelayAccessLanUrlStep
-                    testID="setupWizard-relay-access-url"
+                <RelayAccessPrerequisitesStep
+                    testID="setupWizard-relay-access-prereqs"
+                    providerId={params.relayAccessProviderId}
                     upstreamUrl={params.relayUrl}
-                    onWizardPrimaryChange={params.onWizardPrimaryChange}
-                    onRequestAdvance={params.onRequestAdvance}
-                />
-            );
-        case 'relay_access_cloudflare':
-            return (
-                <RelayAccessCloudflareNamedTunnelStep
-                    testID="setupWizard-relay-access-cloudflare"
-                    upstreamUrl={params.relayUrl}
+                    serverProfileId={params.serverProfileId}
+                    target={params.relayAccessTarget}
                     onWizardPrimaryChange={params.onWizardPrimaryChange}
                     onRequestAdvance={params.onRequestAdvance}
                 />
@@ -297,16 +294,6 @@ export function renderSetupStepBody(params: Readonly<{
                     onRequestAdvance={params.onRequestAdvance}
                 />
             );
-        case 'secure_access_tailscale':
-            if (requiresDesktop) {
-                return (
-                    <View testID="setupWizard-web-tailscale-handoff" style={params.styles.branchList}>
-                        <Text style={params.styles.branchHint}>{t('setupOnboarding.webDesktopOnlyBody')}</Text>
-                        <WebDesktopDownloadCta testIDPrefix="setupWizard-web-tailscale" />
-                    </View>
-                );
-            }
-            return <SecureAccessTailscaleStep />;
         case 'done':
             return <Text>{t('setupOnboarding.nextActionReady')}</Text>;
         default:

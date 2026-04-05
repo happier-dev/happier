@@ -11,7 +11,7 @@ import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGen
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 
 import { isSameServerUrl, normalizeServerUrl, setActiveServerAndSwitch, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
-import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { getActiveServerSnapshot, upsertServerProfileOnly } from '@/sync/domains/server/serverRuntime';
 import { readConfiguredServerUrlEnv } from '@/sync/domains/server/readConfiguredServerUrlEnv';
 import { listServerProfiles, removeServerProfile } from '@/sync/domains/server/serverProfiles';
 import { removeServerProfileUiAction } from '@/components/serverProfiles/removeServerProfileUiAction';
@@ -59,6 +59,8 @@ export type OnboardingWizardSurfaceProps = Readonly<{
     testID?: string;
     layout: 'portrait' | 'landscape';
     isDesktopShell: boolean;
+    wizardChromeMode?: 'overlay' | 'embedded';
+    wizardLayoutPresentation?: 'auto' | 'card' | 'fullscreen';
     authEntryOptions: AuthEntryOptions;
     initialStepId?: WizardStepId;
 
@@ -103,9 +105,31 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         }
     }, [snapshotRelayUrl]);
 
+    const qrScannerHeuristicViewport = React.useMemo(() => {
+        if (Platform.OS !== 'web') {
+            return { width, height };
+        }
+        if (!props.isDesktopShell) {
+            return { width, height };
+        }
+        const screen =
+            (globalThis as unknown as { screen?: unknown }).screen
+            ?? (typeof window !== 'undefined' ? window.screen : null);
+        const screenWidth = typeof (screen as { availWidth?: unknown } | null)?.availWidth === 'number'
+            ? Number((screen as { availWidth: number }).availWidth)
+            : (typeof (screen as { width?: unknown } | null)?.width === 'number' ? Number((screen as { width: number }).width) : 0);
+        const screenHeight = typeof (screen as { availHeight?: unknown } | null)?.availHeight === 'number'
+            ? Number((screen as { availHeight: number }).availHeight)
+            : (typeof (screen as { height?: unknown } | null)?.height === 'number' ? Number((screen as { height: number }).height) : 0);
+        if (Number.isFinite(screenWidth) && Number.isFinite(screenHeight) && screenWidth > 0 && screenHeight > 0) {
+            return { width: screenWidth, height: screenHeight };
+        }
+        return { width, height };
+    }, [height, props.isDesktopShell, width]);
+
     const canScanQr = React.useMemo(
-        () => resolveCanScanQr({ width, height, platform: Platform.OS }),
-        [height, width],
+        () => resolveCanScanQr({ width: qrScannerHeuristicViewport.width, height: qrScannerHeuristicViewport.height, platform: Platform.OS }),
+        [qrScannerHeuristicViewport.height, qrScannerHeuristicViewport.width],
     );
 
     const [urlDraft, setUrlDraft] = React.useState('');
@@ -121,14 +145,14 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
                 platform: props.isDesktopShell ? 'desktop' : (Platform.OS === 'web' ? 'web' : 'native'),
                 canScanQr,
                 scanStepEnabled: false,
-                    canRunSystemTasks: props.isDesktopShell,
-                    relaySelection: buildDefaultRelaySelection(),
-                    relayAccessProviderId: null,
-                    relayLockConfirmationPending: false,
-                    relaySwitchConfirmationPending: false,
-                    authIntent: 'standard',
-                    setupAction: null,
-                } as const;
+                canRunSystemTasks: props.isDesktopShell,
+                relaySelection: buildDefaultRelaySelection(),
+                relayAccessProviderId: null,
+                relayLockConfirmationPending: false,
+                relaySwitchConfirmationPending: false,
+                authIntent: 'standard',
+                setupAction: null,
+            } as const;
 
             const requestedStepId = props.initialStepId ?? 'welcome';
             const isRequestedVisible = getWizardStepDefinition(requestedStepId).visibleWhen(context);
@@ -145,6 +169,27 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
             });
         },
     );
+
+    const handleLocalRelayRuntimeStatusChange = React.useCallback((status: LocalRelayRuntimeStatus) => {
+        setLocalRelayRuntimeStatus(status);
+        const relayUrl = typeof status?.relayUrl === 'string' ? status.relayUrl.trim() : '';
+        if (!relayUrl) {
+            return;
+        }
+        const profile = upsertServerProfileOnly({
+            serverUrl: relayUrl,
+            source: 'url',
+        });
+        dispatch({
+            type: 'wizard/setRelaySelection',
+            relaySelection: {
+                choiceId: 'thisComputer',
+                serverUrl: relayUrl,
+                relayProfileId: profile.id,
+                locked: false,
+            },
+        });
+    }, [dispatch]);
 
     const stepId = state.currentStepId;
     const {
@@ -510,18 +555,6 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
 
         if (selection.choiceId === 'thisComputer') {
             if (props.isDesktopShell) {
-                const status = trueLocalRelayRuntimeBindUrl
-                    ? relayReadinessByEndpoint.get(trueLocalRelayRuntimeBindUrl)?.status
-                    : null;
-                if (trueLocalRelayRuntimeBindUrl && status === 'ready') {
-                    dispatch({
-                        type: 'wizard/setRelaySelection',
-                        relaySelection: { choiceId: 'thisComputer', serverUrl: trueLocalRelayRuntimeBindUrl, relayProfileId: null, locked: false },
-                    });
-                    dispatch({ type: 'wizard/goToStep', stepId: 'relay_access' });
-                    return;
-                }
-
                 dispatch({ type: 'wizard/goToStep', stepId: 'host_relay_local' });
                 return;
             }
@@ -536,7 +569,7 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         }
 
         dispatch({ type: 'wizard/goToStep', stepId: 'auth' });
-    }, [canonicalCloudProfile, props.isDesktopShell, relayReadinessByEndpoint, state.context.relaySelection, stepId, trueLocalRelayRuntimeBindUrl]);
+    }, [canonicalCloudProfile, props.isDesktopShell, state.context.relaySelection, stepId]);
 
     const handleRemoteRelayRuntimeCompletedChange = React.useCallback((payload: Readonly<{
         machineId: string | null;
@@ -549,19 +582,21 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         }
 
         setRelaySwitchDecision('switch');
-        const relayProfileId = resolveRelayProfileIdForServerUrl({ serverUrl: relayUrl, canonicalCloudUrl });
+        const relayProfile = upsertServerProfileOnly({
+            serverUrl: relayUrl,
+            source: 'url',
+        });
         dispatch({
             type: 'wizard/setRelaySelection',
             relaySelection: {
-                choiceId: 'customUrl',
+                choiceId: 'remoteComputer',
                 serverUrl: relayUrl,
-                relayProfileId,
+                relayProfileId: relayProfile.id,
                 locked: false,
             },
         });
-        dispatch({ type: 'wizard/setRelaySwitchConfirmationPending', pending: true });
         setOnboardingWizardAwaitingAuthResumeIntent(relayUrl);
-    }, [canonicalCloudUrl]);
+    }, [dispatch]);
 
     const handleBack = React.useCallback(() => {
         dispatch({ type: 'wizard/back' });
@@ -902,7 +937,7 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         dispatch({ type: 'wizard/setRelayAccessProviderId', providerId });
         dispatch({
             type: 'wizard/goToStep',
-            stepId: providerId === 'cloudflareNamed' ? 'relay_access_cloudflare' : 'relay_access_url',
+            stepId: 'relay_access_prereqs',
         });
     }, [dispatch]);
 
@@ -996,10 +1031,20 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
                                 return;
                             }
                             setRelaySwitchDecision('switch');
-                            dispatch({ type: 'wizard/setRelaySelection', relaySelection: { choiceId: 'thisComputer', serverUrl: relayUrl, relayProfileId: null, locked: false } });
+                            dispatch({
+                                type: 'wizard/setRelaySelection',
+                                relaySelection: {
+                                    choiceId: 'thisComputer',
+                                    serverUrl: relayUrl,
+                                    relayProfileId: state.context.relaySelection.relayProfileId ?? null,
+                                    locked: false,
+                                },
+                            });
                             dispatch({ type: 'wizard/goToStep', stepId: 'relay_access' });
                         }
                         : stepId === 'relay_access'
+                            ? handleRelayAccessAdvance
+                        : stepId === 'relay_access_prereqs'
                             ? handleRelayAccessAdvance
                         : stepId === 'host_relay_remote'
                             ? async () => {
@@ -1012,9 +1057,16 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
                                     return;
                                 }
                                 setRelaySwitchDecision('switch');
-                                dispatch({ type: 'wizard/setRelaySelection', relaySelection: { choiceId: 'customUrl', serverUrl: relayUrl, relayProfileId: null, locked: false } });
-                                dispatch({ type: 'wizard/setRelaySwitchConfirmationPending', pending: true });
-                                dispatch({ type: 'wizard/goToStep', stepId: 'confirm_switch_relay' });
+                                dispatch({
+                                    type: 'wizard/setRelaySelection',
+                                    relaySelection: {
+                                        choiceId: 'remoteComputer',
+                                        serverUrl: relayUrl,
+                                        relayProfileId: state.context.relaySelection.relayProfileId ?? null,
+                                        locked: false,
+                                    },
+                                });
+                                dispatch({ type: 'wizard/goToStep', stepId: 'relay_access' });
                             }
                         : stepId === 'confirm_switch_relay'
                             ? async () => {
@@ -1035,7 +1087,7 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
                                         relaySelection: {
                                             choiceId: state.context.relaySelection.choiceId ?? 'customUrl',
                                             serverUrl: relayUrl,
-                                            relayProfileId: null,
+                                            relayProfileId: state.context.relaySelection.relayProfileId ?? null,
                                             locked: false,
                                         },
                                     });
@@ -1082,10 +1134,11 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         urlDraft,
         onUrlDraftChange: setUrlDraft,
         relaySelectionServerUrl,
+        serverProfileId: state.context.relaySelection.relayProfileId ?? null,
         lastKnownSnapshotRelayUrl: lastKnownSnapshotRelayUrlRef.current || '',
         relaySwitchDecision,
         onRelaySwitchDecisionChange: setRelaySwitchDecision,
-        onLocalRelayRuntimeStatusChange: setLocalRelayRuntimeStatus,
+        onLocalRelayRuntimeStatusChange: handleLocalRelayRuntimeStatusChange,
         onWizardPrimaryChange: handleWizardPrimaryChange,
         onWizardBackChange: handleWizardBackChange,
         onWizardSkipChange: handleWizardSkipChange,
@@ -1127,7 +1180,7 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         onLostAccessBackToAuth: () => dispatch({ type: 'wizard/back' }),
         onHostRelayLocalAdvance: () => dispatch({ type: 'wizard/goToStep', stepId: 'relay_access' }),
         onRelayAccessAdvance: handleRelayAccessAdvance,
-        onHostRelayRemoteAdvance: () => dispatch({ type: 'wizard/goToStep', stepId: 'confirm_switch_relay' }),
+        onHostRelayRemoteAdvance: () => dispatch({ type: 'wizard/goToStep', stepId: 'relay_access' }),
         onHostRelayRemoteCancel: () => dispatch({ type: 'wizard/goToStep', stepId: 'relay_select' }),
         onRemoteRelayRuntimeCompleted: handleRemoteRelayRuntimeCompletedChange,
     });
@@ -1137,6 +1190,8 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
             testID={props.testID ?? 'onboarding-wizard'}
             stepIndex={Math.max(0, progress.current - 1)}
             stepCount={Math.max(1, progress.total)}
+            showScrim={props.wizardChromeMode === 'embedded' ? false : undefined}
+            layoutPresentation={props.wizardLayoutPresentation}
             titleLeading={stepId === 'welcome' ? <WizardLogotype height={45} testID={`${props.testID ?? 'onboarding-wizard'}-logotype`} /> : undefined}
             title={title}
             subtitle={subtitle ?? undefined}

@@ -2,6 +2,15 @@ function stripTrailingSlash(url: string): string {
   return url.replace(/\/+$/, '');
 }
 
+function normalizeServePath(value: string | undefined): string {
+  const raw = String(value ?? '').trim();
+  if (!raw || raw === '/') {
+    return '/';
+  }
+  const prefixed = raw.startsWith('/') ? raw : `/${raw}`;
+  return prefixed.replace(/\/+$/, '') || '/';
+}
+
 function normalizeHttpsUrl(raw: string): string | null {
   const value = String(raw ?? '').trim();
   if (!value) return null;
@@ -33,6 +42,30 @@ function tryParseProxyTargetFromLine(line: string): URL | null {
     return new URL(raw);
   } catch {
     return null;
+  }
+}
+
+function tryParseServePathFromLine(line: string): string | null {
+  const trimmed = String(line ?? '').trim();
+  const match = trimmed.match(/^\|--\s+(\S+)\s+proxy\s+\S+/i);
+  if (!match?.[1]) {
+    return null;
+  }
+  return normalizeServePath(match[1]);
+}
+
+function normalizeHttpsPort(value: number | undefined): string {
+  const normalized = Number.isFinite(value) ? Math.trunc(value as number) : 443;
+  return normalized > 0 ? String(normalized) : '443';
+}
+
+function httpsUrlMatchesPort(baseUrl: string, httpsPort: number | undefined): boolean {
+  try {
+    const parsed = new URL(baseUrl);
+    const actualPort = parsed.port || (parsed.protocol === 'https:' ? '443' : '');
+    return actualPort === normalizeHttpsPort(httpsPort);
+  } catch {
+    return false;
   }
 }
 
@@ -70,6 +103,62 @@ export function parseTailscaleServeHttpsBaseUrlForPort(statusText: string, port:
     if (proxyTarget.port === wantedPort) {
       return currentBase;
     }
+  }
+
+  return null;
+}
+
+export function tailscaleServeHttpsUrlForOwnedConfigFromStatus(params: Readonly<{
+  serveStatusText: string;
+  internalServerUrl: string;
+  servePath?: string;
+  httpsPort?: number;
+}>): string | null {
+  const rawInternalServerUrl = String(params.internalServerUrl ?? '').trim();
+  if (!rawInternalServerUrl) {
+    return null;
+  }
+
+  let wantedPort = '';
+  try {
+    wantedPort = new URL(rawInternalServerUrl).port;
+  } catch {
+    wantedPort = '';
+  }
+  if (!wantedPort) {
+    return null;
+  }
+
+  const wantedServePath = normalizeServePath(params.servePath);
+  let currentBase: string | null = null;
+  const lines = String(params.serveStatusText ?? '').split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = String(rawLine ?? '').trim();
+    if (!line) {
+      continue;
+    }
+
+    const maybeHttps = line.match(/^(https:\/\/\S+)/i)?.[1];
+    if (maybeHttps && !line.toLowerCase().includes('proxy')) {
+      currentBase = normalizeHttpsUrl(maybeHttps);
+      continue;
+    }
+
+    if (!currentBase || !httpsUrlMatchesPort(currentBase, params.httpsPort)) {
+      continue;
+    }
+
+    const proxyTarget = tryParseProxyTargetFromLine(line);
+    if (!proxyTarget || proxyTarget.port !== wantedPort) {
+      continue;
+    }
+
+    const servedPath = tryParseServePathFromLine(line);
+    if (servedPath !== wantedServePath) {
+      continue;
+    }
+
+    return currentBase;
   }
 
   return null;

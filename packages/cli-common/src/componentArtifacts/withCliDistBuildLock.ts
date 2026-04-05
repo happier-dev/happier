@@ -28,10 +28,26 @@ function describeLockOwner(lockPath: string, nowMs: number): string {
   return `pid=${String(owner.pid ?? 'unknown')} ageMs=${ageMs}`;
 }
 
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (typeof error === 'object' && error !== null && 'code' in error && String((error as { code?: string }).code ?? '') === 'ESRCH') {
+      return false;
+    }
+    return true;
+  }
+}
+
 function shouldReclaimLock(lockPath: string, staleAfterMs: number, nowMs: number): boolean {
   try {
     const stats = statSync(lockPath);
     const owner = parseLockOwner(lockPath);
+    const ownerPid = Number(owner?.pid);
+    if (Number.isFinite(ownerPid) && ownerPid > 1 && !isPidAlive(ownerPid)) {
+      return true;
+    }
     const updatedAtMs = Number(owner?.updatedAtMs ?? owner?.createdAtMs ?? stats.mtimeMs ?? 0);
     return updatedAtMs > 0 && nowMs - updatedAtMs > staleAfterMs;
   } catch {

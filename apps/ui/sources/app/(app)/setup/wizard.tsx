@@ -26,7 +26,6 @@ export default function SetupWizardRoute() {
             'setup_this_computer',
             'host_relay_local',
             'remote_ssh_setup',
-            'secure_access_tailscale',
         ];
         return (allowed as readonly string[]).includes(raw) ? (raw as WizardStepId) : undefined;
     }, [params.step]);
@@ -37,7 +36,6 @@ export default function SetupWizardRoute() {
             case 'local':
             case 'relayLocal':
             case 'remote':
-            case 'tailscale':
                 return raw as WizardContext['setupAction'];
             default:
                 return undefined;

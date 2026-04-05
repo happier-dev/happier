@@ -129,4 +129,33 @@ test.describe('ui e2e: setup control panel flow (deterministic runner)', () => {
         await expect(page.getByTestId('system-task-progress-status-succeeded')).toHaveCount(1, { timeout: 120_000 });
         await expect(page.getByTestId('system-task-step-label')).toHaveCount(1, { timeout: 120_000 });
     });
+
+    test('shows the host relay checklist with satisfied rows in desktop mode', async ({ page }) => {
+        test.setTimeout(420_000);
+        if (!uiBaseUrl) throw new Error('missing ui base url');
+
+        await page.setViewportSize({ width: 1440, height: 900 });
+
+        await page.addInitScript(() => {
+            (window as typeof window & {
+                __HAPPIER_DEV_SYSTEM_TASK_SCENARIOS__?: Record<string, unknown>;
+            }).__HAPPIER_DEV_SYSTEM_TASK_SCENARIOS__ = {
+                'relay.runtime.status.v1': 'ready',
+            };
+        });
+
+        await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/setup/wizard?happier_hmr=0`, 180_000);
+        await setFakeTauriInternalsInExistingDocument(page);
+
+        await expect(page.getByTestId('setupWizard.surface')).toBeVisible({ timeout: 120_000 });
+        await expect(page.getByTestId('setupWizard-branch:relayLocal')).toHaveCount(1, { timeout: 120_000 });
+        await page.getByTestId('setupWizard-branch:relayLocal').click();
+        await expect(page.getByTestId('setupWizard.surface-primary')).toBeEnabled({ timeout: 120_000 });
+        await page.getByTestId('setupWizard.surface-primary').click();
+
+        await expect(page.getByTestId('setupWizard-relay-host-local')).toBeVisible({ timeout: 120_000 });
+        await expect(page.getByTestId('setupWizard-relay-host-local-checklist-row-installRelayRuntime')).toBeVisible({ timeout: 120_000 });
+        await expect(page.getByTestId('setupWizard-relay-host-local-checklist-row-startRelayRuntime')).toBeVisible({ timeout: 120_000 });
+        await expect(page.getByTestId('setupWizard-relay-host-local-checklist-row-enableSecureAccess')).toHaveCount(0);
+    });
 });
