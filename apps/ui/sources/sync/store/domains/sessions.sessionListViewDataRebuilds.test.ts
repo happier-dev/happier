@@ -994,7 +994,9 @@ describe('sessions domain: sessionListViewData rebuild gating', () => {
         expect(Array.isArray(initial)).toBe(true);
 
         const initialSessionItems = (initial ?? []) as SessionListViewItem[];
-        const initialSessionItem = initialSessionItems.find((item) => item.type === 'session' && item.session.id === 's1');
+        const initialSessionItem = initialSessionItems
+            .filter((item): item is Extract<SessionListViewItem, { type: 'session' }> => item.type === 'session')
+            .find((item) => item.session.id === 's1');
         expect(initialSessionItem?.session.metadata?.machineId).toBe('m-b');
         const initialResolveCallCount = resolveSessionMachineRpcTargetSpy.mock.calls.length;
 
