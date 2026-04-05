@@ -49,21 +49,19 @@ test('stress workflows do not inherit secrets into reusable tests workflow', asy
   assert.equal(parsed?.jobs?.['stress-manual']?.secrets, undefined, 'stress-manual should not inherit secrets');
 });
 
-test('release workflow defaults providers off and isolates provider secret usage', async () => {
+test('release workflow keeps provider checks outside the compact manual release surface', async () => {
   const { parsed } = await loadWorkflow('release.yml');
   const inputs = parsed?.on?.workflow_dispatch?.inputs ?? {};
 
-  assert.equal(inputs?.run_providers?.default, false, 'run_providers should default to false');
+  assert.equal(inputs?.run_providers, undefined, 'compact manual release workflow should not expose provider toggles');
+  assert.equal(inputs?.providers_preset, undefined, 'compact manual release workflow should not expose provider presets');
+  assert.equal(inputs?.providers_tier, undefined, 'compact manual release workflow should not expose provider tiers');
 
   const ciJob = parsed?.jobs?.ci;
   assert.ok(ciJob, 'ci job should exist');
   assert.equal(ciJob.secrets, undefined, 'ci should not inherit secrets');
   assert.equal(ciJob.with?.run_providers, false, 'ci should never run providers directly');
-
-  const providersJob = parsed?.jobs?.providers;
-  assert.ok(providersJob, 'providers job should exist');
-  assert.equal(providersJob.uses, './.github/workflows/providers-contracts.yml', 'providers should use providers-contracts workflow');
-  assert.equal(providersJob.secrets, 'inherit', 'providers should inherit secrets for provider checks');
+  assert.equal(parsed?.jobs?.providers, undefined, 'release.yml should not embed a separate providers job; provider contracts run from their dedicated workflow');
 });
 
 test('manual secret-bearing workflows enforce trusted refs', async () => {
@@ -153,7 +151,6 @@ test('secret-bearing workflows require release-admin actor guard before privileg
   const guardJob = 'release_actor_guard';
   const expectedWiring = [
     ['release.yml', 'ci'],
-    ['release.yml', 'providers'],
     ['release-npm.yml', 'release'],
     ['promote-ui.yml', 'promote'],
     ['promote-server.yml', 'promote'],

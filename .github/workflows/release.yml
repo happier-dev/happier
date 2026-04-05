@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       checks_profile:
-        description: "Checks — Profile (full=all standard checks, fast=skip slow builds/smoke, none=skip all checks, custom=use toggles below)"
+        description: "Checks — Profile (full=all standard checks, fast=skip slow builds/smoke, none=skip all checks)"
         required: true
         type: choice
         default: full
@@ -12,44 +12,6 @@ on:
           - full
           - fast
           - none
-          - custom
-      run_providers:
-        description: "Checks — Run providers contract suite (requires provider secrets)"
-        required: true
-        default: false
-        type: boolean
-      providers_preset:
-        description: "Checks (PROVIDERS) — Preset"
-        required: true
-        default: all
-        type: choice
-        options:
-          - all
-          - claude
-          - codex
-          - opencode
-      providers_tier:
-        description: "Checks (PROVIDERS) — Tier"
-        required: true
-        default: smoke
-        type: choice
-        options:
-          - smoke
-          - extended
-      custom_checks:
-        description: "Checks (CUST) — Comma-separated toggles used only when checks_profile=custom: e2e_core,e2e_core_slow,server_db_contract,stress,cli_smoke_linux,build_website,build_docs"
-        required: true
-        default: e2e_core,server_db_contract,cli_smoke_linux,build_website,build_docs
-        type: string
-      release_verify_profile:
-        description: "Verify — Post-build release verification (none=skip, smoke=installers+binaries, full=include self-host E2E). Preview-only; runs best-effort after publishing."
-        required: true
-        type: choice
-        default: none
-        options:
-          - none
-          - smoke
-          - full
       dry_run:
         description: "Safety — Run checks and show plan, but do not push/deploy"
         required: true
@@ -83,34 +45,6 @@ on:
           - ota
           - native
           - native_submit
-      ui_expo_builder:
-        description: "Deploy — UI native build runner (eas_cloud uses Expo build servers; eas_local builds on GitHub runners)"
-        required: true
-        default: eas_cloud
-        type: choice
-        options:
-          - eas_cloud
-          - eas_local
-      ui_expo_profile:
-        description: "Deploy — UI EAS build profile (auto recommended). Use *-apk profiles to produce installable Android APKs and publish to GitHub Releases."
-        required: true
-        default: auto
-        type: choice
-        options:
-          - auto
-          - preview
-          - preview-apk
-          - production
-          - production-apk
-      ui_expo_platform:
-        description: "Deploy — UI Expo native platform"
-        required: true
-        default: all
-        type: choice
-        options:
-          - ios
-          - android
-          - all
       desktop_mode:
         description: "Deploy — Desktop artifacts mode"
         required: true
@@ -126,39 +60,6 @@ on:
         type: choice
         default: none
         options:
-          - none
-          - patch
-          - minor
-          - major
-      bump_app_override:
-        description: "Version bump override (App) — preset=use bump preset; none=disable bump"
-        required: true
-        type: choice
-        default: preset
-        options:
-          - preset
-          - none
-          - patch
-          - minor
-          - major
-      bump_cli_override:
-        description: "Version bump override (CLI) — preset=use bump preset; none=disable bump"
-        required: true
-        type: choice
-        default: preset
-        options:
-          - preset
-          - none
-          - patch
-          - minor
-          - major
-      bump_stack_override:
-        description: "Version bump override (Stack) — preset=use bump preset; none=disable bump"
-        required: true
-        type: choice
-        default: preset
-        options:
-          - preset
           - none
           - patch
           - minor
@@ -215,13 +116,13 @@ jobs:
       run_stack: true
       run_typecheck: true
       run_cli_daemon_e2e: true
-      run_e2e_core: ${{ inputs.checks_profile == 'full' || (inputs.checks_profile == 'custom' && (contains(format(',{0},', inputs.custom_checks), ',e2e_core,') || contains(format(',{0},', inputs.custom_checks), ',e2e_core_slow,'))) }}
-      run_e2e_core_slow: ${{ inputs.checks_profile == 'full' || (inputs.checks_profile == 'custom' && contains(format(',{0},', inputs.custom_checks), ',e2e_core_slow,')) }}
-      run_server_db_contract: ${{ inputs.checks_profile == 'full' || (inputs.checks_profile == 'custom' && contains(format(',{0},', inputs.custom_checks), ',server_db_contract,')) }}
+      run_e2e_core: ${{ inputs.checks_profile == 'full' }}
+      run_e2e_core_slow: ${{ inputs.checks_profile == 'full' }}
+      run_server_db_contract: ${{ inputs.checks_profile == 'full' }}
       run_providers: false
-      providers_preset: ${{ inputs.providers_preset }}
-      providers_tier: ${{ inputs.providers_tier }}
-      run_stress: ${{ inputs.checks_profile == 'custom' && contains(format(',{0},', inputs.custom_checks), ',stress,') }}
+      providers_preset: all
+      providers_tier: smoke
+      run_stress: false
       run_release_contracts: true
       run_installers_smoke: false
       run_binary_smoke: false
@@ -230,22 +131,10 @@ jobs:
       run_self_host_schtasks: false
       run_self_host_daemon: false
 
-  providers:
-    name: Providers Checks (providers-contracts.yml)
-    needs: [release_actor_guard]
-    if: inputs.checks_profile != 'none' && inputs.run_providers == true
-    uses: ./.github/workflows/providers-contracts.yml
-    secrets: inherit
-    with:
-      preset: ${{ inputs.providers_preset }}
-      tier: ${{ inputs.providers_tier }}
-      strict_keys: false
-      flake_retry: true
-
   plan:
     name: Release Plan (inputs + changes + bump/publish decisions)
-    needs: [release_actor_guard, ci, providers]
-    if: ${{ always() && needs.release_actor_guard.result == 'success' && (needs.ci.result == 'success' || needs.ci.result == 'skipped') && (needs.providers.result == 'success' || needs.providers.result == 'skipped') }}
+    needs: [release_actor_guard, ci]
+    if: ${{ always() && needs.release_actor_guard.result == 'success' && (needs.ci.result == 'success' || needs.ci.result == 'skipped') }}
     runs-on: ubuntu-latest
     outputs:
       changed_ui: ${{ steps.plan.outputs.changed_ui }}
@@ -338,13 +227,13 @@ jobs:
           cache-dependency-path: yarn.lock
 
       - name: Enable Corepack (Yarn)
-        if: ${{ (inputs.checks_profile == 'full') || (inputs.checks_profile == 'custom' && (contains(format(',{0},', inputs.custom_checks), ',build_website,') || contains(format(',{0},', inputs.custom_checks), ',build_docs,') || contains(format(',{0},', inputs.custom_checks), ',cli_smoke_linux,'))) }}
+        if: ${{ inputs.checks_profile == 'full' }}
         run: |
           corepack enable
           corepack prepare yarn@1.22.22 --activate
 
       - name: Install dependencies
-        if: ${{ (inputs.checks_profile == 'full') || (inputs.checks_profile == 'custom' && (contains(format(',{0},', inputs.custom_checks), ',build_website,') || contains(format(',{0},', inputs.custom_checks), ',build_docs,') || contains(format(',{0},', inputs.custom_checks), ',cli_smoke_linux,'))) }}
+        if: ${{ inputs.checks_profile == 'full' }}
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
@@ -357,15 +246,15 @@ jobs:
           echo "CI checks ran in job 'ci' (tests/typecheck/e2e/providers/stress as configured)."
 
       - name: Build website
-        if: ${{ (inputs.checks_profile == 'full') || (inputs.checks_profile == 'custom' && contains(format(',{0},', inputs.custom_checks), ',build_website,')) }}
+        if: ${{ inputs.checks_profile == 'full' }}
         run: yarn website:build
 
       - name: Build docs
-        if: ${{ (inputs.checks_profile == 'full') || (inputs.checks_profile == 'custom' && contains(format(',{0},', inputs.custom_checks), ',build_docs,')) }}
+        if: ${{ inputs.checks_profile == 'full' }}
         run: yarn docs:build
 
       - name: CLI smoke test (Linux)
-        if: ${{ (inputs.checks_profile == 'full') || (inputs.checks_profile == 'custom' && contains(format(',{0},', inputs.custom_checks), ',cli_smoke_linux,')) }}
+        if: ${{ inputs.checks_profile == 'full' }}
         run: node scripts/pipeline/run.mjs smoke-cli
 
       - name: Compute changed components (main..dev)
@@ -391,16 +280,13 @@ jobs:
             echo "## Release plan (dev → main)"
             echo ""
             echo "- checks_profile: \`${{ inputs.checks_profile }}\`"
-            echo "- custom_checks: \`${{ inputs.custom_checks }}\`"
             echo "- environment: \`${{ inputs.environment }}\`"
             echo "- confirm: \`${{ inputs.confirm }}\`"
             echo "- dry_run: \`${{ inputs.dry_run }}\`"
             echo "- deploy_targets: \`${{ inputs.deploy_targets }}\`"
+            echo "- force_deploy: \`${{ inputs.force_deploy }}\`"
             echo "- bump: \`${{ inputs.bump }}\`"
-            echo "- bump_app_override: \`${{ inputs.bump_app_override }}\`"
-            echo "- bump_cli_override: \`${{ inputs.bump_cli_override }}\`"
-            echo "- bump_stack_override: \`${{ inputs.bump_stack_override }}\`"
-            echo "- ui_expo_action: \`${{ inputs.ui_expo_action }}\` (builder=\`${{ inputs.ui_expo_builder }}\`, platform=\`${{ inputs.ui_expo_platform }}\`, profile=\`${{ inputs.ui_expo_profile }}\`)"
+            echo "- ui_expo_action: \`${{ inputs.ui_expo_action }}\` (builder=\`eas_cloud\`, platform=\`all\`, profile=\`auto\`)"
             echo "- desktop_mode: \`${{ inputs.desktop_mode }}\`"
             echo ""
             echo "- commits to release (main..dev): \`${{ steps.plan.outputs.commit_count }}\`"
@@ -420,9 +306,9 @@ jobs:
         env:
           ENVIRONMENT: ${{ inputs.environment }}
           BUMP_PRESET: ${{ inputs.bump }}
-          BUMP_APP_OVERRIDE: ${{ inputs.bump_app_override }}
-          BUMP_CLI_OVERRIDE: ${{ inputs.bump_cli_override }}
-          BUMP_STACK_OVERRIDE: ${{ inputs.bump_stack_override }}
+          BUMP_APP_OVERRIDE: preset
+          BUMP_CLI_OVERRIDE: preset
+          BUMP_STACK_OVERRIDE: preset
           DEPLOY_TARGETS: ${{ inputs.deploy_targets }}
           CHANGED_UI: ${{ steps.plan.outputs.changed_ui }}
           CHANGED_CLI: ${{ steps.plan.outputs.changed_cli }}
@@ -606,9 +492,9 @@ jobs:
       bump: none
       deploy_web: ${{ inputs.environment == 'production' }}
       expo_action: ${{ inputs.ui_expo_action }}
-      expo_builder: ${{ inputs.ui_expo_builder }}
-      expo_profile: ${{ inputs.ui_expo_profile }}
-      expo_platform: ${{ inputs.ui_expo_platform }}
+      expo_builder: eas_cloud
+      expo_profile: auto
+      expo_platform: all
       desktop_build: ${{ inputs.desktop_mode != 'none' }}
       desktop_publish_release: ${{ inputs.desktop_mode == 'build_and_publish' }}
       run_tests: false
@@ -719,50 +605,6 @@ jobs:
       npm_tag: ${{ inputs.environment == 'production' && 'latest' || 'next' }}
       run_tests: false
       release_message: ${{ inputs.release_message }}
-
-  release_verify:
-    if: always() && needs.publish_npm.result == 'success' && inputs.environment == 'preview' && inputs.release_verify_profile != 'none'
-    needs: [publish_npm]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      actions: write
-    steps:
-      - name: Trigger release verify workflow (best-effort)
-        env:
-          REPO: ${{ github.repository }}
-          REF: ${{ github.ref_name }}
-          TOKEN: ${{ github.token }}
-          RUN_SELF_HOST: ${{ inputs.release_verify_profile == 'full' }}
-        run: |
-          set -euo pipefail
-
-          payload="$(
-            cat <<JSON
-          {
-            "ref": "${REF}",
-            "inputs": {
-              "channel": "preview",
-              "run_installers_smoke": "true",
-              "run_binary_smoke": "true",
-              "run_self_host_systemd": "${RUN_SELF_HOST}",
-              "run_self_host_launchd": "${RUN_SELF_HOST}",
-              "run_self_host_schtasks": "${RUN_SELF_HOST}",
-              "run_self_host_daemon": "${RUN_SELF_HOST}"
-            }
-          }
-          JSON
-          )"
-
-          echo "Dispatching release-verify.yml for preview (profile: ${{ inputs.release_verify_profile }})"
-          if ! curl -fsSL \
-            -X POST \
-            -H "Authorization: Bearer ${TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${REPO}/actions/workflows/release-verify.yml/dispatches" \
-            -d "${payload}"; then
-            echo "::warning::Failed to dispatch release-verify.yml (continuing)"
-          fi
 
   sync_dev:
     if: inputs.dry_run != true && inputs.environment == 'production' && (vars.RELEASE_SYNC_DEV_FROM_MAIN == '' || vars.RELEASE_SYNC_DEV_FROM_MAIN == 'true')
