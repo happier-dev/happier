@@ -5,20 +5,20 @@ import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
 export function useSessionListWorkspaceLabelMigration(input: Readonly<{
-    workspaceLabels: Readonly<Record<string, string> | null | undefined>;
+    workspaceLabels: Readonly<Record<string, string>>;
     setWorkspaceLabels: (value: Record<string, string>) => void;
-    workspaceRefs: ReadonlyArray<WorkspaceRefV1> | null | undefined;
+    workspaceRefs: ReadonlyArray<WorkspaceRefV1>;
     setWorkspaceRefs: (value: WorkspaceRefV1[]) => void;
     scopeHintByLegacyWorkspaceKey: ReadonlyMap<string, WorkspaceScopeBase>;
 }>) {
     React.useEffect(() => {
-        const legacyWorkspaceLabels = input.workspaceLabels ?? {};
+        const legacyWorkspaceLabels = input.workspaceLabels;
         const legacyKeys = Object.keys(legacyWorkspaceLabels);
         if (legacyKeys.length === 0) return;
 
         const result = migrateLegacyWorkspaceLabelsToWorkspaceRefs({
             legacyWorkspaceLabels,
-            workspaceRefs: input.workspaceRefs ?? [],
+            workspaceRefs: input.workspaceRefs,
             nowMs: Date.now(),
             resolveScopeForLegacyKey: (legacyKey) => input.scopeHintByLegacyWorkspaceKey.get(legacyKey) ?? null,
         });
