@@ -177,8 +177,6 @@ jobs:
       expo_profile: ${{ steps.expo_profile.outputs.profile }}
       expo_platform: ${{ steps.ui_options.outputs.expo_platform }}
       desktop_mode: ${{ steps.ui_options.outputs.desktop_mode }}
-      deploy_ref: ${{ steps.deploy_meta.outputs.ref }}
-      deploy_sha: ${{ steps.deploy_meta.outputs.sha }}
     steps:
       - name: Resolve source ref
         id: resolve

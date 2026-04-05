@@ -44,5 +44,6 @@ test('promote-ui delegates web deploy branch promotion to pipeline script', asyn
   assert.match(raw, /Promote source ref to deploy branch \(web\)/);
   assert.match(raw, /node scripts\/pipeline\/run\.mjs promote-deploy-branch/);
   assert.match(raw, /node scripts\/pipeline\/run\.mjs deploy/);
+  assert.doesNotMatch(raw, /steps\.deploy_meta\.outputs\./, 'promote-ui should not reference outputs from a nonexistent deploy_meta step');
   assert.doesNotMatch(raw, /Wait for deploy workflow/i);
 });
