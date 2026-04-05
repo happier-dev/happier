@@ -3,10 +3,14 @@ import { getActionSpec, listActionSpecs } from '@happier-dev/protocol';
 
 import { sync } from '@/sync/sync';
 import { storage } from '@/sync/domains/state/storage';
+import {
+  resolveSessionListCachedSessionServerName,
+} from '@/sync/domains/session/listing/sessionListCacheState';
 import { trackPermissionResponse } from '@/track';
 import { voiceActivityController } from '@/voice/activity/voiceActivityController';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { resolveAgentRequestKind, type AgentRequestKind } from '@/utils/sessions/permissions/permissionPromptPolicy';
 import { listPendingPermissionRequests, listPendingUserActionRequests } from '@/utils/sessions/sessionUtils';
 import { resolveAskUserQuestionDecisionAnswers } from '@/voice/requests/resolveAskUserQuestionDecisionAnswers';
@@ -306,37 +310,9 @@ export function createVoiceToolHandlers(
     return { ok: true, sessionId: fallbackSessionId, requestId: fallbackSelected.requestId };
   };
 
-  const resolveSessionServerIdFromCaches = (sessionId: string): string | null => {
-    const state: any = storage.getState();
-    const byServer = state?.sessionListViewDataByServerId ?? {};
-    for (const [serverId, items] of Object.entries(byServer)) {
-      if (!Array.isArray(items)) continue;
-      for (const item of items as any[]) {
-        if (!item || item.type !== 'session') continue;
-        if (item?.session?.id === sessionId) return String(serverId);
-      }
-    }
-    return null;
-  };
-
-  const resolveSessionServerNameFromCaches = (sessionId: string): string | null => {
-    const state: any = storage.getState();
-    const byServer = state?.sessionListViewDataByServerId ?? {};
-    for (const items of Object.values(byServer)) {
-      if (!Array.isArray(items)) continue;
-      for (const item of items as any[]) {
-        if (!item || item.type !== 'session') continue;
-        if (item?.session?.id !== sessionId) continue;
-        const serverName = normalizeId(item?.serverName);
-        if (serverName) return serverName;
-      }
-    }
-    return null;
-  };
-
   const executor = createDefaultActionExecutor({
-    resolveServerIdForSessionId: resolveSessionServerIdFromCaches,
-    resolveServerNameForSessionId: resolveSessionServerNameFromCaches,
+    resolveServerIdForSessionId: (sessionId: string) => resolvePreferredServerIdForSessionId(sessionId) ?? null,
+    resolveServerNameForSessionId: (sessionId: string) => resolveSessionListCachedSessionServerName(storage.getState(), sessionId),
   });
 
   const execute = async (toolName: string, parameters: unknown, ctx?: { serverId?: string | null }): Promise<string> => {
@@ -370,7 +346,7 @@ export function createVoiceToolHandlers(
       return jsonError('session_not_found', 'session_not_found', { sessionId });
     }
 
-    const targetServerId = resolveSessionServerIdFromCaches(sessionId);
+    const targetServerId = resolvePreferredServerIdForSessionId(sessionId);
     const activeServerId = normalizeId(getActiveServerSnapshot().serverId);
     const isActiveServer = !targetServerId || targetServerId === activeServerId;
     if (isActiveServer) {
@@ -439,7 +415,7 @@ export function createVoiceToolHandlers(
     const decision = data.decision === 'allow' || data.decision === 'deny' ? data.decision : null;
     if (!decision) return jsonError('invalid_parameters', 'invalid_parameters');
 
-    const targetServerId = resolveSessionServerIdFromCaches(sessionId);
+    const targetServerId = resolvePreferredServerIdForSessionId(sessionId);
     const res = await executor.execute(
       'session.permission.respond',
       { sessionId, decision, requestId },
@@ -523,7 +499,7 @@ export function createVoiceToolHandlers(
       return jsonError('invalid_parameters', 'invalid_parameters', { sessionId });
     }
 
-    const targetServerId = resolveSessionServerIdFromCaches(sessionId);
+    const targetServerId = resolvePreferredServerIdForSessionId(sessionId);
     const res = await executor.execute(
       'session.user_action.answer',
       {

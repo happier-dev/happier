@@ -14,7 +14,7 @@ installVoicePickerCommonModuleMocks({
         return createStorageModuleStub({
             importOriginal,
             useAllMachines: () => [{ id: 'machine-1', metadata: { homeDir: '/Users/test' } }],
-            useSessions: () => [],
+            useAllSessionListRenderables: () => [],
             useSetting: (key: string) => {
                 if (key === 'recentMachinePaths') return [];
                 if (key === 'useMachinePickerSearch') return false;

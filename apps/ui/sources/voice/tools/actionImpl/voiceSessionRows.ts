@@ -1,4 +1,8 @@
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
+import {
+  listSessionListCachedActiveSessions,
+  listSessionListCachedServerSessions,
+} from '@/sync/domains/session/listing/sessionListCacheState';
 
 import { normalizeNonEmptyString } from './shared';
 
@@ -170,13 +174,6 @@ export function collectVoiceSessionRows(state: unknown): readonly VoiceSessionRo
   const renderables = stateRecord?.sessionListRenderables && typeof stateRecord.sessionListRenderables === 'object'
     ? (stateRecord.sessionListRenderables as Record<string, unknown>)
     : null;
-  const visibleSessionList = Array.isArray(stateRecord?.sessionListViewData)
-    ? (stateRecord.sessionListViewData as unknown[])
-    : null;
-  const byServer = stateRecord?.sessionListViewDataByServerId && typeof stateRecord.sessionListViewDataByServerId === 'object'
-    ? (stateRecord.sessionListViewDataByServerId as Record<string, unknown>)
-    : null;
-
   const rows = new Map<string, VoiceSessionRowDraft>();
 
   const pushRow = (session: unknown, sourcePriority: number, options?: Readonly<{ serverId?: string | null; serverName?: string | null }>) => {
@@ -197,27 +194,18 @@ export function collectVoiceSessionRows(state: unknown): readonly VoiceSessionRo
     }
   }
 
-  if (byServer) {
-    for (const [serverIdRaw, items] of Object.entries(byServer)) {
-      if (!Array.isArray(items)) continue;
-      for (const item of items) {
-        const row = item && typeof item === 'object' ? (item as Record<string, unknown>) : null;
-        pushRow(row?.session, 2, {
-          serverId: serverIdRaw,
-          serverName: normalizeNonEmptyString(row?.serverName),
-        });
-      }
-    }
+  for (const entry of listSessionListCachedServerSessions(stateRecord)) {
+    pushRow(entry.session, 2, {
+      serverId: entry.serverId,
+      serverName: entry.serverName,
+    });
   }
 
-  if (visibleSessionList) {
-    for (const item of visibleSessionList) {
-      const row = item && typeof item === 'object' ? (item as Record<string, unknown>) : null;
-      pushRow(row?.session, 3, {
-        serverId: normalizeNonEmptyString(row?.serverId),
-        serverName: normalizeNonEmptyString(row?.serverName),
-      });
-    }
+  for (const entry of listSessionListCachedActiveSessions(stateRecord)) {
+    pushRow(entry.session, 3, {
+      serverId: entry.serverId,
+      serverName: entry.serverName,
+    });
   }
 
   return Array.from(rows.values())

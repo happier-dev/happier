@@ -1,4 +1,5 @@
 import { storage } from '@/sync/domains/state/storage';
+import { findSessionListCachedSession } from '@/sync/domains/session/listing/sessionListCacheState';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { VoiceContextFormatterPrefs } from '@/voice/context/contextFormatters';
 
@@ -47,28 +48,9 @@ function labelFromMetadata(
 }
 
 function findCachedSessionMetadata(state: any, sessionId: string): SessionMetadataLike {
-  const visitList = (items: unknown): SessionMetadataLike => {
-    if (!Array.isArray(items)) return null;
-    for (const item of items) {
-      if (!item || typeof item !== 'object' || (item as any).type !== 'session') continue;
-      const session = (item as any).session;
-      if (!session || typeof session !== 'object' || session.id !== sessionId) continue;
-      const metadata = session.metadata;
-      return metadata && typeof metadata === 'object' ? (metadata as SessionMetadataLike) : null;
-    }
-    return null;
-  };
-
-  const activeListMatch = visitList(state?.sessionListViewData);
-  if (activeListMatch) return activeListMatch;
-
-  const byServer = state?.sessionListViewDataByServerId;
-  if (!byServer || typeof byServer !== 'object') return null;
-  for (const items of Object.values(byServer)) {
-    const match = visitList(items);
-    if (match) return match;
-  }
-  return null;
+  const cachedMatch = findSessionListCachedSession(state, sessionId);
+  const metadata = cachedMatch?.session?.metadata;
+  return metadata && typeof metadata === 'object' ? (metadata as SessionMetadataLike) : null;
 }
 
 export function resolveVoiceSessionLabel(

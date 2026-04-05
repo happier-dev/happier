@@ -317,7 +317,7 @@ describe('voice tool handlers', () => {
         backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         intentInput: expect.objectContaining({ engineId: 'claude' }),
       }),
-      undefined,
+      { serverId: 'server-a' },
     );
     expect(JSON.parse(res)).toMatchObject({ ok: true });
   });
@@ -329,7 +329,11 @@ describe('voice tool handlers', () => {
     const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
 
     const res = await tools.actionExecutionRun({ runId: 'run_1', actionId: 'review.triage', input: { findings: [] } });
-    expect(executionRunAction).toHaveBeenCalledWith('s1', expect.objectContaining({ runId: 'run_1', actionId: 'review.triage' }), undefined);
+    expect(executionRunAction).toHaveBeenCalledWith(
+      's1',
+      expect.objectContaining({ runId: 'run_1', actionId: 'review.triage' }),
+      { serverId: 'server-a' },
+    );
     expect(JSON.parse(res)).toMatchObject({ ok: true });
   });
 
@@ -340,7 +344,7 @@ describe('voice tool handlers', () => {
     const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
 
     const res = await tools.listExecutionRuns({});
-    expect(executionRunList).toHaveBeenCalledWith('s1', {}, undefined);
+    expect(executionRunList).toHaveBeenCalledWith('s1', {}, { serverId: 'server-a' });
     expect(JSON.parse(res)).toMatchObject({ runs: [] });
   });
 
@@ -351,7 +355,7 @@ describe('voice tool handlers', () => {
     const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
 
     const res = await tools.getExecutionRun({ runId: 'run_1' });
-    expect(executionRunGet).toHaveBeenCalledWith('s1', { runId: 'run_1', includeStructured: false }, undefined);
+    expect(executionRunGet).toHaveBeenCalledWith('s1', { runId: 'run_1', includeStructured: false }, { serverId: 'server-a' });
     expect(JSON.parse(res)).toMatchObject({ run: { runId: 'run_1', availableActionIds: ['voice_agent.welcome'] } });
   });
 
@@ -365,7 +369,7 @@ describe('voice tool handlers', () => {
     expect(executionRunSend).toHaveBeenCalledWith(
       's1',
       { runId: 'run_1', message: 'hello', delivery: 'steer_if_supported' },
-      undefined,
+      { serverId: 'server-a' },
     );
     expect(JSON.parse(res)).toMatchObject({ ok: true });
   });
@@ -377,7 +381,7 @@ describe('voice tool handlers', () => {
     const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
 
     const res = await tools.stopExecutionRun({ runId: 'run_1' });
-    expect(executionRunStop).toHaveBeenCalledWith('s1', { runId: 'run_1' }, undefined);
+    expect(executionRunStop).toHaveBeenCalledWith('s1', { runId: 'run_1' }, { serverId: 'server-a' });
     expect(JSON.parse(res)).toMatchObject({ ok: true });
   });
 
@@ -668,6 +672,7 @@ describe('voice tool handlers', () => {
       sessionId: 's1',
       method: 'permission',
       payload: { id: 'req_permission', approved: true },
+      serverId: 'server-a',
     });
   });
 
@@ -684,6 +689,7 @@ describe('voice tool handlers', () => {
       sessionId: 's1',
       method: 'permission',
       payload: { id: 'req_b', approved: true },
+      serverId: 'server-a',
     });
     expect(trackPermissionResponse).toHaveBeenCalledWith(true);
   });
@@ -739,6 +745,7 @@ describe('voice tool handlers', () => {
       sessionId: 's1',
       method: 'permission',
       payload: { id: 'req_permission', approved: true },
+      serverId: 'server-a',
     });
   });
 
@@ -816,6 +823,7 @@ describe('voice tool handlers', () => {
       sessionId: 's1',
       method: 'permission',
       payload: { id: 'acp-fs-write:64154962-012d-4d95-8211-b65855cc7476', approved: true },
+      serverId: 'server-a',
     });
   });
 
@@ -912,6 +920,7 @@ describe('voice tool handlers', () => {
       sessionId: 's1',
       method: 'permission',
       payload: { id: 'req_question', approved: true, answers: { 'Continue?': 'Yes' } },
+      serverId: 'server-a',
     });
   });
 
@@ -954,6 +963,7 @@ describe('voice tool handlers', () => {
           approved: false,
           answers: { 'May I create QA_DENY_PATH.txt?': `No, don't create it` },
         },
+        serverId: 'server-a',
       }),
     );
   });
@@ -981,6 +991,7 @@ describe('voice tool handlers', () => {
         approved: false,
         reason: 'The plan needs another pass before exiting plan mode.',
       },
+      serverId: 'server-a',
     });
   });
 
@@ -1038,6 +1049,7 @@ describe('voice tool handlers', () => {
       sessionId: 's1',
       method: 'permission',
       payload: { id: 'req_question', approved: true, answers: { 'Continue?': 'Yes' } },
+      serverId: 'server-a',
     });
   });
 

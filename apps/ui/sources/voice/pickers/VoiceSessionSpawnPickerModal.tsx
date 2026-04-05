@@ -13,7 +13,7 @@ import { PathSelector } from '@/components/sessions/new/components/PathSelector'
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 
-import { useAllMachines, useSessions, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
+import { useAllMachines, useAllSessionListRenderables, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { getRecentMachinesFromSessions } from '@/utils/sessions/recentMachines';
 import { getRecentPathsForMachine } from '@/utils/sessions/recentPaths';
 import { resolvePreferredMachineId } from '@/components/settings/pickers/resolvePreferredMachineId';
@@ -67,7 +67,7 @@ export function VoiceSessionSpawnPickerModal(props: Props) {
   const { onClose, onResolve, setChrome } = props;
 
   const machines = useAllMachines();
-  const sessions = useSessions();
+  const sessions = useAllSessionListRenderables();
   const recentMachinePaths = useSetting('recentMachinePaths') as any[] | undefined;
   const useMachinePickerSearch = useSetting('useMachinePickerSearch');
   const usePathPickerSearch = useSetting('usePathPickerSearch');

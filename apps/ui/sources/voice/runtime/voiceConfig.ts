@@ -3,6 +3,8 @@
  *
  * This is intentionally environment-variable driven (build-time) and not user settings.
  */
+import { readAiAutoDebugRemoteLoggingEnabled } from '@/utils/system/aiAutoDebuggingEnv';
+
 export const VOICE_CONFIG = {
   /** Disable permission request forwarding */
   DISABLE_PERMISSION_REQUESTS: false,
@@ -20,6 +22,5 @@ export const VOICE_CONFIG = {
   DISABLE_READY_EVENTS: false,
 
   /** Enable debug logging for voice context updates */
-  ENABLE_DEBUG_LOGGING: Boolean(process.env.PUBLIC_EXPO_DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING),
+  ENABLE_DEBUG_LOGGING: readAiAutoDebugRemoteLoggingEnabled(),
 } as const;
-

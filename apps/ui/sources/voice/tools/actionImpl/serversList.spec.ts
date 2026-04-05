@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createStorageModuleStub } from '../../../dev/testkit/mocks/storage';
 import { installVoiceToolActionImplCommonModuleMocks } from './voiceToolActionImplTestHelpers';
+import { settingsParse } from '@/sync/domains/settings/settings';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import type { ServerScopedSessionListCache } from '@/sync/domains/session/listing/serverScopedSessionListCache';
+import type { StorageState } from '@/sync/store/types';
+import type { StoreApi, UseBoundStore } from 'zustand';
 
 const getActiveServerSnapshot = vi.fn();
 const getServerProfileById = vi.fn();
@@ -21,15 +26,53 @@ const state = vi.hoisted(() => ({
             };
         };
     };
-    sessionListViewDataByServerId: Record<string, unknown[]>;
+    sessionListViewDataByServerId: ServerScopedSessionListCache;
 };
+
+function createCachedSession(sessionId: string) {
+    return buildSessionListRenderableFromSession({
+        id: sessionId,
+        seq: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        active: true,
+        activeAt: 1,
+        archivedAt: null,
+        metadata: null,
+        metadataVersion: 0,
+        agentState: null,
+        agentStateVersion: 0,
+        thinking: false,
+        thinkingAt: 0,
+        presence: 'online',
+    });
+}
 
 installVoiceToolActionImplCommonModuleMocks({
     storage: async () => {
+        const getSnapshot = () => ({
+            settings: settingsParse(state.settings),
+            sessionListViewDataByServerId: state.sessionListViewDataByServerId,
+        } as StorageState);
+
         return createStorageModuleStub({
-            storage: {
-                getState: () => state,
-            } as typeof import('@/sync/domains/state/storage').storage,
+            // Boundary-only dynamic store stub: this action reads `settings` and `sessionListViewDataByServerId`
+            // directly from `storage.getState()`, so the test only models that contract surface.
+            storage: Object.assign(
+                ((selector?: (value: StorageState) => unknown) => {
+                    const snapshot = getSnapshot();
+                    return typeof selector === 'function' ? selector(snapshot) : snapshot;
+                }) as UseBoundStore<StoreApi<StorageState>>,
+                {
+                    getState: getSnapshot,
+                    getInitialState: getSnapshot,
+                    setState: () => undefined,
+                    subscribe: () => () => undefined,
+                    destroy: () => undefined,
+                } satisfies Pick<StoreApi<StorageState>, 'getState' | 'getInitialState' | 'setState' | 'subscribe'> & {
+                    destroy: () => void;
+                },
+            ),
         });
     },
 });
@@ -55,7 +98,7 @@ describe('listServersForVoiceTool', () => {
                     type: 'session',
                     serverId: 'server-b',
                     serverName: 'Review Server',
-                    session: { id: 's-review' },
+                    session: createCachedSession('s-review'),
                 },
             ],
         };
@@ -92,14 +135,14 @@ describe('listServersForVoiceTool', () => {
                 {
                     type: 'session',
                     serverId: 'server-b',
-                    session: { id: 's-review' },
+                    session: createCachedSession('s-review'),
                 },
             ],
             'server-c': [
                 {
                     type: 'session',
                     serverId: 'server-c',
-                    session: { id: 's-mobile' },
+                    session: createCachedSession('s-mobile'),
                 },
             ],
         };

@@ -1,4 +1,5 @@
 import { storage } from '@/sync/domains/state/storage';
+import { listSessionListCachedServers } from '@/sync/domains/session/listing/sessionListCacheState';
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
@@ -40,16 +41,11 @@ export async function listServersForVoiceTool(params: Readonly<{ limit?: number 
     });
   }
 
-  const byServer = state?.sessionListViewDataByServerId ?? {};
-  for (const [serverIdRaw, rows] of Object.entries(byServer)) {
-    const serverId = normalizeId(serverIdRaw);
+  for (const entry of listSessionListCachedServers(state)) {
+    const serverId = normalizeId(entry.serverId);
     if (!serverId) continue;
     if (seen.has(serverId)) continue;
-    let label = serverId;
-    if (Array.isArray(rows)) {
-      const first = rows.find((r: any) => r && typeof r === 'object' && typeof (r as any).serverName === 'string') as any;
-      if (first?.serverName) label = normalizeId(first.serverName) || label;
-    }
+    const label = normalizeId(entry.serverName) || serverId;
     const genericLabel = `Connected server ${++unnamedConnectedServerCount}`;
     seen.add(serverId);
     items.push({
