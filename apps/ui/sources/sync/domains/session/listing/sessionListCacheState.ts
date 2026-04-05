@@ -35,7 +35,15 @@ export function findSessionListCachedSession(
     }
 
     const scopedMatch = findServerScopedSessionListCacheSession(state?.sessionListViewDataByServerId, sessionId);
-    return scopedMatch;
+    if (!scopedMatch) {
+        return null;
+    }
+
+    return {
+        serverId: scopedMatch.serverId,
+        serverName: scopedMatch.serverName,
+        session: scopedMatch.session,
+    };
 }
 
 export function listSessionListCachedActiveSessions(
