@@ -28,9 +28,14 @@ installPublicShareViewerCommonModuleMocks({
     },
 });
 
-vi.mock('@/sync/http/client', () => ({
-    serverFetch: serverFetchSpy,
-}));
+vi.mock('@/sync/http/client', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/http/client')>();
+    serverFetchSpy.mockImplementation(actual.serverFetch);
+    return {
+        ...actual,
+        serverFetch: serverFetchSpy,
+    };
+});
 
 vi.mock('@/sync/encryption/publicShareEncryption', () => ({
     decryptDataKeyFromPublicShare: decryptDataKeyFromPublicShareSpy,

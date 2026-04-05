@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { createContext, useContext, useMemo, useReducer, useRef, useState } from 'react';
+import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/storage';
 import type { PaneDriver, PaneScopeId } from './types';
-import { appPaneReduce, createAppPaneState, type AppPaneAction, type AppPaneState } from './model/appPaneReducer';
+import { appPaneReduce, createAppPaneState, type AppPaneAction, type AppPaneState, type PaneScopeState } from './model/appPaneReducer';
 
 type AppPaneContextValue = Readonly<{
     state: AppPaneState;
@@ -13,10 +14,130 @@ type AppPaneContextValue = Readonly<{
 
 const AppPaneContext = createContext<AppPaneContextValue | null>(null);
 
+function normalizePersistedPaneScopes(
+    value: Readonly<Record<string, PaneScopeState>> | Record<string, {
+        right: { isOpen: boolean; activeTabId: string | null; tabState: Record<string, unknown> };
+        details: {
+            isOpen: boolean;
+            tabs: Array<{
+                key: string;
+                kind: string;
+                title: string;
+                subtitle?: string | null;
+                resource: unknown;
+                isPreview: boolean;
+                isPinned: boolean;
+            }>;
+            activeTabKey: string | null;
+            tabState: Record<string, unknown>;
+        };
+        bottom: { isOpen: boolean; activeTabId: string | null; tabState: Record<string, unknown> };
+    }> | null | undefined,
+): Readonly<Record<string, PaneScopeState>> {
+    if (!value) return {};
+    return Object.fromEntries(
+        Object.entries(value).map(([scopeId, scope]) => [
+            scopeId,
+            {
+                right: {
+                    isOpen: scope.right.isOpen,
+                    activeTabId: scope.right.activeTabId ?? null,
+                    tabState: scope.right.tabState,
+                },
+                details: {
+                    isOpen: scope.details.isOpen,
+                    tabs: scope.details.tabs.map((tab) => ({
+                        key: tab.key,
+                        kind: tab.kind,
+                        title: tab.title,
+                        subtitle: tab.subtitle ?? null,
+                        resource: tab.resource,
+                        isPreview: tab.isPreview,
+                        isPinned: tab.isPinned,
+                    })),
+                    activeTabKey: scope.details.activeTabKey ?? null,
+                    tabState: scope.details.tabState,
+                },
+                bottom: {
+                    isOpen: scope.bottom.isOpen,
+                    activeTabId: scope.bottom.activeTabId ?? null,
+                    tabState: scope.bottom.tabState,
+                },
+            } satisfies PaneScopeState,
+        ]),
+    );
+}
+
+function serializePersistedPaneScopes(
+    value: Readonly<Record<string, PaneScopeState>>,
+): Record<string, {
+    right: { isOpen: boolean; activeTabId: string | null; tabState: Record<string, unknown> };
+    details: {
+        isOpen: boolean;
+        tabs: Array<{
+            key: string;
+            kind: string;
+            title: string;
+            subtitle?: string | null;
+            resource: unknown;
+            isPreview: boolean;
+            isPinned: boolean;
+        }>;
+        activeTabKey: string | null;
+        tabState: Record<string, unknown>;
+    };
+    bottom: { isOpen: boolean; activeTabId: string | null; tabState: Record<string, unknown> };
+}> {
+    return Object.fromEntries(
+        Object.entries(value).map(([scopeId, scope]) => [
+            scopeId,
+            {
+                right: {
+                    isOpen: scope.right.isOpen,
+                    activeTabId: scope.right.activeTabId,
+                    tabState: { ...scope.right.tabState },
+                },
+                details: {
+                    isOpen: scope.details.isOpen,
+                    tabs: scope.details.tabs.map((tab) => ({
+                        key: tab.key,
+                        kind: tab.kind,
+                        title: tab.title,
+                        subtitle: tab.subtitle ?? null,
+                        resource: tab.resource,
+                        isPreview: tab.isPreview,
+                        isPinned: tab.isPinned,
+                    })),
+                    activeTabKey: scope.details.activeTabKey,
+                    tabState: { ...scope.details.tabState },
+                },
+                bottom: {
+                    isOpen: scope.bottom.isOpen,
+                    activeTabId: scope.bottom.activeTabId,
+                    tabState: { ...scope.bottom.tabState },
+                },
+            },
+        ]),
+    );
+}
+
 export const AppPaneProvider = React.memo((props: Readonly<{ children: React.ReactNode }>) => {
-    const [state, dispatch] = useReducer(appPaneReduce, createAppPaneState({ maxScopesInMemory: 12 }));
+    const persistedScopes = normalizePersistedPaneScopes(useLocalSetting('appPaneScopesV1'));
+    const [, setPersistedScopes] = useLocalSettingMutable('appPaneScopesV1');
+    const [state, dispatch] = useReducer(
+        appPaneReduce,
+        persistedScopes ?? {},
+        (initialScopes) => createAppPaneState({
+            maxScopesInMemory: 12,
+            persistedScopes: initialScopes,
+        }),
+    );
     const driversRef = useRef<Map<PaneScopeId, PaneDriver>>(new Map());
     const [driverRegistryVersion, setDriverRegistryVersion] = useState(0);
+
+    React.useEffect(() => {
+        setPersistedScopes(serializePersistedPaneScopes(state.scopes));
+    }, [setPersistedScopes, state.scopes]);
 
     const registerDriver = React.useCallback((driver: PaneDriver) => {
         driversRef.current.set(driver.scopeId, driver);

@@ -11,12 +11,14 @@ import { ResizableDockedPane, type ResizableDockedPaneCommitMeta } from '@/compo
 import { resolveScaledPaneWidthPx } from '@/components/appShell/panes/layout/paneSizing';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { resolveSidebarDockMaxWidthPx, SIDEBAR_COLLAPSED_WIDTH_PX, SIDEBAR_DOCK_MIN_WIDTH_PX } from './sidebarSizing';
+import { isDesktopActivityOverlayWindowContext } from '@/activity/adapters/desktop/runtime/isDesktopActivityOverlayWindowContext';
 
 export const SidebarNavigator = React.memo(() => {
     const auth = useAuth();
     const isTablet = useIsTablet();
+    const isDesktopOverlayWindow = isDesktopActivityOverlayWindowContext();
     const editorFocusModeEnabled = useLocalSetting('editorFocusModeEnabled');
-    const desktopDrawerEnabled = auth.isAuthenticated && isTablet;
+    const desktopDrawerEnabled = auth.isAuthenticated && isTablet && !isDesktopOverlayWindow;
     const showPermanentDrawer = desktopDrawerEnabled && !editorFocusModeEnabled;
     const { theme } = useUnistyles();
     const { width: windowWidth } = useWindowDimensions();

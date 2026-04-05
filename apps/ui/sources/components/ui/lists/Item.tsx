@@ -32,7 +32,7 @@ function resizeItemIconForDensity(icon: React.ReactNode, iconSize: number): Reac
 
 export interface ItemProps {
     testID?: string;
-    title: string;
+    title: React.ReactNode;
     subtitle?: React.ReactNode;
     subtitleTestID?: string;
     subtitleAccessory?: React.ReactNode;
@@ -264,6 +264,7 @@ export const Item = React.memo<ItemProps>((props) => {
     const webTestIdProps = isWeb && testID
         ? ({ 'data-testid': testID } as const)
         : undefined;
+    const titleLabel = typeof title === 'string' || typeof title === 'number' ? String(title) : '';
 
     // Handle copy functionality
     const handleCopy = React.useCallback(async () => {
@@ -278,16 +279,16 @@ export const Item = React.memo<ItemProps>((props) => {
         } else {
             // If copy is true, try to figure out what to copy
             // Priority: detail > subtitle > title
-            textToCopy = detail || subtitleText || title;
+            textToCopy = detail || subtitleText || titleLabel;
         }
         
         try {
             await Clipboard.setStringAsync(textToCopy);
-            Modal.alert(t('common.copied'), t('items.copiedToClipboard', { label: title }));
+            Modal.alert(t('common.copied'), t('items.copiedToClipboard', { label: titleLabel }));
         } catch (error) {
             Modal.alert(t('common.error'), t('items.failedToCopyToClipboard'));
         }
-    }, [copy, isWeb, title, subtitle, detail]);
+    }, [copy, detail, isWeb, subtitle, titleLabel]);
     
     const longPressConsumedRef = React.useRef(false);
 
@@ -453,12 +454,16 @@ export const Item = React.memo<ItemProps>((props) => {
 
             {/* Center Section */}
             <View style={styles.centerContent}>
-                <Text
-                    style={[styles.title, titleSizeStyle, titleColor, titleStyle]}
-                    numberOfLines={subtitle ? 1 : 2}
-                >
-                    {title}
-                </Text>
+                {typeof title === 'string' || typeof title === 'number' ? (
+                    <Text
+                        style={[styles.title, titleSizeStyle, titleColor, titleStyle]}
+                        numberOfLines={subtitle ? 1 : 2}
+                    >
+                        {title}
+                    </Text>
+                ) : (
+                    normalizeNodeForView(title)
+                )}
                 {subtitle && (() => {
                     // If subtitle is a ReactNode (not string), render as-is.
                     // This enables richer subtitle layouts (e.g. inline glyphs).
@@ -624,6 +629,9 @@ export const Item = React.memo<ItemProps>((props) => {
         theme.colors.surfaceSelected,
     ]);
 
+    const interactiveAccessibilityRole = isWeb ? undefined : (accessibilityRole ?? 'button');
+    const interactiveTabIndex = isWeb && !disabled && !loading ? 0 : undefined;
+
     if (isInteractive) {
         return (
             <Pressable
@@ -654,7 +662,8 @@ export const Item = React.memo<ItemProps>((props) => {
                 } : undefined}
                 onMouseDownCapture={isWeb ? (onMouseDownCapture as any) : undefined}
                 onContextMenu={isWeb ? (onContextMenu as any) : undefined}
-                accessibilityRole={accessibilityRole ?? 'button'}
+                accessibilityRole={interactiveAccessibilityRole}
+                tabIndex={interactiveTabIndex as 0 | undefined}
                 disabled={disabled || loading}
                 style={({ pressed }) => resolveInteractiveRowStyle(pressed)}
                 android_ripple={(isAndroid || isWeb) ? {

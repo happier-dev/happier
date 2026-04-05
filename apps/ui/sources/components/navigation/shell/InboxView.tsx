@@ -198,20 +198,15 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
                     </ItemGroup>
                 )}
 
-                {sessionsNeedingAttention.length > 0 && (
-                    <ItemGroup title={t('inbox.permissions')}>
-                        {sessionsNeedingAttention.map((entry) => {
-                            return (
-                                <InboxSessionAttentionGroupCard
-                                    key={entry.session.id}
-                                    session={entry.session}
-                                    permissionRequests={entry.pendingPermissions}
-                                    userActionRequests={entry.pendingUserActions}
-                                />
-                            );
-                        })}
+                {sessionsNeedingAttention.map((entry) => (
+                    <ItemGroup key={entry.session.id} title={getSessionName(entry.session)}>
+                        <InboxSessionAttentionGroupCard
+                            session={entry.session}
+                            permissionRequests={entry.pendingPermissions}
+                            userActionRequests={entry.pendingUserActions}
+                        />
                     </ItemGroup>
-                )}
+                ))}
 
                 {unreadSessions.length > 0 && (
                     <ItemGroup title={t('inbox.unreadSessions')}>

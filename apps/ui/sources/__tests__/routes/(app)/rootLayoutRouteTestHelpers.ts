@@ -70,6 +70,30 @@ export function installRootLayoutRouteCommonModuleMocks(
     );
 });
 
+    vi.mock('@/activity/badges/ActivityBadgeRuntime', () => ({
+        ActivityBadgeRuntime: () => null,
+    }));
+
+    vi.mock('@/activity/adapters/ios/runtime/ActivitySurfacesRuntime', () => ({
+        ActivitySurfacesRuntime: () => null,
+    }));
+
+    vi.mock('@/activity/notifications/runtime/ActivityLocalNotificationRuntime', () => ({
+        ActivityLocalNotificationRuntime: () => null,
+    }));
+
+    vi.mock('@/activity/adapters/desktop/runtime/DesktopActivityOverlayRuntime', () => ({
+        DesktopActivityOverlayRuntime: () => null,
+    }));
+
+    vi.mock('@/desktop/tray/DesktopTrayRuntime', () => ({
+        DesktopTrayRuntime: () => null,
+    }));
+
+    vi.mock('@/desktop/tray/DesktopTrayDaemonLifecycleRuntime', () => ({
+        DesktopTrayDaemonLifecycleRuntime: () => null,
+    }));
+
     vi.mock('react-native-unistyles', async () => {
         const activeOptions = rootLayoutRouteModuleState.options;
         if (activeOptions.unistyles) {

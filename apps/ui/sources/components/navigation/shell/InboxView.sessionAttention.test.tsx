@@ -241,6 +241,9 @@ describe('InboxView session attention', () => {
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<InboxView />)).tree;
 
+        const itemGroups = tree!.findAllByType('ItemGroup');
+        expect(itemGroups).toHaveLength(1);
+        expect(itemGroups[0]?.props.title).toBe('Repo session');
         expect(tree!.findAllByTestId('inbox.session_attention.session-1')).toHaveLength(1);
         expect(tree!.findAllByType('PermissionPromptCard')).toHaveLength(1);
         expect(tree!.findAllByType('UserActionPromptCard')).toHaveLength(1);

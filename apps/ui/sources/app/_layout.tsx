@@ -39,6 +39,7 @@ import { DesktopUpdateBanner } from '@/components/ui/feedback/DesktopUpdateBanne
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 // import * as SystemUI from 'expo-system-ui';
 import { monkeyPatchConsoleForRemoteLoggingForFasterAiAutoDebuggingOnlyInLocalBuilds } from '@/utils/system/remoteLogger';
+import { readAiAutoDebugRemoteLoggingEnabled } from '@/utils/system/aiAutoDebuggingEnv';
 import { installBugReportConsoleCapture } from '@/utils/system/bugReportLogBuffer';
 import { configureBugReportUserActionTrail } from '@/utils/system/bugReportActionTrail';
 import { useUnistyles } from 'react-native-unistyles';
@@ -376,7 +377,7 @@ SplashScreen.preventAutoHideAsync();
 // NEVER ENABLE REMOTE LOGGING IN PRODUCTION
 // This is for local debugging with AI only
 // So AI will have all the logs easily accessible in one file for analysis
-if (!!process.env.PUBLIC_EXPO_DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING) {
+if (readAiAutoDebugRemoteLoggingEnabled()) {
     monkeyPatchConsoleForRemoteLoggingForFasterAiAutoDebuggingOnlyInLocalBuilds()
 }
 installBugReportConsoleCapture({ maxEntries: 300 });

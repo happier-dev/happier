@@ -379,6 +379,7 @@ describe('app.config.js', () => {
                     expect.objectContaining({
                         name: 'HappierFocusLiveActivity',
                         displayName: 'Happier Focus Live',
+                        supportedFamilies: ['accessoryRectangular'],
                     }),
                 ],
             }),

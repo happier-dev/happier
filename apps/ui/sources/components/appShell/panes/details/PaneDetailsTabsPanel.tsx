@@ -25,6 +25,7 @@ export type PaneDetailsTabsPanelProps = Readonly<{
     pane: AppPaneScopeApi;
     paddingTop?: number;
     headerPaddingTop?: number;
+    forceEmptyState?: boolean;
     testIds?: PaneDetailsTabsPanelTestIds;
     resolveTabIconName?: ((tab: DetailsTabState) => string | null | undefined) | null;
     renderTabContent: (tab: DetailsTabState) => React.ReactNode;
@@ -232,7 +233,12 @@ const DetailsTabSurface = React.memo((props: Readonly<{ isActive: boolean; child
             };
 
     return (
-        <View ref={rootRef} style={[{ flex: 1, minHeight: 0, minWidth: 0 }, !props.isActive ? { display: 'none' } : null]} {...a11yHiddenProps}>
+        <View
+            ref={rootRef}
+            pointerEvents={props.isActive ? 'auto' : 'none'}
+            style={[{ flex: 1, minHeight: 0, minWidth: 0 }, !props.isActive ? { display: 'none' } : null]}
+            {...a11yHiddenProps}
+        >
             {props.children}
         </View>
     );
@@ -260,6 +266,7 @@ export const PaneDetailsTabsPanel = React.memo((props: PaneDetailsTabsPanelProps
 
     const activeTab = React.useMemo(() => tabs.find((t) => t.key === activeKey) ?? tabs.at(-1) ?? null, [activeKey, tabs]);
     const effectiveActiveKey = activeKey ?? activeTab?.key ?? null;
+    const forceEmptyState = props.forceEmptyState === true;
 
     const renderLoadingFallback = React.useCallback(() => (
         <View style={styles.loading}>
@@ -280,127 +287,130 @@ export const PaneDetailsTabsPanel = React.memo((props: PaneDetailsTabsPanelProps
                 : {})}
         >
             <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
-                <ScrollView horizontal style={styles.tabsScroll} showsHorizontalScrollIndicator={false}>
-                    {tabs.map((tab) => {
-                        const isActive = effectiveActiveKey ? tab.key === effectiveActiveKey : false;
-                        const safeTabKey = toTestIdSafeValue(tab.key);
-                        const iconName =
-                            props.resolveTabIconName?.(tab)
-                            ?? (
-                                tab.kind === 'commit'
-                                    ? 'git-commit'
-                                    : tab.kind === 'file'
-                                        ? 'file'
-                                        : tab.kind === 'scmReview'
-                                            ? 'diff'
-                                            : tab.kind === 'scmStash'
-                                                ? 'archive'
-                                                : tab.kind === 'terminal'
-                                                    ? 'terminal'
-                                                    : tab.kind === 'executionRunLauncher'
-                                                        ? 'play'
-                                                        : 'circle'
-                            );
-                        return (
-                            <View
-                                key={tab.key}
-                                style={{
-                                    position: 'relative',
-                                    marginRight: 8,
-                                    maxWidth: 220,
-                                    flexShrink: 0,
-                                }}
-                            >
-                                <Pressable
-                                    onPress={() => props.pane.setActiveDetailsTab(tab.key)}
-                                    testID={props.testIds?.tab?.(safeTabKey) ?? undefined}
-                                    style={[
-                                        styles.tab,
-                                        isActive ? styles.tabActive : null,
-                                        // Reserve room for the action buttons so the label doesn't overlap.
-                                        { paddingRight: tab.isPreview || tab.isPinned ? 52 : 34 },
-                                    ]}
-                                    accessibilityRole="button"
-                                    accessibilityLabel={t('session.detailsPanel.openTabA11y', { title: tab.title })}
-                                >
-                                    <Octicons
-                                        name={iconName as React.ComponentProps<typeof Octicons>['name']}
-                                        size={14}
-                                        color={isActive ? theme.colors.textSecondary : theme.colors.textSecondary}
-                                    />
-                                    <View style={styles.tabCopy}>
-                                        <Text
-                                            style={[styles.tabLabel, isActive ? styles.tabLabelActive : null]}
-                                            numberOfLines={1}
-                                        >
-                                            {tab.title}
-                                        </Text>
-                                        {typeof tab.subtitle === 'string' && tab.subtitle.trim().length > 0 ? (
-                                            <Text style={styles.tabSubtitle} numberOfLines={1}>
-                                                {tab.subtitle}
-                                            </Text>
-                                        ) : null}
-                                    </View>
-                                </Pressable>
+                {!forceEmptyState ? (
+                    <ScrollView horizontal style={styles.tabsScroll} showsHorizontalScrollIndicator={false}>
+                        {tabs.map((tab) => {
+                            const isActive = effectiveActiveKey ? tab.key === effectiveActiveKey : false;
+                            const safeTabKey = toTestIdSafeValue(tab.key);
+                            const iconName =
+                                props.resolveTabIconName?.(tab)
+                                ?? (
+                                    tab.kind === 'commit'
+                                        ? 'git-commit'
+                                        : tab.kind === 'file'
+                                            ? 'file'
+                                            : tab.kind === 'scmReview'
+                                                ? 'diff'
+                                                : tab.kind === 'scmStash'
+                                                    ? 'archive'
+                                                    : tab.kind === 'terminal'
+                                                        ? 'terminal'
+                                                        : tab.kind === 'executionRunLauncher'
+                                                            ? 'play'
+                                                            : 'circle'
+                                );
+                            return (
                                 <View
-                                    style={[
-                                        styles.tabActions,
-                                        { position: 'absolute', right: 10, top: 0, bottom: 0, zIndex: 1 },
-                                    ]}
+                                    key={tab.key}
+                                    style={{
+                                        position: 'relative',
+                                        marginRight: 8,
+                                        maxWidth: 220,
+                                        flexShrink: 0,
+                                    }}
                                 >
-                                    {tab.isPreview ? (
-                                        <Pressable
-                                            onPress={(event: unknown) => {
-                                                if (event && typeof (event as ScrollPropagationEvent).stopPropagation === 'function') {
-                                                    (event as ScrollPropagationEvent).stopPropagation?.();
-                                                }
-                                                props.pane.pinDetailsTab(tab.key);
-                                            }}
-                                            testID={props.testIds?.tabPin?.(safeTabKey) ?? undefined}
-                                            accessibilityRole="button"
-                                            accessibilityLabel={t('session.detailsPanel.pinTabA11y')}
-                                            hitSlop={10}
-                                        >
-                                            <PinIcon size={16} color={theme.colors.textSecondary} />
-                                        </Pressable>
-                                    ) : tab.isPinned ? (
-                                        <Pressable
-                                            onPress={(event: unknown) => {
-                                                if (event && typeof (event as ScrollPropagationEvent).stopPropagation === 'function') {
-                                                    (event as ScrollPropagationEvent).stopPropagation?.();
-                                                }
-                                                props.pane.unpinDetailsTab(tab.key);
-                                            }}
-                                            testID={props.testIds?.tabUnpin?.(safeTabKey) ?? undefined}
-                                            accessibilityRole="button"
-                                            accessibilityLabel={t('session.detailsPanel.unpinTabA11y')}
-                                            hitSlop={10}
-                                        >
-                                            <PinSlashIcon size={16} color={theme.colors.textSecondary} />
-                                        </Pressable>
-                                    ) : null}
                                     <Pressable
-                                        onPress={(event: unknown) => {
-                                            if (event && typeof (event as ScrollPropagationEvent).stopPropagation === 'function') {
-                                                (event as ScrollPropagationEvent).stopPropagation?.();
-                                            }
-                                            props.pane.closeDetailsTab(tab.key);
-                                        }}
-                                        testID={props.testIds?.tabClose?.(safeTabKey) ?? undefined}
+                                        onPress={() => props.pane.setActiveDetailsTab(tab.key)}
+                                        testID={props.testIds?.tab?.(safeTabKey) ?? undefined}
+                                        style={[
+                                            styles.tab,
+                                            isActive ? styles.tabActive : null,
+                                            { paddingRight: tab.isPreview || tab.isPinned ? 52 : 34 },
+                                        ]}
                                         accessibilityRole="button"
-                                        accessibilityLabel={t('session.detailsPanel.closeTabA11y')}
-                                        hitSlop={10}
+                                        accessibilityLabel={t('session.detailsPanel.openTabA11y', { title: tab.title })}
                                     >
-                                        <Octicons name="x" size={14} color={theme.colors.textSecondary} />
+                                        <Octicons
+                                            name={iconName as React.ComponentProps<typeof Octicons>['name']}
+                                            size={14}
+                                            color={isActive ? theme.colors.textSecondary : theme.colors.textSecondary}
+                                        />
+                                        <View style={styles.tabCopy}>
+                                            <Text
+                                                style={[styles.tabLabel, isActive ? styles.tabLabelActive : null]}
+                                                numberOfLines={1}
+                                            >
+                                                {tab.title}
+                                            </Text>
+                                            {typeof tab.subtitle === 'string' && tab.subtitle.trim().length > 0 ? (
+                                                <Text style={styles.tabSubtitle} numberOfLines={1}>
+                                                    {tab.subtitle}
+                                                </Text>
+                                            ) : null}
+                                        </View>
                                     </Pressable>
+                                    <View
+                                        style={[
+                                            styles.tabActions,
+                                            { position: 'absolute', right: 10, top: 0, bottom: 0, zIndex: 1 },
+                                        ]}
+                                    >
+                                        {tab.isPreview ? (
+                                            <Pressable
+                                                onPress={(event: unknown) => {
+                                                    if (event && typeof (event as ScrollPropagationEvent).stopPropagation === 'function') {
+                                                        (event as ScrollPropagationEvent).stopPropagation?.();
+                                                    }
+                                                    props.pane.pinDetailsTab(tab.key);
+                                                }}
+                                                testID={props.testIds?.tabPin?.(safeTabKey) ?? undefined}
+                                                accessibilityRole="button"
+                                                accessibilityLabel={t('session.detailsPanel.pinTabA11y')}
+                                                hitSlop={10}
+                                            >
+                                                <PinIcon size={16} color={theme.colors.textSecondary} />
+                                            </Pressable>
+                                        ) : tab.isPinned ? (
+                                            <Pressable
+                                                onPress={(event: unknown) => {
+                                                    if (event && typeof (event as ScrollPropagationEvent).stopPropagation === 'function') {
+                                                        (event as ScrollPropagationEvent).stopPropagation?.();
+                                                    }
+                                                    props.pane.unpinDetailsTab(tab.key);
+                                                }}
+                                                testID={props.testIds?.tabUnpin?.(safeTabKey) ?? undefined}
+                                                accessibilityRole="button"
+                                                accessibilityLabel={t('session.detailsPanel.unpinTabA11y')}
+                                                hitSlop={10}
+                                            >
+                                                <PinSlashIcon size={16} color={theme.colors.textSecondary} />
+                                            </Pressable>
+                                        ) : null}
+                                        <Pressable
+                                            onPress={(event: unknown) => {
+                                                if (event && typeof (event as ScrollPropagationEvent).stopPropagation === 'function') {
+                                                    (event as ScrollPropagationEvent).stopPropagation?.();
+                                                }
+                                                props.pane.closeDetailsTab(tab.key);
+                                            }}
+                                            testID={props.testIds?.tabClose?.(safeTabKey) ?? undefined}
+                                            accessibilityRole="button"
+                                            accessibilityLabel={t('session.detailsPanel.closeTabA11y')}
+                                            hitSlop={10}
+                                        >
+                                            <Octicons name="x" size={14} color={theme.colors.textSecondary} />
+                                        </Pressable>
+                                    </View>
                                 </View>
-                            </View>
-                        );
-                    })}
-                </ScrollView>
+                            );
+                        })}
+                    </ScrollView>
+                ) : (
+                    <View style={styles.tabsScroll} />
+                )}
                 {props.renderHeaderActions ? props.renderHeaderActions() : null}
             </View>
-            {tabs.length === 0 ? (
+            {forceEmptyState || tabs.length === 0 ? (
                 props.renderEmptyState ? props.renderEmptyState() : (
                     <View style={styles.empty}>
                         <Text style={styles.emptyText}>{t('session.detailsPanel.emptyHint')}</Text>

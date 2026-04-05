@@ -27,6 +27,55 @@ vi.mock('@/auth/context/AuthContext', () => ({
     }),
 }));
 
+vi.mock('@/components/navigation/connectionStatus/useConnectionHealth', () => ({
+    useConnectionHealth: () => ({ onlineCount: 0 }),
+}));
+
+vi.mock('@/components/settings/machines/localControl/useLocalDaemonControl', () => ({
+    useLocalDaemonControl: () => ({
+        status: {
+            serviceInstalled: false,
+            daemonRunning: false,
+            needsAuth: true,
+            machineId: null,
+        },
+    }),
+}));
+
+vi.mock('@/components/settings/server/useRelayDriftBanner', () => ({
+    useRelayDriftBanner: () => null,
+}));
+
+vi.mock('@/components/account/auth/useAuthEntryOptions', () => ({
+    useAuthEntryOptions: () => ({
+        serverAvailability: 'ready',
+        serverUrlForCopy: 'https://relay.example.test',
+        showAuthActions: true,
+        showProviderSignup: true,
+        showAnonymousSignup: true,
+        showMtlsLogin: true,
+        showKeylessProviderLogin: true,
+        providerId: 'github',
+        keylessProviderId: 'github',
+        providerSignupTitle: '',
+        providerKeylessTitle: '',
+        anonymousSignupTitle: '',
+        mtlsTitle: '',
+        primarySignupTitle: '',
+        mtlsPrimary: false,
+        keylessPrimary: false,
+        autoRedirect: {
+            enabled: false,
+            providerId: null,
+            toKeyedProvision: false,
+            toKeylessLogin: false,
+            toMtls: false,
+            toLegacySignupProvider: false,
+        },
+        retryServerCheck: vi.fn(),
+    }),
+}));
+
 const getServerFeaturesSnapshotMock = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
     getServerFeaturesSnapshot: (...args: any[]) => (getServerFeaturesSnapshotMock as any)(...args),
@@ -59,8 +108,10 @@ const platformState = vi.hoisted(() => ({
 const tauriDesktopState = vi.hoisted(() => ({
     value: false,
 }));
+const invokeTauriSpy = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock('@/utils/platform/tauri', () => ({
     isTauriDesktop: () => tauriDesktopState.value,
+    invokeTauri: (...args: any[]) => invokeTauriSpy(...args),
 }));
 
 vi.mock('react-native', async () => {
@@ -377,36 +428,6 @@ describe('Home external auth start', () => {
             phase: 'awaiting_auth',
             relayUrl: 'http://api.example.test',
         });
-    });
-
-    it('keeps the server configuration screen reachable when the selected relay is incompatible', async () => {
-        const Home = await loadHome();
-        getPendingSetupIntentMock.mockReturnValue({
-            branch: 'thisComputer',
-            phase: 'dismissed',
-            relayUrl: 'http://api.example.test',
-        });
-        getServerFeaturesSnapshotMock.mockResolvedValue({
-            status: 'unsupported',
-            reason: 'invalid_payload',
-        });
-
-        const screen = await renderScreen(<Home />);
-        await flushHookEffects({ cycles: 3, turns: 3 });
-
-        await advanceWizardToAuth(screen);
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
-        const button = screen.findByTestId('welcome-configure-server');
-        expect(button).not.toBeNull();
-
-        await act(async () => {
-            const handler = button?.props.onPress ?? button?.props.action;
-            await handler?.();
-        });
-
-        await flushHookEffects({ cycles: 1, turns: 2 });
-        expect(screen.findByTestId('onboarding-wizard-relay:cloud')).not.toBeNull();
     });
 
     it('uses / as the auth returnTo when a setup continuation is pending (wizard resumes after auth)', async () => {

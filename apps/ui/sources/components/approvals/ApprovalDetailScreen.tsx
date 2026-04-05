@@ -13,7 +13,7 @@ import { sync } from '@/sync/sync';
 import { storage, useArtifact, useMachine, useSession } from '@/sync/domains/state/storage';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { readDisplayMachineIdForSession } from '@/sync/ops/sessionMachineTarget';
-import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
+import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { layout } from '@/components/ui/layout/layout';
 import { ApprovalSessionContextCard } from './ApprovalSessionContextCard';
 import { ActionApprovalFieldsCard } from './ActionApprovalFieldsCard';
@@ -107,7 +107,9 @@ export const ApprovalDetailScreen = React.memo((props: Readonly<{ artifactId: st
   const [isDeciding, setIsDeciding] = React.useState(false);
 
   const executor = React.useMemo(
-    () => createDefaultActionExecutor({ resolveServerIdForSessionId: resolveServerIdForSessionIdFromLocalCache }),
+    () => createDefaultActionExecutor({
+      resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId),
+    }),
     [],
   );
 
@@ -181,7 +183,7 @@ export const ApprovalDetailScreen = React.memo((props: Readonly<{ artifactId: st
     if (requestServerId.length > 0) return requestServerId;
     const headerServerId = typeof artifact?.header?.serverId === 'string' ? String(artifact.header.serverId).trim() : '';
     if (headerServerId.length > 0) return headerServerId;
-    return sessionId ? resolveServerIdForSessionIdFromLocalCache(sessionId) : null;
+    return sessionId ? resolvePreferredServerIdForSessionId(sessionId) : null;
   }, [artifact?.header?.serverId, parsed, sessionId]);
 
   const decide = React.useCallback(

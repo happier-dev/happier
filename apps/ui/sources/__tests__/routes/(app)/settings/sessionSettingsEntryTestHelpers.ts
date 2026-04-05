@@ -22,6 +22,7 @@ const sessionSettingsEntryState = vi.hoisted(() => ({
     settingsState: {
         sessionsRightPaneDefaultOpen: false,
         uiMultiPanePanelsEnabled: false,
+        sessionListOrderingModeV1: 'custom',
     } as Record<string, unknown>,
     options: {
         reactNative: undefined as SettingsEntryModuleFactory | undefined,
@@ -40,6 +41,7 @@ export function resetSessionSettingsEntryState() {
     sessionSettingsEntryState.settingsState = {
         sessionsRightPaneDefaultOpen: false,
         uiMultiPanePanelsEnabled: false,
+        sessionListOrderingModeV1: 'custom',
     };
     sessionSettingsEntryState.options = {
         reactNative: undefined,

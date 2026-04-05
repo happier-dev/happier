@@ -94,6 +94,10 @@ vi.mock('@/components/ui/lists/itemGroupRowCorners', () => ({
 }));
 
 describe('Item', () => {
+    function findInteractivePressable(screen: Parameters<typeof findTestInstanceByTypeWithProps>[0]) {
+        return screen.findAllByType('Pressable' as any)[0];
+    }
+
     it('does not render a chevron or pressable wrapper when not interactive', async () => {
         const { Item } = await import('./Item');
 
@@ -110,8 +114,10 @@ describe('Item', () => {
 
         const screen = await renderScreen(<Item title="Title" onPress={() => {}} />);
 
-        const pressable = findTestInstanceByTypeWithProps(screen, 'Pressable' as any, { accessibilityRole: 'button' });
+        const pressable = findInteractivePressable(screen);
         expect(pressable).toBeTruthy();
+        expect(pressable?.props.accessibilityRole).toBeUndefined();
+        expect(pressable?.props.tabIndex).toBe(0);
 
         expect(findTestInstanceByTypeWithProps(screen, 'Ionicons' as any, { name: 'chevron-forward' })).toBeTruthy();
     });
@@ -124,7 +130,7 @@ describe('Item', () => {
             <Item title="Title" onPress={() => {}} onContextMenu={onContextMenu} showChevron={false} />,
         );
 
-        const pressable = findTestInstanceByTypeWithProps(screen, 'Pressable' as any, { accessibilityRole: 'button' });
+        const pressable = findInteractivePressable(screen);
         expect(pressable).toBeTruthy();
         if (!pressable) throw new Error('Pressable not found');
 
@@ -225,7 +231,7 @@ describe('Item', () => {
 
         const screen = await renderScreen(<Item title="Title" onPress={() => {}} disabled showChevron={false} />);
 
-        const pressable = findTestInstanceByTypeWithProps(screen, 'Pressable' as any, { accessibilityRole: 'button' });
+        const pressable = findInteractivePressable(screen);
         expect(pressable).toBeTruthy();
         if (!pressable) throw new Error('Pressable not found');
         const styleFn = pressable.props.style;
@@ -252,7 +258,7 @@ describe('Item', () => {
         expect(findTestInstanceByTypeWithProps(screen, 'DefaultIcon' as any, { marker: 'default' })).toBeTruthy();
         expect(findTestInstanceByTypeWithProps(screen, 'HoverIcon' as any, { marker: 'hovered' })).toBeUndefined();
 
-        const pressable = findTestInstanceByTypeWithProps(screen, 'Pressable' as any, { accessibilityRole: 'button' });
+        const pressable = findInteractivePressable(screen);
         expect(pressable).toBeTruthy();
         if (!pressable) throw new Error('Pressable not found');
 

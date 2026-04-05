@@ -12,6 +12,9 @@ import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers
 const platformState = vi.hoisted(() => ({
     os: 'ios' as 'ios' | 'web' | 'android',
 }));
+const tauriDesktopState = vi.hoisted(() => ({
+    value: false,
+}));
 
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -67,19 +70,45 @@ const localSettingsState = {
     localNotificationsShowPendingUserActionRequests: true,
     localNotificationsForegroundBehavior: 'silent',
     activitySurfacesEnabled: true,
+    liveActivitiesEnabled: true,
+    liveActivitiesStrategy: 'dynamic_primary',
     iosLiveActivitiesEnabled: true,
-    iosWidgetsEnabled: true,
+    widgetsEnabled: true,
     liveActivitiesMode: 'focused',
     liveActivitiesMaxConcurrent: 1,
     liveActivitiesShowPreviewText: true,
     liveActivitiesAllowActionButtons: true,
     liveActivitiesIncludeReady: true,
     liveActivitiesIncludeThinking: true,
+    widgetsPresetMode: 'summary',
+    widgetsShowPreviewText: true,
+    widgetsShowMachinePath: true,
     homeScreenWidgetsMode: 'summary',
     homeScreenWidgetsShowPreviewText: true,
     homeScreenWidgetsShowMachinePath: true,
     activitySurfaceTapTarget: 'open_session',
     activitySurfacePrivacyMode: 'title_only',
+    desktopOverlayEnabled: false,
+    desktopOverlayVisibilityMode: 'attention_only',
+    desktopOverlayShowWhenRunning: true,
+    desktopOverlayShowWhenAttentionRequired: true,
+    desktopOverlayShowWhenReady: true,
+    desktopOverlayAlwaysOnTop: true,
+    desktopOverlayAutoHideEnabled: true,
+    desktopOverlayAutoHideDelayMs: 6_000,
+    desktopOverlayExpandedBehavior: 'click',
+    desktopOverlayInteractiveCollapsed: true,
+    desktopOverlayEnableDragReposition: false,
+    desktopOverlayLockPosition: true,
+    desktopOverlayPlacementMode: 'anchored',
+    desktopOverlayAnchor: 'top_center',
+    desktopOverlayOffsetX: 0,
+    desktopOverlayOffsetY: 0,
+    desktopOverlayClickAction: 'expand_overlay',
+    desktopOverlayDensity: 'compact',
+    desktopOverlayShowSessionCount: true,
+    desktopOverlayShowPreviewText: false,
+    desktopOverlayCompactStyle: 'pill',
 };
 
 type NotificationsSettingsScreen = Awaited<ReturnType<typeof renderSettingsView>>;
@@ -161,6 +190,10 @@ installSettingsViewCommonModuleMocks({
     },
 });
 
+vi.mock('@/utils/platform/tauri', () => ({
+    isTauriDesktop: () => tauriDesktopState.value,
+}));
+
 vi.mock('@/sync/store/settingsWriters', () => ({
     useApplySettings: () => applySettingsMock,
     useApplyLocalSettings: () => applyLocalSettingsMock,
@@ -189,6 +222,7 @@ vi.mock('@/components/ui/forms/Switch', () => ({
 describe('NotificationsSettingsView', () => {
     beforeEach(() => {
         platformState.os = 'ios';
+        tauriDesktopState.value = false;
         applySettingsMock.mockReset();
         applyLocalSettingsMock.mockReset();
         modalPromptMock.mockReset();
@@ -300,6 +334,52 @@ describe('NotificationsSettingsView', () => {
         expect(applyLocalSettingsMock).toHaveBeenCalledWith({ liveActivitiesMode: 'focused' });
     });
 
+    it('writes the live activities strategy through the local settings writer', async () => {
+        const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+        const strategyItem = requireRowByTitle(screen, 'settingsNotifications.activitySurfaces.liveActivities.dynamicPrimaryTitle');
+
+        await act(async () => {
+            strategyItem.props.onPress();
+        });
+
+        expect(applyLocalSettingsMock).toHaveBeenCalledWith({ liveActivitiesStrategy: 'dynamic_primary' });
+    });
+
+    it('renders a labeled live activities presentation cluster', async () => {
+        const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+
+        expect(screen.findRowByTitle('settingsNotifications.activitySurfaces.liveActivities.presentationTitle')).toBeTruthy();
+    });
+
+    it('disables live-activity concurrency controls unless the session-specific strategy is selected', async () => {
+        const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+
+        expect(requireRowByTitle(screen, 'settingsNotifications.activitySurfaces.liveActivities.maxConcurrentTitle').props.disabled).toBe(true);
+        expect(requireRowByTitle(screen, 'settingsNotifications.activitySurfaces.liveActivities.maxConcurrentTwoTitle').props.disabled).toBe(true);
+    });
+
+    it('enables live-activity concurrency controls for the session-specific strategy', async () => {
+        const previousStrategy = localSettingsState.liveActivitiesStrategy;
+        localSettingsState.liveActivitiesStrategy = 'session_specific';
+
+        try {
+            const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+
+            const screen = await renderSettingsView(<NotificationsSettingsView />);
+
+            expect(requireRowByTitle(screen, 'settingsNotifications.activitySurfaces.liveActivities.maxConcurrentTitle').props.disabled).toBe(false);
+            expect(requireRowByTitle(screen, 'settingsNotifications.activitySurfaces.liveActivities.maxConcurrentTwoTitle').props.disabled).toBe(false);
+        } finally {
+            localSettingsState.liveActivitiesStrategy = previousStrategy;
+        }
+    });
+
     it('writes the widget mode through the local settings writer', async () => {
         const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
 
@@ -310,7 +390,7 @@ describe('NotificationsSettingsView', () => {
             widgetsModeItem.props.onPress();
         });
 
-        expect(applyLocalSettingsMock).toHaveBeenCalledWith({ homeScreenWidgetsMode: 'summary' });
+        expect(applyLocalSettingsMock).toHaveBeenCalledWith({ widgetsPresetMode: 'summary' });
     });
 
     it('does not show the removed frequent-updates toggle', async () => {
@@ -321,13 +401,27 @@ describe('NotificationsSettingsView', () => {
         expect(screen.findRowByTitle('settingsNotifications.activitySurfaces.liveActivities.preferMoreFrequentUpdatesTitle')).toBeFalsy();
     });
 
-    it('hides the activity surfaces section on non-iOS platforms', async () => {
+    it('hides the activity surfaces section on non-iOS non-desktop platforms', async () => {
         platformState.os = 'web';
         const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
 
         const screen = await renderSettingsView(<NotificationsSettingsView />);
 
         expect(screen.findRow('settings-notifications-activity-surfaces-enabled')).toBeFalsy();
+    });
+
+    it('renders the shared activity-surface controls on Tauri desktop without the iOS-only groups', async () => {
+        platformState.os = 'web';
+        tauriDesktopState.value = true;
+        const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+
+        expect(screen.findGroup('settingsNotifications.activitySurfaces.title')).toBeTruthy();
+        expect(screen.findGroup('settingsNotifications.activitySurfaces.shared.title')).toBeTruthy();
+        expect(screen.findRow('settings-notifications-activity-surfaces-enabled')).toBeTruthy();
+        expect(screen.findGroup('settingsNotifications.activitySurfaces.liveActivities.title')).toBeFalsy();
+        expect(screen.findGroup('settingsNotifications.activitySurfaces.widgets.title')).toBeFalsy();
     });
 
     it('writes device-local badge settings through the local settings writer', async () => {

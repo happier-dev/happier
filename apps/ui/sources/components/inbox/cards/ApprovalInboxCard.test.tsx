@@ -63,7 +63,7 @@ const storageState = {
             ? {
                 key: {
                     machineId: 'machine-target',
-                    path: '/Volumes/target/repo',
+                    rootPath: '/Volumes/target/repo',
                 },
             }
             : null,

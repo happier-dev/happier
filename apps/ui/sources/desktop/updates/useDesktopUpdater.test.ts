@@ -55,14 +55,18 @@ async function renderDesktopUpdaterHook(options: {
 }
 
 describe('useDesktopUpdater (hook)', () => {
+    const originalNodeEnv = process.env.NODE_ENV;
+
     beforeEach(() => {
         vi.clearAllMocks();
         clearDesktopGlobals();
+        process.env.NODE_ENV = originalNodeEnv;
     });
 
     afterEach(() => {
         standardCleanup();
         clearDesktopGlobals();
+        process.env.NODE_ENV = originalNodeEnv;
     });
 
     it('stays idle when not running in Tauri', async () => {
@@ -162,6 +166,34 @@ describe('useDesktopUpdater (hook)', () => {
         const latest = hook.getCurrent();
         expect(invokeMock).toHaveBeenCalledWith('desktop_install_update', undefined);
         expect(latest?.status).toBe('upToDate');
+        expect(latest?.availableVersion).toBe(null);
+    });
+
+    it('does not check for updates when running in desktop dev mode (avoids prompting for self-built dev runs)', async () => {
+        process.env.NODE_ENV = 'development';
+
+        const invokeMock = vi.fn(async (cmd: string) => {
+            if (cmd === 'desktop_fetch_update') {
+                return {
+                    version: '9.9.9',
+                    currentVersion: '9.9.8',
+                    notes: null,
+                    pubDate: null,
+                };
+            }
+            throw new Error(`unexpected command: ${cmd}`);
+        });
+
+        const storage = createLocalStorage();
+        const hook = await renderDesktopUpdaterHook({
+            storage,
+            invokeMock,
+            isDesktop: true,
+        });
+
+        const latest = hook.getCurrent();
+        expect(invokeMock).toHaveBeenCalledTimes(0);
+        expect(latest?.status).toBe('idle');
         expect(latest?.availableVersion).toBe(null);
     });
 });

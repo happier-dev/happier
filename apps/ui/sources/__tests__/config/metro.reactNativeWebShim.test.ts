@@ -38,6 +38,15 @@ function loadMetroConfig(uiDir: string, envOverrides: Record<string, string | nu
 }
 
 describe('metro.config.js (web)', () => {
+    it('enables require.context for Expo Router lazy route loading on web', () => {
+        const uiDir = getUiDir();
+        const config = loadMetroConfig(uiDir);
+
+        // Expo Router uses `require.context` for lazy route module discovery on web.
+        // If disabled, deep-link routes (e.g. `/terminal/connect`) can resolve to undefined components at runtime.
+        expect(config.transformer?.unstable_allowRequireContext).toBe(true);
+    });
+
     it('keeps Expo default workspace watch folders in local development', () => {
         const uiDir = getUiDir();
         const repoRoot = resolve(uiDir, '..', '..');
@@ -112,6 +121,22 @@ describe('metro.config.js (web)', () => {
         expect(resolved).toEqual({
             type: 'sourceFile',
             filePath: join(uiDir, 'sources/platform/shims/reactNativeWebShim.ts'),
+        });
+    });
+
+    it('shims @react-navigation/native to provide NavigationProvider (react-navigation elements compatibility)', () => {
+        const uiDir = getUiDir();
+        const config = loadMetroConfig(uiDir);
+
+        const resolved = config.resolver.resolveRequest(
+            { originModulePath: join(uiDir, 'index.ts') },
+            '@react-navigation/native',
+            'web',
+        );
+
+        expect(resolved).toEqual({
+            type: 'sourceFile',
+            filePath: join(uiDir, 'sources/platform/shims/reactNavigationNativeWebShim.ts'),
         });
     });
 

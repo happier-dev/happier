@@ -51,7 +51,7 @@ vi.mock('@/auth/context/AuthContext', () => ({
 }));
 
 vi.mock('@/components/navigation/shell/MainView', () => ({
-    MainView: () => null,
+    MainView: (props: Record<string, unknown>) => React.createElement('MainView', props),
 }));
 
 vi.mock('@/components/navigation/shell/HomeHeader', () => ({
@@ -160,6 +160,19 @@ describe('/ (welcome) setup continuation', () => {
 
         expect(expoRouterMock.spies.replace).not.toHaveBeenCalledWith('/setup');
         expect(screen.findAllByType('SetupWizardSurface' as never)).toHaveLength(1);
+    });
+
+    it('mounts the authenticated home shell on web when no post-auth setup wizard is needed', async () => {
+        tauriDesktopState.value = false;
+        connectionHealthState.value = 1;
+        getPendingSetupIntentMock.mockReturnValue(null);
+
+        const Screen = (await import('@/app/(app)/index')).default;
+        const screen = await renderScreen(React.createElement(Screen));
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        expect(screen.findAllByType('MainView' as never)).toHaveLength(1);
+        expect(screen.findAllByType('SetupWizardSurface' as never)).toHaveLength(0);
     });
 
     it('opens the setup wizard in a modal on web (overlay owns scrolling + placement)', async () => {

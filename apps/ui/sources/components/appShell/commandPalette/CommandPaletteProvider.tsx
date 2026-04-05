@@ -12,7 +12,7 @@ import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { useSegments } from 'expo-router';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
-import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
+import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { buildCommandPaletteCommands } from './buildCommandPaletteCommands';
 
 function readActiveSessionIdFromSegments(segments: readonly string[]): string | null {
@@ -35,7 +35,7 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
     const memorySearchEnabled = useFeatureEnabled('memory.search');
     const actionExecutor = useMemo(
         () => createDefaultActionExecutor({
-            resolveServerIdForSessionId: resolveServerIdForSessionIdFromLocalCache,
+            resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId),
             openSession: (sessionId) => {
                 router.push((`/session/${sessionId}`) as any);
             },

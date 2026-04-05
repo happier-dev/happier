@@ -16,7 +16,7 @@ const pushSpy = vi.fn();
 const executeSpy = vi.fn(async () => ({ ok: true as const, result: {} }));
 const createDefaultActionExecutorSpy = vi.fn();
 const fetchArtifactWithBodySpy = vi.fn(async () => null);
-const resolveServerIdForSessionIdFromLocalCacheSpy = vi.fn((_: string) => 'server-cache');
+const resolvePreferredServerIdForSessionIdSpy = vi.fn((_: string) => 'server-cache');
 let modalConfirmResult = true;
 const defaultApprovalArtifactBody = {
     v: 1,
@@ -266,8 +266,8 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
     },
 }));
 
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache', () => ({
-    resolveServerIdForSessionIdFromLocalCache: (sessionId: string) => resolveServerIdForSessionIdFromLocalCacheSpy(sessionId),
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
+    resolvePreferredServerIdForSessionId: (sessionId: string) => resolvePreferredServerIdForSessionIdSpy(sessionId),
 }));
 
 vi.mock('@/components/ui/layout/layout', () => ({
@@ -281,8 +281,8 @@ describe('ApprovalDetailScreen', () => {
         executeSpy.mockClear();
         createDefaultActionExecutorSpy.mockReset();
         fetchArtifactWithBodySpy.mockClear();
-        resolveServerIdForSessionIdFromLocalCacheSpy.mockReset();
-        resolveServerIdForSessionIdFromLocalCacheSpy.mockReturnValue('server-cache');
+        resolvePreferredServerIdForSessionIdSpy.mockReset();
+        resolvePreferredServerIdForSessionIdSpy.mockReturnValue('server-cache');
         modalConfirmResult = true;
         sessionFixtures = createSessionFixtures();
         machineFixtures = createMachineFixtures();
@@ -366,7 +366,7 @@ describe('ApprovalDetailScreen', () => {
                 serverId: 'server-approval',
             }),
         );
-        expect(resolveServerIdForSessionIdFromLocalCacheSpy).not.toHaveBeenCalled();
+        expect(resolvePreferredServerIdForSessionIdSpy).not.toHaveBeenCalled();
     });
 
     it('executes approval decisions even when the web confirm modal resolves false (ModalProvider unavailable)', async () => {

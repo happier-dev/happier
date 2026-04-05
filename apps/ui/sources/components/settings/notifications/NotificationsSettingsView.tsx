@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Platform } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
+import { isTauriDesktop } from '@/utils/platform/tauri';
 
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -93,6 +94,8 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
     const setLocalSetting = React.useCallback((delta: Partial<LocalSettings>) => {
         applyLocalSettings(delta);
     }, [applyLocalSettings]);
+    const showIosActivitySurfaceSections = Platform.OS === 'ios';
+    const showSharedDesktopActivitySurfaceSettings = !showIosActivitySurfaceSections && isTauriDesktop();
 
     const promptWebhookUrl = React.useCallback(async (defaultValue?: string) => {
         const raw = await Modal.prompt(
@@ -210,10 +213,16 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
 
     return (
         <ItemList style={{ paddingTop: 0 }} testID="settings-notifications-screen">
-            {Platform.OS === 'ios' ? (
+            {showIosActivitySurfaceSections ? (
                 <ActivitySurfacesSettingsSection
                     localSettings={localSettings}
                     setLocalSetting={setLocalSetting}
+                />
+            ) : showSharedDesktopActivitySurfaceSettings ? (
+                <ActivitySurfacesSettingsSection
+                    localSettings={localSettings}
+                    setLocalSetting={setLocalSetting}
+                    renderMode="shared_only"
                 />
             ) : null}
 

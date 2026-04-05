@@ -61,13 +61,17 @@ export type AppPaneAction =
     | { type: 'closeDetailsTab'; scopeId: string; tabKey: string }
     | { type: 'setActiveDetailsTab'; scopeId: string; tabKey: string };
 
-export function createAppPaneState(options: Readonly<{ maxScopesInMemory: number }>): AppPaneState {
-    return {
+export function createAppPaneState(options: Readonly<{
+    maxScopesInMemory: number;
+    persistedScopes?: Readonly<Record<string, PaneScopeState>> | null;
+}>): AppPaneState {
+    const persistedScopes = options.persistedScopes ?? {};
+    return evictScopesIfNeeded({
         activeScopeId: null,
-        scopes: {},
-        scopeLru: [],
+        scopes: persistedScopes,
+        scopeLru: Object.keys(persistedScopes),
         limits: { maxScopesInMemory: options.maxScopesInMemory },
-    };
+    });
 }
 
 function createEmptyScopeState(): PaneScopeState {

@@ -45,8 +45,11 @@ test('apps/ui exposes a rollout-local activity-surfaces typecheck and certificat
   assert.equal(Array.isArray(focusedVitestFiles), true);
   assert.equal(new Set(focusedVitestFiles).size, focusedVitestFiles.length);
   assert.equal(focusedVitestFiles.every((entry) => entry.startsWith('sources/')), true);
-  assert.equal(focusedVitestFiles.includes('sources/activity/runtime/ActivitySurfacesRuntime.test.tsx'), true);
+  assert.equal(focusedVitestFiles.includes('sources/activity/adapters/ios/runtime/ActivitySurfacesRuntime.test.tsx'), true);
+  assert.equal(focusedVitestFiles.includes('sources/activity/adapters/ios/liveActivities/buildLiveActivitySnapshots.test.ts'), true);
+  assert.equal(focusedVitestFiles.includes('sources/activity/adapters/ios/liveActivities/resolveLiveActivityReconciliationState.test.ts'), true);
   assert.equal(focusedVitestFiles.includes('sources/activity/adapters/desktop/runtime/DesktopActivityOverlayRuntime.test.tsx'), true);
+  assert.equal(focusedVitestFiles.includes('sources/activity/presentation/activitySurfaceSnapshot.test.ts'), true);
   assert.equal(focusedVitestFiles.includes('sources/components/settings/desktop/DesktopSettingsSection.test.tsx'), true);
   assert.equal(focusedVitestFiles.includes('sources/components/settings/desktop/DesktopOverlaySettingsSection.test.tsx'), true);
   assert.equal(focusedVitestFiles.includes('sources/components/settings/notifications/NotificationsSettingsView.test.tsx'), true);
@@ -65,9 +68,10 @@ test('apps/ui exposes a rollout-local activity-surfaces typecheck and certificat
   assert.equal(include.includes('sources/activity/attention/**/*.ts'), true);
   assert.equal(include.includes('sources/activity/selection/**/*.ts'), true);
   assert.equal(include.includes('sources/activity/presentation/**/*.ts'), true);
-  assert.equal(include.includes('sources/activity/liveActivities/**/*.ts'), true);
   assert.equal(include.includes('sources/activity/widgets/**/*.ts'), true);
-  assert.equal(include.includes('sources/activity/runtime/ActivitySurfacesRuntime.tsx'), true);
+  assert.equal(include.includes('sources/activity/widgets/**/*.tsx'), true);
+  assert.equal(include.includes('sources/activity/adapters/ios/**/*.ts'), true);
+  assert.equal(include.includes('sources/activity/adapters/ios/**/*.tsx'), true);
   assert.equal(include.includes('sources/activity/adapters/desktop/**/*.ts'), true);
   assert.equal(include.includes('sources/activity/adapters/desktop/**/*.tsx'), true);
   assert.equal(include.includes('sources/components/settings/notifications/ActivitySurfacesSettingsSection.tsx'), true);

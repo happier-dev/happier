@@ -2,15 +2,10 @@
 use serde::{Deserialize, Serialize};
 
 #[cfg(desktop)]
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 #[cfg(desktop)]
 use tauri::{
-    path::BaseDirectory,
     App,
     AppHandle,
     Emitter,
@@ -22,6 +17,30 @@ use tauri::{
     WebviewUrl,
     WebviewWindow,
     WebviewWindowBuilder,
+};
+
+#[cfg(desktop)]
+mod placement;
+#[cfg(desktop)]
+mod storage;
+
+#[cfg(desktop)]
+use self::placement::{
+    clamp,
+    resolve_overlay_monitor_rect,
+    resolve_overlay_placement,
+    sanitize_dimension,
+    sanitize_offset,
+    Rect,
+};
+#[cfg(desktop)]
+use self::storage::{
+    clear_persisted_drag_offsets,
+    persist_drag_offsets,
+    read_persisted_drag_offsets,
+    resolve_drag_offsets_path,
+    sanitize_drag_offsets,
+    PersistedOverlayDragOffsets,
 };
 
 #[cfg(desktop)]
@@ -48,14 +67,6 @@ struct ActivityOverlayRuntimeState {
     last_window_state: Option<DesktopActivityOverlayWindowStatePayload>,
     drag_offsets: PersistedOverlayDragOffsets,
     drag_offsets_loaded: bool,
-}
-
-#[cfg(desktop)]
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PersistedOverlayDragOffsets {
-    offset_x: f64,
-    offset_y: f64,
 }
 
 #[cfg(desktop)]
@@ -230,22 +241,6 @@ fn ensure_overlay_command_caller<R: Runtime>(
     allowed_labels: &[&str],
 ) -> Result<(), String> {
     validate_overlay_command_caller(command_name, caller_window.label(), allowed_labels)
-}
-
-#[cfg(desktop)]
-#[derive(Clone, Copy, Debug)]
-struct Rect {
-    x: f64,
-    y: f64,
-    width: f64,
-    height: f64,
-}
-
-#[cfg(desktop)]
-#[derive(Clone, Copy, Debug)]
-struct OverlayPlacementRect {
-    x: f64,
-    y: f64,
 }
 
 #[cfg(desktop)]
@@ -515,35 +510,6 @@ fn apply_overlay_state<R: Runtime>(
 }
 
 #[cfg(desktop)]
-fn resolve_overlay_monitor_rect<R: Runtime>(window: &WebviewWindow<R>) -> Result<Rect, String> {
-    if let Some(monitor) = window
-        .current_monitor()
-        .map_err(|error| error.to_string())?
-    {
-        return Ok(Rect {
-            x: monitor.position().x as f64,
-            y: monitor.position().y as f64,
-            width: monitor.size().width as f64,
-            height: monitor.size().height as f64,
-        });
-    }
-
-    if let Some(monitor) = window
-        .primary_monitor()
-        .map_err(|error| error.to_string())?
-    {
-        return Ok(Rect {
-            x: monitor.position().x as f64,
-            y: monitor.position().y as f64,
-            width: monitor.size().width as f64,
-            height: monitor.size().height as f64,
-        });
-    }
-
-    Err("Unable to resolve a monitor for desktop activity overlay".to_string())
-}
-
-#[cfg(desktop)]
 fn ensure_overlay_window<R: Runtime>(
     app: &AppHandle<R>,
     always_on_top: bool,
@@ -570,99 +536,6 @@ fn ensure_overlay_window<R: Runtime>(
 }
 
 #[cfg(desktop)]
-fn resolve_overlay_placement(
-    monitor: Rect,
-    overlay: Rect,
-    anchor: DesktopActivityOverlayAnchor,
-    offset_x: f64,
-    offset_y: f64,
-    padding: f64,
-) -> OverlayPlacementRect {
-    let offset_x = sanitize_offset(offset_x);
-    let offset_y = sanitize_offset(offset_y);
-    let center_x = monitor.x + (monitor.width - overlay.width) / 2.0;
-    let center_y = monitor.y + (monitor.height - overlay.height) / 2.0;
-
-    let (base_x, base_y) = match anchor {
-        DesktopActivityOverlayAnchor::TopCenter => (center_x, monitor.y + padding),
-        DesktopActivityOverlayAnchor::TopLeft => (monitor.x + padding, monitor.y + padding),
-        DesktopActivityOverlayAnchor::TopRight => (
-            monitor.x + monitor.width - overlay.width - padding,
-            monitor.y + padding,
-        ),
-        DesktopActivityOverlayAnchor::BottomCenter => (
-            center_x,
-            monitor.y + monitor.height - overlay.height - padding,
-        ),
-        DesktopActivityOverlayAnchor::BottomLeft => (
-            monitor.x + padding,
-            monitor.y + monitor.height - overlay.height - padding,
-        ),
-        DesktopActivityOverlayAnchor::BottomRight => (
-            monitor.x + monitor.width - overlay.width - padding,
-            monitor.y + monitor.height - overlay.height - padding,
-        ),
-        DesktopActivityOverlayAnchor::LeftCenter => (monitor.x + padding, center_y),
-        DesktopActivityOverlayAnchor::RightCenter => (
-            monitor.x + monitor.width - overlay.width - padding,
-            center_y,
-        ),
-    };
-
-    let min_x = monitor.x + padding;
-    let min_y = monitor.y + padding;
-    let max_x = monitor.x + monitor.width - overlay.width - padding;
-    let max_y = monitor.y + monitor.height - overlay.height - padding;
-
-    OverlayPlacementRect {
-        x: clamp(base_x + offset_x, min_x, max_x.max(min_x)),
-        y: clamp(base_y + offset_y, min_y, max_y.max(min_y)),
-    }
-}
-
-#[cfg(desktop)]
-fn clamp(value: f64, min: f64, max: f64) -> f64 {
-    if !value.is_finite() {
-        return min;
-    }
-    if value < min {
-        return min;
-    }
-    if value > max {
-        return max;
-    }
-    value
-}
-
-#[cfg(desktop)]
-fn sanitize_offset(value: f64) -> f64 {
-    if value.is_finite() {
-        return value;
-    }
-    0.0
-}
-
-#[cfg(desktop)]
-fn sanitize_dimension(value: f64, fallback: f64, min: f64, max: f64) -> f64 {
-    let raw = if value.is_finite() { value } else { fallback };
-    clamp(raw, min, max)
-}
-
-#[cfg(desktop)]
-fn sanitize_drag_offsets(offsets: PersistedOverlayDragOffsets) -> PersistedOverlayDragOffsets {
-    PersistedOverlayDragOffsets {
-        offset_x: clamp(sanitize_offset(offsets.offset_x), -4096.0, 4096.0),
-        offset_y: clamp(sanitize_offset(offsets.offset_y), -4096.0, 4096.0),
-    }
-}
-
-#[cfg(desktop)]
-fn resolve_drag_offsets_path<R: Runtime>(app: &impl Manager<R>) -> tauri::Result<PathBuf> {
-    app.path()
-        .resolve("window-state/activity-overlay-position.json", BaseDirectory::AppConfig)
-}
-
-#[cfg(desktop)]
 fn ensure_drag_offsets_loaded<R: Runtime>(
     app: &AppHandle<R>,
     state: &mut ActivityOverlayRuntimeState,
@@ -677,185 +550,14 @@ fn ensure_drag_offsets_loaded<R: Runtime>(
     state.drag_offsets_loaded = true;
 }
 
-#[cfg(desktop)]
-fn read_persisted_drag_offsets(path: Option<&Path>) -> Option<PersistedOverlayDragOffsets> {
-    let path = path?;
-    let bytes = fs::read(path).ok()?;
-    serde_json::from_slice::<PersistedOverlayDragOffsets>(&bytes).ok()
-}
-
-#[cfg(desktop)]
-fn persist_drag_offsets<R: Runtime>(app: &AppHandle<R>, offsets: PersistedOverlayDragOffsets) {
-    let Ok(path) = resolve_drag_offsets_path(app) else {
-        return;
-    };
-    persist_drag_offsets_to_path(&path, offsets);
-}
-
-#[cfg(desktop)]
-fn persist_drag_offsets_to_path(path: &Path, offsets: PersistedOverlayDragOffsets) {
-    let Some(parent) = path.parent() else {
-        return;
-    };
-    if fs::create_dir_all(parent).is_err() {
-        return;
-    }
-    let Ok(payload) = serde_json::to_vec_pretty(&sanitize_drag_offsets(offsets)) else {
-        return;
-    };
-    let _ = fs::write(path, payload);
-}
-
-#[cfg(desktop)]
-fn clear_persisted_drag_offsets<R: Runtime>(app: &AppHandle<R>) {
-    let Ok(path) = resolve_drag_offsets_path(app) else {
-        return;
-    };
-    let _ = clear_persisted_drag_offsets_path(&path);
-}
-
-#[cfg(desktop)]
-fn clear_persisted_drag_offsets_path(path: &Path) -> std::io::Result<()> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn resolves_top_center_overlay_placement() {
-        let monitor = Rect {
-            x: 0.0,
-            y: 0.0,
-            width: 1400.0,
-            height: 900.0,
-        };
-        let overlay = Rect {
-            x: 0.0,
-            y: 0.0,
-            width: 360.0,
-            height: 72.0,
-        };
-
-        let placement = resolve_overlay_placement(
-            monitor,
-            overlay,
-            DesktopActivityOverlayAnchor::TopCenter,
-            12.0,
-            8.0,
-            10.0,
-        );
-        assert!((placement.x - 532.0).abs() < 0.001);
-        assert!((placement.y - 18.0).abs() < 0.001);
-    }
-
-    #[test]
-    fn clamps_overlay_placement_to_monitor_bounds() {
-        let monitor = Rect {
-            x: 100.0,
-            y: 40.0,
-            width: 800.0,
-            height: 600.0,
-        };
-        let overlay = Rect {
-            x: 0.0,
-            y: 0.0,
-            width: 520.0,
-            height: 220.0,
-        };
-
-        let placement = resolve_overlay_placement(
-            monitor,
-            overlay,
-            DesktopActivityOverlayAnchor::BottomRight,
-            9999.0,
-            9999.0,
-            16.0,
-        );
-        assert!((placement.x - 364.0).abs() < 0.001);
-        assert!((placement.y - 404.0).abs() < 0.001);
-    }
-
-    #[test]
-    fn resolves_overlay_placement_with_non_finite_offsets() {
-        let monitor = Rect {
-            x: 0.0,
-            y: 0.0,
-            width: 1400.0,
-            height: 900.0,
-        };
-        let overlay = Rect {
-            x: 0.0,
-            y: 0.0,
-            width: 360.0,
-            height: 72.0,
-        };
-
-        let placement = resolve_overlay_placement(
-            monitor,
-            overlay,
-            DesktopActivityOverlayAnchor::TopCenter,
-            f64::NAN,
-            f64::INFINITY,
-            10.0,
-        );
-
-        assert!(placement.x.is_finite());
-        assert!(placement.y.is_finite());
-        assert!((placement.x - 520.0).abs() < 0.001);
-        assert!((placement.y - 10.0).abs() < 0.001);
-    }
 
     #[test]
     fn validates_overlay_command_caller_against_allowed_labels() {
         let command_name = "desktop_activity_overlay_sync";
         assert!(validate_overlay_command_caller(command_name, "main", &["main"]).is_ok());
         assert!(validate_overlay_command_caller(command_name, "activity_overlay", &["main"]).is_err());
-    }
-
-    #[test]
-    fn clears_persisted_drag_offsets_path_without_error_when_file_missing() {
-        let unique = format!(
-            "activity-overlay-position-{}-missing.json",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("system time should be after unix epoch")
-                .as_nanos()
-        );
-        let path = std::env::temp_dir().join(unique);
-
-        clear_persisted_drag_offsets_path(&path)
-            .expect("clearing a missing drag-offset file should succeed");
-    }
-
-    #[test]
-    fn clears_persisted_drag_offsets_path_when_file_exists() {
-        let unique = format!(
-            "activity-overlay-position-{}.json",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("system time should be after unix epoch")
-                .as_nanos()
-        );
-        let path = std::env::temp_dir().join(unique);
-
-        persist_drag_offsets_to_path(
-            &path,
-            PersistedOverlayDragOffsets {
-                offset_x: 18.0,
-                offset_y: -24.0,
-            },
-        );
-        assert!(path.exists());
-
-        clear_persisted_drag_offsets_path(&path)
-            .expect("existing drag-offset file should be removed");
-
-        assert!(!path.exists());
     }
 }

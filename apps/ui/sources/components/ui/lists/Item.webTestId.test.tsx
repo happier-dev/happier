@@ -56,10 +56,11 @@ describe('Item web testID forwarding', () => {
         expect(row).toBeTruthy();
         expect(row?.props.testID).toBe('settings-appearance-themePreference-cycle');
         expect(row?.props['data-testid']).toBe('settings-appearance-themePreference-cycle');
-        expect(row?.props.accessibilityRole).toBe('button');
+        expect(row?.props.accessibilityRole).toBeUndefined();
+        expect(row?.props.tabIndex).toBe(0);
     });
 
-    it('keeps right-side actions inside the row pressable on web', async () => {
+    it('avoids button semantics on web rows with nested right-side actions', async () => {
         const { Item } = await import('./Item');
         const screen = await renderScreen(
             <Item
@@ -78,6 +79,7 @@ describe('Item web testID forwarding', () => {
         const action = screen.findByTestId('item-right-action');
 
         expect(findClosestPressableAncestor(action as renderer.ReactTestInstance)).toBe(row);
+        expect(row?.props.accessibilityRole).toBeUndefined();
     });
 
     it('forwards testID as data-testid on non-interactive web rows', async () => {

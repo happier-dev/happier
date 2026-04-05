@@ -49,6 +49,7 @@ export function useDesktopUpdater(): {
     // Capture the environment at mount time. In production the desktop/web context is stable, and
     // using a stable flag avoids test flakiness when other suites manipulate `window` concurrently.
     const isDesktop = React.useMemo(() => isTauriDesktop(), []);
+    const updatesEnabled = React.useMemo(() => process.env.NODE_ENV !== 'development', []);
 
     const [status, setStatus] = React.useState<DesktopUpdaterStatus>('idle');
     const [availableVersion, setAvailableVersion] = React.useState<string | null>(null);
@@ -56,6 +57,9 @@ export function useDesktopUpdater(): {
 
     const refresh = React.useCallback(async () => {
         if (!isDesktop) {
+            return;
+        }
+        if (!updatesEnabled) {
             return;
         }
 
@@ -82,7 +86,7 @@ export function useDesktopUpdater(): {
             setAvailableVersion(null);
             setStatus('idle');
         }
-    }, [isDesktop]);
+    }, [isDesktop, updatesEnabled]);
 
     React.useEffect(() => {
         void refresh();

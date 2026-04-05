@@ -96,10 +96,6 @@ function buildStepPlan() {
 }
 
 export function buildTauriActivitySurfacesQaPlan({ env = process.env } = {}) {
-    const stackName = String(env.HAPPIER_STACK_STACK ?? '').trim();
-    const runtimeState = stackName ? null : null;
-    const defaultPort = Number(env.HAPPIER_STACK_TAURI_DEV_PORT ?? 8081);
-    const devUrl = `http://127.0.0.1:${readNumber(defaultPort, 8081)}`;
     const trackerPathRaw = readString(env.HAPPIER_TAURI_QA_TRACKER_PATH, defaultTrackerPath);
     const artifactRootRaw = readString(
         env.HAPPIER_TAURI_QA_OUTDIR,
@@ -119,8 +115,6 @@ export function buildTauriActivitySurfacesQaPlan({ env = process.env } = {}) {
             env.HAPPIER_TAURI_MCP_APP_IDENTIFIER ?? env.HAPPIER_TAURI_MCP_PORT ?? env.HAPPIER_TAURI_APP_PORT,
             9225,
         ),
-        devUrl,
-        runtimeState,
         timeouts: {
             selectorWaitMs,
             cliSelectorWaitTimeoutMs,
@@ -603,10 +597,15 @@ async function main(argv = process.argv.slice(2)) {
         await appendWarning(plan.artifactRoot, '- overlay route was not visible after navigation; captured the hidden/loading fallback if present');
     }
 
-    if (await isSelectorPresent('[data-testid="desktop-activity-overlay-collapsed"]', {
+    const collapsedVisible = await isSelectorPresent('[data-testid="desktop-activity-overlay-collapsed"]', {
         appIdentifier: driverSession.resolvedAppIdentifier,
         env: process.env,
-    })) {
+    });
+    if (collapsedVisible) {
+        const collapsedArtifacts = await captureBestEffort('overlay_collapsed');
+        if (!collapsedArtifacts) {
+            await appendWarning(plan.artifactRoot, '- collapsed overlay surface was not available for capture');
+        }
         try {
             await clickSelector('[data-testid="desktop-activity-overlay-collapsed"]', {
                 appIdentifier: driverSession.resolvedAppIdentifier,
@@ -619,11 +618,6 @@ async function main(argv = process.argv.slice(2)) {
         await delay(600);
     } else if (!overlayRouteArtifacts) {
         await appendWarning(plan.artifactRoot, '- collapsed overlay surface was not available; expanded capture skipped');
-    }
-
-    const collapsedArtifacts = await captureBestEffort('overlay_collapsed');
-    if (!collapsedArtifacts) {
-        await appendWarning(plan.artifactRoot, '- collapsed overlay surface was not available for capture');
     }
 
     const expandedArtifacts = await captureBestEffort('overlay_expanded');

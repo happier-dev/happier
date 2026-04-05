@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ActivitySurfaceSnapshot } from '@/activity/presentation/activitySurfaceSnapshot';
+import type { DesktopOverlayPolicy } from '@/activity/adapters/desktop/runtime/resolveDesktopOverlayPolicy';
 
 import { buildDesktopActivityOverlayModel } from './buildDesktopActivityOverlayModel';
 
@@ -81,31 +82,42 @@ function createSnapshot(overrides: Partial<ActivitySurfaceSnapshot> = {}): Activ
     };
 }
 
+function createPolicy(overrides: Partial<DesktopOverlayPolicy> = {}): DesktopOverlayPolicy {
+    const base: DesktopOverlayPolicy = {
+        enabled: true,
+        visibilityMode: 'attention_only',
+        showWhenRunning: true,
+        showWhenAttentionRequired: true,
+        showWhenReady: true,
+        alwaysOnTop: true,
+        autoHideEnabled: true,
+        autoHideDelayMs: 6000,
+        expandedBehavior: 'click',
+        interactiveCollapsed: true,
+        clickAction: 'expand_overlay',
+        density: 'compact',
+        compactStyle: 'pill',
+        showSessionCount: true,
+        showPreviewText: false,
+        placementMode: 'anchored',
+        anchor: 'top_center',
+        offsetX: 0,
+        offsetY: 0,
+        enableDragReposition: false,
+        lockPosition: true,
+    };
+
+    return {
+        ...base,
+        ...overrides,
+    };
+}
+
 describe('buildDesktopActivityOverlayModel', () => {
     it('marks overlay visible when enabled and attention is present in attention mode', () => {
         const model = buildDesktopActivityOverlayModel({
             snapshot: createSnapshot(),
-            policy: {
-                enabled: true,
-                visibilityMode: 'attention_only',
-                showWhenRunning: true,
-                showWhenAttentionRequired: true,
-                showWhenReady: true,
-                alwaysOnTop: true,
-                autoHideEnabled: true,
-                autoHideDelayMs: 6000,
-                clickAction: 'expand_overlay',
-                density: 'compact',
-                compactStyle: 'pill',
-                showSessionCount: true,
-                showPreviewText: false,
-                placementMode: 'anchored',
-                anchor: 'top_center',
-                offsetX: 0,
-                offsetY: 0,
-                enableDragReposition: false,
-                lockPosition: true,
-            },
+            policy: createPolicy(),
             isExpanded: false,
         });
 
@@ -121,27 +133,10 @@ describe('buildDesktopActivityOverlayModel', () => {
     it('stays hidden when disabled regardless of counts', () => {
         const model = buildDesktopActivityOverlayModel({
             snapshot: createSnapshot(),
-            policy: {
+            policy: createPolicy({
                 enabled: false,
                 visibilityMode: 'always_when_enabled',
-                showWhenRunning: true,
-                showWhenAttentionRequired: true,
-                showWhenReady: true,
-                alwaysOnTop: true,
-                autoHideEnabled: true,
-                autoHideDelayMs: 6000,
-                clickAction: 'expand_overlay',
-                density: 'compact',
-                compactStyle: 'pill',
-                showSessionCount: true,
-                showPreviewText: false,
-                placementMode: 'anchored',
-                anchor: 'top_center',
-                offsetX: 0,
-                offsetY: 0,
-                enableDragReposition: false,
-                lockPosition: true,
-            },
+            }),
             isExpanded: false,
         });
 
@@ -162,27 +157,9 @@ describe('buildDesktopActivityOverlayModel', () => {
                 primary: null,
                 sessions: [],
             }),
-            policy: {
-                enabled: true,
+            policy: createPolicy({
                 visibilityMode: 'always_when_enabled',
-                showWhenRunning: true,
-                showWhenAttentionRequired: true,
-                showWhenReady: true,
-                alwaysOnTop: true,
-                autoHideEnabled: true,
-                autoHideDelayMs: 6000,
-                clickAction: 'expand_overlay',
-                density: 'compact',
-                compactStyle: 'pill',
-                showSessionCount: true,
-                showPreviewText: false,
-                placementMode: 'anchored',
-                anchor: 'top_center',
-                offsetX: 0,
-                offsetY: 0,
-                enableDragReposition: false,
-                lockPosition: true,
-            },
+            }),
             isExpanded: false,
         });
 
@@ -194,27 +171,10 @@ describe('buildDesktopActivityOverlayModel', () => {
     it('uses the canonical primary preview text when collapsed preview text is enabled', () => {
         const model = buildDesktopActivityOverlayModel({
             snapshot: createSnapshot(),
-            policy: {
-                enabled: true,
+            policy: createPolicy({
                 visibilityMode: 'always_when_enabled',
-                showWhenRunning: true,
-                showWhenAttentionRequired: true,
-                showWhenReady: true,
-                alwaysOnTop: true,
-                autoHideEnabled: true,
-                autoHideDelayMs: 6000,
-                clickAction: 'expand_overlay',
-                density: 'compact',
-                compactStyle: 'pill',
-                showSessionCount: true,
                 showPreviewText: true,
-                placementMode: 'anchored',
-                anchor: 'top_center',
-                offsetX: 0,
-                offsetY: 0,
-                enableDragReposition: false,
-                lockPosition: true,
-            },
+            }),
             isExpanded: false,
         });
 
@@ -233,27 +193,11 @@ describe('buildDesktopActivityOverlayModel', () => {
                     totalAttention: 0,
                 },
             }),
-            policy: {
-                enabled: true,
-                visibilityMode: 'attention_only',
+            policy: createPolicy({
                 showWhenRunning: false,
                 showWhenAttentionRequired: false,
                 showWhenReady: false,
-                alwaysOnTop: true,
-                autoHideEnabled: true,
-                autoHideDelayMs: 6000,
-                clickAction: 'expand_overlay',
-                density: 'compact',
-                compactStyle: 'pill',
-                showSessionCount: true,
-                showPreviewText: false,
-                placementMode: 'anchored',
-                anchor: 'top_center',
-                offsetX: 0,
-                offsetY: 0,
-                enableDragReposition: false,
-                lockPosition: true,
-            },
+            }),
             isExpanded: false,
         });
 
@@ -272,27 +216,12 @@ describe('buildDesktopActivityOverlayModel', () => {
                     totalAttention: 0,
                 },
             }),
-            policy: {
-                enabled: true,
+            policy: createPolicy({
                 visibilityMode: 'active_sessions',
                 showWhenRunning: false,
                 showWhenAttentionRequired: false,
                 showWhenReady: false,
-                alwaysOnTop: true,
-                autoHideEnabled: true,
-                autoHideDelayMs: 6000,
-                clickAction: 'expand_overlay',
-                density: 'compact',
-                compactStyle: 'pill',
-                showSessionCount: true,
-                showPreviewText: false,
-                placementMode: 'anchored',
-                anchor: 'top_center',
-                offsetX: 0,
-                offsetY: 0,
-                enableDragReposition: false,
-                lockPosition: true,
-            },
+            }),
             isExpanded: false,
         });
 
