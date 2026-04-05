@@ -32,6 +32,7 @@ import {
     SESSION_LIST_ROW_HEIGHT_MINIMAL,
 } from './sessionListRowHeights';
 import { clearSessionVisibleWhenInactive, stopSessionAndMaybeArchive } from '../sessionStopArchiveFlow';
+import { resolveSessionRowInteractionPolicy } from './row/resolveSessionRowInteractionPolicy';
 
 const AVATAR_SIZE_DEFAULT = 48;
 const AVATAR_SIZE_COMPACT = 30;
@@ -443,7 +444,7 @@ export const SessionItem = React.memo(
         const navigateToSession = useNavigateToSession();
         const swipeableRef = React.useRef<Swipeable | null>(null);
         const sessionOwnerId = typeof resolvedSession.owner === 'string' ? resolvedSession.owner : null;
-        const isOwnedByCurrentUser = !sessionOwnerId || (currentUserId && sessionOwnerId === currentUserId);
+        const isOwnedByCurrentUser = !sessionOwnerId || Boolean(currentUserId && sessionOwnerId === currentUserId);
         const hasAdminAccess = isOwnedByCurrentUser || resolvedSession.accessLevel === 'admin';
         const isActiveSession = resolvedSession.active === true;
         const isMinimal = Boolean(compact && compactMinimal);
@@ -451,7 +452,6 @@ export const SessionItem = React.memo(
         const canArchiveSession = hasAdminAccess && !isActiveSession;
         const canRenameSession = hasAdminAccess;
         const hideInactiveSessions = useSetting('hideInactiveSessions');
-        const swipeEnabled = Platform.OS !== 'web' && (isActiveSession ? canStopSession : canArchiveSession);
         const [isRowHovered, setIsRowHovered] = React.useState(false);
         const [isActionsHovered, setIsActionsHovered] = React.useState(false);
         const [tagMenuOpen, setTagMenuOpen] = React.useState(false);
@@ -466,7 +466,6 @@ export const SessionItem = React.memo(
         const showTagAction = supportsTag && showRowActions;
         const activeTags = tags ?? [];
         const knownTags = allKnownTags ?? [];
-        const showReorderHandle = Boolean(reorderHandleGesture);
         const contextMenuAnchorRef = React.useRef<View>(null);
         const [uncontrolledContextMenuOpen, setUncontrolledContextMenuOpen] = React.useState(false);
         const contextMenuOpen = nativeContextMenuOpen ?? uncontrolledContextMenuOpen;
@@ -474,33 +473,6 @@ export const SessionItem = React.memo(
         const suppressNextPressRef = React.useRef(false);
         const contextMenuWasOpenRef = React.useRef(false);
         const clearSuppressionTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-        React.useEffect(() => {
-            // When a context menu is opened by an external gesture (e.g. session list long-press),
-            // Pressable may still fire `onPress` on touch-up. Suppress that navigation *once*,
-            // but don't keep suppressing while the menu stays open (that would require extra taps).
-            const wasOpen = contextMenuWasOpenRef.current;
-            contextMenuWasOpenRef.current = contextMenuOpen;
-
-            if (!contextMenuOpen || wasOpen) {
-                return;
-            }
-
-            suppressNextPressRef.current = true;
-            if (clearSuppressionTimeoutRef.current) {
-                clearTimeout(clearSuppressionTimeoutRef.current);
-            }
-            clearSuppressionTimeoutRef.current = setTimeout(() => {
-                suppressNextPressRef.current = false;
-                clearSuppressionTimeoutRef.current = null;
-            }, CONTEXT_MENU_PRESS_SUPPRESSION_TIMEOUT_MS);
-
-            return () => {
-                if (clearSuppressionTimeoutRef.current) {
-                    clearTimeout(clearSuppressionTimeoutRef.current);
-                    clearSuppressionTimeoutRef.current = null;
-                }
-            };
-        }, [contextMenuOpen]);
         const isBeingDraggedRef = React.useRef<boolean>(false);
         React.useEffect(() => {
             isBeingDraggedRef.current = isBeingDragged === true;
@@ -683,6 +655,57 @@ export const SessionItem = React.memo(
             items.push(...moreMenuItems);
             return items;
         }, [isNativeMobile, moreMenuItems, pinned, rowActionIconColor, supportsPin, supportsTag]);
+        const {
+            swipeEnabled,
+            showReorderHandle,
+            enableLongPressContextMenu,
+            suppressNextPressOnNativeContextMenuOpen,
+        } = React.useMemo(() => resolveSessionRowInteractionPolicy({
+            platformOs: Platform.OS,
+            isActiveSession,
+            canStopSession,
+            canArchiveSession,
+            contextMenuItemCount: contextMenuItems.length,
+            contextMenuOpen,
+            contextMenuWasOpen: contextMenuWasOpenRef.current,
+            nativeInlineDragEnabled: nativeInlineDragEnabled === true,
+            hasReorderHandle: Boolean(reorderHandleGesture),
+        }), [
+            canArchiveSession,
+            canStopSession,
+            contextMenuItems.length,
+            contextMenuOpen,
+            isActiveSession,
+            nativeInlineDragEnabled,
+            reorderHandleGesture,
+        ]);
+
+        React.useEffect(() => {
+            // When a context menu is opened by an external gesture (e.g. session list long-press),
+            // Pressable may still fire `onPress` on touch-up. Suppress that navigation *once*,
+            // but don't keep suppressing while the menu stays open (that would require extra taps).
+            contextMenuWasOpenRef.current = contextMenuOpen;
+
+            if (!suppressNextPressOnNativeContextMenuOpen) {
+                return;
+            }
+
+            suppressNextPressRef.current = true;
+            if (clearSuppressionTimeoutRef.current) {
+                clearTimeout(clearSuppressionTimeoutRef.current);
+            }
+            clearSuppressionTimeoutRef.current = setTimeout(() => {
+                suppressNextPressRef.current = false;
+                clearSuppressionTimeoutRef.current = null;
+            }, CONTEXT_MENU_PRESS_SUPPRESSION_TIMEOUT_MS);
+
+            return () => {
+                if (clearSuppressionTimeoutRef.current) {
+                    clearTimeout(clearSuppressionTimeoutRef.current);
+                    clearSuppressionTimeoutRef.current = null;
+                }
+            };
+        }, [contextMenuOpen, suppressNextPressOnNativeContextMenuOpen]);
 
         const handleContextMenuSelect = React.useCallback((itemId: string) => {
             if (itemId === 'tags') {
@@ -738,12 +761,16 @@ export const SessionItem = React.memo(
             sessionStatus,
         });
         const showTagChips = tagChips.length > 0 && (!isMinimal || !showMinimalStatusLine);
-        const enableLongPressContextMenu = isNativeMobile && contextMenuItems.length > 0 && nativeInlineDragEnabled !== true;
 
         const itemContent = (
             <Pressable
                 testID={`session-list-item-${resolvedSession.id}`}
                 accessibilityState={{ selected }}
+                android_ripple={Platform.OS === 'android' ? {
+                    color: theme.colors.surfaceRipple,
+                    borderless: false,
+                    foreground: true,
+                } : undefined}
                 style={[
                     styles.sessionItem,
                     isFirst ? styles.sessionItemFirst : null,

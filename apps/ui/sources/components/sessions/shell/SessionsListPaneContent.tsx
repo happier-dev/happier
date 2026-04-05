@@ -7,10 +7,10 @@ import {
     type SessionGettingStartedGuidanceVariant,
 } from '@/components/sessions/guidance/SessionGettingStartedGuidance';
 import { DirectSessionsEmptyState } from '@/components/sessions/shell/DirectSessionsEmptyState';
-import { SessionsList } from '@/components/sessions/shell/SessionsList';
+import { SessionsListView } from '@/components/sessions/shell/SessionsList';
 import { SessionsListEmptyState } from '@/components/sessions/shell/SessionsListEmptyState';
 import { useSessionGettingStartedGuidanceBaseModel } from '@/components/sessions/guidance/useSessionGettingStartedGuidanceBaseModel';
-import { useVisibleSessionListViewData } from '@/hooks/session/useVisibleSessionListViewData';
+import { useVisibleSessionListPaneState } from '@/hooks/session/useVisibleSessionListPaneState';
 
 type SessionsListPaneContentProps = Readonly<{
     storageKind: 'persisted' | 'direct';
@@ -47,10 +47,10 @@ const stylesheet = StyleSheet.create((theme) => ({
 export const SessionsListPaneContent = React.memo((props: SessionsListPaneContentProps) => {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const sessionListViewData = useVisibleSessionListViewData(props.storageKind);
+    const sessionListPaneState = useVisibleSessionListPaneState(props.storageKind);
     const gettingStarted = useSessionGettingStartedGuidanceBaseModel();
 
-    if (sessionListViewData === null) {
+    if (sessionListPaneState.showLoading) {
         return (
             <View style={styles.loadingContainerWrapper}>
                 <View style={styles.loadingContainer}>
@@ -60,7 +60,7 @@ export const SessionsListPaneContent = React.memo((props: SessionsListPaneConten
         );
     }
 
-    if (sessionListViewData.length === 0) {
+    if (sessionListPaneState.showEmptyState) {
         if (props.storageKind === 'direct') {
             return (
                 <View style={styles.emptyStateContainer}>
@@ -96,5 +96,5 @@ export const SessionsListPaneContent = React.memo((props: SessionsListPaneConten
         );
     }
 
-    return <SessionsList storageKind={props.storageKind} />;
+    return <SessionsListView storageKind={props.storageKind} />;
 });

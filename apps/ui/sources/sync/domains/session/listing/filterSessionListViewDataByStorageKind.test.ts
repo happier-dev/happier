@@ -25,6 +25,28 @@ function makeSession(id: string, direct: boolean): SessionListViewItem {
 }
 
 describe('filterSessionListViewDataByStorageKind', () => {
+    it('returns the original array when storageKind is all', () => {
+        const source: SessionListViewItem[] = [
+            { type: 'header', title: 'Today', headerKind: 'date', groupKey: 'server:server-a:day:2026-03-05', serverId: 'server-a' },
+            makeSession('persisted-1', false),
+        ];
+
+        const result = filterSessionListViewDataByStorageKind(source, 'all');
+
+        expect(result).toBe(source);
+    });
+
+    it('returns the original array when storageKind filtering would not change the list', () => {
+        const source: SessionListViewItem[] = [
+            { type: 'header', title: 'Today', headerKind: 'date', groupKey: 'server:server-a:day:2026-03-05', serverId: 'server-a' },
+            makeSession('direct-1', true),
+        ];
+
+        const result = filterSessionListViewDataByStorageKind(source, 'direct');
+
+        expect(result).toBe(source);
+    });
+
     it('keeps only direct sessions and the headers that still own visible rows', () => {
         const groupKey = 'server:server-a:day:2026-03-05';
         const source: SessionListViewItem[] = [

@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import type { SessionListViewItem } from './sessionListViewData';
+import type { SessionListOrderingModeV1 } from './sessionListOrderingStateV1';
 import { computeVisibleSessionListViewData } from './computeVisibleSessionListViewData';
 
 type AnySession = any;
+type OrderingMode = SessionListOrderingModeV1;
 
 function makeSession(id: string, partial?: Partial<AnySession>): AnySession {
     return {
@@ -15,6 +17,42 @@ function makeSession(id: string, partial?: Partial<AnySession>): AnySession {
 }
 
 describe('computeVisibleSessionListViewData', () => {
+    it('returns the original array when no visibility transformations apply', () => {
+        const source: SessionListViewItem[] = [
+            { type: 'header', headerKind: 'date', title: 'Today', serverId: 's1', groupKey: 'server:s1:day:2026-02-17' },
+            { type: 'session', session: makeSession('a', { createdAt: 10, updatedAt: 20 }), serverId: 's1', section: 'inactive', groupKey: 'server:s1:day:2026-02-17', groupKind: 'date' },
+            { type: 'session', session: makeSession('b', { createdAt: 20, updatedAt: 30 }), serverId: 's1', section: 'inactive', groupKey: 'server:s1:day:2026-02-17', groupKind: 'date' },
+        ];
+
+        const result = computeVisibleSessionListViewData({
+            source,
+            hideInactiveSessions: false,
+            pinnedSessionKeysV1: [],
+            sessionListGroupOrderV1: {},
+            presentation: { enabled: false, presentation: 'grouped', selectedServerIds: [] },
+        })!;
+
+        expect(result).toBe(source);
+    });
+
+    it('returns the original array when hideInactiveSessions is enabled but nothing would be filtered or regrouped', () => {
+        const source: SessionListViewItem[] = [
+            { type: 'header', headerKind: 'active', title: 'Active', serverId: 's1' },
+            { type: 'session', session: makeSession('a', { active: true }), serverId: 's1', section: 'active', groupKey: 'server:s1:active:project:abc123', groupKind: 'project' },
+            { type: 'session', session: makeSession('b', { active: true }), serverId: 's1', section: 'active', groupKey: 'server:s1:active:project:abc123', groupKind: 'project' },
+        ];
+
+        const result = computeVisibleSessionListViewData({
+            source,
+            hideInactiveSessions: true,
+            pinnedSessionKeysV1: [],
+            sessionListGroupOrderV1: {},
+            presentation: { enabled: false, presentation: 'grouped', selectedServerIds: [] },
+        })!;
+
+        expect(result).toBe(source);
+    });
+
     it('keeps pinned sessions in their existing list order and normalizes pinned variants to default', () => {
         const source: SessionListViewItem[] = [
             { type: 'header', headerKind: 'project', title: '~/repo', serverId: 's1', groupKey: 'server:s1:project:m1:/repo' },
@@ -36,7 +74,7 @@ describe('computeVisibleSessionListViewData', () => {
         expect(pinnedSessions.map((s) => s.variant)).toEqual(['default', 'default']);
     });
 
-    it('applies group ordering overrides only within the same group', () => {
+    it('applies custom group ordering overrides only within the same group', () => {
         const g = 'server:s1:day:2026-02-17';
         const source: SessionListViewItem[] = [
             { type: 'header', headerKind: 'date', title: 'Today', serverId: 's1', groupKey: g },
@@ -51,10 +89,120 @@ describe('computeVisibleSessionListViewData', () => {
             pinnedSessionKeysV1: [],
             sessionListGroupOrderV1: { [g]: ['s1:s2', 's1:s1'] },
             presentation: { enabled: false, presentation: 'grouped', selectedServerIds: [] },
+            sessionListOrderingModeV1: 'custom' as OrderingMode,
         })!;
 
         const sessions = result.filter((i) => i.type === 'session') as any[];
         expect(sessions.map((s) => s.session.id)).toEqual(['s2', 's1', 's3']);
+    });
+
+    it('returns the original array when custom group ordering already matches the source order', () => {
+        const g = 'server:s1:day:2026-02-17';
+        const source: SessionListViewItem[] = [
+            { type: 'header', headerKind: 'date', title: 'Today', serverId: 's1', groupKey: g },
+            { type: 'session', session: makeSession('s1'), serverId: 's1', section: 'inactive', groupKey: g, groupKind: 'date' },
+            { type: 'session', session: makeSession('s2'), serverId: 's1', section: 'inactive', groupKey: g, groupKind: 'date' },
+            { type: 'session', session: makeSession('s3'), serverId: 's1', section: 'inactive', groupKey: g, groupKind: 'date' },
+        ];
+
+        const result = computeVisibleSessionListViewData({
+            source,
+            hideInactiveSessions: false,
+            pinnedSessionKeysV1: [],
+            sessionListGroupOrderV1: { [g]: ['s1:s1', 's1:s2', 's1:s3'] },
+            presentation: { enabled: false, presentation: 'grouped', selectedServerIds: [] },
+            sessionListOrderingModeV1: 'custom' as OrderingMode,
+        })!;
+
+        expect(result).toBe(source);
+    });
+
+    it('orders sessions by createdAt descending when ordering mode is created', () => {
+        const g = 'server:s1:day:2026-02-17';
+        const source: SessionListViewItem[] = [
+            { type: 'header', headerKind: 'date', title: 'Today', serverId: 's1', groupKey: g },
+            { type: 'session', session: makeSession('b', { createdAt: 30, updatedAt: 100 }), serverId: 's1', section: 'inactive', groupKey: g, groupKind: 'date' },
+            { type: 'session', session: makeSession('a', { createdAt: 10, updatedAt: 200 }), serverId: 's1', section: 'inactive', groupKey: g, groupKind: 'date' },
+            { type: 'session', session: makeSession('c', { createdAt: 20, updatedAt: 100 }), serverId: 's1', section: 'inactive', groupKey: g, groupKind: 'date' },
+        ];
+
+        const result = computeVisibleSessionListViewData({
+            source,
+            hideInactiveSessions: false,
+            pinnedSessionKeysV1: [],
+            sessionListGroupOrderV1: { [g]: ['s1:a', 's1:c'] },
+            presentation: { enabled: false, presentation: 'grouped', selectedServerIds: [] },
+            sessionListOrderingModeV1: 'created' as OrderingMode,
+        })!;
+
+        const sessions = result.filter((i) => i.type === 'session') as any[];
+        expect(sessions.map((s) => s.session.id)).toEqual(['b', 'c', 'a']);
+    });
+
+    it('returns the original array when created ordering is already satisfied and no other transformations apply', () => {
+        const g = 'server:s1:day:2026-02-17';
+        const source: SessionListViewItem[] = [
+            { type: 'header', headerKind: 'date', title: 'Today', serverId: 's1', groupKey: g },
+            { type: 'session', session: makeSession('b', { createdAt: 30, updatedAt: 100 }), serverId: 's1', section: 'inactive', groupKey: g, groupKind: 'date' },
+            { type: 'session', session: makeSession('c', { createdAt: 20, updatedAt: 100 }), serverId: 's1', section: 'inactive', groupKey: g, groupKind: 'date' },
+            { type: 'session', session: makeSession('a', { createdAt: 10, updatedAt: 200 }), serverId: 's1', section: 'inactive', groupKey: g, groupKind: 'date' },
+        ];
+
+        const result = computeVisibleSessionListViewData({
+            source,
+            hideInactiveSessions: false,
+            pinnedSessionKeysV1: [],
+            sessionListGroupOrderV1: {},
+            presentation: { enabled: false, presentation: 'grouped', selectedServerIds: [] },
+            sessionListOrderingModeV1: 'created' as OrderingMode,
+        })!;
+
+        expect(result).toBe(source);
+    });
+
+    it('orders sessions by updatedAt descending with stable tie-breaks when ordering mode is updated', () => {
+        const g = 'server:s1:day:2026-02-17';
+        const source: SessionListViewItem[] = [
+            { type: 'header', headerKind: 'date', title: 'Today', serverId: 's1', groupKey: g },
+            { type: 'session', session: makeSession('b', { createdAt: 30, updatedAt: 100 }), serverId: 's1', section: 'inactive', groupKey: g, groupKind: 'date' },
+            { type: 'session', session: makeSession('d', { createdAt: 20, updatedAt: 100 }), serverId: 's1', section: 'inactive', groupKey: g, groupKind: 'date' },
+            { type: 'session', session: makeSession('c', { createdAt: 20, updatedAt: 100 }), serverId: 's1', section: 'inactive', groupKey: g, groupKind: 'date' },
+            { type: 'session', session: makeSession('a', { createdAt: 10, updatedAt: 200 }), serverId: 's1', section: 'inactive', groupKey: g, groupKind: 'date' },
+        ];
+
+        const result = computeVisibleSessionListViewData({
+            source,
+            hideInactiveSessions: false,
+            pinnedSessionKeysV1: [],
+            sessionListGroupOrderV1: { [g]: ['s1:c', 's1:b'] },
+            presentation: { enabled: false, presentation: 'grouped', selectedServerIds: [] },
+            sessionListOrderingModeV1: 'updated' as OrderingMode,
+        })!;
+
+        const sessions = result.filter((i) => i.type === 'session') as any[];
+        expect(sessions.map((s) => s.session.id)).toEqual(['a', 'b', 'c', 'd']);
+    });
+
+    it('keeps pinned sessions ordered by ordering mode when not custom', () => {
+        const g = 'server:s1:day:2026-02-17';
+        const source: SessionListViewItem[] = [
+            { type: 'header', headerKind: 'date', title: 'Today', serverId: 's1', groupKey: g },
+            { type: 'session', session: makeSession('p1', { createdAt: 10, updatedAt: 100 }), serverId: 's1', section: 'inactive', groupKey: g, groupKind: 'date' },
+            { type: 'session', session: makeSession('p2', { createdAt: 20, updatedAt: 200 }), serverId: 's1', section: 'inactive', groupKey: g, groupKind: 'date' },
+            { type: 'session', session: makeSession('p3', { createdAt: 15, updatedAt: 200 }), serverId: 's1', section: 'inactive', groupKey: g, groupKind: 'date' },
+        ];
+
+        const result = computeVisibleSessionListViewData({
+            source,
+            hideInactiveSessions: false,
+            pinnedSessionKeysV1: ['s1:p3', 's1:p1', 's1:p2'],
+            sessionListGroupOrderV1: { 'pinned-v1': ['s1:p1', 's1:p3', 's1:p2'] },
+            presentation: { enabled: false, presentation: 'grouped', selectedServerIds: [] },
+            sessionListOrderingModeV1: 'updated' as OrderingMode,
+        })!;
+
+        const pinnedSessions = result.filter((i) => i.type === 'session' && (i as any).pinned === true) as any[];
+        expect(pinnedSessions.map((s) => s.session.id)).toEqual(['p2', 'p3', 'p1']);
     });
 
     it('keeps pinned inactive sessions visible when hideInactiveSessions is enabled', () => {

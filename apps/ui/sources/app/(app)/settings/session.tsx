@@ -51,6 +51,7 @@ export default React.memo(function SessionSettingsScreen() {
     const deviceType = useDeviceType();
     const panelsSupported = Platform.OS === 'web' || deviceType === 'tablet';
     const [sessionListDensity, setSessionListDensity] = useSettingMutable('sessionListDensity');
+    const [sessionListOrderingModeV1, setSessionListOrderingModeV1] = useSettingMutable('sessionListOrderingModeV1');
     const [hideInactiveSessions, setHideInactiveSessions] = useSettingMutable('hideInactiveSessions');
     const [sessionListActiveGroupingV1, setSessionListActiveGroupingV1] = useSettingMutable('sessionListActiveGroupingV1');
     const [sessionListInactiveGroupingV1, setSessionListInactiveGroupingV1] = useSettingMutable('sessionListInactiveGroupingV1');
@@ -66,6 +67,7 @@ export default React.memo(function SessionSettingsScreen() {
     const [openReplayMenu, setOpenReplayMenu] = React.useState<boolean>(false);
     const [openGroupingMenu, setOpenGroupingMenu] = React.useState<null | 'active' | 'inactive'>(null);
     const [openSessionListDensityMenu, setOpenSessionListDensityMenu] = React.useState(false);
+    const [openSessionListOrderingModeMenu, setOpenSessionListOrderingModeMenu] = React.useState(false);
     const [openWindowsRemoteSessionLaunchModeMenu, setOpenWindowsRemoteSessionLaunchModeMenu] = React.useState(false);
 
     const groupingMenuItems = React.useMemo(() => [
@@ -112,6 +114,26 @@ export default React.memo(function SessionSettingsScreen() {
         if (itemId !== 'detailed' && itemId !== 'cozy' && itemId !== 'narrow') return;
         setSessionListDensity(itemId);
     }, [setSessionListDensity]);
+
+    const sessionListOrderingModeItems = React.useMemo(() => [
+        {
+            id: 'custom',
+            title: t('settingsSession.sessionList.orderingOptions.custom'),
+        },
+        {
+            id: 'created',
+            title: t('settingsSession.sessionList.orderingOptions.created'),
+        },
+        {
+            id: 'updated',
+            title: t('settingsSession.sessionList.orderingOptions.updated'),
+        },
+    ], []);
+
+    const handleSessionListOrderingModeSelect = React.useCallback((itemId: string) => {
+        if (itemId !== 'custom' && itemId !== 'created' && itemId !== 'updated') return;
+        setSessionListOrderingModeV1(itemId);
+    }, [setSessionListOrderingModeV1]);
 
     const options: Array<{ key: MessageSendMode; title: string; subtitle: string }> = [
         {
@@ -209,6 +231,27 @@ export default React.memo(function SessionSettingsScreen() {
                     }}
                     items={sessionListDensityItems}
                     onSelect={handleSessionListDensitySelect}
+                />
+                <DropdownMenu
+                    open={openSessionListOrderingModeMenu}
+                    onOpenChange={setOpenSessionListOrderingModeMenu}
+                    variant="selectable"
+                    search={false}
+                    selectedId={sessionListOrderingModeV1}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    popoverBoundaryRef={popoverBoundaryRef}
+                    itemTrigger={{
+                        title: t('settingsSession.sessionList.orderingTitle'),
+                        subtitle: t('settingsSession.sessionList.orderingSubtitle'),
+                        icon: <Ionicons name="swap-vertical-outline" size={29} color={theme.colors.accent.indigo} />,
+                        showSelectedSubtitle: false,
+                        itemProps: { testID: 'settings-session-sessionListOrderingMode-trigger' },
+                    }}
+                    items={sessionListOrderingModeItems}
+                    onSelect={handleSessionListOrderingModeSelect}
                 />
                 <Item
                     title={t('settingsFeatures.hideInactiveSessions')}

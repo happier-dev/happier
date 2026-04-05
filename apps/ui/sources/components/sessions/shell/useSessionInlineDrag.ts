@@ -9,6 +9,7 @@ export type UseSessionInlineDragParams = Readonly<{
     sessionKey: string | null;
     groupKey: string;
     rowHeight: number;
+    enabled?: boolean;
     onDragStart: (sessionKey: string) => void;
     /**
      * Called once when the drag gesture ends (or is cancelled).
@@ -60,6 +61,7 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
         sessionKey,
         groupKey,
         rowHeight,
+        enabled = true,
         onDragStart,
         onDragEnd,
         dataIndex,
@@ -88,7 +90,7 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
     const didStartDrag = useSharedValue(false);
 
     const gesture = useMemo(() => {
-        if (!sessionKey) return undefined;
+        if (!sessionKey || enabled === false) return undefined;
 
         // Wrap ref reads in plain functions so the worklet can schedule them on
         // the JS thread. The ref.current is always the latest callback.
@@ -215,9 +217,21 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
         return Gesture.Simultaneous(longPressGesture, panGesture);
     // Only recreate when the row's identity or size changes — NOT when callbacks change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [sessionKey, groupKey, rowHeight, dataIndex, totalItemCount]);
+    }, [enabled, sessionKey, groupKey, rowHeight, dataIndex, totalItemCount]);
 
     const animatedStyle = useAnimatedStyle<ViewStyle>(() => {
+        if (!enabled) {
+            return {
+                position: 'relative' as const,
+                transform: [{ translateY: 0 }, { scale: 1 }],
+                zIndex: 0,
+                shadowColor: dragLiftShadow.shadowColor,
+                shadowOffset: dragLiftShadow.shadowOffset,
+                shadowOpacity: 0,
+                shadowRadius: 0,
+                elevation: 0,
+            };
+        }
         return {
             // position: 'relative' is needed on web for zIndex to create a stacking context
             position: 'relative' as const,

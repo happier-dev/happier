@@ -158,6 +158,8 @@ installSessionShellCommonModuleMocks({
             useSettings: () => ({ ...settingsDefaults, experiments: true, featureToggles: {} }),
             useAutomations: () => [],
             useMachine: () => null,
+            useServerScopedMachine: () => null,
+            useWorkspaceReviewCommentsDrafts: () => [],
         };
     },
 });

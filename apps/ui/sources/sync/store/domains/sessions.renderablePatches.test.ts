@@ -23,6 +23,7 @@ function mockSessionsDomainBoundaries() {
         loadSessionPermissionModes: () => ({}),
         loadSessionActionDrafts: () => ({}),
         loadSessionReviewCommentsDrafts: () => ({}),
+        loadWorkspaceReviewCommentsDrafts: () => ({}),
         saveSessionDrafts: vi.fn(),
         saveSessionLastViewed: vi.fn(),
         saveSessionModelModeUpdatedAts: vi.fn(),
@@ -31,6 +32,7 @@ function mockSessionsDomainBoundaries() {
         saveSessionPermissionModes: vi.fn(),
         saveSessionActionDrafts: vi.fn(),
         saveSessionReviewCommentsDrafts: vi.fn(),
+        saveWorkspaceReviewCommentsDrafts: vi.fn(),
         saveSettings: vi.fn(),
         saveLocalSettings: vi.fn(),
         savePendingSettings: vi.fn(),
@@ -39,11 +41,16 @@ function mockSessionsDomainBoundaries() {
     }));
     vi.doMock('../../domains/state/warmCachePersistence', () => ({
         resolveWarmCacheAccountScope: vi.fn((fallback: string | null | undefined) => fallback ?? null),
+        peekSessionListWarmCacheEntries: vi.fn(() => null),
         saveSessionListWarmCacheEntries: vi.fn(),
     }));
-    vi.doMock('../sessionListCache', () => ({
-        setActiveServerSessionListCache: vi.fn((current: any, value: any) => ({ ...current, server_1: value })),
-    }));
+    vi.doMock('../../domains/state/warmCacheAdapters', async () => {
+        const actual = await vi.importActual<typeof import('../../domains/state/warmCacheAdapters')>('../../domains/state/warmCacheAdapters');
+        return {
+            ...actual,
+            buildSessionListCacheEntriesFromRenderables: vi.fn(actual.buildSessionListCacheEntriesFromRenderables),
+        };
+    });
     vi.doMock('../../domains/server/serverRuntime', () => ({
         getActiveServerSnapshot: vi.fn(() => ({ serverId: 'server_1' })),
     }));
@@ -66,7 +73,6 @@ function createHarness(createSessionsDomain: any) {
     let state: any = {
         sessions: {},
         sessionListRenderables: {},
-        sessionsData: null,
         sessionListViewData: null,
         sessionListViewDataByServerId: {},
         sessionScmStatus: {},
@@ -125,13 +131,247 @@ describe('sessions domain: renderable patches', () => {
         ]);
 
         expect(get().sessionListRenderables['s1']?.active).toBe(false);
-        expect(get().sessionListViewDataByServerId['server_1']).not.toBeUndefined();
-
         const saveWarmCache = warmCache.saveSessionListWarmCacheEntries as unknown as ReturnType<typeof vi.fn>;
         expect(saveWarmCache).toHaveBeenCalledTimes(2);
         const lastCall = saveWarmCache.mock.calls.at(-1);
         const entries = lastCall?.[2] as Record<string, any>;
         expect(entries?.s1?.active).toBe(false);
         expect(entries?.s1?.activeAt).toBe(20);
+    });
+
+    it('preserves warm-cache payload for non-semantic renderable patches', async () => {
+        mockSessionsDomainBoundaries();
+
+        const warmCache = await import('../../domains/state/warmCachePersistence');
+        const { buildSessionListRenderableFromSession } = await import('../../domains/session/listing/sessionListRenderable');
+        const { createSessionsDomain } = await import('./sessions');
+        const { get, domain } = createHarness(createSessionsDomain);
+
+        domain.replaceSessionListRenderables([buildSessionListRenderableFromSession({
+            id: 's1',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 10,
+            active: true,
+            activeAt: 10,
+            pendingCount: 0,
+            pendingVersion: 1,
+            metadata: {
+                machineId: 'm1',
+                host: 'host-a',
+                path: '/home/u/repo',
+                homeDir: '/home/u',
+            },
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any)]);
+
+        const initialRenderables = get().sessionListRenderables;
+        const initialRenderable = initialRenderables['s1'];
+        const saveWarmCache = warmCache.saveSessionListWarmCacheEntries as unknown as ReturnType<typeof vi.fn>;
+        expect(initialRenderable).toBeDefined();
+        expect(saveWarmCache).toHaveBeenCalledTimes(1);
+
+        domain.applySessionListRenderablePatches([
+            { sessionId: 's1', patch: { presence: 20 } },
+        ]);
+
+        expect(get().sessionListRenderables).not.toBe(initialRenderables);
+        expect(get().sessionListRenderables['s1']).not.toBe(initialRenderable);
+        expect(get().sessionListRenderables['s1']).toEqual(expect.objectContaining({
+            presence: 20,
+        }));
+        const initialEntries = saveWarmCache.mock.calls.at(0)?.[2] as Record<string, any>;
+        const latestEntries = saveWarmCache.mock.calls.at(-1)?.[2] as Record<string, any>;
+        expect(latestEntries).toEqual(initialEntries);
+    });
+
+    it('preserves previous canonical renderable metadata when a replacement renderable is still stale', async () => {
+        mockSessionsDomainBoundaries();
+
+        const warmCache = await import('../../domains/state/warmCachePersistence');
+        const { buildSessionListRenderableFromSession } = await import('../../domains/session/listing/sessionListRenderable');
+        const { createSessionsDomain } = await import('./sessions');
+        const { get, domain } = createHarness(createSessionsDomain);
+
+        domain.replaceSessionListRenderables([buildSessionListRenderableFromSession({
+            id: 's1',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 10,
+            active: true,
+            activeAt: 10,
+            metadata: {
+                name: 'Cached title',
+                machineId: 'm1',
+                path: '/home/u/repo',
+                homeDir: '/home/u',
+            },
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            pendingPermissionRequestCount: 1,
+            pendingUserActionRequestCount: 0,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any)]);
+
+        domain.replaceSessionListRenderables([
+            {
+                id: 's1',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 20,
+                active: true,
+                activeAt: 20,
+                pendingCount: 2,
+                pendingVersion: 3,
+                metadataVersion: 2,
+                agentStateVersion: 1,
+                metadata: null,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 'online',
+            } as any,
+        ]);
+
+        expect(get().sessionListRenderables.s1).toEqual(expect.objectContaining({
+            id: 's1',
+            updatedAt: 20,
+            pendingCount: 2,
+            pendingVersion: 3,
+            metadataVersion: 1,
+            agentStateVersion: 0,
+            metadata: expect.objectContaining({
+                name: 'Cached title',
+                path: '/home/u/repo',
+                homeDir: '/home/u',
+                machineId: 'm1',
+            }),
+            hasPendingPermissionRequests: true,
+            hasPendingUserActionRequests: false,
+        }));
+
+        const saveWarmCache = warmCache.saveSessionListWarmCacheEntries as unknown as ReturnType<typeof vi.fn>;
+        const lastCall = saveWarmCache.mock.calls.at(-1);
+        const entries = lastCall?.[2] as Record<string, any>;
+
+        expect(entries?.s1).toEqual(expect.objectContaining({
+            sessionId: 's1',
+            updatedAt: 20,
+            pendingCount: 2,
+            pendingVersion: 3,
+            metadataVersion: 1,
+            agentStateVersion: 0,
+            name: 'Cached title',
+            path: '/home/u/repo',
+            homeDir: '/home/u',
+            machineId: 'm1',
+            hasPendingPermissionRequests: true,
+            hasPendingUserActionRequests: false,
+        }));
+    });
+
+    it('skips no-op renderable patches', async () => {
+        mockSessionsDomainBoundaries();
+
+        const warmCache = await import('../../domains/state/warmCachePersistence');
+        const warmCacheAdapters = await import('../../domains/state/warmCacheAdapters');
+        const { buildSessionListRenderableFromSession } = await import('../../domains/session/listing/sessionListRenderable');
+        const { createSessionsDomain } = await import('./sessions');
+        const { get, domain } = createHarness(createSessionsDomain);
+
+        domain.replaceSessionListRenderables([buildSessionListRenderableFromSession({
+            id: 's1',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 10,
+            active: true,
+            activeAt: 10,
+            pendingCount: 0,
+            pendingVersion: 1,
+            metadata: null,
+            metadataVersion: 0,
+            agentState: null,
+            agentStateVersion: 0,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any)]);
+
+        const initialRenderables = get().sessionListRenderables;
+        const initialRenderable = initialRenderables['s1'];
+        const saveWarmCache = warmCache.saveSessionListWarmCacheEntries as unknown as ReturnType<typeof vi.fn>;
+        const buildPreviousEntries = warmCacheAdapters.buildSessionListCacheEntriesFromRenderables as unknown as ReturnType<typeof vi.fn>;
+        expect(initialRenderable).toBeDefined();
+        expect(saveWarmCache).toHaveBeenCalledTimes(1);
+        buildPreviousEntries.mockClear();
+
+        domain.applySessionListRenderablePatches([
+            { sessionId: 's1', patch: { pendingCount: 0, pendingVersion: 1 } },
+        ]);
+
+        expect(get().sessionListRenderables).toBe(initialRenderables);
+        expect(get().sessionListRenderables['s1']).toBe(initialRenderable);
+        expect(saveWarmCache).toHaveBeenCalledTimes(1);
+        expect(buildPreviousEntries).not.toHaveBeenCalled();
+    });
+
+    it('skips identical renderable replacements', async () => {
+        mockSessionsDomainBoundaries();
+
+        const warmCache = await import('../../domains/state/warmCachePersistence');
+        const warmCacheAdapters = await import('../../domains/state/warmCacheAdapters');
+        const { buildSessionListRenderableFromSession } = await import('../../domains/session/listing/sessionListRenderable');
+        const { createSessionsDomain } = await import('./sessions');
+        const { get, domain } = createHarness(createSessionsDomain);
+
+        domain.replaceSessionListRenderables([buildSessionListRenderableFromSession({
+            id: 's1',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 10,
+            active: true,
+            activeAt: 10,
+            pendingCount: 0,
+            pendingVersion: 1,
+            metadata: {
+                machineId: 'm1',
+                host: 'host-a',
+                path: '/home/u/repo',
+                homeDir: '/home/u',
+            },
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any)]);
+
+        const initialRenderables = get().sessionListRenderables;
+        const initialRenderable = initialRenderables['s1'];
+        const saveWarmCache = warmCache.saveSessionListWarmCacheEntries as unknown as ReturnType<typeof vi.fn>;
+        const buildPreviousEntries = warmCacheAdapters.buildSessionListCacheEntriesFromRenderables as unknown as ReturnType<typeof vi.fn>;
+        expect(initialRenderable).toBeDefined();
+        expect(saveWarmCache).toHaveBeenCalledTimes(1);
+        buildPreviousEntries.mockClear();
+
+        domain.replaceSessionListRenderables([
+            {
+                ...initialRenderable,
+                metadata: initialRenderable?.metadata ? { ...initialRenderable.metadata } : null,
+            },
+        ]);
+
+        expect(get().sessionListRenderables).toBe(initialRenderables);
+        expect(get().sessionListRenderables['s1']).toBe(initialRenderable);
+        expect(saveWarmCache).toHaveBeenCalledTimes(1);
+        expect(buildPreviousEntries).not.toHaveBeenCalled();
     });
 });

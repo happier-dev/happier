@@ -1,5 +1,5 @@
-import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import React, { act } from 'react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPartialStorageModuleMock, renderScreen } from '@/dev/testkit';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
@@ -22,13 +22,35 @@ vi.mock('react-native-safe-area-context', () => ({
 const routerPushSpy = vi.fn();
 const setPinnedSessionKeysV1 = vi.fn();
 const setSessionListGroupOrderV1 = vi.fn();
+const setSessionListOrderingModeV1 = vi.fn();
+const setSessionListActiveGroupingV1 = vi.fn();
+const setSessionListInactiveGroupingV1 = vi.fn();
+const setHideInactiveSessions = vi.fn();
 const setSessionTagsV1 = vi.fn();
 const recoveryBannerMountSpy = vi.fn();
 const recoveryBannerUnmountSpy = vi.fn();
 
 let pinnedSessionKeysV1: string[] = [];
 let sessionListGroupOrderV1: Record<string, string[]> = {};
+let sessionListOrderingModeV1 = 'custom';
+let sessionListActiveGroupingV1: 'project' | 'date' = 'project';
+let sessionListInactiveGroupingV1: 'project' | 'date' = 'date';
+let hideInactiveSessions = false;
 let sessionTagsV1: Record<string, string[]> = {};
+type DropdownMenuCapture = {
+    items?: Array<{ id?: string; rightElement?: unknown }>;
+    selectedId?: string;
+    onSelect?: (id: string) => void;
+    trigger?: (params: {
+        open: boolean;
+        toggle: () => void;
+        openMenu: () => void;
+        closeMenu: () => void;
+        selectedItem: unknown;
+    }) => unknown;
+};
+
+const dropdownMenuCaptures: DropdownMenuCapture[] = [];
 
 installSessionShellCommonModuleMocks({
     reactNative: async () => {
@@ -66,16 +88,40 @@ installSessionShellCommonModuleMocks({
             if (key === 'compactSessionView') return false;
             if (key === 'compactSessionViewMinimal') return false;
             if (key === 'sessionTagsEnabled') return true;
+            if (key === 'sessionListOrderingModeV1') return sessionListOrderingModeV1;
+            if (key === 'sessionListActiveGroupingV1') return sessionListActiveGroupingV1;
+            if (key === 'sessionListInactiveGroupingV1') return sessionListInactiveGroupingV1;
+            if (key === 'hideInactiveSessions') return hideInactiveSessions;
             return null;
         },
         useSettingMutable: (key: string) => {
             if (key === 'pinnedSessionKeysV1') return [pinnedSessionKeysV1, setPinnedSessionKeysV1];
             if (key === 'sessionListGroupOrderV1') return [sessionListGroupOrderV1, setSessionListGroupOrderV1];
+            if (key === 'sessionListOrderingModeV1') return [sessionListOrderingModeV1, setSessionListOrderingModeV1];
+            if (key === 'sessionListActiveGroupingV1') return [sessionListActiveGroupingV1, setSessionListActiveGroupingV1];
+            if (key === 'sessionListInactiveGroupingV1') return [sessionListInactiveGroupingV1, setSessionListInactiveGroupingV1];
+            if (key === 'hideInactiveSessions') return [hideInactiveSessions, setHideInactiveSessions];
             if (key === 'sessionTagsV1') return [sessionTagsV1, setSessionTagsV1];
             return [null, vi.fn()];
         },
     }),
 });
+
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
+    DropdownMenu: (props: any) => {
+        dropdownMenuCaptures.push(props);
+        const triggerResult = typeof props.trigger === 'function'
+            ? props.trigger({
+                open: Boolean(props.open),
+                toggle: vi.fn(),
+                openMenu: vi.fn(),
+                closeMenu: vi.fn(),
+                selectedItem: null,
+            })
+            : null;
+        return React.createElement('DropdownMenu', props, triggerResult);
+    },
+}));
 
 vi.mock('@/components/account/RecoveryKeyReminderBanner', () => ({
     RecoveryKeyReminderBanner: () => {
@@ -102,7 +148,10 @@ vi.mock('@/utils/sessions/sessionUtils', () => ({
     formatPathRelativeToHome: (path: string) => path,
 }));
 
-const useSessionInlineDragSpy = vi.hoisted(() => vi.fn((params: any) => ({ gesture: undefined, animatedStyle: params ? {} : {} })));
+const useSessionInlineDragSpy = vi.hoisted(() => vi.fn((params: any) => ({
+    gesture: params?.enabled === false ? undefined : { kind: 'mock-gesture' },
+    animatedStyle: params ? {} : {},
+})));
 
 vi.mock('@/hooks/server/useEffectiveServerSelection', () => ({
     useResolvedActiveServerSelection: () => ({
@@ -122,8 +171,16 @@ const mockVisibleSessionListViewData: any[] = [
     { type: 'session', session: sessionB, groupKey, groupKind: 'date', serverId: 'server_a', serverName: 'Server A' },
 ];
 
-vi.mock('@/hooks/session/useVisibleSessionListViewData', () => ({
-    useVisibleSessionListViewData: () => mockVisibleSessionListViewData,
+vi.mock('@/hooks/session/useVisibleSessionListPaneState', () => ({
+    useVisibleSessionListPaneState: () => ({
+        summary: {
+            sessionsReady: true,
+            sessionCount: mockVisibleSessionListViewData.filter((item) => item.type === 'session').length,
+        },
+        visibleSessionListViewData: mockVisibleSessionListViewData,
+        showLoading: false,
+        showEmptyState: false,
+    }),
 }));
 
 const requestReviewSpy = vi.hoisted(() => vi.fn());
@@ -140,6 +197,25 @@ vi.mock('./SessionItem', () => ({
 }));
 
 describe('SessionsList (inline reorder)', () => {
+    beforeEach(() => {
+        sessionListOrderingModeV1 = 'custom';
+        pinnedSessionKeysV1 = [];
+        sessionListGroupOrderV1 = {};
+        sessionTagsV1 = {};
+        dropdownMenuCaptures.length = 0;
+        requestReviewSpy.mockClear();
+        useSessionInlineDragSpy.mockClear();
+        setSessionListActiveGroupingV1.mockClear();
+        setSessionListInactiveGroupingV1.mockClear();
+        setHideInactiveSessions.mockClear();
+        setPinnedSessionKeysV1.mockClear();
+        setSessionListGroupOrderV1.mockClear();
+        setSessionListOrderingModeV1.mockClear();
+        setSessionTagsV1.mockClear();
+        recoveryBannerMountSpy.mockClear();
+        recoveryBannerUnmountSpy.mockClear();
+    });
+
     it('does not trigger store-review prompts automatically when the list renders', async () => {
         requestReviewSpy.mockClear();
         const { SessionsList } = await import('./SessionsList');
@@ -167,6 +243,102 @@ describe('SessionsList (inline reorder)', () => {
         // isBeingDragged is passed from SessionListRow
         expect(items[0].props.isBeingDragged).toBe(false);
         expect(useSessionInlineDragSpy).toHaveBeenCalledWith(expect.objectContaining({ rowHeight: 84 }));
+    });
+
+    it('hides reorder drag props when ordering mode is created or updated', async () => {
+        sessionListOrderingModeV1 = 'created';
+
+        const { SessionsList } = await import('./SessionsList');
+        const screen = await renderScreen(<SessionsList />);
+
+        const items = screen.findAll((node) => String(node.type) === 'SessionItem');
+        expect(items.length).toBe(2);
+        expect(items[0].props.reorderHandleGesture).toBeUndefined();
+        expect(useSessionInlineDragSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ rowHeight: 84, enabled: false }),
+        );
+        expect(useSessionInlineDragSpy).not.toHaveBeenCalledWith(
+            expect.objectContaining({ rowHeight: 84, enabled: true }),
+        );
+    });
+
+    it('keeps drag-end persistence disabled when ordering mode is not custom', async () => {
+        sessionListOrderingModeV1 = 'updated';
+        sessionListGroupOrderV1 = {};
+        sessionTagsV1 = {};
+        useSessionInlineDragSpy.mockClear();
+
+        const { SessionsList } = await import('./SessionsList');
+        await renderScreen(<SessionsList />);
+
+        const firstRowDragCall = useSessionInlineDragSpy.mock.calls.find((call) => call[0]?.sessionKey === 'server_a:sess_a');
+        expect(firstRowDragCall).toBeTruthy();
+        await act(async () => {
+            firstRowDragCall?.[0]?.onDragEnd?.('server_a:sess_a', groupKey, 1);
+        });
+
+        expect(setSessionListGroupOrderV1).toHaveBeenCalledTimes(0);
+    });
+
+    it('restores reorder drag props when ordering mode returns to custom', async () => {
+        sessionListOrderingModeV1 = 'updated';
+        const { SessionsList } = await import('./SessionsList');
+
+        const screen = await renderScreen(<SessionsList />);
+        const disabledDragCall = useSessionInlineDragSpy.mock.calls.find((call) => call[0]?.sessionKey === 'server_a:sess_a');
+        expect(disabledDragCall?.[0]).toMatchObject({ sessionKey: 'server_a:sess_a', enabled: false });
+
+        useSessionInlineDragSpy.mockClear();
+        setSessionListOrderingModeV1.mockClear();
+        sessionListOrderingModeV1 = 'custom';
+        const updatedScreen = await renderScreen(<SessionsList />);
+        const enabledDragCall = [...useSessionInlineDragSpy.mock.calls]
+            .reverse()
+            .find((call) => call[0]?.sessionKey === 'server_a:sess_a');
+        expect(enabledDragCall?.[0]).toMatchObject({ sessionKey: 'server_a:sess_a', enabled: true });
+
+        const reorderedItems = updatedScreen.findAll((node) => String(node.type) === 'SessionItem');
+        expect(reorderedItems.length).toBe(2);
+        expect(reorderedItems[0].props).toHaveProperty('reorderHandleGesture');
+    });
+
+    it('exposes quick-access ordering, grouping, and visibility controls and writes canonical settings on select', async () => {
+        const { SessionsList } = await import('./SessionsList');
+
+        await renderScreen(<SessionsList />);
+
+        const menuProps = dropdownMenuCaptures.find((captured) => {
+            const items = captured.items ?? [];
+            return items.some((item: any) => item?.id === 'activeGroupingProject')
+                && items.some((item: any) => item?.id === 'inactiveGroupingProject')
+                && items.some((item: any) => item?.id === 'hideInactiveSessions');
+        });
+        expect(menuProps).toBeTruthy();
+        expect(menuProps?.selectedId).toBe('custom');
+        const itemIds = (menuProps?.items ?? []).map((item: any) => String(item?.id ?? ''));
+        expect(itemIds).toEqual(expect.arrayContaining([
+            'custom',
+            'created',
+            'updated',
+            'activeGroupingProject',
+            'activeGroupingDate',
+            'inactiveGroupingProject',
+            'inactiveGroupingDate',
+            'hideInactiveSessions',
+        ]));
+        const activeGroupingProjectItem = menuProps?.items?.find((item: any) => item?.id === 'activeGroupingProject');
+        const inactiveGroupingDateItem = menuProps?.items?.find((item: any) => item?.id === 'inactiveGroupingDate');
+        expect((activeGroupingProjectItem as { rightElement?: unknown } | undefined)?.rightElement).toBeTruthy();
+        expect((inactiveGroupingDateItem as { rightElement?: unknown } | undefined)?.rightElement).toBeTruthy();
+
+        menuProps?.onSelect?.('created');
+        expect(setSessionListOrderingModeV1).toHaveBeenCalledWith('created');
+        menuProps?.onSelect?.('activeGroupingDate');
+        expect(setSessionListActiveGroupingV1).toHaveBeenCalledWith('date');
+        menuProps?.onSelect?.('inactiveGroupingProject');
+        expect(setSessionListInactiveGroupingV1).toHaveBeenCalledWith('project');
+        menuProps?.onSelect?.('hideInactiveSessions');
+        expect(setHideInactiveSessions).toHaveBeenCalledWith(true);
     });
 
     it('keeps the recovery banner mounted across SessionsList rerenders', async () => {

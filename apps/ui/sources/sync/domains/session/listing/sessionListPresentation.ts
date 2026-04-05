@@ -1,5 +1,6 @@
 import type { ServerSelectionPresentation } from '@/sync/domains/server/selection/serverSelectionTypes';
 import type { SessionListViewItem } from './sessionListViewData';
+import { getSessionStorageKind, type SessionListStorageFilter } from '../sessionStorageKind';
 
 type ApplySessionListPresentationParams = Readonly<{
     enabled: boolean;
@@ -10,9 +11,16 @@ type ApplySessionListPresentationParams = Readonly<{
 type ResolveSessionListSourceDataParams = Readonly<{
     enabled: boolean;
     activeServerId: string;
-    activeData: SessionListViewItem[] | null;
-    byServerId?: Readonly<Record<string, SessionListViewItem[] | null | undefined>>;
+    activeData: ReadonlyArray<SessionListViewItem> | null;
+    byServerId?: Readonly<Record<string, ReadonlyArray<SessionListViewItem> | null | undefined>>;
     selectedServerIds?: ReadonlyArray<string>;
+}>;
+
+type ResolveVisibleSessionListSummaryParams = ResolveSessionListSourceDataParams;
+
+export type VisibleSessionListSummary = Readonly<{
+    sessionsReady: boolean;
+    sessionCount: number;
 }>;
 
 function toServerLabel(item: SessionListViewItem): string {
@@ -23,11 +31,71 @@ function toServerLabel(item: SessionListViewItem): string {
     return 'Unknown server';
 }
 
-function stripSyntheticServerHeaders(data: SessionListViewItem[]): SessionListViewItem[] {
+function stripSyntheticServerHeaders(data: ReadonlyArray<SessionListViewItem>): SessionListViewItem[] {
     return data.filter((item) => !(item.type === 'header' && item.headerKind === 'server'));
 }
 
-function countDistinctServerIds(data: SessionListViewItem[]): number {
+function hasSyntheticServerHeaders(data: ReadonlyArray<SessionListViewItem>): boolean {
+    return data.some((item) => item.type === 'header' && item.headerKind === 'server');
+}
+
+function isAlreadyCanonicalGroupedServerPresentation(
+    data: ReadonlyArray<SessionListViewItem>,
+): boolean {
+    if (!hasSyntheticServerHeaders(data)) return false;
+
+    let currentServerId: string | null = null;
+    let seenSessionInCurrentGroup = false;
+    let sawServerGroup = false;
+
+    for (const item of data) {
+        if (item.type === 'header') {
+            if (item.headerKind !== 'server') return false;
+            if (sawServerGroup && !seenSessionInCurrentGroup) return false;
+
+            currentServerId = String(item.serverId ?? '').trim();
+            if (!currentServerId) return false;
+
+            sawServerGroup = true;
+            seenSessionInCurrentGroup = false;
+            continue;
+        }
+
+        if (item.type !== 'session') return false;
+        if (!currentServerId) return false;
+
+        const serverId = String(item.serverId ?? '').trim();
+        if (!serverId || serverId !== currentServerId) return false;
+
+        seenSessionInCurrentGroup = true;
+    }
+
+    return sawServerGroup && seenSessionInCurrentGroup;
+}
+
+function selectionCoversAllVisibleServerIds(
+    data: ReadonlyArray<SessionListViewItem>,
+    selectedServerSet: ReadonlySet<string>,
+): boolean {
+    for (const item of data) {
+        if (item.type === 'header') {
+            if (item.headerKind === 'server') {
+                return false;
+            }
+            continue;
+        }
+
+        const serverId = String(item.serverId ?? '').trim();
+        if (!serverId) continue;
+        if (!selectedServerSet.has(serverId)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function countDistinctServerIds(data: ReadonlyArray<SessionListViewItem>): number {
     const ids = new Set<string>();
     for (const item of data) {
         const serverId = String(item.serverId ?? '').trim();
@@ -37,9 +105,36 @@ function countDistinctServerIds(data: SessionListViewItem[]): number {
     return ids.size;
 }
 
+function countSessionItems(data: ReadonlyArray<SessionListViewItem>): number {
+    let count = 0;
+    for (const item of data) {
+        if (item.type === 'session') {
+            count += 1;
+        }
+    }
+    return count;
+}
+
+function countSessionItemsByStorageFilter(
+    data: ReadonlyArray<SessionListViewItem>,
+    storageFilter: SessionListStorageFilter,
+): number {
+    if (storageFilter === 'all') {
+        return countSessionItems(data);
+    }
+
+    let count = 0;
+    for (const item of data) {
+        if (item.type !== 'session') continue;
+        if (getSessionStorageKind(item.session) !== storageFilter) continue;
+        count += 1;
+    }
+    return count;
+}
+
 export function resolveSessionListSourceData(
     params: ResolveSessionListSourceDataParams,
-): SessionListViewItem[] | null {
+): ReadonlyArray<SessionListViewItem> | null {
     if (!params.enabled) {
         return params.activeData;
     }
@@ -53,35 +148,129 @@ export function resolveSessionListSourceData(
 
     const activeServerId = String(params.activeServerId ?? '').trim();
     const scoped = params.byServerId ?? {};
+    let usedOnlyActiveDataSource = true;
+    if (selectedServerIds.length === 1 && selectedServerIds[0] === activeServerId) {
+        const selectedSource = scoped[activeServerId] ?? params.activeData;
+        if (selectedSource === params.activeData) {
+            return params.activeData;
+        }
+    }
+
     const merged: SessionListViewItem[] = [];
 
     for (const serverId of selectedServerIds) {
         const fromCache = scoped[serverId];
         const source = fromCache ?? (serverId === activeServerId ? params.activeData : null);
         if (!source || source.length === 0) continue;
+        if (source !== params.activeData) {
+            usedOnlyActiveDataSource = false;
+        }
         merged.push(...source);
     }
 
     if (merged.length > 0) {
+        if (
+            usedOnlyActiveDataSource
+            && params.activeData
+            && merged.length === params.activeData.length
+        ) {
+            let matchesActiveData = true;
+            for (let index = 0; index < merged.length; index++) {
+                if (merged[index] !== params.activeData[index]) {
+                    matchesActiveData = false;
+                    break;
+                }
+            }
+
+            if (matchesActiveData) {
+                return params.activeData;
+            }
+        }
         return merged;
     }
 
     return params.activeData;
 }
 
+export function resolveVisibleSessionListSummary(
+    params: ResolveVisibleSessionListSummaryParams,
+    storageFilter: SessionListStorageFilter = 'all',
+): VisibleSessionListSummary {
+    const countForSource = (source: ReadonlyArray<SessionListViewItem> | null): VisibleSessionListSummary => {
+        if (source === null) {
+            return { sessionsReady: false, sessionCount: 0 };
+        }
+        return {
+            sessionsReady: true,
+            sessionCount: countSessionItemsByStorageFilter(source, storageFilter),
+        };
+    };
+
+    if (!params.enabled) {
+        return countForSource(params.activeData);
+    }
+
+    const selectedServerIds = Array.isArray(params.selectedServerIds)
+        ? params.selectedServerIds.map((id) => String(id ?? '').trim()).filter(Boolean)
+        : [];
+    if (selectedServerIds.length === 0) {
+        return countForSource(params.activeData);
+    }
+
+    const activeServerId = String(params.activeServerId ?? '').trim();
+    const scoped = params.byServerId ?? {};
+    let sessionCount = 0;
+    let hasResolvedSelectedSource = false;
+
+    for (const serverId of selectedServerIds) {
+        const fromCache = scoped[serverId];
+        const source = fromCache ?? (serverId === activeServerId ? params.activeData : null);
+        if (!source || source.length === 0) continue;
+        hasResolvedSelectedSource = true;
+        sessionCount += countSessionItemsByStorageFilter(source, storageFilter);
+    }
+
+    if (hasResolvedSelectedSource) {
+        return { sessionsReady: true, sessionCount };
+    }
+
+    return countForSource(params.activeData);
+}
+
 export function applySessionListPresentation(
-    data: SessionListViewItem[],
+    data: ReadonlyArray<SessionListViewItem>,
     params: ApplySessionListPresentationParams,
-): SessionListViewItem[] {
+): ReadonlyArray<SessionListViewItem> {
     if (!params.enabled) {
         return data;
     }
 
-    const withoutServerHeaders = stripSyntheticServerHeaders(data);
     const selectedServerIds = Array.isArray(params.selectedServerIds)
         ? params.selectedServerIds.map((id) => String(id ?? '').trim()).filter(Boolean)
         : [];
     const selectedServerSet = new Set(selectedServerIds);
+
+    if (selectedServerSet.size === 0 && !hasSyntheticServerHeaders(data)) {
+        if (params.presentation === 'flat-with-badge') {
+            return data;
+        }
+        if (countDistinctServerIds(data) <= 1) {
+            return data;
+        }
+    }
+
+    if (
+        params.presentation === 'flat-with-badge'
+        && selectedServerSet.size > 0
+        && !hasSyntheticServerHeaders(data)
+        && selectionCoversAllVisibleServerIds(data, selectedServerSet)
+    ) {
+        return data;
+    }
+
+    const withoutServerHeaders = hasSyntheticServerHeaders(data)
+        ? stripSyntheticServerHeaders(data)
+        : data;
     const filteredBySelection = selectedServerSet.size > 0
         ? (() => {
             const filtered: SessionListViewItem[] = [];
@@ -108,6 +297,10 @@ export function applySessionListPresentation(
 
     if (params.presentation === 'flat-with-badge') {
         return filteredBySelection;
+    }
+
+    if (selectedServerSet.size === 0 && isAlreadyCanonicalGroupedServerPresentation(data)) {
+        return data;
     }
 
     if (countDistinctServerIds(filteredBySelection) <= 1) {

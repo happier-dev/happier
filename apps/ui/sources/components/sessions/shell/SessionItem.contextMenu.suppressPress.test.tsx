@@ -43,6 +43,8 @@ vi.mock('@/hooks/session/useNavigateToSession', () => ({
     useNavigateToSession: () => navigateToSessionSpy,
 }));
 
+let platformOs: 'ios' | 'android' = 'ios';
+
 vi.mock('@/utils/platform/responsive', () => ({
     useIsTablet: () => false,
 }));
@@ -56,7 +58,9 @@ installSessionShellCommonModuleMocks({
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
             Platform: {
-                OS: 'ios',
+                get OS() {
+                    return platformOs;
+                },
             },
         });
     },
@@ -90,6 +94,7 @@ describe('SessionItem context menu press suppression', () => {
     afterEach(() => {
         standardCleanup();
         navigateToSessionSpy.mockClear();
+        platformOs = 'ios';
         vi.useRealTimers();
     });
 
@@ -158,5 +163,93 @@ describe('SessionItem context menu press suppression', () => {
         expect(onNativeContextMenuOpenChange).toHaveBeenCalledWith(false);
         expect(navigateToSessionSpy).toHaveBeenCalledWith('sess_1', undefined);
     });
-});
 
+    it('keeps row long-press actions enabled when reorder is handle-scoped on native', async () => {
+        vi.useFakeTimers();
+
+        const { SessionItem } = await import('./SessionItem');
+
+        const session = {
+            id: 'sess_2',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 1,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any;
+
+        const onNativeContextMenuOpenChange = vi.fn();
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={session}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+                nativeInlineDragEnabled={true}
+                reorderHandleGesture={{ type: 'pan' } as any}
+                nativeContextMenuOpen={false}
+                onNativeContextMenuOpenChange={onNativeContextMenuOpenChange}
+            />,
+        );
+
+        const itemPressable = screen.findByProps({ testID: 'session-list-item-sess_2' });
+        expect(typeof itemPressable.props.onLongPress).toBe('function');
+
+        await act(async () => {
+            itemPressable.props.onLongPress?.();
+        });
+
+        expect(onNativeContextMenuOpenChange).toHaveBeenCalledWith(true);
+    });
+
+    it('adds Android ripple feedback to the session row pressable', async () => {
+        platformOs = 'android';
+
+        const { SessionItem } = await import('./SessionItem');
+
+        const session = {
+            id: 'sess_3',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 1,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any;
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={session}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+            />,
+        );
+
+        const itemPressable = screen.findByProps({ testID: 'session-list-item-sess_3' });
+        expect(itemPressable.props.android_ripple).toMatchObject({
+            borderless: false,
+            foreground: true,
+        });
+    });
+});

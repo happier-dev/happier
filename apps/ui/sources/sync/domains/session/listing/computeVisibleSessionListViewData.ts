@@ -2,12 +2,15 @@ import type { ServerSelectionPresentation } from '@/sync/domains/server/selectio
 
 import { applySessionListPresentation } from './sessionListPresentation';
 import type { SessionListViewItem } from './sessionListViewData';
+import { sortSessionListViewItemsByOrderingMode } from './sessionListOrderingStateV1';
+import type { SessionListOrderingModeV1 } from './sessionListOrderingStateV1';
 
 export type ComputeVisibleSessionListViewDataParams = Readonly<{
-    source: SessionListViewItem[] | null;
+    source: ReadonlyArray<SessionListViewItem> | null;
     hideInactiveSessions: boolean;
     pinnedSessionKeysV1: ReadonlyArray<string>;
     sessionListGroupOrderV1: Readonly<Record<string, ReadonlyArray<string> | undefined>>;
+    sessionListOrderingModeV1?: SessionListOrderingModeV1;
     presentation: Readonly<{
         enabled: boolean;
         presentation: ServerSelectionPresentation;
@@ -22,6 +25,58 @@ function normalizeSessionKey(serverIdRaw: unknown, sessionIdRaw: unknown): strin
     const sessionId = typeof sessionIdRaw === 'string' ? sessionIdRaw.trim() : '';
     if (!serverId || !sessionId) return null;
     return `${serverId}:${sessionId}`;
+}
+
+function hasArchivedSessionItems(items: ReadonlyArray<SessionListViewItem>): boolean {
+    for (const item of items) {
+        if (item.type !== 'session') continue;
+        if (item.session?.archivedAt != null) return true;
+    }
+    return false;
+}
+
+function hasOrphanHeaders(items: ReadonlyArray<SessionListViewItem>): boolean {
+    let pendingSectionHeader: Extract<SessionListViewItem, { type: 'header' }> | null = null;
+    let pendingGroupHeader: Extract<SessionListViewItem, { type: 'header' }> | null = null;
+
+    for (const item of items) {
+        if (item.type === 'header') {
+            if (item.headerKind === 'active' || item.headerKind === 'inactive') {
+                pendingSectionHeader = item;
+                pendingGroupHeader = null;
+            } else {
+                pendingGroupHeader = item;
+            }
+            continue;
+        }
+        if (item.type === 'session') {
+            pendingSectionHeader = null;
+            pendingGroupHeader = null;
+        }
+    }
+
+    return pendingSectionHeader != null || pendingGroupHeader != null;
+}
+
+function hasInactiveSessionsThatNeedFiltering(items: ReadonlyArray<SessionListViewItem>): boolean {
+    for (const item of items) {
+        if (item.type !== 'session') continue;
+        const isActive = item.section === 'active' || item.session.active === true;
+        if (isActive) continue;
+        if (item.session.keepVisibleWhenInactive === true) continue;
+        return true;
+    }
+
+    return false;
+}
+
+function hasGroupOrderingOverrides(
+    orderByGroupKey: Readonly<Record<string, ReadonlyArray<string> | undefined>>,
+): boolean {
+    for (const keys of Object.values(orderByGroupKey)) {
+        if (keys && keys.length > 0) return true;
+    }
+    return false;
 }
 
 function reorderSessionItemsByKeys(
@@ -86,11 +141,12 @@ function applyGroupOrdering(
     }
 
     if (reorderedByGroup.size === 0) {
-        return [...source];
+        return source as SessionListViewItem[];
     }
 
     const indicesByGroup = new Map<string, number>();
     const out: SessionListViewItem[] = [];
+    let didChange = false;
     for (const item of source) {
         if (item.type !== 'session') {
             out.push(item);
@@ -103,10 +159,14 @@ function applyGroupOrdering(
             continue;
         }
         const index = indicesByGroup.get(groupKey) ?? 0;
-        out.push(replacementList[index] ?? item);
+        const replacement = replacementList[index] ?? item;
+        if (replacement !== item) {
+            didChange = true;
+        }
+        out.push(replacement);
         indicesByGroup.set(groupKey, index + 1);
     }
-    return out;
+    return didChange ? out : (source as SessionListViewItem[]);
 }
 
 function pruneOrphanHeaders(items: ReadonlyArray<SessionListViewItem>): SessionListViewItem[] {
@@ -184,16 +244,73 @@ export function computeVisibleSessionListViewData(
     const source = params.source;
     if (!source) return null;
 
-    const ordered = applyGroupOrdering(source, params.sessionListGroupOrderV1 ?? {});
+    const sessionListOrderingModeV1 = params.sessionListOrderingModeV1 ?? 'custom';
+    const pinnedSessionKeys = (params.pinnedSessionKeysV1 ?? []).map((k) => (typeof k === 'string' ? k.trim() : '')).filter(Boolean);
+    const presentationEnabled = params.presentation.enabled === true;
+    const noOrderingOverrides = !hasGroupOrderingOverrides(params.sessionListGroupOrderV1 ?? {});
+
+    if (
+        sessionListOrderingModeV1 === 'custom'
+        && !params.hideInactiveSessions
+        && pinnedSessionKeys.length === 0
+        && !presentationEnabled
+        && noOrderingOverrides
+        && !hasArchivedSessionItems(source)
+        && !hasOrphanHeaders(source)
+    ) {
+        return source as SessionListViewItem[];
+    }
+
+    const orderedByGroup =
+        sessionListOrderingModeV1 === 'custom'
+            ? applyGroupOrdering(source, params.sessionListGroupOrderV1 ?? {})
+            : source;
+    if (
+        sessionListOrderingModeV1 === 'custom'
+        && orderedByGroup === source
+        && !params.hideInactiveSessions
+        && pinnedSessionKeys.length === 0
+        && !presentationEnabled
+        && !hasArchivedSessionItems(source)
+        && !hasOrphanHeaders(source)
+    ) {
+        return source as SessionListViewItem[];
+    }
+
+    const ordered =
+        sessionListOrderingModeV1 === 'custom'
+            ? orderedByGroup
+            : sortSessionListViewItemsByOrderingMode(source, sessionListOrderingModeV1);
+    if (
+        sessionListOrderingModeV1 !== 'custom'
+        && ordered === source
+        && !params.hideInactiveSessions
+        && pinnedSessionKeys.length === 0
+        && !presentationEnabled
+        && !hasArchivedSessionItems(source)
+        && !hasOrphanHeaders(source)
+    ) {
+        return source as SessionListViewItem[];
+    }
+    if (
+        sessionListOrderingModeV1 === 'custom'
+        && params.hideInactiveSessions
+        && pinnedSessionKeys.length === 0
+        && !presentationEnabled
+        && noOrderingOverrides
+        && !hasArchivedSessionItems(source)
+        && !hasOrphanHeaders(source)
+        && !hasInactiveSessionsThatNeedFiltering(source)
+    ) {
+        return source as SessionListViewItem[];
+    }
     const orderedWithoutArchived = ordered.filter((item) => {
         if (!item || item.type !== 'session') return true;
         return item.session?.archivedAt == null;
     });
 
     const pinnedSet = new Set(
-        (params.pinnedSessionKeysV1 ?? [])
-            .map((k) => (typeof k === 'string' ? k.trim() : ''))
-            .filter(Boolean),
+        pinnedSessionKeys,
     );
 
     const pinnedSessions: Array<Extract<SessionListViewItem, { type: 'session' }>> = [];
@@ -223,10 +340,13 @@ export function computeVisibleSessionListViewData(
             ? { type: 'header', title: 'Pinned', headerKind: 'pinned', groupKey: PINNED_GROUP_KEY_V1 }
             : null;
 
-    const pinnedOrdered = reorderSessionItemsByKeys(
-        pinnedSessions,
-        params.sessionListGroupOrderV1?.[PINNED_GROUP_KEY_V1],
-    );
+    const pinnedOrdered =
+        sessionListOrderingModeV1 === 'custom'
+            ? reorderSessionItemsByKeys(
+                  pinnedSessions,
+                  params.sessionListGroupOrderV1?.[PINNED_GROUP_KEY_V1],
+              )
+            : sortSessionListViewItemsByOrderingMode(pinnedSessions, sessionListOrderingModeV1);
 
     const remainderPruned = pruneOrphanHeaders(remainder);
     const remainderFiltered = params.hideInactiveSessions

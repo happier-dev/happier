@@ -125,5 +125,26 @@ describe('useSessionInlineDrag (onLongPressActivated)', () => {
 
         await hook.unmount();
     });
-});
 
+    it('returns no drag gesture when disabled', async () => {
+        const { useSessionInlineDrag } = await import('./useSessionInlineDrag');
+
+        const hook = await renderHook(() => useSessionInlineDrag({
+            enabled: false,
+            sessionKey: 's1',
+            groupKey: 'g1',
+            rowHeight: 80,
+            dataIndex: 1,
+            totalItemCount: 10,
+            dropIndicatorIdx: { value: -1 } as any,
+            dropIndicatorEdge: { value: 0 } as any,
+            onDragStart: () => {},
+            onDragEnd: () => {},
+            activateAfterLongPressMs: 350,
+            onLongPressActivated: vi.fn(),
+        }));
+
+        expect(hook.getCurrent().gesture).toBeUndefined();
+        await hook.unmount();
+    });
+});

@@ -190,6 +190,7 @@ installSessionShellCommonModuleMocks({
         useSessionMessages: () => ({ messages: [], isLoaded: true }),
         useSessionTranscriptIds: () => ({ ids: ['m1'], isLoaded: true }),
         useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true }),
+        useWorkspaceReviewCommentsDrafts: () => reviewCommentDraftsState.current,
         useSessionReviewCommentsDrafts: () => reviewCommentDraftsState.current,
         useSessionUsage: () => null,
         useLocalSetting: readLocalSetting,
@@ -773,7 +774,7 @@ describe('SessionView (direct sessions)', () => {
     }));
   });
 
-  it('polls direct session status and transcript refreshes using the active cadence while the session view is open', async () => {
+  it('polls direct session status using the active cadence without forcing transcript refreshes', async () => {
     const previousActivePollMs = process.env.EXPO_PUBLIC_HAPPIER_DIRECT_SESSIONS_TAIL_POLL_MS_ACTIVE;
     process.env.EXPO_PUBLIC_HAPPIER_DIRECT_SESSIONS_TAIL_POLL_MS_ACTIVE = '50';
 
@@ -782,15 +783,14 @@ describe('SessionView (direct sessions)', () => {
 
       const initialStatusCallCount = machineDirectSessionStatusGetSpy.mock.calls.length;
       expect(initialStatusCallCount).toBeGreaterThanOrEqual(1);
-      expect(syncRefreshSessionMessagesSpy).toHaveBeenCalledWith('s1');
-      const initialRefreshCallCount = syncRefreshSessionMessagesSpy.mock.calls.length;
+      expect(syncRefreshSessionMessagesSpy).not.toHaveBeenCalled();
 
       await act(async () => {
         await sleep(75);
       });
       await flushHookEffects({ cycles: 1, turns: 2 });
       expect(machineDirectSessionStatusGetSpy.mock.calls.length).toBeGreaterThanOrEqual(initialStatusCallCount + 1);
-      expect(syncRefreshSessionMessagesSpy.mock.calls.length).toBeGreaterThanOrEqual(initialRefreshCallCount + 1);
+      expect(syncRefreshSessionMessagesSpy).not.toHaveBeenCalled();
     } finally {
       if (previousActivePollMs === undefined) {
         delete process.env.EXPO_PUBLIC_HAPPIER_DIRECT_SESSIONS_TAIL_POLL_MS_ACTIVE;

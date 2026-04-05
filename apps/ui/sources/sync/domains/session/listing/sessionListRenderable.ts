@@ -102,7 +102,31 @@ function derivePendingRequestFlags(params: Readonly<{
     return derivePendingRequestFlagsFromAgentState(params.agentState);
 }
 
-export function buildSessionListRenderableMetadata(metadata: Metadata | null | undefined): SessionListRenderableMetadata | null {
+function shouldPreserveSessionListRenderableMetadata(
+    session: Session,
+    previous: SessionListRenderableSession | undefined,
+): boolean {
+    return session.metadata == null && previous?.metadata != null;
+}
+
+function shouldPreserveSessionListRenderablePendingFlags(
+    session: Session,
+    previous: SessionListRenderableSession | undefined,
+): boolean {
+    return (
+        session.active === true
+        && session.agentState == null
+        && typeof session.pendingPermissionRequestCount !== 'number'
+        && typeof session.pendingUserActionRequestCount !== 'number'
+        && typeof previous?.hasPendingPermissionRequests === 'boolean'
+        && typeof previous?.hasPendingUserActionRequests === 'boolean'
+    );
+}
+
+export function buildSessionListRenderableMetadata(
+    metadata: Metadata | null | undefined,
+    previous?: SessionListRenderableMetadata | null,
+): SessionListRenderableMetadata | null {
     if (!metadata) return null;
     const directSessionV1 = (() : DirectSessionRenderableMetadata | null => {
         const candidate = metadata.directSessionV1;
@@ -115,7 +139,7 @@ export function buildSessionListRenderableMetadata(metadata: Metadata | null | u
                 : {}),
         };
     })();
-    return {
+    const nextMetadata: SessionListRenderableMetadata = {
         name: typeof metadata.name === 'string' ? metadata.name : undefined,
         summaryText: typeof metadata.summary?.text === 'string' ? metadata.summary.text : null,
         path: typeof metadata.path === 'string' ? metadata.path : '',
@@ -126,16 +150,31 @@ export function buildSessionListRenderableMetadata(metadata: Metadata | null | u
         directSessionV1,
         hiddenSystemSession: metadata.systemSessionV1?.hidden === true,
     };
+    return previous && areSessionListRenderableMetadataEqual(previous, nextMetadata) ? previous : nextMetadata;
 }
 
-export function buildSessionListRenderableFromSession(session: Session): SessionListRenderableSession {
-    const pending = derivePendingRequestFlags({
-        active: session.active === true,
-        agentState: session.agentState,
-        pendingPermissionRequestCount: session.pendingPermissionRequestCount,
-        pendingUserActionRequestCount: session.pendingUserActionRequestCount,
-    });
-    return {
+export function buildSessionListRenderableFromSession(
+    session: Session,
+    previous?: SessionListRenderableSession,
+): SessionListRenderableSession {
+    const preserveMetadata = shouldPreserveSessionListRenderableMetadata(session, previous);
+    const preservePendingFlags = shouldPreserveSessionListRenderablePendingFlags(session, previous);
+    const pending = preservePendingFlags && previous
+        ? {
+            hasPendingPermissionRequests: previous.hasPendingPermissionRequests,
+            hasPendingUserActionRequests: previous.hasPendingUserActionRequests,
+        }
+        : derivePendingRequestFlags({
+            active: session.active === true,
+            agentState: session.agentState,
+            pendingPermissionRequestCount: session.pendingPermissionRequestCount,
+            pendingUserActionRequestCount: session.pendingUserActionRequestCount,
+        });
+    const previousMetadata = previous?.metadata ?? null;
+    const nextMetadata = preserveMetadata
+        ? previousMetadata
+        : buildSessionListRenderableMetadata(session.metadata, previousMetadata);
+    const next: SessionListRenderableSession = {
         id: session.id,
         seq: session.seq,
         createdAt: session.createdAt,
@@ -145,9 +184,11 @@ export function buildSessionListRenderableFromSession(session: Session): Session
         archivedAt: session.archivedAt ?? null,
         pendingVersion: session.pendingVersion,
         pendingCount: session.pendingCount,
-        metadataVersion: session.metadataVersion,
-        agentStateVersion: session.agentStateVersion,
-        metadata: buildSessionListRenderableMetadata(session.metadata),
+        metadataVersion: preserveMetadata && previous ? previous.metadataVersion : session.metadataVersion,
+        agentStateVersion: preservePendingFlags && previous ? previous.agentStateVersion : session.agentStateVersion,
+        metadata: previous && areSessionListRenderableMetadataEqual(previous.metadata, nextMetadata)
+            ? previous.metadata
+            : nextMetadata,
         thinking: session.thinking,
         thinkingAt: session.thinkingAt,
         presence: session.presence,
@@ -159,16 +200,101 @@ export function buildSessionListRenderableFromSession(session: Session): Session
         hasPendingPermissionRequests: pending.hasPendingPermissionRequests,
         hasPendingUserActionRequests: pending.hasPendingUserActionRequests,
     };
+
+    return previous && areSessionListRenderablesEqual(previous, next) ? previous : next;
 }
 
 export function preserveSessionListRenderableTransientState(
     previous: SessionListRenderableSession | undefined,
     next: SessionListRenderableSession,
 ): SessionListRenderableSession {
+    if (previous?.keepVisibleWhenInactive !== true) {
+        return next;
+    }
+
     return {
         ...next,
-        keepVisibleWhenInactive: previous?.keepVisibleWhenInactive === true,
+        keepVisibleWhenInactive: true,
     };
+}
+
+export function preserveSessionListRenderableStaleFields(
+    previous: SessionListRenderableSession | undefined,
+    next: SessionListRenderableSession,
+): SessionListRenderableSession {
+    const preserveMetadata = next.metadata == null && previous?.metadata != null;
+    const preservePendingFlags =
+        typeof next.hasPendingPermissionRequests !== 'boolean'
+        && typeof next.hasPendingUserActionRequests !== 'boolean'
+        && typeof previous?.hasPendingPermissionRequests === 'boolean'
+        && typeof previous?.hasPendingUserActionRequests === 'boolean';
+
+    if (previous == null || (!preserveMetadata && !preservePendingFlags)) {
+        return next;
+    }
+
+    return {
+        ...next,
+        metadataVersion: preserveMetadata ? previous.metadataVersion : next.metadataVersion,
+        agentStateVersion: preservePendingFlags ? previous.agentStateVersion : next.agentStateVersion,
+        metadata: preserveMetadata ? previous.metadata : next.metadata,
+        hasPendingPermissionRequests: preservePendingFlags
+            ? previous.hasPendingPermissionRequests
+            : next.hasPendingPermissionRequests,
+        hasPendingUserActionRequests: preservePendingFlags
+            ? previous.hasPendingUserActionRequests
+            : next.hasPendingUserActionRequests,
+    };
+}
+
+function areSessionListRenderableMetadataEqual(
+    previous: SessionListRenderableMetadata | null,
+    next: SessionListRenderableMetadata | null,
+): boolean {
+    if (previous === next) return true;
+    if (!previous || !next) return previous === next;
+
+    return previous.name === next.name
+        && (previous.summaryText ?? null) === (next.summaryText ?? null)
+        && previous.path === next.path
+        && (previous.homeDir ?? null) === (next.homeDir ?? null)
+        && (previous.host ?? null) === (next.host ?? null)
+        && (previous.machineId ?? null) === (next.machineId ?? null)
+        && (previous.flavor ?? null) === (next.flavor ?? null)
+        && (previous.hiddenSystemSession === true) === (next.hiddenSystemSession === true)
+        && (previous.directSessionV1?.v ?? null) === (next.directSessionV1?.v ?? null)
+        && (previous.directSessionV1?.providerId ?? null) === (next.directSessionV1?.providerId ?? null);
+}
+
+export function areSessionListRenderablesEqual(
+    previous: SessionListRenderableSession | undefined,
+    next: SessionListRenderableSession,
+): boolean {
+    if (!previous) return false;
+
+    return previous.id === next.id
+        && previous.seq === next.seq
+        && previous.createdAt === next.createdAt
+        && previous.updatedAt === next.updatedAt
+        && previous.active === next.active
+        && previous.activeAt === next.activeAt
+        && (previous.archivedAt ?? null) === (next.archivedAt ?? null)
+        && (previous.pendingVersion ?? null) === (next.pendingVersion ?? null)
+        && (previous.pendingCount ?? null) === (next.pendingCount ?? null)
+        && previous.metadataVersion === next.metadataVersion
+        && previous.agentStateVersion === next.agentStateVersion
+        && previous.thinking === next.thinking
+        && previous.thinkingAt === next.thinkingAt
+        && previous.presence === next.presence
+        && (previous.optimisticThinkingAt ?? null) === (next.optimisticThinkingAt ?? null)
+        && (previous.thinkingGraceUntil ?? null) === (next.thinkingGraceUntil ?? null)
+        && (previous.owner ?? null) === (next.owner ?? null)
+        && (previous.accessLevel ?? null) === (next.accessLevel ?? null)
+        && (previous.canApprovePermissions ?? null) === (next.canApprovePermissions ?? null)
+        && (previous.hasPendingPermissionRequests ?? null) === (next.hasPendingPermissionRequests ?? null)
+        && (previous.hasPendingUserActionRequests ?? null) === (next.hasPendingUserActionRequests ?? null)
+        && (previous.keepVisibleWhenInactive === true) === (next.keepVisibleWhenInactive === true)
+        && areSessionListRenderableMetadataEqual(previous.metadata, next.metadata);
 }
 
 export function didSessionListRenderableStructuralFieldsChange(
@@ -206,6 +332,63 @@ export function didSessionListRenderableProjectGroupingFieldsChange(
 
     if (prevParts.pathKey !== nextParts.pathKey) return true;
     if (prevParts.machineGroupId !== nextParts.machineGroupId) return true;
+
+    return false;
+}
+
+export function didSessionListRenderableReachabilityPeerFieldsChange(
+    previous: SessionListRenderableSession | undefined,
+    next: SessionListRenderableSession,
+): boolean {
+    if (!previous) return true;
+    if (previous.active !== next.active) return true;
+    if (previous.updatedAt !== next.updatedAt) return true;
+    if (previous.metadataVersion !== next.metadataVersion) return true;
+
+    const prevMeta = previous.metadata;
+    const nextMeta = next.metadata;
+
+    if (String(prevMeta?.machineId ?? '') !== String(nextMeta?.machineId ?? '')) return true;
+    if (String(prevMeta?.host ?? '') !== String(nextMeta?.host ?? '')) return true;
+    if (String(prevMeta?.path ?? '') !== String(nextMeta?.path ?? '')) return true;
+    if (String(prevMeta?.homeDir ?? '') !== String(nextMeta?.homeDir ?? '')) return true;
+
+    return false;
+}
+
+export function didSessionListRenderableWarmCacheFieldsChange(
+    previous: SessionListRenderableSession | undefined,
+    next: SessionListRenderableSession,
+): boolean {
+    if (!previous) return true;
+
+    if (previous.updatedAt !== next.updatedAt) return true;
+    if (previous.createdAt !== next.createdAt) return true;
+    if (previous.active !== next.active) return true;
+    if (previous.activeAt !== next.activeAt) return true;
+    if ((previous.archivedAt ?? null) !== (next.archivedAt ?? null)) return true;
+    if ((previous.pendingCount ?? null) !== (next.pendingCount ?? null)) return true;
+    if ((previous.pendingVersion ?? null) !== (next.pendingVersion ?? null)) return true;
+    if ((previous.accessLevel ?? null) !== (next.accessLevel ?? null)) return true;
+    if ((previous.canApprovePermissions ?? null) !== (next.canApprovePermissions ?? null)) return true;
+    if (previous.metadataVersion !== next.metadataVersion) return true;
+    if (previous.agentStateVersion !== next.agentStateVersion) return true;
+
+    const prevMeta = previous.metadata;
+    const nextMeta = next.metadata;
+    if ((prevMeta?.name ?? null) !== (nextMeta?.name ?? null)) return true;
+    if ((prevMeta?.summaryText ?? null) !== (nextMeta?.summaryText ?? null)) return true;
+    if (String(prevMeta?.path ?? '') !== String(nextMeta?.path ?? '')) return true;
+    if ((prevMeta?.homeDir ?? null) !== (nextMeta?.homeDir ?? null)) return true;
+    if ((prevMeta?.host ?? null) !== (nextMeta?.host ?? null)) return true;
+    if ((prevMeta?.machineId ?? null) !== (nextMeta?.machineId ?? null)) return true;
+    if ((prevMeta?.flavor ?? null) !== (nextMeta?.flavor ?? null)) return true;
+    if ((prevMeta?.hiddenSystemSession === true) !== (nextMeta?.hiddenSystemSession === true)) return true;
+    if ((prevMeta?.directSessionV1?.v ?? null) !== (nextMeta?.directSessionV1?.v ?? null)) return true;
+    if ((prevMeta?.directSessionV1?.providerId ?? null) !== (nextMeta?.directSessionV1?.providerId ?? null)) return true;
+
+    if ((previous.hasPendingPermissionRequests ?? null) !== (next.hasPendingPermissionRequests ?? null)) return true;
+    if ((previous.hasPendingUserActionRequests ?? null) !== (next.hasPendingUserActionRequests ?? null)) return true;
 
     return false;
 }

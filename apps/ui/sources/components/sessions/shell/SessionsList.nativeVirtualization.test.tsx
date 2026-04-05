@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { SESSION_LIST_ROW_HEIGHT_DEFAULT } from './sessionListRowHeights';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -13,12 +14,15 @@ const readMachineTargetForSessionMock = vi.hoisted(() => vi.fn());
 
 let sessionTagsV1: Record<string, string[]> = {};
 const setSessionTagsV1 = vi.fn();
+let sessionListOrderingModeV1: 'custom' | 'created' | 'updated' = 'custom';
+const setSessionListOrderingModeV1 = vi.fn();
 let workspaceLabelsV1: Record<string, string> = {};
 const setWorkspaceLabelsV1 = vi.fn();
 let workspaceRefsV1: any[] = [];
 const setWorkspaceRefsV1 = vi.fn();
 let collapsedGroupKeysV1: Record<string, boolean> = {};
 const setCollapsedGroupKeysV1 = vi.fn();
+const flashListCompatState = vi.hoisted(() => ({ current: null as null | { props: any | null } }));
 let allMachines = [
     {
         id: 'machine-target',
@@ -172,12 +176,15 @@ vi.mock('@shopify/flash-list', async () => ({
     }).module,
 }));
 
-vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', async () => ({
-    ...((await import('@/dev/testkit/mocks/flashList')) as typeof import('@/dev/testkit/mocks/flashList')).createCapturingFlashListMock({
+vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', async () => {
+    const flashListModule = (await import('@/dev/testkit/mocks/flashList')) as typeof import('@/dev/testkit/mocks/flashList');
+    const mock = flashListModule.createCapturingFlashListMock({
         componentName: 'FlashListCompat',
         renderItems: true,
-    }).module,
-}));
+    });
+    flashListCompatState.current = mock.state;
+    return mock.module;
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -283,6 +290,7 @@ installSessionShellCommonModuleMocks({
                     if (key === 'compactSessionView') return false;
                     if (key === 'compactSessionViewMinimal') return false;
                     if (key === 'sessionTagsEnabled') return true;
+                    if (key === 'sessionListOrderingModeV1') return sessionListOrderingModeV1;
                     return null;
                 },
                 useHasUnreadMessages: () => false,
@@ -290,6 +298,7 @@ installSessionShellCommonModuleMocks({
                 useSettingMutable: (key: string) => {
                     if (key === 'pinnedSessionKeysV1') return [pinnedSessionKeysV1, setPinnedSessionKeysV1];
                     if (key === 'sessionTagsV1') return [sessionTagsV1, setSessionTagsV1];
+                    if (key === 'sessionListOrderingModeV1') return [sessionListOrderingModeV1, setSessionListOrderingModeV1];
                     if (key === 'workspaceLabelsV1') return [workspaceLabelsV1, setWorkspaceLabelsV1];
                     if (key === 'workspaceRefsV1') return [workspaceRefsV1, setWorkspaceRefsV1];
                     if (key === 'collapsedGroupKeysV1') return [collapsedGroupKeysV1, setCollapsedGroupKeysV1];
@@ -362,16 +371,26 @@ let mockVisibleSessionListViewData: any[] = [
     },
 ];
 
-vi.mock('@/hooks/session/useVisibleSessionListViewData', () => ({
-    useVisibleSessionListViewData: () => mockVisibleSessionListViewData,
+vi.mock('@/hooks/session/useVisibleSessionListPaneState', () => ({
+    useVisibleSessionListPaneState: () => ({
+        summary: {
+            sessionsReady: true,
+            sessionCount: mockVisibleSessionListViewData.filter((item) => item.type === 'session').length,
+        },
+        visibleSessionListViewData: mockVisibleSessionListViewData,
+        showLoading: false,
+        showEmptyState: false,
+    }),
 }));
 
 vi.mock('@/utils/system/requestReview', () => ({
     requestReview: vi.fn(),
 }));
 
+const useSessionInlineDragSpy = vi.hoisted(() => vi.fn((params: any) => ({ gesture: undefined, animatedStyle: {} })));
+
 vi.mock('./useSessionInlineDrag', () => ({
-    useSessionInlineDrag: () => ({ gesture: undefined, animatedStyle: {} }),
+    useSessionInlineDrag: (params: any) => useSessionInlineDragSpy(params),
 }));
 
 vi.mock('./SessionItem', () => ({
@@ -444,6 +463,7 @@ function findFirstDropdownMenuItems(screen: Awaited<ReturnType<typeof renderSess
 
 describe('SessionsList (native virtualization)', () => {
     beforeEach(() => {
+        sessionListOrderingModeV1 = 'custom';
         pinnedSessionKeysV1 = [];
         sessionTagsV1 = {};
         workspaceLabelsV1 = {};
@@ -451,9 +471,11 @@ describe('SessionsList (native virtualization)', () => {
         collapsedGroupKeysV1 = {};
         setPinnedSessionKeysV1.mockClear();
         setSessionTagsV1.mockClear();
+        setSessionListOrderingModeV1.mockClear();
         setWorkspaceLabelsV1.mockClear();
         setWorkspaceRefsV1.mockClear();
         setCollapsedGroupKeysV1.mockClear();
+        useSessionInlineDragSpy.mockClear();
         mockAllowedServerIds = ['server_a'];
         readMachineTargetForSessionMock.mockReset();
         readMachineTargetForSessionMock.mockImplementation(() => null);
@@ -474,6 +496,71 @@ describe('SessionsList (native virtualization)', () => {
         expect(first.props.isLast).toBe(false);
         expect(second.props.isFirst).toBe(false);
         expect(second.props.isLast).toBe(true);
+    });
+
+    it('passes reorder handle gestures directly to native session rows in custom mode', async () => {
+        useSessionInlineDragSpy.mockReturnValueOnce({ gesture: { type: 'pan' }, animatedStyle: {} } as any);
+        useSessionInlineDragSpy.mockReturnValueOnce({ gesture: { type: 'pan' }, animatedStyle: {} } as any);
+
+        const screen = await renderSessionsList();
+
+        const first = expectPresent(findSessionItem(screen, 'sess_a'), 'expected sess_a session row');
+        expect(first.props.reorderHandleGesture).toBeDefined();
+        expect(first.props.nativeInlineDragEnabled).toBe(true);
+    });
+
+    it('disables native inline drag affordances when ordering mode is not custom', async () => {
+        sessionListOrderingModeV1 = 'updated';
+
+        const screen = await renderSessionsList();
+
+        const first = expectPresent(findSessionItem(screen, 'sess_a'), 'expected sess_a session row');
+        expect(first.props.reorderHandleGesture).toBeUndefined();
+        expect(first.props.nativeInlineDragEnabled).toBe(false);
+        expect(useSessionInlineDragSpy).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }));
+    });
+
+    it('passes FlashList layout hints for heterogeneous native session rows', async () => {
+        await renderSessionsList();
+
+        expect(flashListCompatState.current?.props?.estimatedItemSize).toBe(SESSION_LIST_ROW_HEIGHT_DEFAULT);
+        expect(typeof flashListCompatState.current?.props?.getItemType).toBe('function');
+    });
+
+    it('classifies native FlashList items by row kind', async () => {
+        mockVisibleSessionListViewData = [
+            {
+                type: 'header',
+                title: 'Active',
+                headerKind: 'active',
+                groupKey: 'server:server_a:active',
+                serverId: 'server_a',
+                serverName: 'Server A',
+            },
+            {
+                type: 'header',
+                title: '/repo',
+                headerKind: 'project',
+                groupKey: 'server:server_a:active:project:abc',
+                serverId: 'server_a',
+                serverName: 'Server A',
+            },
+            {
+                type: 'session',
+                session: sessionA,
+                groupKey: 'server:server_a:active:project:abc',
+                groupKind: 'project',
+                serverId: 'server_a',
+                serverName: 'Server A',
+            },
+        ];
+
+        await renderSessionsList();
+
+        const getItemType = flashListCompatState.current?.props?.getItemType;
+        expect(getItemType?.(mockVisibleSessionListViewData[0], 0)).toBe('header:active');
+        expect(getItemType?.(mockVisibleSessionListViewData[1], 1)).toBe('header:project');
+        expect(getItemType?.(mockVisibleSessionListViewData[2], 2)).toBe('session');
     });
 
     it('passes path secondary-line mode for date-grouped rows', async () => {
@@ -670,5 +757,51 @@ describe('SessionsList (native virtualization)', () => {
             'expected first session item',
         );
         expect(item.props.subtitleOverride).toBe('Rebound workstation · /Volumes/target/repo');
+    });
+
+    it('does not derive reachability details for rows hidden by a collapsed group', async () => {
+        collapsedGroupKeysV1 = { [groupKey]: true };
+        readMachineTargetForSessionMock.mockClear();
+        mockVisibleSessionListViewData = [
+            {
+                type: 'header',
+                title: 'Today',
+                headerKind: 'date',
+                groupKey,
+                serverId: 'server_a',
+                serverName: 'Server A',
+            },
+            {
+                type: 'session',
+                session: sessionA,
+                groupKey,
+                groupKind: 'date',
+                serverId: 'server_a',
+                serverName: 'Server A',
+            },
+            {
+                type: 'header',
+                title: 'Tomorrow',
+                headerKind: 'date',
+                groupKey: 'server:server_a:day:2026-02-18',
+                serverId: 'server_a',
+                serverName: 'Server A',
+            },
+            {
+                type: 'session',
+                session: sessionB,
+                groupKey: 'server:server_a:day:2026-02-18',
+                groupKind: 'date',
+                serverId: 'server_a',
+                serverName: 'Server A',
+            },
+        ];
+
+        const screen = await renderSessionsList();
+
+        expect(screen.findAllByTestId('session-list-session:sess_a')).toHaveLength(0);
+        expect(screen.findAllByTestId('session-list-session:sess_b')).toHaveLength(1);
+        expect(readMachineTargetForSessionMock).toHaveBeenCalledTimes(1);
+        expect(readMachineTargetForSessionMock).toHaveBeenCalledWith('sess_b');
     });
 });

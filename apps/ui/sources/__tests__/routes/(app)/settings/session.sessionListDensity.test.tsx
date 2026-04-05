@@ -7,6 +7,7 @@ import { installSessionSettingsEntryModuleMocks, resetSessionSettingsEntryState 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const setSessionListDensity = vi.fn();
+const setSessionListOrderingMode = vi.fn();
 
 installSessionSettingsEntryModuleMocks({
     storageModule: async (importOriginal) => {
@@ -17,6 +18,7 @@ installSessionSettingsEntryModuleMocks({
                 useSettingMutable: ((key: string) => {
                     if (key === 'sessionTagsEnabled') return [true, vi.fn()];
                     if (key === 'sessionListDensity') return ['cozy', setSessionListDensity];
+                    if (key === 'sessionListOrderingModeV1') return ['custom', setSessionListOrderingMode];
                     if (key === 'hideInactiveSessions') return [false, vi.fn()];
                     if (key === 'sessionListActiveGroupingV1') return ['project', vi.fn()];
                     if (key === 'sessionListInactiveGroupingV1') return ['date', vi.fn()];
@@ -52,6 +54,7 @@ installSessionSettingsEntryModuleMocks({
 afterEach(() => {
     standardCleanup();
     setSessionListDensity.mockClear();
+    setSessionListOrderingMode.mockClear();
     resetSessionSettingsEntryState();
 });
 
@@ -64,16 +67,26 @@ describe('Session settings session list density', () => {
         const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
         const dropdowns = screen.findAllByType('DropdownMenu' as any);
         const densityDropdown = dropdowns.find((node: any) => node.props?.itemTrigger?.title === 'settingsAppearance.sessionListDensity.title');
+        const orderingDropdown = dropdowns.find((node: any) => node.props?.itemTrigger?.title === 'settingsSession.sessionList.orderingTitle');
         expect(densityDropdown).toBeTruthy();
         expect(densityDropdown?.props?.selectedId).toBe('cozy');
+        expect(orderingDropdown).toBeTruthy();
+        expect(orderingDropdown?.props?.selectedId).toBe('custom');
 
         const itemIds = densityDropdown?.props?.items?.map((item: any) => item.id) ?? [];
         expect(itemIds).toEqual(['detailed', 'cozy', 'narrow']);
+        expect(orderingDropdown?.props?.items?.map((item: any) => item.id)).toEqual(['custom', 'created', 'updated']);
 
         await act(async () => {
             densityDropdown!.props.onSelect('cozy');
         });
 
         expect(setSessionListDensity).toHaveBeenCalledWith('cozy');
+
+        await act(async () => {
+            orderingDropdown!.props.onSelect('updated');
+        });
+
+        expect(setSessionListOrderingMode).toHaveBeenCalledWith('updated');
     });
 });

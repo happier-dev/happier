@@ -19,26 +19,36 @@ import type { LocalSettings } from '../domains/settings/localSettings';
 import type { AgentTextMessage, Message } from '../domains/messages/messageTypes';
 import type { Settings } from '../domains/settings/settings';
 import { settingsDefaults } from '../domains/settings/settings';
-import type { SessionListViewItem } from '../domains/session/listing/sessionListViewData';
 import type { SessionListRenderableSession } from '../domains/session/listing/sessionListRenderable';
+import type { SessionListViewItem } from '../domains/session/listing/sessionListViewData';
+import type { ServerScopedSessionListCache } from '../domains/session/listing/serverScopedSessionListCache';
 import { deriveSessionListMeaningfulActivityAt } from '../domains/session/listing/deriveSessionListActivity';
-import { computeHasUnreadActivity } from '../domains/messages/unread';
-import { resolveLastViewedSessionSeq } from '../domains/session/readCursor/resolveLastViewedSessionSeq';
 import type { ReviewCommentDraft } from '../domains/input/reviewComments/reviewCommentTypes';
 import type { SessionActionDraft } from '../domains/sessionActions/sessionActionDraftTypes';
 import { buildSessionMessageRouteId, resolveSessionMessageRouteId } from '../domains/messages/messageRouteIds';
 import { useApplyLocalSettings, useApplySettings } from './settingsWriters';
 import { buildWorkspaceCacheKey, type WorkspaceScopeBase } from '../domains/workspaces/workspaceScope';
+import { deriveSessionAttentionFlags } from '../domains/session/attention/sessionAttention';
 
 import { getStorage } from '../domains/state/storageStore';
 import type { KnownEntitlements } from '../domains/state/storageStore';
 import type { ForkedTranscriptSnapshot } from '../domains/sessionFork/forkedTranscriptSnapshot';
 import { getForkedTranscriptSnapshotCached } from '../domains/sessionFork/forkedTranscriptSnapshot';
+import { resolveSessionListCachedSessionServerIdFromState } from '../domains/session/listing/sessionListCacheState';
 import { resolveVisibleMachinesForActiveServerFromState } from './domains/machines/resolveMachinesForActiveServerFromState';
-import { resolveServerIdForSessionIdFromLocalState } from '../runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 
 export function useSessions() {
-  return getStorage()(useShallow((state) => (state.isDataReady ? state.sessionsData : null)));
+  const snapshot = getStorage()(
+    useShallow((state) => ({
+      isDataReady: state.isDataReady,
+      sessions: state.sessions,
+    }))
+  );
+
+  return React.useMemo(() => {
+    if (!snapshot.isDataReady) return null;
+    return Object.values(snapshot.sessions);
+  }, [snapshot.isDataReady, snapshot.sessions]);
 }
 
 export function useSession(id: string): Session | null {
@@ -50,8 +60,9 @@ export function useSessionListRenderable(id: string): SessionListRenderableSessi
 }
 
 export function useSessionServerId(sessionId: string): string | null {
-  return getStorage()((state) => resolveServerIdForSessionIdFromLocalState({
+  return getStorage()((state) => resolveSessionListCachedSessionServerIdFromState({
     sessions: state.sessions as Record<string, { serverId?: unknown } | null>,
+    sessionListViewData: state.sessionListViewData,
     sessionListViewDataByServerId: state.sessionListViewDataByServerId,
   }, sessionId));
 }
@@ -171,12 +182,11 @@ export function useHasUnreadMessages(sessionId: string): boolean {
   return getStorage()((state) => {
     const session = state.sessions[sessionId];
     if (!session) return false;
-    return computeHasUnreadActivity({
-      sessionSeq: session.seq ?? 0,
-      pendingActivityAt: 0,
-      lastViewedSessionSeq: resolveLastViewedSessionSeq(session),
-      lastViewedPendingActivityAt: session.metadata?.readStateV1?.pendingActivityAt,
-    });
+    return deriveSessionAttentionFlags(session, {
+      showPendingPermissionRequests: false,
+      showPendingUserActionRequests: false,
+      showQueuedUserInput: false,
+    }).hasUnread;
   });
 }
 
@@ -459,7 +469,7 @@ export function useSessionListViewData(): SessionListViewItem[] | null {
   );
 }
 
-export function useSessionListViewDataByServerId(): Record<string, SessionListViewItem[] | null> {
+export function useServerScopedSessionListCache(): ServerScopedSessionListCache {
   return getStorage()(useShallow((state) => state.sessionListViewDataByServerId));
 }
 
@@ -468,6 +478,15 @@ export function useAllSessions(): Session[] {
     useShallow((state) => {
       if (!state.isDataReady) return [];
       return Object.values(state.sessions).sort((a, b) => b.updatedAt - a.updatedAt);
+    })
+  );
+}
+
+export function useAllSessionListRenderables(): SessionListRenderableSession[] {
+  return getStorage()(
+    useShallow((state) => {
+      if (!state.isDataReady) return [];
+      return Object.values(state.sessionListRenderables).sort((a, b) => b.updatedAt - a.updatedAt);
     })
   );
 }

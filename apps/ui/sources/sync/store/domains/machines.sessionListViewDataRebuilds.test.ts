@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const mmkvStore = new Map<string, string>();
+const invalidateCachedTransferRoutesForMachineSpy = vi.fn();
 
 vi.mock('react-native-mmkv', () => {
     class MMKV {
@@ -24,6 +25,7 @@ afterEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
     mmkvStore.clear();
+    invalidateCachedTransferRoutesForMachineSpy.mockReset();
 });
 
 function createHarness(createMachinesDomain: any, initialState: any) {
@@ -43,6 +45,9 @@ function mockMachineDomainBoundaries(): void {
     vi.doMock('../../domains/server/serverRuntime', () => ({
         getActiveServerSnapshot: () => ({ serverId: 'server_a', serverUrl: 'http://server.local', generation: 0 }),
     }));
+    vi.doMock('../../domains/transfers/runtime/transferRouteCache', () => ({
+        invalidateCachedTransferRoutesForMachine: (...args: unknown[]) => invalidateCachedTransferRoutesForMachineSpy(...args),
+    }));
     vi.doMock('../../domains/state/warmCachePersistence', () => ({
         resolveWarmCacheAccountScope: vi.fn((fallback: string | null | undefined) => fallback ?? null),
         saveMachineDisplayWarmCacheEntries: vi.fn(),
@@ -50,6 +55,145 @@ function mockMachineDomainBoundaries(): void {
 }
 
 describe('machines domain: sessionListViewData rebuild gating', () => {
+    it('invalidates cached transfer routes when a machine daemonStateVersion advances', async () => {
+        mockMachineDomainBoundaries();
+
+        const { createMachinesDomain } = await import('./machines');
+
+        const initialState = {
+            sessions: {},
+            settings: {
+                groupInactiveSessionsByProject: false,
+                sessionListActiveGroupingV1: 'date',
+                sessionListInactiveGroupingV1: 'date',
+            },
+            sessionListRenderables: {},
+            sessionListViewData: [],
+            sessionListViewDataByServerId: {},
+            machines: {
+                m1: {
+                    id: 'm1',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    metadata: null,
+                    metadataVersion: 0,
+                    daemonState: { transfer: { supported: { import: true, export: true } } },
+                    daemonStateVersion: 1,
+                },
+            },
+            machineDisplayById: {},
+            machineListByServerId: {},
+            machineListStatusByServerId: {},
+            profile: { id: 'profile-1' },
+            getProjectForSession: () => null,
+        };
+
+        const { domain } = createHarness(createMachinesDomain, initialState);
+
+        domain.applyMachines([
+            {
+                id: 'm1',
+                seq: 2,
+                createdAt: 1,
+                updatedAt: 2,
+                active: true,
+                activeAt: 2,
+                metadata: null,
+                metadataVersion: 0,
+                daemonState: { transfer: { supported: { import: true, export: true } } },
+                daemonStateVersion: 2,
+            },
+        ]);
+
+        expect(invalidateCachedTransferRoutesForMachineSpy).toHaveBeenCalledWith({
+            serverId: 'server_a',
+            remoteMachineId: 'm1',
+        });
+    });
+
+    it('invalidates cached transfer routes for the machine owning server when that server is not active', async () => {
+        mockMachineDomainBoundaries();
+
+        const { createMachinesDomain } = await import('./machines');
+
+        const initialState = {
+            sessions: {},
+            settings: {
+                groupInactiveSessionsByProject: false,
+                sessionListActiveGroupingV1: 'date',
+                sessionListInactiveGroupingV1: 'date',
+            },
+            sessionListRenderables: {},
+            sessionListViewData: [],
+            sessionListViewDataByServerId: {},
+            machines: {
+                'm-remote': {
+                    id: 'm-remote',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    metadata: null,
+                    metadataVersion: 0,
+                    daemonState: { transfer: { supported: { import: true, export: true } } },
+                    daemonStateVersion: 1,
+                },
+            },
+            machineDisplayById: {},
+            machineListByServerId: {
+                server_b: [
+                    {
+                        id: 'm-remote',
+                        seq: 1,
+                        createdAt: 1,
+                        updatedAt: 1,
+                        active: true,
+                        activeAt: 1,
+                        metadata: null,
+                        metadataVersion: 0,
+                        daemonState: { transfer: { supported: { import: true, export: true } } },
+                        daemonStateVersion: 1,
+                    },
+                ],
+            },
+            machineListStatusByServerId: {
+                server_b: 'idle',
+            },
+            profile: { id: 'profile-1' },
+            getProjectForSession: () => null,
+        };
+
+        const { domain } = createHarness(createMachinesDomain, initialState);
+
+        domain.applyMachines([
+            {
+                id: 'm-remote',
+                seq: 2,
+                createdAt: 1,
+                updatedAt: 2,
+                active: true,
+                activeAt: 2,
+                metadata: null,
+                metadataVersion: 0,
+                daemonState: { transfer: { supported: { import: true, export: true } } },
+                daemonStateVersion: 2,
+            },
+        ]);
+
+        expect(invalidateCachedTransferRoutesForMachineSpy).toHaveBeenCalledWith({
+            serverId: 'server_b',
+            remoteMachineId: 'm-remote',
+        });
+        expect(invalidateCachedTransferRoutesForMachineSpy).not.toHaveBeenCalledWith({
+            serverId: 'server_a',
+            remoteMachineId: 'm-remote',
+        });
+    });
+
     it('keeps sessionListViewData reference stable for machine activity-only updates', async () => {
         mockMachineDomainBoundaries();
 

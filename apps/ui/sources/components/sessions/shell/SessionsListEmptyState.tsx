@@ -69,15 +69,13 @@ export const SessionsListEmptyState = React.memo((props: SessionsListEmptyStateP
                     surface="sidebar"
                 />
             ) : (
-                <ItemGroup>
-                    <SessionGettingStartedSummary
-                        testID="sessions-empty-state-summary"
-                        titleTestID="sessions-empty-state-title"
-                        descriptionTestID="sessions-empty-state-description"
-                        kind={props.kind}
-                        targetLabel={props.targetLabel}
-                    />
-                </ItemGroup>
+                <SessionGettingStartedSummary
+                    testID="sessions-empty-state-summary"
+                    titleTestID="sessions-empty-state-title"
+                    descriptionTestID="sessions-empty-state-description"
+                    kind={props.kind}
+                    targetLabel={props.targetLabel}
+                />
             )}
 
             {props.kind === 'create_session' && machines.length > 0 ? (

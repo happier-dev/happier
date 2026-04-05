@@ -1,51 +1,39 @@
 import * as React from 'react';
-import { SessionListViewItem, useSessionListViewData, useSessionListViewDataByServerId, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
-import { resolveSessionListSourceData } from '@/sync/domains/session/listing/sessionListPresentation';
+import { SessionListViewItem, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { computeVisibleSessionListViewData } from '@/sync/domains/session/listing/computeVisibleSessionListViewData';
 import { areSessionListGroupOrderMapsEqual, normalizeSessionListGroupOrderV1ForSource } from '@/sync/domains/session/listing/sessionListOrderingStateV1';
 import { filterSessionListViewDataByStorageKind } from '@/sync/domains/session/listing/filterSessionListViewDataByStorageKind';
+import { useVisibleSessionListSourceState } from './useVisibleSessionListSourceState';
 import type { SessionListStorageFilter } from '@/sync/domains/session/sessionStorageKind';
-import { useResolvedActiveServerSelection } from '@/hooks/server/useEffectiveServerSelection';
 
 export function useVisibleSessionListViewData(storageFilter: SessionListStorageFilter = 'all'): SessionListViewItem[] | null {
-    const activeData = useSessionListViewData();
-    const dataByServerId = useSessionListViewDataByServerId();
+    const { selection, source } = useVisibleSessionListSourceState();
     const hideInactiveSessions = useSetting('hideInactiveSessions');
     const pinnedSessionKeysV1 = useSetting('pinnedSessionKeysV1');
+    const sessionListOrderingModeV1 = useSetting('sessionListOrderingModeV1') as
+        | 'custom'
+        | 'created'
+        | 'updated';
     const [sessionListGroupOrderV1, setSessionListGroupOrderV1] = useSettingMutable('sessionListGroupOrderV1');
-    const selection = useResolvedActiveServerSelection();
-
-    const source = React.useMemo(() => {
-        const source = resolveSessionListSourceData({
-            enabled: selection.enabled,
-            activeServerId: selection.activeServerId,
-            activeData,
-            byServerId: dataByServerId,
-            selectedServerIds: selection.allowedServerIds,
-        });
-        return source;
-    }, [
-        activeData,
-        dataByServerId,
-        selection,
-    ]);
 
     const normalizedGroupOrder = React.useMemo(() => {
         if (!source) return sessionListGroupOrderV1;
+        if (sessionListOrderingModeV1 !== 'custom') return sessionListGroupOrderV1;
         return normalizeSessionListGroupOrderV1ForSource({
             source,
             pinnedSessionKeysV1,
             sessionListGroupOrderV1,
         });
-    }, [pinnedSessionKeysV1, sessionListGroupOrderV1, source]);
+    }, [pinnedSessionKeysV1, sessionListGroupOrderV1, sessionListOrderingModeV1, source]);
 
     React.useEffect(() => {
         if (!source) return;
+        if (sessionListOrderingModeV1 !== 'custom') return;
         if (areSessionListGroupOrderMapsEqual(sessionListGroupOrderV1, normalizedGroupOrder)) {
             return;
         }
         setSessionListGroupOrderV1(normalizedGroupOrder);
-    }, [normalizedGroupOrder, sessionListGroupOrderV1, setSessionListGroupOrderV1, source]);
+    }, [normalizedGroupOrder, sessionListGroupOrderV1, sessionListOrderingModeV1, setSessionListGroupOrderV1, source]);
 
     return React.useMemo(() => {
         if (!source) return source;
@@ -53,12 +41,9 @@ export function useVisibleSessionListViewData(storageFilter: SessionListStorageF
             source,
             hideInactiveSessions,
             pinnedSessionKeysV1,
-            sessionListGroupOrderV1: normalizedGroupOrder,
-            presentation: {
-                enabled: selection.enabled,
-                presentation: selection.presentation,
-                selectedServerIds: selection.allowedServerIds,
-            },
+            sessionListGroupOrderV1: sessionListOrderingModeV1 === 'custom' ? normalizedGroupOrder : sessionListGroupOrderV1,
+            sessionListOrderingModeV1,
+            presentation: selection.presentation,
         });
         if (!visible || storageFilter === 'all') return visible;
         return filterSessionListViewDataByStorageKind(visible, storageFilter);
@@ -66,8 +51,10 @@ export function useVisibleSessionListViewData(storageFilter: SessionListStorageF
         hideInactiveSessions,
         pinnedSessionKeysV1,
         normalizedGroupOrder,
-        selection,
+        selection.presentation,
+        sessionListGroupOrderV1,
         source,
         storageFilter,
+        sessionListOrderingModeV1,
     ]);
 }

@@ -15,6 +15,7 @@ import type { Purchases } from '../domains/purchases/purchases';
 import type { Settings } from '../domains/settings/settings';
 import type { SessionListViewItem } from '../domains/session/listing/sessionListViewData';
 import type { SessionListRenderableSession } from '../domains/session/listing/sessionListRenderable';
+import type { ServerScopedSessionListCache } from '../domains/session/listing/serverScopedSessionListCache';
 import type { MachineDisplayRenderable } from '../domains/machines/machineDisplayRenderable';
 import type { CustomerInfo } from '../domains/purchases/types';
 import type { SessionMessages } from './domains/messages';
@@ -34,7 +35,6 @@ import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
 import type { WorkspaceScopeBase } from '../domains/workspaces/workspaceScope';
 
 export type KnownEntitlements = 'voice' | 'pro';
-export type SessionListItem = string | Session;
 export type SessionModelMode = NonNullable<Session['modelMode']>;
 
 export interface SettingsDomainSlice {
@@ -54,15 +54,11 @@ export interface ProfileDomainSlice {
     applyProfile: (profile: Profile) => void;
 }
 
-export interface LegacySessionsSlice {
-    sessionsData: SessionListItem[] | null;
-}
-
 export interface SessionsDomainSlice {
     sessions: Record<string, Session>;
     sessionListRenderables: Record<string, SessionListRenderableSession>;
     sessionListViewData: SessionListViewItem[] | null;
-    sessionListViewDataByServerId: Record<string, SessionListViewItem[] | null>;
+    sessionListViewDataByServerId: ServerScopedSessionListCache;
     sessionScmStatus: Record<string, ScmStatus | null>;
     sessionLastViewed: Record<string, number>;
     sessionRepositoryTreeExpandedPathsBySessionId: Record<string, string[]>;
@@ -308,7 +304,6 @@ export interface BootstrapSlice {
 
 export type StorageState = SettingsDomainSlice
     & ProfileDomainSlice
-    & LegacySessionsSlice
     & SessionsDomainSlice
     & MachinesDomainSlice
     & MessagesDomainSlice

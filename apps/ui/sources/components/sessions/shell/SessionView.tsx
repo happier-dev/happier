@@ -1,6 +1,3 @@
-import Color from 'color';
-
-import { AgentContentView } from '@/components/sessions/transcript/AgentContentView';
 import { AgentInput } from '@/components/sessions/agentInput';
 import type { AgentInputAttachment } from '@/components/sessions/agentInput/agentInputContracts';
 import { AttachmentFilePicker } from '@/components/sessions/attachments/AttachmentFilePicker';
@@ -23,12 +20,10 @@ import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
 import { useDraft } from '@/hooks/session/useDraft';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useSessionExecutionRunsSupported } from '@/hooks/server/useSessionExecutionRunsSupported';
-import { useWarmRepositoryDirectoryCacheOnSessionOpen } from '@/hooks/session/files/useWarmRepositoryDirectoryCacheOnSessionOpen';
 import { Modal } from '@/modal';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { continueSessionWithReplay, sessionAbort, resumeSession } from '@/sync/ops';
 import { storage, useAutomations, useIsDataReady, useLocalSetting, useRealtimeStatus, useSessionMessages, useSessionPendingMessages, useSessionTranscriptIds, useSessionUsage, useSetting, useSettings, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
-import { setActiveViewingSessionId, clearActiveViewingSessionId } from '@/sync/domains/session/activeViewingSession';
 import { resolveWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 import { canResumeSessionWithOptions } from '@/agents/runtime/resumeCapabilities';
 import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor, buildResumeSessionExtrasFromUiState } from '@/agents/catalog/catalog';
@@ -38,23 +33,20 @@ import { useSession } from '@/sync/domains/state/storage';
 import { Session } from '@/sync/domains/state/storageTypes';
 import { sync } from '@/sync/sync';
 import { useApplyLocalSettings } from '@/sync/store/settingsWriters';
-import { buildReviewCommentsDisplayText, buildReviewCommentsPromptText } from '@/sync/domains/input/reviewComments/reviewCommentPrompt';
-import { buildReviewCommentsV1MetaPayload } from '@/sync/domains/input/reviewComments/reviewCommentMeta';
+import { buildReviewCommentsDisplayText } from '@/sync/domains/input/reviewComments/reviewCommentPrompt';
+import { buildReviewCommentsOutboundMessage } from '@/sync/domains/input/reviewComments/buildReviewCommentsOutboundMessage';
 import { resolveSessionComposerSend } from '@/sync/domains/input/slashCommands/resolveSessionComposerSend';
 import { expandPromptTemplateInvocation } from '@/sync/domains/input/slashCommands/expandPromptTemplateInvocation';
 import { applyPermissionModeSelection } from '@/sync/domains/permissions/permissionModeApply';
 import {
     supportsSessionModeOverrides,
 } from '@/sync/acp/sessionModeControl';
-import { shadowLevelStyle } from '@/shadowElevation';
 import { t } from '@/text';
 import { tracking, trackMessageSent } from '@/track';
-import { isRunningOnMac } from '@/utils/platform/platform';
 import { randomUUID } from '@/platform/randomUUID';
 import { useDeviceType, useHeaderHeight, useIsLandscape, useIsTablet } from '@/utils/platform/responsive';
 import { formatPathRelativeToHome, getSessionAvatarId, getSessionName, listPendingPermissionRequests, listPendingUserActionRequests, shouldShowAbortButtonForSessionState, useSessionStatus } from '@/utils/sessions/sessionUtils';
 import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
-import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 import { isVersionSupported, MINIMUM_CLI_VERSION } from '@/utils/system/versionUtils';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { ensureAgentInstallablesBackground } from '@/capabilities/ensureAgentInstallablesBackground';
@@ -82,9 +74,7 @@ import { getSessionLocalControlState, isSessionLocallyAttached } from '@/sync/do
 import { deriveSessionSubagentCounts } from '@/sync/domains/session/subagents/deriveSessionSubagentCounts';
 import { isModelSelectableForSession } from '@/sync/domains/models/modelOptions';
 import { getInactiveSessionUiState } from '@/components/sessions/model/inactiveSessionUi';
-import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
 import { usePathname, useRouter } from 'expo-router';
 import * as React from 'react';
 import { useMemo } from 'react';
@@ -98,6 +88,7 @@ import { readControlSwitchUiTimeoutMsFromEnv } from '@/sync/domains/session/cont
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { useVoiceSessionSnapshot, voiceSessionManager } from '@/voice/session/voiceSession';
 import { getVoiceAdapterRegistry } from '@/voice/session/voiceAdapterRegistry';
+import { shadowLevelStyle } from '@/shadowElevation';
 import { isVoiceConversationSystemSessionMetadata } from '@/voice/sessionBinding/voiceConversationSession';
 import { resolveVoiceSessionComposerRouting } from '@/voice/sessionBinding/voiceSessionComposerRouting';
 import { sendVoiceSessionComposerText } from '@/voice/sessionBinding/sendVoiceSessionComposerText';
@@ -108,20 +99,19 @@ import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { executeSessionComposerResolution } from '@/sync/domains/input/slashCommands/executeSessionComposerResolution';
 import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
+import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { useAttachmentsUploadConfig } from '@/components/sessions/attachments/useAttachmentsUploadConfig';
 import { useAttachmentDraftManager } from '@/components/sessions/attachments/useAttachmentDraftManager';
 import { formatAttachmentsBlock, uploadAttachmentDraftsToSession } from '@/components/sessions/attachments/uploadAttachmentDraftsToSession';
 import { Text } from '@/components/ui/text/Text';
 import { AppPaneScopeHost } from '@/components/appShell/panes/AppPaneScopeHost';
 import { useRegisterSessionPaneDriver } from '@/components/sessions/panes/useRegisterSessionPaneDriver';
-import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { SessionScreenTestIdsProvider } from './sessionScreenTestIds';
 import { useSessionScreenIsFocused } from './useSessionScreenIsFocused';
 import { resolvePaneLayout } from '@/components/ui/panels/paneBreakpoints';
 import { PANE_SIZING_DEFAULTS } from '@/components/appShell/panes/layout/paneSizing';
 import { resolveMultiPaneDeviceType } from '@/components/appShell/panes/layout/resolveMultiPaneDeviceType';
 import type { SessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
-import { useSessionPaneUrlSync } from '@/components/sessions/panes/url/useSessionPaneUrlSync';
 import { SessionResumeProvider } from '@/components/sessions/model/SessionResumeContext';
 import { useSessionResumeRequestListener } from '@/components/sessions/model/sessionResumeRequests';
 import { useDirectSessionTakeover } from '@/components/sessions/model/useDirectSessionTakeover';
@@ -133,6 +123,8 @@ import type { SessionParticipantTarget } from '@/sync/domains/session/participan
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import { isHiddenSystemSession } from '@happier-dev/protocol';
+import { useSessionViewBootstrap } from './view/useSessionViewBootstrap';
+import { SessionViewLayout } from './view/SessionViewLayout';
 
 
 export const SessionView = React.memo((props: {
@@ -179,7 +171,18 @@ export const SessionView = React.memo((props: {
     // ignored and makes the UI feel broken on first load.
     const multiPaneEnabled = useLocalSetting('uiMultiPanePanelsEnabled') !== false;
     const paneScopeId = useRegisterSessionPaneDriver(sessionId);
-    const pane = useAppPaneScope(paneScopeId);
+    const sessionsRightPaneDefaultOpen = useLocalSetting('sessionsRightPaneDefaultOpen');
+    const { pane, machineReachable: isMachineReachable } = useSessionViewBootstrap({
+        sessionId,
+        paneScopeId,
+        paneUrlState: props.paneUrlState ?? null,
+        multiPaneEnabled,
+        sessionsRightPaneDefaultOpen: sessionsRightPaneDefaultOpen === true,
+        deviceType,
+        sessionPath: session?.metadata?.path ?? null,
+        sessionSeq: session?.seq ?? null,
+        sessionPendingVersion: session?.pendingVersion ?? null,
+    });
     const { messages: pendingMessages } = useSessionPendingMessages(sessionId);
     const { messages: committedMessages } = useSessionMessages(sessionId);
     const directSessionRuntime = useDirectSessionRuntime({
@@ -457,6 +460,8 @@ export const SessionView = React.memo((props: {
                            key={sessionId}
                            sessionId={sessionId}
                            session={session}
+                           pane={pane}
+                           isMachineReachable={isMachineReachable}
                            onBackPress={handleBackPress}
                            isEncryptedSessionLocked={isEncryptedSessionLocked}
                            executionRunsEnabled={executionRunsEnabled}
@@ -480,6 +485,8 @@ function SessionViewLoaded({
     committedMessages,
     sessionId,
     session,
+    pane,
+    isMachineReachable,
     onBackPress,
     isEncryptedSessionLocked,
     executionRunsEnabled,
@@ -494,6 +501,8 @@ function SessionViewLoaded({
     committedMessages: readonly Message[];
     sessionId: string;
     session: Session;
+    pane: ReturnType<typeof useSessionViewBootstrap>['pane'];
+    isMachineReachable: boolean;
     onBackPress: () => void;
     isEncryptedSessionLocked: boolean;
     executionRunsEnabled: boolean;
@@ -521,41 +530,6 @@ function SessionViewLoaded({
     // `undefined` during hydration; failing closed here causes deep links like `?right=git` to be
     // ignored and makes the UI feel broken on first load.
     const multiPaneEnabled = useLocalSetting('uiMultiPanePanelsEnabled') !== false;
-    const sessionsRightPaneDefaultOpen = useLocalSetting('sessionsRightPaneDefaultOpen');
-    const pane = useAppPaneScope(paneScopeId);
-
-    useSessionPaneUrlSync({
-        enabled: multiPaneEnabled && Platform.OS === 'web',
-        scopeKey: paneScopeId,
-        scopeState: pane.scopeState,
-        urlState: paneUrlState,
-        pane,
-        setParams: typeof (router as any)?.setParams === 'function' ? (router as any).setParams.bind(router) : null,
-    });
-
-    // Session preference: optionally open the right sidebar by default (files tab) when
-    // entering a session for the first time on this device.
-    React.useEffect(() => {
-        if (!sessionsRightPaneDefaultOpen) return;
-        if (!multiPaneEnabled) return;
-        if (!(Platform.OS === 'web' || deviceType === 'tablet')) return;
-        if (paneUrlState?.rightTabId) return;
-        const right = (pane.scopeState as any)?.right ?? null;
-        if (!right) return;
-        if (right.isOpen === true) return;
-        // If the user previously opened any right-pane tab in this session, don't override their choice
-        // (even if they closed the pane after).
-        if (right.activeTabId !== null && right.activeTabId !== undefined) return;
-        pane.openRight({ tabId: 'files' });
-        pane.setRightTab('files');
-    }, [
-        deviceType,
-        multiPaneEnabled,
-        pane,
-        pane.scopeState,
-        paneUrlState?.rightTabId,
-        sessionsRightPaneDefaultOpen,
-    ]);
     const [message, setMessage] = React.useState('');
     const realtimeStatus = useRealtimeStatus();
     const { ids: committedMessageIds, isLoaded } = useSessionTranscriptIds(sessionId);
@@ -576,7 +550,7 @@ function SessionViewLoaded({
     const machineId = reachableMachineTarget?.machineId ?? session.metadata?.machineId;
     const isCliOutdated = cliVersion && !isVersionSupported(cliVersion, MINIMUM_CLI_VERSION);
     const isAcknowledged = machineId && acknowledgedCliVersions[machineId] === cliVersion;
-    const shouldShowCliWarning = isCliOutdated && !isAcknowledged;
+    const shouldShowCliWarning = Boolean(isCliOutdated && !isAcknowledged);
     // Get model mode from session object - default is agent-specific (Gemini needs an explicit default)
     const agentId = resolveAgentIdFromSessionMetadata(session.metadata) ?? resolveAgentIdFromFlavor(session.metadata?.flavor) ?? DEFAULT_AGENT_ID;
     const liveAuthoringContext = React.useMemo(() => {
@@ -673,27 +647,14 @@ function SessionViewLoaded({
         };
     }, [scmSessionAutoRefreshIntervalMs, sessionId]);
 
-    const resolveServerIdForSessionId = React.useCallback((sid: string): string | null => {
-        const state: any = storage.getState();
-        const byServer = state?.sessionListViewDataByServerId ?? {};
-        for (const [serverId, items] of Object.entries(byServer)) {
-            if (!Array.isArray(items)) continue;
-            for (const item of items as any[]) {
-                if (!item || item.type !== 'session') continue;
-                if (item?.session?.id === sid) return String(serverId);
-            }
-        }
-        return null;
-    }, []);
-
     const actionExecutor = React.useMemo(
         () => createDefaultActionExecutor({
-            resolveServerIdForSessionId,
+            resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId),
             openSession: (sid) => {
                 router.push((`/session/${sid}`) as any);
             },
         }),
-        [resolveServerIdForSessionId, router]
+        [router]
     );
 
     // Inactive session resume state
@@ -723,14 +684,6 @@ function SessionViewLoaded({
         [session.metadata, sessionId],
     );
 
-    const { machineReachable: isMachineReachable, machineOnline } = useSessionMachineReachability(sessionId);
-
-    useWarmRepositoryDirectoryCacheOnSessionOpen({
-        sessionId,
-        sessionPath: session?.metadata?.path ?? null,
-        machineOnline,
-    });
-
     const inactiveUi = React.useMemo(() => {
         return getInactiveSessionUiState({
             isSessionActive,
@@ -742,67 +695,6 @@ function SessionViewLoaded({
 
     // Use draft hook for auto-saving message drafts
     const { clearDraft } = useDraft(sessionId, message, setMessage);
-
-    const isFocusedRef = React.useRef(false);
-    const markViewedTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-    // Unread is driven by committed transcript `session.seq` only (pending queue does not affect unread).
-    const lastMarkedRef = React.useRef<{ sessionSeq: number } | null>(null);
-
-    const markSessionViewed = React.useCallback((opts?: { sessionSeq?: number }) => {
-        fireAndForget(sync.markSessionViewed(sessionId, opts), { tag: 'SessionView.markSessionViewed' });
-    }, [sessionId]);
-
-    useFocusEffect(React.useCallback(() => {
-        isFocusedRef.current = true;
-        setActiveViewingSessionId(sessionId);
-        {
-            const current = storage.getState().sessions[sessionId];
-            lastMarkedRef.current = {
-                sessionSeq: current?.seq ?? 0,
-            };
-        }
-        const cancelMarkViewed = runAfterInteractionsWithFallback(markSessionViewed);
-        return () => {
-            isFocusedRef.current = false;
-            clearActiveViewingSessionId(sessionId);
-            const sessionSeqAtBlur = storage.getState().sessions[sessionId]?.seq ?? 0;
-            cancelMarkViewed();
-            if (markViewedTimeoutRef.current) {
-                clearTimeout(markViewedTimeoutRef.current);
-                markViewedTimeoutRef.current = null;
-            }
-            runAfterInteractionsWithFallback(() => {
-                markSessionViewed({ sessionSeq: sessionSeqAtBlur });
-            });
-        };
-    }, [markSessionViewed, sessionId]));
-
-    React.useEffect(() => {
-        if (!isFocusedRef.current) return;
-
-        const sessionSeq = session.seq ?? 0;
-        const last = lastMarkedRef.current;
-        if (last && last.sessionSeq >= sessionSeq) return;
-
-        lastMarkedRef.current = { sessionSeq };
-        if (markViewedTimeoutRef.current) clearTimeout(markViewedTimeoutRef.current);
-        markViewedTimeoutRef.current = setTimeout(() => {
-            markViewedTimeoutRef.current = null;
-            markSessionViewed();
-        }, 250);
-        return () => {
-            if (markViewedTimeoutRef.current) {
-                clearTimeout(markViewedTimeoutRef.current);
-                markViewedTimeoutRef.current = null;
-            }
-        };
-    }, [markSessionViewed, session.seq]);
-
-    React.useEffect(() => {
-        return runAfterInteractionsWithFallback(() => {
-            fireAndForget(sync.fetchPendingMessages(sessionId), { tag: 'SessionView.fetchPendingMessages' });
-        });
-    }, [sessionId, session.pendingVersion]);
 
     // Handle dismissing CLI version warning
     const handleDismissCliWarning = React.useCallback(() => {
@@ -1509,22 +1401,14 @@ function SessionViewLoaded({
                                     } as Record<string, unknown>;
 
                                     const outbound = shouldSendReviewComments
-                                        ? {
-                                            text: buildReviewCommentsPromptText({
-                                                sessionId,
-                                                drafts: reviewCommentDrafts,
-                                                additionalMessage: trimmedText.length > 0
-                                                    ? `${additionalMessage}\n\n${attachmentsBlock}`
-                                                    : attachmentsBlock,
-                                            }),
-                                            displayText: `${buildReviewCommentsDisplayText({ drafts: reviewCommentDrafts })}\n\n${attachmentsBlock}`,
-                                            metaOverrides: {
-                                                happier: {
-                                                    kind: 'review_comments.v1',
-                                                    payload: buildReviewCommentsV1MetaPayload({ sessionId, drafts: reviewCommentDrafts }),
-                                                },
-                                            } as Record<string, unknown>,
-                                        }
+                                        ? buildReviewCommentsOutboundMessage({
+                                            sessionId,
+                                            drafts: reviewCommentDrafts,
+                                            additionalMessage: trimmedText.length > 0
+                                                ? `${additionalMessage}\n\n${attachmentsBlock}`
+                                                : attachmentsBlock,
+                                            displayTextSuffix: attachmentsBlock,
+                                        })
                                         : {
                                             text: trimmedText.length > 0 ? `${trimmedText}\n\n${attachmentsBlock}` : attachmentsBlock,
                                             displayText: trimmedText,
@@ -1550,23 +1434,16 @@ function SessionViewLoaded({
                         }
 
                         const outbound = shouldSendReviewComments
-                        ? {
-                            text: buildReviewCommentsPromptText({
-                                sessionId,
-                                drafts: reviewCommentDrafts,
-                                additionalMessage,
-                            }),
-                            displayText: buildReviewCommentsDisplayText({ drafts: reviewCommentDrafts }),
-                            metaOverrides: {
-                                happier: {
-                                    kind: 'review_comments.v1',
-                                    payload: buildReviewCommentsV1MetaPayload({ sessionId, drafts: reviewCommentDrafts }),
-                                },
-                              } as Record<string, unknown>,
-                          }
-                          : (trimmedText.length > 0
-                              ? { text: trimmedText, displayText: undefined, metaOverrides: undefined }
-                              : null);
+                            ? {
+                                ...buildReviewCommentsOutboundMessage({
+                                    sessionId,
+                                    drafts: reviewCommentDrafts,
+                                    additionalMessage,
+                                }),
+                            }
+                            : (trimmedText.length > 0
+                                ? { text: trimmedText, displayText: undefined, metaOverrides: undefined }
+                                : null);
 
                         if (!outbound) return;
 
@@ -1866,78 +1743,16 @@ function SessionViewLoaded({
     ) : null;
 
     const main = (
-        <>
-            {/* CLI Version Warning Overlay - Subtle centered pill */}
-            {shouldShowCliWarning && !(isLandscape && deviceType === 'phone') && (
-                <Pressable
-                    onPress={handleDismissCliWarning}
-                    style={{
-                        position: 'absolute',
-                        top: 8, // Position at top of content area (padding handled by parent)
-                        alignSelf: 'center',
-                        backgroundColor: theme.colors.box.warning.background,
-                        borderWidth: 1,
-                        borderColor: theme.colors.box.warning.border,
-                        borderRadius: 100, // Fully rounded pill
-                        paddingHorizontal: 14,
-                        paddingVertical: 7,
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        zIndex: 998, // Below voice bar but above content
-                        ...shadowLevelStyle(theme.colors.shadowLevels[3]),
-                    }}
-                >
-                    <Ionicons name="warning-outline" size={14} color={theme.colors.box.warning.text} style={{ marginRight: 6 }} />
-                    <Text style={{
-                        fontSize: 12,
-                        color: theme.colors.box.warning.text,
-                        fontWeight: '600'
-                    }}>
-                        {t('sessionInfo.cliVersionOutdated')}
-                    </Text>
-                    <Ionicons name="close" size={14} color={theme.colors.box.warning.text} style={{ marginLeft: 8 }} />
-                </Pressable>
-            )}
-
-            {/* Main content area - no padding since header is overlay */}
-            <View style={{ flexBasis: 0, flexGrow: 1, paddingBottom: safeArea.bottom + ((isRunningOnMac() || Platform.OS === 'web') ? 32 : 0) }}>
-                <AgentContentView
-                    content={content}
-                    input={input}
-                    placeholder={placeholder}
-                />
-            </View >
-
-            {/* Back button for landscape phone mode when header is hidden */}
-            {
-                isLandscape && deviceType === 'phone' && (
-                    <Pressable
-                        onPress={onBackPress}
-                        testID="session-view-landscape-back-button"
-                        style={{
-                            position: 'absolute',
-                            top: safeArea.top + 8,
-                            left: 16,
-                            zIndex: 1000,
-                            width: 44,
-	                            height: 44,
-	                            borderRadius: 22,
-	                            backgroundColor: Color(theme.colors.header.background).alpha(0.9).rgb().string(),
-	                            alignItems: 'center',
-	                            justifyContent: 'center',
-	                            ...shadowLevelStyle(theme.colors.shadowLevels[4]),
-                        }}
-                        hitSlop={15}
-                    >
-                        <Ionicons
-                            name={Platform.OS === 'ios' ? 'chevron-back' : 'arrow-back'}
-                            size={Platform.select({ ios: 28, default: 24 })}
-                            color={theme.colors.text}
-                        />
-                    </Pressable>
-                )
-            }
-        </>
+        <SessionViewLayout
+            content={content}
+            input={input}
+            placeholder={placeholder}
+            shouldShowCliWarning={shouldShowCliWarning}
+            onDismissCliWarning={handleDismissCliWarning}
+            isLandscape={isLandscape}
+            deviceType={deviceType}
+            onBackPress={onBackPress}
+        />
     );
 
     return (

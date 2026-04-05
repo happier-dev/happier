@@ -40,10 +40,20 @@ installSessionShellCommonModuleMocks({
         });
     },
 });
-vi.mock('@/hooks/session/useVisibleSessionListViewData', () => ({
-    useVisibleSessionListViewData: (storageKind?: string) => {
+vi.mock('@/hooks/session/useVisibleSessionListPaneState', () => ({
+    useVisibleSessionListPaneState: (storageKind?: string) => {
         sessionListState.storageKinds.push(storageKind ?? 'all');
-        return sessionListState.data;
+        const data = sessionListState.data;
+        const sessionCount = (data ?? []).filter((item) => item?.type === 'session').length;
+        return {
+            summary: {
+                sessionsReady: true,
+                sessionCount,
+            },
+            visibleSessionListViewData: data,
+            showLoading: false,
+            showEmptyState: sessionCount === 0,
+        };
     },
 }));
 vi.mock('@/components/sessions/model/useSessionListStorageKind', () => ({
@@ -79,6 +89,7 @@ vi.mock('@/components/sessions/guidance/useSessionGettingStartedGuidanceBaseMode
 }));
 vi.mock('@/components/sessions/shell/SessionsList', () => ({
     SessionsList: (props: any) => React.createElement('SessionsList', props),
+    SessionsListView: (props: any) => React.createElement('SessionsListView', props),
 }));
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
@@ -151,7 +162,9 @@ describe('SessionsListWrapper (empty state)', () => {
         expect(sessionListState.storageKinds).toEqual(['direct']);
         expect(() => screen.findByType('SessionsListStorageChrome' as any)).not.toThrow();
         expect(screen.findByType('SessionsListStorageChrome' as any).props.storageKind).toBe('direct');
-        expect(screen.findByType('SessionsList' as any).props.storageKind).toBe('direct');
+        expect(screen.findByType('SessionsListView' as any).props.storageKind).toBe('direct');
+        expect(screen.findByType('SessionsListView' as any).props.data).toBeUndefined();
+        expect(() => screen.findByType('SessionsList' as any)).toThrow();
 
         await screen.unmount();
     });
@@ -167,6 +180,7 @@ describe('SessionsListWrapper (empty state)', () => {
         expect(screen.findByType('SessionsListStorageChrome' as any).props.storageKind).toBe('direct');
         expect(() => screen.findByType('DirectSessionsEmptyState' as any)).not.toThrow();
         expect(() => screen.findByType('SessionGettingStartedGuidance' as any)).toThrow();
+        expect(() => screen.findByType('SessionsList' as any)).toThrow();
 
         await screen.unmount();
     });
@@ -180,7 +194,22 @@ describe('SessionsListWrapper (empty state)', () => {
 
         expect(() => screen.findByType('SessionsListStorageChrome' as any)).not.toThrow();
         expect(screen.findByType('SessionsListStorageChrome' as any).props.storageKind).toBe('direct');
-        expect(screen.findByType('SessionsList' as any).props.storageKind).toBe('direct');
+        expect(screen.findByType('SessionsListView' as any).props.storageKind).toBe('direct');
+        expect(screen.findByType('SessionsListView' as any).props.data).toBeUndefined();
+        expect(() => screen.findByType('SessionsList' as any)).toThrow();
+
+        await screen.unmount();
+    });
+
+    it('passes precomputed visible data to SessionsListView for persisted non-empty sessions', async () => {
+        sessionListState.data = [{ type: 'session', session: { id: 'session-2' } }];
+
+        const screen = await renderScreen(<SessionsListWrapper />);
+
+        expect(sessionListState.storageKinds).toEqual(['persisted']);
+        expect(screen.findByType('SessionsListView' as any).props.storageKind).toBe('persisted');
+        expect(screen.findByType('SessionsListView' as any).props.data).toBeUndefined();
+        expect(() => screen.findByType('SessionsList' as any)).toThrow();
 
         await screen.unmount();
     });

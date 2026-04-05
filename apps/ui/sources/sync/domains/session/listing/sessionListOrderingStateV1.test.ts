@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import type { SessionListViewItem } from './sessionListViewData';
-import { normalizeSessionListGroupOrderV1ForSource, PINNED_GROUP_KEY_V1, SESSION_LIST_GROUP_ORDER_MAX_KEYS_PER_GROUP } from './sessionListOrderingStateV1';
+import {
+    normalizeSessionListGroupOrderV1ForSource,
+    PINNED_GROUP_KEY_V1,
+    SESSION_LIST_GROUP_ORDER_MAX_KEYS_PER_GROUP,
+    sortSessionListViewItemsByOrderingMode,
+} from './sessionListOrderingStateV1';
 
 function makeSessionItem(opts: Readonly<{ serverId: string; sessionId: string; groupKey: string }>): SessionListViewItem {
     return {
@@ -13,6 +18,27 @@ function makeSessionItem(opts: Readonly<{ serverId: string; sessionId: string; g
 }
 
 describe('sessionListOrderingStateV1', () => {
+    it('returns the original array when custom ordering is a no-op', () => {
+        const source: SessionListViewItem[] = [
+            { type: 'header', title: 'Today', headerKind: 'date', groupKey: 'g', serverId: 's1' },
+            makeSessionItem({ serverId: 's1', sessionId: 'a', groupKey: 'g' }),
+        ];
+
+        expect(sortSessionListViewItemsByOrderingMode(source, 'custom')).toBe(source);
+    });
+
+    it('returns the original array when created ordering is already satisfied', () => {
+        const source: SessionListViewItem[] = [
+            { type: 'header', title: 'Today', headerKind: 'date', groupKey: 'g', serverId: 's1' },
+            makeSessionItem({ serverId: 's1', sessionId: 'b', groupKey: 'g' }),
+            makeSessionItem({ serverId: 's1', sessionId: 'a', groupKey: 'g' }),
+        ];
+        (source[1].session as any).createdAt = 20;
+        (source[2].session as any).createdAt = 10;
+
+        expect(sortSessionListViewItemsByOrderingMode(source, 'created')).toBe(source);
+    });
+
     it('removes missing session keys from group order when the group is present in the source', () => {
         const g = 'server:s1:day:2026-02-17';
         const source: SessionListViewItem[] = [
@@ -27,6 +53,24 @@ describe('sessionListOrderingStateV1', () => {
         });
 
         expect(normalized).toEqual({ [g]: ['s1:a'] });
+    });
+
+    it('returns the original map when group order is already normalized for the source', () => {
+        const g = 'server:s1:day:2026-02-17';
+        const normalizedOrder = { [g]: ['s1:a', 's1:b'] };
+        const source: SessionListViewItem[] = [
+            { type: 'header', title: 'Today', headerKind: 'date', groupKey: g, serverId: 's1' },
+            makeSessionItem({ serverId: 's1', sessionId: 'a', groupKey: g }),
+            makeSessionItem({ serverId: 's1', sessionId: 'b', groupKey: g }),
+        ];
+
+        const normalized = normalizeSessionListGroupOrderV1ForSource({
+            source,
+            pinnedSessionKeysV1: [],
+            sessionListGroupOrderV1: normalizedOrder,
+        });
+
+        expect(normalized).toBe(normalizedOrder);
     });
 
     it('caps per-group order lists to the configured max', () => {

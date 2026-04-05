@@ -1,4 +1,6 @@
 import { computeHasUnreadActivity } from '@/sync/domains/messages/unread';
+import { deriveDirectSessionAttentionHasUnread } from '@/sync/domains/session/directSessions/readDirectSessionAttention';
+import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
 import { resolveLastViewedSessionSeq } from '@/sync/domains/session/readCursor/resolveLastViewedSessionSeq';
 import { derivePendingRequestFlagsFromAgentState } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -23,10 +25,13 @@ export function deriveSessionAttentionFlags(
 ): SessionAttentionFlags {
     const isSessionActive = session.active === true;
     const pendingFlags = derivePendingRequestFlagsFromAgentState(session.agentState);
+    const directSessionHasUnread = readDirectSessionLink(session.metadata)
+        ? deriveDirectSessionAttentionHasUnread(session.metadata)
+        : null;
 
     const hasUnread = options?.showUnread === false
         ? false
-        : computeHasUnreadActivity({
+        : directSessionHasUnread ?? computeHasUnreadActivity({
             sessionSeq: session.seq ?? 0,
             pendingActivityAt: 0,
             lastViewedSessionSeq: resolveLastViewedSessionSeq(session),

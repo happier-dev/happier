@@ -233,8 +233,16 @@ let mockVisibleSessionListViewData: any[] = [
     },
 ];
 
-vi.mock('@/hooks/session/useVisibleSessionListViewData', () => ({
-    useVisibleSessionListViewData: () => mockVisibleSessionListViewData,
+vi.mock('@/hooks/session/useVisibleSessionListPaneState', () => ({
+    useVisibleSessionListPaneState: () => ({
+        summary: {
+            sessionsReady: true,
+            sessionCount: mockVisibleSessionListViewData.filter((item) => item.type === 'session').length,
+        },
+        visibleSessionListViewData: mockVisibleSessionListViewData,
+        showLoading: false,
+        showEmptyState: false,
+    }),
 }));
 
 vi.mock('@/utils/system/requestReview', () => ({

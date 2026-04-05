@@ -8,14 +8,13 @@ import {
 import type { Settings } from '../../domains/settings/settings';
 import type { SessionListViewItem } from '../../domains/session/listing/sessionListViewData';
 import type { SessionListRenderableSession } from '../../domains/session/listing/sessionListRenderable';
+import type { ServerScopedSessionListCache } from '../../domains/session/listing/serverScopedSessionListCache';
 import { resolveSessionProjectGroupingKeyParts } from '../../domains/session/listing/sessionListProjectGroupingKeys';
 import { normalizeNonEmptyString } from '@/utils/strings/normalizeNonEmptyString';
-import {
-    buildSessionListViewDataWithServerScope,
-} from '../buildSessionListViewDataWithServerScope';
-import { setActiveServerSessionListCache } from '../sessionListCache';
+import { resolveActiveServerSessionListState } from '../resolveActiveServerSessionListState';
 import { getActiveServerSnapshot } from '../../domains/server/serverRuntime';
 import { projectManager } from '../../runtime/orchestration/projectManager';
+import { invalidateCachedTransferRoutesForMachine } from '../../domains/transfers/runtime/transferRouteCache';
 import {
     resolveWarmCacheAccountScope,
     type MachineDisplayCacheEntryV1,
@@ -37,11 +36,11 @@ export type MachinesDomain = {
 type MachinesDomainDependencies = Readonly<{
     sessions: Record<string, Session>;
     sessionListRenderables: Record<string, SessionListRenderableSession>;
-    getProjectForSession?: (sessionId: string) => { key?: { machineId?: string | null; path?: string | null } | null } | null;
+    getProjectForSession?: (sessionId: string) => { key?: { machineId?: string | null; rootPath?: string | null } | null } | null;
     profile: { id: string };
     settings: Settings;
     sessionListViewData: SessionListViewItem[] | null;
-    sessionListViewDataByServerId: Record<string, SessionListViewItem[] | null>;
+    sessionListViewDataByServerId: ServerScopedSessionListCache;
 }>;
 
 function resolveGroupingForSection(
@@ -89,6 +88,25 @@ function mergeMachineListById(
     return Array.from(mergedById.values());
 }
 
+function resolveServerIdsForMachineTransferRouteInvalidation(
+    state: Pick<MachinesDomain, 'machineListByServerId'>,
+    machineId: string,
+    activeServerId: string,
+): readonly string[] {
+    const scopedServerIds = Object.entries(state.machineListByServerId ?? {})
+        .flatMap(([serverId, machines]) => {
+            const normalizedServerId = normalizeNonEmptyString(serverId);
+            if (!normalizedServerId || !Array.isArray(machines)) return [];
+            return machines.some((machine) => machine.id === machineId) ? [normalizedServerId] : [];
+        });
+
+    if (scopedServerIds.length > 0) {
+        return Array.from(new Set(scopedServerIds));
+    }
+
+    return activeServerId ? [activeServerId] : [];
+}
+
 export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDependencies>({
     set,
 }: {
@@ -104,6 +122,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
             set((state) => {
                 let mergedMachines: Record<string, Machine>;
                 let mergedMachineDisplays: Record<string, MachineDisplayRenderable>;
+                const machinesWithAdvancedDaemonState = new Set<string>();
 
                 if (replace) {
                     mergedMachines = {};
@@ -116,6 +135,13 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     mergedMachines = { ...state.machines };
                     mergedMachineDisplays = { ...state.machineDisplayById };
                     machines.forEach((machine) => {
+                        const previousMachine = state.machines[machine.id];
+                        if (
+                            typeof machine.daemonStateVersion === 'number'
+                            && machine.daemonStateVersion > (previousMachine?.daemonStateVersion ?? 0)
+                        ) {
+                            machinesWithAdvancedDaemonState.add(machine.id);
+                        }
                         mergedMachines[machine.id] = machine;
                         mergedMachineDisplays[machine.id] = buildMachineDisplayRenderableFromMachine(machine);
                     });
@@ -182,15 +208,14 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     }
                 }
 
-                const sessionListViewData = needsSessionListViewDataRebuild
-                    ? buildSessionListViewDataWithServerScope({
-                        sessions: state.sessionListRenderables ?? {},
-                        machines: mergedMachineDisplays,
-                        groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject,
-                        activeGroupingV1: state.settings.sessionListActiveGroupingV1,
-                        inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
-                    })
-                    : state.sessionListViewData;
+                const rebuiltListState = resolveActiveServerSessionListState({
+                    state: {
+                        ...state,
+                        machines: mergedMachines,
+                        machineDisplayById: mergedMachineDisplays,
+                    },
+                    shouldRebuild: needsSessionListViewDataRebuild,
+                });
 
                 if (needsProjectManagerUpdate) {
                     const machineMetadataMap = new Map<string, any>();
@@ -203,6 +228,15 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                 }
 
                 const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+                for (const machineId of machinesWithAdvancedDaemonState) {
+                    const serverIds = resolveServerIdsForMachineTransferRouteInvalidation(state, machineId, activeServerId);
+                    for (const serverId of serverIds) {
+                        invalidateCachedTransferRoutesForMachine({
+                            serverId,
+                            remoteMachineId: machineId,
+                        });
+                    }
+                }
                 const nextActiveServerMachines = activeServerId
                     ? mergeMachineListById(
                         state.machineListByServerId[activeServerId],
@@ -214,13 +248,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     ...state,
                     machines: mergedMachines,
                     machineDisplayById: mergedMachineDisplays,
-                    sessionListViewData,
-                    sessionListViewDataByServerId: needsSessionListViewDataRebuild && sessionListViewData
-                        ? setActiveServerSessionListCache(
-                            state.sessionListViewDataByServerId,
-                            sessionListViewData,
-                        )
-                        : state.sessionListViewDataByServerId,
+                    sessionListViewData: rebuiltListState.sessionListViewData,
                     machineListByServerId: activeServerId
                         ? { ...state.machineListByServerId, [activeServerId]: nextActiveServerMachines }
                         : state.machineListByServerId,
@@ -235,21 +263,17 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
             set((state) => {
                 const nextMachineDisplays = Object.fromEntries(machines.map((machine) => [machine.id, machine]));
                 const previousEntries = buildMachineDisplayCacheEntriesFromRenderables(state.machineDisplayById ?? {});
-                const sessionListViewData = buildSessionListViewDataWithServerScope({
-                    sessions: state.sessionListRenderables ?? {},
-                    machines: nextMachineDisplays,
-                    groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject,
-                    activeGroupingV1: state.settings.sessionListActiveGroupingV1,
-                    inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
+                const rebuiltListState = resolveActiveServerSessionListState({
+                    state: {
+                        ...state,
+                        machineDisplayById: nextMachineDisplays,
+                    },
+                    shouldRebuild: true,
                 });
                 const nextState = {
                     ...state,
                     machineDisplayById: nextMachineDisplays,
-                    sessionListViewData,
-                    sessionListViewDataByServerId: setActiveServerSessionListCache(
-                        state.sessionListViewDataByServerId,
-                        sessionListViewData,
-                    ),
+                    sessionListViewData: rebuiltListState.sessionListViewData,
                 };
                 saveWarmMachineCacheForState(nextState as MachinesDomain & MachinesDomainDependencies, previousEntries);
                 return nextState;
