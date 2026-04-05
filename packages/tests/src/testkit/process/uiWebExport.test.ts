@@ -369,6 +369,34 @@ describe('uiWebExport (cache clearing)', () => {
     }
   });
 
+  it('does not reclaim a stale export lock while staging is still progressing', async () => {
+    const helper = (uiWebExportTestables as Record<string, unknown>).shouldReclaimUiWebExportLock;
+    expect(helper).toBeTypeOf('function');
+
+    const rootDir = mkdtempSync(join(tmpdir(), 'happier-uiwebexport-lock-'));
+    const lockPath = resolve(rootDir, 'build.lock');
+    const stagingDir = resolve(rootDir, `dist-staging-${process.pid}-12345`);
+
+    try {
+      await mkdir(resolve(stagingDir, 'nested'), { recursive: true });
+      await writeFile(
+        lockPath,
+        JSON.stringify({
+          pid: process.pid,
+          createdAtMs: Date.now() - 10_000,
+        }),
+        'utf8',
+      );
+      await writeFile(resolve(stagingDir, 'nested', 'chunk.js'), 'chunk', 'utf8');
+
+      await expect(
+        (helper as (lockPath: string, staleAfterMs: number) => Promise<boolean>)(lockPath, 1_000),
+      ).resolves.toBe(false);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
   it('rejects a completed export when the staging dir is missing publish-required files', async () => {
     runLoggedCommandMock.mockImplementationOnce(async (params?: RunLoggedCommandMockParams) => {
       if (!params?.args) {

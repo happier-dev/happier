@@ -201,7 +201,6 @@ async function resolveExpoWebBaseUrl(params: {
   while (Date.now() - startedAt < params.timeoutMs) {
     const text = await readFile(params.stdoutPath, 'utf8').catch(() => '');
     const stdoutCandidates = extractHttpUrls(text).map((url) => url.replace(/\/+$/, ''));
-    const advertisedExpectedCandidate = expectedCandidates.find((candidate) => stdoutCandidates.includes(candidate)) ?? null;
     const orderedCandidates: string[] = [];
     const seen = new Set<string>();
 
@@ -228,9 +227,6 @@ async function resolveExpoWebBaseUrl(params: {
     }
     if (firstEntryPage) {
       return firstEntryPage;
-    }
-    if (advertisedExpectedCandidate) {
-      return { baseUrl: advertisedExpectedCandidate, hasScriptTags: false };
     }
     await sleep(120);
   }

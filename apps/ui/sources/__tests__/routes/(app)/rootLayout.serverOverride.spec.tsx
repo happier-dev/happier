@@ -15,13 +15,39 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 
 vi.mock('react-native-reanimated', () => ({}));
 
-const historyReplaceStateSpy = vi.fn();
+let historyReplaceStateSpy = vi.fn();
 const routerPushSpy = vi.fn();
 const routerReplaceSpy = vi.fn();
 
 const upsertActivateAndSwitchServerSpy = vi.fn(async (_params: { serverUrl: string; source: string; scope: string; refreshAuth: unknown }) => true);
 const refreshFromActiveServerSpy = vi.fn(async () => {});
 let activeServerUrl = 'https://api.happier.dev';
+
+function installWebLocation(params: Readonly<{ href: string }>) {
+    const locationState = {
+        href: params.href,
+        pathname: new URL(params.href).pathname,
+        search: new URL(params.href).search,
+        hash: new URL(params.href).hash,
+        reload: vi.fn(),
+    };
+    historyReplaceStateSpy = vi.fn((_data: unknown, _title: string, nextUrl?: string | URL | null) => {
+        if (typeof nextUrl !== 'string' && !(nextUrl instanceof URL)) return;
+        const resolved = new URL(nextUrl.toString(), locationState.href);
+        locationState.href = resolved.toString();
+        locationState.pathname = resolved.pathname;
+        locationState.search = resolved.search;
+        locationState.hash = resolved.hash;
+    });
+
+    (globalThis as any).document = {};
+    (globalThis as any).window = {
+        location: locationState,
+        history: { replaceState: historyReplaceStateSpy },
+    };
+
+    return { historyReplaceStateSpy };
+}
 
 vi.mock('expo-updates', () => ({
     checkForUpdateAsync: vi.fn(async () => ({ isAvailable: false })),
@@ -88,14 +114,6 @@ vi.mock('@/hooks/inbox/useUpdates', () => ({
         checkForUpdates: vi.fn(async () => {}),
         reloadApp: vi.fn(async () => {}),
     }),
-}));
-
-vi.mock('@/activity/badges/ActivityBadgeRuntime', () => ({
-    ActivityBadgeRuntime: () => null,
-}));
-
-vi.mock('@/activity/notifications/runtime/ActivityLocalNotificationRuntime', () => ({
-    ActivityLocalNotificationRuntime: () => null,
 }));
 
 vi.mock('@/utils/platform/platform', () => ({
@@ -168,34 +186,18 @@ async function renderRootLayout() {
 describe('App RootLayout server override', () => {
     it('renders safely when `?server=` is present on web routes', async () => {
         // Minimal web globals: enough for readServerUrlOverrideFromWebLocation().
-        (globalThis as any).document = {};
-        (globalThis as any).window = {
-            location: {
-                href: 'https://app.example.test/?server=https%3A%2F%2Fstack.example.test',
-                pathname: '/',
-                search: '?server=https%3A%2F%2Fstack.example.test',
-                hash: '',
-                reload: vi.fn(),
-            },
-            history: { replaceState: historyReplaceStateSpy },
-        };
+        const { historyReplaceStateSpy } = installWebLocation({
+            href: 'https://app.example.test/?server=https%3A%2F%2Fstack.example.test',
+        });
 
         await renderRootLayout();
         expect(historyReplaceStateSpy.mock.calls.length).toBeGreaterThanOrEqual(0);
     });
 
     it('normalizes legacy `?url=...&auto=1` into the same device-scoped server override flow', async () => {
-        (globalThis as any).document = {};
-        (globalThis as any).window = {
-            location: {
-                href: 'https://app.example.test/server?url=https%3A%2F%2Fstack.example.test&auto=1',
-                pathname: '/server',
-                search: '?url=https%3A%2F%2Fstack.example.test&auto=1',
-                hash: '',
-                reload: vi.fn(),
-            },
-            history: { replaceState: historyReplaceStateSpy },
-        };
+        const { historyReplaceStateSpy } = installWebLocation({
+            href: 'https://app.example.test/server?url=https%3A%2F%2Fstack.example.test&auto=1',
+        });
 
         await renderRootLayout();
 
@@ -209,17 +211,9 @@ describe('App RootLayout server override', () => {
     });
 
     it('redirects legacy `/?id=<sessionId>` deep-links to the canonical session route on web', async () => {
-        (globalThis as any).document = {};
-        (globalThis as any).window = {
-            location: {
-                href: 'https://app.example.test/?id=session-123',
-                pathname: '/',
-                search: '?id=session-123',
-                hash: '',
-                reload: vi.fn(),
-            },
-            history: { replaceState: historyReplaceStateSpy },
-        };
+        const { historyReplaceStateSpy } = installWebLocation({
+            href: 'https://app.example.test/?id=session-123',
+        });
 
         await renderRootLayout();
 

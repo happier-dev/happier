@@ -1518,7 +1518,7 @@ describe('startUiWeb baseUrl resolution', () => {
           testDir,
           env: {
             HAPPIER_E2E_UI_WEB_MODE: 'metro',
-            HAPPIER_E2E_UI_WEB_BASE_URL_TIMEOUT_MS: '120',
+            HAPPIER_E2E_UI_WEB_BASE_URL_TIMEOUT_MS: '600',
             HAPPIER_E2E_UI_WEB_ENTRY_PROBE_TIMEOUT_MS: '25',
             HAPPIER_E2E_UI_WEB_METRO_STATUS_TIMEOUT_MS: '800',
             HAPPIER_E2E_UI_WEB_METRO_STATUS_ATTEMPT_TIMEOUT_MS: '25',

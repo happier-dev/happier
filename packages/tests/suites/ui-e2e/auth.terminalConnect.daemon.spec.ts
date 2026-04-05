@@ -9,7 +9,11 @@ import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '.
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
-import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import {
+  createAccountAndReachConnectMachineState,
+  gotoDomContentLoadedWithRetries,
+  normalizeLoopbackBaseUrl,
+} from '../../src/testkit/uiE2E/pageNavigation';
 import { approveTerminalConnect } from '../../src/testkit/uiE2e/approveTerminalConnect';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
@@ -73,39 +77,8 @@ test.describe('ui e2e: auth + terminal connect', () => {
     }
 
     await gotoDomContentLoadedWithRetries(page, baseUrl);
-    await createAccountAndReachConnectMachineState(page);
+    await createAccountAndReachConnectMachineState({ page });
     accountSecretKeyFormatted = await readAccountSecretKeyFromSettings(page, baseUrl);
-  }
-
-  async function createAccountAndReachConnectMachineState(page: Page): Promise<void> {
-    await expect(page.getByTestId('welcome-create-account')).toHaveCount(1, { timeout: 60_000 });
-    await page.getByTestId('welcome-create-account').click();
-
-    const connectMachine = page.getByTestId('session-getting-started-kind-connect_machine');
-    const setupWizard = page.getByTestId('setupWizard.surface');
-
-    await expect
-      .poll(async () => {
-        return (await connectMachine.count()) > 0 || (await setupWizard.count()) > 0;
-      }, { timeout: 120_000 })
-      .toBe(true);
-
-    if ((await setupWizard.count()) > 0) {
-      await dismissSetupWizardIfVisible(page);
-    }
-
-    await expect(connectMachine).toHaveCount(1, { timeout: 120_000 });
-  }
-
-  async function dismissSetupWizardIfVisible(page: Page): Promise<void> {
-    const setupWizard = page.getByTestId('setupWizard.surface');
-    if ((await setupWizard.count()) === 0) {
-      return;
-    }
-    const skipSetup = page.getByTestId('setupWizard.surface-skip');
-    await expect(skipSetup).toHaveCount(1, { timeout: 60_000 });
-    await skipSetup.click();
-    await expect(setupWizard).toHaveCount(0, { timeout: 120_000 });
   }
 
   function transcriptMessageLocator(page: Page) {

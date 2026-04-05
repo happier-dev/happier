@@ -8,6 +8,7 @@ import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '.
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { acknowledgeTerminalConnectSuccessIfPresent } from '../../src/testkit/uiE2e/acknowledgeTerminalConnectSuccessIfPresent';
+import { spawnSessionFromDaemon } from '../../src/testkit/uiE2e/spawnSessionFromDaemon';
 import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { repoRootDir } from '../../src/testkit/paths';
@@ -71,55 +72,6 @@ test.describe('ui e2e: permission prompts (composer card)', () => {
     await server?.stop().catch(() => {});
   });
 
-  async function spawnSessionRunnerInDaemon(params: {
-    daemon: StartedDaemon;
-    directory: string;
-    env: Record<string, string>;
-    timeoutMs: number;
-    sessionId?: string;
-  }): Promise<string> {
-    const controlToken = params.daemon.state.controlToken;
-    if (!controlToken) {
-      throw new Error('daemon.state.controlToken is missing; cannot call daemon control server');
-    }
-
-    const res = await fetch(`http://127.0.0.1:${params.daemon.state.httpPort}/spawn-session`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-happier-daemon-token': controlToken,
-      },
-      body: JSON.stringify({
-        directory: params.directory,
-        ...(params.sessionId ? { sessionId: params.sessionId } : null),
-        agent: 'claude',
-        terminal: { mode: 'plain' },
-        environmentVariables: params.env,
-      }),
-      signal: AbortSignal.timeout(params.timeoutMs),
-    });
-
-    const bodyText = await res.text().catch(() => '');
-    const parsed = (() => {
-      try {
-        return JSON.parse(bodyText) as any;
-      } catch {
-        return null;
-      }
-    })();
-
-    if (res.status === 200 && parsed?.success === true) {
-      const createdSessionId = parsed?.sessionId;
-      if (typeof createdSessionId !== 'string' || !createdSessionId.trim()) {
-        throw new Error(`daemon spawn-session did not return a sessionId: ${bodyText}`);
-      }
-      return String(createdSessionId);
-    }
-
-    const detail = bodyText ? ` ${bodyText}` : '';
-    throw new Error(`Failed to spawn session runner in daemon: HTTP ${res.status}.${detail}`);
-  }
-
   test('shows composer permission card and view-tool navigates to the tool in transcript', async ({ page }, testInfo) => {
     test.setTimeout(420_000);
     if (!server || !ui) throw new Error('missing server/ui fixtures');
@@ -179,17 +131,19 @@ test.describe('ui e2e: permission prompts (composer card)', () => {
       await expect(page.getByTestId('session-getting-started-kind-start_daemon')).toHaveCount(0, { timeout: 120_000 });
 
       if (!daemon) throw new Error('missing daemon fixture');
-      const sessionId = await spawnSessionRunnerInDaemon({
+      const sessionId = await spawnSessionFromDaemon({
         daemon,
         directory: repoRootDir(),
-        env: {
-          HAPPIER_CLAUDE_PATH: fakeClaudePath,
-          HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLogPath,
-          HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${run.runId}`,
-          HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: `fake-claude-invocation-${run.runId}`,
-          HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: 'permission-prompt-write',
+        request: {
+          terminal: { mode: 'plain' },
+          environmentVariables: {
+            HAPPIER_CLAUDE_PATH: fakeClaudePath,
+            HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLogPath,
+            HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${run.runId}`,
+            HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: `fake-claude-invocation-${run.runId}`,
+            HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: 'permission-prompt-write',
+          },
         },
-        timeoutMs: 60_000,
       });
 
       await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/session/${sessionId}`, 120_000);

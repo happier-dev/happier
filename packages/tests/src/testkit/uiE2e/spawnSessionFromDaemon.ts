@@ -4,6 +4,7 @@ export async function spawnSessionFromDaemon(params: Readonly<{
   daemon: StartedDaemon;
   directory: string;
   agent?: string;
+  request?: Readonly<Record<string, unknown>>;
 }>): Promise<string> {
   const token = params.daemon.state.controlToken;
   if (!token) throw new Error('daemon control token missing');
@@ -15,6 +16,7 @@ export async function spawnSessionFromDaemon(params: Readonly<{
       'x-happier-daemon-token': token,
     },
     body: JSON.stringify({
+      ...(params.request ?? {}),
       directory: params.directory,
       agent: params.agent ?? 'claude',
     }),
@@ -25,4 +27,3 @@ export async function spawnSessionFromDaemon(params: Readonly<{
   }
   return json.sessionId as string;
 }
-
