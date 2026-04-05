@@ -8,7 +8,7 @@ import { t } from '@/text';
 export function useSessionListWorkspaceHeaderActions(input: Readonly<{
     workspaceRefs: ReadonlyArray<WorkspaceRefV1> | null | undefined;
     setWorkspaceRefs: (value: WorkspaceRefV1[]) => void;
-    collapsedGroupKeys: Readonly<Record<string, boolean> | null | undefined>;
+    collapsedGroupKeys: Readonly<Record<string, boolean>>;
     setCollapsedGroupKeys: (value: Record<string, boolean>) => void;
 }>) {
     const handleRenameWorkspace = React.useCallback(async (params: Readonly<{
@@ -49,7 +49,7 @@ export function useSessionListWorkspaceHeaderActions(input: Readonly<{
     }, [input.setWorkspaceRefs, input.workspaceRefs]);
 
     const handleToggleCollapse = React.useCallback((collapseKey: string) => {
-        const current = input.collapsedGroupKeys ?? {};
+        const current = input.collapsedGroupKeys;
         if (current[collapseKey]) {
             const next = { ...current };
             delete next[collapseKey];

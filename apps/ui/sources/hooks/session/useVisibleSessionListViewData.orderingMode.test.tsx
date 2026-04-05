@@ -134,7 +134,9 @@ describe('useVisibleSessionListViewData', () => {
         const hook = await renderHook(() => useVisibleSessionListViewData());
         await flushHookEffects();
 
-        expect((hook.getCurrent() ?? []).map((item: any) => item.session.id)).toEqual([
+        expect((hook.getCurrent() ?? [])
+            .filter((item: any) => item.type === 'session')
+            .map((item: any) => item.session.id)).toEqual([
             'active-1',
             'cached-1',
         ]);

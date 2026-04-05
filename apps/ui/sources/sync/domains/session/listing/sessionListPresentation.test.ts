@@ -163,6 +163,23 @@ describe('applySessionListPresentation', () => {
         expect(result).toBe(data);
     });
 
+    it('returns the original array when grouped presentation selection already covers every visible server', () => {
+        const data: SessionListViewItem[] = [
+            { type: 'header', title: 'Server A', headerKind: 'server', serverId: 'server-a', serverName: 'Server A' },
+            makeSession('s1', 'server-a', 'Server A'),
+            { type: 'header', title: 'Server B', headerKind: 'server', serverId: 'server-b', serverName: 'Server B' },
+            makeSession('s2', 'server-b', 'Server B'),
+        ];
+
+        const result = applySessionListPresentation(data, {
+            enabled: true,
+            presentation: 'grouped',
+            selectedServerIds: ['server-a', 'server-b'],
+        });
+
+        expect(result).toBe(data);
+    });
+
     it('filters list rows by selected server ids when provided', () => {
         const data: SessionListViewItem[] = [
             makeHeader('Today'),

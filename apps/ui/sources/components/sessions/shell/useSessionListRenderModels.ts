@@ -12,9 +12,9 @@ import type { VisibleSessionListPaneState } from '@/hooks/session/useVisibleSess
 
 export function useSessionListRenderModels(input: Readonly<{
     paneState: VisibleSessionListPaneState;
-    collapsedGroupKeys: Readonly<Record<string, boolean> | null | undefined>;
+    collapsedGroupKeys: Readonly<Record<string, boolean>>;
     allMachines: ReadonlyArray<Machine>;
-    workspaceLabels: Readonly<Record<string, string> | null | undefined>;
+    workspaceLabels: Readonly<Record<string, string>>;
     workspaceRefs: ReadonlyArray<WorkspaceRefV1>;
     pinnedKeySet: ReadonlySet<string>;
     sessionTags: Readonly<Record<string, string[]>>;
@@ -53,7 +53,7 @@ export function useSessionListRenderModels(input: Readonly<{
         reachableSessionDisplayById: sessionReachabilitySummary.displayById,
         hasMultipleMachines: sessionReachabilitySummary.hasMultipleMachines,
         pinnedSessionKeys: input.pinnedKeySet,
-        sessionTags: { ...input.sessionTags },
+        sessionTags: input.sessionTags,
         selectedSessionId: input.selectedSessionId,
         showServerBadge: input.showServerBadge,
         showPinnedServerBadge: input.showPinnedServerBadge,

@@ -18,6 +18,7 @@ import { useSessionListWorkspaceHeaderActions } from './useSessionListWorkspaceH
 import { useSessionListWorkspaceLabelMigration } from './useSessionListWorkspaceLabelMigration';
 import { useVisibleSessionListPaneState } from '@/hooks/session/useVisibleSessionListPaneState';
 import type { SessionListViewItem } from '@/sync/domains/state/storage';
+import { normalizeSessionListShellState } from './normalizeSessionListShellState';
 
 export function useSessionListViewState(storageKind: SessionListStorageFilter) {
     const sessionListPaneState = useVisibleSessionListPaneState(storageKind);
@@ -54,7 +55,18 @@ export function useSessionListViewState(storageKind: SessionListStorageFilter) {
         sessionListGroupOrderV1,
     }), [pinnedSessionKeysV1, sessionListGroupOrderV1]);
     const allMachines = useAllMachines();
-    const allKnownTags = React.useMemo(() => getAllKnownTags(sessionTagsV1), [sessionTagsV1]);
+    const normalizedShellState = React.useMemo(() => normalizeSessionListShellState({
+        collapsedGroupKeys: collapsedGroupKeysV1,
+        sessionTags: sessionTagsV1,
+        workspaceLabels: workspaceLabelsV1,
+        workspaceRefs: workspaceRefsV1,
+    }), [
+        collapsedGroupKeysV1,
+        sessionTagsV1,
+        workspaceLabelsV1,
+        workspaceRefsV1,
+    ]);
+    const allKnownTags = React.useMemo(() => getAllKnownTags(normalizedShellState.sessionTags), [normalizedShellState.sessionTags]);
     const selectedSessionId = React.useMemo(() => resolveSelectedSessionIdForList({
         selectable: shellFlags.selectable,
         pathname,
@@ -62,12 +74,12 @@ export function useSessionListViewState(storageKind: SessionListStorageFilter) {
 
     const renderModels = useSessionListRenderModels({
         paneState: sessionListPaneState,
-        collapsedGroupKeys: collapsedGroupKeysV1,
+        collapsedGroupKeys: normalizedShellState.collapsedGroupKeys,
         allMachines,
-        workspaceLabels: workspaceLabelsV1,
-        workspaceRefs: workspaceRefsV1 ?? [],
+        workspaceLabels: normalizedShellState.workspaceLabels,
+        workspaceRefs: normalizedShellState.workspaceRefs,
         pinnedKeySet: orderingPersistenceState.pinnedKeySet,
-        sessionTags: sessionTagsV1 ?? {},
+        sessionTags: normalizedShellState.sessionTags,
         selectedSessionId,
         showServerBadge: shellFlags.showServerBadge,
         showPinnedServerBadge: shellFlags.showPinnedServerBadge,
@@ -81,7 +93,7 @@ export function useSessionListViewState(storageKind: SessionListStorageFilter) {
         pinnedKeyList: orderingPersistenceState.pinnedKeyList,
         pinnedKeySet: orderingPersistenceState.pinnedKeySet,
         setPinnedSessionKeysV1,
-        sessionTags: sessionTagsV1 ?? {},
+        sessionTags: normalizedShellState.sessionTags,
         setSessionTagsV1,
     });
 
@@ -94,9 +106,9 @@ export function useSessionListViewState(storageKind: SessionListStorageFilter) {
         handleResetWorkspaceName,
         handleToggleCollapse,
     } = useSessionListWorkspaceHeaderActions({
-        workspaceRefs: workspaceRefsV1,
+        workspaceRefs: normalizedShellState.workspaceRefs,
         setWorkspaceRefs: setWorkspaceRefsV1,
-        collapsedGroupKeys: collapsedGroupKeysV1,
+        collapsedGroupKeys: normalizedShellState.collapsedGroupKeys,
         setCollapsedGroupKeys: setCollapsedGroupKeysV1,
     });
 
@@ -106,14 +118,14 @@ export function useSessionListViewState(storageKind: SessionListStorageFilter) {
     } = renderModels.projectHeaderViewModelState;
 
     useSessionListWorkspaceLabelMigration({
-        workspaceLabels: workspaceLabelsV1,
+        workspaceLabels: normalizedShellState.workspaceLabels,
         setWorkspaceLabels: setWorkspaceLabelsV1,
-        workspaceRefs: workspaceRefsV1,
+        workspaceRefs: normalizedShellState.workspaceRefs,
         setWorkspaceRefs: setWorkspaceRefsV1,
         scopeHintByLegacyWorkspaceKey,
     });
 
-    const collapsedKeys = collapsedGroupKeysV1 ?? {};
+    const collapsedKeys = normalizedShellState.collapsedGroupKeys;
     const renderHeaderItem = React.useCallback((item: Extract<SessionListViewItem, { type: 'header' }>) => (
         <SessionListHeaderItem
             item={item}

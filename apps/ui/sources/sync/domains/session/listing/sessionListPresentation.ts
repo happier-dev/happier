@@ -105,6 +105,23 @@ function selectionCoversAllVisibleServerIds(
     return true;
 }
 
+function selectionCoversAllVisibleSessionServerIds(
+    data: ReadonlyArray<SessionListViewItem>,
+    selectedServerSet: ReadonlySet<string>,
+): boolean {
+    for (const item of data) {
+        if (item.type !== 'session') continue;
+
+        const serverId = String(item.serverId ?? '').trim();
+        if (!serverId) continue;
+        if (!selectedServerSet.has(serverId)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 function countDistinctServerIds(data: ReadonlyArray<SessionListViewItem>): number {
     const ids = new Set<string>();
     for (const item of data) {
@@ -314,6 +331,15 @@ export function applySessionListPresentation(
 
     if (params.presentation === 'flat-with-badge') {
         return filteredBySelection;
+    }
+
+    if (
+        params.presentation === 'grouped'
+        && selectedServerSet.size > 0
+        && isAlreadyCanonicalGroupedServerPresentation(data)
+        && selectionCoversAllVisibleSessionServerIds(data, selectedServerSet)
+    ) {
+        return data;
     }
 
     if (selectedServerSet.size === 0 && isAlreadyCanonicalGroupedServerPresentation(data)) {

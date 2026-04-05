@@ -78,7 +78,7 @@ export function useSessionListRowInteractions(input: Readonly<{
     }, [input.pinnedKeyList, input.pinnedKeySet, input.setPinnedSessionKeysV1]);
 
     const handleSetTagsSessionKey = React.useCallback((sessionKey: string, newTags: string[]) => {
-        const nextTags = { ...input.sessionTags };
+        const nextTags: Record<string, string[]> = { ...input.sessionTags };
         if (newTags.length === 0) {
             delete nextTags[sessionKey];
         } else {
