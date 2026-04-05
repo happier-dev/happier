@@ -165,6 +165,8 @@ describe('resolveActivitySurfaceSlots', () => {
                 }),
                 createSessionFixture({
                     id: 'quiet-active',
+                    seq: 2,
+                    lastViewedSessionSeq: 2,
                     active: true,
                     presence: 'online',
                     metadata: {
@@ -176,6 +178,8 @@ describe('resolveActivitySurfaceSlots', () => {
                 }),
                 createSessionFixture({
                     id: 'quiet-inactive',
+                    seq: 1,
+                    lastViewedSessionSeq: 1,
                     active: false,
                     presence: 'offline',
                     metadata: {
