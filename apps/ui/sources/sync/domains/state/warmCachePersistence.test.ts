@@ -1,19 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const store = new Map<string, string>();
+const getString = vi.fn((key: string) => store.get(key));
+const set = vi.fn((key: string, value: string) => {
+    store.set(key, value);
+});
+const deleteKey = vi.fn((key: string) => {
+    store.delete(key);
+});
 
 vi.mock('react-native-mmkv', () => {
     class MMKV {
         getString(key: string) {
-            return store.get(key);
+            return getString(key);
         }
 
         set(key: string, value: string) {
-            store.set(key, value);
+            set(key, value);
         }
 
         delete(key: string) {
-            store.delete(key);
+            deleteKey(key);
         }
     }
 
@@ -33,6 +40,9 @@ import {
 describe('warmCachePersistence', () => {
     beforeEach(() => {
         store.clear();
+        getString.mockClear();
+        set.mockClear();
+        deleteKey.mockClear();
         clearWarmCacheAccountScope();
     });
 
@@ -111,6 +121,90 @@ describe('warmCachePersistence', () => {
                 displayName: 'Work Mac',
             }),
         });
+    });
+
+    it('skips identical warm-cache writes for session list entries', () => {
+        const entries = {
+            s1: {
+                sessionId: 's1',
+                metadataVersion: 2,
+                agentStateVersion: 3,
+                updatedAt: 20,
+                createdAt: 10,
+                active: true,
+                activeAt: 20,
+                archivedAt: null,
+                pendingCount: 1,
+                pendingVersion: 4,
+                accessLevel: 'edit' as const,
+                canApprovePermissions: true,
+                name: 'Repo',
+                summaryText: 'Summary',
+                path: '/home/u/repo',
+                homeDir: '/home/u',
+                host: 'mbp',
+                machineId: 'm1',
+                hiddenSystemSession: false,
+                hasPendingPermissionRequests: false,
+                hasPendingUserActionRequests: true,
+            },
+        };
+
+        saveSessionListWarmCacheEntries('server-a', 'account-a', entries);
+        saveSessionListWarmCacheEntries('server-a', 'account-a', entries);
+
+        expect(set).toHaveBeenCalledTimes(1);
+        expect(loadSessionListWarmCacheEntries('server-a', 'account-a')).toEqual({
+            s1: expect.objectContaining({
+                sessionId: 's1',
+                metadataVersion: 2,
+                agentStateVersion: 3,
+                name: 'Repo',
+            }),
+        });
+    });
+
+    it('skips re-serializing the same warm-cache object twice for session list entries', () => {
+        const stringifySpy = vi.spyOn(JSON, 'stringify');
+        const entries = {
+            s1: {
+                sessionId: 's1',
+                metadataVersion: 2,
+                agentStateVersion: 3,
+                updatedAt: 20,
+                createdAt: 10,
+                active: true,
+                activeAt: 20,
+                archivedAt: null,
+                pendingCount: 1,
+                pendingVersion: 4,
+                accessLevel: 'edit' as const,
+                canApprovePermissions: true,
+                name: 'Repo',
+                summaryText: 'Summary',
+                path: '/home/u/repo',
+                homeDir: '/home/u',
+                host: 'mbp',
+                machineId: 'm1',
+                hiddenSystemSession: false,
+                hasPendingPermissionRequests: false,
+                hasPendingUserActionRequests: true,
+            },
+        };
+
+        saveSessionListWarmCacheEntries('server-a', 'account-a', entries);
+        saveSessionListWarmCacheEntries('server-a', 'account-a', entries);
+
+        expect(stringifySpy).toHaveBeenCalledTimes(1);
+        expect(set).toHaveBeenCalledTimes(1);
+        stringifySpy.mockRestore();
+    });
+
+    it('does not delete absent warm-cache entries when saving an empty session list', () => {
+        saveSessionListWarmCacheEntries('server-a', 'account-a', {});
+
+        expect(deleteKey).not.toHaveBeenCalled();
+        expect(set).not.toHaveBeenCalled();
     });
 
     it('prefers the authenticated runtime account scope over stale persisted profile ids', () => {

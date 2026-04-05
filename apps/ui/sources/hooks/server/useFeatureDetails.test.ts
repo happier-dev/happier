@@ -13,7 +13,7 @@ afterEach(() => {
 describe('useFeatureDetails', () => {
     it('returns selected server details when features are ready', async () => {
         vi.resetModules();
-        stubServerFeaturesFetch({ automationsEnabled: true });
+        await stubServerFeaturesFetch({ automationsEnabled: true });
 
         const { resetServerFeaturesClientForTests, getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
         resetServerFeaturesClientForTests();
@@ -41,7 +41,7 @@ describe('useFeatureDetails', () => {
 
     it('returns fallback when feature probing fails', async () => {
         vi.resetModules();
-        stubServerFeaturesFetchFailure();
+        await stubServerFeaturesFetchFailure();
 
         const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
         resetServerFeaturesClientForTests();

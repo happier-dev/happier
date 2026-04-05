@@ -36,6 +36,10 @@ export function createStorageModuleStub<TOverrides extends object>(overrides: TO
         machines: {},
         getProjectForSession: () => null,
         applySessionListRenderablePatches: () => undefined,
+        clearSessionReviewCommentDrafts: () => undefined,
+        upsertWorkspaceReviewCommentDraft: () => undefined,
+        deleteWorkspaceReviewCommentDraft: () => undefined,
+        clearWorkspaceReviewCommentDrafts: () => undefined,
     } satisfies Partial<StorageState>);
 
     const defaults = {
@@ -45,7 +49,9 @@ export function createStorageModuleStub<TOverrides extends object>(overrides: TO
         useSettingMutable,
         useAllMachines: () => allMachines,
         useAllSessions: () => allSessions,
+        useMachine: (machineId: string) => store.getState().machines[machineId] ?? null,
         useArtifacts: () => [],
+        useWorkspaceReviewCommentsDrafts: () => [],
         useMachineListByServerId: () => ({}),
         useMachineListStatusByServerId: () => ({}),
         useServerScopedMachine: () => null,

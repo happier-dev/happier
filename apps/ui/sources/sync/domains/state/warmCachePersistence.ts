@@ -7,6 +7,7 @@ const isWebRuntime = typeof window !== 'undefined' && typeof document !== 'undef
 
 var warmCacheStorage: MMKV | null = null;
 let warmCacheAccountScope: string | null = null;
+const warmCacheSavedValueByKey = new Map<string, Record<string, unknown>>();
 
 function getWarmCacheStorage(): MMKV {
     if (warmCacheStorage) return warmCacheStorage;
@@ -117,14 +118,35 @@ function saveScopedRecord<T extends Record<string, unknown>>(key: string | null,
     if (!key) return;
     const storage = getWarmCacheStorage();
     if (Object.keys(value).length === 0) {
-        storage.delete(key);
+        if (storage.getString(key) !== undefined) {
+            storage.delete(key);
+        }
+        warmCacheSavedValueByKey.delete(key);
         return;
     }
-    storage.set(key, JSON.stringify(value));
+    if (warmCacheSavedValueByKey.get(key) === value) {
+        return;
+    }
+    const nextRaw = JSON.stringify(value);
+    if (storage.getString(key) === nextRaw) {
+        warmCacheSavedValueByKey.set(key, value);
+        return;
+    }
+    storage.set(key, nextRaw);
+    warmCacheSavedValueByKey.set(key, value);
+}
+
+function peekScopedRecord<T extends Record<string, unknown>>(key: string | null): T | null {
+    if (!key) return null;
+    return (warmCacheSavedValueByKey.get(key) as T | undefined) ?? null;
 }
 
 export function loadSessionListWarmCacheEntries(serverId: string | null | undefined, accountId: string | null | undefined): Record<string, SessionListCacheEntryV1> {
     return loadScopedRecord(buildScopedKey(SESSION_LIST_WARM_CACHE_PREFIX, serverId, accountId), SessionListCacheEntriesSchema) ?? {};
+}
+
+export function peekSessionListWarmCacheEntries(serverId: string | null | undefined, accountId: string | null | undefined): Record<string, SessionListCacheEntryV1> | null {
+    return peekScopedRecord(buildScopedKey(SESSION_LIST_WARM_CACHE_PREFIX, serverId, accountId));
 }
 
 export function saveSessionListWarmCacheEntries(

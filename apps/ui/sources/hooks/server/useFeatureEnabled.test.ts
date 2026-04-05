@@ -13,7 +13,7 @@ afterEach(() => {
 describe('useFeatureEnabled', () => {
 	    it('returns true when a feature is enabled', async () => {
 	        vi.resetModules();
-	        stubServerFeaturesFetch({ voiceEnabled: true });
+	        await stubServerFeaturesFetch({ voiceEnabled: true });
 
 	        const { getStorage } = await import('@/sync/domains/state/storage');
 	        getStorage().getState().applySettingsLocal({ experiments: true, featureToggles: { voice: true } });
@@ -92,7 +92,7 @@ describe('useFeatureEnabled', () => {
 
     it('applies local policy before server support', async () => {
         vi.resetModules();
-        stubServerFeaturesFetch({ friendsEnabled: true });
+        await stubServerFeaturesFetch({ friendsEnabled: true });
         const { getStorage } = await import('@/sync/domains/state/storage');
         getStorage().getState().applySettingsLocal({
             experiments: false,

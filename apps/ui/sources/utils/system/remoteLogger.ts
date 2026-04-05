@@ -8,16 +8,23 @@
 
 import { config } from '@/config';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { readAiAutoDebugRemoteLoggingEnabled } from '@/utils/system/aiAutoDebuggingEnv';
 
 
-let logBuffer: any[] = []
+type RemoteLogEntry = Readonly<{
+  timestamp: string;
+  level: 'log' | 'info' | 'warn' | 'error' | 'debug';
+  message: unknown[];
+}>;
+
+let logBuffer: RemoteLogEntry[] = [];
 const MAX_BUFFER_SIZE = 1000
 
 export function monkeyPatchConsoleForRemoteLoggingForFasterAiAutoDebuggingOnlyInLocalBuilds() {
   // NEVER ENABLE REMOTE LOGGING IN PRODUCTION
   // This is for local debugging with AI only
   // So AI will have all the logs easily accessible in one file for analysis
-  if (!process.env.DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING) {
+  if (!readAiAutoDebugRemoteLoggingEnabled()) {
     return
   }
 
@@ -36,7 +43,7 @@ export function monkeyPatchConsoleForRemoteLoggingForFasterAiAutoDebuggingOnlyIn
     return
   }
 
-  const sendLog = async (level: string, args: any[]) => {
+  const sendLog = async (level: RemoteLogEntry['level'], args: unknown[]) => {
     try {
       await runtimeFetch(url + '/logs-combined-from-cli-and-mobile-for-simple-ai-debugging', {
         method: 'POST',
@@ -60,16 +67,16 @@ export function monkeyPatchConsoleForRemoteLoggingForFasterAiAutoDebuggingOnlyIn
 
   // Patch console methods
   ;(['log', 'info', 'warn', 'error', 'debug'] as const).forEach(level => {
-    console[level] = (...args: any[]) => {
+    console[level] = (...args: unknown[]) => {
       // Always call original
-      originalConsole[level](...args)
+      originalConsole[level](...args as never[])
       
       // Buffer for developer settings
       const entry = {
         timestamp: new Date().toISOString(),
         level,
-        message: args
-      }
+        message: args,
+      } satisfies RemoteLogEntry;
       logBuffer.push(entry)
       if (logBuffer.length > MAX_BUFFER_SIZE) {
         logBuffer.shift()

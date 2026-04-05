@@ -68,7 +68,7 @@ describe('useFeatureDecision', () => {
     }, 30_000);
 
     it('returns enabled decision when the feature is available', async () => {
-        stubServerFeaturesFetch({ voiceEnabled: true });
+        await stubServerFeaturesFetch({ voiceEnabled: true });
 
         getStorage().getState().applySettingsLocal({ experiments: true, featureToggles: { voice: true } });
 
@@ -141,7 +141,7 @@ describe('useFeatureDecision', () => {
     }, 30_000);
 
     it('returns unknown when probing features fails', async () => {
-        stubServerFeaturesFetchFailure();
+        await stubServerFeaturesFetchFailure();
 
         getStorage().getState().applySettingsLocal({ experiments: true, featureToggles: { voice: true } });
 

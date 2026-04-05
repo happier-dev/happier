@@ -143,6 +143,13 @@ export const ACCOUNT_CORE_SETTING_DEFINITIONS = defineSettingDefinitions({
             }),
         },
     },
+    sessionListOrderingModeV1: {
+        schema: z.enum(['custom', 'created', 'updated']),
+        default: 'custom',
+        description: 'Default session list ordering mode: custom manual order, created timestamp, or updated timestamp',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
     showEnvironmentBadge: {
         schema: z.boolean(),
         default: true,

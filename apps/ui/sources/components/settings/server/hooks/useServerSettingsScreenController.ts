@@ -135,6 +135,8 @@ export function useServerSettingsScreenController(): ServerSettingsController {
     const validationAttemptIdRef = React.useRef(0);
     const validationAbortControllerRef = React.useRef<AbortController | null>(null);
     const handledTailscaleEnsureReadyTaskIdRef = React.useRef<string | null>(null);
+    const reachabilityRemediationRef = React.useRef<EndpointReachabilityRemediation | null>(null);
+    const inputUrlRef = React.useRef(inputUrl);
     const systemTaskRunner = React.useMemo(() => getDefaultSystemTaskRunner(), []);
 
     const [serverSelectionGroups, setServerSelectionGroups] = useSettingMutable('serverSelectionGroups');
@@ -142,6 +144,14 @@ export function useServerSettingsScreenController(): ServerSettingsController {
     const [serverSelectionActiveTargetId, setServerSelectionActiveTargetId] = useSettingMutable('serverSelectionActiveTargetId');
     const tailscaleEnsureReadySnapshot = useSystemTaskSnapshot(systemTaskRunner, tailscaleEnsureReadyTaskId);
     const isPreparingTailscale = tailscaleEnsureReadyTaskId != null && tailscaleEnsureReadySnapshot?.result == null;
+
+    React.useEffect(() => {
+        reachabilityRemediationRef.current = reachabilityRemediation;
+    }, [reachabilityRemediation]);
+
+    React.useEffect(() => {
+        inputUrlRef.current = inputUrl;
+    }, [inputUrl]);
 
     const route = React.useMemo(() => {
         return parseServerSettingsRouteParams({ url: searchParams.url, auto: searchParams.auto, source: searchParams.source });
@@ -231,13 +241,13 @@ export function useServerSettingsScreenController(): ServerSettingsController {
     const onReachabilityRemediationAction = React.useCallback(async (
         actionId: EndpointReachabilityRemediationAction['id'],
     ) => {
-        const remediation = reachabilityRemediation;
+        const remediation = reachabilityRemediationRef.current;
         if (!remediation) return;
         const action = remediation.actions.find((candidate) => candidate.id === actionId);
         if (!action) return;
 
         if (action.kind === 'retry') {
-            await validateServerReachable(inputUrl);
+            await validateServerReachable(inputUrlRef.current);
             return;
         }
 
@@ -251,6 +261,7 @@ export function useServerSettingsScreenController(): ServerSettingsController {
 
         if (action.kind === 'callback' && action.callbackSlot === 'tailscale.ensureReady') {
             try {
+                setError(null);
                 const taskId = await systemTaskRunner.start(createTailscaleEnsureReadyTaskSpec({
                     installPolicy: 'installIfMissing',
                     loginPolicy: 'interactive',
@@ -264,7 +275,7 @@ export function useServerSettingsScreenController(): ServerSettingsController {
                 await Modal.alert(t('common.error'), message);
             }
         }
-    }, [inputUrl, reachabilityRemediation, systemTaskRunner, validateServerReachable]);
+    }, [systemTaskRunner, validateServerReachable]);
 
     React.useEffect(() => {
         const result = tailscaleEnsureReadySnapshot?.result;

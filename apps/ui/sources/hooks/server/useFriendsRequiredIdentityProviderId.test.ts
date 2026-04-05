@@ -13,7 +13,7 @@ afterEach(() => {
 describe('useFriendsRequiredIdentityProviderId', () => {
     it('returns null when no provider is required', async () => {
         vi.resetModules();
-        stubServerFeaturesFetch({ friendsRequiredIdentityProviderId: null });
+        await stubServerFeaturesFetch({ friendsRequiredIdentityProviderId: null });
 
         const { useFriendsRequiredIdentityProviderId } = await import('./useFriendsRequiredIdentityProviderId');
         const seen = await renderHookAndCollectValues(() => useFriendsRequiredIdentityProviderId());
@@ -23,7 +23,7 @@ describe('useFriendsRequiredIdentityProviderId', () => {
 
     it('returns normalized provider id when required', async () => {
         vi.resetModules();
-        stubServerFeaturesFetch({ friendsRequiredIdentityProviderId: ' GITHUB ' });
+        await stubServerFeaturesFetch({ friendsRequiredIdentityProviderId: ' GITHUB ' });
 
         const { useFriendsRequiredIdentityProviderId } = await import('./useFriendsRequiredIdentityProviderId');
         const seen = await renderHookAndCollectValues(() => useFriendsRequiredIdentityProviderId());
@@ -33,7 +33,7 @@ describe('useFriendsRequiredIdentityProviderId', () => {
 
     it('returns null when the request fails', async () => {
         vi.resetModules();
-        stubServerFeaturesFetchFailure();
+        await stubServerFeaturesFetchFailure();
 
         const { useFriendsRequiredIdentityProviderId } = await import('./useFriendsRequiredIdentityProviderId');
         const seen = await renderHookAndCollectValues(() => useFriendsRequiredIdentityProviderId());
@@ -43,7 +43,7 @@ describe('useFriendsRequiredIdentityProviderId', () => {
 
     it('returns null when required provider id is blank after normalization', async () => {
         vi.resetModules();
-        stubServerFeaturesFetch({ friendsRequiredIdentityProviderId: '   ' });
+        await stubServerFeaturesFetch({ friendsRequiredIdentityProviderId: '   ' });
 
         const { useFriendsRequiredIdentityProviderId } = await import('./useFriendsRequiredIdentityProviderId');
         const seen = await renderHookAndCollectValues(() => useFriendsRequiredIdentityProviderId());

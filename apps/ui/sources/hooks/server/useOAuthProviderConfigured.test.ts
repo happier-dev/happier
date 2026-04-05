@@ -11,9 +11,21 @@ afterEach(() => {
 });
 
 describe('useOAuthProviderConfigured', () => {
+    it('starts in loading state before the server features snapshot resolves', async () => {
+        vi.resetModules();
+
+        const { useOAuthProviderConfigured } = await import('./useOAuthProviderConfigured');
+        const seen = await renderHookAndCollectValues(() => useOAuthProviderConfigured('github'));
+
+        expect(seen[0]).toBeNull();
+    });
+
     it('returns false when the provider is not configured', async () => {
         vi.resetModules();
-        stubServerFeaturesFetch({ oauthProviders: { github: { enabled: true, configured: false } } });
+        await stubServerFeaturesFetch({ oauthProviders: { github: { enabled: true, configured: false } } });
+
+        const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        await getServerFeaturesSnapshot({ force: true });
 
         const { useOAuthProviderConfigured } = await import('./useOAuthProviderConfigured');
         const seen = await renderHookAndCollectValues(() => useOAuthProviderConfigured('github'));
@@ -23,7 +35,10 @@ describe('useOAuthProviderConfigured', () => {
 
     it('returns true when the provider is configured', async () => {
         vi.resetModules();
-        stubServerFeaturesFetch({ oauthProviders: { github: { enabled: true, configured: true } } });
+        await stubServerFeaturesFetch({ oauthProviders: { github: { enabled: true, configured: true } } });
+
+        const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        await getServerFeaturesSnapshot({ force: true });
 
         const { useOAuthProviderConfigured } = await import('./useOAuthProviderConfigured');
         const seen = await renderHookAndCollectValues(() => useOAuthProviderConfigured('github'));
@@ -33,7 +48,10 @@ describe('useOAuthProviderConfigured', () => {
 
     it('fails closed when the request fails', async () => {
         vi.resetModules();
-        stubServerFeaturesFetchFailure();
+        await stubServerFeaturesFetchFailure();
+
+        const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        await getServerFeaturesSnapshot({ force: true });
 
         const { useOAuthProviderConfigured } = await import('./useOAuthProviderConfigured');
         const seen = await renderHookAndCollectValues(() => useOAuthProviderConfigured('github'));
@@ -43,7 +61,10 @@ describe('useOAuthProviderConfigured', () => {
 
     it('normalizes provider id input before reading config state', async () => {
         vi.resetModules();
-        stubServerFeaturesFetch({ oauthProviders: { github: { enabled: true, configured: true } } });
+        await stubServerFeaturesFetch({ oauthProviders: { github: { enabled: true, configured: true } } });
+
+        const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        await getServerFeaturesSnapshot({ force: true });
 
         const { useOAuthProviderConfigured } = await import('./useOAuthProviderConfigured');
         const seen = await renderHookAndCollectValues(() => useOAuthProviderConfigured(' GITHUB '));

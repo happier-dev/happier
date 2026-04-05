@@ -1,40 +1,72 @@
-import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUtils';
+import { renderHook } from '@/dev/testkit';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { flushHookEffects } from '@/hooks/server/serverFeatureHookHarness.testHelpers';
-import { renderScreen } from '@/dev/testkit';
-
+import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUtils';
+import {
+    getServerFeaturesSnapshot,
+    resetServerFeaturesClientForTests,
+} from '@/sync/api/capabilities/serverFeaturesClient';
+import {
+    resetServerReachabilitySupervisors,
+    setServerReachabilityNetworkAllowed,
+} from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
+import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { getStorage } from '@/sync/domains/state/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-function createDeferred<T>() {
+type Deferred<T> = Readonly<{
+    promise: Promise<T>;
+    resolve: (value: T) => void;
+}>;
+
+function createDeferred<T>(): Deferred<T> {
     let resolve!: (value: T) => void;
-    let reject!: (error?: unknown) => void;
-    const promise = new Promise<T>((nextResolve, nextReject) => {
+    const promise = new Promise<T>((nextResolve) => {
         resolve = nextResolve;
-        reject = nextReject;
     });
-    return { promise, resolve, reject };
+    return { promise, resolve };
 }
 
-describe('useRequireFriendsEnabled', () => {
-    const previousScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
+const replaceSpy = vi.hoisted(() => vi.fn());
 
-    afterEach(() => {
-        vi.unstubAllGlobals();
-        vi.resetModules();
-        if (previousScope === undefined) delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
-        else process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = previousScope;
+vi.mock('expo-router', () => {
+    const mock = createExpoRouterMock({
+        router: {
+            replace: (value) => {
+                replaceSpy(value);
+            },
+        },
+    });
+    return mock.module as any;
+});
+
+const initialStorageState = getStorage().getState();
+
+describe('useRequireFriendsEnabled', () => {
+    beforeEach(async () => {
+        replaceSpy.mockReset();
+
+        resetServerFeaturesClientForTests();
+        setServerReachabilityNetworkAllowed(true);
+        await resetServerReachabilitySupervisors();
+
+        getStorage().setState(initialStorageState, true);
+
+        const profile = upsertServerProfile({ serverUrl: 'https://friends.test', name: 'Friends Test' });
+        setActiveServerId(profile.id, { scope: 'device' });
+
+        getStorage().getState().applySettingsLocal({
+            experiments: true,
+            featureToggles: { 'social.friends': true },
+        });
     });
 
     it('does not redirect before the friends feature probe resolves enabled', async () => {
-        vi.resetModules();
-        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = `friends_require_enabled_${Date.now()}`;
-
-        const deferred = createDeferred<any>();
-        const replace = vi.fn();
+        const deferred = createDeferred<void>();
 
         vi.stubGlobal(
             'fetch',
@@ -48,59 +80,31 @@ describe('useRequireFriendsEnabled', () => {
             }) as any,
         );
 
-        vi.doMock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: { replace },
-    });
-    return expoRouterMock.module;
-});
+        const probe = getServerFeaturesSnapshot({ force: true });
 
-        const { getStorage } = await import('@/sync/domains/state/storage');
-        getStorage().getState().applySettingsLocal({
-            experiments: true,
-            featureToggles: { 'social.friends': true },
-        });
-
-        const seen: boolean[] = [];
         const { useRequireFriendsEnabled } = await import('./useRequireFriendsEnabled');
+        const hook = await renderHook(() => useRequireFriendsEnabled());
+        await flushHookEffects(1);
 
-        function Test() {
-            const enabled = useRequireFriendsEnabled();
-            React.useEffect(() => {
-                seen.push(enabled);
-            }, [enabled]);
-            return null;
-        }
-
-        let tree: renderer.ReactTestRenderer | null = null;
-
-        tree = (await renderScreen(<Test />)).tree;
-            await flushHookEffects(1);
-
-        expect(replace).not.toHaveBeenCalled();
-        expect(seen).toContain(false);
+        expect(replaceSpy).not.toHaveBeenCalled();
+        expect(hook.getCurrent()).toBe(false);
 
         await act(async () => {
             deferred.resolve(undefined);
+            await probe;
             await flushHookEffects();
         });
 
-        expect(replace).not.toHaveBeenCalled();
-        expect(seen.at(-1)).toBe(true);
+        expect(replaceSpy).not.toHaveBeenCalled();
+        expect(hook.getCurrent()).toBe(true);
 
         await act(async () => {
-            tree?.unmount();
+            await hook.unmount();
             await flushHookEffects(1);
         });
     });
 
     it('redirects home after the friends feature probe resolves disabled', async () => {
-        vi.resetModules();
-        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = `friends_require_disabled_${Date.now()}`;
-
-        const replace = vi.fn();
-
         vi.stubGlobal(
             'fetch',
             vi.fn(async () => ({
@@ -110,36 +114,16 @@ describe('useRequireFriendsEnabled', () => {
             })) as any,
         );
 
-        vi.doMock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: { replace },
-    });
-    return expoRouterMock.module;
-});
-
-        const { getStorage } = await import('@/sync/domains/state/storage');
-        getStorage().getState().applySettingsLocal({
-            experiments: true,
-            featureToggles: { 'social.friends': true },
-        });
+        await getServerFeaturesSnapshot({ force: true });
 
         const { useRequireFriendsEnabled } = await import('./useRequireFriendsEnabled');
+        const hook = await renderHook(() => useRequireFriendsEnabled());
+        await flushHookEffects();
 
-        function Test() {
-            useRequireFriendsEnabled();
-            return null;
-        }
-
-        let tree: renderer.ReactTestRenderer | null = null;
-
-        tree = (await renderScreen(<Test />)).tree;
-            await flushHookEffects();
-
-        expect(replace).toHaveBeenCalledWith('/');
+        expect(replaceSpy).toHaveBeenCalledWith('/');
 
         await act(async () => {
-            tree?.unmount();
+            await hook.unmount();
             await flushHookEffects(1);
         });
     });

@@ -222,6 +222,13 @@ const MetadataObjectSchema = z.object({
      * Local-only markers for committed transcript messages that should be treated as discarded
      * (e.g. when the user switches to terminal control and abandons unprocessed remote messages).
      */
+    directSessionAttentionV1: z.object({
+        v: z.literal(1),
+        observedProgressToken: z.string().optional(),
+        viewedProgressToken: z.string().optional(),
+        observedAtMs: z.number().int().min(0).optional(),
+        viewedAtMs: z.number().int().min(0).optional(),
+    }).passthrough().optional(),
     discardedCommittedMessageLocalIds: z.array(z.string()).optional(),
     readStateV1: z.object({
         v: z.literal(1),
@@ -583,10 +590,12 @@ export interface ScmWorkingSnapshot {
         backendId?: 'git' | 'sapling' | null;
         mode?: '.git' | '.sl' | null;
         worktrees?: Array<{
+            id?: string;
             path: string;
             branch: string | null;
             isCurrent: boolean;
             isMain?: boolean;
+            isPrunable?: boolean;
         }>;
     };
     capabilities?: ScmCapabilities;

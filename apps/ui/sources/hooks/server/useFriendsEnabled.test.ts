@@ -20,7 +20,7 @@ describe('useFriendsEnabled', () => {
 
     it('returns false when the server reports friends are disabled', async () => {
         vi.resetModules();
-        stubServerFeaturesFetch({ friendsEnabled: false });
+        await stubServerFeaturesFetch({ friendsEnabled: false });
         const { getStorage } = await import('@/sync/domains/state/storage');
         getStorage().getState().applySettingsLocal({
             experiments: true,
@@ -35,7 +35,7 @@ describe('useFriendsEnabled', () => {
 
     it('fails closed when the request fails', async () => {
         vi.resetModules();
-        stubServerFeaturesFetchFailure();
+        await stubServerFeaturesFetchFailure();
         const { getStorage } = await import('@/sync/domains/state/storage');
         getStorage().getState().applySettingsLocal({
             experiments: true,
@@ -50,7 +50,7 @@ describe('useFriendsEnabled', () => {
 
     it('returns true when local and server policy are enabled', async () => {
         vi.resetModules();
-        stubServerFeaturesFetch({ friendsEnabled: true });
+        await stubServerFeaturesFetch({ friendsEnabled: true });
         const { getStorage } = await import('@/sync/domains/state/storage');
         getStorage().getState().applySettingsLocal({
             experiments: true,
@@ -65,7 +65,7 @@ describe('useFriendsEnabled', () => {
 
     it('returns false when local experiment gate is disabled', async () => {
         vi.resetModules();
-        stubServerFeaturesFetch({ friendsEnabled: true });
+        await stubServerFeaturesFetch({ friendsEnabled: true });
         const { getStorage } = await import('@/sync/domains/state/storage');
         getStorage().getState().applySettingsLocal({
             experiments: false,
@@ -86,6 +86,8 @@ describe('useFriendsEnabled', () => {
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
 
         const profiles = await import('@/sync/domains/server/serverProfiles');
+        const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        resetServerFeaturesClientForTests();
 
         const primary = profiles.upsertServerProfile({ serverUrl: 'http://primary.example.test', name: 'Primary' });
         const legacy = profiles.upsertServerProfile({ serverUrl: 'http://legacy.example.test', name: 'Legacy' });

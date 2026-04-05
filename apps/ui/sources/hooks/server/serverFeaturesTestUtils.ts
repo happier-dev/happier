@@ -216,7 +216,19 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
     };
 }
 
-export function stubServerFeaturesFetch(overrides: FixtureOverrides = {}): void {
+export async function stubServerFeaturesFetch(overrides: FixtureOverrides = {}): Promise<void> {
+    const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    resetServerFeaturesClientForTests();
+
+    // Some hook tests rely on `serverFetch` paths that require an active server profile. In sharded runs,
+    // other suites may have mutated persisted server state; ensure we always have an active server.
+    const profiles = await import('@/sync/domains/server/serverProfiles');
+    const active = profiles.getActiveServerSnapshot();
+    if (!String(active?.serverId ?? '').trim()) {
+        const profile = profiles.upsertServerProfile({ serverUrl: 'https://features.test', name: 'Features Test' });
+        profiles.setActiveServerId(profile.id, { scope: 'device' });
+    }
+
     const response = buildServerFeaturesResponse(overrides);
     vi.stubGlobal(
         'fetch',
@@ -227,7 +239,17 @@ export function stubServerFeaturesFetch(overrides: FixtureOverrides = {}): void 
     );
 }
 
-export function stubServerFeaturesFetchFailure(): void {
+export async function stubServerFeaturesFetchFailure(): Promise<void> {
+    const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    resetServerFeaturesClientForTests();
+
+    const profiles = await import('@/sync/domains/server/serverProfiles');
+    const active = profiles.getActiveServerSnapshot();
+    if (!String(active?.serverId ?? '').trim()) {
+        const profile = profiles.upsertServerProfile({ serverUrl: 'https://features.test', name: 'Features Test' });
+        profiles.setActiveServerId(profile.id, { scope: 'device' });
+    }
+
     vi.stubGlobal(
         'fetch',
         vi.fn(async (input: RequestInfo | URL) => {

@@ -13,7 +13,7 @@ afterEach(() => {
 describe('useFriendsAllowUsernameSupport', () => {
     it('returns false when username support is disabled', async () => {
         vi.resetModules();
-        stubServerFeaturesFetch({ friendsAllowUsername: false });
+        await stubServerFeaturesFetch({ friendsAllowUsername: false });
 
         const { useFriendsAllowUsernameSupport } = await import('./useFriendsAllowUsernameSupport');
         const seen = await renderHookAndCollectValues(() => useFriendsAllowUsernameSupport());
@@ -23,7 +23,7 @@ describe('useFriendsAllowUsernameSupport', () => {
 
     it('returns true when username support is enabled', async () => {
         vi.resetModules();
-        stubServerFeaturesFetch({ friendsAllowUsername: true });
+        await stubServerFeaturesFetch({ friendsAllowUsername: true });
 
         const { useFriendsAllowUsernameSupport } = await import('./useFriendsAllowUsernameSupport');
         const seen = await renderHookAndCollectValues(() => useFriendsAllowUsernameSupport());
@@ -33,7 +33,7 @@ describe('useFriendsAllowUsernameSupport', () => {
 
     it('fails closed when the request fails', async () => {
         vi.resetModules();
-        stubServerFeaturesFetchFailure();
+        await stubServerFeaturesFetchFailure();
 
         const { useFriendsAllowUsernameSupport } = await import('./useFriendsAllowUsernameSupport');
         const seen = await renderHookAndCollectValues(() => useFriendsAllowUsernameSupport());
@@ -43,7 +43,7 @@ describe('useFriendsAllowUsernameSupport', () => {
 
     it('starts in loading state (undefined) before server features resolve', async () => {
         vi.resetModules();
-        stubServerFeaturesFetch({ friendsAllowUsername: false });
+        await stubServerFeaturesFetch({ friendsAllowUsername: false });
 
         const { useFriendsAllowUsernameSupport } = await import('./useFriendsAllowUsernameSupport');
         const seen = await renderHookAndCollectValues(() => useFriendsAllowUsernameSupport());

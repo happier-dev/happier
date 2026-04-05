@@ -25,7 +25,6 @@ const localSettingsDefaultsRecord: LocalSettingsRecord = {
     ...LOCAL_SETTING_ARTIFACTS.defaults,
 };
 normalizeActivitySurfaceLocalSettings(localSettingsDefaultsRecord);
-normalizeDesktopOverlayLocalSettings(localSettingsDefaultsRecord);
 
 export const localSettingsDefaults: LocalSettings = localSettingsDefaultsRecord;
 Object.freeze(localSettingsDefaults);
@@ -35,6 +34,7 @@ Object.freeze(localSettingsDefaults);
 //
 
 type LocalSettingsRecord = LocalSettings & Record<string, unknown>;
+type LocalSettingsParseRecord = Record<string, unknown>;
 
 function resolveBooleanAlias(
     primary: unknown,
@@ -56,7 +56,9 @@ function resolveStringAlias<T extends string>(
     return fallback;
 }
 
-function normalizeDesktopOverlayLocalSettings(settings: LocalSettingsRecord): LocalSettingsRecord {
+function migrateLegacyDesktopOverlayParseInput(
+    settings: LocalSettingsParseRecord,
+): LocalSettingsParseRecord {
     if (settings.desktopOverlayExpandedBehavior === 'shortcut_only') {
         settings.desktopOverlayExpandedBehavior = 'click';
     }
@@ -69,9 +71,9 @@ function normalizeLocalSettingsParseInput(settings: unknown): unknown {
         return settings;
     }
 
-    return normalizeDesktopOverlayLocalSettings({
+    return migrateLegacyDesktopOverlayParseInput({
         ...(settings as Record<string, unknown>),
-    } as LocalSettingsRecord);
+    });
 }
 
 function normalizeActivitySurfaceLocalSettings(settings: LocalSettingsRecord): LocalSettingsRecord {
@@ -151,10 +153,8 @@ export function localSettingsParse(settings: unknown): LocalSettings {
             : localSettingsDefaults.uiFontScale;
 
     const normalizedParsedData = normalizeActivitySurfaceLocalSettings({ ...parsed.data } as LocalSettingsRecord);
-    normalizeDesktopOverlayLocalSettings(normalizedParsedData);
     const next: LocalSettingsRecord = { ...localSettingsDefaults, ...normalizedParsedData, uiFontScale: nextUiFontScale };
     normalizeActivitySurfaceLocalSettings(next);
-    normalizeDesktopOverlayLocalSettings(next);
 
     // Migration: older builds persisted the then-default settings sidebar width into storage.
     // When a user never resized the sidebar, their storage can still contain that legacy default
@@ -176,9 +176,7 @@ export function localSettingsParse(settings: unknown): LocalSettings {
 
 export function applyLocalSettings(settings: LocalSettings, delta: Partial<LocalSettings>): LocalSettings {
     const normalizedDelta = normalizeActivitySurfaceLocalSettings({ ...delta } as LocalSettingsRecord);
-    normalizeDesktopOverlayLocalSettings(normalizedDelta);
     const next: LocalSettingsRecord = { ...localSettingsDefaults, ...settings, ...normalizedDelta };
     normalizeActivitySurfaceLocalSettings(next);
-    normalizeDesktopOverlayLocalSettings(next);
     return next;
 }

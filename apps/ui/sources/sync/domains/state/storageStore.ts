@@ -14,7 +14,7 @@ import { createSettingsDomain } from '../../store/domains/settings';
 import { createTodosDomain } from '../../store/domains/todos';
 import type { StorageState } from '../../store/types';
 
-export type { KnownEntitlements, SessionListItem } from '../../store/types';
+export type { KnownEntitlements } from '../../store/types';
 export type { SessionListViewItem } from '../session/listing/sessionListViewData';
 
 export const storage = create<StorageState>()((set, get) => {

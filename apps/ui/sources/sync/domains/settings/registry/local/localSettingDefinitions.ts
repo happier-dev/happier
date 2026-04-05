@@ -1,35 +1,8 @@
 import { buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
 import { z } from 'zod';
-
-function bucketNormalizedPaneSize(
-    value: number,
-    basisValue: unknown,
-    smallMaxFraction: number,
-    mediumMaxFraction: number,
-): 'small' | 'medium' | 'large' {
-    const basisPx =
-        typeof basisValue === 'number' && Number.isFinite(basisValue) && basisValue > 0
-            ? basisValue
-            : 1;
-    const normalizedFraction = value / basisPx;
-    if (normalizedFraction <= smallMaxFraction) return 'small';
-    if (normalizedFraction <= mediumMaxFraction) return 'medium';
-    return 'large';
-}
-
-function objectKeyCount(value: unknown): number {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return 0;
-    return Object.keys(value as Record<string, unknown>).length;
-}
-
-function serializeNormalizedPaneSizeWithBasisKey(
-    basisKey: string,
-    smallMaxFraction: number,
-    mediumMaxFraction: number,
-) {
-    return (value: number, record: Readonly<Record<string, unknown>>) =>
-        bucketNormalizedPaneSize(value, record[basisKey], smallMaxFraction, mediumMaxFraction);
-}
+import { ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS } from './localSettingDefinitions.activitySurfaces';
+import { LAYOUT_LOCAL_SETTING_DEFINITIONS } from './localSettingDefinitions.layout';
+import { serializeNormalizedPaneSizeWithBasisKey } from './localSettingDefinitions.shared';
 
 export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
     debugMode: {
@@ -112,7 +85,7 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
             valueKind: 'bucket',
             privacy: 'bucketed',
             identityScope: 'device_user',
-            serializeCurrentWithContext: serializeNormalizedPaneSizeWithBasisKey('sidebarWidthBasisPx', 0.25, 0.4),
+            serializeCurrentWithContext: serializeNormalizedPaneSizeWithBasisKey('sidebarWidthBasisPx', 1200, 0.25, 0.4),
         },
     },
     sidebarWidthBasisPx: {
@@ -139,7 +112,7 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
             valueKind: 'bucket',
             privacy: 'bucketed',
             identityScope: 'device_user',
-            serializeCurrentWithContext: serializeNormalizedPaneSizeWithBasisKey('settingsNavSidebarWidthBasisPx', 0.2, 0.35),
+            serializeCurrentWithContext: serializeNormalizedPaneSizeWithBasisKey('settingsNavSidebarWidthBasisPx', 1200, 0.2, 0.35),
         },
     },
     settingsNavSidebarWidthBasisPx: {
@@ -256,227 +229,8 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         storageScope: 'local',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
     },
-    activitySurfacesEnabled: {
-        schema: z.boolean(),
-        default: true,
-        description: 'Enable activity surfaces on this device',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
-    },
-    iosLiveActivitiesEnabled: {
-        schema: z.boolean(),
-        default: true,
-        description: 'Enable iOS Live Activities on this device',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
-    },
-    iosWidgetsEnabled: {
-        schema: z.boolean(),
-        default: true,
-        description: 'Enable iOS home screen widgets on this device',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
-    },
-    liveActivitiesMode: {
-        schema: z.enum(['focused', 'attention', 'running']),
-        default: 'focused',
-        description: 'Default iOS Live Activities presentation mode',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
-    },
-    liveActivitiesMaxConcurrent: {
-        schema: z.union([z.literal(1), z.literal(2), z.literal(4)]),
-        default: 1,
-        description: 'Maximum concurrent iOS Live Activities',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
-    },
-    liveActivitiesShowPreviewText: {
-        schema: z.boolean(),
-        default: true,
-        description: 'Show preview text in iOS Live Activities',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
-    },
-    liveActivitiesAllowActionButtons: {
-        schema: z.boolean(),
-        default: true,
-        description: 'Allow action buttons in iOS Live Activities',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
-    },
-    liveActivitiesIncludeReady: {
-        schema: z.boolean(),
-        default: true,
-        description: 'Include ready sessions in iOS Live Activities',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
-    },
-    liveActivitiesIncludeThinking: {
-        schema: z.boolean(),
-        default: true,
-        description: 'Include thinking sessions in iOS Live Activities',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
-    },
-    homeScreenWidgetsMode: {
-        schema: z.enum(['summary', 'attention', 'running']),
-        default: 'summary',
-        description: 'Default iOS home screen widget presentation mode',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
-    },
-    homeScreenWidgetsShowPreviewText: {
-        schema: z.boolean(),
-        default: true,
-        description: 'Show preview text in iOS home screen widgets',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
-    },
-    homeScreenWidgetsShowMachinePath: {
-        schema: z.boolean(),
-        default: true,
-        description: 'Show machine and path details in iOS home screen widgets',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
-    },
-    activitySurfaceTapTarget: {
-        schema: z.enum(['open_session', 'open_sessions']),
-        default: 'open_session',
-        description: 'Tap target for activity surfaces on this device',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
-    },
-    activitySurfacePrivacyMode: {
-        schema: z.enum(['status_only', 'title_only', 'include_preview']),
-        default: 'title_only',
-        description: 'Privacy level for activity surface previews on this device',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
-    },
-    editorFocusModeEnabled: {
-        schema: z.boolean(),
-        default: false,
-        description: 'Hide main content + sidebar to focus on right/details panes (web/tablet)',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
-    },
-    rightPaneWidthPx: {
-        schema: z.number(),
-        default: 360,
-        description: 'Preferred right pane dock width in px',
-        storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'bucket',
-            privacy: 'bucketed',
-            identityScope: 'device_user',
-            serializeCurrentWithContext: serializeNormalizedPaneSizeWithBasisKey('rightPaneWidthBasisPx', 0.25, 0.4),
-        },
-    },
-    rightPaneWidthBasisPx: {
-        schema: z.number(),
-        default: 1200,
-        description: 'Container width basis for right pane width scaling',
-        storageScope: 'local',
-    },
-    detailsPaneWidthPx: {
-        schema: z.number(),
-        default: 520,
-        description: 'Preferred details pane dock width in px',
-        storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'bucket',
-            privacy: 'bucketed',
-            identityScope: 'device_user',
-            serializeCurrentWithContext: serializeNormalizedPaneSizeWithBasisKey('detailsPaneWidthBasisPx', 0.25, 0.4),
-        },
-    },
-    detailsPaneWidthBasisPx: {
-        schema: z.number(),
-        default: 1200,
-        description: 'Container width basis for details pane width scaling',
-        storageScope: 'local',
-    },
-    bottomPaneHeightPx: {
-        schema: z.number(),
-        default: 320,
-        description: 'Preferred bottom pane dock height in px',
-        storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'bucket',
-            privacy: 'bucketed',
-            identityScope: 'device_user',
-            serializeCurrentWithContext: serializeNormalizedPaneSizeWithBasisKey('bottomPaneHeightBasisPx', 0.25, 0.4),
-        },
-    },
-    bottomPaneHeightBasisPx: {
-        schema: z.number(),
-        default: 900,
-        description: 'Container height basis for bottom pane height scaling',
-        storageScope: 'local',
-    },
-    embeddedTerminalDockLocation: {
-        schema: z.enum(['sidebar', 'details', 'bottom']),
-        default: 'bottom',
-        description: 'Embedded terminal dock location',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
-    },
-    sessionsListStorageTab: {
-        schema: z.enum(['persisted', 'direct']),
-        default: 'persisted',
-        description: 'Selected session list storage tab',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
-    },
-    projectLastMobileRouteByWorkspaceRefId: {
-        schema: z.record(z.string(), z.enum(['details', 'files', 'git'])).default({}),
-        default: {},
-        description: 'Last active mobile project route by workspace ref id',
-        storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'device_user',
-            serializeCurrent: objectKeyCount,
-        },
-    },
-    projectLastActiveRootPathByWorkspaceRefId: {
-        schema: z.record(z.string(), z.string()).default({}),
-        default: {},
-        description: 'Last active project root path by workspace ref id',
-        storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'device_user',
-            serializeCurrent: objectKeyCount,
-        },
-    },
-    acknowledgedCliVersions: {
-        schema: z.record(z.string(), z.string()),
-        default: {},
-        description: 'Acknowledged CLI versions per machine',
-        storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'device_user',
-            serializeCurrent: objectKeyCount,
-        },
-    },
+    ...ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS,
+    ...LAYOUT_LOCAL_SETTING_DEFINITIONS,
 });
 
 export const LOCAL_SETTING_ARTIFACTS = buildSettingArtifacts(LOCAL_SETTING_DEFINITIONS);

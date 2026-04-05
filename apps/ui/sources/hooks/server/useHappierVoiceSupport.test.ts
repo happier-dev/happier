@@ -13,7 +13,7 @@ afterEach(() => {
 describe('useHappierVoiceSupport', () => {
     it('returns true when voice is enabled', async () => {
         vi.resetModules();
-        stubServerFeaturesFetch({ voiceEnabled: true });
+        await stubServerFeaturesFetch({ voiceEnabled: true });
 
         const { getStorage } = await import('@/sync/domains/state/storage');
         const storage = getStorage();
@@ -44,7 +44,7 @@ describe('useHappierVoiceSupport', () => {
 
     it('returns false when voice is enabled but Happier Voice is disabled', async () => {
         vi.resetModules();
-        stubServerFeaturesFetch({ voiceEnabled: true, happierVoiceEnabled: false });
+        await stubServerFeaturesFetch({ voiceEnabled: true, happierVoiceEnabled: false });
 
         const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
         resetServerFeaturesClientForTests();
@@ -60,7 +60,7 @@ describe('useHappierVoiceSupport', () => {
 
     it('returns false when voice is disabled', async () => {
         vi.resetModules();
-        stubServerFeaturesFetch({ voiceEnabled: false });
+        await stubServerFeaturesFetch({ voiceEnabled: false });
 
         const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
         resetServerFeaturesClientForTests();
@@ -76,7 +76,7 @@ describe('useHappierVoiceSupport', () => {
 
     it('fails closed when the request fails', async () => {
         vi.resetModules();
-        stubServerFeaturesFetchFailure();
+        await stubServerFeaturesFetchFailure();
 
         const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
         resetServerFeaturesClientForTests();

@@ -450,6 +450,7 @@ describe('UI testkit mock factories', () => {
         expect(mock.useSettingMutable('activeServerId')).toEqual(['stub-value', expect.any(Function)]);
         expect(mock.useArtifacts()).toEqual([]);
         expect(mock.useMachineListByServerId()).toEqual({});
+        expect(mock.useMachine('machine-a')).toBeNull();
     });
 
     it('creates a selector-capable storage store mock with getState support', async () => {
