@@ -54,4 +54,39 @@ describe('useScmDiffExpandedKeys', () => {
         expect(Array.from(hook.getCurrent().expandedKeys)).toEqual([]);
         await hook.unmount();
     });
+
+    it('keeps collapsed state stable across rerenders with equivalent key arrays', async () => {
+        const hook = await renderHook((props: {
+            allKeys: readonly string[];
+            viewableIndices: readonly number[];
+            initialCollapsedKeys: readonly string[];
+        }) => useScmDiffExpandedKeys({
+            allKeys: props.allKeys,
+            viewableIndices: props.viewableIndices,
+            tooLarge: false,
+            aheadCount: 1,
+            behindCount: 1,
+            resetKey: 'k1',
+            initialCollapsedKeys: props.initialCollapsedKeys,
+        }), {
+            initialProps: {
+                allKeys: ['a', 'b', 'c'],
+                viewableIndices: [0],
+                initialCollapsedKeys: ['b'],
+            },
+        });
+
+        const firstCollapsedKeys = hook.getCurrent().collapsedKeys;
+
+        await hook.rerender({
+            allKeys: ['a', 'b', 'c'],
+            viewableIndices: [0],
+            initialCollapsedKeys: ['b'],
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(hook.getCurrent().collapsedKeys).toBe(firstCollapsedKeys);
+        expect(Array.from(hook.getCurrent().expandedKeys)).toEqual(['a', 'c']);
+        await hook.unmount();
+    });
 });

@@ -2,6 +2,15 @@ import * as React from 'react';
 
 import { resolveIndexWindow } from '@/components/ui/scroll/resolveIndexWindow';
 
+function areStringSetsEqual(left: ReadonlySet<string>, right: ReadonlySet<string>) {
+    if (left === right) return true;
+    if (left.size !== right.size) return false;
+    for (const value of left) {
+        if (!right.has(value)) return false;
+    }
+    return true;
+}
+
 export type ScmDiffExpandedKeysState = Readonly<{
     collapsedKeys: ReadonlySet<string>;
     toggleCollapsed: (key: string) => void;
@@ -56,18 +65,30 @@ export function useScmDiffExpandedKeys(input: Readonly<{
         const initialCount = Math.max(1, input.aheadCount + input.behindCount + 1);
         return new Set(input.allKeys.slice(0, initialCount));
     }, [input.aheadCount, input.allKeys, input.behindCount]);
+    const initialAutoExpandedKeysSignature = React.useMemo(() => {
+        return Array.from(initialAutoExpandedKeySet).sort().join('\n');
+    }, [initialAutoExpandedKeySet]);
+    const initialCollapsedKeysStateSignature = React.useMemo(() => {
+        return Array.from(initialCollapsedKeySet).sort().join('\n');
+    }, [initialCollapsedKeySet]);
 
     const [autoExpandedKeys, setAutoExpandedKeys] = React.useState<Set<string>>(() => new Set());
 
     React.useEffect(() => {
         if (!input.tooLarge) {
-            setAutoExpandedKeys(new Set());
-            setCollapsedKeys(new Set(initialCollapsedKeySet));
+            setAutoExpandedKeys((prev) => (prev.size === 0 ? prev : new Set()));
+            setCollapsedKeys((prev) => (
+                areStringSetsEqual(prev, initialCollapsedKeySet) ? prev : new Set(initialCollapsedKeySet)
+            ));
             return;
         }
-        setAutoExpandedKeys(new Set(initialAutoExpandedKeySet));
-        setCollapsedKeys(new Set(initialCollapsedKeySet));
-    }, [initialAutoExpandedKeySet, initialCollapsedKeySet, input.resetKey, input.tooLarge]);
+        setAutoExpandedKeys((prev) => (
+            areStringSetsEqual(prev, initialAutoExpandedKeySet) ? prev : new Set(initialAutoExpandedKeySet)
+        ));
+        setCollapsedKeys((prev) => (
+            areStringSetsEqual(prev, initialCollapsedKeySet) ? prev : new Set(initialCollapsedKeySet)
+        ));
+    }, [initialAutoExpandedKeysSignature, initialCollapsedKeysStateSignature, input.resetKey, input.tooLarge]);
 
     React.useEffect(() => {
         if (!input.tooLarge) return;
