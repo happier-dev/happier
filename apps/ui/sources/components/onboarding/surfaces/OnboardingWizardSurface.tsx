@@ -4,6 +4,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { AuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
+import { getDefaultSystemTaskRunner, useSystemTaskSnapshot } from '@/components/systemTasks';
+import type { SystemTaskRunState } from '@/components/systemTasks/types';
+import { isSystemTaskBridgeUnavailableError, readSystemTaskStartErrorMessage } from '@/components/systemTasks/systemTaskStartError';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { Modal } from '@/modal';
@@ -19,12 +22,20 @@ import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurf
 import { isLocalishServerUrl } from '@/sync/domains/server/url/serverUrlClassification';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
 import { readServerReachabilityProbeTimeoutMs } from '@/sync/runtime/connectivity/serverReachabilityTuning';
+import {
+    getEndpointReachabilityProvider,
+    resolveEndpointReachabilityRemediation,
+    type EndpointReachabilityRemediation,
+    type EndpointReachabilityRemediationAction,
+} from '@/sync/runtime/connectivity/resolveEndpointReachabilityRemediation';
 import { isRunningOnMac } from '@/utils/platform/platform';
 import { isWebQrScannerSupported } from '@/utils/platform/qrScannerSupport';
 import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
+import { openExternalUrl } from '@/utils/url/openExternalUrl';
 import type { RelayHostLocalChecklistRuntimeStatus } from '../checklists/relayHostLocal/types';
 import type { RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
+import { createTailscaleEnsureReadyTaskSpec } from '@happier-dev/protocol';
 
 import { WizardLogotype } from '../ui/WizardLogotype';
 import { WizardChoiceRow } from '../ui/WizardChoiceRow';
@@ -139,6 +150,12 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
     const [localRelayRuntimeStatus, setLocalRelayRuntimeStatus] = React.useState<LocalRelayRuntimeStatus>(null);
     const [relayAccessTarget, setRelayAccessTarget] = React.useState<RelayAccessTaskTarget | null>(null);
     const defaultRelayAccessTarget = React.useMemo<RelayAccessTaskTarget>(() => ({ kind: 'local' }), []);
+    const systemTaskRunner = React.useMemo(() => getDefaultSystemTaskRunner(), []);
+    const [tailscaleEnsureReadyTaskId, setTailscaleEnsureReadyTaskId] = React.useState<string | null>(null);
+    const [reachabilityRemediationError, setReachabilityRemediationError] = React.useState<string | null>(null);
+    const reachabilityRemediationRetryEndpointRef = React.useRef<string | null>(null);
+    const handledTailscaleEnsureReadyTaskIdRef = React.useRef<string | null>(null);
+    const tailscaleEnsureReadySnapshot = useSystemTaskSnapshot(systemTaskRunner, tailscaleEnsureReadyTaskId);
     const [state, dispatch] = React.useReducer(
         wizardReducer,
         null,
@@ -307,15 +324,37 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         });
     }, [activeServerSnapshotForLocalBind.activeLocalRelayUrl, activeServerSnapshotForLocalBind.serverUrl]);
 
+    const relayEnterUrlEndpointForReadiness = React.useMemo(() => {
+        if (stepId !== 'relay_enter_url') {
+            return null;
+        }
+        const trimmed = urlDraft.trim();
+        return trimmed ? normalizeServerUrl(trimmed) : null;
+    }, [stepId, urlDraft]);
+
+    const confirmSwitchRelayEndpointForReadiness = React.useMemo(() => {
+        if (stepId !== 'confirm_switch_relay' || relaySwitchDecision !== 'switch') {
+            return null;
+        }
+        const relayUrl = typeof state.context.relaySelection.serverUrl === 'string'
+            ? state.context.relaySelection.serverUrl.trim()
+            : '';
+        return relayUrl ? normalizeServerUrl(relayUrl) : null;
+    }, [relaySwitchDecision, state.context.relaySelection.serverUrl, stepId]);
+
     const { readinessByEndpoint: relayReadinessByEndpoint, retryEndpoint } = useEndpointReadinessMap({
-        endpoints: stepId === 'relay_select'
-            ? [
-                ...profileChoices.map((profile) => profile.serverUrl),
-                ...(canonicalCloudReadinessEndpoint ? [canonicalCloudReadinessEndpoint] : []),
-                ...(trueLocalRelayRuntimeBindUrl ? [trueLocalRelayRuntimeBindUrl] : []),
-            ]
-            : [],
-        enabled: stepId === 'relay_select',
+        endpoints: [
+            ...(stepId === 'relay_select'
+                ? [
+                    ...profileChoices.map((profile) => profile.serverUrl),
+                    ...(canonicalCloudReadinessEndpoint ? [canonicalCloudReadinessEndpoint] : []),
+                    ...(trueLocalRelayRuntimeBindUrl ? [trueLocalRelayRuntimeBindUrl] : []),
+                ]
+                : []),
+            ...(relayEnterUrlEndpointForReadiness ? [relayEnterUrlEndpointForReadiness] : []),
+            ...(confirmSwitchRelayEndpointForReadiness ? [confirmSwitchRelayEndpointForReadiness] : []),
+        ],
+        enabled: stepId === 'relay_select' || stepId === 'relay_enter_url' || stepId === 'confirm_switch_relay',
         timeoutMs: readServerReachabilityProbeTimeoutMs(),
     });
 

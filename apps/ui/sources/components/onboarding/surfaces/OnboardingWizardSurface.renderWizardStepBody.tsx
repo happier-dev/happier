@@ -13,9 +13,12 @@ import { QrCodeScannerView } from '@/components/qr/QrCodeScannerView';
 import { WebDesktopRelayHostHandoffContent } from '@/components/onboarding/steps/webDesktop/WebDesktopRelayHostHandoffContent';
 import { WebDesktopBackgroundServiceHandoffContent } from '@/components/onboarding/steps/webDesktop/WebDesktopBackgroundServiceHandoffContent';
 import { LocalRelayAccessControlSection } from '@/components/settings/server/localControl/LocalRelayAccessControlSection';
+import { ServerReachabilityRemediationCard } from '@/components/settings/server/sections/ServerReachabilityRemediationCard';
 import type { RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 import { RelayAccessPrerequisitesStep } from '@/components/onboarding/steps/relayAccess/RelayAccessPrerequisitesStep';
+import type { SystemTaskRunState } from '@/components/systemTasks/types';
+import type { EndpointReachabilityRemediation, EndpointReachabilityRemediationAction } from '@/sync/runtime/connectivity/resolveEndpointReachabilityRemediation';
 
 import { RestoreIndexEmbedded } from '@/components/onboarding/restore/RestoreIndexEmbedded';
 import { LostAccessEmbedded } from '@/components/onboarding/restore/LostAccessEmbedded';
@@ -74,6 +77,10 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
     serverProfileId: string | null;
     relayAccessTarget: RelayAccessTaskTarget;
     lastKnownSnapshotRelayUrl: string;
+    reachabilityRemediation: EndpointReachabilityRemediation | null;
+    reachabilityRemediationTaskSnapshot: SystemTaskRunState | null;
+    reachabilityRemediationError: string | null;
+    onReachabilityRemediationAction: (actionId: EndpointReachabilityRemediationAction['id']) => Promise<void>;
 
     relaySwitchDecision: RelaySwitchDecision;
     onRelaySwitchDecisionChange: (next: RelaySwitchDecision) => void;
@@ -115,6 +122,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
     onRemoteRelayRuntimeCompleted: (payload: Readonly<{
         machineId: string | null;
         relayRuntimeUrl: string | null;
+        relayAccessTarget: RelayAccessTaskTarget | null;
         mode: RemoteSshChecklistMode;
     }>) => void;
 }>): React.ReactNode {
@@ -209,19 +217,31 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
 
     if (params.stepId === 'relay_enter_url') {
         return (
-            <View style={params.styles.urlBlock}>
-                <TextInput
-                    testID={`${params.testIDPrefix}-relay-url-input`}
-                    placeholder={t('common.urlPlaceholder')}
-                    placeholderTextColor={params.theme.colors.textSecondary}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    value={params.urlDraft}
-                    onChangeText={params.onUrlDraftChange}
-                    style={params.styles.urlInput}
-                />
-                <Text style={params.styles.urlHint}>{t('setupOnboarding.relayCustomUrlSubtitle')}</Text>
-            </View>
+            <>
+                <View style={params.styles.urlBlock}>
+                    <TextInput
+                        testID={`${params.testIDPrefix}-relay-url-input`}
+                        placeholder={t('common.urlPlaceholder')}
+                        placeholderTextColor={params.theme.colors.textSecondary}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        value={params.urlDraft}
+                        onChangeText={params.onUrlDraftChange}
+                        style={params.styles.urlInput}
+                    />
+                    <Text style={params.styles.urlHint}>{t('setupOnboarding.relayCustomUrlSubtitle')}</Text>
+                </View>
+                {params.reachabilityRemediation ? (
+                    <ServerReachabilityRemediationCard
+                        remediation={params.reachabilityRemediation}
+                        taskSnapshot={params.reachabilityRemediationTaskSnapshot}
+                        onAction={params.onReachabilityRemediationAction}
+                    />
+                ) : null}
+                {params.reachabilityRemediationError ? (
+                    <Text style={params.styles.urlHint}>{params.reachabilityRemediationError}</Text>
+                ) : null}
+            </>
         );
     }
 
@@ -299,12 +319,24 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
 
     if (params.stepId === 'confirm_switch_relay') {
         return (
-            <ConfirmSwitchRelayStep
-                testIDPrefix={params.testIDPrefix}
-                relayUrl={params.relaySelectionServerUrl ?? ''}
-                decision={params.relaySwitchDecision}
-                onDecisionChange={params.onRelaySwitchDecisionChange}
-            />
+            <>
+                <ConfirmSwitchRelayStep
+                    testIDPrefix={params.testIDPrefix}
+                    relayUrl={params.relaySelectionServerUrl ?? ''}
+                    decision={params.relaySwitchDecision}
+                    onDecisionChange={params.onRelaySwitchDecisionChange}
+                />
+                {params.reachabilityRemediation ? (
+                    <ServerReachabilityRemediationCard
+                        remediation={params.reachabilityRemediation}
+                        taskSnapshot={params.reachabilityRemediationTaskSnapshot}
+                        onAction={params.onReachabilityRemediationAction}
+                    />
+                ) : null}
+                {params.reachabilityRemediationError ? (
+                    <Text style={params.styles.urlHint}>{params.reachabilityRemediationError}</Text>
+                ) : null}
+            </>
         );
     }
 

@@ -57,6 +57,14 @@ function isTailscaleHostname(hostname: string | null): boolean {
     return hostname.endsWith('.ts.net');
 }
 
+export function getEndpointReachabilityProvider(endpointUrl: string): 'tailscale' | null {
+    const hostname = normalizeHostname(endpointUrl);
+    if (isTailscaleHostname(hostname)) {
+        return 'tailscale';
+    }
+    return null;
+}
+
 function resolveTailscaleInstallUrl(platformOs: string): string {
     switch (platformOs) {
         case 'ios':
@@ -75,8 +83,7 @@ export function resolveEndpointReachabilityRemediation(
         return null;
     }
 
-    const hostname = normalizeHostname(params.endpointUrl);
-    if (!isTailscaleHostname(hostname)) {
+    if (getEndpointReachabilityProvider(params.endpointUrl) !== 'tailscale') {
         return null;
     }
 
