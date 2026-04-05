@@ -21,6 +21,20 @@ function resolveScopedRuntimeDir(params: Readonly<{ homeDir: string; publicRelea
   return suffix === 'stable' ? join(params.homeDir, 'runtime') : join(params.homeDir, `runtime.${suffix}`);
 }
 
+function shouldSkipRuntimeReexecForDaemonAttach(argv: readonly string[]): boolean {
+  const startedByIndex = argv.indexOf('--started-by');
+  if (startedByIndex < 0) return false;
+
+  const startedByValue = String(argv[startedByIndex + 1] ?? '').trim();
+  if (startedByValue !== 'daemon') return false;
+
+  const existingSessionIndex = argv.indexOf('--existing-session');
+  if (existingSessionIndex < 0) return false;
+
+  const existingSessionValue = String(argv[existingSessionIndex + 1] ?? '').trim();
+  return existingSessionValue.length > 0;
+}
+
 export function resolveRuntimeEntrypointPath(params: Readonly<{ homeDir: string; packageName: string; publicReleaseRing?: PublicReleaseRingId }>): string {
   const packageName = String(params.packageName ?? '').trim();
   if (!packageName) {
@@ -48,6 +62,7 @@ export async function maybeReexecToRuntime(params: Readonly<{
   const env = params.env;
   if (String(env.HAPPIER_CLI_RUNTIME_DISABLE ?? '').trim() === '1') return;
   if (String(env.HAPPIER_CLI_RUNTIME_REEXEC ?? '').trim() === '1') return;
+  if (shouldSkipRuntimeReexecForDaemonAttach(params.argv)) return;
 
   const publicReleaseRing = params.publicReleaseRing ?? 'stable';
   const runtimeDir = resolveScopedRuntimeDir({ homeDir: params.homeDir, publicReleaseRing });
