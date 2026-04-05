@@ -59,6 +59,7 @@ export const __testables = {
     sharedExportCacheKey = null;
     sharedExportRootDir = null;
   },
+  shouldReclaimUiWebExportLock,
 };
 
 type UiWebRuntimeConfig = Readonly<{
@@ -102,6 +103,57 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function readLatestMtimeMs(currentPath: string): Promise<number> {
+  const currentStat = await stat(currentPath).catch(() => null);
+  if (!currentStat) {
+    return 0;
+  }
+  if (currentStat.isFile()) {
+    return currentStat.mtimeMs;
+  }
+  if (!currentStat.isDirectory()) {
+    return 0;
+  }
+
+  const entries = await readdir(currentPath, { withFileTypes: true }).catch(() => []);
+  let latestMtimeMs = currentStat.mtimeMs;
+  for (const entry of entries) {
+    latestMtimeMs = Math.max(latestMtimeMs, await readLatestMtimeMs(resolvePath(currentPath, entry.name)));
+  }
+  return latestMtimeMs;
+}
+
+async function hasRecentUiWebExportStagingProgress(rootDir: string, staleAfterMs: number): Promise<boolean> {
+  const entries = await readdir(rootDir, { withFileTypes: true }).catch(() => []);
+  const cutoffMs = Date.now() - staleAfterMs;
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith('dist-staging-')) continue;
+    const stagingLatestMtimeMs = await readLatestMtimeMs(resolvePath(rootDir, entry.name));
+    if (stagingLatestMtimeMs > cutoffMs) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export async function shouldReclaimUiWebExportLock(lockPath: string, staleAfterMs: number): Promise<boolean> {
+  try {
+    const owner = parseLockOwner(readFileSync(lockPath, 'utf8'));
+    if (owner.pid == null && owner.createdAtMs == null) {
+      return !(await hasRecentUiWebExportStagingProgress(dirname(lockPath), staleAfterMs));
+    }
+    if (owner.pid != null && !isRunningPid(owner.pid)) {
+      return true;
+    }
+    if (owner.createdAtMs != null && Date.now() - owner.createdAtMs > staleAfterMs) {
+      return !(await hasRecentUiWebExportStagingProgress(dirname(lockPath), staleAfterMs));
+    }
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 async function withUiWebExportLock<T>(
   lockPath: string,
   fn: () => Promise<T>,
@@ -121,15 +173,7 @@ async function withUiWebExportLock<T>(
     } catch (error: any) {
       if (error?.code !== 'EEXIST') throw error;
 
-      let reclaim = false;
-      try {
-        const owner = parseLockOwner(readFileSync(lockPath, 'utf8'));
-        if (owner.pid == null && owner.createdAtMs == null) reclaim = true;
-        else if (owner.pid != null && !isRunningPid(owner.pid)) reclaim = true;
-        else if (owner.createdAtMs != null && Date.now() - owner.createdAtMs > staleAfterMs) reclaim = true;
-      } catch {
-        reclaim = true;
-      }
+      const reclaim = await shouldReclaimUiWebExportLock(lockPath, staleAfterMs);
 
       if (reclaim) {
         try {
