@@ -35,7 +35,8 @@ test('EAS local Android builds do not force IPv4 preference when disabled', () =
     baseEnv: { HAPPIER_EAS_ANDROID_PREFER_IPV4: '0' },
     platform: 'android',
   });
-  assert.ok(!('JAVA_TOOL_OPTIONS' in env));
+  assert.match(env.JAVA_TOOL_OPTIONS, /-Xmx6144m/);
+  assert.doesNotMatch(env.JAVA_TOOL_OPTIONS, /preferIPv4/);
 });
 
 test('EAS local Android builds append IPv4 preferences to existing JAVA_TOOL_OPTIONS', () => {
@@ -46,6 +47,35 @@ test('EAS local Android builds append IPv4 preferences to existing JAVA_TOOL_OPT
   assert.match(env.JAVA_TOOL_OPTIONS, /-Xmx2g/);
   assert.match(env.JAVA_TOOL_OPTIONS, /-Djava\.net\.preferIPv4Stack=true/);
   assert.match(env.JAVA_TOOL_OPTIONS, /-Djava\.net\.preferIPv4Addresses=true/);
+});
+
+test('EAS local Android builds set default Gradle heap tuning for dex-heavy local release builds', () => {
+  const env = createEasLocalBuildEnv({ baseEnv: {}, platform: 'android' });
+  assert.match(env.JAVA_TOOL_OPTIONS, /-Xmx6144m/);
+  assert.match(env.GRADLE_OPTS, /-Xmx6144m/);
+  assert.match(env.GRADLE_OPTS, /-Dorg\.gradle\.daemon=false/);
+  assert.match(env.GRADLE_OPTS, /-Dorg\.gradle\.parallel=false/);
+  assert.match(env.GRADLE_OPTS, /-Dorg\.gradle\.workers\.max=1/);
+  assert.match(env.GRADLE_OPTS, /-Dkotlin\.daemon\.jvm\.options=-Xmx2048m/);
+  assert.equal(env['ORG_GRADLE_PROJECT_org.gradle.jvmargs'], '-Xmx6144m -Dfile.encoding=UTF-8');
+  assert.equal(env['ORG_GRADLE_PROJECT_kotlin.daemon.jvmargs'], '-Xmx2048m');
+  assert.equal(env.HAPPIER_ANDROID_GRADLE_JVMARGS, '-Xmx6144m -Dfile.encoding=UTF-8');
+});
+
+test('EAS local Android builds honor explicit heap tuning overrides', () => {
+  const env = createEasLocalBuildEnv({
+    baseEnv: {
+      HAPPIER_EAS_ANDROID_GRADLE_HEAP_MB: '7168',
+      HAPPIER_EAS_ANDROID_KOTLIN_DAEMON_HEAP_MB: '3072',
+    },
+    platform: 'android',
+  });
+  assert.match(env.JAVA_TOOL_OPTIONS, /-Xmx7168m/);
+  assert.match(env.GRADLE_OPTS, /-Xmx7168m/);
+  assert.match(env.GRADLE_OPTS, /-Dkotlin\.daemon\.jvm\.options=-Xmx3072m/);
+  assert.equal(env['ORG_GRADLE_PROJECT_org.gradle.jvmargs'], '-Xmx7168m -Dfile.encoding=UTF-8');
+  assert.equal(env['ORG_GRADLE_PROJECT_kotlin.daemon.jvmargs'], '-Xmx3072m');
+  assert.equal(env.HAPPIER_ANDROID_GRADLE_JVMARGS, '-Xmx7168m -Dfile.encoding=UTF-8');
 });
 
 test('EAS local iOS builds reorder PATH so /usr/bin precedes /opt/homebrew/bin (rsync compatibility)', () => {
