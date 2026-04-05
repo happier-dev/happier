@@ -127,7 +127,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     const core = getAgentCore(agentId);
     const executor = React.useMemo(
         () => createDefaultActionExecutor({
-            resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId),
+            resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId) ?? null,
             openSession: (childSessionId) => {
                 router.push((`/session/${childSessionId}`) as any);
             },

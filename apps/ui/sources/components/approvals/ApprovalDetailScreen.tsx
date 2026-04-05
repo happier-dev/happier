@@ -108,7 +108,7 @@ export const ApprovalDetailScreen = React.memo((props: Readonly<{ artifactId: st
 
   const executor = React.useMemo(
     () => createDefaultActionExecutor({
-      resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId),
+      resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId) ?? null,
     }),
     [],
   );

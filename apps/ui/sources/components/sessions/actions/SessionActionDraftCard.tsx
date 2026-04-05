@@ -54,7 +54,7 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
   const spec = getActionSpec(props.draft.actionId as any);
   const executor = React.useMemo(
     () => createDefaultActionExecutor({
-      resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId),
+      resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId) ?? null,
       openSession: (sessionId) => {
         router.push((`/session/${sessionId}`) as any);
       },

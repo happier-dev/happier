@@ -649,7 +649,7 @@ function SessionViewLoaded({
 
     const actionExecutor = React.useMemo(
         () => createDefaultActionExecutor({
-            resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId),
+            resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId) ?? null,
             openSession: (sid) => {
                 router.push((`/session/${sid}`) as any);
             },

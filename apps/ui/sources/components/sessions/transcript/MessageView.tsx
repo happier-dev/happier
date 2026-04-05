@@ -296,7 +296,7 @@ function UserTextBlock(props: {
   }, [props.message, seq]);
 
   const executor = React.useMemo(
-    () => createDefaultActionExecutor({ resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId) }),
+    () => createDefaultActionExecutor({ resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId) ?? null }),
     [],
   );
   const executionRunsEnabled = useFeatureEnabled('execution.runs');
@@ -737,7 +737,7 @@ function AgentTextBlock(props: {
     return resolveForkFromMessageSemantics({ message: props.message, messageSeqInclusive: seq });
   }, [props.message, seq]);
   const executor = React.useMemo(
-    () => createDefaultActionExecutor({ resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId) }),
+    () => createDefaultActionExecutor({ resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId) ?? null }),
     [],
   );
   const executionRunsEnabled = useFeatureEnabled('execution.runs');

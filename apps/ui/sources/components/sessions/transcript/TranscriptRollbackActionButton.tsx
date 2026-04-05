@@ -24,7 +24,7 @@ export const TranscriptRollbackActionButton = React.memo((props: {
     const [isRollingBack, setIsRollingBack] = React.useState(false);
     const executor = React.useMemo(
         () => createDefaultActionExecutor({
-            resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId),
+            resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId) ?? null,
         }),
         [],
     );

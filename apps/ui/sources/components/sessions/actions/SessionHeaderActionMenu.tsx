@@ -109,7 +109,7 @@ export function SessionHeaderActionMenu(props: Readonly<{
   const [open, setOpen] = React.useState(false);
   const executor = React.useMemo(
     () => createDefaultActionExecutor({
-      resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId),
+      resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId) ?? null,
       openSession: (childSessionId: string) => {
         router.push((`/session/${childSessionId}`) as any);
       },

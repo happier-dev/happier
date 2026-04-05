@@ -35,7 +35,7 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
     const memorySearchEnabled = useFeatureEnabled('memory.search');
     const actionExecutor = useMemo(
         () => createDefaultActionExecutor({
-            resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId),
+            resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId) ?? null,
             openSession: (sessionId) => {
                 router.push((`/session/${sessionId}`) as any);
             },
