@@ -6,6 +6,7 @@ import { renderScreen } from '@/dev/testkit';
 import { installMachinesSettingsCommonModuleMocks } from '@/components/settings/machines/machinesSettingsTestHelpers';
 
 const setActiveServerShareableUrlSpy = vi.hoisted(() => vi.fn());
+const setServerProfileShareableUrlSpy = vi.hoisted(() => vi.fn());
 
 (
     globalThis as typeof globalThis & {
@@ -60,6 +61,11 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
         generation: 0,
     }),
     setActiveShareableServerUrl: (value: string | null) => setActiveServerShareableUrlSpy(value),
+    setServerProfileShareableUrl: (
+        serverProfileId: string,
+        value: string | null,
+        options?: { validatedAgainstServerUrl?: string | null },
+    ) => setServerProfileShareableUrlSpy(serverProfileId, value, options),
 }));
 
 vi.mock('@expo/vector-icons', () => ({
@@ -224,6 +230,7 @@ describe('LocalRelayAccessControlSection', () => {
 
     it('runs relay.access.configure.v1 for LAN and updates the active shareable URL on success', async () => {
         setActiveServerShareableUrlSpy.mockClear();
+        setServerProfileShareableUrlSpy.mockClear();
 
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
         const { SystemTaskSpecSchema, SYSTEM_TASK_PROTOCOL_VERSION } = await import('@happier-dev/protocol');
@@ -310,9 +317,87 @@ describe('LocalRelayAccessControlSection', () => {
             });
         });
         expect(setActiveServerShareableUrlSpy).toHaveBeenCalledWith('https://relay.lan.example.test');
+        expect(setServerProfileShareableUrlSpy).not.toHaveBeenCalled();
     });
 
-    it('includes upstreamUrl when configuring providers that need it', async () => {
+    it('persists a configured share URL onto the provided server profile without updating the active profile', async () => {
+        setActiveServerShareableUrlSpy.mockClear();
+        setServerProfileShareableUrlSpy.mockClear();
+
+        const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
+        const { SystemTaskSpecSchema, SYSTEM_TASK_PROTOCOL_VERSION } = await import('@happier-dev/protocol');
+
+        let nextTaskId = 1;
+        const listeners = new Map<string, {
+            onEvent: (payload: unknown) => void;
+            onResult: (payload: unknown) => void;
+        }>();
+
+        const runner = createSystemTaskRunner({
+            bridge: {
+                async start(spec) {
+                    SystemTaskSpecSchema.parse(spec);
+                    const kind = typeof (spec as any)?.kind === 'string' ? String((spec as any).kind) : 'unknown';
+                    return `task_${nextTaskId++}:${kind}`;
+                },
+                async subscribe(taskId, listenerSet) {
+                    listeners.set(taskId, listenerSet);
+                    return () => {
+                        listeners.delete(taskId);
+                    };
+                },
+                async cancel() {},
+                async respond() {},
+            },
+        });
+
+        const { LocalRelayAccessControlSection } = await import('./LocalRelayAccessControlSection');
+        const screen = await renderScreen(
+            React.createElement(LocalRelayAccessControlSection as any, {
+                runner,
+                upstreamUrl: 'http://127.0.0.1:3005/',
+                serverProfileId: 'candidate-relay',
+            }),
+        );
+        await renderer.act(async () => {});
+
+        const input = screen.findByTestId('settings.server.relayAccess.lanUrl');
+        expect(input).toBeTruthy();
+        await renderer.act(async () => {
+            input?.props.onChangeText?.('https://relay.lan.example.test');
+        });
+
+        const save = screen.findByTestId('settings.server.relayAccess.save');
+        expect(save).toBeTruthy();
+        await renderer.act(async () => {
+            await save?.props.onPress?.();
+        });
+
+        const taskId = 'task_2:relay.access.configure.v1';
+        await renderer.act(async () => {
+            listeners.get(taskId)?.onResult({
+                protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                taskId,
+                ok: true,
+                data: {
+                    configured: true,
+                    providerId: 'lan',
+                    status: {
+                        state: 'enabled',
+                        shareUrl: 'https://relay.lan.example.test',
+                        details: null,
+                    },
+                },
+            });
+        });
+
+        expect(setServerProfileShareableUrlSpy).toHaveBeenCalledWith('candidate-relay', 'https://relay.lan.example.test', {
+            validatedAgainstServerUrl: 'http://127.0.0.1:3005/',
+        });
+        expect(setActiveServerShareableUrlSpy).not.toHaveBeenCalled();
+    });
+
+    it('runs secure access for Tailscale providers and includes upstreamUrl in the task spec', async () => {
         setActiveServerShareableUrlSpy.mockClear();
 
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
@@ -359,14 +444,73 @@ describe('LocalRelayAccessControlSection', () => {
         expect(startedSpecs).toHaveLength(2);
         expect(startedSpecs[1]).toEqual({
             protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
-            kind: 'relay.access.configure.v1',
+            kind: 'secureAccess.tailscale.v1',
             params: {
-                target: { kind: 'local' },
                 upstreamUrl: 'http://127.0.0.1:3005',
                 providerId: 'tailscaleServe',
-                config: {
-                    providerId: 'tailscaleServe',
+                servePath: '/',
+                installPolicy: 'installIfMissing',
+                loginPolicy: 'interactive',
+                mode: 'normalUser',
+            },
+        });
+    });
+
+    it('supports Tailscale Funnel through the secure access system task spec', async () => {
+        const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
+        const { SystemTaskSpecSchema, SYSTEM_TASK_PROTOCOL_VERSION } = await import('@happier-dev/protocol');
+
+        let nextTaskId = 1;
+        const startedSpecs: unknown[] = [];
+
+        const runner = createSystemTaskRunner({
+            bridge: {
+                async start(spec) {
+                    SystemTaskSpecSchema.parse(spec);
+                    startedSpecs.push(spec);
+                    const kind = typeof (spec as any)?.kind === 'string' ? String((spec as any).kind) : 'unknown';
+                    return `task_${nextTaskId++}:${kind}`;
                 },
+                async subscribe() {
+                    return () => {};
+                },
+                async cancel() {},
+                async respond() {},
+            },
+        });
+
+        const { LocalRelayAccessControlSection } = await import('./LocalRelayAccessControlSection');
+        const screen = await renderScreen(
+            React.createElement(LocalRelayAccessControlSection as any, {
+                runner,
+                upstreamUrl: 'http://127.0.0.1:3005',
+            }),
+        );
+        await renderer.act(async () => {});
+
+        const funnelChoice = screen.findByTestId('settings.server.relayAccess.choice:tailscaleFunnel');
+        expect(funnelChoice).toBeTruthy();
+        await renderer.act(async () => {
+            funnelChoice?.props.onPress?.();
+        });
+
+        const save = screen.findByTestId('settings.server.relayAccess.save');
+        expect(save).toBeTruthy();
+        await renderer.act(async () => {
+            await save?.props.onPress?.();
+        });
+
+        expect(startedSpecs).toHaveLength(2);
+        expect(startedSpecs[1]).toEqual({
+            protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+            kind: 'secureAccess.tailscale.v1',
+            params: {
+                upstreamUrl: 'http://127.0.0.1:3005',
+                providerId: 'tailscaleFunnel',
+                servePath: '/',
+                installPolicy: 'installIfMissing',
+                loginPolicy: 'interactive',
+                mode: 'normalUser',
             },
         });
     });

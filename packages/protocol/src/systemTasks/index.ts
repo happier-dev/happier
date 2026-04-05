@@ -36,9 +36,23 @@ export {
 } from './stepIdCatalog.js';
 
 export {
+  createTailscaleEnsureReadyTaskSpec,
+  TAILSCALE_ENSURE_READY_SYSTEM_TASK_KIND,
+  TAILSCALE_ENSURE_READY_SYSTEM_TASK_STEP_IDS,
+  type TailscaleEnsureReadyInstallPolicy,
+  type TailscaleEnsureReadyLoginPolicy,
+  type TailscaleEnsureReadyMode,
+  type TailscaleEnsureReadySystemTaskStepId,
+  type TailscaleEnsureReadyTaskParams,
+  type TailscaleEnsureReadyTaskResult,
+  type TailscaleEnsureReadyTaskSpec,
+} from './tailscaleEnsureReadyTaskContract.js';
+
+export {
   createTailscaleSecureAccessTaskSpec,
   TAILSCALE_SECURE_ACCESS_SYSTEM_TASK_KIND,
   TAILSCALE_SECURE_ACCESS_SYSTEM_TASK_STEP_IDS,
+  type TailscaleSecureAccessProviderId,
   type TailscaleSecureAccessInstallPolicy,
   type TailscaleSecureAccessLoginPolicy,
   type TailscaleSecureAccessMode,

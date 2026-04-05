@@ -130,12 +130,15 @@ export function ServerSettingsScreen() {
                             inputName={controller.inputName}
                             error={controller.error}
                             isValidating={controller.isValidating}
+                            reachabilityRemediation={controller.reachabilityRemediation}
+                            reachabilityRemediationTaskSnapshot={controller.reachabilityRemediationTaskSnapshot}
                             prefillHint={controller.addServerPrefillHint}
                             defaultExpanded={controller.addServerDefaultExpanded}
                             onChangeUrl={controller.onChangeUrl}
                             onChangeName={controller.onChangeName}
                             onResetServer={controller.onResetServer}
                             onAddServer={controller.onAddServer}
+                            onReachabilityRemediationAction={controller.onReachabilityRemediationAction}
                             servers={controller.servers}
                             activeServerId={controller.activeServerId}
                             onCreateServerGroup={controller.onCreateServerGroup}

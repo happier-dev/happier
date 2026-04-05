@@ -1,11 +1,6 @@
 import * as systemTasks from '@happier-dev/cli-common/systemTasks';
 import {
-  resolveTailscaleInstallStrategy,
-  runTailscaleLogin,
-  runTailscaleStatusJson,
-  type RunTailscaleLoginResult,
   type TailscaleSecureAccessTaskResult,
-  type TailscaleStatusSnapshot,
 } from '@happier-dev/cli-common/tailscale';
 import {
   createRelayAccessConfigureTaskKind,
@@ -18,36 +13,32 @@ import {
   type RelayAccessProvider,
   type RelayAccessProviderId,
 } from '@happier-dev/cli-common/relayAccess';
-
-import { ensureTailscaleInstalled, type EnsureTailscaleInstalledResult } from '../../integrations/tailscale/ensureTailscaleInstalled.js';
+import {
+  createTailscaleReadinessRuntimeDeps,
+  inspectLocalTailscaleReadinessState,
+  readBoundedIntEnv,
+  runTailscaleReadinessFlow,
+  type TailscaleReadinessRuntimeDeps,
+  type TailscaleReadinessState,
+} from './tailscaleReadinessFlow.js';
 
 type SecureAccessTailscaleParams = Readonly<{
   upstreamUrl: string;
+  providerId: 'tailscaleServe' | 'tailscaleFunnel';
   servePath: string;
   installPolicy: 'skip' | 'installIfMissing';
   loginPolicy: 'skip' | 'interactive';
   mode: 'normalUser' | 'managedAdmin';
 }>;
 
-type SecureAccessTailscaleState = Readonly<{
-  installed: boolean;
-  loggedIn: boolean;
-  authUrl: string | null;
-  shareableHttpsUrl: string | null;
-}>;
-
 type SecureAccessTailscaleDeps = Readonly<{
-  inspectState: (params: SecureAccessTailscaleParams) => Promise<SecureAccessTailscaleState>;
-  ensureInstalled: (params: Readonly<{ signal?: AbortSignal }>) => Promise<EnsureTailscaleInstalledResult>;
-  loginInteractive: () => Promise<RunTailscaleLoginResult>;
+  inspectState: (params: SecureAccessTailscaleParams) => Promise<TailscaleReadinessState>;
   relayAccess: Readonly<{
     getProvider: (providerId: RelayAccessProviderId) => RelayAccessProvider;
     writeConfig: (params: Readonly<{ target: RelayAccessTaskTarget; config: RelayAccessConfig | null }>) => Promise<void>;
     createExecutionContext: (params: Readonly<{ target: RelayAccessTaskTarget; upstreamUrl: string | null }>) => RelayAccessExecutionContext;
   }>;
-  sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
-  now: () => number;
-}>;
+} & TailscaleReadinessRuntimeDeps>;
 
 export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAccessTailscaleDeps>) {
   const deps = createSecureAccessTailscaleDeps(overrides);
@@ -66,182 +57,7 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
     void
   > {
     const parsed = parseSecureAccessTailscaleParams(params);
-
-    yield {
-      type: 'progress',
-      stepId: 'tailscale.detect',
-      message: 'Checking Tailscale secure-access status',
-    };
-
-    let state = await deps.inspectState(parsed);
-
-    if (parsed.mode === 'managedAdmin') {
-      const docsUrl = resolveTailscaleInstallStrategy(process.platform, process.env).docsUrl;
-      if (!state.installed) {
-        yield {
-          type: 'prompt',
-          stepId: 'tailscale.install',
-          message: 'Install Tailscale to continue',
-          data: {
-            kind: 'tailscaleInstall',
-            platform: process.platform,
-            url: docsUrl,
-          },
-        };
-        throw new systemTasks.SystemTaskExecutionError(
-          'prompt_required',
-          'Install Tailscale and rerun secure access setup.',
-        );
-      }
-
-      if (!state.loggedIn) {
-        const actionUrl = state.authUrl ?? docsUrl;
-        yield {
-          type: 'prompt',
-          stepId: 'tailscale.login',
-          message: 'Complete Tailscale sign-in to continue',
-          data: {
-            kind: 'needsUserAction.openUrl',
-            url: actionUrl,
-            usedQr: false,
-          },
-        };
-        throw new systemTasks.SystemTaskExecutionError(
-          'prompt_required',
-          'Complete Tailscale sign-in before enabling secure access.',
-        );
-      }
-    }
-
-    if (!state.installed) {
-      if (parsed.installPolicy === 'installIfMissing') {
-        yield {
-          type: 'progress',
-          stepId: 'tailscale.install',
-          message: 'Installing Tailscale (you may see system prompts)',
-        };
-
-        const install = await deps.ensureInstalled({ signal: context?.signal });
-        if (install.outcome === 'prompt') {
-          const prompt = install.prompt;
-          yield {
-            type: 'prompt',
-            stepId: 'tailscale.install',
-            message: 'Install Tailscale to continue',
-            data: {
-              kind: 'tailscaleInstall',
-              platform: prompt.platform,
-              url: prompt.url,
-            },
-          };
-          throw new systemTasks.SystemTaskExecutionError(
-            'prompt_required',
-            install.prompt.reason === 'install_incomplete'
-              ? 'Finish the Tailscale install flow and rerun secure access setup.'
-              : 'Install Tailscale and rerun secure access setup.',
-          );
-        }
-
-        state = await deps.inspectState(parsed);
-      }
-
-      if (!state.installed) {
-        yield {
-          type: 'progress',
-          stepId: 'tailscale.install',
-          message: 'Tailscale install is still pending',
-          data: {
-            kind: 'tailscaleInstallPending',
-          },
-        };
-      }
-    }
-
-    if (!state.installed) {
-      throw new systemTasks.SystemTaskExecutionError(
-        'tailscale_not_installed',
-        'Install Tailscale before enabling secure access.',
-      );
-    }
-
-    if (!state.loggedIn) {
-      if (parsed.loginPolicy !== 'interactive') {
-        throw new systemTasks.SystemTaskExecutionError(
-          'tailscale_login_required',
-          'Complete Tailscale sign-in before enabling secure access.',
-        );
-      }
-
-      const login = await deps.loginInteractive();
-      const loginActionUrl = login.actionUrl ?? state.authUrl;
-      if (loginActionUrl) {
-        yield {
-          type: 'prompt',
-          stepId: 'tailscale.login',
-          message: 'Complete Tailscale sign-in to continue',
-          data: {
-            kind: login.actionUrl
-              ? (login.usedQr ? 'needsUserAction.scanQr' : 'needsUserAction.openUrl')
-              : 'needsUserAction.openUrl',
-            url: loginActionUrl,
-            usedQr: login.usedQr,
-          },
-        };
-      } else {
-        yield {
-          type: 'progress',
-          stepId: 'tailscale.login',
-          message: 'Started interactive Tailscale sign-in',
-          data: {
-            kind: 'tailscaleLogin',
-            usedQr: login.usedQr,
-          },
-        };
-      }
-
-      state = await deps.inspectState(parsed);
-      if (!state.loggedIn) {
-        const loginPollTimeoutMs = readBoundedIntEnv(
-          'HAPPIER_TAILSCALE_LOGIN_POLL_TIMEOUT_MS',
-          60_000,
-          { min: 0, max: 600_000 },
-        );
-        const loginPollIntervalMs = readBoundedIntEnv(
-          'HAPPIER_TAILSCALE_LOGIN_POLL_INTERVAL_MS',
-          1_000,
-          { min: 1, max: 60_000 },
-        );
-        const maxAttempts = Math.max(1, Math.ceil(loginPollTimeoutMs / loginPollIntervalMs));
-
-        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-          if (context?.signal?.aborted) {
-            throw new systemTasks.SystemTaskExecutionError('cancelled', 'System task execution was cancelled.');
-          }
-
-          const refreshed = await deps.inspectState(parsed);
-          if (refreshed.loggedIn) {
-            state = refreshed;
-            break;
-          }
-
-          yield {
-            type: 'progress',
-            stepId: 'tailscale.login',
-            message: attempt === 0 ? 'Waiting for Tailscale sign-in' : 'Still waiting for Tailscale sign-in',
-          };
-          if (attempt < maxAttempts - 1) {
-            await deps.sleep(loginPollIntervalMs, context?.signal);
-          }
-        }
-
-        if (!state.loggedIn) {
-          throw new systemTasks.SystemTaskExecutionError(
-            'prompt_required',
-            'Complete Tailscale sign-in before enabling secure access.',
-          );
-        }
-      }
-    }
+    let state = yield* runTailscaleReadinessFlow(parsed, deps, context);
 
     if (state.shareableHttpsUrl) {
       yield {
@@ -281,8 +97,8 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
       params: {
         target: { kind: 'local' },
         upstreamUrl: parsed.upstreamUrl,
-        providerId: 'tailscaleServe',
-        config: { providerId: 'tailscaleServe' },
+        providerId: parsed.providerId,
+        config: { providerId: parsed.providerId },
       },
       emit: () => undefined,
       prompt: async () => {
@@ -408,94 +224,26 @@ function createSecureAccessTailscaleDeps(overrides?: Partial<SecureAccessTailsca
   };
 
   return {
+    ...createTailscaleReadinessRuntimeDeps(overrides),
     inspectState: overrides?.inspectState ?? ((params) => inspectSecureAccessTailscaleState(params, relayAccess)),
-    ensureInstalled: overrides?.ensureInstalled ?? (async (params) => await ensureTailscaleInstalled(params)),
-    loginInteractive: overrides?.loginInteractive ?? (async () => await runTailscaleLogin()),
     relayAccess,
-    sleep: overrides?.sleep ?? defaultSleep,
-    now: overrides?.now ?? Date.now,
   };
-}
-
-function readBoundedIntEnv(
-  envVarName: string,
-  fallback: number,
-  bounds: Readonly<{ min: number; max: number }>,
-): number {
-  const raw = process.env[envVarName];
-  if (typeof raw !== 'string' || !raw.trim()) {
-    return fallback;
-  }
-  const parsed = Number.parseInt(raw.trim(), 10);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  return Math.min(bounds.max, Math.max(bounds.min, parsed));
-}
-
-async function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
-  const duration = Number.isFinite(ms) ? Math.max(0, Math.floor(ms)) : 0;
-  if (duration <= 0) {
-    return;
-  }
-
-  if (signal?.aborted) {
-    throw new systemTasks.SystemTaskExecutionError('cancelled', 'System task execution was cancelled.');
-  }
-
-  await new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      cleanup();
-      resolve();
-    }, duration);
-
-    const onAbort = () => {
-      cleanup();
-      reject(new systemTasks.SystemTaskExecutionError('cancelled', 'System task execution was cancelled.'));
-    };
-
-    const cleanup = () => {
-      clearTimeout(timeout);
-      signal?.removeEventListener('abort', onAbort);
-    };
-
-    if (signal) {
-      signal.addEventListener('abort', onAbort, { once: true });
-    }
-  });
 }
 
 async function inspectSecureAccessTailscaleState(
   params: SecureAccessTailscaleParams,
   relayAccess: SecureAccessTailscaleDeps['relayAccess'],
-): Promise<SecureAccessTailscaleState> {
-  let status: TailscaleStatusSnapshot;
-  try {
-    status = await runTailscaleStatusJson();
-  } catch (error) {
-    if (isUnavailableTailscaleError(error)) {
-      return {
-        installed: false,
-        loggedIn: false,
-        authUrl: null,
-        shareableHttpsUrl: null,
-      };
-    }
-    throw error;
-  }
-
-  if (!status.loggedIn) {
+): Promise<TailscaleReadinessState> {
+  const status = await inspectLocalTailscaleReadinessState();
+  if (!status.installed || !status.loggedIn) {
     return {
-      installed: true,
-      loggedIn: false,
-      authUrl: status.authUrl,
-      shareableHttpsUrl: null,
+      ...status,
     };
   }
 
-  const relayAccessProvider = relayAccess.getProvider('tailscaleServe');
+  const relayAccessProvider = relayAccess.getProvider(params.providerId);
   const relayAccessStatus = await relayAccessProvider.status({
-    config: { providerId: 'tailscaleServe' },
+    config: { providerId: params.providerId },
     ctx: relayAccess.createExecutionContext({
       target: { kind: 'local' },
       upstreamUrl: params.upstreamUrl,
@@ -528,7 +276,7 @@ function parseSecureAccessTailscaleParams(params: unknown): SecureAccessTailscal
   }
 
   const record = params as Record<string, unknown>;
-  const allowedKeys = new Set(['upstreamUrl', 'servePath', 'installPolicy', 'loginPolicy', 'mode']);
+  const allowedKeys = new Set(['upstreamUrl', 'providerId', 'servePath', 'installPolicy', 'loginPolicy', 'mode']);
   for (const key of Object.keys(record)) {
     if (!allowedKeys.has(key)) {
       throw new systemTasks.SystemTaskExecutionError('invalid_params', `Unknown secure access param: ${key}`);
@@ -537,6 +285,7 @@ function parseSecureAccessTailscaleParams(params: unknown): SecureAccessTailscal
 
   return {
     upstreamUrl: ensureNonEmptyString(record.upstreamUrl, 'upstreamUrl'),
+    providerId: record.providerId === 'tailscaleFunnel' ? 'tailscaleFunnel' : 'tailscaleServe',
     servePath: normalizeServePath(record.servePath),
     installPolicy: record.installPolicy === 'installIfMissing' ? 'installIfMissing' : 'skip',
     loginPolicy: record.loginPolicy === 'skip' ? 'skip' : 'interactive',
@@ -573,13 +322,6 @@ function appendServePathToHttpsUrl(baseUrl: string | null, servePath: string): s
   } catch {
     return null;
   }
-}
-
-function isUnavailableTailscaleError(error: unknown): boolean {
-  const message = error instanceof Error && error.message.trim()
-    ? error.message.trim()
-    : String(error ?? '');
-  return /(enoent|cli not found|not found|cannot find)/i.test(message);
 }
 
 function ensureNonEmptyString(value: unknown, field: string): string {

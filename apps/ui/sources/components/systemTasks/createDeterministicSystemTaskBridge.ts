@@ -69,6 +69,48 @@ function buildDefaultScenario(spec: SystemTaskSpec, taskId: string): readonly De
             },
         ];
     }
+    if (taskKind === 'tailscale.ensureReady.v1') {
+        return [
+            {
+                delayMs: 30,
+                type: 'event',
+                payload: {
+                    protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                    taskId,
+                    tsMs: 30,
+                    type: 'step',
+                    stepId: 'tailscale.detect',
+                    message: t('common.loading'),
+                },
+            },
+            {
+                delayMs: 90,
+                type: 'event',
+                payload: {
+                    protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                    taskId,
+                    tsMs: 90,
+                    type: 'progress',
+                    stepId: 'tailscale.login',
+                    message: t('settings.localTailscale.statusWorking'),
+                },
+            },
+            {
+                delayMs: 150,
+                type: 'result',
+                payload: {
+                    protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                    taskId,
+                    ok: true,
+                    data: {
+                        tailscaleInstalled: true,
+                        tailscaleLoggedIn: true,
+                        authUrl: null,
+                    },
+                },
+            },
+        ];
+    }
     if (taskKind === 'secureAccess.tailscale.v1') {
         const approvalUrl = 'https://login.tailscale.com/f/serve?node=node-dev';
         if (scenarioOverride === 'approval') {
@@ -160,6 +202,41 @@ function buildDefaultScenario(spec: SystemTaskSpec, taskId: string): readonly De
                         serveEnabled: true,
                         shareableHttpsUrl: 'https://relay.tailnet.ts.net',
                         requiresApproval: null,
+                    },
+                },
+            },
+        ];
+    }
+    if (taskKind === 'relay.runtime.status.v1' && scenarioOverride === 'ready') {
+        return [
+            {
+                delayMs: 30,
+                type: 'event',
+                payload: {
+                    protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                    taskId,
+                    tsMs: 30,
+                    type: 'step',
+                    stepId: 'relay.runtime.detect',
+                    message: t('common.loading'),
+                },
+            },
+            {
+                delayMs: 120,
+                type: 'result',
+                payload: {
+                    protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                    taskId,
+                    ok: true,
+                    data: {
+                        installed: true,
+                        version: '1.0.0-dev',
+                        relayUrl: 'http://127.0.0.1:53288',
+                        healthy: true,
+                        service: {
+                            active: true,
+                            enabled: true,
+                        },
                     },
                 },
             },

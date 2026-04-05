@@ -2121,6 +2121,94 @@ describe('createHsetupSystemTaskRegistry', () => {
     }
   });
 
+  it('runs tailscale.ensureReady.v1 through interactive login and returns structured readiness data', async () => {
+    const fakeCli = createFakeTailscaleCli({
+      statusJsons: [
+        {
+          BackendState: 'NeedsLogin',
+          AuthURL: 'https://login.tailscale.com/a/example',
+          HaveNodeKey: false,
+        },
+        {
+          BackendState: 'Running',
+          AuthURL: '',
+          HaveNodeKey: true,
+          Self: {
+            DNSName: 'relay.tailf00.ts.net.',
+          },
+          CurrentTailnet: {
+            Name: 'example-tailnet',
+          },
+          TailscaleIPs: ['100.64.0.10'],
+        },
+      ],
+      loginOutputs: [
+        {
+          exitCode: 0,
+          stdout: 'To authenticate, visit https://login.tailscale.com/a/example',
+        },
+      ],
+    });
+    const previousTailscaleBin = process.env.HAPPIER_TAILSCALE_BIN;
+    const previousStatePath = process.env.HAPPIER_FAKE_TAILSCALE_STATE_PATH;
+    const previousLogPath = process.env.HAPPIER_FAKE_TAILSCALE_LOG_PATH;
+    const events: unknown[] = [];
+    try {
+      process.env.HAPPIER_TAILSCALE_BIN = fakeCli.cliPath;
+      process.env.HAPPIER_FAKE_TAILSCALE_STATE_PATH = join(fakeCli.cliPath, '..', 'scenario.json');
+      process.env.HAPPIER_FAKE_TAILSCALE_LOG_PATH = join(fakeCli.cliPath, '..', 'invocations.log');
+
+      const result = await executeSystemTask({
+        spec: {
+          protocolVersion: 1,
+          kind: 'tailscale.ensureReady.v1',
+          params: {
+            loginPolicy: 'interactive',
+          },
+        },
+        taskId: 'task_tailscale_ensure_ready_1',
+        registry: createHsetupSystemTaskRegistry(),
+        now: () => 1700000000000,
+        emitEvent(event) {
+          events.push(event);
+        },
+      });
+
+      expect(result).toEqual({
+        protocolVersion: 1,
+        taskId: 'task_tailscale_ensure_ready_1',
+        ok: true,
+        data: {
+          tailscaleInstalled: true,
+          tailscaleLoggedIn: true,
+          authUrl: null,
+        },
+      });
+      expect(events).toEqual([
+        expect.objectContaining({ type: 'progress', stepId: 'tailscale.detect' }),
+        expect.objectContaining({
+          type: 'prompt',
+          stepId: 'tailscale.login',
+          data: {
+            kind: 'needsUserAction.scanQr',
+            url: 'https://login.tailscale.com/a/example',
+            usedQr: true,
+          },
+        }),
+      ]);
+      expect(fakeCli.readInvocations()).toEqual([
+        ['status', '--json'],
+        ['login', '--qr'],
+        ['status', '--json'],
+      ]);
+    } finally {
+      restoreEnvVar('HAPPIER_TAILSCALE_BIN', previousTailscaleBin);
+      restoreEnvVar('HAPPIER_FAKE_TAILSCALE_STATE_PATH', previousStatePath);
+      restoreEnvVar('HAPPIER_FAKE_TAILSCALE_LOG_PATH', previousLogPath);
+      fakeCli.cleanup();
+    }
+  });
+
   it('runs relay.access.configure.v1 and redacts sensitive provider details in the task result', async () => {
     const store: { config: unknown } = { config: null };
     const events: unknown[] = [];

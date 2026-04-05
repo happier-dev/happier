@@ -11,7 +11,13 @@ import { Text, TextInput } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
+import type {
+    EndpointReachabilityRemediation,
+    EndpointReachabilityRemediationAction,
+} from '@/sync/runtime/connectivity/resolveEndpointReachabilityRemediation';
+import type { SystemTaskRunState } from '@/components/systemTasks/types';
 import { Typography } from '@/constants/Typography';
+import { ServerReachabilityRemediationCard } from '@/components/settings/server/sections/ServerReachabilityRemediationCard';
 
 type AddTargetsSectionProps = Readonly<{
     // Add server form
@@ -20,10 +26,13 @@ type AddTargetsSectionProps = Readonly<{
     inputName: string;
     error: string | null;
     isValidating: boolean;
+    reachabilityRemediation: EndpointReachabilityRemediation | null;
+    reachabilityRemediationTaskSnapshot?: SystemTaskRunState | null;
     onChangeUrl: (value: string) => void;
     onChangeName: (value: string) => void;
     onResetServer: () => Promise<void> | void;
     onAddServer: () => Promise<void> | void;
+    onReachabilityRemediationAction: (actionId: EndpointReachabilityRemediationAction['id']) => Promise<void> | void;
     prefillHint?: string | null;
     defaultExpanded?: 'server' | 'group' | null;
 
@@ -242,6 +251,14 @@ export function AddTargetsSection(props: AddTargetsSectionProps) {
                             {props.error}
                         </Text>
                     )}
+                    {props.reachabilityRemediation ? (
+                        <ServerReachabilityRemediationCard
+                            remediation={props.reachabilityRemediation}
+                            disabled={props.isValidating}
+                            taskSnapshot={props.reachabilityRemediationTaskSnapshot ?? null}
+                            onAction={props.onReachabilityRemediationAction}
+                        />
+                    ) : null}
                     {props.isValidating && (
                         <Text style={styles.validatingText}>
                             {t('server.validatingServer')}

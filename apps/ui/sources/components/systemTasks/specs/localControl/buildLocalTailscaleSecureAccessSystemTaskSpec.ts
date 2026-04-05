@@ -1,17 +1,13 @@
-import { SYSTEM_TASK_PROTOCOL_VERSION, type SystemTaskSpec } from '@happier-dev/protocol';
-import { createTailscaleSecureAccessTaskSpec } from '@happier-dev/protocol';
+import type { SystemTaskSpec } from '@happier-dev/protocol';
+
+import { buildRelayAccessTailscaleSecureAccessSystemTaskSpec } from '@/components/systemTasks/specs/relayAccess/buildRelayAccessTailscaleSecureAccessSystemTaskSpec';
 
 export function buildLocalTailscaleSecureAccessSystemTaskSpec(params: Readonly<{
     upstreamUrl: string;
+    providerId?: 'tailscaleServe' | 'tailscaleFunnel';
 }>): SystemTaskSpec {
-    return {
-        protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
-        ...createTailscaleSecureAccessTaskSpec({
-            upstreamUrl: params.upstreamUrl,
-            servePath: '/',
-            installPolicy: 'installIfMissing',
-            loginPolicy: 'interactive',
-            mode: 'normalUser',
-        }),
-    };
+    return buildRelayAccessTailscaleSecureAccessSystemTaskSpec({
+        upstreamUrl: params.upstreamUrl,
+        providerId: params.providerId ?? 'tailscaleServe',
+    });
 }

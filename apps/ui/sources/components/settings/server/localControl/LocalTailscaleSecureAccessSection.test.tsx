@@ -323,6 +323,7 @@ describe('LocalTailscaleSecureAccessSection', () => {
                 installPolicy: 'installIfMissing',
                 loginPolicy: 'interactive',
                 mode: 'normalUser',
+                providerId: 'tailscaleServe',
             },
         });
 

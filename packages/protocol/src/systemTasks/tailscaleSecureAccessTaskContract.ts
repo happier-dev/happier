@@ -12,9 +12,11 @@ export type TailscaleSecureAccessSystemTaskStepId = (typeof TAILSCALE_SECURE_ACC
 export type TailscaleSecureAccessInstallPolicy = 'skip' | 'installIfMissing';
 export type TailscaleSecureAccessLoginPolicy = 'skip' | 'interactive';
 export type TailscaleSecureAccessMode = 'normalUser' | 'managedAdmin';
+export type TailscaleSecureAccessProviderId = 'tailscaleServe' | 'tailscaleFunnel';
 
 export type TailscaleSecureAccessTaskParams = Readonly<{
   upstreamUrl: string;
+  providerId?: TailscaleSecureAccessProviderId;
   servePath?: string;
   installPolicy?: TailscaleSecureAccessInstallPolicy;
   loginPolicy?: TailscaleSecureAccessLoginPolicy;
@@ -25,6 +27,7 @@ export type TailscaleSecureAccessTaskSpec = Readonly<{
   kind: typeof TAILSCALE_SECURE_ACCESS_SYSTEM_TASK_KIND;
   params: Readonly<{
     upstreamUrl: string;
+    providerId: TailscaleSecureAccessProviderId;
     servePath: string;
     installPolicy: TailscaleSecureAccessInstallPolicy;
     loginPolicy: TailscaleSecureAccessLoginPolicy;
@@ -47,6 +50,7 @@ export function createTailscaleSecureAccessTaskSpec(
     kind: TAILSCALE_SECURE_ACCESS_SYSTEM_TASK_KIND,
     params: {
       upstreamUrl: String(params.upstreamUrl ?? '').trim(),
+      providerId: params.providerId === 'tailscaleFunnel' ? 'tailscaleFunnel' : 'tailscaleServe',
       servePath: String(params.servePath ?? '/').trim() || '/',
       installPolicy: params.installPolicy ?? 'skip',
       loginPolicy: params.loginPolicy ?? 'interactive',

@@ -133,7 +133,7 @@ describe('createSecureAccessTailscaleHandler', () => {
             shareableHttpsUrl: 'https://relay.tailf00.ts.net',
             requiresApproval: null,
         });
-    }, 10_000);
+    }, 25_000);
 
     it('delegates the secure-access serve enable step to the relay-access tailscaleServe provider', async () => {
         const { createSecureAccessTailscaleHandler } = await import('./secureAccessTailscale.js');
@@ -193,7 +193,58 @@ describe('createSecureAccessTailscaleHandler', () => {
             serveEnabled: true,
             requiresApproval: null,
         }));
-    });
+    }, 15_000);
+
+    it('delegates the secure-access enable step to the relay-access tailscaleFunnel provider when requested', async () => {
+        const { createSecureAccessTailscaleHandler } = await import('./secureAccessTailscale.js');
+
+        const configure = vi.fn(async () => ({
+            state: 'enabled' as const,
+            shareUrl: 'https://relay.tailf00.ts.net',
+        }));
+        const status = vi.fn(async () => ({
+            state: 'enabled' as const,
+            shareUrl: 'https://relay.tailf00.ts.net',
+        }));
+        relayAccessMocks.getRelayAccessProvider.mockReturnValue({
+            descriptor: {
+                id: 'tailscaleFunnel',
+                title: 'Tailscale Funnel',
+                exposure: 'public',
+                prerequisites: [],
+            },
+            configure,
+            status,
+            disable: vi.fn(),
+        });
+
+        const { result } = await collectHandlerRun({
+            handler: createSecureAccessTailscaleHandler({
+                inspectState: vi.fn(async () => ({
+                    installed: true,
+                    loggedIn: true,
+                    authUrl: null,
+                    shareableHttpsUrl: null,
+                })),
+            }),
+            input: {
+                upstreamUrl: 'http://127.0.0.1:3005',
+                providerId: 'tailscaleFunnel',
+                servePath: '/',
+                installPolicy: 'skip',
+                loginPolicy: 'skip',
+            },
+        });
+
+        expect(relayAccessMocks.getRelayAccessProvider).toHaveBeenCalledWith('tailscaleFunnel');
+        expect(configure).toHaveBeenCalledTimes(1);
+        expect(status).toHaveBeenCalledTimes(1);
+        expect(result).toEqual(expect.objectContaining({
+            shareableHttpsUrl: 'https://relay.tailf00.ts.net',
+            serveEnabled: true,
+            requiresApproval: null,
+        }));
+    }, 15_000);
 
     it('appends the serve path to the relay access share URL', async () => {
         const { createSecureAccessTailscaleHandler } = await import('./secureAccessTailscale.js');

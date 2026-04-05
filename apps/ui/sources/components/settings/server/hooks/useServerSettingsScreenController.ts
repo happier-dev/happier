@@ -1,8 +1,12 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import { getDefaultSystemTaskRunner, useSystemTaskSnapshot } from '@/components/systemTasks';
+import type { SystemTaskRunState } from '@/components/systemTasks/types';
+import { isSystemTaskBridgeUnavailableError, readSystemTaskStartErrorMessage } from '@/components/systemTasks/systemTaskStartError';
 import { validateServerUrl } from '@/sync/domains/server/serverConfig';
 import {
     getActiveServerId,
@@ -37,6 +41,14 @@ import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeature
 import { clearPendingNotificationNav, getPendingNotificationNav } from '@/sync/domains/pending/pendingNotificationNav';
 import { readServerReachabilityProbeTimeoutMs } from '@/sync/runtime/connectivity/serverReachabilityTuning';
 import { createEndpointReadinessProbe } from '@/sync/runtime/connectivity/createEndpointReadinessProbe';
+import {
+    resolveEndpointReachabilityRemediation,
+    type EndpointReachabilityRemediation,
+    type EndpointReachabilityRemediationAction,
+} from '@/sync/runtime/connectivity/resolveEndpointReachabilityRemediation';
+import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { isTauriDesktop } from '@/utils/platform/tauri';
+import { createTailscaleEnsureReadyTaskSpec } from '@happier-dev/protocol';
 
 type SearchParams = Readonly<{ url?: string | string[]; auto?: string | string[]; source?: string | string[] }>;
 
@@ -80,12 +92,15 @@ export type ServerSettingsController = Readonly<{
     inputName: string;
     error: string | null;
     isValidating: boolean;
+    reachabilityRemediation: EndpointReachabilityRemediation | null;
+    reachabilityRemediationTaskSnapshot: SystemTaskRunState | null;
     addServerPrefillHint: string | null;
     addServerDefaultExpanded: 'server' | 'group' | null;
     onChangeUrl: (value: string) => void;
     onChangeName: (value: string) => void;
     onResetServer: () => Promise<void>;
     onAddServer: () => Promise<void>;
+    onReachabilityRemediationAction: (actionId: EndpointReachabilityRemediationAction['id']) => Promise<void>;
 
     onSwitchServer: (profile: ServerProfile) => Promise<void>;
     onSwitchGroup: (profile: ServerSelectionGroup) => Promise<void>;
@@ -115,12 +130,18 @@ export function useServerSettingsScreenController(): ServerSettingsController {
     const [inputName, setInputName] = React.useState('');
     const [error, setError] = React.useState<string | null>(null);
     const [isValidating, setIsValidating] = React.useState(false);
+    const [reachabilityRemediation, setReachabilityRemediation] = React.useState<EndpointReachabilityRemediation | null>(null);
+    const [tailscaleEnsureReadyTaskId, setTailscaleEnsureReadyTaskId] = React.useState<string | null>(null);
     const validationAttemptIdRef = React.useRef(0);
     const validationAbortControllerRef = React.useRef<AbortController | null>(null);
+    const handledTailscaleEnsureReadyTaskIdRef = React.useRef<string | null>(null);
+    const systemTaskRunner = React.useMemo(() => getDefaultSystemTaskRunner(), []);
 
     const [serverSelectionGroups, setServerSelectionGroups] = useSettingMutable('serverSelectionGroups');
     const [serverSelectionActiveTargetKind, setServerSelectionActiveTargetKind] = useSettingMutable('serverSelectionActiveTargetKind');
     const [serverSelectionActiveTargetId, setServerSelectionActiveTargetId] = useSettingMutable('serverSelectionActiveTargetId');
+    const tailscaleEnsureReadySnapshot = useSystemTaskSnapshot(systemTaskRunner, tailscaleEnsureReadyTaskId);
+    const isPreparingTailscale = tailscaleEnsureReadyTaskId != null && tailscaleEnsureReadySnapshot?.result == null;
 
     const route = React.useMemo(() => {
         return parseServerSettingsRouteParams({ url: searchParams.url, auto: searchParams.auto, source: searchParams.source });
@@ -146,6 +167,7 @@ export function useServerSettingsScreenController(): ServerSettingsController {
         try {
             setIsValidating(true);
             setError(null);
+            setReachabilityRemediation(null);
 
             const normalized = normalizeUrl(url);
             if (!normalized) {
@@ -168,6 +190,13 @@ export function useServerSettingsScreenController(): ServerSettingsController {
 
             if (result.status === 'ready') return true;
 
+            setReachabilityRemediation(resolveEndpointReachabilityRemediation({
+                endpointUrl: normalized,
+                readiness: result,
+                platformOs: Platform.OS,
+                isDesktopShell: isTauriDesktop(),
+            }));
+
             const message = typeof result.errorMessage === 'string' ? result.errorMessage : '';
             if (message.includes('returned')) {
                 setError(t('server.serverReturnedError'));
@@ -177,6 +206,18 @@ export function useServerSettingsScreenController(): ServerSettingsController {
             return false;
         } catch {
             if (attemptId === validationAttemptIdRef.current) {
+                const normalized = normalizeUrl(url);
+                if (normalized) {
+                    setReachabilityRemediation(resolveEndpointReachabilityRemediation({
+                        endpointUrl: normalized,
+                        readiness: {
+                            status: 'server_unreachable',
+                            errorMessage: 'Network request failed',
+                        },
+                        platformOs: Platform.OS,
+                        isDesktopShell: isTauriDesktop(),
+                    }));
+                }
                 setError(t('server.failedToConnectToServer'));
             }
             return false;
@@ -186,6 +227,67 @@ export function useServerSettingsScreenController(): ServerSettingsController {
             }
         }
     }, []);
+
+    const onReachabilityRemediationAction = React.useCallback(async (
+        actionId: EndpointReachabilityRemediationAction['id'],
+    ) => {
+        const remediation = reachabilityRemediation;
+        if (!remediation) return;
+        const action = remediation.actions.find((candidate) => candidate.id === actionId);
+        if (!action) return;
+
+        if (action.kind === 'retry') {
+            await validateServerReachable(inputUrl);
+            return;
+        }
+
+        if (action.kind === 'external-url') {
+            const opened = await openExternalUrl(action.url, { platformOS: Platform.OS });
+            if (!opened) {
+                await Modal.alert(t('common.error'), t('server.reachabilityRemediation.failedToOpenInstallLink'));
+            }
+            return;
+        }
+
+        if (action.kind === 'callback' && action.callbackSlot === 'tailscale.ensureReady') {
+            try {
+                const taskId = await systemTaskRunner.start(createTailscaleEnsureReadyTaskSpec({
+                    installPolicy: 'installIfMissing',
+                    loginPolicy: 'interactive',
+                    mode: 'normalUser',
+                }));
+                handledTailscaleEnsureReadyTaskIdRef.current = null;
+                setTailscaleEnsureReadyTaskId(taskId);
+            } catch {
+                const message = t('settings.systemTaskStartFailed');
+                setError(message);
+                await Modal.alert(t('common.error'), message);
+            }
+        }
+    }, [inputUrl, reachabilityRemediation, systemTaskRunner, validateServerReachable]);
+
+    React.useEffect(() => {
+        const result = tailscaleEnsureReadySnapshot?.result;
+        if (!result) return;
+        if (handledTailscaleEnsureReadyTaskIdRef.current === tailscaleEnsureReadySnapshot.taskId) {
+            return;
+        }
+        handledTailscaleEnsureReadyTaskIdRef.current = tailscaleEnsureReadySnapshot.taskId;
+        if (!result.ok) {
+            const message = typeof result.error?.message === 'string' ? result.error.message.trim() : '';
+            setError(message || t('settings.systemTaskStartFailed'));
+            setTailscaleEnsureReadyTaskId(null);
+            return;
+        }
+        void (async () => {
+            try {
+                setReachabilityRemediation(null);
+                await validateServerReachable(inputUrl);
+            } finally {
+                setTailscaleEnsureReadyTaskId((current) => (current === tailscaleEnsureReadySnapshot.taskId ? null : current));
+            }
+        })();
+    }, [inputUrl, tailscaleEnsureReadySnapshot, validateServerReachable]);
 
     useServerAutoAddFromRoute({
         enabled: autoMode,
@@ -459,16 +561,20 @@ export function useServerSettingsScreenController(): ServerSettingsController {
         inputUrl,
         inputName,
         error,
-        isValidating,
+        isValidating: isValidating || isPreparingTailscale,
+        reachabilityRemediation,
+        reachabilityRemediationTaskSnapshot: tailscaleEnsureReadySnapshot ?? null,
         addServerPrefillHint,
         addServerDefaultExpanded,
         onChangeUrl: (value) => {
             setInputUrl(value);
             setError(null);
+            setReachabilityRemediation(null);
         },
         onChangeName: setInputName,
         onResetServer,
         onAddServer,
+        onReachabilityRemediationAction,
 
         onSwitchServer: profileActions.onSwitchServer,
         onSwitchGroup: groupActions.onSwitchGroup,

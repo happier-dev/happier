@@ -2,7 +2,7 @@ import {
     getActiveServerSnapshot as getSnapshotFromProfiles,
     isActiveServerSelectionExplicit as isExplicitFromProfiles,
     setActiveServerId,
-    setServerProfileShareableUrl,
+    setServerProfileShareableUrl as setServerProfileShareableUrlFromProfiles,
     subscribeActiveServer as subscribeFromProfiles,
     upsertServerProfile,
     type ActiveServerSnapshot,
@@ -46,6 +46,30 @@ export function upsertAndActivateServer(
     return profile;
 }
 
+export function upsertServerProfileOnly(
+    params: Readonly<{
+        serverUrl: string;
+        name?: string;
+        source?: ServerProfile['source'];
+        replaceEquivalentStoredUrl?: boolean;
+    }>,
+): ServerProfile {
+    return upsertServerProfile({
+        serverUrl: params.serverUrl,
+        name: params.name,
+        source: params.source,
+        replaceEquivalentStoredUrl: params.replaceEquivalentStoredUrl,
+    });
+}
+
+export function setServerProfileShareableUrl(
+    serverProfileId: string,
+    serverUrl: string | null | undefined,
+    options: Readonly<{ validatedAgainstServerUrl?: string | null | undefined }> = {},
+): void {
+    setServerProfileShareableUrlFromProfiles(serverProfileId, serverUrl, options);
+}
+
 export function setActiveShareableServerUrl(
     serverUrl: string | null | undefined,
     options: Readonly<{ validatedAgainstServerUrl?: string | null | undefined }> = {},
@@ -53,5 +77,5 @@ export function setActiveShareableServerUrl(
     const snapshot = getSnapshotFromProfiles();
     const serverId = String(snapshot.serverId ?? '').trim();
     if (!serverId) return;
-    setServerProfileShareableUrl(serverId, serverUrl, options);
+    setServerProfileShareableUrlFromProfiles(serverId, serverUrl, options);
 }

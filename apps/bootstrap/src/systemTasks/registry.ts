@@ -12,6 +12,7 @@ import { buildScpCommand, buildSshCommand, redactSshText } from '../ssh/index.js
 
 import { runLocalHappierJsonCommand } from './happierCli.js';
 import { createSecureAccessTailscaleHandler } from './kinds/secureAccessTailscale.js';
+import { createTailscaleEnsureReadyHandler } from './kinds/tailscaleEnsureReady.js';
 import {
   createDaemonServiceRestartHandler,
   createDaemonServiceStartHandler,
@@ -280,6 +281,10 @@ export function createHsetupSystemTaskRegistry(deps: HsetupRegistryDeps = {}): S
       handler: createSecureAccessTailscaleHandler({
         relayAccess: relayAccessDeps,
       }),
+    },
+    {
+      kind: 'tailscale.ensureReady.v1',
+      handler: createTailscaleEnsureReadyHandler(),
     },
     {
       kind: 'remote.ssh.bootstrapMachine.v1',
