@@ -509,5 +509,19 @@ describe("featuresRoutes", () => {
                 },
             });
         });
+
+        it("omits retention capabilities when retention is not effectively enabled", async () => {
+            resetEnv({
+                HAPPIER_SERVER_RETENTION__ENABLED: "false",
+                HAPPIER_SERVER_RETENTION__SESSIONS__MODE: "delete_inactive",
+                HAPPIER_SERVER_RETENTION__SESSIONS__INACTIVITY_DAYS: "30",
+                HAPPIER_SERVER_RETENTION__ACCOUNT_CHANGES__MODE: "delete_older_than",
+                HAPPIER_SERVER_RETENTION__ACCOUNT_CHANGES__DAYS: "30",
+            });
+
+            const payload = await getFeaturesPayload();
+
+            expect(payload.capabilities.server.retention).toBeUndefined();
+        });
     });
 });
