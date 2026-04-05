@@ -40,6 +40,7 @@ Out of scope for this package:
 - Core deterministic e2e: `yarn workspace @happier-dev/tests test`
 - Core deterministic e2e (fast lane): `yarn workspace @happier-dev/tests test:core:fast`
 - Core deterministic e2e (slow lane): `yarn workspace @happier-dev/tests test:core:slow`
+- Core deterministic e2e (handoff slice): `yarn workspace @happier-dev/tests test:core:handoff`
 - UI E2E (Playwright, web UI): `yarn workspace @happier-dev/tests test:ui:e2e`
 - WSREPL Lima matrix (macOS/Linux host opt-in): `yarn workspace @happier-dev/tests test:ui:e2e:wsrepl:lima -- happier-wsrepl-qa`
 - Stress (seeded chaos): `yarn workspace @happier-dev/tests test:stress`

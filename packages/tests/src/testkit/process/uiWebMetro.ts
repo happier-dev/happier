@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { mkdir, readFile } from 'node:fs/promises';
-import { resolve as resolvePath } from 'node:path';
+import { relative, resolve as resolvePath } from 'node:path';
 
 import { reserveAvailablePort } from '../network/reserveAvailablePort';
 import { repoRootDir } from '../paths';
@@ -16,7 +18,46 @@ import { spawnLoggedProcess } from './spawnProcess';
 import type { StartedUiWeb } from './uiWebTypes';
 
 function stripAnsi(text: string): string {
-  return text.replace(/\u001b\[[0-9;]*[A-Za-z]/g, '');
+    return text.replace(/\u001b\[[0-9;]*[A-Za-z]/g, '');
+}
+
+const uiWebMetroSessionCacheBustSymbol = Symbol.for('happier.tests.uiWebMetroSessionCacheBust');
+
+function resolveUiWebMetroSessionCacheBust(): string {
+  const globalState = globalThis as typeof globalThis & {
+    [uiWebMetroSessionCacheBustSymbol]?: string;
+  };
+  const cachedBust = globalState[uiWebMetroSessionCacheBustSymbol];
+  if (typeof cachedBust === 'string' && cachedBust.trim().length > 0) {
+    return cachedBust;
+  }
+
+  const sessionBust = createHash('sha256')
+    .update(repoRootDir())
+    .update('\0')
+    .update(String(process.pid))
+    .update('\0')
+    .update(String(process.ppid))
+    .update('\0')
+    .update(String(process.uptime()))
+    .update('\0')
+    .update(String(Date.now()))
+    .digest('hex');
+  globalState[uiWebMetroSessionCacheBustSymbol] = sessionBust;
+  return sessionBust;
+}
+
+function resolveUiWebMetroCacheVersionBust(env: NodeJS.ProcessEnv): string {
+  const sessionBust = resolveUiWebMetroSessionCacheBust();
+  const explicitBust = String(env.HAPPIER_UI_METRO_CACHE_VERSION_BUST ?? '').trim();
+  if (!explicitBust) {
+    return sessionBust;
+  }
+  return createHash('sha256')
+    .update(sessionBust)
+    .update('\0')
+    .update(explicitBust)
+    .digest('hex');
 }
 
 function looksLikeUiWebMetroCommand(command: string): boolean {
@@ -35,7 +76,11 @@ export function resolveUiWebBaseUrlTimeoutMs(env: NodeJS.ProcessEnv): number {
 }
 
 export function resolveUiWebMetroStatusTimeoutMs(env: NodeJS.ProcessEnv): number {
-  return readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_METRO_STATUS_TIMEOUT_MS, 120_000);
+  return readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_METRO_STATUS_TIMEOUT_MS, 240_000);
+}
+
+export function resolveUiWebMetroStatusAttemptTimeoutMs(env: NodeJS.ProcessEnv): number {
+  return readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_METRO_STATUS_ATTEMPT_TIMEOUT_MS, 250);
 }
 
 export function resolveUiWebScriptFetchTotalTimeoutMs(env: NodeJS.ProcessEnv): number {
@@ -156,6 +201,7 @@ async function resolveExpoWebBaseUrl(params: {
   while (Date.now() - startedAt < params.timeoutMs) {
     const text = await readFile(params.stdoutPath, 'utf8').catch(() => '');
     const stdoutCandidates = extractHttpUrls(text).map((url) => url.replace(/\/+$/, ''));
+    const advertisedExpectedCandidate = expectedCandidates.find((candidate) => stdoutCandidates.includes(candidate)) ?? null;
     const orderedCandidates: string[] = [];
     const seen = new Set<string>();
 
@@ -183,11 +229,13 @@ async function resolveExpoWebBaseUrl(params: {
     if (firstEntryPage) {
       return firstEntryPage;
     }
-
+    if (advertisedExpectedCandidate) {
+      return { baseUrl: advertisedExpectedCandidate, hasScriptTags: false };
+    }
     await sleep(120);
   }
 
-  if (lastOrderedCandidates.length > 0) {
+  if (expectedCandidates.length === 0 && lastOrderedCandidates.length > 0) {
     return { baseUrl: lastOrderedCandidates[0] as string, hasScriptTags: false };
   }
 
@@ -196,17 +244,67 @@ async function resolveExpoWebBaseUrl(params: {
 
 export const __testables = {
   resolveExpoWebBaseUrl,
+  resolveExpoCliPath,
+  resolvePreferredLiveMetroBaseUrl,
 };
 
-async function isMetroPackagerReady(baseUrl: string): Promise<boolean> {
+function resolveExpoCliPath(params: Readonly<{ rootDir: string; uiWorkspaceDir: string }>): string {
+  const rootCandidate = resolvePath(params.rootDir, 'node_modules', 'expo', 'bin', 'cli');
+  if (existsSync(rootCandidate)) return rootCandidate;
+  const workspaceCandidate = resolvePath(params.uiWorkspaceDir, 'node_modules', 'expo', 'bin', 'cli');
+  if (existsSync(workspaceCandidate)) return workspaceCandidate;
+  return rootCandidate;
+}
+
+async function isMetroPackagerReady(baseUrl: string, env: NodeJS.ProcessEnv): Promise<boolean> {
   try {
-    const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/status`, { method: 'GET', signal: AbortSignal.timeout(2_000) });
+    const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/status`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(resolveUiWebMetroStatusAttemptTimeoutMs(env)),
+    });
     if (!res.ok) return false;
     const text = await res.text().catch(() => '');
     return text.includes('packager-status:running');
   } catch {
     return false;
   }
+}
+
+async function resolvePreferredLiveMetroBaseUrl(params: {
+  currentBaseUrl: string;
+  metroPort: number;
+  env: NodeJS.ProcessEnv;
+}): Promise<ResolvedExpoWebBaseUrl | null> {
+  const currentUrl = new URL(params.currentBaseUrl);
+  if (resolveUrlPort(params.currentBaseUrl) === params.metroPort) {
+    const currentProbe = await inspectUiWebEntryPage(params.currentBaseUrl, params.env);
+    if (currentProbe.isEntryPage) {
+      return {
+        baseUrl: params.currentBaseUrl,
+        hasScriptTags: currentProbe.hasScriptTags,
+      };
+    }
+  }
+
+  const candidates = [
+    `${currentUrl.protocol}//${currentUrl.hostname}:${params.metroPort}`,
+    `${currentUrl.protocol}//127.0.0.1:${params.metroPort}`,
+    `${currentUrl.protocol}//localhost:${params.metroPort}`,
+  ];
+  const seen = new Set<string>();
+
+  for (const candidate of candidates) {
+    if (seen.has(candidate)) continue;
+    seen.add(candidate);
+    const probe = await inspectUiWebEntryPage(candidate, params.env);
+    if (!probe.isEntryPage) continue;
+    return {
+      baseUrl: candidate,
+      hasScriptTags: probe.hasScriptTags,
+    };
+  }
+
+  return null;
 }
 
 export function resolveUiWebScriptFetchAttemptTimeoutMs(env: NodeJS.ProcessEnv, totalTimeoutMs: number): number {
@@ -222,26 +320,171 @@ export function resolveUiWebAllowScriptReadyTimeout(env: NodeJS.ProcessEnv): boo
   return !(raw === '0' || raw === 'false' || raw === 'no' || raw === 'off');
 }
 
+class MetroBundleFailureError extends Error {
+  constructor(detail: string) {
+    super(detail);
+    this.name = 'MetroBundleFailureError';
+  }
+}
+
 type ScriptReadyProbe = 'ready' | 'retry' | 'refresh-html';
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort(new DOMException('The operation was aborted.', 'AbortError'));
+  }, timeoutMs);
+
+  try {
+    const mergedInit: RequestInit = {
+      ...init,
+      signal: controller.signal,
+    };
+    return await Promise.race([
+      fetch(url, mergedInit),
+      new Promise<never>((_, reject) => {
+        controller.signal.addEventListener('abort', () => {
+          reject(controller.signal.reason instanceof Error ? controller.signal.reason : new DOMException('The operation was aborted.', 'AbortError'));
+        }, { once: true });
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function extractMetroBundleFailureDetail(text: string): string | null {
+  const sanitized = stripAnsi(text).trim();
+  if (!sanitized) return null;
+
+  const markers = [
+    'Unable to resolve ',
+    'TransformError',
+    'Web Bundling failed',
+    'Bundling failed',
+  ];
+
+  const markerIndex = markers
+    .map((marker) => sanitized.indexOf(marker))
+    .filter((index) => index >= 0)
+    .sort((left, right) => left - right)[0];
+
+  if (typeof markerIndex !== 'number') {
+    return null;
+  }
+
+  const detail = sanitized.slice(markerIndex, markerIndex + 1_600).trim();
+  return detail.length > 0 ? detail : null;
+}
+
+function extractMetroBundleFailureMessageFromJson(body: string): string | null {
+  try {
+    const parsed = JSON.parse(body) as { message?: unknown; error?: unknown; type?: unknown };
+    if (typeof parsed.message === 'string' && parsed.message.trim().length > 0) {
+      return parsed.message.trim();
+    }
+    if (typeof parsed.error === 'string' && parsed.error.trim().length > 0) {
+      return parsed.error.trim();
+    }
+    if (typeof parsed.type === 'string' && parsed.type.trim().length > 0) {
+      return parsed.type.trim();
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function resolveMetroBundleFailureResponseDetail(params: Readonly<{
+  url: string;
+  status: number;
+  contentType: string;
+  body: string;
+}>): string | null {
+  const logDetail = extractMetroBundleFailureDetail(params.body);
+  if (logDetail) {
+    return `Primary app script ${params.url} failed with status ${params.status} (${params.contentType || 'unknown'}) | ${logDetail}`;
+  }
+
+  const jsonMessage = extractMetroBundleFailureMessageFromJson(params.body);
+  if (params.contentType.includes('application/json') && jsonMessage) {
+    return `Primary app script ${params.url} failed with status ${params.status} (${params.contentType}) | ${jsonMessage}`;
+  }
+
+  if (params.contentType.includes('application/json') && params.body.trim().length > 0) {
+    return `Primary app script ${params.url} failed with status ${params.status} (${params.contentType}) | ${params.body.trim().slice(0, 1_200)}`;
+  }
+
+  return null;
+}
+
+async function readMetroBundleFailureDetailFromLogs(stdoutPath: string, stderrPath: string): Promise<string | null> {
+  const stdoutText = await readFile(stdoutPath, 'utf8').catch(() => '');
+  const stderrText = await readFile(stderrPath, 'utf8').catch(() => '');
+  return extractMetroBundleFailureDetail(stdoutText) ?? extractMetroBundleFailureDetail(stderrText);
+}
 
 async function probeScriptReady(url: string, timeoutMs: number): Promise<ScriptReadyProbe> {
   try {
-    const res = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(timeoutMs) });
-    if (!res.ok) return 'refresh-html';
+    const res = await fetchWithTimeout(url, { method: 'GET' }, timeoutMs);
     const contentType = (res.headers.get('content-type') ?? '').toLowerCase();
-    if (contentType.includes('javascript')) return 'ready';
     const text = await res.text().catch(() => '');
+
+    if (!res.ok) {
+      const detail = resolveMetroBundleFailureResponseDetail({
+        url,
+        status: typeof res.status === 'number' ? res.status : 500,
+        contentType,
+        body: text,
+      });
+      if (detail) {
+        throw new MetroBundleFailureError(detail);
+      }
+      return 'refresh-html';
+    }
+
+    if (contentType.includes('javascript')) return 'ready';
+
+    const detail = resolveMetroBundleFailureResponseDetail({
+      url,
+      status: typeof res.status === 'number' ? res.status : 200,
+      contentType,
+      body: text,
+    });
+    if (detail) {
+      throw new MetroBundleFailureError(detail);
+    }
+
     return text.includes('__d(') || text.includes('webpackBootstrap') || text.includes('globalThis')
       ? 'ready'
       : 'retry';
-  } catch {
+  } catch (error) {
+    if (error instanceof MetroBundleFailureError) {
+      throw error;
+    }
     return 'retry';
   }
 }
 
-async function resolvePrimaryAppScriptUrl(baseUrl: string, env: NodeJS.ProcessEnv): Promise<string | null> {
-  const entryTimeoutMs = resolveUiWebEntryProbeTimeoutMs(env);
-  const html = await fetch(baseUrl, { method: 'GET', signal: AbortSignal.timeout(entryTimeoutMs) })
+function resolveRemainingTimeoutMs(deadlineAtMs: number, fallbackTimeoutMs: number): number {
+  const remainingMs = deadlineAtMs - Date.now();
+  if (!Number.isFinite(remainingMs) || remainingMs <= 0) {
+    return 1;
+  }
+  return Math.max(1, Math.min(fallbackTimeoutMs, remainingMs));
+}
+
+async function resolvePrimaryAppScriptUrl(
+  baseUrl: string,
+  env: NodeJS.ProcessEnv,
+  deadlineAtMs: number,
+): Promise<string | null> {
+  const entryTimeoutMs = resolveRemainingTimeoutMs(deadlineAtMs, resolveUiWebEntryProbeTimeoutMs(env));
+  const html = await fetchWithTimeout(baseUrl, { method: 'GET' }, entryTimeoutMs)
     .then((response) => response.ok ? response.text() : '')
     .catch(() => '');
   const scripts = resolveScriptUrlsFromHtml(html, baseUrl);
@@ -252,45 +495,70 @@ async function waitForPrimaryAppScriptReady(baseUrl: string, env: NodeJS.Process
   const totalTimeoutMs = resolveUiWebScriptFetchTotalTimeoutMs(env);
   const attemptTimeoutMs = resolveUiWebScriptFetchAttemptTimeoutMs(env, totalTimeoutMs);
   const htmlRefreshRetryCount = resolveUiWebScriptHtmlRefreshRetryCount(env);
+  const deadlineAtMs = Date.now() + totalTimeoutMs;
+  const retryDelayMs = Math.min(100, Math.max(25, Math.floor(attemptTimeoutMs / 2)));
   let primaryAppScriptUrl: string | null = null;
   let retryCountForCurrentScript = 0;
+  let lastError: unknown = null;
 
   try {
-    await waitFor(async () => {
+    while (Date.now() < deadlineAtMs) {
       if (!primaryAppScriptUrl) {
-        primaryAppScriptUrl = await resolvePrimaryAppScriptUrl(baseUrl, env);
+        primaryAppScriptUrl = await resolvePrimaryAppScriptUrl(baseUrl, env, deadlineAtMs);
         retryCountForCurrentScript = 0;
       }
       if (!primaryAppScriptUrl) {
-        const probe = await inspectUiWebEntryPage(baseUrl, env);
-        return probe.isEntryPage;
+        const remainingSleepMs = deadlineAtMs - Date.now();
+        if (remainingSleepMs <= 0) break;
+        await sleep(Math.min(retryDelayMs, remainingSleepMs));
+        continue;
       }
-      if (!primaryAppScriptUrl) return false;
-      const probe = await probeScriptReady(primaryAppScriptUrl, attemptTimeoutMs);
-      if (probe === 'ready') return true;
-      if (probe === 'refresh-html') {
-        primaryAppScriptUrl = null;
-        retryCountForCurrentScript = 0;
-        return false;
+      try {
+        const probe = await probeScriptReady(
+          primaryAppScriptUrl,
+          resolveRemainingTimeoutMs(deadlineAtMs, attemptTimeoutMs),
+        );
+        if (probe === 'ready') {
+          return true;
+        }
+        if (probe === 'refresh-html') {
+          primaryAppScriptUrl = null;
+          retryCountForCurrentScript = 0;
+          const remainingSleepMs = deadlineAtMs - Date.now();
+          if (remainingSleepMs <= 0) break;
+          await sleep(Math.min(retryDelayMs, remainingSleepMs));
+          continue;
+        }
+        retryCountForCurrentScript += 1;
+        if (retryCountForCurrentScript >= htmlRefreshRetryCount) {
+          primaryAppScriptUrl = null;
+          retryCountForCurrentScript = 0;
+        }
+      } catch (error) {
+        lastError = error;
+        if (error instanceof MetroBundleFailureError) {
+          throw error;
+        }
       }
-      retryCountForCurrentScript += 1;
-      if (retryCountForCurrentScript >= htmlRefreshRetryCount) {
-        primaryAppScriptUrl = null;
-        retryCountForCurrentScript = 0;
-      }
-      return false;
-    }, {
-      timeoutMs: totalTimeoutMs,
-      intervalMs: 250,
-      context: 'expo web primary script ready',
-    });
-    return true;
+      const remainingSleepMs = deadlineAtMs - Date.now();
+      if (remainingSleepMs <= 0) break;
+      await sleep(Math.min(retryDelayMs, remainingSleepMs));
+    }
   } catch (error) {
-    if (!resolveUiWebAllowScriptReadyTimeout(env)) {
+    if (error instanceof MetroBundleFailureError) {
       throw error;
     }
-    return false;
+    lastError = error;
   }
+
+  if (!resolveUiWebAllowScriptReadyTimeout(env)) {
+    if (lastError instanceof Error) {
+      throw lastError;
+    }
+    throw new Error('Timed out waiting for condition (expo web primary script ready)');
+  }
+
+  return false;
 }
 
 export async function startUiWebMetro(params: {
@@ -317,13 +585,14 @@ export async function startUiWebMetro(params: {
   const noDevRaw = (params.env.HAPPIER_E2E_UI_WEB_NO_DEV ?? '1').toString().trim().toLowerCase();
   const noDev = noDevRaw === '1' || noDevRaw === 'true' || noDevRaw === 'yes' || noDevRaw === 'y';
 
-  const expoCliPath = resolvePath(repoRootDir(), 'node_modules', 'expo', 'bin', 'cli');
   const uiWorkspaceDir = resolvePath(repoRootDir(), 'apps', 'ui');
+  const expoCliPath = resolveExpoCliPath({ rootDir: repoRootDir(), uiWorkspaceDir });
   const tmpDir = resolvePath(params.testDir, 'ui.web.tmp');
   await mkdir(tmpDir, { recursive: true });
   const metroPort = typeof params.port === 'number' && Number.isFinite(params.port) && params.port > 0
     ? params.port
     : await reserveAvailablePort();
+  const metroCacheVersionBust = resolveUiWebMetroCacheVersionBust(params.env);
 
   const proc = spawnLoggedProcess({
     args: [
@@ -345,6 +614,7 @@ export async function startUiWebMetro(params: {
       EXPO_NO_TELEMETRY: '1',
       EXPO_UNSTABLE_WEB_MODAL: '1',
       BROWSER: 'none',
+      HAPPIER_UI_METRO_CACHE_VERSION_BUST: metroCacheVersionBust,
       TMPDIR: tmpDir,
       TMP: tmpDir,
       TEMP: tmpDir,
@@ -389,16 +659,59 @@ export async function startUiWebMetro(params: {
       exitedEarly,
     ]);
     baseUrl = resolved.baseUrl;
+    let hasReadyEntryPage = resolved.hasScriptTags;
+    const requiresLivePortReanchor = typeof params.port === 'number' && Number.isFinite(params.port) && params.port > 0;
+    if (requiresLivePortReanchor || !hasReadyEntryPage) {
+      await waitFor(
+        async () => {
+          const metroStatusReady =
+            (await isMetroPackagerReady(`http://localhost:${metroPort}`, params.env))
+            || (await isMetroPackagerReady(`http://127.0.0.1:${metroPort}`, params.env));
 
-    await waitFor(
-      async () =>
-        (await isMetroPackagerReady(`http://localhost:${metroPort}`))
-        || (await isMetroPackagerReady(`http://127.0.0.1:${metroPort}`)),
-      { timeoutMs: resolveUiWebMetroStatusTimeoutMs(params.env), intervalMs: 250, context: 'metro /status ready' },
-    );
+        if (metroStatusReady) {
+          if (resolveUrlPort(baseUrl) !== metroPort) {
+            const preferredBaseUrl = await resolvePreferredLiveMetroBaseUrl({
+              currentBaseUrl: baseUrl,
+              metroPort,
+              env: params.env,
+            });
+            if (preferredBaseUrl) {
+              baseUrl = preferredBaseUrl.baseUrl;
+              hasReadyEntryPage = preferredBaseUrl.hasScriptTags;
+              return true;
+            }
+          } else {
+            const probe = await inspectUiWebEntryPage(baseUrl, params.env);
+            if (probe.isEntryPage) {
+              hasReadyEntryPage = probe.hasScriptTags;
+            }
+            return true;
+          }
+        }
 
-    if (resolved.hasScriptTags) {
-      await waitForPrimaryAppScriptReady(baseUrl, params.env);
+          if (requiresLivePortReanchor && resolveUrlPort(baseUrl) !== metroPort) {
+            return false;
+          }
+
+          const probe = await inspectUiWebEntryPage(baseUrl, params.env);
+          if (!probe.isEntryPage) {
+            return false;
+          }
+          hasReadyEntryPage = probe.hasScriptTags;
+          return true;
+        },
+        { timeoutMs: resolveUiWebMetroStatusTimeoutMs(params.env), intervalMs: 250, context: 'metro /status ready' },
+      );
+    }
+
+    if (hasReadyEntryPage) {
+      const primaryScriptReady = await waitForPrimaryAppScriptReady(baseUrl, params.env);
+      if (!primaryScriptReady) {
+        const bundleFailureDetail = await readMetroBundleFailureDetailFromLogs(stdoutPath, stderrPath);
+        if (bundleFailureDetail) {
+          throw new MetroBundleFailureError(bundleFailureDetail);
+        }
+      }
     }
   } catch (e) {
     await proc.stop().catch(() => {});

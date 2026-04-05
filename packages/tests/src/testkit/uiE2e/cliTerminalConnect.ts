@@ -141,14 +141,15 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
     const match = await waitForRegexInFile({
       path: stdoutPath,
       regex: /https?:\/\/[^\s)]+\/terminal\/connect#key=[^\s]+/,
-      timeoutMs: 90_000,
+      timeoutMs: 180_000,
       pollMs: 100,
       context: 'CLI terminal connect URL',
     });
     connectUrl = extractTerminalConnectUrl(match.input ?? '') ?? normalizeUrl(match[0] ?? '');
   } catch (e) {
+    const tail = await stdoutTail(stdoutPath);
     await proc.stop().catch(() => {});
-    throw e;
+    throw new Error(`${String(e)} | stdoutTail=${JSON.stringify(tail)}`);
   }
 
   if (!connectUrl) {

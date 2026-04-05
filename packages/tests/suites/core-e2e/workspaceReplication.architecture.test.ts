@@ -7,7 +7,6 @@ import { repoRootDir } from '../../src/testkit/paths';
 
 const PRODUCTION_FILE_SUFFIXES = ['.ts', '.tsx'] as const;
 const UI_BULK_TRANSFER_PIPELINE_DIR_FRAGMENT = '/sync/domains/transfers/runtime/bulkTransferPipeline/' as const;
-const UI_BULK_TRANSFER_PIPELINE_PUBLIC_IMPORT = "@/sync/domains/transfers/runtime/bulkTransferPipeline" as const;
 const BANNED_HANDOFF_BASE64_TOKENS = [
   "contentBase64",
 ] as const;
@@ -129,7 +128,7 @@ describe('workspace replication architecture closures', () => {
     const sources = await readProductionSources('apps/ui/sources');
 
     for (const { path, content } of sources) {
-      if (path.includes(UI_BULK_TRANSFER_PIPELINE_DIR_FRAGMENT)) {
+      if (path.includes(UI_BULK_TRANSFER_PIPELINE_DIR_FRAGMENT) || path.includes('/transferSubstrate/')) {
         continue;
       }
 
@@ -142,10 +141,10 @@ describe('workspace replication architecture closures', () => {
     }
   });
 
-  it('requires UI feature code to import bulk transfer primitives only from the bulkTransferPipeline public entrypoint', async () => {
+  it('does not let UI feature code depend on the old bulkTransferPipeline public barrel', async () => {
     const sources = await readProductionSources('apps/ui/sources');
-    const internalImportRegex = new RegExp(
-      String.raw`from\s+['"]${UI_BULK_TRANSFER_PIPELINE_PUBLIC_IMPORT.replace(/\//g, '\\/')}/`,
+    const legacyPublicImportRegex = new RegExp(
+      String.raw`from\s+['"]${"@/sync/domains/transfers/runtime/bulkTransferPipeline".replace(/\//g, '\\/')}['"]`,
       'g',
     );
 
@@ -153,7 +152,7 @@ describe('workspace replication architecture closures', () => {
       if (path.includes(UI_BULK_TRANSFER_PIPELINE_DIR_FRAGMENT)) {
         continue;
       }
-      expect(content.match(internalImportRegex), path).toBe(null);
+      expect(content.match(legacyPublicImportRegex), path).toBe(null);
     }
   });
 

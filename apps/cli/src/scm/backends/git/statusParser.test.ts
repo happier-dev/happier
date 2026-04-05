@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { deriveGitWorktreeId } from './deriveGitWorktreeId';
 import { buildGitSnapshot } from './statusSnapshot';
 
 type SnapshotEntry = Readonly<{
@@ -193,9 +194,9 @@ describe('git status snapshot parser', () => {
         });
 
         expect(snapshot.repo.worktrees).toEqual([
-            { path: '/repo', branch: 'main', isCurrent: false, isMain: true },
-            { path: '/repo/.worktrees/bugfix', branch: 'bugfix', isCurrent: false, isMain: false },
-            { path: '/repo/.worktrees/feature-auth', branch: 'feature/auth', isCurrent: true, isMain: false },
+            { id: deriveGitWorktreeId('/repo'), path: '/repo', branch: 'main', isCurrent: false, isMain: true },
+            { id: deriveGitWorktreeId('/repo/.worktrees/bugfix'), path: '/repo/.worktrees/bugfix', branch: 'bugfix', isCurrent: false, isMain: false },
+            { id: deriveGitWorktreeId('/repo/.worktrees/feature-auth'), path: '/repo/.worktrees/feature-auth', branch: 'feature/auth', isCurrent: true, isMain: false },
         ]);
     });
 
@@ -228,9 +229,9 @@ describe('git status snapshot parser', () => {
 
         expect(snapshot.repo.rootPath).toBe('/repo');
         expect(snapshot.repo.worktrees).toEqual([
-            { path: '/repo', branch: 'main', isCurrent: false, isMain: true },
-            { path: '/repo/.worktrees/bugfix', branch: 'bugfix', isCurrent: false, isMain: false },
-            { path: '/repo/.worktrees/feature-auth', branch: 'feature/auth', isCurrent: true, isMain: false },
+            { id: deriveGitWorktreeId('/repo'), path: '/repo', branch: 'main', isCurrent: false, isMain: true },
+            { id: deriveGitWorktreeId('/repo/.worktrees/bugfix'), path: '/repo/.worktrees/bugfix', branch: 'bugfix', isCurrent: false, isMain: false },
+            { id: deriveGitWorktreeId('/repo/.worktrees/feature-auth'), path: '/repo/.worktrees/feature-auth', branch: 'feature/auth', isCurrent: true, isMain: false },
         ]);
     });
 });

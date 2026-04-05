@@ -2868,6 +2868,59 @@ else:
 PY
 }
 
+playwright_attempt_wrote_fatal_json() {
+  local outdir="${1:-}"
+  if [[ -z "${outdir}" ]]; then
+    return 1
+  fi
+  local fatal_path="${outdir}/fatal.json"
+  if [[ ! -f "${fatal_path}" ]]; then
+    return 1
+  fi
+  python3 - "${fatal_path}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+  payload = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+  raise SystemExit(1)
+
+ok = payload.get("ok")
+if ok is False:
+  raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+playwright_attempt_wrote_success_summary() {
+  local outdir="${1:-}"
+  if [[ -z "${outdir}" ]]; then
+    return 1
+  fi
+  local summary_path="${outdir}/summary.json"
+  if [[ ! -f "${summary_path}" ]]; then
+    return 1
+  fi
+  python3 - "${summary_path}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+  payload = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+  raise SystemExit(1)
+
+if payload.get("ok") is True:
+  raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
 resolve_final_status() {
   local status="$1"
   RESOLVED_FINAL_STATUS="${status}"
@@ -4170,59 +4223,6 @@ run_playwright_attempt() {
   local status="${PIPESTATUS[0]}"
 
   return "${status}"
-}
-
-playwright_attempt_wrote_fatal_json() {
-  local outdir="${1:-}"
-  if [[ -z "${outdir}" ]]; then
-    return 1
-  fi
-  local fatal_path="${outdir}/fatal.json"
-  if [[ ! -f "${fatal_path}" ]]; then
-    return 1
-  fi
-  python3 - "${fatal_path}" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-try:
-  payload = json.loads(path.read_text(encoding="utf-8"))
-except Exception:
-  raise SystemExit(1)
-
-ok = payload.get("ok")
-if ok is False:
-  raise SystemExit(0)
-raise SystemExit(1)
-PY
-}
-
-playwright_attempt_wrote_success_summary() {
-  local outdir="${1:-}"
-  if [[ -z "${outdir}" ]]; then
-    return 1
-  fi
-  local summary_path="${outdir}/summary.json"
-  if [[ ! -f "${summary_path}" ]]; then
-    return 1
-  fi
-  python3 - "${summary_path}" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-try:
-  payload = json.loads(path.read_text(encoding="utf-8"))
-except Exception:
-  raise SystemExit(1)
-
-if payload.get("ok") is True:
-  raise SystemExit(0)
-raise SystemExit(1)
-PY
 }
 
 should_retry_for_daemon_rpc_unavailable() {

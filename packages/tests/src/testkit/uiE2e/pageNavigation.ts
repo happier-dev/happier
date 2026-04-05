@@ -1,5 +1,7 @@
 import type { Page } from '@playwright/test';
 
+import { dismissSetupWizardIfVisible } from './createAccountAndReachConnectMachineState';
+
 export { createAccountAndReachConnectMachineState, dismissSetupWizardIfVisible } from './createAccountAndReachConnectMachineState';
 
 export function normalizeLoopbackBaseUrl(input: string): string {
@@ -95,5 +97,58 @@ export async function gotoDomContentLoadedWithPathFallback(
   } catch (error) {
     if (isGotoTimeoutOnExpectedPath(page, expectedPathname, error)) return;
     throw error;
+  }
+}
+
+export async function waitForAuthenticatedHomeUi(params: Readonly<{
+  page: Pick<Page, 'getByTestId' | 'reload' | 'url' | 'waitForTimeout'>;
+  timeoutMs?: number;
+  browserDiagnostics?: (() => string) | undefined;
+  reloadOnFailure?: boolean | undefined;
+}>): Promise<void> {
+  const timeoutMs = typeof params.timeoutMs === 'number' && Number.isFinite(params.timeoutMs) && params.timeoutMs > 0
+    ? params.timeoutMs
+    : 120_000;
+  const reloadOnFailure = params.reloadOnFailure !== false;
+
+  const waitForAuthenticatedHomeUiOnce = async (): Promise<void> => {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      let pathname: string;
+      try {
+        pathname = normalizePathname(new URL(params.page.url()).pathname);
+      } catch {
+        pathname = '';
+      }
+
+      if (pathname !== '/') {
+        await params.page.waitForTimeout(250);
+        continue;
+      }
+
+      const welcomeVisible = await params.page.getByTestId('welcome-create-account').count();
+      const connectMachineVisible = await params.page.getByTestId('session-getting-started-kind-connect_machine').count();
+      const setupWizardVisible = await params.page.getByTestId('setupWizard.surface').count();
+
+      if (welcomeVisible === 0 && connectMachineVisible > 0) {
+        if (setupWizardVisible > 0) {
+          await dismissSetupWizardIfVisible({ page: params.page });
+        }
+        return;
+      }
+
+      await params.page.waitForTimeout(250);
+    }
+
+    const diagnostics = params.browserDiagnostics ? `\n\n${params.browserDiagnostics()}` : '';
+    throw new Error(`App did not reach the authenticated home UI within ${timeoutMs}ms.${diagnostics}`);
+  };
+
+  try {
+    await waitForAuthenticatedHomeUiOnce();
+  } catch (error) {
+    if (!reloadOnFailure) throw error;
+    await params.page.reload({ waitUntil: 'domcontentloaded' });
+    await waitForAuthenticatedHomeUiOnce();
   }
 }

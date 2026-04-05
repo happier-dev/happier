@@ -177,4 +177,26 @@ describe('maybeReexecToRuntime', () => {
     expect(exec).not.toHaveBeenCalled();
     expect(exit).not.toHaveBeenCalled();
   });
+
+  it('does not reexec daemon-spawned existing-session attaches before the webhook path can start', async () => {
+    const exec = vi.fn();
+    const exit = createExitMock();
+    const exists = (path: string) => path.endsWith('/runtime/node_modules/@happier-dev/cli/dist/index.mjs');
+    const readVersion = (path: string) => (path.includes('/runtime/') ? '9.9.9' : '1.0.0');
+
+    await maybeReexecToRuntime({
+      cliRootDir: '/repo/apps/cli',
+      homeDir: '/home/x/.happier',
+      packageName: '@happier-dev/cli',
+      argv: ['claude', '--happy-starting-mode', 'remote', '--started-by', 'daemon', '--existing-session', 'sess-123'],
+      env: {},
+      exec,
+      exit,
+      exists,
+      readVersion,
+    });
+
+    expect(exec).not.toHaveBeenCalled();
+    expect(exit).not.toHaveBeenCalled();
+  });
 });

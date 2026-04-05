@@ -8,11 +8,13 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let spawnStdoutText = '';
+let lastSpawnEnv: NodeJS.ProcessEnv | null = null;
 
 vi.mock('./spawnProcess', () => ({
-    spawnLoggedProcess: (params: { stdoutPath: string; stderrPath: string }) => {
+    spawnLoggedProcess: (params: { stdoutPath: string; stderrPath: string; env?: NodeJS.ProcessEnv }) => {
         writeFileSync(params.stdoutPath, spawnStdoutText, 'utf8');
         writeFileSync(params.stderrPath, '', 'utf8');
+        lastSpawnEnv = params.env && typeof params.env === 'object' ? params.env as NodeJS.ProcessEnv : null;
         const child = new EventEmitter() as EventEmitter & {
             exitCode: number | null;
             signalCode: NodeJS.Signals | null;
@@ -44,6 +46,7 @@ afterEach(() => {
 
 beforeEach(() => {
     spawnStdoutText = 'http://127.0.0.1:19077\n';
+    lastSpawnEnv = null;
     vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
         const url = String(input);
         if (url.endsWith('/status')) {
@@ -127,6 +130,26 @@ describe('startUiWebMetro', () => {
                     // ignore
                 }
             }
+            await rm(testDir, { recursive: true, force: true });
+        }
+    });
+
+    it('passes a Metro cache version bust through to the web dev server process', async () => {
+        const testDir = await mkdtemp(join(tmpdir(), 'happier-ui-web-metro-cache-bust-'));
+
+        try {
+            await mkdir(testDir, { recursive: true });
+
+            const started = await startUiWebMetro({
+                testDir,
+                env: {},
+                port: 19077,
+            });
+
+            expect(lastSpawnEnv?.HAPPIER_UI_METRO_CACHE_VERSION_BUST).toMatch(/^[a-f0-9]{16,}$/u);
+
+            await started.stop();
+        } finally {
             await rm(testDir, { recursive: true, force: true });
         }
     });

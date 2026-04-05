@@ -1,11 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
-
 import {
   gotoDomContentLoadedWithPathFallback,
   gotoDomContentLoadedWithRetries,
   normalizeLoopbackBaseUrl,
 } from './pageNavigation';
 import * as pageNavigation from './pageNavigation';
+
+type WaitForAuthenticatedHomeUiPage = Readonly<{
+  getByTestId(testId: string): { count: () => Promise<number> };
+  reload: () => Promise<void>;
+  url: () => string;
+  waitForTimeout: (delayMs: number) => Promise<void>;
+}>;
 
 describe('gotoDomContentLoadedWithRetries', () => {
   it('retries retryable network errors before succeeding', async () => {
@@ -119,5 +125,45 @@ describe('normalizeLoopbackBaseUrl', () => {
     expect(normalizeLoopbackBaseUrl('http://127.0.0.1:60674/')).toBe('http://127.0.0.1:60674');
     expect(normalizeLoopbackBaseUrl('http://0.0.0.0:60674/')).toBe('http://127.0.0.1:60674');
     expect(normalizeLoopbackBaseUrl('http://[::1]:60674/')).toBe('http://127.0.0.1:60674');
+  });
+});
+
+describe('waitForAuthenticatedHomeUi', () => {
+  it('waits for the authenticated root shell after terminal-connect success', async () => {
+    const testIdCounts: Record<string, number[]> = {
+      'welcome-create-account': [1, 1, 0, 0],
+      'session-getting-started-kind-connect_machine': [0, 0, 1, 1],
+      'setupWizard.surface': [0, 0, 0, 0],
+    };
+    const counts = new Map<string, number>();
+    const nextCount = (key: string): number => {
+      const index = counts.get(key) ?? 0;
+      counts.set(key, index + 1);
+      const sequence = testIdCounts[key] ?? [0];
+      return sequence[Math.min(index, sequence.length - 1)] ?? 0;
+    };
+    let nowMs = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+    const page = {
+      getByTestId: (testId: string) => ({ count: async () => nextCount(testId) }),
+      waitForTimeout: vi.fn(async (delayMs: number) => {
+        nowMs += delayMs;
+      }),
+      reload: vi.fn(async () => {}),
+      url: () => (nowMs < 250 ? 'http://127.0.0.1:3000/terminal/connect' : 'http://127.0.0.1:3000/'),
+    };
+
+    const helper = (pageNavigation as Record<string, unknown>).waitForAuthenticatedHomeUi;
+    expect(helper).toBeTypeOf('function');
+
+    await expect(
+      (helper as (
+        params: Readonly<{ page: WaitForAuthenticatedHomeUiPage; timeoutMs?: number; reloadOnFailure?: boolean }>,
+      ) => Promise<void>)({ page, timeoutMs: 1_000, reloadOnFailure: false }),
+    ).resolves.toBeUndefined();
+
+    expect(page.reload).not.toHaveBeenCalled();
+    expect(counts.get('welcome-create-account')).toBeGreaterThanOrEqual(2);
+    expect(counts.get('session-getting-started-kind-connect_machine')).toBeGreaterThanOrEqual(2);
   });
 });

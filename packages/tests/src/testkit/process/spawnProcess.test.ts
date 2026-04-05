@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import { waitFor } from '../timing';
 import { isProcessAlive, terminateProcessTreeByPid } from './processTree';
-import { spawnLoggedProcess } from './spawnProcess';
+import { runLoggedCommand, spawnLoggedProcess } from './spawnProcess';
 
 async function waitForMarker(path: string, timeoutMs = 10_000): Promise<{ childPid: number; grandchildPid: number }> {
   const deadline = Date.now() + timeoutMs;
@@ -142,4 +142,81 @@ describe('spawnLoggedProcess', () => {
       await rm(rootDir, { recursive: true, force: true });
     }
   }, 15_000);
+});
+
+describe('runLoggedCommand', () => {
+  it('aborts promptly and reaps descendant processes when aborted', async () => {
+    if (process.platform === 'win32') {
+      return;
+    }
+
+    const rootDir = await mkdtemp(join(tmpdir(), 'happier-run-logged-command-abort-'));
+    const markerPath = join(rootDir, 'marker.json');
+    const stdoutPath = join(rootDir, 'stdout.log');
+    const stderrPath = join(rootDir, 'stderr.log');
+    const abortController = new AbortController();
+
+    const childScript = [
+      "const { spawn } = require('node:child_process');",
+      "const { writeFileSync } = require('node:fs');",
+      "const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });",
+      'grandchild.unref();',
+      `writeFileSync(${JSON.stringify(markerPath)}, JSON.stringify({ childPid: process.pid, grandchildPid: grandchild.pid }), 'utf8');`,
+      'setInterval(() => {}, 1000);',
+      '',
+    ].join('\n');
+
+    try {
+      const runPromise = runLoggedCommand({
+        command: process.execPath,
+        args: ['-e', childScript],
+        cwd: rootDir,
+        stdoutPath,
+        stderrPath,
+        timeoutMs: 30_000,
+        abortSignal: abortController.signal,
+      });
+
+      const { childPid, grandchildPid } = await waitForMarker(markerPath);
+      abortController.abort(new Error('runLoggedCommand aborted for test'));
+
+      const outcome = await Promise.race([
+        runPromise.then(
+          () => ({ ok: true as const }),
+          (error: unknown) => ({ ok: false as const, error: error instanceof Error ? error : new Error(String(error)) }),
+        ),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('runLoggedCommand did not abort quickly')), 5_000);
+        }),
+      ]);
+
+      expect(outcome.ok).toBe(false);
+      if (!outcome.ok) {
+        expect(outcome.error.message).toMatch(/aborted for test/i);
+      }
+
+      await waitFor(() => !isProcessAlive(childPid), {
+        timeoutMs: 10_000,
+        intervalMs: 50,
+        context: 'runLoggedCommand aborted child cleanup',
+      });
+      await waitFor(() => !isProcessAlive(grandchildPid), {
+        timeoutMs: 10_000,
+        intervalMs: 50,
+        context: 'runLoggedCommand aborted descendant cleanup',
+      });
+    } finally {
+      try {
+        const raw = await readFile(markerPath, 'utf8');
+        const parsed = JSON.parse(raw) as { grandchildPid?: unknown };
+        const grandchildPid = Number(parsed.grandchildPid);
+        if (Number.isInteger(grandchildPid) && grandchildPid > 1) {
+          await terminateProcessTreeByPid(grandchildPid, { graceMs: 0, pollMs: 25, skipAliveCheck: true }).catch(() => {});
+        }
+      } catch {
+        // ignore cleanup failures
+      }
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  }, 20_000);
 });

@@ -145,10 +145,12 @@ export const ScmWorkingEntrySchema = z.object({
 export type ScmWorkingEntry = z.infer<typeof ScmWorkingEntrySchema>;
 
 export const ScmWorktreeSchema = z.object({
+  id: z.string().min(1).optional(),
   path: z.string(),
   branch: z.string().nullable(),
   isCurrent: z.boolean(),
   isMain: z.boolean().optional(),
+  isPrunable: z.boolean().optional(),
 });
 export type ScmWorktree = z.infer<typeof ScmWorktreeSchema>;
 

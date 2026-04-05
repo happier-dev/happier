@@ -23,18 +23,24 @@ describe('runPlaywrightWithHeartbeat helpers', () => {
       detached: process.platform !== 'win32',
       stdio: 'inherit',
       env: expect.objectContaining({
+        PLAYWRIGHT_HTML_OPEN: 'never',
         TEST_FLAG: '1',
       }),
     });
   });
 
-  it('assigns a per-run UI web export namespace when one is not provided', () => {
-    const options = createPlaywrightSpawnOptions({ TEST_FLAG: '1' });
-    expect(options.env).toEqual(expect.objectContaining({
+  it('assigns a shared UI web export namespace when one is not provided', () => {
+    const first = createPlaywrightSpawnOptions({ TEST_FLAG: '1' });
+    const second = createPlaywrightSpawnOptions({ TEST_FLAG: '1' });
+
+    expect(first.env).toEqual(expect.objectContaining({
       TEST_FLAG: '1',
     }));
-    expect(typeof options.env.HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE).toBe('string');
-    expect(options.env.HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE).toMatch(/^playwright-ui-/);
+    expect(second.env).toEqual(expect.objectContaining({
+      TEST_FLAG: '1',
+    }));
+    expect(first.env.HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE).toBe('playwright-ui-shared');
+    expect(second.env.HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE).toBe('playwright-ui-shared');
   });
 
   it('preserves an explicit UI web export namespace', () => {

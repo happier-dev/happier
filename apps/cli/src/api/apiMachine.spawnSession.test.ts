@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Machine } from '@/api/types';
-import { encodeBase64, encrypt } from '@/api/encryption';
+import { decodeBase64, encodeBase64, decrypt, encrypt } from '@/api/encryption';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { ApiMachineClient } from './apiMachine';
@@ -211,7 +211,7 @@ describe('ApiMachineClient spawn-happy-session handler', () => {
     });
 
     expect(captured).toEqual(params);
-    expect(result).toEqual({
+    expect(decrypt(machine.encryptionKey, machine.encryptionVariant, decodeBase64(result))).toEqual({
       success: true,
       transferId: 'transfer-1',
       endpointCandidates: [],

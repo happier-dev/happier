@@ -108,12 +108,14 @@ describe('scm protocol contracts', () => {
                 mode: '.git',
                 worktrees: [
                     {
+                        id: 'gitwt_main',
                         path: '/repo',
                         branch: 'main',
                         isCurrent: true,
                         isMain: true,
                     },
                     {
+                        id: 'gitwt_feature_auth',
                         path: '/repo/.worktrees/feature-auth',
                         branch: 'feature/auth',
                         isCurrent: false,
@@ -169,6 +171,7 @@ describe('scm protocol contracts', () => {
         expect(response.snapshot?.repo.worktrees?.[1]?.branch).toBe('feature/auth');
         expect(response.snapshot?.repo.worktrees?.[0]?.isMain).toBe(true);
         expect(response.snapshot?.repo.worktrees?.[1]?.isMain).toBe(false);
+        expect(response.snapshot?.repo.worktrees?.[1]?.isPrunable).toBeUndefined();
         expect(response.snapshot?.totals.pendingFiles).toBe(0);
         expect(response.snapshot?.capabilities.changeSetModel).toBe('index');
         expect(response.snapshot?.capabilities.supportedDiffAreas).toEqual(['included', 'pending', 'both']);

@@ -1,13 +1,20 @@
+import { createHash } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync, closeSync } from 'node:fs';
-import { appendFile, mkdir, readFile, rename, rm, stat } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { extname, dirname, resolve as resolvePath } from 'node:path';
+import { extname, dirname, relative as relativePath, resolve as resolvePath } from 'node:path';
 import { repoRootDir } from '../paths';
 import { reserveAvailablePort } from '../network/reserveAvailablePort';
 import { runLoggedCommand } from './spawnProcess';
 import { yarnCommand } from './commands';
 import { readPositiveEnvInt } from './uiWebEnv';
 import type { StartedUiWeb } from './uiWebTypes';
+import { buildUiWebExportCacheKey } from './uiWebExportCacheKey';
+import {
+  createUiWebExportStartupStallGuard,
+  isUiWebExportMetroCacheCorruptionError,
+  stderrHasUiWebExportMetroCacheCorruption,
+} from './createUiWebExportStartupStallGuard';
 
 export function resolveUiWebExportRootDir(env: NodeJS.ProcessEnv = process.env): string {
   const rootDir = resolvePath(repoRootDir(), '.project', 'tmp', 'ui-web-export');
@@ -15,10 +22,44 @@ export function resolveUiWebExportRootDir(env: NodeJS.ProcessEnv = process.env):
   return namespace ? resolvePath(rootDir, namespace) : rootDir;
 }
 
+function resolveUiWebExportRootDirForParams(params: {
+  env: NodeJS.ProcessEnv;
+  testDir?: string;
+}): string {
+  const explicitNamespace = String(params.env.HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE ?? '').trim();
+  if (explicitNamespace) {
+    return resolveUiWebExportRootDir(params.env);
+  }
+  const normalizedTestDir = typeof params.testDir === 'string' ? params.testDir.trim() : '';
+  if (!normalizedTestDir) {
+    return resolveUiWebExportRootDir(params.env);
+  }
+
+  const derivedNamespace = `auto-${createHash('sha1').update(normalizedTestDir).digest('hex').slice(0, 12)}`;
+  return resolveUiWebExportRootDir({
+    ...params.env,
+    HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: derivedNamespace,
+  });
+}
+
+function hasExplicitUiWebExportNamespace(env: NodeJS.ProcessEnv): boolean {
+  return String(env.HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE ?? '').trim().length > 0;
+}
+
 let sharedExportPromise: Promise<string> | null = null;
 let sharedExportDir: string | null = null;
 let sharedExportCacheKey: string | null = null;
+let sharedExportRootDir: string | null = null;
 const UI_WEB_EXPORT_MANIFEST_VERSION = 1;
+
+export const __testables = {
+  resetSharedUiWebExportState(): void {
+    sharedExportPromise = null;
+    sharedExportDir = null;
+    sharedExportCacheKey = null;
+    sharedExportRootDir = null;
+  },
+};
 
 type UiWebRuntimeConfig = Readonly<{
   serverUrl: string;
@@ -123,7 +164,13 @@ async function withUiWebExportLock<T>(
 }
 
 export function resolveUiWebExportBuildTimeoutMs(env: NodeJS.ProcessEnv): number {
-  return readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS, 240_000);
+  return readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS, 480_000);
+}
+
+export function resolveUiWebExportHardTimeoutMs(env: NodeJS.ProcessEnv): number | null {
+  const raw = String(env.HAPPIER_E2E_UI_WEB_EXPORT_HARD_TIMEOUT_MS ?? '').trim();
+  if (!raw) return null;
+  return readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_EXPORT_HARD_TIMEOUT_MS, 0);
 }
 
 export function resolveUiWebExportLockTimeoutMs(env: NodeJS.ProcessEnv): number {
@@ -133,7 +180,10 @@ export function resolveUiWebExportLockTimeoutMs(env: NodeJS.ProcessEnv): number 
 export function resolveUiWebExportBeforeAllTimeoutMs(env: NodeJS.ProcessEnv): number {
   const minTimeoutMs = readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_BEFORE_ALL_MIN_TIMEOUT_MS, 900_000);
   const headroomMs = readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_BEFORE_ALL_HEADROOM_MS, 60_000);
-  return Math.max(minTimeoutMs, resolveUiWebExportBuildTimeoutMs(env) + headroomMs);
+  const exportIdleTimeoutMs = resolveUiWebExportBuildTimeoutMs(env);
+  const exportHardTimeoutMs = resolveUiWebExportHardTimeoutMs(env);
+  const exportBudgetMs = exportHardTimeoutMs == null ? exportIdleTimeoutMs : Math.max(exportIdleTimeoutMs, exportHardTimeoutMs);
+  return Math.max(minTimeoutMs, exportBudgetMs + headroomMs);
 }
 
 function readServerUrlFromEnv(env: NodeJS.ProcessEnv): string {
@@ -158,6 +208,10 @@ function buildRuntimeConfig(env: NodeJS.ProcessEnv): UiWebRuntimeConfig {
 
 function buildExportEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const debug = String(env.EXPO_PUBLIC_DEBUG ?? '1').trim() || '1';
+  const metroCacheVersionBust = createHash('sha256')
+    .update(buildUiWebExportCacheKey(env))
+    .digest('hex')
+    .slice(0, 16);
   return {
     ...process.env,
     ...env,
@@ -171,24 +225,8 @@ function buildExportEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     EXPO_PUBLIC_SERVER_URL: '',
     EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: '',
     EXPO_PUBLIC_HAPPIER_SYNC_TUNING_JSON: '',
+    HAPPIER_UI_METRO_CACHE_VERSION_BUST: metroCacheVersionBust,
   };
-}
-
-function buildUiWebExportCacheKey(env: NodeJS.ProcessEnv): string {
-  const exportEnv = buildExportEnv(env);
-  const relevantEntries = Object.entries(exportEnv)
-    .filter(([key]) =>
-      key.startsWith('EXPO_PUBLIC_')
-      || key === 'APP_ENV'
-      || key === 'APP_VARIANT'
-      || key === 'HAPPIER_APP_VARIANT_OVERRIDE'
-      || key === 'EAS_BUILD_PROFILE'
-      || key === 'EXPO_UPDATES_CHANNEL'
-      || key === 'NODE_ENV'
-    )
-    .sort(([left], [right]) => left.localeCompare(right));
-
-  return JSON.stringify(relevantEntries);
 }
 
 function readPersistedUiWebExportCacheKey(cacheKeyPath: string): string | null {
@@ -227,38 +265,225 @@ function writePersistedUiWebExportManifest(manifestPath: string): void {
   }), 'utf8');
 }
 
+const REQUIRED_UI_WEB_EXPORT_FILES = ['index.html', 'metadata.json'] as const;
+
+type UiWebExportFailureSnapshot = Readonly<{
+  fileCount: number;
+  publishPhaseFileCount: number;
+  sampleFiles: readonly string[];
+}>;
+
+async function readUiWebExportFailureSnapshot(rootDir: string, currentPath = rootDir): Promise<UiWebExportFailureSnapshot> {
+  const currentStat = await stat(currentPath).catch(() => null);
+  if (!currentStat) {
+    return {
+      fileCount: 0,
+      publishPhaseFileCount: 0,
+      sampleFiles: [],
+    };
+  }
+
+  if (currentStat.isFile()) {
+    const relativeName = relativePath(rootDir, currentPath);
+    return {
+      fileCount: 1,
+      publishPhaseFileCount: REQUIRED_UI_WEB_EXPORT_FILES.includes(relativeName as (typeof REQUIRED_UI_WEB_EXPORT_FILES)[number]) ? 1 : 0,
+      sampleFiles: [relativeName],
+    };
+  }
+
+  if (!currentStat.isDirectory()) {
+    return {
+      fileCount: 0,
+      publishPhaseFileCount: 0,
+      sampleFiles: [],
+    };
+  }
+
+  const entries = await readdir(currentPath, { withFileTypes: true }).catch(() => []);
+  let fileCount = 0;
+  let publishPhaseFileCount = 0;
+  const sampleFiles: string[] = [];
+
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    const childSnapshot = await readUiWebExportFailureSnapshot(rootDir, resolvePath(currentPath, entry.name));
+    fileCount += childSnapshot.fileCount;
+    publishPhaseFileCount += childSnapshot.publishPhaseFileCount;
+    for (const sampleFile of childSnapshot.sampleFiles) {
+      if (sampleFiles.length >= 8) break;
+      sampleFiles.push(sampleFile);
+    }
+  }
+
+  return {
+    fileCount,
+    publishPhaseFileCount,
+    sampleFiles,
+  };
+}
+
+async function classifyUiWebExportFailure(params: {
+  error: unknown;
+  stdoutTail: string;
+  stderrTail: string;
+  stagingDir: string;
+}): Promise<string | null> {
+  const message = params.error instanceof Error ? params.error.message : String(params.error);
+  const metroStarted = `${params.stdoutTail}\n${params.stderrTail}`.includes('Starting Metro Bundler');
+
+  if (message.includes('expo export startup stalled after')) {
+    return metroStarted
+      ? 'startup_stalled_after_metro_startup_no_staging_progress'
+      : 'startup_stalled_before_metro_startup';
+  }
+
+  if (!message.includes('expo export timed out after')) {
+    return null;
+  }
+
+  const snapshot = await readUiWebExportFailureSnapshot(params.stagingDir);
+  if (snapshot.publishPhaseFileCount >= REQUIRED_UI_WEB_EXPORT_FILES.length) {
+    return 'timed_out_after_metro_publish_phase_output_present';
+  }
+  if (snapshot.fileCount > 0) {
+    return 'timed_out_after_metro_partial_staging';
+  }
+  if (!metroStarted) {
+    return 'timed_out_before_metro_startup';
+  }
+  return 'timed_out_after_metro_no_staging_output';
+}
+
+async function assertCompleteUiWebExportDir(distDir: string): Promise<void> {
+  const missingFiles: string[] = [];
+  for (const fileName of REQUIRED_UI_WEB_EXPORT_FILES) {
+    try {
+      await stat(resolvePath(distDir, fileName));
+    } catch {
+      missingFiles.push(fileName);
+    }
+  }
+
+  if (missingFiles.length > 0) {
+    throw new Error(`UI web export incomplete: missing publish-required files ${missingFiles.join(', ')} in ${distDir}`);
+  }
+}
+
 function canReusePersistedUiWebExport(
   params: { distDir: string; cacheKeyPath: string; cacheKey: string; manifestPath: string },
 ): boolean {
   if (!existsSync(resolvePath(params.distDir, 'index.html'))) return false;
+  if (!existsSync(resolvePath(params.distDir, 'metadata.json'))) return false;
   if (!hasPersistedUiWebExportManifest(params.manifestPath)) return false;
   return readPersistedUiWebExportCacheKey(params.cacheKeyPath) === params.cacheKey;
+}
+
+async function findReusableUiWebExportRoot(params: {
+  rootDir: string;
+  cacheKey: string;
+  excludeRootDirs?: readonly string[];
+  excludeAutoDerivedNamespaces?: boolean;
+}): Promise<string | null> {
+  const excludedRoots = new Set(
+    (params.excludeRootDirs ?? [])
+      .map((rootDir) => rootDir.trim())
+      .filter((rootDir) => rootDir.length > 0),
+  );
+
+  const candidateRoots = new Set<string>();
+  if (!excludedRoots.has(params.rootDir)) {
+    candidateRoots.add(params.rootDir);
+  }
+
+  const entries = await readdir(params.rootDir, { withFileTypes: true, encoding: 'utf8' }).catch(() => null);
+  if (!entries) {
+    return null;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (params.excludeAutoDerivedNamespaces && entry.name.startsWith('auto-')) continue;
+    candidateRoots.add(resolvePath(params.rootDir, entry.name));
+  }
+
+  for (const candidateRoot of candidateRoots) {
+    if (excludedRoots.has(candidateRoot)) continue;
+    if (canReusePersistedUiWebExport({
+      distDir: resolvePath(candidateRoot, 'dist'),
+      cacheKeyPath: resolvePath(candidateRoot, 'cache-key.json'),
+      cacheKey: params.cacheKey,
+      manifestPath: resolvePath(candidateRoot, 'export-manifest.json'),
+    })) {
+      return candidateRoot;
+    }
+  }
+
+  return null;
 }
 
 async function ensureUiWebExportBuilt(params: { testDir: string; env: NodeJS.ProcessEnv }): Promise<string> {
   const cacheKey = buildUiWebExportCacheKey(params.env);
   const clearRaw = (params.env.HAPPIER_E2E_EXPO_CLEAR ?? '').toString().trim().toLowerCase();
-  const clearCache = clearRaw === '1' || clearRaw === 'true' || clearRaw === 'yes' || clearRaw === 'y';
-  const exportedDistParent = resolveUiWebExportRootDir(params.env);
+  let clearCache = clearRaw === '1' || clearRaw === 'true' || clearRaw === 'yes' || clearRaw === 'y';
+  const explicitNamespace = hasExplicitUiWebExportNamespace(params.env);
+  const sharedDefaultRoot = explicitNamespace ? null : resolveUiWebExportRootDir(params.env);
+  const canonicalSharedRoot = resolveUiWebExportRootDir();
+  const exportedDistParent = resolveUiWebExportRootDirForParams(params);
   const exportedDistDir = resolvePath(exportedDistParent, 'dist');
   const exportedDistLockPath = resolvePath(exportedDistParent, 'build.lock');
   const exportedDistCacheKeyPath = resolvePath(exportedDistParent, 'cache-key.json');
   const exportedDistManifestPath = resolvePath(exportedDistParent, 'export-manifest.json');
 
-  if (sharedExportDir && sharedExportCacheKey === cacheKey) return sharedExportDir;
-  if (sharedExportPromise && sharedExportCacheKey === cacheKey) return await sharedExportPromise;
+  if (!clearCache && explicitNamespace && canonicalSharedRoot !== exportedDistParent && canReusePersistedUiWebExport({
+    distDir: resolvePath(canonicalSharedRoot, 'dist'),
+    cacheKeyPath: resolvePath(canonicalSharedRoot, 'cache-key.json'),
+    cacheKey,
+    manifestPath: resolvePath(canonicalSharedRoot, 'export-manifest.json'),
+  })) {
+    const reusableDistDir = resolvePath(canonicalSharedRoot, 'dist');
+    sharedExportDir = reusableDistDir;
+    sharedExportCacheKey = cacheKey;
+    sharedExportRootDir = canonicalSharedRoot;
+    return reusableDistDir;
+  }
+
+  if (!clearCache && sharedDefaultRoot && sharedDefaultRoot !== exportedDistParent) {
+    const reusableRootDir = await findReusableUiWebExportRoot({
+      rootDir: sharedDefaultRoot,
+      cacheKey,
+      excludeRootDirs: [exportedDistParent],
+      excludeAutoDerivedNamespaces: true,
+    });
+    if (reusableRootDir) {
+      const reusableDistDir = resolvePath(reusableRootDir, 'dist');
+      sharedExportDir = reusableDistDir;
+      sharedExportCacheKey = cacheKey;
+      sharedExportRootDir = reusableRootDir;
+      return reusableDistDir;
+    }
+  }
+
+  if (!clearCache) {
+    if (sharedExportDir && sharedExportCacheKey === cacheKey && sharedExportRootDir === exportedDistParent) {
+      return sharedExportDir;
+    }
+    if (sharedExportPromise && sharedExportCacheKey === cacheKey && sharedExportRootDir === exportedDistParent) {
+      return await sharedExportPromise;
+    }
+  }
   if (canReusePersistedUiWebExport({
     distDir: exportedDistDir,
     cacheKeyPath: exportedDistCacheKeyPath,
     cacheKey,
     manifestPath: exportedDistManifestPath,
-  })) {
+  }) && !clearCache) {
     sharedExportDir = exportedDistDir;
     sharedExportCacheKey = cacheKey;
+    sharedExportRootDir = exportedDistParent;
     return exportedDistDir;
   }
 
-	  const buildPromise = withUiWebExportLock(exportedDistLockPath, async () => {
+  const buildPromise = withUiWebExportLock(exportedDistLockPath, async () => {
 	    const stagingDir = resolvePath(exportedDistParent, `dist-staging-${process.pid}-${Date.now()}`);
 	    const stdoutPath = resolvePath(params.testDir, 'ui.web.export.stdout.log');
 	    const stderrPath = resolvePath(params.testDir, 'ui.web.export.stderr.log');
@@ -266,6 +491,7 @@ async function ensureUiWebExportBuilt(params: { testDir: string; env: NodeJS.Pro
 	    await mkdir(exportedDistParent, { recursive: true });
 	    await rm(stagingDir, { recursive: true, force: true }).catch(() => {});
 
+	    for (;;) {
 	    try {
 	      const exportEnv = buildExportEnv(params.env);
 	      const shouldPinMetroPort = !exportEnv.RCT_METRO_PORT && !exportEnv.EXPO_METRO_PORT && !exportEnv.METRO_PORT;
@@ -279,26 +505,89 @@ async function ensureUiWebExportBuilt(params: { testDir: string; env: NodeJS.Pro
 	        }
 	        : exportEnv;
 
-	      await runLoggedCommand({
-	        command: yarnCommand(),
-	        args: [
-	          'expo',
-	          'export',
-          '--platform',
-          'web',
-	          '--output-dir',
-	          stagingDir,
-	          ...(clearCache ? ['--clear'] : []),
-	        ],
-	        cwd: resolvePath(repoRootDir(), 'apps', 'ui'),
-	        env: pinnedExportEnv,
-	        stdoutPath,
-	        stderrPath,
-	        timeoutMs: resolveUiWebExportBuildTimeoutMs(params.env),
-	      });
+        const runExportBuildAttempt = async (forceClear: boolean): Promise<void> => {
+          const buildTimeoutMs = resolveUiWebExportBuildTimeoutMs(params.env);
+          const buildHardTimeoutMs = resolveUiWebExportHardTimeoutMs(params.env);
+          let buildTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+          const abortController = new AbortController();
+          const startupStallGuard = createUiWebExportStartupStallGuard({
+            stdoutPath,
+            stderrPath,
+            stagingDir,
+            env: params.env,
+            abortController,
+          });
+          let timedOut = false;
+          const buildTimeoutError = new Error(`expo export timed out after ${buildHardTimeoutMs}ms`);
+          const buildTimeoutPromise = buildHardTimeoutMs == null
+            ? null
+            : new Promise<never>((_, reject) => {
+              buildTimeoutTimer = setTimeout(() => {
+                timedOut = true;
+                if (!abortController.signal.aborted) {
+                  abortController.abort(buildTimeoutError);
+                }
+                reject(buildTimeoutError);
+              }, buildHardTimeoutMs);
+              if (typeof buildTimeoutTimer === 'object' && buildTimeoutTimer !== null && 'unref' in buildTimeoutTimer) {
+                buildTimeoutTimer.unref();
+              }
+            });
+          const runPromise = runLoggedCommand({
+	          command: yarnCommand(),
+	          args: [
+	            'expo',
+	            'export',
+              '--platform',
+              'web',
+	            '--output-dir',
+	            stagingDir,
+	            ...((clearCache || forceClear) ? ['--clear'] : []),
+	          ],
+	          cwd: resolvePath(repoRootDir(), 'apps', 'ui'),
+	          env: pinnedExportEnv,
+	          stdoutPath,
+	          stderrPath,
+	          timeoutMs: buildHardTimeoutMs ?? 2_147_483_647,
+            abortSignal: abortController.signal,
+          });
 
-      const indexPath = resolvePath(stagingDir, 'index.html');
-      await stat(indexPath);
+        try {
+          await Promise.race([runPromise, startupStallGuard.promise, ...(buildTimeoutPromise ? [buildTimeoutPromise] : [])]);
+          await runPromise;
+        } catch (error) {
+          if (!abortController.signal.aborted) {
+            abortController.abort(error);
+          }
+          if (!timedOut && !isUiWebExportMetroCacheCorruptionError(error)) {
+            await runPromise.catch(() => {});
+          }
+          throw error;
+        } finally {
+          if (buildTimeoutTimer != null) {
+            clearTimeout(buildTimeoutTimer);
+            buildTimeoutTimer = null;
+          }
+          startupStallGuard.stop();
+        }
+        };
+
+        try {
+          await runExportBuildAttempt(false);
+        } catch (error) {
+          const stderrTail = await readFile(stderrPath, 'utf8').catch(() => '');
+          if (!clearCache && stderrHasUiWebExportMetroCacheCorruption(stderrTail)) {
+            clearCache = true;
+            await rm(stagingDir, { recursive: true, force: true }).catch(() => {});
+            await writeFile(stdoutPath, '', 'utf8').catch(() => {});
+            await writeFile(stderrPath, '', 'utf8').catch(() => {});
+            await runExportBuildAttempt(true);
+          } else {
+            throw error;
+          }
+        }
+
+      await assertCompleteUiWebExportDir(stagingDir);
       await rm(exportedDistDir, { recursive: true, force: true }).catch(() => {});
       await rename(stagingDir, exportedDistDir);
       writePersistedUiWebExportCacheKey(exportedDistCacheKeyPath, cacheKey);
@@ -307,29 +596,60 @@ async function ensureUiWebExportBuilt(params: { testDir: string; env: NodeJS.Pro
     } catch (error) {
       const stdoutTail = await readFile(stdoutPath, 'utf8').catch(() => '');
       const stderrTail = await readFile(stderrPath, 'utf8').catch(() => '');
+      if (!clearCache && stderrTail.includes('Unable to deserialize cloned data')) {
+        clearCache = true;
+        await rm(stagingDir, { recursive: true, force: true }).catch(() => {});
+        continue;
+      }
+      const classification = await classifyUiWebExportFailure({
+        error,
+        stdoutTail,
+        stderrTail,
+        stagingDir,
+      });
       const tailLimit = 8_000;
       throw new Error([
         error instanceof Error ? error.message : String(error),
+        classification ? `classification=${classification}` : null,
         `stdoutTail=${JSON.stringify(stdoutTail.slice(Math.max(0, stdoutTail.length - tailLimit)))}`,
         `stderrTail=${JSON.stringify(stderrTail.slice(Math.max(0, stderrTail.length - tailLimit)))}`,
-      ].join(' | '));
+      ].filter(Boolean).join(' | '));
     } finally {
       await rm(stagingDir, { recursive: true, force: true }).catch(() => {});
     }
+	    }
   }, {
         timeoutMs: resolveUiWebExportLockTimeoutMs(params.env),
         staleAfterMs: resolveUiWebExportBuildTimeoutMs(params.env),
       });
   sharedExportPromise = buildPromise;
   sharedExportCacheKey = cacheKey;
+  sharedExportRootDir = exportedDistParent;
 
   try {
     const builtDir = await buildPromise;
     if (sharedExportPromise === buildPromise) {
       sharedExportDir = builtDir;
       sharedExportCacheKey = cacheKey;
+      sharedExportRootDir = exportedDistParent;
     }
     return builtDir;
+  } catch (error) {
+    if (!clearCache && !explicitNamespace) {
+      const fallbackRootDir = await findReusableUiWebExportRoot({
+        rootDir: resolveUiWebExportRootDir(params.env),
+        cacheKey,
+        excludeRootDirs: [exportedDistParent],
+      });
+      if (fallbackRootDir) {
+        const fallbackDistDir = resolvePath(fallbackRootDir, 'dist');
+        sharedExportDir = fallbackDistDir;
+        sharedExportCacheKey = cacheKey;
+        sharedExportRootDir = fallbackRootDir;
+        return fallbackDistDir;
+      }
+    }
+    throw error;
   } finally {
     if (sharedExportPromise === buildPromise) {
       sharedExportPromise = null;

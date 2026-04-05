@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -39,4 +39,35 @@ describe('providers: runLoggedCommand long-running process', () => {
       ).resolves.toBeUndefined();
     });
   }, 40_000);
+
+  it('aborts promptly when an abort signal is triggered', async () => {
+    await withTempDir(async (dir) => {
+      const stdoutPath = join(dir, 'stdout.log');
+      const stderrPath = join(dir, 'stderr.log');
+      const abortController = new AbortController();
+      const startedAt = Date.now();
+      const script = [
+        "process.stdout.write('Starting Metro Bundler\\n');",
+        'setInterval(() => {}, 1_000);',
+      ].join('\n');
+
+      const runPromise = runLoggedCommand({
+        command: process.execPath,
+        args: ['-e', script],
+        cwd: dir,
+        stdoutPath,
+        stderrPath,
+        timeoutMs: 30_000,
+        abortSignal: abortController.signal,
+      });
+
+      setTimeout(() => {
+        abortController.abort(new Error('runLoggedCommand aborted for test'));
+      }, 100);
+
+      await expect(runPromise).rejects.toThrow(/aborted for test/);
+      expect(Date.now() - startedAt).toBeLessThan(5_000);
+      expect(await readFile(stdoutPath, 'utf8')).toContain('Starting Metro Bundler');
+    });
+  }, 10_000);
 });

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -66,6 +66,55 @@ async function writeExitAfterStateDaemonScript(scriptPath: string, opts: { homeD
 }
 
 describe('startTestDaemon', () => {
+  it('assigns an isolated direct-peer bind port when one is not explicitly configured', async () => {
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-direct-peer-port-'));
+    const homeDir = resolve(testDir, 'home');
+    const observedEnvPath = resolve(testDir, 'observed-env.json');
+
+    try {
+      const fakeScriptDir = resolve(testDir, 'fake-daemon', 'dist');
+      await mkdir(fakeScriptDir, { recursive: true });
+      await mkdir(homeDir, { recursive: true });
+
+      await writeFile(
+        resolve(fakeScriptDir, 'index.mjs'),
+        [
+          "import { writeFileSync } from 'node:fs';",
+          "import { resolve } from 'node:path';",
+          "const homeDir = process.env.HAPPIER_HOME_DIR;",
+          "if (!homeDir) throw new Error('Missing HAPPIER_HOME_DIR');",
+          `writeFileSync(${JSON.stringify(observedEnvPath)}, JSON.stringify({ directPeerBindPort: process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT ?? null }), 'utf8');`,
+          "writeFileSync(resolve(homeDir, 'daemon.state.json'), JSON.stringify({ pid: process.pid, httpPort: 32226, controlToken: 'fresh-control-token' }), 'utf8');",
+          "process.on('SIGTERM', () => process.exit(0));",
+          "setInterval(() => {}, 1000);",
+        ].join('\n'),
+        'utf8',
+      );
+
+      cliLaunchSpecMock.resolveCliTestLaunchSpec.mockResolvedValueOnce({
+        command: process.execPath,
+        args: [resolve(fakeScriptDir, 'index.mjs')],
+        cwd: testDir,
+        env: {},
+      });
+
+      const daemon = await startTestDaemon({
+        testDir,
+        happyHomeDir: homeDir,
+        env: {},
+        startupTimeoutMs: 15_000,
+      });
+
+      const observed = JSON.parse(await readFile(observedEnvPath, 'utf8')) as { directPeerBindPort?: unknown };
+      expect(typeof observed.directPeerBindPort).toBe('string');
+      expect(Number(observed.directPeerBindPort)).toBeGreaterThan(0);
+
+      await daemon.stop();
+    } finally {
+      await rm(testDir, { recursive: true, force: true });
+    }
+  });
+
   it('reclaims a stale daemon ownership lease from a dead worker before starting a fresh daemon', async () => {
     if (process.platform === 'win32') {
       return;

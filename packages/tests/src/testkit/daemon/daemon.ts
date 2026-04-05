@@ -14,6 +14,7 @@ import {
 import { spawnLoggedProcess, type SpawnedProcess } from '../process/spawnProcess';
 import { resolveCliTestLaunchSpec } from '../process/cliLaunchSpec';
 import { terminateProcessTreeByPid } from '../process/processTree';
+import { reserveAvailablePort } from '../network/reserveAvailablePort';
 
 export type DaemonState = {
   pid: number;
@@ -466,6 +467,12 @@ export async function startTestDaemon(params: {
 
   await stopDaemonFromHomeDir(params.happyHomeDir).catch(() => {});
 
+  const directPeerBindPort =
+    typeof params.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT === 'string'
+    && params.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT.trim().length > 0
+      ? params.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT.trim()
+      : String(await reserveAvailablePort());
+
   const proc = spawnLoggedProcess({
     command: cliLaunchSpec.command,
     args: [...cliLaunchSpec.args, 'daemon', 'start-sync'],
@@ -476,6 +483,7 @@ export async function startTestDaemon(params: {
       ...resolveDaemonSubprocessEntrypointEnv(cliLaunchSpec),
       CI: '1',
       HAPPIER_HOME_DIR: params.happyHomeDir,
+      HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT: directPeerBindPort,
     },
     stdoutPath: resolve(params.testDir, 'daemon.stdout.log'),
     stderrPath: resolve(params.testDir, 'daemon.stderr.log'),

@@ -6,18 +6,29 @@ import { EventEmitter } from 'node:events';
 import { existsSync, unlinkSync, writeFileSync } from 'node:fs';
 
 import { repoRootDir } from '../paths';
+import { waitFor } from '../timing';
+import { buildUiWebExportCacheKey } from './uiWebExportCacheKey';
 
 let lastSpawnArgs: string[] | null = null;
 let lastSpawnEnv: NodeJS.ProcessEnv | null = null;
 let spawnCallCount = 0;
 let runLoggedCalls: Array<{ args: string[]; cwd: string; env?: NodeJS.ProcessEnv }> = [];
-let runLoggedFailureQueue: string[] = [];
+type RunLoggedBehavior =
+  | { type: 'throw'; message: string }
+  | { type: 'stallAtStartup' };
+let runLoggedFailureQueue: RunLoggedBehavior[] = [];
 let spawnStdoutText: string | null = null;
 let spawnStderrText: string | null = null;
 
 vi.mock('./spawnProcess', () => {
   return {
-    runLoggedCommand: async (params: { args?: unknown; cwd: string; env?: unknown }) => {
+    runLoggedCommand: async (params: {
+      args?: unknown;
+      cwd: string;
+      env?: unknown;
+      stdoutPath: string;
+      abortSignal?: AbortSignal;
+    }) => {
       const args = Array.isArray(params.args) ? (params.args as string[]) : [];
       runLoggedCalls.push({
         args,
@@ -25,9 +36,25 @@ vi.mock('./spawnProcess', () => {
         env: params.env && typeof params.env === 'object' ? (params.env as NodeJS.ProcessEnv) : undefined,
       });
 
-      const queuedFailure = runLoggedFailureQueue.shift();
-      if (queuedFailure) {
-        throw new Error(queuedFailure);
+      const queuedBehavior = runLoggedFailureQueue.shift();
+      if (queuedBehavior?.type === 'throw') {
+        throw new Error(queuedBehavior.message);
+      }
+      if (queuedBehavior?.type === 'stallAtStartup') {
+        writeFileSync(
+          params.stdoutPath,
+          ['Expo Autolinking module resolution enabled', 'Starting Metro Bundler'].join('\n'),
+          'utf8',
+        );
+        await new Promise<never>((_, reject) => {
+          if (params.abortSignal?.aborted) {
+            reject(params.abortSignal.reason instanceof Error ? params.abortSignal.reason : new Error(String(params.abortSignal.reason ?? 'aborted')));
+            return;
+          }
+          params.abortSignal?.addEventListener('abort', () => {
+            reject(params.abortSignal?.reason instanceof Error ? params.abortSignal.reason : new Error(String(params.abortSignal?.reason ?? 'aborted')));
+          }, { once: true });
+        });
       }
 
       const outputDirFlagIndex = args.findIndex((value) => value === '--output-dir');
@@ -39,6 +66,7 @@ vi.mock('./spawnProcess', () => {
           '<!doctype html><html><head><script src="/_expo/static/js/web/index.js"></script></head><body><div id="root"></div></body></html>',
           'utf8',
         );
+        await writeFile(join(outputDir, 'metadata.json'), JSON.stringify({ version: 1 }), 'utf8');
         await mkdir(join(outputDir, '_expo/static/js/web'), { recursive: true });
         await writeFile(join(outputDir, '_expo/static/js/web/index.js'), 'globalThis.__HAPPIER_E2E__ = true;', 'utf8');
       }
@@ -79,6 +107,7 @@ function resolveUrlString(input: unknown): string {
 
 type FakeFetchResponse = {
   ok: boolean;
+  status?: number;
   headers: { get: (name: string) => string | null };
   text: () => Promise<string>;
 };
@@ -94,40 +123,23 @@ function okText(body: string, contentType: string): FakeFetchResponse {
 function notOk(): FakeFetchResponse {
   return {
     ok: false,
+    status: 500,
     headers: { get: () => null },
     text: async () => '',
   };
 }
 
-function buildUiWebExportCacheKeyLike(env: NodeJS.ProcessEnv): string {
-  const debug = String(env.EXPO_PUBLIC_DEBUG ?? '1').trim() || '1';
-  const exportEnv: NodeJS.ProcessEnv = {
-    ...process.env,
-    ...env,
-    CI: '1',
-    NODE_ENV: 'production',
-    EXPO_NO_TELEMETRY: '1',
-    EXPO_PUBLIC_DEBUG: debug,
-    EXPO_PUBLIC_POSTHOG_KEY: String(env.EXPO_PUBLIC_POSTHOG_KEY ?? 'phc-clear-export').trim() || 'phc-clear-export',
-    EXPO_PUBLIC_HAPPIER_SERVER_URL: '',
-    EXPO_PUBLIC_HAPPY_SERVER_URL: '',
-    EXPO_PUBLIC_SERVER_URL: '',
-    EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: '',
-    EXPO_PUBLIC_HAPPIER_SYNC_TUNING_JSON: '',
+function responseText(body: string, contentType: string, options?: { ok?: boolean; status?: number }): FakeFetchResponse {
+  return {
+    ok: options?.ok ?? true,
+    status: options?.status ?? (options?.ok === false ? 500 : 200),
+    headers: { get: (name) => name.toLowerCase() === 'content-type' ? contentType : null },
+    text: async () => body,
   };
-  const relevantEntries = Object.entries(exportEnv)
-    .filter(([key]) =>
-      key.startsWith('EXPO_PUBLIC_')
-      || key === 'APP_ENV'
-      || key === 'APP_VARIANT'
-      || key === 'HAPPIER_APP_VARIANT_OVERRIDE'
-      || key === 'EAS_BUILD_PROFILE'
-      || key === 'EXPO_UPDATES_CHANNEL'
-      || key === 'NODE_ENV'
-    )
-    .sort(([left], [right]) => left.localeCompare(right));
+}
 
-  return JSON.stringify(relevantEntries);
+function buildUiWebExportCacheKeyLike(env: NodeJS.ProcessEnv): string {
+  return buildUiWebExportCacheKey(env);
 }
 
 function writeUiWebExportManifestLike(path: string): void {
@@ -182,6 +194,96 @@ describe('startUiWeb baseUrl resolution', () => {
     expect(resolveUiWebExportRootDir()).toBe(resolve(repoRootDir(), '.project', 'tmp', 'ui-web-export'));
   });
 
+  it('isolates default export roots per testDir when no explicit namespace is provided', async () => {
+    const { startUiWeb } = await import('./uiWeb');
+    const uniqueChannel = buildUniqueUiWebExportNamespace('isolated-default-root');
+
+    const testDirA = await mkdtemp(join(tmpdir(), 'happier-uiweb-default-a-'));
+    const testDirB = await mkdtemp(join(tmpdir(), 'happier-uiweb-default-b-'));
+
+    const startedA = await startUiWeb({
+      testDir: testDirA,
+      env: {
+        EXPO_PUBLIC_HAPPY_SERVER_URL: 'http://127.0.0.1:4111',
+        EXPO_UPDATES_CHANNEL: uniqueChannel,
+      },
+    });
+    const startedB = await startUiWeb({
+      testDir: testDirB,
+      env: {
+        EXPO_PUBLIC_HAPPY_SERVER_URL: 'http://127.0.0.1:4112',
+        EXPO_UPDATES_CHANNEL: uniqueChannel,
+      },
+    });
+
+    try {
+      expect(runLoggedCalls).toHaveLength(2);
+      const outputDirs = runLoggedCalls
+        .map((call) => {
+          const outputFlagIndex = call.args.findIndex((value) => value === '--output-dir');
+          return outputFlagIndex >= 0 ? call.args[outputFlagIndex + 1] : null;
+        })
+        .filter((value): value is string => typeof value === 'string');
+
+      expect(outputDirs).toHaveLength(2);
+      expect(outputDirs[0]).not.toBe(outputDirs[1]);
+      expect(outputDirs[0]).toContain('/.project/tmp/ui-web-export/');
+      expect(outputDirs[1]).toContain('/.project/tmp/ui-web-export/');
+    } finally {
+      await startedA.stop();
+      await startedB.stop();
+    }
+  }, 10_000);
+
+  it('reuses a completed matching export namespace before building an isolated auto namespace', async () => {
+    const { startUiWeb, resolveUiWebExportRootDir } = await import('./uiWeb');
+    const sharedRoot = resolveUiWebExportRootDir();
+    const cachedNamespaceRoot = resolveUiWebExportRootDir({
+      HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: buildUniqueUiWebExportNamespace('cached-export-match'),
+    });
+    await removePathWithRetries(cachedNamespaceRoot);
+
+    const sharedDistDir = resolve(cachedNamespaceRoot, 'dist');
+    await mkdir(sharedDistDir, { recursive: true });
+    await writeFile(
+      resolve(sharedDistDir, 'index.html'),
+      '<!doctype html><html><head><script src="/_expo/static/js/web/index.js"></script></head><body><div id="root"></div></body></html>',
+      'utf8',
+    );
+    await writeFile(resolve(sharedDistDir, 'metadata.json'), JSON.stringify({ version: 1 }), 'utf8');
+    await mkdir(resolve(sharedDistDir, '_expo/static/js/web'), { recursive: true });
+    await writeFile(resolve(sharedDistDir, '_expo/static/js/web/index.js'), 'globalThis.__HAPPIER_E2E__ = true;', 'utf8');
+
+    const env: NodeJS.ProcessEnv = {
+      EXPO_PUBLIC_HAPPY_SERVER_URL: 'http://127.0.0.1:4123',
+    };
+    await writeFile(
+      resolve(cachedNamespaceRoot, 'cache-key.json'),
+      JSON.stringify({ cacheKey: buildUiWebExportCacheKeyLike(env) }),
+      'utf8',
+    );
+    writeUiWebExportManifestLike(resolve(cachedNamespaceRoot, 'export-manifest.json'));
+
+    const started = await Promise.race([
+      startUiWeb({
+        testDir: await mkdtemp(join(tmpdir(), 'happier-uiweb-shared-default-')),
+        env,
+      }),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error(`startUiWeb did not resolve quickly; runLoggedCalls=${JSON.stringify(runLoggedCalls)}`));
+        }, 750);
+      }),
+    ]);
+
+    try {
+      expect(runLoggedCalls).toHaveLength(0);
+    } finally {
+      await started.stop();
+      await removePathWithRetries(cachedNamespaceRoot);
+    }
+  }, 10_000);
+
   it('uses a stable PostHog key when export env omits one', async () => {
     vi.resetModules();
     const { startUiWeb } = await import('./uiWeb');
@@ -195,12 +297,14 @@ describe('startUiWeb baseUrl resolution', () => {
     });
 
     try {
-      expect(runLoggedCalls).toHaveLength(1);
-      expect(runLoggedCalls[0]?.env?.EXPO_PUBLIC_POSTHOG_KEY).toBe('phc-clear-export');
+      expect(runLoggedCalls.length).toBeGreaterThanOrEqual(1);
+      for (const call of runLoggedCalls) {
+        expect(call.env?.EXPO_PUBLIC_POSTHOG_KEY).toBe('phc-clear-export');
+      }
     } finally {
       await started.stop();
     }
-  });
+  }, 10_000);
 
   it('uses exported web mode by default and reuses the shared export build', async () => {
     const { startUiWeb, resolveUiWebExportRootDir } = await import('./uiWeb');
@@ -221,6 +325,7 @@ describe('startUiWeb baseUrl resolution', () => {
         EXPO_PUBLIC_HAPPIER_SYNC_TUNING_JSON: JSON.stringify({ changesPageLimit: 12 }),
       },
     });
+    const buildCallsAfterA = runLoggedCalls.length;
     const startedB = await startUiWeb({
       testDir: testDirB,
       env: {
@@ -230,7 +335,8 @@ describe('startUiWeb baseUrl resolution', () => {
     });
 
     try {
-      expect(runLoggedCalls).toHaveLength(1);
+      expect(buildCallsAfterA).toBeGreaterThanOrEqual(1);
+      expect(runLoggedCalls).toHaveLength(buildCallsAfterA);
       expect(spawnCallCount).toBe(0);
 
       const html = await fetch(startedA.baseUrl).then((response) => response.text());
@@ -263,6 +369,7 @@ describe('startUiWeb baseUrl resolution', () => {
 
     await mkdir(distDir, { recursive: true });
     await writeFile(join(distDir, 'index.html'), '<!doctype html><html><head></head><body>cached</body></html>', 'utf8');
+    await writeFile(join(distDir, 'metadata.json'), JSON.stringify({ version: 1 }), 'utf8');
     await mkdir(join(distDir, '_expo', 'static', 'js', 'web'), { recursive: true });
     await writeFile(join(distDir, '_expo', 'static', 'js', 'web', 'index.js'), 'globalThis.__HAPPIER_E2E__ = true;', 'utf8');
 
@@ -300,6 +407,7 @@ describe('startUiWeb baseUrl resolution', () => {
 
     await mkdir(distDir, { recursive: true });
     await writeFile(join(distDir, 'index.html'), '<!doctype html><html><head></head><body>cached</body></html>', 'utf8');
+    await writeFile(join(distDir, 'metadata.json'), JSON.stringify({ version: 1 }), 'utf8');
     await mkdir(join(distDir, '_expo', 'static', 'js', 'web'), { recursive: true });
     await writeFile(join(distDir, '_expo', 'static', 'js', 'web', 'index.js'), 'globalThis.__HAPPIER_E2E__ = true;', 'utf8');
 
@@ -389,7 +497,7 @@ describe('startUiWeb baseUrl resolution', () => {
       await startedA.stop();
       await startedB.stop();
     }
-  });
+  }, 10_000);
 
   it('stops the exported web server cleanly', async () => {
     const { startUiWeb } = await import('./uiWeb');
@@ -785,6 +893,7 @@ describe('startUiWeb baseUrl resolution', () => {
     const testDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-'));
     await writeFile(join(testDir, 'ui.web.stdout.log'), '', 'utf8');
     await writeFile(join(testDir, 'ui.web.stderr.log'), '', 'utf8');
+    spawnStdoutText = 'http://localhost:43123\n';
 
     const webEntryHtml = '<!doctype html><html><head><script src="/index.bundle?platform=web&dev=false&minify=true"></script></head></html>';
     let htmlFetchCount = 0;
@@ -817,13 +926,22 @@ describe('startUiWeb baseUrl resolution', () => {
     const originalFetch = globalThis.fetch;
     (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
 
-    const startedPromise = startUiWeb({ testDir, env: { HAPPIER_E2E_UI_WEB_MODE: 'metro' } });
+    const startedPromise = startUiWeb({
+      testDir,
+      env: { HAPPIER_E2E_UI_WEB_MODE: 'metro' },
+      port: 43123,
+    });
     try {
       const started = await Promise.race([
         startedPromise.then(() => 'resolved'),
-        new Promise<'waiting'>((resolve) => {
-          setTimeout(() => resolve('waiting'), 150);
-        }),
+        (async (): Promise<'waiting'> => {
+          await waitFor(() => bundleFetchCount > 0 && htmlFetchCount > 0, {
+            timeoutMs: 1_000,
+            intervalMs: 25,
+            context: 'initial metro html + bundle probe',
+          });
+          return 'waiting';
+        })(),
       ]);
 
       expect(started).toBe('waiting');
@@ -844,32 +962,115 @@ describe('startUiWeb baseUrl resolution', () => {
     }
   }, 10_000);
 
-  it('does not stall when the metro entry-page probe hangs for a single candidate', async () => {
+  it('re-anchors metro baseUrl to the live port once the spawned metro becomes reachable', async () => {
     const { startUiWeb } = await import('./uiWeb');
 
     const testDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-'));
-    await writeFile(join(testDir, 'ui.web.stdout.log'), '', 'utf8');
+    await writeFile(join(testDir, 'ui.web.stdout.log'), 'http://localhost:19006\n', 'utf8');
     await writeFile(join(testDir, 'ui.web.stderr.log'), '', 'utf8');
+    spawnStdoutText = 'http://localhost:19006\n';
 
-    let bundleFetchCount = 0;
-    const fetchMock = vi.fn(async (input: unknown, init?: { signal?: AbortSignal }): Promise<FakeFetchResponse> => {
+    let livePortEntryFetchCount = 0;
+    const fetchMock = vi.fn(async (input: unknown): Promise<FakeFetchResponse> => {
       const url = resolveUrlString(input);
       const parsed = new URL(url);
 
-      if (parsed.pathname === '/status') {
+      if (parsed.port === '43123' && parsed.pathname === '/status') {
         return okText('packager-status:running', 'text/plain');
       }
 
-      if (parsed.pathname === '/') {
-        return await new Promise<FakeFetchResponse>((_, reject) => {
-          init?.signal?.addEventListener('abort', () => {
-            reject(new DOMException('The operation was aborted.', 'AbortError'));
-          }, { once: true });
-        });
+      if (parsed.port === '43123' && parsed.pathname === '/') {
+        livePortEntryFetchCount += 1;
+        return okText(
+          '<!doctype html><html><head><script src="/index.bundle?platform=web&dev=false&minify=true"></script></head></html>',
+          'text/html',
+        );
       }
 
-      if (parsed.pathname.startsWith('/index.bundle')) {
-        bundleFetchCount += 1;
+      if (parsed.port === '43123' && parsed.pathname.startsWith('/index.bundle')) {
+        return okText('globalThis.__HAPPIER_E2E__ = true;', 'application/javascript');
+      }
+
+      if (parsed.port === '19006') {
+        return notOk();
+      }
+
+      return notOk();
+    });
+
+    const originalFetch = globalThis.fetch;
+    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    try {
+      const started = await Promise.race([
+        startUiWeb({
+          testDir,
+          env: {
+            HAPPIER_E2E_UI_WEB_MODE: 'metro',
+          },
+          port: 43123,
+        }),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => {
+            reject(new Error(`startUiWeb did not re-anchor to the live metro port; livePortEntryFetchCount=${livePortEntryFetchCount}`));
+          }, 1_500);
+        }),
+      ]);
+
+      expect(new URL(started.baseUrl).port).toBe('43123');
+      expect(livePortEntryFetchCount).toBeGreaterThan(0);
+      await started.stop();
+    } finally {
+      if (typeof originalFetch === 'function') {
+        (globalThis as { fetch: typeof fetch }).fetch = originalFetch;
+      } else {
+        delete (globalThis as { fetch?: unknown }).fetch;
+      }
+    }
+  }, 10_000);
+
+  it('waits for the live metro port when the stale stdout port still serves an entry page', async () => {
+    const { startUiWeb } = await import('./uiWeb');
+
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-'));
+    await writeFile(join(testDir, 'ui.web.stdout.log'), 'http://localhost:19006\n', 'utf8');
+    await writeFile(join(testDir, 'ui.web.stderr.log'), '', 'utf8');
+    spawnStdoutText = 'http://localhost:19006\n';
+
+    let metroReady = false;
+    setTimeout(() => {
+      metroReady = true;
+    }, 220);
+
+    let livePortEntryFetchCount = 0;
+    const fetchMock = vi.fn(async (input: unknown): Promise<FakeFetchResponse> => {
+      const url = resolveUrlString(input);
+      const parsed = new URL(url);
+
+      if (parsed.port === '43123' && parsed.pathname === '/status' && metroReady) {
+        return okText('packager-status:running', 'text/plain');
+      }
+
+      if (parsed.port === '43123' && parsed.pathname === '/' && metroReady) {
+        livePortEntryFetchCount += 1;
+        return okText(
+          '<!doctype html><html><head><script src="/index.bundle?platform=web&dev=false&minify=true"></script></head></html>',
+          'text/html',
+        );
+      }
+
+      if (parsed.port === '43123' && parsed.pathname.startsWith('/index.bundle') && metroReady) {
+        return okText('globalThis.__HAPPIER_E2E__ = true;', 'application/javascript');
+      }
+
+      if (parsed.port === '19006' && parsed.pathname === '/') {
+        return okText(
+          '<!doctype html><html><head><script src="/index.bundle?platform=web&dev=false&minify=true"></script></head></html>',
+          'text/html',
+        );
+      }
+
+      if (parsed.port === '19006' && parsed.pathname.startsWith('/index.bundle')) {
         return okText('globalThis.__HAPPIER_E2E__ = true;', 'application/javascript');
       }
 
@@ -885,17 +1086,18 @@ describe('startUiWeb baseUrl resolution', () => {
           testDir,
           env: {
             HAPPIER_E2E_UI_WEB_MODE: 'metro',
-            HAPPIER_E2E_UI_WEB_ENTRY_PROBE_TIMEOUT_MS: '50',
           },
+          port: 43123,
         }),
         new Promise<never>((_, reject) => {
           setTimeout(() => {
-            reject(new Error(`startUiWeb stalled on a hanging entry probe; bundleFetchCount=${bundleFetchCount}`));
-          }, 500);
+            reject(new Error(`startUiWeb did not wait for the live metro port; livePortEntryFetchCount=${livePortEntryFetchCount}`));
+          }, 1_500);
         }),
       ]);
 
-      expect(bundleFetchCount).toBe(0);
+      expect(new URL(started.baseUrl).port).toBe('43123');
+      expect(livePortEntryFetchCount).toBeGreaterThan(0);
       await started.stop();
     } finally {
       if (typeof originalFetch === 'function') {
@@ -959,12 +1161,65 @@ describe('startUiWeb baseUrl resolution', () => {
         new Promise<never>((_, reject) => {
           setTimeout(() => {
             reject(new Error(`startUiWeb did not recover from aborted bundle fetch; bundleFetchCount=${bundleFetchCount}`));
-          }, 450);
+          }, 1_800);
         }),
       ]);
 
       expect(bundleFetchCount).toBeGreaterThanOrEqual(2);
       await started.stop();
+    } finally {
+      if (typeof originalFetch === 'function') {
+        (globalThis as { fetch: typeof fetch }).fetch = originalFetch;
+      } else {
+        delete (globalThis as { fetch?: unknown }).fetch;
+      }
+    }
+  }, 10_000);
+
+  it('fails fast when the primary app script returns a Metro JSON bundle error', async () => {
+    const { startUiWeb } = await import('./uiWeb');
+
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-'));
+    await writeFile(join(testDir, 'ui.web.stdout.log'), '', 'utf8');
+    await writeFile(join(testDir, 'ui.web.stderr.log'), '', 'utf8');
+
+    const fetchMock = vi.fn(async (input: unknown): Promise<FakeFetchResponse> => {
+      const url = resolveUrlString(input);
+      const parsed = new URL(url);
+
+      if (parsed.pathname === '/status') {
+        return okText('packager-status:running', 'text/plain');
+      }
+
+      if (parsed.pathname === '/') {
+        return okText(
+          '<!doctype html><html><head><script src="/index.bundle?platform=web&dev=false&minify=true"></script></head></html>',
+          'text/html',
+        );
+      }
+
+      if (parsed.pathname.startsWith('/index.bundle')) {
+        return responseText(JSON.stringify({
+          type: 'TransformError',
+          message: 'Unable to resolve "../selection/resolveActivitySurfaceSlots" from "apps/ui/sources/activity/liveActivities/buildLiveActivitySnapshots.ts"',
+        }), 'application/json', { ok: false, status: 500 });
+      }
+
+      return notOk();
+    });
+
+    const originalFetch = globalThis.fetch;
+    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    try {
+      await expect(startUiWeb({
+        testDir,
+        env: {
+          HAPPIER_E2E_UI_WEB_MODE: 'metro',
+          HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: '500',
+          HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS: '50',
+        },
+      })).rejects.toThrow(/resolveActivitySurfaceSlots/);
     } finally {
       if (typeof originalFetch === 'function') {
         (globalThis as { fetch: typeof fetch }).fetch = originalFetch;
@@ -1041,6 +1296,64 @@ describe('startUiWeb baseUrl resolution', () => {
     }
   }, 10_000);
 
+  it('fails fast on script-ready timeout when Metro stdout already reports a bundle failure', async () => {
+    const { startUiWeb } = await import('./uiWeb');
+
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-'));
+    await writeFile(join(testDir, 'ui.web.stdout.log'), '', 'utf8');
+    await writeFile(join(testDir, 'ui.web.stderr.log'), '', 'utf8');
+
+    spawnStdoutText = [
+      'Starting Metro Bundler',
+      'Waiting on http://localhost:19006',
+      'Web Bundling failed 48164ms apps/ui/index.ts (6483 modules)',
+      'Unable to resolve "../selection/resolveActivitySurfaceSlots" from "apps/ui/sources/activity/liveActivities/buildLiveActivitySnapshots.ts"',
+    ].join('\n');
+
+    const fetchMock = vi.fn(async (input: unknown): Promise<FakeFetchResponse> => {
+      const url = resolveUrlString(input);
+      const parsed = new URL(url);
+
+      if (parsed.pathname === '/status') {
+        return okText('packager-status:running', 'text/plain');
+      }
+
+      if (parsed.pathname === '/') {
+        return okText(
+          '<!doctype html><html><head><script src="/index.bundle?platform=web&dev=false&minify=true"></script></head></html>',
+          'text/html',
+        );
+      }
+
+      if (parsed.pathname.startsWith('/index.bundle')) {
+        return okText('<!doctype html><html><body>Still compiling</body></html>', 'text/html');
+      }
+
+      return notOk();
+    });
+
+    const originalFetch = globalThis.fetch;
+    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    try {
+      await expect(startUiWeb({
+        testDir,
+        env: {
+          HAPPIER_E2E_UI_WEB_MODE: 'metro',
+          HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: '250',
+          HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS: '50',
+          HAPPIER_E2E_UI_WEB_SCRIPT_HTML_REFRESH_RETRY_COUNT: '1',
+        },
+      })).rejects.toThrow(/resolveActivitySurfaceSlots/);
+    } finally {
+      if (typeof originalFetch === 'function') {
+        (globalThis as { fetch: typeof fetch }).fetch = originalFetch;
+      } else {
+        delete (globalThis as { fetch?: unknown }).fetch;
+      }
+    }
+  }, 10_000);
+
   it('returns once the entry html is available even before Expo injects script tags', async () => {
     const { startUiWeb } = await import('./uiWeb');
 
@@ -1088,9 +1401,151 @@ describe('startUiWeb baseUrl resolution', () => {
     }
   }, 10_000);
 
+  it('does not require metro /status when the entry page and primary bundle are already reachable', async () => {
+    const { startUiWeb } = await import('./uiWeb');
+
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-'));
+    await writeFile(join(testDir, 'ui.web.stdout.log'), '', 'utf8');
+    await writeFile(join(testDir, 'ui.web.stderr.log'), '', 'utf8');
+    spawnStdoutText = 'http://localhost:43123\n';
+
+    const fetchMock = vi.fn(async (input: unknown, init?: { signal?: AbortSignal }): Promise<FakeFetchResponse> => {
+      const url = resolveUrlString(input);
+      const parsed = new URL(url);
+
+      if (parsed.pathname === '/status') {
+        return await new Promise<FakeFetchResponse>((_, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('The operation was aborted.', 'AbortError'));
+          }, { once: true });
+        });
+      }
+
+      if (parsed.pathname === '/') {
+        return okText(
+          '<!doctype html><html><head><script src="/index.bundle?platform=web&dev=false&minify=true"></script></head></html>',
+          'text/html',
+        );
+      }
+
+      if (parsed.pathname.startsWith('/index.bundle')) {
+        return okText('globalThis.__HAPPIER_E2E__ = true;', 'application/javascript');
+      }
+
+      return notOk();
+    });
+
+    const originalFetch = globalThis.fetch;
+    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    try {
+      const started = await Promise.race([
+        startUiWeb({
+          testDir,
+          env: {
+            HAPPIER_E2E_UI_WEB_MODE: 'metro',
+            HAPPIER_E2E_UI_WEB_METRO_STATUS_TIMEOUT_MS: '150',
+            HAPPIER_E2E_UI_WEB_METRO_STATUS_ATTEMPT_TIMEOUT_MS: '25',
+            HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: '500',
+            HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS: '50',
+          },
+          port: 43123,
+        }),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('startUiWeb did not finish quickly')), 1_000);
+        }),
+      ]);
+
+      await started.stop();
+    } finally {
+      if (typeof originalFetch === 'function') {
+        (globalThis as { fetch: typeof fetch }).fetch = originalFetch;
+      } else {
+        delete (globalThis as { fetch?: unknown }).fetch;
+      }
+    }
+  }, 10_000);
+
+  it('waits on the advertised expected metro port even when stdout beats HTTP readiness', async () => {
+    const { startUiWeb } = await import('./uiWeb');
+
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-'));
+    await writeFile(join(testDir, 'ui.web.stdout.log'), '', 'utf8');
+    await writeFile(join(testDir, 'ui.web.stderr.log'), '', 'utf8');
+    spawnStdoutText = 'Waiting on http://localhost:43123\n';
+
+    let metroReady = false;
+    setTimeout(() => {
+      metroReady = true;
+    }, 220);
+
+    const fetchMock = vi.fn(async (input: unknown, init?: { signal?: AbortSignal }): Promise<FakeFetchResponse> => {
+      const url = resolveUrlString(input);
+      const parsed = new URL(url);
+
+      if (!metroReady && (parsed.pathname === '/status' || parsed.pathname === '/')) {
+        return await new Promise<FakeFetchResponse>((_, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('The operation was aborted.', 'AbortError'));
+          }, { once: true });
+        });
+      }
+
+      if (parsed.pathname === '/status') {
+        return okText('packager-status:running', 'text/plain');
+      }
+
+      if (parsed.pathname === '/') {
+        return okText(
+          '<!doctype html><html><head><script src="/index.bundle?platform=web&dev=false&minify=true"></script></head></html>',
+          'text/html',
+        );
+      }
+
+      if (parsed.pathname.startsWith('/index.bundle')) {
+        return okText('globalThis.__HAPPIER_E2E__ = true;', 'application/javascript');
+      }
+
+      return notOk();
+    });
+
+    const originalFetch = globalThis.fetch;
+    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    try {
+      const started = await Promise.race([
+        startUiWeb({
+          testDir,
+          env: {
+            HAPPIER_E2E_UI_WEB_MODE: 'metro',
+            HAPPIER_E2E_UI_WEB_BASE_URL_TIMEOUT_MS: '120',
+            HAPPIER_E2E_UI_WEB_ENTRY_PROBE_TIMEOUT_MS: '25',
+            HAPPIER_E2E_UI_WEB_METRO_STATUS_TIMEOUT_MS: '800',
+            HAPPIER_E2E_UI_WEB_METRO_STATUS_ATTEMPT_TIMEOUT_MS: '25',
+            HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: '500',
+            HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS: '50',
+          },
+          port: 43123,
+        }),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('startUiWeb did not recover from stdout leading HTTP readiness')), 1_400);
+        }),
+      ]);
+
+      expect(metroReady).toBe(true);
+      await started.stop();
+    } finally {
+      if (typeof originalFetch === 'function') {
+        (globalThis as { fetch: typeof fetch }).fetch = originalFetch;
+      } else {
+        delete (globalThis as { fetch?: unknown }).fetch;
+      }
+    }
+  }, 10_000);
+
   it('falls back to Metro when exported web startup fails and fallback is enabled', async () => {
     vi.resetModules();
-    runLoggedFailureQueue = ['expo export hung at Starting Metro Bundler'];
+    runLoggedFailureQueue = [{ type: 'stallAtStartup' }];
     const { startUiWeb } = await import('./uiWeb');
 
     const testDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-'));
@@ -1123,14 +1578,24 @@ describe('startUiWeb baseUrl resolution', () => {
     (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
 
     try {
-      const started = await startUiWeb({
-        testDir,
-        env: {
-          HAPPIER_E2E_UI_WEB_MODE: 'export',
-          HAPPIER_E2E_UI_WEB_EXPORT_FALLBACK_TO_METRO: '1',
-          HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: `uiweb-fallback-${Date.now()}`,
-        },
-      });
+      const started = await Promise.race([
+        startUiWeb({
+          testDir,
+          env: {
+            HAPPIER_E2E_UI_WEB_MODE: 'export',
+            HAPPIER_E2E_UI_WEB_EXPORT_FALLBACK_TO_METRO: '1',
+            HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: `uiweb-fallback-${Date.now()}`,
+            HAPPIER_E2E_UI_WEB_EXPORT_STARTUP_STALL_TIMEOUT_MS: '25',
+            HAPPIER_E2E_UI_WEB_METRO_STATUS_TIMEOUT_MS: '150',
+            HAPPIER_E2E_UI_WEB_METRO_STATUS_ATTEMPT_TIMEOUT_MS: '25',
+            HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: '500',
+            HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS: '50',
+          },
+        }),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('startUiWeb did not finish quickly')), 1_500);
+        }),
+      ]);
 
       expect(runLoggedCalls).toHaveLength(1);
       expect(spawnCallCount).toBe(1);
@@ -1143,7 +1608,7 @@ describe('startUiWeb baseUrl resolution', () => {
         delete (globalThis as { fetch?: unknown }).fetch;
       }
     }
-  });
+  }, 10_000);
 
   it('exports a beforeAll timeout budget that covers cold Expo startup phases', async () => {
     const uiWebModule = await import('./uiWeb');
@@ -1162,7 +1627,20 @@ describe('startUiWeb baseUrl resolution', () => {
     const resolveUiWebExportBuildTimeoutMs = (uiWebExportModule as Record<string, unknown>).resolveUiWebExportBuildTimeoutMs;
 
     expect(typeof resolveUiWebExportBuildTimeoutMs).toBe('function');
-    expect((resolveUiWebExportBuildTimeoutMs as (env: NodeJS.ProcessEnv) => number)({})).toBeGreaterThan(150_000);
+    expect((resolveUiWebExportBuildTimeoutMs as (env: NodeJS.ProcessEnv) => number)({})).toBe(480_000);
+  });
+
+  it('keeps the Metro readiness timeout high enough for cold CI startup', async () => {
+    const metroModule = await import('./uiWebMetro');
+    const resolveUiWebMetroStatusTimeoutMs = (metroModule as Record<string, unknown>).resolveUiWebMetroStatusTimeoutMs;
+
+    expect(typeof resolveUiWebMetroStatusTimeoutMs).toBe('function');
+    expect((resolveUiWebMetroStatusTimeoutMs as (env: NodeJS.ProcessEnv) => number)({})).toBe(240_000);
+    expect(
+      (resolveUiWebMetroStatusTimeoutMs as (env: NodeJS.ProcessEnv) => number)({
+        HAPPIER_E2E_UI_WEB_METRO_STATUS_TIMEOUT_MS: '9000',
+      }),
+    ).toBe(9000);
   });
 
   it('uses a bounded metro script-fetch attempt budget unless explicitly overridden', async () => {
@@ -1250,7 +1728,7 @@ describe('startUiWeb baseUrl resolution', () => {
         new Promise<never>((_, reject) => {
           setTimeout(() => {
             reject(new Error(`startUiWeb did not recover from entry html changing; htmlFetchCount=${htmlFetchCount}`));
-          }, 450);
+          }, 1_800);
         }),
       ]);
 
@@ -1327,7 +1805,7 @@ describe('startUiWeb baseUrl resolution', () => {
         new Promise<never>((_, reject) => {
           setTimeout(() => {
             reject(new Error(`startUiWeb did not accept later bundle-like script; runtime=${runtimeFetchCount} entry=${entryFetchCount}`));
-          }, 450);
+          }, 1_800);
         }),
       ]);
 

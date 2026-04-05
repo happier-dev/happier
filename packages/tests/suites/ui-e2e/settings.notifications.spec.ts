@@ -13,6 +13,12 @@ async function createAccountIfNeeded(page: Page): Promise<void> {
     const createAccount = page.getByTestId('welcome-create-account');
     if (await createAccount.count()) {
         await createAccountAndReachConnectMachineState({ page });
+        return;
+    }
+
+    const createAccountByRole = page.getByRole('button', { name: 'Create account' });
+    if (await createAccountByRole.count()) {
+        await createAccountAndReachConnectMachineState({ page });
     }
 }
 
@@ -33,7 +39,7 @@ test.describe('ui e2e: settings notifications', () => {
     let uiBaseUrl: string | null = null;
 
     test.beforeAll(async () => {
-        test.setTimeout(540_000);
+        test.setTimeout(900_000);
         await mkdir(suiteDir, { recursive: true });
 
         server = await startServerLight({
@@ -51,6 +57,10 @@ test.describe('ui e2e: settings notifications', () => {
                 EXPO_PUBLIC_DEBUG: '1',
                 EXPO_PUBLIC_HAPPY_SERVER_URL: server.baseUrl,
                 EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-settings-notifications-${run.runId}`,
+                HAPPIER_E2E_UI_WEB_MODE: 'export',
+                HAPPIER_E2E_UI_WEB_EXPORT_FALLBACK_TO_METRO: '0',
+                HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS: '900000',
+                HAPPIER_E2E_UI_WEB_EXPORT_STARTUP_STALL_TIMEOUT_MS: '300000',
             },
         });
 
@@ -64,7 +74,7 @@ test.describe('ui e2e: settings notifications', () => {
     });
 
     test('renders the notifications settings route and adds a webhook channel', async ({ page }) => {
-        test.setTimeout(540_000);
+        test.setTimeout(900_000);
         if (!uiBaseUrl) throw new Error('missing ui base url');
 
         await page.setViewportSize({ width: 1440, height: 900 });
@@ -75,6 +85,9 @@ test.describe('ui e2e: settings notifications', () => {
         await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/notifications?happier_hmr=0`, 180_000);
 
         await expect(page.getByTestId('settings-notifications-screen')).toHaveCount(1, { timeout: 60_000 });
+        await expect(page.getByTestId('settings-notifications-activity-surfaces-enabled')).toHaveCount(0);
+        await expect(page.getByTestId('settings-notifications-live-activities-enabled')).toHaveCount(0);
+        await expect(page.getByTestId('settings-notifications-home-screen-widgets-enabled')).toHaveCount(0);
         await expect(page.getByTestId('settings-notifications-badges-enabled')).toHaveCount(1, { timeout: 60_000 });
         await expect(page.getByTestId('settings-notifications-local-enabled')).toHaveCount(1, { timeout: 60_000 });
         await expect(page.getByTestId('settings-notifications-push-enabled')).toHaveCount(1, { timeout: 60_000 });

@@ -891,11 +891,11 @@ test('macos wsrepl lima matrix wrapper defaults Playwright to headless (supports
       '  echo "v99.0.0-test"',
       '  exit 0',
       'fi',
-      'if [[ "${1:-}" == *"/apps/cli/bin/happier.mjs" && "${2:-}" == "--version" ]]; then',
+      'if [[ ( "${1:-}" == *"/apps/cli/bin/happier.mjs" || "${1:-}" == *"/node_modules/.bin/happier" ) && "${2:-}" == "--version" ]]; then',
       '  echo "0.1.0"',
       '  exit 0',
       'fi',
-      'if [[ "${1:-}" == *"/apps/cli/bin/happier.mjs" && "${2:-}" == "daemon" ]]; then',
+      'if [[ ( "${1:-}" == *"/apps/cli/bin/happier.mjs" || "${1:-}" == *"/node_modules/.bin/happier" ) && "${2:-}" == "daemon" ]]; then',
       '  stopped_marker="${HOME}/.host-daemon-stopped"',
       '  sub="${3:-}"',
       '  case "$sub" in',
@@ -3935,8 +3935,10 @@ test('macos wsrepl lima matrix wrapper prefers the stack runtime CLI inferred fr
   const runtimeJsonPath = join(stackRoot, 'stack.runtime.json');
   const accessKeyPath = join(stackRoot, 'cli', 'servers', 'server_test', 'access.key');
   const daemonLogPath = join(homeDir, 'daemon.log');
+  const guestHappierPath = join(homeDir, '.happier', 'bin', 'happier');
 
   await mkdir(runtimeCliDir, { recursive: true });
+  await mkdir(join(guestHappierPath, '..'), { recursive: true });
   await mkdir(resolve(accessKeyPath, '..'), { recursive: true });
   await writeFile(accessKeyPath, 'test-access-key\n', 'utf8');
   await writeFile(
@@ -3960,6 +3962,16 @@ test('macos wsrepl lima matrix wrapper prefers the stack runtime CLI inferred fr
 	    'utf8',
 	  );
   await chmod(runtimeCliPath, 0o755);
+  await writeFile(
+    guestHappierPath,
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      `exec ${JSON.stringify(runtimeCliPath)} "$@"`,
+    ].join('\n') + '\n',
+    'utf8',
+  );
+  await chmod(guestHappierPath, 0o755);
 
   const scriptPath = resolve(join(__dirname, 'wsrepl-lima-matrix.sh'));
   const env = {
@@ -4062,11 +4074,11 @@ test('macos wsrepl lima matrix wrapper restarts the guest daemon with HAPPIER_SE
       '  echo "v99.0.0-test"',
       '  exit 0',
       'fi',
-      'if [[ "${1:-}" == *"/apps/cli/bin/happier.mjs" && "${2:-}" == "--version" ]]; then',
+      'if [[ ( "${1:-}" == *"/apps/cli/bin/happier.mjs" || "${1:-}" == *"/node_modules/.bin/happier" ) && "${2:-}" == "--version" ]]; then',
       '  echo "0.1.0"',
       '  exit 0',
       'fi',
-      'if [[ "${1:-}" == *"/apps/cli/bin/happier.mjs" && "${2:-}" == "daemon" ]]; then',
+      'if [[ ( "${1:-}" == *"/apps/cli/bin/happier.mjs" || "${1:-}" == *"/node_modules/.bin/happier" ) && "${2:-}" == "daemon" ]]; then',
       '  stopped_marker="${HOME}/.host-daemon-stopped"',
       '  sub="${3:-}"',
       '  case "$sub" in',
@@ -9087,11 +9099,11 @@ test('macos wsrepl lima matrix wrapper can derive HAPPIER_QA_STEPS_JSON from hos
       '  echo "v99.0.0-test"',
       '  exit 0',
       'fi',
-      'if [[ "${1:-}" == *"/apps/cli/bin/happier.mjs" && "${2:-}" == "--version" ]]; then',
+      'if [[ ( "${1:-}" == *"/apps/cli/bin/happier.mjs" || "${1:-}" == *"/node_modules/.bin/happier" ) && "${2:-}" == "--version" ]]; then',
       '  echo "0.1.0"',
       '  exit 0',
       'fi',
-      'if [[ "${1:-}" == *"/apps/cli/bin/happier.mjs" && "${2:-}" == "daemon" ]]; then',
+      'if [[ ( "${1:-}" == *"/apps/cli/bin/happier.mjs" || "${1:-}" == *"/node_modules/.bin/happier" ) && "${2:-}" == "daemon" ]]; then',
       '  stopped_marker="${HOME}/.host-daemon-stopped"',
       '  sub="${3:-}"',
       '  case "$sub" in',

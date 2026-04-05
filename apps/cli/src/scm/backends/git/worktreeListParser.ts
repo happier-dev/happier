@@ -1,5 +1,7 @@
 import type { ScmWorktree } from '@happier-dev/protocol';
 
+import { deriveGitWorktreeId } from './deriveGitWorktreeId';
+
 function normalizeBranchRef(rawBranch: string | null): string | null {
     if (!rawBranch) return null;
     const trimmed = rawBranch.trim();
@@ -19,18 +21,22 @@ export function parseGitWorktreeListPorcelain(input: {
 
     let activePath: string | null = null;
     let activeBranch: string | null = null;
+    let activeIsPrunable = false;
 
     const flush = () => {
         const path = activePath?.trim() || null;
         if (!path) return;
         worktrees.push({
+            id: deriveGitWorktreeId(path),
             path,
             branch: normalizeBranchRef(activeBranch),
             isCurrent: currentPath === path,
             isMain: mainPath === path,
+            ...(activeIsPrunable ? { isPrunable: true } : {}),
         });
         activePath = null;
         activeBranch = null;
+        activeIsPrunable = false;
     };
 
     for (const rawLine of lines) {
@@ -46,6 +52,10 @@ export function parseGitWorktreeListPorcelain(input: {
         }
         if (line.startsWith('branch ')) {
             activeBranch = line.slice('branch '.length);
+            continue;
+        }
+        if (line.startsWith('prunable ')) {
+            activeIsPrunable = true;
         }
     }
 

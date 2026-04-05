@@ -91,6 +91,7 @@ export async function runLoggedCommand(params: {
   stdoutPath: string;
   stderrPath: string;
   timeoutMs?: number;
+  abortSignal?: AbortSignal;
 }): Promise<void> {
   const child = spawn(params.command, params.args, {
     cwd: params.cwd,
@@ -108,40 +109,84 @@ export async function runLoggedCommand(params: {
 
   const timeoutMs = params.timeoutMs ?? 120_000;
   const streamDrainTimeoutMs = Math.max(10_000, Math.min(timeoutMs, 120_000));
+  const closeLogStreams = () => {
+    try {
+      child.stdout?.unpipe(stdout);
+    } catch {
+      // ignore
+    }
+    try {
+      child.stderr?.unpipe(stderr);
+    } catch {
+      // ignore
+    }
+    try {
+      stdout.end();
+    } catch {
+      // ignore
+    }
+    try {
+      stderr.end();
+    } catch {
+      // ignore
+    }
+  };
+  const normalizeAbortError = (reason: unknown): Error => {
+    if (reason instanceof Error) return reason;
+    if (typeof reason === 'string' && reason.trim()) return new Error(reason);
+    return new Error(`${params.command} ${params.args.join(' ')} aborted`);
+  };
 
   const outcome = await new Promise<{ ok: true } | { ok: false; error: Error }>((resolve) => {
+    let settled = false;
+    const settle = (result: { ok: true } | { ok: false; error: Error }) => {
+      if (settled) return;
+      settled = true;
+      if (params.abortSignal && abortHandler) {
+        params.abortSignal.removeEventListener('abort', abortHandler);
+      }
+      resolve(result);
+    };
     const timer = setTimeout(() => {
       if (typeof child.pid === 'number' && child.pid > 0) {
         void terminateProcessTreeByPid(child.pid, { graceMs: 0, pollMs: 25 });
       }
-      resolve({ ok: false, error: new Error(`${params.command} ${params.args.join(' ')} timed out after ${timeoutMs}ms`) });
+      closeLogStreams();
+      settle({ ok: false, error: new Error(`${params.command} ${params.args.join(' ')} timed out after ${timeoutMs}ms`) });
     }, timeoutMs);
+
+    const abortHandler = () => {
+      clearTimeout(timer);
+      detachCleanup();
+      if (typeof child.pid === 'number' && child.pid > 0) {
+        void terminateProcessTreeByPid(child.pid, { graceMs: 0, pollMs: 25 });
+      }
+      closeLogStreams();
+      settle({ ok: false, error: normalizeAbortError(params.abortSignal?.reason) });
+    };
+
+    if (params.abortSignal?.aborted) {
+      abortHandler();
+      return;
+    }
+    params.abortSignal?.addEventListener('abort', abortHandler, { once: true });
 
     child.on('error', (err) => {
       clearTimeout(timer);
       detachCleanup();
-      try {
-        stdout.end();
-      } catch {
-        // ignore
-      }
-      try {
-        stderr.end();
-      } catch {
-        // ignore
-      }
-      resolve({ ok: false, error: err instanceof Error ? err : new Error(String(err)) });
+      closeLogStreams();
+      settle({ ok: false, error: err instanceof Error ? err : new Error(String(err)) });
     });
     child.on('exit', (code, signal) => {
       clearTimeout(timer);
       detachCleanup();
       if (code === 0) {
-        resolve({ ok: true });
+        settle({ ok: true });
         return;
       }
 
       const detail = signal ? `signal ${signal}` : `code ${code}`;
-      resolve({ ok: false, error: new Error(`${params.command} exited with ${detail}`) });
+      settle({ ok: false, error: new Error(`${params.command} exited with ${detail}`) });
     });
   });
 

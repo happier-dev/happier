@@ -27,13 +27,14 @@ export function parseHeartbeatArgs(argv) {
 function resolveUiWebExportNamespace(env) {
   const explicitNamespace = String(env?.HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE ?? '').trim();
   if (explicitNamespace) return explicitNamespace;
-  return `playwright-ui-${process.pid}-${Date.now()}`;
+  return 'playwright-ui-shared';
 }
 
 export function createPlaywrightSpawnOptions(env) {
   const nextEnv = {
     ...env,
     HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: resolveUiWebExportNamespace(env),
+    PLAYWRIGHT_HTML_OPEN: 'never',
   };
   return {
     stdio: 'inherit',
