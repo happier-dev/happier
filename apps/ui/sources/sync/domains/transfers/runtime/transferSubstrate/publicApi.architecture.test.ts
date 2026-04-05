@@ -105,4 +105,50 @@ describe('transferSubstrate (public API)', () => {
             'workspaceFileTransfers.ts',
         ]);
     });
+
+    it('pins the concrete responsibilities that keep each residual holdover on the bulk bridge', async () => {
+        const transferSubstratePath = fileURLToPath(new URL('./', import.meta.url));
+        const holdoverReasons = [
+            {
+                file: 'promptAssetTransfers.ts',
+                requiredTokens: [
+                    'downloadJsonPayloadViaMachineTransferCarriers',
+                    'uploadBulkPayloadFromFileViaDirectImport',
+                    'prepareBulkJsonPayloadForUpload',
+                    'uploadBulkJsonPayload',
+                ],
+            },
+            {
+                file: 'promptRegistryTransfers.ts',
+                requiredTokens: [
+                    'downloadJsonPayloadViaMachineTransferCarriers',
+                ],
+            },
+            {
+                file: 'sessionAttachmentTransfers.ts',
+                requiredTokens: [
+                    'createWorkspaceFileTransferRpcCaller',
+                    'uploadBulkPayloadFromFile',
+                ],
+            },
+            {
+                file: 'workspaceFileTransfers.ts',
+                requiredTokens: [
+                    'createBufferedTransferDestination',
+                    'createWorkspaceFileTransferRpcCaller',
+                    'downloadBulkPayloadToFile',
+                    'downloadBulkPayloadViaDirectExportToDestination',
+                    'downloadBulkPayloadViaServerRelayToDestination',
+                    'uploadBulkPayloadFromFile',
+                ],
+            },
+        ] as const;
+
+        for (const { file, requiredTokens } of holdoverReasons) {
+            const source = await readFile(join(transferSubstratePath, file), 'utf8');
+            for (const token of requiredTokens) {
+                expect(source).toContain(token);
+            }
+        }
+    });
 });
