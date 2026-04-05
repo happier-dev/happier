@@ -13,7 +13,7 @@
  *
  * For "app", this updates:
  * - apps/ui/package.json version
- * - apps/ui/app.config.js expo.version (string literal)
+ * - apps/ui/app.config.js expo.version only when the config still uses a legacy string literal
  * - apps/ui/src-tauri/*.json (if present) top-level "version"
  */
 import fs from 'node:fs';
@@ -89,7 +89,7 @@ function updateExpoAppConfigVersion(appDir, nextVersion) {
 
   const re = /(\bversion\s*:\s*["'])([^"']+)(["'])/;
   const m = re.exec(raw);
-  if (!m) fail(`Unable to find expo.version string literal in ${filePath}`);
+  if (!m) return;
 
   const updated = raw.replace(re, `$1${nextVersion}$3`);
   fs.writeFileSync(filePath, updated);
@@ -110,17 +110,17 @@ function updateTauriVersions(appDir, nextVersion) {
 }
 
 function getAppCurrentVersion(appDir) {
+  const pkgPath = path.join(appDir, 'package.json');
+  if (fs.existsSync(pkgPath)) {
+    const pkg = readJson(pkgPath);
+    if (typeof pkg.version === 'string' && pkg.version.trim()) return pkg.version.trim();
+  }
   const configPath = path.join(appDir, 'app.config.js');
   if (fs.existsSync(configPath)) {
     const raw = fs.readFileSync(configPath, 'utf8');
     const re = /(\bversion\s*:\s*["'])([^"']+)(["'])/;
     const m = re.exec(raw);
     if (m) return m[2];
-  }
-  const pkgPath = path.join(appDir, 'package.json');
-  if (fs.existsSync(pkgPath)) {
-    const pkg = readJson(pkgPath);
-    if (typeof pkg.version === 'string' && pkg.version.trim()) return pkg.version.trim();
   }
   return null;
 }
