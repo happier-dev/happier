@@ -492,11 +492,7 @@ jobs:
       bump: none
       deploy_web: ${{ inputs.environment == 'production' }}
       expo_action: ${{ inputs.ui_expo_action }}
-      expo_builder: eas_cloud
-      expo_profile: auto
-      expo_platform: all
-      desktop_build: ${{ inputs.desktop_mode != 'none' }}
-      desktop_publish_release: ${{ inputs.desktop_mode == 'build_and_publish' }}
+      desktop_mode: ${{ inputs.desktop_mode }}
       run_tests: false
       expo_update_message: ${{ inputs.release_message }}
 

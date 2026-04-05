@@ -37,6 +37,7 @@ test('promote-ui keeps workflow_dispatch inputs under GitHub limit with compact 
 
   for (const legacyKey of ['expo_builder', 'expo_profile', 'expo_platform', 'desktop_build', 'desktop_publish_release']) {
     assert.equal(inputs[legacyKey], undefined, `manual input ${legacyKey} should be removed from workflow_dispatch`);
+    assert.equal(callInputs[legacyKey], undefined, `workflow_call input ${legacyKey} should be removed from promote-ui`);
   }
 
   assert.ok(callInputs.desktop_mode, 'workflow_call should also define desktop_mode so reusable invocations validate');

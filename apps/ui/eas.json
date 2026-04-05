@@ -8,7 +8,7 @@
       "node": "22.14.0",
       "env": {
         "HAPPIER_EAS_ENSURE_UI_WORKSPACES_BUILT": "1",
-        "HAPPIER_INSTALL_SCOPE": "ui,protocol,agents,transfers,connection-supervisor",
+        "HAPPIER_INSTALL_SCOPE": "ui,protocol,agents,cli-common,release-runtime,transfers,connection-supervisor",
         "EXPO_PUBLIC_HAPPY_SERVER_URL": "https://api.happier.dev",
         "HAPPIER_UI_VENDOR_WEB_ASSETS": "0"
       },

@@ -61,11 +61,12 @@ test('release workflow derives promote mode from confirm and uses compact defaul
   assert.match(raw, /contains\(format\(',\{0\},', inputs\.deploy_targets\), ',website,'\)/);
   assert.match(raw, /contains\(format\(',\{0\},', inputs\.deploy_targets\), ',docs,'\)/);
 
-  assert.match(raw, /desktop_build:\s*\$\{\{ inputs\.desktop_mode != 'none' \}\}/);
-  assert.match(raw, /desktop_publish_release:\s*\$\{\{ inputs\.desktop_mode == 'build_and_publish' \}\}/);
-  assert.match(raw, /expo_builder:\s*eas_cloud/);
-  assert.match(raw, /expo_profile:\s*auto/);
-  assert.match(raw, /expo_platform:\s*all/);
+  assert.match(raw, /desktop_mode:\s*\$\{\{\s*inputs\.desktop_mode\s*\}\}/);
+  assert.doesNotMatch(raw, /desktop_build:\s*\$\{\{ inputs\.desktop_mode != 'none' \}\}/);
+  assert.doesNotMatch(raw, /desktop_publish_release:\s*\$\{\{ inputs\.desktop_mode == 'build_and_publish' \}\}/);
+  assert.doesNotMatch(raw, /expo_builder:\s*eas_cloud/);
+  assert.doesNotMatch(raw, /expo_profile:\s*auto/);
+  assert.doesNotMatch(raw, /expo_platform:\s*all/);
   assert.doesNotMatch(raw, /inputs\.bump_app_override/);
   assert.doesNotMatch(raw, /inputs\.bump_cli_override/);
   assert.doesNotMatch(raw, /inputs\.bump_stack_override/);
