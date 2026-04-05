@@ -211,14 +211,6 @@ function main() {
 
   console.log(`[pipeline] expo ota: environment=${formatMobileReleaseEnvironment(normalizedEnvironment)}`);
 
-  if (normalizedEnvironment === 'production') {
-    run(opts, 'yarn', ['--cwd', 'apps/ui', 'ota:production'], {
-      cwd: repoRoot,
-      env: { ...process.env, APP_ENV: process.env.APP_ENV ?? 'production' },
-    });
-    return;
-  }
-
   const uiDir = path.join(repoRoot, 'apps', 'ui');
   const appEnvironment = normalizedEnvironment;
   const updateLane = resolveMobileAppEnvironmentConfig(normalizedEnvironment).updatesChannel;

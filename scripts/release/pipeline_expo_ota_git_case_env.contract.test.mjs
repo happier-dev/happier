@@ -62,7 +62,7 @@ function createExpoOtaStubEnvironment(prefix) {
       `echo "$*" >> ${JSON.stringify(paths.npxLogPath)}`,
       `echo "NODE_OPTIONS=${'${NODE_OPTIONS:-}'}" >> ${JSON.stringify(paths.npxLogPath)}`,
       `env | grep '^GIT_CONFIG_' | sort >> ${JSON.stringify(paths.npxLogPath)} || true`,
-      'if [[ "$*" == *" eas-cli@"*" update --channel internaldev "* ]]; then',
+      'if [[ "$*" == *" eas-cli@"*" update --channel "* ]]; then',
       '  exit 0',
       'fi',
       'echo "unexpected npx invocation: $*" >&2',
@@ -148,4 +148,21 @@ test('expo ota update respects explicit Expo heap overrides for EAS update', () 
   const npxLog = fs.readFileSync(stub.npxLogPath, 'utf8');
   assert.match(npxLog, /NODE_OPTIONS=.*--trace-warnings.*--max-old-space-size=4096/);
   assert.doesNotMatch(npxLog, /NODE_OPTIONS=.*--max-old-space-size=2048/);
+});
+
+test('expo ota update publishes production directly through EAS update instead of the legacy app script wrapper', () => {
+  const stub = runExpoOtaUpdateWithStubbedCommands({
+    environment: 'production',
+    message: 'production OTA direct publish contract test',
+    prefix: 'happier-pipeline-eas-ota-production-direct-',
+    extraEnv: {
+      EXPO_TOKEN: 'contract-test',
+    },
+  });
+
+  const npxLog = fs.readFileSync(stub.npxLogPath, 'utf8');
+  const yarnLog = fs.readFileSync(stub.yarnLogPath, 'utf8');
+
+  assert.match(npxLog, /update --channel production/);
+  assert.doesNotMatch(yarnLog, /ota:production/);
 });
