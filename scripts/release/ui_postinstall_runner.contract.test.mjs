@@ -68,3 +68,18 @@ test('ui Metro/Babel runtime owns babel-plugin-module-resolver as an install-tim
     'apps/ui should not keep babel-plugin-module-resolver in devDependencies once production bundling depends on it'
   );
 });
+
+test('ui production Metro/Babel runtime owns babel-plugin-transform-remove-console as an install-time dependency', async () => {
+  const uiPackageJson = JSON.parse(await readFile(uiPackagePath, 'utf8'));
+
+  assert.equal(
+    uiPackageJson?.dependencies?.['babel-plugin-transform-remove-console'],
+    '^6.9.4',
+    'apps/ui production Metro bundling requires babel-plugin-transform-remove-console during EAS/local builds, so it must live in dependencies'
+  );
+  assert.equal(
+    uiPackageJson?.devDependencies?.['babel-plugin-transform-remove-console'],
+    undefined,
+    'apps/ui should not keep babel-plugin-transform-remove-console in devDependencies once production bundling depends on it'
+  );
+});
