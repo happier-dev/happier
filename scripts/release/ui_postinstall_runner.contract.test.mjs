@@ -38,3 +38,18 @@ test('ui postinstall runner skips installed package context and respects npm_exe
     'postinstall runner should continue to delegate to postinstall:real'
   );
 });
+
+test('ui postinstall runtime owns patch-package as an install-time dependency', async () => {
+  const uiPackageJson = JSON.parse(await readFile(uiPackagePath, 'utf8'));
+
+  assert.equal(
+    uiPackageJson?.dependencies?.['patch-package'],
+    '^8.0.0',
+    'apps/ui postinstall requires patch-package during EAS/local installs, so it must live in dependencies'
+  );
+  assert.equal(
+    uiPackageJson?.devDependencies?.['patch-package'],
+    undefined,
+    'apps/ui should not keep patch-package in devDependencies once postinstall depends on it at install time'
+  );
+});
