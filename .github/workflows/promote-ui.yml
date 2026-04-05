@@ -130,6 +130,11 @@ on:
         required: false
         default: ""
         type: string
+      desktop_mode:
+        description: "Deploy (Desktop) — Desktop bundle mode"
+        required: false
+        default: ""
+        type: string
       desktop_build:
         description: "Deploy (Desktop) — Build Tauri desktop bundles (macOS/Windows/Linux)"
         required: false

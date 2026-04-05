@@ -16,6 +16,7 @@ test('promote-ui keeps workflow_dispatch inputs under GitHub limit with compact 
   const raw = await loadWorkflow('promote-ui.yml');
   const parsed = parse(raw);
   const inputs = parsed?.on?.workflow_dispatch?.inputs ?? {};
+  const callInputs = parsed?.on?.workflow_call?.inputs ?? {};
 
   assert.ok(Object.keys(inputs).length <= 10, 'workflow_dispatch inputs must stay <= 10');
 
@@ -37,6 +38,8 @@ test('promote-ui keeps workflow_dispatch inputs under GitHub limit with compact 
   for (const legacyKey of ['expo_builder', 'expo_profile', 'expo_platform', 'desktop_build', 'desktop_publish_release']) {
     assert.equal(inputs[legacyKey], undefined, `manual input ${legacyKey} should be removed from workflow_dispatch`);
   }
+
+  assert.ok(callInputs.desktop_mode, 'workflow_call should also define desktop_mode so reusable invocations validate');
 });
 
 test('promote-ui delegates web deploy branch promotion to pipeline script', async () => {
