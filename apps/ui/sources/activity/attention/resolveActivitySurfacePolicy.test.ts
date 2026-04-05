@@ -9,6 +9,7 @@ describe('resolveActivitySurfacePolicy', () => {
             liveActivities: {
                 enabled: true,
                 mode: 'focused',
+                strategy: 'dynamic_primary',
                 maxConcurrent: 1,
                 showPreviewText: true,
                 allowActionButtons: true,
@@ -48,6 +49,7 @@ describe('resolveActivitySurfacePolicy', () => {
             iosLiveActivitiesEnabled: true,
             iosWidgetsEnabled: false,
             liveActivitiesMode: 'attention',
+            liveActivitiesStrategy: 'session_specific',
             liveActivitiesMaxConcurrent: 4,
             liveActivitiesShowPreviewText: false,
             liveActivitiesAllowActionButtons: false,
@@ -63,6 +65,7 @@ describe('resolveActivitySurfacePolicy', () => {
             liveActivities: {
                 enabled: true,
                 mode: 'attention',
+                strategy: 'session_specific',
                 maxConcurrent: 4,
                 showPreviewText: false,
                 allowActionButtons: false,
@@ -77,6 +80,47 @@ describe('resolveActivitySurfacePolicy', () => {
             },
             tapTarget: 'open_sessions',
             privacyMode: 'title_only',
+        });
+    });
+
+    it('preserves legacy multi-session live activity behavior when max-concurrent is greater than one', () => {
+        expect(resolveActivitySurfacePolicy({
+            liveActivitiesMode: 'attention',
+            liveActivitiesMaxConcurrent: 2,
+        }).liveActivities.strategy).toBe('session_specific');
+    });
+
+    it('preserves an explicit live-activity strategy even when the legacy multi-session fallback would differ', () => {
+        expect(resolveActivitySurfacePolicy({
+            liveActivitiesMode: 'attention',
+            liveActivitiesMaxConcurrent: 4,
+            liveActivitiesStrategy: 'dynamic_primary',
+        }).liveActivities.strategy).toBe('dynamic_primary');
+    });
+
+    it('prefers normalized settings keys while still honoring legacy aliases', () => {
+        expect(resolveActivitySurfacePolicy({
+            activitySurfacesEnabled: true,
+            liveActivitiesEnabled: false,
+            iosLiveActivitiesEnabled: true,
+            widgetsEnabled: false,
+            iosWidgetsEnabled: true,
+            widgetsPresetMode: 'attention',
+            homeScreenWidgetsMode: 'running',
+            widgetsShowPreviewText: false,
+            homeScreenWidgetsShowPreviewText: true,
+            widgetsShowMachinePath: false,
+            homeScreenWidgetsShowMachinePath: true,
+        })).toMatchObject({
+            liveActivities: {
+                enabled: false,
+            },
+            widgets: {
+                enabled: false,
+                mode: 'attention',
+                showPreviewText: false,
+                showMachinePath: false,
+            },
         });
     });
 });

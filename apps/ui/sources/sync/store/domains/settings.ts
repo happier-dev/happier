@@ -1,12 +1,14 @@
 import type { CustomerInfo } from '../../domains/purchases/types';
+import type { MachineDisplayRenderable } from '../../domains/machines/machineDisplayRenderable';
+import type { SessionListRenderableSession } from '../../domains/session/listing/sessionListRenderable';
 import type { Machine, Session } from '../../domains/state/storageTypes';
 import type { SessionListViewItem } from '../../domains/session/listing/sessionListViewData';
+import type { ServerScopedSessionListCache } from '../../domains/session/listing/serverScopedSessionListCache';
 import { applyLocalSettings, type LocalSettings } from '../../domains/settings/localSettings';
 import { customerInfoToPurchases, type Purchases } from '../../domains/purchases/purchases';
 import { applySettings, settingsParse, type Settings } from '../../domains/settings/settings';
 import { loadLocalSettings, loadPurchases, loadSettings, saveLocalSettings, savePurchases, saveSettings } from '../../domains/state/persistence';
-import { buildSessionListViewDataWithServerScope } from '../buildSessionListViewDataWithServerScope';
-import { setActiveServerSessionListCache } from '../sessionListCache';
+import { resolveActiveServerSessionListState } from '../resolveActiveServerSessionListState';
 import { emitLocalSettingChangedEvents } from '@/track/settingsAnalytics/emitSettingChangedEvent';
 import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
 import { setPreferredLanguageFromSettings } from '@/text/i18n';
@@ -37,8 +39,11 @@ export type SettingsDomain = {
 type SettingsDomainDependencies = Readonly<{
     sessions: Record<string, Session>;
     machines: Record<string, Machine>;
+    machineDisplayById: Record<string, MachineDisplayRenderable>;
+    sessionListRenderables: Record<string, SessionListRenderableSession>;
     sessionListViewData: SessionListViewItem[] | null;
-    sessionListViewDataByServerId: Record<string, SessionListViewItem[] | null>;
+    sessionListViewDataByServerId: ServerScopedSessionListCache;
+    getProjectForSession?: (sessionId: string) => { key?: { machineId?: string | null; rootPath?: string | null } | null } | null;
 }>;
 
 export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDependencies>({
@@ -72,22 +77,18 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
                         delta.sessionListInactiveGroupingV1 !== state.settings.sessionListInactiveGroupingV1);
 
                 if (shouldRebuildSessionListViewData) {
-                    const sessionListViewData = buildSessionListViewDataWithServerScope({
-                        sessions: state.sessions,
-                        machines: state.machines,
-                        groupInactiveSessionsByProject: newSettings.groupInactiveSessionsByProject,
-                        activeGroupingV1: newSettings.sessionListActiveGroupingV1,
-                        inactiveGroupingV1: newSettings.sessionListInactiveGroupingV1,
+                    const rebuiltListState = resolveActiveServerSessionListState({
+                        state: {
+                            ...state,
+                            settings: newSettings,
+                        },
+                        shouldRebuild: true,
                     });
                     safeSetPreferredLanguageFromSettings(newSettings.preferredLanguage);
                     return {
                         ...state,
                         settings: newSettings,
-                        sessionListViewData,
-                        sessionListViewDataByServerId: setActiveServerSessionListCache(
-                            state.sessionListViewDataByServerId,
-                            sessionListViewData,
-                        ),
+                        sessionListViewData: rebuiltListState.sessionListViewData,
                     };
                 }
                 safeSetPreferredLanguageFromSettings(newSettings.preferredLanguage);
@@ -107,24 +108,19 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
                         nextSettings.sessionListActiveGroupingV1 !== state.settings.sessionListActiveGroupingV1 ||
                         nextSettings.sessionListInactiveGroupingV1 !== state.settings.sessionListInactiveGroupingV1;
 
-                    const sessionListViewData = shouldRebuildSessionListViewData
-                        ? buildSessionListViewDataWithServerScope({
-                            sessions: state.sessions,
-                            machines: state.machines,
-                            groupInactiveSessionsByProject: nextSettings.groupInactiveSessionsByProject,
-                            activeGroupingV1: nextSettings.sessionListActiveGroupingV1,
-                            inactiveGroupingV1: nextSettings.sessionListInactiveGroupingV1,
-                        })
-                        : state.sessionListViewData;
+                    const rebuiltListState = resolveActiveServerSessionListState({
+                        state: {
+                            ...state,
+                            settings: nextSettings,
+                        },
+                        shouldRebuild: shouldRebuildSessionListViewData,
+                    });
 
                     return {
                         ...state,
                         settings: nextSettings,
                         settingsVersion: nextVersion,
-                        sessionListViewData,
-                        sessionListViewDataByServerId: shouldRebuildSessionListViewData
-                            ? setActiveServerSessionListCache(state.sessionListViewDataByServerId, sessionListViewData)
-                            : state.sessionListViewDataByServerId,
+                        sessionListViewData: rebuiltListState.sessionListViewData,
                     };
                 }
                 return state;
@@ -139,24 +135,19 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
                     nextSettings.sessionListActiveGroupingV1 !== state.settings.sessionListActiveGroupingV1 ||
                     nextSettings.sessionListInactiveGroupingV1 !== state.settings.sessionListInactiveGroupingV1;
 
-                const sessionListViewData = shouldRebuildSessionListViewData
-                    ? buildSessionListViewDataWithServerScope({
-                        sessions: state.sessions,
-                        machines: state.machines,
-                        groupInactiveSessionsByProject: nextSettings.groupInactiveSessionsByProject,
-                        activeGroupingV1: nextSettings.sessionListActiveGroupingV1,
-                        inactiveGroupingV1: nextSettings.sessionListInactiveGroupingV1,
-                    })
-                    : state.sessionListViewData;
+                const rebuiltListState = resolveActiveServerSessionListState({
+                    state: {
+                        ...state,
+                        settings: nextSettings,
+                    },
+                    shouldRebuild: shouldRebuildSessionListViewData,
+                });
 
                 return {
                     ...state,
                     settings: nextSettings,
                     settingsVersion: nextVersion,
-                    sessionListViewData,
-                    sessionListViewDataByServerId: shouldRebuildSessionListViewData
-                        ? setActiveServerSessionListCache(state.sessionListViewDataByServerId, sessionListViewData)
-                        : state.sessionListViewDataByServerId,
+                    sessionListViewData: rebuiltListState.sessionListViewData,
                 };
             }),
         applyLocalSettings: (delta, options) =>

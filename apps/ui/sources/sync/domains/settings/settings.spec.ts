@@ -56,6 +56,7 @@ describe('settings', () => {
         it('defaults session list density to cozy', () => {
             const settings = settingsParse({});
             expect((settings as any).sessionListDensity).toBe('cozy');
+            expect((settings as any).sessionListOrderingModeV1).toBe('custom');
             expect((settings as any).compactSessionView).toBe(true);
             expect((settings as any).compactSessionViewMinimal).toBe(false);
         });
@@ -899,6 +900,7 @@ describe('settings', () => {
             expect((settingsDefaults as any).connectedServicesQuotaSummaryStrategyByKey).toEqual({});
             expect((settingsDefaults as any).pinnedSessionKeysV1).toEqual([]);
             expect((settingsDefaults as any).sessionListGroupOrderV1).toEqual({});
+            expect((settingsDefaults as any).sessionListOrderingModeV1).toBe('custom');
             expect((settingsDefaults as any).notificationsSettingsV1).toEqual({
                 v: 1,
                 pushEnabled: true,

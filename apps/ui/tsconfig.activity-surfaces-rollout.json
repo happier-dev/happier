@@ -1,0 +1,33 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "incremental": false,
+    "tsBuildInfoFile": "./node_modules/.cache/tsc/ui.activity-surfaces-rollout.typecheck.tsbuildinfo"
+  },
+  "include": [
+    "sources/activity/actions/**/*.ts",
+    "sources/activity/attention/**/*.ts",
+    "sources/activity/selection/**/*.ts",
+    "sources/activity/presentation/**/*.ts",
+    "sources/activity/liveActivities/**/*.ts",
+    "sources/activity/widgets/**/*.ts",
+    "sources/activity/runtime/ActivitySurfacesRuntime.tsx",
+    "sources/activity/adapters/desktop/**/*.ts",
+    "sources/activity/adapters/desktop/**/*.tsx",
+    "sources/components/settings/notifications/ActivitySurfacesSettingsSection.tsx",
+    "sources/components/settings/notifications/NotificationsSettingsView.tsx",
+    "sources/components/settings/desktop/DesktopOverlaySettingsSection.tsx",
+    "sources/components/settings/desktop/DesktopOverlaySettingsSection.options.tsx",
+    "sources/components/settings/desktop/DesktopSettingsSection.tsx",
+    "sources/sync/domains/settings/registry/local/localSettingDefinitions.activitySurfaces.ts",
+    "sources/types/**/*.d.ts",
+    "sources/unistyles.ts",
+    "expo-env.d.ts",
+    "nativewind-env.d.ts",
+    ".expo/types/**/*.ts"
+  ],
+  "exclude": [
+    "sources/trash/**/*",
+    "node_modules"
+  ]
+}

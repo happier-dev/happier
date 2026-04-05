@@ -1,0 +1,178 @@
+import { spawnSync } from 'node:child_process';
+import { access, readFile, readdir } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+export const DEFAULT_GENERATED_TARGET_NAME = 'ExpoWidgetsTarget';
+export const DEFAULT_GENERATED_WIDGET_NAMES = [
+  'HappierFocusWidget',
+  'HappierSessionsWidget',
+  'HappierFocusLiveActivity',
+];
+
+async function assertReadableFile(filePath) {
+  await access(filePath, fsConstants.R_OK);
+  return filePath;
+}
+
+function ensurePattern(text, pattern, message) {
+  if (!pattern.test(text)) {
+    throw new Error(message);
+  }
+}
+
+async function resolveGeneratedProjectPaths({
+  iosDir,
+  targetName = DEFAULT_GENERATED_TARGET_NAME,
+}) {
+  const entries = await readdir(iosDir, { withFileTypes: true });
+  const projectEntry = entries.find(
+    (entry) => entry.isDirectory() && entry.name.endsWith('.xcodeproj') && entry.name !== 'Pods.xcodeproj',
+  );
+
+  if (!projectEntry) {
+    throw new Error(`Unable to find generated iOS Xcode project in '${iosDir}'.`);
+  }
+
+  const xcodeprojPath = join(iosDir, projectEntry.name);
+  const pbxprojPath = join(xcodeprojPath, 'project.pbxproj');
+  const podfilePath = join(iosDir, 'Podfile');
+  const targetDir = join(iosDir, targetName);
+  const infoPlistPath = join(targetDir, 'Info.plist');
+
+  await Promise.all([
+    assertReadableFile(pbxprojPath),
+    assertReadableFile(podfilePath),
+    assertReadableFile(infoPlistPath),
+  ]);
+
+  return {
+    xcodeprojPath,
+    pbxprojPath,
+    podfilePath,
+    targetDir,
+    infoPlistPath,
+  };
+}
+
+function assertXcodebuildOutput(output, targetName) {
+  ensurePattern(
+    output,
+    new RegExp(`\\b${targetName}\\b`),
+    `xcodebuild did not report generated target '${targetName}'.`,
+  );
+}
+
+export async function assertExpoWidgetsGeneratedProject({
+  cwd,
+  iosDir,
+  targetName = DEFAULT_GENERATED_TARGET_NAME,
+  requiredWidgetNames = DEFAULT_GENERATED_WIDGET_NAMES,
+  spawnSyncImpl = spawnSync,
+} = {}) {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = cwd ?? dirname(scriptsDir);
+  const resolvedIosDir = iosDir ?? join(packageRoot, 'ios');
+  const paths = await resolveGeneratedProjectPaths({ iosDir: resolvedIosDir, targetName });
+
+  const [pbxprojRaw, podfileRaw, infoPlistRaw] = await Promise.all([
+    readFile(paths.pbxprojPath, 'utf8'),
+    readFile(paths.podfilePath, 'utf8'),
+    readFile(paths.infoPlistPath, 'utf8'),
+  ]);
+
+  ensurePattern(
+    podfileRaw,
+    new RegExp(`target\\s+["']${targetName}["']`),
+    `Podfile is missing generated target '${targetName}'.`,
+  );
+  ensurePattern(
+    podfileRaw,
+    /use_expo_modules_widgets!/,
+    'Podfile is missing use_expo_modules_widgets! integration.',
+  );
+  ensurePattern(
+    pbxprojRaw,
+    new RegExp(`\\b${targetName}\\b`),
+    `Generated Xcode project is missing target '${targetName}'.`,
+  );
+  ensurePattern(
+    pbxprojRaw,
+    /wrapper\.app-extension|\.appex\b/,
+    'Generated Xcode project is missing the widget app extension product reference.',
+  );
+  ensurePattern(
+    infoPlistRaw,
+    /com\.apple\.widgetkit-extension/,
+    'Generated widget target Info.plist is missing the WidgetKit extension point identifier.',
+  );
+
+  for (const widgetName of requiredWidgetNames) {
+    await assertReadableFile(join(paths.targetDir, `${widgetName}.swift`));
+    ensurePattern(
+      pbxprojRaw,
+      new RegExp(`${widgetName}\\.swift`),
+      `Generated Xcode project is missing source reference '${widgetName}.swift'.`,
+    );
+  }
+
+  const bundleIdentifierMatch = pbxprojRaw.match(/PRODUCT_BUNDLE_IDENTIFIER\s*=\s*"?(?<bundleIdentifier>[^";\n]+)"?;/);
+  if (!bundleIdentifierMatch?.groups?.bundleIdentifier) {
+    throw new Error('Generated Xcode project is missing the widget target PRODUCT_BUNDLE_IDENTIFIER.');
+  }
+
+  const xcodebuildResult = spawnSyncImpl(
+    'xcodebuild',
+    ['-list', '-project', paths.xcodeprojPath],
+    {
+      cwd: packageRoot,
+      encoding: 'utf8',
+    },
+  );
+
+  let usedXcodebuildValidation = true;
+  if (xcodebuildResult.error) {
+    if (xcodebuildResult.error?.code !== 'ENOENT') {
+      throw xcodebuildResult.error;
+    }
+    usedXcodebuildValidation = false;
+  } else {
+    const output = `${xcodebuildResult.stdout ?? ''}${xcodebuildResult.stderr ?? ''}`;
+    if (xcodebuildResult.status !== 0) {
+      throw new Error(`xcodebuild -list failed for generated widgets project.\n${output}`.trim());
+    }
+    assertXcodebuildOutput(output, targetName);
+  }
+
+  return {
+    targetName,
+    bundleIdentifier: bundleIdentifierMatch.groups.bundleIdentifier,
+    widgetNames: [...requiredWidgetNames],
+    xcodeprojPath: paths.xcodeprojPath,
+    usedXcodebuildValidation,
+  };
+}
+
+async function runCli() {
+  try {
+    const summary = await assertExpoWidgetsGeneratedProject();
+    console.log(
+      [
+        'Expo widgets generated iOS project validated.',
+        `target=${summary.targetName}`,
+        `bundleIdentifier=${summary.bundleIdentifier}`,
+        `widgets=${summary.widgetNames.join(',')}`,
+        `xcodebuild=${summary.usedXcodebuildValidation ? 'validated' : 'skipped'}`,
+      ].join(' '),
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(message);
+    process.exitCode = 1;
+  }
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  await runCli();
+}

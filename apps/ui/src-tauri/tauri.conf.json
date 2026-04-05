@@ -10,9 +10,11 @@
     "beforeBuildCommand": "node ./scripts/runTauriBeforeCommand.mjs tauri:prepare:build"
   },
   "app": {
+    "macOSPrivateApi": true,
     "security": {
       "capabilities": [
-        "default"
+        "default",
+        "overlay"
       ],
       "csp": null
     },

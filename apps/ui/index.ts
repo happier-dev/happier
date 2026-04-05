@@ -32,6 +32,22 @@ if (typeof window !== 'undefined') {
     }
 
     try {
+        const mod = require('./sources/utils/path/terminalConnectWebBootstrap');
+        if (typeof mod === 'object' && mod !== null && 'bootstrapTerminalConnectWebHash' in mod) {
+            const bootstrap = (mod as { bootstrapTerminalConnectWebHash?: unknown }).bootstrapTerminalConnectWebHash;
+            if (typeof bootstrap === 'function') {
+                bootstrap({
+                    url: new URL(window.location.href),
+                    sessionStorage: window.sessionStorage,
+                    history: window.history,
+                });
+            }
+        }
+    } catch {
+        // ignore
+    }
+
+    try {
         if (typeof (window as unknown as { __TAURI__?: unknown }).__TAURI__ !== 'undefined' && (globalThis as unknown as { __DEV__?: boolean }).__DEV__) {
             const mod = require('./sources/desktop/mcp/installTauriMcpWebviewDriverScripts');
             if (typeof mod === 'object' && mod !== null && 'installTauriMcpWebviewDriverScripts' in mod) {

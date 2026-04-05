@@ -15,6 +15,7 @@
     "security": {
       "capabilities": [
         "default",
+        "overlay",
         "mcp-dev"
       ]
     },

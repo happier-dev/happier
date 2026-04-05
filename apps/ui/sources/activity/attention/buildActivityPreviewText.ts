@@ -1,6 +1,6 @@
 import type { Message } from '@/sync/domains/messages/messageTypes';
 
-function normalizePreviewText(value: string): string {
+export function normalizeActivityPreviewText(value: string): string {
     return value.replace(/\s+/g, ' ').trim();
 }
 
@@ -17,6 +17,6 @@ export function buildActivityPreviewText(params: Readonly<{
         return null;
     }
 
-    const normalized = normalizePreviewText(latestAssistantText);
+    const normalized = normalizeActivityPreviewText(latestAssistantText);
     return normalized.length > 0 ? normalized : null;
 }

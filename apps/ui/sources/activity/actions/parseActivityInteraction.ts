@@ -90,20 +90,26 @@ export function parseActivityInteraction(params: Readonly<{
 
     const sessionId = readSessionId(params.data);
     const requestId = readRequestId(params.data);
+    const route = activitySurfaceRoute ?? resolveRoute(params.data);
+    const resolvedPermissionAction =
+        permissionAction && sessionId && requestId
+            ? {
+                action: permissionAction,
+                sessionId,
+                requestId,
+            }
+            : null;
+
+    if (!route && resolvedPermissionAction === null) {
+        return null;
+    }
 
     return {
         actionIdentifier,
         isDefaultTap,
         isOpenAction,
-        route: activitySurfaceRoute ?? resolveRoute(params.data),
+        route,
         serverUrl: resolveServerUrl(params.data),
-        permissionAction:
-            permissionAction && sessionId && requestId
-                ? {
-                    action: permissionAction,
-                    sessionId,
-                    requestId,
-                }
-                : null,
+        permissionAction: resolvedPermissionAction,
     };
 }

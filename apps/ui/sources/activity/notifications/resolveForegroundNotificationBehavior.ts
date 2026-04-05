@@ -25,9 +25,11 @@ export function resolveForegroundNotificationBehavior(params: Readonly<{
         return localForegroundBehavior;
     }
 
-    const notificationsSettings = NotificationsSettingsV1Schema.parse(
-        params.accountSettings?.notificationsSettingsV1 ?? DEFAULT_NOTIFICATIONS_SETTINGS_V1,
-    );
+    const notificationsSettingsInput = params.accountSettings?.notificationsSettingsV1 ?? DEFAULT_NOTIFICATIONS_SETTINGS_V1;
+    const notificationsSettingsResult = NotificationsSettingsV1Schema.safeParse(notificationsSettingsInput);
+    const notificationsSettings = notificationsSettingsResult.success
+        ? notificationsSettingsResult.data
+        : DEFAULT_NOTIFICATIONS_SETTINGS_V1;
 
     return notificationsSettings.foregroundBehavior ?? 'full';
 }

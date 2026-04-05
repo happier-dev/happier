@@ -1,1 +1,1 @@
-export { default } from '../sources/activity/liveActivities/HappierFocusLiveActivity';
+export { default } from '../sources/activity/adapters/ios/liveActivities/HappierFocusLiveActivity';

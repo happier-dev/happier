@@ -59,6 +59,14 @@ describe('parseActivityInteraction', () => {
         })).toBeNull();
     });
 
+    it('returns null for default taps without any actionable route target', () => {
+        expect(parseActivityInteraction({
+            actionIdentifier: '',
+            defaultActionIdentifier: 'DEFAULT',
+            data: null,
+        })).toBeNull();
+    });
+
     it('parses activity-surface targets into open-session and inbox routes', () => {
         const primary = parseActivityInteraction({
             actionIdentifier: 'open-primary-session',

@@ -1,14 +1,18 @@
 import { buildActivityOverviewSnapshot } from '@/activity/attention/buildActivityOverviewSnapshot';
 import { resolveActivitySurfacePolicy, type ActivitySurfacePolicy } from '@/activity/attention/resolveActivitySurfacePolicy';
-import { selectActivitySurfaceCandidates } from '@/activity/attention/selectActivitySurfaceCandidates';
+import { buildActivitySurfaceCountsViewModel } from '@/activity/presentation/buildActivitySurfaceCountsViewModel';
+import { buildActivitySurfaceViewModels } from '@/activity/presentation/buildActivitySurfaceViewModel';
+import type {
+    ActivitySurfaceCountsViewModel,
+    ActivitySurfaceSessionViewModel,
+} from '@/activity/presentation/activitySurfaceViewModels';
+import {
+    createWidgetSelectionSpec,
+} from '@/activity/selection/activitySurfaceSelectionTypes';
+import { resolveActivitySurfaceSlots } from '@/activity/selection/resolveActivitySurfaceSlots';
+import { resolvePrimaryActivitySurfaceTarget } from '@/activity/presentation/buildActivitySurfaceViewModel';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
-
-import {
-    buildActivitySurfaceSessionCard,
-    resolvePrimaryActivitySurfaceTarget,
-    type ActivitySurfaceSessionCard,
-} from './buildActivitySurfaceSessionCard';
 
 export type ActivitySurfaceSnapshotLabels = Readonly<{
     focusTitle: string;
@@ -25,9 +29,9 @@ export type ActivitySurfaceSnapshot = Readonly<{
     version: 1;
     generatedAt: number;
     counts: ReturnType<typeof buildActivityOverviewSnapshot>['counts'];
-    primary: ActivitySurfaceSessionCard | null;
-    sessions: readonly ActivitySurfaceSessionCard[];
-    overflowCount: number;
+    summaryCounts: ActivitySurfaceCountsViewModel;
+    primary: ActivitySurfaceSessionViewModel | null;
+    sessions: readonly ActivitySurfaceSessionViewModel[];
     defaultTarget: string;
     labels: ActivitySurfaceSnapshotLabels;
 }>;
@@ -68,35 +72,25 @@ export function buildActivitySurfaceSnapshot(params: Readonly<{
         sessions: params.sessions,
         nowMs,
     });
-    const selectedCandidates = selectActivitySurfaceCandidates({
+    const slots = resolveActivitySurfaceSlots({
         overview,
-        surface: 'widgets',
-        policy,
+        selection: createWidgetSelectionSpec(policy),
     });
-    const eligibleCandidates = selectActivitySurfaceCandidates({
-        overview,
-        surface: 'widgets',
+    const sessions = buildActivitySurfaceViewModels({
+        candidates: slots.selectedSessions,
         policy,
+        showMachinePath: policy.widgets.showMachinePath,
+        showPreviewText: policy.widgets.showPreviewText,
+        nowMs,
     });
-
-    const sessions = selectedCandidates.map((candidate, index) =>
-        buildActivitySurfaceSessionCard({
-            candidate,
-            policy,
-            showMachinePath: policy.widgets.showMachinePath,
-            showPreviewText: policy.widgets.showPreviewText,
-            isPrimary: index === 0,
-            nowMs,
-        }),
-    );
 
     return {
         version: 1,
         generatedAt: nowMs,
         counts: overview.counts,
+        summaryCounts: buildActivitySurfaceCountsViewModel(overview.counts),
         primary: sessions[0] ?? null,
         sessions,
-        overflowCount: Math.max(0, eligibleCandidates.length - sessions.length),
         defaultTarget: resolvePrimaryActivitySurfaceTarget(policy, sessions[0]?.sessionId ?? null),
         labels: buildActivitySurfaceSnapshotLabels(policy),
     };

@@ -59,4 +59,21 @@ describe('resolveForegroundNotificationBehavior', () => {
             },
         })).toBe('silent');
     });
+
+    it('falls back to the default behavior when account settings are malformed', () => {
+        expect(resolveForegroundNotificationBehavior({
+            localSettings: null,
+            accountSettings: {
+                notificationsSettingsV1: {
+                    v: 1,
+                    pushEnabled: true,
+                    ready: true,
+                    readyIncludeMessageText: true,
+                    permissionRequest: true,
+                    userActionRequest: true,
+                    foregroundBehavior: 'not-a-real-mode',
+                } as never,
+            },
+        })).toBe('full');
+    });
 });

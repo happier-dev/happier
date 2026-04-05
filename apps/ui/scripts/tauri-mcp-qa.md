@@ -117,6 +117,24 @@ This script:
 
 If an OS permission or picker dialog appears, complete it once manually and re-run; those steps are documented in the generated `manual-steps.md`.
 
+## Deterministic activity-surfaces QA capture
+
+To capture the desktop overlay settings surface and the overlay window states in a deterministic order:
+
+```bash
+yarn --cwd apps/ui tauri:mcp:activity-surfaces:qa
+```
+
+This script:
+- assumes the stack-owned `tauri:qa --serve` launcher (or another Tauri dev run) is already running,
+- ensures internal `@happier-dev/*` workspace packages have their `dist/` outputs built,
+- opens a Tauri driver session,
+- navigates to the desktop overlay settings section,
+- toggles the overlay on if it is currently off,
+- captures the overlay settings surface and the overlay window route states,
+- writes artifacts under `.project/logs/activity-surfaces-qa/tauri-activity-surfaces-YYYYMMDD-.../`,
+- and appends the evidence paths to `.project/plans/todo/activity-surfaces/happier-activity-surfaces-qa-tracking-2026-04-05.md`.
+
 ## Window / crash checks
 
 - The latest captured backend state showed one visible `main` window (`window_count: 1`), so the desktop window itself did not crash in that run.

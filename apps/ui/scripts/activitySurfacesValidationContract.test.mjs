@@ -1,0 +1,81 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { access, readFile } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+test('apps/ui exposes a rollout-local activity-surfaces typecheck and certification contract', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir);
+
+  const packageJson = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf-8'));
+  const scripts = packageJson?.scripts ?? {};
+
+  assert.equal(
+    scripts['typecheck:activity-surfaces'],
+    'node ./scripts/ensureWorkspacePackagesBuilt.mjs && tsc -p tsconfig.activity-surfaces-rollout.json --noEmit --pretty false',
+  );
+  assert.equal(
+    scripts['test:activity-surfaces'],
+    'node ./scripts/runActivitySurfacesVitestSuite.mjs',
+  );
+  assert.equal(
+    scripts['certify:activity-surfaces'],
+    'node ./scripts/runActivitySurfacesCertification.mjs',
+  );
+  assert.equal(
+    scripts['certify:activity-surfaces:native'],
+    'node ./scripts/runActivitySurfacesNativeCertification.mjs',
+  );
+  assert.equal(
+    scripts['certify:activity-surfaces:release'],
+    'yarn -s certify:activity-surfaces && yarn -s typecheck',
+  );
+
+  const focusedSuitePath = join(packageRoot, 'scripts/runActivitySurfacesVitestSuite.mjs');
+  const certificationPath = join(packageRoot, 'scripts/runActivitySurfacesCertification.mjs');
+  const nativeCertificationPath = join(packageRoot, 'scripts/runActivitySurfacesNativeCertification.mjs');
+  await access(focusedSuitePath, fsConstants.F_OK);
+  await access(certificationPath, fsConstants.F_OK);
+  await access(nativeCertificationPath, fsConstants.F_OK);
+
+  const focusedSuiteModule = await import(pathToFileURL(focusedSuitePath).href);
+  const focusedVitestFiles = focusedSuiteModule.ACTIVITY_SURFACES_VITEST_FILES;
+  assert.equal(Array.isArray(focusedVitestFiles), true);
+  assert.equal(new Set(focusedVitestFiles).size, focusedVitestFiles.length);
+  assert.equal(focusedVitestFiles.every((entry) => entry.startsWith('sources/')), true);
+  assert.equal(focusedVitestFiles.includes('sources/activity/runtime/ActivitySurfacesRuntime.test.tsx'), true);
+  assert.equal(focusedVitestFiles.includes('sources/activity/adapters/desktop/runtime/DesktopActivityOverlayRuntime.test.tsx'), true);
+  assert.equal(focusedVitestFiles.includes('sources/components/settings/desktop/DesktopSettingsSection.test.tsx'), true);
+  assert.equal(focusedVitestFiles.includes('sources/components/settings/desktop/DesktopOverlaySettingsSection.test.tsx'), true);
+  assert.equal(focusedVitestFiles.includes('sources/components/settings/notifications/NotificationsSettingsView.test.tsx'), true);
+  assert.equal(focusedVitestFiles.includes('sources/sync/domains/settings/localSettings.test.ts'), true);
+  assert.equal(focusedVitestFiles.includes('sources/sync/store/domains/settings.analytics.test.ts'), true);
+
+  const configPath = join(packageRoot, 'tsconfig.activity-surfaces-rollout.json');
+  await access(configPath, fsConstants.F_OK);
+
+  const config = JSON.parse(await readFile(configPath, 'utf-8'));
+  const include = Array.isArray(config?.include) ? config.include : [];
+
+  assert.equal(config?.extends, './tsconfig.json');
+  assert.equal(config?.compilerOptions?.incremental, false);
+  assert.equal(include.includes('sources/activity/actions/**/*.ts'), true);
+  assert.equal(include.includes('sources/activity/attention/**/*.ts'), true);
+  assert.equal(include.includes('sources/activity/selection/**/*.ts'), true);
+  assert.equal(include.includes('sources/activity/presentation/**/*.ts'), true);
+  assert.equal(include.includes('sources/activity/liveActivities/**/*.ts'), true);
+  assert.equal(include.includes('sources/activity/widgets/**/*.ts'), true);
+  assert.equal(include.includes('sources/activity/runtime/ActivitySurfacesRuntime.tsx'), true);
+  assert.equal(include.includes('sources/activity/adapters/desktop/**/*.ts'), true);
+  assert.equal(include.includes('sources/activity/adapters/desktop/**/*.tsx'), true);
+  assert.equal(include.includes('sources/components/settings/notifications/ActivitySurfacesSettingsSection.tsx'), true);
+  assert.equal(include.includes('sources/components/settings/notifications/NotificationsSettingsView.tsx'), true);
+  assert.equal(include.includes('sources/components/settings/desktop/DesktopOverlaySettingsSection.tsx'), true);
+  assert.equal(include.includes('sources/components/settings/desktop/DesktopSettingsSection.tsx'), true);
+  assert.equal(include.includes('sources/sync/domains/settings/registry/local/localSettingDefinitions.activitySurfaces.ts'), true);
+  assert.equal(include.includes('sources/types/**/*.d.ts'), true);
+  assert.equal(include.includes('sources/unistyles.ts'), true);
+  assert.equal(include.some((entry) => entry.includes('.test.')), false);
+});

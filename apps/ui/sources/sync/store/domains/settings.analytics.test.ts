@@ -46,6 +46,7 @@ vi.mock('@/sync/domains/state/persistence', () => ({
     loadSessionPermissionModes: () => ({}),
     loadSessionActionDrafts: () => ({}),
     loadSessionReviewCommentsDrafts: () => ({}),
+    loadWorkspaceReviewCommentsDrafts: () => ({}),
     loadPendingSettings: () => ({}),
     loadSessionMaterializedMaxSeqById: () => ({}),
     loadChangesCursor: () => null,
@@ -57,6 +58,7 @@ vi.mock('@/sync/domains/state/persistence', () => ({
     saveSessionPermissionModes: vi.fn(),
     saveSessionActionDrafts: vi.fn(),
     saveSessionReviewCommentsDrafts: vi.fn(),
+    saveWorkspaceReviewCommentsDrafts: vi.fn(),
     savePendingSettings: vi.fn(),
     saveSessionMaterializedMaxSeqById: vi.fn(),
     saveChangesCursor: vi.fn(),
@@ -94,6 +96,8 @@ describe('createSettingsDomain local settings analytics', () => {
             return {
                 sessions: {},
                 machines: {},
+                machineDisplayById: {},
+                sessionListRenderables: {},
                 sessionListViewData: null,
                 sessionListViewDataByServerId: {},
             };
@@ -153,6 +157,80 @@ describe('createSettingsDomain local settings analytics', () => {
                 source: 'ui',
                 prev_value: 0,
                 next_value: 1,
+            }),
+        );
+        expect(mocks.tracking.capture).toHaveBeenCalledTimes(3);
+    });
+
+    it('normalizes legacy iOS activity-surface keys onto canonical local settings before analytics emission', () => {
+        type TestState = ReturnType<typeof createState>;
+
+        function createState() {
+            return {
+                sessions: {},
+                machines: {},
+                machineDisplayById: {},
+                sessionListRenderables: {},
+                sessionListViewData: null,
+                sessionListViewDataByServerId: {},
+            };
+        }
+
+        let state: TestState & ReturnType<typeof createSettingsDomain> = {
+            ...(createState() as TestState),
+        } as TestState & ReturnType<typeof createSettingsDomain>;
+        const set = (updater: any) => {
+            const next = typeof updater === 'function' ? updater(state) : updater;
+            state = { ...state, ...next };
+        };
+        const get = () => state as any;
+
+        const domain = createSettingsDomain<TestState & ReturnType<typeof createSettingsDomain>>({ set: set as any, get });
+        state = { ...state, ...domain };
+
+        state.applyLocalSettings({
+            iosLiveActivitiesEnabled: false,
+            iosWidgetsEnabled: false,
+            homeScreenWidgetsMode: 'running',
+        }, { source: 'ui' });
+
+        expect(state.localSettings.liveActivitiesEnabled).toBe(false);
+        expect(state.localSettings.iosLiveActivitiesEnabled).toBe(false);
+        expect(state.localSettings.widgetsEnabled).toBe(false);
+        expect(state.localSettings.iosWidgetsEnabled).toBe(false);
+        expect(state.localSettings.widgetsPresetMode).toBe('running');
+        expect(state.localSettings.homeScreenWidgetsMode).toBe('running');
+        expect(mocks.tracking.capture).toHaveBeenCalledWith(
+            'setting_changed',
+            expect.objectContaining({
+                setting_key: 'liveActivitiesEnabled',
+                scope: 'local_setting',
+                identity_scope: 'device_user',
+                source: 'ui',
+                prev_value: true,
+                next_value: false,
+            }),
+        );
+        expect(mocks.tracking.capture).toHaveBeenCalledWith(
+            'setting_changed',
+            expect.objectContaining({
+                setting_key: 'widgetsEnabled',
+                scope: 'local_setting',
+                identity_scope: 'device_user',
+                source: 'ui',
+                prev_value: true,
+                next_value: false,
+            }),
+        );
+        expect(mocks.tracking.capture).toHaveBeenCalledWith(
+            'setting_changed',
+            expect.objectContaining({
+                setting_key: 'widgetsPresetMode',
+                scope: 'local_setting',
+                identity_scope: 'device_user',
+                source: 'ui',
+                prev_value: 'summary',
+                next_value: 'running',
             }),
         );
         expect(mocks.tracking.capture).toHaveBeenCalledTimes(3);

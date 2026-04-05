@@ -16,9 +16,10 @@ test('apps/ui package.json exposes shared stack-owned Tauri dev entrypoints', as
   assert.equal(scripts['ui:tauri'], 'yarn -s ensure:workspace:built && node ../stack/scripts/tauri_dev.mjs');
   assert.equal(scripts['tauri:qa'], 'yarn -s ensure:workspace:built && node ./scripts/tauriMcpQa.mjs');
   assert.equal(scripts['tauri:mcp:wizard:qa'], 'node ./scripts/qa/tauriOnboardingWizardMcpQa.mjs');
+  assert.equal(scripts['tauri:mcp:activity-surfaces:qa'], 'node ./scripts/qa/tauriActivitySurfacesMcpQa.mjs');
   assert.equal(scripts['tauri:mcp:server'], 'npx -y @hypothesi/tauri-mcp-server');
   assert.equal(scripts['tauri:mcp:cli'], 'npx -y -p @hypothesi/tauri-mcp-cli tauri-mcp');
-  assert.equal(scripts['tauri:mcp:session:start'], 'npx -y -p @hypothesi/tauri-mcp-cli tauri-mcp driver-session start --port 9223');
+  assert.equal(scripts['tauri:mcp:session:start'], 'npx -y -p @hypothesi/tauri-mcp-cli tauri-mcp driver-session start --port 9225');
 });
 
 test('apps/ui Tauri public dev config enables the global Tauri bridge API for MCP tooling', async () => {
@@ -53,4 +54,44 @@ test('apps/ui default Tauri capability allows dialog open for SSH identity selec
   assert.equal(permissions.includes('dialog:allow-open'), true);
   assert.equal(permissions.includes('core:window:allow-set-badge-count'), true);
   assert.equal(permissions.includes('core:window:allow-set-badge-label'), true);
+});
+
+test('apps/ui pins tauri plugin-http to one exact version across package, Cargo.toml, and Cargo.lock', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir);
+
+  const packageJson = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf-8'));
+  const cargoToml = await readFile(join(packageRoot, 'src-tauri', 'Cargo.toml'), 'utf-8');
+  const cargoLock = await readFile(join(packageRoot, 'src-tauri', 'Cargo.lock'), 'utf-8');
+
+  const jsVersion = packageJson?.dependencies?.['@tauri-apps/plugin-http'];
+  const cargoTomlVersion = cargoToml.match(/tauri-plugin-http = "([^"]+)"/)?.[1];
+  const cargoLockVersion = cargoLock.match(/name = "tauri-plugin-http"\nversion = "([^"]+)"/)?.[1];
+
+  assert.equal(typeof jsVersion, 'string');
+  assert.equal(jsVersion.startsWith('^'), false);
+  assert.equal(jsVersion.startsWith('~'), false);
+  assert.equal(cargoTomlVersion, `=${jsVersion}`);
+  assert.equal(jsVersion, cargoLockVersion);
+});
+
+test('apps/ui default Tauri capability uses URL patterns that match loopback and arbitrary ports', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir);
+
+  const capability = JSON.parse(await readFile(join(packageRoot, 'src-tauri', 'capabilities', 'default.json'), 'utf-8'));
+  const permissions = Array.isArray(capability?.permissions) ? capability.permissions : [];
+  const httpPermission = permissions.find((permission) => permission?.identifier === 'http:default');
+
+  assert.ok(httpPermission);
+  const allowUrls = Array.isArray(httpPermission.allow)
+    ? httpPermission.allow.map((entry) => entry?.url).filter((value) => typeof value === 'string')
+    : [];
+
+  assert.equal(allowUrls.includes('http://**'), false);
+  assert.equal(allowUrls.includes('https://**'), false);
+  assert.equal(allowUrls.includes('http://*'), true);
+  assert.equal(allowUrls.includes('http://*:*'), true);
+  assert.equal(allowUrls.includes('https://*'), true);
+  assert.equal(allowUrls.includes('https://*:*'), true);
 });

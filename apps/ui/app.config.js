@@ -383,6 +383,7 @@ const baseExpoConfig = {
                             name: "HappierFocusLiveActivity",
                             displayName: "Happier Focus Live",
                             description: "Shows the focused session on the Lock Screen and in the Dynamic Island.",
+                            supportedFamilies: ["accessoryRectangular"],
                         },
                     ],
                 }

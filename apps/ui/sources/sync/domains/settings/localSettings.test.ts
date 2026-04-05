@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
-import { localSettingsDefaults, localSettingsParse } from './localSettings';
+import { ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS } from './registry/local/localSettingDefinitions.activitySurfaces';
+import { applyLocalSettings, localSettingsDefaults, localSettingsParse } from './localSettings';
 
 describe('localSettingsParse', () => {
+    it('does not accept the dead shortcut_only desktop overlay expanded behavior in the rollout schema', () => {
+        expect(
+            ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS.desktopOverlayExpandedBehavior.schema.safeParse('shortcut_only').success,
+        ).toBe(false);
+    });
+
     it('includes multi-pane and pane tab defaults', () => {
         const parsed = localSettingsParse(null);
         expect(parsed.uiMultiPanePanelsEnabled).toBe(true);
@@ -24,19 +31,45 @@ describe('localSettingsParse', () => {
         expect(parsed.localNotificationsShowPendingUserActionRequests).toBe(true);
         expect(parsed.localNotificationsForegroundBehavior).toBe('full');
         expect(parsed.activitySurfacesEnabled).toBe(true);
+        expect(parsed.liveActivitiesEnabled).toBe(true);
+        expect(parsed.liveActivitiesStrategy).toBe('dynamic_primary');
         expect(parsed.iosLiveActivitiesEnabled).toBe(true);
-        expect(parsed.iosWidgetsEnabled).toBe(true);
+        expect(parsed.widgetsEnabled).toBe(true);
         expect(parsed.liveActivitiesMode).toBe('focused');
         expect(parsed.liveActivitiesMaxConcurrent).toBe(1);
         expect(parsed.liveActivitiesShowPreviewText).toBe(true);
         expect(parsed.liveActivitiesAllowActionButtons).toBe(true);
         expect(parsed.liveActivitiesIncludeReady).toBe(true);
         expect(parsed.liveActivitiesIncludeThinking).toBe(true);
+        expect(parsed.widgetsPresetMode).toBe('summary');
+        expect(parsed.widgetsShowPreviewText).toBe(true);
+        expect(parsed.widgetsShowMachinePath).toBe(true);
         expect(parsed.homeScreenWidgetsMode).toBe('summary');
         expect(parsed.homeScreenWidgetsShowPreviewText).toBe(true);
         expect(parsed.homeScreenWidgetsShowMachinePath).toBe(true);
         expect(parsed.activitySurfaceTapTarget).toBe('open_session');
         expect(parsed.activitySurfacePrivacyMode).toBe('title_only');
+        expect(parsed.desktopOverlayEnabled).toBe(false);
+        expect(parsed.desktopOverlayVisibilityMode).toBe('attention_only');
+        expect(parsed.desktopOverlayShowWhenRunning).toBe(true);
+        expect(parsed.desktopOverlayShowWhenAttentionRequired).toBe(true);
+        expect(parsed.desktopOverlayShowWhenReady).toBe(true);
+        expect(parsed.desktopOverlayAlwaysOnTop).toBe(true);
+        expect(parsed.desktopOverlayAutoHideEnabled).toBe(true);
+        expect(parsed.desktopOverlayAutoHideDelayMs).toBe(6_000);
+        expect(parsed.desktopOverlayExpandedBehavior).toBe('click');
+        expect(parsed.desktopOverlayInteractiveCollapsed).toBe(true);
+        expect(parsed.desktopOverlayEnableDragReposition).toBe(false);
+        expect(parsed.desktopOverlayLockPosition).toBe(true);
+        expect(parsed.desktopOverlayPlacementMode).toBe('anchored');
+        expect(parsed.desktopOverlayAnchor).toBe('top_center');
+        expect(parsed.desktopOverlayOffsetX).toBe(0);
+        expect(parsed.desktopOverlayOffsetY).toBe(0);
+        expect(parsed.desktopOverlayClickAction).toBe('expand_overlay');
+        expect(parsed.desktopOverlayDensity).toBe('compact');
+        expect(parsed.desktopOverlayShowSessionCount).toBe(true);
+        expect(parsed.desktopOverlayShowPreviewText).toBe(false);
+        expect(parsed.desktopOverlayCompactStyle).toBe('pill');
         expect(typeof (parsed as any).sidebarWidthPx).toBe('number');
         expect(typeof (parsed as any).sidebarWidthBasisPx).toBe('number');
         expect((parsed as any).bottomPaneHeightPx).toBe(320);
@@ -98,8 +131,11 @@ describe('localSettingsParse', () => {
             localNotificationsShowPendingUserActionRequests: false,
             localNotificationsForegroundBehavior: 'silent',
             activitySurfacesEnabled: false,
+            liveActivitiesEnabled: false,
+            liveActivitiesStrategy: 'session_specific',
             iosLiveActivitiesEnabled: false,
-            iosWidgetsEnabled: false,
+            widgetsEnabled: false,
+            widgetsPresetMode: 'attention',
             liveActivitiesMode: 'running',
             liveActivitiesMaxConcurrent: 4,
             liveActivitiesShowPreviewText: false,
@@ -107,10 +143,33 @@ describe('localSettingsParse', () => {
             liveActivitiesIncludeReady: false,
             liveActivitiesIncludeThinking: false,
             homeScreenWidgetsMode: 'attention',
+            widgetsShowPreviewText: false,
+            widgetsShowMachinePath: false,
             homeScreenWidgetsShowPreviewText: false,
             homeScreenWidgetsShowMachinePath: false,
             activitySurfaceTapTarget: 'open_sessions',
             activitySurfacePrivacyMode: 'include_preview',
+            desktopOverlayEnabled: true,
+            desktopOverlayVisibilityMode: 'always_when_enabled',
+            desktopOverlayShowWhenRunning: false,
+            desktopOverlayShowWhenAttentionRequired: false,
+            desktopOverlayShowWhenReady: false,
+            desktopOverlayAlwaysOnTop: false,
+            desktopOverlayAutoHideEnabled: false,
+            desktopOverlayAutoHideDelayMs: 30_000,
+            desktopOverlayExpandedBehavior: 'click',
+            desktopOverlayInteractiveCollapsed: false,
+            desktopOverlayEnableDragReposition: true,
+            desktopOverlayLockPosition: false,
+            desktopOverlayPlacementMode: 'custom',
+            desktopOverlayAnchor: 'bottom_right',
+            desktopOverlayOffsetX: 12,
+            desktopOverlayOffsetY: -8,
+            desktopOverlayClickAction: 'open_sessions',
+            desktopOverlayDensity: 'comfortable',
+            desktopOverlayShowSessionCount: false,
+            desktopOverlayShowPreviewText: true,
+            desktopOverlayCompactStyle: 'panel',
         });
 
         expect(parsed.activityBadgesEnabled).toBe(false);
@@ -123,8 +182,11 @@ describe('localSettingsParse', () => {
         expect(parsed.localNotificationsShowPendingUserActionRequests).toBe(false);
         expect(parsed.localNotificationsForegroundBehavior).toBe('silent');
         expect(parsed.activitySurfacesEnabled).toBe(false);
+        expect(parsed.liveActivitiesEnabled).toBe(false);
+        expect(parsed.liveActivitiesStrategy).toBe('session_specific');
         expect(parsed.iosLiveActivitiesEnabled).toBe(false);
-        expect(parsed.iosWidgetsEnabled).toBe(false);
+        expect(parsed.widgetsEnabled).toBe(false);
+        expect(parsed.widgetsPresetMode).toBe('attention');
         expect(parsed.liveActivitiesMode).toBe('running');
         expect(parsed.liveActivitiesMaxConcurrent).toBe(4);
         expect(parsed.liveActivitiesShowPreviewText).toBe(false);
@@ -132,9 +194,60 @@ describe('localSettingsParse', () => {
         expect(parsed.liveActivitiesIncludeReady).toBe(false);
         expect(parsed.liveActivitiesIncludeThinking).toBe(false);
         expect(parsed.homeScreenWidgetsMode).toBe('attention');
+        expect(parsed.widgetsShowPreviewText).toBe(false);
+        expect(parsed.widgetsShowMachinePath).toBe(false);
         expect(parsed.homeScreenWidgetsShowPreviewText).toBe(false);
         expect(parsed.homeScreenWidgetsShowMachinePath).toBe(false);
         expect(parsed.activitySurfaceTapTarget).toBe('open_sessions');
         expect(parsed.activitySurfacePrivacyMode).toBe('include_preview');
+        expect(parsed.desktopOverlayEnabled).toBe(true);
+        expect(parsed.desktopOverlayVisibilityMode).toBe('always_when_enabled');
+        expect(parsed.desktopOverlayShowWhenRunning).toBe(false);
+        expect(parsed.desktopOverlayShowWhenAttentionRequired).toBe(false);
+        expect(parsed.desktopOverlayShowWhenReady).toBe(false);
+        expect(parsed.desktopOverlayAlwaysOnTop).toBe(false);
+        expect(parsed.desktopOverlayAutoHideEnabled).toBe(false);
+        expect(parsed.desktopOverlayAutoHideDelayMs).toBe(30_000);
+        expect(parsed.desktopOverlayExpandedBehavior).toBe('click');
+        expect(parsed.desktopOverlayInteractiveCollapsed).toBe(false);
+        expect(parsed.desktopOverlayEnableDragReposition).toBe(true);
+        expect(parsed.desktopOverlayLockPosition).toBe(false);
+        expect(parsed.desktopOverlayPlacementMode).toBe('custom');
+        expect(parsed.desktopOverlayAnchor).toBe('bottom_right');
+        expect(parsed.desktopOverlayOffsetX).toBe(12);
+        expect(parsed.desktopOverlayOffsetY).toBe(-8);
+        expect(parsed.desktopOverlayClickAction).toBe('open_sessions');
+        expect(parsed.desktopOverlayDensity).toBe('comfortable');
+        expect(parsed.desktopOverlayShowSessionCount).toBe(false);
+        expect(parsed.desktopOverlayShowPreviewText).toBe(true);
+        expect(parsed.desktopOverlayCompactStyle).toBe('panel');
+    });
+
+    it('migrates the legacy shortcut_only desktop overlay expanded behavior before validation', () => {
+        const parsed = localSettingsParse({
+            desktopOverlayExpandedBehavior: 'shortcut_only',
+        });
+
+        expect(parsed.desktopOverlayExpandedBehavior).toBe('click');
+    });
+
+    it('syncs canonical activity surface aliases when applying local settings', () => {
+        const applied = applyLocalSettings(localSettingsDefaults, {
+            iosLiveActivitiesEnabled: false,
+            homeScreenWidgetsMode: 'running',
+            homeScreenWidgetsShowPreviewText: false,
+            homeScreenWidgetsShowMachinePath: false,
+            desktopOverlayExpandedBehavior: 'click',
+        });
+
+        expect(applied.liveActivitiesEnabled).toBe(false);
+        expect(applied.iosLiveActivitiesEnabled).toBe(false);
+        expect(applied.widgetsPresetMode).toBe('running');
+        expect(applied.homeScreenWidgetsMode).toBe('running');
+        expect(applied.widgetsShowPreviewText).toBe(false);
+        expect(applied.homeScreenWidgetsShowPreviewText).toBe(false);
+        expect(applied.widgetsShowMachinePath).toBe(false);
+        expect(applied.homeScreenWidgetsShowMachinePath).toBe(false);
+        expect(applied.desktopOverlayExpandedBehavior).toBe('click');
     });
 });

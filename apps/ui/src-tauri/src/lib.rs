@@ -10,6 +10,9 @@ mod system_tasks;
 #[cfg(desktop)]
 mod window_sizing;
 
+#[cfg(desktop)]
+mod activity_overlay;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default()
@@ -28,6 +31,7 @@ pub fn run() {
             .manage(app_updates::PendingUpdate::default())
             .manage(system_tasks::SystemTasksState::default())
             .manage(window_sizing::WindowSizingState::default())
+            .manage(activity_overlay::ActivityOverlayState::default())
             .invoke_handler(tauri::generate_handler![
                 app_updates::desktop_fetch_update,
                 app_updates::desktop_install_update,
@@ -40,7 +44,13 @@ pub fn run() {
                 system_tasks::get_system_task_snapshot,
                 system_tasks::system_tasks_open_log_path,
                 system_tasks::respond_system_task_prompt,
-                window_sizing::desktop_set_window_mode
+                window_sizing::desktop_set_window_mode,
+                activity_overlay::desktop_activity_overlay_sync,
+                activity_overlay::desktop_activity_overlay_get_window_state,
+                activity_overlay::desktop_activity_overlay_set_expanded,
+                activity_overlay::desktop_activity_overlay_apply_drag_delta,
+                activity_overlay::desktop_activity_overlay_reset_position,
+                activity_overlay::desktop_activity_overlay_emit_interaction
             ]);
     }
 
@@ -51,6 +61,7 @@ pub fn run() {
                 autostart::register(app)?;
                 tray::register(app)?;
                 window_sizing::register(app)?;
+                activity_overlay::register(app)?;
             }
 
             #[cfg(desktop)]

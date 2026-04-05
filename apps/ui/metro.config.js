@@ -190,6 +190,7 @@ const kokoroJsStub = path.resolve(__dirname, "sources/platform/stubs/kokoroJsStu
 const transformersStub = path.resolve(__dirname, "sources/platform/stubs/huggingfaceTransformersStub.ts");
 const fontFaceObserverWebShim = path.resolve(__dirname, "sources/platform/shims/fontFaceObserverWebShim.ts");
 const reactNativeWebShim = path.resolve(__dirname, "sources/platform/shims/reactNativeWebShim.ts");
+const reactNavigationNativeWebShim = path.resolve(__dirname, "sources/platform/shims/reactNavigationNativeWebShim.ts");
 const expoSystemUiWebStub = path.resolve(__dirname, "sources/platform/stubs/expoSystemUiWebStub.ts");
 const expoAsyncRequireSetupShim = path.resolve(__dirname, "sources/dev/webHmrOptOut/expoAsyncRequireSetupShim.ts");
 const expoMessageSocketShim = path.resolve(__dirname, "sources/dev/webHmrOptOut/expoMessageSocketShim.ts");
@@ -300,6 +301,14 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   // `react-native` and crash at runtime. Use a shim that re-exports RNW + adds the missing API.
   if (platform === "web" && resolvedModuleName === "react-native") {
     return { type: "sourceFile", filePath: reactNativeWebShim };
+  }
+
+  // `@react-navigation/elements` (via `@react-navigation/native-stack`) expects `NavigationProvider`
+  // to be exported from `@react-navigation/native`. Our pinned navigation version doesn't export it,
+  // which can crash routes that show a header on web. Use a shim that re-exports the real module and
+  // provides a small `NavigationProvider` polyfill.
+  if (platform === "web" && resolvedModuleName === "@react-navigation/native") {
+    return { type: "sourceFile", filePath: reactNavigationNativeWebShim };
   }
 
   if (

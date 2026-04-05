@@ -40,7 +40,7 @@ const MIN_WINDOW_WIDTH_PX: f64 = 520.0;
 const MIN_WINDOW_HEIGHT_PX: f64 = 520.0;
 
 #[cfg(desktop)]
-const PREAUTH_WINDOW_WIDTH_PX: f64 = 520.0;
+const PREAUTH_WINDOW_WIDTH_PX: f64 = 500.0;
 
 #[cfg(desktop)]
 const PREAUTH_WINDOW_HEIGHT_PX: f64 = 760.0;

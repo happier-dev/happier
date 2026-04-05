@@ -70,6 +70,11 @@ describe('buildActivitySurfaceSnapshot', () => {
             thinking: 1,
             totalAttention: 3,
         });
+        expect(snapshot.summaryCounts).toEqual({
+            attentionCount: 3,
+            runningCount: 1,
+            permissionCount: 1,
+        });
     });
 
     it('returns an empty primary candidate when there are no sessions', () => {
@@ -130,4 +135,56 @@ describe('buildActivitySurfaceSnapshot', () => {
         expect(snapshot.primary?.subtitle).toBeNull();
     });
 
+    it('removes preview text from widget snapshots when previews are disabled but keeps status text', () => {
+        const snapshot = buildActivitySurfaceSnapshot({
+            sessions: [
+                createSessionFixture({
+                    id: 'permission',
+                    active: true,
+                    presence: 'online',
+                    pendingPermissionRequestCount: 1,
+                    metadata: {
+                        path: '/Users/tester/project/permission',
+                        host: 'tester.local',
+                        homeDir: '/Users/tester',
+                        summary: { text: 'Need your approval', updatedAt: 3 },
+                    },
+                }),
+            ],
+            policy: resolveActivitySurfacePolicy({
+                activitySurfacePrivacyMode: 'include_preview',
+                homeScreenWidgetsShowPreviewText: false,
+            }),
+            nowMs: 1_000,
+        });
+
+        expect(snapshot.primary?.previewText).toBeNull();
+        expect(snapshot.primary?.statusText).toBeTruthy();
+    });
+
+    it('routes widget default taps to inbox when the shared tap target is configured for the sessions list', () => {
+        const snapshot = buildActivitySurfaceSnapshot({
+            sessions: [
+                createSessionFixture({
+                    id: 'permission',
+                    active: true,
+                    presence: 'online',
+                    pendingPermissionRequestCount: 1,
+                    metadata: {
+                        path: '/Users/tester/project/permission',
+                        host: 'tester.local',
+                        homeDir: '/Users/tester',
+                        summary: { text: 'Need your approval', updatedAt: 3 },
+                    },
+                }),
+            ],
+            policy: resolveActivitySurfacePolicy({
+                activitySurfaceTapTarget: 'open_sessions',
+            }),
+            nowMs: 1_000,
+        });
+
+        expect(snapshot.defaultTarget).toBe('open-inbox');
+        expect(snapshot.primary?.target).toBe('open-session:permission');
+    });
 });

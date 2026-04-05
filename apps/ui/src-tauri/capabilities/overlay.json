@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "overlay",
+  "description": "minimal IPC permissions for the desktop activity overlay window",
+  "windows": [
+    "activity_overlay"
+  ],
+  "permissions": [
+    "core:default"
+  ]
+}
