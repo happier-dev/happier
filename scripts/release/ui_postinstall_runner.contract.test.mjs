@@ -53,3 +53,18 @@ test('ui postinstall runtime owns patch-package as an install-time dependency', 
     'apps/ui should not keep patch-package in devDependencies once postinstall depends on it at install time'
   );
 });
+
+test('ui Metro/Babel runtime owns babel-plugin-module-resolver as an install-time dependency', async () => {
+  const uiPackageJson = JSON.parse(await readFile(uiPackagePath, 'utf8'));
+
+  assert.equal(
+    uiPackageJson?.dependencies?.['babel-plugin-module-resolver'],
+    '^5.0.2',
+    'apps/ui Metro bundling requires babel-plugin-module-resolver during EAS/local builds, so it must live in dependencies'
+  );
+  assert.equal(
+    uiPackageJson?.devDependencies?.['babel-plugin-module-resolver'],
+    undefined,
+    'apps/ui should not keep babel-plugin-module-resolver in devDependencies once production bundling depends on it'
+  );
+});
