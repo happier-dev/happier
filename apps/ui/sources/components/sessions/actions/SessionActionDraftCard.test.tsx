@@ -99,8 +99,8 @@ vi.mock('@/hooks/server/useExecutionRunsBackendsForSession', () => ({
   useExecutionRunsBackendsForSession: () => null,
 }));
 
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache', () => ({
-  resolveServerIdForSessionIdFromLocalCache: () => null,
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
+  resolvePreferredServerIdForSessionId: () => null,
 }));
 
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({

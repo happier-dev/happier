@@ -7,16 +7,46 @@ import { Platform } from 'react-native';
 import type { PickedAttachment } from '@/components/sessions/attachments/AttachmentFilePicker.types';
 import { installNewSessionScreenModelCommonModuleMocks } from '@/components/sessions/new/hooks/newSessionScreenModelTestHelpers';
 import { clearAllNewSessionAttachmentDrafts } from './newSessionAttachmentDraftStore';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const uploadAttachmentDraftsToSessionSpy = vi.hoisted(() => vi.fn());
 const formatAttachmentsBlockSpy = vi.hoisted(() => vi.fn(() => '[attachments block]'));
-const followUpSpawnedSessionWithServerScopeSpy = vi.hoisted(() => vi.fn(async () => undefined));
+const followUpSpawnedSessionWithServerScopeSpy = vi.hoisted(() => vi.fn(async (_params: unknown) => undefined));
 const featureEnabledSpy = vi.hoisted(() => vi.fn((featureId: string) => featureId === 'attachments.uploads'));
+const workspaceReviewDraftsState = vi.hoisted(() => ({
+    draftsByRootPath: new Map<string, Array<{
+        id: string;
+        filePath: string;
+        source: 'file' | 'diff';
+        anchor: Record<string, unknown>;
+        snapshot: {
+            selectedLines: string[];
+            beforeContext: string[];
+            afterContext: string[];
+        };
+        body: string;
+        createdAt: number;
+    }>>(),
+}));
+const clearWorkspaceReviewCommentDraftsSpy = vi.hoisted(() => vi.fn());
+const reviewDraftHandlerScopeSpy = vi.hoisted(() => vi.fn());
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureEnabledSpy(featureId),
+}));
+
+vi.mock('@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceReviewCommentDraftHandlers', () => ({
+    useWorkspaceReviewCommentDraftHandlers: (scope: WorkspaceScopeBase | null) => {
+        reviewDraftHandlerScopeSpy(scope);
+        return {
+            onUpsertReviewCommentDraft: vi.fn(),
+            onDeleteReviewCommentDraft: vi.fn(),
+            onReviewCommentError: vi.fn(),
+            clearReviewCommentDrafts: clearWorkspaceReviewCommentDraftsSpy,
+        };
+    },
 }));
 
 vi.mock('@/components/sessions/attachments/useAttachmentsUploadConfig', () => ({
@@ -43,7 +73,17 @@ vi.mock('@/utils/platform/deferOnWeb', () => ({
     deferOnWeb: (callback: () => void) => callback(),
 }));
 
-installNewSessionScreenModelCommonModuleMocks();
+installNewSessionScreenModelCommonModuleMocks({
+    storage: async (importOriginal) => {
+        const original = await importOriginal<any>();
+        return {
+            ...original,
+            useWorkspaceReviewCommentsDrafts: (scope: WorkspaceScopeBase | null | undefined) => (
+                scope ? (workspaceReviewDraftsState.draftsByRootPath.get(scope.rootPath) ?? []) : []
+            ),
+        };
+    },
+});
 
 type HookValue = ReturnType<typeof import('./useNewSessionAttachmentsController').useNewSessionAttachmentsController>;
 
@@ -90,6 +130,9 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         formatAttachmentsBlockSpy.mockClear();
         followUpSpawnedSessionWithServerScopeSpy.mockReset();
         featureEnabledSpy.mockClear();
+        workspaceReviewDraftsState.draftsByRootPath.clear();
+        clearWorkspaceReviewCommentDraftsSpy.mockReset();
+        reviewDraftHandlerScopeSpy.mockReset();
     });
 
     it('restores attachment drafts when the new-session flow remounts with the same flow id', async () => {
@@ -289,5 +332,240 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         }));
 
         expect(remounted.getCurrent().drafts).toHaveLength(0);
+    });
+
+    it('automatically includes matching workspace review comments in the new-session follow-up flow and clears workspace drafts after success', async () => {
+        const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
+        const handleCreateSession = vi.fn();
+        featureEnabledSpy.mockImplementation((featureId: string) => featureId === 'files.reviewComments');
+        workspaceReviewDraftsState.draftsByRootPath.set('/repo/worktree-a', [{
+            id: 'draft-1',
+            filePath: 'src/a.ts',
+            source: 'diff',
+            anchor: {
+                kind: 'diffLine',
+                startLine: 1,
+                side: 'after',
+                oldLine: 1,
+                newLine: 1,
+            },
+            snapshot: {
+                selectedLines: ['+export const a = 2;'],
+                beforeContext: ['-export const a = 1;'],
+                afterContext: [],
+            },
+            body: 'Please verify this project change.',
+            createdAt: 1,
+        }]);
+
+        const hook = await renderHook(() => useNewSessionAttachmentsController({
+            flowId: 'flow-review-comments',
+            isCreating: false,
+            sessionPrompt: 'Focus on correctness',
+            handleCreateSession,
+            selectedProfileId: 'profile-work',
+            selectedMachineId: 'machine-1',
+            selectedPath: '/repo/worktree-a',
+            targetServerId: 'server-b',
+            baseActionChips: [],
+        }));
+
+        const reviewCommentsChip = hook.getCurrent().extraActionChips.find((chip) => chip.key === 'review-comments');
+        expect(reviewCommentsChip).toBeTruthy();
+        const collapsedActionResult = reviewCommentsChip?.collapsedAction?.({
+            tint: '#000',
+            dismiss: vi.fn(),
+            blurInput: vi.fn(),
+        });
+        const collapsedAction = Array.isArray(collapsedActionResult)
+            ? collapsedActionResult[0]
+            : collapsedActionResult;
+        expect(collapsedAction?.selected).toBe(true);
+        expect(reviewDraftHandlerScopeSpy).toHaveBeenCalledWith({
+            serverId: 'server-b',
+            machineId: 'machine-1',
+            rootPath: '/repo/worktree-a',
+        });
+
+        await act(async () => {
+            hook.getCurrent().handleSend();
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        expect(handleCreateSession).toHaveBeenCalledWith(expect.objectContaining({
+            initialMessage: 'skip',
+            afterCreated: expect.any(Function),
+        }));
+
+        const afterCreated = handleCreateSession.mock.calls[0]?.[0]?.afterCreated;
+        expect(typeof afterCreated).toBe('function');
+
+        await act(async () => {
+            await afterCreated({
+                sessionId: 'session-1',
+                effectiveSpawnServerId: 'server-b',
+            });
+        });
+
+        expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 'session-1',
+            targetServerId: 'server-b',
+            displayText: 'Review comments (1)',
+            profileId: 'profile-work',
+            metaOverrides: {
+                happier: {
+                    kind: 'review_comments.v1',
+                    payload: {
+                        sessionId: 'session-1',
+                        comments: [
+                            expect.objectContaining({
+                                id: 'draft-1',
+                                filePath: 'src/a.ts',
+                                body: 'Please verify this project change.',
+                            }),
+                        ],
+                    },
+                },
+            },
+        }));
+        const followUpCall = followUpSpawnedSessionWithServerScopeSpy.mock.calls.at(0);
+        expect(followUpCall).toBeDefined();
+        const followUpPayload = followUpCall?.[0] as { initialMessageText: string } | undefined;
+        expect(followUpPayload?.initialMessageText).toContain('Review comments:');
+        expect(followUpPayload?.initialMessageText).toContain('src/a.ts');
+        expect(clearWorkspaceReviewCommentDraftsSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('hides the review comments chip when the selected path changes away from the matching workspace', async () => {
+        const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
+        const handleCreateSession = vi.fn();
+        featureEnabledSpy.mockImplementation((featureId: string) => featureId === 'files.reviewComments');
+        workspaceReviewDraftsState.draftsByRootPath.set('/repo/worktree-a', [{
+            id: 'draft-1',
+            filePath: 'src/a.ts',
+            source: 'diff',
+            anchor: {
+                kind: 'diffLine',
+                startLine: 1,
+                side: 'after',
+                oldLine: 1,
+                newLine: 1,
+            },
+            snapshot: {
+                selectedLines: ['+export const a = 2;'],
+                beforeContext: ['-export const a = 1;'],
+                afterContext: [],
+            },
+            body: 'Please verify this project change.',
+            createdAt: 1,
+        }]);
+
+        let selectedPath = '/repo/worktree-a';
+        const hook = await renderHook(() => useNewSessionAttachmentsController({
+            flowId: 'flow-review-comments-unlink',
+            isCreating: false,
+            sessionPrompt: 'Focus on correctness',
+            handleCreateSession,
+            selectedProfileId: 'profile-work',
+            selectedMachineId: 'machine-1',
+            selectedPath,
+            targetServerId: 'server-b',
+            baseActionChips: [],
+        }));
+
+        expect(hook.getCurrent().extraActionChips.some((chip) => chip.key === 'review-comments')).toBe(true);
+
+        selectedPath = '/repo/other';
+        await hook.rerender();
+
+        expect(hook.getCurrent().extraActionChips.some((chip) => chip.key === 'review-comments')).toBe(false);
+
+        await act(async () => {
+            hook.getCurrent().handleSend();
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        expect(handleCreateSession).toHaveBeenCalledWith(undefined);
+        expect(clearWorkspaceReviewCommentDraftsSpy).not.toHaveBeenCalled();
+    });
+
+    it('shows a toggle chip for matching workspace review comments on a generic new-session screen and lets the user disable and re-enable it', async () => {
+        const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
+        const handleCreateSession = vi.fn();
+        featureEnabledSpy.mockImplementation((featureId: string) => featureId === 'files.reviewComments');
+        workspaceReviewDraftsState.draftsByRootPath.set('/repo/worktree-a', [{
+            id: 'draft-1',
+            filePath: 'src/a.ts',
+            source: 'diff',
+            anchor: {
+                kind: 'diffLine',
+                startLine: 1,
+                side: 'after',
+                oldLine: 1,
+                newLine: 1,
+            },
+            snapshot: {
+                selectedLines: ['+export const a = 2;'],
+                beforeContext: ['-export const a = 1;'],
+                afterContext: [],
+            },
+            body: 'Please verify this project change.',
+            createdAt: 1,
+        }]);
+
+        const hook = await renderHook(() => useNewSessionAttachmentsController({
+            flowId: 'flow-review-comments-discover',
+            isCreating: false,
+            sessionPrompt: 'Focus on correctness',
+            handleCreateSession,
+            selectedProfileId: 'profile-work',
+            selectedMachineId: 'machine-1',
+            selectedPath: '/repo/worktree-a',
+            targetServerId: 'server-b',
+            baseActionChips: [],
+        }));
+
+        const reviewCommentsChip = hook.getCurrent().extraActionChips.find((chip) => chip.key === 'review-comments');
+        expect(reviewCommentsChip).toBeTruthy();
+
+        await act(async () => {
+            const collapsedActionResult = reviewCommentsChip?.collapsedAction?.({
+                tint: '#000',
+                dismiss: vi.fn(),
+                blurInput: vi.fn(),
+            });
+            const collapsedAction = Array.isArray(collapsedActionResult)
+                ? collapsedActionResult[0]
+                : collapsedActionResult;
+            collapsedAction?.onPress?.();
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        const disabledChip = hook.getCurrent().extraActionChips.find((chip) => chip.key === 'review-comments');
+        const disabledActionResult = disabledChip?.collapsedAction?.({
+            tint: '#000',
+            dismiss: vi.fn(),
+            blurInput: vi.fn(),
+        });
+        const disabledAction = Array.isArray(disabledActionResult)
+            ? disabledActionResult[0]
+            : disabledActionResult;
+        expect(disabledAction?.selected).toBe(false);
+
+        await act(async () => {
+            disabledAction?.onPress?.();
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        const reenabledChip = hook.getCurrent().extraActionChips.find((chip) => chip.key === 'review-comments');
+        const reenabledActionResult = reenabledChip?.collapsedAction?.({
+            tint: '#000',
+            dismiss: vi.fn(),
+            blurInput: vi.fn(),
+        });
+        const reenabledAction = Array.isArray(reenabledActionResult)
+            ? reenabledActionResult[0]
+            : reenabledActionResult;
+        expect(reenabledAction?.selected).toBe(true);
     });
 });

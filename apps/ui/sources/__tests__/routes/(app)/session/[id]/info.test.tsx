@@ -18,7 +18,7 @@ const routerPushSpy = vi.fn();
 const routerBackSpy = vi.fn();
 const safeRouterBackSpy = vi.fn();
 const readMachineTargetForSessionSpy = vi.fn();
-const resolveServerIdForSessionIdFromLocalCacheSpy = vi.fn();
+const resolvePreferredServerIdForSessionIdSpy = vi.fn();
 const resolvePreferredServerIdForSessionIdSpy = vi.fn();
 const usePreferredServerIdForSessionSpy = vi.fn();
 const machineRpcWithServerScopeSpy = vi.fn();
@@ -198,7 +198,9 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 }));
 vi.mock('@/hooks/server/useSessionExecutionRunsSupported', () => ({ useSessionExecutionRunsSupported: () => false }));
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({ createDefaultActionExecutor: () => ({}) }));
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache', () => ({ resolveServerIdForSessionIdFromLocalCache: resolveServerIdForSessionIdFromLocalCacheSpy }));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
+    resolvePreferredServerIdForSessionId: (sessionId: string) => resolvePreferredServerIdForSessionIdSpy(sessionId),
+}));
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
     resolvePreferredServerIdForSessionId: (sessionId: string) => resolvePreferredServerIdForSessionIdSpy(sessionId),
 }));
@@ -274,11 +276,11 @@ describe('/session/[id]/info', () => {
         sessionArchiveSpy.mockClear();
         modalAlertSpy.mockClear();
         modalConfirmSpy.mockClear();
-        resolveServerIdForSessionIdFromLocalCacheSpy.mockClear();
+        resolvePreferredServerIdForSessionIdSpy.mockClear();
         resolvePreferredServerIdForSessionIdSpy.mockClear();
         usePreferredServerIdForSessionSpy.mockClear();
         machineRpcWithServerScopeSpy.mockClear();
-        resolveServerIdForSessionIdFromLocalCacheSpy.mockReturnValue(resolvedServerId);
+        resolvePreferredServerIdForSessionIdSpy.mockReturnValue(resolvedServerId);
         resolvePreferredServerIdForSessionIdSpy.mockImplementation(() => resolvedServerId);
         usePreferredServerIdForSessionSpy.mockImplementation(() => resolvedServerId);
         machineRpcWithServerScopeSpy.mockRejectedValue(new Error('unreachable'));
@@ -504,7 +506,7 @@ describe('/session/[id]/info', () => {
     it('reacts when machine-rpc direct-peer viability becomes available for the reachable machine target after metadata goes stale', async () => {
         sessionHandoffFeatureEnabled = true;
         resolvedServerId = 'server_reactive_info';
-        resolveServerIdForSessionIdFromLocalCacheSpy.mockReturnValue('server_reactive_info');
+        resolvePreferredServerIdForSessionIdSpy.mockReturnValue('server_reactive_info');
         readMachineTargetForSessionSpy.mockReturnValue({
             machineId: 'machine_rebound',
             basePath: '/workspace/repo',
@@ -569,7 +571,7 @@ describe('/session/[id]/info', () => {
     it('falls back to the preferred session server when the local server cache misses and still surfaces handoff after a scoped reachability probe succeeds', async () => {
         sessionHandoffFeatureEnabled = true;
         resolvedServerId = 'server_preferred_info';
-        resolveServerIdForSessionIdFromLocalCacheSpy.mockReturnValue(null);
+        resolvePreferredServerIdForSessionIdSpy.mockReturnValue(null);
         resolvePreferredServerIdForSessionIdSpy.mockReturnValue('server_preferred_info');
         usePreferredServerIdForSessionSpy.mockReturnValue('server_preferred_info');
         machineRpcWithServerScopeSpy.mockResolvedValue({ ok: true });

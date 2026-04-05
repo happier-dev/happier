@@ -77,8 +77,9 @@ installSessionHandoffCommonModuleMocks({
         return createStorageModuleStub({
             useMachineListByServerId: () => machineListByServerIdState,
             useMachineRecordValues: () => allMachinesState,
-            useSessions: () => sessionsState,
+            useAllSessionListRenderables: () => sessionsState,
             useSession: (id: string) => sessionsByIdState[id] ?? null,
+            useSessionListRenderable: (id: string) => sessionsState.find((session) => session?.id === id) ?? null,
             useSettingMutable: (key: string) => [
                 settingsState[key],
                 (next: any) => {

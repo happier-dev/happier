@@ -86,7 +86,6 @@ import { Text } from '@/components/ui/text/Text';
 import type { PermissionToolCallMessageLocation } from '@/utils/sessions/permissions/permissionToolCallLocationTypes';
 import { resolvePermissionToolCallLocations } from '@/utils/sessions/permissions/resolvePermissionToolCallLocations';
 import {
-    resolveAgentRequestKind,
     resolvePermissionPromptSurface,
     shouldShowGenericPermissionPromptForRequest,
 } from '@/utils/sessions/permissions/permissionPromptPolicy';
@@ -679,27 +678,20 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         () => pendingPermissionRequests.filter((req) => shouldShowGenericPermissionPromptForRequest({ toolName: req.tool, requestKind: req.kind })),
         [pendingPermissionRequests],
     );
-    const composerUserActionRequests = React.useMemo(
-        () =>
-            pendingUserActionRequests.filter(
-                (req) => resolveAgentRequestKind({ toolName: req.tool, requestKind: req.kind }) === 'user_action'
-            ),
-        [pendingUserActionRequests],
-    );
     const sessionIdForStorage = props.sessionId ?? '';
     const { ids: committedMessageIdsOldestFirst } = useSessionTranscriptIds(sessionIdForStorage);
     const committedMessagesById = useSessionMessagesById(sessionIdForStorage);
     const committedMessagesReducerState = useSessionMessagesReducerState(sessionIdForStorage);
     const permissionLocationVersion = useSessionMessagesVersion(
         sessionIdForStorage,
-        Boolean(props.sessionId && showComposerPermissionCards && (composerPermissionRequests.length > 0 || composerUserActionRequests.length > 0)),
+        Boolean(props.sessionId && showComposerPermissionCards && composerPermissionRequests.length > 0),
     );
 
     const permissionLocationsById = React.useMemo(() => {
         if (!props.sessionId) return new Map<string, PermissionToolCallMessageLocation | null>();
         if (!showComposerPermissionCards) return new Map<string, PermissionToolCallMessageLocation | null>();
-        if (composerPermissionRequests.length === 0 && composerUserActionRequests.length === 0) return new Map<string, PermissionToolCallMessageLocation | null>();
-        const ids = [...composerPermissionRequests, ...composerUserActionRequests].map((r) => r.id);
+        if (composerPermissionRequests.length === 0) return new Map<string, PermissionToolCallMessageLocation | null>();
+        const ids = composerPermissionRequests.map((r) => r.id);
         return new Map(
             resolvePermissionToolCallLocations({
                 permissionIds: ids,
@@ -718,7 +710,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         committedMessagesById,
         committedMessagesReducerState,
         composerPermissionRequests,
-        composerUserActionRequests,
         props.sessionId,
         showComposerPermissionCards,
         permissionLocationVersion,
@@ -1829,11 +1820,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     ) : null}
                     {Platform.OS === 'web' ? (
                         <>
-                            {props.sessionId && (composerPermissionRequests.length > 0 || composerUserActionRequests.length > 0) && showComposerPermissionCards ? (
+                            {props.sessionId && composerPermissionRequests.length > 0 && showComposerPermissionCards ? (
                                 <AgentInputPermissionRequests
                                     sessionId={props.sessionId}
                                     permissionRequests={composerPermissionRequests}
-                                    userActionRequests={composerUserActionRequests}
                                     permissionLocationsById={permissionLocationsById}
                                     metadata={props.metadata || null}
                                     canApprovePermissions={canApprovePermissions}
@@ -2002,11 +1992,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                 keyboardShouldPersistTaps="handled"
                                 alwaysBounceVertical={false}
                             >
-                                {props.sessionId && (composerPermissionRequests.length > 0 || composerUserActionRequests.length > 0) && showComposerPermissionCards ? (
+                                {props.sessionId && composerPermissionRequests.length > 0 && showComposerPermissionCards ? (
                                     <AgentInputPermissionRequests
                                         sessionId={props.sessionId}
                                         permissionRequests={composerPermissionRequests}
-                                        userActionRequests={composerUserActionRequests}
                                         permissionLocationsById={permissionLocationsById}
                                         metadata={props.metadata || null}
                                         canApprovePermissions={canApprovePermissions}
@@ -2054,7 +2043,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                             <View
                                 style={styles.nativeKeyboardFooterSection}
                                 onLayout={(event) => {
-                                    setActionFooterHeightPx(Math.trunc(event.nativeEvent.layout.height));
+                                    const nextHeight = Math.trunc(event.nativeEvent.layout.height);
+                                    setActionFooterHeightPx((currentHeight) => (
+                                        currentHeight === nextHeight ? currentHeight : nextHeight
+                                    ));
                                 }}
                             >
                                 <View style={styles.actionButtonsContainer}>

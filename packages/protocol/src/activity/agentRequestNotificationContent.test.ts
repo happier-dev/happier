@@ -26,13 +26,13 @@ describe('buildAgentRequestNotificationContent', () => {
     });
   });
 
-  it('uses explicit tool details when provided', () => {
+  it('uses explicit tool details when provided and normalizes ask-user-question labels', () => {
     expect(
       buildAgentRequestNotificationContent({
         kind: 'user_action',
         sessionId: 'session-1',
         requestId: 'request-2',
-        toolName: 'AskUserQuestion',
+        toolName: 'ask_user_question',
         toolInput: {
           questions: [{ question: 'Which branch should I use?' }],
         },

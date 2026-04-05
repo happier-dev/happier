@@ -7,7 +7,7 @@ import { useRouter } from 'expo-router';
 import { storage, useSession } from '@/sync/domains/state/storage';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
-import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
+import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { useExecutionRunsBackendsForSession } from '@/hooks/server/useExecutionRunsBackendsForSession';
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
@@ -54,7 +54,7 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
   const spec = getActionSpec(props.draft.actionId as any);
   const executor = React.useMemo(
     () => createDefaultActionExecutor({
-      resolveServerIdForSessionId: resolveServerIdForSessionIdFromLocalCache,
+      resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId),
       openSession: (sessionId) => {
         router.push((`/session/${sessionId}`) as any);
       },

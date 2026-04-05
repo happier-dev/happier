@@ -58,8 +58,11 @@ vi.mock('@/hooks/session/useConnectTerminal', () => ({
     }),
 }));
 
-vi.mock('@/hooks/session/useVisibleSessionListViewData', () => ({
-    useVisibleSessionListViewData: () => [],
+vi.mock('@/hooks/session/useVisibleSessionListSummary', () => ({
+    useVisibleSessionListSummary: () => ({
+        sessionsReady: true,
+        sessionCount: 0,
+    }),
 }));
 
 vi.mock('@/hooks/server/useEffectiveServerSelection', () => ({
@@ -72,7 +75,9 @@ vi.mock('@/hooks/server/useEffectiveServerSelection', () => ({
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerSnapshot: () => ({ serverId: 's1', generation: 1 }),
+    getServerProfilesGeneration: () => 1,
     listServerProfiles: () => [{ id: 's1', name: 'dev', serverUrl: 'http://127.0.0.1:3005' }],
+    subscribeServerProfiles: () => () => {},
 }));
 
 vi.mock('@/sync/domains/features/featureBuildPolicy', () => ({

@@ -32,7 +32,13 @@ function readSessionHandoffDirectProof(input: Readonly<{
         serverId,
         remoteMachineId: sourceMachineId,
     });
-    return cached.status === 'viable' ? 'reachable' : 'unknown';
+    if (cached.status === 'viable') {
+        return 'reachable';
+    }
+    if (cached.status === 'unavailable') {
+        return 'unavailable';
+    }
+    return 'unknown';
 }
 
 export function useSessionHandoffSourceReachability(input: Readonly<{
@@ -62,10 +68,7 @@ export function useSessionHandoffSourceReachability(input: Readonly<{
             serverId,
             remoteMachineId: sourceMachineId,
         }, () => {
-            const next = getSnapshot();
-            if (next === 'reachable') {
-                setAvailability('reachable');
-            }
+            setAvailability(getSnapshot());
         });
     }, [getSnapshot, serverId, sourceMachineId]);
 

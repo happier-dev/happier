@@ -1,6 +1,30 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 
 import { resolveSessionHandoffUiAvailability } from './resolveSessionHandoffUiAvailability';
+
+const state = vi.hoisted(() => ({
+    storageState: {
+        machines: {} as Record<string, { daemonState?: unknown | null }>,
+        machineListByServerId: {} as Record<string, { id: string; daemonState?: unknown | null }[] | null>,
+    },
+    preferredServerId: 'server-1',
+    reachableMachineId: 'machine_source',
+}));
+
+vi.mock('@/sync/domains/state/storage', () => createStorageModuleStub({
+    storage: {
+        getState: () => state.storageState,
+    },
+}));
+
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
+    resolvePreferredServerIdForSessionId: () => state.preferredServerId,
+}));
+
+vi.mock('@/sync/ops/sessionMachineTarget', () => ({
+    readMachineTargetForSession: () => ({ machineId: state.reachableMachineId }),
+}));
 
 function buildReadyServerSnapshot(input?: Readonly<{
     directPeerEnabled?: boolean;
@@ -42,7 +66,156 @@ const HANDOFF_ELIGIBLE_SESSION = {
     },
 } as const;
 
+function buildActiveDaemonTransferState(): unknown {
+    return {
+        transfer: {
+            supported: {
+                import: true,
+                export: true,
+            },
+            listenerClasses: {
+                loopback_http: {
+                    enabled: true,
+                    configured: true,
+                    active: true,
+                },
+                lan_http: {
+                    enabled: false,
+                    configured: false,
+                    active: false,
+                },
+                tailscale_serve_https: {
+                    enabled: false,
+                    configured: false,
+                    active: false,
+                    available: false,
+                },
+            },
+            lifecycle: {
+                mode: 'lazy_idle_shutdown',
+                version: 1,
+            },
+        },
+    };
+}
+
+function buildConfiguredInactiveDaemonTransferState(): unknown {
+    return {
+        transfer: {
+            supported: {
+                import: true,
+                export: true,
+            },
+            listenerClasses: {
+                loopback_http: {
+                    enabled: true,
+                    configured: true,
+                    active: false,
+                },
+                lan_http: {
+                    enabled: false,
+                    configured: false,
+                    active: false,
+                },
+                tailscale_serve_https: {
+                    enabled: false,
+                    configured: false,
+                    active: false,
+                    available: false,
+                },
+            },
+            lifecycle: {
+                mode: 'lazy_idle_shutdown',
+                version: 1,
+            },
+        },
+    };
+}
+
 describe('resolveSessionHandoffUiAvailability', () => {
+    it('reads source-machine daemon transfer state from the preferred server scope when callers have not passed daemon state explicitly', () => {
+        state.storageState.machineListByServerId = {
+            'server-1': [{
+                id: 'machine_source',
+                daemonState: buildActiveDaemonTransferState(),
+            }],
+        };
+        state.storageState.machines = {};
+
+        expect(resolveSessionHandoffUiAvailability({
+            sessionId: 'session-1',
+            session: HANDOFF_ELIGIBLE_SESSION,
+            sessionHandoffFeatureEnabled: true,
+            serverSnapshot: buildReadyServerSnapshot({
+                directPeerEnabled: true,
+                serverRoutedEnabled: true,
+            }),
+        })).toEqual({
+            available: true,
+            reason: 'available',
+        });
+    });
+
+    it('allows handoff when daemon state proves the source machine transfer listener is active even if runtime reachability is still unknown', () => {
+        expect(resolveSessionHandoffUiAvailability({
+            sessionId: 'session-1',
+            session: HANDOFF_ELIGIBLE_SESSION,
+            sessionHandoffFeatureEnabled: true,
+            serverSnapshot: buildReadyServerSnapshot({
+                directPeerEnabled: true,
+                serverRoutedEnabled: true,
+            }),
+            machineDaemonState: buildActiveDaemonTransferState(),
+        })).toEqual({
+            available: true,
+            reason: 'available',
+        });
+    });
+
+    it('fails closed when the preferred server-scoped machine record exists but has no daemon state yet, even if the global machine cache is stale-active', () => {
+        state.storageState.machineListByServerId = {
+            'server-1': [{
+                id: 'machine_source',
+                daemonState: null,
+            }],
+        };
+        state.storageState.machines = {
+            machine_source: {
+                daemonState: buildActiveDaemonTransferState(),
+            },
+        };
+
+        expect(resolveSessionHandoffUiAvailability({
+            sessionId: 'session-1',
+            session: HANDOFF_ELIGIBLE_SESSION,
+            sessionHandoffFeatureEnabled: true,
+            serverSnapshot: buildReadyServerSnapshot({
+                directPeerEnabled: true,
+                serverRoutedEnabled: true,
+            }),
+        })).toEqual({
+            available: false,
+            reason: 'runtime_direct_peer_unavailable',
+        });
+    });
+
+    it('fails closed when stale runtime reachability disagrees with daemon state and the source transfer listener is configured but inactive', () => {
+        expect(resolveSessionHandoffUiAvailability({
+            sessionId: 'session-1',
+            session: HANDOFF_ELIGIBLE_SESSION,
+            sessionHandoffFeatureEnabled: true,
+            serverSnapshot: buildReadyServerSnapshot({
+                directPeerEnabled: true,
+                serverRoutedEnabled: true,
+            }),
+            runtimeAvailability: 'reachable',
+            machineDaemonState: buildConfiguredInactiveDaemonTransferState(),
+        })).toEqual({
+            available: false,
+            reason: 'runtime_direct_peer_unavailable',
+        });
+    });
+
     it('fails closed when server-routed transfer is the only transport the selected server can truthfully offer', () => {
         expect(resolveSessionHandoffUiAvailability({
             session: HANDOFF_ELIGIBLE_SESSION,

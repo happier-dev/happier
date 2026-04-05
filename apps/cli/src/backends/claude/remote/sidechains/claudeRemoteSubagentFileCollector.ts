@@ -15,7 +15,7 @@ import {
 } from './_shared';
 
 import { realpath } from 'node:fs/promises';
-import { JsonlFollower } from '@/agent/localControl/jsonlFollower';
+import { JsonlFollower } from '@/api/session/fileBackedTranscripts/jsonl/followJsonlFile';
 
 type WatchFile = (file: string, onFileChange: (file: string) => void) => () => void;
 

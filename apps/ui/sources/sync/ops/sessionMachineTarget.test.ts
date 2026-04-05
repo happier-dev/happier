@@ -182,6 +182,51 @@ describe('sessionMachineTarget', () => {
         });
     });
 
+    it('prefers an active sibling session over an inactive direct machine target', async () => {
+        const { readMachineTargetForSession } = await import('./sessionMachineTarget');
+        getStateSpy.mockReturnValue({
+            sessions: {
+                s1: {
+                    active: false,
+                    metadata: {
+                        machineId: 'm-stale',
+                        path: '/workspace/repo',
+                        host: '',
+                    },
+                },
+                s2: {
+                    active: true,
+                    updatedAt: 100,
+                    metadata: {
+                        machineId: 'm-peer',
+                        path: '/workspace/repo',
+                        host: 'mbp.local',
+                    },
+                },
+            },
+            machines: {
+                'm-stale': {
+                    id: 'm-stale',
+                    active: false,
+                    activeAt: 0,
+                    metadata: { host: 'stale.local' },
+                },
+                'm-peer': {
+                    id: 'm-peer',
+                    active: true,
+                    activeAt: 42,
+                    metadata: { host: 'mbp.local' },
+                },
+            },
+            getProjectForSession: () => null,
+        });
+
+        expect(readMachineTargetForSession('s1')).toEqual({
+            machineId: 'm-peer',
+            basePath: '/workspace/repo',
+        });
+    });
+
     it('prefers the reachable machine target for display when metadata machine id is stale', async () => {
         const { readDisplayMachineIdForSession } = await import('./sessionMachineTarget');
         getStateSpy.mockReturnValue({

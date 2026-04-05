@@ -35,9 +35,31 @@ describe('computeSessionGettingStartedDecision', () => {
 });
 
 describe('buildSessionGettingStartedViewModel', () => {
+    it('uses the canonical session-ready summary instead of the raw sessions array', () => {
+        const input: any = {
+            sessions: null,
+            sessionsReady: true,
+            sessionCount: 1,
+            selection: {
+                activeTarget: { kind: 'server', id: 'srv-a' },
+                activeServerId: 'srv-a',
+                allowedServerIds: ['srv-a'],
+            },
+            serverSelectionGroups: [],
+            serverProfiles: [
+                { id: 'srv-a', name: 'A', serverUrl: 'https://api.a.example' },
+            ],
+            machineListByServerId: { 'srv-a': [{ active: true }] },
+        };
+        const model = buildSessionGettingStartedViewModel(input);
+
+        expect(model.kind).toBe('select_session');
+    });
+
     it('uses group name as target label when active target is a group', () => {
         const model = buildSessionGettingStartedViewModel({
-            sessions: [],
+            sessionsReady: true,
+            sessionCount: 0,
             selection: {
                 activeTarget: { kind: 'group', id: 'g1', groupId: 'g1' },
                 activeServerId: 'srv-a',
@@ -49,14 +71,14 @@ describe('buildSessionGettingStartedViewModel', () => {
                 { id: 'srv-b', name: 'B', serverUrl: 'https://api.b.example' },
             ],
             machineListByServerId: { 'srv-a': [], 'srv-b': [] },
-            machineListStatusByServerId: { 'srv-a': 'idle', 'srv-b': 'idle' },
         });
         expect(model.targetLabel).toBe('Company Servers');
     });
 
     it('shows server setup command for non-cloud servers', () => {
         const model = buildSessionGettingStartedViewModel({
-            sessions: [],
+            sessionsReady: true,
+            sessionCount: 0,
             selection: {
                 activeTarget: { kind: 'server', id: 'srv-a' },
                 activeServerId: 'srv-a',
@@ -65,14 +87,14 @@ describe('buildSessionGettingStartedViewModel', () => {
             serverSelectionGroups: [],
             serverProfiles: [{ id: 'srv-a', name: 'Company', serverUrl: 'https://api.company.example' }],
             machineListByServerId: { 'srv-a': [] },
-            machineListStatusByServerId: { 'srv-a': 'idle' },
         });
         expect(model.showServerSetup).toBe(true);
     });
 
     it('does not show server setup command for Happier Cloud', () => {
         const model = buildSessionGettingStartedViewModel({
-            sessions: [],
+            sessionsReady: true,
+            sessionCount: 0,
             selection: {
                 activeTarget: { kind: 'server', id: 'cloud' },
                 activeServerId: 'cloud',
@@ -81,7 +103,6 @@ describe('buildSessionGettingStartedViewModel', () => {
             serverSelectionGroups: [],
             serverProfiles: [{ id: 'cloud', name: 'Happier Cloud', serverUrl: 'https://api.happier.dev' }],
             machineListByServerId: { cloud: [] },
-            machineListStatusByServerId: { cloud: 'idle' },
         });
         expect(model.showServerSetup).toBe(false);
     });

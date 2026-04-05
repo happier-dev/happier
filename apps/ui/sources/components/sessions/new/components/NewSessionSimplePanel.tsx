@@ -67,6 +67,7 @@ export type NewSessionSimplePanelProps = Readonly<{
     isResumeSupportChecking: boolean;
     useProfiles: boolean;
     selectedProfileId: string | null;
+    selectedMachineId?: string | null;
     profilePopover?: React.ComponentProps<typeof AgentInput>['profilePopover'];
     targetServerId?: string | null;
     attachmentFlowId?: string | null;
@@ -95,6 +96,8 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
         handleCreateSession: props.handleCreateSession,
         selectedProfileId: props.selectedProfileId,
         targetServerId: props.targetServerId,
+        selectedMachineId: props.selectedMachineId ?? null,
+        selectedPath: props.selectedPath,
         baseActionChips: props.agentInputExtraActionChips,
     });
 

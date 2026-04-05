@@ -10,7 +10,7 @@ import {
   readCanonicalAgentRuntimeDescriptorV1ForProvider,
 } from '@happier-dev/protocol';
 
-import { collectCodexSessionRolloutFiles } from '../directSessions/collectCodexSessionRolloutFiles';
+import { collectCodexSessionRolloutFiles } from '../rollout/discovery/collectCodexSessionRolloutFiles';
 import { resolveCodexHomesForDirectSessionsSource } from '../directSessions/resolveCodexHomesForDirectSessionsSource';
 import type { CodexSessionBundle } from '../../../session/handoff/types';
 

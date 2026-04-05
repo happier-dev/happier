@@ -1,4 +1,5 @@
 import {
+  buildAgentRequestSemanticSummary,
   summarizeToolInputForNotification,
   type AgentRequestKind,
 } from './agentRequestSummary.js';
@@ -18,16 +19,21 @@ export function buildAgentRequestNotificationContent(params: Readonly<{
 }> {
   const type = params.kind === 'user_action' ? 'user_action_request' : 'permission_request';
   const title = params.kind === 'user_action' ? 'Action Required' : 'Permission Request';
+  const summary = buildAgentRequestSemanticSummary({
+    kind: params.kind,
+    toolName: params.toolName,
+    toolInput: params.toolInput,
+  });
   const toolDetails = typeof params.toolDetails === 'string' && params.toolDetails.trim()
     ? params.toolDetails.trim()
     : summarizeToolInputForNotification(params.toolName, params.toolInput);
   const body = params.kind === 'user_action'
     ? toolDetails
-      ? `Input needed for: ${params.toolName}\n${toolDetails}`
-      : `Input needed for: ${params.toolName}`
+      ? `Input needed for: ${summary.normalizedToolLabel}\n${toolDetails}`
+      : `Input needed for: ${summary.normalizedToolLabel}`
     : toolDetails
-      ? `Approval needed for: ${params.toolName}\n${toolDetails}`
-      : `Approval needed for: ${params.toolName}`;
+      ? `Approval needed for: ${summary.normalizedToolLabel}\n${toolDetails}`
+      : `Approval needed for: ${summary.normalizedToolLabel}`;
 
   return {
     title,

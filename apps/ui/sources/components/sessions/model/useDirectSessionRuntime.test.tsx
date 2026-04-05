@@ -4,21 +4,36 @@ import { renderHook } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const appStateListeners = vi.hoisted(() => new Set<(state: string) => void>());
+const documentListeners = vi.hoisted(() => new Set<() => void>());
+const documentStub = vi.hoisted(() => ({
+  visibilityState: 'visible' as DocumentVisibilityState,
+  addEventListener: vi.fn((event: string, handler: EventListenerOrEventListenerObject) => {
+    if (event === 'visibilitychange' && typeof handler === 'function') {
+      documentListeners.add(handler as () => void);
+    }
+  }),
+  removeEventListener: vi.fn((event: string, handler: EventListenerOrEventListenerObject) => {
+    if (event === 'visibilitychange' && typeof handler === 'function') {
+      documentListeners.delete(handler as () => void);
+    }
+  }),
+}));
+
 const machineDirectSessionStatusGetSpy = vi.hoisted(() => vi.fn());
-const refreshSessionMessagesSpy = vi.hoisted(() => vi.fn());
+const machineDirectSessionAttachSpy = vi.hoisted(() => vi.fn());
+const machineDirectSessionDetachSpy = vi.hoisted(() => vi.fn());
 const subscribeActiveServerSpy = vi.hoisted(() =>
   vi.fn<(listener: (snapshot: { serverId: string }) => void) => () => void>(() => () => {}),
 );
 const resolvePreferredServerIdForSessionIdSpy = vi.hoisted(() => vi.fn());
+const appState = vi.hoisted(() => ({ currentState: 'active' as string }));
 let activeServerSnapshot = { serverId: 'server-1' };
 
 vi.mock('@/sync/ops/machineDirectSessions', () => ({
   machineDirectSessionStatusGet: machineDirectSessionStatusGetSpy,
-}));
-vi.mock('@/sync/sync', () => ({
-  sync: {
-    refreshSessionMessages: refreshSessionMessagesSpy,
-  },
+  machineDirectSessionAttach: machineDirectSessionAttachSpy,
+  machineDirectSessionDetach: machineDirectSessionDetachSpy,
 }));
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => activeServerSnapshot,
@@ -27,6 +42,21 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
   resolvePreferredServerIdForSessionId: (sessionId: string) => resolvePreferredServerIdForSessionIdSpy(sessionId),
 }));
+vi.mock('react-native', async () => {
+  const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+  return createReactNativeWebMock({
+    Platform: { OS: 'web' },
+    AppState: {
+      get currentState() {
+        return appState.currentState;
+      },
+      addEventListener: (_event: string, handler: (state: string) => void) => {
+        appStateListeners.add(handler);
+        return { remove: () => appStateListeners.delete(handler) };
+      },
+    },
+  });
+});
 
 type HookValue = ReturnType<typeof import('./useDirectSessionRuntime')['useDirectSessionRuntime']>;
 
@@ -63,12 +93,19 @@ async function renderHarness(): Promise<{ getCurrent: () => HookValue; unmount: 
 
 describe('useDirectSessionRuntime', () => {
   beforeEach(() => {
+    appState.currentState = 'active';
+    documentStub.visibilityState = 'visible';
+    appStateListeners.clear();
+    documentListeners.clear();
     activeServerSnapshot = { serverId: 'server-1' };
     machineDirectSessionStatusGetSpy.mockReset();
-    refreshSessionMessagesSpy.mockReset();
+    machineDirectSessionAttachSpy.mockReset();
+    machineDirectSessionDetachSpy.mockReset();
     subscribeActiveServerSpy.mockClear();
     resolvePreferredServerIdForSessionIdSpy.mockReset();
     resolvePreferredServerIdForSessionIdSpy.mockReturnValue('server-owned');
+    machineDirectSessionAttachSpy.mockResolvedValue({ ok: true, leaseId: 'lease-1', expiresAtMs: Date.now() + 60_000 });
+    machineDirectSessionDetachSpy.mockResolvedValue({ ok: true, detached: true });
   });
 
   afterEach(() => {
@@ -83,18 +120,15 @@ describe('useDirectSessionRuntime', () => {
     process.on('unhandledRejection', onUnhandledRejection);
 
     try {
-      const refreshMessages = createDeferred<void>();
       machineDirectSessionStatusGetSpy.mockRejectedValueOnce(Object.assign(new Error('RPC method not available'), {
         rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE',
       }));
-      refreshSessionMessagesSpy.mockReturnValueOnce(refreshMessages.promise);
 
       const harness = await renderHarness();
       expect(unhandled).toEqual([]);
 
       await act(async () => {
-        refreshMessages.resolve();
-        await refreshMessages.promise;
+        await new Promise<void>((resolve) => queueMicrotask(resolve));
       });
 
       expect(unhandled).toEqual([]);
@@ -106,19 +140,17 @@ describe('useDirectSessionRuntime', () => {
   });
 
   it('returns the current status instead of rejecting when status refresh fails', async () => {
-    const refreshMessages = createDeferred<void>();
-    machineDirectSessionStatusGetSpy.mockRejectedValueOnce(Object.assign(new Error('RPC method not available'), {
-      rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE',
-    }));
-    refreshSessionMessagesSpy.mockReturnValueOnce(refreshMessages.promise);
+    machineDirectSessionStatusGetSpy
+      .mockRejectedValueOnce(Object.assign(new Error('RPC method not available'), {
+        rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE',
+      }))
+      .mockRejectedValueOnce(Object.assign(new Error('RPC method not available'), {
+        rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE',
+      }));
 
     const harness = await renderHarness();
 
     const refreshPromise = harness.getCurrent().refreshNow();
-    await act(async () => {
-      refreshMessages.resolve();
-      await refreshMessages.promise;
-    });
     await expect(refreshPromise).resolves.toBeNull();
     expect(harness.getCurrent().status).toBeNull();
     await harness.unmount();
@@ -130,7 +162,6 @@ describe('useDirectSessionRuntime', () => {
     machineDirectSessionStatusGetSpy
       .mockImplementationOnce(async () => await server1Status.promise)
       .mockResolvedValue({ ok: true, machineOnline: true, activity: 'running', runnerActive: true });
-    refreshSessionMessagesSpy.mockResolvedValue(undefined);
 
     const harness = await renderHarness();
 
@@ -160,7 +191,6 @@ describe('useDirectSessionRuntime', () => {
       .mockResolvedValueOnce({ ok: true, machineOnline: true, activity: 'idle', runnerActive: false })
       .mockResolvedValueOnce({ ok: true, machineOnline: true, activity: 'running', runnerActive: true })
       .mockResolvedValue({ ok: true, machineOnline: true, activity: 'running', runnerActive: true });
-    refreshSessionMessagesSpy.mockResolvedValue(undefined);
     resolvePreferredServerIdForSessionIdSpy
       .mockReturnValueOnce('server-owned-a')
       .mockReturnValueOnce('server-owned-a')
@@ -177,5 +207,84 @@ describe('useDirectSessionRuntime', () => {
 
     expect(machineDirectSessionStatusGetSpy.mock.calls[1]?.[1]).toEqual({ serverId: 'server-owned-b' });
     await harness.unmount();
+  });
+
+  it('polling direct-session status does not trigger transcript catch-up side effects', async () => {
+    machineDirectSessionStatusGetSpy
+      .mockResolvedValueOnce({ ok: true, machineOnline: true, activity: 'active_recently', runnerActive: false })
+      .mockResolvedValue({ ok: true, machineOnline: true, activity: 'idle', runnerActive: false });
+
+    const harness = await renderHarness();
+
+    await act(async () => {
+      await harness.getCurrent().refreshNow();
+    });
+
+    expect(machineDirectSessionStatusGetSpy).toHaveBeenCalled();
+    await harness.unmount();
+  });
+
+  it('attaches a direct-session view lease while mounted and detaches it on unmount', async () => {
+    const harness = await renderHarness();
+
+    expect(machineDirectSessionAttachSpy).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'machine-1',
+      sessionId: 'session-1',
+      providerId: 'opencode',
+      remoteSessionId: 'remote-1',
+    }), { serverId: 'server-owned' });
+
+    await harness.unmount();
+
+    expect(machineDirectSessionDetachSpy).toHaveBeenCalledWith({
+      machineId: 'machine-1',
+      sessionId: 'session-1',
+      leaseId: 'lease-1',
+    }, { serverId: 'server-owned' });
+  });
+
+  it('pauses direct-session polling and renewals when the runtime is hidden, then recovers on visibility restore', async () => {
+    vi.useFakeTimers();
+    try {
+      const harness = await renderHarness();
+
+      expect(machineDirectSessionAttachSpy).toHaveBeenCalledTimes(1);
+      expect(machineDirectSessionStatusGetSpy).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        appState.currentState = 'background';
+        documentStub.visibilityState = 'hidden';
+        for (const handler of appStateListeners) handler('background');
+        for (const handler of documentListeners) handler();
+        await new Promise<void>((resolve) => queueMicrotask(resolve));
+      });
+
+      expect(machineDirectSessionDetachSpy).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 3_000);
+          vi.advanceTimersByTime(3_000);
+        });
+      });
+
+      expect(machineDirectSessionStatusGetSpy).toHaveBeenCalledTimes(1);
+      expect(machineDirectSessionAttachSpy).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        appState.currentState = 'active';
+        documentStub.visibilityState = 'visible';
+        for (const handler of appStateListeners) handler('active');
+        for (const handler of documentListeners) handler();
+        await new Promise<void>((resolve) => queueMicrotask(resolve));
+      });
+
+      expect(machineDirectSessionAttachSpy).toHaveBeenCalledTimes(2);
+      expect(machineDirectSessionStatusGetSpy).toHaveBeenCalledTimes(2);
+
+      await harness.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

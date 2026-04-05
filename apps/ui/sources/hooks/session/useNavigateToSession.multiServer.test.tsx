@@ -32,10 +32,14 @@ vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
 }));
 
 describe('useNavigateToSession (multi-server)', () => {
-    it('switches active server when passed a different serverId', async () => {
+    it('navigates immediately while the server switch runs in parallel', async () => {
         routerNavigateSpy.mockClear();
         setActiveServerAndSwitchSpy.mockClear();
-        setActiveServerAndSwitchSpy.mockResolvedValue(true);
+        let resolveSwitch: ((value: boolean) => void) | undefined;
+        const switchPromise = new Promise<boolean>((resolve) => {
+            resolveSwitch = resolve;
+        });
+        setActiveServerAndSwitchSpy.mockImplementation(() => switchPromise);
 
         const { useNavigateToSession } = await import('./useNavigateToSession');
 
@@ -47,8 +51,9 @@ describe('useNavigateToSession (multi-server)', () => {
 
         await renderScreen(React.createElement(Probe));
 
+        let navigationPromise: Promise<void> | null = null;
         await act(async () => {
-            await navigateToSession!('sess_123', { serverId: 'other' });
+            navigationPromise = navigateToSession!('sess_123', { serverId: 'other' });
         });
 
         expect(setActiveServerAndSwitchSpy).toHaveBeenCalledTimes(1);
@@ -60,6 +65,14 @@ describe('useNavigateToSession (multi-server)', () => {
         expect(routerNavigateSpy).toHaveBeenCalledTimes(1);
         expect(routerNavigateSpy).toHaveBeenCalledWith('/session/sess_123', expect.any(Object));
         expect(routerNavigateSpy.mock.calls[0]?.[1]?.dangerouslySingular?.()).toBe('session');
+
+        if (!resolveSwitch) {
+            throw new Error('Expected server switch resolver to be initialized');
+        }
+        resolveSwitch(true);
+        await act(async () => {
+            await navigationPromise;
+        });
     });
 
     it('requests switch orchestration when serverId is provided', async () => {

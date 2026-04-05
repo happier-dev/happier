@@ -34,8 +34,8 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
     createDefaultActionExecutor: (opts?: unknown) => createDefaultActionExecutorSpy(opts),
 }));
 
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache', () => ({
-    resolveServerIdForSessionIdFromLocalCache: (sessionId: string) => `server:${sessionId}`,
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
+    resolvePreferredServerIdForSessionId: (sessionId: string) => `server:${sessionId}`,
 }));
 
 describe('TranscriptRollbackActionButton', () => {

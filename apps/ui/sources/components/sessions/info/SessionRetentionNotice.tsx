@@ -4,7 +4,8 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useServerRetentionPolicy } from '@/hooks/server/useServerRetentionPolicy';
 import { formatSessionRetentionSummary } from '@/sync/domains/server/retention/formatServerRetentionPolicy';
-import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
+import { storage } from '@/sync/domains/state/storage';
+import { resolveSessionListCachedSessionServerId } from '@/sync/domains/session/listing/sessionListCacheState';
 import { t } from '@/text';
 
 type SessionRetentionNoticeProps = Readonly<{
@@ -12,7 +13,10 @@ type SessionRetentionNoticeProps = Readonly<{
 }>;
 
 export function SessionRetentionNotice(props: SessionRetentionNoticeProps) {
-    const serverId = React.useMemo(() => resolveServerIdForSessionIdFromLocalCache(props.sessionId), [props.sessionId]);
+    const serverId = React.useMemo(
+        () => resolveSessionListCachedSessionServerId(storage.getState(), props.sessionId),
+        [props.sessionId],
+    );
     const policy = useServerRetentionPolicy(serverId);
 
     if (!serverId || !policy || !policy.enabled || policy.sessions.mode === 'keep_forever') {

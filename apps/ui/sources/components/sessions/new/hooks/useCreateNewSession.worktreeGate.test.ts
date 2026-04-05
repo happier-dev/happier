@@ -244,6 +244,8 @@ vi.mock('@/sync/domains/state/persistence', () => ({
     saveSessionDrafts: saveSessionDraftsMock,
     loadSessionReviewCommentsDrafts: () => ({}),
     saveSessionReviewCommentsDrafts: vi.fn(),
+    loadWorkspaceReviewCommentsDrafts: () => ({}),
+    saveWorkspaceReviewCommentsDrafts: vi.fn(),
     loadSessionActionDrafts: () => ({}),
     saveSessionActionDrafts: vi.fn(),
     loadNewSessionDraft: () => null,

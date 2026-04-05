@@ -5,7 +5,7 @@ import { renderScreen } from '@/dev/testkit';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const useServerRetentionPolicy = vi.fn();
-const resolveServerIdForSessionIdFromLocalCache = vi.fn();
+const resolveSessionListCachedSessionServerId = vi.fn();
 
 vi.mock('@/hooks/server/useServerRetentionPolicy', () => ({
     useServerRetentionPolicy,
@@ -22,8 +22,8 @@ vi.mock('@/text', async () => {
     });
 });
 
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache', () => ({
-    resolveServerIdForSessionIdFromLocalCache,
+vi.mock('@/sync/domains/session/listing/sessionListCacheState', () => ({
+    resolveSessionListCachedSessionServerId,
 }));
 
 async function renderSessionRetentionNotice(sessionId: string) {
@@ -33,7 +33,7 @@ async function renderSessionRetentionNotice(sessionId: string) {
 
 describe('SessionRetentionNotice', () => {
     it('renders nothing when the session server cannot be resolved', async () => {
-        resolveServerIdForSessionIdFromLocalCache.mockReturnValue(null);
+        resolveSessionListCachedSessionServerId.mockReturnValue(null);
         useServerRetentionPolicy.mockReturnValue(null);
 
         const screen = await renderSessionRetentionNotice('session-a');
@@ -42,7 +42,7 @@ describe('SessionRetentionNotice', () => {
     });
 
     it('renders a session retention notice when the server deletes inactive sessions', async () => {
-        resolveServerIdForSessionIdFromLocalCache.mockReturnValue('server-a');
+        resolveSessionListCachedSessionServerId.mockReturnValue('server-a');
         useServerRetentionPolicy.mockReturnValue({
             enabled: true,
             sessions: {

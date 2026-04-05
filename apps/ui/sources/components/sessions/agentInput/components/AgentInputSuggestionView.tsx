@@ -6,6 +6,7 @@ import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
 import { FileIcon } from '@/components/ui/media/FileIcon';
 import { normalizeRepoPathParts } from '@/utils/path/normalizeRepoPathParts';
+import { InlineRepoPathLabel } from '@/components/ui/path/InlineRepoPathLabel';
 
 
 interface CommandSuggestionProps {
@@ -42,10 +43,9 @@ interface FileMentionProps {
 }
 
 export const FileMentionSuggestion = React.memo(({ fileName, filePath, fileType = 'file' }: FileMentionProps) => {
-    const { dir, name } = React.useMemo(() => {
+    const { name } = React.useMemo(() => {
         return normalizeRepoPathParts({ fileName, filePath });
     }, [fileName, filePath]);
-    const dirLabel = dir ? `${dir}/` : null;
 
     const icon = fileType === 'folder'
         ? <Ionicons name="folder-outline" size={16} color={styles.iconColor.color} />
@@ -54,18 +54,13 @@ export const FileMentionSuggestion = React.memo(({ fileName, filePath, fileType 
     return (
         <View style={styles.suggestionContainer}>
             <View style={styles.leadingIcon}>{icon}</View>
-            <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'baseline' }}>
-                {dirLabel ? (
-                    <Text style={styles.filePathText} numberOfLines={1} ellipsizeMode="clip">
-                        {dirLabel}
-                    </Text>
-                ) : (
-                    <View style={{ flex: 1, minWidth: 0 }} />
-                )}
-                <Text style={styles.fileTitleText} numberOfLines={1} ellipsizeMode="middle">
-                    {fileType === 'folder' ? `${name}/` : name}
-                </Text>
-            </View>
+            <InlineRepoPathLabel
+                fileName={fileName}
+                filePath={filePath}
+                nameSuffix={fileType === 'folder' ? '/' : undefined}
+                pathTextStyle={styles.filePathText}
+                nameTextStyle={styles.fileTitleText}
+            />
         </View>
     );
 });
@@ -105,8 +100,6 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default('semiBold'),
     },
     filePathText: {
-        flex: 1,
-        minWidth: 0,
         fontSize: 12,
         color: theme.colors.textSecondary,
         ...Typography.default(),

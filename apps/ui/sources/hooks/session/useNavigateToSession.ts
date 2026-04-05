@@ -11,11 +11,13 @@ export function useNavigateToSession() {
     return React.useCallback(async (sessionId: string, opts?: Readonly<{ serverId?: string }>) => {
         const targetServerId = String(opts?.serverId ?? '').trim();
         if (targetServerId) {
-            try {
-                await setActiveServerAndSwitch({ serverId: targetServerId, scope: 'device', refreshAuth: auth.refreshFromActiveServer });
-            } catch {
+            void setActiveServerAndSwitch({
+                serverId: targetServerId,
+                scope: 'device',
+                refreshAuth: auth.refreshFromActiveServer,
+            }).catch(() => {
                 // If switching fails, still try navigation so users can recover in-session.
-            }
+            });
         }
 
         router.navigate(`/session/${sessionId}`, {

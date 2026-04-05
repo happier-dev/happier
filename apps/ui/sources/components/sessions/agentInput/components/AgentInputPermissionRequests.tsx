@@ -5,7 +5,6 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 import { PermissionPromptCard } from '@/components/tools/shell/permissions/PermissionPromptCard';
-import { UserActionPromptCard } from '@/components/tools/shell/userActions/UserActionPromptCard';
 import { Typography } from '@/constants/Typography';
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 import type { PermissionToolCallMessageLocation } from '@/utils/sessions/permissions/permissionToolCallLocationTypes';
@@ -43,7 +42,6 @@ const stylesheet = StyleSheet.create((theme) => ({
 export const AgentInputPermissionRequests = React.memo(function AgentInputPermissionRequests(props: Readonly<{
     sessionId: string;
     permissionRequests: readonly PendingPermissionRequest[];
-    userActionRequests: readonly PendingPermissionRequest[];
     permissionLocationsById: ReadonlyMap<string, PermissionToolCallMessageLocation | null>;
     metadata: Metadata | null;
     canApprovePermissions: boolean;
@@ -60,14 +58,9 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
 
     const permissionRequests = props.disabledReason === 'inactive' ? [] : props.permissionRequests;
 
-    if (permissionRequests.length === 0 && props.userActionRequests.length === 0) {
+    if (permissionRequests.length === 0) {
         return null;
     }
-
-    const rows = [
-        ...permissionRequests.map((req) => ({ kind: 'permission' as const, req })),
-        ...props.userActionRequests.map((req) => ({ kind: 'userAction' as const, req })),
-    ];
 
     return (
         <View style={styles.permissionRequestsContainer}>
@@ -85,7 +78,7 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
                         onScroll={props.onScroll}
                     >
                         <View style={{ paddingTop: 0 }}>
-                            {rows.map(({ kind, req }, index) => (
+                            {permissionRequests.map((req, index) => (
                                 <React.Fragment key={req.id}>
                                     {index > 0 ? (
                                         <View
@@ -93,27 +86,15 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
                                             style={styles.divider}
                                         />
                                     ) : null}
-                                    {kind === 'permission' ? (
-                                        <PermissionPromptCard
-                                            chrome="inline"
-                                            request={req}
-                                            location={props.permissionLocationsById.get(req.id) ?? null}
-                                            sessionId={props.sessionId}
-                                            metadata={props.metadata}
-                                            canApprovePermissions={props.canApprovePermissions}
-                                            disabledReason={props.disabledReason}
-                                        />
-                                    ) : (
-                                        <UserActionPromptCard
-                                            chrome="inline"
-                                            request={req}
-                                            location={props.permissionLocationsById.get(req.id) ?? null}
-                                            sessionId={props.sessionId}
-                                            metadata={props.metadata}
-                                            canApprovePermissions={props.canApprovePermissions}
-                                            disabledReason={props.disabledReason}
-                                        />
-                                    )}
+                                    <PermissionPromptCard
+                                        chrome="inline"
+                                        request={req}
+                                        location={props.permissionLocationsById.get(req.id) ?? null}
+                                        sessionId={props.sessionId}
+                                        metadata={props.metadata}
+                                        canApprovePermissions={props.canApprovePermissions}
+                                        disabledReason={props.disabledReason}
+                                    />
                                 </React.Fragment>
                             ))}
                         </View>

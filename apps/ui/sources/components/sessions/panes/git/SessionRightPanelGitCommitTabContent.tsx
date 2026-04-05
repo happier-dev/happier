@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { computeExpandedPathsForReveal } from '@/components/workspaces/files/repositoryTree/computeExpandedPathsForReveal';
 import { SessionRightPanelGitCommitTab } from '@/components/sessions/panes/git/SessionRightPanelGitCommitTab';
 import { ScmChangeDiscardButton } from '@/components/sessions/sourceControl/changes/ScmChangeDiscardButton';
+import { ScmCommitSelectionToggleButton } from '@/components/sessions/sourceControl/commitSelection/ScmCommitSelectionToggleButton';
 import { ScmChangeOverflowMenu } from '@/components/workspaces/scm/changes/ScmChangeOverflowMenu';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 import { getDefaultChangedFilesViewMode } from '@/scm/scmAttribution';
@@ -116,7 +117,6 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
 
     const noop = React.useCallback(() => {}, []);
     const noopFile = React.useCallback((_file: ScmFileStatus) => {}, []);
-    const renderNull = React.useCallback((_file: ScmFileStatus) => null, []);
 
     const revealInTree = React.useCallback((fullPath: string) => {
         props.onOpenFilesSidebar();
@@ -154,6 +154,30 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
         );
     }, [props.scmCommitStrategy, props.scmSnapshot, props.scmWriteEnabled, props.sessionId, props.sessionPath, revealInTree]);
 
+    const renderFileActions = React.useCallback((file: ScmFileStatus) => {
+        if (!commitSelectionUiEnabled || !props.scmWriteEnabled) return null;
+        return (
+            <ScmCommitSelectionToggleButton
+                sessionId={props.sessionId}
+                sessionPath={props.sessionPath}
+                snapshot={props.scmSnapshot}
+                scmWriteEnabled={props.scmWriteEnabled}
+                commitStrategy={props.scmCommitStrategy}
+                file={file}
+                selectedForCommit={isSelectedForCommit(file)}
+                surface="files"
+            />
+        );
+    }, [
+        commitSelectionUiEnabled,
+        isSelectedForCommit,
+        props.scmCommitStrategy,
+        props.scmSnapshot,
+        props.scmWriteEnabled,
+        props.sessionId,
+        props.sessionPath,
+    ]);
+
     return (
         <SessionRightPanelGitCommitTab
             theme={props.theme}
@@ -189,7 +213,7 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
             onFilePress={(file) => props.openFileInDetails(file.fullPath)}
             onFilePressPinned={(file) => props.openFileInDetailsPinned(file.fullPath)}
             onToggleSelectionForFile={commitSelectionUiEnabled ? toggleCommitSelectionForFile : noopFile}
-            renderFileActions={renderNull}
+            renderFileActions={renderFileActions}
             renderFileTrailingActions={renderTrailingActions}
             commitDraftMessage={props.commitDraftMessage}
             onCommitDraftMessageChange={props.onCommitDraftMessageChange}

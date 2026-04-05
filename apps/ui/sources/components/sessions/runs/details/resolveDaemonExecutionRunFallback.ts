@@ -4,7 +4,7 @@ import type { Message } from '@/sync/domains/messages/messageTypes';
 import { machineExecutionRunsList } from '@/sync/ops/machineExecutionRuns';
 import { storage } from '@/sync/domains/state/storage';
 import { readDisplayMachineIdForSession } from '@/sync/ops/sessionMachineTarget';
-import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
+import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { t } from '@/text';
 
 export type ExecutionRunTranscriptFallback = Readonly<{
@@ -79,7 +79,7 @@ export async function resolveDaemonExecutionRunFallback(params: Readonly<{
         metadata: session?.metadata ?? null,
     }) || null;
     if (!machineId) return null;
-    const serverId = resolveServerIdForSessionIdFromLocalCache(params.sessionId);
+    const serverId = resolvePreferredServerIdForSessionId(params.sessionId);
 
     const listed = await machineExecutionRunsList(machineId, { ...(serverId ? { serverId } : {}) });
     if (!listed || listed.ok !== true) return null;

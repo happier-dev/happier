@@ -8,6 +8,7 @@ import tweetnacl from 'tweetnacl';
 import axios from 'axios';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { sealEncryptedDataKeyEnvelopeV1, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 import { encrypt, encodeBase64 } from '@/api/encryption';
 import { collectBugReportMachineDiagnosticsSnapshot } from '@/diagnostics/bugReportMachineDiagnostics';
@@ -284,6 +285,33 @@ describe('registerMachineRpcHandlers', () => {
     const firstSpawnOptions = firstSpawnCall?.[0];
     expect(firstSpawnOptions).toBeDefined();
     expect(firstSpawnOptions).not.toHaveProperty('token');
+  });
+
+  it('forwards savePreparedTargetLocalMetadata into session handoff registration', async () => {
+    const sessionHandoff = await import('./rpcHandlers.sessionHandoff');
+    const registerMachineSessionHandoffRpcHandlersSpy = vi
+      .spyOn(sessionHandoff, 'registerMachineSessionHandoffRpcHandlers')
+      .mockImplementation(() => {});
+    const rpcHandlerManager = {
+      registerHandler: vi.fn(),
+    } as any;
+    const savePreparedTargetLocalMetadata = vi.fn(async () => {});
+
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession: async () => ({ type: 'success', sessionId: 's1' } as const),
+        stopSession: async () => true,
+        requestShutdown: () => {},
+        savePreparedTargetLocalMetadata,
+      } as any,
+    });
+
+    expect(registerMachineSessionHandoffRpcHandlersSpy).toHaveBeenCalledTimes(1);
+    expect(registerMachineSessionHandoffRpcHandlersSpy).toHaveBeenCalledWith(expect.objectContaining({
+      rpcHandlerManager,
+      savePreparedTargetLocalMetadata,
+    }));
   });
 
   it('normalizes legacy experimentalCodexAcp spawn requests onto canonical codexBackendMode', async () => {
@@ -4906,11 +4934,78 @@ describe('registerMachineRpcHandlers', () => {
 
     expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST)).toBe(true);
     expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_LINK_ENSURE)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_ATTACH)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_DETACH)).toBe(true);
     expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_STATUS_GET)).toBe(true);
     expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_TRANSCRIPT_PAGE)).toBe(true);
     expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER)).toBe(true);
     expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_TAKEOVER)).toBe(true);
     expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST)).toBe(true);
+  });
+
+  it('drops stale direct transfer handlers when the machine rpc surface is re-registered without transfer capability', async () => {
+    const { RpcHandlerManager } = await import('../rpc/RpcHandlerManager');
+
+    const rpcHandlerManager = new RpcHandlerManager({
+      scopePrefix: 'machine-test',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+    });
+
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession: async () => ({ type: 'success', sessionId: 's1' } as const),
+        stopSession: async () => true,
+        requestShutdown: () => {},
+        directTransferImport: {
+          prepareImportSession: async () => ({
+            uploadId: 'upload-1',
+            destDisplayPath: 'payload.bin',
+            expectedSizeBytes: 4,
+            chunkSizeBytes: 8,
+            recipientPublicKeyBase64: 'recipient-key',
+            expiresAt: 5_000,
+            endpointCandidates: [],
+          }),
+        },
+        directTransferExport: {
+          prepareExportSession: async () => ({
+            transferId: 'transfer-1',
+            endpointCandidates: [],
+            expiresAt: 5_000,
+          }),
+        },
+      },
+    });
+
+    expect(rpcHandlerManager.hasHandler(RPC_METHODS.SPAWN_HAPPY_SESSION)).toBe(true);
+    expect(rpcHandlerManager.hasHandler(RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_PREPARE)).toBe(true);
+    expect(rpcHandlerManager.hasHandler(RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE)).toBe(true);
+
+    const socketEmit = vi.fn();
+    (rpcHandlerManager as any).socket = {
+      emit: socketEmit,
+    };
+
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession: async () => ({ type: 'success', sessionId: 's2' } as const),
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    expect(rpcHandlerManager.hasHandler(RPC_METHODS.SPAWN_HAPPY_SESSION)).toBe(true);
+    expect(rpcHandlerManager.hasHandler(RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_PREPARE)).toBe(false);
+    expect(rpcHandlerManager.hasHandler(RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE)).toBe(false);
+    expect(socketEmit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.UNREGISTER, {
+      method: `machine-test:${RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_PREPARE}`,
+    });
+    expect(socketEmit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.UNREGISTER, {
+      method: `machine-test:${RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE}`,
+    });
   });
 
   it('registers session handoff handlers', async () => {

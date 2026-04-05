@@ -7,7 +7,6 @@ import type { AgentInputPermissionRequests as AgentInputPermissionRequestsCompon
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const capturedPermissionPromptCardProps: Array<Record<string, unknown>> = [];
-const capturedUserActionPromptCardProps: Array<Record<string, unknown>> = [];
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -50,27 +49,16 @@ vi.mock('@/components/tools/shell/permissions/PermissionPromptCard', () => ({
     },
 }));
 
-vi.mock('@/components/tools/shell/userActions/UserActionPromptCard', () => ({
-    UserActionPromptCard: (props: any) => {
-        capturedUserActionPromptCardProps.push(props);
-        return React.createElement('UserActionPromptCard', props);
-    },
-}));
-
 describe('AgentInputPermissionRequests', () => {
     it('renders a single outer chrome wrapper and uses inline cards with dividers', async () => {
         const { AgentInputPermissionRequests } = await import('./AgentInputPermissionRequests');
         capturedPermissionPromptCardProps.length = 0;
-        capturedUserActionPromptCardProps.length = 0;
 
         const screen = await renderScreen(React.createElement(AgentInputPermissionRequests, {
             sessionId: 's1',
             permissionRequests: [
                 { id: 'p1', kind: 'permission', tool: 'execute', arguments: { command: 'pwd' }, createdAt: null },
                 { id: 'p2', kind: 'permission', tool: 'execute', arguments: { command: 'ls' }, createdAt: null },
-            ],
-            userActionRequests: [
-                { id: 'u1', kind: 'user_action', tool: 'execute', arguments: { command: 'whoami' }, createdAt: null },
             ],
             permissionLocationsById: new Map(),
             metadata: null,
@@ -86,26 +74,21 @@ describe('AgentInputPermissionRequests', () => {
         expect(screen.findByTestId('agentInput.permissionRequests.chrome')).toBeTruthy();
 
         expect(capturedPermissionPromptCardProps).toHaveLength(2);
-        expect(capturedUserActionPromptCardProps).toHaveLength(1);
         expect(capturedPermissionPromptCardProps[0].chrome).toBe('inline');
-        expect(capturedUserActionPromptCardProps[0].chrome).toBe('inline');
 
-        // 3 rows => 2 dividers (each divider is attached to the row after it).
+        // 2 rows => 1 divider (attached to the second row).
         expect(screen.findByTestId('agentInput.permissionRequests.divider:p2')).toBeTruthy();
-        expect(screen.findByTestId('agentInput.permissionRequests.divider:u1')).toBeTruthy();
     });
 
     it('does not render when approvals are disabled due to inactive session', async () => {
         const { AgentInputPermissionRequests } = await import('./AgentInputPermissionRequests');
         capturedPermissionPromptCardProps.length = 0;
-        capturedUserActionPromptCardProps.length = 0;
 
         const screen = await renderScreen(React.createElement(AgentInputPermissionRequests, {
             sessionId: 's1',
             permissionRequests: [
                 { id: 'p1', kind: 'permission', tool: 'execute', arguments: { command: 'pwd' }, createdAt: null },
             ],
-            userActionRequests: [],
             permissionLocationsById: new Map(),
             metadata: null,
             canApprovePermissions: false,
@@ -125,14 +108,12 @@ describe('AgentInputPermissionRequests', () => {
     it('does not render permission requests when the session is inactive even if canApprovePermissions is incorrectly true', async () => {
         const { AgentInputPermissionRequests } = await import('./AgentInputPermissionRequests');
         capturedPermissionPromptCardProps.length = 0;
-        capturedUserActionPromptCardProps.length = 0;
 
         const screen = await renderScreen(React.createElement(AgentInputPermissionRequests, {
             sessionId: 's1',
             permissionRequests: [
                 { id: 'p1', kind: 'permission', tool: 'mcp__playwright__browser_close', arguments: {}, createdAt: null },
             ],
-            userActionRequests: [],
             permissionLocationsById: new Map(),
             metadata: null,
             canApprovePermissions: true,

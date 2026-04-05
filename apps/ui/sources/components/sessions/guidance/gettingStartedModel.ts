@@ -51,7 +51,8 @@ export function computeSessionGettingStartedDecision(params: Readonly<{
 }
 
 export type SessionGettingStartedViewModelInput = Readonly<{
-    sessions: ReadonlyArray<Readonly<{ type: string }>> | null;
+    sessionsReady: boolean;
+    sessionCount: number;
     selection: Readonly<{
         activeTarget: Readonly<{ kind: 'server' | 'group'; id: string; groupId?: string }>;
         activeServerId: string;
@@ -60,7 +61,6 @@ export type SessionGettingStartedViewModelInput = Readonly<{
     serverSelectionGroups: ReadonlyArray<Readonly<{ id: string; name: string }>> | null | undefined;
     serverProfiles: ReadonlyArray<Readonly<{ id: string; name: string; serverUrl: string }>>;
     machineListByServerId: Readonly<Record<string, ReadonlyArray<Readonly<{ active: boolean }>> | null | undefined>>;
-    machineListStatusByServerId: Readonly<Record<string, MachineListStatus | undefined>>;
 }>;
 
 export type SessionGettingStartedViewModel = Readonly<{
@@ -71,14 +71,6 @@ export type SessionGettingStartedViewModel = Readonly<{
     serverUrl: string;
     showServerSetup: boolean;
 }>;
-
-function countSessionItems(items: ReadonlyArray<Readonly<{ type: string }>>): number {
-    let count = 0;
-    for (const item of items) {
-        if (item.type === 'session') count += 1;
-    }
-    return count;
-}
 
 function resolveActiveServerProfile(
     serverProfiles: ReadonlyArray<Readonly<{ id: string; name: string; serverUrl: string }>>,
@@ -118,12 +110,9 @@ export function buildSessionGettingStartedViewModel(input: SessionGettingStarted
     });
     const machines = computeMachinesSummary(perServer);
 
-    const sessionsReady = input.sessions !== null;
-    const sessionCount = input.sessions ? countSessionItems(input.sessions) : 0;
-
     const kind = computeSessionGettingStartedDecision({
-        sessionsReady,
-        sessionCount,
+        sessionsReady: input.sessionsReady,
+        sessionCount: input.sessionCount,
         machines,
     });
 

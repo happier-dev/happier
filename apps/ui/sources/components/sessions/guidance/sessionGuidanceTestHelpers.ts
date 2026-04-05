@@ -148,7 +148,7 @@ export function installSessionGuidanceCommonModuleMocks(
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
             useSessionListViewData: () => [],
-            useSessionListViewDataByServerId: () => ({ s1: [] }),
+            useServerScopedSessionListCache: () => ({ s1: [] }),
             useMachineListByServerId: () => ({ s1: [] }),
             useMachineListStatusByServerId: () => ({ s1: 'idle' }),
             useLocalSetting: () => sessionGuidanceModuleState.localSettings.sessionGettingStartedGuidanceDismissed,

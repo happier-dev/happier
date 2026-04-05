@@ -15,7 +15,7 @@ import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Modal } from '@/modal';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
-import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
+import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { canForkConversation } from '@/sync/domains/sessionFork/forkUiSupport';
 import { executeSessionForkAction } from '@/sync/domains/sessionFork/executeSessionForkAction';
@@ -33,7 +33,29 @@ import { useHasGlobalVoiceAgentConversation } from '@/voice/agent/useHasGlobalVo
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { machineDirectSessionFollowPolicySet } from '@/sync/ops/machineDirectSessions';
 import { useSessionHandoffSourceReachability } from '@/sync/domains/sessionHandoff/useSessionHandoffSourceReachability';
+import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
+import {
+  readDirectSessionFollowPolicy,
+  updateMetadataWithDirectSessionFollowPolicy,
+} from '@/sync/domains/session/directSessions/directSessionFollowMetadata';
+import { sync } from '@/sync/sync';
+
+function resolveSessionHandoffMenuSubtitle(handoffAvailability: ReturnType<typeof resolveSessionHandoffUiAvailability>, fallbackSubtitle: string | undefined): string | undefined {
+  if (handoffAvailability.available) {
+    return fallbackSubtitle;
+  }
+
+  switch (handoffAvailability.reason) {
+    case 'handoff_feature_disabled':
+      return t('common.disabled');
+    case 'session_ineligible':
+    case 'transport_unavailable':
+    case 'runtime_direct_peer_unavailable':
+      return t('common.unavailable');
+  }
+}
 
 export function SessionHeaderActionMenu(props: Readonly<{
   sessionId: string;
@@ -87,7 +109,7 @@ export function SessionHeaderActionMenu(props: Readonly<{
   const [open, setOpen] = React.useState(false);
   const executor = React.useMemo(
     () => createDefaultActionExecutor({
-      resolveServerIdForSessionId: resolveServerIdForSessionIdFromLocalCache,
+      resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId),
       openSession: (childSessionId: string) => {
         router.push((`/session/${childSessionId}`) as any);
       },
@@ -99,20 +121,34 @@ export function SessionHeaderActionMenu(props: Readonly<{
     [props.sessionId, voice],
   );
   const showTeleportAction = teleportAvailability.ok && hasGlobalVoiceAgentConversation;
+  const directSessionLink = readDirectSessionLink(props.session.metadata);
+  const directSessionFollowPolicy = readDirectSessionFollowPolicy(props.session.metadata);
   const actions = React.useMemo(() => {
     const actionItems: DropdownMenuItem[] = listActionSpecs()
       .filter((spec) => spec.surfaces.ui_button === true)
       .filter((spec) => isActionEnabledInState({ settings } as any, spec.id, { surface: 'ui_button', placement: 'session_action_menu' } as any))
       .filter((spec) => Array.isArray(spec.placements) && spec.placements.includes('session_action_menu' as any))
       .filter((spec) => spec.id !== 'session.fork' || canForkConversation({ session: props.session, replayEnabled: sessionReplayEnabled }) === true)
-      .filter((spec) => spec.id !== 'session.handoff' || handoffAvailability.available)
       .map((spec) => ({
         id: spec.id,
         title: spec.title,
-        subtitle: spec.description,
+        subtitle: spec.id === 'session.handoff'
+          ? resolveSessionHandoffMenuSubtitle(handoffAvailability, spec.description)
+          : spec.description,
+        ...(spec.id === 'session.handoff' && handoffAvailability.available !== true
+          ? { disabled: true }
+          : {}),
       }));
 
     const out: DropdownMenuItem[] = [];
+
+    if (directSessionLink) {
+      out.push({
+        id: 'session.directSession.backgroundFollow',
+        title: t('session.actionMenu.backgroundFollow'),
+        subtitle: directSessionFollowPolicy === 'background_follow' ? t('common.enabled') : t('common.disabled'),
+      });
+    }
 
     if (Array.isArray(props.extraItems) && props.extraItems.length > 0) {
       out.push(...props.extraItems);
@@ -131,11 +167,12 @@ export function SessionHeaderActionMenu(props: Readonly<{
   }, [
     props.extraItems,
     props.session,
-    sessionHandoffEnabled,
     sessionReplayEnabled,
     settings,
     showTeleportAction,
-    handoffAvailability.available,
+    handoffAvailability,
+    directSessionLink,
+    directSessionFollowPolicy,
   ]);
 
   if (actions.length === 0) return null;
@@ -148,6 +185,30 @@ export function SessionHeaderActionMenu(props: Readonly<{
       onSelect={(actionId) => {
         setOpen(false);
         if (props.onSelectExtraItem?.(actionId) === true) return;
+        if (actionId === 'session.directSession.backgroundFollow') {
+          fireAndForget((async () => {
+            if (!directSessionLink) return;
+            const nextPolicy = directSessionFollowPolicy === 'background_follow' ? 'attached_only' : 'background_follow';
+            const result = await machineDirectSessionFollowPolicySet({
+              machineId: directSessionLink.machineId,
+              sessionId: props.sessionId,
+              providerId: directSessionLink.providerId,
+              remoteSessionId: directSessionLink.remoteSessionId,
+              source: directSessionLink.source,
+              enabled: nextPolicy === 'background_follow',
+            }, sessionServerId ? { serverId: sessionServerId } : undefined).catch(() => undefined);
+            if (!result?.ok) {
+              return;
+            }
+            sync.applySessionMetadataLocally(props.sessionId, (metadata) =>
+              updateMetadataWithDirectSessionFollowPolicy(metadata, {
+                policy: nextPolicy,
+                updatedAtMs: result.updatedAtMs,
+              }),
+            );
+          })(), { tag: 'SessionHeaderActionMenu.execute.directSessionBackgroundFollow' });
+          return;
+        }
         if (actionId === 'header.openRuns') {
           router.push((`/session/${props.sessionId}/runs`) as any);
           return;
@@ -176,8 +237,9 @@ export function SessionHeaderActionMenu(props: Readonly<{
           return;
         }
         if (actionId === 'session.handoff') {
-          // Defer opening the modal on web so the dropdown press/unmount cycle completes before we
-          // mount another portal-backed surface (avoids flakey immediate dismissals in e2e).
+          if (!handoffAvailability.available) {
+            return;
+          }
           deferOnWeb(() => {
             fireAndForget((async () => {
               const serverId = sessionServerId;

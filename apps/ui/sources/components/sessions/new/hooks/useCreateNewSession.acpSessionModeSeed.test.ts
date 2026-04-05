@@ -107,6 +107,8 @@ async function setupHarness(options?: Readonly<{
     saveSessionDrafts: vi.fn(),
     loadSessionReviewCommentsDrafts: () => ({}),
     saveSessionReviewCommentsDrafts: vi.fn(),
+    loadWorkspaceReviewCommentsDrafts: () => ({}),
+    saveWorkspaceReviewCommentsDrafts: vi.fn(),
     loadSessionActionDrafts: () => ({}),
     saveSessionActionDrafts: vi.fn(),
     loadNewSessionDraft: () => null,

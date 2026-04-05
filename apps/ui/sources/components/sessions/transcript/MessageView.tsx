@@ -38,7 +38,7 @@ import { resolveForkFromMessageSemantics } from '@/sync/domains/sessionFork/fork
 import { writeForkInitialPromptV1 } from '@/sync/domains/sessionFork/forkInitialPromptV1';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
+import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { getImageMimeTypeFromPath } from '@/scm/utils/filePresentation';
 import { normalizeVoiceAgentTurnTranscriptText } from '@happier-dev/agents';
 import { TranscriptRollbackActionButton } from '@/components/sessions/transcript/TranscriptRollbackActionButton';
@@ -296,7 +296,7 @@ function UserTextBlock(props: {
   }, [props.message, seq]);
 
   const executor = React.useMemo(
-    () => createDefaultActionExecutor({ resolveServerIdForSessionId: resolveServerIdForSessionIdFromLocalCache }),
+    () => createDefaultActionExecutor({ resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId) }),
     [],
   );
   const executionRunsEnabled = useFeatureEnabled('execution.runs');
@@ -348,7 +348,7 @@ function UserTextBlock(props: {
               : undefined;
           const result = await forkSession({
             machineId: reachableMachineTarget?.machineId ?? session?.metadata?.machineId,
-            serverId: resolveServerIdForSessionIdFromLocalCache(props.sessionId),
+            serverId: resolvePreferredServerIdForSessionId(props.sessionId),
             parentSessionId: props.sessionId,
             forkPoint: { type: 'seq', upToSeqInclusive },
             ...(typeof sessionReplayMaxSeedChars === 'number' ? { replayMaxSeedChars: sessionReplayMaxSeedChars } : {}),
@@ -737,7 +737,7 @@ function AgentTextBlock(props: {
     return resolveForkFromMessageSemantics({ message: props.message, messageSeqInclusive: seq });
   }, [props.message, seq]);
   const executor = React.useMemo(
-    () => createDefaultActionExecutor({ resolveServerIdForSessionId: resolveServerIdForSessionIdFromLocalCache }),
+    () => createDefaultActionExecutor({ resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId) }),
     [],
   );
   const executionRunsEnabled = useFeatureEnabled('execution.runs');
@@ -789,7 +789,7 @@ function AgentTextBlock(props: {
               : undefined;
           const result = await forkSession({
             machineId: reachableMachineTarget?.machineId ?? session?.metadata?.machineId,
-            serverId: resolveServerIdForSessionIdFromLocalCache(props.sessionId),
+            serverId: resolvePreferredServerIdForSessionId(props.sessionId),
             parentSessionId: props.sessionId,
             forkPoint: { type: 'seq', upToSeqInclusive },
             ...(typeof sessionReplayMaxSeedChars === 'number' ? { replayMaxSeedChars: sessionReplayMaxSeedChars } : {}),
@@ -1101,7 +1101,7 @@ function ForkMessageButton(props: {
           : undefined;
       const result = await forkSession({
         machineId: reachableMachineTarget?.machineId ?? session?.metadata?.machineId,
-        serverId: resolveServerIdForSessionIdFromLocalCache(props.sessionId),
+        serverId: resolvePreferredServerIdForSessionId(props.sessionId),
         parentSessionId: props.sessionId,
         forkPoint: { type: 'seq', upToSeqInclusive: props.upToSeqInclusive },
         ...(typeof sessionReplayMaxSeedChars === 'number' ? { replayMaxSeedChars: sessionReplayMaxSeedChars } : {}),

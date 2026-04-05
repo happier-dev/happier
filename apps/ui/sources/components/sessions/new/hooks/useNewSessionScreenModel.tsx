@@ -1569,6 +1569,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         isResumeSupportChecking,
         useProfiles,
         selectedProfileId,
+        selectedMachineId,
         profilePopover,
         agentInputExtraActionChips,
         targetServerId,

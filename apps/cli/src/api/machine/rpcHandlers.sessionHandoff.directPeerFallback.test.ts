@@ -687,6 +687,20 @@ function requireFileTransferPayloadSourcePath(
 
         registerMachineSessionHandoffRpcHandlers({
             rpcHandlerManager,
+            loadSessionMetadata: async () => ({
+                machineId: 'machine_source',
+                path: '/repo',
+                flavor: 'claude',
+                claudeSessionId: 'claude_session_1',
+            }),
+            exportSessionBundle: async () => ({
+                providerBundle: {
+                    providerId: 'claude',
+                    remoteSessionId: 'claude_session_target',
+                    transcriptBase64: 'e30K',
+                },
+                targetPath: '/repo-target',
+            }),
             importSessionBundle: async () => ({
                 remoteSessionId: 'claude_session_target',
                 directSource: {

@@ -5,14 +5,13 @@ import { Pressable, View } from 'react-native';
 import type { AgentInputExtraActionChip, AgentInputExtraActionChipRenderContext } from '@/components/sessions/agentInput/agentInputContracts';
 import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
-import { storage } from '@/sync/domains/state/storage';
 import { buildReviewCommentsDisplayText } from '@/sync/domains/input/reviewComments/reviewCommentPrompt';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import { t } from '@/text';
 
 function openReviewCommentsDraftsAlert(params: Readonly<{
-    sessionId: string;
     reviewCommentDrafts: readonly ReviewCommentDraft[];
+    onClearDrafts: () => void;
 }>) {
     const preview = params.reviewCommentDrafts
         .slice(0, 12)
@@ -30,15 +29,15 @@ function openReviewCommentsDraftsAlert(params: Readonly<{
             {
                 text: t('common.discard'),
                 style: 'destructive',
-                onPress: () => storage.getState().clearSessionReviewCommentDrafts(params.sessionId),
+                onPress: params.onClearDrafts,
             },
         ],
     );
 }
 
 export function createReviewCommentsActionChip(params: Readonly<{
-    sessionId: string;
     reviewCommentDrafts: readonly ReviewCommentDraft[];
+    onClearDrafts: () => void;
 }>): AgentInputExtraActionChip | undefined {
     const reviewCommentDraftCount = params.reviewCommentDrafts.length;
     if (reviewCommentDraftCount <= 0) return undefined;
@@ -46,8 +45,8 @@ export function createReviewCommentsActionChip(params: Readonly<{
     const label = t('files.reviewComments.draftsChipLabel', { count: reviewCommentDraftCount });
     const openDraftsAlert = () => {
         openReviewCommentsDraftsAlert({
-            sessionId: params.sessionId,
             reviewCommentDrafts: params.reviewCommentDrafts,
+            onClearDrafts: params.onClearDrafts,
         });
     };
 

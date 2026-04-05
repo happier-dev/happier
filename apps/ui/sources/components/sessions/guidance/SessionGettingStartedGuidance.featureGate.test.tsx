@@ -42,8 +42,11 @@ vi.mock('@/hooks/session/useConnectTerminal', () => ({
     }),
 }));
 
-vi.mock('@/hooks/session/useVisibleSessionListViewData', () => ({
-    useVisibleSessionListViewData: () => [],
+vi.mock('@/hooks/session/useVisibleSessionListSummary', () => ({
+    useVisibleSessionListSummary: () => ({
+        sessionsReady: true,
+        sessionCount: 0,
+    }),
 }));
 
 vi.mock('@/hooks/server/useEffectiveServerSelection', () => ({
@@ -56,7 +59,9 @@ vi.mock('@/hooks/server/useEffectiveServerSelection', () => ({
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerSnapshot: () => ({ serverId: 's1', generation: 1 }),
+    getServerProfilesGeneration: () => 1,
     listServerProfiles: () => [{ id: 's1', name: 'cloud', serverUrl: 'https://api.happier.dev' }],
+    subscribeServerProfiles: () => () => {},
 }));
 
 vi.mock('@/components/ui/buttons/RoundButton', () => ({

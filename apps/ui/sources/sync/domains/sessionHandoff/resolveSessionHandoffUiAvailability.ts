@@ -1,9 +1,16 @@
 import type { SessionHandoffTransportStrategy } from '@happier-dev/protocol';
 
+import { storage } from '@/sync/domains/state/storage';
+import {
+    resolveMachineDaemonTransferDirectPeerDiagnostics,
+} from '@/sync/domains/transfers/runtime/transferSubstrate/machineDaemonTransferState';
 import { resolveMachineTransferAvailability } from '@/sync/domains/transfers/runtime/resolveTransferAvailability';
 import { readCachedMachineRpcDirectRoute } from '@/sync/domains/transfers/runtime/transferRouteCache';
+import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 
 import { canHandoffConversation } from './handoffUiSupport';
+import { resolveSessionHandoffSourceMachineId } from './resolveSessionHandoffSourceMachineId';
 import type { SessionHandoffRuntimeAvailability } from './useSessionHandoffSourceReachability';
 
 type SessionLike = Readonly<{
@@ -35,6 +42,59 @@ function normalizeNonEmptyString(value: unknown): string | null {
     return trimmed.length > 0 ? trimmed : null;
 }
 
+function readSourceMachineDaemonState(input: Readonly<{
+    sessionId?: string | null;
+    session: SessionLike | null | undefined;
+}>): unknown | null {
+    const sessionId = normalizeNonEmptyString(input.sessionId);
+    const sessionMetadata = input.session?.metadata ?? null;
+    if (!sessionId || !sessionMetadata) {
+        return null;
+    }
+
+    const serverId = resolvePreferredServerIdForSessionId(sessionId);
+    const reachableMachineId = readMachineTargetForSession(sessionId)?.machineId ?? null;
+    const sourceMachineId = resolveSessionHandoffSourceMachineId({
+        reachableMachineId,
+        sessionMetadata,
+    });
+    if (!sourceMachineId) {
+        return null;
+    }
+
+    const state = storage.getState() as Readonly<{
+        machines?: Record<string, { daemonState?: unknown | null } | undefined>;
+        machineListByServerId?: Record<string, readonly Readonly<{ id: string; daemonState?: unknown | null }>[] | null | undefined>;
+    }>;
+    const scopedMachine = serverId
+        ? (state.machineListByServerId?.[serverId]?.find((candidate) => candidate.id === sourceMachineId) ?? null)
+        : null;
+    if (scopedMachine) {
+        return scopedMachine.daemonState ?? null;
+    }
+
+    return state.machines?.[sourceMachineId]?.daemonState ?? null;
+}
+
+function resolveSessionHandoffDaemonDirectPeerAvailability(input: Readonly<{
+    sessionId?: string | null;
+    session: SessionLike | null | undefined;
+    machineDaemonState?: unknown | null;
+}>): SessionHandoffRuntimeAvailability {
+    const daemonState = input.machineDaemonState ?? readSourceMachineDaemonState(input);
+    const diagnostics = resolveMachineDaemonTransferDirectPeerDiagnostics({
+        daemonState,
+    });
+
+    if (diagnostics.state === 'active') {
+        return 'reachable';
+    }
+    if (diagnostics.state === 'configured_inactive' || diagnostics.state === 'unconfigured') {
+        return 'unavailable';
+    }
+    return 'unknown';
+}
+
 export function resolveSessionHandoffRuntimeDirectPeerAvailability(input: Readonly<{
     serverId?: string | null;
     sourceMachineId?: string | null;
@@ -61,6 +121,7 @@ export function resolveSessionHandoffUiAvailability(input: Readonly<{
     sessionHandoffFeatureEnabled: boolean;
     serverSnapshot: unknown;
     runtimeAvailability?: SessionHandoffRuntimeAvailability | null;
+    machineDaemonState?: unknown | null;
 }>): SessionHandoffUiAvailability {
     if (input.sessionHandoffFeatureEnabled !== true) {
         return {
@@ -87,7 +148,14 @@ export function resolveSessionHandoffUiAvailability(input: Readonly<{
         };
     }
 
-    const runtimeAvailability = input.runtimeAvailability ?? 'unknown';
+    const daemonRuntimeAvailability = resolveSessionHandoffDaemonDirectPeerAvailability({
+        sessionId: input.sessionId,
+        session: input.session,
+        machineDaemonState: input.machineDaemonState,
+    });
+    const runtimeAvailability = daemonRuntimeAvailability !== 'unknown'
+        ? daemonRuntimeAvailability
+        : (input.runtimeAvailability ?? 'unknown');
 
     if (transport.negotiatedTransportStrategy === 'server_routed_stream') {
         return {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import {
+    buildMachineResolutionContext,
     resolveSessionMachineRpcTarget,
     resolveSessionReachableMachineId,
 } from '@/sync/domains/session/resolveSessionReachableMachineId';
@@ -98,7 +99,7 @@ describe('resolveSessionMachineRpcTarget', () => {
             sessionHomeDir: '/Users/tester',
             projectMachineId: null,
             projectPath: null,
-            machines,
+            machineResolutionContext: buildMachineResolutionContext(machines),
             peerSessions: [
                 {
                     id: 's-peer',
@@ -132,7 +133,7 @@ describe('resolveSessionMachineRpcTarget', () => {
             sessionHomeDir: null,
             projectMachineId: null,
             projectPath: null,
-            machines,
+            machineResolutionContext: buildMachineResolutionContext(machines),
             peerSessions: [],
         });
 

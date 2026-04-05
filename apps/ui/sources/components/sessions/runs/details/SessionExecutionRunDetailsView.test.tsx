@@ -119,8 +119,8 @@ vi.mock('@/sync/ops/machineExecutionRuns', () => ({
     machineExecutionRunsList: vi.fn(async () => ({ ok: true, runs: [] })),
 }));
 
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache', () => ({
-    resolveServerIdForSessionIdFromLocalCache: () => null,
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
+    resolvePreferredServerIdForSessionId: () => null,
 }));
 
 vi.mock('@/components/sessions/runs/details/SessionExecutionRunInfoCard', () => ({

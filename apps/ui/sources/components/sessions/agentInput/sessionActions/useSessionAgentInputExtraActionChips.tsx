@@ -3,6 +3,7 @@ import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
+import { storage } from '@/sync/domains/state/storage';
 
 import { createLinkedFilesActionChip } from '../definitions/createLinkedFilesActionChip';
 import { createReviewCommentsActionChip } from '../definitions/createReviewCommentsActionChip';
@@ -46,8 +47,8 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
 
         if (params.reviewCommentsEnabled) {
             const reviewCommentsChip = createReviewCommentsActionChip({
-                sessionId: params.sessionId,
                 reviewCommentDrafts: params.reviewCommentDrafts,
+                onClearDrafts: () => storage.getState().clearSessionReviewCommentDrafts(params.sessionId),
             });
             if (reviewCommentsChip) {
                 chips.push(reviewCommentsChip);

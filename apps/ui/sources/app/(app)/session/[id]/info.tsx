@@ -34,7 +34,7 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useSessionExecutionRunsSupported } from '@/hooks/server/useSessionExecutionRunsSupported';
 import { Text } from '@/components/ui/text/Text';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
-import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
+import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
 import { canForkConversation } from '@/sync/domains/sessionFork/forkUiSupport';
@@ -127,7 +127,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     const core = getAgentCore(agentId);
     const executor = React.useMemo(
         () => createDefaultActionExecutor({
-            resolveServerIdForSessionId: resolveServerIdForSessionIdFromLocalCache,
+            resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId),
             openSession: (childSessionId) => {
                 router.push((`/session/${childSessionId}`) as any);
             },
@@ -256,7 +256,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     const canStopSession = !session.accessLevel;
     const isArchivedSession = session.archivedAt != null;
     const canArchiveSession = canManageSharing && !session.active && !isArchivedSession;
-    const resolvedServerId = resolveServerIdForSessionIdFromLocalCache(session.id);
+    const resolvedServerId = resolvePreferredServerIdForSessionId(session.id);
     const isPinnedSession = Boolean(
         resolvedServerId &&
         Array.isArray(pinnedSessionKeysV1) &&

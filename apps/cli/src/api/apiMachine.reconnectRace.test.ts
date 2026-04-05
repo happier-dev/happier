@@ -212,7 +212,9 @@ vi.mock('@/ui/logger', () => ({
 
 vi.mock('@/rpc/handlers/registerSessionHandlers', () => ({ registerSessionHandlers: vi.fn() }));
 vi.mock('@/rpc/handlers/scm', () => ({ registerScmHandlers: vi.fn() }));
-vi.mock('@/rpc/handlers/fileSystem', () => ({ registerFileSystemHandlers: vi.fn() }));
+vi.mock('@/rpc/handlers/fileSystem', () => ({ registerFileSystemHandlers: vi.fn(() => ({
+    bulkTransferStore: {},
+})) }));
 vi.mock('@/rpc/handlers/machineFileBrowser/registerMachineFileBrowserHandlers', () => ({ registerMachineFileBrowserHandlers: vi.fn() }));
 vi.mock('./machine/rpcHandlers', () => ({ registerMachineRpcHandlers: vi.fn() }));
 vi.mock('./rpc/RpcHandlerManager', () => ({

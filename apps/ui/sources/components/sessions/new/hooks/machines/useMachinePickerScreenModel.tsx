@@ -3,7 +3,7 @@ import { Pressable, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 
-import { useAllMachines, useSessions, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
+import { useAllMachines, useAllSessionListRenderables, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { getRecentMachinesFromSessions } from '@/utils/sessions/recentMachines';
@@ -74,7 +74,7 @@ export function useMachinePickerScreenModel() {
         spawnServerId?: string;
     }>();
     const machines = useAllMachines();
-    const sessions = useSessions();
+    const sessions = useAllSessionListRenderables();
     const useMachinePickerSearch = useSetting('useMachinePickerSearch');
     const serverSelectionGroups = useSetting('serverSelectionGroups');
     const serverSelectionActiveTargetKind = useSetting('serverSelectionActiveTargetKind');

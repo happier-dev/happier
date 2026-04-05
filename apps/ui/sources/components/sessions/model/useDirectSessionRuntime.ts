@@ -1,12 +1,17 @@
 import * as React from 'react';
 import type { DirectSessionStatusGetResponse } from '@happier-dev/protocol';
+import { AppState, Platform } from 'react-native';
 
 import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
-import { machineDirectSessionStatusGet } from '@/sync/ops/machineDirectSessions';
+import {
+    machineDirectSessionAttach,
+    machineDirectSessionDetach,
+    machineDirectSessionStatusGet,
+} from '@/sync/ops/machineDirectSessions';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
-import { sync } from '@/sync/sync';
+import { isRuntimeActive } from '@/utils/runtime/isRuntimeActive';
 
 export type DirectSessionRuntimeStatus = Extract<DirectSessionStatusGetResponse, { ok: true }>;
 
@@ -46,6 +51,46 @@ function resolvePollDelayMs(status: DirectSessionRuntimeStatus | null): number {
     return readIdlePollMsFromEnv();
 }
 
+function readAttachLeaseTtlMsFromEnv(): number {
+    const raw = Number.parseInt(String(process.env.EXPO_PUBLIC_HAPPIER_DIRECT_SESSIONS_ATTACH_LEASE_TTL_MS ?? ''), 10);
+    const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 30_000;
+    return Math.max(1_000, Math.min(15 * 60_000, configured));
+}
+
+function readAttachRenewLeadMsFromEnv(): number {
+    const raw = Number.parseInt(String(process.env.EXPO_PUBLIC_HAPPIER_DIRECT_SESSIONS_ATTACH_RENEW_LEAD_MS ?? ''), 10);
+    const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 10_000;
+    return Math.max(500, Math.min(60_000, configured));
+}
+
+function useRuntimeActive(): boolean {
+    const [runtimeActive, setRuntimeActive] = React.useState(() => isRuntimeActive());
+
+    React.useEffect(() => {
+        const update = () => {
+            setRuntimeActive(isRuntimeActive());
+        };
+
+        update();
+
+        const appStateSubscription = AppState.addEventListener('change', update);
+        let removeVisibilityListener: (() => void) | null = null;
+        if (Platform.OS === 'web' && typeof document !== 'undefined') {
+            document.addEventListener('visibilitychange', update);
+            removeVisibilityListener = () => {
+                document.removeEventListener('visibilitychange', update);
+            };
+        }
+
+        return () => {
+            appStateSubscription?.remove?.();
+            removeVisibilityListener?.();
+        };
+    }, []);
+
+    return runtimeActive;
+}
+
 export function useDirectSessionRuntime(params: UseDirectSessionRuntimeParams): UseDirectSessionRuntimeResult {
     const directSessionLink = React.useMemo(
         () => readDirectSessionLink(params.metadata),
@@ -55,8 +100,10 @@ export function useDirectSessionRuntime(params: UseDirectSessionRuntimeParams): 
     const [status, setStatus] = React.useState<DirectSessionRuntimeStatus | null>(null);
     const statusRef = React.useRef<DirectSessionRuntimeStatus | null>(null);
     const inFlightRefreshRef = React.useRef<Promise<DirectSessionRuntimeStatus | null> | null>(null);
+    const currentLeaseIdRef = React.useRef<string | null>(null);
     const generationRef = React.useRef(0);
     const previousServerIdRef = React.useRef<string | undefined>(undefined);
+    const runtimeActive = useRuntimeActive();
     const activeServerId = normalizeServerId(activeServerSnapshot.serverId);
     const sessionServerId = React.useMemo(
         () => resolvePreferredServerIdForSessionId(params.sessionId) ?? activeServerId,
@@ -103,7 +150,7 @@ export function useDirectSessionRuntime(params: UseDirectSessionRuntimeParams): 
         let refreshPromise: Promise<DirectSessionRuntimeStatus | null> | null = null;
         refreshPromise = (async () => {
             const targetServerId = resolvePreferredServerIdForSessionId(params.sessionId) ?? activeServerId;
-            const statusPromise = machineDirectSessionStatusGet({
+            const statusResult = await machineDirectSessionStatusGet({
                 machineId: directSessionLink.machineId,
                 sessionId: params.sessionId,
                 providerId: directSessionLink.providerId,
@@ -112,10 +159,6 @@ export function useDirectSessionRuntime(params: UseDirectSessionRuntimeParams): 
             }, { serverId: targetServerId })
                 .then((response) => ({ ok: true as const, response }))
                 .catch((error: unknown) => ({ ok: false as const, error }));
-
-            await sync.refreshSessionMessages(params.sessionId).catch(() => {});
-
-            const statusResult = await statusPromise;
             if (!statusResult.ok) {
                 return statusRef.current;
             }
@@ -149,6 +192,9 @@ export function useDirectSessionRuntime(params: UseDirectSessionRuntimeParams): 
             }
             return;
         }
+        if (!runtimeActive) {
+            return;
+        }
 
         let cancelled = false;
         let timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -174,7 +220,70 @@ export function useDirectSessionRuntime(params: UseDirectSessionRuntimeParams): 
                 clearTimeout(timeoutId);
             }
         };
-    }, [directSessionLink, refreshNow]);
+    }, [directSessionLink, refreshNow, runtimeActive]);
+
+    React.useEffect(() => {
+        if (!directSessionLink || !runtimeActive) {
+            currentLeaseIdRef.current = null;
+            return;
+        }
+
+        let cancelled = false;
+        let renewTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+        const clearRenewTimeout = () => {
+            if (renewTimeoutId) {
+                clearTimeout(renewTimeoutId);
+                renewTimeoutId = null;
+            }
+        };
+
+        const scheduleRenew = (expiresAtMs: number) => {
+            const renewLeadMs = readAttachRenewLeadMsFromEnv();
+            const delayMs = Math.max(1_000, expiresAtMs - Date.now() - renewLeadMs);
+            renewTimeoutId = setTimeout(() => {
+                void ensureLease();
+            }, delayMs);
+        };
+
+        const ensureLease = async () => {
+            const targetServerId = resolvePreferredServerIdForSessionId(params.sessionId) ?? activeServerId;
+            try {
+                const response = await machineDirectSessionAttach({
+                    machineId: directSessionLink.machineId,
+                    sessionId: params.sessionId,
+                    providerId: directSessionLink.providerId,
+                    remoteSessionId: directSessionLink.remoteSessionId,
+                    source: directSessionLink.source,
+                    ...(currentLeaseIdRef.current ? { leaseId: currentLeaseIdRef.current } : {}),
+                    ttlMs: readAttachLeaseTtlMsFromEnv(),
+                }, { serverId: targetServerId });
+                if (cancelled || !response.ok) return;
+                currentLeaseIdRef.current = response.leaseId;
+                clearRenewTimeout();
+                scheduleRenew(response.expiresAtMs);
+            } catch {
+                if (cancelled) return;
+                clearRenewTimeout();
+            }
+        };
+
+        void ensureLease();
+
+        return () => {
+            cancelled = true;
+            clearRenewTimeout();
+            const leaseId = currentLeaseIdRef.current;
+            currentLeaseIdRef.current = null;
+            if (!leaseId) return;
+            const targetServerId = resolvePreferredServerIdForSessionId(params.sessionId) ?? activeServerId;
+            void machineDirectSessionDetach({
+                machineId: directSessionLink.machineId,
+                sessionId: params.sessionId,
+                leaseId,
+            }, { serverId: targetServerId }).catch(() => {});
+        };
+    }, [activeServerId, directSessionLink, params.sessionId, runtimeActive]);
 
     return {
         directSessionLink,

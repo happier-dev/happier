@@ -14,7 +14,7 @@ const ensureSessionVisibleSpy = vi.fn();
 const updateSessionDraftSpy = vi.fn();
 const patchSessionMetadataWithRetrySpy = vi.fn();
 const modalAlertSpy = vi.fn();
-const resolveServerIdForSessionIdFromLocalCacheSpy = vi.fn<(sessionId: string) => string>();
+const resolvePreferredServerIdForSessionIdSpy = vi.fn<(sessionId: string) => string>();
 
 let replayEnabled = true;
 let copyButtonsVisible = true;
@@ -229,8 +229,9 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
   useFeatureEnabled: () => false,
 }));
 
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache', () => ({
-  resolveServerIdForSessionIdFromLocalCache: (sessionId: string) => resolveServerIdForSessionIdFromLocalCacheSpy(sessionId),
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
+  resolvePreferredServerIdForSessionId: (sessionId: string) =>
+    resolvePreferredServerIdForSessionIdSpy(sessionId),
 }));
 
 describe('MessageView (fork button)', () => {
@@ -241,8 +242,8 @@ describe('MessageView (fork button)', () => {
     updateSessionDraftSpy.mockReset();
     patchSessionMetadataWithRetrySpy.mockReset();
     modalAlertSpy.mockReset();
-    resolveServerIdForSessionIdFromLocalCacheSpy.mockReset();
-    resolveServerIdForSessionIdFromLocalCacheSpy.mockImplementation(() => 'server-a');
+    resolvePreferredServerIdForSessionIdSpy.mockReset();
+    resolvePreferredServerIdForSessionIdSpy.mockImplementation(() => 'server-a');
     replayEnabled = true;
     copyButtonsVisible = true;
     sessionMetadata = { machineId: 'm1' };

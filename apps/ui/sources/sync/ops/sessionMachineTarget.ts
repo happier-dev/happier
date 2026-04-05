@@ -1,7 +1,11 @@
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, type RpcErrorCarrier } from '@happier-dev/protocol/rpcErrors';
-import { resolveSessionMachineRpcTarget } from '@/sync/domains/session/resolveSessionReachableMachineId';
+import {
+  buildMachineResolutionContextFromRecord,
+  normalizeSessionPathForComparison,
+  resolveSessionMachineRpcTarget,
+  type SessionMachineTargetPeer,
+} from '@/sync/domains/session/resolveSessionReachableMachineId';
 import { storage } from '@/sync/domains/state/storage';
-import type { Machine } from '@/sync/domains/state/storageTypes';
 
 type MachineTargetLikeState = Readonly<{
   sessions?: Record<string, {
@@ -47,16 +51,63 @@ export function resolveMachineTargetForSessionFromState(
 ): { machineId: string; basePath: string } | null {
   const session = state.sessions?.[sessionId];
   const metadata = session?.metadata ?? null;
-  const project = typeof state.getProjectForSession === 'function' ? state.getProjectForSession(sessionId) : null;
+  const getProjectForSession = typeof state.getProjectForSession === 'function' ? state.getProjectForSession : null;
+  const project = getProjectForSession?.(sessionId) ?? null;
+  const sessionMachineId = normalizeNonEmptyString(metadata?.machineId);
+  const sessionHostHint = normalizeNonEmptyString(metadata?.host);
+  const sessionPath = normalizeNonEmptyString(metadata?.path);
+  const sessionHomeDir = normalizeNonEmptyString(metadata?.homeDir);
+  const projectMachineId = project?.key?.machineId ?? null;
+  const projectPath = normalizeNonEmptyString(project?.key?.rootPath);
+  if (!projectPath && !sessionPath) {
+    return null;
+  }
+  const comparableBasePath =
+    normalizeSessionPathForComparison(projectPath, sessionHomeDir)
+    ?? normalizeSessionPathForComparison(sessionPath, sessionHomeDir);
+  const machineResolutionContext = buildMachineResolutionContextFromRecord(state.machines ?? {});
 
-  const machines = Object.values(state.machines ?? {}) as Machine[];
-  const peerSessions = Object.entries(state.sessions ?? {}).map(([candidateSessionId, candidateSession]) => {
+  const directTarget = resolveSessionMachineRpcTarget({
+    sessionId,
+    sessionMachineId,
+    sessionHostHint,
+    sessionPath,
+    sessionHomeDir,
+    comparableBasePath,
+    projectMachineId,
+    projectPath,
+    machineResolutionContext,
+  });
+  const directTargetMachine = directTarget ? machineResolutionContext.machineById.get(directTarget.machineId) ?? null : null;
+  if (!comparableBasePath || directTargetMachine?.active === true) {
+    return directTarget;
+  }
+
+  const peerSessions: SessionMachineTargetPeer[] = [];
+  for (const candidateSessionId in state.sessions ?? {}) {
+    if (candidateSessionId === sessionId) {
+      continue;
+    }
+    const candidateSession = state.sessions?.[candidateSessionId];
     const candidateMetadata = candidateSession?.metadata ?? null;
-    const candidateProject =
-      typeof state.getProjectForSession === 'function'
-        ? state.getProjectForSession(candidateSessionId)
-        : null;
-    return {
+    const candidateHomeDir = normalizeNonEmptyString(candidateMetadata?.homeDir);
+    const candidateComparableMetadataPath = normalizeSessionPathForComparison(
+      normalizeNonEmptyString(candidateMetadata?.path),
+      candidateHomeDir,
+    );
+    if (candidateComparableMetadataPath && candidateComparableMetadataPath !== comparableBasePath) {
+      continue;
+    }
+    const candidateProject = getProjectForSession?.(candidateSessionId) ?? null;
+    const candidateComparableProjectPath = normalizeSessionPathForComparison(
+      normalizeNonEmptyString(candidateProject?.key?.rootPath),
+      candidateHomeDir,
+    );
+    const candidateComparablePath: string | null = candidateComparableMetadataPath ?? candidateComparableProjectPath;
+    if (candidateComparablePath !== comparableBasePath) {
+      continue;
+    }
+    peerSessions.push({
       id: candidateSessionId,
       active: candidateSession?.active === true,
       updatedAt: typeof (candidateSession as { updatedAt?: unknown }).updatedAt === 'number'
@@ -64,23 +115,36 @@ export function resolveMachineTargetForSessionFromState(
         : 0,
       machineId: normalizeNonEmptyString(candidateMetadata?.machineId),
       hostHint: normalizeNonEmptyString(candidateMetadata?.host),
-      path: normalizeNonEmptyString(candidateMetadata?.path),
-	      homeDir: normalizeNonEmptyString(candidateMetadata?.homeDir),
-	      projectMachineId: candidateProject?.key?.machineId ?? null,
-	      projectPath: normalizeNonEmptyString(candidateProject?.key?.rootPath),
-	    };
-	  });
+      projectMachineId: candidateProject?.key?.machineId ?? null,
+    });
+  }
+  if (peerSessions.length > 1) {
+    peerSessions.sort((left, right) => {
+      const activeDelta = Number(Boolean(right.active)) - Number(Boolean(left.active));
+      if (activeDelta !== 0) {
+        return activeDelta;
+      }
+      return (right.updatedAt ?? 0) - (left.updatedAt ?? 0);
+    });
+  }
+  if (peerSessions.length === 0) {
+    return directTarget;
+  }
+
   return resolveSessionMachineRpcTarget({
     sessionId,
-    sessionMachineId: normalizeNonEmptyString(metadata?.machineId),
-    sessionHostHint: normalizeNonEmptyString(metadata?.host),
-    sessionPath: normalizeNonEmptyString(metadata?.path),
-	    sessionHomeDir: normalizeNonEmptyString(metadata?.homeDir),
-	    projectMachineId: project?.key?.machineId ?? null,
-	    projectPath: normalizeNonEmptyString(project?.key?.rootPath),
-	    machines,
-	    peerSessions,
-	  });
+    sessionMachineId: null,
+    sessionHostHint,
+    sessionPath,
+    sessionHomeDir,
+    comparableBasePath,
+    projectMachineId: projectMachineId !== directTarget?.machineId ? projectMachineId : null,
+    projectPath,
+    machineResolutionContext,
+    peerSessions,
+    peerSessionsSorted: true,
+    peerSessionsComparablePathFiltered: true,
+  });
 }
 
 export function readMachineTargetForSession(

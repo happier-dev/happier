@@ -26,7 +26,14 @@ import {
     SESSION_HANDOFF_WORKSPACE_TRANSFER_STRATEGY_OPTIONS,
 } from '@/sync/domains/sessionHandoff/sessionHandoffDefaults';
 import { resolveSessionHandoffPickerSourceMachineId } from '@/sync/domains/sessionHandoff/resolveSessionHandoffPickerSourceMachineId';
-import { useMachineListByServerId, useMachineRecordValues, useSession, useSessions, useSettingMutable } from '@/sync/domains/state/storage';
+import {
+    useAllSessionListRenderables,
+    useMachineListByServerId,
+    useMachineRecordValues,
+    useSession,
+    useSessionListRenderable,
+    useSettingMutable,
+} from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { getRecentMachinesFromSessions } from '@/utils/sessions/recentMachines';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
@@ -112,8 +119,9 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
     const styles = stylesheet;
     const actionSpec = getActionSpec('session.handoff');
 
-    const sessions = useSessions() ?? [];
+    const sessions = useAllSessionListRenderables();
     const sessionRecord = useSession(sessionId);
+    const sessionRenderable = useSessionListRenderable(sessionId);
     const machineListByServerId = useMachineListByServerId();
     const activeServerMachines = useMachineRecordValues() ?? [];
     const [favoriteMachinesRaw, setFavoriteMachinesRaw] = useSettingMutable('favoriteMachines');
@@ -136,8 +144,9 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
     }, [activeServerMachines, machineListByServerId, serverId]);
     const currentSession = React.useMemo(() => {
         if (sessionRecord) return sessionRecord;
+        if (sessionRenderable) return sessionRenderable;
         return sessions.find((session: any) => normalizeId(session?.id) === normalizeId(sessionId)) ?? null;
-    }, [sessionId, sessionRecord, sessions]);
+    }, [sessionId, sessionRecord, sessionRenderable, sessions]);
     const resolvedSourceMachineId = React.useMemo(
         () => resolveSessionHandoffPickerSourceMachineId({
             sourceMachineId,
