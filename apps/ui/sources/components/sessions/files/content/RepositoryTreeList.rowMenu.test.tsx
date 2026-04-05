@@ -189,6 +189,20 @@ vi.mock('@/sync/domains/input/repositoryDirectory', () => {
 });
 
 vi.mock('@/components/sessions/files/useSessionFileTransferAvailability', () => ({
+    useSessionFileTransferAvailabilityState: () => ({
+        available: downloadAvailabilityState.value,
+        decision: downloadAvailabilityState.value
+            ? { kind: 'selected', preferredRouteKind: 'machine_rpc_direct' }
+            : null,
+        daemonDirectPeerDiagnostics: {
+            route: { status: 'unknown' },
+            state: 'unknown',
+            configuredListenerClasses: [],
+            activeListenerClasses: [],
+            inactiveListenerClasses: [],
+            unavailableListenerClasses: [],
+        },
+    }),
     useSessionFileTransferAvailabilityResolver: () => (_transferSizeBytes?: number | null) => downloadAvailabilityState.value,
     useSessionFileTransferAvailability: () => downloadAvailabilityState.value,
 }));

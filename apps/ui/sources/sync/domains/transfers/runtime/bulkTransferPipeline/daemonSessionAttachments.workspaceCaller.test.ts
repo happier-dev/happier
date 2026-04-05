@@ -55,7 +55,7 @@ describe('daemonSessionAttachments', () => {
         state.calledMethods = [];
         state.initRequest = null;
 
-        const { uploadDaemonSessionAttachmentFromReader } = await import('./daemonSessionAttachments');
+        const { uploadDaemonSessionAttachmentFromReader } = await import('../transferSubstrate/sessionAttachmentTransfers');
         const result = await uploadDaemonSessionAttachmentFromReader({
             sessionId: 's1',
             fileReader: {
@@ -94,7 +94,7 @@ describe('daemonSessionAttachments', () => {
         state.calledMethods = [];
         state.initRequest = null;
 
-        const { uploadDaemonSessionAttachmentFromReader } = await import('./daemonSessionAttachments');
+        const { uploadDaemonSessionAttachmentFromReader } = await import('../transferSubstrate/sessionAttachmentTransfers');
         const result = await uploadDaemonSessionAttachmentFromReader({
             sessionId: 's1',
             fileReader: {
@@ -126,7 +126,7 @@ describe('daemonSessionAttachments', () => {
         state.calledMethods = [];
         state.initRequest = null;
 
-        const { uploadDaemonSessionAttachmentFromReader } = await import('./daemonSessionAttachments');
+        const { uploadDaemonSessionAttachmentFromReader } = await import('../transferSubstrate/sessionAttachmentTransfers');
         await uploadDaemonSessionAttachmentFromReader({
             sessionId: 's1',
             fileReader: {

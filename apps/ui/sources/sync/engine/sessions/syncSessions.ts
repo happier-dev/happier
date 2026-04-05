@@ -3,13 +3,23 @@ import { normalizeRawMessage } from '@/sync/typesRaw';
 import { computeNextSessionSeqFromUpdate } from '@/sync/domains/session/sequence/realtimeSessionSeq';
 import type { Metadata, Session } from '@/sync/domains/state/storageTypes';
 import { computeNextReadStateV1 } from '@/sync/domains/state/readStateV1';
+import {
+    buildSessionListRenderableMetadata,
+    derivePendingRequestFlagsFromAgentState,
+    type SessionListRenderableSession,
+} from '@/sync/domains/session/listing/sessionListRenderable';
 import type { ApiMessage, ApiSessionMessagesResponse } from '@/sync/api/types/apiTypes';
 import { ApiSessionMessagesResponseSchema } from '@/sync/api/types/apiTypes';
 import { storage } from '@/sync/domains/state/storage';
 import type { Encryption } from '@/sync/encryption/encryption';
 import { nowServerMs } from '@/sync/runtime/time';
 import { getTaskLifecycleEventFromRawContent, type TaskLifecycleEvent } from './taskLifecycle';
-import { parsePlainSessionAgentState, parsePlainSessionMetadata } from './parsePlainSessionPayload';
+import {
+    parsePlainSessionAgentState,
+    parsePlainSessionMetadata,
+    tryParsePlainSessionAgentState,
+    tryParsePlainSessionMetadata,
+} from './parsePlainSessionPayload';
 export { handleNewMessageSocketUpdate } from './sessionSocketUpdate';
 export { handleMessageUpdatedSocketUpdate } from './sessionSocketUpdate';
 export { fetchAndApplySessions } from './sessionSnapshot';
@@ -118,6 +128,62 @@ export async function buildUpdatedSessionFromSocketUpdate(params: {
     };
 
     return { nextSession, agentState };
+}
+
+export async function buildUpdatedSessionListRenderablePatchFromSocketUpdate(params: {
+    renderable: SessionListRenderableSession;
+    updateBody: any;
+    updateSeq: number;
+    updateCreatedAt: number;
+    sessionEncryption: SessionEncryption | null;
+}): Promise<Partial<SessionListRenderableSession>> {
+    const { renderable, updateBody, updateSeq, updateCreatedAt, sessionEncryption } = params;
+
+    const parsedMetadata =
+        !updateBody.metadata
+            ? undefined
+            : sessionEncryption
+                ? await sessionEncryption.decryptMetadata(updateBody.metadata.version, updateBody.metadata.value)
+                : typeof updateBody.metadata.value === 'string'
+                    ? tryParsePlainSessionMetadata(updateBody.metadata.value)
+                    : updateBody.metadata.value === null
+                        ? null
+                        : undefined;
+
+    const parsedAgentState =
+        !updateBody.agentState
+            ? undefined
+            : sessionEncryption
+                ? await sessionEncryption.decryptAgentState(updateBody.agentState.version, updateBody.agentState.value)
+                : tryParsePlainSessionAgentState(updateBody.agentState.value);
+
+    const pendingFlags =
+        typeof updateBody.pendingPermissionRequestCount === 'number' || typeof updateBody.pendingUserActionRequestCount === 'number'
+            ? {
+                hasPendingPermissionRequests: (updateBody.pendingPermissionRequestCount ?? 0) > 0,
+                hasPendingUserActionRequests: (updateBody.pendingUserActionRequestCount ?? 0) > 0,
+            }
+            : parsedAgentState !== undefined
+                ? derivePendingRequestFlagsFromAgentState(parsedAgentState)
+                : {
+                    hasPendingPermissionRequests: renderable.hasPendingPermissionRequests === true,
+                    hasPendingUserActionRequests: renderable.hasPendingUserActionRequests === true,
+                };
+
+    return {
+        seq: computeNextSessionSeqFromUpdate({
+            currentSessionSeq: renderable.seq ?? 0,
+            updateType: 'update-session',
+            containerSeq: updateSeq,
+            messageSeq: undefined,
+        }),
+        updatedAt: updateCreatedAt,
+        metadataVersion: updateBody.metadata ? updateBody.metadata.version : renderable.metadataVersion,
+        agentStateVersion: updateBody.agentState ? updateBody.agentState.version : renderable.agentStateVersion,
+        metadata: parsedMetadata === undefined ? renderable.metadata : buildSessionListRenderableMetadata(parsedMetadata),
+        hasPendingPermissionRequests: pendingFlags.hasPendingPermissionRequests,
+        hasPendingUserActionRequests: pendingFlags.hasPendingUserActionRequests,
+    };
 }
 
 export async function repairInvalidReadStateV1(params: {

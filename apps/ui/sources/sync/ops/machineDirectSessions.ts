@@ -1,4 +1,10 @@
 import {
+    DirectSessionAttachRequestSchema,
+    DirectSessionAttachResponseSchema,
+    DirectSessionDetachRequestSchema,
+    DirectSessionDetachResponseSchema,
+    DirectSessionFollowPolicySetRequestSchema,
+    DirectSessionFollowPolicySetResponseSchema,
     DirectSessionLinkEnsureRequestSchema,
     DirectSessionLinkEnsureResponseSchema,
     DirectSessionStatusGetRequestSchema,
@@ -13,6 +19,12 @@ import {
     DirectTranscriptPageResponseSchema,
     DirectTranscriptReadAfterRequestSchema,
     DirectTranscriptReadAfterResponseSchema,
+    type DirectSessionAttachRequest,
+    type DirectSessionAttachResponse,
+    type DirectSessionDetachRequest,
+    type DirectSessionDetachResponse,
+    type DirectSessionFollowPolicySetRequest,
+    type DirectSessionFollowPolicySetResponse,
     type DirectSessionLinkEnsureRequest,
     type DirectSessionLinkEnsureResponse,
     type DirectSessionStatusGetRequest,
@@ -89,6 +101,48 @@ export async function machineDirectSessionLinkEnsure(
         input,
         requestSchema: DirectSessionLinkEnsureRequestSchema,
         responseSchema: DirectSessionLinkEnsureResponseSchema,
+        opts,
+    });
+}
+
+export async function machineDirectSessionAttach(
+    input: DirectSessionAttachRequest,
+    opts?: MachineDirectSessionsOpts,
+): Promise<DirectSessionAttachResponse> {
+    return callDirectSessionMachineRpc({
+        machineId: input.machineId,
+        method: RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH,
+        input,
+        requestSchema: DirectSessionAttachRequestSchema,
+        responseSchema: DirectSessionAttachResponseSchema,
+        opts,
+    });
+}
+
+export async function machineDirectSessionDetach(
+    input: DirectSessionDetachRequest,
+    opts?: MachineDirectSessionsOpts,
+): Promise<DirectSessionDetachResponse> {
+    return callDirectSessionMachineRpc({
+        machineId: input.machineId,
+        method: RPC_METHODS.DAEMON_DIRECT_SESSION_DETACH,
+        input,
+        requestSchema: DirectSessionDetachRequestSchema,
+        responseSchema: DirectSessionDetachResponseSchema,
+        opts,
+    });
+}
+
+export async function machineDirectSessionFollowPolicySet(
+    input: DirectSessionFollowPolicySetRequest,
+    opts?: MachineDirectSessionsOpts,
+): Promise<DirectSessionFollowPolicySetResponse> {
+    return callDirectSessionMachineRpc({
+        machineId: input.machineId,
+        method: RPC_METHODS.DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET,
+        input,
+        requestSchema: DirectSessionFollowPolicySetRequestSchema,
+        responseSchema: DirectSessionFollowPolicySetResponseSchema,
         opts,
     });
 }

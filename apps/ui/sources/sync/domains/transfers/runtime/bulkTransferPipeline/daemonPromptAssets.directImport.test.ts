@@ -15,8 +15,8 @@ vi.mock('./uploadBulkJsonPayload', async (importOriginal) => {
     };
 });
 
-vi.mock('./resolvePreferScopedForBulkMachineTransfer', () => ({
-    resolvePreferScopedForBulkMachineTransfer: async () => true,
+vi.mock('../transferSubstrate/resolvePreferScopedMachineRpc', () => ({
+    resolvePreferScopedMachineRpc: async () => true,
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
@@ -38,7 +38,7 @@ describe('daemonPromptAssets upload', () => {
             },
         });
 
-        const { uploadDaemonPromptAsset } = await import('./daemonPromptAssets');
+        const { uploadDaemonPromptAsset } = await import('../transferSubstrate/promptAssetTransfers');
         const result = await uploadDaemonPromptAsset(
             'machine-1',
             {

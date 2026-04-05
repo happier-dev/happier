@@ -113,38 +113,54 @@ export async function sessionAttachmentsUploadFile(args: Readonly<{
         }
 
         const reader = await openLocalUploadSourceReader(args.file);
-        const bulkUpload = await uploadDaemonSessionAttachmentFromReader({
-            sessionId: args.sessionId,
-            fileReader: {
-                sizeBytes: described.sizeBytes,
-                readBytes: async (offset, length) => await reader.readBytes(offset, length),
-                close: async () => await reader.close(),
-            },
-            request: {
-                messageLocalId: args.messageLocalId,
-                fileName: described.name,
-                sizeBytes: described.sizeBytes,
-                uploadLocation: args.config.uploadLocation,
-                workspaceRelativeDir: args.config.workspaceRelativeDir,
-                vcsIgnoreStrategy: args.config.vcsIgnoreStrategy,
-                vcsIgnoreWritesEnabled: args.config.vcsIgnoreWritesEnabled,
-            },
-            onProgress: args.onProgress
-                ? (progress) => {
-                    try {
-                        args.onProgress?.(progress);
-                    } catch {
-                        // ignore
+        let readerClosed = false;
+        const closeReaderOnce = async () => {
+            if (readerClosed) {
+                return;
+            }
+            readerClosed = true;
+            await reader.close();
+        };
+        try {
+            const bulkUpload = await uploadDaemonSessionAttachmentFromReader({
+                sessionId: args.sessionId,
+                fileReader: {
+                    sizeBytes: described.sizeBytes,
+                    readBytes: async (offset, length) => await reader.readBytes(offset, length),
+                    close: async () => await closeReaderOnce(),
+                },
+                request: {
+                    messageLocalId: args.messageLocalId,
+                    fileName: described.name,
+                    sizeBytes: described.sizeBytes,
+                    uploadLocation: args.config.uploadLocation,
+                    workspaceRelativeDir: args.config.workspaceRelativeDir,
+                    vcsIgnoreStrategy: args.config.vcsIgnoreStrategy,
+                    vcsIgnoreWritesEnabled: args.config.vcsIgnoreWritesEnabled,
+                },
+                onProgress: args.onProgress
+                    ? (progress) => {
+                        try {
+                            args.onProgress?.(progress);
+                        } catch {
+                            // ignore
+                        }
                     }
-                }
-                : null,
-        });
+                    : null,
+            });
 
-        if (bulkUpload.success !== true) {
-            return { success: false, error: bulkUpload.error ?? 'Upload failed', errorCode: bulkUpload.errorCode };
+            if (bulkUpload.success !== true) {
+                return { success: false, error: bulkUpload.error ?? 'Upload failed', errorCode: bulkUpload.errorCode };
+            }
+
+            return { success: true, path: bulkUpload.path, sizeBytes: bulkUpload.sizeBytes, sha256: bulkUpload.sha256 };
+        } finally {
+            try {
+                await closeReaderOnce();
+            } catch {
+                // ignore
+            }
         }
-
-        return { success: true, path: bulkUpload.path, sizeBytes: bulkUpload.sizeBytes, sha256: bulkUpload.sha256 };
     } catch (error) {
         return {
             success: false,

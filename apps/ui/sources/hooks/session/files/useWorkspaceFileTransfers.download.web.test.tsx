@@ -10,7 +10,7 @@ const downloadDaemonWorkspaceFileToDestinationMock = vi.hoisted(() => vi.fn());
 
 installSessionFilesHookCommonModuleMocks();
 
-vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline/daemonWorkspaceFiles', () => ({
+vi.mock('@/sync/domains/transfers/runtime/transferSubstrate', () => ({
     downloadDaemonWorkspaceFileToDestination: (...args: unknown[]) => downloadDaemonWorkspaceFileToDestinationMock(...args),
 }));
 
@@ -29,15 +29,18 @@ describe('useWorkspaceFileTransfers web download cleanup', () => {
         const createObjectURL = vi.fn(() => 'blob:test-download');
         const revokeObjectURL = vi.fn();
         const click = vi.fn();
+        const remove = vi.fn();
+        const appendChild = vi.fn();
         const createElement = vi.fn(() => ({
             click,
+            remove,
             href: '',
             download: '',
             rel: '',
         }));
 
         vi.stubGlobal('URL', { createObjectURL, revokeObjectURL });
-        vi.stubGlobal('document', { createElement });
+        vi.stubGlobal('document', { createElement, body: { appendChild } });
         vi.stubGlobal('Blob', class Blob {
             constructor(_parts?: unknown[], _options?: Record<string, unknown>) {}
         });
@@ -89,7 +92,9 @@ describe('useWorkspaceFileTransfers web download cleanup', () => {
             await api!.startDownload({ path: 'report.txt', asZip: false });
         });
 
+        expect(appendChild).toHaveBeenCalledTimes(1);
         expect(click).toHaveBeenCalledTimes(1);
+        expect(remove).toHaveBeenCalledTimes(0);
         expect(revokeObjectURL).not.toHaveBeenCalled();
         expect(downloadDaemonWorkspaceFileToDestinationMock).toHaveBeenCalledTimes(1);
 
@@ -97,6 +102,7 @@ describe('useWorkspaceFileTransfers web download cleanup', () => {
             await vi.runAllTimersAsync();
         });
 
+        expect(remove).toHaveBeenCalledTimes(1);
         expect(revokeObjectURL).toHaveBeenCalledWith('blob:test-download');
     });
 

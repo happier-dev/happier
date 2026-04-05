@@ -47,6 +47,7 @@ const machineDirectSessionTranscriptReadAfterMock = vi.hoisted(() => vi.fn());
 const resolvePreferredServerIdForSessionIdMock = vi.hoisted(() => vi.fn());
 const sessionRpcWithPreferredSessionScopeMock = vi.hoisted(() => vi.fn());
 const emitSessionMetadataUpdateWithServerScopeMock = vi.hoisted(() => vi.fn());
+const notifyActivityReadyMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/sync/ops/machineDirectSessions', () => ({
     machineDirectSessionTranscriptPage: machineDirectSessionTranscriptPageMock,
@@ -84,10 +85,18 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/sessionRpcWithPreferredSes
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/emitSessionMetadataUpdateWithServerScope', () => ({
     emitSessionMetadataUpdateWithServerScope: (params: unknown) => emitSessionMetadataUpdateWithServerScopeMock(params),
 }));
+vi.mock('@/activity/notifications/runtime/activityLocalNotificationBus', async () => {
+    const actual = await vi.importActual<typeof import('@/activity/notifications/runtime/activityLocalNotificationBus')>('@/activity/notifications/runtime/activityLocalNotificationBus');
+    return {
+        ...actual,
+        notifyActivityReady: (...args: unknown[]) => notifyActivityReadyMock(...args),
+    };
+});
 
 import { storage } from './domains/state/storage';
 import { setActiveServerId, upsertServerProfile } from './domains/server/serverProfiles';
-import type { Session } from './domains/state/storageTypes';
+import type { Machine, Session } from './domains/state/storageTypes';
+import type { SessionListViewItem } from './domains/session/listing/sessionListViewData';
 
 const initialStorageState = storage.getState();
 
@@ -108,6 +117,23 @@ function createSession(sessionId: string): Session {
         thinkingAt: 0,
         presence: 'online',
         optimisticThinkingAt: null,
+    };
+}
+
+function createMachine(machineId: string): Machine {
+    const now = Date.now();
+    return {
+        id: machineId,
+        seq: 0,
+        createdAt: now,
+        updatedAt: now,
+        active: true,
+        activeAt: now,
+        revokedAt: null,
+        metadata: null,
+        metadataVersion: 0,
+        daemonState: null,
+        daemonStateVersion: 0,
     };
 }
 
@@ -155,6 +181,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         resolvePreferredServerIdForSessionIdMock.mockReset();
         sessionRpcWithPreferredSessionScopeMock.mockReset();
         emitSessionMetadataUpdateWithServerScopeMock.mockReset();
+        notifyActivityReadyMock.mockReset();
         resolvePreferredServerIdForSessionIdMock.mockReturnValue(undefined);
     });
 
@@ -177,6 +204,58 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         expect(storage.getState().sessions[sessionId]).not.toBeUndefined();
         // Ensure we don't get stuck in a perpetual loading state.
         expect(storage.getState().sessionMessages[sessionId]?.isLoaded).toBe(true);
+    });
+
+    it('clears only the active server session-list cache entry when runtime state resets', async () => {
+        const activeServer = upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
+        const sideServer = upsertServerProfile({ serverUrl: 'https://side.example', name: 'Side' });
+        setActiveServerId(activeServer.id, { scope: 'device' });
+
+        storage.setState((state) => ({
+            ...state,
+            sessionListViewDataByServerId: {
+                [activeServer.id]: [{ type: 'session', session: { id: 'active-session' } } as SessionListViewItem],
+                [sideServer.id]: [{ type: 'session', session: { id: 'side-session' } } as SessionListViewItem],
+            },
+        }));
+
+        const { sync } = await import('./sync');
+
+        (sync as any).resetServerScopedRuntimeState();
+
+        expect(storage.getState().sessionListViewDataByServerId).toEqual({
+            [sideServer.id]: [{ type: 'session', session: { id: 'side-session' } }],
+        });
+    });
+
+    it('clears only the active server machine-list cache entry when runtime state resets', async () => {
+        const activeServer = upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
+        const sideServer = upsertServerProfile({ serverUrl: 'https://side.example', name: 'Side' });
+        setActiveServerId(activeServer.id, { scope: 'device' });
+        const sideMachine = createMachine('side-machine');
+
+        storage.setState((state) => ({
+            ...state,
+            machineListByServerId: {
+                [activeServer.id]: [createMachine('active-machine')],
+                [sideServer.id]: [sideMachine],
+            },
+            machineListStatusByServerId: {
+                [activeServer.id]: 'loading',
+                [sideServer.id]: 'idle',
+            },
+        }));
+
+        const { sync } = await import('./sync');
+
+        (sync as any).resetServerScopedRuntimeState();
+
+        expect(storage.getState().machineListByServerId).toEqual({
+            [sideServer.id]: [sideMachine],
+        });
+        expect(storage.getState().machineListStatusByServerId).toEqual({
+            [sideServer.id]: 'idle',
+        });
     });
 
     it('keeps retry semantics before first session snapshot for the active server', async () => {
@@ -230,6 +309,11 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         const sessionId = 'direct_session_id';
         resolvePreferredServerIdForSessionIdMock.mockReturnValue('server-owned');
         storage.getState().applySessions([createDirectSession(sessionId)]);
+        emitSessionMetadataUpdateWithServerScopeMock.mockImplementation(async ({ expectedVersion, metadata }: any) => ({
+            result: 'success',
+            version: Number(expectedVersion ?? 0) + 1,
+            metadata,
+        }));
         machineDirectSessionTranscriptPageMock.mockResolvedValueOnce({
             ok: true,
             items: [
@@ -269,6 +353,12 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             remoteSessionId: 'vendor-session-1',
             cursor: 'tail',
         }), { serverId: 'server-owned' });
+        expect((storage.getState().sessions[sessionId]?.metadata as any)?.directSessionAttentionV1).toEqual({
+            v: 1,
+            observedProgressToken: '1:direct-msg-1',
+            observedAtMs: 1,
+        });
+        expect(emitSessionMetadataUpdateWithServerScopeMock).not.toHaveBeenCalled();
         expect(storage.getState().sessionMessages[sessionId]?.isLoaded).toBe(true);
         const messagesById = storage.getState().sessionMessages[sessionId]?.messagesById ?? {};
         expect(Object.values(messagesById).some((message) => message.kind === 'user-text' && message.text === 'hello direct')).toBe(true);
@@ -761,6 +851,11 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
     it('refreshes loaded direct session transcripts through the shared messages invalidation path', async () => {
         const sessionId = 'direct_session_refresh';
         storage.getState().applySessions([createDirectSession(sessionId)]);
+        emitSessionMetadataUpdateWithServerScopeMock.mockImplementation(async ({ expectedVersion, metadata }: any) => ({
+            result: 'success',
+            version: Number(expectedVersion ?? 0) + 1,
+            metadata,
+        }));
         machineDirectSessionTranscriptPageMock.mockResolvedValueOnce({
             ok: true,
             items: [
@@ -804,6 +899,12 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             remoteSessionId: 'vendor-session-1',
             cursor: 'page-tail-cursor-1',
         }), expect.anything());
+        expect((storage.getState().sessions[sessionId]?.metadata as any)?.directSessionAttentionV1).toEqual({
+            v: 1,
+            observedProgressToken: '2:direct-msg-2',
+            observedAtMs: 2,
+        });
+        expect(emitSessionMetadataUpdateWithServerScopeMock).not.toHaveBeenCalled();
         const sessionMessages = storage.getState().sessionMessages[sessionId];
         const orderedTexts = (sessionMessages?.messageIdsOldestFirst ?? [])
             .map((id) => sessionMessages?.messagesById[id])
@@ -811,5 +912,139 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             .filter((message) => message.kind === 'user-text')
             .map((message) => message.text);
         expect(orderedTexts).toEqual(['hello direct', 'followed direct']);
+    });
+
+    it('applies pushed direct-session transcript deltas and advances the tail cursor for fallback paging', async () => {
+        const sessionId = 'direct_session_push_delta';
+        storage.getState().applySessions([createDirectSession(sessionId)]);
+        emitSessionMetadataUpdateWithServerScopeMock.mockImplementation(async ({ expectedVersion, metadata }: any) => ({
+            result: 'success',
+            version: Number(expectedVersion ?? 0) + 1,
+            metadata,
+        }));
+        machineDirectSessionTranscriptPageMock.mockResolvedValueOnce({
+            ok: true,
+            items: [
+                {
+                    id: 'direct-msg-1',
+                    createdAtMs: 1,
+                    raw: { role: 'user', content: { type: 'text', text: 'hello direct' } },
+                },
+            ],
+            nextCursor: 'older-cursor-1',
+            tailCursor: 'page-tail-cursor-1',
+            hasMore: false,
+        });
+        machineDirectSessionTranscriptReadAfterMock.mockResolvedValueOnce({
+            ok: true,
+            items: [],
+            nextCursor: 'tail-cursor-3',
+            truncated: false,
+        });
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = {
+            getSessionEncryption: () => null,
+        };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+
+        await (sync as any).fetchMessages(sessionId);
+        expect((storage.getState().sessions[sessionId]?.metadata as any)?.directSessionAttentionV1).toEqual({
+            v: 1,
+            observedProgressToken: '1:direct-msg-1',
+            observedAtMs: 1,
+        });
+
+        await (sync as any).handleEphemeralUpdate({
+            type: 'direct-session-transcript-delta',
+            sessionId,
+            items: [
+                {
+                    id: 'direct-msg-2',
+                    createdAtMs: 2,
+                    raw: { role: 'user', content: { type: 'text', text: 'followed direct' } },
+                },
+            ],
+            nextCursor: 'tail-cursor-2',
+            truncated: false,
+        });
+
+        expect((storage.getState().sessions[sessionId]?.metadata as any)?.directSessionAttentionV1).toEqual({
+            v: 1,
+            observedProgressToken: '2:direct-msg-2',
+            observedAtMs: 2,
+        });
+        expect(emitSessionMetadataUpdateWithServerScopeMock).not.toHaveBeenCalled();
+
+        const sessionMessages = storage.getState().sessionMessages[sessionId];
+        const orderedTexts = (sessionMessages?.messageIdsOldestFirst ?? [])
+            .map((id) => sessionMessages?.messagesById[id])
+            .filter((message): message is NonNullable<typeof message> => Boolean(message))
+            .filter((message) => message.kind === 'user-text')
+            .map((message) => message.text);
+        expect(orderedTexts).toEqual(['hello direct', 'followed direct']);
+
+        await (sync as any).refreshSessionMessages(sessionId);
+
+        expect(machineDirectSessionTranscriptReadAfterMock).toHaveBeenCalledTimes(1);
+        expect(machineDirectSessionTranscriptReadAfterMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-1',
+            remoteSessionId: 'vendor-session-1',
+            cursor: 'tail-cursor-2',
+        }), expect.anything());
+    });
+
+    it('reuses ready local notifications for direct-session assistant push deltas', async () => {
+        const sessionId = 'direct_session_notify_delta';
+        storage.getState().applySessions([createDirectSession(sessionId)]);
+        emitSessionMetadataUpdateWithServerScopeMock.mockImplementation(async ({ expectedVersion, metadata }: any) => ({
+            result: 'success',
+            version: Number(expectedVersion ?? 0) + 1,
+            metadata,
+        }));
+        machineDirectSessionTranscriptPageMock.mockResolvedValueOnce({
+            ok: true,
+            items: [],
+            nextCursor: null,
+            tailCursor: 'notify-tail-cursor-1',
+            hasMore: false,
+        });
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = {
+            getSessionEncryption: () => null,
+        };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+
+        await (sync as any).fetchMessages(sessionId);
+        await (sync as any).handleEphemeralUpdate({
+            type: 'direct-session-transcript-delta',
+            sessionId,
+            items: [
+                {
+                    id: 'direct-agent-msg-1',
+                    createdAtMs: 2,
+                    raw: {
+                        role: 'agent',
+                        content: {
+                            type: 'codex',
+                            data: {
+                                type: 'message',
+                                message: 'followed direct reply',
+                            },
+                        },
+                    },
+                },
+            ],
+            nextCursor: 'notify-tail-cursor-2',
+            truncated: false,
+        });
+
+        expect(notifyActivityReadyMock).toHaveBeenCalledWith(
+            sessionId,
+            expect.any(Array),
+        );
     });
 });

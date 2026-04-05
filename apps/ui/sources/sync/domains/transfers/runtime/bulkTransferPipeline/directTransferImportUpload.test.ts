@@ -16,7 +16,11 @@ describe('uploadBulkPayloadFromFileViaDirectImport', () => {
     });
 
     it('prepares a direct import session and uploads encrypted chunks through the HTTP transfer endpoints', async () => {
-        const requests: Array<Readonly<{ method: string; url: string }>> = [];
+        const requests: Array<Readonly<{
+            method: string;
+            url: string;
+            headers: Record<string, string>;
+        }>> = [];
 
         prepareImportSessionMock.mockResolvedValue({
             success: true,
@@ -30,6 +34,111 @@ describe('uploadBulkPayloadFromFileViaDirectImport', () => {
                 {
                     kind: 'http',
                     url: 'http://127.0.0.1:46001/machine-transfers/direct/imports/upload-1',
+                    expiresAt: 5_000,
+                },
+            ],
+        });
+
+        setRuntimeFetch(async (input, init) => {
+            const url = input instanceof URL ? input.toString() : String(input);
+            const method = String(init?.method ?? 'GET');
+            requests.push({
+                method,
+                url,
+                headers: new Headers(init?.headers).entries().reduce<Record<string, string>>((acc, [key, value]) => {
+                    acc[key] = value;
+                    return acc;
+                }, {}),
+            });
+
+            if (url.includes('/chunks/') && method === 'PUT') {
+                return new Response(JSON.stringify({ success: true }), {
+                    status: 200,
+                    headers: { 'content-type': 'application/json' },
+                });
+            }
+
+            if (url.endsWith('/finalize') && method === 'POST') {
+                return new Response(JSON.stringify({
+                    success: true,
+                    finalized: {
+                        success: true,
+                        path: '/repo/payload.bin',
+                        sizeBytes: 5,
+                    },
+                    sha256: 'sha256:test',
+                }), {
+                    status: 200,
+                    headers: { 'content-type': 'application/json' },
+                });
+            }
+
+            throw new Error(`unexpected request: ${method} ${url}`);
+        });
+
+        const result = await uploadBulkPayloadFromFileViaDirectImport({
+            machineId: 'machine-1',
+            serverId: 'server-1',
+            fileReader: {
+                sizeBytes: 5,
+                readBytes: async (offset, length) => new TextEncoder().encode('hello').subarray(offset, offset + length),
+                close: async () => {},
+            },
+            request: {
+                t: 'session_file_upload_v1',
+                workingDirectory: '/repo',
+                path: '/repo/payload.bin',
+                sizeBytes: 5,
+                overwrite: true,
+            },
+        });
+
+        expect(result).toEqual({
+            success: true,
+            path: '/repo/payload.bin',
+            sizeBytes: 5,
+            sha256: 'sha256:test',
+        });
+        expect(prepareImportSessionMock).toHaveBeenCalledTimes(1);
+        expect(requests).toEqual([
+            {
+                method: 'PUT',
+                url: 'http://127.0.0.1:46001/machine-transfers/direct/imports/upload-1/chunks/0',
+                headers: { 'content-type': 'application/json' },
+            },
+            {
+                method: 'PUT',
+                url: 'http://127.0.0.1:46001/machine-transfers/direct/imports/upload-1/chunks/1',
+                headers: { 'content-type': 'application/json' },
+            },
+            {
+                method: 'PUT',
+                url: 'http://127.0.0.1:46001/machine-transfers/direct/imports/upload-1/chunks/2',
+                headers: { 'content-type': 'application/json' },
+            },
+            {
+                method: 'POST',
+                url: 'http://127.0.0.1:46001/machine-transfers/direct/imports/upload-1/finalize',
+                headers: {},
+            },
+        ]);
+    });
+
+    it('accepts https direct import endpoints with a Serve path prefix', async () => {
+        const requests: Array<Readonly<{ method: string; url: string }>> = [];
+
+        prepareImportSessionMock.mockResolvedValue({
+            success: true,
+            uploadId: 'upload-https',
+            destDisplayPath: '/repo/payload.bin',
+            expectedSizeBytes: 5,
+            chunkSizeBytes: 2,
+            recipientPublicKeyBase64: Buffer.alloc(32, 7).toString('base64'),
+            expiresAt: 5_000,
+            endpointCandidates: [
+                {
+                    kind: 'https',
+                    url: 'https://example.ts.net/__happier/transfer/machine-transfers/direct/imports/upload-https',
                     expiresAt: 5_000,
                 },
             ],
@@ -88,12 +197,23 @@ describe('uploadBulkPayloadFromFileViaDirectImport', () => {
             sizeBytes: 5,
             sha256: 'sha256:test',
         });
-        expect(prepareImportSessionMock).toHaveBeenCalledTimes(1);
         expect(requests).toEqual([
-            { method: 'PUT', url: 'http://127.0.0.1:46001/machine-transfers/direct/imports/upload-1/chunks/0' },
-            { method: 'PUT', url: 'http://127.0.0.1:46001/machine-transfers/direct/imports/upload-1/chunks/1' },
-            { method: 'PUT', url: 'http://127.0.0.1:46001/machine-transfers/direct/imports/upload-1/chunks/2' },
-            { method: 'POST', url: 'http://127.0.0.1:46001/machine-transfers/direct/imports/upload-1/finalize' },
+            {
+                method: 'PUT',
+                url: 'https://example.ts.net/__happier/transfer/machine-transfers/direct/imports/upload-https/chunks/0',
+            },
+            {
+                method: 'PUT',
+                url: 'https://example.ts.net/__happier/transfer/machine-transfers/direct/imports/upload-https/chunks/1',
+            },
+            {
+                method: 'PUT',
+                url: 'https://example.ts.net/__happier/transfer/machine-transfers/direct/imports/upload-https/chunks/2',
+            },
+            {
+                method: 'POST',
+                url: 'https://example.ts.net/__happier/transfer/machine-transfers/direct/imports/upload-https/finalize',
+            },
         ]);
     });
 
@@ -183,7 +303,11 @@ describe('uploadBulkPayloadFromFileViaDirectImport', () => {
     });
 
     it('falls through to the next endpoint candidate when an earlier direct import endpoint returns a handled failure', async () => {
-        const requests: Array<Readonly<{ method: string; url: string }>> = [];
+        const requests: Array<Readonly<{
+            method: string;
+            url: string;
+            headers: Record<string, string>;
+        }>> = [];
 
         prepareImportSessionMock.mockResolvedValue({
             success: true,
@@ -210,7 +334,14 @@ describe('uploadBulkPayloadFromFileViaDirectImport', () => {
         setRuntimeFetch(async (input, init) => {
             const url = input instanceof URL ? input.toString() : String(input);
             const method = String(init?.method ?? 'GET');
-            requests.push({ method, url });
+            requests.push({
+                method,
+                url,
+                headers: new Headers(init?.headers).entries().reduce<Record<string, string>>((acc, [key, value]) => {
+                    acc[key] = value;
+                    return acc;
+                }, {}),
+            });
 
             if (url.startsWith('http://127.0.0.1:46001/') && url.includes('/chunks/') && method === 'PUT') {
                 return new Response(JSON.stringify({ success: false, error: 'first-candidate-failed' }), {
@@ -272,10 +403,26 @@ describe('uploadBulkPayloadFromFileViaDirectImport', () => {
             sha256: 'sha256:test',
         });
         expect(requests).toEqual(expect.arrayContaining([
-            { method: 'PUT', url: 'http://127.0.0.1:46001/machine-transfers/direct/imports/upload-2/chunks/0' },
-            { method: 'POST', url: 'http://127.0.0.1:46001/machine-transfers/direct/imports/upload-2/abort' },
-            { method: 'PUT', url: 'http://127.0.0.1:46002/machine-transfers/direct/imports/upload-2/chunks/0' },
-            { method: 'POST', url: 'http://127.0.0.1:46002/machine-transfers/direct/imports/upload-2/finalize' },
+            {
+                method: 'PUT',
+                url: 'http://127.0.0.1:46001/machine-transfers/direct/imports/upload-2/chunks/0',
+                headers: { 'content-type': 'application/json' },
+            },
+            {
+                method: 'POST',
+                url: 'http://127.0.0.1:46001/machine-transfers/direct/imports/upload-2/abort',
+                headers: {},
+            },
+            {
+                method: 'PUT',
+                url: 'http://127.0.0.1:46002/machine-transfers/direct/imports/upload-2/chunks/0',
+                headers: { 'content-type': 'application/json' },
+            },
+            {
+                method: 'POST',
+                url: 'http://127.0.0.1:46002/machine-transfers/direct/imports/upload-2/finalize',
+                headers: {},
+            },
         ]));
     });
 

@@ -35,7 +35,7 @@ export async function buildUpdatedMachineFromSocketUpdate(params: {
     updateSeq: number;
     updateCreatedAt: number;
     existingMachine: Machine | undefined;
-    getMachineEncryption: (machineId: string) => MachineEncryption | null;
+    getMachineEncryption: (machineId: string) => MachineEncryption | null | undefined;
 }): Promise<Machine | null> {
     const { machineUpdate, updateCreatedAt, existingMachine, getMachineEncryption } = params;
 
@@ -64,11 +64,12 @@ export async function buildUpdatedMachineFromSocketUpdate(params: {
         daemonStateVersion: existingMachine?.daemonStateVersion ?? 0,
     };
 
-    // Get machine-specific encryption (might not exist if machine wasn't initialized)
+    // Get machine-specific encryption (might not exist if machine wasn't initialized).
+    // We still preserve freshness fields without it so the UI can reflect the
+    // latest online/active state while a full machine refresh is pending.
     const machineEncryption = getMachineEncryption(machineId);
     if (!machineEncryption) {
-        console.error(`Machine encryption not found for ${machineId} - cannot decrypt updates`);
-        return null;
+        return updatedMachine;
     }
 
     // If metadata is provided, decrypt and update it

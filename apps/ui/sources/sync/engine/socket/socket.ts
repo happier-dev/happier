@@ -18,6 +18,7 @@ import { didControlReturnToMobile } from '@/sync/domains/session/control/control
 import { createSessionMessageApplyCoalescer } from '@/sync/engine/sessions/sessionMessageApplyCoalescer';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import {
+    buildUpdatedSessionListRenderablePatchFromSocketUpdate,
     buildUpdatedSessionFromSocketUpdate,
     handleDeleteSessionSocketUpdate,
     handleMessageUpdatedSocketUpdate,
@@ -42,6 +43,7 @@ import {
 import { applyAutomationSocketUpdate } from '@/sync/engine/automations/automationSocketApply';
 import { normalizeRelationshipUpdatedUpdateBody } from '@/sync/engine/social/relationshipUpdate';
 import { parseEphemeralUpdate, parseUpdateContainer } from './socketParse';
+import type { DirectSessionTranscriptUpdatedEphemeralUpdate } from './socketParse';
 import { FeedBodySchema } from '@/sync/domains/social/feedTypes';
 export { parseEphemeralUpdate, parseUpdateContainer } from './socketParse';
 
@@ -308,12 +310,13 @@ export async function handleUpdateContainer(params: {
         if (!session) {
             const cachedRenderable = state.sessionListRenderables[sessionId];
             if (cachedRenderable) {
-                state.replaceSessionListRenderables([
-                    ...Object.values(state.sessionListRenderables).filter((entry) => entry.id !== sessionId),
+                state.applySessionListRenderablePatches([
                     {
-                        ...cachedRenderable,
-                        pendingCount: updateData.body.pendingCount,
-                        pendingVersion: updateData.body.pendingVersion,
+                        sessionId,
+                        patch: {
+                            pendingCount: updateData.body.pendingCount,
+                            pendingVersion: updateData.body.pendingVersion,
+                        },
                     },
                 ]);
                 return;
@@ -330,9 +333,25 @@ export async function handleUpdateContainer(params: {
             pendingVersion: updateData.body.pendingVersion,
         }]);
     } else if (updateData.body.t === 'update-session') {
-        const session = storage.getState().sessions[updateData.body.id];
+        const state = storage.getState();
+        const session = state.sessions[updateData.body.id];
         if (!session) {
-            invalidateSessions();
+            const cachedRenderable = state.sessionListRenderables[updateData.body.id];
+            if (!cachedRenderable) {
+                invalidateSessions();
+                return;
+            }
+
+            const renderablePatch = await buildUpdatedSessionListRenderablePatchFromSocketUpdate({
+                renderable: cachedRenderable,
+                updateBody: updateData.body,
+                updateSeq: updateData.seq,
+                updateCreatedAt: updateData.createdAt,
+                sessionEncryption: encryption.getSessionEncryption(updateData.body.id),
+            });
+            storage.getState().applySessionListRenderablePatches([
+                { sessionId: updateData.body.id, patch: renderablePatch },
+            ]);
             return;
         }
 
@@ -409,10 +428,14 @@ export async function handleUpdateContainer(params: {
         //
         // NOTE: When the dataEncryptionKey is null, we still initialize with null so
         // the machine has a fallback encryptor available (legacy path).
-        const decryptedDataKey =
-            typeof (machineUpdate as any).dataEncryptionKey === 'string' && (machineUpdate as any).dataEncryptionKey.length > 0
-                ? await encryption.decryptEncryptionKey((machineUpdate as any).dataEncryptionKey)
-                : null;
+        let decryptedDataKey: Uint8Array | null = null;
+        if (typeof (machineUpdate as any).dataEncryptionKey === 'string' && (machineUpdate as any).dataEncryptionKey.length > 0) {
+            try {
+                decryptedDataKey = await encryption.decryptEncryptionKey((machineUpdate as any).dataEncryptionKey);
+            } catch (error) {
+                console.error(`Failed to decrypt machine dataEncryptionKey for ${machineId}; falling back to legacy machine encryption.`, error);
+            }
+        }
         await encryption.initializeMachines(new Map([[machineId, decryptedDataKey]]));
 
         // Apply a placeholder immediately so UI state (e.g. onboarding) can react
@@ -438,14 +461,6 @@ export async function handleUpdateContainer(params: {
         const machineId = machineUpdate.machineId; // Changed from .id to .machineId
         const machine = storage.getState().machines[machineId];
 
-        // Machine encryption is derived from the machine's dataEncryptionKey, which can
-        // arrive slightly later (e.g. after a machines refresh). Fail closed and
-        // trigger a rehydrate instead of logging errors or applying undecryptable updates.
-        if (!encryption.getMachineEncryption(machineId)) {
-            invalidateMachines();
-            return;
-        }
-
         const updatedMachine = await buildUpdatedMachineFromSocketUpdate({
             machineUpdate,
             updateSeq: updateData.seq,
@@ -453,10 +468,16 @@ export async function handleUpdateContainer(params: {
             existingMachine: machine,
             getMachineEncryption: (id) => encryption.getMachineEncryption(id),
         });
-        if (!updatedMachine) return;
+        if (!updatedMachine) {
+            invalidateMachines();
+            return;
+        }
 
         // Update storage using applyMachines which rebuilds sessionListViewData
         storage.getState().applyMachines([updatedMachine]);
+        if (!encryption.getMachineEncryption(machineId)) {
+            invalidateMachines();
+        }
     } else if (updateData.body.t === 'relationship-updated') {
         log.log('👥 Received relationship-updated update');
         const normalized = normalizeRelationshipUpdatedUpdateBody(updateData.body, {
@@ -658,8 +679,17 @@ export function handleEphemeralSocketUpdate(params: {
     getSessionEncryption: Encryption['getSessionEncryption'];
     getSession: (sessionId: string) => Session | undefined;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
+    updateDirectSessionTranscript?: (update: DirectSessionTranscriptUpdatedEphemeralUpdate) => Promise<void> | void;
 }): Promise<void> {
-    const { update, addActivityUpdate, addMachineActivityUpdate, getSessionEncryption, getSession, applyMessages } = params;
+    const {
+        update,
+        addActivityUpdate,
+        addMachineActivityUpdate,
+        getSessionEncryption,
+        getSession,
+        applyMessages,
+        updateDirectSessionTranscript,
+    } = params;
 
     const updateData = parseEphemeralUpdate(update);
     if (!updateData) return Promise.resolve();
@@ -672,6 +702,8 @@ export function handleEphemeralSocketUpdate(params: {
         addMachineActivityUpdate({ id: updateData.id, active: updateData.active, activeAt: updateData.activeAt });
     } else if (updateData.type === 'execution-run-updated') {
         notifyExecutionRunActivity(updateData.sessionId);
+    } else if (updateData.type === 'direct-session-transcript-delta') {
+        return Promise.resolve(updateDirectSessionTranscript?.(updateData as DirectSessionTranscriptUpdatedEphemeralUpdate));
     } else if (updateData.type === 'transcript-stream-segment') {
         return handleTranscriptStreamSegmentEphemeralUpdate({
             update: updateData,

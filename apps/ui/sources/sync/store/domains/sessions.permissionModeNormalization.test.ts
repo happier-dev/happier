@@ -5,7 +5,6 @@ import { createSessionsDomain } from './sessions';
 function createHarness() {
     let state: any = {
         sessions: {},
-        sessionsData: null,
         sessionListViewData: null,
         sessionListViewDataByServerId: {},
         sessionScmStatus: {},

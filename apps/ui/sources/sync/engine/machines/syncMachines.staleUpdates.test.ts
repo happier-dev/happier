@@ -101,18 +101,34 @@ describe('buildUpdatedMachineFromSocketUpdate stale guards', () => {
         expect(updated?.metadata).toEqual({ m: true })
     })
 
-    it('returns null when machine encryption is unavailable', async () => {
-        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    it('preserves freshness fields even when machine encryption is unavailable', async () => {
+        const existingMachine = buildMachine({
+            active: false,
+            activeAt: 10,
+            metadataVersion: 5,
+            daemonStateVersion: 7,
+        })
+
         const updated = await buildUpdatedMachineFromSocketUpdate({
-            machineUpdate: { machineId: 'm1' } as MachineUpdate,
+            machineUpdate: {
+                machineId: 'm1',
+                active: true,
+                activeAt: 100,
+                revokedAt: null,
+            } as MachineUpdate,
             updateSeq: 5,
             updateCreatedAt: 100,
-            existingMachine: buildMachine(),
+            existingMachine,
             getMachineEncryption: () => null,
         })
 
-        expect(updated).toBeNull()
-        errorSpy.mockRestore()
+        expect(updated).not.toBeNull()
+        expect(updated?.active).toBe(true)
+        expect(updated?.activeAt).toBe(100)
+        expect(updated?.metadataVersion).toBe(existingMachine.metadataVersion)
+        expect(updated?.metadata).toEqual(existingMachine.metadata)
+        expect(updated?.daemonStateVersion).toBe(existingMachine.daemonStateVersion)
+        expect(updated?.daemonState).toEqual(existingMachine.daemonState)
     })
 
     it('applies revoke updates from the socket payload', async () => {

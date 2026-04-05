@@ -36,7 +36,6 @@ import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 function createHarness() {
     let state: any = {
         sessions: {},
-        sessionsData: null,
         sessionListViewData: null,
         sessionListViewDataByServerId: {},
         sessionScmStatus: {},

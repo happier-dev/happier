@@ -3,7 +3,10 @@ import type { TransferRouteViabilityRecord } from '@happier-dev/transfers';
 
 import type { TransferRouteDecision, ResolveTransferRouteDecisionInput } from './resolveTransferRouteDecision';
 import { resolveTransferRouteDecision } from './resolveTransferRouteDecision';
-import { resolveMachineDaemonTransferDirectPeerRoute } from './machineDaemonTransferState';
+import {
+    resolveMachineDaemonTransferDirectPeerDiagnostics,
+    type MachineDaemonTransferDirectPeerDiagnostics,
+} from './machineDaemonTransferState';
 
 export type ResolveSessionFileTransferAvailabilityInput = Readonly<{
     sessionAvailable: boolean;
@@ -18,28 +21,41 @@ export type ResolveSessionFileTransferAvailabilityInput = Readonly<{
 export type ResolveSessionFileTransferAvailabilityResult = Readonly<{
     available: boolean;
     decision: TransferRouteDecision | null;
+    daemonDirectPeerDiagnostics: MachineDaemonTransferDirectPeerDiagnostics;
 }>;
+
+function resolveSessionDirectPeerRoute(
+    daemonRoute: TransferRouteViabilityRecord,
+    directPeerRoute?: TransferRouteViabilityRecord | null,
+): TransferRouteViabilityRecord {
+    if (daemonRoute.status !== 'viable') {
+        return daemonRoute;
+    }
+
+    if (directPeerRoute?.status === 'viable' || directPeerRoute?.status === 'unavailable') {
+        return directPeerRoute;
+    }
+
+    return daemonRoute;
+}
 
 export function resolveSessionFileTransferAvailability(
     input: ResolveSessionFileTransferAvailabilityInput,
 ): ResolveSessionFileTransferAvailabilityResult {
+    const daemonDirectPeerDiagnostics = resolveMachineDaemonTransferDirectPeerDiagnostics({
+        daemonState: input.machineDaemonState,
+    });
+
     if (!input.sessionAvailable || !input.machineTargetAvailable || !input.serverFeatures) {
         return {
             available: false,
             decision: null,
+            daemonDirectPeerDiagnostics,
         };
     }
 
-    const daemonTransferRoute = resolveMachineDaemonTransferDirectPeerRoute({
-        daemonState: input.machineDaemonState,
-    });
-    const directPeerRoute = daemonTransferRoute.status === 'unavailable'
-        ? daemonTransferRoute
-        : input.directPeerRoute?.status === 'unavailable'
-            ? input.directPeerRoute
-            : input.directPeerRoute?.status === 'viable'
-                ? input.directPeerRoute
-                : daemonTransferRoute;
+    const daemonTransferRoute = daemonDirectPeerDiagnostics.route;
+    const directPeerRoute = resolveSessionDirectPeerRoute(daemonTransferRoute, input.directPeerRoute);
 
     const decision = resolveTransferRouteDecision({
         serverFeatures: input.serverFeatures,
@@ -51,5 +67,6 @@ export function resolveSessionFileTransferAvailability(
     return {
         available: decision.kind === 'selected',
         decision,
+        daemonDirectPeerDiagnostics,
     };
 }

@@ -19,7 +19,6 @@ import {
     type ScmStashShowRequest,
     type ScmStashShowResponse,
 } from '@happier-dev/protocol';
-import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 
 import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTestHelpers';
 
@@ -63,6 +62,15 @@ const modalAlertSpy = vi.fn();
 const modalConfirmSpy = vi.fn(async (..._args: any[]) => true);
 
 installSessionFilesViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: { OS: 'ios' },
+            View: React.forwardRef((props: any, ref: any) => React.createElement('View', { ...props, ref }, props.children)),
+            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+            ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
+        });
+    },
     modal: async () => {
         const modalModuleMock = createModalModuleMock({ confirmResult: true });
         modalModuleMock.spies.alert.mockImplementation((...args: any[]) => modalAlertSpy(...args));
@@ -84,9 +92,10 @@ installSessionFilesViewCommonModuleMocks({
         }),
 });
 
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-}));
+vi.mock('@expo/vector-icons', async () => {
+    const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
+    return createExpoVectorIconsMock();
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -302,7 +311,7 @@ describe('SessionScmStashDetailsView', () => {
         });
     });
 
-    it('loads the clicked stash when switching between all stash pills including unmanaged entries', async () => {
+    it('switches between stashes from the dropdown trigger and shows stash metadata in the subtitle', async () => {
         sessionScmStashListSpy.mockResolvedValue({
             success: true,
             stashes: [
@@ -327,9 +336,29 @@ describe('SessionScmStashDetailsView', () => {
         }));
 
         const screen = await renderStashDetailsView();
-        await screen.pressByTestIdAsync(`scm-stash-pill-${toTestIdSafeValue('stash@{1}')}`);
+
+        const stashSelector = screen.tree.findByProps({ title: 'files.stash.detailsTitle' });
+        expect(String(stashSelector.props.subtitle ?? '')).toContain('stash@{0}');
+
+        await act(async () => {
+            stashSelector.props.onPress?.();
+            await new Promise<void>((resolve) => {
+                setTimeout(resolve, 0);
+            });
+            await settleStashDetailsView();
+        });
+
+        const unmanagedOption = screen.tree.findByProps({
+            testID: `dropdown-option-${String('stash@{1}').replace(/[^a-zA-Z0-9_-]/g, '_')}`,
+        });
+        await act(async () => {
+            unmanagedOption.props.onPress?.();
+            await settleStashDetailsView();
+        });
 
         expect(sessionScmStashShowSpy).toHaveBeenCalledWith('s1', expect.objectContaining({ stashRef: 'stash@{1}' }));
+        const updatedSelector = screen.tree.findByProps({ title: 'files.stash.detailsTitle' });
+        expect(String(updatedSelector.props.subtitle ?? '')).toContain('stash@{1}');
     });
 
     it('pops the selected stash when restoring', async () => {

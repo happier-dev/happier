@@ -6,7 +6,6 @@ import { clearPersistence, saveSessionModelModeUpdatedAts, saveSessionModelModes
 function createHarness() {
     let state: any = {
         sessions: {},
-        sessionsData: null,
         sessionListViewData: null,
         sessionListViewDataByServerId: {},
         sessionScmStatus: {},

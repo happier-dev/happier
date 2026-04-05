@@ -8,10 +8,11 @@ import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { buildSessionListViewData, type SessionListViewItem } from '@/sync/domains/session/listing/sessionListViewData';
 import { storage } from '@/sync/domains/state/storageStore';
-import { setServerSessionListCache } from '@/sync/store/sessionListCache';
+import { clearServerSessionListCache, setServerSessionListCache } from '@/sync/store/sessionListCache';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
+import { invalidateCachedTransferRoutesForServer } from '@/sync/domains/transfers/runtime/transferRouteCache';
 import {
     type ManagedConnectionState,
     type ManagedConnectionTransport,
@@ -21,6 +22,7 @@ import {
     reportServerUnreachable,
     startServerReachabilitySupervisor,
     stopServerReachabilitySupervisor,
+    subscribeServerReachabilityNetworkAllowed,
     subscribeServerReachabilityState,
 } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
@@ -28,6 +30,7 @@ import {
     createConcurrentServerSocketTransport,
     type ConcurrentServerSocket,
 } from './concurrentServerConnections/createConcurrentServerSocketTransport';
+import { shouldRefreshConcurrentSessionCacheForUpdate } from './concurrentSessionCacheUpdateClassifier';
 
 type ConcurrentTarget = Readonly<{
     id: string;
@@ -87,11 +90,16 @@ function areAuthCredentialsEquivalent(a: AuthCredentials, b: AuthCredentials): b
 let started = false;
 let storageUnsubscribe: (() => void) | null = null;
 let activeServerUnsubscribe: (() => void) | null = null;
+let networkAllowedUnsubscribe: (() => void) | null = null;
 let periodicRefreshTimer: ReturnType<typeof setInterval> | null = null;
 let reconcileTimer: ReturnType<typeof setTimeout> | null = null;
 
 function normalizeServerUrl(url: string): string {
     return canonicalizeServerUrl(String(url ?? ''));
+}
+
+function normalizeServerId(value: unknown): string {
+    return String(value ?? '').trim();
 }
 
 function createServerRequest(serverUrl: string, token: string): (path: string, init: RequestInit) => Promise<Response> {
@@ -146,14 +154,55 @@ async function getOrCreateEncryption(entry: ManagedConcurrentServer): Promise<En
 }
 
 function updateConcurrentSessionListCache(serverId: string, sessionListViewData: SessionListViewItem[] | null): void {
-    storage.setState((state) => ({
-        ...state,
-        sessionListViewDataByServerId: setServerSessionListCache(
+    storage.setState((state) => {
+        const nextSessionListViewDataByServerId = setServerSessionListCache(
             state.sessionListViewDataByServerId,
             serverId,
             sessionListViewData,
-        ),
-    }));
+        );
+        if (nextSessionListViewDataByServerId === state.sessionListViewDataByServerId) {
+            return state;
+        }
+        return {
+            ...state,
+            sessionListViewDataByServerId: nextSessionListViewDataByServerId,
+        };
+    });
+}
+
+function areMachineListsEqual(previous: Machine[] | null | undefined, next: Machine[] | null | undefined): boolean {
+    if (previous === next) return true;
+    if (!Array.isArray(previous) || !Array.isArray(next)) return previous === next;
+    if (previous.length !== next.length) return false;
+
+    for (let index = 0; index < previous.length; index += 1) {
+        const previousMachine = previous[index];
+        const nextMachine = next[index];
+        if (previousMachine.id !== nextMachine.id) return false;
+        if (previousMachine.seq !== nextMachine.seq) return false;
+        if (previousMachine.createdAt !== nextMachine.createdAt) return false;
+        if (previousMachine.updatedAt !== nextMachine.updatedAt) return false;
+        if (previousMachine.active !== nextMachine.active) return false;
+        if (previousMachine.activeAt !== nextMachine.activeAt) return false;
+        if ((previousMachine.revokedAt ?? null) !== (nextMachine.revokedAt ?? null)) return false;
+        if (previousMachine.metadataVersion !== nextMachine.metadataVersion) return false;
+        if ((previousMachine.metadata?.host ?? null) !== (nextMachine.metadata?.host ?? null)) return false;
+        if ((previousMachine.metadata?.platform ?? null) !== (nextMachine.metadata?.platform ?? null)) return false;
+        if ((previousMachine.metadata?.happyCliVersion ?? null) !== (nextMachine.metadata?.happyCliVersion ?? null)) return false;
+        if ((previousMachine.metadata?.happyHomeDir ?? null) !== (nextMachine.metadata?.happyHomeDir ?? null)) return false;
+        if ((previousMachine.metadata?.homeDir ?? null) !== (nextMachine.metadata?.homeDir ?? null)) return false;
+        if ((previousMachine.metadata?.username ?? null) !== (nextMachine.metadata?.username ?? null)) return false;
+        if ((previousMachine.metadata?.arch ?? null) !== (nextMachine.metadata?.arch ?? null)) return false;
+        if ((previousMachine.metadata?.displayName ?? null) !== (nextMachine.metadata?.displayName ?? null)) return false;
+        if ((previousMachine.metadata?.windowsRemoteSessionLaunchMode ?? null) !== (nextMachine.metadata?.windowsRemoteSessionLaunchMode ?? null)) return false;
+        if ((previousMachine.metadata?.windowsRemoteSessionConsole ?? null) !== (nextMachine.metadata?.windowsRemoteSessionConsole ?? null)) return false;
+        if ((previousMachine.metadata?.daemonLastKnownStatus ?? null) !== (nextMachine.metadata?.daemonLastKnownStatus ?? null)) return false;
+        if ((previousMachine.metadata?.daemonLastKnownPid ?? null) !== (nextMachine.metadata?.daemonLastKnownPid ?? null)) return false;
+        if ((previousMachine.metadata?.shutdownRequestedAt ?? null) !== (nextMachine.metadata?.shutdownRequestedAt ?? null)) return false;
+        if ((previousMachine.metadata?.shutdownSource ?? null) !== (nextMachine.metadata?.shutdownSource ?? null)) return false;
+    }
+
+    return true;
 }
 
 function updateConcurrentMachineListCache(input: {
@@ -162,54 +211,71 @@ function updateConcurrentMachineListCache(input: {
     status: 'idle' | 'loading' | 'signedOut' | 'error';
     authoritative?: boolean;
 }): void {
-    storage.setState((state) => ({
-        ...state,
-        machineListByServerId: {
-            ...state.machineListByServerId,
-            [input.serverId]: (() => {
-                if (!Array.isArray(input.machines)) {
-                    return input.machines;
-                }
+    storage.setState((state) => {
+        const nextMachineListByServerId = (() => {
+            const previous = state.machineListByServerId?.[input.serverId];
+            let nextMachines = input.machines;
 
-                if (input.authoritative) {
-                    return input.machines;
-                }
-
-                const previous = state.machineListByServerId?.[input.serverId];
+            if (Array.isArray(input.machines) && !input.authoritative) {
                 if (!Array.isArray(previous) || previous.length === 0) {
-                    return input.machines;
-                }
-
-                // SWR merge: keep older machines that are missing from this refresh response.
-                // This avoids confusing "disappear then reappear" flicker if a server returns a
-                // partial list transiently.
-                const nextIds = new Set(input.machines.map((m) => m.id));
-                if (nextIds.size === 0) {
-                    return previous;
-                }
-                const merged: Machine[] = [...input.machines];
-                for (const machine of previous) {
-                    if (!nextIds.has(machine.id)) {
-                        merged.push(machine);
+                    nextMachines = input.machines;
+                } else {
+                    // SWR merge: keep older machines that are missing from this refresh response.
+                    // This avoids confusing "disappear then reappear" flicker if a server returns a
+                    // partial list transiently.
+                    const nextIds = new Set(input.machines.map((m) => m.id));
+                    if (nextIds.size === 0) {
+                        nextMachines = previous;
+                    } else {
+                        const merged: Machine[] = [...input.machines];
+                        for (const machine of previous) {
+                            if (!nextIds.has(machine.id)) {
+                                merged.push(machine);
+                            }
+                        }
+                        nextMachines = merged;
                     }
                 }
-                return merged;
-            })(),
-        },
-        machineListStatusByServerId: {
-            ...state.machineListStatusByServerId,
-            [input.serverId]: input.status,
-        },
-    }));
+            }
+
+            if (previous !== undefined && areMachineListsEqual(previous, nextMachines)) {
+                return state.machineListByServerId;
+            }
+
+            return {
+                ...state.machineListByServerId,
+                [input.serverId]: nextMachines,
+            };
+        })();
+
+        const nextMachineListStatusByServerId = state.machineListStatusByServerId?.[input.serverId] === input.status
+            ? state.machineListStatusByServerId
+            : {
+                ...state.machineListStatusByServerId,
+                [input.serverId]: input.status,
+            };
+
+        if (
+            nextMachineListByServerId === state.machineListByServerId
+            && nextMachineListStatusByServerId === state.machineListStatusByServerId
+        ) {
+            return state;
+        }
+
+        return {
+            ...state,
+            machineListByServerId: nextMachineListByServerId,
+            machineListStatusByServerId: nextMachineListStatusByServerId,
+        };
+    });
 }
 
 function clearConcurrentSessionListCache(serverIdRaw: string): void {
     const serverId = String(serverIdRaw ?? '').trim();
     if (!serverId) return;
     storage.setState((state) => {
-        if (!(serverId in state.sessionListViewDataByServerId)) return state;
-        const next = { ...state.sessionListViewDataByServerId };
-        delete next[serverId];
+        const next = clearServerSessionListCache(state.sessionListViewDataByServerId, serverId);
+        if (next === state.sessionListViewDataByServerId) return state;
         return {
             ...state,
             sessionListViewDataByServerId: next,
@@ -313,20 +379,6 @@ function isManagedServerActive(entry: ManagedConcurrentServer): boolean {
     return managedServers.get(entry.id) === entry;
 }
 
-function isConcurrentMachineCacheUpdate(raw: unknown): boolean {
-    if (!raw || typeof raw !== 'object') {
-        return false;
-    }
-
-    const body = (raw as { body?: unknown }).body;
-    if (!body || typeof body !== 'object') {
-        return false;
-    }
-
-    const updateType = (body as { t?: unknown }).t;
-    return updateType === 'new-machine' || updateType === 'update-machine';
-}
-
 function queueRefresh(entry: ManagedConcurrentServer): void {
     if (!isManagedServerActive(entry)) return;
     if (entry.reachabilityState.phase !== 'online') return;
@@ -377,6 +429,7 @@ function stopManagedServer(serverId: string): void {
     }
     const transport = entry.socketTransport;
     entry.socketTransport = null;
+    invalidateCachedTransferRoutesForServer({ serverId: entry.id });
     void transport?.disconnect({ intentional: true });
     void transport?.destroy();
     managedServers.delete(serverId);
@@ -436,7 +489,7 @@ function createManagedServer(target: ConcurrentTarget, credentials: AuthCredenti
             entry.socket = socket;
             entry.socketTransport = transport;
             socket.on('update', (raw: unknown) => {
-                if (!isConcurrentMachineCacheUpdate(raw)) {
+                if (!shouldRefreshConcurrentSessionCacheForUpdate(raw)) {
                     return;
                 }
                 queueRefresh(entry);
@@ -543,9 +596,31 @@ function scheduleReconcile(): void {
     }, 0);
 }
 
+function pauseManagedServersForNetworkDisallowed(): void {
+    for (const entry of managedServers.values()) {
+        if (entry.refreshTimer) {
+            clearTimeout(entry.refreshTimer);
+            entry.refreshTimer = null;
+        }
+        void entry.socketTransport?.disconnect({ intentional: true });
+    }
+}
+
+function resumeManagedServersForNetworkAllowed(): void {
+    for (const entry of managedServers.values()) {
+        void startServerReachabilitySupervisor({ serverUrl: entry.serverUrl, token: entry.credentials.token });
+        if (entry.reachabilityState.phase === 'online' && entry.socketTransport?.isConnected() !== true) {
+            void entry.socketTransport?.connect();
+        }
+        queueRefresh(entry);
+    }
+    scheduleReconcile();
+}
+
 export function startConcurrentSessionCacheSync(): void {
     if (started) return;
     started = true;
+    let lastActiveServerSnapshot = getActiveServerSnapshot();
 
     let lastConfigKey = '';
     storageUnsubscribe = storage.subscribe((state) => {
@@ -561,8 +636,31 @@ export function startConcurrentSessionCacheSync(): void {
         scheduleReconcile();
     });
 
-    activeServerUnsubscribe = subscribeActiveServer(() => {
+    activeServerUnsubscribe = subscribeActiveServer((nextSnapshot) => {
+        const previousServerId = normalizeServerId(lastActiveServerSnapshot.serverId);
+        const nextServerId = normalizeServerId(nextSnapshot.serverId);
+        const activeServerChanged =
+            previousServerId !== nextServerId
+            || lastActiveServerSnapshot.generation !== nextSnapshot.generation;
+
+        if (activeServerChanged) {
+            if (previousServerId) {
+                invalidateCachedTransferRoutesForServer({ serverId: previousServerId });
+            }
+            if (nextServerId && nextServerId !== previousServerId) {
+                invalidateCachedTransferRoutesForServer({ serverId: nextServerId });
+            }
+        }
+        lastActiveServerSnapshot = nextSnapshot;
         scheduleReconcile();
+    });
+
+    networkAllowedUnsubscribe = subscribeServerReachabilityNetworkAllowed((allowed) => {
+        if (allowed) {
+            resumeManagedServersForNetworkAllowed();
+            return;
+        }
+        pauseManagedServersForNetworkDisallowed();
     });
 
     periodicRefreshTimer = setInterval(() => {
@@ -594,6 +692,10 @@ export function stopConcurrentSessionCacheSync(): void {
     if (activeServerUnsubscribe) {
         activeServerUnsubscribe();
         activeServerUnsubscribe = null;
+    }
+    if (networkAllowedUnsubscribe) {
+        networkAllowedUnsubscribe();
+        networkAllowedUnsubscribe = null;
     }
 
     for (const serverId of Array.from(managedServers.keys())) {

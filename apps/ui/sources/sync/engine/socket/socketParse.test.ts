@@ -123,6 +123,41 @@ describe('socketParse', () => {
         expect((res as any)?.message?.localId).toBe('segment-1');
     });
 
+    it('parses canonical direct-session transcript delta ephemerals', () => {
+        const res = parseEphemeralUpdate({
+            type: 'direct-session-transcript-delta',
+            sessionId: 's1',
+            items: [
+                {
+                    id: 'direct-msg-1',
+                    createdAtMs: 1,
+                    raw: { role: 'user', content: { type: 'text', text: 'hello direct' } },
+                },
+            ],
+            nextCursor: 'tail-1',
+            truncated: false,
+        });
+
+        expect(res).not.toBeNull();
+        expect(res?.type).toBe('direct-session-transcript-delta');
+        expect((res as any)?.sessionId).toBe('s1');
+        expect((res as any)?.nextCursor).toBe('tail-1');
+    });
+
+    it('rejects stale legacy direct-session transcript ephemeral names', () => {
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        const res = parseEphemeralUpdate({
+            type: 'direct-session-transcript-updated',
+            sessionId: 's1',
+            items: [],
+        });
+
+        expect(res).toBeNull();
+        expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+        consoleErrorSpy.mockRestore();
+    });
+
     it('returns null for invalid ephemeral payloads', () => {
         const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         const res = parseEphemeralUpdate({

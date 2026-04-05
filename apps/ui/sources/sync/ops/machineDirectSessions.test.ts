@@ -93,6 +93,96 @@ describe('machine direct sessions ops server-scoped routing', () => {
         }));
     });
 
+    it('routes direct session attach and detach through server-scoped machine rpc', async () => {
+        machineRpcWithServerScopeMock
+            .mockResolvedValueOnce({
+                ok: true,
+                leaseId: 'lease-1',
+                expiresAtMs: 45_000,
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                detached: true,
+            });
+        const { machineDirectSessionAttach, machineDirectSessionDetach } = await import('./machineDirectSessions');
+
+        const attachResult = await machineDirectSessionAttach({
+            machineId: 'machine-1',
+            sessionId: 'happy-session-1',
+            providerId: 'codex',
+            remoteSessionId: 'vendor-session-1',
+            source: directSource,
+            ttlMs: 30_000,
+        }, { serverId: 'server-a' });
+        const detachResult = await machineDirectSessionDetach({
+            machineId: 'machine-1',
+            sessionId: 'happy-session-1',
+            leaseId: 'lease-1',
+        }, { serverId: 'server-a' });
+
+        expect(attachResult).toEqual({ ok: true, leaseId: 'lease-1', expiresAtMs: 45_000 });
+        expect(detachResult).toEqual({ ok: true, detached: true });
+        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
+            machineId: 'machine-1',
+            serverId: 'server-a',
+            method: 'daemon.directSessions.attach',
+            payload: expect.objectContaining({
+                sessionId: 'happy-session-1',
+                remoteSessionId: 'vendor-session-1',
+                ttlMs: 30_000,
+            }),
+        }));
+        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+            machineId: 'machine-1',
+            serverId: 'server-a',
+            method: 'daemon.directSessions.detach',
+            payload: {
+                machineId: 'machine-1',
+                sessionId: 'happy-session-1',
+                leaseId: 'lease-1',
+            },
+        }));
+    });
+
+    it('routes direct session background follow policy updates through server-scoped machine rpc', async () => {
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({
+            ok: true,
+            enabled: true,
+            leaseActive: true,
+            updatedAtMs: 42,
+        });
+        const { machineDirectSessionFollowPolicySet } = await import('./machineDirectSessions');
+
+        const result = await machineDirectSessionFollowPolicySet({
+            machineId: 'machine-1',
+            sessionId: 'happy-session-1',
+            providerId: 'codex',
+            remoteSessionId: 'vendor-session-1',
+            source: directSource,
+            enabled: true,
+        }, { serverId: 'server-a' });
+
+        expect(result).toEqual({
+            ok: true,
+            enabled: true,
+            leaseActive: true,
+            updatedAtMs: 42,
+        });
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-1',
+            serverId: 'server-a',
+            method: 'daemon.directSessions.followPolicy.set',
+            payload: {
+                machineId: 'machine-1',
+                sessionId: 'happy-session-1',
+                providerId: 'codex',
+                remoteSessionId: 'vendor-session-1',
+                source: directSource,
+                enabled: true,
+            },
+        }));
+    });
+
     it('routes direct transcript paging through server-scoped machine rpc', async () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({
             ok: true,

@@ -23,6 +23,7 @@ function mockSessionsDomainBoundaries(): void {
         loadSessionPermissionModes: () => ({}),
         loadSessionActionDrafts: () => ({}),
         loadSessionReviewCommentsDrafts: () => ({}),
+        loadWorkspaceReviewCommentsDrafts: () => ({}),
         saveSessionDrafts: vi.fn(),
         saveSessionLastViewed: vi.fn(),
         saveSessionModelModeUpdatedAts: vi.fn(),
@@ -31,6 +32,7 @@ function mockSessionsDomainBoundaries(): void {
         saveSessionPermissionModes: vi.fn(),
         saveSessionActionDrafts: vi.fn(),
         saveSessionReviewCommentsDrafts: vi.fn(),
+        saveWorkspaceReviewCommentsDrafts: vi.fn(),
         saveSettings: vi.fn(),
         saveLocalSettings: vi.fn(),
         savePendingSettings: vi.fn(),
@@ -39,6 +41,7 @@ function mockSessionsDomainBoundaries(): void {
     }));
     vi.doMock('../../domains/state/warmCachePersistence', () => ({
         resolveWarmCacheAccountScope: vi.fn(() => null),
+        peekSessionListWarmCacheEntries: vi.fn(() => null),
         saveSessionListWarmCacheEntries: vi.fn(),
     }));
     vi.doMock('../../domains/state/warmCacheAdapters', () => ({
@@ -47,9 +50,6 @@ function mockSessionsDomainBoundaries(): void {
     vi.doMock('../buildSessionListViewDataWithServerScope', () => ({
         applyReachableTargetsToSessionListRenderables: vi.fn(({ sessions }) => sessions),
         buildSessionListViewDataWithServerScope: vi.fn(() => []),
-    }));
-    vi.doMock('../sessionListCache', () => ({
-        setActiveServerSessionListCache: vi.fn((current) => current),
     }));
     vi.doMock('../../domains/server/serverRuntime', () => ({
         getActiveServerSnapshot: vi.fn(() => ({ serverId: 'server_1' })),
@@ -71,7 +71,6 @@ function createHarness(createSessionsDomain: any, createReducer: any) {
     let state: any = {
         sessions: {},
         sessionListRenderables: {},
-        sessionsData: null,
         sessionListViewData: null,
         sessionListViewDataByServerId: {},
         sessionScmStatus: {},

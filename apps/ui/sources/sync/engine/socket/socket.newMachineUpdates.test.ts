@@ -137,6 +137,58 @@ describe('socket update handling: new-machine', () => {
         expect(initializeMachines).toHaveBeenCalledTimes(1);
         expect(invalidateMachines).toHaveBeenCalledTimes(1);
     });
+
+    it('falls back to the legacy machine encryption path when decrypting the data encryption key fails', async () => {
+        const invalidateMachines = vi.fn();
+        const decryptEncryptionKey = vi.fn(async () => {
+            throw new Error('bad envelope');
+        });
+        const initializeMachines = vi.fn(async () => {});
+        const params = buildBaseParams({
+            invalidateMachines,
+            encryption: {
+                getSessionEncryption: () => null,
+                getMachineEncryption: () => null,
+                removeSessionEncryption: () => {},
+                decryptEncryptionKey,
+                initializeMachines,
+            } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
+        });
+
+        const updateData: ApiUpdateContainer = {
+            id: 'u_machine_3',
+            seq: 44,
+            createdAt: 125,
+            body: {
+                t: 'new-machine',
+                machineId: 'm3',
+                seq: 9,
+                metadata: 'AA==',
+                metadataVersion: 1,
+                daemonState: null,
+                daemonStateVersion: 0,
+                dataEncryptionKey: 'broken-envelope',
+                active: true,
+                activeAt: 122,
+                createdAt: 102,
+                updatedAt: 112,
+            },
+        } as ApiUpdateContainer;
+
+        await expect(handleUpdateContainer({ ...params, updateData })).resolves.toBeUndefined();
+
+        expect(decryptEncryptionKey).toHaveBeenCalledTimes(1);
+        expect(initializeMachines).toHaveBeenCalledTimes(1);
+        expect(initializeMachines.mock.calls[0]?.[0]).toEqual(new Map([['m3', null]]));
+        expect(invalidateMachines).toHaveBeenCalledTimes(1);
+
+        const machine = storage.getState().machines['m3'] as Machine | undefined;
+        expect(machine).toBeTruthy();
+        expect(machine?.active).toBe(true);
+        expect(machine?.activeAt).toBe(122);
+        expect(machine?.metadata).toBeNull();
+        expect(machine?.daemonState).toBeNull();
+    });
 });
 
 describe('socket update handling: update-machine (missing encryption)', () => {
@@ -144,9 +196,8 @@ describe('socket update handling: update-machine (missing encryption)', () => {
         storage.setState(initialStorageState, true);
     });
 
-    it('invalidates machines sync instead of attempting to decrypt', async () => {
+    it('still applies freshness fields before invalidating machines sync', async () => {
         const invalidateMachines = vi.fn();
-        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
         const params = buildBaseParams({ invalidateMachines });
 
         const updateData: ApiUpdateContainer = {
@@ -156,6 +207,8 @@ describe('socket update handling: update-machine (missing encryption)', () => {
             body: {
                 t: 'update-machine',
                 machineId: 'm_missing_enc',
+                active: true,
+                activeAt: 200,
                 metadata: { version: 2, value: 'cipher' },
             },
         } as ApiUpdateContainer;
@@ -163,8 +216,12 @@ describe('socket update handling: update-machine (missing encryption)', () => {
         await handleUpdateContainer({ ...params, updateData });
 
         expect(invalidateMachines).toHaveBeenCalledTimes(1);
-        expect(consoleError).not.toHaveBeenCalled();
-        consoleError.mockRestore();
+        const machine = storage.getState().machines['m_missing_enc'] as Machine | undefined;
+        expect(machine).toBeTruthy();
+        expect(machine?.active).toBe(true);
+        expect(machine?.activeAt).toBe(200);
+        expect(machine?.metadata).toBeNull();
+        expect(machine?.daemonState).toBeNull();
     });
 });
 
@@ -271,6 +328,51 @@ describe('socket update handling: transcript-stream-segment ephemerals', () => {
                 }),
             ],
         );
+    });
+});
+
+describe('socket update handling: direct-session transcript delta ephemerals', () => {
+    it('forwards only the canonical direct-session transcript delta update', async () => {
+        const updateDirectSessionTranscript = vi.fn();
+
+        await handleEphemeralSocketUpdate(buildEphemeralParams({
+            update: {
+                type: 'direct-session-transcript-delta',
+                sessionId: 's1',
+                items: [
+                    {
+                        id: 'direct-msg-1',
+                        createdAtMs: 1,
+                        raw: { role: 'user', content: { type: 'text', text: 'hello direct' } },
+                    },
+                ],
+                nextCursor: 'tail-1',
+                truncated: false,
+            },
+            updateDirectSessionTranscript,
+        }));
+
+        expect(updateDirectSessionTranscript).toHaveBeenCalledTimes(1);
+        expect(updateDirectSessionTranscript).toHaveBeenCalledWith(expect.objectContaining({
+            type: 'direct-session-transcript-delta',
+            sessionId: 's1',
+            nextCursor: 'tail-1',
+        }));
+    });
+
+    it('ignores stale legacy direct-session transcript ephemeral names', async () => {
+        const updateDirectSessionTranscript = vi.fn();
+
+        await handleEphemeralSocketUpdate(buildEphemeralParams({
+            update: {
+                type: 'direct-session-transcript-updated',
+                sessionId: 's1',
+                items: [],
+            },
+            updateDirectSessionTranscript,
+        }));
+
+        expect(updateDirectSessionTranscript).not.toHaveBeenCalled();
     });
 });
 

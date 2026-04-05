@@ -1,16 +1,4 @@
-export {
-    uploadBulkPayloadFromFile,
-    type BulkTransferFailureResponse,
-    type BulkTransferFileReader,
-} from './uploadBulkPayloadFromFile';
-export {
-    downloadBulkPayloadToFile,
-    type BulkTransferFileDestination,
-} from './downloadBulkPayloadToFile';
-export * from './uploadBulkJsonPayload';
-export * from './downloadBulkJsonPayload';
-export * from './shouldPreferScopedMachineRpcForBulkTransfer';
-export * from './daemonWorkspaceFiles';
-export * from './daemonSessionAttachments';
-export * from './daemonPromptAssets';
-export * from './daemonPromptRegistries';
+// Bridge-state compatibility marker only.
+// Product-facing code must import `transferSubstrate` or the owning low-level
+// bulk carrier module directly instead of this legacy barrel.
+export {};

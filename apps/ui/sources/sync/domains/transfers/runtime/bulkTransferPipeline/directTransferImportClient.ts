@@ -1,4 +1,5 @@
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { normalizeDirectPeerImportEndpointBaseUrl } from '@happier-dev/protocol';
 
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import { callGuardedMachineRpcWithPolicy } from '@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc';
@@ -42,7 +43,7 @@ export type DirectTransferImportPrepareResponse =
         recipientPublicKeyBase64: string;
         expiresAt: number;
         endpointCandidates: readonly Readonly<{
-            kind: 'http';
+            kind: 'http' | 'https';
             url: string;
             expiresAt: number;
         }>[];
@@ -110,22 +111,6 @@ function buildDirectImportEndpoint(baseUrl: string, suffix: 'chunks' | 'finalize
     return url.toString();
 }
 
-function validateDirectImportEndpointCandidate(candidateUrl: string): string {
-    const parsed = new URL(candidateUrl);
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        throw new Error('Invalid direct import endpoint candidate');
-    }
-    parsed.username = '';
-    parsed.password = '';
-    parsed.search = '';
-    parsed.hash = '';
-    const segments = parsed.pathname.split('/').filter((segment) => segment.length > 0);
-    if (segments.length !== 4 || segments[0] !== 'machine-transfers' || segments[1] !== 'direct' || segments[2] !== 'imports' || segments[3].length === 0) {
-        throw new Error('Invalid direct import endpoint candidate');
-    }
-    return parsed.toString();
-}
-
 export async function prepareDirectImportSession(params: Readonly<{
     machineId: string;
     serverId?: string | null;
@@ -159,12 +144,12 @@ export async function prepareDirectImportSession(params: Readonly<{
 
     const baseUrls: string[] = [];
     for (const candidate of prepare.endpointCandidates) {
-        if (candidate.kind !== 'http') {
+        if (candidate.kind !== 'http' && candidate.kind !== 'https') {
             continue;
         }
 
         try {
-            baseUrls.push(validateDirectImportEndpointCandidate(candidate.url));
+            baseUrls.push(normalizeDirectPeerImportEndpointBaseUrl(candidate.url));
         } catch {
             continue;
         }
@@ -221,9 +206,6 @@ export async function finalizeDirectImportSession(baseUrl: string): Promise<Dire
     return await readJsonResponse<DirectTransferImportFinalizeResponse>(
         await runtimeFetch(buildDirectImportEndpoint(baseUrl, 'finalize'), {
             method: 'POST',
-            headers: {
-                'content-type': 'application/json',
-            },
             credentials: 'same-origin',
         }),
     );
@@ -232,9 +214,6 @@ export async function finalizeDirectImportSession(baseUrl: string): Promise<Dire
 export async function abortDirectImportSession(baseUrl: string): Promise<void> {
     await runtimeFetch(buildDirectImportEndpoint(baseUrl, 'abort'), {
         method: 'POST',
-        headers: {
-            'content-type': 'application/json',
-        },
         credentials: 'same-origin',
     });
 }

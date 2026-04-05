@@ -1,5 +1,4 @@
 export * from './workspaceFileTransfers';
-export * from './bulkTransferCompatibility';
 export * from './sessionAttachmentTransfers';
 export * from './promptAssetTransfers';
 export * from './promptRegistryTransfers';

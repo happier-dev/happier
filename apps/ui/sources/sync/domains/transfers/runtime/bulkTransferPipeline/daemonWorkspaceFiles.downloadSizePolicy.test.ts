@@ -23,7 +23,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc', () => 
     callGuardedMachineRpcWithPolicy: (...args: unknown[]) => callGuardedMachineRpcWithPolicyMock(...args),
 }));
 
-const { downloadDaemonWorkspaceFileToBase64, downloadDaemonWorkspaceFileToDestination } = await import('./daemonWorkspaceFiles');
+const { downloadDaemonWorkspaceFileToBase64, downloadDaemonWorkspaceFileToDestination } = await import('../transferSubstrate/workspaceFileTransfers');
 
 describe('daemonWorkspaceFiles download size policy', () => {
     beforeEach(() => {

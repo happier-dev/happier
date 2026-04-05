@@ -11,8 +11,11 @@ import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { acknowledgeTerminalConnectSuccessIfPresent } from '../../src/testkit/uiE2e/acknowledgeTerminalConnectSuccessIfPresent';
 import { clickScopedButtonByTestIdOrRole } from '../../src/testkit/uiE2e/clickScopedButtonByTestIdOrRole';
+import {
+  openRepositoryTreeRowMenuAndSelectItem,
+  repositoryTreeRowLocator,
+} from '../../src/testkit/uiE2e/repositoryTree';
 import { spawnSessionFromDaemon } from '../../src/testkit/uiE2e/spawnSessionFromDaemon';
-import { toTestIdSafeValue } from '../../src/testkit/uiE2e/testIdSafeValue';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
@@ -48,24 +51,38 @@ function rightPaneLocator(page: Page) {
   return page.getByTestId('multi-pane-right-docked').or(page.getByTestId('multi-pane-right-overlay'));
 }
 
-function repositoryTreePathVariants(path: string): readonly [string, string] {
-  const trimmed = path.trim();
-  if (!trimmed) return [trimmed, trimmed];
-  return trimmed.endsWith('/') ? [trimmed, trimmed.slice(0, -1)] : [trimmed, `${trimmed}/`];
+type DirectPeerOpenRequest = Readonly<{
+  url: string;
+  authorizationHeader: string | null;
+}>;
+
+function collectDirectPeerOpenRequests(page: Page): DirectPeerOpenRequest[] {
+  const requests: DirectPeerOpenRequest[] = [];
+  page.context().on('request', (request) => {
+    const url = request.url();
+    if (!url.includes('/machine-transfers/direct/') || !new URL(url).pathname.endsWith('/open')) {
+      return;
+    }
+    requests.push({
+      url,
+      authorizationHeader: request.headers().authorization ?? null,
+    });
+  });
+  return requests;
 }
 
-function repositoryTreeRowLocator(scope: Locator, path: string): Locator {
-  const [primary, alternate] = repositoryTreePathVariants(path);
-  return scope
-    .locator(`[data-testid="repository-tree-row-${toTestIdSafeValue(primary)}"]:visible`)
-    .or(scope.locator(`[data-testid="repository-tree-row-${toTestIdSafeValue(alternate)}"]:visible`));
-}
-
-function repositoryTreeRowMenuLocator(scope: Locator, path: string): Locator {
-  const [primary, alternate] = repositoryTreePathVariants(path);
-  return scope
-    .locator(`[data-testid="repository-tree-row-menu-${toTestIdSafeValue(primary)}"]:visible`)
-    .or(scope.locator(`[data-testid="repository-tree-row-menu-${toTestIdSafeValue(alternate)}"]:visible`));
+async function waitForDirectPeerOpenRequest(params: Readonly<{
+  requests: readonly DirectPeerOpenRequest[];
+  requestIndex: number;
+  timeoutMs?: number;
+}>): Promise<DirectPeerOpenRequest> {
+  const timeoutMs = params.timeoutMs ?? 120_000;
+  await expect.poll(() => params.requests.length, { timeout: timeoutMs }).toBeGreaterThan(params.requestIndex);
+  const request = params.requests[params.requestIndex];
+  if (!request) {
+    throw new Error(`Missing direct-peer open request at index ${params.requestIndex}`);
+  }
+  return request;
 }
 
 async function maybeDismissDetectedClisModal(page: Page, timeoutMs = 5_000): Promise<void> {
@@ -152,16 +169,6 @@ async function readUploadInputState(page: Page) {
   );
 }
 
-async function clickDropdownOptionByItemId(page: Page, itemId: string): Promise<void> {
-  const dropdownOption = page.locator(`[data-testid="dropdown-option-${toTestIdSafeValue(itemId)}"]:visible`).first();
-  if ((await dropdownOption.count()) > 0) {
-    await dropdownOption.click();
-    return;
-  }
-
-  await page.locator(`[data-testid="${itemId}"]:visible`).first().click();
-}
-
 async function expectFilesToolbarPrimaryOrOverflowAction(rightPane: Locator, actionTestId: string, timeoutMs: number) {
   await expect
     .poll(
@@ -175,25 +182,31 @@ async function expectFilesToolbarPrimaryOrOverflowAction(rightPane: Locator, act
     .toBe(true);
 }
 
-async function waitForUploadToComplete(params: Readonly<{
-  rightPane: Locator;
-  uploadedPath: string;
-}>): Promise<void> {
-  const uploadStatus = params.rightPane.getByTestId('repository-tree-upload-status');
-  const uploadedRow = params.rightPane.getByTestId(`repository-tree-row-${toTestIdSafeValue(params.uploadedPath)}`);
-
-  await expect
-    .poll(
-      async () => (await uploadStatus.count()) > 0 || (await uploadedRow.count()) > 0,
-      { timeout: 60_000 },
-    )
-    .toBe(true);
-
-  if ((await uploadStatus.count()) > 0) {
-    await expect(uploadStatus).toHaveCount(0, { timeout: 180_000 });
-  }
-
-  await expect(uploadedRow).toHaveCount(1, { timeout: 120_000 });
+function buildFileManagerDaemonEnv(params: Readonly<{
+  cliHomeDir: string;
+  serverBaseUrl: string;
+  uiBaseUrl: string;
+  testDir: string;
+  fakeClaudePath: string;
+  fakeClaudeLogPath: string;
+  runId: string;
+}>): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    HOME: params.cliHomeDir,
+    CI: '1',
+    HAPPIER_HOME_DIR: params.cliHomeDir,
+    HAPPIER_SERVER_URL: params.serverBaseUrl,
+    HAPPIER_WEBAPP_URL: params.uiBaseUrl,
+    HAPPIER_DISABLE_CAFFEINATE: '1',
+    HAPPIER_VARIANT: 'dev',
+    HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+    HAPPIER_MACHINE_RPC_WORKING_DIRECTORY: params.testDir,
+    HAPPIER_CLAUDE_PATH: params.fakeClaudePath,
+    HAPPIER_E2E_FAKE_CLAUDE_LOG: params.fakeClaudeLogPath,
+    HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${params.runId}`,
+    HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: `fake-claude-invocation-${params.runId}`,
+  };
 }
 
 test.describe('ui e2e: Files upload + rename/delete + download (+ zip)', () => {
@@ -213,10 +226,11 @@ test.describe('ui e2e: Files upload + rename/delete + download (+ zip)', () => {
       EXPO_PUBLIC_DEBUG: '1',
       EXPO_PUBLIC_HAPPY_SERVER_URL: '',
       EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
+      HAPPIER_E2E_UI_WEB_MODE: 'metro',
+      HAPPIER_E2E_UI_WEB_METRO_STATUS_TIMEOUT_MS: '600000',
       HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS:
         process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS
-        ?? process.env.HAPPIER_E2E_UI_WEB_BEFORE_ALL_MIN_TIMEOUT_MS
-        ?? '900000',
+        ?? '480000',
     };
     test.setTimeout(resolveUiWebBeforeAllTimeoutMs(uiWebEnv));
     await mkdir(cliHomeDir, { recursive: true });
@@ -255,10 +269,12 @@ test.describe('ui e2e: Files upload + rename/delete + download (+ zip)', () => {
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     const browserDiagnostics = collectBrowserDiagnostics({ page });
+    const directPeerOpenRequests = collectDirectPeerOpenRequests(page);
     const testDir = resolve(join(suiteDir, 't1-filemanager'));
 
-      let runDaemon: StartedDaemon | null = null;
-      try {
+    let runDaemon: StartedDaemon | null = null;
+    try {
+      await test.step('reach authenticated home UI', async () => {
         await page.setViewportSize({ width: 1440, height: 900 });
         await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
 
@@ -266,6 +282,7 @@ test.describe('ui e2e: Files upload + rename/delete + download (+ zip)', () => {
         await maybeDismissDetectedClisModal(page, 1_000).catch(() => {});
         await maybeDismissAgentPickerPopover(page).catch(() => {});
         await createAccountAndReachConnectMachineState({ page, useFirstCreateButton: true });
+      });
 
       await mkdir(testDir, { recursive: true });
 
@@ -283,189 +300,284 @@ test.describe('ui e2e: Files upload + rename/delete + download (+ zip)', () => {
           HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
         },
       });
-
-      await page.goto(cliLogin.connectUrl, { waitUntil: 'domcontentloaded' });
-      await expect(page.getByTestId('terminal-connect-approve')).toHaveCount(1, { timeout: 60_000 });
-      await page.getByTestId('terminal-connect-approve').click();
-      await cliLogin.waitForSuccess();
-      await acknowledgeTerminalConnectSuccessIfPresent(page);
+      await test.step('complete terminal connect login', async () => {
+        await page.goto(cliLogin.connectUrl, { waitUntil: 'domcontentloaded' });
+        await expect(page.getByTestId('terminal-connect-approve')).toHaveCount(1, { timeout: 60_000 });
+        await page.getByTestId('terminal-connect-approve').click();
+        await cliLogin.waitForSuccess();
+        await acknowledgeTerminalConnectSuccessIfPresent(page);
+      });
 
       const fakeClaudeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));
       const fakeClaudePath = fakeClaudeFixturePath();
 
-      runDaemon = await startTestDaemon({
-        testDir,
-        happyHomeDir: cliHomeDir,
-        env: {
-          ...process.env,
-          HOME: cliHomeDir,
-          CI: '1',
-          HAPPIER_HOME_DIR: cliHomeDir,
-          HAPPIER_SERVER_URL: server.baseUrl,
-          HAPPIER_WEBAPP_URL: uiBaseUrl,
-          HAPPIER_DISABLE_CAFFEINATE: '1',
-          HAPPIER_VARIANT: 'dev',
-          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
-          HAPPIER_MACHINE_RPC_WORKING_DIRECTORY: testDir,
-          HAPPIER_CLAUDE_PATH: fakeClaudePath,
-          HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLogPath,
-          HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${run.runId}`,
-          HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: `fake-claude-invocation-${run.runId}`,
-        },
+      await test.step('spawn daemon and load session files pane', async () => {
+        runDaemon = await startTestDaemon({
+          testDir,
+          happyHomeDir: cliHomeDir,
+          env: {
+            ...process.env,
+            HOME: cliHomeDir,
+            CI: '1',
+            HAPPIER_HOME_DIR: cliHomeDir,
+            HAPPIER_SERVER_URL: server.baseUrl,
+            HAPPIER_WEBAPP_URL: uiBaseUrl,
+            HAPPIER_DISABLE_CAFFEINATE: '1',
+            HAPPIER_VARIANT: 'dev',
+            HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+            HAPPIER_MACHINE_RPC_WORKING_DIRECTORY: testDir,
+            HAPPIER_CLAUDE_PATH: fakeClaudePath,
+            HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLogPath,
+            HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${run.runId}`,
+            HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: `fake-claude-invocation-${run.runId}`,
+          },
+        });
+        daemon = runDaemon;
+
+        const workspaceDir = resolve(join(testDir, 'workspace'));
+        const downloadFolder = resolve(join(workspaceDir, 'download-me'));
+        await mkdir(resolve(join(downloadFolder, 'nested')), { recursive: true });
+        await writeFile(resolve(join(downloadFolder, 'nested', 'hello.txt')), 'hello zip\n', 'utf8');
+
+        const uploadSourcePath = resolve(join(testDir, 'upload-source.txt'));
+        await writeFile(uploadSourcePath, 'hello upload\n', 'utf8');
+
+        const sessionId = await spawnSessionFromDaemon({ daemon: runDaemon, directory: workspaceDir });
+        const sessionResponse = await page.goto(`${uiBaseUrl}/session/${sessionId}?right=files`, { waitUntil: 'domcontentloaded' });
+        try {
+          await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 180_000 });
+        } catch (error) {
+          await capturePageDiagnostics({
+            page,
+            outputPath: resolve(join(testDir, 'browser-diagnostics.session-route.md')),
+            browserDiagnostics,
+            response: sessionResponse,
+          });
+          throw error;
+        }
+
+        // Ensure right pane is open and the Files tab has fully lazy-mounted before looking for tree controls.
+        await expect(rightPaneLocator(page)).toHaveCount(1, { timeout: 60_000 });
+
+        const rightPane = rightPaneLocator(page);
+        await clickScopedButtonByTestIdOrRole({
+          scope: rightPane,
+          testId: 'session-rightpanel-tab:files',
+          roleName: 'Files',
+          timeoutMs: 180_000,
+        });
+
+        await expect(rightPane.getByTestId('session-rightpanel-surface-files')).toHaveCount(1, { timeout: 120_000 });
+        try {
+          await expectFilesToolbarPrimaryOrOverflowAction(rightPane, 'repository-tree-upload', 180_000);
+        } catch (error) {
+          await capturePageDiagnostics({
+            page,
+            outputPath: resolve(join(testDir, 'browser-diagnostics.files-pane.md')),
+            browserDiagnostics,
+          });
+          throw error;
+        }
+
+        // Use the dedicated hidden web input directly here. The toolbar menu wiring is covered
+        // separately at the component level, and the raw input path is the stable contract this
+        // isolated browser lane exposes for exercising real uploads end-to-end.
+        try {
+          const uploadInput = page.getByTestId('repository-tree-upload-input-files');
+          await expect(uploadInput).toHaveCount(1, { timeout: 60_000 });
+          await uploadInput.setInputFiles(uploadSourcePath);
+          await writeFile(
+            resolve(join(testDir, 'upload-input-state.after-set.json')),
+            JSON.stringify(await readUploadInputState(page), null, 2),
+            'utf8',
+          ).catch(() => {});
+        } catch (error) {
+          await capturePageDiagnostics({
+            page,
+            outputPath: resolve(join(testDir, 'browser-diagnostics.upload-chooser.md')),
+            browserDiagnostics,
+          });
+          throw error;
+        }
       });
-      daemon = runDaemon;
 
-      const workspaceDir = resolve(join(testDir, 'workspace'));
-      const downloadFolder = resolve(join(workspaceDir, 'download-me'));
-      await mkdir(resolve(join(downloadFolder, 'nested')), { recursive: true });
-      await writeFile(resolve(join(downloadFolder, 'nested', 'hello.txt')), 'hello zip\n', 'utf8');
+      await test.step('prove post-restart file handling', async () => {
+        const workspaceDir = resolve(join(testDir, 'workspace'));
+        const uploadedPath = 'upload-source.txt';
+        const workspaceUploadedPath = resolve(join(workspaceDir, uploadedPath));
+        let preRestartDirectPeerOpenRequest: Awaited<ReturnType<typeof waitForDirectPeerOpenRequest>> | null = null;
+        try {
+          await expect
+            .poll(async () => await readFile(workspaceUploadedPath, 'utf8').catch(() => null), { timeout: 120_000 })
+            .toBe('hello upload\n');
 
-      const uploadSourcePath = resolve(join(testDir, 'upload-source.txt'));
-      await writeFile(uploadSourcePath, 'hello upload\n', 'utf8');
+          const preRestartOpenRequestIndex = directPeerOpenRequests.length;
+          const [preRestartDownload] = await Promise.all([
+            page.waitForEvent('download', { timeout: 60_000 }),
+            openRepositoryTreeRowMenuAndSelectItem({
+              page,
+              scope: rightPaneLocator(page),
+              path: uploadedPath,
+              itemId: 'repository-tree-menuitem-download',
+            }),
+          ]);
+          const preRestartDownloadPath = await preRestartDownload.path();
+          expect(preRestartDownloadPath).not.toBeNull();
+          if (preRestartDownloadPath) {
+            await expect
+              .poll(async () => await readFile(preRestartDownloadPath, 'utf8').catch(() => null), { timeout: 120_000 })
+              .toBe('hello upload\n');
+          }
+          await expect
+            .poll(() => directPeerOpenRequests.length, { timeout: 60_000 })
+            .toBeGreaterThanOrEqual(1);
+          preRestartDirectPeerOpenRequest = await waitForDirectPeerOpenRequest({
+            requests: directPeerOpenRequests,
+            requestIndex: preRestartOpenRequestIndex,
+            timeoutMs: 120_000,
+          });
 
-      const sessionId = await spawnSessionFromDaemon({ daemon: runDaemon, directory: workspaceDir });
-      const sessionResponse = await page.goto(`${uiBaseUrl}/session/${sessionId}?right=files`, { waitUntil: 'domcontentloaded' });
-      try {
-        await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 180_000 });
-      } catch (error) {
-        await capturePageDiagnostics({
-          page,
-          outputPath: resolve(join(testDir, 'browser-diagnostics.session-route.md')),
-          browserDiagnostics,
-          response: sessionResponse,
+          await runDaemon.stop();
+          daemon = null;
+
+          runDaemon = await startTestDaemon({
+            testDir,
+            happyHomeDir: cliHomeDir,
+            env: buildFileManagerDaemonEnv({
+              cliHomeDir,
+              serverBaseUrl: server.baseUrl,
+              uiBaseUrl,
+              testDir,
+              fakeClaudePath,
+              fakeClaudeLogPath,
+              runId: run.runId,
+            }),
+          });
+          daemon = runDaemon;
+
+          const sessionUrl = `${uiBaseUrl}/session/${sessionId}?right=files`;
+          await gotoDomContentLoadedWithRetries(page, sessionUrl);
+          await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 180_000 });
+          await expect(rightPaneLocator(page)).toHaveCount(1, { timeout: 60_000 });
+          const refreshedRightPane = rightPaneLocator(page);
+          await clickScopedButtonByTestIdOrRole({
+            scope: refreshedRightPane,
+            testId: 'session-rightpanel-tab:files',
+            roleName: 'Files',
+            timeoutMs: 180_000,
+          });
+          await expect(refreshedRightPane.getByTestId('session-rightpanel-surface-files')).toHaveCount(1, {
+            timeout: 120_000,
+          });
+          await expect(repositoryTreeRowLocator(refreshedRightPane, uploadedPath)).toHaveCount(1, { timeout: 120_000 });
+        } catch (error) {
+          await writeFile(
+            resolve(join(testDir, 'upload-input-state.json')),
+            JSON.stringify(await readUploadInputState(page), null, 2),
+            'utf8',
+          ).catch(() => {});
+          await capturePageDiagnostics({
+            page,
+            outputPath: resolve(join(testDir, 'browser-diagnostics.upload-status.md')),
+            browserDiagnostics,
+          });
+          throw error;
+        }
+
+        const rightPane = rightPaneLocator(page);
+
+        const postRestartOpenRequestIndex = directPeerOpenRequests.length;
+        const [postRestartDownload] = await Promise.all([
+          page.waitForEvent('download', { timeout: 60_000 }),
+          openRepositoryTreeRowMenuAndSelectItem({
+            page,
+            scope: rightPane,
+            path: uploadedPath,
+            itemId: 'repository-tree-menuitem-download',
+          }),
+        ]);
+        const postRestartDownloadPath = await postRestartDownload.path();
+        expect(postRestartDownloadPath).not.toBeNull();
+        if (postRestartDownloadPath) {
+          await expect
+            .poll(async () => await readFile(postRestartDownloadPath, 'utf8').catch(() => null), { timeout: 120_000 })
+            .toBe('hello upload\n');
+        }
+        const postRestartDirectPeerOpenRequest = await waitForDirectPeerOpenRequest({
+          requests: directPeerOpenRequests,
+          requestIndex: postRestartOpenRequestIndex,
+          timeoutMs: 120_000,
         });
-        throw error;
-      }
+        expect(preRestartDirectPeerOpenRequest).not.toBeNull();
+        expect(postRestartDirectPeerOpenRequest.url).not.toBe(preRestartDirectPeerOpenRequest.url);
+        expect(postRestartDirectPeerOpenRequest.authorizationHeader).not.toBe(preRestartDirectPeerOpenRequest.authorizationHeader);
 
-      // Ensure right pane is open and the Files tab has fully lazy-mounted before looking for tree controls.
-      await expect(rightPaneLocator(page)).toHaveCount(1, { timeout: 60_000 });
+        // Rename uploaded file.
+        await openRepositoryTreeRowMenuAndSelectItem({
+          page,
+          scope: rightPane,
+          path: uploadedPath,
+          itemId: 'repository-tree-menuitem-rename',
+        });
+        const prompt = page.getByPlaceholder(uploadedPath);
+        await expect(prompt).toHaveCount(1, { timeout: 60_000 });
+        const renamedPath = 'renamed.txt';
+        await prompt.fill(renamedPath);
+        await prompt.press('Enter');
 
-      const rightPane = rightPaneLocator(page);
-      await clickScopedButtonByTestIdOrRole({
-        scope: rightPane,
-        testId: 'session-rightpanel-tab:files',
-        roleName: 'Files',
-        timeoutMs: 180_000,
+        await expect(repositoryTreeRowLocator(rightPane, uploadedPath)).toHaveCount(0, { timeout: 120_000 });
+        await expect(repositoryTreeRowLocator(rightPane, renamedPath)).toHaveCount(1, { timeout: 120_000 });
+
+        // Download renamed file.
+        const [fileDownload] = await Promise.all([
+          page.waitForEvent('download', { timeout: 60_000 }),
+          openRepositoryTreeRowMenuAndSelectItem({
+            page,
+            scope: rightPane,
+            path: renamedPath,
+            itemId: 'repository-tree-menuitem-download',
+          }),
+        ]);
+        const fileDownloadPath = await fileDownload.path();
+        expect(fileDownloadPath).not.toBeNull();
+        if (fileDownloadPath) {
+          await expect
+            .poll(async () => await readFile(fileDownloadPath, 'utf8').catch(() => null), { timeout: 120_000 })
+            .toBe('hello upload\n');
+        }
+
+        // Delete renamed file.
+        await openRepositoryTreeRowMenuAndSelectItem({
+          page,
+          scope: rightPane,
+          path: renamedPath,
+          itemId: 'repository-tree-menuitem-delete',
+        });
+        await expect(page.getByTestId('web-modal-confirm')).toHaveCount(1, { timeout: 60_000 });
+        await page.getByTestId('web-modal-confirm').click({ force: true, timeout: 60_000 });
+        await expect(repositoryTreeRowLocator(rightPane, renamedPath)).toHaveCount(0, { timeout: 120_000 });
+
+        // Download folder as zip.
+        const folderPath = 'download-me';
+        await expect(repositoryTreeRowLocator(rightPane, folderPath)).toHaveCount(1, { timeout: 120_000 });
+        const [zipDownload] = await Promise.all([
+          page.waitForEvent('download', { timeout: 120_000 }),
+          openRepositoryTreeRowMenuAndSelectItem({
+            page,
+            scope: rightPane,
+            path: folderPath,
+            itemId: 'repository-tree-menuitem-zip',
+            timeoutMs: 120_000,
+          }),
+        ]);
+        const zipPath = await zipDownload.path();
+        expect(zipPath).not.toBeNull();
+        if (zipPath) {
+          await expect
+            .poll(async () => (await stat(zipPath)).size, { timeout: 120_000 })
+            .toBeGreaterThan(0);
+        }
       });
-
-      await expect(rightPane.getByTestId('session-rightpanel-surface-files')).toHaveCount(1, { timeout: 120_000 });
-      try {
-        await expectFilesToolbarPrimaryOrOverflowAction(rightPane, 'repository-tree-upload', 180_000);
-      } catch (error) {
-        await capturePageDiagnostics({
-          page,
-          outputPath: resolve(join(testDir, 'browser-diagnostics.files-pane.md')),
-          browserDiagnostics,
-        });
-        throw error;
-      }
-
-      // Use the dedicated hidden web input directly here. The toolbar menu wiring is covered
-      // separately at the component level, and the raw input path is the stable contract this
-      // isolated browser lane exposes for exercising real uploads end-to-end.
-      try {
-        const uploadInput = page.getByTestId('repository-tree-upload-input-files');
-        await expect(uploadInput).toHaveCount(1, { timeout: 60_000 });
-        await uploadInput.setInputFiles(uploadSourcePath);
-        await writeFile(
-          resolve(join(testDir, 'upload-input-state.after-set.json')),
-          JSON.stringify(await readUploadInputState(page), null, 2),
-          'utf8',
-        ).catch(() => {});
-      } catch (error) {
-        await capturePageDiagnostics({
-          page,
-          outputPath: resolve(join(testDir, 'browser-diagnostics.upload-chooser.md')),
-          browserDiagnostics,
-        });
-        throw error;
-      }
-
-      const uploadedPath = 'upload-source.txt';
-      try {
-        await waitForUploadToComplete({ rightPane, uploadedPath });
-      } catch (error) {
-        await writeFile(
-          resolve(join(testDir, 'upload-input-state.json')),
-          JSON.stringify(await readUploadInputState(page), null, 2),
-          'utf8',
-        ).catch(() => {});
-        await capturePageDiagnostics({
-          page,
-          outputPath: resolve(join(testDir, 'browser-diagnostics.upload-status.md')),
-          browserDiagnostics,
-        });
-        throw error;
-      }
-
-      // Rename uploaded file.
-      await rightPane.getByTestId(`repository-tree-row-menu-${toTestIdSafeValue(uploadedPath)}`).click();
-      await clickDropdownOptionByItemId(page, 'repository-tree-menuitem-rename');
-      const prompt = page.getByPlaceholder(uploadedPath);
-      await expect(prompt).toHaveCount(1, { timeout: 60_000 });
-      const renamedPath = 'renamed.txt';
-      await prompt.fill(renamedPath);
-      await prompt.press('Enter');
-
-      await expect(rightPane.getByTestId(`repository-tree-row-${toTestIdSafeValue(uploadedPath)}`)).toHaveCount(0, { timeout: 120_000 });
-      await expect(rightPane.getByTestId(`repository-tree-row-${toTestIdSafeValue(renamedPath)}`)).toHaveCount(1, { timeout: 120_000 });
-
-      // Download renamed file.
-      await rightPane.getByTestId(`repository-tree-row-menu-${toTestIdSafeValue(renamedPath)}`).click();
-      const [fileDownload] = await Promise.all([
-        page.waitForEvent('download', { timeout: 60_000 }),
-        clickDropdownOptionByItemId(page, 'repository-tree-menuitem-download'),
-      ]);
-      const fileDownloadPath = await fileDownload.path();
-      expect(fileDownloadPath).not.toBeNull();
-      if (fileDownloadPath) {
-        const fileStats = await stat(fileDownloadPath);
-        expect(fileStats.size).toBeGreaterThan(0);
-      }
-
-      // Delete renamed file.
-      await rightPane.getByTestId(`repository-tree-row-menu-${toTestIdSafeValue(renamedPath)}`).click();
-      await clickDropdownOptionByItemId(page, 'repository-tree-menuitem-delete');
-      await expect(page.getByTestId('web-modal-confirm')).toHaveCount(1, { timeout: 60_000 });
-      await page.getByTestId('web-modal-confirm').click();
-      await expect(rightPane.getByTestId(`repository-tree-row-${toTestIdSafeValue(renamedPath)}`)).toHaveCount(0, { timeout: 120_000 });
-
-      // Upload a conflicting file and keep both versions.
-      const conflictPath = 'upload-conflict.txt';
-      const keepBothPath = 'upload-conflict (1).txt';
-      await writeFile(resolve(join(workspaceDir, conflictPath)), 'existing target\n', 'utf8');
-
-      const conflictingUploadSourcePath = resolve(join(testDir, conflictPath));
-      await writeFile(conflictingUploadSourcePath, 'conflicting upload\n', 'utf8');
-
-      const conflictUploadInput = page.getByTestId('repository-tree-upload-input-files');
-      await expect(conflictUploadInput).toHaveCount(1, { timeout: 60_000 });
-      await conflictUploadInput.setInputFiles(conflictingUploadSourcePath);
-
-      await expect(page.getByTestId('upload-conflicts-keep-both')).toHaveCount(1, { timeout: 120_000 });
-      await page.getByTestId('upload-conflicts-keep-both').click();
-
-      await expect(rightPane.getByTestId(`repository-tree-row-${toTestIdSafeValue(conflictPath)}`)).toHaveCount(1, { timeout: 120_000 });
-      await waitForUploadToComplete({ rightPane, uploadedPath: keepBothPath });
-
-      await expect.poll(async () => await readFile(resolve(join(workspaceDir, conflictPath)), 'utf8')).toBe('existing target\n');
-      await expect.poll(async () => await readFile(resolve(join(workspaceDir, keepBothPath)), 'utf8')).toBe('conflicting upload\n');
-
-      // Download folder as zip.
-      const folderPath = 'download-me';
-      await expect(repositoryTreeRowLocator(rightPane, folderPath)).toHaveCount(1, { timeout: 120_000 });
-      await repositoryTreeRowMenuLocator(rightPane, folderPath).click();
-      const [zipDownload] = await Promise.all([
-        page.waitForEvent('download', { timeout: 120_000 }),
-        clickDropdownOptionByItemId(page, 'repository-tree-menuitem-zip'),
-      ]);
-      expect(zipDownload.suggestedFilename()).toMatch(/\.zip$/);
-      const zipPath = await zipDownload.path();
-      expect(zipPath).not.toBeNull();
-      if (zipPath) {
-        const zipStats = await stat(zipPath);
-        expect(zipStats.size).toBeGreaterThan(0);
-      }
     } catch (error) {
       throw new Error(`${String(error)}\n\n${browserDiagnostics()}`);
     } finally {

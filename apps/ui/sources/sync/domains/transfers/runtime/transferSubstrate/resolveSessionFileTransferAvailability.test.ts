@@ -63,6 +63,19 @@ describe('resolveSessionFileTransferAvailability', () => {
         } as any);
 
         expect(result.available).toBe(true);
+        expect(result.daemonDirectPeerDiagnostics).toEqual({
+            route: {
+                status: 'unavailable',
+                checkedAt: 0,
+                expiresAt: 0,
+                failureReason: 'daemon_transfer_listener_unconfigured',
+            },
+            state: 'unconfigured',
+            configuredListenerClasses: [],
+            activeListenerClasses: [],
+            inactiveListenerClasses: [],
+            unavailableListenerClasses: [],
+        });
         expect(result.decision?.kind).toBe('selected');
         if (result.decision?.kind !== 'selected') {
             throw new Error('expected selected transfer route decision');
@@ -129,10 +142,253 @@ describe('resolveSessionFileTransferAvailability', () => {
         } as any);
 
         expect(result.available).toBe(true);
+        expect(result.daemonDirectPeerDiagnostics).toEqual({
+            route: {
+                status: 'viable',
+                checkedAt: 0,
+                expiresAt: Number.MAX_SAFE_INTEGER,
+            },
+            state: 'active',
+            configuredListenerClasses: ['loopback_http'],
+            activeListenerClasses: ['loopback_http'],
+            inactiveListenerClasses: [],
+            unavailableListenerClasses: [],
+        });
         expect(result.decision?.kind).toBe('selected');
         if (result.decision?.kind !== 'selected') {
             throw new Error('expected selected transfer route decision');
         }
         expect(result.decision.preferredRouteKind).toBe('direct_peer');
+    });
+
+    it('does not prefer a cached direct peer route when the daemon transfer listener is configured but inactive', async () => {
+        const { resolveSessionFileTransferAvailability } = await import('./resolveSessionFileTransferAvailability');
+
+        const serverFeatures = FeaturesResponseSchema.parse({
+            features: {
+                machines: {
+                    enabled: true,
+                    transfer: {
+                        enabled: true,
+                        directPeer: {
+                            enabled: true,
+                        },
+                        serverRouted: {
+                            enabled: false,
+                        },
+                    },
+                },
+            },
+            capabilities: {},
+        });
+
+        const result = resolveSessionFileTransferAvailability({
+            sessionAvailable: true,
+            machineTargetAvailable: true,
+            serverFeatures,
+            directPeerRoute: { status: 'viable', checkedAt: 12, expiresAt: 22 },
+            machineRpcDirectRoute: { status: 'viable', checkedAt: 13, expiresAt: 23 },
+            machineDaemonState: {
+                transfer: {
+                    supported: {
+                        import: true,
+                        export: true,
+                    },
+                    listenerClasses: {
+                        loopback_http: {
+                            enabled: true,
+                            configured: true,
+                            active: false,
+                        },
+                        lan_http: {
+                            enabled: false,
+                            configured: false,
+                            active: false,
+                        },
+                        tailscale_serve_https: {
+                            enabled: false,
+                            configured: false,
+                            active: false,
+                            available: false,
+                        },
+                    },
+                    lifecycle: {
+                        mode: 'lazy_idle_shutdown',
+                        version: 1,
+                    },
+                },
+            } as any,
+        } as any);
+
+        expect(result.available).toBe(true);
+        expect(result.daemonDirectPeerDiagnostics).toEqual({
+            route: { status: 'unknown' },
+            state: 'configured_inactive',
+            configuredListenerClasses: ['loopback_http'],
+            activeListenerClasses: [],
+            inactiveListenerClasses: ['loopback_http'],
+            unavailableListenerClasses: [],
+        });
+        expect(result.decision?.kind).toBe('selected');
+        if (result.decision?.kind !== 'selected') {
+            throw new Error('expected selected transfer route decision');
+        }
+        expect(result.decision.preferredRouteKind).toBe('machine_rpc_direct');
+    });
+
+    it('falls back to the machine-rpc route when the configured daemon listener reports available false', async () => {
+        const { resolveSessionFileTransferAvailability } = await import('./resolveSessionFileTransferAvailability');
+
+        const serverFeatures = FeaturesResponseSchema.parse({
+            features: {
+                machines: {
+                    enabled: true,
+                    transfer: {
+                        enabled: true,
+                        directPeer: {
+                            enabled: true,
+                        },
+                        serverRouted: {
+                            enabled: false,
+                        },
+                    },
+                },
+            },
+            capabilities: {},
+        });
+
+        const result = resolveSessionFileTransferAvailability({
+            sessionAvailable: true,
+            machineTargetAvailable: true,
+            serverFeatures,
+            directPeerRoute: { status: 'viable', checkedAt: 12, expiresAt: 22 },
+            machineRpcDirectRoute: { status: 'viable', checkedAt: 13, expiresAt: 23 },
+            machineDaemonState: {
+                transfer: {
+                    supported: {
+                        import: true,
+                        export: true,
+                    },
+                    listenerClasses: {
+                        loopback_http: {
+                            enabled: true,
+                            configured: true,
+                            active: true,
+                            available: false,
+                        },
+                        lan_http: {
+                            enabled: false,
+                            configured: false,
+                            active: false,
+                        },
+                        tailscale_serve_https: {
+                            enabled: false,
+                            configured: false,
+                            active: false,
+                            available: false,
+                        },
+                    },
+                    lifecycle: {
+                        mode: 'lazy_idle_shutdown',
+                        version: 1,
+                    },
+                },
+            } as any,
+        } as any);
+
+        expect(result.available).toBe(true);
+        expect(result.daemonDirectPeerDiagnostics).toEqual({
+            route: { status: 'unknown' },
+            state: 'configured_inactive',
+            configuredListenerClasses: ['loopback_http'],
+            activeListenerClasses: [],
+            inactiveListenerClasses: [],
+            unavailableListenerClasses: ['loopback_http'],
+        });
+        expect(result.decision?.kind).toBe('selected');
+        if (result.decision?.kind !== 'selected') {
+            throw new Error('expected selected transfer route decision');
+        }
+        expect(result.decision.preferredRouteKind).toBe('machine_rpc_direct');
+    });
+
+    it('fails closed to the machine-rpc route when daemon transfer support is disabled', async () => {
+        const { resolveSessionFileTransferAvailability } = await import('./resolveSessionFileTransferAvailability');
+
+        const serverFeatures = FeaturesResponseSchema.parse({
+            features: {
+                machines: {
+                    enabled: true,
+                    transfer: {
+                        enabled: true,
+                        directPeer: {
+                            enabled: true,
+                        },
+                        serverRouted: {
+                            enabled: false,
+                        },
+                    },
+                },
+            },
+            capabilities: {},
+        });
+
+        const result = resolveSessionFileTransferAvailability({
+            sessionAvailable: true,
+            machineTargetAvailable: true,
+            serverFeatures,
+            directPeerRoute: { status: 'viable', checkedAt: 12, expiresAt: 22 },
+            machineRpcDirectRoute: { status: 'viable', checkedAt: 13, expiresAt: 23 },
+            machineDaemonState: {
+                transfer: {
+                    supported: {
+                        import: false,
+                        export: false,
+                    },
+                    listenerClasses: {
+                        loopback_http: {
+                            enabled: true,
+                            configured: true,
+                            active: true,
+                        },
+                        lan_http: {
+                            enabled: false,
+                            configured: false,
+                            active: false,
+                        },
+                        tailscale_serve_https: {
+                            enabled: false,
+                            configured: false,
+                            active: false,
+                            available: false,
+                        },
+                    },
+                    lifecycle: {
+                        mode: 'lazy_idle_shutdown',
+                        version: 1,
+                    },
+                },
+            } as any,
+        } as any);
+
+        expect(result.available).toBe(true);
+        expect(result.daemonDirectPeerDiagnostics).toEqual({
+            route: {
+                status: 'unavailable',
+                checkedAt: 0,
+                expiresAt: 0,
+                failureReason: 'daemon_transfer_listener_unconfigured',
+            },
+            state: 'unconfigured',
+            configuredListenerClasses: [],
+            activeListenerClasses: [],
+            inactiveListenerClasses: [],
+            unavailableListenerClasses: [],
+        });
+        expect(result.decision?.kind).toBe('selected');
+        if (result.decision?.kind !== 'selected') {
+            throw new Error('expected selected transfer route decision');
+        }
+        expect(result.decision.preferredRouteKind).toBe('machine_rpc_direct');
     });
 });

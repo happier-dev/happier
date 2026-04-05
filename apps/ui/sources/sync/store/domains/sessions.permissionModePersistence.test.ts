@@ -12,6 +12,7 @@ vi.mock('../../domains/state/persistence', () => ({
     loadSessionPermissionModes: () => Object.fromEntries(persistedPermissionModes.entries()),
     loadSessionActionDrafts: () => ({}),
     loadSessionReviewCommentsDrafts: () => ({}),
+    loadWorkspaceReviewCommentsDrafts: () => ({}),
     saveSessionDrafts: () => {},
     saveSessionLastViewed: () => {},
     saveSessionModelModeUpdatedAts: () => {},
@@ -30,6 +31,7 @@ vi.mock('../../domains/state/persistence', () => ({
     },
     saveSessionActionDrafts: () => {},
     saveSessionReviewCommentsDrafts: () => {},
+    saveWorkspaceReviewCommentsDrafts: () => {},
 }));
 
 vi.mock('../../domains/state/warmCachePersistence', () => ({
@@ -112,10 +114,6 @@ vi.mock('../buildSessionListViewDataWithServerScope', () => ({
     buildSessionListViewDataWithServerScope: () => [],
 }));
 
-vi.mock('../sessionListCache', () => ({
-    setActiveServerSessionListCache: () => {},
-}));
-
 vi.mock('../../domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({ serverId: 'server_1' }),
 }));
@@ -126,7 +124,6 @@ function createHarness() {
     let state: any = {
         sessions: {},
         sessionListRenderables: {},
-        sessionsData: null,
         sessionListViewData: null,
         sessionListViewDataByServerId: {},
         sessionScmStatus: {},

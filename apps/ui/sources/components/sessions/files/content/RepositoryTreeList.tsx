@@ -18,7 +18,7 @@ import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import { useRepositoryTreeRowActions } from '@/components/sessions/files/repositoryTree/useRepositoryTreeRowActions';
 import { WebDropTargetView } from '@/components/workspaces/files/repositoryTree/WebDropTargetView';
 import { isWebFileDragEvent } from '@/utils/files/isWebFileDragEvent';
-import { useSessionFileTransferAvailabilityResolver } from '@/components/sessions/files/useSessionFileTransferAvailability';
+import { useSessionFileTransferAvailabilityState } from '@/components/sessions/files/useSessionFileTransferAvailability';
 
 export type RepositoryTreeWebDropTarget = Readonly<{
     destinationDir: string;
@@ -96,7 +96,10 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
     const { theme, sessionId, expandedPaths, onExpandedPathsChange, onOpenFile } = props;
     const detailsMode = props.detailsMode === true;
     const writeActionsEnabled = props.writeActionsEnabled !== false;
-    const canDownload = useSessionFileTransferAvailabilityResolver(sessionId);
+    const transferAvailability = useSessionFileTransferAvailabilityState(sessionId);
+    const canDownload = React.useCallback((_transferSizeBytes?: number | null) => {
+        return transferAvailability.available;
+    }, [transferAvailability.available]);
     const { rootLoading, rootError, nodes, toggleDirectory, retryRoot, retryDirectory } = useRepositoryTreeBrowser({
         sessionId,
         enabled: true,

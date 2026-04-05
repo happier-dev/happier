@@ -41,7 +41,6 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 describe('machineRpcWithServerScope (retry)', () => {
   beforeEach(() => {
     vi.resetModules();
-    vi.useFakeTimers();
     machineRpcSpy.mockReset();
     createEphemeralSocketSpy.mockReset();
     getCredentialsSpy.mockReset();
@@ -57,7 +56,6 @@ describe('machineRpcWithServerScope (retry)', () => {
   });
 
   afterEach(() => {
-    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     resetScopedMachineDataKeyCacheForTests();
@@ -112,16 +110,17 @@ describe('machineRpcWithServerScope (retry)', () => {
     });
     const assertion = expect(rpcPromise).resolves.toEqual({ ok: true });
 
-    await vi.runAllTimersAsync();
     await assertion;
 
     expect(machineRpcSpy).not.toHaveBeenCalled();
     expect(createEphemeralSocketSpy).toHaveBeenCalledTimes(2);
     expect(emitWithAckSpy).toHaveBeenCalledTimes(2);
-    expect(emitWithAckSpy).toHaveBeenNthCalledWith(1, SOCKET_RPC_EVENTS.CALL, {
+    expect(emitWithAckSpy).toHaveBeenNthCalledWith(1, SOCKET_RPC_EVENTS.CALL, expect.objectContaining({
       method: 'machine-1:method-test',
       params: 'encrypted-payload',
-      timeoutMs: 30000,
-    });
+      timeoutMs: expect.any(Number),
+    }));
+    expect((emitWithAckSpy.mock.calls[0]?.[1] as { timeoutMs: number }).timeoutMs).toBeGreaterThan(0);
+    expect((emitWithAckSpy.mock.calls[0]?.[1] as { timeoutMs: number }).timeoutMs).toBeLessThanOrEqual(30_000);
   });
 });

@@ -1,6 +1,16 @@
 import { z } from 'zod';
+import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
 import { EphemeralUpdateSchema, UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import type { UpdateContainer, EphemeralUpdate } from '@happier-dev/protocol/updates';
+
+export type DirectSessionTranscriptUpdatedEphemeralUpdate = Readonly<{
+    type: 'direct-session-transcript-delta';
+    sessionId: string;
+    items: ReadonlyArray<DirectTranscriptRawMessageV1>;
+    nextCursor?: string | null;
+    tailCursor?: string | null;
+    truncated?: boolean;
+}>;
 
 const LegacySharingUpdateBodySchema = z.discriminatedUnion('t', [
     z.object({
@@ -68,9 +78,30 @@ export function parseUpdateContainer(update: unknown): UpdateContainer | null {
     return validatedUpdate.data;
 }
 
-export function parseEphemeralUpdate(update: unknown): EphemeralUpdate | null {
+export function parseEphemeralUpdate(update: unknown): EphemeralUpdate | DirectSessionTranscriptUpdatedEphemeralUpdate | null {
     const validatedUpdate = EphemeralUpdateSchema.safeParse(update);
     if (!validatedUpdate.success) {
+        if (update && typeof update === 'object') {
+            const candidate = update as Record<string, unknown>;
+            const type = candidate.type;
+            if (
+                type === 'direct-session-transcript-delta'
+                && typeof candidate.sessionId === 'string'
+                && Array.isArray(candidate.items)
+            ) {
+                return {
+                    type,
+                    sessionId: candidate.sessionId,
+                    items: candidate.items as ReadonlyArray<DirectTranscriptRawMessageV1>,
+                    ...(typeof candidate.nextCursor === 'string' ? { nextCursor: candidate.nextCursor } : {}),
+                    ...(candidate.nextCursor === null ? { nextCursor: null } : {}),
+                    ...(typeof candidate.tailCursor === 'string' ? { tailCursor: candidate.tailCursor } : {}),
+                    ...(candidate.tailCursor === null ? { tailCursor: null } : {}),
+                    ...(typeof candidate.truncated === 'boolean' ? { truncated: candidate.truncated } : {}),
+                } as DirectSessionTranscriptUpdatedEphemeralUpdate;
+            }
+        }
+
         const isDev = typeof __DEV__ !== 'undefined' && __DEV__;
         if (isDev) {
             console.error('Invalid ephemeral update received:', update);

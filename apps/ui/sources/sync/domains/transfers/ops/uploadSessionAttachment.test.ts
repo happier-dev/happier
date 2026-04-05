@@ -11,7 +11,7 @@ vi.mock('@/sync/domains/features/featureDecisionInputs', () => ({
     isRuntimeFeatureEnabled: (params: unknown) => isRuntimeFeatureEnabledSpy(params),
 }));
 
-vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline/daemonSessionAttachments', async () => {
+vi.mock('@/sync/domains/transfers/runtime/transferSubstrate', async () => {
     return {
         uploadDaemonSessionAttachmentFromReader: (params: unknown) => uploadDaemonSessionAttachmentFromReaderSpy(params),
     };
@@ -202,6 +202,29 @@ describe('uploadSessionAttachment', () => {
 
         expect(res).toMatchObject({ success: true });
         expect((res as any).path).toBe('.happier/uploads/messages/m1/12345678-hello.txt');
+        expect(nativeOpenSpy).toHaveBeenCalledTimes(1);
+        expect(nativeCloseSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('closes the native file handle when the canonical upload helper rejects', async () => {
+        const { sessionAttachmentsUploadFile } = await import('./uploadSessionAttachment');
+
+        uploadDaemonSessionAttachmentFromReaderSpy.mockRejectedValue(new Error('Upload source reader exploded'));
+
+        const res = await sessionAttachmentsUploadFile({
+            sessionId: 's1',
+            file: { kind: 'native', uri: 'file:///tmp/hello.txt', name: 'hello.txt', sizeBytes: 5, mimeType: 'text/plain' },
+            messageLocalId: 'm1',
+            config: {
+                uploadLocation: 'workspace',
+                workspaceRelativeDir: '.happier/uploads',
+                vcsIgnoreStrategy: 'git_info_exclude',
+                vcsIgnoreWritesEnabled: true,
+                maxFileBytes: 25 * 1024 * 1024,
+            },
+        });
+
+        expect(res).toEqual({ success: false, error: 'Upload source reader exploded' });
         expect(nativeOpenSpy).toHaveBeenCalledTimes(1);
         expect(nativeCloseSpy).toHaveBeenCalledTimes(1);
     });

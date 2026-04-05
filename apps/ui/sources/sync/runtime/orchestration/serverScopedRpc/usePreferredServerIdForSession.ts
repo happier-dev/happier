@@ -2,11 +2,7 @@ import * as React from 'react';
 
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { useSessionServerId } from '@/sync/store/hooks';
-
-function normalizeServerId(value: unknown): string | null {
-    const serverId = String(value ?? '').trim();
-    return serverId || null;
-}
+import { normalizeServerId } from './normalizeServerId';
 
 export function usePreferredServerIdForSession(sessionId: string): string | null {
     const sessionServerId = useSessionServerId(sessionId);

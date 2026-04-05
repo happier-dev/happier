@@ -107,8 +107,8 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
         resetKey: `${sessionId}:${sha}`,
     });
 
-    const sessionsData = useSessions();
-    const isStorageReady = sessionsData !== null;
+    const sessions = useSessions();
+    const isStorageReady = sessions !== null;
     const session = useSession(sessionId);
     const project = useProjectForSession(sessionId);
     const sessionPath = resolveSessionWorkspacePath({

@@ -39,7 +39,7 @@ import { clearCachedWorkspaceRepositoryDirectoryEntries } from '@/sync/domains/w
 import { searchWorkspaceFiles, workspaceFileSearchCache } from '@/sync/domains/workspaces/files/workspaceFileSearch';
 import { RepositoryTreeRowActionsMenu } from '@/components/workspaces/files/repositoryTree/RepositoryTreeRowActionsMenu';
 import { useRepositoryTreeRowActions } from '@/components/sessions/files/repositoryTree/useRepositoryTreeRowActions';
-import { useSessionFileTransferAvailabilityResolver } from '@/components/sessions/files/useSessionFileTransferAvailability';
+import { useSessionFileTransferAvailabilityState } from '@/components/sessions/files/useSessionFileTransferAvailability';
 import { useSessionWorkspaceTarget } from '@/hooks/session/useSessionWorkspaceTarget';
 import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
 import { workspaceCreateDirectory, workspaceWriteFile } from '@/sync/ops/workspaceFileSystem';
@@ -187,7 +187,10 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
         onAfterUploadSuccess: refresh,
     });
 
-    const canDownload = useSessionFileTransferAvailabilityResolver(props.sessionId);
+    const transferAvailability = useSessionFileTransferAvailabilityState(props.sessionId);
+    const canDownload = React.useCallback((_transferSizeBytes?: number | null) => {
+        return transferAvailability.available;
+    }, [transferAvailability.available]);
     const rowActions = useRepositoryTreeRowActions({
         sessionId: props.sessionId,
         writeActionsEnabled: allowCreateActions,

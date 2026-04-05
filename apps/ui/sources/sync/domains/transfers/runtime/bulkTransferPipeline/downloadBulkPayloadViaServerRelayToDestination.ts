@@ -82,6 +82,9 @@ export async function downloadBulkPayloadViaServerRelayToDestination(params: Rea
     signal?: AbortSignal | null;
 }>): Promise<RelayFileDownloadResponse> {
     const recipientKeyPair = createTransferRecipientKeyPair();
+    const transferTimeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0
+        ? Math.max(1, Math.floor(params.timeoutMs))
+        : null;
     const init = await params.init({
         recipientPublicKeyBase64: recipientKeyPair.recipientPublicKeyBase64,
     });
@@ -94,8 +97,21 @@ export async function downloadBulkPayloadViaServerRelayToDestination(params: Rea
     }
 
     if (params.onInit) {
-        const sideEffect = await params.onInit({ name: init.name, sizeBytes: init.sizeBytes });
-        if (sideEffect && sideEffect.success === false) {
+        try {
+            const sideEffect = await params.onInit({ name: init.name, sizeBytes: init.sizeBytes });
+            if (sideEffect && sideEffect.success === false) {
+                try {
+                    await params.abort?.({ downloadId: init.downloadId });
+                } catch {
+                    // Best-effort only.
+                }
+                await cleanupFailedDestination(params.destination);
+                return {
+                    ok: false,
+                    error: sideEffect.error,
+                };
+            }
+        } catch (error) {
             try {
                 await params.abort?.({ downloadId: init.downloadId });
             } catch {
@@ -104,7 +120,7 @@ export async function downloadBulkPayloadViaServerRelayToDestination(params: Rea
             await cleanupFailedDestination(params.destination);
             return {
                 ok: false,
-                error: sideEffect.error,
+                error: error instanceof Error ? error.message : 'Server relay transfer failed',
             };
         }
     }
@@ -133,6 +149,7 @@ export async function downloadBulkPayloadViaServerRelayToDestination(params: Rea
         let settled = false;
         let unsubscribe: (() => void) | null = null;
         let signalCleanup: (() => void) | null = null;
+        let transferTimeoutId: ReturnType<typeof setTimeout> | null = null;
         let envelopeQueue = Promise.resolve();
         let downloadedBytes = 0;
         const streamedChunks: Uint8Array[] = [];
@@ -152,11 +169,33 @@ export async function downloadBulkPayloadViaServerRelayToDestination(params: Rea
             }
         };
 
+        const clearTransferTimeout = () => {
+            if (transferTimeoutId === null) {
+                return;
+            }
+            clearTimeout(transferTimeoutId);
+            transferTimeoutId = null;
+        };
+
+        const armTransferTimeout = () => {
+            clearTransferTimeout();
+            if (transferTimeoutMs === null) {
+                return;
+            }
+            transferTimeoutId = setTimeout(() => {
+                void finish({
+                    ok: false,
+                    error: 'Server relay transfer timed out',
+                }, true);
+            }, transferTimeoutMs);
+        };
+
         const finish = async (result: RelayFileDownloadResponse, abortTransfer = false) => {
             if (settled) {
                 return;
             }
             settled = true;
+            clearTransferTimeout();
             unsubscribe?.();
             signalCleanup?.();
             relaySocket.disconnect();
@@ -189,6 +228,8 @@ export async function downloadBulkPayloadViaServerRelayToDestination(params: Rea
                 ) {
                     return;
                 }
+
+                armTransferTimeout();
 
                 if (payload.envelope.kind === 'abort') {
                     await finish({
@@ -292,5 +333,6 @@ export async function downloadBulkPayloadViaServerRelayToDestination(params: Rea
                 recipientPublicKeyBase64: recipientKeyPair.recipientPublicKeyBase64,
             },
         });
+        armTransferTimeout();
     });
 }

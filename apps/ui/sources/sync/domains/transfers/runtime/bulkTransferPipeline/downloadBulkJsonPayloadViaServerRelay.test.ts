@@ -28,6 +28,7 @@ vi.mock('@/platform/digest', () => ({
 function createRelaySocketHarness(): Readonly<{
     scopeUserId: string;
     sent: TransferRelayV2SendEnvelope[];
+    disconnect: ReturnType<typeof vi.fn>;
     socket: Readonly<{
         scopeUserId: string;
         machineId: string;
@@ -38,6 +39,7 @@ function createRelaySocketHarness(): Readonly<{
 }> {
     const listeners = new Set<(payload: TransferRelayV2SendEnvelope) => void>();
     const sent: TransferRelayV2SendEnvelope[] = [];
+    const disconnect = vi.fn();
     const payloadBytes = Buffer.from(JSON.stringify({
         ok: true,
         title: 'Relay payload',
@@ -51,6 +53,7 @@ function createRelaySocketHarness(): Readonly<{
     return {
         scopeUserId: 'user-1',
         sent,
+        disconnect,
         socket: {
             scopeUserId: 'user-1',
             machineId: 'machine-1',
@@ -116,13 +119,14 @@ function createRelaySocketHarness(): Readonly<{
                     }, 0);
                 }
             },
-            disconnect() {},
+            disconnect,
         },
     };
 }
 
 describe('downloadBulkJsonPayloadViaServerRelay', () => {
     afterEach(() => {
+        vi.useRealTimers();
         resolveServerScopedTransferRelaySocketMock.mockReset();
         digestMock.mockClear();
     });
@@ -155,6 +159,7 @@ describe('downloadBulkJsonPayloadViaServerRelay', () => {
                 title: 'Relay payload',
             },
         });
+        expect(harness.disconnect).toHaveBeenCalledTimes(1);
         expect(initMock).toHaveBeenCalledWith({
             recipientPublicKeyBase64: expect.any(String),
         });
@@ -222,5 +227,65 @@ describe('downloadBulkJsonPayloadViaServerRelay', () => {
         expect(abortMock).toHaveBeenCalledWith({
             downloadId: 'download-parse-fail',
         });
+    });
+
+    it('aborts the relay download if the transfer timeout elapses before completion', async () => {
+        vi.useFakeTimers();
+        const listeners = new Set<(payload: TransferRelayV2SendEnvelope) => void>();
+        const sent: TransferRelayV2SendEnvelope[] = [];
+        const disconnect = vi.fn();
+        resolveServerScopedTransferRelaySocketMock.mockResolvedValue({
+            scopeUserId: 'user-1',
+            machineId: 'machine-1',
+            onEnvelope(listener) {
+                listeners.add(listener);
+                return () => {
+                    listeners.delete(listener);
+                };
+            },
+            sendEnvelope(payload) {
+                sent.push(payload);
+            },
+            disconnect,
+        });
+        const abortMock = vi.fn(async () => ({ success: true as const }));
+
+        const { downloadBulkJsonPayloadViaServerRelay } = await import('./downloadBulkJsonPayloadViaServerRelay');
+        const downloadPromise = downloadBulkJsonPayloadViaServerRelay({
+            machineId: 'machine-1',
+            serverId: 'server-a',
+            timeoutMs: 10,
+            init: async () => ({
+                success: true as const,
+                downloadId: 'download-timeout',
+                chunkSizeBytes: 4096,
+                sizeBytes: 33,
+                name: 'payload.json',
+            }),
+            finalize: async () => ({ success: true as const }),
+            abort: abortMock,
+            parsePayload: (value) => value as { ok: boolean },
+        });
+
+        await vi.advanceTimersByTimeAsync(10);
+
+        await expect(downloadPromise).resolves.toEqual({
+            ok: false,
+            error: 'Server relay transfer timed out',
+        });
+        expect(abortMock).toHaveBeenCalledWith({
+            downloadId: 'download-timeout',
+        });
+        expect(disconnect).toHaveBeenCalledTimes(1);
+        expect(sent).toEqual([
+            expect.objectContaining({
+                envelope: {
+                    transferId: 'download-timeout',
+                    kind: 'open',
+                    recipientPublicKeyBase64: expect.any(String),
+                },
+            }),
+        ]);
+        expect(listeners.size).toBe(0);
     });
 });

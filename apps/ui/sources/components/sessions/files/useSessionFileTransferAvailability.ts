@@ -1,16 +1,18 @@
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
 import { useSession } from '@/sync/domains/state/storage';
-import { useServerScopedMachine } from '@/sync/domains/state/storage';
+import { useMachine, useServerScopedMachine } from '@/sync/domains/state/storage';
 import {
     readCachedMachineRpcDirectRoute,
 } from '@/sync/domains/transfers/runtime/transferRouteCache';
-import { resolveSessionFileTransferAvailability } from '@/sync/domains/transfers/runtime/transferSubstrate';
-import { resolveMachineDaemonTransferDirectPeerRoute } from '@/sync/domains/transfers/runtime/transferSubstrate/machineDaemonTransferState';
+import {
+    resolveSessionFileTransferAvailability,
+    type ResolveSessionFileTransferAvailabilityResult,
+} from '@/sync/domains/transfers/runtime/transferSubstrate';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 
-export function useSessionFileTransferAvailabilityResolver(sessionId: string): (transferSizeBytes?: number | null) => boolean {
+export function useSessionFileTransferAvailabilityState(sessionId: string): ResolveSessionFileTransferAvailabilityResult {
     const session = useSession(sessionId);
     const { machineRpcTargetAvailable } = useSessionMachineReachability(sessionId);
     const serverId = resolvePreferredServerIdForSessionId(sessionId) ?? null;
@@ -18,10 +20,9 @@ export function useSessionFileTransferAvailabilityResolver(sessionId: string): (
         enabled: Boolean(serverId) && machineRpcTargetAvailable,
     });
     const machineTarget = readMachineTargetForSession(sessionId);
-    const machine = useServerScopedMachine(serverId, machineTarget?.machineId ?? '');
-    const machineDirectPeerRoute = resolveMachineDaemonTransferDirectPeerRoute({
-        daemonState: machine?.daemonState ?? null,
-    });
+    const globalMachine = useMachine(machineTarget?.machineId ?? '');
+    const serverScopedMachine = useServerScopedMachine(serverId, machineTarget?.machineId ?? '');
+    const machine = serverScopedMachine ?? globalMachine;
     const machineRpcRouteInput = machineTarget && serverId
         ? {
             serverId,
@@ -29,36 +30,23 @@ export function useSessionFileTransferAvailabilityResolver(sessionId: string): (
         }
         : null;
 
+    return resolveSessionFileTransferAvailability({
+        sessionAvailable: Boolean(session),
+        machineTargetAvailable: machineRpcTargetAvailable,
+        serverFeatures: serverSnapshot.status === 'ready' ? serverSnapshot.features : null,
+        machineDaemonState: machine?.daemonState ?? null,
+        machineRpcDirectRoute: machineRpcRouteInput
+            ? readCachedMachineRpcDirectRoute(machineRpcRouteInput)
+            : { status: 'unknown' },
+    });
+}
+
+export function useSessionFileTransferAvailabilityResolver(sessionId: string): (transferSizeBytes?: number | null) => boolean {
+    const availability = useSessionFileTransferAvailabilityState(sessionId);
+
     return (transferSizeBytes?: number | null) => {
         void transferSizeBytes;
-        if (!session) {
-            return false;
-        }
-        if (!serverId) {
-            return false;
-        }
-        if (serverSnapshot.status !== 'ready') {
-            return false;
-        }
-        if (!machineTarget) {
-            return false;
-        }
-        if (!machineRpcTargetAvailable) {
-            return false;
-        }
-
-        const { available } = resolveSessionFileTransferAvailability({
-            sessionAvailable: true,
-            machineTargetAvailable: true,
-            serverFeatures: serverSnapshot.features,
-            machineDaemonState: machine?.daemonState ?? null,
-            directPeerRoute: machineDirectPeerRoute,
-            machineRpcDirectRoute: machineRpcRouteInput
-                ? readCachedMachineRpcDirectRoute(machineRpcRouteInput)
-                : { status: 'unknown' },
-        });
-
-        return available;
+        return availability.available;
     };
 }
 

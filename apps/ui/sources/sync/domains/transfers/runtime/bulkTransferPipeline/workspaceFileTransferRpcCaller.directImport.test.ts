@@ -42,8 +42,8 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc', () => 
     }),
 }));
 
-vi.mock('./resolvePreferScopedForBulkMachineTransfer', () => ({
-    resolvePreferScopedForBulkMachineTransfer: vi.fn(async () => true),
+vi.mock('../transferSubstrate/resolvePreferScopedMachineRpc', () => ({
+    resolvePreferScopedMachineRpc: vi.fn(async () => true),
 }));
 
 vi.mock('@/utils/system/runtimeFetch', () => ({
@@ -134,6 +134,119 @@ describe('workspaceFileTransferRpcCaller direct import', () => {
         expect(state.fetchCalls.map((call) => String(call.input))).toEqual([
             'http://127.0.0.1:46001/machine-transfers/direct/imports/direct-upload-1/chunks/0',
             'http://127.0.0.1:46001/machine-transfers/direct/imports/direct-upload-1/finalize',
+        ]);
+    });
+
+    it('keeps the prepared direct import session alive long enough to finalize on a later endpoint candidate when the first one fails', async () => {
+        state.machineRpcCalls = [];
+        state.fetchCalls = [];
+
+        const { createWorkspaceFileTransferRpcCaller } = await import('./workspaceFileTransferRpcCaller');
+        const caller = createWorkspaceFileTransferRpcCaller({
+            machineId: 'machine-1',
+            serverId: 'server-1',
+            transferSizeBytes: 4,
+            workingDirectory: '/repo',
+        });
+
+        state.machineRpcCalls = [];
+        state.fetchCalls = [];
+
+        vi.mocked((await import('@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc')).callGuardedMachineRpcWithPolicy)
+            .mockResolvedValueOnce({
+                success: true,
+                uploadId: 'direct-upload-2',
+                chunkSizeBytes: 8,
+                recipientPublicKeyBase64: 'recipient-key',
+                destDisplayPath: 'nested/file.txt',
+                expectedSizeBytes: 4,
+                expiresAt: 2_000,
+                endpointCandidates: [
+                    {
+                        kind: 'http' as const,
+                        url: 'http://127.0.0.1:46001/machine-transfers/direct/imports/direct-upload-2',
+                        expiresAt: 2_000,
+                    },
+                    {
+                        kind: 'http' as const,
+                        url: 'http://127.0.0.1:46002/machine-transfers/direct/imports/direct-upload-2',
+                        expiresAt: 2_000,
+                    },
+                ],
+            });
+
+        const runtimeFetch = (await import('@/utils/system/runtimeFetch')).runtimeFetch as unknown as ReturnType<typeof vi.fn>;
+        runtimeFetch.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input);
+            state.fetchCalls.push({ input, init });
+
+            if (url.startsWith('http://127.0.0.1:46001/') && url.endsWith('/chunks/0')) {
+                return new Response(JSON.stringify({ success: true }), {
+                    status: 200,
+                    headers: { 'content-type': 'application/json' },
+                });
+            }
+            if (url.startsWith('http://127.0.0.1:46001/') && url.endsWith('/finalize')) {
+                return new Response(JSON.stringify({ success: false, error: 'first-finalize-failed' }), {
+                    status: 500,
+                    headers: { 'content-type': 'application/json' },
+                });
+            }
+            if (url.startsWith('http://127.0.0.1:46002/') && url.endsWith('/finalize')) {
+                return new Response(JSON.stringify({
+                    success: true,
+                    finalized: {
+                        success: true,
+                        path: 'nested/file.txt',
+                        sizeBytes: 4,
+                    },
+                    sha256: 'sha256:test',
+                }), {
+                    status: 200,
+                    headers: { 'content-type': 'application/json' },
+                });
+            }
+
+            throw new Error(`Unexpected runtimeFetch call: ${url}`);
+        });
+
+        await expect(caller.call({
+            machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT,
+            request: {
+                t: 'session_file_upload_v1',
+                path: 'nested/file.txt',
+                sizeBytes: 4,
+                overwrite: true,
+            },
+        })).resolves.toEqual({
+            success: true,
+            uploadId: 'direct-upload-2',
+            chunkSizeBytes: 8,
+            recipientPublicKeyBase64: 'recipient-key',
+            destDisplayPath: 'nested/file.txt',
+            expectedSizeBytes: 4,
+            expiresAt: 2_000,
+        });
+
+        await expect(caller.call({
+            machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK,
+            request: {
+                uploadId: 'direct-upload-2',
+                index: 0,
+                payloadBase64: 'YQ==',
+                encryptedDataKeyEnvelopeBase64: 'Yg==',
+            },
+        })).resolves.toEqual({ success: true });
+
+        await expect(caller.call({
+            machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE,
+            request: { uploadId: 'direct-upload-2' },
+        })).resolves.toEqual({ success: true, path: 'nested/file.txt', sizeBytes: 4, sha256: 'sha256:test' });
+
+        expect(state.fetchCalls.map((call) => String(call.input))).toEqual([
+            'http://127.0.0.1:46001/machine-transfers/direct/imports/direct-upload-2/chunks/0',
+            'http://127.0.0.1:46001/machine-transfers/direct/imports/direct-upload-2/finalize',
+            'http://127.0.0.1:46002/machine-transfers/direct/imports/direct-upload-2/finalize',
         ]);
     });
 });

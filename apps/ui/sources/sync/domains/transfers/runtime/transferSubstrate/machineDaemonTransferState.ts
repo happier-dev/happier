@@ -7,6 +7,11 @@ export type MachineDaemonTransferListenerClassState = Readonly<{
     available?: boolean;
 }>;
 
+export type MachineDaemonTransferListenerClass =
+    | 'loopback_http'
+    | 'lan_http'
+    | 'tailscale_serve_https';
+
 export type MachineDaemonTransferState = Readonly<{
     supported: Readonly<{
         import: boolean;
@@ -24,6 +29,21 @@ export type MachineDaemonTransferState = Readonly<{
 }>;
 
 type MachineDaemonTransferListenerState = MachineDaemonTransferListenerClassState;
+
+export type MachineDaemonTransferDirectPeerDiagnostics = Readonly<{
+    route: TransferRouteViabilityRecord;
+    state: 'unknown' | 'unconfigured' | 'configured_inactive' | 'active';
+    configuredListenerClasses: readonly MachineDaemonTransferListenerClass[];
+    activeListenerClasses: readonly MachineDaemonTransferListenerClass[];
+    inactiveListenerClasses: readonly MachineDaemonTransferListenerClass[];
+    unavailableListenerClasses: readonly MachineDaemonTransferListenerClass[];
+}>;
+
+const TRANSFER_LISTENER_CLASS_ORDER: readonly MachineDaemonTransferListenerClass[] = [
+    'loopback_http',
+    'lan_http',
+    'tailscale_serve_https',
+] as const;
 
 function readBoolean(value: unknown): boolean | null {
     return typeof value === 'boolean' ? value : null;
@@ -59,6 +79,46 @@ function hasConfiguredTransferListener(listenerClasses: MachineDaemonTransferSta
 
 function hasActiveTransferListener(listenerClasses: MachineDaemonTransferState['listenerClasses']): boolean {
     return Object.values(listenerClasses).some((listener) => listener.enabled && listener.configured && listener.active && listener.available !== false);
+}
+
+function hasSupportedTransfer(supported: MachineDaemonTransferState['supported']): boolean {
+    return supported.import && supported.export;
+}
+
+function resolveConfiguredListenerClasses(
+    listenerClasses: MachineDaemonTransferState['listenerClasses'],
+): MachineDaemonTransferListenerClass[] {
+    return TRANSFER_LISTENER_CLASS_ORDER.filter((listenerClass) => {
+        const listener = listenerClasses[listenerClass];
+        return listener.enabled && listener.configured;
+    });
+}
+
+function resolveActiveListenerClasses(
+    listenerClasses: MachineDaemonTransferState['listenerClasses'],
+): MachineDaemonTransferListenerClass[] {
+    return TRANSFER_LISTENER_CLASS_ORDER.filter((listenerClass) => {
+        const listener = listenerClasses[listenerClass];
+        return listener.enabled && listener.configured && listener.active && listener.available !== false;
+    });
+}
+
+function resolveInactiveListenerClasses(
+    listenerClasses: MachineDaemonTransferState['listenerClasses'],
+): MachineDaemonTransferListenerClass[] {
+    return TRANSFER_LISTENER_CLASS_ORDER.filter((listenerClass) => {
+        const listener = listenerClasses[listenerClass];
+        return listener.enabled && listener.configured && !listener.active && listener.available !== false;
+    });
+}
+
+function resolveUnavailableListenerClasses(
+    listenerClasses: MachineDaemonTransferState['listenerClasses'],
+): MachineDaemonTransferListenerClass[] {
+    return TRANSFER_LISTENER_CLASS_ORDER.filter((listenerClass) => {
+        const listener = listenerClasses[listenerClass];
+        return listener.enabled && listener.configured && listener.available === false;
+    });
 }
 
 export function readMachineDaemonTransferState(input: Readonly<{
@@ -122,27 +182,84 @@ export function resolveMachineDaemonTransferDirectPeerRoute(
         daemonState?: unknown | null;
     }> | null | undefined,
 ): TransferRouteViabilityRecord {
+    return resolveMachineDaemonTransferDirectPeerDiagnostics(input).route;
+}
+
+export function resolveMachineDaemonTransferDirectPeerDiagnostics(
+    input: Readonly<{
+        daemonState?: unknown | null;
+    }> | null | undefined,
+): MachineDaemonTransferDirectPeerDiagnostics {
     const transferState = readMachineDaemonTransferState(input);
     if (!transferState) {
-        return { status: 'unknown' };
+        return {
+            route: { status: 'unknown' },
+            state: 'unknown',
+            configuredListenerClasses: [],
+            activeListenerClasses: [],
+            inactiveListenerClasses: [],
+            unavailableListenerClasses: [],
+        };
+    }
+
+    const configuredListenerClasses = resolveConfiguredListenerClasses(transferState.listenerClasses);
+    const activeListenerClasses = resolveActiveListenerClasses(transferState.listenerClasses);
+    const inactiveListenerClasses = resolveInactiveListenerClasses(transferState.listenerClasses);
+    const unavailableListenerClasses = resolveUnavailableListenerClasses(transferState.listenerClasses);
+
+    if (!hasSupportedTransfer(transferState.supported)) {
+        return {
+            route: {
+                status: 'unavailable',
+                checkedAt: 0,
+                expiresAt: 0,
+                failureReason: 'daemon_transfer_listener_unconfigured',
+            },
+            state: 'unconfigured',
+            configuredListenerClasses: [],
+            activeListenerClasses: [],
+            inactiveListenerClasses: [],
+            unavailableListenerClasses: [],
+        };
     }
 
     if (!hasConfiguredTransferListener(transferState.listenerClasses)) {
         return {
-            status: 'unavailable',
-            checkedAt: 0,
-            expiresAt: 0,
-            failureReason: 'daemon_transfer_listener_unconfigured',
+            route: {
+                status: 'unavailable',
+                checkedAt: 0,
+                expiresAt: 0,
+                failureReason: 'daemon_transfer_listener_unconfigured',
+            },
+            state: 'unconfigured',
+            configuredListenerClasses,
+            activeListenerClasses,
+            inactiveListenerClasses,
+            unavailableListenerClasses,
         };
     }
 
     if (hasActiveTransferListener(transferState.listenerClasses)) {
         return {
-            status: 'viable',
-            checkedAt: 0,
-            expiresAt: Number.MAX_SAFE_INTEGER,
+            route: {
+                status: 'viable',
+                checkedAt: 0,
+                expiresAt: Number.MAX_SAFE_INTEGER,
+            },
+            state: 'active',
+            configuredListenerClasses,
+            activeListenerClasses,
+            inactiveListenerClasses,
+            unavailableListenerClasses,
         };
     }
 
-    return { status: 'unknown' };
+    return {
+        route: { status: 'unknown' },
+        state: 'configured_inactive',
+        configuredListenerClasses,
+        activeListenerClasses,
+        inactiveListenerClasses,
+        unavailableListenerClasses,
+    };
 }

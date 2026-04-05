@@ -599,12 +599,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             });
 
             if (needsReachablePeerReevaluation && (!needsSessionListViewDataRebuild || !needsProjectManagerUpdate)) {
-                const previousReachableRenderables = applyReachableTargetsToSessionListRenderables({
-                    sessions: state.sessionListRenderables,
-                    sessionRecords: state.sessions,
-                    machineRecords: state.machines,
-                    getProjectForSession: state.getProjectForSession,
-                });
+                const previousReachableRenderables = state.sessionListRenderables;
                 const nextReachableRenderables = applyReachableTargetsToSessionListRenderables({
                     sessions: mergedRenderables,
                     sessionRecords: mergedSessions,

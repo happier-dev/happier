@@ -175,6 +175,79 @@ describe('useSessionFileTransferAvailabilityResolver', () => {
         expect(hook.getCurrent()(64)).toBe(true);
     });
 
+    it('exposes coarse daemon direct-peer diagnostics for configured-but-inactive listeners', async () => {
+        state.session = { active: true } as any;
+        state.machineReachability = { machineRpcTargetAvailable: true } as any;
+        state.machineTarget = { machineId: 'machine-1', basePath: '/repo' } as any;
+        state.machine = {
+            daemonState: {
+                transfer: {
+                    supported: {
+                        import: true,
+                        export: true,
+                    },
+                    listenerClasses: {
+                        loopback_http: {
+                            enabled: true,
+                            configured: true,
+                            active: false,
+                        },
+                        lan_http: {
+                            enabled: false,
+                            configured: false,
+                            active: false,
+                        },
+                        tailscale_serve_https: {
+                            enabled: true,
+                            configured: true,
+                            active: false,
+                            available: true,
+                        },
+                    },
+                    lifecycle: {
+                        mode: 'lazy_idle_shutdown',
+                        version: 1,
+                    },
+                },
+            },
+        } as any;
+        state.serverScopedMachine = state.machine;
+        state.cachedMachineRpcDirectRoute = { status: 'viable' as const, checkedAt: 20, expiresAt: 30 } as any;
+        state.serverSnapshot = {
+            status: 'ready' as const,
+            features: {
+                features: {
+                    machines: {
+                        enabled: true,
+                        transfer: {
+                            enabled: true,
+                            directPeer: {
+                                enabled: true,
+                            },
+                            serverRouted: {
+                                enabled: false,
+                            },
+                        },
+                    },
+                },
+                capabilities: {},
+            },
+        } as any;
+
+        const { useSessionFileTransferAvailabilityState } = await import('./useSessionFileTransferAvailability');
+        const hook = await renderHook(() => useSessionFileTransferAvailabilityState('s1'));
+
+        expect(hook.getCurrent().daemonDirectPeerDiagnostics).toEqual({
+            route: { status: 'unknown' },
+            state: 'configured_inactive',
+            configuredListenerClasses: ['loopback_http', 'tailscale_serve_https'],
+            activeListenerClasses: [],
+            inactiveListenerClasses: ['loopback_http', 'tailscale_serve_https'],
+            unavailableListenerClasses: [],
+        });
+        expect(hook.getCurrent().available).toBe(true);
+    });
+
     it('uses the preferred server scoped machine daemon state instead of the active global machine record', async () => {
         state.session = { active: true } as any;
         state.machineReachability = { machineRpcTargetAvailable: true } as any;
@@ -212,6 +285,71 @@ describe('useSessionFileTransferAvailabilityResolver', () => {
                 },
             },
         } as any;
+        state.cachedMachineRpcDirectRoute = { status: 'unknown' as const } as any;
+        state.serverSnapshot = {
+            status: 'ready' as const,
+            features: {
+                features: {
+                    machines: {
+                        enabled: true,
+                        transfer: {
+                            enabled: true,
+                            directPeer: {
+                                enabled: true,
+                            },
+                            serverRouted: {
+                                enabled: false,
+                            },
+                        },
+                    },
+                },
+                capabilities: {},
+            },
+        } as any;
+
+        const { useSessionFileTransferAvailabilityResolver } = await import('./useSessionFileTransferAvailability');
+        const hook = await renderHook(() => useSessionFileTransferAvailabilityResolver('s1'));
+
+        expect(hook.getCurrent()(64)).toBe(true);
+    });
+
+    it('falls back to the active global machine daemon state when the preferred server scoped machine record is not loaded yet', async () => {
+        state.session = { active: true } as any;
+        state.machineReachability = { machineRpcTargetAvailable: true } as any;
+        state.machineTarget = { machineId: 'machine-1', basePath: '/repo' } as any;
+        state.machine = {
+            daemonState: {
+                transfer: {
+                    supported: {
+                        import: true,
+                        export: true,
+                    },
+                    listenerClasses: {
+                        loopback_http: {
+                            enabled: true,
+                            configured: true,
+                            active: true,
+                        },
+                        lan_http: {
+                            enabled: false,
+                            configured: false,
+                            active: false,
+                        },
+                        tailscale_serve_https: {
+                            enabled: false,
+                            configured: false,
+                            active: false,
+                            available: false,
+                        },
+                    },
+                    lifecycle: {
+                        mode: 'lazy_idle_shutdown',
+                        version: 1,
+                    },
+                },
+            },
+        } as any;
+        state.serverScopedMachine = null as any;
         state.cachedMachineRpcDirectRoute = { status: 'unknown' as const } as any;
         state.serverSnapshot = {
             status: 'ready' as const,

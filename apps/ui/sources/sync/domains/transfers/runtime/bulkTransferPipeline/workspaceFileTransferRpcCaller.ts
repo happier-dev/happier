@@ -9,10 +9,11 @@ import {
     finalizeDirectImportSession,
     prepareDirectImportSession,
     sendDirectImportChunk,
+    type DirectTransferImportFinalizeResponse,
     type DirectTransferImportOpenRequest,
     type PreparedDirectImportSession,
 } from './directTransferImportClient';
-import { resolvePreferScopedForBulkMachineTransfer } from './resolvePreferScopedForBulkMachineTransfer';
+import { resolvePreferScopedMachineRpc } from '../transferSubstrate/resolvePreferScopedMachineRpc';
 
 type WorkspaceFileTransferRpcCallParams<TRequest> = Readonly<{
     request: TRequest;
@@ -148,7 +149,7 @@ export function createWorkspaceFileTransferRpcCaller(params: Readonly<{
     let preferScopedPromise: Promise<boolean> | null = null;
 
     const getPreferScoped = async (): Promise<boolean> => {
-        preferScopedPromise ??= resolvePreferScopedForBulkMachineTransfer({
+        preferScopedPromise ??= resolvePreferScopedMachineRpc({
             machineId: params.machineId,
             serverId: params.serverId,
             timeoutMs: 500,
@@ -203,15 +204,19 @@ export function createWorkspaceFileTransferRpcCaller(params: Readonly<{
                 if (callParams.machineMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE && isDirectImportFinalizeRequest(callParams.request)) {
                     const directSession = directImportSessions.get(callParams.request.uploadId);
                     if (directSession) {
-                        const finalizeResponse = await finalizeDirectImportSession(directSession.baseUrls[0] ?? '');
-                        const normalizedSuccess = normalizeDirectImportFinalizeSuccess(finalizeResponse);
-                        if ((finalizeResponse as { keepSession?: boolean }).keepSession !== true) {
-                            directImportSessions.delete(callParams.request.uploadId);
+                        let lastFinalizeResponse: DirectTransferImportFinalizeResponse | null = null;
+                        for (const baseUrl of directSession.baseUrls) {
+                            const finalizeResponse = await finalizeDirectImportSession(baseUrl);
+                            const normalizedSuccess = normalizeDirectImportFinalizeSuccess(finalizeResponse);
+                            if (normalizedSuccess !== null) {
+                                directImportSessions.delete(callParams.request.uploadId);
+                                return normalizedSuccess as unknown as TResponse;
+                            }
+                            lastFinalizeResponse = finalizeResponse;
                         }
-                        if (normalizedSuccess === null) {
-                            return finalizeResponse as unknown as TResponse;
+                        if (lastFinalizeResponse !== null) {
+                            return lastFinalizeResponse as unknown as TResponse;
                         }
-                        return normalizedSuccess as unknown as TResponse;
                     }
                 }
 

@@ -69,6 +69,9 @@ export async function downloadBulkJsonPayloadViaServerRelay<TPayload>(params: Re
     | Readonly<{ ok: false; error: string }>
 > {
     const recipientKeyPair = createTransferRecipientKeyPair();
+    const transferTimeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0
+        ? Math.max(1, Math.floor(params.timeoutMs))
+        : null;
     const init = await params.init({
         recipientPublicKeyBase64: recipientKeyPair.recipientPublicKeyBase64,
     });
@@ -118,13 +121,33 @@ export async function downloadBulkJsonPayloadViaServerRelay<TPayload>(params: Re
         let settled = false;
         let unsubscribe: (() => void) | null = null;
         let signalCleanup: (() => void) | null = null;
+        let transferTimeoutId: ReturnType<typeof setTimeout> | null = null;
         let envelopeQueue = Promise.resolve();
+
+        const clearTransferTimeout = () => {
+            if (transferTimeoutId === null) {
+                return;
+            }
+            clearTimeout(transferTimeoutId);
+            transferTimeoutId = null;
+        };
+
+        const armTransferTimeout = () => {
+            clearTransferTimeout();
+            if (transferTimeoutMs === null) {
+                return;
+            }
+            transferTimeoutId = setTimeout(() => {
+                void resolveError('Server relay transfer timed out', true);
+            }, transferTimeoutMs);
+        };
 
         const cleanup = () => {
             if (settled) {
                 return;
             }
             settled = true;
+            clearTransferTimeout();
             unsubscribe?.();
             signalCleanup?.();
             relaySocket.disconnect();
@@ -159,6 +182,8 @@ export async function downloadBulkJsonPayloadViaServerRelay<TPayload>(params: Re
                 ) {
                     return;
                 }
+
+                armTransferTimeout();
 
                 if (payload.envelope.kind === 'abort') {
                     await resolveError(payload.envelope.reason);
@@ -268,5 +293,6 @@ export async function downloadBulkJsonPayloadViaServerRelay<TPayload>(params: Re
                 recipientPublicKeyBase64: recipientKeyPair.recipientPublicKeyBase64,
             },
         });
+        armTransferTimeout();
     });
 }

@@ -61,7 +61,7 @@ vi.mock('@/voice/context/voiceHooks', () => ({
     },
 }));
 
-const emitWithAckMock = vi.hoisted(() => vi.fn(async () => ({
+const emitWithAckMock = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({
     result: 'success',
     version: 2,
     metadata: JSON.stringify({
@@ -103,6 +103,43 @@ function createPlainSession(params: { sessionId: string }): Session {
             path: '',
             host: '',
             readStateV1: { v: 1, sessionSeq: 0, pendingActivityAt: 0, updatedAt: 0 },
+        } as any,
+        metadataVersion: 1,
+        agentState: null,
+        agentStateVersion: 1,
+        thinking: false,
+        thinkingAt: 0,
+        presence: 'online',
+        optimisticThinkingAt: null,
+    };
+}
+
+function createDirectSessionWithObservedAttention(params: { sessionId: string }): Session {
+    const now = Date.now();
+    return {
+        id: params.sessionId,
+        seq: 0,
+        encryptionMode: 'plain',
+        createdAt: now,
+        updatedAt: now,
+        active: true,
+        activeAt: now,
+        metadata: {
+            path: '',
+            host: '',
+            directSessionV1: {
+                v: 1,
+                providerId: 'codex',
+                machineId: 'machine-1',
+                remoteSessionId: 'vendor-session-1',
+                source: { kind: 'codexHome', home: 'user' },
+                followPolicyV1: { v: 1, policy: 'background_follow' },
+            },
+            directSessionAttentionV1: {
+                v: 1,
+                observedProgressToken: '2:direct-msg-2',
+                observedAtMs: 2,
+            },
         } as any,
         metadataVersion: 1,
         agentState: null,
@@ -159,6 +196,57 @@ describe('sync.markSessionViewed (authoritative read cursor)', () => {
         expect(updateReadCursorCall?.[1]).toEqual({
             sid: sessionId,
             lastViewedSessionSeq: 3,
+        });
+    });
+
+    it('marks the latest observed direct-session progress as viewed without persisting transcript bodies', async () => {
+        const sessionId = 's_direct_attention_1';
+        storage.getState().applySessions([createDirectSessionWithObservedAttention({ sessionId })]);
+        emitWithAckMock.mockImplementation(async (...args: unknown[]) => {
+            const [event, payload] = args;
+            if (event === 'update-metadata') {
+                const metadata = typeof payload === 'object' && payload !== null && typeof (payload as { metadata?: unknown }).metadata === 'string'
+                    ? (payload as { metadata: string }).metadata
+                    : '';
+                return {
+                    result: 'success',
+                    version: 2,
+                    metadata,
+                };
+            }
+            return {
+                result: 'success',
+                version: 1,
+                metadata: JSON.stringify({
+                    path: '',
+                    host: '',
+                }),
+            };
+        });
+
+        const { sync } = await import('./sync');
+
+        await sync.markSessionViewed(sessionId);
+
+        const updateMetadataCall = (emitWithAckMock.mock.calls as unknown[][])
+            .find(([event]) => event === 'update-metadata');
+        expect(updateMetadataCall).toBeDefined();
+        const metadataPayload = updateMetadataCall?.[1] as { metadata?: string } | undefined;
+        const encodedMetadata = typeof metadataPayload?.metadata === 'string' ? metadataPayload.metadata : '';
+        expect(encodedMetadata).toContain('"directSessionAttentionV1"');
+        expect(encodedMetadata).toContain('"observedProgressToken":"2:direct-msg-2"');
+        expect(encodedMetadata).toContain('"viewedProgressToken":"2:direct-msg-2"');
+
+        expect((storage.getState().sessions[sessionId]?.metadata as any)?.directSessionV1?.followPolicyV1).toEqual({
+            v: 1,
+            policy: 'background_follow',
+        });
+        expect((storage.getState().sessions[sessionId]?.metadata as any)?.directSessionAttentionV1).toEqual({
+            v: 1,
+            observedProgressToken: '2:direct-msg-2',
+            viewedProgressToken: '2:direct-msg-2',
+            observedAtMs: 2,
+            viewedAtMs: 2,
         });
     });
 });

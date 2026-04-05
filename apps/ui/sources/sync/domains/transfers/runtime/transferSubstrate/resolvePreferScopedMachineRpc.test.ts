@@ -6,7 +6,7 @@ vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
     getReadyServerFeatures: (params: unknown) => getReadyServerFeaturesMock(params),
 }));
 
-describe('resolvePreferScopedForBulkMachineTransfer', () => {
+describe('resolvePreferScopedMachineRpc', () => {
     beforeEach(() => {
         vi.resetModules();
         getReadyServerFeaturesMock.mockReset();
@@ -15,8 +15,8 @@ describe('resolvePreferScopedForBulkMachineTransfer', () => {
     it('fails closed (preferScoped=true) when server feature evaluation throws', async () => {
         getReadyServerFeaturesMock.mockRejectedValueOnce(new Error('boom'));
 
-        const { resolvePreferScopedForBulkMachineTransfer } = await import('./resolvePreferScopedForBulkMachineTransfer');
+        const { resolvePreferScopedMachineRpc } = await import('./resolvePreferScopedMachineRpc');
 
-        await expect(resolvePreferScopedForBulkMachineTransfer({ machineId: 'm1', serverId: 'server-1' })).resolves.toBe(true);
+        await expect(resolvePreferScopedMachineRpc({ machineId: 'm1', serverId: 'server-1' })).resolves.toBe(true);
     });
 });

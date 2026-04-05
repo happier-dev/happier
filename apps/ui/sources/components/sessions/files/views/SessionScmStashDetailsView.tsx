@@ -29,7 +29,6 @@ export const SessionScmStashDetailsView = React.memo((props: SessionScmStashDeta
             adapter={adapter}
             scopeResetKey={`session:${props.sessionId}`}
             onAfterMutation={handleAfterMutation}
-            stashPillTestIdPrefix="scm-stash-pill"
             restoreButtonTestId="scm-stash-restore-button"
             discardButtonTestId="scm-stash-discard-button"
             rootTestId="scm-stash-details-root"

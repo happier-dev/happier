@@ -1,5 +1,5 @@
 import { readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
@@ -38,8 +38,6 @@ describe('transferSubstrate (public API)', () => {
             'callDaemonWorkspaceWriteFileRpc',
             'deleteDaemonPromptAsset',
             'discoverDaemonPromptAssets',
-            'downloadBulkJsonPayload',
-            'downloadBulkPayloadToFile',
             'downloadDaemonPromptAsset',
             'downloadDaemonPromptRegistryItem',
             'downloadDaemonWorkspaceFileToBase64',
@@ -52,9 +50,6 @@ describe('transferSubstrate (public API)', () => {
             'resolveTransferAvailability',
             'resolveTransferRouteDecision',
             'scanDaemonPromptRegistrySource',
-            'shouldPreferScopedMachineRpcForBulkTransfer',
-            'uploadBulkJsonPayload',
-            'uploadBulkPayloadFromFile',
             'uploadDaemonPromptAsset',
             'uploadDaemonSessionAttachmentFromReader',
             'uploadDaemonWorkspaceFileFromReader',
@@ -78,6 +73,36 @@ describe('transferSubstrate (public API)', () => {
 
             const source = await readFile(filePath, 'utf8');
             assertDoesNotImportModule(source, 'bulkTransferPipeline', filePath);
+            assertDoesNotImportModule(source, 'transferSubstrate/downloadJsonPayloadWithCarrierFallbacks', filePath);
+            assertDoesNotImportModule(source, 'transferSubstrate/createBufferedTransferDestination', filePath);
+            assertDoesNotImportModule(source, 'transferSubstrate/createJsonMachineRpcCarrierDownloads', filePath);
         }
+    });
+
+    it('limits the remaining bulkTransferPipeline bridge-state imports to the known holdover files', async () => {
+        const transferSubstratePath = fileURLToPath(new URL('./', import.meta.url));
+        const files = (await listFilesRecursively(transferSubstratePath)).filter((filePath) =>
+            (filePath.endsWith('.ts') || filePath.endsWith('.tsx'))
+            && !filePath.endsWith('.test.ts')
+            && !filePath.endsWith('.spec.ts')
+            && !filePath.endsWith('.test.tsx')
+            && !filePath.endsWith('.spec.tsx'),
+        );
+
+        const bridgeStateFiles: string[] = [];
+        for (const filePath of files) {
+            const source = await readFile(filePath, 'utf8');
+            if (!source.includes('bulkTransferPipeline')) {
+                continue;
+            }
+            bridgeStateFiles.push(relative(transferSubstratePath, filePath));
+        }
+
+        expect(bridgeStateFiles.sort()).toEqual([
+            'promptAssetTransfers.ts',
+            'promptRegistryTransfers.ts',
+            'sessionAttachmentTransfers.ts',
+            'workspaceFileTransfers.ts',
+        ]);
     });
 });

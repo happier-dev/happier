@@ -71,7 +71,7 @@ describe('daemonWorkspaceFiles direct export', () => {
             sizeBytes: 5,
         });
 
-        const { downloadDaemonWorkspaceFileToDestination } = await import('./daemonWorkspaceFiles');
+        const { downloadDaemonWorkspaceFileToDestination } = await import('../transferSubstrate/workspaceFileTransfers');
         const result = await downloadDaemonWorkspaceFileToDestination({
             machineId: 'machine-1',
             serverId: 'server-a',
@@ -144,7 +144,7 @@ describe('daemonWorkspaceFiles direct export', () => {
             return { ok: true as const, name: 'hello.txt', sizeBytes: 3 };
         });
 
-        const { downloadDaemonWorkspaceFileToBase64 } = await import('./daemonWorkspaceFiles');
+        const { downloadDaemonWorkspaceFileToBase64 } = await import('../transferSubstrate/workspaceFileTransfers');
         const result = await downloadDaemonWorkspaceFileToBase64({
             machineId: 'machine-1',
             serverId: 'server-a',
@@ -221,7 +221,7 @@ describe('daemonWorkspaceFiles direct export', () => {
             return { ok: true as const, name: init.name, sizeBytes: init.sizeBytes };
         });
 
-        const { downloadDaemonWorkspaceFileToDestination } = await import('./daemonWorkspaceFiles');
+        const { downloadDaemonWorkspaceFileToDestination } = await import('../transferSubstrate/workspaceFileTransfers');
         const result = await downloadDaemonWorkspaceFileToDestination({
             machineId: 'machine-1',
             serverId: 'server-a',

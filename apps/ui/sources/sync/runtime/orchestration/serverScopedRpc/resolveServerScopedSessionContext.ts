@@ -4,10 +4,7 @@ import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 
 import type { ScopedRpcSessionEncryptionContext } from './serverScopedRpcTypes';
-
-function normalizeId(raw: unknown): string {
-  return String(raw ?? '').trim();
-}
+import { normalizeServerId } from './normalizeServerId';
 
 export type ResolvedServerSessionRpcContext =
   | Readonly<{ scope: 'active'; timeoutMs: number }>
@@ -46,14 +43,14 @@ export async function resolveServerScopedSessionContext(params: Readonly<{
   timeoutMs?: number;
   preferScoped?: boolean;
 }>): Promise<ResolvedServerSessionRpcContext> {
-  const targetServerId = normalizeId(params.serverId);
+  const targetServerId = normalizeServerId(params.serverId);
   const timeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? params.timeoutMs : 30_000;
   const activeSnapshot = getActiveServerSnapshot();
 
-  if (!targetServerId || targetServerId === normalizeId(activeSnapshot.serverId)) {
+  if (!targetServerId || targetServerId === normalizeServerId(activeSnapshot.serverId)) {
     if (params.preferScoped === true) {
       return await buildScopedContext({
-        serverId: normalizeId(activeSnapshot.serverId),
+        serverId: normalizeServerId(activeSnapshot.serverId) ?? '',
         serverUrl: activeSnapshot.serverUrl,
         timeoutMs,
       });
@@ -62,7 +59,7 @@ export async function resolveServerScopedSessionContext(params: Readonly<{
   }
 
   const profiles = listServerProfiles();
-  const targetProfile = profiles.find((profile) => normalizeId(profile.id) === targetServerId) ?? null;
+  const targetProfile = profiles.find((profile) => normalizeServerId(profile.id) === targetServerId) ?? null;
   if (!targetProfile) {
     throw new Error(`Target server profile not found for serverId "${targetServerId}"`);
   }

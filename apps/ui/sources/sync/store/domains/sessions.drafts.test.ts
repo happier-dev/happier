@@ -25,19 +25,19 @@ import { clearPersistence, loadSessionDrafts } from '@/sync/domains/state/persis
 function createHarness() {
   let state: any = {
     sessions: {},
-    sessionsData: null,
     sessionListViewData: null,
     sessionListViewDataByServerId: {},
     sessionScmStatus: {},
     sessionLastViewed: {},
-    sessionRepositoryTreeExpandedPathsBySessionId: {},
-    reviewCommentsDraftsBySessionId: {},
-    actionDraftsBySessionId: {},
-    isDataReady: false,
-    machines: {},
-    sessionMessages: {},
-    settings: { groupInactiveSessionsByProject: false },
-  };
+        sessionRepositoryTreeExpandedPathsBySessionId: {},
+        reviewCommentsDraftsBySessionId: {},
+        actionDraftsBySessionId: {},
+        isDataReady: false,
+        machines: {},
+        machineDisplayById: {},
+        sessionMessages: {},
+        settings: { groupInactiveSessionsByProject: false },
+    };
 
   const get = () => state;
   const set = (updater: any) => {

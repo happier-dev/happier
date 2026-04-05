@@ -20,8 +20,8 @@ vi.mock('./downloadBulkJsonPayloadViaServerRelay', () => ({
     downloadBulkJsonPayloadViaServerRelay: (...args: unknown[]) => relayJsonDownloadMock(...args),
 }));
 
-vi.mock('./resolvePreferScopedForBulkMachineTransfer', () => ({
-    resolvePreferScopedForBulkMachineTransfer: async () => true,
+vi.mock('../transferSubstrate/resolvePreferScopedMachineRpc', () => ({
+    resolvePreferScopedMachineRpc: async () => true,
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
@@ -53,7 +53,7 @@ describe('daemonPromptRegistries download', () => {
             payload,
         });
 
-        const { downloadDaemonPromptRegistryItem } = await import('./daemonPromptRegistries');
+        const { downloadDaemonPromptRegistryItem } = await import('../transferSubstrate/promptRegistryTransfers');
         const result = await downloadDaemonPromptRegistryItem(
             'machine-1',
             {

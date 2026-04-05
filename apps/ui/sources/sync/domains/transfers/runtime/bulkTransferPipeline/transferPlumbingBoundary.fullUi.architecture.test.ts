@@ -47,7 +47,7 @@ describe('bulkTransferPipeline (architecture)', () => {
         );
 
         for (const filePath of files) {
-            if (filePath.includes('/bulkTransferPipeline/')) {
+            if (filePath.includes('/bulkTransferPipeline/') || filePath.includes('/transferSubstrate/')) {
                 continue;
             }
             const source = await readFile(filePath, 'utf8');
@@ -56,6 +56,9 @@ describe('bulkTransferPipeline (architecture)', () => {
             assertDoesNotImportModule(source, 'transferChunkEncryption', filePath);
             assertDoesNotImportModule(source, 'sessionFileTransferRpcCaller', filePath);
             assertDoesNotImportModule(source, 'mergeTransferChunks', filePath);
+            assertDoesNotImportModule(source, 'bulkTransferPipeline/createBufferedTransferDestination', filePath);
+            assertDoesNotImportModule(source, 'bulkTransferPipeline/downloadJsonPayloadWithCarrierFallbacks', filePath);
+            assertDoesNotImportModule(source, 'bulkTransferPipeline/downloadJsonPayloadViaMachineTransferCarriers', filePath);
             // Prevent bypass via importing other low-level transfer plumbing that is not part of
             // the feature-facing pipeline (for example local upload readers).
             assertDoesNotImportModule(source, 'sync/domains/files/transfers', filePath);
@@ -63,6 +66,8 @@ describe('bulkTransferPipeline (architecture)', () => {
             assertDoesNotImportModule(source, 'downloadBulkPayloadToFile', filePath);
             assertDoesNotImportModule(source, 'uploadBulkJsonPayload', filePath);
             assertDoesNotImportModule(source, 'downloadBulkJsonPayload', filePath);
+            assertDoesNotImportModule(source, 'workspaceFileTransferRpcCaller', filePath);
+            assertDoesNotImportModule(source, 'bulkTransferPipeline/daemonWorkspaceFiles', filePath);
             assertDoesNotImportModule(source, 'bulkTransferPipeline/daemonSessionFiles', filePath);
             assertDoesNotImportModule(source, 'bulkTransferPipeline/daemonSessionAttachments', filePath);
             assertDoesNotImportModule(source, 'bulkTransferPipeline/daemonPromptAssets', filePath);
@@ -70,7 +75,8 @@ describe('bulkTransferPipeline (architecture)', () => {
             // Prevent bypass via direct base64 file writes. These must remain behind the
             // centralized policy/fallback choke point (and/or the bulk transfer pipeline).
             const allowsGuardedWriteFileTokens =
-                filePath.endsWith('/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc.ts');
+                filePath.endsWith('/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc.ts')
+                || filePath.endsWith('/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpcPolicy.ts');
             if (!allowsGuardedWriteFileTokens) {
                 assertDoesNotContainToken(source, 'RPC_METHODS.WRITE_FILE', filePath);
                 // Prevent bypass via raw method strings (no chunk-loop reimplementation outside the pipeline).

@@ -1,15 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createEncryptedTransferChunkEnvelope } from './transferChunkEncryption';
+import { downloadBulkJsonPayload } from './downloadBulkJsonPayload';
+import { downloadBulkPayloadToFile } from './downloadBulkPayloadToFile';
+import { uploadBulkJsonPayload } from './uploadBulkJsonPayload';
+import { uploadBulkPayloadFromFile } from './uploadBulkPayloadFromFile';
 
-import {
-    downloadBulkJsonPayload,
-    downloadBulkPayloadToFile,
-    uploadBulkJsonPayload,
-    uploadBulkPayloadFromFile,
-} from './index';
-
-describe('bulkTransferPipeline', () => {
+describe('bulk transfer low-level helpers', () => {
     it('uploads a file-backed payload and closes the reader after finalizing', async () => {
         const close = vi.fn(async () => {});
         const readBytes = vi.fn(async (offset: number, length: number) =>

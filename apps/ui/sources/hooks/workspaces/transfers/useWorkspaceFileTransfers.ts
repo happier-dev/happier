@@ -314,8 +314,10 @@ export function useWorkspaceFileTransfers(params: Readonly<{
 
     const uploadAbortRef = React.useRef<AbortController | null>(null);
     const downloadAbortRef = React.useRef<AbortController | null>(null);
+    const uploadAbortReasonRef = React.useRef<'user' | 'error' | null>(null);
 
     const cancelUploads = React.useCallback(() => {
+        uploadAbortReasonRef.current = 'user';
         uploadAbortRef.current?.abort();
     }, []);
 
@@ -330,6 +332,8 @@ export function useWorkspaceFileTransfers(params: Readonly<{
 
         const controller = new AbortController();
         uploadAbortRef.current = controller;
+        uploadAbortReasonRef.current = null;
+        let uploadFailureError: string | null = null;
 
         try {
             setUploadState({
@@ -387,37 +391,71 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                     const task = tasks[index];
                     if (!task) return;
 
-                    const source = await openWorkspaceUploadSourceReader(task.entry);
-                    let lastUploaded = 0;
-                    const result = await uploadDaemonWorkspaceFileFromReader({
-                        machineId: scope.machineId,
-                        serverId: scope.serverId,
-                        rootPath: scope.rootPath,
-                        fileReader: source,
-                        request: {
-                            path: task.targetPath,
-                            sizeBytes: task.sizeBytes,
-                            overwrite: task.overwrite,
-                        },
-                        onProgress: (progress) => {
-                            const delta = progress.uploadedBytes - lastUploaded;
-                            lastUploaded = progress.uploadedBytes;
-                            if (delta <= 0) return;
-                            setUploadState((prev) => {
-                                if (prev.status !== 'uploading') return prev;
-                                return {
-                                    ...prev,
-                                    uploadedBytes: prev.uploadedBytes + delta,
-                                };
-                            });
-                        },
-                        signal: controller.signal,
-                    });
+                    let source: Awaited<ReturnType<typeof openWorkspaceUploadSourceReader>> | null = null;
+                    let sourceClosed = false;
+                    const closeSourceOnce = async () => {
+                        if (!source || sourceClosed) {
+                            return;
+                        }
+                        sourceClosed = true;
+                        await source.close();
+                    };
+                    try {
+                        source = await openWorkspaceUploadSourceReader(task.entry);
+                        const fileReader = {
+                            ...source,
+                            close: async () => await closeSourceOnce(),
+                        };
+                        let lastUploaded = 0;
+                        const result = await uploadDaemonWorkspaceFileFromReader({
+                            machineId: scope.machineId,
+                            serverId: scope.serverId,
+                            rootPath: scope.rootPath,
+                            fileReader,
+                            request: {
+                                path: task.targetPath,
+                                sizeBytes: task.sizeBytes,
+                                overwrite: task.overwrite,
+                            },
+                            onProgress: (progress) => {
+                                const delta = progress.uploadedBytes - lastUploaded;
+                                lastUploaded = progress.uploadedBytes;
+                                if (delta <= 0) return;
+                                setUploadState((prev) => {
+                                    if (prev.status !== 'uploading') return prev;
+                                    return {
+                                        ...prev,
+                                        uploadedBytes: prev.uploadedBytes + delta,
+                                    };
+                                });
+                            },
+                            signal: controller.signal,
+                        });
 
-                    if (result.success !== true) {
+                        if (result.success !== true) {
+                            uploadFailureError = result.error;
+                            if (uploadAbortReasonRef.current !== 'user') {
+                                uploadAbortReasonRef.current = 'error';
+                            }
+                            cancelOnce();
+                            setUploadState({ status: 'error', error: result.error });
+                            return;
+                        }
+                    } catch (error) {
+                        const errorMessage = error instanceof Error ? error.message : 'Upload failed';
+                        uploadFailureError = errorMessage;
+                        if (uploadAbortReasonRef.current !== 'user') {
+                            uploadAbortReasonRef.current = 'error';
+                        }
                         cancelOnce();
-                        setUploadState(controller.signal.aborted ? { status: 'canceled' } : { status: 'error', error: result.error });
+                        setUploadState({ status: 'error', error: errorMessage });
                         return;
+                    } finally {
+                        try {
+                            await closeSourceOnce();
+                        } catch {
+                            // ignore close failures so the batch can continue reporting the original error.
+                        }
                     }
 
                     setUploadState((prev) => {
@@ -432,8 +470,19 @@ export function useWorkspaceFileTransfers(params: Readonly<{
 
             await Promise.all(workers);
 
-            if (controller.signal.aborted) {
+            if (uploadAbortReasonRef.current === 'user') {
                 setUploadState({ status: 'canceled' });
+                return { ok: false, error: 'Upload canceled' };
+            }
+
+            if (uploadAbortReasonRef.current === 'error') {
+                const error = uploadFailureError ?? 'Upload failed';
+                setUploadState({ status: 'error', error });
+                return { ok: false, error };
+            }
+
+            if (controller.signal.aborted) {
+                setUploadState({ status: 'error', error: 'Upload canceled' });
                 return { ok: false, error: 'Upload canceled' };
             }
 
@@ -442,6 +491,7 @@ export function useWorkspaceFileTransfers(params: Readonly<{
             return { ok: true };
         } finally {
             uploadAbortRef.current = null;
+            uploadAbortReasonRef.current = null;
         }
     }, [params]);
 
@@ -454,6 +504,14 @@ export function useWorkspaceFileTransfers(params: Readonly<{
         downloadAbortRef.current = controller;
 
         const nativeSinkRef: { current: NativeDownloadSink | null } = { current: null };
+        let nativeSinkCleaned = false;
+        const cleanupNativeSinkOnce = async () => {
+            if (Platform.OS === 'web' || !nativeSinkRef.current || nativeSinkCleaned) {
+                return;
+            }
+            nativeSinkCleaned = true;
+            await nativeSinkRef.current.cleanup();
+        };
         const downloadedChunks: Uint8Array[] = [];
         let webBufferedBytes = 0;
         let webExceededLimit = false;
@@ -471,89 +529,95 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                 return { ok: false, error: 'Workspace scope not available' };
             }
 
-            const res = await downloadDaemonWorkspaceFileToDestination({
-                machineId: scope.machineId,
-                serverId: scope.serverId,
-                rootPath: scope.rootPath,
-                request: input,
-                destination: {
-                    writeBytes: async (bytes) => {
-                        if (Platform.OS === 'web') {
-                            if (webExceededLimit) {
+            let res: Awaited<ReturnType<typeof downloadDaemonWorkspaceFileToDestination>> | null = null;
+            try {
+                res = await downloadDaemonWorkspaceFileToDestination({
+                    machineId: scope.machineId,
+                    serverId: scope.serverId,
+                    rootPath: scope.rootPath,
+                    request: input,
+                    destination: {
+                        writeBytes: async (bytes) => {
+                            if (Platform.OS === 'web') {
+                                if (webExceededLimit) {
+                                    return;
+                                }
+
+                                webBufferedBytes += bytes.byteLength;
+                                if (webBufferedBytes > webDownloadMaxBytes) {
+                                    webExceededLimit = true;
+                                    // Stop the transfer as early as possible without throwing through the pipeline.
+                                    try {
+                                        controller.abort();
+                                    } catch {}
+
+                                    webBufferedBytes = 0;
+                                    downloadedChunks.length = 0;
+                                    return;
+                                }
+
+                                downloadedChunks.push(new Uint8Array(bytes));
                                 return;
                             }
 
-                            webBufferedBytes += bytes.byteLength;
-                            if (webBufferedBytes > webDownloadMaxBytes) {
-                                webExceededLimit = true;
-                                // Stop the transfer as early as possible without throwing through the pipeline.
-                                try {
-                                    controller.abort();
-                                } catch {}
-
+                            if (!nativeSinkRef.current) {
+                                throw new Error('Download sink unavailable');
+                            }
+                            await nativeSinkRef.current.writeBytes(bytes);
+                        },
+                        close: async () => {
+                            if (Platform.OS !== 'web' && nativeSinkRef.current) {
+                                await nativeSinkRef.current.close();
+                            }
+                        },
+                        cleanup: async () => {
+                            if (Platform.OS === 'web') {
                                 webBufferedBytes = 0;
                                 downloadedChunks.length = 0;
                                 return;
                             }
 
-                            downloadedChunks.push(new Uint8Array(bytes));
-                            return;
-                        }
+                            await cleanupNativeSinkOnce();
+                        },
+                    },
+                    onInit: async (init) => {
+                        setDownloadState({
+                            status: 'downloading',
+                            name: init.name,
+                            downloadedBytes: 0,
+                            totalBytes: init.sizeBytes,
+                        });
 
-                        if (!nativeSinkRef.current) {
-                            throw new Error('Download sink unavailable');
-                        }
-                        await nativeSinkRef.current.writeBytes(bytes);
-                    },
-                    close: async () => {
-                        if (Platform.OS !== 'web' && nativeSinkRef.current) {
-                            await nativeSinkRef.current.close();
-                        }
-                    },
-                    cleanup: async () => {
                         if (Platform.OS === 'web') {
+                            if (init.sizeBytes > webDownloadMaxBytes) {
+                                return {
+                                    success: false,
+                                    error: 'File exceeds the web download size limit',
+                                };
+                            }
                             webBufferedBytes = 0;
-                            downloadedChunks.length = 0;
+                            webExceededLimit = false;
                             return;
                         }
 
-                        if (nativeSinkRef.current) {
-                            await nativeSinkRef.current.cleanup();
-                        }
-                    },
-                },
-                onInit: async (init) => {
-                    setDownloadState({
-                        status: 'downloading',
-                        name: init.name,
-                        downloadedBytes: 0,
-                        totalBytes: init.sizeBytes,
-                    });
-
-                    if (Platform.OS === 'web') {
-                        if (init.sizeBytes > webDownloadMaxBytes) {
+                        const sink = await createNativeDownloadSink({ name: init.name || 'download' });
+                        if (!sink.ok) {
                             return {
                                 success: false,
-                                error: 'File exceeds the web download size limit',
+                                error: sink.error,
                             };
                         }
-                        webBufferedBytes = 0;
-                        webExceededLimit = false;
-                        return;
-                    }
-
-                    const sink = await createNativeDownloadSink({ name: init.name || 'download' });
-                    if (!sink.ok) {
-                        return {
-                            success: false,
-                            error: sink.error,
-                        };
-                    }
-                    nativeSinkRef.current = sink;
-                },
-                signal: controller.signal,
-                onProgress: updateProgress,
-            });
+                        nativeSinkRef.current = sink;
+                    },
+                    signal: controller.signal,
+                    onProgress: updateProgress,
+                });
+            } catch (error) {
+                await cleanupNativeSinkOnce();
+                const message = error instanceof Error ? error.message : 'Download failed';
+                setDownloadState(controller.signal.aborted ? { status: 'canceled' } : { status: 'error', error: message });
+                return { ok: false, error: message };
+            }
 
             if (Platform.OS === 'web' && webExceededLimit) {
                 setDownloadState({ status: 'error', error: 'File exceeds the web download size limit' });
@@ -561,6 +625,7 @@ export function useWorkspaceFileTransfers(params: Readonly<{
             }
 
             if (!res.ok) {
+                await cleanupNativeSinkOnce();
                 setDownloadState(controller.signal.aborted ? { status: 'canceled' } : { status: 'error', error: res.error });
                 return { ok: false, error: res.error };
             }
@@ -574,7 +639,15 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                     anchor.href = url;
                     anchor.download = res.name || 'download';
                     anchor.rel = 'noopener noreferrer';
+                    try { anchor.style.display = 'none'; } catch {}
+                    try { document.body?.appendChild(anchor); } catch {}
                     anchor.click();
+
+                    // Defer DOM cleanup to the next task so browser download observers still see
+                    // the synthetic anchor click as a real download navigation.
+                    setTimeout(() => {
+                        try { anchor.remove(); } catch { }
+                    }, 0);
                 } finally {
                     setTimeout(() => {
                         try { URL.revokeObjectURL(url); } catch { }
@@ -598,9 +671,7 @@ export function useWorkspaceFileTransfers(params: Readonly<{
             }
 
             if (controller.signal.aborted) {
-                if (nativeSinkRef.current) {
-                    await nativeSinkRef.current.cleanup();
-                }
+                await cleanupNativeSinkOnce();
                 setDownloadState({ status: 'canceled' });
                 return { ok: false, error: 'Download canceled' };
             }

@@ -64,7 +64,7 @@ import { RevenueCat } from './domains/purchases';
 import { trackPaywallPresented, trackPaywallPurchased, trackPaywallCancelled, trackPaywallRestored, trackPaywallError } from '@/track';
 import { getActiveServerSnapshot } from './domains/server/serverRuntime';
 import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
-import { setActiveServerSessionListCache } from './store/sessionListCache';
+import { clearServerSessionListCache } from './store/sessionListCache';
 import { config } from '@/config';
 import { log } from '@/log';
 import { scmStatusSync } from '@/scm/scmStatusSync';
@@ -75,6 +75,7 @@ import { notifyActivityReady } from '@/activity/notifications/runtime/activityLo
 import { Message } from './domains/messages/messageTypes';
 import { EncryptionCache } from './encryption/encryptionCache';
 import { nowServerMs } from './runtime/time';
+import { listSessionListCachedActiveSessionIds } from './domains/session/listing/sessionListCacheState';
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { computeNextReadStateV1 } from './domains/state/readStateV1';
 import { updateSessionMetadataWithRetry as updateSessionMetadataWithRetryRpc, type UpdateMetadataAck } from './domains/session/metadata/updateSessionMetadataWithRetry';
@@ -122,6 +123,11 @@ import { runTasksWithLimit } from '@/sync/runtime/orchestration/runTasksWithLimi
 import { decideMessageCatchUpPolicy } from '@/sync/runtime/orchestration/messageCatchUpPolicy';
 import { applyMessageCatchUpDecision } from '@/sync/runtime/orchestration/applyMessageCatchUpDecision';
 import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
+import {
+    deriveDirectSessionObservedProgress,
+    updateMetadataWithObservedDirectSessionProgress,
+    updateMetadataWithViewedDirectSessionProgress,
+} from '@/sync/domains/session/directSessions/directSessionAttentionMetadata';
 import { normalizeDirectTranscriptMessages } from '@/sync/runtime/directSessions/normalizeDirectTranscriptMessages';
 import { readStoredSessionRawRecord } from '@/sync/runtime/readStoredSessionContent';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
@@ -161,6 +167,7 @@ import { publishAcpConfigOptionOverrideToMetadata as publishAcpConfigOptionOverr
 import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { isRpcMethodNotAvailableError } from '@/sync/runtime/rpcErrors';
 import { MessageAckResponseSchema, type MessageAckResponse } from '@happier-dev/protocol/updates';
+import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { serverFetch } from './http/client';
 import {
@@ -670,12 +677,27 @@ class Sync {
             profile: { ...profileDefaults },
             sessions: {},
             sessionListRenderables: {},
-            sessionsData: null,
             sessionListViewData: null,
-            sessionListViewDataByServerId: setActiveServerSessionListCache(
+            sessionListViewDataByServerId: clearServerSessionListCache(
                 state.sessionListViewDataByServerId,
-                null,
+                getActiveServerSnapshot().serverId,
             ),
+            machineListByServerId: (() => {
+                const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+                if (!activeServerId) return state.machineListByServerId;
+                if (!(activeServerId in state.machineListByServerId)) return state.machineListByServerId;
+                const next = { ...state.machineListByServerId };
+                delete next[activeServerId];
+                return next;
+            })(),
+            machineListStatusByServerId: (() => {
+                const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+                if (!activeServerId) return state.machineListStatusByServerId;
+                if (!(activeServerId in state.machineListStatusByServerId)) return state.machineListStatusByServerId;
+                const next = { ...state.machineListStatusByServerId };
+                delete next[activeServerId];
+                return next;
+            })(),
             sessionScmStatus: {},
             machines: {},
             machineDisplayById: {},
@@ -1508,6 +1530,20 @@ class Sync {
         });
     }
 
+    public applySessionMetadataLocally(
+        sessionId: string,
+        updater: (metadata: Metadata) => Metadata,
+    ): void {
+        const latestSession = storage.getState().sessions[sessionId] ?? null;
+        if (!latestSession?.metadata) return;
+        const nextMetadata = updater(latestSession.metadata);
+        if (nextMetadata === latestSession.metadata) return;
+        this.applySessions([{
+            ...latestSession,
+            metadata: nextMetadata,
+        }]);
+    }
+
     private repairInvalidReadStateV1 = async (params: { sessionId: string; sessionSeqUpperBound: number }): Promise<void> => {
         await repairInvalidReadStateV1Engine({
             sessionId: params.sessionId,
@@ -1535,6 +1571,15 @@ class Sync {
                 ? Math.max(0, Math.trunc(session.lastViewedSessionSeq))
                 : 0;
         const nextAuthoritativeSeq = Math.max(existingAuthoritativeSeq, sessionSeq);
+        const nextDirectAttentionMetadata =
+            session.metadata && readDirectSessionLink(session.metadata)
+                ? updateMetadataWithViewedDirectSessionProgress(session.metadata)
+                : session.metadata;
+        const shouldPublishDirectAttention = Boolean(
+            session.metadata
+            && nextDirectAttentionMetadata
+            && nextDirectAttentionMetadata !== session.metadata,
+        );
 
         const early = computeNextReadStateV1({
             prev: existing,
@@ -1544,7 +1589,7 @@ class Sync {
         });
 
         const shouldPublishReadCursor = nextAuthoritativeSeq > existingAuthoritativeSeq;
-        if (!needsRepair && !early.didChange && !shouldPublishReadCursor) return;
+        if (!needsRepair && !early.didChange && !shouldPublishReadCursor && !shouldPublishDirectAttention) return;
 
         if (shouldPublishReadCursor) {
             const result = await apiSocket.emitWithAck<{
@@ -1572,15 +1617,68 @@ class Sync {
         }
 
         await this.updateSessionMetadataWithRetry(sessionId, (metadata) => {
+            let nextMetadata = readDirectSessionLink(metadata)
+                ? updateMetadataWithViewedDirectSessionProgress(metadata)
+                : metadata;
             const result = computeNextReadStateV1({
-                prev: metadata.readStateV1,
+                prev: nextMetadata.readStateV1,
                 sessionSeq,
                 pendingActivityAt,
                 now: nowServerMs(),
             });
-            if (!result.didChange) return metadata;
-            return { ...metadata, readStateV1: result.next };
+            if (!result.didChange) return nextMetadata;
+            return { ...nextMetadata, readStateV1: result.next };
         });
+    }
+
+    private async publishDirectSessionObservedProgress(
+        sessionId: string,
+        items: ReadonlyArray<DirectTranscriptRawMessageV1>,
+    ): Promise<void> {
+        const session = storage.getState().sessions[sessionId] ?? null;
+        if (!session?.metadata || !readDirectSessionLink(session.metadata)) return;
+
+        const progress = deriveDirectSessionObservedProgress(items);
+        if (!progress) return;
+
+        this.applySessionMetadataLocally(
+            sessionId,
+            (metadata) => updateMetadataWithObservedDirectSessionProgress(metadata, progress),
+        );
+    }
+
+    private async applyDirectSessionTranscriptItems(
+        sessionId: string,
+        items: ReadonlyArray<DirectTranscriptRawMessageV1>,
+        options?: Readonly<{
+            nextCursor?: string | null;
+        }>,
+    ): Promise<void> {
+        const session = storage.getState().sessions[sessionId] ?? null;
+        if (!session?.metadata || !readDirectSessionLink(session.metadata)) return;
+
+        const normalizedMessages = normalizeDirectTranscriptMessages(items);
+        if (normalizedMessages.length > 0) {
+            const applied = this.applyMessages(sessionId, normalizedMessages, {
+                notifyVoice: false,
+                notifyActivity: true,
+            });
+            if (!applied.hasReadyEvent) {
+                const sessionMessages = storage.getState().sessionMessages[sessionId];
+                const changedMessages = applied.changed
+                    .map((messageId) => sessionMessages?.messagesMap[messageId] ?? null)
+                    .filter((message): message is Message => Boolean(message) && message.kind === 'agent-text');
+                if (changedMessages.length > 0) {
+                    notifyActivityReady(sessionId, changedMessages);
+                }
+            }
+        }
+
+        if (options && Object.prototype.hasOwnProperty.call(options, 'nextCursor')) {
+            this.directSessionTailCursorBySessionId.set(sessionId, options.nextCursor ?? null);
+        }
+
+        await this.publishDirectSessionObservedProgress(sessionId, items);
     }
 
     async publishSessionPermissionModeToMetadata(params: {
@@ -1833,12 +1931,7 @@ class Sync {
             return prioritizedByViewport;
         }
 
-        const eagerListIds: string[] = [];
-        for (const item of storage.getState().sessionListViewData ?? []) {
-            if (item.type !== 'session') continue;
-            eagerListIds.push(item.session.id);
-            if (eagerListIds.length >= eagerListCount) break;
-        }
+        const eagerListIds = listSessionListCachedActiveSessionIds(storage.getState(), eagerListCount);
 
         return Array.from(new Set([...prioritizedByViewport, ...eagerListIds]));
     }
@@ -2780,17 +2873,14 @@ class Sync {
               throw new Error(page.error);
           }
 
-          const normalizedMessages = normalizeDirectTranscriptMessages(page.items);
-          if (normalizedMessages.length > 0) {
-              this.applyMessages(sessionId, normalizedMessages, { notifyVoice: false });
-          }
-
           this.directSessionOlderCursorBySessionId.set(sessionId, page.nextCursor ?? null);
           this.directSessionHasMoreOlderBySessionId.set(sessionId, page.hasMore === true);
           storage.getState().applyMessagesLoaded(sessionId);
+          await this.applyDirectSessionTranscriptItems(sessionId, page.items, {
+              nextCursor: typeof page.tailCursor === 'string' ? page.tailCursor : null,
+          });
 
           if (typeof page.tailCursor === 'string' && page.tailCursor.trim().length > 0) {
-              this.directSessionTailCursorBySessionId.set(sessionId, page.tailCursor);
               return;
           }
 
@@ -2807,7 +2897,9 @@ class Sync {
               throw new Error(tail.error);
           }
 
-          this.directSessionTailCursorBySessionId.set(sessionId, tail.nextCursor ?? null);
+          await this.applyDirectSessionTranscriptItems(sessionId, tail.items, {
+              nextCursor: tail.nextCursor ?? null,
+          });
       }
 
       private async catchUpDirectSessionMessages(
@@ -2835,11 +2927,9 @@ class Sync {
               return;
           }
 
-          const normalizedMessages = normalizeDirectTranscriptMessages(tail.items);
-          if (normalizedMessages.length > 0) {
-              this.applyMessages(sessionId, normalizedMessages, { notifyVoice: false });
-          }
-          this.directSessionTailCursorBySessionId.set(sessionId, tail.nextCursor ?? null);
+          await this.applyDirectSessionTranscriptItems(sessionId, tail.items, {
+              nextCursor: tail.nextCursor ?? null,
+          });
       }
 
       private async loadOlderMessagesForChain(params: Readonly<{
@@ -3454,6 +3544,17 @@ class Sync {
             getSessionEncryption: this.encryption.getSessionEncryption,
             getSession: (sessionId) => storage.getState().sessions[sessionId],
             applyMessages: (sessionId, messages) => this.applyMessages(sessionId, messages, { notifyVoice: false }),
+            updateDirectSessionTranscript: (ephemeralUpdate) => this.applyDirectSessionTranscriptItems(
+                ephemeralUpdate.sessionId,
+                ephemeralUpdate.items,
+                {
+                    ...(typeof ephemeralUpdate.nextCursor === 'string' || ephemeralUpdate.nextCursor === null
+                        ? { nextCursor: ephemeralUpdate.nextCursor }
+                        : typeof ephemeralUpdate.tailCursor === 'string' || ephemeralUpdate.tailCursor === null
+                            ? { nextCursor: ephemeralUpdate.tailCursor }
+                            : {}),
+                },
+            ),
         }), { tag: 'Sync.handleEphemeralUpdate' });
     }
 
@@ -3464,11 +3565,12 @@ class Sync {
     private applyMessages = (
         sessionId: string,
         messages: NormalizedMessage[],
-        options?: { notifyVoice?: boolean }
+        options?: { notifyVoice?: boolean; notifyActivity?: boolean }
     ) => {
         const result = storage.getState().applyMessages(sessionId, messages);
         const notifyVoice = options?.notifyVoice !== false;
-        if (notifyVoice) {
+        const notifyActivity = options?.notifyActivity ?? notifyVoice;
+        if (notifyVoice || notifyActivity) {
             let m: Message[] = [];
             for (let messageId of result.changed) {
                 const message = storage.getState().sessionMessages[sessionId].messagesMap[messageId];
@@ -3476,14 +3578,19 @@ class Sync {
                     m.push(message);
                 }
             }
-            if (m.length > 0) {
+            if (notifyVoice && m.length > 0) {
                 voiceHooks.onMessages(sessionId, m);
             }
             if (result.hasReadyEvent) {
-                voiceHooks.onReady(sessionId, m);
-                notifyActivityReady(sessionId, m);
+                if (notifyVoice) {
+                    voiceHooks.onReady(sessionId, m);
+                }
+                if (notifyActivity) {
+                    notifyActivityReady(sessionId, m);
+                }
             }
         }
+        return result;
     }
 
     private updateSessionMessagesPaginationFromPage(

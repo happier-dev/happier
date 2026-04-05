@@ -106,7 +106,7 @@ describe('socket update handling: plaintext update-session', () => {
         }
     });
 
-    it('invalidates sessions when an update-session targets a cache-only row with no hydrated session', async () => {
+    it('patches cache-only renderables for plaintext update-session without forcing a sessions refresh', async () => {
         storage.getState().replaceSessionListRenderables([
             {
                 id: 's_cached_only',
@@ -142,7 +142,18 @@ describe('socket update handling: plaintext update-session', () => {
             updateData,
         });
 
-        expect(params.invalidateSessions).toHaveBeenCalledTimes(1);
+        expect(storage.getState().sessionListRenderables['s_cached_only']).toEqual(
+            expect.objectContaining({
+                updatedAt: 1235,
+                seq: 1,
+                metadataVersion: 2,
+                metadata: expect.objectContaining({
+                    path: '/work',
+                    host: 'devbox',
+                }),
+            }),
+        );
+        expect(params.invalidateSessions).not.toHaveBeenCalled();
         expect((params.applySessions as unknown as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
     });
 
@@ -166,6 +177,7 @@ describe('socket update handling: plaintext update-session', () => {
                 presence: 'online',
             },
         ]);
+        const initialViewData = storage.getState().sessionListViewData;
 
         const params = buildBaseParams();
         const updateData: ApiUpdateContainer = {
@@ -191,6 +203,7 @@ describe('socket update handling: plaintext update-session', () => {
                 pendingVersion: 8,
             }),
         );
+        expect(storage.getState().sessionListViewData).toBe(initialViewData);
         expect(params.invalidateSessions).not.toHaveBeenCalled();
         expect((params.applySessions as unknown as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
     });

@@ -48,7 +48,7 @@ describe('daemonWorkspaceFiles upload', () => {
             throw new Error(`unexpected method: ${params.machineMethod}`);
         });
 
-        const { uploadDaemonWorkspaceFileFromReader } = await import('./daemonWorkspaceFiles');
+        const { uploadDaemonWorkspaceFileFromReader } = await import('../transferSubstrate/workspaceFileTransfers');
 
         const result = await uploadDaemonWorkspaceFileFromReader({
             machineId: 'machine-1',

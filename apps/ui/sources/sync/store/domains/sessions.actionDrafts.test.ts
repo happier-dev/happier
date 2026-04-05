@@ -25,7 +25,6 @@ import { clearPersistence } from '@/sync/domains/state/persistence';
 function createHarness() {
     let state: any = {
         sessions: {},
-        sessionsData: null,
         sessionListViewData: null,
         sessionListViewDataByServerId: {},
         sessionScmStatus: {},

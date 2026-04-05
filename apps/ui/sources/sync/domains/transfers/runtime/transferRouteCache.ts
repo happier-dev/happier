@@ -121,6 +121,24 @@ export function recordCachedMachineRpcDirectRouteViable(input: MachineRpcDirectR
     notifyMachineRpcDirectRouteListeners(input.serverId);
 }
 
+export function invalidateCachedTransferRoutesForServer(input: Readonly<{
+    serverId?: string | null;
+}>): void {
+    const normalizedServerId = normalizeServerScopeId(input.serverId);
+    transferRouteCachesByServerScopeId.delete(normalizedServerId);
+    notifyMachineRpcDirectRouteListeners(normalizedServerId);
+}
+
+export function invalidateCachedTransferRoutesForMachine(input: Readonly<{
+    serverId?: string | null;
+    remoteMachineId: string;
+}>): void {
+    const cache = getScopedTransferRouteCache(input.serverId);
+    cache.invalidateDirectPeerRoutesForMachine(input.remoteMachineId);
+    cache.invalidateMachineRpcDirectRoutesForMachine(input.remoteMachineId);
+    notifyMachineRpcDirectRouteListeners(input.serverId);
+}
+
 export function subscribeCachedMachineRpcDirectRoute(
     input: MachineRpcDirectRouteInput,
     listener: CacheListener,
