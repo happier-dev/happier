@@ -1,16 +1,15 @@
 import { InvalidateSync } from "@/utils/sync";
 import { RawJSONLines } from "../types";
-import { dirname, join } from "node:path";
-import { readFile } from "node:fs/promises";
 import { logger } from "@/ui/logger";
-import { startFileWatcher } from "@/integrations/watcher/startFileWatcher";
-import { getProjectPath } from "./path";
 import { ClaudeRemoteSubagentFileCollector } from '../remote/sidechains/claudeRemoteSubagentFileCollector';
 import { resolveClaudeSubagentJsonlPath } from '../remote/sidechains/resolveClaudeSubagentJsonlPath';
-import { normalizeClaudeToolUseNamesInRawJsonLines } from './normalizeClaudeToolUseNames';
 import { createClaudeTeamInboxCollector } from './teamInbox/claudeTeamInboxCollector';
-import { readClaudeSessionJsonlMessages } from './readClaudeSessionJsonlMessages';
 import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
+import { createClaudeScannerFileObservationRuntime } from '../transcripts/scanner/createClaudeScannerFileObservationRuntime';
+import { createClaudeScannerMainTranscriptStoreLifecycle } from '../transcripts/scanner/createClaudeScannerMainTranscriptStoreLifecycle';
+import { createClaudeScannerMessageRouter } from '../transcripts/scanner/createClaudeScannerMessageRouter';
+import { createClaudeScannerSessionCoordinator } from '../transcripts/scanner/createClaudeScannerSessionCoordinator';
+import { createClaudeScannerSessionPathResolver } from '../transcripts/scanner/createClaudeScannerSessionPathResolver';
 
 export type SessionScannerSessionInfo = {
     sessionId: string;
@@ -36,81 +35,49 @@ export async function createSessionScanner(opts: {
     transcriptMissingWarningMs?: number
 }) {
     const shapeLogger = createEventShapeLoggerForLog({ logger, scope: 'claude-jsonl' });
+    const messageRouter = createClaudeScannerMessageRouter({
+        onMessage: (message) => {
+            try {
+                opts.onMessage(message);
+            } catch (err) {
+                logger.debug('[SESSION_SCANNER] onMessage callback threw:', err);
+            }
+        },
+        logEvent: (event, message) => {
+            shapeLogger.log(event, message);
+        },
+    });
 
-    // Best-effort project directory resolution (fallback).
-    // When available, we prefer the Claude hook's transcriptPath-derived directory instead.
-    const initialProjectDir = getProjectPath(opts.workingDirectory, opts.claudeConfigDir ?? null);
-    let projectDirOverride: string | null = null;
-    const sessionFileOverrides = new Map<string, string>();
+    const sessionPathResolver = createClaudeScannerSessionPathResolver({
+        sessionId: opts.sessionId,
+        transcriptPath: opts.transcriptPath ?? null,
+        workingDirectory: opts.workingDirectory,
+        claudeConfigDir: opts.claudeConfigDir ?? null,
+    });
+    const sessionCoordinator = createClaudeScannerSessionCoordinator({
+        sessionId: opts.sessionId,
+    });
 
     const transcriptMissingWarningMs = opts.transcriptMissingWarningMs ?? 5000;
-    const warnedMissingTranscripts = new Set<string>();
-    const missingTranscriptTimers = new Map<string, NodeJS.Timeout>();
+    const mainTranscriptStoreLifecycle = createClaudeScannerMainTranscriptStoreLifecycle({
+        workingDirectory: opts.workingDirectory,
+        claudeConfigDir: opts.claudeConfigDir ?? null,
+        invalidate: () => invalidate?.(),
+    });
+    const fileObservationRuntime = createClaudeScannerFileObservationRuntime({
+        onInvalidate: () => invalidate?.(),
+        onTranscriptMissing: opts.onTranscriptMissing,
+        transcriptMissingWarningMs,
+    });
 
-    function effectiveProjectDir(): string {
-        return projectDirOverride ?? initialProjectDir;
-    }
-
-    function getSessionFilePath(sessionId: string): string {
-        const override = sessionFileOverrides.get(sessionId);
-        return override ?? join(effectiveProjectDir(), `${sessionId}.jsonl`);
-    }
-
-    function scheduleTranscriptMissingWarning(sessionId: string): void {
-        if (!opts.onTranscriptMissing) return;
-        if (!Number.isFinite(transcriptMissingWarningMs) || transcriptMissingWarningMs <= 0) return;
-        if (warnedMissingTranscripts.has(sessionId)) return;
-        if (missingTranscriptTimers.has(sessionId)) return;
-
-        const timeoutId = setTimeout(async () => {
-            missingTranscriptTimers.delete(sessionId);
-            if (warnedMissingTranscripts.has(sessionId)) return;
-
-            const filePath = getSessionFilePath(sessionId);
-            try {
-                await readFile(filePath, 'utf-8');
-                return;
-            } catch {
-                // still missing (or unreadable)
-            }
-
-            warnedMissingTranscripts.add(sessionId);
-            try {
-                opts.onTranscriptMissing?.({ sessionId, filePath });
-            } catch (err) {
-                logger.debug('[SESSION_SCANNER] onTranscriptMissing callback threw:', err);
-            }
-        }, transcriptMissingWarningMs);
-
-        missingTranscriptTimers.set(sessionId, timeoutId);
-    }
-
-    // Finished, pending finishing and current session
-    let finishedSessions = new Set<string>();
-    let pendingSessions = new Set<string>();
-    let currentSessionId: string | null = null;
-    let watchers = new Map<string, { filePath: string; stop: () => void }>();
-    let processedMessageKeys = new Set<string>();
-    const taskToolUseIdByAgentId = new Map<string, string>();
     let invalidate: (() => void) | null = null;
 
     const subagentCollector = new ClaudeRemoteSubagentFileCollector({
         emitImported: (body) => {
-            // Best-effort: avoid double-emitting imported sidechain messages within the same scanner lifetime.
             try {
-                const uuid = typeof (body as any)?.uuid === 'string' ? String((body as any).uuid) : '';
-                const sidechainId = typeof (body as any)?.sidechainId === 'string' ? String((body as any).sidechainId) : '';
-                const key = uuid && sidechainId ? `sidechain:${sidechainId}:${uuid}` : messageKey(body);
-                if (processedMessageKeys.has(key)) return;
-                processedMessageKeys.add(key);
+                messageRouter.emitImportedSidechainMessage(body);
             } catch {
-                // If we can't key it (unexpected type), still emit; downstream should dedupe by uuid.
-            }
-            try {
-                shapeLogger.log('emit:sidechain-import', body);
-                opts.onMessage(body);
-            } catch (err) {
-                logger.debug('[SESSION_SCANNER] onMessage callback threw (sidechain import):', err);
+                // If router emission fails unexpectedly, keep behavior best-effort and continue.
             }
         },
         resolveJsonlPathForAgentId: ({ agentId, claudeSessionId }) => {
@@ -118,7 +85,7 @@ export async function createSessionScanner(opts: {
             const sanitized = String(agentId ?? '').trim();
             if (!sanitized) return null;
             return resolveClaudeSubagentJsonlPath({
-                projectDir: effectiveProjectDir(),
+                projectDir: sessionPathResolver.effectiveProjectDir(),
                 claudeSessionId,
                 agentId: sanitized,
             });
@@ -130,125 +97,15 @@ export async function createSessionScanner(opts: {
         onInvalidate: () => invalidate?.(),
         emit: (body) => {
             try {
-                const uuid = typeof (body as any)?.uuid === 'string' ? String((body as any).uuid) : '';
-                const sidechainId = typeof (body as any)?.sidechainId === 'string' ? String((body as any).sidechainId) : '';
-                const key = uuid && sidechainId ? `team-inbox:${sidechainId}:${uuid}` : messageKey(body);
-                if (processedMessageKeys.has(key)) return;
-                processedMessageKeys.add(key);
+                messageRouter.emitImportedTeamInboxMessage(body);
             } catch {
                 // ignore
-            }
-            try {
-                shapeLogger.log('emit:team-inbox', body);
-                opts.onMessage(body);
-            } catch (err) {
-                logger.debug('[SESSION_SCANNER] onMessage callback threw (team inbox):', err);
             }
         },
     });
 
-    function isTaskNotificationUserText(message: RawJSONLines): boolean {
-        if (message.type !== 'user') return false;
-        if ((message as any).isSidechain === true) return false;
-        const content = (message as any)?.message?.content;
-        if (typeof content !== 'string') return false;
-        return /^\s*<task-notification>/i.test(content);
-    }
-
-    function extractTaskNotification(payload: string): { taskId: string; result: string } | null {
-        const raw = String(payload ?? '');
-        const taskId = raw.match(/<task-id>\s*([^<\n\r]+?)\s*<\/task-id>/i)?.[1]?.trim() ?? '';
-        if (!taskId) return null;
-        const result = raw.match(/<result>\s*([\s\S]*?)\s*<\/result>/i)?.[1]?.trim() ?? '';
-        if (!result) return null;
-        return { taskId, result };
-    }
-
-    function observeTaskToolResultMapping(message: RawJSONLines): void {
-        if (message.type !== 'user') return;
-        const toolUseResult = (message as any).toolUseResult;
-        if (!toolUseResult || typeof toolUseResult !== 'object') return;
-        const agentId =
-            typeof (toolUseResult as any).agentId === 'string' ? String((toolUseResult as any).agentId).trim() : '';
-        if (!agentId) return;
-
-        const content = (message as any)?.message?.content;
-        if (!Array.isArray(content)) return;
-        for (const item of content) {
-            if (!item || typeof item !== 'object') continue;
-            if ((item as any).type !== 'tool_result') continue;
-            const toolUseId = typeof (item as any).tool_use_id === 'string' ? String((item as any).tool_use_id).trim() : '';
-            if (!toolUseId) continue;
-            taskToolUseIdByAgentId.set(agentId, toolUseId);
-        }
-    }
-
-    type TaskNotificationAction = { type: 'rewrite'; message: RawJSONLines } | { type: 'drop' };
-
-    function rewriteTaskNotificationToToolResult(message: RawJSONLines): TaskNotificationAction | null {
-        if (!isTaskNotificationUserText(message)) return null;
-        const content = String((message as any).message.content ?? '');
-        const parsed = extractTaskNotification(content);
-        if (!parsed) return { type: 'drop' };
-
-        const toolUseId = taskToolUseIdByAgentId.get(parsed.taskId) ?? null;
-        if (!toolUseId) {
-            // If we can't map the task-id to a Task tool_use, drop it to avoid transcript spam.
-            return { type: 'drop' };
-        }
-
-        return { type: 'rewrite', message: {
-            ...(message as any),
-            isMeta: true,
-            type: 'user',
-            message: {
-                role: 'user',
-                content: [
-                    {
-                        type: 'tool_result',
-                        tool_use_id: toolUseId,
-                        content: [{ type: 'text', text: parsed.result }],
-                        is_error: false,
-                    },
-                ],
-            },
-        } as any };
-    }
-
-    // If the caller already knows the transcript path for the initial session,
-    // apply it before reading any existing messages so we mark the correct history as processed.
-    if (opts.sessionId && typeof opts.transcriptPath === 'string' && opts.transcriptPath.trim()) {
-        const transcriptPath = opts.transcriptPath.trim();
-        sessionFileOverrides.set(opts.sessionId, transcriptPath);
-        projectDirOverride = dirname(transcriptPath);
-    }
-
-    // Mark existing messages as processed and start watching the initial session
     if (opts.sessionId) {
-        let messages = await readClaudeSessionJsonlMessages({
-            sessionFilePath: getSessionFilePath(opts.sessionId),
-            logLabel: 'SESSION_SCANNER',
-        });
-        logger.debug(`[SESSION_SCANNER] Marking ${messages.length} existing messages as processed from session ${opts.sessionId}`);
-        for (let m of messages) {
-            // Observe history for sidechain import + task-notification mapping, even when we do not replay history.
-            try {
-                observeTaskToolResultMapping(m);
-                subagentCollector.observe(m as any);
-                teamInboxCollector.observe(m as any);
-            } catch (err) {
-                logger.debug('[SESSION_SCANNER] Failed observing historical message:', err);
-            }
-            processedMessageKeys.add(messageKey(m));
-        }
-        // Backfill sidechain messages for any already-launched tasks.
-        await subagentCollector.syncAll();
-        await teamInboxCollector.syncAll();
-        // IMPORTANT: Also start watching the initial session file because Claude Code
-        // may continue writing to it even after creating a new session with --resume
-        // (agent tasks and other updates can still write to the original session file)
-        currentSessionId = opts.sessionId;
-        scheduleTranscriptMissingWarning(opts.sessionId);
+        fileObservationRuntime.scheduleTranscriptMissingWarning(opts.sessionId, sessionPathResolver.getSessionFilePath(opts.sessionId));
     }
 
     // Main sync function
@@ -257,57 +114,37 @@ export async function createSessionScanner(opts: {
 
         // Collect session ids - include ALL sessions that have watchers
         // This ensures we continue processing sessions that Claude Code may still write to
-        let sessions: string[] = [];
-        for (let p of pendingSessions) {
-            sessions.push(p);
-        }
-        if (currentSessionId && !pendingSessions.has(currentSessionId)) {
-            sessions.push(currentSessionId);
-        }
-        // Also process sessions that have active watchers (they may still receive updates)
-        for (let [sessionId] of watchers) {
-            if (!sessions.includes(sessionId)) {
-                sessions.push(sessionId);
-            }
-        }
+        const sessions = sessionCoordinator.collectSessionsToSync(fileObservationRuntime.getWatchedSessionIds());
+        const currentSessionId = sessionCoordinator.getCurrentSessionId();
 
         // Process sessions
         for (let session of sessions) {
-            const sessionMessages = await readClaudeSessionJsonlMessages({
-                sessionFilePath: getSessionFilePath(session),
-                logLabel: 'SESSION_SCANNER',
-            });
+            const sessionFilePath = sessionPathResolver.getSessionFilePath(session);
+            await mainTranscriptStoreLifecycle.sync(session, sessionFilePath);
+            const sessionRead = await mainTranscriptStoreLifecycle.readNext(session, sessionFilePath);
+            if (!sessionRead.initialized) {
+                continue;
+            }
+            const previousCursor = sessionRead.previousCursor;
+            const shouldEmitMessages = sessionCoordinator.resolveInitialReplayEmission(session, previousCursor);
+            const sessionMessages = sessionRead.items;
             let skipped = 0;
             let sent = 0;
             for (let file of sessionMessages) {
-                file = normalizeClaudeToolUseNamesInRawJsonLines(file);
                 try {
-                    observeTaskToolResultMapping(file);
+                    messageRouter.observeSessionMessage(file);
                     subagentCollector.observe(file as any);
                     teamInboxCollector.observe(file as any);
                 } catch (err) {
                     logger.debug('[SESSION_SCANNER] Failed observing message:', err);
                 }
-                let key = messageKey(file);
-                if (processedMessageKeys.has(key)) {
+                logger.debug(`[SESSION_SCANNER] Sending new message: type=${file.type}, uuid=${file.type === 'summary' ? file.leafUuid : file.uuid}`);
+                if (!shouldEmitMessages && session === currentSessionId) {
                     skipped++;
                     continue;
                 }
-                processedMessageKeys.add(key);
-                logger.debug(`[SESSION_SCANNER] Sending new message: type=${file.type}, uuid=${file.type === 'summary' ? file.leafUuid : file.uuid}`);
                 try {
-                    const action = rewriteTaskNotificationToToolResult(file);
-                    if (action?.type === 'drop') {
-                        skipped++;
-                        continue;
-                    }
-                    if (action?.type === 'rewrite') {
-                        shapeLogger.log('emit:rewritten-task-notification', action.message);
-                        opts.onMessage(action.message);
-                    } else {
-                        shapeLogger.log(`emit:${String((file as any)?.type ?? 'unknown')}`, file);
-                        opts.onMessage(file);
-                    }
+                    messageRouter.emitSessionMessage(file, shouldEmitMessages || session !== currentSessionId);
                     sent++; // count only emitted messages
                 } catch (err) {
                     logger.debug('[SESSION_SCANNER] onMessage callback threw:', err);
@@ -321,31 +158,13 @@ export async function createSessionScanner(opts: {
         await subagentCollector.syncAll();
         await teamInboxCollector.syncAll();
 
-        // Move pending sessions to finished sessions (but keep processing them via watchers)
-        for (let p of sessions) {
-            if (pendingSessions.has(p)) {
-                pendingSessions.delete(p);
-                finishedSessions.add(p);
-            }
-        }
+        sessionCoordinator.markSessionsSynced(sessions);
 
-        // Update watchers for all sessions
-        for (let p of sessions) {
-            const desiredPath = getSessionFilePath(p);
-            const existing = watchers.get(p);
-
-            if (!existing) {
-                logger.debug(`[SESSION_SCANNER] Starting watcher for session: ${p}`);
-                watchers.set(p, { filePath: desiredPath, stop: startFileWatcher(desiredPath, () => { sync.invalidate(); }) });
-                continue;
-            }
-
-            if (existing.filePath !== desiredPath) {
-                logger.debug(`[SESSION_SCANNER] Restarting watcher for session: ${p} (${existing.filePath} -> ${desiredPath})`);
-                existing.stop();
-                watchers.set(p, { filePath: desiredPath, stop: startFileWatcher(desiredPath, () => { sync.invalidate(); }) });
-            }
-        }
+        fileObservationRuntime.syncWatchers({
+            sessionIds: sessions,
+            hasStoreLease: (sessionId) => mainTranscriptStoreLifecycle.hasStoreLease(sessionId),
+            resolveFilePath: (sessionId) => sessionPathResolver.getSessionFilePath(sessionId),
+        });
     });
     invalidate = () => sync.invalidate();
     await sync.invalidateAndAwait();
@@ -357,16 +176,11 @@ export async function createSessionScanner(opts: {
     return {
         cleanup: async () => {
             clearInterval(intervalId);
+            await mainTranscriptStoreLifecycle.cleanup();
+            messageRouter.reset();
             subagentCollector.cleanup();
             teamInboxCollector.cleanup();
-            for (let w of watchers.values()) {
-                w.stop();
-            }
-            watchers.clear();
-            for (const timeoutId of missingTranscriptTimers.values()) {
-                clearTimeout(timeoutId);
-            }
-            missingTranscriptTimers.clear();
+            fileObservationRuntime.cleanup();
             await sync.invalidateAndAwait();
             sync.stop();
         },
@@ -375,76 +189,33 @@ export async function createSessionScanner(opts: {
             const transcriptPathRaw = typeof arg === 'string' ? null : arg.transcriptPath;
             const transcriptPath = typeof transcriptPathRaw === 'string' && transcriptPathRaw.trim() ? transcriptPathRaw : null;
 
-            let didUpdatePaths = false;
-            if (transcriptPath) {
-                const prevOverride = sessionFileOverrides.get(sessionId);
-                if (prevOverride !== transcriptPath) {
-                    sessionFileOverrides.set(sessionId, transcriptPath);
-                    didUpdatePaths = true;
-                }
-                const nextProjectDir = dirname(transcriptPath);
-                if (!projectDirOverride || projectDirOverride !== nextProjectDir) {
-                    projectDirOverride = nextProjectDir;
-                    didUpdatePaths = true;
-                }
+            const didUpdatePaths = sessionPathResolver.applyTranscriptPathOverride(sessionId, transcriptPath);
+            if (didUpdatePaths) {
+                mainTranscriptStoreLifecycle.resetSession(sessionId);
             }
 
-            if (currentSessionId === sessionId) {
+            const transition = sessionCoordinator.onNewSession(sessionId);
+
+            if (!transition.shouldWarmSession) {
                 if (didUpdatePaths) {
                     sync.invalidate();
                 } else {
-                    logger.debug(`[SESSION_SCANNER] New session: ${sessionId} is the same as the current session, skipping`);
+                    logger.debug(`[SESSION_SCANNER] New session: ${sessionId} is already tracked, skipping`);
                 }
                 return;
             }
-            if (finishedSessions.has(sessionId)) {
-                if (didUpdatePaths) sync.invalidate();
-                else logger.debug(`[SESSION_SCANNER] New session: ${sessionId} is already finished, skipping`);
-                return;
-            }
-            if (pendingSessions.has(sessionId)) {
-                if (didUpdatePaths) sync.invalidate();
-                else logger.debug(`[SESSION_SCANNER] New session: ${sessionId} is already pending, skipping`);
-                return;
-            }
-            if (currentSessionId) {
-                pendingSessions.add(currentSessionId);
-            }
+
             logger.debug(`[SESSION_SCANNER] New session: ${sessionId}`)
-            currentSessionId = sessionId;
-            scheduleTranscriptMissingWarning(sessionId);
-            sync.invalidate();
+            const sessionFilePath = transcriptPath ?? sessionPathResolver.getSessionFilePath(sessionId);
+            // Prime observation immediately so the first append cannot land before the initial sync finishes.
+            fileObservationRuntime.ensureWatching(sessionId, sessionFilePath);
+            void mainTranscriptStoreLifecycle.sync(sessionId, sessionFilePath);
+            fileObservationRuntime.scheduleTranscriptMissingWarning(sessionId, sessionPathResolver.getSessionFilePath(sessionId));
+            if (transition.shouldInvalidate || didUpdatePaths) {
+                sync.invalidate();
+            }
         },
     }
 }
 
 export type SessionScanner = ReturnType<typeof createSessionScanner>;
-
-
-//
-// Helpers
-//
-
-function messageKey(message: RawJSONLines): string {
-    if (message.type === 'user') {
-        return message.uuid;
-    } else if (message.type === 'assistant') {
-        return message.uuid;
-    } else if (message.type === 'summary') {
-        return 'summary: ' + message.leafUuid + ': ' + message.summary;
-    } else if (message.type === 'system') {
-        return message.uuid;
-    } else if (message.type === 'progress') {
-        const uuid = typeof (message as any).uuid === 'string' ? (message as any).uuid : '';
-        if (uuid) return `progress:${uuid}`;
-        const ts = typeof (message as any).timestamp === 'string' ? (message as any).timestamp : '';
-        if (ts) return `progress:timestamp:${ts}`;
-        return `progress:${JSON.stringify(message)}`;
-    } else {
-        throw Error() // Impossible
-    }
-}
-
-/**
- * Read and parse session log files lives in `readClaudeSessionJsonlMessages`.
- */

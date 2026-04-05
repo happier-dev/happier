@@ -1,5 +1,8 @@
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
+  DirectSessionAttachRequestSchema,
+  DirectSessionDetachRequestSchema,
+  DirectSessionFollowPolicySetRequestSchema,
   DirectSessionLinkEnsureRequestSchema,
   DirectSessionStatusGetRequestSchema,
   DirectSessionTakeoverPersistRequestSchema,
@@ -8,6 +11,9 @@ import {
   DirectTranscriptPageRequestSchema,
   DirectTranscriptReadAfterRequestSchema,
   normalizeCodexBackendMode,
+  type DirectSessionAttachResponse,
+  type DirectSessionDetachResponse,
+  type DirectSessionFollowPolicySetResponse,
   type DirectSessionLinkEnsureResponse,
   type DirectSessionStatusGetResponse,
   type DirectSessionTakeoverPersistResponse,
@@ -15,6 +21,7 @@ import {
   type DirectSessionsCandidatesListResponse,
   type DirectTranscriptPageResponse,
   type DirectTranscriptReadAfterResponse,
+  type DirectSessionTranscriptDeltaEphemeral,
 } from '@happier-dev/protocol';
 
 import { readCredentials } from '@/persistence';
@@ -22,12 +29,16 @@ import { listSessionMarkers } from '@/daemon/sessionRegistry';
 import { getDirectSessionProviderOps } from '@/backends/catalog';
 
 import { importDirectSessionTranscript } from '@/api/directSessions/import/importDirectSessionTranscript';
+import { createManagedDirectSessionFollowLease } from '@/api/directSessions/backgroundFollow/createManagedDirectSessionFollowLease';
+import { updateSessionMetadataWithDirectSessionFollowPolicy } from '@/api/directSessions/backgroundFollow/directSessionBackgroundFollowMetadata';
+import { createDirectSessionFollowLeaseManager } from '@/api/directSessions/leases/createDirectSessionFollowLeaseManager';
 import { ensureDirectSessionLink } from '@/api/directSessions/linking/ensureDirectSessionLink';
 import { validateDirectMachineSource } from '@/api/directSessions/security/validateDirectMachineSource';
 import { findTrustedDirectSessionOwner } from '@/api/directSessions/takeover/findTrustedDirectSessionOwner';
 import { loadLinkedDirectSession } from '@/api/directSessions/takeover/loadLinkedDirectSession';
 import { resolveDirectTakeoverSpawnOptions } from '@/api/directSessions/takeover/resolveDirectTakeoverSpawnOptions';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
+import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
@@ -65,6 +76,21 @@ function resolveRecentActivityWindowMs(): number {
   return Math.max(1000, Math.min(60 * 60 * 1000, configured));
 }
 
+function resolveTakeoverReadinessCacheMs(): number {
+  const raw = Number.parseInt(String(process.env.HAPPIER_DIRECT_SESSIONS_STATUS_TAKEOVER_CACHE_MS ?? ''), 10);
+  const configured = Number.isFinite(raw) && raw >= 0 ? Math.trunc(raw) : 5_000;
+  return Math.max(0, Math.min(10 * 60 * 1000, configured));
+}
+
+function resolveDirectSessionAttachLeaseTtlMs(requestedTtlMs: number | undefined): number {
+  const envRaw = Number.parseInt(String(process.env.HAPPIER_DIRECT_SESSIONS_ATTACH_LEASE_TTL_MS ?? ''), 10);
+  const defaultTtlMs = Number.isFinite(envRaw) && envRaw > 0 ? Math.trunc(envRaw) : 45_000;
+  const candidate = typeof requestedTtlMs === 'number' && Number.isFinite(requestedTtlMs) && requestedTtlMs > 0
+    ? Math.trunc(requestedTtlMs)
+    : defaultTtlMs;
+  return Math.max(1_000, Math.min(15 * 60_000, candidate));
+}
+
 function isPidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -78,8 +104,158 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerManager;
   spawnSession?: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   stopSession?: (sessionId: string) => Promise<boolean>;
+  emitDirectSessionTranscriptUpdate?: (payload: DirectSessionTranscriptDeltaEphemeral) => void;
 }>): void {
-  const { rpcHandlerManager } = params;
+  const { rpcHandlerManager, emitDirectSessionTranscriptUpdate } = params;
+  const takeoverReadinessCacheMs = resolveTakeoverReadinessCacheMs();
+  const takeoverReadinessBySessionId = new Map<string, Readonly<{ value: boolean; expiresAtMs: number }>>();
+  const followLeaseManager = createDirectSessionFollowLeaseManager();
+
+  const readCachedTakeoverReadiness = (sessionId: string): boolean | null => {
+    if (takeoverReadinessCacheMs <= 0) return null;
+    const cached = takeoverReadinessBySessionId.get(sessionId) ?? null;
+    if (!cached) return null;
+    if (cached.expiresAtMs <= Date.now()) {
+      takeoverReadinessBySessionId.delete(sessionId);
+      return null;
+    }
+    return cached.value;
+  };
+
+  const writeCachedTakeoverReadiness = (sessionId: string, value: boolean): void => {
+    if (takeoverReadinessCacheMs <= 0) return;
+    takeoverReadinessBySessionId.set(sessionId, {
+      value,
+      expiresAtMs: Date.now() + takeoverReadinessCacheMs,
+    });
+  };
+
+  const invalidateTakeoverReadiness = (sessionId: string): void => {
+    takeoverReadinessBySessionId.delete(sessionId);
+  };
+
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH, async (raw: unknown) => {
+    const parsed = DirectSessionAttachRequestSchema.safeParse(raw);
+    if (!parsed.success) return err('invalid_request') satisfies DirectSessionAttachResponse;
+    const validatedSource = validateDirectMachineSource({
+      providerId: parsed.data.providerId,
+      source: parsed.data.source,
+      env: process.env,
+    });
+    if (!validatedSource.ok) {
+      return err('invalid_request', validatedSource.error) satisfies DirectSessionAttachResponse;
+    }
+    try {
+      const providerOps = await getDirectSessionProviderOps(parsed.data.providerId);
+      const attached = await followLeaseManager.attach({
+        sessionId: parsed.data.sessionId,
+        leaseId: parsed.data.leaseId,
+        ttlMs: resolveDirectSessionAttachLeaseTtlMs(parsed.data.ttlMs),
+        acquireFollowLease: providerOps.acquireFollowLease
+          ? async () => {
+            return createManagedDirectSessionFollowLease({
+              sessionId: parsed.data.sessionId,
+              reason: 'attached_view',
+              acquireProviderFollowLease: () => providerOps.acquireFollowLease!({
+                source: validatedSource.source,
+                remoteSessionId: parsed.data.remoteSessionId,
+                reason: 'attached_view',
+              }),
+              emitDirectSessionTranscriptUpdate,
+              isBackgroundFollowEnabled: () => followLeaseManager.isBackgroundFollowEnabled(parsed.data.sessionId),
+            });
+          }
+          : undefined,
+      });
+      return {
+        ok: true,
+        leaseId: attached.leaseId,
+        expiresAtMs: attached.expiresAtMs,
+        renewed: attached.renewed,
+      } satisfies DirectSessionAttachResponse;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      return err('internal_error', message) satisfies DirectSessionAttachResponse;
+    }
+  });
+
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_DETACH, async (raw: unknown) => {
+    const parsed = DirectSessionDetachRequestSchema.safeParse(raw);
+    if (!parsed.success) return err('invalid_request') satisfies DirectSessionDetachResponse;
+    const detached = await followLeaseManager.detach({
+      sessionId: parsed.data.sessionId,
+      leaseId: parsed.data.leaseId,
+    });
+    return {
+      ok: true,
+      detached: detached.detached,
+    } satisfies DirectSessionDetachResponse;
+  });
+
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET, async (raw: unknown) => {
+    const parsed = DirectSessionFollowPolicySetRequestSchema.safeParse(raw);
+    if (!parsed.success) return err('invalid_request') satisfies DirectSessionFollowPolicySetResponse;
+    const validatedSource = validateDirectMachineSource({
+      providerId: parsed.data.providerId,
+      source: parsed.data.source,
+      env: process.env,
+    });
+    if (!validatedSource.ok) {
+      return err('invalid_request', validatedSource.error) satisfies DirectSessionFollowPolicySetResponse;
+    }
+
+    const credentials = await readCredentials().catch(() => null);
+    if (!credentials) {
+      return err('provider_unavailable', 'not_authenticated') satisfies DirectSessionFollowPolicySetResponse;
+    }
+
+    try {
+      const providerOps = await getDirectSessionProviderOps(parsed.data.providerId);
+      const backgroundFollow = await followLeaseManager.setBackgroundFollowEnabled({
+        sessionId: parsed.data.sessionId,
+        enabled: parsed.data.enabled,
+        acquireFollowLease: parsed.data.enabled && providerOps.acquireFollowLease
+          ? async () => createManagedDirectSessionFollowLease({
+            sessionId: parsed.data.sessionId,
+            reason: 'background_follow',
+            acquireProviderFollowLease: () => providerOps.acquireFollowLease!({
+              source: validatedSource.source,
+              remoteSessionId: parsed.data.remoteSessionId,
+              reason: 'background_follow',
+            }),
+            emitDirectSessionTranscriptUpdate,
+            isBackgroundFollowEnabled: () => followLeaseManager.isBackgroundFollowEnabled(parsed.data.sessionId),
+          })
+          : undefined,
+      });
+
+      const rawSession = await fetchSessionById({
+        token: credentials.token,
+        sessionId: parsed.data.sessionId,
+      }).catch(() => null);
+      const updatedAtMs = Date.now();
+      if (rawSession) {
+        await updateSessionMetadataWithDirectSessionFollowPolicy({
+          token: credentials.token,
+          credentials,
+          sessionId: parsed.data.sessionId,
+          rawSession,
+          policy: parsed.data.enabled ? 'background_follow' : 'attached_only',
+          updatedAtMs,
+        }).catch(() => undefined);
+      }
+
+      return {
+        ok: true,
+        enabled: parsed.data.enabled,
+        leaseActive: followLeaseManager.hasBackgroundFollowLease(parsed.data.sessionId) || followLeaseManager.countActiveLeases(parsed.data.sessionId) > 0,
+        updatedAtMs,
+      } satisfies DirectSessionFollowPolicySetResponse;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      return err('internal_error', message) satisfies DirectSessionFollowPolicySetResponse;
+    }
+  });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST, async (raw: unknown) => {
     const parsed = DirectSessionsCandidatesListRequestSchema.safeParse(raw);
@@ -200,29 +376,33 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
       activityValue = 'running';
     }
 
-    let canTakeOverPersist = true;
-    try {
-      const credentials = await readCredentials().catch(() => null);
-      if (!credentials) {
-        canTakeOverPersist = false;
-      } else {
-        const linked = await loadLinkedDirectSession({
-          credentials,
-          sessionId: parsed.data.sessionId,
-          machineId: parsed.data.machineId,
-        });
-        if (!linked.ok) {
+    const cachedTakeoverReadiness = readCachedTakeoverReadiness(parsed.data.sessionId);
+    let canTakeOverPersist = cachedTakeoverReadiness ?? true;
+    if (cachedTakeoverReadiness === null) {
+      try {
+        const credentials = await readCredentials().catch(() => null);
+        if (!credentials) {
           canTakeOverPersist = false;
         } else {
-          const takeoverOptions = await resolveDirectTakeoverSpawnOptions({
-            linked: linked.session,
+          const linked = await loadLinkedDirectSession({
+            credentials,
             sessionId: parsed.data.sessionId,
+            machineId: parsed.data.machineId,
           });
-          canTakeOverPersist = takeoverOptions !== null;
+          if (!linked.ok) {
+            canTakeOverPersist = false;
+          } else {
+            const takeoverOptions = await resolveDirectTakeoverSpawnOptions({
+              linked: linked.session,
+              sessionId: parsed.data.sessionId,
+            });
+            canTakeOverPersist = takeoverOptions !== null;
+          }
         }
+      } catch {
+        canTakeOverPersist = false;
       }
-    } catch {
-      canTakeOverPersist = false;
+      writeCachedTakeoverReadiness(parsed.data.sessionId, canTakeOverPersist);
     }
 
     return {
@@ -315,6 +495,7 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
     if (!params.spawnSession || !params.stopSession) {
       return err('provider_unavailable', 'takeover_not_supported') satisfies DirectSessionTakeoverResponse;
     }
+    invalidateTakeoverReadiness(parsed.data.sessionId);
 
     const credentials = await readCredentials().catch(() => null);
     if (!credentials) {
@@ -390,6 +571,7 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
     if (!params.spawnSession || !params.stopSession) {
       return err('provider_unavailable', 'takeover_not_supported') satisfies DirectSessionTakeoverPersistResponse;
     }
+    invalidateTakeoverReadiness(parsed.data.sessionId);
 
     const credentials = await readCredentials().catch(() => null);
     if (!credentials) {

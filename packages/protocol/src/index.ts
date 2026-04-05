@@ -139,8 +139,12 @@ export {
 
 export {
   TRANSFER_RELAY_V2_SOCKET_EVENT,
+  TransferRelayV2RecipientSchema,
   TransferRelayV2SendEnvelopeSchema,
+  TransferRelayV2SenderSchema,
+  type TransferRelayV2Recipient,
   type TransferRelayV2SendEnvelope,
+  type TransferRelayV2Sender,
 } from './transferRelayV2/index.js';
 
 export {
@@ -493,6 +497,7 @@ export {
 
 export {
   EphemeralUpdateSchema,
+  DirectSessionTranscriptDeltaEphemeralSchema,
   MessageAckResponseSchema,
   SessionBroadcastBodySchema,
   SessionBroadcastContainerSchema,
@@ -501,6 +506,7 @@ export {
   UpdateMetadataAckResponseSchema,
   UpdateStateAckResponseSchema,
   type EphemeralUpdate,
+  type DirectSessionTranscriptDeltaEphemeral,
   type MessageAckResponse,
   type SessionBroadcastBody,
   type SessionBroadcastContainer,
@@ -1061,6 +1067,12 @@ export {
   DirectSessionsCandidatesListResponseSchema,
   DirectSessionLinkEnsureRequestSchema,
   DirectSessionLinkEnsureResponseSchema,
+  DirectSessionAttachRequestSchema,
+  DirectSessionAttachResponseSchema,
+  DirectSessionDetachRequestSchema,
+  DirectSessionDetachResponseSchema,
+  DirectSessionFollowPolicySetRequestSchema,
+  DirectSessionFollowPolicySetResponseSchema,
   DirectSessionActivityV1Schema,
   DirectSessionStatusGetRequestSchema,
   DirectSessionStatusGetResponseSchema,
@@ -1080,6 +1092,12 @@ export {
   type DirectSessionsCandidatesListResponse,
   type DirectSessionLinkEnsureRequest,
   type DirectSessionLinkEnsureResponse,
+  type DirectSessionAttachRequest,
+  type DirectSessionAttachResponse,
+  type DirectSessionDetachRequest,
+  type DirectSessionDetachResponse,
+  type DirectSessionFollowPolicySetRequest,
+  type DirectSessionFollowPolicySetResponse,
   type DirectSessionActivityV1,
   type DirectSessionStatusGetRequest,
   type DirectSessionStatusGetResponse,
@@ -1093,6 +1111,21 @@ export {
   type DirectSessionTakeoverPersistRequest,
   type DirectSessionTakeoverPersistResponse,
 } from './directSessions/daemonRpcV1.js';
+
+export {
+  applyObservedProgressToDirectSessionAttentionV1,
+  buildDirectSessionAttentionV1,
+  buildDirectSessionFollowPolicyV1,
+  deriveDirectSessionAttentionHasUnread,
+  deriveDirectSessionObservedProgress,
+  markDirectSessionAttentionViewedV1,
+  readDirectSessionAttentionV1,
+  readDirectSessionFollowPolicyV1,
+  type DirectSessionAttentionV1,
+  type DirectSessionFollowPolicy,
+  type DirectSessionFollowPolicyV1,
+  type DirectSessionObservedProgress,
+} from './directSessions/linkedSessionMetadata.js';
 
 export {
   SessionHandoffAbortRequestSchema,
@@ -1156,6 +1189,15 @@ export {
   type TransferEndpointCandidate,
   type TransferStreamEnvelope,
 } from './machineTransfer/transferStream.js';
+export {
+  normalizeDirectPeerImportEndpointBaseUrl,
+  normalizeDirectPeerTransferEndpointBaseUrl,
+} from './machineTransfer/directPeerUrls.js';
+export {
+  createDeterministicRandomBytesFromBase64,
+  transferChunkEncryptionVectors,
+  type TransferChunkEncryptionVector,
+} from './machineTransfer/transferChunkEncryptionVectors.js';
 
 export {
   EphemeralTaskKindSchema,
@@ -1188,6 +1230,9 @@ export {
   RelayConnectBackgroundServiceSystemTaskStepIdSchema,
   SetupRepairThisComputerSystemTaskStepIdSchema,
   SetupThisComputerSystemTaskStepIdSchema,
+  createTailscaleEnsureReadyTaskSpec,
+  TAILSCALE_ENSURE_READY_SYSTEM_TASK_KIND,
+  TAILSCALE_ENSURE_READY_SYSTEM_TASK_STEP_IDS,
   createTailscaleSecureAccessTaskSpec,
   TAILSCALE_SECURE_ACCESS_SYSTEM_TASK_KIND,
   TAILSCALE_SECURE_ACCESS_SYSTEM_TASK_STEP_IDS,
@@ -1202,6 +1247,14 @@ export {
   type RelayConnectBackgroundServiceSystemTaskStepId,
   type SetupRepairThisComputerSystemTaskStepId,
   type SetupThisComputerSystemTaskStepId,
+  type TailscaleEnsureReadyInstallPolicy,
+  type TailscaleEnsureReadyLoginPolicy,
+  type TailscaleEnsureReadyMode,
+  type TailscaleEnsureReadySystemTaskStepId,
+  type TailscaleEnsureReadyTaskParams,
+  type TailscaleEnsureReadyTaskResult,
+  type TailscaleEnsureReadyTaskSpec,
+  type TailscaleSecureAccessProviderId,
   type TailscaleSecureAccessInstallPolicy,
   type TailscaleSecureAccessLoginPolicy,
   type TailscaleSecureAccessMode,

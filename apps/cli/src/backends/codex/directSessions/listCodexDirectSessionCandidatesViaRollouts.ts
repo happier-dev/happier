@@ -5,7 +5,7 @@ import type { DirectSessionCandidateV1 } from '@happier-dev/protocol';
 
 import { deriveDirectSessionActivityFromTimestamp } from '@/api/directSessions/activity/deriveDirectSessionActivityFromTimestamp';
 
-import { readCodexSessionMetaFromRollout } from '../localControl/rolloutDiscovery';
+import { readCodexSessionMetaFromRollout } from '../rollout/discovery/rolloutDiscovery';
 import { readCodexSessionTitleFromRollout } from './readCodexSessionTitleFromRollout';
 import type { CodexDirectSessionHomeEntry } from './resolveCodexHomeEntriesForDirectSessionsSource';
 import { resolveCodexHomeEntriesForDirectSessionsSource } from './resolveCodexHomeEntriesForDirectSessionsSource';

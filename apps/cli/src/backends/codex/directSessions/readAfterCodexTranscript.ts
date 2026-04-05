@@ -2,7 +2,7 @@ import type { DirectSessionsSource, DirectTranscriptRawMessageV1 } from '@happie
 
 import { resolveCodexHomesForDirectSessionsSource } from './resolveCodexHomesForDirectSessionsSource';
 import { decodeCodexDirectForwardCursor, encodeCodexDirectForwardCursor } from './codexDirectForwardCursor';
-import { collectCodexSessionRolloutFiles } from './collectCodexSessionRolloutFiles';
+import { collectCodexSessionRolloutFiles } from '../rollout/discovery/collectCodexSessionRolloutFiles';
 import { materializeCodexDirectTranscriptItems } from './materializeCodexDirectTranscriptItems';
 import {
   mapCodexDirectSessionAppServerPreviewToMessage,
@@ -57,7 +57,7 @@ export async function readAfterCodexTranscript(params: Readonly<{
 
   const perHomeFiles = await Promise.all(homes.map((home) => collectCodexSessionRolloutFiles({ codexHome: home, remoteSessionId: params.remoteSessionId })));
   const bestHome = selectBestCodexHomeWithFiles(homes, perHomeFiles);
-  const appServerMetadata = bestHome === null || params.cursor === 'tail'
+  const appServerMetadata = bestHome === null
     ? await resolveCodexDirectSessionAppServerMetadata({
       source: params.source,
       activeServerDir: params.activeServerDir,

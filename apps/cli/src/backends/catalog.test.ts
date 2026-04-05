@@ -98,10 +98,12 @@ describe('AGENTS', () => {
       pageTranscript: expect.any(Function),
       readAfterTranscript: expect.any(Function),
       getActivity: expect.any(Function),
+      acquireFollowLease: expect.any(Function),
       resolveTakeoverSpawnOptions: expect.any(Function),
     });
     await expect(getDirectSessionProviderOps('codex')).resolves.toMatchObject({
       listCandidates: expect.any(Function),
+      acquireFollowLease: expect.any(Function),
     });
     await expect(getDirectSessionProviderOps('opencode')).resolves.toMatchObject({
       listCandidates: expect.any(Function),

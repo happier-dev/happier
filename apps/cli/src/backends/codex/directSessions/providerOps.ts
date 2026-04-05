@@ -1,3 +1,4 @@
+import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
 import { configuration } from '@/configuration';
 import { buildCodexSpawnRuntimeAffinityCompatFields } from '@happier-dev/agents';
 
@@ -6,12 +7,10 @@ import {
   type DirectSessionProviderOps,
 } from '@/backends/directSessions/providerOps';
 
-import { getCodexDirectSessionActivity } from './getCodexDirectSessionActivity';
 import { getCodexDirectSessionWorkingDirectory } from './getCodexDirectSessionWorkingDirectory';
 import { listCodexSessionCandidates } from './listCodexSessionCandidates';
-import { pageCodexTranscript } from './pageCodexTranscript';
-import { readAfterCodexTranscript } from './readAfterCodexTranscript';
 import { resolveCodexHomeEntriesForDirectSessionsSource } from './resolveCodexHomeEntriesForDirectSessionsSource';
+import { acquireCodexRolloutSessionStore, withCodexRolloutSessionStore } from '../rollout/sessionStore/codexRolloutSessionStoreRegistry';
 
 export const codexDirectSessionProviderOps: DirectSessionProviderOps = {
   listCandidates: async ({ source, cursor, limit, searchTerm }) => {
@@ -19,22 +18,54 @@ export const codexDirectSessionProviderOps: DirectSessionProviderOps = {
     return { candidates: res.candidates, nextCursor: res.nextCursor ?? null };
   },
   getActivity: async ({ source, remoteSessionId }) => {
-    const res = await getCodexDirectSessionActivity({ source, activeServerDir: configuration.activeServerDir, remoteSessionId });
+    const res = await withCodexRolloutSessionStore(
+      {
+        activeServerDir: configuration.activeServerDir,
+        key: {
+          providerId: 'codex',
+          source,
+          remoteSessionId,
+        },
+      },
+      async (store): Promise<Readonly<{ lastActivityAtMs: number | null }>> => {
+        const activity = (await store.getActivity()) as Readonly<{ lastActivityAtMs: number | null }> | null;
+        return {
+          lastActivityAtMs: activity?.lastActivityAtMs ?? null,
+        };
+      },
+    );
     return {
       lastActivityAtMs: typeof res.lastActivityAtMs === 'number' && Number.isFinite(res.lastActivityAtMs) ? res.lastActivityAtMs : null,
       isRunning: false,
     };
   },
   pageTranscript: async ({ source, remoteSessionId, direction, cursor, maxBytes, maxItems }) => {
-    const res = await pageCodexTranscript({
-      source,
-      activeServerDir: configuration.activeServerDir,
-      remoteSessionId,
-      direction,
-      cursor,
-      maxBytes,
-      maxItems,
-    });
+    const res = await withCodexRolloutSessionStore(
+      {
+        activeServerDir: configuration.activeServerDir,
+        key: {
+          providerId: 'codex',
+          source,
+          remoteSessionId,
+        },
+      },
+      async (store): Promise<Readonly<{
+        items: DirectTranscriptRawMessageV1[];
+        nextCursor: string | null;
+        tailCursor: string | null;
+        hasMore: boolean;
+        truncated: boolean;
+      }>> => {
+        const page = await store.pageOlder({ direction, cursor, maxBytes, maxItems });
+        return {
+          items: Array.from(page.items as readonly DirectTranscriptRawMessageV1[]),
+          nextCursor: page.nextCursor,
+          tailCursor: page.tailCursor,
+          hasMore: page.hasMore,
+          truncated: page.truncated,
+        };
+      },
+    );
     return {
       items: res.items,
       nextCursor: res.nextCursor ?? null,
@@ -44,34 +75,69 @@ export const codexDirectSessionProviderOps: DirectSessionProviderOps = {
     };
   },
   readAfterTranscript: async ({ source, remoteSessionId, cursor, maxBytes, maxItems }) => {
-    const res = await readAfterCodexTranscript({
-      source,
-      activeServerDir: configuration.activeServerDir,
-      remoteSessionId,
-      cursor,
-      maxBytes,
-      maxItems,
-    });
-    return { items: res.items, nextCursor: res.nextCursor ?? null, truncated: res.truncated === true };
-    },
-    resolveTakeoverSpawnOptions: async ({ linked, sessionId }) => {
-      const homeEntries = await resolveCodexHomeEntriesForDirectSessionsSource({
-        source: linked.source,
+    const res = await withCodexRolloutSessionStore(
+      {
         activeServerDir: configuration.activeServerDir,
-        env: process.env,
-      });
-      const codexHome = homeEntries.length === 1 ? homeEntries[0]?.codexHome ?? null : null;
-      const directory =
-        linked.sessionPath ??
-        (await getCodexDirectSessionWorkingDirectory({
+        key: {
+          providerId: 'codex',
+          source,
+          remoteSessionId,
+        },
+      },
+      async (store): Promise<Readonly<{
+        items: DirectTranscriptRawMessageV1[];
+        nextCursor: string | null;
+        truncated: boolean;
+      }>> => {
+        const read = await store.readAfter({ cursor, maxBytes, maxItems });
+        return {
+          items: Array.from(read.items as readonly DirectTranscriptRawMessageV1[]),
+          nextCursor: read.nextCursor,
+          truncated: read.truncated,
+        };
+      },
+    );
+    return { items: res.items, nextCursor: res.nextCursor ?? null, truncated: res.truncated === true };
+  },
+  acquireFollowLease: async ({ source, remoteSessionId }) => {
+    const lease = await acquireCodexRolloutSessionStore({
+      activeServerDir: configuration.activeServerDir,
+      key: {
+        providerId: 'codex',
+        source,
+        remoteSessionId,
+      },
+    });
+    return {
+      release: lease.release,
+      getTailCursor: () => lease.store.getTailCursor(),
+      subscribeToTranscriptUpdates: (listener) => lease.store.subscribe(async (event) => {
+        await listener({
+          items: Array.from(event.items as readonly DirectTranscriptRawMessageV1[]),
+          nextCursor: event.nextCursor,
+          truncated: event.truncated,
+        });
+      }),
+    };
+  },
+  resolveTakeoverSpawnOptions: async ({ linked, sessionId }) => {
+    const homeEntries = await resolveCodexHomeEntriesForDirectSessionsSource({
+      source: linked.source,
+      activeServerDir: configuration.activeServerDir,
+      env: process.env,
+    });
+    const codexHome = homeEntries.length === 1 ? homeEntries[0]?.codexHome ?? null : null;
+    const directory =
+      linked.sessionPath ??
+      (await getCodexDirectSessionWorkingDirectory({
         source: linked.source,
         activeServerDir: configuration.activeServerDir,
         remoteSessionId: linked.remoteSessionId,
         env: process.env,
-        }));
-      if (!directory || !codexHome) return null;
-      return {
-        directory,
+      }));
+    if (!directory || !codexHome) return null;
+    return {
+      directory,
       backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
       existingSessionId: sessionId,
       resume: linked.remoteSessionId,

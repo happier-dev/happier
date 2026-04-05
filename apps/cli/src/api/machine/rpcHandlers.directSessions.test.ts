@@ -47,10 +47,385 @@ function jsonlLine(value: unknown): string {
   return `${JSON.stringify(value)}\n`;
 }
 
+async function waitForExpectation(assertion: () => void | Promise<void>, timeoutMs = 5_000): Promise<void> {
+  const startedAt = Date.now();
+  let lastError: unknown = null;
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      await assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Expectation was not met before timeout');
+}
+
 describe('registerMachineDirectSessionsRpcHandlers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.unstubAllEnvs();
+  });
+
+  it('registers direct-session attach leases and detaches them', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-directSessions-rpc-attach-'));
+    const configDir = join(root, '.claude');
+    const sessionFile = join(configDir, 'projects', 'proj-attach', 'sess-attach.jsonl');
+    await mkdir(join(configDir, 'projects', 'proj-attach'), { recursive: true });
+    await writeFile(
+      sessionFile,
+      jsonlLine({ type: 'assistant', uuid: 'a1', message: { model: 'm', content: [] } }),
+      'utf8',
+    );
+    vi.stubEnv('HAPPIER_CLAUDE_CONFIG_DIR', configDir);
+
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager });
+
+    const attachHandler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH);
+    const detachHandler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_DETACH);
+    expect(attachHandler).toBeDefined();
+    expect(detachHandler).toBeDefined();
+
+    const attached = await attachHandler!({
+      machineId: 'm1',
+      sessionId: 'happy-session-1',
+      providerId: 'claude',
+      remoteSessionId: 'sess-attach',
+      source: { kind: 'claudeConfig', configDir, projectId: 'proj-attach' },
+      ttlMs: 30_000,
+    });
+
+    expect(attached.ok).toBe(true);
+    expect(typeof attached.leaseId).toBe('string');
+    expect(attached.expiresAtMs).toBeGreaterThan(Date.now());
+
+    const detached = await detachHandler!({
+      machineId: 'm1',
+      sessionId: 'happy-session-1',
+      leaseId: attached.leaseId,
+    });
+
+    expect(detached).toEqual({ ok: true, detached: true });
+  });
+
+  it('writes lightweight background-follow policy metadata without transcript bodies', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-directSessions-rpc-follow-policy-'));
+    const configDir = join(root, '.claude');
+    const sessionDir = join(configDir, 'projects', 'proj-policy');
+    const sessionFile = join(sessionDir, 'sess-claude-policy.jsonl');
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(
+      sessionFile,
+      jsonlLine({ type: 'assistant', uuid: 'a1', message: { model: 'm', content: [] } }),
+      'utf8',
+    );
+    vi.stubEnv('HAPPIER_CLAUDE_CONFIG_DIR', configDir);
+
+    readCredentialsMock.mockResolvedValueOnce({
+      token: 'token-direct',
+      encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) },
+    });
+    fetchSessionByIdMock.mockResolvedValueOnce({
+      id: 'sess_happy_policy',
+      metadataVersion: 7,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        path: '',
+        machineId: 'm1',
+        flavor: 'claude',
+        directSessionV1: {
+          v: 1,
+          providerId: 'claude',
+          machineId: 'm1',
+          remoteSessionId: 'sess-claude-policy',
+          source: { kind: 'claudeConfig', configDir, projectId: 'proj-policy' },
+          linkedAtMs: Date.now(),
+        },
+      }),
+    });
+    updateSessionMetadataWithRetryMock.mockImplementation(async ({ updater }: { updater: (current: Record<string, unknown>) => Record<string, unknown> }) => ({
+      version: 8,
+      metadata: updater({
+        path: '',
+        machineId: 'm1',
+        flavor: 'claude',
+        directSessionV1: {
+          v: 1,
+          providerId: 'claude',
+          machineId: 'm1',
+          remoteSessionId: 'sess-claude-policy',
+          source: { kind: 'claudeConfig', configDir, projectId: 'proj-policy' },
+          linkedAtMs: Date.now(),
+        },
+      }),
+    }));
+
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager });
+
+    const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET);
+    expect(handler).toBeDefined();
+
+    const res = await handler!({
+      machineId: 'm1',
+      sessionId: 'sess_happy_policy',
+      providerId: 'claude',
+      remoteSessionId: 'sess-claude-policy',
+      source: { kind: 'claudeConfig', configDir, projectId: 'proj-policy' },
+      enabled: true,
+    });
+
+    expect(res.ok).toBe(true);
+    expect(res.enabled).toBe(true);
+    expect(res.leaseActive).toBe(true);
+    expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(1);
+    const metadataUpdateArgs = updateSessionMetadataWithRetryMock.mock.calls[0]?.[0];
+    const updatedMetadata = metadataUpdateArgs?.updater?.({
+      path: '',
+      machineId: 'm1',
+      flavor: 'claude',
+      directSessionV1: {
+        v: 1,
+        providerId: 'claude',
+        machineId: 'm1',
+        remoteSessionId: 'sess-claude-policy',
+        source: { kind: 'claudeConfig', configDir, projectId: 'proj-policy' },
+        linkedAtMs: Date.now(),
+      },
+    });
+    expect(updatedMetadata.directSessionV1.followPolicyV1).toEqual({
+      v: 1,
+      policy: 'background_follow',
+      updatedAtMs: expect.any(Number),
+    });
+    expect(updatedMetadata.directSessionV1.lastKnownActivityAtMs).toBeUndefined();
+  });
+
+  it('persists lightweight progress markers for detached background-follow sessions when transcript updates arrive', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-directSessions-rpc-background-follow-'));
+    const configDir = join(root, '.claude');
+    const sessionDir = join(configDir, 'projects', 'proj-background');
+    const sessionFile = join(sessionDir, 'sess-background.jsonl');
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(
+      sessionFile,
+      jsonlLine({ type: 'assistant', uuid: 'a1', message: { model: 'm', content: [] } }),
+      'utf8',
+    );
+    vi.stubEnv('HAPPIER_CLAUDE_CONFIG_DIR', configDir);
+
+    readCredentialsMock.mockResolvedValue({
+      token: 'token-direct',
+      encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) },
+    });
+    fetchSessionByIdMock.mockResolvedValue({
+      id: 'sess_happy_background',
+      metadataVersion: 7,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        path: '',
+        machineId: 'm1',
+        flavor: 'claude',
+        directSessionV1: {
+          v: 1,
+          providerId: 'claude',
+          machineId: 'm1',
+          remoteSessionId: 'sess-background',
+          source: { kind: 'claudeConfig', configDir, projectId: 'proj-background' },
+          linkedAtMs: Date.now(),
+        },
+      }),
+    });
+    updateSessionMetadataWithRetryMock.mockImplementation(async ({ updater }: { updater: (current: Record<string, unknown>) => Record<string, unknown> }) => ({
+      version: 8,
+      metadata: updater({
+        path: '',
+        machineId: 'm1',
+        flavor: 'claude',
+        directSessionV1: {
+          v: 1,
+          providerId: 'claude',
+          machineId: 'm1',
+          remoteSessionId: 'sess-background',
+          source: { kind: 'claudeConfig', configDir, projectId: 'proj-background' },
+          linkedAtMs: Date.now(),
+        },
+      }),
+    }));
+
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager });
+
+    const policyHandler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET);
+    expect(policyHandler).toBeDefined();
+
+    const res = await policyHandler!({
+      machineId: 'm1',
+      sessionId: 'sess_happy_background',
+      providerId: 'claude',
+      remoteSessionId: 'sess-background',
+      source: { kind: 'claudeConfig', configDir, projectId: 'proj-background' },
+      enabled: true,
+    });
+
+    expect(res.ok).toBe(true);
+
+    await writeFile(
+      sessionFile,
+      [
+        jsonlLine({ type: 'assistant', uuid: 'a1', message: { model: 'm', content: [] } }),
+        jsonlLine({ type: 'assistant', uuid: 'a2', message: { model: 'm', content: [{ type: 'text', text: 'background delta' }] } }),
+      ].join(''),
+      'utf8',
+    );
+
+    await waitForExpectation(() => {
+      expect(updateSessionMetadataWithRetryMock).toHaveBeenCalled();
+      const latestCall = updateSessionMetadataWithRetryMock.mock.calls.at(-1)?.[0];
+      const updated = latestCall?.updater?.({
+        path: '',
+        machineId: 'm1',
+        flavor: 'claude',
+        directSessionV1: {
+          v: 1,
+          providerId: 'claude',
+          machineId: 'm1',
+          remoteSessionId: 'sess-background',
+          source: { kind: 'claudeConfig', configDir, projectId: 'proj-background' },
+          linkedAtMs: Date.now(),
+          followPolicyV1: {
+            v: 1,
+            policy: 'background_follow',
+            updatedAtMs: Date.now(),
+          },
+        },
+      });
+      expect(updated.directSessionV1.followPolicyV1).toEqual(expect.objectContaining({
+        policy: 'background_follow',
+      }));
+      expect(updated.directSessionV1.lastKnownActivityAtMs).toEqual(expect.any(Number));
+      expect(updated.directSessionAttentionV1).toEqual(expect.objectContaining({
+        observedProgressToken: expect.any(String),
+        observedAtMs: expect.any(Number),
+      }));
+    });
+  });
+
+  it('pushes transcript deltas for attached direct sessions and stops after detach', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-directSessions-rpc-push-'));
+    const configDir = join(root, '.claude');
+    const sessionFile = join(configDir, 'projects', 'proj-push', 'sess-push.jsonl');
+    await mkdir(join(configDir, 'projects', 'proj-push'), { recursive: true });
+    await writeFile(
+      sessionFile,
+      jsonlLine({ type: 'assistant', uuid: 'a1', message: { model: 'm', content: [] } }),
+      'utf8',
+    );
+    vi.stubEnv('HAPPIER_CLAUDE_CONFIG_DIR', configDir);
+
+    const emitDirectSessionTranscriptUpdate = vi.fn(async () => {});
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    registerMachineDirectSessionsRpcHandlers({
+      rpcHandlerManager,
+      emitDirectSessionTranscriptUpdate,
+    } as any);
+
+    const attachHandler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH);
+    const detachHandler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_DETACH);
+    expect(attachHandler).toBeDefined();
+    expect(detachHandler).toBeDefined();
+
+    const attached = await attachHandler!({
+      machineId: 'm1',
+      sessionId: 'happy-session-push',
+      providerId: 'claude',
+      remoteSessionId: 'sess-push',
+      source: { kind: 'claudeConfig', configDir, projectId: 'proj-push' },
+      ttlMs: 30_000,
+    });
+
+    expect(attached.ok).toBe(true);
+
+    await writeFile(
+      sessionFile,
+      [
+        jsonlLine({ type: 'assistant', uuid: 'a1', message: { model: 'm', content: [] } }),
+        jsonlLine({ type: 'assistant', uuid: 'a2', message: { model: 'm', content: [{ type: 'text', text: 'hello from push' }] } }),
+      ].join(''),
+      'utf8',
+    );
+
+    await waitForExpectation(() => {
+      expect(emitDirectSessionTranscriptUpdate).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'direct-session-transcript-delta',
+        sessionId: 'happy-session-push',
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            raw: expect.objectContaining({
+              content: expect.objectContaining({
+                data: expect.objectContaining({
+                  message: expect.objectContaining({
+                    content: expect.arrayContaining([
+                      expect.objectContaining({ text: 'hello from push' }),
+                    ]),
+                  }),
+                }),
+              }),
+            }),
+          }),
+        ]),
+        truncated: false,
+      }));
+    });
+
+    emitDirectSessionTranscriptUpdate.mockClear();
+
+    const detached = await detachHandler!({
+      machineId: 'm1',
+      sessionId: 'happy-session-push',
+      leaseId: attached.leaseId,
+    });
+
+    expect(detached).toEqual({ ok: true, detached: true });
+
+    await writeFile(
+      sessionFile,
+      [
+        jsonlLine({ type: 'assistant', uuid: 'a1', message: { model: 'm', content: [] } }),
+        jsonlLine({ type: 'assistant', uuid: 'a2', message: { model: 'm', content: [{ type: 'text', text: 'hello from push' }] } }),
+        jsonlLine({ type: 'assistant', uuid: 'a3', message: { model: 'm', content: [{ type: 'text', text: 'after detach' }] } }),
+      ].join(''),
+      'utf8',
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(emitDirectSessionTranscriptUpdate).not.toHaveBeenCalled();
   });
 
   it('takes over a direct claude session using provider cwd and config dir', async () => {
@@ -659,6 +1034,79 @@ describe('registerMachineDirectSessionsRpcHandlers', () => {
 
     expect(res.ok).toBe(true);
     expect(res.canTakeOverPersist).toBe(false);
+  });
+
+  it('reuses cached takeover readiness across repeated direct-session status polls', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-directSessions-rpc-status-cache-'));
+    const configDir = join(root, '.claude');
+    const sessionFile = join(configDir, 'projects', 'proj-cache', 'sess-cache.jsonl');
+    await mkdir(join(configDir, 'projects', 'proj-cache'), { recursive: true });
+    await writeFile(
+      sessionFile,
+      jsonlLine({
+        type: 'user',
+        uuid: 'u-cache',
+        cwd: '/tmp/direct-cache-worktree',
+        message: { content: 'hello' },
+      }),
+      'utf8',
+    );
+    vi.stubEnv('HAPPIER_CLAUDE_CONFIG_DIR', configDir);
+    vi.stubEnv('HAPPIER_DIRECT_SESSIONS_STATUS_TAKEOVER_CACHE_MS', '60000');
+
+    readCredentialsMock.mockResolvedValue({
+      token: 'token-cache',
+      encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) },
+    });
+    fetchSessionByIdMock.mockResolvedValue({
+      id: 'sess_happy_direct_cache',
+      metadataVersion: 1,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        path: '',
+        machineId: 'm1',
+        flavor: 'claude',
+        claudeSessionId: 'sess-cache',
+        directSessionV1: {
+          v: 1,
+          providerId: 'claude',
+          machineId: 'm1',
+          remoteSessionId: 'sess-cache',
+          source: { kind: 'claudeConfig', configDir, projectId: 'proj-cache' },
+          linkedAtMs: Date.now(),
+        },
+      }),
+    });
+
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager });
+
+    const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET);
+    expect(handler).toBeDefined();
+
+    const request = {
+      machineId: 'm1',
+      sessionId: 'sess_happy_direct_cache',
+      providerId: 'claude',
+      remoteSessionId: 'sess-cache',
+      source: { kind: 'claudeConfig', configDir, projectId: 'proj-cache' },
+    };
+
+    const first = await handler!(request);
+    const second = await handler!(request);
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(first.canTakeOverPersist).toBe(true);
+    expect(second.canTakeOverPersist).toBe(true);
+    expect(readCredentialsMock).toHaveBeenCalledTimes(1);
+    expect(fetchSessionByIdMock).toHaveBeenCalledTimes(1);
   });
 
   it('marks claude sessions with recent file activity as active_recently', async () => {

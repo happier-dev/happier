@@ -17,6 +17,7 @@ import { RpcHandlerManager } from './rpc/RpcHandlerManager';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import {
     TRANSFER_RELAY_V2_SOCKET_EVENT,
+    type DirectSessionTranscriptDeltaEphemeral,
     type MachineTransferReceiveEnvelope,
     type MachineTransferSendEnvelope,
     type TransferRelayV2SendEnvelope,
@@ -129,6 +130,7 @@ export class ApiMachineClient {
         stopSession,
         isSessionActive,
         loadLocalSessionMetadata,
+        savePreparedTargetLocalMetadata,
         requestShutdown,
         memory,
         machineTransferChannel,
@@ -144,6 +146,7 @@ export class ApiMachineClient {
                 stopSession,
                 ...(isSessionActive ? { isSessionActive } : {}),
                 ...(loadLocalSessionMetadata ? { loadLocalSessionMetadata } : {}),
+                ...(savePreparedTargetLocalMetadata ? { savePreparedTargetLocalMetadata } : {}),
                 requestShutdown,
                 ...(memory ? { memory } : {}),
                 ...(machineTransferChannel ? { machineTransferChannel } : {}),
@@ -201,6 +204,11 @@ export class ApiMachineClient {
     sendTransferRelayV2Envelope(payload: TransferRelayV2SendEnvelope): void {
         if (!this.socket) return;
         this.socket.emit(TRANSFER_RELAY_V2_SOCKET_EVENT, payload);
+    }
+
+    emitDirectSessionTranscriptUpdate(payload: DirectSessionTranscriptDeltaEphemeral): void {
+        if (!this.socket) return;
+        this.socket.emit('direct-session-transcript-delta', payload);
     }
 
     private dispatchUpdate(update: Update): boolean {

@@ -14,7 +14,7 @@ vi.mock('node:fs/promises', async () => {
   };
 });
 
-import { collectCodexSessionRolloutFiles } from './collectCodexSessionRolloutFiles';
+import { collectCodexSessionRolloutFiles } from '../rollout/discovery/collectCodexSessionRolloutFiles';
 
 describe('collectCodexSessionRolloutFiles', () => {
   beforeEach(async () => {
@@ -71,6 +71,31 @@ describe('collectCodexSessionRolloutFiles', () => {
 
     expect(files.map((file) => file.fileRelPath)).toEqual([
       `sessions/custom/tree/rollout-2026-02-14T08-28-05-${remoteSessionId}.jsonl`,
+    ]);
+  });
+
+  it('falls back to session_meta matching for flat rollout files whose name does not include the session id', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-rollout-session-meta-'));
+    const remoteSessionId = 'session-meta-match';
+    const sessionsDir = join(codexHome, 'sessions');
+    await mkdir(sessionsDir, { recursive: true });
+    await writeFile(
+      join(sessionsDir, 'rollout-test.jsonl'),
+      `${JSON.stringify({
+        type: 'session_meta',
+        payload: {
+          id: remoteSessionId,
+          timestamp: '2026-02-14T08:28:05.000Z',
+          cwd: '/repo/meta-match',
+        },
+      })}\n`,
+      'utf8',
+    );
+
+    const files = await collectCodexSessionRolloutFiles({ codexHome, remoteSessionId });
+
+    expect(files.map((file) => file.fileRelPath)).toEqual([
+      'sessions/rollout-test.jsonl',
     ]);
   });
 });

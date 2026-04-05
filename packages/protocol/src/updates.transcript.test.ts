@@ -124,6 +124,35 @@ describe('updates transcript vNext payloads', () => {
     expect(parsed.data.message.localId).toBe('segment_1');
   });
 
+  it('parses direct-session transcript delta ephemerals', () => {
+    const parsed = EphemeralUpdateSchema.safeParse({
+      type: 'direct-session-transcript-delta',
+      sessionId: 'sess_1',
+      items: [
+        {
+          id: 'a2',
+          createdAtMs: 1_050,
+          localId: 'direct-2',
+          raw: {
+            type: 'assistant',
+            uuid: 'a2',
+            message: {
+              model: 'm',
+              content: [{ type: 'text', text: 'hello from push' }],
+            },
+          },
+        },
+      ],
+      nextCursor: 'cursor-2',
+      truncated: false,
+    });
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.type).toBe('direct-session-transcript-delta');
+    expect(parsed.data.items).toHaveLength(1);
+  });
+
   it('parses message ack responses with didUpdate', () => {
     const parsed = MessageAckResponseSchema.safeParse({
       ok: true,

@@ -11,8 +11,6 @@ import {
     type SessionRollbackRpcParams,
     type SessionRollbackRpcResult,
 } from '@happier-dev/protocol';
-import { TurnChangeSetCollector } from '@/agent/tools/diff/turnChangeSetCollector';
-import { emitCanonicalTurnDiffTool } from '@/agent/runtime/emitCanonicalTurnDiffTool';
 import { logger } from '@/ui/logger';
 import { delay } from '@/utils/time';
 import { publishCodexSessionIdMetadata } from '../utils/codexSessionIdMetadata';
@@ -22,6 +20,16 @@ import {
     looksLikeCodexApprovalRequestUserInput,
     normalizeCodexRequestUserInputQuestionsToAskUserQuestionInput,
 } from '../runtime/codexRequestUserInputQuestions';
+import { finalizeCodexSyntheticSubagent, startCodexSyntheticSubagent } from '../runtime/emitCodexSyntheticSubagentLifecycle';
+import {
+    createCodexAppServerAssistantReasoningProjector,
+} from '../runtime/createCodexAppServerAssistantReasoningProjector';
+import {
+    createCodexAppServerTurnDiffProjector,
+} from '../runtime/createCodexAppServerTurnDiffProjector';
+import {
+    createCodexAppServerToolProjector,
+} from '../runtime/createCodexAppServerToolProjector';
 import { canonicalizeCodexMcpToolName } from '../utils/canonicalizeCodexMcpToolName';
 import { resolveCodexAppServerPolicyForPermissionMode } from '../utils/permissionModePolicy';
 import { readCodexEnvironmentAuthState } from '../cli/auth/readCodexEnvironmentAuthState';
@@ -81,11 +89,6 @@ type PermissionResult = Readonly<{
 type StreamUpdateContext = Readonly<{
     sidechainId: string | null;
     streamScopeId: string;
-}>;
-
-type PendingRawAssistantFinal = Readonly<{
-    text: string;
-    sidechainId: string | null;
 }>;
 
 type PermissionHandlerSubset = Readonly<{
@@ -241,10 +244,6 @@ export function createCodexAppServerRuntime(params: Readonly<{
     let pendingTurnFinalizationTimer: ReturnType<typeof setTimeout> | null = null;
     let scheduledPendingTurnFlushReason: 'turn-end' | 'abort' | null = null;
     const streamEventBridge = createCodexAppServerStreamEventBridge();
-    const turnChangeCollector = new TurnChangeSetCollector({
-        provider: 'codex',
-        snapshotUnifiedDiff: true,
-    });
     const itemTranscriptBridge = createKeyedStreamedTranscriptBridge<{
         streamKey: string;
         sidechainId: string | null;
@@ -252,11 +251,22 @@ export function createCodexAppServerRuntime(params: Readonly<{
         provider: 'codex',
         createSessionForStream: () => params.transcriptSession ?? params.session,
     });
-    const assistantTextByItemId = new Map<string, string>();
-    const reasoningTextByItemId = new Map<string, string>();
-    const latestAssistantItemIdByStreamScope = new Map<string, string>();
-    const normalizedAssistantFinalSeenByStreamScope = new Set<string>();
-    const rawAssistantFinalByStreamScope = new Map<string, PendingRawAssistantFinal>();
+    const assistantReasoningProjector = createCodexAppServerAssistantReasoningProjector({
+        bridge: itemTranscriptBridge,
+    });
+    const turnDiffProjector = createCodexAppServerTurnDiffProjector({
+        session: params.session,
+        readLastObservedMessageSeq: () => readLastObservedMessageSeq(params.session),
+    });
+    const toolProjector = createCodexAppServerToolProjector({
+        session: params.session,
+        flushBeforeToolCall: async () => {
+            await itemTranscriptBridge.flushAll({ reason: 'tool-call-boundary' });
+        },
+        observeFileChangeToolCall: (input) => {
+            turnDiffProjector.observeFileChangeToolCall(input);
+        },
+    });
     const syntheticSubagentThreadIds = new Set<string>();
     const syntheticSubagentTracker = createCodexSyntheticSubagentTracker({
         session: params.session,
@@ -324,236 +334,46 @@ export function createCodexAppServerRuntime(params: Readonly<{
         return await next;
     };
 
-    const appendStreamDelta = (itemKey: string, text: string, values: Map<string, string>, append: (deltaText: string) => void): void => {
-        if (!text) return;
-        append(text);
-        values.set(itemKey, `${values.get(itemKey) ?? ''}${text}`);
-    };
-
-    const appendStreamFinal = (
-        itemKey: string,
-        text: string,
-        values: Map<string, string>,
-        append: (deltaText: string) => void,
-        override: (finalText: string) => void,
-    ): void => {
-        const accumulated = values.get(itemKey) ?? '';
-        values.delete(itemKey);
-        if (!text) return;
-        if (!accumulated) {
-            append(text);
-            return;
-        }
-        if (text.startsWith(accumulated)) {
-            const suffix = text.slice(accumulated.length);
-            if (suffix) append(suffix);
-            return;
-        }
-        override(text);
-    };
-
-    const commitRawAssistantFinal = (streamScopeId: string, pending: PendingRawAssistantFinal): void => {
-        const itemId = latestAssistantItemIdByStreamScope.get(streamScopeId) ?? 'raw-response-item';
-        appendStreamFinal(
-            buildItemStateKey(streamScopeId, itemId),
-            pending.text,
-            assistantTextByItemId,
-            (deltaText) => {
-                itemTranscriptBridge.appendAssistantDelta({
-                    deltaText,
-                    streamKey: buildItemStreamKey(streamScopeId, 'assistant', itemId),
-                    sidechainId: pending.sidechainId,
-                });
-            },
-            (finalText) => {
-                itemTranscriptBridge.overrideAssistantText({
-                    text: finalText,
-                    streamKey: buildItemStreamKey(streamScopeId, 'assistant', itemId),
-                    sidechainId: pending.sidechainId,
-                });
-            },
-        );
-    };
-
-    const commitPendingRawAssistantFinals = (): void => {
-        for (const [streamScopeId, pendingRaw] of rawAssistantFinalByStreamScope.entries()) {
-            if (!normalizedAssistantFinalSeenByStreamScope.has(streamScopeId)) {
-                commitRawAssistantFinal(streamScopeId, pendingRaw);
-            }
-            rawAssistantFinalByStreamScope.delete(streamScopeId);
-        }
-    };
-
-    const buildItemStateKey = (scopeId: string, itemId: string): string => `${scopeId}:${itemId}`;
-    const buildItemStreamKey = (scopeId: string, kind: 'assistant' | 'reasoning', itemId: string): string =>
-        `${scopeId}:${kind}:${itemId}`;
-
     const ensureSyntheticSubagentThread = async (threadId: string): Promise<string> => {
         if (syntheticSubagentThreadIds.has(threadId)) return threadId;
-        await itemTranscriptBridge.flushAll({ reason: 'tool-call-boundary' });
-        syntheticSubagentTracker.ensureStarted({ threadId });
+        await startCodexSyntheticSubagent({
+            tracker: syntheticSubagentTracker,
+            flushBoundary: async () => {
+                await itemTranscriptBridge.flushAll({ reason: 'tool-call-boundary' });
+            },
+            threadId,
+        });
         syntheticSubagentThreadIds.add(threadId);
         return threadId;
     };
 
     const finalizeSyntheticSubagentThread = async (threadId: string, status: 'completed' | 'interrupted'): Promise<void> => {
         await ensureSyntheticSubagentThread(threadId);
-        await itemTranscriptBridge.flushAll({ reason: 'tool-call-boundary' });
-        syntheticSubagentTracker.finalize({ threadId, status });
+        await finalizeCodexSyntheticSubagent({
+            tracker: syntheticSubagentTracker,
+            flushBoundary: async () => {
+                await itemTranscriptBridge.flushAll({ reason: 'tool-call-boundary' });
+            },
+            threadId,
+            status,
+        });
     };
 
     const applyStreamUpdate = async (update: CodexAppServerStreamUpdate, context: StreamUpdateContext): Promise<void> => {
-        if (update.type === 'assistant-text-delta') {
-            latestAssistantItemIdByStreamScope.set(context.streamScopeId, update.itemId);
-            appendStreamDelta(buildItemStateKey(context.streamScopeId, update.itemId), update.text, assistantTextByItemId, (deltaText) => {
-                itemTranscriptBridge.appendAssistantDelta({
-                    deltaText,
-                    streamKey: buildItemStreamKey(context.streamScopeId, 'assistant', update.itemId),
-                    sidechainId: context.sidechainId,
-                });
-            });
+        if (assistantReasoningProjector.observeStreamUpdate(update, context)) {
             return;
         }
 
-        if (update.type === 'assistant-text-final') {
-            latestAssistantItemIdByStreamScope.set(context.streamScopeId, update.itemId);
-            normalizedAssistantFinalSeenByStreamScope.add(context.streamScopeId);
-            rawAssistantFinalByStreamScope.delete(context.streamScopeId);
-            appendStreamFinal(buildItemStateKey(context.streamScopeId, update.itemId), update.text, assistantTextByItemId, (deltaText) => {
-                itemTranscriptBridge.appendAssistantDelta({
-                    deltaText,
-                    streamKey: buildItemStreamKey(context.streamScopeId, 'assistant', update.itemId),
-                    sidechainId: context.sidechainId,
-                });
-            }, (finalText) => {
-                itemTranscriptBridge.overrideAssistantText({
-                    text: finalText,
-                    streamKey: buildItemStreamKey(context.streamScopeId, 'assistant', update.itemId),
-                    sidechainId: context.sidechainId,
-                });
-            });
-            return;
-        }
-
-        if (update.type === 'assistant-raw-final') {
-            if (normalizedAssistantFinalSeenByStreamScope.has(context.streamScopeId)) {
+        if (turnDiffProjector.observeStreamUpdate(update, {
+            sidechainId: context.sidechainId,
+            activeTurnId: pendingTurn?.turnId ?? null,
+        })) {
                 return;
-            }
-            rawAssistantFinalByStreamScope.set(context.streamScopeId, {
-                text: update.text,
-                sidechainId: context.sidechainId,
-            });
+        }
+
+        if (await toolProjector.observeStreamUpdate(update, context)) {
             return;
         }
-
-        if (update.type === 'reasoning-delta') {
-            appendStreamDelta(buildItemStateKey(context.streamScopeId, update.itemId), update.text, reasoningTextByItemId, (deltaText) => {
-                itemTranscriptBridge.appendThinkingDelta({
-                    deltaText,
-                    streamKey: buildItemStreamKey(context.streamScopeId, 'reasoning', update.itemId),
-                    sidechainId: context.sidechainId,
-                });
-            });
-            return;
-        }
-
-        if (update.type === 'reasoning-final') {
-            appendStreamFinal(buildItemStateKey(context.streamScopeId, update.itemId), update.text, reasoningTextByItemId, (deltaText) => {
-                itemTranscriptBridge.appendThinkingDelta({
-                    deltaText,
-                    streamKey: buildItemStreamKey(context.streamScopeId, 'reasoning', update.itemId),
-                    sidechainId: context.sidechainId,
-                });
-            }, (finalText) => {
-                itemTranscriptBridge.overrideThinkingText({
-                    text: finalText,
-                    streamKey: buildItemStreamKey(context.streamScopeId, 'reasoning', update.itemId),
-                    sidechainId: context.sidechainId,
-                });
-            });
-            return;
-        }
-
-        if (update.type === 'turn-diff-updated') {
-            if (context.sidechainId) return;
-            const activeTurnId = pendingTurn?.turnId ?? null;
-            if (update.turnId && activeTurnId && update.turnId !== activeTurnId) {
-                return;
-            }
-            turnChangeCollector.observeUnifiedDiffSnapshot({
-                unifiedDiff: update.unifiedDiff,
-                source: 'provider_native',
-                confidence: 'exact',
-            });
-            return;
-        }
-
-        if (update.type === 'tool-call') {
-            await itemTranscriptBridge.flushAll({ reason: 'tool-call-boundary' });
-            if (update.toolKind === 'file-change') {
-                const input = update.input && typeof update.input === 'object' && !Array.isArray(update.input)
-                    ? update.input as Record<string, unknown>
-                    : null;
-                const changes = input?.changes;
-                if (changes && typeof changes === 'object' && !Array.isArray(changes)) {
-                    turnChangeCollector.observePatchChanges({
-                        changes: changes as Record<string, unknown>,
-                        source: 'provider_tool',
-                        confidence: 'strong',
-                    });
-                }
-            }
-            if (context.sidechainId) {
-                params.session.sendAgentMessage('codex', {
-                    type: 'tool-call',
-                    name: update.name,
-                    callId: update.callId,
-                    input: update.input,
-                    id: randomUUID(),
-                    sidechainId: context.sidechainId,
-                });
-            } else {
-                params.session.sendCodexMessage({
-                    type: 'tool-call',
-                    name: update.name,
-                    callId: update.callId,
-                    input: update.input,
-                    id: randomUUID(),
-                });
-            }
-            return;
-        }
-
-        if (update.type === 'tool-result') {
-            if (context.sidechainId) {
-                params.session.sendAgentMessage('codex', {
-                    type: 'tool-result',
-                    callId: update.callId,
-                    output: update.output,
-                    id: randomUUID(),
-                    sidechainId: context.sidechainId,
-                });
-            } else {
-                params.session.sendCodexMessage({
-                    type: 'tool-call-result',
-                    callId: update.callId,
-                    output: update.output,
-                    id: randomUUID(),
-                });
-            }
-        }
-    };
-
-    const flushStreamState = async (reason: 'turn-end' | 'abort'): Promise<void> => {
-        assistantTextByItemId.clear();
-        reasoningTextByItemId.clear();
-        latestAssistantItemIdByStreamScope.clear();
-        normalizedAssistantFinalSeenByStreamScope.clear();
-        rawAssistantFinalByStreamScope.clear();
-        await itemTranscriptBridge.flushAll({
-            reason,
-            ...(reason === 'abort' ? { interruptedReason: 'app-server-turn-interrupted' } : {}),
-        });
     };
 
     const mapApprovalDecision = (
@@ -841,57 +661,21 @@ export function createCodexAppServerRuntime(params: Readonly<{
         setThinking(false);
         if (options?.flushReason) {
             if (options.insideBridgeWork === true) {
-                if (options.flushReason === 'turn-end') {
-                    commitPendingRawAssistantFinals();
-                }
-                await flushStreamState(options.flushReason);
+                await assistantReasoningProjector.flush(options.flushReason);
             } else {
                 await runBridgeWork(async () => {
-                    if (options.flushReason === 'turn-end') {
-                        commitPendingRawAssistantFinals();
-                    }
-                    await flushStreamState(options.flushReason!);
+                    await assistantReasoningProjector.flush(options.flushReason!);
                 });
             }
         }
         if (options?.flushReason === 'turn-end' && activeTurn) {
-            const turnChangeSet = turnChangeCollector.flushTurn({
-                sessionId: params.session.sessionId ?? activeTurn.threadId,
+            turnDiffProjector.emitCompletedTurn({
+                threadId: activeTurn.threadId,
                 turnId: activeTurn.turnId ?? latestPendingTurnId ?? `codex-app-server-turn-${Date.now()}`,
-                seqRange: {
-                    startSeqInclusive: completedTurnStartSeqInclusive ?? 0,
-                    endSeqInclusive: readLastObservedMessageSeq(params.session),
-                },
-                status: 'completed',
+                completedTurnStartSeqInclusive: completedTurnStartSeqInclusive ?? 0,
             });
-            if (turnChangeSet) {
-                emitCanonicalTurnDiffTool({
-                    turnChangeSet,
-                    protocol: 'codex',
-                    rawToolName: 'CodexDiff',
-                    sendToolCall: ({ toolName, input, callId }) => {
-                        const resolvedCallId = callId ?? randomUUID();
-                        params.session.sendCodexMessage({
-                            type: 'tool-call',
-                            name: toolName,
-                            callId: resolvedCallId,
-                            input,
-                            id: randomUUID(),
-                        });
-                        return resolvedCallId;
-                    },
-                    sendToolResult: ({ callId, output }) => {
-                        params.session.sendCodexMessage({
-                            type: 'tool-call-result',
-                            callId,
-                            output,
-                            id: randomUUID(),
-                        });
-                    },
-                });
-            }
         } else {
-            turnChangeCollector.beginTurn();
+            turnDiffProjector.beginTurn();
         }
         latestPendingTurnId = null;
         if (options?.flushReason === 'turn-end' && completedTurnStartSeqInclusive !== null) {
@@ -1153,7 +937,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
         supportsInFlightSteer: () => true,
         isTurnInFlight: () => turnInFlight,
         beginTurn: () => {
-            turnChangeCollector.beginTurn();
+            turnDiffProjector.beginTurn();
             turnInFlight = true;
             setThinking(true);
         },
@@ -1285,7 +1069,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
             }
             const client = await ensureClient();
             pendingTurnStartSeqInclusive = readLastObservedMessageSeq(params.session);
-            turnChangeCollector.beginTurn();
+            turnDiffProjector.beginTurn();
             const activeTurn = createPendingTurn(activeThreadId);
             pendingTurn = activeTurn;
             latestPendingTurnId = null;

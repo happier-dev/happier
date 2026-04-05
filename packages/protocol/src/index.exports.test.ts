@@ -84,6 +84,7 @@ describe('protocol package root exports', () => {
         expect(typeof (protocol as any).DirectTranscriptPageRequestSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).DirectTranscriptReadAfterRequestSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).DirectSessionLinkEnsureRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DirectSessionFollowPolicySetRequestSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).DirectSessionTakeoverRequestSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).DirectSessionTakeoverPersistRequestSchema?.safeParse).toBe('function');
     });
@@ -93,6 +94,8 @@ describe('protocol package root exports', () => {
         expect(typeof (protocol as any).SessionHandoffPrepareTargetRequestSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).SessionHandoffStatusSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).TransferChunkEnvelopeSchema?.safeParse).toBe('function');
+        expect(Array.isArray((protocol as any).transferChunkEncryptionVectors)).toBe(true);
+        expect(typeof (protocol as any).createDeterministicRandomBytesFromBase64).toBe('function');
     });
 
     it('does not export the removed sync-only workspace replication RPC surface', () => {

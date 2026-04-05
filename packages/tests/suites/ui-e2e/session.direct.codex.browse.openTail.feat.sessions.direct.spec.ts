@@ -4,11 +4,13 @@ import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebExportSuiteTimeoutMs } from '../../src/testkit/process/uiWebEnv';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { enableDirectSessionsFeature } from '../../src/testkit/uiE2e/enableDirectSessionsFeature';
 import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -35,7 +37,18 @@ test.describe('ui e2e: direct Codex sessions browse/open/tail', () => {
   let daemon: StartedDaemon | null = null;
 
   test.beforeAll(async () => {
-    test.setTimeout(540_000);
+    const uiWebExportSuiteTimeoutMs = String(resolveUiWebExportSuiteTimeoutMs(process.env));
+    const uiWebEnv = {
+      EXPO_PUBLIC_HAPPY_SERVER_URL: server?.baseUrl ?? '',
+      EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}-codex`,
+      HAPPIER_E2E_UI_WEB_MODE: 'export',
+      HAPPIER_E2E_UI_WEB_EXPORT_FALLBACK_TO_METRO: '0',
+      HAPPIER_E2E_UI_WEB_EXPORT_STARTUP_STALL_TIMEOUT_MS: '600000',
+      HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS: uiWebExportSuiteTimeoutMs,
+      HAPPIER_E2E_UI_WEB_EXPORT_HARD_TIMEOUT_MS: uiWebExportSuiteTimeoutMs,
+      HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: '480000',
+    };
+    test.setTimeout(resolveUiWebBeforeAllTimeoutMs(uiWebEnv));
     await mkdir(cliHomeDir, { recursive: true });
     await mkdir(resolve(join(codexHomeDir, 'sessions', '2026', '03', '06')), { recursive: true });
     await writeFile(
@@ -77,10 +90,8 @@ test.describe('ui e2e: direct Codex sessions browse/open/tail', () => {
     ui = await startUiWeb({
       testDir: suiteDir,
       env: {
-        ...process.env,
-        EXPO_PUBLIC_DEBUG: '1',
+        ...uiWebEnv,
         EXPO_PUBLIC_HAPPY_SERVER_URL: server.baseUrl,
-        EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}-codex`,
       },
     });
 
@@ -107,7 +118,8 @@ test.describe('ui e2e: direct Codex sessions browse/open/tail', () => {
     await mkdir(testDir, { recursive: true });
 
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto(uiBaseUrl, { waitUntil: 'domcontentloaded' });
+    await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
+    await waitForInitialAppUi({ page, timeoutMs: 180_000 });
     await createAccountAndReachConnectMachineState({ page });
 
     const cliLogin: StartedCliTerminalConnect = await startCliAuthLoginForTerminalConnect({
@@ -116,7 +128,7 @@ test.describe('ui e2e: direct Codex sessions browse/open/tail', () => {
       serverUrl: server.baseUrl,
       webappUrl: uiBaseUrl,
       env: {
-        ...process.env,
+        HOME: cliHomeDir,
         CI: '1',
         HAPPIER_DISABLE_CAFFEINATE: '1',
         HAPPIER_VARIANT: 'dev',
@@ -133,7 +145,7 @@ test.describe('ui e2e: direct Codex sessions browse/open/tail', () => {
       testDir,
       happyHomeDir: cliHomeDir,
       env: {
-        ...process.env,
+        HOME: cliHomeDir,
         CI: '1',
         HAPPIER_HOME_DIR: cliHomeDir,
         HAPPIER_SERVER_URL: server.baseUrl,

@@ -1,4 +1,4 @@
-import type { CodexRolloutAction } from '../localControl/rolloutMapper';
+import type { CodexRolloutAction } from './projection/mapCodexRolloutEventToActions';
 
 type NormalizedCodexRolloutAction = Exclude<
     CodexRolloutAction,

@@ -2,7 +2,7 @@ import {
     buildCodexSyntheticSubagentToolCall,
     buildCodexSyntheticSubagentToolResult,
 } from '../collaboration/buildCodexSyntheticSubagentToolMessages';
-import type { CodexRolloutAction } from '../localControl/rolloutMapper';
+import type { CodexRolloutAction } from './projection/mapCodexRolloutEventToActions';
 
 export type CodexProjectedRolloutEvent =
     | { type: 'codex-session-id'; id: string }

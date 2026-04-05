@@ -6,7 +6,7 @@ import type { DirectSessionCandidateV1, DirectSessionsSource } from '@happier-de
 import { deriveDirectSessionActivityFromTimestamp } from '@/api/directSessions/activity/deriveDirectSessionActivityFromTimestamp';
 import { mapWithConcurrency } from '@/api/directSessions/discovery/mapWithConcurrency';
 
-import { readClaudeSessionTitle } from './readClaudeSessionTitle';
+import { withClaudeJsonlSessionStore } from '../transcripts/sessionStore';
 import { resolveClaudeConfigDirForDirectSessions } from './resolveClaudeConfigDir';
 
 type IndexCursorV1 = Readonly<{ v: 1; kind: 'index'; offset: number }>;
@@ -116,12 +116,20 @@ export async function listClaudeSessionCandidates(params: Readonly<{
   const pageSessions = sortedSessions.slice(offset, offset + limit);
   const page = await Promise.all(
     pageSessions.map(async (session): Promise<DirectSessionCandidateV1> => {
-      let title: string | null = null;
-      try {
-        title = await readClaudeSessionTitle(session.fullPath);
-      } catch {
-        title = null;
-      }
+      const title = await withClaudeJsonlSessionStore({
+        env,
+        key: {
+          providerId: 'claude',
+          source: { kind: 'claudeConfig', configDir, projectId: session.projectId },
+          remoteSessionId: session.remoteSessionId,
+        },
+      }, async (store) => {
+        try {
+          return await store.getTitle();
+        } catch {
+          return null;
+        }
+      });
 
       return {
         remoteSessionId: session.remoteSessionId,

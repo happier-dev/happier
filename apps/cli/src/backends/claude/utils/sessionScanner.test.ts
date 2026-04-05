@@ -105,7 +105,7 @@ describe('sessionScanner', () => {
     
     // Write second line and wait for scanner to process it.
     await appendFile(sessionFile1, lines1[1] + '\n')
-    await waitFor(() => collectedMessages.length >= 2)
+    await waitFor(() => collectedMessages.length >= 2, 5000)
     
     expect(collectedMessages).toHaveLength(2)
     expect(collectedMessages[1].type).toBe('assistant')
@@ -178,6 +178,169 @@ describe('sessionScanner', () => {
       const content = getFirstTextFromContent(lastAssistantMsg.message.content) ?? ''
       expect(content).toContain('0-say-lol-session.jsonl')
       expect(content).toContain('readme.md')
+    }
+  })
+
+  it('replays all newly introduced resumed-session messages even when the file grows beyond the old tail-read window', async () => {
+    scanner = await createSessionScanner({
+      sessionId: null,
+      workingDirectory: testDir,
+      onMessage: (msg) => collectedMessages.push(msg)
+    })
+
+    const sessionId1 = 'session-initial-large'
+    const sessionFile1 = join(projectDir, `${sessionId1}.jsonl`)
+    await writeFile(
+      sessionFile1,
+      [
+        JSON.stringify({ type: 'user', uuid: 'u-initial', message: { content: 'old user' } }),
+        JSON.stringify({ type: 'assistant', uuid: 'a-initial', message: { model: 'm', content: [{ type: 'text', text: 'old assistant' }] } }),
+      ].join('\n') + '\n',
+    )
+    scanner.onNewSession(sessionId1)
+    await waitFor(() => collectedMessages.length >= 2)
+
+    const phase1Count = collectedMessages.length
+    const largeUserText = `large-user-${'x'.repeat(600_000)}`
+    const largeAssistantText = `large-assistant-${'y'.repeat(450_000)}`
+
+    const sessionId2 = 'session-resumed-large'
+    const sessionFile2 = join(projectDir, `${sessionId2}.jsonl`)
+    await writeFile(
+      sessionFile2,
+      [
+        JSON.stringify({ type: 'summary', summary: 'resumed summary', leafUuid: 'leaf-1' }),
+        JSON.stringify({ type: 'user', uuid: 'u-initial', message: { content: 'old user' } }),
+        JSON.stringify({ type: 'assistant', uuid: 'a-initial', message: { model: 'm', content: [{ type: 'text', text: 'old assistant' }] } }),
+        JSON.stringify({ type: 'user', uuid: 'u-large', message: { content: largeUserText } }),
+        JSON.stringify({ type: 'assistant', uuid: 'a-large', message: { model: 'm', content: [{ type: 'text', text: largeAssistantText }] } }),
+      ].join('\n') + '\n',
+    )
+
+    scanner.onNewSession(sessionId2)
+
+    await waitFor(() => collectedMessages.length >= phase1Count + 3, 5000)
+
+    const resumedMessages = collectedMessages.slice(phase1Count)
+    expect(resumedMessages.map((message) => message.type)).toEqual(['summary', 'user', 'assistant'])
+
+    const resumedUser = resumedMessages[1]
+    expect(resumedUser?.type).toBe('user')
+    if (resumedUser?.type === 'user') {
+      expect(resumedUser.message.content).toBe(largeUserText)
+    }
+
+    const resumedAssistant = resumedMessages[2]
+    expect(resumedAssistant?.type).toBe('assistant')
+    if (resumedAssistant?.type === 'assistant') {
+      expect(getFirstTextFromContent(resumedAssistant.message?.content)).toBe(largeAssistantText)
+    }
+  })
+
+  it('replays newly introduced resumed-session messages even when later duplicate history pushes them out of the old tail-read window', async () => {
+    scanner = await createSessionScanner({
+      sessionId: null,
+      workingDirectory: testDir,
+      onMessage: (msg) => collectedMessages.push(msg),
+    })
+
+    const sessionId1 = 'session-initial-tail-cutoff'
+    const sessionFile1 = join(projectDir, `${sessionId1}.jsonl`)
+    await writeFile(
+      sessionFile1,
+      [
+        JSON.stringify({ type: 'user', uuid: 'u-initial-tail-cutoff', message: { content: 'old user' } }),
+        JSON.stringify({ type: 'assistant', uuid: 'a-initial-tail-cutoff', message: { model: 'm', content: [{ type: 'text', text: 'old assistant' }] } }),
+      ].join('\n') + '\n',
+    )
+    scanner.onNewSession(sessionId1)
+    await waitFor(() => collectedMessages.length >= 2)
+
+    const phase1Count = collectedMessages.length
+    const resumedUserText = 'resumed-user-visible'
+    const resumedAssistantText = 'resumed-assistant-visible'
+    const duplicateAssistantFillerA = `duplicate-a-${'a'.repeat(650_000)}`
+    const duplicateAssistantFillerB = `duplicate-b-${'b'.repeat(650_000)}`
+
+    const sessionId2 = 'session-resumed-tail-cutoff'
+    const sessionFile2 = join(projectDir, `${sessionId2}.jsonl`)
+    await writeFile(
+      sessionFile2,
+      [
+        JSON.stringify({ type: 'summary', summary: 'resumed summary tail cutoff', leafUuid: 'leaf-tail-cutoff' }),
+        JSON.stringify({ type: 'user', uuid: 'u-initial-tail-cutoff', message: { content: 'old user' } }),
+        JSON.stringify({ type: 'assistant', uuid: 'a-initial-tail-cutoff', message: { model: 'm', content: [{ type: 'text', text: 'old assistant' }] } }),
+        JSON.stringify({ type: 'user', uuid: 'u-resumed-tail-cutoff', message: { content: resumedUserText } }),
+        JSON.stringify({ type: 'assistant', uuid: 'a-resumed-tail-cutoff', message: { model: 'm', content: [{ type: 'text', text: resumedAssistantText }] } }),
+        JSON.stringify({ type: 'assistant', uuid: 'a-initial-tail-cutoff', message: { model: 'm', content: [{ type: 'text', text: duplicateAssistantFillerA }] } }),
+        JSON.stringify({ type: 'assistant', uuid: 'a-initial-tail-cutoff', message: { model: 'm', content: [{ type: 'text', text: duplicateAssistantFillerB }] } }),
+      ].join('\n') + '\n',
+    )
+
+    scanner.onNewSession(sessionId2)
+
+    await waitFor(() => collectedMessages.length >= phase1Count + 3, 5000)
+
+    const resumedMessages = collectedMessages.slice(phase1Count)
+    expect(resumedMessages.map((message) => message.type)).toEqual(['summary', 'user', 'assistant'])
+
+    const resumedUser = resumedMessages[1]
+    expect(resumedUser?.type).toBe('user')
+    if (resumedUser?.type === 'user') {
+      expect(resumedUser.message.content).toBe(resumedUserText)
+    }
+
+    const resumedAssistant = resumedMessages[2]
+    expect(resumedAssistant?.type).toBe('assistant')
+    if (resumedAssistant?.type === 'assistant') {
+      expect(getFirstTextFromContent(resumedAssistant.message?.content)).toBe(resumedAssistantText)
+    }
+  })
+
+  it('streams all newly appended messages even when one append burst exceeds the old tail-read window', async () => {
+    scanner = await createSessionScanner({
+      sessionId: null,
+      workingDirectory: testDir,
+      onMessage: (msg) => collectedMessages.push(msg)
+    })
+
+    const sessionId = 'session-large-append-burst'
+    const sessionFile = join(projectDir, `${sessionId}.jsonl`)
+    await writeFile(
+      sessionFile,
+      JSON.stringify({ type: 'user', uuid: 'u-base', message: { content: 'baseline' } }) + '\n',
+    )
+
+    scanner.onNewSession(sessionId)
+    await waitFor(() => collectedMessages.length >= 1)
+
+    const phase1Count = collectedMessages.length
+    const largeUserText = `burst-user-${'u'.repeat(600_000)}`
+    const largeAssistantText = `burst-assistant-${'a'.repeat(450_000)}`
+
+    await appendFile(
+      sessionFile,
+      [
+        JSON.stringify({ type: 'user', uuid: 'u-burst', message: { content: largeUserText } }),
+        JSON.stringify({ type: 'assistant', uuid: 'a-burst', message: { model: 'm', content: [{ type: 'text', text: largeAssistantText }] } }),
+      ].join('\n') + '\n',
+    )
+
+    await waitFor(() => collectedMessages.length >= phase1Count + 2, 5000)
+
+    const appendedMessages = collectedMessages.slice(phase1Count)
+    expect(appendedMessages.map((message) => message.type)).toEqual(['user', 'assistant'])
+
+    const appendedUser = appendedMessages[0]
+    expect(appendedUser?.type).toBe('user')
+    if (appendedUser?.type === 'user') {
+      expect(appendedUser.message.content).toBe(largeUserText)
+    }
+
+    const appendedAssistant = appendedMessages[1]
+    expect(appendedAssistant?.type).toBe('assistant')
+    if (appendedAssistant?.type === 'assistant') {
+      expect(getFirstTextFromContent(appendedAssistant.message?.content)).toBe(largeAssistantText)
     }
   })
 

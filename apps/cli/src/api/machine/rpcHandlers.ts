@@ -12,6 +12,7 @@ import {
   type SpawnSessionResult,
 } from '@/rpc/handlers/registerSessionHandlers';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import {
   AcpConfigOptionOverridesV1Schema,
   AgentRuntimeDescriptorV1Schema,
@@ -62,6 +63,7 @@ import { configuration } from '@/configuration';
 import { isAcpForkEligibleForProvider } from '@/agent/acp/acpForkEligibility';
 import { resolveReplaySeedDraft } from '@/session/replay/resolveReplaySeedDraft';
 import type {
+  DirectSessionTranscriptDeltaEphemeral,
   MachineTransferReceiveEnvelope,
   MachineTransferSendEnvelope,
   TransferEndpointCandidate,
@@ -80,11 +82,44 @@ import { createPromptRegistryAdapterRegistry } from '@/promptRegistries/createPr
 import type { DirectTransferImportOpenRequest } from '@/machines/transfer/directTransferImportSession';
 import { createTransferSessionLifecycle } from '@/transfers/core/transferSessionLifecycle';
 
+const transferRelayV2DownloadResponderCleanupByManager = new WeakMap<RpcHandlerManager, () => void>();
+const machineDirectTransferRpcMethodsToReset = [
+  RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_PREPARE,
+  RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE,
+] as const;
+
+function removeRegisteredMachineRpcMethods(
+  rpcHandlerManager: RpcHandlerManager,
+  methods: readonly string[],
+): void {
+  const manager = rpcHandlerManager as unknown as Readonly<{
+    handlers?: Map<string, unknown>;
+    scopePrefix?: string;
+    socket?: {
+      emit: (event: string, payload: Readonly<{ method: string }>) => void;
+    } | null;
+  }>;
+  if (!manager.handlers || !manager.scopePrefix) {
+    return;
+  }
+
+  for (const method of methods) {
+    const prefixedMethod = `${manager.scopePrefix}:${method}`;
+    if (manager.handlers.delete(prefixedMethod) && manager.socket) {
+      manager.socket.emit(SOCKET_RPC_EVENTS.UNREGISTER, { method: prefixedMethod });
+    }
+  }
+}
+
 export type MachineRpcHandlers = {
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   stopSession: (sessionId: string) => Promise<boolean>;
   isSessionActive?: (sessionId: string) => Promise<boolean>;
   loadLocalSessionMetadata?: (sessionId: string) => Promise<SessionHandoffLocalMetadataSource | null>;
+  savePreparedTargetLocalMetadata?: (input: Readonly<{
+    remoteSessionId: string;
+    exportMetadataOverlay: Record<string, unknown>;
+  }>) => Promise<void> | void;
   requestShutdown: () => void;
   memory?: MemoryWorkerHandle;
   machineTransferChannel?: Readonly<{
@@ -124,6 +159,7 @@ export type MachineRpcHandlerDeps = Readonly<{
   workingDirectory?: string;
   getAdditionalAllowedWriteDirs?: () => ReadonlyArray<string>;
   extraTransferRelayV2DownloadOwners?: readonly TransferRelayV2DownloadSessionOwner[];
+  emitDirectSessionTranscriptUpdate?: (payload: DirectSessionTranscriptDeltaEphemeral) => void;
 }>;
 
 async function fetchForkChildSessionOrThrow(params: Readonly<{
@@ -203,6 +239,9 @@ export function registerMachineRpcHandlers(params: Readonly<{
   transferRelayV2DownloadOwners: readonly TransferRelayV2DownloadSessionOwner[];
 }> {
   const { rpcHandlerManager, handlers } = params;
+  transferRelayV2DownloadResponderCleanupByManager.get(rpcHandlerManager)?.();
+  transferRelayV2DownloadResponderCleanupByManager.delete(rpcHandlerManager);
+  removeRegisteredMachineRpcMethods(rpcHandlerManager, machineDirectTransferRpcMethodsToReset);
   const { spawnSession, stopSession, requestShutdown } = handlers;
   const memoryWorker = handlers.memory ?? null;
 
@@ -473,7 +512,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
     },
   ];
   if (handlers.transferRelayV2Channel) {
-    registerTransferRelayV2DownloadSessionResponder({
+    transferRelayV2DownloadResponderCleanupByManager.set(rpcHandlerManager, registerTransferRelayV2DownloadSessionResponder({
       machineId: handlers.transferRelayV2Channel.machineId,
       transferRelayChannel: handlers.transferRelayV2Channel,
       resolveSessionOwner: (transferId) => {
@@ -484,12 +523,13 @@ export function registerMachineRpcHandlers(params: Readonly<{
         }
         return null;
       },
-    });
+    }));
   }
   registerMachineDirectSessionsRpcHandlers({
     rpcHandlerManager,
     spawnSession,
     stopSession,
+    emitDirectSessionTranscriptUpdate: params.deps?.emitDirectSessionTranscriptUpdate,
   });
   if (handlers.directTransferImport) {
     registerMachineDirectTransferImportRpcHandlers({
@@ -513,6 +553,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
       return (await stopSession(sessionId)) ? 'stopped' : 'failed';
     },
     ...(handlers.loadLocalSessionMetadata ? { loadLocalSessionMetadata: handlers.loadLocalSessionMetadata } : {}),
+    ...(handlers.savePreparedTargetLocalMetadata ? { savePreparedTargetLocalMetadata: handlers.savePreparedTargetLocalMetadata } : {}),
     ...(handlers.machineTransferChannel ? { machineTransferChannel: handlers.machineTransferChannel } : {}),
     ...(handlers.directPeerTransfer ? { directPeerTransfer: handlers.directPeerTransfer } : {}),
   });

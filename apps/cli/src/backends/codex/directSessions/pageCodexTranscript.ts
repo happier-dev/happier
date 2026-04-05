@@ -2,7 +2,7 @@ import type { DirectSessionsSource, DirectTranscriptRawMessageV1 } from '@happie
 
 import { resolveCodexHomesForDirectSessionsSource } from './resolveCodexHomesForDirectSessionsSource';
 import { encodeCodexDirectForwardCursor } from './codexDirectForwardCursor';
-import { collectCodexSessionRolloutFiles } from './collectCodexSessionRolloutFiles';
+import { collectCodexSessionRolloutFiles } from '../rollout/discovery/collectCodexSessionRolloutFiles';
 import { materializeCodexDirectTranscriptItems } from './materializeCodexDirectTranscriptItems';
 import {
   mapCodexDirectSessionAppServerPreviewToMessage,
@@ -85,14 +85,13 @@ export async function pageCodexTranscript(params: Readonly<{
   const perHomeFiles = await Promise.all(homes.map((home) => collectCodexSessionRolloutFiles({ codexHome: home, remoteSessionId: params.remoteSessionId })));
   const bestHome = selectBestCodexHomeWithFiles(homes, perHomeFiles);
 
-  const appServerMetadata = await resolveCodexDirectSessionAppServerMetadata({
-    source: params.source,
-    activeServerDir: params.activeServerDir,
-    remoteSessionId: params.remoteSessionId,
-    env,
-  });
-
   if (bestHome === null) {
+    const appServerMetadata = await resolveCodexDirectSessionAppServerMetadata({
+      source: params.source,
+      activeServerDir: params.activeServerDir,
+      remoteSessionId: params.remoteSessionId,
+      env,
+    });
     const previewItem = appServerMetadata
       ? mapCodexDirectSessionAppServerPreviewToMessage({ remoteSessionId: params.remoteSessionId, metadata: appServerMetadata })
       : null;

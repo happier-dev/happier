@@ -31,6 +31,20 @@ export type DirectSessionTranscriptReadAfter = Readonly<{
   truncated: boolean;
 }>;
 
+export type DirectSessionFollowLeaseReason = 'attached_view' | 'background_follow';
+
+export type DirectSessionFollowLease = Readonly<{
+  release: () => Promise<void>;
+  subscribeToTranscriptUpdates?: (
+    listener: (update: Readonly<{
+      items: readonly DirectTranscriptRawMessageV1[];
+      nextCursor: string | null;
+      truncated: boolean;
+    }>) => void | Promise<void>,
+  ) => () => void;
+  getTailCursor?: () => string | null;
+}>;
+
 export type DirectSessionProviderOps = Readonly<{
   listCandidates: (params: Readonly<{
     source: DirectSessionsSource;
@@ -57,6 +71,11 @@ export type DirectSessionProviderOps = Readonly<{
     maxBytes: number;
     maxItems: number;
   }>) => Promise<DirectSessionTranscriptReadAfter>;
+  acquireFollowLease?: (params: Readonly<{
+    source: DirectSessionsSource;
+    remoteSessionId: string;
+    reason: DirectSessionFollowLeaseReason;
+  }>) => Promise<DirectSessionFollowLease | null>;
   resolveTakeoverSpawnOptions: (params: Readonly<{
     linked: LoadedLinkedDirectSession;
     sessionId: string;

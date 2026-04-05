@@ -2,9 +2,9 @@ import { readFile } from 'node:fs/promises';
 
 import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
-import { mapCodexRolloutEventToActions } from '../localControl/rolloutMapper';
+import { mapCodexRolloutEventToActions } from '../rollout/projection/mapCodexRolloutEventToActions';
 import { createCodexRolloutSemanticTracker } from '../rollout/createCodexRolloutSemanticTracker';
-import { collectCodexSessionRolloutFiles, type CodexRolloutFile } from './collectCodexSessionRolloutFiles';
+import { collectCodexSessionRolloutFiles, type CodexRolloutFile } from '../rollout/discovery/collectCodexSessionRolloutFiles';
 import { mapCodexRolloutLineToDirectMessages } from './mapCodexRolloutLineToDirectMessages';
 
 type CodexDirectTranscriptRolloutStream = CodexRolloutFile & Readonly<{

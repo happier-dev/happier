@@ -15,7 +15,8 @@ import { createDataKeyRpcClient, unwrapDataKeyRpcResult } from '../../src/testki
 import { waitFor } from '../../src/testkit/timing';
 import { fakeClaudeFixturePath, waitForFakeClaudeInvocation } from '../../src/testkit/fakeClaude';
 import { fetchJson } from '../../src/testkit/http';
-import { fetchSessionV2 } from '../../src/testkit/sessions';
+import { fetchAllMessages, fetchSessionV2 } from '../../src/testkit/sessions';
+import { fetchSessionMetadataV2 } from '../../src/testkit/sessionHandoffMetadata';
 
 const run = createRunDirs({ runLabel: 'core' });
 const daemonStartupTimeoutMs = 90_000;
@@ -72,6 +73,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
       dbProvider: 'sqlite',
       extraEnv: {
         HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: '1',
+        HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'plaintext_only',
       },
     });
     const auth = await createTestAuth(server.baseUrl);
@@ -98,6 +100,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
         HAPPIER_SERVER_URL: server.baseUrl,
         HAPPIER_CLAUDE_CONFIG_DIR: claudeConfigDir,
         HAPPIER_DIRECT_SESSIONS_PAGE_MAX_ITEMS: '2',
+        HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'plaintext_only',
       },
     });
 
@@ -248,6 +251,170 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
           }),
         ]),
       }));
+    } finally {
+      ui.close();
+    }
+  }, 240_000);
+
+  it('keeps detached background-follow metadata fresh without importing direct transcript rows', async () => {
+    const testDir = run.testDir('direct-sessions-claude-background-follow');
+    const daemonHomeDir = resolve(join(testDir, 'daemon-home'));
+    const claudeConfigDir = resolve(join(testDir, '.claude'));
+    const claudeSessionFile = resolve(join(claudeConfigDir, 'projects', 'proj-direct-background', 'sess-direct-background.jsonl'));
+
+    await mkdir(daemonHomeDir, { recursive: true });
+    await mkdir(join(claudeConfigDir, 'projects', 'proj-direct-background'), { recursive: true });
+    await writeFile(
+      claudeSessionFile,
+      [
+        jsonlLine({ type: 'user', uuid: 'bg-u1', cwd: '/tmp/direct-background-project', message: { content: 'background follow seed prompt' } }),
+        jsonlLine({ type: 'assistant', uuid: 'bg-a1', cwd: '/tmp/direct-background-project', message: { model: 'claude-test', content: [{ type: 'text', text: 'background follow seed reply' }] } }),
+      ].join(''),
+      'utf8',
+    );
+
+    server = await startServerLight({
+      testDir,
+      dbProvider: 'sqlite',
+      extraEnv: {
+        HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: '1',
+      },
+    });
+    const auth = await createTestAuth(server.baseUrl);
+
+    const machineKey = Uint8Array.from(randomBytes(32));
+    const seeded = await seedCliDataKeyAuthForServer({
+      cliHome: daemonHomeDir,
+      serverUrl: server.baseUrl,
+      token: auth.token,
+      machineKey,
+    });
+
+    daemon = await startTestDaemon({
+      testDir,
+      happyHomeDir: daemonHomeDir,
+      startupTimeoutMs: daemonStartupTimeoutMs,
+      env: {
+        ...process.env,
+        CI: '1',
+        HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+        HAPPIER_HOME_DIR: daemonHomeDir,
+        HAPPIER_SERVER_URL: server.baseUrl,
+        HAPPIER_CLAUDE_CONFIG_DIR: claudeConfigDir,
+        HAPPIER_DIRECT_SESSIONS_PAGE_MAX_ITEMS: '2',
+      },
+    });
+
+    const ui = createUserScopedSocketCollector(server.baseUrl, auth.token);
+    ui.connect();
+
+    try {
+      await waitFor(() => ui.isConnected(), { timeoutMs: 20_000, context: 'socket connected for detached background-follow e2e' });
+
+      const machineRpc = createDataKeyRpcClient(ui, machineKey);
+
+      const link = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE}`, {
+        machineId: seeded.machineId,
+        providerId: 'claude',
+        remoteSessionId: 'sess-direct-background',
+        titleHint: 'Detached background follow fixture',
+        directoryHint: '/tmp/direct-background-project',
+        source: { kind: 'claudeConfig', configDir: claudeConfigDir, projectId: 'proj-direct-background' },
+      });
+      const linkResult = unwrapDataKeyRpcResult(link, 'direct Claude detached background-follow link');
+      expect(linkResult).toEqual(expect.objectContaining({
+        ok: true,
+        created: true,
+      }));
+      const sessionId = (linkResult as { sessionId: string }).sessionId;
+
+      const follow = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET}`, {
+        machineId: seeded.machineId,
+        sessionId,
+        providerId: 'claude',
+        remoteSessionId: 'sess-direct-background',
+        source: { kind: 'claudeConfig', configDir: claudeConfigDir, projectId: 'proj-direct-background' },
+        enabled: true,
+      });
+      const followResult = unwrapDataKeyRpcResult(follow, 'direct Claude detached background-follow policy set');
+      expect(followResult).toEqual(expect.objectContaining({
+        ok: true,
+        enabled: true,
+      }));
+
+      await waitFor(
+        async () => {
+          const metadata = await fetchSessionMetadataV2({
+            baseUrl: server!.baseUrl,
+            token: auth.token,
+            sessionId,
+            machineKeys: [machineKey],
+          });
+          return isRecord(metadata.directSessionV1)
+            && isRecord(metadata.directSessionV1.followPolicyV1)
+            && metadata.directSessionV1.followPolicyV1.policy === 'background_follow';
+        },
+        { timeoutMs: 30_000, context: 'background-follow policy persisted on linked direct session' },
+      );
+
+      await appendFile(
+        claudeSessionFile,
+        jsonlLine({
+          type: 'assistant',
+          uuid: 'bg-a2',
+          cwd: '/tmp/direct-background-project',
+          message: { model: 'claude-test', content: [{ type: 'text', text: 'detached background follow delta' }] },
+        }),
+        'utf8',
+      );
+
+      await waitFor(
+        async () => {
+          const metadata = await fetchSessionMetadataV2({
+            baseUrl: server!.baseUrl,
+            token: auth.token,
+            sessionId,
+            machineKeys: [machineKey],
+          });
+          const directSession = isRecord(metadata.directSessionV1) ? metadata.directSessionV1 : null;
+          const attention = isRecord(metadata.directSessionAttentionV1) ? metadata.directSessionAttentionV1 : null;
+          return Boolean(
+            directSession
+              && typeof directSession.lastKnownActivityAtMs === 'number'
+              && attention
+              && typeof attention.observedProgressToken === 'string'
+              && attention.observedProgressToken.length > 0
+              && typeof attention.observedAtMs === 'number'
+              && attention.viewedProgressToken === undefined,
+          );
+        },
+        { timeoutMs: 30_000, context: 'detached background-follow metadata advances after external transcript activity' },
+      );
+
+      const metadataAfter = await fetchSessionMetadataV2({
+        baseUrl: server.baseUrl,
+        token: auth.token,
+        sessionId,
+        machineKeys: [machineKey],
+      });
+      expect(metadataAfter.directSessionV1).toEqual(expect.objectContaining({
+        v: 1,
+        providerId: 'claude',
+        remoteSessionId: 'sess-direct-background',
+        followPolicyV1: expect.objectContaining({
+          v: 1,
+          policy: 'background_follow',
+        }),
+        lastKnownActivityAtMs: expect.any(Number),
+      }));
+      expect(metadataAfter.directSessionAttentionV1).toEqual(expect.objectContaining({
+        v: 1,
+        observedProgressToken: expect.any(String),
+        observedAtMs: expect.any(Number),
+      }));
+
+      const storedMessages = await fetchAllMessages(server.baseUrl, auth.token, sessionId);
+      expect(storedMessages).toEqual([]);
     } finally {
       ui.close();
     }

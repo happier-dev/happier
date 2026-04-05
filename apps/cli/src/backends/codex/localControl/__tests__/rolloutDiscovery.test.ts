@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtemp, writeFile, utimes, mkdir, rm, truncate } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { discoverCodexRolloutFileOnce, scoreCodexRolloutCandidate } from '../rolloutDiscovery';
+import { discoverCodexRolloutFileOnce, scoreCodexRolloutCandidate } from '../../rollout/discovery/rolloutDiscovery';
 
 function sessionMetaLine(payload: Record<string, unknown>): string {
     return JSON.stringify({

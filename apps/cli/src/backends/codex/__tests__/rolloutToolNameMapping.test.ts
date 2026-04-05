@@ -3,7 +3,7 @@ import {
     KNOWN_CODEX_ROLLOUT_TOOL_NAMES,
     canonicalizeCodexRolloutToolName,
     normalizeCodexRolloutToolInput,
-} from '../localControl/rolloutToolNameMapping';
+} from '../rollout/projection/rolloutToolNameMapping';
 
 describe('codex local-control rollout tool mapping', () => {
     const expectedInventory = [

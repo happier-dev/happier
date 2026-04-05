@@ -392,6 +392,19 @@ export type DirectSessionMetadataV1 = {
   remoteSessionId: string,
   source: DirectSessionsSource,
   linkedAtMs: number,
+  lastKnownActivityAtMs?: number,
+  followPolicyV1?: {
+    v: 1,
+    policy: 'attached_only' | 'background_follow',
+    updatedAtMs: number,
+  },
+  directSessionAttentionV1?: {
+    v: 1,
+    observedProgressToken?: string,
+    viewedProgressToken?: string,
+    observedAtMs?: number,
+    viewedAtMs?: number,
+  },
   codexBackendMode?: 'mcp' | 'acp' | 'appServer',
   agentRuntimeDescriptorV1?: unknown,
 };

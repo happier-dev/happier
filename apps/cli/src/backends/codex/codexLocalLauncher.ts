@@ -11,11 +11,13 @@ import { createManagedChildProcess } from '@/subprocess/supervision/managedChild
 import { updateAgentStateBestEffort, updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { killProcessTree } from '@/agent/acp/killProcessTree';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
+import { configuration } from '@/configuration';
 import { resolveCodexCliInvocation } from './utils/resolveCodexCliInvocation';
 import { delay } from '@/utils/time';
 
 import { CodexRolloutMirror } from './localControl/codexRolloutMirror';
-import { discoverCodexRolloutFileOnce } from './localControl/rolloutDiscovery';
+import { resolveCodexRolloutSessionStoreBinding } from './localControl/resolveCodexRolloutSessionStoreBinding';
+import { discoverCodexRolloutFileOnce } from './rollout/discovery/rolloutDiscovery';
 import { resolveCodexMcpPolicyForPermissionMode } from './utils/permissionModePolicy';
 
 export type CodexLauncherResult = { type: 'switch'; resumeId: string } | { type: 'exit'; code: number };
@@ -443,10 +445,24 @@ export async function codexLocalLauncher<TMode>(opts: {
       }
     }
 
+    const codexHome = typeof process.env.CODEX_HOME === 'string' && process.env.CODEX_HOME.trim().length > 0
+      ? process.env.CODEX_HOME
+      : null;
+
+    const rolloutSessionStore = resolveCodexRolloutSessionStoreBinding({
+      activeServerDir: configuration.activeServerDir,
+      candidateFilePath: candidateFile.filePath,
+      codexHome,
+      remoteSessionId: knownResumeId.value,
+      sessionMetaId: typeof candidateFile.sessionMeta?.id === 'string' ? candidateFile.sessionMeta.id : null,
+    });
+
     mirror = new CodexRolloutMirror({
       filePath: candidateFile.filePath,
-      codexHome: process.env.CODEX_HOME ?? null,
+      codexHome,
       debug,
+      allowLegacyFollowerFallback: process.env.HAPPIER_CODEX_ALLOW_NONCANONICAL_LOCAL_CONTROL_FALLBACK === '1',
+      rolloutSessionStore,
       session: opts.session,
       onCodexSessionId: async (id) => {
         queueCodexSessionIdPublish(id);

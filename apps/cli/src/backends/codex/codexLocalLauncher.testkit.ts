@@ -16,6 +16,7 @@ const TRACKED_ENV_KEYS = [
   'HAPPIER_CODEX_SESSIONS_DIR',
   'HAPPIER_CODEX_TUI_BIN',
   'CODEX_HOME',
+  'HAPPIER_CODEX_ALLOW_NONCANONICAL_LOCAL_CONTROL_FALLBACK',
   'CODEX_THREAD_ID',
   'CODEX_CI',
   'CODEX_SHELL',
@@ -75,6 +76,7 @@ export function applyCodexLauncherEnv(vars: Partial<Record<(typeof TRACKED_ENV_K
     HAPPIER_CODEX_SESSIONS_DIR: process.env.HAPPIER_CODEX_SESSIONS_DIR,
     HAPPIER_CODEX_TUI_BIN: process.env.HAPPIER_CODEX_TUI_BIN,
     CODEX_HOME: process.env.CODEX_HOME,
+    HAPPIER_CODEX_ALLOW_NONCANONICAL_LOCAL_CONTROL_FALLBACK: process.env.HAPPIER_CODEX_ALLOW_NONCANONICAL_LOCAL_CONTROL_FALLBACK,
     CODEX_THREAD_ID: process.env.CODEX_THREAD_ID,
     CODEX_CI: process.env.CODEX_CI,
     CODEX_SHELL: process.env.CODEX_SHELL,
@@ -86,8 +88,14 @@ export function applyCodexLauncherEnv(vars: Partial<Record<(typeof TRACKED_ENV_K
     TEST_CODEX_ENV_DUMP_PATH: process.env.TEST_CODEX_ENV_DUMP_PATH,
   };
 
+  const legacyFallbackOverride =
+    vars.HAPPIER_CODEX_ALLOW_NONCANONICAL_LOCAL_CONTROL_FALLBACK ??
+    (vars.HAPPIER_CODEX_SESSIONS_DIR ? '1' : undefined);
+
   for (const key of TRACKED_ENV_KEYS) {
-    const next = vars[key];
+    const next = key === 'HAPPIER_CODEX_ALLOW_NONCANONICAL_LOCAL_CONTROL_FALLBACK'
+      ? legacyFallbackOverride
+      : vars[key];
     if (next === undefined) {
       delete process.env[key];
     } else {

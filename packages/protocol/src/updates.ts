@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DirectTranscriptRawMessageV1Schema } from './directSessions/daemonRpcV1.js';
 import { ExecutionRunPublicStateSchema } from './executionRuns.js';
 import { SessionStoredMessageContentSchema } from './sessionMessages/sessionStoredMessageContent.js';
 
@@ -252,6 +253,14 @@ export const TranscriptStreamSegmentEphemeralMessageSchema = z.object({
   updatedAt: TimestampMsSchema,
 }).passthrough();
 
+export const DirectSessionTranscriptDeltaEphemeralSchema = z.object({
+  type: z.literal('direct-session-transcript-delta'),
+  sessionId: z.string(),
+  items: z.array(DirectTranscriptRawMessageV1Schema),
+  nextCursor: z.string().min(1).nullable().optional(),
+  truncated: z.boolean(),
+}).passthrough();
+
 export const EphemeralUpdateSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('activity'),
@@ -270,6 +279,7 @@ export const EphemeralUpdateSchema = z.discriminatedUnion('type', [
     sessionId: z.string(),
     message: TranscriptStreamSegmentEphemeralMessageSchema,
   }).passthrough(),
+  DirectSessionTranscriptDeltaEphemeralSchema,
   z.object({
     type: z.literal('machine-activity'),
     id: z.string(),
@@ -293,6 +303,7 @@ export const EphemeralUpdateSchema = z.discriminatedUnion('type', [
 ]);
 
 export type EphemeralUpdate = z.infer<typeof EphemeralUpdateSchema>;
+export type DirectSessionTranscriptDeltaEphemeral = z.infer<typeof DirectSessionTranscriptDeltaEphemeralSchema>;
 
 // Broadcast-safe events (cursorless).
 //

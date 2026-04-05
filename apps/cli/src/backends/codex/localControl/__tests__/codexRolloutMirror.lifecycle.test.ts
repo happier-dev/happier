@@ -11,7 +11,7 @@ const state = vi.hoisted(() => ({
   appendAfterFlushCount: 0,
 }));
 
-vi.mock('@/agent/localControl/jsonlFollower', () => ({
+vi.mock('@/api/session/fileBackedTranscripts/jsonl/followJsonlFile', () => ({
   JsonlFollower: class MockJsonlFollower {
     start = vi.fn(
       () =>
@@ -56,10 +56,45 @@ describe('CodexRolloutMirror lifecycle', () => {
     state.appendAfterFlushCount = 0;
   });
 
+  it('fails fast when no shared-store binding exists and the legacy fallback is disabled', async () => {
+    const mirror = new CodexRolloutMirror({
+      filePath: '/tmp/mock.jsonl',
+      debug: false,
+      onCodexSessionId: () => {},
+      session: {
+        sendUserTextMessage: () => {},
+        sendCodexMessage: () => {},
+        sendSessionEvent: () => {},
+      } as any,
+    });
+
+    const startPromise = mirror.start();
+    const timeout = new Promise<'timeout'>((resolve) => {
+      setTimeout(() => resolve('timeout'), 100);
+    });
+
+    const outcome = await Promise.race([
+      startPromise.then(
+        () => ({ kind: 'resolved' as const }),
+        (error) => ({ kind: 'rejected' as const, error }),
+      ),
+      timeout.then(() => ({ kind: 'timeout' as const })),
+    ]);
+
+    expect(outcome.kind).toBe('rejected');
+    if (outcome.kind === 'rejected') {
+      expect(outcome.error).toBeInstanceOf(Error);
+      expect(String((outcome.error as Error).message)).toContain('shared-store');
+    }
+
+    await startPromise.catch(() => undefined);
+  });
+
   it('stops follower if stop is called while start is still pending', async () => {
     const mirror = new CodexRolloutMirror({
       filePath: '/tmp/mock.jsonl',
       debug: false,
+      allowLegacyFollowerFallback: true,
       onCodexSessionId: () => {},
       session: {
         sendUserTextMessage: () => {},
@@ -87,6 +122,7 @@ describe('CodexRolloutMirror lifecycle', () => {
     const mirror = new CodexRolloutMirror({
       filePath: '/tmp/mock.jsonl',
       debug: false,
+      allowLegacyFollowerFallback: true,
       onCodexSessionId: () => {},
       session: {
         sendUserTextMessage: () => {},

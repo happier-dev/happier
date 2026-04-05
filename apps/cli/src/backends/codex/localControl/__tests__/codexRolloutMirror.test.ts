@@ -100,7 +100,6 @@ describe('CodexRolloutMirror', () => {
 
     expect(codexSessionIds).toEqual(['sid']);
     expect(userTexts).toEqual(['hello']);
-    expect(committedMessages.some((m) => m.provider === 'codex' && m.body.type === 'message' && m.body.message === 'hi')).toBe(true);
     expect(committedMessages.some((m) => m.provider === 'codex' && m.body.type === 'message' && m.body.message === 'hi there')).toBe(true);
     const segmentLocalIds = committedMessages
       .filter((m) => m.body.type === 'message')
@@ -136,6 +135,7 @@ describe('CodexRolloutMirror', () => {
     const mirror = new CodexRolloutMirror({
       filePath,
       debug: false,
+      allowLegacyFollowerFallback: true,
       onCodexSessionId: async () => {
         await publishPromise;
       },
@@ -184,6 +184,7 @@ describe('CodexRolloutMirror', () => {
     const mirror = new CodexRolloutMirror({
       filePath,
       debug: false,
+      allowLegacyFollowerFallback: true,
       onCodexSessionId: (id) => {
         codexSessionIds.push(id);
       },
@@ -212,6 +213,297 @@ describe('CodexRolloutMirror', () => {
     }
   });
 
+  it('replays existing rollout content through the shared store even when the raw file path is stale', async () => {
+    const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'codex-rollout-mirror-store-')));
+    const codexHome = join(root, 'codex-home');
+    const sessionsDir = join(codexHome, 'sessions');
+    const activeServerDir = join(root, 'servers', 'cloud');
+    await mkdir(sessionsDir, { recursive: true });
+    await mkdir(activeServerDir, { recursive: true });
+
+    const sessionId = '12121212-1212-1212-1212-121212121212';
+    const filePath = join(sessionsDir, `rollout-2026-01-02T00-00-00-${sessionId}.jsonl`);
+    await writeFile(
+      filePath,
+      [
+        JSON.stringify({ type: 'session_meta', timestamp: '2026-01-02T00:00:00.000Z', payload: { id: sessionId } }),
+        JSON.stringify({
+          type: 'response_item',
+          timestamp: '2026-01-02T00:00:01.000Z',
+          payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hello-from-store' }] },
+        }),
+      ].join('\n') + '\n',
+      'utf8',
+    );
+
+    const codexSessionIds: string[] = [];
+    const committedMessages: CommittedAgentMessage[] = [];
+
+    const mirror = new CodexRolloutMirror({
+      filePath: join(root, 'missing', 'stale-rollout.jsonl'),
+      codexHome,
+      debug: false,
+      onCodexSessionId: (id) => {
+        codexSessionIds.push(id);
+      },
+      rolloutSessionStore: {
+        activeServerDir,
+        source: {
+          kind: 'codexHome',
+          home: 'user',
+          homePath: codexHome,
+        },
+        remoteSessionId: sessionId,
+        env: { ...process.env, CODEX_HOME: codexHome },
+      },
+      session: {
+        sendUserTextMessage: () => {},
+        sendCodexMessage: () => {},
+        sendAgentMessageCommitted: async (provider: string, body: unknown, opts: { localId: string }) => {
+          committedMessages.push({
+            provider,
+            body: body as { type?: string; message?: string; text?: string },
+            localId: opts.localId,
+          });
+        },
+        sendSessionEvent: () => {},
+      } as any,
+    });
+
+    await mirror.start();
+    try {
+      await waitFor(() => {
+        expect(codexSessionIds).toEqual([sessionId]);
+        expect(committedMessages.some((message) => (
+          message.provider === 'codex'
+            && message.body.type === 'message'
+            && message.body.message === 'hello-from-store'
+        ))).toBe(true);
+      });
+    } finally {
+      await mirror.stop();
+    }
+  });
+
+  it('replays existing flat CODEX_HOME sessions content through the shared store when the filename omits the session id', async () => {
+    const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'codex-rollout-mirror-flat-store-')));
+    const codexHome = join(root, 'codex-home');
+    const sessionsDir = join(codexHome, 'sessions');
+    const activeServerDir = join(root, 'servers', 'cloud');
+    await mkdir(sessionsDir, { recursive: true });
+    await mkdir(activeServerDir, { recursive: true });
+
+    const sessionId = 'flat-shared-store-session';
+    const filePath = join(sessionsDir, 'rollout-test.jsonl');
+    await writeFile(
+      filePath,
+      [
+        JSON.stringify({ type: 'session_meta', timestamp: '2026-01-02T00:00:00.000Z', payload: { id: sessionId } }),
+        JSON.stringify({
+          type: 'response_item',
+          timestamp: '2026-01-02T00:00:01.000Z',
+          payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hello-from-flat-store' }] },
+        }),
+      ].join('\n') + '\n',
+      'utf8',
+    );
+
+    const committedMessages: CommittedAgentMessage[] = [];
+
+    const mirror = new CodexRolloutMirror({
+      filePath,
+      codexHome,
+      debug: false,
+      onCodexSessionId: () => {},
+      rolloutSessionStore: {
+        activeServerDir,
+        source: {
+          kind: 'codexHome',
+          home: 'user',
+          homePath: codexHome,
+        },
+        remoteSessionId: sessionId,
+        env: { ...process.env, CODEX_HOME: codexHome },
+      },
+      session: {
+        sendUserTextMessage: () => {},
+        sendCodexMessage: () => {},
+        sendAgentMessageCommitted: async (provider: string, body: unknown, opts: { localId: string }) => {
+          committedMessages.push({
+            provider,
+            body: body as { type?: string; message?: string; text?: string },
+            localId: opts.localId,
+          });
+        },
+        sendSessionEvent: () => {},
+      } as any,
+    });
+
+    await mirror.start();
+    try {
+      await waitFor(() => {
+        expect(committedMessages.some((message) => (
+          message.provider === 'codex'
+            && message.body.type === 'message'
+            && message.body.message === 'hello-from-flat-store'
+        ))).toBe(true);
+      });
+    } finally {
+      await mirror.stop();
+    }
+  });
+
+  it('tails appended flat shared-store content when the response_item line omits the top-level timestamp', async () => {
+    const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'codex-rollout-mirror-flat-store-tail-')));
+    const codexHome = join(root, 'codex-home');
+    const sessionsDir = join(codexHome, 'sessions');
+    const activeServerDir = join(root, 'servers', 'cloud');
+    await mkdir(sessionsDir, { recursive: true });
+    await mkdir(activeServerDir, { recursive: true });
+
+    const sessionId = 'flat-shared-store-tail-session';
+    const filePath = join(sessionsDir, 'rollout-test.jsonl');
+    await writeFile(
+      filePath,
+      `${JSON.stringify({ type: 'session_meta', timestamp: '2026-01-02T00:00:00.000Z', payload: { id: sessionId } })}\n`,
+      'utf8',
+    );
+
+    const committedMessages: CommittedAgentMessage[] = [];
+
+    const mirror = new CodexRolloutMirror({
+      filePath,
+      codexHome,
+      debug: false,
+      onCodexSessionId: () => {},
+      rolloutSessionStore: {
+        activeServerDir,
+        source: {
+          kind: 'codexHome',
+          home: 'user',
+          homePath: codexHome,
+        },
+        remoteSessionId: sessionId,
+        env: { ...process.env, CODEX_HOME: codexHome },
+      },
+      session: {
+        sendUserTextMessage: () => {},
+        sendCodexMessage: () => {},
+        sendAgentMessageCommitted: async (provider: string, body: unknown, opts: { localId: string }) => {
+          committedMessages.push({
+            provider,
+            body: body as { type?: string; message?: string; text?: string },
+            localId: opts.localId,
+          });
+        },
+        sendSessionEvent: () => {},
+      } as any,
+    });
+
+    await mirror.start();
+    try {
+      await appendFile(
+        filePath,
+        `${JSON.stringify({
+          type: 'response_item',
+          payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hello-from-flat-store-tail' }] },
+        })}\n`,
+        'utf8',
+      );
+
+      await waitFor(() => {
+        expect(committedMessages.some((message) => (
+          message.provider === 'codex'
+            && message.body.type === 'message'
+            && message.body.message === 'hello-from-flat-store-tail'
+        ))).toBe(true);
+      });
+    } finally {
+      await mirror.stop();
+    }
+  });
+
+  it('delivers the first flat shared-store assistant item when it lands before mirror.start() finishes', async () => {
+    const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'codex-rollout-mirror-flat-store-start-race-')));
+    const codexHome = join(root, 'codex-home');
+    const sessionsDir = join(codexHome, 'sessions');
+    const activeServerDir = join(root, 'servers', 'cloud');
+    await mkdir(sessionsDir, { recursive: true });
+    await mkdir(activeServerDir, { recursive: true });
+
+    const sessionId = 'flat-shared-store-start-race';
+    const filePath = join(sessionsDir, 'rollout-test.jsonl');
+    await writeFile(
+      filePath,
+      `${JSON.stringify({ type: 'session_meta', timestamp: '2026-01-02T00:00:00.000Z', payload: { id: sessionId } })}\n`,
+      'utf8',
+    );
+
+    const committedMessages: CommittedAgentMessage[] = [];
+
+    const mirror = new CodexRolloutMirror({
+      filePath,
+      codexHome,
+      debug: false,
+      onCodexSessionId: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      },
+      rolloutSessionStore: {
+        activeServerDir,
+        source: {
+          kind: 'codexHome',
+          home: 'user',
+          homePath: codexHome,
+        },
+        remoteSessionId: sessionId,
+        env: { ...process.env, CODEX_HOME: codexHome },
+      },
+      session: {
+        sendUserTextMessage: () => {},
+        sendCodexMessage: () => {},
+        sendAgentMessageCommitted: async (provider: string, body: unknown, opts: { localId: string }) => {
+          committedMessages.push({
+            provider,
+            body: body as { type?: string; message?: string; text?: string },
+            localId: opts.localId,
+          });
+        },
+        sendSessionEvent: () => {},
+      } as any,
+    });
+
+    const startPromise = mirror.start();
+    try {
+      await appendFile(
+        filePath,
+        `${JSON.stringify({
+          type: 'response_item',
+          payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hello-before-mirror-start-finished' }] },
+        })}\n`,
+        'utf8',
+      );
+
+      await startPromise;
+
+      await waitFor(() => {
+        expect(committedMessages.some((message) => (
+          message.provider === 'codex'
+            && message.body.type === 'message'
+            && message.body.message === 'hello-before-mirror-start-finished'
+        ))).toBe(true);
+      });
+      expect(
+        committedMessages.filter((message) => (
+          message.provider === 'codex'
+            && message.body.type === 'message'
+            && message.body.message === 'hello-before-mirror-start-finished'
+        )),
+      ).toHaveLength(1);
+    } finally {
+      await mirror.stop();
+    }
+  });
+
   it('mirrors child rollout activity into a synthetic SubAgent sidechain', async () => {
     const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'codex-rollout-subagent-')));
     const parentDir = join(root, 'sessions', '2026', '03', '20');
@@ -232,6 +524,7 @@ describe('CodexRolloutMirror', () => {
       filePath: parentFilePath,
       codexHome: root,
       debug: false,
+      allowLegacyFollowerFallback: true,
       onCodexSessionId: (id) => {
         codexSessionIds.push(id);
       },
@@ -374,6 +667,7 @@ describe('CodexRolloutMirror', () => {
       filePath: parentFilePath,
       codexHome: root,
       debug: false,
+      allowLegacyFollowerFallback: true,
       onCodexSessionId: () => {},
       session: {
         sendUserTextMessage: () => {},
@@ -480,5 +774,83 @@ describe('CodexRolloutMirror', () => {
           message.body.sidechainId === childThreadId,
       ),
     ).toBe(true);
+  });
+
+  it('keeps the shared-store path alive when the rollout file appears after mirror startup', async () => {
+    const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'codex-rollout-mirror-empty-store-')));
+    const codexHome = join(root, 'codex-home');
+    const sessionsDir = join(codexHome, 'sessions');
+    const activeServerDir = join(root, 'servers', 'cloud');
+    await mkdir(sessionsDir, { recursive: true });
+    await mkdir(activeServerDir, { recursive: true });
+
+    const sessionId = '34343434-3434-3434-3434-343434343434';
+    const actualFilePath = join(sessionsDir, `rollout-2026-01-02T00-00-00-${sessionId}.jsonl`);
+
+    const codexSessionIds: string[] = [];
+    const committedMessages: CommittedAgentMessage[] = [];
+
+    const mirror = new CodexRolloutMirror({
+      filePath: join(root, 'missing', 'stale-rollout.jsonl'),
+      codexHome,
+      debug: false,
+      onCodexSessionId: (id) => {
+        codexSessionIds.push(id);
+      },
+      rolloutSessionStore: {
+        activeServerDir,
+        source: {
+          kind: 'codexHome',
+          home: 'user',
+          homePath: codexHome,
+        },
+        remoteSessionId: sessionId,
+        env: { ...process.env, CODEX_HOME: codexHome },
+      },
+      session: {
+        sendUserTextMessage: () => {},
+        sendCodexMessage: () => {},
+        sendAgentMessageCommitted: async (provider: string, body: unknown, opts: { localId: string; meta?: Record<string, unknown> }) => {
+          committedMessages.push({
+            provider,
+            body: body as { type?: string; message?: string; text?: string },
+            localId: opts.localId,
+            meta: opts.meta,
+          });
+        },
+        sendSessionEvent: () => {},
+      } as any,
+    });
+
+    await mirror.start();
+    try {
+      expect(codexSessionIds).toEqual([sessionId]);
+
+      await writeFile(
+        actualFilePath,
+        [
+          JSON.stringify({ type: 'session_meta', timestamp: '2026-01-02T00:00:00.000Z', payload: { id: sessionId } }),
+          JSON.stringify({
+            type: 'response_item',
+            timestamp: '2026-01-02T00:00:01.000Z',
+            payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hello-after-late-rollout' }] },
+          }),
+        ].join('\n') + '\n',
+        'utf8',
+      );
+
+      await waitFor(() => {
+        expect(
+          committedMessages.some(
+            (message) =>
+              message.provider === 'codex'
+              && message.body.type === 'message'
+              && message.body.message === 'hello-after-late-rollout',
+          ),
+        ).toBe(true);
+      });
+    } finally {
+      await mirror.stop();
+    }
   });
 });

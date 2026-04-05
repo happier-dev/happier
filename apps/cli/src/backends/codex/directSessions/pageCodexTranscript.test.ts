@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { readJsonlFileBackwardPage } from '@/api/directSessions/filePaging/jsonlBackwardPager';
+import { readJsonlFileBackwardPage } from '@/api/session/fileBackedTranscripts/jsonl/pageJsonlBackward';
 import {
   createCodexAppServerProcessEnv,
   writeFakeCodexAppServerThreadListScript,

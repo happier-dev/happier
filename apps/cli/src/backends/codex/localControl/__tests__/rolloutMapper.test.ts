@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mapCodexRolloutEventToActions } from '../rolloutMapper';
+import { mapCodexRolloutEventToActions } from '../../rollout/projection/mapCodexRolloutEventToActions';
 
 describe('mapCodexRolloutEventToActions', () => {
     it('extracts codex session id from session_meta', () => {
