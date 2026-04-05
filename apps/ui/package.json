@@ -1,7 +1,7 @@
 {
   "name": "@happier-dev/app",
   "main": "index.ts",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "scripts": {
     "ensure:workspace:built": "node ./scripts/ensureWorkspacePackagesBuilt.mjs",
     "start": "yarn -s ensure:workspace:built && cross-env EXPO_UNSTABLE_WEB_MODAL=1 expo start",
