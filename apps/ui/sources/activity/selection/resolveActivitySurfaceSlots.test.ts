@@ -181,7 +181,7 @@ describe('resolveActivitySurfaceSlots', () => {
                     seq: 1,
                     lastViewedSessionSeq: 1,
                     active: false,
-                    presence: 'offline',
+                    presence: 1,
                     metadata: {
                         path: '/Users/tester/project/quiet-inactive',
                         host: 'tester.local',
