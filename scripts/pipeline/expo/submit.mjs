@@ -326,6 +326,9 @@ function main() {
   const submitPathAbs = submitPathRaw ? path.resolve(repoRoot, submitPathRaw) : '';
   if (submitPathAbs) {
     if (!fs.existsSync(submitPathAbs)) {
+      if (dryRun) {
+        console.log(`[dry-run] submit artifact not present yet, skipping local artifact validation: ${submitPathAbs}`);
+      } else {
       fail(
         [
           `${submitPathAbs} doesn't exist`,
@@ -337,9 +340,8 @@ function main() {
           'Run: ls dist/ui-mobile',
         ].join('\n'),
       );
-    }
-
-    if (platforms.includes('ios')) {
+      }
+    } else if (platforms.includes('ios')) {
       const meta = readIosIpaMetadata({ ipaPath: submitPathAbs, env: process.env });
       if (meta?.bundleIdentifier) {
         const expected = resolveExpectedIosBundleId({ environment, env: process.env });

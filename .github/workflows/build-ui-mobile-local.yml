@@ -121,6 +121,7 @@ jobs:
     name: Validate EXPO_TOKEN
     if: ${{ inputs.action == 'ota' || inputs.platform == 'all' || inputs.platform == 'android' || inputs.platform == 'ios' }}
     runs-on: ubuntu-latest
+    environment: release-shared
     steps:
       - name: Fail when EXPO_TOKEN is missing
         run: |
@@ -135,6 +136,7 @@ jobs:
     name: Validate APPLE_API_PRIVATE_KEY (iOS submit)
     if: ${{ inputs.action == 'build_and_submit' && (inputs.environment == 'dev' || inputs.environment == 'preview' || inputs.environment == 'production') && (inputs.platform == 'all' || inputs.platform == 'ios') }}
     runs-on: ubuntu-latest
+    environment: release-shared
     steps:
       - name: Fail when APPLE_API_PRIVATE_KEY is missing
         run: |

@@ -74,3 +74,42 @@ test('ui-mobile-release can delegate local Android builds to Dagger runtime', ()
 
   assert.match(out, /--local-runtime"?\s+"?dagger\b/);
 });
+
+test('ui-mobile-release native_submit dry-run does not require local build artifacts to exist yet', () => {
+  const out = execFileSync(
+    process.execPath,
+    [
+      path.join(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
+      'ui-mobile-release',
+      '--environment',
+      'production',
+      '--action',
+      'native_submit',
+      '--platform',
+      'all',
+      '--profile',
+      'production',
+      '--native-build-mode',
+      'local',
+      '--dry-run',
+      '--secrets-source',
+      'env',
+    ],
+    {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        EXPO_TOKEN: 'test-token',
+        APPLE_API_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----\\n',
+      },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    },
+  );
+
+  assert.match(out, /\[pipeline\] ui-mobile release:/);
+  assert.match(out, /scripts\/pipeline\/expo\/native-build\.mjs/);
+  assert.match(out, /scripts\/pipeline\/expo\/submit\.mjs/);
+  assert.match(out, /--path\b/);
+});
