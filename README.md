@@ -42,7 +42,7 @@ It lets you run AI coding sessions **locally on your computer**, then **continue
 
 Whether you’re stepping away for a coffee or switching devices mid-task, Happier keeps your AI coding sessions alive and accessible.
 
-## How It Works
+## Installation
 
 ### Step 1: Download App
 
