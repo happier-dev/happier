@@ -229,7 +229,9 @@ test('promote-ui native_submit uses the shared Expo submit script (handles previ
 test('promote-ui preview OTA updates are non-interactive and provide an update message', async () => {
   const raw = await loadWorkflow('promote-ui.yml');
   assert.match(raw, /- name: Expo OTA update/);
-  assert.match(raw, /node scripts\/pipeline\/run\.mjs expo-ota/);
+  assert.match(raw, /node scripts\/pipeline\/run\.mjs ui-mobile-release/);
+  assert.match(raw, /--action "\$\{\{ inputs\.expo_action \}\}"/);
+  assert.match(raw, /--platform all/);
 
   const script = await loadFile('scripts/pipeline/expo/ota-update.mjs');
   assert.match(script, /eas-cli@\$\{easCliVersion\}/);

@@ -276,9 +276,12 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/run.mjs expo-ota \
+          node scripts/pipeline/run.mjs ui-mobile-release \
             --environment "${{ inputs.environment }}" \
-            --message "${{ inputs.expo_update_message }}" \
+            --action "${{ inputs.expo_action }}" \
+            --platform all \
+            --release-message "${{ inputs.expo_update_message }}" \
+            --secrets-source env \
             --eas-cli-version "${EAS_CLI_VERSION}"
 
       - name: Resolve deploy branch SHA (before)
