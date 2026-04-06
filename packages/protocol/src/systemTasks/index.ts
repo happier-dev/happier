@@ -57,6 +57,7 @@ export {
   type TailscaleSecureAccessLoginPolicy,
   type TailscaleSecureAccessMode,
   type TailscaleSecureAccessSystemTaskStepId,
+  type TailscaleSecureAccessTaskTarget,
   type TailscaleSecureAccessTaskParams,
   type TailscaleSecureAccessTaskResult,
   type TailscaleSecureAccessTaskSpec,

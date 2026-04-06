@@ -12,6 +12,10 @@ vi.mock('./RelayAccessCloudflareNamedTunnelStep', () => ({
     RelayAccessCloudflareNamedTunnelStep: (props: Record<string, unknown>) => React.createElement('RelayAccessCloudflareNamedTunnelStep', props),
 }));
 
+vi.mock('./RelayAccessTailscalePrerequisitesStep', () => ({
+    RelayAccessTailscalePrerequisitesStep: (props: Record<string, unknown>) => React.createElement('RelayAccessTailscalePrerequisitesStep', props),
+}));
+
 describe('RelayAccessPrerequisitesStep', () => {
     afterEach(() => {
         standardCleanup();
@@ -58,6 +62,33 @@ describe('RelayAccessPrerequisitesStep', () => {
             };
         };
 
+        expect(step.props.upstreamUrl).toBe('https://relay.example.test');
+        expect(step.props.serverProfileId).toBe('profile-1');
+        expect(step.props.target).toEqual({ kind: 'local' });
+    });
+
+    it.each([
+        'tailscaleServe',
+        'tailscaleFunnel',
+    ] as const)('forwards %s relay access requests to the dedicated Tailscale step', async (providerId) => {
+        const { RelayAccessPrerequisitesStep } = await import('./RelayAccessPrerequisitesStep');
+        const screen = await renderScreen(React.createElement(RelayAccessPrerequisitesStep, {
+            providerId,
+            upstreamUrl: 'https://relay.example.test',
+            serverProfileId: 'profile-1',
+            target: { kind: 'local' },
+        }));
+
+        const step = screen.findByType('RelayAccessTailscalePrerequisitesStep' as never) as unknown as {
+            props: {
+                providerId?: string;
+                upstreamUrl?: string;
+                serverProfileId?: string;
+                target?: { kind: 'local' };
+            };
+        };
+
+        expect(step.props.providerId).toBe(providerId);
         expect(step.props.upstreamUrl).toBe('https://relay.example.test');
         expect(step.props.serverProfileId).toBe('profile-1');
         expect(step.props.target).toEqual({ kind: 'local' });

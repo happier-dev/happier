@@ -32,8 +32,10 @@ import { RemoteSshChecklistPromptCard } from './RemoteSshChecklistPromptCard';
 import { RemoteSshChecklistCredentialsPhase } from './RemoteSshChecklistCredentialsPhase';
 import { RemoteSshChecklistPlanPhase } from './RemoteSshChecklistPlanPhase';
 import { RemoteSshChecklistExecutionPhase } from './RemoteSshChecklistExecutionPhase';
+import { RemoteSshChecklistCompletePhase } from './RemoteSshChecklistCompletePhase';
 import { resolveRemoteSshBootstrapFormState } from './resolveRemoteSshBootstrapFormState';
 import { persistRemoteHostAfterRemoteSshCompletion } from './persistRemoteHostAfterRemoteSshCompletion';
+import { useRemoteRelayRuntimeStatusProbe } from './useRemoteRelayRuntimeStatusProbe';
 
 const SAVED_REMOTE_HOST_NEW_ID = '__new__';
 
@@ -65,14 +67,23 @@ function buildRemoteHostDraftFromHost(remoteHost: RemoteHost): SshCredentialsDra
 }
 
 function toPlanChecklistItem(
-    item: Readonly<{ id: string; title: string; subtitle: string; selected: boolean; disabled: boolean; optional: boolean; details: string }>,
+    item: Readonly<{
+        id: string;
+        title: string;
+        subtitle: string;
+        satisfied?: boolean;
+        selected: boolean;
+        disabled: boolean;
+        optional: boolean;
+        details: string;
+    }>,
     params: Readonly<{ defaultSelected?: boolean }> = {},
 ): PlanChecklistItem {
     return {
         id: item.id,
         title: item.title,
         subtitle: item.subtitle,
-        satisfied: false,
+        satisfied: item.satisfied ?? false,
         disabled: item.disabled,
         defaultSelected: params.defaultSelected ?? item.selected,
         badge: item.optional ? t('common.optional') : undefined,
@@ -269,17 +280,6 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         serviceMode: props.mode === 'remoteRelayHost' ? 'none' : 'user',
     });
 
-    const items = React.useMemo(() => buildRemoteSshChecklistItems({
-        mode: props.mode,
-    }), [props.mode]);
-    const planItems = React.useMemo(() => items.map((item) => toPlanChecklistItem(item, {
-        defaultSelected: item.id === 'install_relay_runtime'
-            ? Boolean(props.initialInstallRelayRuntime ?? true)
-            : undefined,
-    })), [items, props.initialInstallRelayRuntime]);
-
-    type RemoteSshChecklistExecutionPlan = Readonly<{ installRelayRuntime: boolean }>;
-
     const resolveRemoteSshFormStateForExecution = React.useCallback(async (installRelayRuntime: boolean) => {
         return await resolveRemoteSshBootstrapFormState({
             draft,
@@ -311,6 +311,28 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         usingSavedHost,
     ]);
 
+    const resolveRemoteSshFormStateForStatusProbe = React.useCallback(async () => {
+        return await resolveRemoteSshFormStateForExecution(false);
+    }, [resolveRemoteSshFormStateForExecution]);
+
+    const remoteRelayRuntimeStatusProbe = useRemoteRelayRuntimeStatusProbe({
+        enabled: props.mode === 'remoteRelayHost' && phase === 'plan',
+        ...(props.runner ? { runner: props.runner } : {}),
+        resolveFormState: resolveRemoteSshFormStateForStatusProbe,
+    });
+
+    const items = React.useMemo(() => buildRemoteSshChecklistItems({
+        mode: props.mode,
+        existingRelayRuntime: props.mode === 'remoteRelayHost' ? remoteRelayRuntimeStatusProbe.result : null,
+    }), [props.mode, remoteRelayRuntimeStatusProbe.result]);
+    const planItems = React.useMemo(() => items.map((item) => toPlanChecklistItem(item, {
+        defaultSelected: item.id === 'install_relay_runtime'
+            ? Boolean(props.initialInstallRelayRuntime ?? true)
+            : undefined,
+    })), [items, props.initialInstallRelayRuntime]);
+
+    type RemoteSshChecklistExecutionPlan = Readonly<{ installRelayRuntime: boolean }>;
+
     const buildExecutionPlan = React.useCallback((selectedIds: readonly string[]): RemoteSshChecklistExecutionPlan => ({
         installRelayRuntime: selectedIds.includes('install_relay_runtime'),
     }), []);
@@ -335,8 +357,15 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         errorTitle: t('common.error'),
     }), [items]);
 
+    const normalizePlanSelection = React.useCallback((selectedIds: readonly string[], nextItems: readonly PlanChecklistItem[]) => {
+        return nextItems
+            .filter((item) => selectedIds.includes(item.id) && !(item.satisfied && item.disabled))
+            .map((item) => item.id);
+    }, []);
+
     const checklist = usePlanChecklistController<RemoteSshChecklistExecutionPlan, SystemTaskRunState | null>({
         items: planItems,
+        normalizeSelectedIds: normalizePlanSelection,
         buildExecutionPlan,
         runExecutionPlan,
         mapExecutionSnapshotToRowState,
@@ -364,12 +393,18 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         const relayUrl = typeof relayRuntime?.relayUrl === 'string' ? relayRuntime.relayUrl.trim() : '';
         return relayUrl.length > 0 ? relayUrl : null;
     }, [activeTaskSnapshot]);
+    const detectedRelayRuntimeUrl = React.useMemo(() => {
+        const relayUrl = typeof remoteRelayRuntimeStatusProbe.result?.relayUrl === 'string'
+            ? remoteRelayRuntimeStatusProbe.result.relayUrl.trim()
+            : '';
+        return relayUrl.length > 0 ? relayUrl : null;
+    }, [remoteRelayRuntimeStatusProbe.result?.relayUrl]);
     const completionRelayUrl = React.useMemo(() => {
         return resolveRemoteRelayCompletionUrl({
             publicRelayUrl: props.publicRelayUrl,
-            relayRuntimeUrl: relayRuntimeResult,
+            relayRuntimeUrl: relayRuntimeResult ?? detectedRelayRuntimeUrl,
         });
-    }, [props.publicRelayUrl, relayRuntimeResult]);
+    }, [detectedRelayRuntimeUrl, props.publicRelayUrl, relayRuntimeResult]);
 
     React.useEffect(() => {
         if (phase !== 'execution') {
@@ -398,7 +433,6 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
                 completion: {
                     machineId: completion.machineId,
                     relayRuntimeUrl: completion.relayRuntimeUrl,
-                    relayAccessTarget: completion.relayAccessTarget,
                 },
             });
 
@@ -533,7 +567,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
             props.onWizardSkipChange?.(null);
             props.onWizardPrimaryChange?.({
                 label: t('common.continue'),
-                disabled: !checklist.canContinue,
+                disabled: !checklist.canContinue || remoteRelayRuntimeStatusProbe.isBusy,
                 onPress: async () => {
                     await handleStartExecution();
                 },
@@ -609,6 +643,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         isStarting,
         phase,
         prompt,
+        remoteRelayRuntimeStatusProbe.isBusy,
         selectedSavedRemoteHostId,
         props.onWizardBackChange,
         props.onWizardPrimaryChange,
@@ -624,16 +659,13 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
 
     if (phase === 'complete' && activeTaskSnapshot?.result?.ok) {
         return (
-            <View testID={props.testID} style={styles.root}>
-                <View style={styles.heading}>
-                    <Text style={styles.title}>{copy.completeTitle}</Text>
-                    <Text style={styles.subtitle}>
-                        {completionRelayUrl
-                            ? `${copy.completeSubtitle} ${completionRelayUrl}`
-                            : copy.completeSubtitle}
-                    </Text>
-                </View>
-            </View>
+            <RemoteSshChecklistCompletePhase
+                testID={props.testID}
+                copy={copy}
+                planItems={planItems}
+                selectedIds={checklist.selectedIds}
+                completionRelayUrl={completionRelayUrl}
+            />
         );
     }
 

@@ -216,6 +216,7 @@ export function useRelayAccessControl(options: RelayAccessControlOptions = {}) {
 
     return {
         activeTaskSnapshot,
+        actionSnapshot,
         configure: React.useCallback(async (payload: Readonly<{ providerId: RelayAccessProviderId; config: RelayAccessConfig }>) => {
             return await runAction('relay.access.configure.v1', payload);
         }, [runAction]),

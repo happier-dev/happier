@@ -7,6 +7,13 @@ export function resolveHappyHomeDirFromEnvironment(processEnv: NodeJS.ProcessEnv
     return isAbsolute(override) ? override : resolvePath(override);
   }
 
+  const stackOverride = typeof processEnv.HAPPIER_STACK_CLI_HOME_DIR === 'string'
+    ? processEnv.HAPPIER_STACK_CLI_HOME_DIR.trim()
+    : '';
+  if (stackOverride) {
+    return isAbsolute(stackOverride) ? stackOverride : resolvePath(stackOverride);
+  }
+
   const envHome = (processEnv.HOME ?? processEnv.USERPROFILE ?? '').trim();
   let baseHome = envHome;
   if (!baseHome) {

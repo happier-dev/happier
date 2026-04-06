@@ -4,9 +4,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { getDefaultSystemTaskRunner, useSystemTaskSnapshot } from '@/components/systemTasks';
 import type { SystemTaskRunState } from '@/components/systemTasks/types';
-import { isSystemTaskBridgeUnavailableError, readSystemTaskStartErrorMessage } from '@/components/systemTasks/systemTaskStartError';
 import { validateServerUrl } from '@/sync/domains/server/serverConfig';
 import {
     getActiveServerId,
@@ -32,23 +30,22 @@ import { useSettingMutable } from '@/sync/domains/state/storage';
 import { parseServerSettingsRouteParams } from '@/components/settings/server/navigation/serverSettingsRouteParams';
 import { useServerAuthStatusByServerId } from '@/components/settings/server/hooks/useServerAuthStatusByServerId';
 import { useServerAutoAddFromRoute } from '@/components/settings/server/hooks/useServerAutoAddFromRoute';
+import { useEndpointReachabilityRemediationController } from '@/components/settings/server/hooks/useEndpointReachabilityRemediationController';
 import { useServerSettingsServerProfileActions } from '@/components/settings/server/hooks/useServerSettingsServerProfileActions';
 import { useServerSettingsGroupActions } from '@/components/settings/server/hooks/useServerSettingsGroupActions';
 import { useServerSettingsConcurrentActions } from '@/components/settings/server/hooks/useServerSettingsConcurrentActions';
 import { useRelayDriftBanner } from '@/components/settings/server/useRelayDriftBanner';
 import type { RelayDriftBanner } from '@/components/settings/server/relayDriftTypes';
-import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
-import { clearPendingNotificationNav, getPendingNotificationNav } from '@/sync/domains/pending/pendingNotificationNav';
-import { readServerReachabilityProbeTimeoutMs } from '@/sync/runtime/connectivity/serverReachabilityTuning';
-import { createEndpointReadinessProbe } from '@/sync/runtime/connectivity/createEndpointReadinessProbe';
 import {
     resolveEndpointReachabilityRemediation,
     type EndpointReachabilityRemediation,
     type EndpointReachabilityRemediationAction,
-} from '@/sync/runtime/connectivity/resolveEndpointReachabilityRemediation';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+} from '@/components/serverReachability/remediation';
+import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { clearPendingNotificationNav, getPendingNotificationNav } from '@/sync/domains/pending/pendingNotificationNav';
+import { readServerReachabilityProbeTimeoutMs } from '@/sync/runtime/connectivity/serverReachabilityTuning';
+import { createEndpointReadinessProbe } from '@/sync/runtime/connectivity/createEndpointReadinessProbe';
 import { isTauriDesktop } from '@/utils/platform/tauri';
-import { createTailscaleEnsureReadyTaskSpec } from '@happier-dev/protocol';
 
 type SearchParams = Readonly<{ url?: string | string[]; auto?: string | string[]; source?: string | string[] }>;
 
@@ -131,23 +128,13 @@ export function useServerSettingsScreenController(): ServerSettingsController {
     const [error, setError] = React.useState<string | null>(null);
     const [isValidating, setIsValidating] = React.useState(false);
     const [reachabilityRemediation, setReachabilityRemediation] = React.useState<EndpointReachabilityRemediation | null>(null);
-    const [tailscaleEnsureReadyTaskId, setTailscaleEnsureReadyTaskId] = React.useState<string | null>(null);
     const validationAttemptIdRef = React.useRef(0);
     const validationAbortControllerRef = React.useRef<AbortController | null>(null);
-    const handledTailscaleEnsureReadyTaskIdRef = React.useRef<string | null>(null);
-    const reachabilityRemediationRef = React.useRef<EndpointReachabilityRemediation | null>(null);
     const inputUrlRef = React.useRef(inputUrl);
-    const systemTaskRunner = React.useMemo(() => getDefaultSystemTaskRunner(), []);
 
     const [serverSelectionGroups, setServerSelectionGroups] = useSettingMutable('serverSelectionGroups');
     const [serverSelectionActiveTargetKind, setServerSelectionActiveTargetKind] = useSettingMutable('serverSelectionActiveTargetKind');
     const [serverSelectionActiveTargetId, setServerSelectionActiveTargetId] = useSettingMutable('serverSelectionActiveTargetId');
-    const tailscaleEnsureReadySnapshot = useSystemTaskSnapshot(systemTaskRunner, tailscaleEnsureReadyTaskId);
-    const isPreparingTailscale = tailscaleEnsureReadyTaskId != null && tailscaleEnsureReadySnapshot?.result == null;
-
-    React.useEffect(() => {
-        reachabilityRemediationRef.current = reachabilityRemediation;
-    }, [reachabilityRemediation]);
 
     React.useEffect(() => {
         inputUrlRef.current = inputUrl;
@@ -238,67 +225,26 @@ export function useServerSettingsScreenController(): ServerSettingsController {
         }
     }, []);
 
-    const onReachabilityRemediationAction = React.useCallback(async (
-        actionId: EndpointReachabilityRemediationAction['id'],
-    ) => {
-        const remediation = reachabilityRemediationRef.current;
-        if (!remediation) return;
-        const action = remediation.actions.find((candidate) => candidate.id === actionId);
-        if (!action) return;
-
-        if (action.kind === 'retry') {
-            await validateServerReachable(inputUrlRef.current);
-            return;
-        }
-
-        if (action.kind === 'external-url') {
-            const opened = await openExternalUrl(action.url, { platformOS: Platform.OS });
-            if (!opened) {
-                await Modal.alert(t('common.error'), t('server.reachabilityRemediation.failedToOpenInstallLink'));
-            }
-            return;
-        }
-
-        if (action.kind === 'callback' && action.callbackSlot === 'tailscale.ensureReady') {
-            try {
-                setError(null);
-                const taskId = await systemTaskRunner.start(createTailscaleEnsureReadyTaskSpec({
-                    installPolicy: 'installIfMissing',
-                    loginPolicy: 'interactive',
-                    mode: 'normalUser',
-                }));
-                handledTailscaleEnsureReadyTaskIdRef.current = null;
-                setTailscaleEnsureReadyTaskId(taskId);
-            } catch {
-                const message = t('settings.systemTaskStartFailed');
-                setError(message);
-                await Modal.alert(t('common.error'), message);
-            }
-        }
-    }, [systemTaskRunner, validateServerReachable]);
+    const {
+        error: reachabilityRemediationError,
+        taskSnapshot: reachabilityRemediationTaskSnapshot,
+        onAction: onReachabilityRemediationAction,
+    } = useEndpointReachabilityRemediationController({
+        remediation: reachabilityRemediation,
+        endpoint: inputUrlRef.current ? normalizeUrl(inputUrlRef.current) : null,
+        onRetryEndpoint: async (endpoint) => {
+            setReachabilityRemediation(null);
+            await validateServerReachable(endpoint);
+        },
+    });
+    const isPreparingTailscale = reachabilityRemediationTaskSnapshot != null && reachabilityRemediationTaskSnapshot.result == null;
 
     React.useEffect(() => {
-        const result = tailscaleEnsureReadySnapshot?.result;
-        if (!result) return;
-        if (handledTailscaleEnsureReadyTaskIdRef.current === tailscaleEnsureReadySnapshot.taskId) {
+        if (!reachabilityRemediationError) {
             return;
         }
-        handledTailscaleEnsureReadyTaskIdRef.current = tailscaleEnsureReadySnapshot.taskId;
-        if (!result.ok) {
-            const message = typeof result.error?.message === 'string' ? result.error.message.trim() : '';
-            setError(message || t('settings.systemTaskStartFailed'));
-            setTailscaleEnsureReadyTaskId(null);
-            return;
-        }
-        void (async () => {
-            try {
-                setReachabilityRemediation(null);
-                await validateServerReachable(inputUrl);
-            } finally {
-                setTailscaleEnsureReadyTaskId((current) => (current === tailscaleEnsureReadySnapshot.taskId ? null : current));
-            }
-        })();
-    }, [inputUrl, tailscaleEnsureReadySnapshot, validateServerReachable]);
+        setError(reachabilityRemediationError);
+    }, [reachabilityRemediationError]);
 
     useServerAutoAddFromRoute({
         enabled: autoMode,
@@ -574,7 +520,7 @@ export function useServerSettingsScreenController(): ServerSettingsController {
         error,
         isValidating: isValidating || isPreparingTailscale,
         reachabilityRemediation,
-        reachabilityRemediationTaskSnapshot: tailscaleEnsureReadySnapshot ?? null,
+        reachabilityRemediationTaskSnapshot,
         addServerPrefillHint,
         addServerDefaultExpanded,
         onChangeUrl: (value) => {

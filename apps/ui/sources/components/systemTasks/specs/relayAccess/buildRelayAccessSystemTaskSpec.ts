@@ -3,30 +3,7 @@ import type { RelayAccessConfig, RelayAccessProviderId } from '@happier-dev/cli-
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 
 import { buildRelayAccessTailscaleSecureAccessSystemTaskSpec as buildTailscaleSecureAccessRelayAccessSystemTaskSpec } from './buildRelayAccessTailscaleSecureAccessSystemTaskSpec';
-
-const DEFAULT_RELAY_ACCESS_TARGET: RelayAccessTaskTarget = {
-    kind: 'local',
-};
-
-function resolveRelayAccessTarget(target?: RelayAccessTaskTarget): RelayAccessTaskTarget {
-    return target ?? DEFAULT_RELAY_ACCESS_TARGET;
-}
-
-function serializeRelayAccessTarget(target?: RelayAccessTaskTarget): Readonly<{
-    kind: 'local';
-}> | Readonly<{
-    kind: 'ssh';
-    ssh: Record<string, string | number | boolean | null | undefined>;
-}> {
-    const resolved = resolveRelayAccessTarget(target);
-    if (resolved.kind === 'local') {
-        return { kind: 'local' };
-    }
-    return {
-        kind: 'ssh',
-        ssh: { ...resolved.ssh },
-    };
-}
+import { serializeRelayAccessTaskTarget } from './serializeRelayAccessTaskTarget';
 
 export function buildRelayAccessStatusSystemTaskSpec(params: Readonly<{
     target?: RelayAccessTaskTarget;
@@ -35,7 +12,7 @@ export function buildRelayAccessStatusSystemTaskSpec(params: Readonly<{
         protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
         kind: 'relay.access.status.v1',
         params: {
-            target: serializeRelayAccessTarget(params.target),
+            target: serializeRelayAccessTaskTarget(params.target),
         },
     };
 }
@@ -47,7 +24,7 @@ export function buildRelayAccessDisableSystemTaskSpec(params: Readonly<{
         protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
         kind: 'relay.access.disable.v1',
         params: {
-            target: serializeRelayAccessTarget(params.target),
+            target: serializeRelayAccessTaskTarget(params.target),
         },
     };
 }
@@ -63,7 +40,7 @@ export function buildRelayAccessConfigureSystemTaskSpec(params: Readonly<{
         protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
         kind: 'relay.access.configure.v1',
         params: {
-            target: serializeRelayAccessTarget(params.target),
+            target: serializeRelayAccessTaskTarget(params.target),
             ...(upstreamUrl ? { upstreamUrl } : {}),
             providerId: params.providerId,
             config: params.config,
@@ -78,10 +55,11 @@ export function buildRelayAccessExecutionSystemTaskSpec(params: Readonly<{
     upstreamUrl?: string | null;
 }>): SystemTaskSpec {
     const target = params.target ?? { kind: 'local' as const };
-    if (target.kind !== 'ssh' && (params.providerId === 'tailscaleServe' || params.providerId === 'tailscaleFunnel')) {
+    if (params.providerId === 'tailscaleServe' || params.providerId === 'tailscaleFunnel') {
         return buildTailscaleSecureAccessRelayAccessSystemTaskSpec({
             providerId: params.providerId,
             upstreamUrl: params.upstreamUrl ?? '',
+            target,
         });
     }
 

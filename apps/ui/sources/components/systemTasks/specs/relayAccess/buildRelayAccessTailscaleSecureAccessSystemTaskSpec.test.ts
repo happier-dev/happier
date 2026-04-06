@@ -7,10 +7,24 @@ describe('buildRelayAccessTailscaleSecureAccessSystemTaskSpec', () => {
         expect(buildRelayAccessTailscaleSecureAccessSystemTaskSpec({
             upstreamUrl: 'http://127.0.0.1:3005/',
             providerId: 'tailscaleServe',
+            target: {
+                kind: 'ssh',
+                ssh: {
+                    target: 'dev@example.test',
+                    auth: 'agent',
+                },
+            },
         })).toEqual({
             protocolVersion: 1,
             kind: 'secureAccess.tailscale.v1',
             params: {
+                target: {
+                    kind: 'ssh',
+                    ssh: {
+                        target: 'dev@example.test',
+                        auth: 'agent',
+                    },
+                },
                 upstreamUrl: 'http://127.0.0.1:3005/',
                 providerId: 'tailscaleServe',
                 servePath: '/',
@@ -27,6 +41,7 @@ describe('buildRelayAccessTailscaleSecureAccessSystemTaskSpec', () => {
             protocolVersion: 1,
             kind: 'secureAccess.tailscale.v1',
             params: {
+                target: { kind: 'local' },
                 upstreamUrl: 'http://127.0.0.1:3005/',
                 providerId: 'tailscaleFunnel',
                 servePath: '/',

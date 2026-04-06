@@ -69,9 +69,6 @@ vi.mock('@/components/settings/server/localControl/LocalRelayRuntimeControlSecti
 vi.mock('@/components/settings/server/localControl/LocalRelayAccessControlSection', () => ({
     LocalRelayAccessControlSection: (props: any) => React.createElement('LocalRelayAccessControlSection', props),
 }));
-vi.mock('@/components/settings/server/localControl/LocalTailscaleSecureAccessSection', () => ({
-    LocalTailscaleSecureAccessSection: (props: any) => React.createElement('LocalTailscaleSecureAccessSection', props),
-}));
 
 vi.mock('@/components/settings/server/hooks/useServerSettingsScreenController', () => ({
     useServerSettingsScreenController: () => controllerValue,
@@ -128,7 +125,6 @@ describe('ServerSettingsScreen web gating', () => {
 
         expect(screen.findAllByType('LocalRelayRuntimeControlSection' as any)).toHaveLength(0);
         expect(screen.findAllByType('LocalRelayAccessControlSection' as any)).toHaveLength(0);
-        expect(screen.findAllByType('LocalTailscaleSecureAccessSection' as any)).toHaveLength(0);
         const notice = screen.findByTestId('settings.server.openSetupWizard');
         expect(notice).toBeTruthy();
         expect(notice?.props.title).toBe('setupOnboarding.setupNewRelayAction');

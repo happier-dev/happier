@@ -4,11 +4,17 @@ import { View } from 'react-native';
 import type { AgentId } from '@happier-dev/agents';
 import type { RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
+import type { SystemTaskRunState } from '@/components/systemTasks/types';
+import type {
+    EndpointReachabilityRemediation,
+    EndpointReachabilityRemediationAction,
+} from '@/components/serverReachability/remediation';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { t, tLoose } from '@/text';
 
 import { SshCredentialsFields } from '@/components/ssh/SshCredentialsFields';
 import { LocalRelayAccessControlSection } from '@/components/settings/server/localControl/LocalRelayAccessControlSection';
+import { ServerReachabilityRemediationCard } from '@/components/settings/server/sections/ServerReachabilityRemediationCard';
 import { RelayAccessPrerequisitesStep } from '@/components/onboarding/steps/relayAccess/RelayAccessPrerequisitesStep';
 import { WizardTerminalHandoff } from '@/components/onboarding/ui/WizardTerminalHandoff';
 import { SetupThisComputerWizardStep } from '@/components/onboarding/steps/SetupThisComputerWizardStep';
@@ -30,11 +36,7 @@ import type { SshCredentialsDraft } from '@/components/ssh/SshCredentialsFields'
 import { ConfirmSwitchRelayStep, type RelaySwitchDecision } from '../steps/ConfirmSwitchRelayStep';
 import type { WizardBackOverride, WizardPrimaryOverride, WizardSkipOverride } from '../hooks/useWizardChromeOverrides';
 import type { WizardStepId } from '../state/wizardTypes';
-import type {
-    RemoteRelayRuntimeCompletion,
-    RemoteSetupIntent,
-    SetupWizardSurfaceStyles,
-} from './SetupWizardSurface';
+import type { RemoteRelayRuntimeCompletion, RemoteSetupIntent, SetupWizardSurfaceStyles } from './SetupWizardSurface';
 
 export function renderSetupStepBody(params: Readonly<{
     theme: Readonly<{ colors: Readonly<{ textSecondary: string }> }>;
@@ -49,8 +51,13 @@ export function renderSetupStepBody(params: Readonly<{
     activeServerUrl: string | null;
     activeLocalRelayUrl: string | null;
     relayUrl: string | null;
+    confirmRelayUrl: string | null;
     serverProfileId: string | null;
     relayAccessTarget: RelayAccessTaskTarget;
+    reachabilityRemediation: EndpointReachabilityRemediation | null;
+    reachabilityRemediationTaskSnapshot: SystemTaskRunState | null;
+    reachabilityRemediationError: string | null;
+    onReachabilityRemediationAction: (actionId: EndpointReachabilityRemediationAction['id']) => void | Promise<void>;
     providerMachineId: string | null;
     providerSelectionProviderIds: readonly AgentId[];
     selectedProviderIds: readonly AgentId[];
@@ -64,6 +71,7 @@ export function renderSetupStepBody(params: Readonly<{
     onRemoteRelayRuntimeCompletedChange: (payload: RemoteRelayRuntimeCompletion) => void;
     onRelayUrlPasteChange: (value: string) => void;
     onRelayShareUrlPasteChange: (value: string) => void;
+    onRelayAccessShareUrlChange: (shareUrl: string | null) => void;
     relayAccessProviderId: RelayAccessProviderId | null;
     onRelayAccessProviderIdChange: (next: RelayAccessProviderId | null) => void;
     onRelayAccessProviderDetailsRequested: (providerId: RelayAccessProviderId) => void;
@@ -85,6 +93,7 @@ export function renderSetupStepBody(params: Readonly<{
             }
             return (
                 <SetupThisComputerWizardStep
+                    testID="setupWizard-setup-this-computer"
                     onSucceeded={params.onLocalSetupSucceeded}
                     onNeedsAuth={params.onLocalSetupNeedsAuth}
                     onNeedsApproval={params.onLocalSetupNeedsApproval}
@@ -154,6 +163,7 @@ export function renderSetupStepBody(params: Readonly<{
                     upstreamUrl={params.relayUrl}
                     serverProfileId={params.serverProfileId}
                     presentation="wizard"
+                    onShareUrlChange={params.onRelayAccessShareUrlChange}
                     onWizardPrimaryChange={params.onWizardPrimaryChange}
                     onRequestAdvance={params.onRequestAdvance}
                     onWizardSelectedProviderIdChange={params.onRelayAccessProviderIdChange}
@@ -169,6 +179,7 @@ export function renderSetupStepBody(params: Readonly<{
                     upstreamUrl={params.relayUrl}
                     serverProfileId={params.serverProfileId}
                     target={params.relayAccessTarget}
+                    onShareUrlChange={params.onRelayAccessShareUrlChange}
                     onWizardPrimaryChange={params.onWizardPrimaryChange}
                     onRequestAdvance={params.onRequestAdvance}
                 />
@@ -239,14 +250,26 @@ export function renderSetupStepBody(params: Readonly<{
                 />
             );
         case 'confirm_switch_relay': {
-            const relayUrl = typeof params.relayUrl === 'string' ? params.relayUrl.trim() : '';
+            const relayUrl = typeof params.confirmRelayUrl === 'string' ? params.confirmRelayUrl.trim() : '';
             return (
-                <ConfirmSwitchRelayStep
-                    testIDPrefix={params.testIDPrefix}
-                    relayUrl={relayUrl}
-                    decision={params.relaySwitchDecision}
-                    onDecisionChange={params.onRelaySwitchDecisionChange}
-                />
+                <>
+                    <ConfirmSwitchRelayStep
+                        testIDPrefix={params.testIDPrefix}
+                        relayUrl={relayUrl}
+                        decision={params.relaySwitchDecision}
+                        onDecisionChange={params.onRelaySwitchDecisionChange}
+                    />
+                    {params.reachabilityRemediation ? (
+                        <ServerReachabilityRemediationCard
+                            remediation={params.reachabilityRemediation}
+                            taskSnapshot={params.reachabilityRemediationTaskSnapshot}
+                            onAction={params.onReachabilityRemediationAction}
+                        />
+                    ) : null}
+                    {params.reachabilityRemediationError ? (
+                        <Text style={params.styles.urlHint}>{params.reachabilityRemediationError}</Text>
+                    ) : null}
+                </>
             );
         }
         case 'providers_optional':

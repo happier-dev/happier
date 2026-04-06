@@ -4,6 +4,7 @@ import {
 } from '@happier-dev/cli-common/tailscale';
 import {
   createRelayAccessConfigureTaskKind,
+  parseSystemTaskSshConfig,
   type RelayAccessTaskTarget,
 } from '@happier-dev/cli-common/systemTasks';
 import {
@@ -15,14 +16,19 @@ import {
 } from '@happier-dev/cli-common/relayAccess';
 import {
   createTailscaleReadinessRuntimeDeps,
-  inspectLocalTailscaleReadinessState,
   readBoundedIntEnv,
   runTailscaleReadinessFlow,
   type TailscaleReadinessRuntimeDeps,
   type TailscaleReadinessState,
 } from './tailscaleReadinessFlow.js';
+import {
+  inspectTailscaleReadinessStateForExecutionContext,
+  resolveTailscaleInstallPromptForExecutionContext,
+  runTailscaleLoginForExecutionContext,
+} from './tailscaleExecutionContext.js';
 
 type SecureAccessTailscaleParams = Readonly<{
+  target: RelayAccessTaskTarget;
   upstreamUrl: string;
   providerId: 'tailscaleServe' | 'tailscaleFunnel';
   servePath: string;
@@ -38,7 +44,7 @@ type SecureAccessTailscaleDeps = Readonly<{
     writeConfig: (params: Readonly<{ target: RelayAccessTaskTarget; config: RelayAccessConfig | null }>) => Promise<void>;
     createExecutionContext: (params: Readonly<{ target: RelayAccessTaskTarget; upstreamUrl: string | null }>) => RelayAccessExecutionContext;
   }>;
-} & TailscaleReadinessRuntimeDeps>;
+} & TailscaleReadinessRuntimeDeps<SecureAccessTailscaleParams>>;
 
 export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAccessTailscaleDeps>) {
   const deps = createSecureAccessTailscaleDeps(overrides);
@@ -95,7 +101,7 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
       createExecutionContext: deps.relayAccess.createExecutionContext,
     }).run({
       params: {
-        target: { kind: 'local' },
+        target: serializeSecureAccessTailscaleTarget(parsed.target),
         upstreamUrl: parsed.upstreamUrl,
         providerId: parsed.providerId,
         config: { providerId: parsed.providerId },
@@ -222,9 +228,54 @@ function createSecureAccessTailscaleDeps(overrides?: Partial<SecureAccessTailsca
       upstreamUrl: params.upstreamUrl,
     }),
   };
+  const readinessDeps = createTailscaleReadinessRuntimeDeps<SecureAccessTailscaleParams>(overrides);
 
   return {
-    ...createTailscaleReadinessRuntimeDeps(overrides),
+    ...readinessDeps,
+    ensureInstalled: overrides?.ensureInstalled ?? (async (params, options) => {
+      if (params.target.kind === 'local') {
+        return await readinessDeps.ensureInstalled(params, options);
+      }
+
+      const prompt = await resolveTailscaleInstallPromptForExecutionContext(
+        relayAccess.createExecutionContext({
+          target: params.target,
+          upstreamUrl: params.upstreamUrl,
+        }),
+      );
+      return {
+        outcome: 'prompt',
+        installerLaunched: false,
+        prompt: {
+          ...prompt,
+          reason: 'manual_install_required',
+        },
+      };
+    }),
+    loginInteractive: overrides?.loginInteractive ?? (async (params) => {
+      if (params.target.kind === 'local') {
+        return await readinessDeps.loginInteractive(params);
+      }
+
+      return await runTailscaleLoginForExecutionContext(
+        relayAccess.createExecutionContext({
+          target: params.target,
+          upstreamUrl: params.upstreamUrl,
+        }),
+      );
+    }),
+    resolveInstallPrompt: overrides?.resolveInstallPrompt ?? (async (params) => {
+      if (params.target.kind === 'local') {
+        return await readinessDeps.resolveInstallPrompt(params);
+      }
+
+      return await resolveTailscaleInstallPromptForExecutionContext(
+        relayAccess.createExecutionContext({
+          target: params.target,
+          upstreamUrl: params.upstreamUrl,
+        }),
+      );
+    }),
     inspectState: overrides?.inspectState ?? ((params) => inspectSecureAccessTailscaleState(params, relayAccess)),
     relayAccess,
   };
@@ -234,7 +285,11 @@ async function inspectSecureAccessTailscaleState(
   params: SecureAccessTailscaleParams,
   relayAccess: SecureAccessTailscaleDeps['relayAccess'],
 ): Promise<TailscaleReadinessState> {
-  const status = await inspectLocalTailscaleReadinessState();
+  const executionContext = relayAccess.createExecutionContext({
+    target: params.target,
+    upstreamUrl: params.upstreamUrl,
+  });
+  const status = await inspectTailscaleReadinessStateForExecutionContext(executionContext);
   if (!status.installed || !status.loggedIn) {
     return {
       ...status,
@@ -244,10 +299,7 @@ async function inspectSecureAccessTailscaleState(
   const relayAccessProvider = relayAccess.getProvider(params.providerId);
   const relayAccessStatus = await relayAccessProvider.status({
     config: { providerId: params.providerId },
-    ctx: relayAccess.createExecutionContext({
-      target: { kind: 'local' },
-      upstreamUrl: params.upstreamUrl,
-    }),
+    ctx: executionContext,
   });
 
   return {
@@ -276,7 +328,7 @@ function parseSecureAccessTailscaleParams(params: unknown): SecureAccessTailscal
   }
 
   const record = params as Record<string, unknown>;
-  const allowedKeys = new Set(['upstreamUrl', 'providerId', 'servePath', 'installPolicy', 'loginPolicy', 'mode']);
+  const allowedKeys = new Set(['target', 'upstreamUrl', 'providerId', 'servePath', 'installPolicy', 'loginPolicy', 'mode']);
   for (const key of Object.keys(record)) {
     if (!allowedKeys.has(key)) {
       throw new systemTasks.SystemTaskExecutionError('invalid_params', `Unknown secure access param: ${key}`);
@@ -284,12 +336,59 @@ function parseSecureAccessTailscaleParams(params: unknown): SecureAccessTailscal
   }
 
   return {
+    target: parseSecureAccessTailscaleTarget(record.target),
     upstreamUrl: ensureNonEmptyString(record.upstreamUrl, 'upstreamUrl'),
     providerId: record.providerId === 'tailscaleFunnel' ? 'tailscaleFunnel' : 'tailscaleServe',
     servePath: normalizeServePath(record.servePath),
     installPolicy: record.installPolicy === 'installIfMissing' ? 'installIfMissing' : 'skip',
     loginPolicy: record.loginPolicy === 'skip' ? 'skip' : 'interactive',
     mode: record.mode === 'managedAdmin' ? 'managedAdmin' : 'normalUser',
+  };
+}
+
+function parseSecureAccessTailscaleTarget(value: unknown): RelayAccessTaskTarget {
+  if (value == null) {
+    return { kind: 'local' };
+  }
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new systemTasks.SystemTaskExecutionError('invalid_params', 'Invalid secure access target.');
+  }
+
+  const record = value as Record<string, unknown>;
+  if (record.kind === 'ssh') {
+    return {
+      kind: 'ssh',
+      ssh: parseSystemTaskSshConfig(record.ssh),
+    };
+  }
+  if (record.kind === 'local' || record.kind === undefined) {
+    return { kind: 'local' };
+  }
+
+  throw new systemTasks.SystemTaskExecutionError('invalid_params', 'Invalid secure access target.');
+}
+
+function serializeSecureAccessTailscaleTarget(target: RelayAccessTaskTarget): Readonly<{
+  kind: 'local';
+}> | Readonly<{
+  kind: 'ssh';
+  ssh: Record<string, string | number | boolean | null>;
+}> {
+  if (target.kind !== 'ssh') {
+    return { kind: 'local' };
+  }
+
+  const ssh: Record<string, string | number | boolean | null> = {};
+  for (const [key, value] of Object.entries(target.ssh)) {
+    if (value === undefined) {
+      continue;
+    }
+    ssh[key] = value;
+  }
+
+  return {
+    kind: 'ssh',
+    ssh,
   };
 }
 

@@ -5,8 +5,23 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installMachinesSettingsCommonModuleMocks } from '@/components/settings/machines/machinesSettingsTestHelpers';
 
+type WizardPrimaryState = {
+    disabled: boolean;
+    onPress: (() => void) | (() => Promise<void>);
+} | null;
+
+function readWizardPrimary(state: WizardPrimaryState): Exclude<WizardPrimaryState, null> {
+    if (!state) {
+        throw new Error('expected wizard primary action');
+    }
+    return state;
+}
+
 const setActiveServerShareableUrlSpy = vi.hoisted(() => vi.fn());
 const setServerProfileShareableUrlSpy = vi.hoisted(() => vi.fn());
+const openExternalUrlSpy = vi.hoisted(() => vi.fn(
+    async (_url: string, _options?: Readonly<{ platformOS?: string }>) => true,
+));
 
 (
     globalThis as typeof globalThis & {
@@ -66,6 +81,10 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
         value: string | null,
         options?: { validatedAgainstServerUrl?: string | null },
     ) => setServerProfileShareableUrlSpy(serverProfileId, value, options),
+}));
+
+vi.mock('@/utils/url/openExternalUrl', () => ({
+    openExternalUrl: (url: string, options?: Record<string, unknown>) => openExternalUrlSpy(url, options),
 }));
 
 vi.mock('@expo/vector-icons', () => ({
@@ -226,6 +245,153 @@ describe('LocalRelayAccessControlSection', () => {
             if (previousDeny === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
             else process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = previousDeny;
         }
+    });
+
+    it('shows Tailscale relay access providers for SSH targets alongside the other SSH-capable options', async () => {
+        const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
+
+        const runner = createSystemTaskRunner({
+            bridge: {
+                async start() {
+                    return 'task_1:relay.access.status.v1';
+                },
+                async subscribe(_taskId, _listenerSet) {
+                    return () => {};
+                },
+                async cancel() {},
+                async respond() {},
+            },
+        });
+
+        const { LocalRelayAccessControlSection } = await import('./LocalRelayAccessControlSection');
+        const screen = await renderScreen(
+            React.createElement(LocalRelayAccessControlSection, {
+                runner,
+                target: {
+                    kind: 'ssh',
+                    ssh: {
+                        target: 'dev@example.test',
+                        auth: 'agent',
+                    },
+                },
+                upstreamUrl: 'http://127.0.0.1:3005',
+            }),
+        );
+
+        expect(screen.findByTestId('settings.server.relayAccess.choice:localOnly')).toBeTruthy();
+        expect(screen.findByTestId('settings.server.relayAccess.choice:lan')).toBeTruthy();
+        expect(screen.findByTestId('settings.server.relayAccess.choice:cloudflareNamed')).toBeTruthy();
+        expect(screen.findByTestId('settings.server.relayAccess.choice:tailscaleServe')).toBeTruthy();
+        expect(screen.findByTestId('settings.server.relayAccess.choice:tailscaleFunnel')).toBeTruthy();
+    });
+
+    it('advances the wizard after successful Tailscale secure access once the inline snapshot settles', async () => {
+        const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
+        const { SystemTaskSpecSchema, SYSTEM_TASK_PROTOCOL_VERSION } = await import('@happier-dev/protocol');
+
+        let nextTaskId = 1;
+        const listeners = new Map<string, {
+            onEvent: (payload: unknown) => void;
+            onResult: (payload: unknown) => void;
+        }>();
+        const startedSpecs: unknown[] = [];
+        let primary: WizardPrimaryState = null;
+        const onRequestAdvance = vi.fn();
+
+        const runner = createSystemTaskRunner({
+            bridge: {
+                async start(spec) {
+                    SystemTaskSpecSchema.parse(spec);
+                    startedSpecs.push(spec);
+                    const kind = typeof (spec as any)?.kind === 'string' ? String((spec as any).kind) : 'unknown';
+                    return `task_${nextTaskId++}:${kind}`;
+                },
+                async subscribe(taskId, listenerSet) {
+                    listeners.set(taskId, listenerSet);
+                    return () => {
+                        listeners.delete(taskId);
+                    };
+                },
+                async cancel() {},
+                async respond() {},
+            },
+        });
+
+        const { LocalRelayAccessControlSection } = await import('./LocalRelayAccessControlSection');
+        await renderScreen(
+            React.createElement(LocalRelayAccessControlSection, {
+                runner,
+                presentation: 'wizard',
+                upstreamUrl: 'http://127.0.0.1:3005',
+                forcedProviderId: 'tailscaleServe',
+                showProviderChoices: false,
+                allowWizardDetailsRedirect: false,
+                onWizardPrimaryChange: (state) => {
+                    primary = state as WizardPrimaryState;
+                },
+                onRequestAdvance,
+            }),
+        );
+        await renderer.act(async () => {});
+
+        await renderer.act(async () => {
+            listeners.get('task_1:relay.access.status.v1')?.onResult({
+                protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                taskId: 'task_1:relay.access.status.v1',
+                ok: true,
+                data: {
+                    configured: false,
+                    providerId: null,
+                    status: {
+                        state: 'disabled',
+                        shareUrl: null,
+                        details: null,
+                    },
+                },
+            });
+        });
+        await renderer.act(async () => {});
+
+        expect(primary).toBeTruthy();
+        const currentPrimary = readWizardPrimary(primary);
+        expect(currentPrimary.disabled).toBe(false);
+
+        await renderer.act(async () => {
+            await currentPrimary.onPress();
+        });
+
+        expect(startedSpecs[1]).toEqual({
+            protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+            kind: 'secureAccess.tailscale.v1',
+            params: {
+                target: { kind: 'local' },
+                upstreamUrl: 'http://127.0.0.1:3005',
+                providerId: 'tailscaleServe',
+                servePath: '/',
+                installPolicy: 'installIfMissing',
+                loginPolicy: 'interactive',
+                mode: 'normalUser',
+            },
+        });
+        expect(onRequestAdvance).toHaveBeenCalledTimes(0);
+
+        await renderer.act(async () => {
+            listeners.get('task_2:secureAccess.tailscale.v1')?.onResult({
+                protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                taskId: 'task_2:secureAccess.tailscale.v1',
+                ok: true,
+                data: {
+                    tailscaleInstalled: true,
+                    tailscaleLoggedIn: true,
+                    serveEnabled: true,
+                    shareableHttpsUrl: 'https://relay.tailnet.ts.net',
+                    requiresApproval: null,
+                },
+            });
+        });
+        await renderer.act(async () => {});
+
+        expect(onRequestAdvance).toHaveBeenCalledTimes(1);
     });
 
     it('runs relay.access.configure.v1 for LAN and updates the active shareable URL on success', async () => {
@@ -446,6 +612,7 @@ describe('LocalRelayAccessControlSection', () => {
             protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
             kind: 'secureAccess.tailscale.v1',
             params: {
+                target: { kind: 'local' },
                 upstreamUrl: 'http://127.0.0.1:3005',
                 providerId: 'tailscaleServe',
                 servePath: '/',
@@ -505,6 +672,7 @@ describe('LocalRelayAccessControlSection', () => {
             protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
             kind: 'secureAccess.tailscale.v1',
             params: {
+                target: { kind: 'local' },
                 upstreamUrl: 'http://127.0.0.1:3005',
                 providerId: 'tailscaleFunnel',
                 servePath: '/',
@@ -513,6 +681,110 @@ describe('LocalRelayAccessControlSection', () => {
                 mode: 'normalUser',
             },
         });
+    });
+
+    it('renders actionable prompt UX for Tailscale secure-access prompts and opens the prompt URL', async () => {
+        openExternalUrlSpy.mockClear();
+
+        const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
+        const { SystemTaskSpecSchema, SYSTEM_TASK_PROTOCOL_VERSION } = await import('@happier-dev/protocol');
+
+        let nextTaskId = 1;
+        const listeners = new Map<string, {
+            onEvent: (payload: unknown) => void;
+            onResult: (payload: unknown) => void;
+        }>();
+
+        const runner = createSystemTaskRunner({
+            bridge: {
+                async start(spec) {
+                    SystemTaskSpecSchema.parse(spec);
+                    const kind = typeof (spec as any)?.kind === 'string' ? String((spec as any).kind) : 'unknown';
+                    return `task_${nextTaskId++}:${kind}`;
+                },
+                async subscribe(taskId, listenerSet) {
+                    listeners.set(taskId, listenerSet);
+                    return () => {
+                        listeners.delete(taskId);
+                    };
+                },
+                async cancel() {},
+                async respond() {},
+            },
+        });
+
+        const { LocalRelayAccessControlSection } = await import('./LocalRelayAccessControlSection');
+        const screen = await renderScreen(
+            React.createElement(LocalRelayAccessControlSection as any, {
+                runner,
+                upstreamUrl: 'http://127.0.0.1:3005',
+            }),
+        );
+        await renderer.act(async () => {});
+
+        await renderer.act(async () => {
+            listeners.get('task_1:relay.access.status.v1')?.onResult({
+                protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                taskId: 'task_1:relay.access.status.v1',
+                ok: true,
+                data: {
+                    configured: false,
+                    providerId: null,
+                    status: {
+                        state: 'disabled',
+                        shareUrl: null,
+                        details: null,
+                    },
+                },
+            });
+        });
+        await renderer.act(async () => {});
+
+        await renderer.act(async () => {
+            screen.findByTestId('settings.server.relayAccess.choice:tailscaleServe')?.props.onPress?.();
+        });
+        await renderer.act(async () => {
+            await screen.findByTestId('settings.server.relayAccess.save')?.props.onPress?.();
+        });
+
+        const actionTaskId = 'task_2:secureAccess.tailscale.v1';
+        await renderer.act(async () => {
+            listeners.get(actionTaskId)?.onEvent({
+                protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                taskId: actionTaskId,
+                tsMs: 1,
+                type: 'prompt',
+                stepId: 'tailscale.login',
+                message: 'Complete Tailscale sign-in to continue',
+                data: {
+                    kind: 'needsUserAction.openUrl',
+                    url: 'https://login.tailscale.com/a/example',
+                    usedQr: false,
+                },
+            });
+            listeners.get(actionTaskId)?.onResult({
+                protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                taskId: actionTaskId,
+                ok: false,
+                error: {
+                    code: 'prompt_required',
+                    message: 'Complete Tailscale sign-in before enabling secure access.',
+                },
+            });
+        });
+        await renderer.act(async () => {});
+
+        const promptCard = screen.findByTestId('settings.server.relayAccess.promptCard');
+        expect(promptCard).toBeTruthy();
+
+        await renderer.act(async () => {
+            await screen.findByTestId('settings.server.relayAccess.promptCard-primary')?.props.onPress?.();
+        });
+
+        expect(openExternalUrlSpy).toHaveBeenCalledWith(
+            'https://login.tailscale.com/a/example',
+            { platformOS: 'web' },
+        );
     });
 
     it('allows switching relay access providers after an existing configuration is loaded', async () => {

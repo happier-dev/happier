@@ -49,6 +49,10 @@ function flattenStyleProp(styleProp: unknown): Record<string, unknown> {
     return out;
 }
 
+function asFiniteNumber(value: unknown): number {
+    return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
 describe('WizardCardLayout', () => {
     afterEach(() => {
         standardCleanup();
@@ -91,6 +95,52 @@ describe('WizardCardLayout', () => {
         expect(scrims).toHaveLength(1);
         const flattenedScrim = flattenStyleProp(scrims[0]?.props.style as unknown);
         expect(flattenedScrim.position).toBe('fixed');
+    });
+
+    it('keeps the card container above the scrim so wizard buttons stay clickable on web', async () => {
+        const { WizardCardLayout } = await import('./WizardCardLayout');
+        const previousDocument = (globalThis as any).document;
+        const portalTarget =
+            typeof document !== 'undefined' && typeof document.createElement === 'function'
+                ? document.createElement('div')
+                : ({ nodeType: 1 } as any);
+
+        createPortalMock.mockReset();
+
+        (globalThis as any).document = { body: { nodeType: 1 } } as any;
+        let screen: Awaited<ReturnType<typeof renderScreen>>;
+        try {
+            screen = await renderScreen(
+                React.createElement(
+                    ModalPortalTargetProvider,
+                    {
+                        target: portalTarget,
+                        children: React.createElement(
+                            WizardCardLayout,
+                            {
+                                testID: 'wizard-card',
+                                children: React.createElement('View', { testID: 'wizard-child' }),
+                            },
+                        ),
+                    },
+                ),
+            );
+        } finally {
+            (globalThis as any).document = previousDocument;
+        }
+
+        const scrim = screen!.findByTestId('wizard-card-scrim');
+        if (!scrim) {
+            throw new Error('Expected WizardCardLayout scrim to be present.');
+        }
+        const card = screen!.findByTestId('wizard-card-card');
+        if (!card) {
+            throw new Error('Expected WizardCardLayout card container to be present.');
+        }
+
+        const flattenedScrim = flattenStyleProp(scrim.props.style as unknown);
+        const flattenedCard = flattenStyleProp(card.props.style as unknown);
+        expect(asFiniteNumber(flattenedCard.zIndex)).toBeGreaterThan(asFiniteNumber(flattenedScrim.zIndex));
     });
 
     it('retries the web portal after mount so the wizard can portal to document.body even if document is unavailable during the first render', async () => {

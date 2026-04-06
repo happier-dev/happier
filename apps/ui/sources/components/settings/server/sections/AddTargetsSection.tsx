@@ -9,12 +9,12 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { t } from '@/text';
-import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
-import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
 import type {
     EndpointReachabilityRemediation,
     EndpointReachabilityRemediationAction,
-} from '@/sync/runtime/connectivity/resolveEndpointReachabilityRemediation';
+} from '@/components/serverReachability/remediation';
+import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
+import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
 import type { SystemTaskRunState } from '@/components/systemTasks/types';
 import { Typography } from '@/constants/Typography';
 import { ServerReachabilityRemediationCard } from '@/components/settings/server/sections/ServerReachabilityRemediationCard';

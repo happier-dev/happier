@@ -4,15 +4,15 @@ import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import type {
+    EndpointReachabilityRemediation,
+    EndpointReachabilityRemediationAction,
+} from '@/components/serverReachability/remediation';
 import { SystemTaskProgressCard } from '@/components/systemTasks';
 import type { SystemTaskRunState } from '@/components/systemTasks/types';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import type {
-    EndpointReachabilityRemediation,
-    EndpointReachabilityRemediationAction,
-} from '@/sync/runtime/connectivity/resolveEndpointReachabilityRemediation';
 
 type ServerReachabilityRemediationCardProps = Readonly<{
     remediation: EndpointReachabilityRemediation;

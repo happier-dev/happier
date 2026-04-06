@@ -56,6 +56,35 @@ describe('tailscaleServeRelayAccessProvider', () => {
     });
   });
 
+  it('returns the share url for the requested upstream even when serve status includes other mappings first', async () => {
+    const { runTailscaleStatusJson, runTailscaleServeStatus } = await import('../../../tailscale/index.js');
+    vi.mocked(runTailscaleStatusJson).mockResolvedValue({
+      backendState: 'Running',
+      authUrl: null,
+      dnsName: 'machine.tailnet.ts.net',
+      tailnetName: 'tailnet.ts.net',
+      tailscaleIps: [],
+      loggedIn: true,
+    });
+    vi.mocked(runTailscaleServeStatus).mockResolvedValue([
+      'https://other.tailnet.ts.net',
+      '|-- / proxy http://127.0.0.1:9999',
+      '',
+      'https://machine.tailnet.ts.net:8443',
+      '|-- /__happier/transfer proxy http://127.0.0.1:3005',
+    ].join('\n'));
+
+    const res = await tailscaleServeRelayAccessProvider.status({
+      config: { providerId: 'tailscaleServe' },
+      ctx: { env: process.env, upstreamUrl: 'http://127.0.0.1:3005' },
+    });
+
+    expect(res).toEqual({
+      state: 'enabled',
+      shareUrl: 'https://machine.tailnet.ts.net:8443',
+    });
+  });
+
   it('returns disabled when serve is not configured', async () => {
     const { runTailscaleStatusJson, runTailscaleServeStatus } = await import('../../../tailscale/index.js');
     vi.mocked(runTailscaleStatusJson).mockResolvedValue({

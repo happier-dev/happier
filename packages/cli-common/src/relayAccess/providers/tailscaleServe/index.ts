@@ -2,6 +2,7 @@ import type { RelayAccessProvider } from '../../types.js';
 
 import {
     extractTailscaleServeHttpsUrl,
+    tailscaleServeHttpsUrlForInternalServerUrlFromStatus,
     runTailscaleServeDisable,
     runTailscaleServeEnable,
     runTailscaleServeStatus,
@@ -131,7 +132,10 @@ export const tailscaleServeRelayAccessProvider: RelayAccessProvider = {
             };
         }
 
-        const shareUrl = extractTailscaleServeHttpsUrl(serveStatus);
+        const shareUrl = tailscaleServeHttpsUrlForInternalServerUrlFromStatus(
+            serveStatus,
+            String(ctx.upstreamUrl ?? '').trim(),
+        );
         if (!shareUrl) {
             return { state: 'disabled' };
         }

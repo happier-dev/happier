@@ -62,6 +62,6 @@ describe('buildRelayHostLocalChecklistItems', () => {
                 defaultSelected: false,
             }),
         ]));
-        expect(items.find((item) => item.id === 'enableSecureAccess')).toBeUndefined();
+        expect(items.some((item) => String(item.id) === 'enableSecureAccess')).toBe(false);
     });
 });

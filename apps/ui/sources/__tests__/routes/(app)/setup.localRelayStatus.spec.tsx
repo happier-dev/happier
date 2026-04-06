@@ -87,10 +87,6 @@ vi.mock('@/components/settings/server/localControl/LocalRelayRuntimeControlSecti
     },
 }));
 
-vi.mock('@/components/settings/server/localControl/LocalTailscaleSecureAccessSection', () => ({
-    LocalTailscaleSecureAccessSection: (props: Record<string, unknown>) => React.createElement('LocalTailscaleSecureAccessSection', props),
-}));
-
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({

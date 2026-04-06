@@ -186,6 +186,23 @@ describe('wizardSelectors', () => {
 
         expect(getVisibleWizardStepIds({
             ...setupContext,
+            setupAction: 'relayLocal',
+            relayAccessProviderId: 'tailscaleServe',
+            relaySelection: {
+                ...setupContext.relaySelection,
+                serverUrl: 'https://local-relay.example.test',
+            },
+        })).toEqual([
+            'setup_chooser',
+            'host_relay_local',
+            'relay_access',
+            'relay_access_prereqs',
+            'confirm_switch_relay',
+            'done',
+        ]);
+
+        expect(getVisibleWizardStepIds({
+            ...setupContext,
             setupAction: 'remote',
         })).toEqual([
             'setup_chooser',

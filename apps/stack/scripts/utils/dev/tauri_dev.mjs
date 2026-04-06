@@ -3,6 +3,8 @@ import * as os from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
+import { resolvePreferredStackServerIdFromCliSettings } from '../auth/credentials_paths.mjs';
+import { applyStackActiveServerScopeEnv } from '../auth/stable_scope_id.mjs';
 import { getComponentDir, getDefaultAutostartPaths, getRepoDir } from '../paths/paths.mjs';
 import { resolveCommandInvocation } from '../process/resolveCommandInvocation.mjs';
 
@@ -249,8 +251,86 @@ function resolveUserHomeDirValue({ env = process.env, resolveUserHomeDir } = {})
   return String(input.HOME ?? input.USERPROFILE ?? '').trim();
 }
 
+function resolveStackScopedServerUrl(env) {
+  const serverPort = Number(String(env.HAPPIER_STACK_SERVER_PORT ?? '').trim());
+  if (Number.isFinite(serverPort) && serverPort > 0) {
+    return `http://127.0.0.1:${Math.floor(serverPort)}`;
+  }
+
+  return String(env.HAPPIER_SERVER_URL ?? '').trim();
+}
+
+function isLoopbackServerUrl(rawUrl) {
+  const value = String(rawUrl ?? '').trim();
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    const host = String(url.hostname ?? '').trim().toLowerCase();
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]' || host === '0.0.0.0';
+  } catch {
+    return false;
+  }
+}
+
+function applyStackScopedServerDefaults(env, { preferStackDefaults = false } = {}) {
+  const nextEnv = env;
+  const stackCliHomeDir = String(nextEnv.HAPPIER_STACK_CLI_HOME_DIR ?? '').trim();
+  const stackName = String(nextEnv.HAPPIER_STACK_STACK ?? '').trim();
+  const stackEnvFile = String(nextEnv.HAPPIER_STACK_ENV_FILE ?? '').trim();
+  const hasStackContext = Boolean(stackCliHomeDir || stackName || stackEnvFile);
+  if (!hasStackContext) {
+    return nextEnv;
+  }
+
+  const resolvedServerUrl = resolveStackScopedServerUrl(nextEnv);
+  const existingServerUrl = String(nextEnv.HAPPIER_SERVER_URL ?? '').trim();
+  const shouldOverrideServerUrl =
+    preferStackDefaults || !existingServerUrl || isLoopbackServerUrl(existingServerUrl);
+  if (resolvedServerUrl && shouldOverrideServerUrl) {
+    nextEnv.HAPPIER_SERVER_URL = resolvedServerUrl;
+  }
+
+  const stackWebappUrl = (() => {
+    const serverPort = Number(String(nextEnv.HAPPIER_STACK_SERVER_PORT ?? '').trim());
+    return Number.isFinite(serverPort) && serverPort > 0 ? `http://localhost:${Math.floor(serverPort)}` : '';
+  })();
+  const existingWebappUrl = String(nextEnv.HAPPIER_WEBAPP_URL ?? '').trim();
+  const shouldOverrideWebappUrl = shouldOverrideServerUrl || isLoopbackServerUrl(existingWebappUrl);
+  if (stackWebappUrl && shouldOverrideWebappUrl) {
+    nextEnv.HAPPIER_WEBAPP_URL = stackWebappUrl;
+  }
+
+  const existingActiveServerId = String(nextEnv.HAPPIER_ACTIVE_SERVER_ID ?? '').trim();
+  const shouldResolveActiveServerId = !existingActiveServerId || shouldOverrideServerUrl;
+  if (shouldResolveActiveServerId) {
+    const scopedEnv = applyStackActiveServerScopeEnv({
+      env: nextEnv,
+      stackName: stackName || null,
+      cliIdentity: (nextEnv.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default',
+    });
+    const settingsServerId =
+      stackCliHomeDir && resolvedServerUrl
+        ? resolvePreferredStackServerIdFromCliSettings({
+            cliHomeDir: stackCliHomeDir,
+            serverUrl: resolvedServerUrl,
+          })
+        : '';
+    nextEnv.HAPPIER_ACTIVE_SERVER_ID =
+      settingsServerId || String(scopedEnv.HAPPIER_ACTIVE_SERVER_ID ?? '').trim();
+  }
+
+  return nextEnv;
+}
+
 export function buildTauriRuntimeEnv({ env = process.env, resolveUserHomeDir } = {}) {
   const nextEnv = { ...(env && typeof env === 'object' ? env : process.env) };
+  const stackCliHomeDir = String(nextEnv.HAPPIER_STACK_CLI_HOME_DIR ?? '').trim();
+  if (stackCliHomeDir && !String(nextEnv.HAPPIER_HOME_DIR ?? '').trim()) {
+    nextEnv.HAPPIER_HOME_DIR = stackCliHomeDir;
+  }
+  applyStackScopedServerDefaults(nextEnv, {
+    preferStackDefaults: Boolean(String(nextEnv.HAPPIER_STACK_ENV_FILE ?? '').trim()),
+  });
   const nodeBinDir = resolveNodeBinDir();
   if (nodeBinDir) {
     prependPathEntry(nextEnv, nodeBinDir);
@@ -332,14 +412,24 @@ export function buildStackTauriDevProcessInvocation({
   repoRootDir,
   uiDir,
   env = process.env,
+  stackEnv = null,
   configPath = 'tauri.publicdev.conf.json',
   configOverride,
   resolveUserHomeDir,
 } = {}) {
+  // Stack-owned Tauri launches must prefer the authoritative stack snapshot over any
+  // stale shell process env so they inherit the correct stack-scoped server settings.
+  const mergedEnv = {
+    ...(env && typeof env === 'object' ? env : process.env),
+    ...(stackEnv && typeof stackEnv === 'object' ? stackEnv : {}),
+  };
   const runtimeEnv = buildTauriRuntimeEnv({
-    env,
+    env: mergedEnv,
     resolveUserHomeDir,
   });
+  if (stackEnv && typeof stackEnv === 'object' && Object.keys(stackEnv).length > 0) {
+    applyStackScopedServerDefaults(runtimeEnv, { preferStackDefaults: true });
+  }
   const cargoBinDir = assertCargoAvailableForTauri({ env: runtimeEnv, resolveUserHomeDir });
   const cargoBinaryName = process.platform === 'win32' ? 'cargo.exe' : 'cargo';
   const cargoBinaryPath = join(cargoBinDir, cargoBinaryName);

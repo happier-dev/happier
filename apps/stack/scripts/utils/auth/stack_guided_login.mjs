@@ -40,8 +40,8 @@ async function resolveRuntimeExpoWebappUrlForAuth({ stackName }) {
   }
 }
 
-async function resolveExpoWebappUrlForAuth({ rootDir, stackName, timeoutMs }) {
-  const baseDir = resolveStackEnvPath(stackName).baseDir;
+async function resolveExpoWebappUrlForAuth({ rootDir, stackName, env = process.env, timeoutMs }) {
+  const { baseDir } = resolveStackEnvPath(stackName, env);
   void rootDir; // kept for API stability; url resolution is stack-dir based
 
   // IMPORTANT:
@@ -53,7 +53,7 @@ async function resolveExpoWebappUrlForAuth({ rootDir, stackName, timeoutMs }) {
 
   async function resolveExpectedUiDir() {
     try {
-      const { envPath } = resolveStackEnvPath(stackName);
+      const { envPath } = resolveStackEnvPath(stackName, env);
       const stackEnv = await readEnvObjectFromFile(envPath);
       const merged = { ...process.env, ...stackEnv };
       return resolve(getComponentDir(rootDir, 'happier-ui', merged));
@@ -357,6 +357,7 @@ export async function resolveStackWebappTargetForAuth({ rootDir, stackName, env 
   const expoUrl = await resolveExpoWebappUrlForAuth({
     rootDir,
     stackName,
+    env,
     timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 180_000,
   });
   if (expoUrl) {
@@ -364,10 +365,14 @@ export async function resolveStackWebappTargetForAuth({ rootDir, stackName, env 
   }
 
   if (authFlow) {
+    const serverUrl = await resolveServerWebappUrlForAuth({ stackName, env });
+    if (serverUrl) {
+      return { webappUrl: serverUrl, kind: 'server' };
+    }
     throw new Error(
-      `[auth] failed to resolve Expo web UI URL for guided login.\n` +
-        `[auth] Reason: Expo web UI did not become ready within ${Number.isFinite(timeoutMs) ? timeoutMs : 180_000}ms.\n` +
-        `[auth] Fix: re-run and wait for Expo to start, or run in prod mode (--start) if you want server-served UI.`
+      `[auth] failed to resolve a guided login web UI URL.\n` +
+        `[auth] Reason: Expo web UI did not become ready within ${Number.isFinite(timeoutMs) ? timeoutMs : 180_000}ms and the stack server URL could not be resolved.\n` +
+        `[auth] Fix: re-run and wait for Expo to start, or start the stack server first.`
     );
   }
 

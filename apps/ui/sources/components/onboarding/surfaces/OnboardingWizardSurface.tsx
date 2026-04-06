@@ -4,9 +4,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { AuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
-import { getDefaultSystemTaskRunner, useSystemTaskSnapshot } from '@/components/systemTasks';
-import type { SystemTaskRunState } from '@/components/systemTasks/types';
-import { isSystemTaskBridgeUnavailableError, readSystemTaskStartErrorMessage } from '@/components/systemTasks/systemTaskStartError';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { Modal } from '@/modal';
@@ -18,6 +15,7 @@ import { getActiveServerSnapshot, upsertServerProfileOnly } from '@/sync/domains
 import { readConfiguredServerUrlEnv } from '@/sync/domains/server/readConfiguredServerUrlEnv';
 import { listServerProfiles, removeServerProfile } from '@/sync/domains/server/serverProfiles';
 import { removeServerProfileUiAction } from '@/components/serverProfiles/removeServerProfileUiAction';
+import { useEndpointReachabilityRemediationController } from '@/components/settings/server/hooks/useEndpointReachabilityRemediationController';
 import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { isLocalishServerUrl } from '@/sync/domains/server/url/serverUrlClassification';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
@@ -26,16 +24,13 @@ import {
     getEndpointReachabilityProvider,
     resolveEndpointReachabilityRemediation,
     type EndpointReachabilityRemediation,
-    type EndpointReachabilityRemediationAction,
-} from '@/sync/runtime/connectivity/resolveEndpointReachabilityRemediation';
+} from '@/components/serverReachability/remediation';
 import { isRunningOnMac } from '@/utils/platform/platform';
 import { isWebQrScannerSupported } from '@/utils/platform/qrScannerSupport';
 import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
 import type { RelayHostLocalChecklistRuntimeStatus } from '../checklists/relayHostLocal/types';
 import type { RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
-import { createTailscaleEnsureReadyTaskSpec } from '@happier-dev/protocol';
 
 import { WizardLogotype } from '../ui/WizardLogotype';
 import { WizardChoiceRow } from '../ui/WizardChoiceRow';
@@ -60,6 +55,7 @@ import {
     isWebMixedContentBlockedEndpoint,
     resolveCanonicalCloudRelayProfile,
     resolveRelayProfileIdForServerUrl,
+    resolveRelaySwitchUrl,
     resolveTrueLocalRelayRuntimeBindUrl,
 } from './relaySelection/relaySelectionHelpers';
 import { useWizardChromeOverrides } from '../hooks/useWizardChromeOverrides';
@@ -149,13 +145,8 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
     type LocalRelayRuntimeStatus = RelayHostLocalChecklistRuntimeStatus | null;
     const [localRelayRuntimeStatus, setLocalRelayRuntimeStatus] = React.useState<LocalRelayRuntimeStatus>(null);
     const [relayAccessTarget, setRelayAccessTarget] = React.useState<RelayAccessTaskTarget | null>(null);
+    const [relayAccessShareUrl, setRelayAccessShareUrl] = React.useState<string | null>(null);
     const defaultRelayAccessTarget = React.useMemo<RelayAccessTaskTarget>(() => ({ kind: 'local' }), []);
-    const systemTaskRunner = React.useMemo(() => getDefaultSystemTaskRunner(), []);
-    const [tailscaleEnsureReadyTaskId, setTailscaleEnsureReadyTaskId] = React.useState<string | null>(null);
-    const [reachabilityRemediationError, setReachabilityRemediationError] = React.useState<string | null>(null);
-    const reachabilityRemediationRetryEndpointRef = React.useRef<string | null>(null);
-    const handledTailscaleEnsureReadyTaskIdRef = React.useRef<string | null>(null);
-    const tailscaleEnsureReadySnapshot = useSystemTaskSnapshot(systemTaskRunner, tailscaleEnsureReadyTaskId);
     const [state, dispatch] = React.useReducer(
         wizardReducer,
         null,
@@ -197,6 +188,7 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
             return;
         }
         setRelayAccessTarget({ kind: 'local' });
+        setRelayAccessShareUrl(null);
         const profile = upsertServerProfileOnly({
             serverUrl: relayUrl,
             source: 'url',
@@ -336,11 +328,13 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         if (stepId !== 'confirm_switch_relay' || relaySwitchDecision !== 'switch') {
             return null;
         }
-        const relayUrl = typeof state.context.relaySelection.serverUrl === 'string'
-            ? state.context.relaySelection.serverUrl.trim()
-            : '';
+        const relayUrl = resolveRelaySwitchUrl({
+            relayRuntimeUrl: state.context.relaySelection.serverUrl,
+            relayAccessShareUrl,
+            relayAccessTarget,
+        }) ?? '';
         return relayUrl ? normalizeServerUrl(relayUrl) : null;
-    }, [relaySwitchDecision, state.context.relaySelection.serverUrl, stepId]);
+    }, [relayAccessShareUrl, relayAccessTarget, relaySwitchDecision, state.context.relaySelection.serverUrl, stepId]);
 
     const { readinessByEndpoint: relayReadinessByEndpoint, retryEndpoint } = useEndpointReadinessMap({
         endpoints: [
@@ -372,6 +366,8 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         }
 
         if (state.context.relaySelection.relayProfileId === id) {
+            setRelayAccessTarget(null);
+            setRelayAccessShareUrl(null);
             dispatch({
                 type: 'wizard/setRelaySelection',
                 relaySelection: {
@@ -413,10 +409,14 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
                         relayProfileId: null,
                         locked: state.context.relaySelection.locked,
                     };
+        setRelayAccessTarget(null);
+        setRelayAccessShareUrl(null);
         dispatch({ type: 'wizard/setRelaySelection', relaySelection: next });
     }, [canonicalCloudUrl, state.context.relaySelection]);
 
     const selectProfileRelay = React.useCallback((profile: WizardProfileChoice) => {
+        setRelayAccessTarget(null);
+        setRelayAccessShareUrl(null);
         dispatch({
             type: 'wizard/setRelaySelection',
             relaySelection: {
@@ -522,6 +522,8 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
                 selected={selected}
                 disabled={state.context.relaySelection.locked && !selected}
                 onPress={() => {
+                    setRelayAccessTarget(null);
+                    setRelayAccessShareUrl(null);
                     dispatch({
                         type: 'wizard/setRelaySelection',
                         relaySelection: {
@@ -627,6 +629,7 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
 
         setRelaySwitchDecision('switch');
         setRelayAccessTarget(payload.relayAccessTarget);
+        setRelayAccessShareUrl(null);
         const relayProfile = upsertServerProfileOnly({
             serverUrl: relayUrl,
             source: 'url',
@@ -642,6 +645,11 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         });
         setOnboardingWizardAwaitingAuthResumeIntent(relayUrl);
     }, [dispatch]);
+
+    const handleRelayAccessShareUrlChange = React.useCallback((shareUrl: string | null) => {
+        const normalized = typeof shareUrl === 'string' ? shareUrl.trim() : '';
+        setRelayAccessShareUrl(normalized || null);
+    }, []);
 
     const handleBack = React.useCallback(() => {
         dispatch({ type: 'wizard/back' });
@@ -670,6 +678,8 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
 
     const handleScan = React.useCallback(async (data: string) => {
         const parsed = parseOnboardingScanPayload(data);
+        setRelayAccessTarget(null);
+        setRelayAccessShareUrl(null);
         dispatch({ type: 'wizard/setParsedScanPayload', parsedScanPayload: parsed });
         if (parsed.kind === 'pairing_link' && parsed.serverUrl == null) {
             dispatch({ type: 'wizard/setRelaySelection', relaySelection: { choiceId: 'customUrl', serverUrl: null, relayProfileId: null, locked: true } });
@@ -722,6 +732,8 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         const relayProfileId = nextChoiceId === 'customUrl'
             ? resolveRelayProfileIdForServerUrl({ serverUrl: normalized, canonicalCloudUrl })
             : null;
+        setRelayAccessTarget(null);
+        setRelayAccessShareUrl(null);
         dispatch({ type: 'wizard/setRelaySelection', relaySelection: { choiceId: nextChoiceId, serverUrl: normalized, relayProfileId, locked: false } });
         setOnboardingWizardAwaitingAuthResumeIntent(normalized);
         const nextStepId =
@@ -887,6 +899,9 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         if (!readiness?.probeResult) {
             return null;
         }
+        if (readiness.probeResult.status === 'ready') {
+            return null;
+        }
         return resolveEndpointReachabilityRemediation({
             endpointUrl: activeReachabilityRemediationEndpoint,
             readiness: readiness.probeResult,
@@ -905,93 +920,15 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         const readiness = relayReadinessByEndpoint.get(activeReachabilityRemediationEndpoint);
         return readiness == null || readiness.status === 'checking';
     }, [activeReachabilityRemediationEndpoint, relayReadinessByEndpoint]);
-
-    const handleReachabilityRemediationAction = React.useCallback(async (
-        actionId: EndpointReachabilityRemediationAction['id'],
-    ) => {
-        const remediation = activeReachabilityRemediation;
-        const endpoint = activeReachabilityRemediationEndpoint;
-        if (!remediation || !endpoint) {
-            return;
-        }
-        const action = remediation.actions.find((candidate) => candidate.id === actionId);
-        if (!action) {
-            return;
-        }
-
-        if (action.kind === 'retry') {
-            setReachabilityRemediationError(null);
-            retryEndpoint(endpoint);
-            return;
-        }
-
-        if (action.kind === 'external-url') {
-            const opened = await openExternalUrl(action.url, { platformOS: Platform.OS });
-            if (!opened) {
-                await Modal.alert(t('common.error'), t('server.reachabilityRemediation.failedToOpenInstallLink'));
-            }
-            return;
-        }
-
-        if (action.kind === 'callback' && action.callbackSlot === 'tailscale.ensureReady') {
-            try {
-                setReachabilityRemediationError(null);
-                const taskId = await systemTaskRunner.start(createTailscaleEnsureReadyTaskSpec({
-                    installPolicy: 'installIfMissing',
-                    loginPolicy: 'interactive',
-                    mode: 'normalUser',
-                }));
-                handledTailscaleEnsureReadyTaskIdRef.current = null;
-                reachabilityRemediationRetryEndpointRef.current = endpoint;
-                setTailscaleEnsureReadyTaskId(taskId);
-            } catch (error) {
-                const message = readSystemTaskStartErrorMessage(error);
-                setReachabilityRemediationError(
-                    isSystemTaskBridgeUnavailableError(error)
-                        ? t('settings.systemTaskBridgeUnavailable')
-                        : (message ?? t('settings.systemTaskStartFailed')),
-                );
-            }
-        }
-    }, [
-        activeReachabilityRemediation,
-        activeReachabilityRemediationEndpoint,
-        retryEndpoint,
-        systemTaskRunner,
-    ]);
-
-    React.useEffect(() => {
-        const result = tailscaleEnsureReadySnapshot?.result;
-        if (!result) {
-            return;
-        }
-        if (handledTailscaleEnsureReadyTaskIdRef.current === tailscaleEnsureReadySnapshot.taskId) {
-            return;
-        }
-        handledTailscaleEnsureReadyTaskIdRef.current = tailscaleEnsureReadySnapshot.taskId;
-        if (!result.ok) {
-            const message = typeof result.error?.message === 'string' ? result.error.message.trim() : '';
-            setReachabilityRemediationError(message || t('settings.systemTaskStartFailed'));
-            setTailscaleEnsureReadyTaskId(null);
-            return;
-        }
-        const endpoint = reachabilityRemediationRetryEndpointRef.current;
-        setReachabilityRemediationError(null);
-        if (endpoint) {
-            retryEndpoint(endpoint);
-        }
-        setTailscaleEnsureReadyTaskId(null);
-    }, [retryEndpoint, tailscaleEnsureReadySnapshot]);
-
-    React.useEffect(() => {
-        if (activeReachabilityRemediation) {
-            return;
-        }
-        if (tailscaleEnsureReadyTaskId) {
-            return;
-        }
-        setReachabilityRemediationError(null);
-    }, [activeReachabilityRemediation, tailscaleEnsureReadyTaskId]);
+    const {
+        error: reachabilityRemediationError,
+        taskSnapshot: tailscaleEnsureReadySnapshot,
+        onAction: handleReachabilityRemediationAction,
+    } = useEndpointReachabilityRemediationController({
+        remediation: activeReachabilityRemediation,
+        endpoint: activeReachabilityRemediationEndpoint,
+        onRetryEndpoint: retryEndpoint,
+    });
 
     const primaryDisabled =
         (stepId === 'relay_select' && (
@@ -1018,7 +955,7 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
             && (
                 activeReachabilityRemediation != null
                 || isActiveReachabilityRemediationPending
-                || (tailscaleEnsureReadyTaskId != null && tailscaleEnsureReadySnapshot?.result == null)
+                || (tailscaleEnsureReadySnapshot != null && tailscaleEnsureReadySnapshot.result == null)
             )
         )
         || (stepId === 'host_relay_local' && !localRelayRuntimeStatus?.relayUrl)
@@ -1255,10 +1192,11 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
                             }
                         : stepId === 'confirm_switch_relay'
                             ? async () => {
-                                const relayUrlRaw = typeof state.context.relaySelection.serverUrl === 'string'
-                                    ? state.context.relaySelection.serverUrl.trim()
-                                    : '';
-                                const relayUrl = relayUrlRaw ? normalizeServerUrl(relayUrlRaw) : null;
+                                const relayUrl = resolveRelaySwitchUrl({
+                                    relayRuntimeUrl: state.context.relaySelection.serverUrl,
+                                    relayAccessShareUrl,
+                                    relayAccessTarget,
+                                });
                                 if (!relayUrl) {
                                     dispatch({ type: 'wizard/setRelaySwitchConfirmationPending', pending: false });
                                     dispatch({ type: 'wizard/goToStep', stepId: 'relay_select' });
@@ -1297,6 +1235,11 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
     const relaySelectionServerUrl = typeof state.context.relaySelection.serverUrl === 'string'
         ? state.context.relaySelection.serverUrl.trim()
         : null;
+    const confirmRelayUrl = resolveRelaySwitchUrl({
+        relayRuntimeUrl: relaySelectionServerUrl,
+        relayAccessShareUrl,
+        relayAccessTarget,
+    });
     const relaySelectBody = (
         <View>
             {profileChoices.map(renderRelayChoiceRow)}
@@ -1319,6 +1262,7 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         urlDraft,
         onUrlDraftChange: setUrlDraft,
         relaySelectionServerUrl,
+        confirmRelayUrl,
         serverProfileId: state.context.relaySelection.relayProfileId ?? null,
         relayAccessTarget: relayAccessTarget ?? defaultRelayAccessTarget,
         lastKnownSnapshotRelayUrl: lastKnownSnapshotRelayUrlRef.current || '',
@@ -1326,6 +1270,7 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         reachabilityRemediationTaskSnapshot: tailscaleEnsureReadySnapshot,
         reachabilityRemediationError,
         onReachabilityRemediationAction: handleReachabilityRemediationAction,
+        onRelayAccessShareUrlChange: handleRelayAccessShareUrlChange,
         relaySwitchDecision,
         onRelaySwitchDecisionChange: setRelaySwitchDecision,
         onLocalRelayRuntimeStatusChange: handleLocalRelayRuntimeStatusChange,

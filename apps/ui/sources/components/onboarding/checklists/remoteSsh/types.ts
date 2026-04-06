@@ -14,6 +14,7 @@ export type RemoteSshChecklistItem = Readonly<{
     id: RemoteSshChecklistItemId;
     title: string;
     subtitle: string;
+    satisfied?: boolean;
     selected: boolean;
     disabled: boolean;
     optional: boolean;

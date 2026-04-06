@@ -25,24 +25,34 @@ export type TailscaleReadinessState = Readonly<{
   shareableHttpsUrl: string | null;
 }>;
 
-export type TailscaleReadinessRuntimeDeps = Readonly<{
-  ensureInstalled: (params: Readonly<{ signal?: AbortSignal }>) => Promise<EnsureTailscaleInstalledResult>;
-  loginInteractive: () => Promise<RunTailscaleLoginResult>;
+export type TailscaleReadinessRuntimeDeps<TParams extends TailscaleReadinessBaseParams = TailscaleReadinessBaseParams> = Readonly<{
+  ensureInstalled: (
+    params: TParams,
+    options: Readonly<{ signal?: AbortSignal }>,
+  ) => Promise<EnsureTailscaleInstalledResult>;
+  loginInteractive: (params: TParams) => Promise<RunTailscaleLoginResult>;
+  resolveInstallPrompt: (
+    params: TParams,
+  ) => Promise<Readonly<{ platform: NodeJS.Platform; url: string }>> | Readonly<{ platform: NodeJS.Platform; url: string }>;
   sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   now: () => number;
 }>;
 
 export type TailscaleReadinessFlowDeps<TParams extends TailscaleReadinessBaseParams> =
-  TailscaleReadinessRuntimeDeps & Readonly<{
+  TailscaleReadinessRuntimeDeps<TParams> & Readonly<{
     inspectState: (params: TParams) => Promise<TailscaleReadinessState>;
   }>;
 
-export function createTailscaleReadinessRuntimeDeps(
-  overrides?: Partial<TailscaleReadinessRuntimeDeps>,
-): TailscaleReadinessRuntimeDeps {
+export function createTailscaleReadinessRuntimeDeps<TParams extends TailscaleReadinessBaseParams>(
+  overrides?: Partial<TailscaleReadinessRuntimeDeps<TParams>>,
+): TailscaleReadinessRuntimeDeps<TParams> {
   return {
-    ensureInstalled: overrides?.ensureInstalled ?? (async (params) => await ensureTailscaleInstalled(params)),
+    ensureInstalled: overrides?.ensureInstalled ?? (async (_params, options) => await ensureTailscaleInstalled(options)),
     loginInteractive: overrides?.loginInteractive ?? (async () => await runTailscaleLogin()),
+    resolveInstallPrompt: overrides?.resolveInstallPrompt ?? (async () => ({
+      platform: process.platform,
+      url: resolveTailscaleInstallStrategy(process.platform, process.env).docsUrl,
+    })),
     sleep: overrides?.sleep ?? defaultSleep,
     now: overrides?.now ?? Date.now,
   };
@@ -71,7 +81,7 @@ export async function* runTailscaleReadinessFlow<TParams extends TailscaleReadin
   let state = await deps.inspectState(params);
 
   if (params.mode === 'managedAdmin') {
-    const docsUrl = resolveTailscaleInstallStrategy(process.platform, process.env).docsUrl;
+    const installPrompt = await deps.resolveInstallPrompt(params);
     if (!state.installed) {
       yield {
         type: 'prompt',
@@ -79,8 +89,8 @@ export async function* runTailscaleReadinessFlow<TParams extends TailscaleReadin
         message: 'Install Tailscale to continue',
         data: {
           kind: 'tailscaleInstall',
-          platform: process.platform,
-          url: docsUrl,
+          platform: installPrompt.platform,
+          url: installPrompt.url,
         },
       };
       throw new systemTasks.SystemTaskExecutionError(
@@ -90,7 +100,7 @@ export async function* runTailscaleReadinessFlow<TParams extends TailscaleReadin
     }
 
     if (!state.loggedIn) {
-      const actionUrl = state.authUrl ?? docsUrl;
+      const actionUrl = state.authUrl ?? installPrompt.url;
       yield {
         type: 'prompt',
         stepId: 'tailscale.login',
@@ -116,7 +126,7 @@ export async function* runTailscaleReadinessFlow<TParams extends TailscaleReadin
         message: 'Installing Tailscale (you may see system prompts)',
       };
 
-      const install = await deps.ensureInstalled({ signal: context?.signal });
+      const install = await deps.ensureInstalled(params, { signal: context?.signal });
       if (install.outcome === 'prompt') {
         const prompt = install.prompt;
         yield {
@@ -167,7 +177,7 @@ export async function* runTailscaleReadinessFlow<TParams extends TailscaleReadin
       );
     }
 
-    const login = await deps.loginInteractive();
+    const login = await deps.loginInteractive(params);
     const loginActionUrl = login.actionUrl ?? state.authUrl;
     if (loginActionUrl) {
       yield {

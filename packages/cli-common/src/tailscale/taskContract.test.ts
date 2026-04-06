@@ -26,6 +26,41 @@ describe('TAILSCALE secure access task contract', () => {
     ).toEqual({
       kind: 'secureAccess.tailscale.v1',
       params: {
+        providerId: 'tailscaleServe',
+        target: { kind: 'local' },
+        installPolicy: 'skip',
+        loginPolicy: 'interactive',
+        mode: 'normalUser',
+        servePath: '/',
+        upstreamUrl: 'http://127.0.0.1:3005',
+      },
+    });
+  });
+
+  it('preserves an explicit SSH relay host target', () => {
+    expect(
+      createTailscaleSecureAccessTaskSpec({
+        upstreamUrl: 'http://127.0.0.1:3005',
+        providerId: 'tailscaleFunnel',
+        target: {
+          kind: 'ssh',
+          ssh: {
+            target: 'dev@example.test',
+            auth: 'agent',
+          },
+        },
+      }),
+    ).toEqual({
+      kind: 'secureAccess.tailscale.v1',
+      params: {
+        providerId: 'tailscaleFunnel',
+        target: {
+          kind: 'ssh',
+          ssh: {
+            target: 'dev@example.test',
+            auth: 'agent',
+          },
+        },
         installPolicy: 'skip',
         loginPolicy: 'interactive',
         mode: 'normalUser',

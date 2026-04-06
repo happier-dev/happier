@@ -15,6 +15,7 @@ import type { SystemTaskRunState } from './types';
 
 const isTauriDesktopMock = vi.hoisted(() => vi.fn(() => false));
 const invokeTauriMock = vi.hoisted(() => vi.fn(async () => undefined));
+const openUrlMock = vi.hoisted(() => vi.fn(async () => undefined));
 
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: Record<string, unknown> & { children?: React.ReactNode }) => React.createElement('Item', props, props.children),
@@ -28,6 +29,9 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
         View: 'View',
+        Linking: {
+            openURL: openUrlMock,
+        },
     });
 });
 
@@ -228,5 +232,61 @@ describe('SystemTaskProgressCard checklist rendering', () => {
         const screen = await renderScreen(React.createElement(SystemTaskProgressCard, { snapshot: createSnapshot(), title: null }));
         const group = screen.tree.findByType('ItemGroup' as any);
         expect(group.props.title).toBeUndefined();
+    });
+
+    it('renders an open action for URL prompts and opens the provided URL', async () => {
+        isTauriDesktopMock.mockReturnValue(false);
+        openUrlMock.mockResolvedValueOnce(undefined);
+        const { SystemTaskProgressCard } = await import('./SystemTaskProgressCard');
+
+        const screen = await renderScreen(React.createElement(SystemTaskProgressCard, {
+            snapshot: createSnapshot({
+                awaitingInput: true,
+                events: [{
+                    protocolVersion: 1,
+                    taskId: 'task_1',
+                    tsMs: 100,
+                    type: 'prompt',
+                    stepId: 'tailscale.login',
+                    message: 'Complete sign-in',
+                    data: {
+                        kind: 'needsUserAction.openUrl',
+                        url: 'https://login.tailscale.com/a/example',
+                    },
+                }],
+            }),
+        }));
+
+        const action = screen.findByTestId('system-task-progress-prompt-action');
+        expect(action?.props?.title).toBe('common.open');
+
+        await screen.pressByTestIdAsync('system-task-progress-prompt-action');
+
+        expect(openUrlMock).toHaveBeenCalledWith('https://login.tailscale.com/a/example');
+    });
+
+    it('uses the tailscale-specific install label for install prompts', async () => {
+        isTauriDesktopMock.mockReturnValue(false);
+        const { SystemTaskProgressCard } = await import('./SystemTaskProgressCard');
+
+        const screen = await renderScreen(React.createElement(SystemTaskProgressCard, {
+            snapshot: createSnapshot({
+                awaitingInput: true,
+                events: [{
+                    protocolVersion: 1,
+                    taskId: 'task_1',
+                    tsMs: 100,
+                    type: 'prompt',
+                    stepId: 'tailscale.install',
+                    message: 'Install Tailscale',
+                    data: {
+                        kind: 'tailscaleInstall',
+                        url: 'https://tailscale.com/docs/install/linux',
+                    },
+                }],
+            }),
+        }));
+
+        expect(screen.findByTestId('system-task-progress-prompt-action')?.props?.title).toBe('settings.localTailscale.openInstallAction');
     });
 });

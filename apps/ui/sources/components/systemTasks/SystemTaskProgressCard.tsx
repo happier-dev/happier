@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Linking, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -11,6 +11,7 @@ import { isTauriDesktop, invokeTauri } from '@/utils/platform/tauri';
 
 import type { SystemTaskRunState } from './types';
 import { resolveSystemTaskStepLabel } from './resolveSystemTaskStepLabel';
+import { readLatestSystemTaskPrompt } from './prompts/readLatestSystemTaskPrompt';
 
 function translateStatus(snapshot: SystemTaskRunState): string {
     if (snapshot.awaitingInput) {
@@ -111,6 +112,43 @@ function buildChecklistSteps(snapshot: SystemTaskRunState): readonly ChecklistSt
     });
 }
 
+type PromptAction = Readonly<{
+    title: string;
+    url: string;
+}>;
+
+function resolvePromptAction(snapshot: SystemTaskRunState): PromptAction | null {
+    const prompt = readLatestSystemTaskPrompt(snapshot);
+    if (!prompt) {
+        return null;
+    }
+
+    const url = typeof prompt.data.url === 'string' ? prompt.data.url.trim() : '';
+    if (!url) {
+        return null;
+    }
+
+    if (prompt.kind === 'tailscaleInstall') {
+        return {
+            title: t('settings.localTailscale.openInstallAction'),
+            url,
+        };
+    }
+
+    if (
+        prompt.kind === 'needsUserAction.openUrl'
+        || prompt.kind === 'needsUserAction.scanQr'
+        || prompt.kind === 'tailscaleServeApproval'
+    ) {
+        return {
+            title: t('common.open'),
+            url,
+        };
+    }
+
+    return null;
+}
+
 async function openDesktopSystemTaskLogs(): Promise<void> {
     const { homeDir, join } = await import('@tauri-apps/api/path');
     const home = await homeDir();
@@ -147,6 +185,7 @@ export const SystemTaskProgressCard = React.memo(function SystemTaskProgressCard
     const stepLabel = resolveSystemTaskStepLabel(props.snapshot.currentStepId);
     const latestMessage = props.snapshot.latestMessage;
     const checklistSteps = React.useMemo(() => buildChecklistSteps(props.snapshot), [props.snapshot]);
+    const promptAction = React.useMemo(() => resolvePromptAction(props.snapshot), [props.snapshot]);
     const canOpenLogs = showOpenLogs && isTauriDesktop();
     const handleOpenLogs = React.useCallback(async () => {
         if (!canOpenLogs) {
@@ -154,6 +193,18 @@ export const SystemTaskProgressCard = React.memo(function SystemTaskProgressCard
         }
         await openDesktopSystemTaskLogs();
     }, [canOpenLogs]);
+    const handlePromptAction = React.useCallback(async () => {
+        if (!promptAction) {
+            return;
+        }
+
+        try {
+            await Linking.openURL(promptAction.url);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error ?? '');
+            Modal.alert(t('common.error'), message);
+        }
+    }, [promptAction]);
 
     const groupTitle = props.title === null
         ? undefined
@@ -231,6 +282,14 @@ export const SystemTaskProgressCard = React.memo(function SystemTaskProgressCard
                         testID="system-task-progress-open-logs"
                         title={t('settings.systemTaskOpenLogs')}
                         onPress={handleOpenLogs}
+                        showChevron={false}
+                    />
+                ) : null}
+                {promptAction ? (
+                    <Item
+                        testID="system-task-progress-prompt-action"
+                        title={promptAction.title}
+                        onPress={handlePromptAction}
                         showChevron={false}
                     />
                 ) : null}

@@ -2,6 +2,7 @@ import type { RelayAccessProvider } from '../../types.js';
 
 import {
     extractTailscaleServeHttpsUrl,
+    tailscaleServeHttpsUrlForInternalServerUrlFromStatus,
     runTailscaleFunnelEnable,
     runTailscaleFunnelReset,
     runTailscaleFunnelStatus,
@@ -131,7 +132,10 @@ export const tailscaleFunnelRelayAccessProvider: RelayAccessProvider = {
             };
         }
 
-        const shareUrl = extractTailscaleServeHttpsUrl(funnelStatus);
+        const shareUrl = tailscaleServeHttpsUrlForInternalServerUrlFromStatus(
+            funnelStatus,
+            String(ctx.upstreamUrl ?? '').trim(),
+        );
         if (!shareUrl) {
             return { state: 'disabled' };
         }

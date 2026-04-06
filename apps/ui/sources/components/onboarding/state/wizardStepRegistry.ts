@@ -1,3 +1,4 @@
+import { getRelayAccessProviderDescriptor } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { WizardContext, WizardStepDefinition, WizardStepId } from './wizardTypes';
 
 const baseRelayStep: Pick<WizardStepDefinition, 'kind' | 'surface' | 'canSkip'> = {
@@ -5,6 +6,13 @@ const baseRelayStep: Pick<WizardStepDefinition, 'kind' | 'surface' | 'canSkip'> 
     surface: 'onboarding',
     canSkip: true,
 };
+
+function relayAccessProviderNeedsPrerequisitesStep(providerId: WizardContext['relayAccessProviderId']): boolean {
+    if (!providerId) {
+        return false;
+    }
+    return getRelayAccessProviderDescriptor(providerId).prerequisites.length > 0;
+}
 
 const onboardingVisible = (stepId: WizardStepId) => (context: WizardContext): boolean => {
     if (context.mode !== 'onboarding') return false;
@@ -57,7 +65,7 @@ const setupVisible = (stepId: WizardStepId) => (context: WizardContext): boolean
             if (!url) return false;
             if (context.platform !== 'desktop' || !context.canRunSystemTasks) return false;
             if (context.setupAction !== 'relayLocal' && context.setupAction !== 'remote') return false;
-            if (context.relayAccessProviderId !== 'lan' && context.relayAccessProviderId !== 'cloudflareNamed') return false;
+            if (!relayAccessProviderNeedsPrerequisitesStep(context.relayAccessProviderId)) return false;
             return true;
         }
         case 'confirm_switch_relay': {
@@ -269,7 +277,7 @@ const wizardStepRegistryEntries = [
         visibleWhen: (context) => {
             const url = typeof context.relaySelection.serverUrl === 'string' ? context.relaySelection.serverUrl.trim() : '';
             if (!url) return false;
-            if (context.relayAccessProviderId !== 'lan' && context.relayAccessProviderId !== 'cloudflareNamed') {
+            if (!relayAccessProviderNeedsPrerequisitesStep(context.relayAccessProviderId)) {
                 return false;
             }
             if (context.mode === 'onboarding') {

@@ -14,6 +14,13 @@ import { upsertServerProfileOnly } from '@/sync/domains/server/serverRuntime';
 import { t, tLoose } from '@/text';
 import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
+import { readServerReachabilityProbeTimeoutMs } from '@/sync/runtime/connectivity/serverReachabilityTuning';
+import { useEndpointReachabilityRemediationController } from '@/components/settings/server/hooks/useEndpointReachabilityRemediationController';
+import {
+    getEndpointReachabilityProvider,
+    resolveEndpointReachabilityRemediation,
+    type EndpointReachabilityRemediation,
+} from '@/components/serverReachability/remediation';
 import { getProviderCliSetupSupportedIds, type AgentId } from '@happier-dev/agents';
 import type { RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
@@ -26,9 +33,12 @@ import { type RelaySwitchDecision } from '../steps/ConfirmSwitchRelayStep';
 import { getWizardStepDefinition } from '../state/wizardStepRegistry';
 import { SetupThisComputerWizardStep } from '../steps/SetupThisComputerWizardStep';
 import { RelayHostLocalChecklistStep } from '../checklists/relayHostLocal/RelayHostLocalChecklistStep';
+import type { RelayHostLocalChecklistRuntimeStatus } from '../checklists/relayHostLocal/types';
 import { WizardChoiceRow } from '../ui/WizardChoiceRow';
 import { useWizardChromeOverrides } from '../hooks/useWizardChromeOverrides';
+import { useEndpointReadinessMap } from '../hooks/useEndpointReadinessMap';
 import { renderSetupStepBody } from './SetupWizardSurface.renderSetupStepBody';
+import { resolveRelaySwitchUrl } from './relaySelection/relaySelectionHelpers';
 
 export type SetupWizardSurfaceProps = Readonly<{
     testID?: string;
@@ -181,6 +191,8 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
         machineId: string | null;
     }> | null>(null);
     const [relayAccessTarget, setRelayAccessTarget] = React.useState<RelayAccessTaskTarget | null>(null);
+    const [relayAccessShareUrl, setRelayAccessShareUrl] = React.useState<string | null>(null);
+    const [localRelayRuntimeStatus, setLocalRelayRuntimeStatus] = React.useState<RelayHostLocalChecklistRuntimeStatus | null>(null);
     const defaultRelayAccessTarget = React.useMemo<RelayAccessTaskTarget>(() => ({ kind: 'local' }), []);
     const [localMachineId, setLocalMachineId] = React.useState<string | null>(null);
     const [remoteMachineId, setRemoteMachineId] = React.useState<string | null>(null);
@@ -268,7 +280,9 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
     const clearRelayRuntimeCandidate = React.useCallback(() => {
         setRelaySwitchDecision('keep');
         setPendingRelayRuntime(null);
+        setLocalRelayRuntimeStatus(null);
         setRelayAccessTarget(null);
+        setRelayAccessShareUrl(null);
         dispatch({
             type: 'wizard/setRelaySelection',
             relaySelection: { choiceId: null, serverUrl: null, locked: false },
@@ -291,6 +305,7 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
         });
         setPendingRelayRuntime({ relayUrl: normalized, machineId });
         setRelayAccessTarget(nextRelayAccessTarget);
+        setRelayAccessShareUrl(null);
         dispatch({
             type: 'wizard/setRelaySelection',
             relaySelection: {
@@ -301,6 +316,58 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
             },
         });
     }, [clearRelayRuntimeCandidate]);
+
+    const effectiveRelayCandidateUrl = React.useMemo(() => resolveRelaySwitchUrl({
+        relayRuntimeUrl: relayCandidateUrl,
+        relayAccessShareUrl,
+        relayAccessTarget,
+    }), [relayAccessShareUrl, relayAccessTarget, relayCandidateUrl]);
+    const confirmSwitchRelayEndpointForReadiness = React.useMemo(() => {
+        if (stepId !== 'confirm_switch_relay' || relaySwitchDecision !== 'switch') {
+            return null;
+        }
+        const relayUrl = typeof effectiveRelayCandidateUrl === 'string' ? effectiveRelayCandidateUrl.trim() : '';
+        return relayUrl.length > 0 ? relayUrl : null;
+    }, [effectiveRelayCandidateUrl, relaySwitchDecision, stepId]);
+    const { readinessByEndpoint: relayReadinessByEndpoint, retryEndpoint } = useEndpointReadinessMap({
+        endpoints: confirmSwitchRelayEndpointForReadiness ? [confirmSwitchRelayEndpointForReadiness] : [],
+        enabled: stepId === 'confirm_switch_relay',
+        timeoutMs: readServerReachabilityProbeTimeoutMs(),
+    });
+    const activeReachabilityRemediation = React.useMemo<EndpointReachabilityRemediation | null>(() => {
+        if (!confirmSwitchRelayEndpointForReadiness) {
+            return null;
+        }
+        const readiness = relayReadinessByEndpoint.get(confirmSwitchRelayEndpointForReadiness);
+        if (!readiness?.probeResult || readiness.probeResult.status === 'ready') {
+            return null;
+        }
+        return resolveEndpointReachabilityRemediation({
+            endpointUrl: confirmSwitchRelayEndpointForReadiness,
+            readiness: readiness.probeResult,
+            platformOs: Platform.OS,
+            isDesktopShell: props.isDesktopShell,
+        });
+    }, [confirmSwitchRelayEndpointForReadiness, props.isDesktopShell, relayReadinessByEndpoint]);
+    const isActiveReachabilityRemediationPending = React.useMemo(() => {
+        if (!confirmSwitchRelayEndpointForReadiness) {
+            return false;
+        }
+        if (getEndpointReachabilityProvider(confirmSwitchRelayEndpointForReadiness) !== 'tailscale') {
+            return false;
+        }
+        const readiness = relayReadinessByEndpoint.get(confirmSwitchRelayEndpointForReadiness);
+        return readiness == null || readiness.status === 'checking';
+    }, [confirmSwitchRelayEndpointForReadiness, relayReadinessByEndpoint]);
+    const {
+        error: reachabilityRemediationError,
+        taskSnapshot: tailscaleEnsureReadySnapshot,
+        onAction: handleReachabilityRemediationAction,
+    } = useEndpointReachabilityRemediationController({
+        remediation: activeReachabilityRemediation,
+        endpoint: confirmSwitchRelayEndpointForReadiness,
+        onRetryEndpoint: retryEndpoint,
+    });
 
     const onSkip = React.useCallback(() => {
         exitWizard();
@@ -370,7 +437,12 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
             return;
         }
         if (stepId === 'host_relay_local') {
-            if (typeof relayCandidateUrl === 'string' && relayCandidateUrl.trim().length > 0) {
+            const fallbackRelayUrl = activeServerSnapshot.serverUrl ? String(activeServerSnapshot.serverUrl).trim() : '';
+            const nextRelayUrl = typeof relayCandidateUrl === 'string' && relayCandidateUrl.trim().length > 0
+                ? relayCandidateUrl.trim()
+                : fallbackRelayUrl;
+            if (nextRelayUrl.length > 0) {
+                setRelayRuntimeCandidate(nextRelayUrl, null, { kind: 'local' });
                 dispatch({ type: 'wizard/goToStep', stepId: 'relay_access' });
                 return;
             }
@@ -402,7 +474,7 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
             return;
         }
         if (stepId === 'confirm_switch_relay') {
-            const nextRelayUrl = typeof relayCandidateUrl === 'string' ? relayCandidateUrl.trim() : '';
+            const nextRelayUrl = typeof effectiveRelayCandidateUrl === 'string' ? effectiveRelayCandidateUrl.trim() : '';
             if (!nextRelayUrl) {
                 dispatch({ type: 'wizard/goToStep', stepId: action === 'relayLocal' ? 'done' : afterProvidersStepId });
                 return;
@@ -445,7 +517,7 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
         }
 
         exitWizard();
-    }, [action, exitWizard, pendingRelayRuntime?.machineId, props.onExit, relayCandidateUrl, relaySwitchDecision, remoteSetupIntent, setupPolicy.providers.allowProviderSetup, stepId]);
+    }, [action, activeServerSnapshot.serverUrl, effectiveRelayCandidateUrl, exitWizard, pendingRelayRuntime?.machineId, props.onExit, relayCandidateUrl, relaySwitchDecision, remoteSetupIntent, setRelayRuntimeCandidate, setupPolicy.providers.allowProviderSetup, stepId]);
 
     const handleRelayAccessProviderIdChange = React.useCallback((providerId: RelayAccessProviderId | null) => {
         dispatch({ type: 'wizard/setRelayAccessProviderId', providerId });
@@ -460,7 +532,9 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
     }, [dispatch]);
 
     const handleLocalRelayStatusChange = React.useCallback((status: unknown) => {
-        const relayUrl = (status as { relayUrl?: unknown } | null | undefined)?.relayUrl;
+        const nextStatus = status as RelayHostLocalChecklistRuntimeStatus | null;
+        setLocalRelayRuntimeStatus(nextStatus);
+        const relayUrl = (nextStatus as { relayUrl?: unknown } | null | undefined)?.relayUrl;
         setRelayRuntimeCandidate(typeof relayUrl === 'string' ? relayUrl : null, null, { kind: 'local' });
     }, [setRelayRuntimeCandidate]);
 
@@ -468,6 +542,9 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
         setRemoteMachineId(payload.machineId);
         const relayUrl = typeof payload.relayRuntimeUrl === 'string' ? payload.relayRuntimeUrl.trim() : '';
         if (relayUrl.length > 0) {
+            if (payload.mode === 'remoteRelayHost') {
+                setRelaySwitchDecision('switch');
+            }
             setRelayRuntimeCandidate(relayUrl, payload.machineId, payload.relayAccessTarget);
             persistRemoteSetupIntent('remoteRelayHost', relayUrl, payload.machineId);
         }
@@ -480,6 +557,47 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
     const handleRelayShareUrlPasteChange = React.useCallback((value: string) => {
         setRelayRuntimeCandidate(value, null, relayAccessTarget ?? defaultRelayAccessTarget);
     }, [defaultRelayAccessTarget, relayAccessTarget, setRelayRuntimeCandidate]);
+
+    const handleRelayAccessShareUrlChange = React.useCallback((shareUrl: string | null) => {
+        const normalized = typeof shareUrl === 'string' ? shareUrl.trim() : '';
+        setRelayAccessShareUrl(normalized || null);
+    }, []);
+
+    const handleRequestAdvance = React.useCallback(() => {
+        void onPrimary();
+    }, [onPrimary]);
+
+    const handleLocalRelayPrimary = React.useCallback(() => {
+        const relayUrlFromStatus = typeof localRelayRuntimeStatus?.relayUrl === 'string' ? localRelayRuntimeStatus.relayUrl.trim() : '';
+        const fallbackRelayUrl = activeServerSnapshot.serverUrl ? String(activeServerSnapshot.serverUrl).trim() : '';
+        const nextRelayUrl = relayUrlFromStatus || fallbackRelayUrl;
+
+        if (nextRelayUrl.length > 0) {
+            setRelayRuntimeCandidate(nextRelayUrl, null, { kind: 'local' });
+            dispatch({ type: 'wizard/goToStep', stepId: 'relay_access' });
+            return;
+        }
+
+        void onPrimary();
+    }, [activeServerSnapshot.serverUrl, dispatch, localRelayRuntimeStatus, onPrimary, setRelayRuntimeCandidate]);
+
+    const handleLocalRelayRequestAdvance = React.useCallback((status: RelayHostLocalChecklistRuntimeStatus | null) => {
+        const relayUrlFromStatus = typeof status?.relayUrl === 'string' ? status.relayUrl.trim() : '';
+        const fallbackRelayUrl = activeServerSnapshot.serverUrl ? String(activeServerSnapshot.serverUrl).trim() : '';
+        const nextRelayUrl = relayUrlFromStatus || fallbackRelayUrl;
+
+        if (stepId === 'host_relay_local' && nextRelayUrl.length > 0) {
+            setRelayRuntimeCandidate(nextRelayUrl, null, { kind: 'local' });
+            dispatch({ type: 'wizard/goToStep', stepId: 'relay_access' });
+            return;
+        }
+
+        void onPrimary();
+    }, [activeServerSnapshot.serverUrl, dispatch, onPrimary, setRelayRuntimeCandidate, stepId]);
+
+    const localRelayRuntimeSatisfied = localRelayRuntimeStatus?.installed === true
+        && localRelayRuntimeStatus?.service.active === true
+        && localRelayRuntimeStatus?.healthy === true;
 
     let body: React.ReactNode = null;
     if (stepId === 'setup_chooser') {
@@ -555,7 +673,7 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
                     testID="setupWizard-relay-host-local"
                     onStatusChange={handleLocalRelayStatusChange}
                     onWizardPrimaryChange={handleWizardPrimaryChange}
-                    onRequestAdvance={() => void onPrimary()}
+                    onRequestAdvance={handleLocalRelayRequestAdvance}
                 />
             );
         } else {
@@ -574,8 +692,13 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
                     ? String(activeServerSnapshot.activeLocalRelayUrl).trim()
                     : null,
                 relayUrl: relayCandidateUrl,
+                confirmRelayUrl: effectiveRelayCandidateUrl,
                 serverProfileId: state.context.relaySelection.relayProfileId ?? null,
                 relayAccessTarget: relayAccessTarget ?? defaultRelayAccessTarget,
+                reachabilityRemediation: activeReachabilityRemediation,
+                reachabilityRemediationTaskSnapshot: tailscaleEnsureReadySnapshot,
+                reachabilityRemediationError,
+                onReachabilityRemediationAction: handleReachabilityRemediationAction,
                 providerMachineId,
                 providerSelectionProviderIds,
                 selectedProviderIds,
@@ -589,13 +712,14 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
                 onRemoteRelayRuntimeCompletedChange: handleRemoteRelayRuntimeCompletedChange,
                 onRelayUrlPasteChange: handleRelayUrlPasteChange,
                 onRelayShareUrlPasteChange: handleRelayShareUrlPasteChange,
+                onRelayAccessShareUrlChange: handleRelayAccessShareUrlChange,
                 relayAccessProviderId: state.context.relayAccessProviderId,
                 onRelayAccessProviderIdChange: handleRelayAccessProviderIdChange,
                 onRelayAccessProviderDetailsRequested: handleRelayAccessProviderDetailsRequested,
                 onWizardPrimaryChange: handleWizardPrimaryChange,
                 onWizardBackChange: handleWizardBackChange,
                 onWizardSkipChange: handleWizardSkipChange,
-                onRequestAdvance: () => void onPrimary(),
+                onRequestAdvance: handleRequestAdvance,
             });
         }
     }
@@ -607,6 +731,10 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
             : stepId === 'done'
                 ? t('common.done')
                 : t('common.continue'));
+
+    const primaryAction = stepId === 'host_relay_local' && localRelayRuntimeSatisfied && primaryOverride?.disabled !== true
+        ? handleLocalRelayPrimary
+        : (primaryOverride?.onPress ?? onPrimary);
 
     return (
         <WizardModalShell
@@ -631,16 +759,26 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
             }
             backLabel={backOverride?.label}
             showBack={backOverride?.hidden ? false : true}
-            onPrimary={primaryOverride?.onPress ?? onPrimary}
+            onPrimary={primaryAction}
             primaryLabel={primaryLabel}
-	            primaryDisabled={
-	                primaryOverride?.disabled
-	                ?? ((stepId === 'setup_chooser' && action == null)
-	                    || (stepId === 'setup_this_computer' && state.context.platform !== 'web' && !localMachineId))
-	            }
-	            footerHint={footerHint}
-	        >
-	            {body}
-	        </WizardModalShell>
+            primaryDisabled={
+                primaryOverride?.disabled
+                ?? ((stepId === 'setup_chooser' && action == null)
+                    || (stepId === 'host_relay_local' && primaryOverride == null)
+                    || (stepId === 'setup_this_computer' && state.context.platform !== 'web' && !localMachineId)
+                    || (
+                        stepId === 'confirm_switch_relay'
+                        && relaySwitchDecision === 'switch'
+                        && (
+                            activeReachabilityRemediation != null
+                            || isActiveReachabilityRemediationPending
+                            || (tailscaleEnsureReadySnapshot != null && tailscaleEnsureReadySnapshot.result == null)
+                        )
+                    ))
+            }
+            footerHint={footerHint}
+        >
+            {body}
+        </WizardModalShell>
     );
 }

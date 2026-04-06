@@ -17,6 +17,20 @@ const relayRuntimeStatus = Object.freeze({
     service: { active: true, enabled: true },
 });
 
+type WizardPrimaryState = {
+    label: string;
+    disabled: boolean;
+    onPress: () => void | Promise<void>;
+};
+
+const localRelayRuntimeControlMockState: {
+    status: typeof relayRuntimeStatus | null;
+    isBusy: boolean;
+} = {
+    status: relayRuntimeStatus,
+    isBusy: false,
+};
+
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
@@ -50,7 +64,10 @@ vi.mock('react-native-unistyles', async () => {
 
 vi.mock('@/components/settings/server/localControl/useLocalRelayRuntimeControl', () => ({
     useLocalRelayRuntimeControl: () => {
-        return { status: relayRuntimeStatus };
+        return {
+            status: localRelayRuntimeControlMockState.status,
+            isBusy: localRelayRuntimeControlMockState.isBusy,
+        };
     },
 }));
 
@@ -66,7 +83,30 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 }));
 
 describe('RelayHostLocalChecklistStep', () => {
+    it('disables the wizard continue action while the initial relay status is still loading', async () => {
+        localRelayRuntimeControlMockState.status = null;
+        localRelayRuntimeControlMockState.isBusy = true;
+
+        const { RelayHostLocalChecklistStep } = await import('./RelayHostLocalChecklistStep');
+
+        let primary: WizardPrimaryState | null = null;
+        await renderScreen(React.createElement(RelayHostLocalChecklistStep, {
+            testID: 'relay-host-local',
+            onWizardPrimaryChange: (state) => {
+                primary = state;
+            },
+        }));
+
+        expect(primary).toMatchObject({
+            label: 'common.continue',
+            disabled: true,
+        });
+    });
+
     it('keeps the checklist focused on relay runtime tasks when the relay is already installed', async () => {
+        localRelayRuntimeControlMockState.status = relayRuntimeStatus;
+        localRelayRuntimeControlMockState.isBusy = false;
+
         const { RelayHostLocalChecklistStep } = await import('./RelayHostLocalChecklistStep');
         const stableSnapshot = {
             taskId: 'task_1',
@@ -87,7 +127,7 @@ describe('RelayHostLocalChecklistStep', () => {
             subscribe: vi.fn(() => () => {}),
         } as const;
 
-        let primary: { label: string; disabled: boolean; onPress: () => void | Promise<void> } | null = null;
+        let primary: WizardPrimaryState | null = null;
         const screen = await renderScreen(React.createElement(RelayHostLocalChecklistStep, {
             testID: 'relay-host-local',
             runner: runner as never,
@@ -98,7 +138,7 @@ describe('RelayHostLocalChecklistStep', () => {
         if (!primary) {
             throw new Error('Expected wizard primary override');
         }
-        const primaryState = primary as { label: string; disabled: boolean; onPress: () => void | Promise<void> };
+        const primaryState: WizardPrimaryState = primary;
 
         expect(screen.findByTestId('relay-host-local-checklist-row-installRelayRuntime')).toBeTruthy();
         expect(screen.findByTestId('relay-host-local-checklist-row-startRelayRuntime')).toBeTruthy();
@@ -109,5 +149,82 @@ describe('RelayHostLocalChecklistStep', () => {
             await primaryState.onPress();
         });
         expect(runner.start).toHaveBeenCalledTimes(0);
+    });
+
+    it('refreshes the wizard continue action when the parent advance handler changes', async () => {
+        localRelayRuntimeControlMockState.status = relayRuntimeStatus;
+        localRelayRuntimeControlMockState.isBusy = false;
+
+        const { RelayHostLocalChecklistStep } = await import('./RelayHostLocalChecklistStep');
+
+        const initialAdvance = vi.fn();
+        const nextAdvance = vi.fn();
+        let primary: WizardPrimaryState | null = null;
+        const handleWizardPrimaryChange = (state: typeof primary) => {
+            primary = state;
+        };
+
+        const screen = await renderScreen(React.createElement(RelayHostLocalChecklistStep, {
+            testID: 'relay-host-local',
+            onRequestAdvance: initialAdvance,
+            onWizardPrimaryChange: handleWizardPrimaryChange,
+        }));
+
+        await screen.update(React.createElement(RelayHostLocalChecklistStep, {
+            testID: 'relay-host-local',
+            onRequestAdvance: nextAdvance,
+            onWizardPrimaryChange: handleWizardPrimaryChange,
+        }));
+
+        if (!primary) {
+            throw new Error('Expected wizard primary override');
+        }
+
+        await act(async () => {
+            await primary?.onPress();
+        });
+
+        expect(initialAdvance).toHaveBeenCalledTimes(0);
+        expect(nextAdvance).toHaveBeenCalledTimes(1);
+        expect(nextAdvance).toHaveBeenCalledWith(relayRuntimeStatus);
+    });
+
+    it('advances when a previously captured continue handler becomes stale after relay status settles', async () => {
+        localRelayRuntimeControlMockState.status = null;
+        localRelayRuntimeControlMockState.isBusy = false;
+
+        const { RelayHostLocalChecklistStep } = await import('./RelayHostLocalChecklistStep');
+
+        const advance = vi.fn();
+        let primary: WizardPrimaryState | null = null;
+        const handleWizardPrimaryChange = (state: typeof primary) => {
+            primary = state;
+        };
+
+        const screen = await renderScreen(React.createElement(RelayHostLocalChecklistStep, {
+            testID: 'relay-host-local',
+            onRequestAdvance: advance,
+            onWizardPrimaryChange: handleWizardPrimaryChange,
+        }));
+
+        if (!primary) {
+            throw new Error('Expected initial wizard primary override');
+        }
+
+        const stalePrimary: WizardPrimaryState = primary;
+
+        localRelayRuntimeControlMockState.status = relayRuntimeStatus;
+        await screen.update(React.createElement(RelayHostLocalChecklistStep, {
+            testID: 'relay-host-local',
+            onRequestAdvance: advance,
+            onWizardPrimaryChange: handleWizardPrimaryChange,
+        }));
+
+        await act(async () => {
+            await stalePrimary.onPress();
+        });
+
+        expect(advance).toHaveBeenCalledTimes(1);
+        expect(advance).toHaveBeenCalledWith(relayRuntimeStatus);
     });
 });

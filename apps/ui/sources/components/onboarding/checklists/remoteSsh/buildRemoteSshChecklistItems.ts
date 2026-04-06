@@ -3,6 +3,10 @@ import { getRemoteSshChecklistCopy } from './copy';
 
 export function buildRemoteSshChecklistItems(params: Readonly<{
     mode: RemoteSshChecklistMode;
+    existingRelayRuntime?: Readonly<{
+        installed: boolean;
+        relayUrl: string | null;
+    }> | null;
 }>): readonly RemoteSshChecklistItem[] {
     const copy = getRemoteSshChecklistCopy(params.mode);
     const daemonItem: RemoteSshChecklistItem = {
@@ -51,16 +55,29 @@ export function buildRemoteSshChecklistItems(params: Readonly<{
 
     const relayRuntime: RemoteSshChecklistItem[] = params.mode === 'remoteRelayHost'
         ? [
-            {
-                id: 'install_relay_runtime',
-                title: copy.installRelayRuntimeTitle,
-                subtitle: copy.installRelayRuntimeSubtitle,
-                selected: true,
-                disabled: false,
-                optional: true,
-                stepIds: ['relay.runtime.install'],
-                details: copy.installRelayRuntimeDetails,
-            },
+            (() => {
+                const relayUrl = typeof params.existingRelayRuntime?.relayUrl === 'string'
+                    ? params.existingRelayRuntime.relayUrl.trim()
+                    : '';
+                const runtimeDetected = params.existingRelayRuntime?.installed === true;
+                const subtitle = runtimeDetected && relayUrl
+                    ? `${copy.installRelayRuntimeSubtitle} ${relayUrl}`
+                    : copy.installRelayRuntimeSubtitle;
+                const details = runtimeDetected && relayUrl
+                    ? `${copy.installRelayRuntimeDetails} ${relayUrl}`
+                    : copy.installRelayRuntimeDetails;
+                return {
+                    id: 'install_relay_runtime',
+                    title: copy.installRelayRuntimeTitle,
+                    subtitle,
+                    satisfied: runtimeDetected,
+                    selected: true,
+                    disabled: runtimeDetected,
+                    optional: true,
+                    stepIds: ['relay.runtime.install'],
+                    details,
+                };
+            })(),
         ]
         : [];
 

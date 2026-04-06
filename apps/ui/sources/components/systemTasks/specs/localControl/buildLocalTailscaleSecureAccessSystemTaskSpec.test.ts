@@ -10,6 +10,7 @@ describe('buildLocalTailscaleSecureAccessSystemTaskSpec', () => {
             protocolVersion: 1,
             kind: 'secureAccess.tailscale.v1',
             params: {
+                target: { kind: 'local' },
                 upstreamUrl: 'http://127.0.0.1:3005/',
                 providerId: 'tailscaleServe',
                 servePath: '/',
@@ -28,6 +29,7 @@ describe('buildLocalTailscaleSecureAccessSystemTaskSpec', () => {
             protocolVersion: 1,
             kind: 'secureAccess.tailscale.v1',
             params: {
+                target: { kind: 'local' },
                 upstreamUrl: 'http://127.0.0.1:3005/',
                 providerId: 'tailscaleFunnel',
                 servePath: '/',

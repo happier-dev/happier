@@ -49,10 +49,12 @@ describe('buildRelayAccessSystemTaskSpec', () => {
         expect(buildRelayAccessTailscaleSecureAccessSystemTaskSpec({
             upstreamUrl: 'http://127.0.0.1:3005/',
             providerId: 'tailscaleFunnel',
+            target,
         })).toEqual({
             protocolVersion: 1,
             kind: 'secureAccess.tailscale.v1',
             params: {
+                target,
                 upstreamUrl: 'http://127.0.0.1:3005/',
                 providerId: 'tailscaleFunnel',
                 servePath: '/',
@@ -71,6 +73,7 @@ describe('buildRelayAccessSystemTaskSpec', () => {
             protocolVersion: 1,
             kind: 'secureAccess.tailscale.v1',
             params: {
+                target: { kind: 'local' },
                 upstreamUrl: 'http://127.0.0.1:3005/',
                 providerId: 'tailscaleServe',
                 servePath: '/',
@@ -87,12 +90,15 @@ describe('buildRelayAccessSystemTaskSpec', () => {
             upstreamUrl: 'http://127.0.0.1:3005/',
         })).toEqual({
             protocolVersion: 1,
-            kind: 'relay.access.configure.v1',
+            kind: 'secureAccess.tailscale.v1',
             params: {
-                target,
-                providerId: 'tailscaleServe',
-                config: { providerId: 'tailscaleServe' },
                 upstreamUrl: 'http://127.0.0.1:3005/',
+                providerId: 'tailscaleServe',
+                servePath: '/',
+                installPolicy: 'installIfMissing',
+                loginPolicy: 'interactive',
+                mode: 'normalUser',
+                target,
             },
         });
     });

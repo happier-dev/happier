@@ -4,6 +4,7 @@ import { isSameServerUrl, normalizeServerUrl } from '@/sync/domains/server/activ
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { getOrCreateHappierCloudServerProfile, listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
+import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 
 import type { WizardRelaySelection } from '../../state/wizardTypes';
 
@@ -134,4 +135,21 @@ export function resolveRelayProfileIdForServerUrl(params: Readonly<{
     });
 
     return match?.id ?? 'active';
+}
+
+export function resolveRelaySwitchUrl(params: Readonly<{
+    relayRuntimeUrl: string | null;
+    relayAccessShareUrl: string | null;
+    relayAccessTarget: RelayAccessTaskTarget | null;
+}>): string | null {
+    const relayRuntimeUrlRaw = typeof params.relayRuntimeUrl === 'string' ? params.relayRuntimeUrl.trim() : '';
+    const relayRuntimeUrl = relayRuntimeUrlRaw ? (normalizeServerUrl(relayRuntimeUrlRaw) ?? relayRuntimeUrlRaw) : '';
+    const relayAccessShareUrlRaw = typeof params.relayAccessShareUrl === 'string' ? params.relayAccessShareUrl.trim() : '';
+    const relayAccessShareUrl = relayAccessShareUrlRaw ? (normalizeServerUrl(relayAccessShareUrlRaw) ?? relayAccessShareUrlRaw) : '';
+
+    if (params.relayAccessTarget?.kind === 'ssh' && relayAccessShareUrl) {
+        return relayAccessShareUrl;
+    }
+
+    return relayRuntimeUrl || null;
 }

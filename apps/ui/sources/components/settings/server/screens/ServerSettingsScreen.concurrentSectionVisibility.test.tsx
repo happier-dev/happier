@@ -70,10 +70,6 @@ vi.mock('@/components/settings/server/localControl/LocalRelayAccessControlSectio
     LocalRelayAccessControlSection: (props: any) => React.createElement('LocalRelayAccessControlSection', props),
 }));
 
-vi.mock('@/components/settings/server/localControl/LocalTailscaleSecureAccessSection', () => ({
-    LocalTailscaleSecureAccessSection: (props: any) => React.createElement('LocalTailscaleSecureAccessSection', props),
-}));
-
 vi.mock('@/components/settings/server/hooks/useServerSettingsScreenController', () => ({
     useServerSettingsScreenController: () => controllerValue,
 }));
@@ -174,8 +170,29 @@ describe('ServerSettingsScreen (concurrent section visibility)', () => {
 
         expect(screen.findAllByType('LocalRelayRuntimeControlSection' as any)).toHaveLength(0);
         expect(screen.findAllByType('LocalRelayAccessControlSection' as any)).toHaveLength(0);
-        expect(screen.findAllByType('LocalTailscaleSecureAccessSection' as any)).toHaveLength(0);
         expect(screen.findByTestId('settings.server.localControl.desktopOnlyNotice')).toBeTruthy();
+    });
+
+    it('does not render the standalone Tailscale secure-access section on the Relay settings screen', async () => {
+        const previousTauriInternals = (globalThis as any).__TAURI_INTERNALS__;
+        (globalThis as any).__TAURI_INTERNALS__ = { invoke: () => undefined };
+        setController({
+            relayDriftBanner: null,
+            activeServerUrl: 'https://relay.example.test',
+            activeLocalRelayUrl: 'http://127.0.0.1:4555',
+        });
+
+        try {
+            const { ServerSettingsScreen } = await import('./ServerSettingsScreen');
+
+            const screen = await renderScreen(React.createElement(ServerSettingsScreen));
+
+            expect(screen.findAllByType('LocalRelayRuntimeControlSection' as any)).toHaveLength(1);
+            expect(screen.findAllByType('LocalRelayAccessControlSection' as any)).toHaveLength(1);
+        } finally {
+            if (previousTauriInternals === undefined) delete (globalThis as any).__TAURI_INTERNALS__;
+            else (globalThis as any).__TAURI_INTERNALS__ = previousTauriInternals;
+        }
     });
 
     it('keeps secure-access local control desktop-only even when a known local relay alias exists', async () => {
@@ -189,7 +206,6 @@ describe('ServerSettingsScreen (concurrent section visibility)', () => {
 
         const screen = await renderScreen(React.createElement(ServerSettingsScreen));
 
-        expect(screen.findAllByType('LocalTailscaleSecureAccessSection' as any)).toHaveLength(0);
         expect(screen.findByTestId('settings.server.localControl.desktopOnlyNotice')).toBeTruthy();
     });
 
@@ -205,7 +221,6 @@ describe('ServerSettingsScreen (concurrent section visibility)', () => {
 
             expect(screen.findAllByType('LocalRelayRuntimeControlSection' as any)).toHaveLength(0);
             expect(screen.findAllByType('LocalRelayAccessControlSection' as any)).toHaveLength(0);
-            expect(screen.findAllByType('LocalTailscaleSecureAccessSection' as any)).toHaveLength(0);
         } finally {
             delete (globalThis as any).__TAURI_INTERNALS__;
             if (previousDeny === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
@@ -225,7 +240,6 @@ describe('ServerSettingsScreen (concurrent section visibility)', () => {
 
             expect(screen.findAllByType('LocalRelayRuntimeControlSection' as any)).toHaveLength(1);
             expect(screen.findAllByType('LocalRelayAccessControlSection' as any)).toHaveLength(1);
-            expect(screen.findAllByType('LocalTailscaleSecureAccessSection' as any)).toHaveLength(0);
         } finally {
             delete (globalThis as any).__TAURI_INTERNALS__;
             if (previousDeny === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;

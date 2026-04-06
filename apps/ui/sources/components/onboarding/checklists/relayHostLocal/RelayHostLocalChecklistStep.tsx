@@ -85,27 +85,23 @@ export function RelayHostLocalChecklistStep(props: Readonly<{
         disabled: boolean;
         onPress: (() => void) | (() => Promise<void>);
     }> | null) => void;
-    onRequestAdvance?: () => void;
+    onRequestAdvance?: (status: RelayHostLocalChecklistRuntimeStatus | null) => void;
 }>) {
     useUnistyles();
     const styles = stylesheet;
     const runner = props.runner ?? getDefaultSystemTaskRunner();
-    const { status } = useLocalRelayRuntimeControl({ runner });
+    const {
+        isBusy: relayRuntimeStatusBusy,
+        status,
+    } = useLocalRelayRuntimeControl({ runner });
     const activeServerSnapshot = useActiveServerSnapshot();
     const currentRelayUrl = activeServerSnapshot.serverUrl ? String(activeServerSnapshot.serverUrl).trim() : null;
     const currentShareableUrl = activeServerSnapshot.activeShareableServerUrl
         ? String(activeServerSnapshot.activeShareableServerUrl).trim()
         : null;
-    const requestAdvanceRef = React.useRef(props.onRequestAdvance);
-    const wizardPrimaryChangeRef = React.useRef(props.onWizardPrimaryChange);
-
     React.useEffect(() => {
         props.onStatusChange?.(status ?? null);
     }, [status, props.onStatusChange]);
-    React.useEffect(() => {
-        requestAdvanceRef.current = props.onRequestAdvance;
-        wizardPrimaryChangeRef.current = props.onWizardPrimaryChange;
-    }, [props.onRequestAdvance, props.onWizardPrimaryChange]);
 
     const liveItems = React.useMemo(() => buildRelayHostLocalChecklistItems({
         runtimeStatus: status ?? null,
@@ -186,23 +182,38 @@ export function RelayHostLocalChecklistStep(props: Readonly<{
         const selectedSet = new Set(checklist.selectedIds);
         return items.some((item) => selectedSet.has(item.id) && !item.satisfied);
     }, [checklist.selectedIds, items]);
+    const isInitialStatusPending = status == null && relayRuntimeStatusBusy;
+    const hasPendingSelectionRef = React.useRef(hasPendingSelection);
+    const statusRef = React.useRef(status ?? null);
+    const requestAdvanceRef = React.useRef(props.onRequestAdvance);
     const continueRef = React.useRef(checklist.continue);
     const retryRef = React.useRef(checklist.retry);
     React.useEffect(() => {
+        hasPendingSelectionRef.current = hasPendingSelection;
+        statusRef.current = status ?? null;
+        requestAdvanceRef.current = props.onRequestAdvance;
         continueRef.current = checklist.continue;
         retryRef.current = checklist.retry;
-    }, [checklist.continue, checklist.retry]);
+    }, [checklist.continue, checklist.retry, hasPendingSelection, props.onRequestAdvance, status]);
 
     React.useLayoutEffect(() => {
-        const onWizardPrimaryChange = wizardPrimaryChangeRef.current;
+        const onWizardPrimaryChange = props.onWizardPrimaryChange;
         if (!onWizardPrimaryChange) return;
 
         if (checklist.phase === 'select') {
+            if (isInitialStatusPending) {
+                onWizardPrimaryChange({
+                    label: t('common.continue'),
+                    disabled: true,
+                    onPress: async () => undefined,
+                });
+                return;
+            }
             if (!hasPendingSelection) {
                 onWizardPrimaryChange({
                     label: t('common.continue'),
                     disabled: false,
-                    onPress: requestAdvanceRef.current ?? (() => undefined),
+                    onPress: () => props.onRequestAdvance?.(status ?? null),
                 });
                 return;
             }
@@ -210,6 +221,10 @@ export function RelayHostLocalChecklistStep(props: Readonly<{
                 label: t('common.continue'),
                 disabled: false,
                 onPress: async () => {
+                    if (!hasPendingSelectionRef.current) {
+                        requestAdvanceRef.current?.(statusRef.current);
+                        return;
+                    }
                     await continueRef.current();
                 },
             });
@@ -239,13 +254,16 @@ export function RelayHostLocalChecklistStep(props: Readonly<{
         onWizardPrimaryChange({
             label: t('common.continue'),
             disabled: false,
-            onPress: requestAdvanceRef.current ?? (() => undefined),
+            onPress: () => props.onRequestAdvance?.(status ?? null),
         });
     }, [
         checklist.phase,
         hasError,
+        isInitialStatusPending,
         hasPendingSelection,
         hasRunningExecution,
+        status,
+        props.onRequestAdvance,
         props.onWizardPrimaryChange,
     ]);
 

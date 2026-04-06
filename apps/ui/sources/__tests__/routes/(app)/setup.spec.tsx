@@ -59,9 +59,6 @@ vi.mock('@/components/ui/lists/Item', () => ({
 vi.mock('@/components/settings/server/localControl/LocalRelayRuntimeControlSection', () => ({
     LocalRelayRuntimeControlSection: (props: Record<string, unknown>) => React.createElement('LocalRelayRuntimeControlSection', props),
 }));
-vi.mock('@/components/settings/server/localControl/LocalTailscaleSecureAccessSection', () => ({
-    LocalTailscaleSecureAccessSection: (props: Record<string, unknown>) => React.createElement('LocalTailscaleSecureAccessSection', props),
-}));
 vi.mock('@/components/settings/server/useRelayDriftBanner', () => ({
     useRelayDriftBanner: () => relayDriftBannerMock(),
 }));

@@ -467,6 +467,7 @@ describe('useServerSettingsScreenController (server validation)', () => {
         });
 
         expect(systemTaskRunnerState.startMock).toHaveBeenCalledWith({
+            protocolVersion: 1,
             kind: 'tailscale.ensureReady.v1',
             params: {
                 installPolicy: 'installIfMissing',

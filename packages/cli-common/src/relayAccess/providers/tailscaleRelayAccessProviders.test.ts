@@ -133,4 +133,34 @@ describe("tailscale relay access providers", () => {
       }),
     );
   });
+
+  it("tailscaleFunnel returns the share url for the requested upstream even when funnel status includes other mappings first", async () => {
+    const { runTailscaleStatusJson, runTailscaleFunnelStatus } = await import("../../tailscale/index.js");
+    vi.mocked(runTailscaleStatusJson).mockResolvedValue({
+      backendState: "Running",
+      authUrl: null,
+      dnsName: "my-machine.tailnet.ts.net",
+      tailnetName: "tailnet.ts.net",
+      tailscaleIps: [],
+      loggedIn: true,
+    });
+    vi.mocked(runTailscaleFunnelStatus).mockResolvedValue([
+      "https://other.tailnet.ts.net",
+      "|-- / proxy http://127.0.0.1:9999",
+      "",
+      "https://my-machine.tailnet.ts.net",
+      "|-- / proxy http://127.0.0.1:3005",
+    ].join("\n"));
+
+    const { tailscaleFunnelRelayAccessProvider } = await import("./tailscaleFunnel/index.js");
+    const status = await tailscaleFunnelRelayAccessProvider.status({
+      config: { providerId: "tailscaleFunnel" },
+      ctx: { env: process.env, upstreamUrl: "http://127.0.0.1:3005" },
+    });
+
+    expect(status).toEqual({
+      state: "enabled",
+      shareUrl: "https://my-machine.tailnet.ts.net",
+    });
+  });
 });

@@ -3,6 +3,14 @@ import {
     type SystemTaskResult,
     type SystemTaskSpec,
 } from '@happier-dev/protocol';
+import type {
+    RelayAccessConfig,
+    RelayAccessProviderId,
+} from '@happier-dev/cli-common/relayAccess/catalog';
+import type {
+    RelayAccessTaskSnapshot,
+    RelayAccessTaskTarget,
+} from '@happier-dev/cli-common/systemTasks';
 import { t } from '@/text';
 
 import type {
@@ -32,6 +40,151 @@ type TaskRuntime = {
 };
 
 type DevScenarioOverrides = Readonly<Record<string, unknown>>;
+
+function readRelayAccessTargetKey(spec: SystemTaskSpec): string {
+    const target = ((spec as { params?: { target?: RelayAccessTaskTarget } }).params?.target ?? { kind: 'local' }) as RelayAccessTaskTarget;
+    return JSON.stringify(target);
+}
+
+function buildDisabledRelayAccessSnapshot(): RelayAccessTaskSnapshot {
+    return {
+        configured: false,
+        providerId: null,
+        status: {
+            state: 'disabled',
+            shareUrl: null,
+            details: null,
+        },
+    };
+}
+
+function resolveRelayAccessShareUrl(config: RelayAccessConfig): string | null {
+    switch (config.providerId) {
+        case 'lan': {
+            const url = typeof config.url === 'string' ? config.url.trim() : '';
+            return url.length > 0 ? url : null;
+        }
+        case 'cloudflareNamed': {
+            const hostname = typeof config.hostname === 'string' ? config.hostname.trim() : '';
+            return hostname.length > 0 ? `https://${hostname}` : null;
+        }
+        default:
+            return null;
+    }
+}
+
+function buildConfiguredRelayAccessSnapshot(
+    providerId: RelayAccessProviderId,
+    config: RelayAccessConfig,
+): RelayAccessTaskSnapshot {
+    const shareUrl = resolveRelayAccessShareUrl(config);
+    return {
+        configured: true,
+        providerId,
+        status: {
+            state: shareUrl ? 'enabled' : 'unknown',
+            shareUrl,
+            details: null,
+        },
+    };
+}
+
+function buildRelayAccessScenario(
+    spec: SystemTaskSpec,
+    taskId: string,
+    relayAccessSnapshotsByTarget: Map<string, RelayAccessTaskSnapshot>,
+): readonly DeterministicScenarioStep[] | null {
+    if (spec.kind === 'relay.access.status.v1') {
+        const snapshot = relayAccessSnapshotsByTarget.get(readRelayAccessTargetKey(spec)) ?? buildDisabledRelayAccessSnapshot();
+        return [
+            {
+                delayMs: 30,
+                type: 'event',
+                payload: {
+                    protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                    taskId,
+                    tsMs: 30,
+                    type: 'step',
+                    stepId: 'relay.access.status.inspect',
+                    message: t('common.loading'),
+                },
+            },
+            {
+                delayMs: 120,
+                type: 'result',
+                payload: {
+                    protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                    taskId,
+                    ok: true,
+                    data: snapshot,
+                },
+            },
+        ];
+    }
+
+    if (spec.kind === 'relay.access.configure.v1') {
+        const params = (spec as { params?: { providerId?: RelayAccessProviderId; config?: RelayAccessConfig } }).params;
+        if (!params?.providerId || !params.config) {
+            return null;
+        }
+        const snapshot = buildConfiguredRelayAccessSnapshot(params.providerId, params.config);
+        relayAccessSnapshotsByTarget.set(readRelayAccessTargetKey(spec), snapshot);
+        return [
+            {
+                delayMs: 30,
+                type: 'event',
+                payload: {
+                    protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                    taskId,
+                    tsMs: 30,
+                    type: 'step',
+                    stepId: 'relay.access.configure.persist',
+                    message: t('common.loading'),
+                },
+            },
+            {
+                delayMs: 120,
+                type: 'result',
+                payload: {
+                    protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                    taskId,
+                    ok: true,
+                    data: snapshot,
+                },
+            },
+        ];
+    }
+
+    if (spec.kind === 'relay.access.disable.v1') {
+        relayAccessSnapshotsByTarget.delete(readRelayAccessTargetKey(spec));
+        return [
+            {
+                delayMs: 30,
+                type: 'event',
+                payload: {
+                    protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                    taskId,
+                    tsMs: 30,
+                    type: 'step',
+                    stepId: 'relay.access.disable.persist',
+                    message: t('common.loading'),
+                },
+            },
+            {
+                delayMs: 120,
+                type: 'result',
+                payload: {
+                    protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                    taskId,
+                    ok: true,
+                    data: buildDisabledRelayAccessSnapshot(),
+                },
+            },
+        ];
+    }
+
+    return null;
+}
 
 function readDevSystemTaskScenarioOverride(taskKind: string): string | null {
     const record: DevScenarioOverrides | null =
@@ -113,6 +266,7 @@ function buildDefaultScenario(spec: SystemTaskSpec, taskId: string): readonly De
     }
     if (taskKind === 'secureAccess.tailscale.v1') {
         const approvalUrl = 'https://login.tailscale.com/f/serve?node=node-dev';
+        const useVisibleSuccessTiming = scenarioOverride === 'visibleSuccess';
         if (scenarioOverride === 'approval') {
             return [
                 {
@@ -177,20 +331,34 @@ function buildDefaultScenario(spec: SystemTaskSpec, taskId: string): readonly De
                     message: t('common.loading'),
                 },
             },
+            ...(useVisibleSuccessTiming
+                ? [{
+                    delayMs: 750,
+                    type: 'event' as const,
+                    payload: {
+                        protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                        taskId,
+                        tsMs: 750,
+                        type: 'progress',
+                        stepId: 'tailscale.login',
+                        message: t('settings.localTailscale.statusWorking'),
+                    },
+                }]
+                : []),
             {
-                delayMs: 90,
+                delayMs: useVisibleSuccessTiming ? 1_400 : 90,
                 type: 'event',
                 payload: {
                     protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
                     taskId,
-                    tsMs: 90,
+                    tsMs: useVisibleSuccessTiming ? 1_400 : 90,
                     type: 'progress',
                     stepId: 'tailscale.serveEnable',
                     message: t('settings.localTailscale.statusWorking'),
                 },
             },
             {
-                delayMs: 150,
+                delayMs: useVisibleSuccessTiming ? 2_200 : 150,
                 type: 'result',
                 payload: {
                     protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
@@ -236,6 +404,62 @@ function buildDefaultScenario(spec: SystemTaskSpec, taskId: string): readonly De
                         service: {
                             active: true,
                             enabled: true,
+                        },
+                    },
+                },
+            },
+        ];
+    }
+    if (taskKind === 'remote.ssh.bootstrapMachine.v1' && scenarioOverride === 'relayHostReady') {
+        return [
+            {
+                delayMs: 30,
+                type: 'event',
+                payload: {
+                    protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                    taskId,
+                    tsMs: 30,
+                    type: 'step',
+                    stepId: 'ssh.installCli',
+                    message: t('common.loading'),
+                },
+            },
+            {
+                delayMs: 90,
+                type: 'event',
+                payload: {
+                    protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                    taskId,
+                    tsMs: 90,
+                    type: 'progress',
+                    stepId: 'relay.runtime.install',
+                    message: t('settings.machineSetupStageInstall'),
+                },
+            },
+            {
+                delayMs: 150,
+                type: 'event',
+                payload: {
+                    protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                    taskId,
+                    tsMs: 150,
+                    type: 'progress',
+                    stepId: 'ssh.complete',
+                    message: t('settings.machineSetupStageFinish'),
+                },
+            },
+            {
+                delayMs: 210,
+                type: 'result',
+                payload: {
+                    protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                    taskId,
+                    ok: true,
+                    data: {
+                        machineId: 'machine-remote-dev-1',
+                        publicKey: 'pub-key-remote-dev',
+                        relayRuntime: {
+                            relayUrl: 'https://remote-relay.example.test',
                         },
                     },
                 },
@@ -497,6 +721,7 @@ export function createDeterministicSystemTaskBridge(options?: Readonly<{
 }>): SystemTasksBridge {
     const listeners = new Set<BridgeListenerSet>();
     const runtimes = new Map<string, TaskRuntime>();
+    const relayAccessSnapshotsByTarget = new Map<string, RelayAccessTaskSnapshot>();
     let nextTaskId = 1;
 
     const notifyEvent = (taskId: string, payload: unknown) => {
@@ -535,7 +760,8 @@ export function createDeterministicSystemTaskBridge(options?: Readonly<{
             };
             runtimes.set(taskId, runtime);
 
-            const scenario = (options?.buildScenario ?? buildDefaultScenario)(spec, taskId);
+            const scenario = buildRelayAccessScenario(spec, taskId, relayAccessSnapshotsByTarget)
+                ?? (options?.buildScenario ?? buildDefaultScenario)(spec, taskId);
             for (const step of scenario) {
                 const timeoutId = setTimeout(() => {
                     if (runtime.completed) {

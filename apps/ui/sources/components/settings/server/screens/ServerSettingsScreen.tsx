@@ -13,7 +13,6 @@ import { ServerRetentionSection } from '@/components/settings/server/sections/Se
 import { RelayDriftActionCard } from '@/components/settings/server/RelayDriftActionCard';
 import { LocalRelayRuntimeControlSection } from '@/components/settings/server/localControl/LocalRelayRuntimeControlSection';
 import { LocalRelayAccessControlSection } from '@/components/settings/server/localControl/LocalRelayAccessControlSection';
-import { LocalTailscaleSecureAccessSection } from '@/components/settings/server/localControl/LocalTailscaleSecureAccessSection';
 import { resolveKnownLocalRelayUrl } from '@/sync/domains/server/url/resolveKnownLocalRelayUrl';
 import { useServerSettingsScreenController } from '@/components/settings/server/hooks/useServerSettingsScreenController';
 import { isTauriDesktop } from '@/utils/platform/tauri';
@@ -107,9 +106,6 @@ export function ServerSettingsScreen() {
                                 onStatusChange={handleLocalRelayStatusChange}
                             />
                             <LocalRelayAccessControlSection upstreamUrl={localRelayUrl ?? knownLocalRelayUrl} />
-                            {setupPolicy.relayAccess.allowTailscale ? (
-                                <LocalTailscaleSecureAccessSection upstreamUrl={localRelayUrl ?? knownLocalRelayUrl} />
-                            ) : null}
                         </>
                     ) : isWeb ? null : (
                         <ItemGroup title={t('settingsProviders.localControlTitle')}>

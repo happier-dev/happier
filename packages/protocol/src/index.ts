@@ -1262,6 +1262,7 @@ export {
   type TailscaleSecureAccessTaskParams,
   type TailscaleSecureAccessTaskResult,
   type TailscaleSecureAccessTaskSpec,
+  type TailscaleSecureAccessTaskTarget,
 } from './systemTasks/index.js';
 
 export {

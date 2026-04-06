@@ -15,6 +15,7 @@ import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { parseEnvToObject } from './utils/env/dotenv.mjs';
+import { readEnvObjectFromFile } from './utils/env/read.mjs';
 import { run, runCapture } from './utils/proc/proc.mjs';
 import { applyStackCacheEnv, ensureDepsInstalled } from './utils/proc/pm.mjs';
 import { applyHappyServerMigrations, ensureHappyServerManagedInfra } from './utils/server/infra/happy_server_infra.mjs';
@@ -90,10 +91,12 @@ async function getInternalServerUrlCompat() {
   return { port, url: internalServerUrl };
 }
 
-async function resolveWebappUrlFromRunningExpo({ rootDir, stackName }) {
+async function resolveWebappUrlFromRunningExpo({ rootDir, stackName, env = process.env }) {
   try {
-    const baseDir = resolveStackEnvPath(stackName).baseDir;
-    const uiDir = getComponentDir(rootDir, 'happier-ui');
+    const { baseDir, envPath } = resolveStackEnvPath(stackName, env);
+    const stackEnv = await readEnvObjectFromFile(envPath);
+    const mergedEnv = { ...process.env, ...(stackEnv ?? {}) };
+    const uiDir = getComponentDir(rootDir, 'happier-ui', mergedEnv);
     const uiPaths = getExpoStatePaths({
       baseDir,
       kind: 'expo-dev',
@@ -1604,7 +1607,7 @@ async function cmdLogin({ argv, json }) {
   }
 
   const { envWebappUrl } = getWebappUrlEnvOverride({ env: process.env, stackName });
-  const expoWebappUrl = await resolveWebappUrlFromRunningExpo({ rootDir, stackName });
+  const expoWebappUrl = await resolveWebappUrlFromRunningExpo({ rootDir, stackName, env: process.env });
   const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv: [], env: process.env });
   const runtimeSnapshotActive = Boolean(runtimeLaunchContext.snapshot);
 
@@ -1647,9 +1650,11 @@ async function cmdLogin({ argv, json }) {
     webappUrlRaw = expoWebappUrl || '';
     webappUrlSource = 'expo';
   } else {
-    // auto|stack: preserve existing ordering for now (env override wins unless explicitly forced otherwise).
-    webappUrlRaw = runtimeSnapshotActive ? envWebappUrl || publicServerUrl || expoWebappUrl : envWebappUrl || expoWebappUrl || publicServerUrl;
-    webappUrlSource = envWebappUrl ? 'stack env override' : runtimeSnapshotActive ? (publicServerUrl ? 'server' : expoWebappUrl ? 'expo' : 'server') : expoWebappUrl ? 'expo' : 'server';
+    // auto: prefer the live Expo web UI when it is available, even if a runtime snapshot is active.
+    // This keeps guided web login pointed at the local Expo UI instead of falling back to the
+    // server URL just because a runtime snapshot exists.
+    webappUrlRaw = envWebappUrl || expoWebappUrl || publicServerUrl;
+    webappUrlSource = envWebappUrl ? 'stack env override' : expoWebappUrl ? 'expo' : 'server';
   }
 
   const webappUrl = webappUrlRaw ? await preferStackLocalhostUrl(webappUrlRaw, { stackName }) : '';

@@ -93,6 +93,8 @@ const stylesheet = StyleSheet.create((theme, _runtime) => ({
     },
     cardBase: {
         alignSelf: 'center',
+        position: 'relative',
+        zIndex: 1,
         overflow: 'hidden',
         flexDirection: 'column',
         flexGrow: 0,

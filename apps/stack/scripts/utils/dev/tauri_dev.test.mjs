@@ -10,6 +10,7 @@ import {
   buildTauriRuntimeEnv,
   resolveTauriDevUrl,
 } from './tauri_dev.mjs';
+import { buildStackStableScopeId } from '../auth/stable_scope_id.mjs';
 import { getDefaultAutostartPaths } from '../paths/paths.mjs';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -270,6 +271,227 @@ test('buildStackTauriDevProcessInvocation exports rustup homes for the detected 
   assert.equal(invocation.env?.RUSTUP_HOME, `${realHome}/.rustup`);
 });
 
+test('buildStackTauriDevProcessInvocation inherits the stack-scoped server url and active server id from the stack CLI settings', async () => {
+  const stackRootDir = '/Users/leeroy/Documents/Development/happier/dev/apps/stack';
+  const realHome = await mkdir(`${tmpdir()}/happier-tauri-stack-server-real-${Date.now()}`, { recursive: true });
+  const isolatedHome = await mkdir(`${tmpdir()}/happier-tauri-stack-server-isolated-${Date.now()}`, { recursive: true });
+  const cargoBinDir = `${realHome}/.cargo/bin`;
+  const cliHomeDir = `${tmpdir()}/happier-tauri-stack-cli-home-${Date.now()}`;
+  await mkdir(cargoBinDir, { recursive: true });
+  await mkdir(cliHomeDir, { recursive: true });
+
+  const cargoBinary = `${cargoBinDir}/${process.platform === 'win32' ? 'cargo.exe' : 'cargo'}`;
+  await writeFile(cargoBinary, '#!/bin/sh\nexit 0\n', 'utf-8');
+  await chmod(cargoBinary, 0o755);
+
+  await writeFile(
+    `${cliHomeDir}/settings.json`,
+    JSON.stringify(
+      {
+        schemaVersion: 5,
+        activeServerId: 'stack_main__id_default',
+        servers: {
+          stack_main__id_default: {
+            id: 'stack_main__id_default',
+            name: 'Main',
+            serverUrl: 'http://127.0.0.1:3005',
+            localServerUrl: 'http://127.0.0.1:3005',
+            webappUrl: 'http://localhost:8081',
+            createdAt: Date.now() - 10_000,
+            updatedAt: Date.now() - 10_000,
+            lastUsedAt: Date.now() - 10_000,
+          },
+          'stack_activity-surfaces-qa__id_default': {
+            id: 'stack_activity-surfaces-qa__id_default',
+            name: 'Activity Surfaces QA',
+            serverUrl: 'http://127.0.0.1:3009',
+            localServerUrl: 'http://127.0.0.1:3009',
+            webappUrl: 'http://localhost:8081',
+            createdAt: Date.now() - 5_000,
+            updatedAt: Date.now() - 5_000,
+            lastUsedAt: Date.now() - 5_000,
+          },
+        },
+      },
+      null,
+      2
+    ),
+    'utf-8'
+  );
+
+  const invocation = buildStackTauriDevProcessInvocation({
+    rootDir: stackRootDir,
+    env: {
+      ...process.env,
+      PATH: '/usr/bin:/bin',
+      HOME: isolatedHome,
+      USERPROFILE: isolatedHome,
+      HAPPIER_STACK_STACK: 'activity-surfaces-qa',
+      HAPPIER_STACK_CLI_HOME_DIR: cliHomeDir,
+      HAPPIER_STACK_SERVER_PORT: '3009',
+      HAPPIER_HOME_DIR: '',
+      HAPPIER_SERVER_URL: '',
+      HAPPIER_ACTIVE_SERVER_ID: '',
+    },
+    configPath: 'src-tauri/tauri.publicdev.conf.json',
+    configOverride: {
+      build: {
+        beforeDevCommand: '',
+        devUrl: 'http://localhost:8081',
+      },
+    },
+    resolveUserHomeDir: () => realHome,
+  });
+
+  assert.equal(invocation.env?.HAPPIER_HOME_DIR, cliHomeDir);
+  assert.equal(invocation.env?.HAPPIER_SERVER_URL, 'http://127.0.0.1:3009');
+  assert.equal(invocation.env?.HAPPIER_ACTIVE_SERVER_ID, 'stack_activity-surfaces-qa__id_default');
+});
+
+test('buildStackTauriDevProcessInvocation seeds stack-scoped home and server env from the stack env file when the shell is missing them', async () => {
+  const stackRootDir = '/Users/leeroy/Documents/Development/happier/dev/apps/stack';
+  const realHome = await mkdir(`${tmpdir()}/happier-tauri-stack-env-real-${Date.now()}`, { recursive: true });
+  const isolatedHome = await mkdir(`${tmpdir()}/happier-tauri-stack-env-isolated-${Date.now()}`, { recursive: true });
+  const cargoBinDir = `${realHome}/.cargo/bin`;
+  const cliHomeDir = `${tmpdir()}/happier-tauri-stack-env-cli-home-${Date.now()}`;
+  await mkdir(cargoBinDir, { recursive: true });
+  await mkdir(cliHomeDir, { recursive: true });
+
+  const cargoBinary = `${cargoBinDir}/${process.platform === 'win32' ? 'cargo.exe' : 'cargo'}`;
+  await writeFile(cargoBinary, '#!/bin/sh\nexit 0\n', 'utf-8');
+  await chmod(cargoBinary, 0o755);
+
+  await writeFile(
+    `${cliHomeDir}/settings.json`,
+    JSON.stringify(
+      {
+        schemaVersion: 5,
+        activeServerId: 'stack_main__id_default',
+        servers: {
+          stack_main__id_default: {
+            id: 'stack_main__id_default',
+            serverUrl: 'http://127.0.0.1:3005',
+            localServerUrl: 'http://127.0.0.1:3005',
+            webappUrl: 'http://localhost:8081',
+          },
+          'stack_activity-surfaces-qa__id_default': {
+            id: 'stack_activity-surfaces-qa__id_default',
+            serverUrl: 'http://127.0.0.1:3009',
+            localServerUrl: 'http://127.0.0.1:3009',
+            webappUrl: 'http://localhost:8081',
+          },
+        },
+      },
+      null,
+      2
+    ),
+    'utf-8'
+  );
+
+  const invocation = buildStackTauriDevProcessInvocation({
+    rootDir: stackRootDir,
+    env: {
+      ...process.env,
+      PATH: '/usr/bin:/bin',
+      HOME: isolatedHome,
+      USERPROFILE: isolatedHome,
+      HAPPIER_STACK_STACK: 'activity-surfaces-qa',
+      HAPPIER_HOME_DIR: '',
+      HAPPIER_SERVER_URL: '',
+      HAPPIER_ACTIVE_SERVER_ID: '',
+    },
+    stackEnv: {
+      HAPPIER_STACK_CLI_HOME_DIR: cliHomeDir,
+      HAPPIER_STACK_SERVER_PORT: '3009',
+    },
+    configPath: 'src-tauri/tauri.publicdev.conf.json',
+    configOverride: {
+      build: {
+        beforeDevCommand: '',
+        devUrl: 'http://localhost:8081',
+      },
+    },
+    resolveUserHomeDir: () => realHome,
+  });
+
+  assert.equal(invocation.env?.HAPPIER_HOME_DIR, cliHomeDir);
+  assert.equal(invocation.env?.HAPPIER_SERVER_URL, 'http://127.0.0.1:3009');
+  assert.equal(invocation.env?.HAPPIER_ACTIVE_SERVER_ID, 'stack_activity-surfaces-qa__id_default');
+});
+
+test('buildStackTauriDevProcessInvocation lets the stack env file override stale shell server selection', async () => {
+  const stackRootDir = '/Users/leeroy/Documents/Development/happier/dev/apps/stack';
+  const realHome = await mkdir(`${tmpdir()}/happier-tauri-stack-env-authoritative-real-${Date.now()}`, { recursive: true });
+  const isolatedHome = await mkdir(`${tmpdir()}/happier-tauri-stack-env-authoritative-isolated-${Date.now()}`, { recursive: true });
+  const cargoBinDir = `${realHome}/.cargo/bin`;
+  const cliHomeDir = `${tmpdir()}/happier-tauri-stack-env-authoritative-cli-home-${Date.now()}`;
+  await mkdir(cargoBinDir, { recursive: true });
+  await mkdir(cliHomeDir, { recursive: true });
+
+  const cargoBinary = `${cargoBinDir}/${process.platform === 'win32' ? 'cargo.exe' : 'cargo'}`;
+  await writeFile(cargoBinary, '#!/bin/sh\nexit 0\n', 'utf-8');
+  await chmod(cargoBinary, 0o755);
+
+  const stackName = 'activity-surfaces-qa';
+  const stackServerId = `stack_${stackName}__id_default`;
+  await writeFile(
+    `${cliHomeDir}/settings.json`,
+    JSON.stringify(
+      {
+        schemaVersion: 5,
+        activeServerId: stackServerId,
+        servers: {
+          [stackServerId]: {
+            id: stackServerId,
+            name: 'Activity Surfaces QA',
+            serverUrl: 'http://127.0.0.1:3009',
+            localServerUrl: 'http://127.0.0.1:3009',
+            webappUrl: 'http://localhost:3009',
+          },
+        },
+      },
+      null,
+      2
+    ),
+    'utf-8'
+  );
+
+  const invocation = buildStackTauriDevProcessInvocation({
+    rootDir: stackRootDir,
+    env: {
+      ...process.env,
+      PATH: '/usr/bin:/bin',
+      HOME: isolatedHome,
+      USERPROFILE: isolatedHome,
+      HAPPIER_STACK_STACK: stackName,
+      HAPPIER_STACK_SERVER_PORT: '3005',
+      HAPPIER_STACK_CLI_HOME_DIR: `${tmpdir()}/unused-stack-cli-home-${Date.now()}`,
+      HAPPIER_HOME_DIR: '',
+      HAPPIER_SERVER_URL: 'http://remote.example.test:4010',
+      HAPPIER_WEBAPP_URL: 'https://app.happier.dev',
+      HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+    },
+    stackEnv: {
+      HAPPIER_STACK_CLI_HOME_DIR: cliHomeDir,
+      HAPPIER_STACK_SERVER_PORT: '3009',
+      HAPPIER_STACK_STACK: stackName,
+    },
+    configPath: 'src-tauri/tauri.publicdev.conf.json',
+    configOverride: {
+      build: {
+        beforeDevCommand: '',
+        devUrl: 'http://localhost:8081',
+      },
+    },
+    resolveUserHomeDir: () => realHome,
+  });
+
+  assert.equal(invocation.env?.HAPPIER_HOME_DIR, cliHomeDir);
+  assert.equal(invocation.env?.HAPPIER_SERVER_URL, 'http://127.0.0.1:3009');
+  assert.equal(invocation.env?.HAPPIER_WEBAPP_URL, 'http://localhost:3009');
+  assert.equal(invocation.env?.HAPPIER_ACTIVE_SERVER_ID, stackServerId);
+});
+
 test('buildTauriRuntimeEnv infers rustup home when cargo comes from an explicit CARGO_HOME but HOME is isolated', async () => {
   if (process.platform === 'win32') {
     // Path inference uses `.cargo/bin` semantics on POSIX; keep Windows coverage in the invocation tests.
@@ -422,6 +644,296 @@ test('buildTauriRuntimeEnv overrides a non-path CARGO env var with the resolved 
   });
 
   assert.equal(env.CARGO, cargoBinary);
+});
+
+test('buildTauriRuntimeEnv mirrors HAPPIER_STACK_CLI_HOME_DIR into HAPPIER_HOME_DIR when the canonical home is missing', async () => {
+  const realHome = await mkdir(`${tmpdir()}/happier-tauri-stack-home-real-${Date.now()}`, { recursive: true });
+  const stackCliHome = `${realHome}/stack-cli-home`;
+  const cargoBinDir = `${realHome}/.cargo/bin`;
+  await mkdir(cargoBinDir, { recursive: true });
+  await mkdir(stackCliHome, { recursive: true });
+  const cargoBinary = `${cargoBinDir}/${process.platform === 'win32' ? 'cargo.exe' : 'cargo'}`;
+  await writeFile(cargoBinary, '#!/bin/sh\nexit 0\n', 'utf-8');
+  await chmod(cargoBinary, 0o755);
+
+  const env = buildTauriRuntimeEnv({
+    env: {
+      ...process.env,
+      PATH: '/usr/bin:/bin',
+      HAPPIER_STACK_CLI_HOME_DIR: stackCliHome,
+      HAPPIER_HOME_DIR: '',
+    },
+    resolveUserHomeDir: () => realHome,
+  });
+
+  assert.equal(env.HAPPIER_STACK_CLI_HOME_DIR, stackCliHome);
+  assert.equal(env.HAPPIER_HOME_DIR, stackCliHome);
+});
+
+test('buildTauriRuntimeEnv preserves an explicit HAPPIER_HOME_DIR instead of overwriting it from HAPPIER_STACK_CLI_HOME_DIR', async () => {
+  const realHome = await mkdir(`${tmpdir()}/happier-tauri-stack-home-preserve-${Date.now()}`, { recursive: true });
+  const explicitHome = `${realHome}/explicit-home`;
+  const stackCliHome = `${realHome}/stack-cli-home`;
+  const cargoBinDir = `${realHome}/.cargo/bin`;
+  await mkdir(cargoBinDir, { recursive: true });
+  await mkdir(explicitHome, { recursive: true });
+  await mkdir(stackCliHome, { recursive: true });
+  const cargoBinary = `${cargoBinDir}/${process.platform === 'win32' ? 'cargo.exe' : 'cargo'}`;
+  await writeFile(cargoBinary, '#!/bin/sh\nexit 0\n', 'utf-8');
+  await chmod(cargoBinary, 0o755);
+
+  const env = buildTauriRuntimeEnv({
+    env: {
+      ...process.env,
+      PATH: '/usr/bin:/bin',
+      HAPPIER_STACK_CLI_HOME_DIR: stackCliHome,
+      HAPPIER_HOME_DIR: explicitHome,
+    },
+    resolveUserHomeDir: () => realHome,
+  });
+
+  assert.equal(env.HAPPIER_STACK_CLI_HOME_DIR, stackCliHome);
+  assert.equal(env.HAPPIER_HOME_DIR, explicitHome);
+});
+
+test('buildTauriRuntimeEnv overrides stale HAPPIER_SERVER_URL with the stack-local server and prefers the matching stack server profile id', async () => {
+  const realHome = await mkdir(`${tmpdir()}/happier-tauri-stack-scope-real-${Date.now()}`, { recursive: true });
+  const stackCliHome = `${realHome}/stack-cli-home`;
+  const cargoBinDir = `${realHome}/.cargo/bin`;
+  await mkdir(cargoBinDir, { recursive: true });
+  await mkdir(stackCliHome, { recursive: true });
+  const cargoBinary = `${cargoBinDir}/${process.platform === 'win32' ? 'cargo.exe' : 'cargo'}`;
+  await writeFile(cargoBinary, '#!/bin/sh\nexit 0\n', 'utf-8');
+  await chmod(cargoBinary, 0o755);
+
+  const stackName = 'activity-surfaces-qa';
+  const expectedServerId = buildStackStableScopeId({ stackName, cliIdentity: 'default' });
+  await writeFile(
+    `${stackCliHome}/settings.json`,
+    JSON.stringify(
+      {
+        schemaVersion: 6,
+        activeServerId: 'cloud',
+        servers: {
+          cloud: {
+            id: 'cloud',
+            name: 'Happier Cloud',
+            serverUrl: 'https://api.happier.dev',
+            webappUrl: 'https://app.happier.dev',
+          },
+          [expectedServerId]: {
+            id: expectedServerId,
+            name: 'Stack activity-surfaces-qa',
+            serverUrl: 'http://127.0.0.1:3009',
+            localServerUrl: 'http://127.0.0.1:3009',
+            webappUrl: 'http://localhost:3009',
+          },
+        },
+      },
+      null,
+      2,
+    ),
+    'utf-8',
+  );
+
+  const env = buildTauriRuntimeEnv({
+    env: {
+      ...process.env,
+      PATH: '/usr/bin:/bin',
+      HAPPIER_STACK_STACK: stackName,
+      HAPPIER_STACK_CLI_HOME_DIR: stackCliHome,
+      HAPPIER_STACK_SERVER_PORT: '3009',
+      HAPPIER_SERVER_URL: 'http://127.0.0.1:3005',
+      HAPPIER_WEBAPP_URL: '',
+    },
+    resolveUserHomeDir: () => realHome,
+  });
+
+  assert.equal(env.HAPPIER_SERVER_URL, 'http://127.0.0.1:3009');
+  assert.equal(env.HAPPIER_WEBAPP_URL, 'http://localhost:3009');
+  assert.equal(env.HAPPIER_ACTIVE_SERVER_ID, expectedServerId);
+});
+
+test('buildTauriRuntimeEnv falls back to the stable stack scope id when CLI settings do not contain a matching stack server profile', async () => {
+  const realHome = await mkdir(`${tmpdir()}/happier-tauri-stack-scope-fallback-${Date.now()}`, { recursive: true });
+  const stackCliHome = `${realHome}/stack-cli-home`;
+  const cargoBinDir = `${realHome}/.cargo/bin`;
+  await mkdir(cargoBinDir, { recursive: true });
+  await mkdir(stackCliHome, { recursive: true });
+  const cargoBinary = `${cargoBinDir}/${process.platform === 'win32' ? 'cargo.exe' : 'cargo'}`;
+  await writeFile(cargoBinary, '#!/bin/sh\nexit 0\n', 'utf-8');
+  await chmod(cargoBinary, 0o755);
+
+  const stackName = 'activity-surfaces-qa';
+  const expectedServerId = buildStackStableScopeId({ stackName, cliIdentity: 'default' });
+  await writeFile(
+    `${stackCliHome}/settings.json`,
+    JSON.stringify(
+      {
+        schemaVersion: 6,
+        activeServerId: 'stack_main__id_default',
+        servers: {
+          stack_main__id_default: {
+            id: 'stack_main__id_default',
+            name: 'Main Stack',
+            serverUrl: 'http://127.0.0.1:3005',
+            localServerUrl: 'http://127.0.0.1:3005',
+            webappUrl: 'http://localhost:3005',
+          },
+        },
+      },
+      null,
+      2,
+    ),
+    'utf-8',
+  );
+
+  const env = buildTauriRuntimeEnv({
+    env: {
+      ...process.env,
+      PATH: '/usr/bin:/bin',
+      HAPPIER_STACK_STACK: stackName,
+      HAPPIER_STACK_CLI_HOME_DIR: stackCliHome,
+      HAPPIER_STACK_SERVER_PORT: '3009',
+      HAPPIER_SERVER_URL: '',
+      HAPPIER_WEBAPP_URL: '',
+    },
+    resolveUserHomeDir: () => realHome,
+  });
+
+  assert.equal(env.HAPPIER_SERVER_URL, 'http://127.0.0.1:3009');
+  assert.equal(env.HAPPIER_WEBAPP_URL, 'http://localhost:3009');
+  assert.equal(env.HAPPIER_ACTIVE_SERVER_ID, expectedServerId);
+});
+
+test('buildTauriRuntimeEnv derives a stack-scoped HAPPIER_SERVER_URL and active server id from stack env when they are missing', async () => {
+  const realHome = await mkdir(`${tmpdir()}/happier-tauri-stack-scope-${Date.now()}`, { recursive: true });
+  const stackCliHome = `${realHome}/stack-cli-home`;
+  const cargoBinDir = `${realHome}/.cargo/bin`;
+  await mkdir(cargoBinDir, { recursive: true });
+  await mkdir(stackCliHome, { recursive: true });
+  const cargoBinary = `${cargoBinDir}/${process.platform === 'win32' ? 'cargo.exe' : 'cargo'}`;
+  await writeFile(cargoBinary, '#!/bin/sh\nexit 0\n', 'utf-8');
+  await chmod(cargoBinary, 0o755);
+
+  const env = buildTauriRuntimeEnv({
+    env: {
+      ...process.env,
+      PATH: '/usr/bin:/bin',
+      HAPPIER_STACK_STACK: 'activity-surfaces-qa',
+      HAPPIER_STACK_SERVER_PORT: '3009',
+      HAPPIER_STACK_CLI_HOME_DIR: stackCliHome,
+      HAPPIER_HOME_DIR: '',
+      HAPPIER_SERVER_URL: '',
+      HAPPIER_ACTIVE_SERVER_ID: '',
+    },
+    resolveUserHomeDir: () => realHome,
+  });
+
+  assert.equal(env.HAPPIER_HOME_DIR, stackCliHome);
+  assert.equal(env.HAPPIER_SERVER_URL, 'http://127.0.0.1:3009');
+  assert.equal(env.HAPPIER_ACTIVE_SERVER_ID, 'stack_activity-surfaces-qa__id_default');
+});
+
+test('buildTauriRuntimeEnv preserves explicit remote server selection when only HAPPIER_STACK_STACK is present', async () => {
+  const realHome = await mkdir(`${tmpdir()}/happier-tauri-stack-name-only-${Date.now()}`, { recursive: true });
+  const cargoBinDir = `${realHome}/.cargo/bin`;
+  await mkdir(cargoBinDir, { recursive: true });
+  const cargoBinary = `${cargoBinDir}/${process.platform === 'win32' ? 'cargo.exe' : 'cargo'}`;
+  await writeFile(cargoBinary, '#!/bin/sh\nexit 0\n', 'utf-8');
+  await chmod(cargoBinary, 0o755);
+
+  const env = buildTauriRuntimeEnv({
+    env: {
+      ...process.env,
+      PATH: '/usr/bin:/bin',
+      HAPPIER_STACK_STACK: 'activity-surfaces-qa',
+      HAPPIER_SERVER_URL: 'https://api.happier.dev',
+      HAPPIER_WEBAPP_URL: 'https://app.happier.dev',
+      HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+      HAPPIER_HOME_DIR: '',
+    },
+    resolveUserHomeDir: () => realHome,
+  });
+
+  assert.equal(env.HAPPIER_SERVER_URL, 'https://api.happier.dev');
+  assert.equal(env.HAPPIER_WEBAPP_URL, 'https://app.happier.dev');
+  assert.equal(env.HAPPIER_ACTIVE_SERVER_ID, 'cloud');
+});
+
+test('buildTauriRuntimeEnv prefers a matching server id from stack CLI settings over the derived stable scope', async () => {
+  const realHome = await mkdir(`${tmpdir()}/happier-tauri-stack-settings-${Date.now()}`, { recursive: true });
+  const stackCliHome = `${realHome}/stack-cli-home`;
+  const cargoBinDir = `${realHome}/.cargo/bin`;
+  await mkdir(cargoBinDir, { recursive: true });
+  await mkdir(stackCliHome, { recursive: true });
+  const cargoBinary = `${cargoBinDir}/${process.platform === 'win32' ? 'cargo.exe' : 'cargo'}`;
+  await writeFile(cargoBinary, '#!/bin/sh\nexit 0\n', 'utf-8');
+  await chmod(cargoBinary, 0o755);
+  await writeFile(
+    `${stackCliHome}/settings.json`,
+    JSON.stringify(
+      {
+        schemaVersion: 6,
+        activeServerId: 'custom-stack-server',
+        servers: {
+          'custom-stack-server': {
+            id: 'custom-stack-server',
+            serverUrl: 'http://127.0.0.1:3009',
+            localServerUrl: 'http://127.0.0.1:3009',
+            webappUrl: 'http://localhost:3009',
+          },
+        },
+      },
+      null,
+      2
+    ),
+    'utf-8'
+  );
+
+  const env = buildTauriRuntimeEnv({
+    env: {
+      ...process.env,
+      PATH: '/usr/bin:/bin',
+      HAPPIER_STACK_STACK: 'activity-surfaces-qa',
+      HAPPIER_STACK_SERVER_PORT: '3009',
+      HAPPIER_STACK_CLI_HOME_DIR: stackCliHome,
+      HAPPIER_HOME_DIR: '',
+      HAPPIER_SERVER_URL: '',
+      HAPPIER_ACTIVE_SERVER_ID: '',
+    },
+    resolveUserHomeDir: () => realHome,
+  });
+
+  assert.equal(env.HAPPIER_SERVER_URL, 'http://127.0.0.1:3009');
+  assert.equal(env.HAPPIER_ACTIVE_SERVER_ID, 'custom-stack-server');
+});
+
+test('buildTauriRuntimeEnv preserves explicit server selection instead of overwriting it from stack defaults', async () => {
+  const realHome = await mkdir(`${tmpdir()}/happier-tauri-stack-scope-preserve-${Date.now()}`, { recursive: true });
+  const stackCliHome = `${realHome}/stack-cli-home`;
+  const cargoBinDir = `${realHome}/.cargo/bin`;
+  await mkdir(cargoBinDir, { recursive: true });
+  await mkdir(stackCliHome, { recursive: true });
+  const cargoBinary = `${cargoBinDir}/${process.platform === 'win32' ? 'cargo.exe' : 'cargo'}`;
+  await writeFile(cargoBinary, '#!/bin/sh\nexit 0\n', 'utf-8');
+  await chmod(cargoBinary, 0o755);
+
+  const env = buildTauriRuntimeEnv({
+    env: {
+      ...process.env,
+      PATH: '/usr/bin:/bin',
+      HAPPIER_STACK_STACK: 'activity-surfaces-qa',
+      HAPPIER_STACK_CLI_HOME_DIR: stackCliHome,
+      HAPPIER_STACK_SERVER_PORT: '3009',
+      HAPPIER_SERVER_URL: 'http://remote.example.test:4010',
+      HAPPIER_ACTIVE_SERVER_ID: 'env_deadbeef',
+    },
+    resolveUserHomeDir: () => realHome,
+  });
+
+  assert.equal(env.HAPPIER_SERVER_URL, 'http://remote.example.test:4010');
+  assert.equal(env.HAPPIER_ACTIVE_SERVER_ID, 'env_deadbeef');
 });
 
 test('buildStackTauriDevProcessInvocation fails fast with a friendly error when cargo is unavailable', async () => {

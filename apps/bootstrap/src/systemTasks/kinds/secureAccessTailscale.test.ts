@@ -411,4 +411,207 @@ describe('createSecureAccessTailscaleHandler', () => {
             shareableHttpsUrl: 'https://relay.tailf00.ts.net',
         }));
     });
+
+    it('uses the SSH relay host target for Tailscale readiness inspection and relay-access configuration', async () => {
+        const { createSecureAccessTailscaleHandler } = await import('./secureAccessTailscale.js');
+
+        const remoteRunCommand = vi.fn(async () => ({
+            command: 'tailscale',
+            args: ['status', '--json'],
+            exitCode: 0,
+            stdout: JSON.stringify({
+                backendState: 'Running',
+                authUrl: null,
+                dnsName: 'relay.tailf00.ts.net',
+                tailnetName: 'example-tailnet',
+                tailscaleIps: ['100.64.0.10'],
+                loggedIn: true,
+            }),
+            stderr: '',
+        }));
+        tailscaleMocks.runTailscaleStatusJson.mockResolvedValue({
+            backendState: 'Running',
+            authUrl: null,
+            dnsName: 'relay.tailf00.ts.net',
+            tailnetName: 'example-tailnet',
+            tailscaleIps: ['100.64.0.10'],
+            loggedIn: true,
+        });
+        const createExecutionContext = vi.fn(() => ({
+            env: process.env,
+            upstreamUrl: 'http://127.0.0.1:3005',
+            runCommand: remoteRunCommand,
+            resolveCommandOnPath: (command: string) => command,
+        }));
+        const configure = vi.fn(async () => ({
+            state: 'enabled' as const,
+            shareUrl: 'https://relay.tailf00.ts.net',
+        }));
+        const status = vi.fn()
+            .mockResolvedValueOnce({
+                state: 'disabled' as const,
+            })
+            .mockResolvedValueOnce({
+                state: 'enabled' as const,
+                shareUrl: 'https://relay.tailf00.ts.net',
+            });
+
+        const { result } = await collectHandlerRun({
+            handler: createSecureAccessTailscaleHandler({
+                relayAccess: {
+                    getProvider: vi.fn(() => ({
+                        descriptor: {
+                            id: 'tailscaleServe' as const,
+                            title: 'Tailscale Serve',
+                            exposure: 'private' as const,
+                            prerequisites: [],
+                        },
+                        configure,
+                        status,
+                        disable: vi.fn(),
+                    })),
+                    writeConfig: vi.fn(async () => undefined),
+                    createExecutionContext,
+                },
+            }),
+            input: {
+                target: {
+                    kind: 'ssh',
+                    ssh: {
+                        target: 'dev@example.test',
+                        auth: 'agent',
+                    },
+                },
+                upstreamUrl: 'http://127.0.0.1:3005',
+                servePath: '/',
+                installPolicy: 'skip',
+                loginPolicy: 'skip',
+            },
+        });
+
+        expect(tailscaleMocks.runTailscaleStatusJson).toHaveBeenCalledWith(
+            expect.objectContaining({ env: process.env }),
+            expect.objectContaining({
+                runCommand: remoteRunCommand,
+                resolveCommandOnPath: expect.any(Function),
+            }),
+        );
+        expect(createExecutionContext).toHaveBeenCalledWith({
+            target: {
+                kind: 'ssh',
+                ssh: {
+                    target: 'dev@example.test',
+                    auth: 'agent',
+                },
+            },
+            upstreamUrl: 'http://127.0.0.1:3005',
+        });
+        expect(configure).toHaveBeenCalledWith(expect.objectContaining({
+            ctx: expect.objectContaining({
+                runCommand: remoteRunCommand,
+                upstreamUrl: 'http://127.0.0.1:3005',
+            }),
+        }));
+        expect(status).toHaveBeenCalledWith(expect.objectContaining({
+            ctx: expect.objectContaining({
+                runCommand: remoteRunCommand,
+                upstreamUrl: 'http://127.0.0.1:3005',
+            }),
+        }));
+        expect(result).toEqual(expect.objectContaining({
+            shareableHttpsUrl: 'https://relay.tailf00.ts.net',
+            serveEnabled: true,
+            requiresApproval: null,
+        }));
+    });
+
+    it('prompts for manual install when an SSH relay host is missing tailscale', async () => {
+        const { createSecureAccessTailscaleHandler } = await import('./secureAccessTailscale.js');
+
+        tailscaleMocks.runTailscaleStatusJson.mockRejectedValue(new Error('tailscale cli not found'));
+        const remoteRunCommand = vi.fn(async () => ({
+            command: 'sh',
+            args: ['-lc', "uname -s | tr '[:upper:]' '[:lower:]'"],
+            exitCode: 0,
+            stdout: 'linux\n',
+            stderr: '',
+        }));
+        const createExecutionContext = vi.fn(() => ({
+            env: process.env,
+            upstreamUrl: 'http://127.0.0.1:3005',
+            runCommand: remoteRunCommand,
+            resolveCommandOnPath: (command: string) => command,
+        }));
+
+        const iterator = createSecureAccessTailscaleHandler({
+            relayAccess: {
+                getProvider: vi.fn(() => {
+                    throw new Error('provider resolution should not run before tailscale is installed');
+                }),
+                writeConfig: vi.fn(async () => undefined),
+                createExecutionContext,
+            },
+        })({
+            target: {
+                kind: 'ssh',
+                ssh: {
+                    target: 'dev@example.test',
+                    auth: 'agent',
+                },
+            },
+            upstreamUrl: 'http://127.0.0.1:3005',
+            installPolicy: 'installIfMissing',
+            loginPolicy: 'skip',
+        });
+
+        await expect(iterator.next()).resolves.toEqual(expect.objectContaining({
+            done: false,
+            value: expect.objectContaining({ type: 'progress', stepId: 'tailscale.detect' }),
+        }));
+        await expect(iterator.next()).resolves.toEqual(expect.objectContaining({
+            done: false,
+            value: expect.objectContaining({ type: 'progress', stepId: 'tailscale.install' }),
+        }));
+        await expect(iterator.next()).resolves.toEqual(expect.objectContaining({
+            done: false,
+            value: expect.objectContaining({
+                type: 'prompt',
+                stepId: 'tailscale.install',
+                data: expect.objectContaining({
+                    kind: 'tailscaleInstall',
+                    platform: 'linux',
+                }),
+            }),
+        }));
+        await expect(iterator.next()).rejects.toMatchObject({
+            code: 'prompt_required',
+        });
+    });
+
+    it('rejects malformed relay host targets instead of silently falling back to local execution', async () => {
+        const { createSecureAccessTailscaleHandler } = await import('./secureAccessTailscale.js');
+
+        const handler = createSecureAccessTailscaleHandler({
+            inspectState: vi.fn(async () => ({
+                installed: true,
+                loggedIn: true,
+                authUrl: null,
+                shareableHttpsUrl: 'https://relay.tailf00.ts.net',
+            })),
+        });
+
+        await expect(collectHandlerRun({
+            handler,
+            input: {
+                target: {
+                    kind: 'bogus',
+                },
+                upstreamUrl: 'http://127.0.0.1:3005',
+                installPolicy: 'skip',
+                loginPolicy: 'skip',
+            },
+        })).rejects.toMatchObject({
+            code: 'invalid_params',
+        });
+    });
 });

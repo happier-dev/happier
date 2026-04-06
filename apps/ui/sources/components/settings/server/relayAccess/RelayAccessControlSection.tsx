@@ -6,7 +6,9 @@ import { relayAccessProviderIds, type RelayAccessConfig, type RelayAccessProvide
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 
 import { getDefaultSystemTaskRunner, SystemTaskProgressCard } from '@/components/systemTasks';
+import { readLatestSystemTaskPrompt } from '@/components/systemTasks/prompts/readLatestSystemTaskPrompt';
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
+import { ActionCard } from '@/components/ui/cards/ActionCard';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SelectableRow } from '@/components/ui/lists/SelectableRow';
@@ -16,8 +18,13 @@ import { Modal } from '@/modal';
 import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { setActiveShareableServerUrl, setServerProfileShareableUrl } from '@/sync/domains/server/serverRuntime';
 import { t } from '@/text';
+import { openExternalUrl } from '@/utils/url/openExternalUrl';
 
-import { relayAccessProviderRequiresDetailsStep, relayAccessProviderUiCatalog } from './relayAccessUiCatalog';
+import {
+    relayAccessProviderSupportsTarget,
+    relayAccessProviderUiCatalog,
+    relayAccessProviderUsesPrerequisitesStep,
+} from './relayAccessUiCatalog';
 import { useRelayAccessControl } from './useRelayAccessControl';
 
 function resolveStatusSubtitle(state: string | null | undefined): string {
@@ -36,7 +43,13 @@ function resolveStatusSubtitle(state: string | null | undefined): string {
     }
 }
 
+function readRelayAccessPromptUrl(snapshot: ReturnType<typeof readLatestSystemTaskPrompt>): string | null {
+    const rawUrl = typeof snapshot?.data.url === 'string' ? snapshot.data.url.trim() : '';
+    return rawUrl || null;
+}
+
 export type RelayAccessControlSectionProps = Readonly<{
+    testID?: string;
     runner?: SystemTaskRunner;
     onShareUrlChange?: (shareUrl: string | null) => void;
     serverProfileId?: string | null;
@@ -48,11 +61,17 @@ export type RelayAccessControlSectionProps = Readonly<{
     onWizardRequestProviderDetails?: (providerId: RelayAccessProviderId) => void;
     onWizardSelectedProviderIdChange?: (providerId: RelayAccessProviderId) => void;
     wizardSelectedProviderId?: RelayAccessProviderId | null;
+    forcedProviderId?: RelayAccessProviderId | null;
+    showProviderChoices?: boolean;
+    allowWizardDetailsRedirect?: boolean;
 }>;
 
 export const RelayAccessControlSection = React.memo(function RelayAccessControlSection(props: RelayAccessControlSectionProps) {
     const runner = props.runner ?? getDefaultSystemTaskRunner();
     const presentation = props.presentation ?? 'settings';
+    const showProviderChoices = props.showProviderChoices ?? true;
+    const allowWizardDetailsRedirect = props.allowWizardDetailsRedirect ?? true;
+    const target = props.target ?? { kind: 'local' as const };
     const onWizardPrimaryChange = props.onWizardPrimaryChange;
     const onRequestAdvance = props.onRequestAdvance;
     const { theme } = useUnistyles();
@@ -63,6 +82,7 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
     }, [props.upstreamUrl]);
     const {
         activeTaskSnapshot,
+        actionSnapshot,
         configure,
         disable,
         isBusy,
@@ -70,7 +90,7 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
         lastErrorMessage,
         refreshStatus,
         snapshot,
-    } = useRelayAccessControl({ runner, upstreamUrl: normalizedUpstreamUrl, target: props.target });
+    } = useRelayAccessControl({ runner, upstreamUrl: normalizedUpstreamUrl, target });
 
     const resolvedProviderId = snapshot?.providerId ?? null;
     const resolvedShareUrl = snapshot?.status?.shareUrl ?? null;
@@ -78,7 +98,8 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
     const resolvedConfigured = snapshot?.configured === true;
 
     const [selectedProviderId, setSelectedProviderId] = React.useState<RelayAccessProviderId>(() => (
-        resolvedProviderId
+        props.forcedProviderId
+            ?? resolvedProviderId
             ?? (presentation === 'wizard'
                 ? (props.wizardSelectedProviderId ?? 'localOnly')
                 : 'lan')
@@ -87,13 +108,22 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
     const [cloudflareHostnameDraft, setCloudflareHostnameDraft] = React.useState('');
     const [cloudflareTokenDraft, setCloudflareTokenDraft] = React.useState('');
     const [advanceAfterSaveRequested, setAdvanceAfterSaveRequested] = React.useState(false);
+    const latestPromptSnapshot = actionSnapshot ?? activeTaskSnapshot;
+    const latestPrompt = React.useMemo(
+        () => readLatestSystemTaskPrompt(latestPromptSnapshot ?? null),
+        [latestPromptSnapshot],
+    );
 
     React.useEffect(() => {
+        if (props.forcedProviderId) {
+            setSelectedProviderId(props.forcedProviderId);
+            return;
+        }
         if (!resolvedProviderId) {
             return;
         }
         setSelectedProviderId(resolvedProviderId);
-    }, [resolvedProviderId]);
+    }, [props.forcedProviderId, resolvedProviderId]);
 
     React.useEffect(() => {
         if (presentation !== 'wizard') return;
@@ -104,7 +134,15 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
     }, [presentation, props.wizardSelectedProviderId, resolvedProviderId]);
 
     const visibleProviderIds = React.useMemo(() => {
+        if (props.forcedProviderId) {
+            return relayAccessProviderSupportsTarget(props.forcedProviderId, target)
+                ? [props.forcedProviderId]
+                : relayAccessProviderIds.filter((providerId) => relayAccessProviderSupportsTarget(providerId, target));
+        }
         return relayAccessProviderIds.filter((providerId) => {
+            if (!relayAccessProviderSupportsTarget(providerId, target)) {
+                return false;
+            }
             if (providerId === 'tailscaleServe' || providerId === 'tailscaleFunnel') {
                 return setupPolicy.relayAccess.allowTailscale;
             }
@@ -113,7 +151,7 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
             }
             return true;
         });
-    }, [setupPolicy.relayAccess.allowCloudflareTunnel, setupPolicy.relayAccess.allowTailscale]);
+    }, [props.forcedProviderId, setupPolicy.relayAccess.allowCloudflareTunnel, setupPolicy.relayAccess.allowTailscale, target]);
 
     React.useEffect(() => {
         if (visibleProviderIds.includes(selectedProviderId)) {
@@ -217,6 +255,47 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
         snapshot,
     ]);
 
+    const relayAccessPromptCard = React.useMemo(() => {
+        if (!latestPrompt) {
+            return null;
+        }
+
+        const promptUrl = readRelayAccessPromptUrl(latestPrompt);
+        if (!promptUrl) {
+            return null;
+        }
+
+        const canRetry = latestPromptSnapshot?.result != null;
+        return (
+            <ActionCard
+                testID="settings.server.relayAccess.promptCard"
+                title={latestPrompt.message || t('settings.machineSetupTaskWaitingForInput')}
+                description={promptUrl}
+                primaryAction={{
+                    label: t('common.open'),
+                    onPress: async () => {
+                        await openExternalUrl(promptUrl, { platformOS: Platform.OS });
+                    },
+                }}
+                secondaryAction={canRetry
+                    ? {
+                        label: t('common.retry'),
+                        onPress: () => {
+                            void save();
+                        },
+                    }
+                    : activeTaskSnapshot
+                        ? {
+                            label: t('common.cancel'),
+                            onPress: () => {
+                                cancel();
+                            },
+                        }
+                        : undefined}
+            />
+        );
+    }, [activeTaskSnapshot, cancel, latestPrompt, latestPromptSnapshot?.result, save]);
+
     const selectedProviderDraftValid = React.useMemo(() => {
         if (!selectedProviderNeedsDraftConfig) return true;
         if (selectedProviderId === 'lan') {
@@ -235,7 +314,7 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
     ]);
 
     const handleWizardPrimaryPress = React.useCallback(async () => {
-        if (presentation === 'wizard' && relayAccessProviderRequiresDetailsStep(selectedProviderId)) {
+        if (presentation === 'wizard' && allowWizardDetailsRedirect && relayAccessProviderUsesPrerequisitesStep(selectedProviderId)) {
             props.onWizardRequestProviderDetails?.(selectedProviderId);
             return;
         }
@@ -257,6 +336,7 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
         setAdvanceAfterSaveRequested(true);
     }, [
         onRequestAdvance,
+        allowWizardDetailsRedirect,
         presentation,
         props.onWizardRequestProviderDetails,
         save,
@@ -268,8 +348,11 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
     React.useEffect(() => {
         if (!advanceAfterSaveRequested) return;
         if (isBusy) return;
-        if (!snapshot) {
+        if (lastErrorMessage) {
             setAdvanceAfterSaveRequested(false);
+            return;
+        }
+        if (!snapshot) {
             return;
         }
         if (snapshot.configured === true && snapshot.providerId === selectedProviderId) {
@@ -277,13 +360,12 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
             onRequestAdvance?.();
             return;
         }
-        setAdvanceAfterSaveRequested(false);
-    }, [advanceAfterSaveRequested, isBusy, onRequestAdvance, selectedProviderId, snapshot]);
+    }, [advanceAfterSaveRequested, isBusy, lastErrorMessage, onRequestAdvance, selectedProviderId, snapshot]);
 
     React.useEffect(() => {
         if (presentation !== 'wizard') return;
         if (!onWizardPrimaryChange) return;
-        const requiresDetailsStep = relayAccessProviderRequiresDetailsStep(selectedProviderId);
+        const requiresDetailsStep = allowWizardDetailsRedirect && relayAccessProviderUsesPrerequisitesStep(selectedProviderId);
         onWizardPrimaryChange({
             label: t('common.continue'),
             disabled: isBusy || isUnavailable || (!requiresDetailsStep && !selectedProviderDraftValid && selectedProviderNeedsDraftConfig),
@@ -296,6 +378,7 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
         handleWizardPrimaryPress,
         isBusy,
         isUnavailable,
+        allowWizardDetailsRedirect,
         onWizardPrimaryChange,
         presentation,
         selectedProviderDraftValid,
@@ -371,11 +454,13 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
         const overlayScrimColor = theme.colors.overlay?.scrimWizard ?? theme.colors.surface;
         const showBusyOverlay = isBusy && activeTaskSnapshot != null;
         return (
-            <View style={{ width: '100%', gap: 12, position: 'relative' }}>
+            <View testID={props.testID} style={{ width: '100%', gap: 12, position: 'relative' }}>
                 <View style={{ width: '100%', gap: 12 }}>
-                    <View style={{ width: '100%', gap: 8 }}>
-                        {providerChoiceRows}
-                    </View>
+                    {showProviderChoices ? (
+                        <View style={{ width: '100%', gap: 8 }}>
+                            {providerChoiceRows}
+                        </View>
+                    ) : null}
 
                     {lastErrorMessage ? (
                         <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
@@ -450,17 +535,22 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
                         )}
 
                         <View style={{ width: '100%', maxWidth: 420 }}>
-                            <SystemTaskProgressCard
-                                snapshot={activeTaskSnapshot}
-                                variant="checklistOnly"
-                                title={null}
-                                showStepMessages={false}
-                                showOpenLogs={false}
-                                onCancel={cancel}
-                            />
+                            <View style={{ width: '100%', gap: 12 }}>
+                                <SystemTaskProgressCard
+                                    snapshot={activeTaskSnapshot}
+                                    variant="checklistOnly"
+                                    title={null}
+                                    showStepMessages={false}
+                                    showOpenLogs={false}
+                                    onCancel={cancel}
+                                />
+                                {relayAccessPromptCard}
+                            </View>
                         </View>
                     </View>
                 ) : null}
+
+                {!showBusyOverlay ? relayAccessPromptCard : null}
             </View>
         );
     }
@@ -512,9 +602,11 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
                     disabled={isBusy || isUnavailable}
                 />
 
-                <View>
-                    {providerChoiceRows}
-                </View>
+                {showProviderChoices ? (
+                    <View>
+                        {providerChoiceRows}
+                    </View>
+                ) : null}
 
                 {providerConfigFields}
 
@@ -551,6 +643,7 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
                     onCancel={cancel}
                 />
             ) : null}
+            {relayAccessPromptCard}
         </>
     );
 });

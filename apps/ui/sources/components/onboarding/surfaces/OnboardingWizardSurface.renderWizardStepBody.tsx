@@ -14,11 +14,14 @@ import { WebDesktopRelayHostHandoffContent } from '@/components/onboarding/steps
 import { WebDesktopBackgroundServiceHandoffContent } from '@/components/onboarding/steps/webDesktop/WebDesktopBackgroundServiceHandoffContent';
 import { LocalRelayAccessControlSection } from '@/components/settings/server/localControl/LocalRelayAccessControlSection';
 import { ServerReachabilityRemediationCard } from '@/components/settings/server/sections/ServerReachabilityRemediationCard';
+import type {
+    EndpointReachabilityRemediation,
+    EndpointReachabilityRemediationAction,
+} from '@/components/serverReachability/remediation';
 import type { RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 import { RelayAccessPrerequisitesStep } from '@/components/onboarding/steps/relayAccess/RelayAccessPrerequisitesStep';
 import type { SystemTaskRunState } from '@/components/systemTasks/types';
-import type { EndpointReachabilityRemediation, EndpointReachabilityRemediationAction } from '@/sync/runtime/connectivity/resolveEndpointReachabilityRemediation';
 
 import { RestoreIndexEmbedded } from '@/components/onboarding/restore/RestoreIndexEmbedded';
 import { LostAccessEmbedded } from '@/components/onboarding/restore/LostAccessEmbedded';
@@ -74,6 +77,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
     onUrlDraftChange: (next: string) => void;
 
     relaySelectionServerUrl: string | null;
+    confirmRelayUrl: string | null;
     serverProfileId: string | null;
     relayAccessTarget: RelayAccessTaskTarget;
     lastKnownSnapshotRelayUrl: string;
@@ -81,6 +85,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
     reachabilityRemediationTaskSnapshot: SystemTaskRunState | null;
     reachabilityRemediationError: string | null;
     onReachabilityRemediationAction: (actionId: EndpointReachabilityRemediationAction['id']) => Promise<void>;
+    onRelayAccessShareUrlChange: (shareUrl: string | null) => void;
 
     relaySwitchDecision: RelaySwitchDecision;
     onRelaySwitchDecisionChange: (next: RelaySwitchDecision) => void;
@@ -273,6 +278,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
                 serverProfileId={params.serverProfileId}
                 target={params.relayAccessTarget}
                 presentation="wizard"
+                onShareUrlChange={params.onRelayAccessShareUrlChange}
                 onWizardPrimaryChange={params.onWizardPrimaryChange}
                 onRequestAdvance={params.onRelayAccessAdvance}
                 onWizardSelectedProviderIdChange={params.onRelayAccessProviderIdChange}
@@ -322,7 +328,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
             <>
                 <ConfirmSwitchRelayStep
                     testIDPrefix={params.testIDPrefix}
-                    relayUrl={params.relaySelectionServerUrl ?? ''}
+                    relayUrl={params.confirmRelayUrl ?? ''}
                     decision={params.relaySwitchDecision}
                     onDecisionChange={params.onRelaySwitchDecisionChange}
                 />
