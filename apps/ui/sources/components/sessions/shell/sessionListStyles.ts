@@ -22,13 +22,6 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
     },
     listHeaderSection: {
         backgroundColor: theme.colors.groupped.background,
-        position: 'relative' as const,
-    },
-    listHeaderMenuAnchor: {
-        position: 'absolute' as const,
-        top: 8,
-        right: 24,
-        zIndex: 1,
     },
     listHeaderMenuButton: {
         width: 28,
@@ -89,17 +82,28 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
     headerRow: {
         flexDirection: 'row' as const,
         alignItems: 'center' as const,
+        justifyContent: 'space-between' as const,
     },
     headerLabelRow: {
         flexDirection: 'row' as const,
         alignItems: 'center' as const,
         gap: 4,
+        flex: 1,
+        minWidth: 0,
     },
     headerChevron: {
         width: 18,
         alignItems: 'center' as const,
         justifyContent: 'center' as const,
         color: theme.colors.textSecondary,
+    },
+    headerActionButton: {
+        width: 18,
+        height: 14,
+        alignItems: 'center' as const,
+        justifyContent: 'center' as const,
+        borderRadius: 999,
+        marginLeft: 4,
     },
     groupHeaderChevron: {
         width: 18,
