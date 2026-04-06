@@ -226,7 +226,7 @@ describe('ProviderSetupFlow', () => {
             .map((step) => (typeof step.code === 'string' ? step.code : ''))
             .join('\n');
         expect(codes).toContain('curl -fsSL https://happier.dev/install | bash');
-        expect(codes).toContain('--run providers-setup');
+        expect(codes).toContain('&& happier providers setup');
     });
 
     it('renders a wizard-friendly CLI handoff on web when running in wizard presentation', async () => {

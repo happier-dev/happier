@@ -23,9 +23,9 @@ import { SystemTaskProgressCard } from '@/components/systemTasks/SystemTaskProgr
 import { readLatestSystemTaskPrompt } from '@/components/systemTasks/prompts/readLatestSystemTaskPrompt';
 import { useSshSystemTaskPromptModals } from '@/components/systemTasks/ssh/useSshSystemTaskPromptModals';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { buildRemoteSshManageHostSystemTaskSpec } from '@/components/systemTasks/specs/remoteSsh/buildRemoteSshManageHostSystemTaskSpec';
 
 import { RemoteHostForm } from './RemoteHostForm';
-import { buildRemoteSshManageHostSystemTaskSpec } from './buildRemoteSshManageHostSystemTaskSpec';
 import { resolvePreferredPublicReleaseRingLabelForCurrentApp } from '@/sync/runtime/resolvePublicReleaseRing';
 
 function sortByLastUsedDesc(hosts: readonly RemoteHost[]): RemoteHost[] {
