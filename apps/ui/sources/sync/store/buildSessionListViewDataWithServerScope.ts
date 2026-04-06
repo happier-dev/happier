@@ -1,6 +1,7 @@
 import { getServerProfileById } from '../domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '../domains/server/serverRuntime';
 import { buildSessionListViewData, type SessionListViewItem } from '../domains/session/listing/sessionListViewData';
+import { normalizeTrimmedString } from '../domains/session/listing/normalizeTrimmedString';
 import type { MachineDisplayRenderable } from '../domains/machines/machineDisplayRenderable';
 import {
     type MachineResolutionContext,
@@ -10,6 +11,11 @@ import {
 } from '../domains/session/resolveSessionReachableMachineId';
 import type { SessionListRenderableSession } from '../domains/session/listing/sessionListRenderable';
 import type { Machine, Session } from '../domains/state/storageTypes';
+import {
+    buildComparableBasePathPeerSessions,
+    listComparableBasePathPeerSessions,
+    type ReachableTargetPeerSession,
+} from './buildComparableBasePathPeerSessions';
 
 type ProjectLookupResult = {
     key?: {
@@ -41,6 +47,14 @@ type NormalizedSessionProjectionInput = Readonly<{
     comparableBasePath: string | null;
 }>;
 
+type NormalizedSessionProjectionBase = Readonly<Pick<
+    NormalizedSessionProjectionInput,
+    'sessionMachineId' | 'sessionHostHint' | 'projectMachineId'
+> & Readonly<{
+    projectPath: string | null;
+    comparableProjectPath: string | null;
+}>>;
+
 type NormalizedSessionPeerProjection = Readonly<Pick<
     NormalizedSessionProjectionInput,
     'sessionMachineId' | 'sessionHostHint' | 'projectMachineId'
@@ -48,6 +62,11 @@ type NormalizedSessionPeerProjection = Readonly<Pick<
     comparableProjectPath: string | null;
     comparableBasePath: string | null;
 }>>;
+
+type NormalizedSessionProjectionArtifacts = Readonly<{
+    input: NormalizedSessionProjectionInput;
+    peer: NormalizedSessionPeerProjection;
+}>;
 
 type NormalizedSessionRecordMetadata = Readonly<{
     sessionMachineId: string | null;
@@ -62,22 +81,11 @@ type NormalizedTargetMachineMetadata = Readonly<{
     host: string | null;
 }>;
 
-type ReachableTargetPeerSession = Readonly<{
-    id: string;
-    active: boolean;
-    updatedAt: number;
-    machineId: string | null;
-    hostHint: string | null;
-    projectMachineId: string | null;
-}>;
-
 type ReachableTargetFallbackEntry = Readonly<{
     sessionId: string;
     normalizedProjectionInput: NormalizedSessionProjectionInput;
     directTarget: SessionMachineRpcTarget;
 }>;
-
-const EMPTY_REACHABLE_TARGET_PEER_SESSIONS: readonly ReachableTargetPeerSession[] = [];
 
 function applySessionOverrideMap(
     sessions: Record<string, SessionListRenderableSession>,
@@ -93,19 +101,13 @@ function applySessionOverrideMap(
     return nextSessions;
 }
 
-function normalizeNonEmptyString(value: unknown): string | null {
-    if (typeof value !== 'string') return null;
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
-}
-
 function buildNormalizedSessionRecordMetadata(sessionRecord: Session): NormalizedSessionRecordMetadata {
     const metadata = sessionRecord.metadata ?? null;
-    const sessionPath = normalizeNonEmptyString(metadata?.path);
-    const sessionHomeDir = normalizeNonEmptyString(metadata?.homeDir);
+    const sessionPath = normalizeTrimmedString(metadata?.path) || null;
+    const sessionHomeDir = normalizeTrimmedString(metadata?.homeDir) || null;
     return {
-        sessionMachineId: normalizeNonEmptyString(metadata?.machineId),
-        sessionHostHint: normalizeNonEmptyString(metadata?.host),
+        sessionMachineId: normalizeTrimmedString(metadata?.machineId) || null,
+        sessionHostHint: normalizeTrimmedString(metadata?.host) || null,
         sessionPath,
         sessionHomeDir,
         comparableSessionPath: normalizeSessionPathForComparison(sessionPath, sessionHomeDir),
@@ -146,6 +148,19 @@ function projectSessionRenderableMetadata(input: Readonly<{
     };
 }
 
+function projectReachableSessionRenderableMetadata(input: Readonly<{
+    session: SessionListRenderableSession;
+    target: Readonly<{ machineId: string; basePath: string }>;
+    readCachedNormalizedTargetMachineMetadata: (machineId: string) => NormalizedTargetMachineMetadata;
+}>): SessionListRenderableSession {
+    return projectSessionRenderableMetadata({
+        session: input.session,
+        targetMachineId: input.target.machineId,
+        targetBasePath: input.target.basePath,
+        targetMachineMetadata: input.readCachedNormalizedTargetMachineMetadata(input.target.machineId),
+    });
+}
+
 function readNormalizedTargetMachineMetadata(input: Readonly<{
     machineId: string;
     machineRecords: Record<string, Machine>;
@@ -157,43 +172,51 @@ function readNormalizedTargetMachineMetadata(input: Readonly<{
     }
     const machine = input.machineRecords[input.machineId];
     const metadata = {
-        homeDir: normalizeNonEmptyString(machine?.metadata?.homeDir),
-        host: normalizeNonEmptyString(machine?.metadata?.host),
+        homeDir: normalizeTrimmedString(machine?.metadata?.homeDir) || null,
+        host: normalizeTrimmedString(machine?.metadata?.host) || null,
     } satisfies NormalizedTargetMachineMetadata;
     input.cache.set(input.machineId, metadata);
     return metadata;
 }
 
-function buildNormalizedSessionProjectionInput(input: Readonly<{
+function buildNormalizedSessionProjectionBase(input: Readonly<{
     normalizedSessionMetadata: NormalizedSessionRecordMetadata;
     project: ProjectLookupResult;
-}>): NormalizedSessionProjectionInput {
-    const projectPath = normalizeNonEmptyString(input.project?.key?.rootPath);
-    const comparableProjectPath = normalizeSessionPathForComparison(projectPath, input.normalizedSessionMetadata.sessionHomeDir);
+}>): NormalizedSessionProjectionBase {
+    const projectPath = normalizeTrimmedString(input.project?.key?.rootPath) || null;
     return {
         sessionMachineId: input.normalizedSessionMetadata.sessionMachineId,
         sessionHostHint: input.normalizedSessionMetadata.sessionHostHint,
-        sessionPath: input.normalizedSessionMetadata.sessionPath,
-        sessionHomeDir: input.normalizedSessionMetadata.sessionHomeDir,
-        projectMachineId: normalizeNonEmptyString(input.project?.key?.machineId),
+        projectMachineId: normalizeTrimmedString(input.project?.key?.machineId) || null,
         projectPath,
-        comparableProjectPath,
-        comparableBasePath: comparableProjectPath ?? input.normalizedSessionMetadata.comparableSessionPath,
+        comparableProjectPath: normalizeSessionPathForComparison(projectPath, input.normalizedSessionMetadata.sessionHomeDir),
     };
 }
 
-function buildNormalizedSessionPeerProjection(input: Readonly<{
+function buildNormalizedSessionProjectionArtifacts(input: Readonly<{
     normalizedSessionMetadata: NormalizedSessionRecordMetadata;
     project: ProjectLookupResult;
-}>): NormalizedSessionPeerProjection {
-    const projectPath = normalizeNonEmptyString(input.project?.key?.rootPath);
-    const comparableProjectPath = normalizeSessionPathForComparison(projectPath, input.normalizedSessionMetadata.sessionHomeDir);
+}>): NormalizedSessionProjectionArtifacts {
+    const normalized = buildNormalizedSessionProjectionBase(input);
+    const inputProjection = {
+        sessionMachineId: normalized.sessionMachineId,
+        sessionHostHint: normalized.sessionHostHint,
+        sessionPath: input.normalizedSessionMetadata.sessionPath,
+        sessionHomeDir: input.normalizedSessionMetadata.sessionHomeDir,
+        projectMachineId: normalized.projectMachineId,
+        projectPath: normalized.projectPath,
+        comparableProjectPath: normalized.comparableProjectPath,
+        comparableBasePath: normalized.comparableProjectPath ?? input.normalizedSessionMetadata.comparableSessionPath,
+    } satisfies NormalizedSessionProjectionInput;
     return {
-        sessionMachineId: input.normalizedSessionMetadata.sessionMachineId,
-        sessionHostHint: input.normalizedSessionMetadata.sessionHostHint,
-        projectMachineId: normalizeNonEmptyString(input.project?.key?.machineId),
-        comparableProjectPath,
-        comparableBasePath: comparableProjectPath ?? input.normalizedSessionMetadata.comparableSessionPath,
+        input: inputProjection,
+        peer: {
+            sessionMachineId: inputProjection.sessionMachineId,
+            sessionHostHint: inputProjection.sessionHostHint,
+            projectMachineId: inputProjection.projectMachineId,
+            comparableProjectPath: inputProjection.comparableProjectPath,
+            comparableBasePath: inputProjection.comparableBasePath,
+        },
     };
 }
 
@@ -206,8 +229,7 @@ export function applyReachableTargetsToSessionListRenderables(
         return params.sessions;
     }
 
-    let normalizedProjectionInputBySessionId: Map<string, NormalizedSessionProjectionInput> | null = null;
-    let normalizedPeerProjectionBySessionId: Map<string, NormalizedSessionPeerProjection> | null = null;
+    let normalizedProjectionArtifactsBySessionId: Map<string, NormalizedSessionProjectionArtifacts> | null = null;
     let normalizedSessionMetadataBySessionId: Map<string, NormalizedSessionRecordMetadata> | null = null;
     let normalizedTargetMachineMetadataById: Map<string, NormalizedTargetMachineMetadata> | null = null;
     const readNormalizedSessionMetadata = (sessionId: string, sessionRecord: Session): NormalizedSessionRecordMetadata => {
@@ -220,35 +242,18 @@ export function applyReachableTargetsToSessionListRenderables(
         cache.set(sessionId, normalizedSessionMetadata);
         return normalizedSessionMetadata;
     };
-    const readNormalizedProjectionInput = (sessionId: string, sessionRecord: Session): NormalizedSessionProjectionInput => {
-        const cache = normalizedProjectionInputBySessionId ?? (normalizedProjectionInputBySessionId = new Map());
+    const readNormalizedProjectionArtifacts = (sessionId: string, sessionRecord: Session): NormalizedSessionProjectionArtifacts => {
+        const cache = normalizedProjectionArtifactsBySessionId ?? (normalizedProjectionArtifactsBySessionId = new Map());
         const cached = cache.get(sessionId);
         if (cached) {
             return cached;
         }
-        const normalizedProjectionInput = buildNormalizedSessionProjectionInput({
+        const normalizedProjectionArtifacts = buildNormalizedSessionProjectionArtifacts({
             normalizedSessionMetadata: readNormalizedSessionMetadata(sessionId, sessionRecord),
             project: params.getProjectForSession?.(sessionId) ?? null,
         });
-        cache.set(sessionId, normalizedProjectionInput);
-        return normalizedProjectionInput;
-    };
-    const readNormalizedPeerProjection = (sessionId: string, sessionRecord: Session): NormalizedSessionPeerProjection => {
-        const fullProjection = normalizedProjectionInputBySessionId?.get(sessionId);
-        if (fullProjection) {
-            return fullProjection;
-        }
-        const cache = normalizedPeerProjectionBySessionId ?? (normalizedPeerProjectionBySessionId = new Map());
-        const cached = cache.get(sessionId);
-        if (cached) {
-            return cached;
-        }
-        const normalizedPeerProjection = buildNormalizedSessionPeerProjection({
-            normalizedSessionMetadata: readNormalizedSessionMetadata(sessionId, sessionRecord),
-            project: params.getProjectForSession?.(sessionId) ?? null,
-        });
-        cache.set(sessionId, normalizedPeerProjection);
-        return normalizedPeerProjection;
+        cache.set(sessionId, normalizedProjectionArtifacts);
+        return normalizedProjectionArtifacts;
     };
     const readCachedNormalizedTargetMachineMetadata = (machineId: string): NormalizedTargetMachineMetadata =>
         readNormalizedTargetMachineMetadata({
@@ -268,7 +273,8 @@ export function applyReachableTargetsToSessionListRenderables(
         if (!sessionRecord || !session.metadata) {
             continue;
         }
-        const normalizedProjectionInput = readNormalizedProjectionInput(sessionId, sessionRecord);
+        const normalizedProjectionArtifacts = readNormalizedProjectionArtifacts(sessionId, sessionRecord);
+        const normalizedProjectionInput = normalizedProjectionArtifacts.input;
         if (!normalizedProjectionInput.sessionPath && !normalizedProjectionInput.projectPath) {
             continue;
         }
@@ -292,11 +298,10 @@ export function applyReachableTargetsToSessionListRenderables(
 
         if (!directTarget || !machineRecords[directTarget.machineId]) {
             if (directTarget && !normalizedProjectionInput.comparableBasePath) {
-                const projectedSession = projectSessionRenderableMetadata({
+                const projectedSession = projectReachableSessionRenderableMetadata({
                     session,
-                    targetMachineId: directTarget.machineId,
-                    targetBasePath: directTarget.basePath,
-                    targetMachineMetadata: readCachedNormalizedTargetMachineMetadata(directTarget.machineId),
+                    target: directTarget,
+                    readCachedNormalizedTargetMachineMetadata,
                 });
                 if (projectedSession !== session) {
                     (directProjectedOverrides ??= new Map()).set(sessionId, projectedSession);
@@ -332,62 +337,59 @@ export function applyReachableTargetsToSessionListRenderables(
         return applySessionOverrideMap(params.sessions, directProjectedOverrides);
     }
 
-    const peerSessionsByComparableBasePath = new Map<string, ReachableTargetPeerSession[]>();
     const unresolvedComparableBasePathsSet = unresolvedComparableBasePaths!;
-    if (unresolvedComparableBasePathsSet.size > 0) {
-        for (const sessionId in sessionRecords) {
-            const session = sessionRecords[sessionId];
-            const normalizedSessionMetadata = readNormalizedSessionMetadata(session.id, session);
-            const comparableMetadataPath = normalizedSessionMetadata.comparableSessionPath;
-            if (comparableMetadataPath && !unresolvedComparableBasePathsSet.has(comparableMetadataPath)) {
-                continue;
-            }
-            let normalizedPeerProjection: NormalizedSessionPeerProjection;
-            let comparablePeerBasePath: string | null = null;
-            if (comparableMetadataPath) {
-                comparablePeerBasePath = comparableMetadataPath;
-                normalizedPeerProjection = readNormalizedPeerProjection(sessionId, session);
-            } else {
-                normalizedPeerProjection = readNormalizedPeerProjection(sessionId, session);
+    const peerSessionsByComparableBasePath = unresolvedComparableBasePathsSet.size > 0
+        ? buildComparableBasePathPeerSessions({
+            sessionRecords,
+            unresolvedComparableBasePaths: unresolvedComparableBasePathsSet,
+            resolveComparableBasePathAndPeerSession: (sessionId, sessionRecord) => {
+                if (!sessionRecord.metadata) {
+                    return null;
+                }
+
+                const normalizedSessionMetadata = readNormalizedSessionMetadata(sessionId, sessionRecord);
+                const comparableSessionPath = normalizedSessionMetadata.comparableSessionPath;
+                if (comparableSessionPath) {
+                    if (!unresolvedComparableBasePathsSet.has(comparableSessionPath)) {
+                        return null;
+                    }
+
+                    const normalizedProjectionArtifacts = readNormalizedProjectionArtifacts(sessionId, sessionRecord);
+                    const normalizedPeerProjection = normalizedProjectionArtifacts.peer;
+                    return {
+                        comparableBasePath: comparableSessionPath,
+                        peerSession: {
+                            id: sessionRecord.id,
+                            active: sessionRecord.active,
+                            updatedAt: sessionRecord.updatedAt,
+                            machineId: normalizedPeerProjection.sessionMachineId,
+                            hostHint: normalizedPeerProjection.sessionHostHint,
+                            projectMachineId: normalizedPeerProjection.projectMachineId,
+                        },
+                    };
+                }
+
+                const normalizedProjectionArtifacts = readNormalizedProjectionArtifacts(sessionId, sessionRecord);
+                const normalizedPeerProjection = normalizedProjectionArtifacts.peer;
                 const comparableProjectPath = normalizedPeerProjection.comparableProjectPath;
                 if (!comparableProjectPath || !unresolvedComparableBasePathsSet.has(comparableProjectPath)) {
-                    continue;
+                    return null;
                 }
-                comparablePeerBasePath = normalizedPeerProjection.comparableBasePath;
-            }
 
-            const peerComparableBasePath = comparablePeerBasePath;
-            if (!peerComparableBasePath) {
-                continue;
-            }
-
-            let peerSessions = peerSessionsByComparableBasePath.get(peerComparableBasePath);
-            if (!peerSessions) {
-                peerSessions = [];
-                peerSessionsByComparableBasePath.set(peerComparableBasePath, peerSessions);
-            }
-            peerSessions.push({
-                id: session.id,
-                active: session.active,
-                updatedAt: session.updatedAt,
-                machineId: normalizedPeerProjection.sessionMachineId,
-                hostHint: normalizedPeerProjection.sessionHostHint,
-                projectMachineId: normalizedPeerProjection.projectMachineId,
-            });
-        }
-
-        for (const peerSessions of peerSessionsByComparableBasePath.values()) {
-            if (peerSessions.length > 1) {
-                peerSessions.sort((a, b) => {
-                    const activeDelta = Number(Boolean(b.active)) - Number(Boolean(a.active));
-                    if (activeDelta !== 0) {
-                        return activeDelta;
-                    }
-                    return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
-                });
-            }
-        }
-    }
+                return {
+                    comparableBasePath: comparableProjectPath,
+                    peerSession: {
+                        id: sessionRecord.id,
+                        active: sessionRecord.active,
+                        updatedAt: sessionRecord.updatedAt,
+                        machineId: normalizedPeerProjection.sessionMachineId,
+                        hostHint: normalizedPeerProjection.sessionHostHint,
+                        projectMachineId: normalizedPeerProjection.projectMachineId,
+                    },
+                };
+            },
+        })
+        : new Map<string, ReachableTargetPeerSession[]>();
 
     let nextSessions = applySessionOverrideMap(params.sessions, directProjectedOverrides);
     let nextSessionsChanged = (directProjectedOverrides?.size ?? 0) > 0;
@@ -398,10 +400,10 @@ export function applyReachableTargetsToSessionListRenderables(
     for (const peerFallbackEntry of peerFallbackEntries) {
         const { sessionId, normalizedProjectionInput, directTarget } = peerFallbackEntry;
         const session = params.sessions[sessionId];
-        const peerSessions = normalizedProjectionInput.comparableBasePath
-            ? (peerSessionsByComparableBasePath.get(normalizedProjectionInput.comparableBasePath)
-                ?? EMPTY_REACHABLE_TARGET_PEER_SESSIONS)
-            : EMPTY_REACHABLE_TARGET_PEER_SESSIONS;
+        const peerSessions = listComparableBasePathPeerSessions(
+            peerSessionsByComparableBasePath,
+            normalizedProjectionInput.comparableBasePath,
+        );
         const target = (!normalizedProjectionInput.comparableBasePath || peerSessions.length === 0)
             ? directTarget
             : resolveSessionMachineRpcTarget({
@@ -423,11 +425,10 @@ export function applyReachableTargetsToSessionListRenderables(
             continue;
         }
 
-        const projectedSession = projectSessionRenderableMetadata({
+        const projectedSession = projectReachableSessionRenderableMetadata({
             session,
-            targetMachineId: target.machineId,
-            targetBasePath: target.basePath,
-            targetMachineMetadata: readCachedNormalizedTargetMachineMetadata(target.machineId),
+            target,
+            readCachedNormalizedTargetMachineMetadata,
         });
         if (projectedSession === session) {
             continue;

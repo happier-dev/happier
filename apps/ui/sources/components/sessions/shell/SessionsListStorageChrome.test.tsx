@@ -71,6 +71,20 @@ describe('SessionsListStorageChrome', () => {
         expect(() => screen.findByType('ItemGroup' as never)).not.toThrow();
         expect(() => screen.findByProps({ testID: 'direct-sessions-browse-button' })).not.toThrow();
 
+        const firstItem = screen.findByType('Item');
+        const firstOnPress = firstItem.props.onPress;
+
+        await screen.update(
+            <SessionsListStorageChrome
+                directSessionsEnabled={true}
+                storageKind="direct"
+                onSelectStorageKind={() => {}}
+            />,
+        );
+
+        const secondItem = screen.findByType('Item');
+        expect(secondItem.props.onPress).toBe(firstOnPress);
+
         await screen.pressByTestIdAsync('direct-sessions-browse-button');
 
         expect(routerPushSpy).toHaveBeenCalledWith('/direct/browse');

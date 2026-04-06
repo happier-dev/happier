@@ -33,6 +33,7 @@ import {
 } from './sessionListRowHeights';
 import { clearSessionVisibleWhenInactive, stopSessionAndMaybeArchive } from '../sessionStopArchiveFlow';
 import { resolveSessionRowInteractionPolicy } from './row/resolveSessionRowInteractionPolicy';
+import { resolveSessionItemTagCollections } from './sessionTagUtils';
 
 const AVATAR_SIZE_DEFAULT = 48;
 const AVATAR_SIZE_COMPACT = 30;
@@ -464,8 +465,10 @@ export const SessionItem = React.memo(
         const supportsPin = typeof onTogglePinned === 'function';
         const supportsTag = tagsEnabled === true && typeof onSetTags === 'function';
         const showTagAction = supportsTag && showRowActions;
-        const activeTags = tags ?? [];
-        const knownTags = allKnownTags ?? [];
+        const { activeTags, knownTags } = React.useMemo(() => resolveSessionItemTagCollections({
+            tags,
+            allKnownTags,
+        }), [allKnownTags, tags]);
         const contextMenuAnchorRef = React.useRef<View>(null);
         const [uncontrolledContextMenuOpen, setUncontrolledContextMenuOpen] = React.useState(false);
         const contextMenuOpen = nativeContextMenuOpen ?? uncontrolledContextMenuOpen;
@@ -723,18 +726,16 @@ export const SessionItem = React.memo(
             handleMoreMenuSelect(itemId);
         }, [handleMoreMenuSelect, onTogglePinned]);
 
-        const avatarId = React.useMemo(() => {
-            return getSessionAvatarId(resolvedSession);
-        }, [resolvedSession]);
+        const avatarId = getSessionAvatarId(resolvedSession);
         const hasUnreadMessages = useHasUnreadMessages(resolvedSession.id);
+        const unreadIndicatorTestID = `session-list-item-unread-indicator-${resolvedSession.id}`;
         const pendingCount = resolvedSession.pendingCount ?? 0;
         const pendingBadge = formatPendingCountBadge(pendingCount);
         const meaningfulActivityAt = useSessionListMeaningfulActivityAt(resolvedSession.id);
 
-        const activityTimeLabel = React.useMemo(() => {
-            const ts = meaningfulActivityAt;
-            return typeof ts === 'number' && ts > 0 ? formatShortRelativeTime(ts) : '';
-        }, [meaningfulActivityAt]);
+        const activityTimeLabel = typeof meaningfulActivityAt === 'number' && meaningfulActivityAt > 0
+            ? formatShortRelativeTime(meaningfulActivityAt)
+            : '';
         const tagChipDensity: 'default' | 'compact' | 'minimal' = isMinimal ? 'minimal' : compact ? 'compact' : 'default';
         const tagLimit = isMinimal ? 1 : compact ? 2 : 3;
         const tagChips = React.useMemo(() => {
@@ -800,7 +801,7 @@ export const SessionItem = React.memo(
             >
                 {isMinimal ? (
                     <View style={styles.minimalIndicatorColumn}>
-                        {hasUnreadMessages ? <View style={styles.minimalUnreadDot} /> : null}
+                        {hasUnreadMessages ? <View testID={unreadIndicatorTestID} style={styles.minimalUnreadDot} /> : null}
                         <StatusDot color={sessionStatus.statusDotColor} isPulsing={sessionStatus.isPulsing} />
                     </View>
                 ) : (
@@ -811,6 +812,7 @@ export const SessionItem = React.memo(
                             monochrome={!sessionStatus.isConnected}
                             flavor={resolvedSession.metadata?.flavor}
                             hasUnreadMessages={hasUnreadMessages}
+                            unreadBadgeTestID={unreadIndicatorTestID}
                         />
                         {pendingBadge ? (
                             <View

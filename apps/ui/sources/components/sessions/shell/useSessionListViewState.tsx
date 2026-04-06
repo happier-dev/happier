@@ -34,43 +34,32 @@ export function useSessionListViewState(storageKind: SessionListStorageFilter) {
     const [collapsedGroupKeysV1, setCollapsedGroupKeysV1] = useSettingMutable('collapsedGroupKeysV1');
     const sessionListDensity = useSetting('sessionListDensity');
     const profile = useProfile();
-    const densityViewState = React.useMemo(() => resolveSessionListDensityViewState(sessionListDensity), [sessionListDensity]);
+    const densityViewState = resolveSessionListDensityViewState(sessionListDensity);
     const currentUserId = typeof profile?.id === 'string' ? profile.id : null;
     const selection = useSessionListSelectionState();
-    const shellFlags = React.useMemo(() => resolveSessionListShellFlags({
+    const shellFlags = resolveSessionListShellFlags({
         selectedServerCount: selection.selectedServerCount,
         selectionEnabled: selection.enabled,
         selectionPresentation: selection.presentation,
         isTablet,
         sessionListOrderingModeV1,
-    }), [
-        isTablet,
-        selection.enabled,
-        selection.presentation,
-        selection.selectedServerCount,
-        sessionListOrderingModeV1,
-    ]);
-    const orderingPersistenceState = React.useMemo(() => resolveSessionListOrderingPersistenceState({
+    });
+    const orderingPersistenceState = resolveSessionListOrderingPersistenceState({
         pinnedSessionKeysV1,
         sessionListGroupOrderV1,
-    }), [pinnedSessionKeysV1, sessionListGroupOrderV1]);
+    });
     const allMachines = useAllMachines();
-    const normalizedShellState = React.useMemo(() => normalizeSessionListShellState({
+    const normalizedShellState = normalizeSessionListShellState({
         collapsedGroupKeys: collapsedGroupKeysV1,
         sessionTags: sessionTagsV1,
         workspaceLabels: workspaceLabelsV1,
         workspaceRefs: workspaceRefsV1,
-    }), [
-        collapsedGroupKeysV1,
-        sessionTagsV1,
-        workspaceLabelsV1,
-        workspaceRefsV1,
-    ]);
-    const allKnownTags = React.useMemo(() => getAllKnownTags(normalizedShellState.sessionTags), [normalizedShellState.sessionTags]);
-    const selectedSessionId = React.useMemo(() => resolveSelectedSessionIdForList({
+    });
+    const allKnownTags = getAllKnownTags(normalizedShellState.sessionTags);
+    const selectedSessionId = resolveSelectedSessionIdForList({
         selectable: shellFlags.selectable,
         pathname,
-    }), [pathname, shellFlags.selectable]);
+    });
 
     const renderModels = useSessionListRenderModels({
         paneState: sessionListPaneState,

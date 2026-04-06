@@ -37,17 +37,20 @@ let sessionListActiveGroupingV1: 'project' | 'date' = 'project';
 let sessionListInactiveGroupingV1: 'project' | 'date' = 'date';
 let hideInactiveSessions = false;
 let sessionTagsV1: Record<string, string[]> = {};
+type DropdownMenuTriggerParams = {
+    open: boolean;
+    toggle: ReturnType<typeof vi.fn>;
+    openMenu: ReturnType<typeof vi.fn>;
+    closeMenu: ReturnType<typeof vi.fn>;
+    selectedItem: unknown;
+};
+
 type DropdownMenuCapture = {
     items?: Array<{ id?: string; rightElement?: unknown }>;
     selectedId?: string;
     onSelect?: (id: string) => void;
-    trigger?: (params: {
-        open: boolean;
-        toggle: () => void;
-        openMenu: () => void;
-        closeMenu: () => void;
-        selectedItem: unknown;
-    }) => unknown;
+    trigger?: (params: DropdownMenuTriggerParams) => unknown;
+    triggerParams?: DropdownMenuTriggerParams;
 };
 
 const dropdownMenuCaptures: DropdownMenuCapture[] = [];
@@ -109,15 +112,16 @@ installSessionShellCommonModuleMocks({
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: any) => {
-        dropdownMenuCaptures.push(props);
+        const triggerParams: DropdownMenuTriggerParams = {
+            open: Boolean(props.open),
+            toggle: vi.fn(),
+            openMenu: vi.fn(),
+            closeMenu: vi.fn(),
+            selectedItem: null,
+        };
+        dropdownMenuCaptures.push({ ...props, triggerParams });
         const triggerResult = typeof props.trigger === 'function'
-            ? props.trigger({
-                open: Boolean(props.open),
-                toggle: vi.fn(),
-                openMenu: vi.fn(),
-                closeMenu: vi.fn(),
-                selectedItem: null,
-            })
+            ? props.trigger(triggerParams)
             : null;
         return React.createElement('DropdownMenu', props, triggerResult);
     },
@@ -162,13 +166,15 @@ vi.mock('@/hooks/server/useEffectiveServerSelection', () => ({
     }),
 }));
 
-const groupKey = 'server:server_a:day:2026-02-17';
+const groupKey = 'active:server_a';
+const inactiveGroupKey = 'inactive:server_a';
 const sessionA = { id: 'sess_a', createdAt: 1, active: true, presence: 'online', metadata: { host: 'h', path: '/p', homeDir: '/h' } } as any;
-const sessionB = { id: 'sess_b', createdAt: 2, active: true, presence: 'online', metadata: { host: 'h', path: '/p', homeDir: '/h' } } as any;
+const sessionB = { id: 'sess_b', createdAt: 2, active: false, presence: 'offline', metadata: { host: 'h', path: '/p', homeDir: '/h' } } as any;
 const mockVisibleSessionListViewData: any[] = [
-    { type: 'header', title: 'Today', headerKind: 'date', groupKey, serverId: 'server_a', serverName: 'Server A' },
+    { type: 'header', title: 'Active', headerKind: 'active', groupKey, serverId: 'server_a', serverName: 'Server A' },
     { type: 'session', session: sessionA, groupKey, groupKind: 'date', serverId: 'server_a', serverName: 'Server A' },
-    { type: 'session', session: sessionB, groupKey, groupKind: 'date', serverId: 'server_a', serverName: 'Server A' },
+    { type: 'header', title: 'Inactive', headerKind: 'inactive', groupKey: inactiveGroupKey, serverId: 'server_a', serverName: 'Server A' },
+    { type: 'session', session: sessionB, groupKey: inactiveGroupKey, groupKind: 'date', serverId: 'server_a', serverName: 'Server A' },
 ];
 
 vi.mock('@/hooks/session/useVisibleSessionListPaneState', () => ({
@@ -305,7 +311,7 @@ describe('SessionsList (inline reorder)', () => {
     it('exposes quick-access ordering, grouping, and visibility controls and writes canonical settings on select', async () => {
         const { SessionsList } = await import('./SessionsList');
 
-        await renderScreen(<SessionsList />);
+        const screen = await renderScreen(<SessionsList />);
 
         const menuProps = dropdownMenuCaptures.find((captured) => {
             const items = captured.items ?? [];
@@ -331,14 +337,60 @@ describe('SessionsList (inline reorder)', () => {
         expect((activeGroupingProjectItem as { rightElement?: unknown } | undefined)?.rightElement).toBeTruthy();
         expect((inactiveGroupingDateItem as { rightElement?: unknown } | undefined)?.rightElement).toBeTruthy();
 
-        menuProps?.onSelect?.('created');
+        const firstMenuItems = menuProps?.items;
+
+        await screen.update(<SessionsList />);
+
+        const rerenderedMenuProps = dropdownMenuCaptures.at(-1);
+        expect(rerenderedMenuProps?.items).toBe(firstMenuItems);
+
+        rerenderedMenuProps?.onSelect?.('created');
         expect(setSessionListOrderingModeV1).toHaveBeenCalledWith('created');
-        menuProps?.onSelect?.('activeGroupingDate');
+        rerenderedMenuProps?.onSelect?.('activeGroupingDate');
         expect(setSessionListActiveGroupingV1).toHaveBeenCalledWith('date');
-        menuProps?.onSelect?.('inactiveGroupingProject');
+        rerenderedMenuProps?.onSelect?.('inactiveGroupingProject');
         expect(setSessionListInactiveGroupingV1).toHaveBeenCalledWith('project');
-        menuProps?.onSelect?.('hideInactiveSessions');
+        rerenderedMenuProps?.onSelect?.('hideInactiveSessions');
         expect(setHideInactiveSessions).toHaveBeenCalledWith(true);
+    });
+
+    it('renders ordering triggers on the active and inactive section headers and keeps stopPropagation bound', async () => {
+        const { SessionsList } = await import('./SessionsList');
+
+        const screen = await renderScreen(<SessionsList />);
+
+        const menuProps = dropdownMenuCaptures.find((captured) => {
+            const items = captured.items ?? [];
+            return items.some((item: any) => item?.id === 'activeGroupingProject')
+                && items.some((item: any) => item?.id === 'inactiveGroupingProject')
+                && items.some((item: any) => item?.id === 'hideInactiveSessions');
+        });
+        expect(menuProps).toBeTruthy();
+
+        expect(screen.findAllByProps({ testID: 'session-list-ordering-menu-anchor' })).toHaveLength(0);
+
+        const triggers = screen.findAllByProps({ testID: 'session-list-ordering-menu-trigger' });
+        expect(triggers).toHaveLength(2);
+        expect(triggers[0].props.style).toEqual(expect.objectContaining({
+            width: 28,
+            height: 28,
+        }));
+        expect(triggers[0].props.style.backgroundColor).toBeUndefined();
+        expect(triggers[0].props.style.borderWidth).toBeUndefined();
+        expect(triggers[0].props.style.borderColor).toBeUndefined();
+
+        const event = {
+            nativeEvent: {},
+            stopPropagation(this: { nativeEvent?: unknown }) {
+                if (!this?.nativeEvent) {
+                    throw new Error('stopPropagation lost event binding');
+                }
+            },
+        };
+        await act(async () => {
+            triggers[0].props.onPress(event);
+        });
+        expect(menuProps?.triggerParams?.toggle).toHaveBeenCalledTimes(1);
     });
 
     it('keeps the recovery banner mounted across SessionsList rerenders', async () => {

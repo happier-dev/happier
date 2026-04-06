@@ -9,6 +9,7 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 (globalThis as any).__DEV__ = false;
 
 const headerActionMenuSpy = vi.hoisted(() => vi.fn());
+const chatHeaderSpy = vi.hoisted(() => vi.fn());
 const routerPushSpy = vi.hoisted(() => vi.fn());
 const routerBackSpy = vi.hoisted(() => vi.fn(() => {
   (globalThis as any).location.href = 'http://localhost/session/s1/previous';
@@ -72,7 +73,10 @@ vi.mock('@/components/sessions/panes/url/useSessionPaneUrlSync', () => ({
   useSessionPaneUrlSync: () => {},
 }));
 vi.mock('@/components/sessions/transcript/ChatHeaderView', () => ({
-  ChatHeaderView: (props: any) => React.createElement('ChatHeaderView', props, props.rightElement ?? null),
+  ChatHeaderView: (props: any) => {
+    chatHeaderSpy(props);
+    return React.createElement('ChatHeaderView', props, props.rightElement ?? null);
+  },
 }));
 vi.mock('@/components/sessions/transcript/ChatList', () => ({
   ChatList: () => React.createElement('ChatList'),
@@ -326,6 +330,7 @@ describe('SessionView header action menu visibility', () => {
     sessionMessagesState.messages = [];
     automationsSupportState.enabled = false;
     headerActionMenuSpy.mockClear();
+    chatHeaderSpy.mockClear();
     routerPushSpy.mockReset();
     routerBackSpy.mockReset();
     navigateWithBlurOnWebSpy.mockClear();
@@ -385,6 +390,7 @@ describe('SessionView header action menu visibility', () => {
     automationsSupportState.enabled = true;
 
     const screen = await renderSessionView();
+    const firstHeaderProps = chatHeaderSpy.mock.calls.at(-1)?.[0] as any;
 
     const openRunsButton = findPressableByAccessibilityLabel(screen, 'session.openRuns');
     const openAutomationsButton = findPressableByAccessibilityLabel(screen, 'session.openAutomations');
@@ -400,6 +406,98 @@ describe('SessionView header action menu visibility', () => {
     expect(extraIds).toContain('header.openRuns');
     expect(extraIds).toContain('header.openAutomations');
     expect(extraIds).toContain('header.openSubagents');
+
+    const firstBadges = firstHeaderProps?.badges;
+
+    sessionState.session = {
+      ...sessionState.session,
+      metadata: {
+        ...sessionState.session.metadata,
+        host: 'alternate-host',
+      },
+    } as any;
+
+    await renderSessionView();
+
+    const rerenderedProps = headerActionMenuSpy.mock.calls.at(-1)?.[0] as any;
+    expect(rerenderedProps?.extraItems).toBe(extraItems);
+    const rerenderedHeaderProps = chatHeaderSpy.mock.calls.at(-1)?.[0] as any;
+    expect(rerenderedHeaderProps?.badges).toEqual(firstBadges);
+  });
+
+  it('preserves the visible header props when rerendered with identical session values', async () => {
+    platformState.os = 'web';
+    responsiveState.deviceType = 'phone';
+    responsiveState.isLandscape = false;
+    executionRunsFeatureState.enabled = true;
+    sessionExecutionRunsSupportedState.supported = true;
+    executionRunsBackendsState.backends = null;
+    sessionMessagesState.messages = [];
+    headerActionMenuSpy.mockClear();
+    chatHeaderSpy.mockClear();
+
+    await renderSessionView();
+    const firstHeaderProps = chatHeaderSpy.mock.calls.at(-1)?.[0] as any;
+
+    sessionState.session = {
+      ...sessionState.session,
+      metadata: sessionState.session.metadata,
+    } as any;
+
+    await renderSessionView();
+
+    const rerenderedHeaderProps = chatHeaderSpy.mock.calls.at(-1)?.[0] as any;
+    expect(rerenderedHeaderProps).toMatchObject({
+      title: firstHeaderProps?.title,
+      subtitle: firstHeaderProps?.subtitle,
+      badges: firstHeaderProps?.badges,
+      avatarId: firstHeaderProps?.avatarId,
+      isConnected: firstHeaderProps?.isConnected,
+      flavor: firstHeaderProps?.flavor,
+    });
+    expect(rerenderedHeaderProps.badges).toBe(firstHeaderProps?.badges);
+    expect(rerenderedHeaderProps.rightElement).toBe(firstHeaderProps?.rightElement);
+  });
+
+  it('refreshes the header action menu when the mounted session gains a new machine target', async () => {
+    platformState.os = 'web';
+    responsiveState.deviceType = 'phone';
+    responsiveState.isLandscape = false;
+    executionRunsFeatureState.enabled = false;
+    sessionExecutionRunsSupportedState.supported = false;
+    executionRunsBackendsState.backends = null;
+    headerActionMenuSpy.mockClear();
+    chatHeaderSpy.mockClear();
+
+    sessionState.session = {
+      ...sessionState.session,
+      updatedAt: 1,
+      metadata: null,
+    } as any;
+
+    const screen = await renderSessionView();
+    const firstHeaderActionMenuProps = headerActionMenuSpy.mock.calls.at(-1)?.[0] as any;
+    expect(firstHeaderActionMenuProps?.session?.metadata?.machineId ?? null).toBeNull();
+
+    sessionState.session = {
+      ...sessionState.session,
+      updatedAt: 2,
+      metadata: {
+        ...(sessionState.session.metadata ?? {}),
+        machineId: 'machine-rebound',
+        flavor: 'codex',
+        version: '0.0.0',
+        path: '/tmp',
+        homeDir: '/tmp',
+      },
+    } as any;
+
+    await screen.update(<SessionView id="s1" jumpToSeq={1} />);
+
+    const rerenderedHeaderActionMenuProps = headerActionMenuSpy.mock.calls.at(-1)?.[0] as any;
+    expect(rerenderedHeaderActionMenuProps?.session?.updatedAt).toBe(2);
+    expect(rerenderedHeaderActionMenuProps?.session?.metadata?.machineId).toBe('machine-rebound');
+    expect(rerenderedHeaderActionMenuProps?.session).not.toBe(firstHeaderActionMenuProps?.session);
   });
 
   it('keeps the open runs button visible when the transcript already contains execution-run signals', async () => {

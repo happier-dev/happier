@@ -6,7 +6,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemGroupTitleWithAction } from '@/components/ui/lists/ItemGroupTitleWithAction';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Typography } from '@/constants/Typography';
-import { useSessions, useAllMachines, useMachine, storage, useSetting, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
+import { useSessions, useMachine, storage, useSetting, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import type { MachineMetadata, Session } from '@/sync/domains/state/storageTypes';
 import {
@@ -147,6 +147,8 @@ export default function MachineDetailScreen() {
     const [isSpawning, setIsSpawning] = useState(false);
     const inputRef = useRef<MultiTextInputHandle>(null);
     const [showAllPaths, setShowAllPaths] = useState(false);
+    const [isHydratingMachine, setIsHydratingMachine] = useState(() => Boolean(machineId) && !machine);
+    const machineHydrationRequestedRef = useRef(false);
     const isOnline = !!machine && isMachineOnline(machine);
     const metadata = machine?.metadata;
     const isWindowsMachine = metadata?.platform === 'win32';
@@ -193,6 +195,36 @@ export default function MachineDetailScreen() {
             cancelled = true;
         };
     }, [requestedServerId]);
+
+    React.useEffect(() => {
+        if (!machineId) return;
+        if (machine) {
+            machineHydrationRequestedRef.current = false;
+            if (isHydratingMachine) {
+                setIsHydratingMachine(false);
+            }
+            return;
+        }
+
+        if (machineHydrationRequestedRef.current) return;
+        machineHydrationRequestedRef.current = true;
+
+        let cancelled = false;
+        setIsHydratingMachine(true);
+        fireAndForget((async () => {
+            try {
+                await sync.refreshMachines();
+            } finally {
+                if (!cancelled) {
+                    setIsHydratingMachine(false);
+                }
+            }
+        })(), { tag: 'MachineDetailScreen.hydrateMachine' });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [isHydratingMachine, machine, machineId]);
 
     const { state: detectedCapabilities, refresh: refreshDetectedCapabilities } = useMachineCapabilitiesCache({
         machineId: machineId ?? null,
@@ -744,6 +776,21 @@ export default function MachineDetailScreen() {
     }, [headerBackTitle, headerRight, headerTitle]);
 
     if (!machine) {
+        if (isHydratingMachine) {
+            return (
+                <>
+                    <Stack.Screen
+                        options={notFoundScreenOptions}
+                    />
+                    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                        <ActivityIndicator size="large" color={theme.colors.textSecondary} />
+                        <Text style={[Typography.default(), { fontSize: 16, color: theme.colors.textSecondary, marginTop: 12 }]}>
+                            {t('common.loading')}
+                        </Text>
+                    </View>
+                </>
+            );
+        }
         return (
             <>
                 <Stack.Screen

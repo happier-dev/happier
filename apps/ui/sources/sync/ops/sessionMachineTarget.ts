@@ -5,9 +5,11 @@ import {
   resolveSessionMachineRpcTarget,
   type SessionMachineTargetPeer,
 } from '@/sync/domains/session/resolveSessionReachableMachineId';
+import { findSessionListViewDataSession } from '@/sync/domains/session/listing/sessionListViewDataAccess';
+import type { SessionListCacheStateLike } from '@/sync/domains/session/listing/sessionListCacheState';
 import { storage } from '@/sync/domains/state/storage';
 
-type MachineTargetLikeState = Readonly<{
+type MachineTargetLikeState = SessionListCacheStateLike & Readonly<{
   sessions?: Record<string, {
     active?: boolean;
     updatedAt?: number;
@@ -50,7 +52,7 @@ export function resolveMachineTargetForSessionFromState(
   sessionId: string,
 ): { machineId: string; basePath: string } | null {
   const session = state.sessions?.[sessionId];
-  const metadata = session?.metadata ?? null;
+  const metadata = findSessionListViewDataSession(state?.sessionListViewData, sessionId)?.session?.metadata ?? session?.metadata ?? null;
   const getProjectForSession = typeof state.getProjectForSession === 'function' ? state.getProjectForSession : null;
   const project = getProjectForSession?.(sessionId) ?? null;
   const sessionMachineId = normalizeNonEmptyString(metadata?.machineId);
@@ -89,7 +91,7 @@ export function resolveMachineTargetForSessionFromState(
       continue;
     }
     const candidateSession = state.sessions?.[candidateSessionId];
-    const candidateMetadata = candidateSession?.metadata ?? null;
+    const candidateMetadata = findSessionListViewDataSession(state?.sessionListViewData, candidateSessionId)?.session?.metadata ?? candidateSession?.metadata ?? null;
     const candidateHomeDir = normalizeNonEmptyString(candidateMetadata?.homeDir);
     const candidateComparableMetadataPath = normalizeSessionPathForComparison(
       normalizeNonEmptyString(candidateMetadata?.path),

@@ -1,3 +1,5 @@
+import { readWebRuntimeConfigServerContext } from '@/sync/runtime/webRuntimeConfig';
+
 function isWebRuntime(): boolean {
     return typeof window !== 'undefined' && typeof document !== 'undefined';
 }
@@ -12,6 +14,10 @@ function readExpoPublicServerContextEnv(): string {
     return normalize(process.env?.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT);
 }
 
+function readRuntimeConfiguredServerContext(): string {
+    return normalize(readWebRuntimeConfigServerContext());
+}
+
 function inferStackContextFromWebOrigin(): boolean {
     if (!isWebRuntime()) return false;
     const host = normalize(window.location.hostname);
@@ -20,6 +26,8 @@ function inferStackContextFromWebOrigin(): boolean {
 }
 
 export function isStackContext(): boolean {
+    const fromRuntimeConfig = readRuntimeConfiguredServerContext();
+    if (fromRuntimeConfig === 'stack') return true;
     const fromEnv = readExpoPublicServerContextEnv();
     if (fromEnv === 'stack') return true;
     return inferStackContextFromWebOrigin();

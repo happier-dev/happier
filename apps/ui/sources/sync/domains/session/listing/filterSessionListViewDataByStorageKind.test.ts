@@ -47,6 +47,21 @@ describe('filterSessionListViewDataByStorageKind', () => {
         expect(result).toBe(source);
     });
 
+    it('reuses a shared empty array when filtering produces no visible rows', () => {
+        const emptyFirst = filterSessionListViewDataByStorageKind([], 'direct');
+        const emptySecond = filterSessionListViewDataByStorageKind([], 'persisted');
+
+        const source: SessionListViewItem[] = [
+            { type: 'header', title: 'Today', headerKind: 'date', groupKey: 'server:server-a:day:2026-03-05', serverId: 'server-a' },
+            makeSession('persisted-1', false),
+        ];
+        const filtered = filterSessionListViewDataByStorageKind(source, 'direct');
+
+        expect(emptyFirst).toBe(emptySecond);
+        expect(emptyFirst).toBe(filtered);
+        expect(emptyFirst).toEqual([]);
+    });
+
     it('keeps only direct sessions and the headers that still own visible rows', () => {
         const groupKey = 'server:server-a:day:2026-03-05';
         const source: SessionListViewItem[] = [

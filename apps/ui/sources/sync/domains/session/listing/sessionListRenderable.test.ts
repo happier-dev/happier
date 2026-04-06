@@ -8,6 +8,22 @@ import {
 } from './sessionListRenderable';
 
 describe('derivePendingRequestFlagsFromAgentState', () => {
+    it('reuses a shared empty flags object when there are no requests', () => {
+        const first = derivePendingRequestFlagsFromAgentState(null);
+        const second = derivePendingRequestFlagsFromAgentState(undefined);
+        const third = derivePendingRequestFlagsFromAgentState({
+            requests: {},
+            completedRequests: {},
+        } as any);
+
+        expect(first).toBe(second);
+        expect(second).toBe(third);
+        expect(first).toEqual({
+            hasPendingPermissionRequests: false,
+            hasPendingUserActionRequests: false,
+        });
+    });
+
     it('treats legacy AskUserQuestion requests without kind as user actions', () => {
         const flags = derivePendingRequestFlagsFromAgentState({
             requests: {
@@ -197,6 +213,29 @@ describe('buildSessionListRenderableFromSession', () => {
         expect(next).toBe(previous);
     });
 
+    it('reuses the nested directSessionV1 object when only unrelated metadata fields change', () => {
+        const baseMetadata = {
+            name: 'Repo',
+            summary: { text: 'Summary' },
+            path: '/home/u/repo',
+            homeDir: '/home/u',
+            host: 'mbp',
+            machineId: 'm1',
+            flavor: 'pro',
+            directSessionV1: { v: 1 as const, providerId: 'provider-a' },
+            systemSessionV1: { hidden: false },
+        };
+
+        const previous = buildSessionListRenderableMetadata(baseMetadata as any);
+        const next = buildSessionListRenderableMetadata({
+            ...baseMetadata,
+            summary: { text: 'Updated summary' },
+        } as any, previous);
+
+        expect(next).not.toBe(previous);
+        expect(next?.directSessionV1).toBe(previous?.directSessionV1);
+    });
+
     it('returns the next renderable unchanged when there is no transient state to preserve', () => {
         const previous = buildSessionListRenderableFromSession({
             id: 's1',
@@ -271,5 +310,46 @@ describe('buildSessionListRenderableFromSession', () => {
             ...next,
             keepVisibleWhenInactive: true,
         });
+    });
+
+    it('returns the next renderable unchanged when transient visibility is already preserved', () => {
+        const previous = {
+            ...buildSessionListRenderableFromSession({
+                id: 's1',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 2,
+                active: true,
+                activeAt: 2,
+                metadata: null,
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 'online',
+            } as any),
+            keepVisibleWhenInactive: true,
+        };
+        const next = {
+            ...buildSessionListRenderableFromSession({
+                id: 's1',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 3,
+                active: true,
+                activeAt: 3,
+                metadata: null,
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 'online',
+            } as any),
+            keepVisibleWhenInactive: true,
+        };
+
+        expect(preserveSessionListRenderableTransientState(previous, next)).toBe(next);
     });
 });

@@ -17,9 +17,27 @@ export type SessionRowInteractionPolicy = Readonly<{
     suppressNextPressOnNativeContextMenuOpen: boolean;
 }>;
 
+const SESSION_ROW_INTERACTION_POLICY_CACHE = new Map<string, SessionRowInteractionPolicy>();
+
 export function resolveSessionRowInteractionPolicy(
     params: SessionRowInteractionPolicyParams,
 ): SessionRowInteractionPolicy {
+    const cacheKey = JSON.stringify([
+        params.platformOs,
+        params.isActiveSession,
+        params.canStopSession,
+        params.canArchiveSession,
+        params.contextMenuItemCount,
+        params.contextMenuOpen,
+        params.contextMenuWasOpen,
+        params.nativeInlineDragEnabled,
+        params.hasReorderHandle,
+    ]);
+    const cached = SESSION_ROW_INTERACTION_POLICY_CACHE.get(cacheKey);
+    if (cached) {
+        return cached;
+    }
+
     const {
         platformOs,
         isActiveSession,
@@ -36,7 +54,7 @@ export function resolveSessionRowInteractionPolicy(
     const swipeEnabled = platformOs !== 'web' && (isActiveSession ? canStopSession : canArchiveSession);
     const suppressNextPressOnNativeContextMenuOpen = contextMenuItemCount > 0 && contextMenuOpen && !contextMenuWasOpen;
 
-    return {
+    const next = {
         swipeEnabled,
         showReorderHandle: hasReorderHandle,
         enableLongPressContextMenu:
@@ -45,4 +63,7 @@ export function resolveSessionRowInteractionPolicy(
             && (!nativeInlineDragEnabled || hasReorderHandle),
         suppressNextPressOnNativeContextMenuOpen,
     };
+
+    SESSION_ROW_INTERACTION_POLICY_CACHE.set(cacheKey, next);
+    return next;
 }

@@ -10,26 +10,32 @@ export type SessionListDensityViewState = Readonly<{
     rowHeight: number;
 }>;
 
+const SESSION_LIST_DENSITY_VIEW_STATE_DEFAULT: SessionListDensityViewState = Object.freeze({
+    compact: false,
+    compactMinimal: false,
+    rowHeight: SESSION_LIST_ROW_HEIGHT_DEFAULT,
+});
+
+const SESSION_LIST_DENSITY_VIEW_STATE_COMPACT: SessionListDensityViewState = Object.freeze({
+    compact: true,
+    compactMinimal: false,
+    rowHeight: SESSION_LIST_ROW_HEIGHT_COMPACT,
+});
+
+const SESSION_LIST_DENSITY_VIEW_STATE_MINIMAL: SessionListDensityViewState = Object.freeze({
+    compact: true,
+    compactMinimal: true,
+    rowHeight: SESSION_LIST_ROW_HEIGHT_MINIMAL,
+});
+
 export function resolveSessionListDensityViewState(sessionListDensity: string | null | undefined): SessionListDensityViewState {
     if (sessionListDensity === 'narrow') {
-        return {
-            compact: true,
-            compactMinimal: true,
-            rowHeight: SESSION_LIST_ROW_HEIGHT_MINIMAL,
-        };
+        return SESSION_LIST_DENSITY_VIEW_STATE_MINIMAL;
     }
 
     if (sessionListDensity === 'cozy') {
-        return {
-            compact: true,
-            compactMinimal: false,
-            rowHeight: SESSION_LIST_ROW_HEIGHT_COMPACT,
-        };
+        return SESSION_LIST_DENSITY_VIEW_STATE_COMPACT;
     }
 
-    return {
-        compact: false,
-        compactMinimal: false,
-        rowHeight: SESSION_LIST_ROW_HEIGHT_DEFAULT,
-    };
+    return SESSION_LIST_DENSITY_VIEW_STATE_DEFAULT;
 }

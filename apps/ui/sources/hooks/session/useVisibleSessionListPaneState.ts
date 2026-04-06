@@ -1,12 +1,15 @@
 import * as React from 'react';
 
 import { useVisibleSessionListSummaryState } from './useVisibleSessionListSummaryState';
-import { useVisibleSessionListViewData } from './useVisibleSessionListViewData';
+import { useVisibleSessionListViewState } from './useVisibleSessionListViewState';
 import type { SessionListStorageFilter } from '@/sync/domains/session/sessionStorageKind';
 import type { SessionListViewItem } from '@/sync/domains/session/listing/sessionListViewData';
 
 export type VisibleSessionListPaneState = Readonly<{
-    summary: ReturnType<typeof useVisibleSessionListSummaryState>['summary'];
+    summary: Readonly<{
+        sessionsReady: boolean;
+        sessionCount: number;
+    }>;
     visibleSessionListViewData: SessionListViewItem[] | null;
     showLoading: boolean;
     showEmptyState: boolean;
@@ -14,7 +17,7 @@ export type VisibleSessionListPaneState = Readonly<{
 
 export function useVisibleSessionListPaneState(storageFilter: SessionListStorageFilter = 'all'): VisibleSessionListPaneState {
     const { summary } = useVisibleSessionListSummaryState(storageFilter);
-    const visibleSessionListViewData = useVisibleSessionListViewData(storageFilter);
+    const { visibleSessionListViewData } = useVisibleSessionListViewState(storageFilter);
 
     return React.useMemo(() => ({
         summary,

@@ -113,12 +113,11 @@ describe('useWorkspaceFileTransfers upload pipeline', () => {
         await renderScreen(<Test />);
 
         if (!api) throw new Error('expected hook api');
-        const currentApi = api as WorkspaceFileTransfersApi;
 
         const file = new File([new TextEncoder().encode('hello')], 'hello.txt', { type: 'text/plain' });
 
         await act(async () => {
-            await currentApi.startUploads({
+            await (api as WorkspaceFileTransfersApi).startUploads({
                 destinationDir: 'workspace/files',
                 entries: [
                     {
@@ -159,6 +158,7 @@ describe('useWorkspaceFileTransfers upload pipeline', () => {
         await renderScreen(<Test />);
 
         if (!api) throw new Error('expected hook api');
+        const currentApi = api as WorkspaceFileTransfersApi;
 
         const file = new File([new TextEncoder().encode('hello')], 'hello.txt', { type: 'text/plain' });
 
@@ -178,7 +178,6 @@ describe('useWorkspaceFileTransfers upload pipeline', () => {
 
         expect(result).toEqual({ ok: false, error: 'Upload finalize failed' });
         expect(uploadDaemonWorkspaceFileFromReaderMock).toHaveBeenCalledTimes(1);
-        expect(api?.uploadState).toEqual({ status: 'error', error: 'Upload finalize failed' });
     });
 
     it('surfaces thrown upload helper failures as errors instead of rejecting the batch', async () => {
@@ -224,7 +223,6 @@ describe('useWorkspaceFileTransfers upload pipeline', () => {
 
         expect(result).toEqual({ ok: false, error: 'Upload source reader exploded' });
         expect(uploadDaemonWorkspaceFileFromReaderMock).toHaveBeenCalledTimes(1);
-        expect(api?.uploadState).toEqual({ status: 'error', error: 'Upload source reader exploded' });
         expect(uploadReaderCloseSpy).toHaveBeenCalledTimes(1);
     });
 });

@@ -16,6 +16,7 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 const machineDirectSessionStatusGetSpy = vi.hoisted(() => vi.fn());
 const machineDirectSessionTakeoverSpy = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
 const machineDirectSessionTakeoverPersistSpy = vi.hoisted(() => vi.fn(async () => ({ ok: true, converted: true })));
+const createDefaultActionExecutorMock = vi.hoisted(() => vi.fn());
 const syncRefreshSessionMessagesSpy = vi.hoisted(() => vi.fn(async () => {}));
 const syncSubmitMessageSpy = vi.hoisted(() => vi.fn(async () => {}));
 const publishSessionAcpSessionModeOverrideToMetadataSpy = vi.hoisted(() => vi.fn(async () => {}));
@@ -343,7 +344,7 @@ vi.mock('@/sync/ops/machineDirectSessions', () => ({
   machineDirectSessionTakeoverPersist: machineDirectSessionTakeoverPersistSpy,
 }));
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
-  createDefaultActionExecutor: () => ({ execute: vi.fn() }),
+  createDefaultActionExecutor: (...args: unknown[]) => createDefaultActionExecutorMock(...args),
 }));
 vi.mock('@/components/sessions/agentInput', () => ({
   AgentInput: (props: any) => React.createElement('AgentInput', { testID: 'session-agent-input', ...props }),
@@ -359,6 +360,14 @@ vi.mock('@/voice/sessionBinding/voiceSessionComposerRouting', () => ({
 }));
 vi.mock('@/components/sessions/agentInput/routing/useSessionRecipientState', () => ({
   useSessionRecipientState: () => recipientStateState.current,
+}));
+vi.mock('@/components/sessions/model/resolveSessionTargetServerId', () => ({
+  resolveSessionTargetServerId: () => 'server-canonical',
+}));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
+  resolvePreferredServerIdForSessionId: () => {
+    throw new Error('legacy direct resolver should not be used in SessionView');
+  },
 }));
 vi.mock('@/hooks/session/useSessionSubagents', () => ({
   useSessionSubagents: () => ({ subagents: [], participantTargets: participantTargetsState.current, sidechainIds: [] }),
@@ -401,6 +410,7 @@ describe('SessionView (direct sessions)', () => {
   }
 
   beforeEach(() => {
+    createDefaultActionExecutorMock.mockReset();
     chatListPropsSpy.mockReset();
     chatHeaderPropsSpy.mockReset();
     voiceSurfacePropsSpy.mockReset();
@@ -464,6 +474,9 @@ describe('SessionView (direct sessions)', () => {
       canTakeOverPersist: true,
       canForceStop: false,
     });
+    createDefaultActionExecutorMock.mockReturnValue({
+      execute: vi.fn(),
+    });
   });
 
   afterEach(() => {
@@ -490,9 +503,30 @@ describe('SessionView (direct sessions)', () => {
     expect(machineDirectSessionTakeoverSpy).toHaveBeenCalledWith({
       machineId: 'machine-1',
       sessionId: 's1',
-    }, { serverId: 'server-1' });
+    }, { serverId: 'server-canonical' });
     expect(modalAlertSpy).not.toHaveBeenCalled();
 
+    await renderSessionView();
+
+    const rerenderedChatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
+    expect(rerenderedChatListProps?.directControlFooter).toEqual(expect.objectContaining({
+      canTakeOverDirect: true,
+      canTakeOverPersist: true,
+      takeoverInFlight: null,
+    }));
+    expect(rerenderedChatListProps?.directControlFooter).not.toBe(latestChatListProps?.directControlFooter);
+
+  });
+
+  it('builds the default action executor from the canonical session target helper', async () => {
+    await renderSessionView();
+
+    expect(createDefaultActionExecutorMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resolveServerIdForSessionId: expect.any(Function),
+      }),
+    );
+    expect(createDefaultActionExecutorMock.mock.calls[0]?.[0]?.resolveServerIdForSessionId?.('s1')).toBe('server-canonical');
   });
 
   it('passes pending user action requests to AgentInput', async () => {
@@ -821,7 +855,7 @@ describe('SessionView (direct sessions)', () => {
     expect(machineDirectSessionTakeoverSpy).toHaveBeenCalledWith({
       machineId: 'machine-1',
       sessionId: 's1',
-    }, { serverId: 'server-1' });
+    }, { serverId: 'server-canonical' });
     expect(syncSubmitMessageSpy).toHaveBeenCalledWith('s1', 'continue this session', undefined, undefined);
 
   });
@@ -896,7 +930,7 @@ describe('SessionView (direct sessions)', () => {
       machineId: 'machine-1',
       sessionId: 's1',
       forceStop: true,
-    }, { serverId: 'server-1' });
+    }, { serverId: 'server-canonical' });
     expect(syncSubmitMessageSpy).toHaveBeenCalledWith('s1', 'persist this', undefined, undefined);
 
   });

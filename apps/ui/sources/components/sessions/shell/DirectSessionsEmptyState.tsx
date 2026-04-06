@@ -27,7 +27,7 @@ const stylesheet = StyleSheet.create(() => ({
     },
 }));
 
-export const DirectSessionsEmptyState = React.memo((props: DirectSessionsEmptyStateProps) => {
+export function DirectSessionsEmptyState(props: DirectSessionsEmptyStateProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const sidebarWidthPx = useLocalSetting('sidebarWidthPx');
@@ -57,4 +57,4 @@ export const DirectSessionsEmptyState = React.memo((props: DirectSessionsEmptySt
             />
         </View>
     );
-});
+}

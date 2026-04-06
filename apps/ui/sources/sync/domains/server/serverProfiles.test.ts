@@ -25,6 +25,20 @@ function stubWebRuntime(origin: string) {
     vi.stubGlobal('document', {});
 }
 
+function stubWebRuntimeWithRuntimeConfig(origin: string, runtimeConfig: Record<string, unknown>) {
+    let hostname = '';
+    try {
+        hostname = new URL(origin).hostname;
+    } catch {
+        hostname = '';
+    }
+    vi.stubGlobal('window', {
+        location: { origin, hostname },
+        __HAPPIER_WEB_RUNTIME_CONFIG__: runtimeConfig,
+    });
+    vi.stubGlobal('document', {});
+}
+
 async function importFresh(options: Readonly<{ resetModules?: boolean }> = {}) {
     if (options.resetModules !== false) vi.resetModules();
     return await import('./serverProfiles');
@@ -236,6 +250,23 @@ describe('serverProfiles', () => {
         const profiles = await importFresh();
 
         expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'http://localhost:8081')).toBe(false);
+        expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'https://api.happier.dev')).toBe(true);
+        expect(profiles.getActiveServerUrl()).toBe('https://api.happier.dev');
+    });
+
+    it('avoids seeding Metro/local UI origins as a relay server when stack context comes from runtime config', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        delete process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT;
+        delete process.env.EXPO_PUBLIC_HAPPY_SERVER_URL;
+        delete process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL;
+        delete process.env.EXPO_PUBLIC_SERVER_URL;
+        delete process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS;
+        stubWebRuntimeWithRuntimeConfig('http://127.0.0.1:8081', { serverContext: 'stack' });
+
+        const profiles = await importFresh();
+
+        expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'http://127.0.0.1:8081')).toBe(false);
         expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'https://api.happier.dev')).toBe(true);
         expect(profiles.getActiveServerUrl()).toBe('https://api.happier.dev');
     });

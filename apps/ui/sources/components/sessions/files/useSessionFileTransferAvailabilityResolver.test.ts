@@ -6,10 +6,12 @@ import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const state = vi.hoisted(() => ({
+    preferredServerId: 'server-1' as string | null,
     session: { active: true } as any,
     machineReachability: { machineRpcTargetAvailable: true } as any,
     machineTarget: { machineId: 'machine-1', basePath: '/repo' } as any,
     machine: null as any,
+    serverScopedMachineServerId: 'server-1' as string | null,
     serverScopedMachine: null as any,
     cachedMachineRpcDirectRoute: { status: 'unknown' as const } as any,
     serverSnapshot: {
@@ -44,7 +46,8 @@ vi.mock('@/sync/domains/state/storage', () =>
     createStorageModuleStub({
         useSession: () => state.session,
         useMachine: () => state.machine,
-        useServerScopedMachine: () => state.serverScopedMachine,
+        useServerScopedMachine: (_serverId: string | null) =>
+            _serverId !== null && _serverId === state.serverScopedMachineServerId ? state.serverScopedMachine : null,
     }),
 );
 
@@ -66,7 +69,7 @@ vi.mock('@/sync/domains/features/featureDecisionRuntime', () => ({
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
-    resolvePreferredServerIdForSessionId: () => 'server-1',
+    resolvePreferredServerIdForSessionId: () => state.preferredServerId,
 }));
 
 describe('useSessionFileTransferAvailabilityResolver', () => {
@@ -252,6 +255,73 @@ describe('useSessionFileTransferAvailabilityResolver', () => {
         state.session = { active: true } as any;
         state.machineReachability = { machineRpcTargetAvailable: true } as any;
         state.machineTarget = { machineId: 'machine-1', basePath: '/repo' } as any;
+        state.machine = null as any;
+        state.serverScopedMachine = {
+            daemonState: {
+                transfer: {
+                    supported: {
+                        import: true,
+                        export: true,
+                    },
+                    listenerClasses: {
+                        loopback_http: {
+                            enabled: true,
+                            configured: true,
+                            active: true,
+                        },
+                        lan_http: {
+                            enabled: false,
+                            configured: false,
+                            active: false,
+                        },
+                        tailscale_serve_https: {
+                            enabled: false,
+                            configured: false,
+                            active: false,
+                            available: false,
+                        },
+                    },
+                    lifecycle: {
+                        mode: 'lazy_idle_shutdown',
+                        version: 1,
+                    },
+                },
+            },
+        } as any;
+        state.cachedMachineRpcDirectRoute = { status: 'unknown' as const } as any;
+        state.serverSnapshot = {
+            status: 'ready' as const,
+            features: {
+                features: {
+                    machines: {
+                        enabled: true,
+                        transfer: {
+                            enabled: true,
+                            directPeer: {
+                                enabled: true,
+                            },
+                            serverRouted: {
+                                enabled: false,
+                            },
+                        },
+                    },
+                },
+                capabilities: {},
+            },
+        } as any;
+
+        const { useSessionFileTransferAvailabilityResolver } = await import('./useSessionFileTransferAvailability');
+        const hook = await renderHook(() => useSessionFileTransferAvailabilityResolver('s1'));
+
+        expect(hook.getCurrent()(64)).toBe(true);
+    });
+
+    it('uses the session server id when preferred server resolution is unavailable', async () => {
+        state.preferredServerId = null;
+        state.session = { active: true, serverId: 'server-explicit' } as any;
+        state.machineReachability = { machineRpcTargetAvailable: true } as any;
+        state.machineTarget = { machineId: 'machine-1', basePath: '/repo' } as any;
+        state.serverScopedMachineServerId = 'server-explicit';
         state.machine = null as any;
         state.serverScopedMachine = {
             daemonState: {

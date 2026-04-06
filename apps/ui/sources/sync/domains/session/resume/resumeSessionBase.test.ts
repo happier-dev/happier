@@ -103,7 +103,7 @@ describe('buildResumeSessionBaseOptionsFromSession', () => {
                     ? {
                         key: {
                             machineId: 'm-target',
-                            path: '/tmp/target',
+                            rootPath: '/tmp/target',
                         },
                     }
                     : null,

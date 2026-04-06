@@ -158,7 +158,7 @@ export default function ArchivedSessionsScreen() {
                         styles.sessionCard,
                         isSingle ? styles.sessionCardSingle : isFirst ? styles.sessionCardFirst : isLast ? styles.sessionCardLast : null,
                     ]}
-                    onPress={() => navigateToSession(item.id)}
+                    onPress={() => navigateToSession(item.id, item.serverId ? { serverId: item.serverId } : undefined)}
                 >
                     <Avatar id={avatarId} size={48} />
                     <View style={styles.sessionContent}>

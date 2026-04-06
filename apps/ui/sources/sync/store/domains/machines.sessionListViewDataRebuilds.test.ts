@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const mmkvStore = new Map<string, string>();
-const invalidateCachedTransferRoutesForMachineSpy = vi.fn();
+import { resolveMachineSessionListViewDataImpact } from './machines';
+import { resolveMachineSessionListViewDataImpact as resolveMachineSessionViewDataImpactFromHelper } from './machineSessionListViewDataImpact';
+
+const { mmkvStore, invalidateCachedTransferRoutesForMachineSpy } = vi.hoisted(() => ({
+    mmkvStore: new Map<string, string>(),
+    invalidateCachedTransferRoutesForMachineSpy: vi.fn(),
+}));
 
 vi.mock('react-native-mmkv', () => {
     class MMKV {
@@ -55,6 +60,10 @@ function mockMachineDomainBoundaries(): void {
 }
 
 describe('machines domain: sessionListViewData rebuild gating', () => {
+    it('exports the machine session list view data impact resolver from the domain entrypoint', () => {
+        expect(resolveMachineSessionListViewDataImpact).toBe(resolveMachineSessionViewDataImpactFromHelper);
+    });
+
     it('invalidates cached transfer routes when a machine daemonStateVersion advances', async () => {
         mockMachineDomainBoundaries();
 

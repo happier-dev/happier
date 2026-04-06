@@ -4,11 +4,13 @@ import { DEFAULT_AGENT_ID, resolveAgentIdFromFlavor } from '@/agents/catalog/cat
 import { useResumeCapabilityOptions } from '@/agents/hooks/useResumeCapabilityOptions';
 import { canResumeSessionWithOptions } from '@/agents/runtime/resumeCapabilities';
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
+import { resolveSessionTargetServerId } from '@/components/sessions/model/resolveSessionTargetServerId';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useExecutionRunsBackendsForSession } from '@/hooks/server/useExecutionRunsBackendsForSession';
 import { useSessionExecutionRunsSupported } from '@/hooks/server/useSessionExecutionRunsSupported';
 import { useDirectSessionRuntime } from '@/components/sessions/model/useDirectSessionRuntime';
 import { canLaunchExecutionRunsForSession } from '@/sync/domains/executionRuns/canLaunchExecutionRunsForSession';
+import type { ExecutionRunBackendCapabilityMap } from '@/sync/domains/executionRuns/resolveExecutionRunAvailableBackends';
 import { resolveSessionMachineId } from '@/sync/domains/session/directSessions/resolveSessionMachineId';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { useSettings } from '@/sync/domains/state/storage';
@@ -16,8 +18,9 @@ import { useSettings } from '@/sync/domains/state/storage';
 export type UseSessionExecutionRunLaunchabilityResult = Readonly<{
     canLaunchExecutionRuns: boolean;
     canShowExecutionRunLauncher: boolean;
-    executionRunsBackends: Record<string, unknown> | null | undefined;
+    executionRunsBackends: ExecutionRunBackendCapabilityMap;
     executionRunsSupported: boolean;
+    sessionServerId: string | null;
 }>;
 
 export function useSessionExecutionRunLaunchability(
@@ -26,8 +29,12 @@ export function useSessionExecutionRunLaunchability(
 ): UseSessionExecutionRunLaunchabilityResult {
     const settings = useSettings();
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
-    const executionRunsSupported = useSessionExecutionRunsSupported(sessionId);
-    const executionRunsBackends = useExecutionRunsBackendsForSession(sessionId);
+    const sessionTargetServerId = React.useMemo(
+        () => resolveSessionTargetServerId(sessionId, session?.serverId),
+        [session?.serverId, sessionId],
+    );
+    const executionRunsSupported = useSessionExecutionRunsSupported(sessionId, sessionTargetServerId);
+    const executionRunsBackends = useExecutionRunsBackendsForSession(sessionId, sessionTargetServerId);
     const { machineReachable } = useSessionMachineReachability(sessionId);
     const directSessionRuntime = useDirectSessionRuntime({
         sessionId,
@@ -89,5 +96,6 @@ export function useSessionExecutionRunLaunchability(
         canShowExecutionRunLauncher,
         executionRunsBackends,
         executionRunsSupported,
+        sessionServerId: sessionTargetServerId,
     };
 }

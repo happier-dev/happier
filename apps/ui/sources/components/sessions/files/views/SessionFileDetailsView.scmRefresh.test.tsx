@@ -61,7 +61,7 @@ vi.mock('@/sync/ops/sessionMachineTarget', () => ({
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
-  resolvePreferredServerIdForSessionId: () => 'srv1',
+  resolvePreferredServerIdForSessionId: () => null,
 }));
 
 vi.mock('@/utils/code/fileLanguage', () => ({
@@ -196,6 +196,7 @@ const refreshSpy = vi.fn(async (_input: any) => {
 
 const scmRefreshSession: Session = createSessionFixture({
     id: 's1',
+    serverId: 'srv-session',
     active: true,
     metadata: {
         path: '/workspace',
@@ -206,7 +207,7 @@ const scmRefreshSession: Session = createSessionFixture({
 });
 const scmRefreshProject: Project = {
     id: 'project-1',
-    key: { serverId: 'srv1', machineId: 'm1', rootPath: '/workspace' },
+    key: { serverId: null as unknown as string, machineId: 'm1', rootPath: '/workspace' },
     sessionIds: ['s1'],
     createdAt: 1,
     updatedAt: 1,

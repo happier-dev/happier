@@ -26,7 +26,7 @@ const machineDirectSessionDetachSpy = vi.hoisted(() => vi.fn());
 const subscribeActiveServerSpy = vi.hoisted(() =>
   vi.fn<(listener: (snapshot: { serverId: string }) => void) => () => void>(() => () => {}),
 );
-const resolvePreferredServerIdForSessionIdSpy = vi.hoisted(() => vi.fn());
+const resolveSessionTargetServerIdSpy = vi.hoisted(() => vi.fn());
 const appState = vi.hoisted(() => ({ currentState: 'active' as string }));
 let activeServerSnapshot = { serverId: 'server-1' };
 
@@ -39,8 +39,9 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => activeServerSnapshot,
   subscribeActiveServer: subscribeActiveServerSpy,
 }));
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
-  resolvePreferredServerIdForSessionId: (sessionId: string) => resolvePreferredServerIdForSessionIdSpy(sessionId),
+vi.mock('./resolveSessionTargetServerId', () => ({
+  resolveSessionTargetServerId: (sessionId: string, fallbackServerId?: string | null) =>
+    resolveSessionTargetServerIdSpy(sessionId, fallbackServerId),
 }));
 vi.mock('react-native', async () => {
   const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -58,7 +59,12 @@ vi.mock('react-native', async () => {
   });
 });
 
-type HookValue = ReturnType<typeof import('./useDirectSessionRuntime')['useDirectSessionRuntime']>;
+type HookValue = Readonly<{
+  directSessionLink: unknown;
+  sessionServerId: string | null;
+  status: unknown;
+  refreshNow: () => Promise<unknown>;
+}>;
 
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -102,8 +108,8 @@ describe('useDirectSessionRuntime', () => {
     machineDirectSessionAttachSpy.mockReset();
     machineDirectSessionDetachSpy.mockReset();
     subscribeActiveServerSpy.mockClear();
-    resolvePreferredServerIdForSessionIdSpy.mockReset();
-    resolvePreferredServerIdForSessionIdSpy.mockReturnValue('server-owned');
+    resolveSessionTargetServerIdSpy.mockReset();
+    resolveSessionTargetServerIdSpy.mockReturnValue('server-owned');
     machineDirectSessionAttachSpy.mockResolvedValue({ ok: true, leaseId: 'lease-1', expiresAtMs: Date.now() + 60_000 });
     machineDirectSessionDetachSpy.mockResolvedValue({ ok: true, detached: true });
   });
@@ -191,7 +197,7 @@ describe('useDirectSessionRuntime', () => {
       .mockResolvedValueOnce({ ok: true, machineOnline: true, activity: 'idle', runnerActive: false })
       .mockResolvedValueOnce({ ok: true, machineOnline: true, activity: 'running', runnerActive: true })
       .mockResolvedValue({ ok: true, machineOnline: true, activity: 'running', runnerActive: true });
-    resolvePreferredServerIdForSessionIdSpy
+    resolveSessionTargetServerIdSpy
       .mockReturnValueOnce('server-owned-a')
       .mockReturnValueOnce('server-owned-a')
       .mockReturnValueOnce('server-owned-b')
@@ -206,6 +212,14 @@ describe('useDirectSessionRuntime', () => {
     });
 
     expect(machineDirectSessionStatusGetSpy.mock.calls[1]?.[1]).toEqual({ serverId: 'server-owned-b' });
+    await harness.unmount();
+  });
+
+  it('exposes the canonical session server id from the runtime hook', async () => {
+    const harness = await renderHarness();
+
+    expect(harness.getCurrent().sessionServerId).toBe('server-owned');
+
     await harness.unmount();
   });
 

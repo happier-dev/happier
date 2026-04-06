@@ -1,11 +1,17 @@
 import type { SessionListViewItem } from './sessionListViewData';
-import type { SessionStorageKind } from '../sessionStorageKind';
+import type { SessionListStorageFilter } from '../sessionStorageKind';
 import { getSessionStorageKind } from '../sessionStorageKind';
+
+const EMPTY_SESSION_LIST_VIEW_DATA: SessionListViewItem[] = [];
 
 export function filterSessionListViewDataByStorageKind(
     source: ReadonlyArray<SessionListViewItem>,
-    storageKind: SessionStorageKind,
+    storageKind: SessionListStorageFilter,
 ): SessionListViewItem[] {
+    if (source.length === 0) {
+        return EMPTY_SESSION_LIST_VIEW_DATA;
+    }
+
     if (storageKind === 'all') {
         return source as SessionListViewItem[];
     }
@@ -82,5 +88,5 @@ export function filterSessionListViewDataByStorageKind(
         out.push(item);
     }
 
-    return out;
+    return out.length === 0 ? EMPTY_SESSION_LIST_VIEW_DATA : out;
 }

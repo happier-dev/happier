@@ -2,6 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const prepareImportSessionMock = vi.hoisted(() => vi.fn());
 
+function readHeadersRecord(headers: HeadersInit | undefined): Record<string, string> {
+    return Object.fromEntries(new Headers(headers).entries()) as Record<string, string>;
+}
+
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc', () => ({
     callGuardedMachineRpcWithPolicy: (...args: unknown[]) => prepareImportSessionMock(...args),
 }));
@@ -45,10 +49,7 @@ describe('uploadBulkPayloadFromFileViaDirectImport', () => {
             requests.push({
                 method,
                 url,
-                headers: new Headers(init?.headers).entries().reduce<Record<string, string>>((acc, [key, value]) => {
-                    acc[key] = value;
-                    return acc;
-                }, {}),
+                headers: readHeadersRecord(init?.headers),
             });
 
             if (url.includes('/chunks/') && method === 'PUT') {
@@ -337,10 +338,7 @@ describe('uploadBulkPayloadFromFileViaDirectImport', () => {
             requests.push({
                 method,
                 url,
-                headers: new Headers(init?.headers).entries().reduce<Record<string, string>>((acc, [key, value]) => {
-                    acc[key] = value;
-                    return acc;
-                }, {}),
+                headers: readHeadersRecord(init?.headers),
             });
 
             if (url.startsWith('http://127.0.0.1:46001/') && url.includes('/chunks/') && method === 'PUT') {

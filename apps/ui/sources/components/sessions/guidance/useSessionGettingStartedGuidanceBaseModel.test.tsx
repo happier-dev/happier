@@ -2,12 +2,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 
-const buildSessionGettingStartedViewModel = vi.fn(() => ({
+type BuildSessionGettingStartedViewModel = typeof import('./gettingStartedModel').buildSessionGettingStartedViewModel;
+
+const buildSessionGettingStartedViewModel = vi.fn<BuildSessionGettingStartedViewModel>((input) => ({
     kind: 'create_session',
     targetLabel: 'Selected servers',
-    serverId: 'srv-a',
-    serverName: 'A',
-    serverUrl: 'https://api.a.example',
+    serverId: input.activeServerProfile.id,
+    serverName: input.activeServerProfile.name,
+    serverUrl: input.activeServerProfile.serverUrl,
     showServerSetup: false,
 }));
 
@@ -37,9 +39,13 @@ const guidanceState = vi.hoisted(() => ({
     ] as Array<{ id: string; name: string; serverUrl: string }>,
 }));
 
-vi.mock('./gettingStartedModel', () => ({
-    buildSessionGettingStartedViewModel,
-}));
+vi.mock('./gettingStartedModel', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('./gettingStartedModel')>();
+    return {
+        ...actual,
+        buildSessionGettingStartedViewModel,
+    };
+});
 
 vi.mock('@/hooks/session/useVisibleSessionListSummaryState', () => ({
     useVisibleSessionListSummaryState: () => ({
@@ -54,10 +60,6 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
 
 vi.mock('@/hooks/server/useServerProfilesGeneration', () => ({
     useServerProfilesGeneration: () => guidanceState.serverProfilesGeneration,
-}));
-
-vi.mock('@/hooks/server/useEffectiveServerSelection', () => ({
-    useResolvedActiveServerSelection: () => guidanceState.selection,
 }));
 
 describe('useSessionGettingStartedGuidanceBaseModel', () => {
@@ -123,10 +125,9 @@ describe('useSessionGettingStartedGuidanceBaseModel', () => {
         await hook.rerender({ tick: 1 });
 
         expect(buildSessionGettingStartedViewModel).toHaveBeenCalledTimes(2);
-        expect(buildSessionGettingStartedViewModel.mock.lastCall?.[0]).toEqual(expect.objectContaining({
-            serverProfiles: [
-                { id: 'srv-a', name: 'Renamed', serverUrl: 'https://api.renamed.example' },
-            ],
+        expect(hook.getCurrent()).toEqual(expect.objectContaining({
+            serverName: 'Renamed',
+            serverUrl: 'https://api.renamed.example',
         }));
     });
 });

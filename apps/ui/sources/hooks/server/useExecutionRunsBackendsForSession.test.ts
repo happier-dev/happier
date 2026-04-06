@@ -1,5 +1,3 @@
-import * as React from 'react';
-import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook } from '@/dev/testkit';
 import { createPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';
@@ -16,53 +14,11 @@ const capabilitiesState = vi.hoisted(() => ({
   lastArgs: null as null | { machineId: string | null; serverId?: string | null; enabled: boolean; request: any },
 }));
 
-const activeServerSnapshotState = vi.hoisted(() => ({
-  value: { serverId: 'active-server' },
-}));
-
 installServerHookCommonModuleMocks({
   storage: async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
     useSession: () => sessionState.value,
   }),
 });
-
-const sessionServerIdStore = vi.hoisted(() => {
-  let value: string | null = null;
-  const listeners = new Set<() => void>();
-  return {
-    getSnapshot: () => value,
-    set(next: string | null) {
-      value = next;
-      for (const listener of Array.from(listeners)) listener();
-    },
-    reset(next: string | null = null) {
-      value = next;
-      listeners.clear();
-    },
-    subscribe(listener: () => void) {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
-    },
-  };
-});
-
-vi.mock('@/sync/store/hooks', async () => {
-  const React = await import('react');
-  return {
-    useSessionServerId: () => React.useSyncExternalStore(
-      sessionServerIdStore.subscribe,
-      sessionServerIdStore.getSnapshot,
-      sessionServerIdStore.getSnapshot,
-    ),
-  };
-});
-
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-  getActiveServerSnapshot: () => activeServerSnapshotState.value,
-  subscribeActiveServer: () => () => {},
-}));
 
 vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({
   useMachineCapabilitiesCache: (args: { machineId: string | null; serverId?: string | null; enabled: boolean; request: any }) => {
@@ -92,11 +48,12 @@ vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({
   },
 }));
 
-async function renderExecutionRunsBackendsHook(sessionId: string) {
+async function renderExecutionRunsBackendsHook(sessionId: string, serverId?: string | null) {
   const { useExecutionRunsBackendsForSession } = await import('./useExecutionRunsBackendsForSession');
   return renderHook(
-    (nextSessionId: string) => useExecutionRunsBackendsForSession(nextSessionId),
-    { initialProps: sessionId, flushOptions: { cycles: 1, turns: 1 } },
+    (props: { sessionId: string; serverId?: string | null }) =>
+      useExecutionRunsBackendsForSession(props.sessionId, props.serverId),
+    { initialProps: { sessionId, serverId }, flushOptions: { cycles: 1, turns: 1 } },
   );
 }
 
@@ -104,8 +61,6 @@ describe('useExecutionRunsBackendsForSession', () => {
   beforeEach(() => {
     sessionState.value = null;
     capabilitiesState.lastArgs = null;
-    activeServerSnapshotState.value = { serverId: 'active-server' };
-    sessionServerIdStore.reset();
   });
 
   afterEach(() => {
@@ -139,8 +94,7 @@ describe('useExecutionRunsBackendsForSession', () => {
     await hook.unmount();
   });
 
-  it('scopes the execution-run capability lookup to the session-owned server', async () => {
-    sessionServerIdStore.set('server-owned');
+  it('scopes the execution-run capability lookup to the canonical session server', async () => {
     sessionState.value = {
       id: 'session-1',
       metadata: {
@@ -154,7 +108,7 @@ describe('useExecutionRunsBackendsForSession', () => {
       },
     };
 
-    const hook = await renderExecutionRunsBackendsHook('session-1');
+    const hook = await renderExecutionRunsBackendsHook('session-1', 'server-owned');
 
     expect(capabilitiesState.lastArgs).toEqual(expect.objectContaining({
       machineId: 'machine-direct',
@@ -165,7 +119,7 @@ describe('useExecutionRunsBackendsForSession', () => {
     await hook.unmount();
   });
 
-  it('reacts when the session-owned server id hydrates after mount', async () => {
+  it('updates when the caller changes the canonical server id', async () => {
     sessionState.value = {
       id: 'session-1',
       metadata: {
@@ -183,17 +137,15 @@ describe('useExecutionRunsBackendsForSession', () => {
 
     expect(capabilitiesState.lastArgs).toEqual(expect.objectContaining({
       machineId: 'machine-direct',
-      serverId: 'active-server',
       enabled: true,
     }));
+    expect(capabilitiesState.lastArgs?.serverId).toBeUndefined();
 
-    await act(async () => {
-      sessionServerIdStore.set('server-owned');
-    });
+    await hook.rerender({ sessionId: 'session-1', serverId: 'server-canonical' });
 
     expect(capabilitiesState.lastArgs).toEqual(expect.objectContaining({
       machineId: 'machine-direct',
-      serverId: 'server-owned',
+      serverId: 'server-canonical',
       enabled: true,
     }));
 

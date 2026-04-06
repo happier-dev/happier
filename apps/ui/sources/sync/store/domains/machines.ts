@@ -1,15 +1,13 @@
 import type { Machine, Session } from '../../domains/state/storageTypes';
 import {
     buildMachineDisplayRenderableFromMachine,
-    getMachineDisplaySubtitle,
-    resolveBestMachineDisplayRenderableForHost,
     type MachineDisplayRenderable,
 } from '../../domains/machines/machineDisplayRenderable';
 import type { Settings } from '../../domains/settings/settings';
 import type { SessionListViewItem } from '../../domains/session/listing/sessionListViewData';
 import type { SessionListRenderableSession } from '../../domains/session/listing/sessionListRenderable';
 import type { ServerScopedSessionListCache } from '../../domains/session/listing/serverScopedSessionListCache';
-import { resolveSessionProjectGroupingKeyParts } from '../../domains/session/listing/sessionListProjectGroupingKeys';
+import { resolveMachineSessionListViewDataImpact } from './machineSessionListViewDataImpact';
 import { normalizeNonEmptyString } from '@/utils/strings/normalizeNonEmptyString';
 import { resolveActiveServerSessionListState } from '../resolveActiveServerSessionListState';
 import { getActiveServerSnapshot } from '../../domains/server/serverRuntime';
@@ -23,6 +21,8 @@ import {
 import { buildMachineDisplayCacheEntriesFromRenderables } from '../../domains/state/warmCacheAdapters';
 
 import type { StoreGet, StoreSet } from './_shared';
+
+export { resolveMachineSessionListViewDataImpact } from './machineSessionListViewDataImpact';
 
 export type MachinesDomain = {
     machines: Record<string, Machine>;
@@ -154,57 +154,17 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     const activeGrouping = resolveGroupingForSection('active', state.settings);
                     const inactiveGrouping = resolveGroupingForSection('inactive', state.settings);
                     const usesProjectGrouping = activeGrouping === 'project' || inactiveGrouping === 'project';
-
-                    if (usesProjectGrouping) {
-                        const referencedGroupIds = new Set<string>();
-                        const resolveMachineGroupId = (
-                            parts: ReturnType<typeof resolveSessionProjectGroupingKeyParts>,
-                            machinesById: Record<string, MachineDisplayRenderable>,
-                        ): string => {
-                            const machine = parts.machineId ? machinesById[parts.machineId] : undefined;
-                            const host = parts.host ?? normalizeNonEmptyString(machine?.metadata?.host);
-                            return host ? `host:${host}` : parts.machineId ? `id:${parts.machineId}` : 'unknown';
-                        };
-
-                        for (const session of Object.values(state.sessionListRenderables ?? {})) {
-                            const parts = resolveSessionProjectGroupingKeyParts(session.metadata ?? null);
-                            if (!parts.pathKey) continue;
-                            const prevGroupId = resolveMachineGroupId(parts, state.machineDisplayById ?? {});
-                            const nextGroupId = resolveMachineGroupId(parts, mergedMachineDisplays);
-                            referencedGroupIds.add(prevGroupId);
-                            referencedGroupIds.add(nextGroupId);
-                            if (prevGroupId !== nextGroupId) {
-                                needsSessionListViewDataRebuild = true;
-                                needsProjectManagerUpdate = true;
-                                break;
-                            }
-                        }
-
-                        const resolveSubtitleForGroup = (
-                            groupId: string,
-                            machinesById: Record<string, MachineDisplayRenderable>,
-                        ): string => {
-                            if (groupId.startsWith('host:')) {
-                                const host = groupId.slice('host:'.length);
-                                const machine = resolveBestMachineDisplayRenderableForHost(machinesById, host) ?? undefined;
-                                return getMachineDisplaySubtitle(machine, host);
-                            }
-                            if (groupId.startsWith('id:')) {
-                                const machineId = groupId.slice('id:'.length);
-                                return getMachineDisplaySubtitle(machinesById[machineId], machineId);
-                            }
-                            return 'unknown';
-                        };
-
-                        for (const groupId of referencedGroupIds) {
-                            const prevSubtitle = resolveSubtitleForGroup(groupId, state.machineDisplayById ?? {});
-                            const nextSubtitle = resolveSubtitleForGroup(groupId, mergedMachineDisplays);
-                            if (prevSubtitle !== nextSubtitle) {
-                                needsSessionListViewDataRebuild = true;
-                                needsProjectManagerUpdate = true;
-                                break;
-                            }
-                        }
+                    const machineImpact = resolveMachineSessionListViewDataImpact({
+                        sessions: Object.values(state.sessionListRenderables ?? {}),
+                        previousMachineDisplays: state.machineDisplayById ?? {},
+                        nextMachineDisplays: mergedMachineDisplays,
+                        usesProjectGrouping,
+                    });
+                    if (machineImpact.needsSessionListViewDataRebuild) {
+                        needsSessionListViewDataRebuild = true;
+                    }
+                    if (machineImpact.needsProjectManagerUpdate) {
+                        needsProjectManagerUpdate = true;
                     }
                 }
 

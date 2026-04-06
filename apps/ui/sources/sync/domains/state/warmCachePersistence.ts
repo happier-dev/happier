@@ -18,6 +18,9 @@ function getWarmCacheStorage(): MMKV {
 
 const SESSION_LIST_WARM_CACHE_PREFIX = 'session-list-warm-cache-v1';
 const MACHINE_DISPLAY_WARM_CACHE_PREFIX = 'machine-display-warm-cache-v1';
+const EMPTY_WARM_CACHE_ENTRIES: Record<string, never> = {};
+const EMPTY_SESSION_LIST_WARM_CACHE_ENTRIES = EMPTY_WARM_CACHE_ENTRIES as Record<string, SessionListCacheEntryV1>;
+const EMPTY_MACHINE_DISPLAY_WARM_CACHE_ENTRIES = EMPTY_WARM_CACHE_ENTRIES as Record<string, MachineDisplayCacheEntryV1>;
 
 export const SessionListCacheEntryV1Schema = z.object({
     sessionId: z.string().min(1),
@@ -72,6 +75,16 @@ function normalizeScopePart(value: string | null | undefined): string {
     return normalized;
 }
 
+function hasAnyOwnEntries(record: Readonly<Record<string, unknown>> | null | undefined): boolean {
+    const source = record ?? {};
+    for (const key in source) {
+        if (Object.prototype.hasOwnProperty.call(source, key)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 export function setWarmCacheAccountScope(accountId: string | null | undefined): void {
     warmCacheAccountScope = normalizeScopePart(accountId) || null;
 }
@@ -117,7 +130,7 @@ function loadScopedRecord<T>(
 function saveScopedRecord<T extends Record<string, unknown>>(key: string | null, value: T): void {
     if (!key) return;
     const storage = getWarmCacheStorage();
-    if (Object.keys(value).length === 0) {
+    if (!hasAnyOwnEntries(value)) {
         if (storage.getString(key) !== undefined) {
             storage.delete(key);
         }
@@ -141,8 +154,14 @@ function peekScopedRecord<T extends Record<string, unknown>>(key: string | null)
     return (warmCacheSavedValueByKey.get(key) as T | undefined) ?? null;
 }
 
+function normalizeEmptyWarmCacheRecord<T extends Record<string, unknown>>(value: T): T {
+    return hasAnyOwnEntries(value) ? value : (EMPTY_WARM_CACHE_ENTRIES as T);
+}
+
 export function loadSessionListWarmCacheEntries(serverId: string | null | undefined, accountId: string | null | undefined): Record<string, SessionListCacheEntryV1> {
-    return loadScopedRecord(buildScopedKey(SESSION_LIST_WARM_CACHE_PREFIX, serverId, accountId), SessionListCacheEntriesSchema) ?? {};
+    const loaded = loadScopedRecord(buildScopedKey(SESSION_LIST_WARM_CACHE_PREFIX, serverId, accountId), SessionListCacheEntriesSchema);
+    if (!loaded) return EMPTY_SESSION_LIST_WARM_CACHE_ENTRIES;
+    return normalizeEmptyWarmCacheRecord(loaded);
 }
 
 export function peekSessionListWarmCacheEntries(serverId: string | null | undefined, accountId: string | null | undefined): Record<string, SessionListCacheEntryV1> | null {
@@ -158,7 +177,9 @@ export function saveSessionListWarmCacheEntries(
 }
 
 export function loadMachineDisplayWarmCacheEntries(serverId: string | null | undefined, accountId: string | null | undefined): Record<string, MachineDisplayCacheEntryV1> {
-    return loadScopedRecord(buildScopedKey(MACHINE_DISPLAY_WARM_CACHE_PREFIX, serverId, accountId), MachineDisplayCacheEntriesSchema) ?? {};
+    const loaded = loadScopedRecord(buildScopedKey(MACHINE_DISPLAY_WARM_CACHE_PREFIX, serverId, accountId), MachineDisplayCacheEntriesSchema);
+    if (!loaded) return EMPTY_MACHINE_DISPLAY_WARM_CACHE_ENTRIES;
+    return hasAnyOwnEntries(loaded) ? loaded : (EMPTY_MACHINE_DISPLAY_WARM_CACHE_ENTRIES as Record<string, MachineDisplayCacheEntryV1>);
 }
 
 export function saveMachineDisplayWarmCacheEntries(

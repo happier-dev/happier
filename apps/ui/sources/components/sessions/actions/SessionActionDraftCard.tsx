@@ -7,7 +7,7 @@ import { useRouter } from 'expo-router';
 import { storage, useSession } from '@/sync/domains/state/storage';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
-import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
+import { resolveSessionTargetServerId } from '@/components/sessions/model/resolveSessionTargetServerId';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { useExecutionRunsBackendsForSession } from '@/hooks/server/useExecutionRunsBackendsForSession';
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
@@ -22,9 +22,9 @@ import { ActionInputFields } from './ActionInputFields';
 
 type EngineOption = Readonly<{ id: string; label: string; disabled?: boolean }>;
 
-function useReviewEngineOptions(sessionId: string): readonly EngineOption[] {
+function useReviewEngineOptions(sessionId: string, serverId?: string | null): readonly EngineOption[] {
   const enabledAgentIds = useEnabledAgentIds();
-  const backends = useExecutionRunsBackendsForSession(sessionId);
+  const backends = useExecutionRunsBackendsForSession(sessionId, resolveSessionTargetServerId(sessionId, serverId));
 
   return React.useMemo(() => {
     const opts = buildAvailableReviewEngineOptions({
@@ -51,19 +51,20 @@ function useExecutionBackendOptions(): readonly EngineOption[] {
 export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draft: SessionActionDraft }>) {
   const { theme } = useUnistyles();
   const router = useRouter();
+  const session = useSession(props.sessionId);
   const spec = getActionSpec(props.draft.actionId as any);
   const executor = React.useMemo(
     () => createDefaultActionExecutor({
-      resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId) ?? null,
+      resolveServerIdForSessionId: (sessionId) => resolveSessionTargetServerId(sessionId, session?.serverId),
       openSession: (sessionId) => {
         router.push((`/session/${sessionId}`) as any);
       },
     }),
-    [router],
+    [router, session?.serverId],
   );
 
   const input: Record<string, unknown> = props.draft.input ?? {};
-  const engineOptions = useReviewEngineOptions(props.sessionId);
+  const engineOptions = useReviewEngineOptions(props.sessionId, session?.serverId);
   const backendOptions = useExecutionBackendOptions();
   const submitInFlightRef = React.useRef(false);
   const [isSubmitting, setIsSubmitting] = React.useState(false);

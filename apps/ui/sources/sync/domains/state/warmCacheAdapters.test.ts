@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
     buildMachineDisplayCacheEntryFromRenderable,
@@ -97,9 +97,17 @@ describe('warmCacheAdapters', () => {
             hasPendingUserActionRequests: false,
         };
 
+        const originalKeys = Object.keys;
+        const keysSpy = vi.spyOn(Object, 'keys');
         const previousEntries = {
             s1: buildSessionListCacheEntryFromRenderable(renderable as any),
         };
+        keysSpy.mockImplementation((value) => {
+            if (value === previousEntries) {
+                throw new Error('previous session entries should not be enumerated');
+            }
+            return originalKeys(value as never);
+        });
 
         const nextEntries = buildSessionListCacheEntriesFromRenderables(
             { s1: renderable as any },
@@ -107,6 +115,20 @@ describe('warmCacheAdapters', () => {
         );
 
         expect(nextEntries).toBe(previousEntries);
+        keysSpy.mockRestore();
+    });
+
+    it('reuses shared empty maps when renderables are empty', () => {
+        const firstSessionEntries = buildSessionListCacheEntriesFromRenderables({});
+        const secondSessionEntries = buildSessionListCacheEntriesFromRenderables({});
+        const firstMachineEntries = buildMachineDisplayCacheEntriesFromRenderables({});
+        const secondMachineEntries = buildMachineDisplayCacheEntriesFromRenderables({});
+
+        expect(firstSessionEntries).toBe(secondSessionEntries);
+        expect(firstSessionEntries).toEqual({});
+        expect(firstMachineEntries).toBe(secondMachineEntries);
+        expect(firstSessionEntries).toBe(firstMachineEntries);
+        expect(firstMachineEntries).toEqual({});
     });
 
     it('reuses the previous session cache entry when renderable data is semantically identical', () => {
@@ -199,9 +221,17 @@ describe('warmCacheAdapters', () => {
             },
         };
 
+        const originalKeys = Object.keys;
+        const keysSpy = vi.spyOn(Object, 'keys');
         const previousEntries = {
             m1: buildMachineDisplayCacheEntryFromRenderable(renderable as any),
         };
+        keysSpy.mockImplementation((value) => {
+            if (value === previousEntries) {
+                throw new Error('previous machine entries should not be enumerated');
+            }
+            return originalKeys(value as never);
+        });
 
         const nextEntries = buildMachineDisplayCacheEntriesFromRenderables(
             { m1: renderable as any },
@@ -209,6 +239,7 @@ describe('warmCacheAdapters', () => {
         );
 
         expect(nextEntries).toBe(previousEntries);
+        keysSpy.mockRestore();
     });
 
     it('reuses the previous machine display cache entry when renderable data is semantically identical', () => {

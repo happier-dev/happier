@@ -10,6 +10,7 @@ import { installSessionHooksCommonModuleMocks } from './sessionHooksTestHelpers'
 const routerNavigateSpy = vi.fn();
 const setActiveServerAndSwitchSpy = vi.fn(async () => false);
 const refreshFromActiveServerSpy = vi.fn(async () => {});
+const resolveSessionTargetServerIdSpy = vi.fn<(sessionId: string, fallbackServerId?: string | null) => string | null>();
 
 installSessionHooksCommonModuleMocks({
     router: async () => {
@@ -31,10 +32,21 @@ vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
     setActiveServerAndSwitch: setActiveServerAndSwitchSpy,
 }));
 
+vi.mock('@/components/sessions/model/resolveSessionTargetServerId', () => ({
+    resolveSessionTargetServerId: (...args: unknown[]) => resolveSessionTargetServerIdSpy(args[0] as string, args[1] as string | null | undefined),
+}));
+
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
+    resolvePreferredServerIdForSessionId: () => {
+        throw new Error('legacy preferred-server resolver should not be used in useNavigateToSession');
+    },
+}));
+
 describe('useNavigateToSession (multi-server)', () => {
     it('navigates immediately while the server switch runs in parallel', async () => {
         routerNavigateSpy.mockClear();
         setActiveServerAndSwitchSpy.mockClear();
+        resolveSessionTargetServerIdSpy.mockReturnValue('other');
         let resolveSwitch: ((value: boolean) => void) | undefined;
         const switchPromise = new Promise<boolean>((resolve) => {
             resolveSwitch = resolve;
@@ -79,6 +91,7 @@ describe('useNavigateToSession (multi-server)', () => {
         routerNavigateSpy.mockClear();
         setActiveServerAndSwitchSpy.mockClear();
         setActiveServerAndSwitchSpy.mockResolvedValue(false);
+        resolveSessionTargetServerIdSpy.mockReturnValue('same');
 
         const { useNavigateToSession } = await import('./useNavigateToSession');
 
@@ -100,5 +113,63 @@ describe('useNavigateToSession (multi-server)', () => {
             refreshAuth: expect.any(Function),
         });
         expect(routerNavigateSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back to the canonical preferred server id when serverId is omitted', async () => {
+        routerNavigateSpy.mockClear();
+        setActiveServerAndSwitchSpy.mockClear();
+        resolveSessionTargetServerIdSpy.mockClear();
+        resolveSessionTargetServerIdSpy.mockReturnValue('preferred-server');
+
+        const { useNavigateToSession } = await import('./useNavigateToSession');
+
+        let navigateToSession: ReturnType<typeof useNavigateToSession> | null = null;
+        function Probe() {
+            navigateToSession = useNavigateToSession();
+            return null;
+        }
+
+        await renderScreen(React.createElement(Probe));
+
+        await act(async () => {
+            await navigateToSession!('sess_789');
+        });
+
+        expect(resolveSessionTargetServerIdSpy).toHaveBeenCalledWith('sess_789', undefined);
+        expect(setActiveServerAndSwitchSpy).toHaveBeenCalledWith({
+            serverId: 'preferred-server',
+            scope: 'device',
+            refreshAuth: expect.any(Function),
+        });
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/sess_789', expect.any(Object));
+    });
+
+    it('prefers an explicit row serverId over the canonical preferred server id', async () => {
+        routerNavigateSpy.mockClear();
+        setActiveServerAndSwitchSpy.mockClear();
+        resolveSessionTargetServerIdSpy.mockClear();
+        resolveSessionTargetServerIdSpy.mockReturnValue('preferred-server');
+
+        const { useNavigateToSession } = await import('./useNavigateToSession');
+
+        let navigateToSession: ReturnType<typeof useNavigateToSession> | null = null;
+        function Probe() {
+            navigateToSession = useNavigateToSession();
+            return null;
+        }
+
+        await renderScreen(React.createElement(Probe));
+
+        await act(async () => {
+            await navigateToSession!('sess_999', { serverId: 'explicit-server' });
+        });
+
+        expect(resolveSessionTargetServerIdSpy).not.toHaveBeenCalled();
+        expect(setActiveServerAndSwitchSpy).toHaveBeenCalledWith({
+            serverId: 'explicit-server',
+            scope: 'device',
+            refreshAuth: expect.any(Function),
+        });
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/sess_999', expect.any(Object));
     });
 });

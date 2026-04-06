@@ -11,6 +11,7 @@ import { SessionsListView } from '@/components/sessions/shell/SessionsList';
 import { SessionsListEmptyState } from '@/components/sessions/shell/SessionsListEmptyState';
 import { useSessionGettingStartedGuidanceBaseModel } from '@/components/sessions/guidance/useSessionGettingStartedGuidanceBaseModel';
 import { useVisibleSessionListPaneState } from '@/hooks/session/useVisibleSessionListPaneState';
+import { resolveSessionsListEmptyStateKind } from './resolveSessionsListEmptyStateKind';
 
 type SessionsListPaneContentProps = Readonly<{
     storageKind: 'persisted' | 'direct';
@@ -71,13 +72,7 @@ export const SessionsListPaneContent = React.memo((props: SessionsListPaneConten
             );
         }
 
-        const emptyStateKind: React.ComponentProps<typeof SessionsListEmptyState>['kind'] | null = (
-            gettingStarted.kind === 'create_session'
-            || gettingStarted.kind === 'connect_machine'
-            || gettingStarted.kind === 'start_daemon'
-        )
-            ? gettingStarted.kind
-            : null;
+        const emptyStateKind = resolveSessionsListEmptyStateKind(gettingStarted.kind);
 
         return (
             <View style={styles.emptyStateContainer}>

@@ -22,9 +22,16 @@ vi.mock('@/text', async () => {
     });
 });
 
-vi.mock('@/sync/domains/session/listing/sessionListCacheState', () => ({
-    resolveSessionListCachedSessionServerId,
-}));
+vi.mock('@/sync/domains/session/listing/sessionListCacheState', async () => {
+    const actual = await vi.importActual<typeof import('@/sync/domains/session/listing/sessionListCacheState')>(
+        '@/sync/domains/session/listing/sessionListCacheState',
+    );
+
+    return {
+        ...actual,
+        resolveSessionListCachedSessionServerId,
+    };
+});
 
 async function renderSessionRetentionNotice(sessionId: string) {
     const { SessionRetentionNotice } = await import('./SessionRetentionNotice');

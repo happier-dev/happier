@@ -14,7 +14,8 @@ const ensureSessionVisibleSpy = vi.fn();
 const updateSessionDraftSpy = vi.fn();
 const patchSessionMetadataWithRetrySpy = vi.fn();
 const modalAlertSpy = vi.fn();
-const resolvePreferredServerIdForSessionIdSpy = vi.fn<(sessionId: string) => string>();
+const resolveSessionTargetServerIdSpy = vi.fn<(sessionId: string) => string | null>();
+const createDefaultActionExecutorSpy = vi.fn();
 
 let replayEnabled = true;
 let copyButtonsVisible = true;
@@ -132,6 +133,7 @@ installMessageViewCommonModuleMocks({
         updatedAt: 0,
         active: true,
         activeAt: 0,
+        serverId: 'server-explicit',
         metadata: sessionMetadata,
         metadataVersion: 1,
         agentState: null,
@@ -229,9 +231,24 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
   useFeatureEnabled: () => false,
 }));
 
+vi.mock('@/components/sessions/model/resolveSessionTargetServerId', () => ({
+  resolveSessionTargetServerId: (sessionId: string, fallbackServerId?: string | null) =>
+    resolveSessionTargetServerIdSpy(sessionId) ?? fallbackServerId ?? null,
+}));
+
+vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
+  createDefaultActionExecutor: (options: any) => {
+    createDefaultActionExecutorSpy(options);
+    return {
+      execute: vi.fn(),
+    };
+  },
+}));
+
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
-  resolvePreferredServerIdForSessionId: (sessionId: string) =>
-    resolvePreferredServerIdForSessionIdSpy(sessionId),
+  resolvePreferredServerIdForSessionId: () => {
+    throw new Error('legacy direct resolver should not be used in MessageView');
+  },
 }));
 
 describe('MessageView (fork button)', () => {
@@ -242,8 +259,9 @@ describe('MessageView (fork button)', () => {
     updateSessionDraftSpy.mockReset();
     patchSessionMetadataWithRetrySpy.mockReset();
     modalAlertSpy.mockReset();
-    resolvePreferredServerIdForSessionIdSpy.mockReset();
-    resolvePreferredServerIdForSessionIdSpy.mockImplementation(() => 'server-a');
+    resolveSessionTargetServerIdSpy.mockReset();
+    resolveSessionTargetServerIdSpy.mockReturnValue('server-a');
+    createDefaultActionExecutorSpy.mockReset();
     replayEnabled = true;
     copyButtonsVisible = true;
     sessionMetadata = { machineId: 'm1' };
@@ -458,5 +476,18 @@ describe('MessageView (fork button)', () => {
       resolveFork?.({ ok: true, childSessionId: 'child-loading' });
       await flushHookEffects({ cycles: 1, turns: 1 });
     });
+  });
+
+  it('threads the explicit session server id into the default action executor when preferred resolution is unavailable', async () => {
+    resolveSessionTargetServerIdSpy.mockReturnValue(null);
+    const { MessageView } = await import('./MessageView');
+
+    const message: any = { kind: 'agent-text', id: 'm-explicit', createdAt: 1, text: 'hi', isThinking: false, seq: 5 };
+
+    await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+    expect(createDefaultActionExecutorSpy).toHaveBeenCalled();
+    const executorOptions = createDefaultActionExecutorSpy.mock.calls[0]?.[0];
+    expect(executorOptions?.resolveServerIdForSessionId?.('s1')).toBe('server-explicit');
   });
 });

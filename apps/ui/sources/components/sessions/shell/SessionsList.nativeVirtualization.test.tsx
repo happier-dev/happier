@@ -430,6 +430,7 @@ function resetVisibleSessionListViewData(): void {
 }
 
 async function renderSessionsList() {
+    await vi.resetModules();
     const { SessionsList } = await import('./SessionsList');
     return renderScreen(<SessionsList />);
 }

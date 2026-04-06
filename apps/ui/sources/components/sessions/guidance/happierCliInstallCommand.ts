@@ -52,6 +52,34 @@ function buildPowershellInstallerInvocation(input: Readonly<{
     return base;
 }
 
+function resolveCliInvokerNameForChannel(channel: 'stable' | 'preview' | 'dev'): 'happier' | 'hprev' | 'hdev' {
+    if (channel === 'preview') return 'hprev';
+    if (channel === 'dev') return 'hdev';
+    return 'happier';
+}
+
+function buildCliRunCommandForChannel(
+    channel: 'stable' | 'preview' | 'dev',
+    run: Readonly<{
+        action: HappierInstallerRunAction;
+        args?: readonly string[];
+    }>,
+): string {
+    const invoker = resolveCliInvokerNameForChannel(channel);
+    const args = Array.isArray(run.args) && run.args.length > 0 ? ` ${run.args.join(' ')}` : '';
+
+    switch (run.action) {
+        case 'setup':
+            return `${invoker} setup${args}`;
+        case 'auth-login':
+            return `${invoker} auth login${args}`;
+        case 'providers-setup':
+            return `${invoker} providers setup${args}`;
+        default:
+            return `${invoker} ${run.action}${args}`;
+    }
+}
+
 export function buildHappierCliInstallAndRunCommand(
     input: Readonly<{
         appVariant: AppVariant;
@@ -72,11 +100,8 @@ export function buildHappierCliInstallAndRunCommand(
     if (run.action === 'setup-relay') {
         args.push('--setup-relay');
     } else {
-        args.push(`--run ${run.action}`);
-        if (Array.isArray(run.args) && run.args.length > 0) {
-            args.push('--');
-            args.push(...run.args);
-        }
+        return `curl -fsSL https://happier.dev/install | bash -s -- ${args.join(' ')}`.trim()
+            + ` && ${buildCliRunCommandForChannel(channel, run)}`;
     }
 
     return `curl -fsSL https://happier.dev/install | bash -s -- ${args.join(' ')}`.trim();
@@ -110,9 +135,5 @@ export function buildHappierCliInstallAndRunPowershellCommand(
         return parts.join(' ');
     }
 
-    parts.push('-Run', run.action);
-    if (Array.isArray(run.args) && run.args.length > 0) {
-        parts.push(...run.args);
-    }
-    return parts.join(' ');
+    return `${parts.join(' ')}; if ($?) { ${buildCliRunCommandForChannel(channel, run)} }`;
 }

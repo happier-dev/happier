@@ -22,24 +22,19 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
     },
     listHeaderSection: {
         backgroundColor: theme.colors.groupped.background,
-        paddingHorizontal: 24,
-        paddingTop: 12,
-        paddingBottom: 8,
+        position: 'relative' as const,
     },
-    listHeaderMenuRow: {
-        flexDirection: 'row' as const,
-        justifyContent: 'flex-end' as const,
-        marginBottom: 8,
+    listHeaderMenuAnchor: {
+        position: 'absolute' as const,
+        top: 8,
+        right: 24,
+        zIndex: 1,
     },
     listHeaderMenuButton: {
         width: 28,
         height: 28,
         alignItems: 'center' as const,
         justifyContent: 'center' as const,
-        borderRadius: 999,
-        backgroundColor: theme.colors.surface,
-        borderWidth: 1,
-        borderColor: theme.colors.divider,
     },
     headerText: {
         fontSize: 14,

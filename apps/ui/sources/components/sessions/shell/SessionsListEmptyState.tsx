@@ -28,12 +28,12 @@ type SessionsListEmptyStateProps = Readonly<{
     surface?: 'default' | 'sidebar';
 }>;
 
-export const SessionsListEmptyState = React.memo((props: SessionsListEmptyStateProps) => {
+export function SessionsListEmptyState(props: SessionsListEmptyStateProps) {
     const { theme } = useUnistyles();
     const router = useRouter();
     const activeServer = useActiveServerSnapshot();
     const allMachines = useAllMachines();
-    const machines = React.useMemo(() => resolveMachineActionCandidates(allMachines), [allMachines]);
+    const machines = resolveMachineActionCandidates(allMachines);
 
     const handleStartSession = React.useCallback((machineId: string) => {
         const serverId = String(activeServer.serverId ?? '').trim();
@@ -109,4 +109,4 @@ export const SessionsListEmptyState = React.memo((props: SessionsListEmptyStateP
             ) : null}
         </ItemList>
     );
-});
+}

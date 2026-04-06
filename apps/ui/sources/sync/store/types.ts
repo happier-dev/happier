@@ -298,7 +298,6 @@ export interface FeedDomainSlice {
 }
 
 export interface BootstrapSlice {
-    applyLoaded: () => void;
     applyReady: () => void;
 }
 

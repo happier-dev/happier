@@ -1,11 +1,10 @@
-import * as React from 'react';
 import { View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 
-export const SessionContextChips = React.memo(function SessionContextChips(props: Readonly<{
+export function SessionContextChips(props: Readonly<{
     machineLabel: string | null;
     pathLabel: string | null;
 }>) {
@@ -29,7 +28,7 @@ export const SessionContextChips = React.memo(function SessionContextChips(props
             ) : null}
         </View>
     );
-});
+}
 
 const styles = StyleSheet.create((theme) => ({
     row: {

@@ -18,10 +18,14 @@ const routerPushSpy = vi.fn();
 const routerBackSpy = vi.fn();
 const safeRouterBackSpy = vi.fn();
 const readMachineTargetForSessionSpy = vi.fn();
-const resolvePreferredServerIdForSessionIdSpy = vi.fn();
-const resolvePreferredServerIdForSessionIdSpy = vi.fn();
-const usePreferredServerIdForSessionSpy = vi.fn();
+const resolveSessionTargetServerIdSpy = vi.fn();
 const machineRpcWithServerScopeSpy = vi.fn();
+const useSessionExecutionRunsSupportedSpy = vi.fn<(sessionId: string, sessionServerId?: string | null) => boolean>(() => false);
+type CreateDefaultActionExecutorConfig = Readonly<{
+    resolveServerIdForSessionId?: (sessionId: string) => string | null;
+    openSession?: (sessionId: string) => void;
+}>;
+const createDefaultActionExecutorSpy = vi.fn((_config: CreateDefaultActionExecutorConfig) => ({}));
 const sessionStopSpy = vi.fn(async () => ({ success: true }));
 const sessionArchiveSpy = vi.fn(async () => ({ success: true, archivedAt: 1 }));
 const modalAlertSpy = vi.fn();
@@ -196,16 +200,13 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
         return false;
     },
 }));
-vi.mock('@/hooks/server/useSessionExecutionRunsSupported', () => ({ useSessionExecutionRunsSupported: () => false }));
-vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({ createDefaultActionExecutor: () => ({}) }));
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
-    resolvePreferredServerIdForSessionId: (sessionId: string) => resolvePreferredServerIdForSessionIdSpy(sessionId),
+vi.mock('@/hooks/server/useSessionExecutionRunsSupported', () => ({
+    useSessionExecutionRunsSupported: (sessionId: string, sessionServerId?: string | null) =>
+        useSessionExecutionRunsSupportedSpy(sessionId, sessionServerId),
 }));
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
-    resolvePreferredServerIdForSessionId: (sessionId: string) => resolvePreferredServerIdForSessionIdSpy(sessionId),
-}));
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession', () => ({
-    usePreferredServerIdForSession: (sessionId: string) => usePreferredServerIdForSessionSpy(sessionId),
+vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({ createDefaultActionExecutor: (config: CreateDefaultActionExecutorConfig) => createDefaultActionExecutorSpy(config) }));
+vi.mock('@/components/sessions/model/resolveSessionTargetServerId', () => ({
+    resolveSessionTargetServerId: (sessionId: string, fallbackServerId?: string | null) => resolveSessionTargetServerIdSpy(sessionId, fallbackServerId),
 }));
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: (...args: unknown[]) => machineRpcWithServerScopeSpy(...args),
@@ -276,13 +277,10 @@ describe('/session/[id]/info', () => {
         sessionArchiveSpy.mockClear();
         modalAlertSpy.mockClear();
         modalConfirmSpy.mockClear();
-        resolvePreferredServerIdForSessionIdSpy.mockClear();
-        resolvePreferredServerIdForSessionIdSpy.mockClear();
-        usePreferredServerIdForSessionSpy.mockClear();
+        resolveSessionTargetServerIdSpy.mockClear();
         machineRpcWithServerScopeSpy.mockClear();
-        resolvePreferredServerIdForSessionIdSpy.mockReturnValue(resolvedServerId);
-        resolvePreferredServerIdForSessionIdSpy.mockImplementation(() => resolvedServerId);
-        usePreferredServerIdForSessionSpy.mockImplementation(() => resolvedServerId);
+        useSessionExecutionRunsSupportedSpy.mockClear();
+        resolveSessionTargetServerIdSpy.mockImplementation(() => resolvedServerId);
         machineRpcWithServerScopeSpy.mockRejectedValue(new Error('unreachable'));
         hideInactiveSessions = false;
         pinnedSessionKeysV1 = null;
@@ -322,6 +320,7 @@ describe('/session/[id]/info', () => {
         mockResolveAgentIdFromFlavor.mockReset();
         mockResolveAgentIdFromFlavor.mockReturnValue('claude');
         vi.clearAllMocks();
+        useSessionExecutionRunsSupportedSpy.mockReturnValue(false);
     });
 
     afterEach(() => {
@@ -360,6 +359,27 @@ describe('/session/[id]/info', () => {
         mockSessionId = ['session-2 '] as any;
         await renderInfoScreen();
         expect(useSessionSpy).toHaveBeenCalledWith('session-2');
+    });
+
+    it('threads the route session server id into the default action executor fallback', async () => {
+        mockSession = {
+            id: 'session-1',
+            serverId: 'server-session-info',
+            active: false,
+            accessLevel: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            seq: 1,
+            metadata: {},
+        };
+        resolveSessionTargetServerIdSpy.mockImplementation((_sessionId, fallbackServerId) => fallbackServerId ?? null);
+
+        await renderInfoScreen();
+
+        const executorConfig = (createDefaultActionExecutorSpy.mock.calls as Array<[CreateDefaultActionExecutorConfig]>).at(-1)?.[0];
+        executorConfig?.resolveServerIdForSessionId?.('child-session');
+        expect(resolveSessionTargetServerIdSpy).toHaveBeenCalledWith('child-session', 'server-session-info');
+        expect(useSessionExecutionRunsSupportedSpy).toHaveBeenCalledWith('session-1', 'server-session-info');
     });
 
     it('fails closed and hides the handoff quick action when direct peer truth is runtime-unknown and server-routed fallback would make the UI untruthful', async () => {
@@ -407,6 +427,7 @@ describe('/session/[id]/info', () => {
         const screen = await renderInfoScreen();
         const handoffItems = screen.findAllByType('Item' as any).filter((node: any) => node.props?.title === 'Hand off session');
         expect(handoffItems).toHaveLength(0);
+        expect(resolveSessionTargetServerIdSpy).toHaveBeenCalledWith('session-1', undefined);
     });
 
     it('fails closed and hides the handoff quick action when the selected server only exposes direct-peer handoff transport', async () => {
@@ -506,7 +527,7 @@ describe('/session/[id]/info', () => {
     it('reacts when machine-rpc direct-peer viability becomes available for the reachable machine target after metadata goes stale', async () => {
         sessionHandoffFeatureEnabled = true;
         resolvedServerId = 'server_reactive_info';
-        resolvePreferredServerIdForSessionIdSpy.mockReturnValue('server_reactive_info');
+        resolveSessionTargetServerIdSpy.mockReturnValue('server_reactive_info');
         readMachineTargetForSessionSpy.mockReturnValue({
             machineId: 'machine_rebound',
             basePath: '/workspace/repo',
@@ -568,12 +589,10 @@ describe('/session/[id]/info', () => {
         expect(handoffItems).toHaveLength(1);
     });
 
-    it('falls back to the preferred session server when the local server cache misses and still surfaces handoff after a scoped reachability probe succeeds', async () => {
+    it('falls back to the canonical target server when the local server cache misses and still surfaces handoff after a scoped reachability probe succeeds', async () => {
         sessionHandoffFeatureEnabled = true;
         resolvedServerId = 'server_preferred_info';
-        resolvePreferredServerIdForSessionIdSpy.mockReturnValue(null);
-        resolvePreferredServerIdForSessionIdSpy.mockReturnValue('server_preferred_info');
-        usePreferredServerIdForSessionSpy.mockReturnValue('server_preferred_info');
+        resolveSessionTargetServerIdSpy.mockReturnValue('server_preferred_info');
         machineRpcWithServerScopeSpy.mockResolvedValue({ ok: true });
         serverFeaturesSnapshot = {
             status: 'ready',

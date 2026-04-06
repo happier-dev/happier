@@ -23,6 +23,9 @@ export type SessionListHeaderViewState =
         title: string;
     }>;
 
+const PROJECT_HEADER_VIEW_STATE_CACHE = new Map<string, SessionListHeaderViewState>();
+const SECTION_HEADER_VIEW_STATE_CACHE = new Map<string, SessionListHeaderViewState>();
+
 export function resolveSessionListHeaderViewState(input: Readonly<{
     item: Extract<SessionListViewItem, { type: 'header' }>;
     collapsedKeys: Readonly<Record<string, boolean>>;
@@ -38,8 +41,25 @@ export function resolveSessionListHeaderViewState(input: Readonly<{
         const workspaceRefId = viewModel?.workspaceRefId ?? null;
         const displayTitle = viewModel?.displayTitle ?? input.item.title;
         const hasCustomLabel = viewModel?.hasCustomLabel ?? false;
+        const cacheKey = JSON.stringify([
+            groupKey,
+            input.item.title,
+            input.item.headerKind,
+            Boolean(input.collapsedKeys[collapseKey]),
+            legacyWorkspaceKey,
+            displayTitle,
+            hasCustomLabel,
+            workspaceRefId,
+            scopeHint?.serverId ?? null,
+            scopeHint?.machineId ?? null,
+            scopeHint?.rootPath ?? null,
+        ]);
+        const cached = PROJECT_HEADER_VIEW_STATE_CACHE.get(cacheKey);
+        if (cached) {
+            return cached;
+        }
 
-        return {
+        const next: SessionListHeaderViewState = {
             kind: 'project',
             collapseKey,
             collapsed: Boolean(input.collapsedKeys[collapseKey]),
@@ -49,6 +69,9 @@ export function resolveSessionListHeaderViewState(input: Readonly<{
             scopeHint,
             workspaceRefId,
         };
+
+        PROJECT_HEADER_VIEW_STATE_CACHE.set(cacheKey, next);
+        return next;
     }
 
     if (!input.item.title) {
@@ -59,11 +82,26 @@ export function resolveSessionListHeaderViewState(input: Readonly<{
     const title = input.item.headerKind === 'server'
         ? input.translateServerHeader(input.item.title)
         : input.item.title;
+    const cacheKey = JSON.stringify([
+        collapseKey,
+        input.item.headerKind,
+        input.item.groupKey,
+        input.item.serverId ?? null,
+        title,
+        Boolean(input.collapsedKeys[collapseKey]),
+    ]);
+    const cached = SECTION_HEADER_VIEW_STATE_CACHE.get(cacheKey);
+    if (cached) {
+        return cached;
+    }
 
-    return {
+    const next: SessionListHeaderViewState = {
         kind: 'section',
         collapseKey,
         collapsed: Boolean(input.collapsedKeys[collapseKey]),
         title,
     };
+
+    SECTION_HEADER_VIEW_STATE_CACHE.set(cacheKey, next);
+    return next;
 }

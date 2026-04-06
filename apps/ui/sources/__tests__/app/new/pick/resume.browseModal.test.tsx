@@ -64,7 +64,7 @@ installPickerCommonModuleMocks({
 });
 
 vi.mock('@/components/sessions/new/components/NewSessionResumeSelectionContent', () => ({
-    NewSessionResumeSelectionContent: (props: Record<string, unknown>) => {
+    NewSessionResumeSelectionContent: (props: NewSessionResumeSelectionContentProps) => {
         resumeSelectionContentPropsRef.current = props;
         return null;
     },

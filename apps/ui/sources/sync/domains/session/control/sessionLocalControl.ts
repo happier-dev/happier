@@ -36,6 +36,7 @@ function readAgentStateLocalControl(agentState: AgentState | null | undefined): 
 
 export function getSessionLocalControlState(session: Session | null): SessionLocalControlState | null {
     const state = readAgentStateLocalControl(session?.agentState ?? null);
+    if (session?.metadata != null && session?.active !== true) return null;
     if (state) return state;
 
     if (session?.agentState?.controlledByUser === true) {

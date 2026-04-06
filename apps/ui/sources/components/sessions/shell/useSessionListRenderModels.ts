@@ -5,10 +5,36 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 
 import { filterCollapsedSessionListItems } from './filterCollapsedSessionListItems';
-import { buildSessionListProjectHeaderViewModels } from './sessionListProjectHeaderViewModels';
+import { buildSessionListProjectHeaderViewModels, type SessionListProjectHeaderViewModel } from './sessionListProjectHeaderViewModels';
 import { buildSessionListReachabilitySummary } from './buildSessionListReachabilitySummary';
-import { buildSessionListRowViewModels } from './sessionListRowViewModels';
+import { buildSessionListRowViewModels, type SessionListRowViewModel } from './sessionListRowViewModels';
+import { normalizeSessionListShellState } from './normalizeSessionListShellState';
+import type { SessionListProjectHeaderViewModelState } from './sessionListProjectHeaderViewModels';
 import type { VisibleSessionListPaneState } from '@/hooks/session/useVisibleSessionListPaneState';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+
+type SessionReachableDisplay = Readonly<{
+    machineId: string | null;
+    machineLabel: string;
+    pathSubtitle: string;
+}>;
+
+const EMPTY_SESSION_LIST_RENDER_MODELS = {
+    listItems: [] as Array<SessionListViewItem>,
+    reachableSessionDisplayById: new Map<string, SessionReachableDisplay>(),
+    hasMultipleMachines: false,
+    projectHeaderViewModelState: {
+        projectHeaderViewModelByGroupKey: new Map<string, SessionListProjectHeaderViewModel>(),
+        scopeHintByLegacyWorkspaceKey: new Map<string, WorkspaceScopeBase>(),
+    },
+    rowViewModels: [] as ReadonlyArray<SessionListRowViewModel | null>,
+} satisfies Readonly<{
+    listItems: ReadonlyArray<SessionListViewItem>;
+    reachableSessionDisplayById: ReadonlyMap<string, SessionReachableDisplay>;
+    hasMultipleMachines: boolean;
+    projectHeaderViewModelState: SessionListProjectHeaderViewModelState;
+    rowViewModels: ReadonlyArray<SessionListRowViewModel | null>;
+}>;
 
 export function useSessionListRenderModels(input: Readonly<{
     paneState: VisibleSessionListPaneState;
@@ -22,6 +48,13 @@ export function useSessionListRenderModels(input: Readonly<{
     showServerBadge: boolean;
     showPinnedServerBadge: boolean;
 }>) {
+    const normalizedShellState = normalizeSessionListShellState({
+        collapsedGroupKeys: input.collapsedGroupKeys,
+        sessionTags: input.sessionTags,
+        workspaceLabels: input.workspaceLabels,
+        workspaceRefs: input.workspaceRefs,
+    });
+
     const machinesById = React.useMemo(() => {
         return new Map(input.allMachines.map((machine) => [machine.id, machine] as const));
     }, [input.allMachines]);
@@ -33,46 +66,45 @@ export function useSessionListRenderModels(input: Readonly<{
     }, [input.collapsedGroupKeys, input.paneState.visibleSessionListViewData]);
     const listItems = (visibleListItems ?? []) as Array<SessionListViewItem>;
 
-    const sessionReachabilitySummary = React.useMemo(() => buildSessionListReachabilitySummary({
+    const sessionReachabilitySummary = buildSessionListReachabilitySummary({
         listItems,
         machinesById,
-    }), [listItems, machinesById]);
+    });
 
-    const projectHeaderViewModelState = React.useMemo(() => buildSessionListProjectHeaderViewModels({
+    const projectHeaderViewModelState = buildSessionListProjectHeaderViewModels({
         listItems,
-        workspaceLabels: input.workspaceLabels,
-        workspaceRefs: input.workspaceRefs,
-    }), [
-        input.workspaceLabels,
-        input.workspaceRefs,
-        listItems,
-    ]);
+        workspaceLabels: normalizedShellState.workspaceLabels,
+        workspaceRefs: normalizedShellState.workspaceRefs,
+    });
 
-    const rowViewModels = React.useMemo(() => buildSessionListRowViewModels({
+    const rowViewModels = buildSessionListRowViewModels({
         listItems,
         reachableSessionDisplayById: sessionReachabilitySummary.displayById,
         hasMultipleMachines: sessionReachabilitySummary.hasMultipleMachines,
         pinnedSessionKeys: input.pinnedKeySet,
-        sessionTags: input.sessionTags,
+        sessionTags: normalizedShellState.sessionTags,
         selectedSessionId: input.selectedSessionId,
         showServerBadge: input.showServerBadge,
         showPinnedServerBadge: input.showPinnedServerBadge,
-    }), [
-        input.pinnedKeySet,
-        input.selectedSessionId,
-        input.sessionTags,
-        input.showPinnedServerBadge,
-        input.showServerBadge,
+    });
+
+    return React.useMemo(() => {
+        if (listItems.length === 0) {
+            return EMPTY_SESSION_LIST_RENDER_MODELS;
+        }
+
+        return {
+            listItems,
+            reachableSessionDisplayById: sessionReachabilitySummary.displayById,
+            hasMultipleMachines: sessionReachabilitySummary.hasMultipleMachines,
+            projectHeaderViewModelState,
+            rowViewModels,
+        };
+    }, [
         listItems,
+        projectHeaderViewModelState,
+        rowViewModels,
         sessionReachabilitySummary.displayById,
         sessionReachabilitySummary.hasMultipleMachines,
     ]);
-
-    return {
-        listItems,
-        reachableSessionDisplayById: sessionReachabilitySummary.displayById,
-        hasMultipleMachines: sessionReachabilitySummary.hasMultipleMachines,
-        projectHeaderViewModelState,
-        rowViewModels,
-    };
 }

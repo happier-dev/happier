@@ -63,15 +63,7 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
     onStopScrollEventPropagationOnWeb: (event: any) => void;
     onPressArchivedSessions: () => void;
 }>) {
-    const contentContainerStyle = React.useMemo(
-        () => ({ paddingBottom: props.safeAreaBottom + 128, maxWidth: layout.maxWidth }),
-        [props.safeAreaBottom],
-    );
-
-    const footer = React.useCallback(
-        () => <SessionsListArchivedFooter onPress={props.onPressArchivedSessions} />,
-        [props.onPressArchivedSessions],
-    );
+    const contentContainerStyle = { paddingBottom: props.safeAreaBottom + 128, maxWidth: layout.maxWidth };
 
     if (Platform.OS === 'web') {
         return (
@@ -85,7 +77,7 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
                 keyExtractor={getSessionListItemKey as any}
                 contentContainerStyle={contentContainerStyle}
                 ListHeaderComponent={SessionsListHeader as any}
-                ListFooterComponent={footer as any}
+                ListFooterComponent={<SessionsListArchivedFooter onPress={props.onPressArchivedSessions} /> as any}
             />
         );
     }
@@ -99,7 +91,7 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
             getItemType={getSessionListItemType as any}
             contentContainerStyle={contentContainerStyle as any}
             ListHeaderComponent={SessionsListHeader as any}
-            ListFooterComponent={footer as any}
+            ListFooterComponent={<SessionsListArchivedFooter onPress={props.onPressArchivedSessions} /> as any}
         />
     );
 });

@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type {
+    PromptRegistryFetchItemRequestV1,
+    PromptRegistryInstallRequestV1,
+    PromptRegistryListSourcesRequestV1,
+    PromptRegistryScanSourceRequestV1,
+} from '@happier-dev/protocol';
+
 const downloadDaemonPromptRegistryItemMock = vi.hoisted(() => vi.fn());
 const installDaemonPromptRegistryItemMock = vi.hoisted(() => vi.fn());
 const listDaemonPromptRegistryAdaptersMock = vi.hoisted(() => vi.fn());
@@ -36,7 +43,7 @@ describe('machine prompt registries ops', () => {
     });
 
     it('delegates source listing to the transfer substrate', async () => {
-        const request = { configuredSources: [] } as const;
+        const request: PromptRegistryListSourcesRequestV1 = { configuredSources: [] };
         listDaemonPromptRegistrySourcesMock.mockResolvedValueOnce({ ok: true, sources: [] });
         const { machinePromptRegistriesListSources } = await import('./machinePromptRegistries');
 
@@ -49,7 +56,7 @@ describe('machine prompt registries ops', () => {
     });
 
     it('delegates source scans to the transfer substrate', async () => {
-        const request = { sourceId: 'skills_sh:featured', configuredSources: [] } as const;
+        const request: PromptRegistryScanSourceRequestV1 = { sourceId: 'skills_sh:featured', configuredSources: [] };
         scanDaemonPromptRegistrySourceMock.mockResolvedValueOnce({ ok: true, items: [] });
         const { machinePromptRegistriesScanSource } = await import('./machinePromptRegistries');
 
@@ -62,11 +69,11 @@ describe('machine prompt registries ops', () => {
     });
 
     it('maps substrate downloads onto the item response shape', async () => {
-        const request = {
+        const request: PromptRegistryFetchItemRequestV1 = {
             sourceId: 'skills_sh:featured',
             itemId: 'skills_sh:featured:item-1',
             configuredSources: [],
-        } as const;
+        };
         const item = {
             sourceId: 'skills_sh:featured',
             itemId: 'skills_sh:featured:item-1',
@@ -92,7 +99,7 @@ describe('machine prompt registries ops', () => {
     });
 
     it('delegates installs to the transfer substrate', async () => {
-        const request = {
+        const request: PromptRegistryInstallRequestV1 = {
             sourceId: 'skills_sh:featured',
             itemId: 'skills_sh:featured:item-1',
             configuredSources: [],
@@ -102,7 +109,7 @@ describe('machine prompt registries ops', () => {
                 directory: '/tmp/project',
                 targetName: 'frontend-design',
             },
-        } as const;
+        };
         installDaemonPromptRegistryItemMock.mockResolvedValueOnce({ ok: true });
         const { machinePromptRegistriesInstall } = await import('./machinePromptRegistries');
 

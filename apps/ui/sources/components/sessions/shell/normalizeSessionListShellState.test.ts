@@ -27,6 +27,30 @@ describe('normalizeSessionListShellState', () => {
         expect(first.workspaceRefs).toEqual([]);
     });
 
+    it('reuses shared empty canonical inputs for freshly allocated empty shell state', () => {
+        const first = normalizeSessionListShellState({
+            collapsedGroupKeys: {},
+            sessionTags: {},
+            workspaceLabels: {},
+            workspaceRefs: [],
+        });
+        const second = normalizeSessionListShellState({
+            collapsedGroupKeys: {},
+            sessionTags: {},
+            workspaceLabels: {},
+            workspaceRefs: [],
+        });
+
+        expect(first.collapsedGroupKeys).toBe(second.collapsedGroupKeys);
+        expect(first.sessionTags).toBe(second.sessionTags);
+        expect(first.workspaceLabels).toBe(second.workspaceLabels);
+        expect(first.workspaceRefs).toBe(second.workspaceRefs);
+        expect(first.collapsedGroupKeys).toEqual({});
+        expect(first.sessionTags).toEqual({});
+        expect(first.workspaceLabels).toEqual({});
+        expect(first.workspaceRefs).toEqual([]);
+    });
+
     it('preserves non-empty shell inputs by reference', () => {
         const collapsedGroupKeys = { 'group:server-a': true };
         const sessionTags = { 'server-a:sess-1': ['important'] };

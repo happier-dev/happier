@@ -53,6 +53,98 @@ function makeMachine(partial: Partial<Machine> & Pick<Machine, 'id'>): Machine {
 }
 
 describe('buildSessionListViewData', () => {
+    it('reuses a shared empty array when there are no visible sessions', () => {
+        const valuesSpy = vi.spyOn(Object, 'values');
+        const first = buildSessionListViewData({}, {}, { groupInactiveSessionsByProject: false });
+        const second = buildSessionListViewData({}, {}, { groupInactiveSessionsByProject: true });
+
+        expect(first).toBe(second);
+        expect(first).toEqual([]);
+        expect(valuesSpy).not.toHaveBeenCalled();
+        valuesSpy.mockRestore();
+    });
+
+    it('does not sort singleton session buckets', () => {
+        const sortSpy = vi.spyOn(Array.prototype, 'sort');
+        try {
+            const singleSessionData = buildSessionListViewData({
+                s1: makeSession({
+                    id: 's1',
+                    active: true,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    metadata: { machineId: 'm1', path: '/home/u/repoA', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
+                }),
+            }, {
+                m1: makeMachine({
+                    id: 'm1',
+                    metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/home/u' },
+                }),
+            }, { groupInactiveSessionsByProject: false });
+            const sortCallsWithSingletonBucket = sortSpy.mock.calls.length;
+
+            const twoSessionData = buildSessionListViewData({
+                s1: makeSession({
+                    id: 's1',
+                    active: true,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    metadata: { machineId: 'm1', path: '/home/u/repoA', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
+                }),
+                s2: makeSession({
+                    id: 's2',
+                    active: true,
+                    createdAt: 2,
+                    updatedAt: 2,
+                    metadata: { machineId: 'm1', path: '/home/u/repoA', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
+                }),
+            }, {
+                m1: makeMachine({
+                    id: 'm1',
+                    metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/home/u' },
+                }),
+            }, { groupInactiveSessionsByProject: false });
+
+            expect(singleSessionData.some((item) => item.type === 'session')).toBe(true);
+            expect(twoSessionData.some((item) => item.type === 'session')).toBe(true);
+            expect(sortSpy.mock.calls.length - sortCallsWithSingletonBucket).toBe(1);
+        } finally {
+            sortSpy.mockRestore();
+        }
+    });
+
+    it('does not sort already ordered session buckets', () => {
+        const sortSpy = vi.spyOn(Array.prototype, 'sort');
+        try {
+            const data = buildSessionListViewData({
+                s1: makeSession({
+                    id: 's1',
+                    active: true,
+                    createdAt: 2,
+                    updatedAt: 2,
+                    metadata: { machineId: 'm1', path: '/home/u/repoA', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
+                }),
+                s2: makeSession({
+                    id: 's2',
+                    active: true,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    metadata: { machineId: 'm1', path: '/home/u/repoA', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
+                }),
+            }, {
+                m1: makeMachine({
+                    id: 'm1',
+                    metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/home/u' },
+                }),
+            }, { groupInactiveSessionsByProject: false });
+
+            expect(data.some((item) => item.type === 'session')).toBe(true);
+            expect(sortSpy).not.toHaveBeenCalled();
+        } finally {
+            sortSpy.mockRestore();
+        }
+    });
+
     it('excludes hidden system sessions from the list view data', () => {
         const machine = makeMachine({
             id: 'm1',
@@ -85,6 +177,56 @@ describe('buildSessionListViewData', () => {
         const data = buildSessionListViewData(sessions, { [machine.id]: machine }, { groupInactiveSessionsByProject: false });
         const sessionIds = data.filter((i) => i.type === 'session').map((i: any) => i.session.id);
         expect(sessionIds).toEqual(['user']);
+    });
+
+    it('reuses the shared empty array when every session is hidden system data', () => {
+        const valuesSpy = vi.spyOn(Object, 'values');
+        try {
+            const machine = makeMachine({
+                id: 'm1',
+                metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/home/u' },
+            });
+
+            const sessions: Record<string, Session> = {
+                sys1: makeSession({
+                    id: 'sys1',
+                    createdAt: 1,
+                    updatedAt: 1,
+                    metadata: {
+                        machineId: 'm1',
+                        path: '/home/u/repoSys1',
+                        homeDir: '/home/u',
+                        host: 'm1',
+                        version: '0.0.0',
+                        flavor: 'claude',
+                        systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true },
+                    } as any,
+                }),
+                sys2: makeSession({
+                    id: 'sys2',
+                    createdAt: 2,
+                    updatedAt: 2,
+                    metadata: {
+                        machineId: 'm1',
+                        path: '/home/u/repoSys2',
+                        homeDir: '/home/u',
+                        host: 'm1',
+                        version: '0.0.0',
+                        flavor: 'claude',
+                        systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true },
+                    } as any,
+                }),
+            };
+
+            const first = buildSessionListViewData(sessions, { [machine.id]: machine }, { groupInactiveSessionsByProject: false });
+            const second = buildSessionListViewData(sessions, { [machine.id]: machine }, { groupInactiveSessionsByProject: true });
+
+            expect(first).toBe(second);
+            expect(first).toEqual([]);
+            expect(valuesSpy).not.toHaveBeenCalled();
+        } finally {
+            valuesSpy.mockRestore();
+        }
     });
 
     it('groups inactive sessions by machine+path when enabled', () => {
@@ -221,7 +363,7 @@ describe('buildSessionListViewData', () => {
         expect(header?.title).toBe('/home/userfoo/repo');
     });
 
-    it('propagates server scope metadata to all list rows when provided', () => {
+    it('propagates normalized server scope metadata to all list rows when provided', () => {
         const machine = makeMachine({
             id: 'm1',
             metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/home/u' },
@@ -248,7 +390,7 @@ describe('buildSessionListViewData', () => {
             { [machine.id]: machine },
             {
                 groupInactiveSessionsByProject: true,
-                serverScope: { serverId: 'server-a', serverName: 'Server A' },
+                serverScope: { serverId: ' server-a ', serverName: ' Server A ' },
             }
         );
 

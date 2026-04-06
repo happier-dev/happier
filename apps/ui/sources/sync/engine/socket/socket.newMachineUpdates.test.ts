@@ -10,7 +10,7 @@ const initialStorageState = storage.getState();
 
 function buildBaseParams(overrides: Partial<Omit<Parameters<typeof handleUpdateContainer>[0], 'updateData'>> = {}) {
     const decryptEncryptionKey = vi.fn(async () => null as Uint8Array | null);
-    const initializeMachines = vi.fn(async () => {});
+    const initializeMachines = vi.fn(async (_machineKeysMap: Map<string, Uint8Array | null>) => {});
     return {
         encryption: {
             getSessionEncryption: () => null,
@@ -99,7 +99,7 @@ describe('socket update handling: new-machine', () => {
     it('initializes machine encryption when a data encryption key is present', async () => {
         const invalidateMachines = vi.fn();
         const decryptEncryptionKey = vi.fn(async () => new Uint8Array([1, 2, 3]));
-        const initializeMachines = vi.fn(async () => {});
+        const initializeMachines = vi.fn(async (_machineKeysMap: Map<string, Uint8Array | null>) => {});
         const params = buildBaseParams({
             invalidateMachines,
             encryption: {
@@ -143,7 +143,7 @@ describe('socket update handling: new-machine', () => {
         const decryptEncryptionKey = vi.fn(async () => {
             throw new Error('bad envelope');
         });
-        const initializeMachines = vi.fn(async () => {});
+        const initializeMachines = vi.fn(async (_machineKeysMap: Map<string, Uint8Array | null>) => {});
         const params = buildBaseParams({
             invalidateMachines,
             encryption: {

@@ -10,11 +10,7 @@ import type { SessionListViewItem } from '../../domains/session/listing/sessionL
 import type { ServerScopedSessionListCache } from '../../domains/session/listing/serverScopedSessionListCache';
 import {
     areSessionListRenderablesEqual,
-    didSessionListRenderableReachabilityPeerFieldsChange,
     buildSessionListRenderableFromSession,
-    didSessionListRenderableProjectGroupingFieldsChange,
-    didSessionListRenderableWarmCacheFieldsChange,
-    didSessionListRenderableStructuralFieldsChange,
     preserveSessionListRenderableStaleFields,
     preserveSessionListRenderableTransientState,
     type SessionListRenderableSession,
@@ -66,6 +62,7 @@ import { applyAgentStateUpdateToSessionMessages } from './messages';
 import type { SessionMessages } from './messages';
 import { persistSessionPermissionData } from './sessionPermissionPersistence';
 import { resolveMergedSessionPermissionMode } from './resolveMergedSessionPermissionMode';
+import { resolveSessionListRenderableChangeImpact } from './sessionListRenderableChange';
 import {
     clearSessionRepositoryTreeExpandedPathsForState,
     clearWorkspaceRepositoryTreeExpandedPathsForState,
@@ -106,7 +103,6 @@ export type SessionsDomain = {
             patch: Readonly<Partial<Omit<SessionListRenderableSession, 'id'>>>;
         }>>,
     ) => void;
-    applyLoaded: () => void;
     applyReady: () => void;
 
     applyScmStatus: (sessionId: string, status: ScmStatus | null) => void;
@@ -259,6 +255,33 @@ function saveWarmSessionCacheForState(
         accountId,
         nextEntries,
     );
+}
+
+function finalizeSessionListViewDataUpdate(
+    state: SessionsDomain & SessionsDomainDependencies,
+    nextStateBase: SessionsDomain & SessionsDomainDependencies,
+    needsSessionListViewDataRebuild: boolean,
+    didAnyWarmCacheRelevantRenderableChange: boolean,
+): SessionsDomain & SessionsDomainDependencies {
+    const rebuiltListState = needsSessionListViewDataRebuild
+        ? resolveActiveServerSessionListState({
+            state: nextStateBase,
+            shouldRebuild: true,
+        })
+        : {
+            sessionListViewData: state.sessionListViewData,
+        };
+
+    const nextState = {
+        ...nextStateBase,
+        sessionListViewData: rebuiltListState.sessionListViewData,
+    };
+
+    if (didAnyWarmCacheRelevantRenderableChange) {
+        saveWarmSessionCacheForState(nextState);
+    }
+
+    return nextState;
 }
 
 export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDependencies>({
@@ -566,8 +589,9 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 const mergedRenderable = areSessionListRenderablesEqual(previousRenderable, nextRenderable)
                     ? previousRenderable
                     : nextRenderable;
+                const renderableChangeImpact = resolveSessionListRenderableChangeImpact(previousRenderable, mergedRenderable);
                 if (mergedRenderable !== previousRenderable) {
-                    if (didSessionListRenderableWarmCacheFieldsChange(previousRenderable, mergedRenderable)) {
+                    if (renderableChangeImpact.didWarmCacheRelevantRenderableChange) {
                         didAnyWarmCacheRelevantRenderableChange = true;
                     }
                     if (mergedRenderables === state.sessionListRenderables) {
@@ -577,22 +601,19 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 }
 
                 if (!needsSessionListViewDataRebuild) {
-                    const nextRenderable = mergedRenderable;
-                    if (!previousRenderable || didSessionListRenderableStructuralFieldsChange(previousRenderable, nextRenderable)) {
+                    if (renderableChangeImpact.needsSessionListViewDataRebuild) {
                         needsSessionListViewDataRebuild = true;
                     }
                 }
 
                 if (!needsProjectManagerUpdate) {
-                    const nextRenderable = mergedRenderable;
-                    if (!previousRenderable || didSessionListRenderableProjectGroupingFieldsChange(previousRenderable, nextRenderable)) {
+                    if (renderableChangeImpact.needsProjectManagerUpdate) {
                         needsProjectManagerUpdate = true;
                     }
                 }
 
                 if (!needsReachablePeerReevaluation) {
-                    const nextRenderable = mergedRenderable;
-                    if (!previousRenderable || didSessionListRenderableReachabilityPeerFieldsChange(previousRenderable, nextRenderable)) {
+                    if (renderableChangeImpact.needsReachablePeerReevaluation) {
                         needsReachablePeerReevaluation = true;
                     }
                 }
@@ -614,17 +635,18 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     const previousRenderable = previousReachableRenderables[sessionId];
                     const nextRenderable = nextReachableRenderables[sessionId];
                     if (!nextRenderable) continue;
+                    const renderableChangeImpact = resolveSessionListRenderableChangeImpact(previousRenderable, nextRenderable);
 
                     if (
                         !needsSessionListViewDataRebuild
-                        && didSessionListRenderableStructuralFieldsChange(previousRenderable, nextRenderable)
+                        && renderableChangeImpact.needsSessionListViewDataRebuild
                     ) {
                         needsSessionListViewDataRebuild = true;
                     }
 
                     if (
                         !needsProjectManagerUpdate
-                        && didSessionListRenderableProjectGroupingFieldsChange(previousRenderable, nextRenderable)
+                        && renderableChangeImpact.needsProjectManagerUpdate
                     ) {
                         needsProjectManagerUpdate = true;
                     }
@@ -688,13 +710,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 return state;
             }
 
-            const nextStateBase = {
-                ...state,
-                sessions: mergedSessions,
-                sessionListRenderables: mergedRenderables,
-                sessionMessages: updatedSessionMessages,
-            };
-
             if (needsProjectManagerUpdate) {
                 const machineMetadataMap = new Map<string, any>();
                 Object.values(state.machines).forEach(machine => {
@@ -706,23 +721,19 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 projectManager.updateSessions(Object.values(mergedSessions), machineMetadataMap, activeServerId);
             }
 
-            const rebuiltListState = needsSessionListViewDataRebuild
-                ? resolveActiveServerSessionListState({
-                    state: nextStateBase,
-                    shouldRebuild: true,
-                })
-                : {
-                    sessionListViewData: state.sessionListViewData,
-                };
-
-            const nextState = {
-                ...nextStateBase,
-                sessionListViewData: rebuiltListState.sessionListViewData,
+            const nextStateBase = {
+                ...state,
+                sessions: mergedSessions,
+                sessionListRenderables: mergedRenderables,
+                sessionMessages: updatedSessionMessages,
             };
-            if (didAnyWarmCacheRelevantRenderableChange) {
-                saveWarmSessionCacheForState(nextState as SessionsDomain & SessionsDomainDependencies);
-            }
-            return nextState;
+
+            return finalizeSessionListViewDataUpdate(
+                state,
+                nextStateBase,
+                needsSessionListViewDataRebuild,
+                didAnyWarmCacheRelevantRenderableChange,
+            );
         }),
         replaceSessionListRenderables: (sessions) => set((state) => {
             let nextRenderables = state.sessionListRenderables;
@@ -743,10 +754,11 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 const nextRenderable = areSessionListRenderablesEqual(previousRenderable, nextRenderableBase)
                     ? previousRenderable
                     : nextRenderableBase;
+                const renderableChangeImpact = resolveSessionListRenderableChangeImpact(previousRenderable, nextRenderable);
 
                 if (!previousRenderable || nextRenderable !== previousRenderable) {
                     didAnyRenderableChange = true;
-                    if (didSessionListRenderableWarmCacheFieldsChange(previousRenderable, nextRenderable)) {
+                    if (renderableChangeImpact.didWarmCacheRelevantRenderableChange) {
                         didAnyWarmCacheRelevantRenderableChange = true;
                     }
                     if (nextRenderables === state.sessionListRenderables) {
@@ -780,7 +792,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     for (const sessionId of nextIds) {
                         const previousRenderable = state.sessionListRenderables[sessionId];
                         const nextRenderable = nextRenderables[sessionId];
-                        if (!previousRenderable || didSessionListRenderableStructuralFieldsChange(previousRenderable, nextRenderable)) {
+                        if (resolveSessionListRenderableChangeImpact(previousRenderable, nextRenderable).needsSessionListViewDataRebuild) {
                             needsSessionListViewDataRebuild = true;
                             break;
                         }
@@ -792,23 +804,13 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 ...state,
                 sessionListRenderables: nextRenderables,
             };
-            const rebuiltListState = needsSessionListViewDataRebuild
-                ? resolveActiveServerSessionListState({
-                    state: nextStateBase as SessionsDomain & SessionsDomainDependencies,
-                    shouldRebuild: true,
-                })
-                : {
-                    sessionListViewData: state.sessionListViewData,
-                };
 
-            const next = {
-                ...nextStateBase,
-                sessionListViewData: rebuiltListState.sessionListViewData,
-            };
-            if (didAnyWarmCacheRelevantRenderableChange) {
-                saveWarmSessionCacheForState(next as SessionsDomain & SessionsDomainDependencies);
-            }
-            return next;
+            return finalizeSessionListViewDataUpdate(
+                state,
+                nextStateBase,
+                needsSessionListViewDataRebuild,
+                didAnyWarmCacheRelevantRenderableChange,
+            );
         }),
         applySessionListRenderablePatches: (patches) => set((state) => {
             if (patches.length === 0) {
@@ -835,12 +837,14 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     continue;
                 }
 
-                if (didSessionListRenderableWarmCacheFieldsChange(previousRenderable, nextRenderable)) {
+                const renderableChangeImpact = resolveSessionListRenderableChangeImpact(previousRenderable, nextRenderable);
+
+                if (renderableChangeImpact.didWarmCacheRelevantRenderableChange) {
                     didAnyWarmCacheRelevantRenderableChange = true;
                 }
 
                 if (!needsSessionListViewDataRebuild) {
-                    if (didSessionListRenderableStructuralFieldsChange(previousRenderable, nextRenderable)) {
+                    if (renderableChangeImpact.needsSessionListViewDataRebuild) {
                         needsSessionListViewDataRebuild = true;
                     }
                 }
@@ -860,27 +864,12 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 sessionListRenderables: nextRenderables,
             };
 
-            const rebuiltListState = needsSessionListViewDataRebuild
-                ? resolveActiveServerSessionListState({
-                    state: nextStateBase as SessionsDomain & SessionsDomainDependencies,
-                    shouldRebuild: true,
-                })
-                : {
-                    sessionListViewData: state.sessionListViewData,
-                };
-
-            const nextState = {
-                ...nextStateBase,
-                sessionListViewData: rebuiltListState.sessionListViewData,
-            };
-
-            if (didAnyWarmCacheRelevantRenderableChange) {
-                saveWarmSessionCacheForState(nextState as SessionsDomain & SessionsDomainDependencies);
-            }
-            return nextState;
-        }),
-        applyLoaded: () => set((state) => {
-            return state;
+            return finalizeSessionListViewDataUpdate(
+                state,
+                nextStateBase,
+                needsSessionListViewDataRebuild,
+                didAnyWarmCacheRelevantRenderableChange,
+            );
         }),
         applyReady: () => set((state) => ({
             ...state,

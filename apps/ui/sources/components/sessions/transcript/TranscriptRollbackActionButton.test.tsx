@@ -11,9 +11,12 @@ import {
 
 const executeSpy = vi.fn();
 const updateSessionDraftSpy = vi.fn();
-const createDefaultActionExecutorSpy = vi.fn((_: unknown) => ({
+const createDefaultActionExecutorSpy = vi.fn((_: Readonly<{
+    resolveServerIdForSessionId?: (sessionId: string) => string | null;
+}> | undefined) => ({
     execute: (actionId: unknown, input: unknown, ctx: unknown) => executeSpy(actionId, input, ctx),
 }));
+const resolveSessionTargetServerIdSpy = vi.fn<(sessionId: string) => string | null>();
 
 installTranscriptCommonModuleMocks({
     storage: async (importOriginal) => {
@@ -21,6 +24,11 @@ installTranscriptCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
+                useSession: () => ({
+                    id: 's1',
+                    serverId: 'server-explicit',
+                    metadata: { machineId: 'm1' },
+                } as any),
                 storage: createStorageStoreMock({
                     updateSessionDraft: (...args: any[]) => updateSessionDraftSpy(...args),
                 }),
@@ -31,11 +39,16 @@ installTranscriptCommonModuleMocks({
 resetTranscriptCommonModuleMockState();
 
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
-    createDefaultActionExecutor: (opts?: unknown) => createDefaultActionExecutorSpy(opts),
+    createDefaultActionExecutor: (opts?: unknown) => createDefaultActionExecutorSpy(opts as any),
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
-    resolvePreferredServerIdForSessionId: (sessionId: string) => `server:${sessionId}`,
+    resolvePreferredServerIdForSessionId: () => null,
+}));
+
+vi.mock('@/components/sessions/model/resolveSessionTargetServerId', () => ({
+    resolveSessionTargetServerId: (sessionId: string, fallbackServerId?: string | null) =>
+        resolveSessionTargetServerIdSpy(sessionId) ?? fallbackServerId ?? null,
 }));
 
 describe('TranscriptRollbackActionButton', () => {
@@ -47,6 +60,7 @@ describe('TranscriptRollbackActionButton', () => {
         executeSpy.mockReset();
         updateSessionDraftSpy.mockReset();
         createDefaultActionExecutorSpy.mockClear();
+        resolveSessionTargetServerIdSpy.mockReset();
         getTranscriptModalMockRef().current?.spies.alert?.mockReset();
     });
 
@@ -79,6 +93,7 @@ describe('TranscriptRollbackActionButton', () => {
         expect(createDefaultActionExecutorSpy).toHaveBeenCalledWith(expect.objectContaining({
             resolveServerIdForSessionId: expect.any(Function),
         }));
+        expect(createDefaultActionExecutorSpy.mock.calls[0]?.[0]?.resolveServerIdForSessionId?.('s1')).toBe('server-explicit');
         await screen.unmount();
     }, 120000);
 

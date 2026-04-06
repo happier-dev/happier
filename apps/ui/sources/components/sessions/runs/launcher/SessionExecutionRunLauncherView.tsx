@@ -8,7 +8,6 @@ import { buildResumeSessionExtrasFromUiState, DEFAULT_AGENT_ID, getAgentCore, re
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { useResumeCapabilityOptions } from '@/agents/hooks/useResumeCapabilityOptions';
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
-import { useExecutionRunsBackendsForSession } from '@/hooks/server/useExecutionRunsBackendsForSession';
 import { useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
 import { useSessionExecutionRunLaunchability } from '@/hooks/session/useSessionExecutionRunLaunchability';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
@@ -22,11 +21,11 @@ import { useSession, useSettings } from '@/sync/domains/state/storage';
 import { buildExecutionRunsGuidanceBlock, coerceExecutionRunsGuidanceEntries } from '@/sync/domains/settings/executionRunsGuidance';
 import { getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import { resolveSessionMachineId } from '@/sync/domains/session/directSessions/resolveSessionMachineId';
-import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { resumeSession } from '@/sync/ops/sessions';
 import { t } from '@/text';
 import { resolveActionInputValidationError } from '@/sync/domains/actions/resolveActionInputValidationError';
+import { resolveSessionTargetServerId } from '@/components/sessions/model/resolveSessionTargetServerId';
 import { resolveExecutionRunLauncherContainerStyle } from './resolveExecutionRunLauncherContainerStyle';
 import { resolveExecutionRunLauncherBackendChoices } from './resolveExecutionRunLauncherBackendChoices';
 import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
@@ -101,7 +100,8 @@ export const SessionExecutionRunLauncherView = React.memo((props: Readonly<{
     const session = useSession(props.sessionId);
     const settings = useSettings();
     const enabledAgentIds = useEnabledAgentIds();
-    const executionRunsBackends = useExecutionRunsBackendsForSession(props.sessionId);
+    const { canLaunchExecutionRuns, canShowExecutionRunLauncher, executionRunsBackends, sessionServerId } =
+        useSessionExecutionRunLaunchability(props.sessionId, session);
     const { machineReachable } = useSessionMachineReachability(props.sessionId);
     const machineId = React.useMemo(
         () => resolveSessionMachineId((session as any)?.metadata),
@@ -124,8 +124,6 @@ export const SessionExecutionRunLauncherView = React.memo((props: Readonly<{
         settings,
         enabled: session?.active === false,
     });
-    const sessionServerId = usePreferredServerIdForSession(props.sessionId);
-
     const { state: machineCapabilitiesState } = useMachineCapabilitiesCache({
         machineId,
         enabled: Boolean(machineId),
@@ -313,8 +311,12 @@ export const SessionExecutionRunLauncherView = React.memo((props: Readonly<{
         return buildExecutionRunsGuidanceBlock({ entries, maxChars: Math.min(maxChars, 2_000) }).text;
     }, [settings]);
 
-    const actionExecutor = React.useMemo(() => createDefaultActionExecutor(), []);
-    const { canLaunchExecutionRuns, canShowExecutionRunLauncher, executionRunsSupported } = useSessionExecutionRunLaunchability(props.sessionId, session);
+    const actionExecutor = React.useMemo(
+        () => createDefaultActionExecutor({
+            resolveServerIdForSessionId: (sessionId) => resolveSessionTargetServerId(sessionId, sessionServerId) ?? null,
+        }),
+        [sessionServerId],
+    );
     const waitingForExecutionRunCapabilities = React.useMemo(() => {
         if (canShowExecutionRunLauncher !== true) return false;
         if (canLaunchExecutionRuns === true) return false;

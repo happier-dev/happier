@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildSessionGettingStartedViewModel, computeMachinesSummary, computeSessionGettingStartedDecision } from './gettingStartedModel';
+import { buildSessionGettingStartedViewModel, computeMachinesSummary, computeSessionGettingStartedDecision, resolveActiveServerProfile } from './gettingStartedModel';
 
 describe('computeSessionGettingStartedDecision', () => {
     it('returns loading when sessions are not ready', () => {
@@ -35,6 +35,24 @@ describe('computeSessionGettingStartedDecision', () => {
 });
 
 describe('buildSessionGettingStartedViewModel', () => {
+    it('resolves the active server profile with the canonical fallback order', () => {
+        expect(resolveActiveServerProfile([
+            { id: 'srv-a', name: 'A', serverUrl: 'https://api.a.example' },
+            { id: 'srv-b', name: 'B', serverUrl: 'https://api.b.example' },
+        ], 'srv-b')).toEqual({
+            id: 'srv-b',
+            name: 'B',
+            serverUrl: 'https://api.b.example',
+        });
+        expect(resolveActiveServerProfile([
+            { id: 'srv-a', name: 'A', serverUrl: 'https://api.a.example' },
+        ], 'missing')).toEqual({
+            id: 'srv-a',
+            name: 'A',
+            serverUrl: 'https://api.a.example',
+        });
+    });
+
     it('uses the canonical session-ready summary instead of the raw sessions array', () => {
         const input: any = {
             sessions: null,
@@ -46,9 +64,7 @@ describe('buildSessionGettingStartedViewModel', () => {
                 allowedServerIds: ['srv-a'],
             },
             serverSelectionGroups: [],
-            serverProfiles: [
-                { id: 'srv-a', name: 'A', serverUrl: 'https://api.a.example' },
-            ],
+            activeServerProfile: { id: 'srv-a', name: 'A', serverUrl: 'https://api.a.example' },
             machineListByServerId: { 'srv-a': [{ active: true }] },
         };
         const model = buildSessionGettingStartedViewModel(input);
@@ -66,10 +82,7 @@ describe('buildSessionGettingStartedViewModel', () => {
                 allowedServerIds: ['srv-a', 'srv-b'],
             },
             serverSelectionGroups: [{ id: 'g1', name: 'Company Servers' }],
-            serverProfiles: [
-                { id: 'srv-a', name: 'A', serverUrl: 'https://api.a.example' },
-                { id: 'srv-b', name: 'B', serverUrl: 'https://api.b.example' },
-            ],
+            activeServerProfile: { id: 'srv-a', name: 'A', serverUrl: 'https://api.a.example' },
             machineListByServerId: { 'srv-a': [], 'srv-b': [] },
         });
         expect(model.targetLabel).toBe('Company Servers');
@@ -85,7 +98,7 @@ describe('buildSessionGettingStartedViewModel', () => {
                 allowedServerIds: ['srv-a'],
             },
             serverSelectionGroups: [],
-            serverProfiles: [{ id: 'srv-a', name: 'Company', serverUrl: 'https://api.company.example' }],
+            activeServerProfile: { id: 'srv-a', name: 'Company', serverUrl: 'https://api.company.example' },
             machineListByServerId: { 'srv-a': [] },
         });
         expect(model.showServerSetup).toBe(true);
@@ -101,7 +114,7 @@ describe('buildSessionGettingStartedViewModel', () => {
                 allowedServerIds: ['cloud'],
             },
             serverSelectionGroups: [],
-            serverProfiles: [{ id: 'cloud', name: 'Happier Cloud', serverUrl: 'https://api.happier.dev' }],
+            activeServerProfile: { id: 'cloud', name: 'Happier Cloud', serverUrl: 'https://api.happier.dev' },
             machineListByServerId: { cloud: [] },
         });
         expect(model.showServerSetup).toBe(false);

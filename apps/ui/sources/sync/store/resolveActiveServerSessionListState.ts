@@ -35,26 +35,26 @@ export function resolveActiveServerSessionListState(params: Readonly<{
 }>): Readonly<{
     sessionListViewData: SessionListViewItem[] | null;
 }> {
-    const sessionListViewData = params.shouldRebuild
-        ? (() => {
-            const rebuilt = buildSessionListViewDataWithServerScope({
-                sessions: params.state.sessionListRenderables,
-                sessionRecords: params.state.sessions,
-                machines: params.state.machineDisplayById,
-                machineRecords: params.state.machines,
-                groupInactiveSessionsByProject: params.state.settings.groupInactiveSessionsByProject === true,
-                activeGroupingV1: params.state.settings.sessionListActiveGroupingV1,
-                inactiveGroupingV1: params.state.settings.sessionListInactiveGroupingV1,
-                getProjectForSession: params.state.getProjectForSession,
-            });
+    if (!params.shouldRebuild) {
+        return {
+            sessionListViewData: params.state.sessionListViewData,
+        };
+    }
 
-            return areSessionListViewItemsEqual(params.state.sessionListViewData, rebuilt)
-                ? params.state.sessionListViewData
-                : rebuilt;
-        })()
-        : params.state.sessionListViewData;
+    const rebuilt = buildSessionListViewDataWithServerScope({
+        sessions: params.state.sessionListRenderables,
+        sessionRecords: params.state.sessions,
+        machines: params.state.machineDisplayById,
+        machineRecords: params.state.machines,
+        groupInactiveSessionsByProject: params.state.settings.groupInactiveSessionsByProject === true,
+        activeGroupingV1: params.state.settings.sessionListActiveGroupingV1,
+        inactiveGroupingV1: params.state.settings.sessionListInactiveGroupingV1,
+        getProjectForSession: params.state.getProjectForSession,
+    });
 
     return {
-        sessionListViewData,
+        sessionListViewData: areSessionListViewItemsEqual(params.state.sessionListViewData, rebuilt)
+            ? params.state.sessionListViewData
+            : rebuilt,
     };
 }

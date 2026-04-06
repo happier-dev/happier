@@ -9,6 +9,7 @@ import { customerInfoToPurchases, type Purchases } from '../../domains/purchases
 import { applySettings, settingsParse, type Settings } from '../../domains/settings/settings';
 import { loadLocalSettings, loadPurchases, loadSettings, saveLocalSettings, savePurchases, saveSettings } from '../../domains/state/persistence';
 import { resolveActiveServerSessionListState } from '../resolveActiveServerSessionListState';
+import { resolveSessionListViewDataSettingsImpact } from './settingsSessionListViewDataImpact';
 import { emitLocalSettingChangedEvents } from '@/track/settingsAnalytics/emitSettingChangedEvent';
 import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
 import { setPreferredLanguageFromSettings } from '@/text/i18n';
@@ -67,14 +68,10 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
             set((state) => {
                 const newSettings = applySettings(state.settings, delta);
                 saveSettings(newSettings, state.settingsVersion ?? 0);
-
-                const shouldRebuildSessionListViewData =
-                    (Object.prototype.hasOwnProperty.call(delta, 'groupInactiveSessionsByProject') &&
-                        delta.groupInactiveSessionsByProject !== state.settings.groupInactiveSessionsByProject) ||
-                    (Object.prototype.hasOwnProperty.call(delta, 'sessionListActiveGroupingV1') &&
-                        delta.sessionListActiveGroupingV1 !== state.settings.sessionListActiveGroupingV1) ||
-                    (Object.prototype.hasOwnProperty.call(delta, 'sessionListInactiveGroupingV1') &&
-                        delta.sessionListInactiveGroupingV1 !== state.settings.sessionListInactiveGroupingV1);
+                const shouldRebuildSessionListViewData = resolveSessionListViewDataSettingsImpact(
+                    state.settings,
+                    newSettings,
+                ).shouldRebuildSessionListViewData;
 
                 if (shouldRebuildSessionListViewData) {
                     const rebuiltListState = resolveActiveServerSessionListState({
@@ -102,11 +99,10 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
                 if (state.settingsVersion == null || state.settingsVersion < nextVersion) {
                     saveSettings(nextSettings, nextVersion);
                     safeSetPreferredLanguageFromSettings(nextSettings.preferredLanguage);
-
-                    const shouldRebuildSessionListViewData =
-                        nextSettings.groupInactiveSessionsByProject !== state.settings.groupInactiveSessionsByProject ||
-                        nextSettings.sessionListActiveGroupingV1 !== state.settings.sessionListActiveGroupingV1 ||
-                        nextSettings.sessionListInactiveGroupingV1 !== state.settings.sessionListInactiveGroupingV1;
+                    const shouldRebuildSessionListViewData = resolveSessionListViewDataSettingsImpact(
+                        state.settings,
+                        nextSettings,
+                    ).shouldRebuildSessionListViewData;
 
                     const rebuiltListState = resolveActiveServerSessionListState({
                         state: {
@@ -129,11 +125,10 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
             set((state) => {
                 saveSettings(nextSettings, nextVersion);
                 safeSetPreferredLanguageFromSettings(nextSettings.preferredLanguage);
-
-                const shouldRebuildSessionListViewData =
-                    nextSettings.groupInactiveSessionsByProject !== state.settings.groupInactiveSessionsByProject ||
-                    nextSettings.sessionListActiveGroupingV1 !== state.settings.sessionListActiveGroupingV1 ||
-                    nextSettings.sessionListInactiveGroupingV1 !== state.settings.sessionListInactiveGroupingV1;
+                const shouldRebuildSessionListViewData = resolveSessionListViewDataSettingsImpact(
+                    state.settings,
+                    nextSettings,
+                ).shouldRebuildSessionListViewData;
 
                 const rebuiltListState = resolveActiveServerSessionListState({
                     state: {

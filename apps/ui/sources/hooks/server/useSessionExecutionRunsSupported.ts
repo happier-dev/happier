@@ -2,15 +2,20 @@ import * as React from 'react';
 
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useExecutionRunsBackendsForSession } from '@/hooks/server/useExecutionRunsBackendsForSession';
-import { useSessionMessages } from '@/sync/domains/state/storage';
+import { useSession, useSessionMessages } from '@/sync/domains/state/storage';
 import { sessionExecutionRunList } from '@/sync/ops/sessionExecutionRuns';
 import { deriveExecutionRunPollingRefreshKey } from '@/sync/domains/session/participants/deriveExecutionRunPollingRefreshKey';
+import { resolveSessionTargetServerId } from '@/components/sessions/model/resolveSessionTargetServerId';
 
 const EMPTY_EXECUTION_RUN_REFRESH_KEY = 'subagent:|started:|stopped:';
 
-export function useSessionExecutionRunsSupported(sessionId: string): boolean {
+export function useSessionExecutionRunsSupported(sessionId: string, sessionServerId?: string | null): boolean {
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
-    const backends = useExecutionRunsBackendsForSession(sessionId);
+    const session = useSession(sessionId);
+    const backends = useExecutionRunsBackendsForSession(
+        sessionId,
+        sessionServerId ?? resolveSessionTargetServerId(sessionId, session?.serverId),
+    );
     const { messages } = useSessionMessages(sessionId);
     const [historicalRunsSupported, setHistoricalRunsSupported] = React.useState(false);
 

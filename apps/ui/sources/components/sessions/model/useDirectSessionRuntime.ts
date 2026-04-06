@@ -10,8 +10,8 @@ import {
     machineDirectSessionDetach,
     machineDirectSessionStatusGet,
 } from '@/sync/ops/machineDirectSessions';
-import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { isRuntimeActive } from '@/utils/runtime/isRuntimeActive';
+import { resolveSessionTargetServerId } from './resolveSessionTargetServerId';
 
 export type DirectSessionRuntimeStatus = Extract<DirectSessionStatusGetResponse, { ok: true }>;
 
@@ -22,6 +22,7 @@ type UseDirectSessionRuntimeParams = Readonly<{
 
 export type UseDirectSessionRuntimeResult = Readonly<{
     directSessionLink: ReturnType<typeof readDirectSessionLink>;
+    sessionServerId: string | null;
     status: DirectSessionRuntimeStatus | null;
     refreshNow: () => Promise<DirectSessionRuntimeStatus | null>;
 }>;
@@ -102,11 +103,11 @@ export function useDirectSessionRuntime(params: UseDirectSessionRuntimeParams): 
     const inFlightRefreshRef = React.useRef<Promise<DirectSessionRuntimeStatus | null> | null>(null);
     const currentLeaseIdRef = React.useRef<string | null>(null);
     const generationRef = React.useRef(0);
-    const previousServerIdRef = React.useRef<string | undefined>(undefined);
+    const previousServerIdRef = React.useRef<string | null | undefined>(undefined);
     const runtimeActive = useRuntimeActive();
     const activeServerId = normalizeServerId(activeServerSnapshot.serverId);
     const sessionServerId = React.useMemo(
-        () => resolvePreferredServerIdForSessionId(params.sessionId) ?? activeServerId,
+        () => resolveSessionTargetServerId(params.sessionId, activeServerId),
         [activeServerId, params.sessionId],
     );
 
@@ -149,7 +150,7 @@ export function useDirectSessionRuntime(params: UseDirectSessionRuntimeParams): 
         const currentGeneration = generationRef.current;
         let refreshPromise: Promise<DirectSessionRuntimeStatus | null> | null = null;
         refreshPromise = (async () => {
-            const targetServerId = resolvePreferredServerIdForSessionId(params.sessionId) ?? activeServerId;
+            const targetServerId = resolveSessionTargetServerId(params.sessionId, activeServerId);
             const statusResult = await machineDirectSessionStatusGet({
                 machineId: directSessionLink.machineId,
                 sessionId: params.sessionId,
@@ -247,7 +248,6 @@ export function useDirectSessionRuntime(params: UseDirectSessionRuntimeParams): 
         };
 
         const ensureLease = async () => {
-            const targetServerId = resolvePreferredServerIdForSessionId(params.sessionId) ?? activeServerId;
             try {
                 const response = await machineDirectSessionAttach({
                     machineId: directSessionLink.machineId,
@@ -257,7 +257,7 @@ export function useDirectSessionRuntime(params: UseDirectSessionRuntimeParams): 
                     source: directSessionLink.source,
                     ...(currentLeaseIdRef.current ? { leaseId: currentLeaseIdRef.current } : {}),
                     ttlMs: readAttachLeaseTtlMsFromEnv(),
-                }, { serverId: targetServerId });
+                }, { serverId: sessionServerId ?? undefined });
                 if (cancelled || !response.ok) return;
                 currentLeaseIdRef.current = response.leaseId;
                 clearRenewTimeout();
@@ -276,17 +276,17 @@ export function useDirectSessionRuntime(params: UseDirectSessionRuntimeParams): 
             const leaseId = currentLeaseIdRef.current;
             currentLeaseIdRef.current = null;
             if (!leaseId) return;
-            const targetServerId = resolvePreferredServerIdForSessionId(params.sessionId) ?? activeServerId;
             void machineDirectSessionDetach({
                 machineId: directSessionLink.machineId,
                 sessionId: params.sessionId,
                 leaseId,
-            }, { serverId: targetServerId }).catch(() => {});
+            }, { serverId: sessionServerId ?? undefined }).catch(() => {});
         };
-    }, [activeServerId, directSessionLink, params.sessionId, runtimeActive]);
+    }, [directSessionLink, params.sessionId, runtimeActive, sessionServerId]);
 
     return {
         directSessionLink,
+        sessionServerId,
         status,
         refreshNow,
     };

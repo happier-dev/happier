@@ -201,10 +201,14 @@ describe('warmCachePersistence', () => {
     });
 
     it('does not delete absent warm-cache entries when saving an empty session list', () => {
+        const keysSpy = vi.spyOn(Object, 'keys');
+
         saveSessionListWarmCacheEntries('server-a', 'account-a', {});
 
         expect(deleteKey).not.toHaveBeenCalled();
         expect(set).not.toHaveBeenCalled();
+        expect(keysSpy).not.toHaveBeenCalled();
+        keysSpy.mockRestore();
     });
 
     it('prefers the authenticated runtime account scope over stale persisted profile ids', () => {
@@ -215,5 +219,37 @@ describe('warmCachePersistence', () => {
 
         clearWarmCacheAccountScope();
         expect(resolveWarmCacheAccountScope('persisted-account')).toBe('persisted-account');
+    });
+
+    it('reuses shared empty objects for empty warm-cache loads', () => {
+        const keysSpy = vi.spyOn(Object, 'keys');
+
+        const firstSessionLoad = loadSessionListWarmCacheEntries('server-a', 'account-a');
+        const secondSessionLoad = loadSessionListWarmCacheEntries('server-b', 'account-b');
+        const firstMachineLoad = loadMachineDisplayWarmCacheEntries('server-a', 'account-a');
+        const secondMachineLoad = loadMachineDisplayWarmCacheEntries('server-b', 'account-b');
+
+        expect(firstSessionLoad).toEqual(secondSessionLoad);
+        expect(firstMachineLoad).toEqual(secondMachineLoad);
+        expect(firstSessionLoad).toBe(firstMachineLoad);
+        expect(firstSessionLoad).toEqual({});
+        expect(firstMachineLoad).toEqual({});
+        expect(keysSpy).not.toHaveBeenCalled();
+        keysSpy.mockRestore();
+    });
+
+    it('reuses shared empty objects when legacy persisted warm-cache payloads are empty objects', () => {
+        store.set('session-list-warm-cache-v1:server-a:account-a', '{}');
+        store.set('machine-display-warm-cache-v1:server-a:account-a', '{}');
+
+        const firstSessionLoad = loadSessionListWarmCacheEntries('server-a', 'account-a');
+        const secondSessionLoad = loadSessionListWarmCacheEntries('server-a', 'account-a');
+        const firstMachineLoad = loadMachineDisplayWarmCacheEntries('server-a', 'account-a');
+        const secondMachineLoad = loadMachineDisplayWarmCacheEntries('server-a', 'account-a');
+
+        expect(firstSessionLoad).toBe(secondSessionLoad);
+        expect(firstMachineLoad).toBe(secondMachineLoad);
+        expect(firstSessionLoad).toEqual({});
+        expect(firstMachineLoad).toEqual({});
     });
 });

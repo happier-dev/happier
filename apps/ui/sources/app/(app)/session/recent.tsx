@@ -202,7 +202,7 @@ export default function SessionHistory() {
                         isFirst ? styles.sessionCardFirst :
                         isLast ? styles.sessionCardLast : {}
                     ]}
-                    onPress={() => navigateToSession(session.id)}
+                    onPress={() => navigateToSession(session.id, session.serverId ? { serverId: session.serverId } : undefined)}
                 >
                     <Avatar id={avatarId} size={48} />
                     <View style={styles.sessionContent}>

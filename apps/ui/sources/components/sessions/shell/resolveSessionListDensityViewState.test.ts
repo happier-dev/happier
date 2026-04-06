@@ -9,36 +9,40 @@ import { resolveSessionListDensityViewState } from './resolveSessionListDensityV
 
 describe('resolveSessionListDensityViewState', () => {
     it('uses the default row height and expanded flags for detailed or unknown density values', () => {
-        expect(resolveSessionListDensityViewState('detailed')).toEqual({
+        const first = resolveSessionListDensityViewState('detailed');
+        const second = resolveSessionListDensityViewState('comfortable');
+        const third = resolveSessionListDensityViewState(null);
+
+        expect(first).toEqual({
             compact: false,
             compactMinimal: false,
             rowHeight: SESSION_LIST_ROW_HEIGHT_DEFAULT,
         });
-        expect(resolveSessionListDensityViewState('comfortable')).toEqual({
-            compact: false,
-            compactMinimal: false,
-            rowHeight: SESSION_LIST_ROW_HEIGHT_DEFAULT,
-        });
-        expect(resolveSessionListDensityViewState(null)).toEqual({
-            compact: false,
-            compactMinimal: false,
-            rowHeight: SESSION_LIST_ROW_HEIGHT_DEFAULT,
-        });
+        expect(first).toBe(second);
+        expect(second).toBe(third);
     });
 
     it('maps cozy density to compact rows without minimal layout', () => {
-        expect(resolveSessionListDensityViewState('cozy')).toEqual({
+        const first = resolveSessionListDensityViewState('cozy');
+        const second = resolveSessionListDensityViewState('cozy');
+
+        expect(first).toEqual({
             compact: true,
             compactMinimal: false,
             rowHeight: SESSION_LIST_ROW_HEIGHT_COMPACT,
         });
+        expect(first).toBe(second);
     });
 
     it('maps narrow density to the minimal row layout', () => {
-        expect(resolveSessionListDensityViewState('narrow')).toEqual({
+        const first = resolveSessionListDensityViewState('narrow');
+        const second = resolveSessionListDensityViewState('narrow');
+
+        expect(first).toEqual({
             compact: true,
             compactMinimal: true,
             rowHeight: SESSION_LIST_ROW_HEIGHT_MINIMAL,
         });
+        expect(first).toBe(second);
     });
 });

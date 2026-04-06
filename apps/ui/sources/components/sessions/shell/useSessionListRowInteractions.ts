@@ -3,6 +3,7 @@ import { useSharedValue } from 'react-native-reanimated';
 
 import type { SessionListViewItem } from '@/sync/domains/state/storage';
 import { SESSION_LIST_GROUP_ORDER_MAX_KEYS_PER_GROUP } from '@/sync/domains/session/listing/sessionListOrderingStateV1';
+import { setTagsForSession } from './sessionTagUtils';
 
 export function useSessionListRowInteractions(input: Readonly<{
     listItems: ReadonlyArray<SessionListViewItem> | null;
@@ -78,12 +79,8 @@ export function useSessionListRowInteractions(input: Readonly<{
     }, [input.pinnedKeyList, input.pinnedKeySet, input.setPinnedSessionKeysV1]);
 
     const handleSetTagsSessionKey = React.useCallback((sessionKey: string, newTags: string[]) => {
-        const nextTags: Record<string, string[]> = { ...input.sessionTags };
-        if (newTags.length === 0) {
-            delete nextTags[sessionKey];
-        } else {
-            nextTags[sessionKey] = newTags;
-        }
+        const nextTags = setTagsForSession(input.sessionTags, sessionKey, newTags);
+        if (nextTags === input.sessionTags) return;
         input.setSessionTagsV1(nextTags);
     }, [input.sessionTags, input.setSessionTagsV1]);
 

@@ -11,18 +11,71 @@ import {
 } from './sessionListViewDataAccess';
 import type { ServerScopedSessionListCache } from './serverScopedSessionListCache';
 import type { SessionListViewItem } from './sessionListViewData';
+import { normalizeTrimmedString } from './normalizeTrimmedString';
+import { normalizeSessionListServerScope } from './normalizeSessionListServerScope';
 
 export type SessionListCacheStateLike = Readonly<{
     sessionListViewData?: ReadonlyArray<SessionListViewItem> | null | undefined;
     sessionListViewDataByServerId?: ServerScopedSessionListCache | null | undefined;
 }> | null | undefined;
 
-export type SessionServerLookupStateLike = SessionListCacheStateLike & Readonly<{
-    sessions?: Readonly<Record<string, { serverId?: unknown } | null>> | null | undefined;
+type SessionServerLookupStateBase = Readonly<{
+    sessionListViewData?: ReadonlyArray<SessionListViewItem> | null | undefined;
+    sessionListViewDataByServerId?: ServerScopedSessionListCache | null | undefined;
+    sessions?: Readonly<Record<string, { serverId?: unknown; metadata?: unknown } | null>> | null | undefined;
 }>;
 
-function normalizeSessionId(raw: unknown): string {
-    return String(raw ?? '').trim();
+export type SessionServerLookupStateLike = SessionServerLookupStateBase | null | undefined;
+
+export type SessionMetadataLike = Readonly<{
+    summary?: Readonly<{ text?: unknown }> | null | undefined;
+    summaryText?: unknown;
+    name?: unknown;
+    path?: unknown;
+    homeDir?: unknown;
+    machineId?: unknown;
+    permissionMode?: unknown;
+}> | null | undefined;
+
+type CachedSessionLookup = Readonly<{
+    sessionId: string;
+    directSession: Readonly<{ serverId?: unknown; metadata?: unknown }> | null | undefined;
+    cachedSession: SessionListViewDataSessionEntry | null;
+}>;
+
+export type SessionListCachedSessionServerScope = Readonly<{
+    serverId: string | null;
+    serverName: string | null;
+}>;
+
+function resolveCachedSessionLookupFromState(
+    state: SessionServerLookupStateLike,
+    sessionIdRaw: string,
+): CachedSessionLookup | null {
+    const sessionId = normalizeTrimmedString(sessionIdRaw);
+    if (!sessionId) return null;
+
+    const directSession = state?.sessions?.[sessionId];
+    return {
+        sessionId,
+        directSession,
+        cachedSession: findSessionListCachedSession(state, sessionId),
+    };
+}
+
+export function resolveSessionListCachedSessionServerScopeFromState(
+    state: SessionServerLookupStateLike,
+    sessionId: string,
+): SessionListCachedSessionServerScope | null {
+    const lookup = resolveCachedSessionLookupFromState(state, sessionId);
+    if (!lookup) return null;
+
+    const serverScope = normalizeSessionListServerScope(
+        normalizeTrimmedString(lookup.directSession?.serverId) || lookup.cachedSession?.serverId || null,
+        lookup.cachedSession?.serverName ?? null,
+    );
+
+    return serverScope.serverId === null && serverScope.serverName === null ? null : serverScope;
 }
 
 export function findSessionListCachedSession(
@@ -35,15 +88,7 @@ export function findSessionListCachedSession(
     }
 
     const scopedMatch = findServerScopedSessionListCacheSession(state?.sessionListViewDataByServerId, sessionId);
-    if (!scopedMatch) {
-        return null;
-    }
-
-    return {
-        serverId: scopedMatch.serverId,
-        serverName: scopedMatch.serverName,
-        session: scopedMatch.session,
-    };
+    return scopedMatch ?? null;
 }
 
 export function listSessionListCachedActiveSessions(
@@ -82,19 +127,48 @@ export function resolveSessionListCachedSessionServerIdFromState(
     state: SessionServerLookupStateLike,
     sessionId: string,
 ): string | null {
-    const sid = normalizeSessionId(sessionId);
-    if (!sid) return null;
+    return resolveSessionListCachedSessionServerScopeFromState(state, sessionId)?.serverId ?? null;
+}
 
-    const direct = state?.sessions?.[sid];
-    const serverId = typeof direct?.serverId === 'string' ? normalizeSessionId(direct.serverId) : '';
-    if (serverId) return serverId;
+export function resolveSessionListPreferredServerIdFromState(
+    state: SessionServerLookupStateLike,
+    sessionId: string,
+    fallbackServerId?: string | null | undefined,
+): string | null {
+    const resolvedServerId = resolveSessionListCachedSessionServerScopeFromState(state, sessionId)?.serverId ?? null;
+    const preferredServerId = resolvedServerId || normalizeTrimmedString(fallbackServerId);
+    return preferredServerId || null;
+}
 
-    return resolveSessionListCachedSessionServerId(state, sid);
+export function resolveSessionListCachedSessionMetadataFromState(
+    state: SessionServerLookupStateLike,
+    sessionId: string,
+): SessionMetadataLike {
+    const lookup = resolveCachedSessionLookupFromState(state, sessionId);
+    if (!lookup) return null;
+
+    const cachedMetadata = lookup.cachedSession?.session?.metadata;
+    if (cachedMetadata && typeof cachedMetadata === 'object') {
+        return cachedMetadata as SessionMetadataLike;
+    }
+
+    const directMetadata = lookup.directSession && typeof lookup.directSession === 'object'
+        && typeof lookup.directSession.metadata === 'object'
+        ? lookup.directSession.metadata
+        : null;
+    return directMetadata && typeof directMetadata === 'object' ? (directMetadata as SessionMetadataLike) : null;
+}
+
+export function resolveSessionListPreferredSessionMetadataFromState(
+    state: SessionServerLookupStateLike,
+    sessionId: string,
+): SessionMetadataLike {
+    return resolveSessionListCachedSessionMetadataFromState(state, sessionId);
 }
 
 export function resolveSessionListCachedSessionServerName(
-    state: SessionListCacheStateLike,
+    state: SessionServerLookupStateLike,
     sessionId: string,
 ): string | null {
-    return findSessionListCachedSession(state, sessionId)?.serverName ?? null;
+    return resolveSessionListCachedSessionServerScopeFromState(state, sessionId)?.serverName ?? null;
 }

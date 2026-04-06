@@ -133,9 +133,35 @@ function buildConfiguredInactiveDaemonTransferState(): unknown {
 }
 
 describe('resolveSessionHandoffUiAvailability', () => {
-    it('reads source-machine daemon transfer state from the preferred server scope when callers have not passed daemon state explicitly', () => {
+    it('reads source-machine daemon transfer state from an explicit server scope when callers pass one', () => {
+        state.preferredServerId = 'server-preferred-ignored';
         state.storageState.machineListByServerId = {
-            'server-1': [{
+            'server-explicit': [{
+                id: 'machine_source',
+                daemonState: buildActiveDaemonTransferState(),
+            }],
+        };
+        state.storageState.machines = {};
+
+        expect(resolveSessionHandoffUiAvailability({
+            sessionId: 'session-1',
+            serverId: 'server-explicit',
+            session: HANDOFF_ELIGIBLE_SESSION,
+            sessionHandoffFeatureEnabled: true,
+            serverSnapshot: buildReadyServerSnapshot({
+                directPeerEnabled: true,
+                serverRoutedEnabled: true,
+            }),
+        })).toEqual({
+            available: true,
+            reason: 'available',
+        });
+    });
+
+    it('does not infer a server-scoped source-machine daemon state from the preferred server when callers omit serverId', () => {
+        state.preferredServerId = 'server-preferred';
+        state.storageState.machineListByServerId = {
+            'server-preferred': [{
                 id: 'machine_source',
                 daemonState: buildActiveDaemonTransferState(),
             }],
@@ -151,8 +177,8 @@ describe('resolveSessionHandoffUiAvailability', () => {
                 serverRoutedEnabled: true,
             }),
         })).toEqual({
-            available: true,
-            reason: 'available',
+            available: false,
+            reason: 'runtime_direct_peer_unavailable',
         });
     });
 
@@ -172,9 +198,9 @@ describe('resolveSessionHandoffUiAvailability', () => {
         });
     });
 
-    it('fails closed when the preferred server-scoped machine record exists but has no daemon state yet, even if the global machine cache is stale-active', () => {
+    it('fails closed when the explicit server-scoped machine record exists but has no daemon state yet, even if the global machine cache is stale-active', () => {
         state.storageState.machineListByServerId = {
-            'server-1': [{
+            'server-explicit': [{
                 id: 'machine_source',
                 daemonState: null,
             }],
@@ -187,6 +213,7 @@ describe('resolveSessionHandoffUiAvailability', () => {
 
         expect(resolveSessionHandoffUiAvailability({
             sessionId: 'session-1',
+            serverId: 'server-explicit',
             session: HANDOFF_ELIGIBLE_SESSION,
             sessionHandoffFeatureEnabled: true,
             serverSnapshot: buildReadyServerSnapshot({

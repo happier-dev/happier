@@ -13,8 +13,6 @@ import { SessionHeaderSubagentsButton } from '@/components/sessions/actions/Sess
 import { SessionHeaderTerminalButton } from '@/components/sessions/actions/SessionHeaderTerminalButton';
 import { ChatList } from '@/components/sessions/transcript/ChatList';
 import { Deferred } from '@/components/ui/forms/Deferred';
-import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { DependabotIcon } from '@/components/ui/icons/DependabotIcon';
 import { EmptyMessages } from '@/components/ui/empty/EmptyMessages';
 import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
 import { useDraft } from '@/hooks/session/useDraft';
@@ -45,8 +43,7 @@ import { t } from '@/text';
 import { tracking, trackMessageSent } from '@/track';
 import { randomUUID } from '@/platform/randomUUID';
 import { useDeviceType, useHeaderHeight, useIsLandscape, useIsTablet } from '@/utils/platform/responsive';
-import { formatPathRelativeToHome, getSessionAvatarId, getSessionName, listPendingPermissionRequests, listPendingUserActionRequests, shouldShowAbortButtonForSessionState, useSessionStatus } from '@/utils/sessions/sessionUtils';
-import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
+import { listPendingPermissionRequests, listPendingUserActionRequests, shouldShowAbortButtonForSessionState, useSessionStatus } from '@/utils/sessions/sessionUtils';
 import { isVersionSupported, MINIMUM_CLI_VERSION } from '@/utils/system/versionUtils';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { ensureAgentInstallablesBackground } from '@/capabilities/ensureAgentInstallablesBackground';
@@ -70,14 +67,12 @@ import { resolveHappierReplayConfig } from '@/sync/domains/session/resume/happie
 import { buildLiveSessionAuthoringContext } from '@/components/sessions/authoring/context/buildLiveSessionAuthoringContext';
 import { resolveSessionComposerStateFromAuthoringContext } from '@/components/sessions/authoring/context/resolveSessionComposerStateFromAuthoringContext';
 import { chooseSubmitMode } from '@/sync/domains/session/control/submitMode';
-import { getSessionLocalControlState, isSessionLocallyAttached } from '@/sync/domains/session/control/sessionLocalControl';
+import { isSessionLocallyAttached } from '@/sync/domains/session/control/sessionLocalControl';
 import { deriveSessionSubagentCounts } from '@/sync/domains/session/subagents/deriveSessionSubagentCounts';
 import { isModelSelectableForSession } from '@/sync/domains/models/modelOptions';
-import { getInactiveSessionUiState } from '@/components/sessions/model/inactiveSessionUi';
 import { Ionicons } from '@expo/vector-icons';
 import { usePathname, useRouter } from 'expo-router';
 import * as React from 'react';
-import { useMemo } from 'react';
 import { ActivityIndicator, Platform, Pressable, View, useWindowDimensions } from 'react-native';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { useUnistyles } from 'react-native-unistyles';
@@ -99,7 +94,7 @@ import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { executeSessionComposerResolution } from '@/sync/domains/input/slashCommands/executeSessionComposerResolution';
 import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
-import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
+import { resolveSessionTargetServerId } from '@/components/sessions/model/resolveSessionTargetServerId';
 import { useAttachmentsUploadConfig } from '@/components/sessions/attachments/useAttachmentsUploadConfig';
 import { useAttachmentDraftManager } from '@/components/sessions/attachments/useAttachmentDraftManager';
 import { formatAttachmentsBlock, uploadAttachmentDraftsToSession } from '@/components/sessions/attachments/uploadAttachmentDraftsToSession';
@@ -118,13 +113,18 @@ import { useDirectSessionTakeover } from '@/components/sessions/model/useDirectS
 import { useDirectSessionRuntime } from '@/components/sessions/model/useDirectSessionRuntime';
 import { useAuth } from '@/auth/context/AuthContext';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
-import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
 import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import { isHiddenSystemSession } from '@happier-dev/protocol';
 import { useSessionViewBootstrap } from './view/useSessionViewBootstrap';
 import { SessionViewLayout } from './view/SessionViewLayout';
+import { combineSessionViewExtraActionChips } from './view/combineSessionViewExtraActionChips';
+import { resolveSessionViewModeOptionIds } from './view/resolveSessionViewModeOptionIds';
+import { resolveSessionViewHeaderProps } from './view/resolveSessionViewHeaderProps';
+import { resolveSessionViewDirectControlFooter } from './view/resolveSessionViewDirectControlFooter';
+import { resolveSessionViewRuntimeDisplayState } from './view/resolveSessionViewRuntimeDisplayState';
+import { resolveSessionViewMicButtonState } from './view/resolveSessionViewMicButtonState';
 
 
 export const SessionView = React.memo((props: {
@@ -195,7 +195,7 @@ export const SessionView = React.memo((props: {
         messages: committedMessages,
         directSessionRuntime,
     });
-    const subagentCounts = React.useMemo(() => deriveSessionSubagentCounts(subagents), [subagents]);
+    const subagentCounts = deriveSessionSubagentCounts(subagents);
     const shouldShowSubagentsButton = subagentCounts.total > 0 || sessionExecutionRunsSupported || hasSessionSubagentLaunchCards(session);
 
     useEnsureSidechainsLoaded({
@@ -204,10 +204,9 @@ export const SessionView = React.memo((props: {
         sidechainIds: participantSidechainIds,
     });
 
-    const sessionAutomationsEnabledCount = React.useMemo(() => {
-        if (!showAutomations) return 0;
-        return countEnabledAutomationsLinkedToSession(automations, sessionId);
-    }, [automations, sessionId, showAutomations]);
+    const sessionAutomationsEnabledCount = showAutomations
+        ? countEnabledAutomationsLinkedToSession(automations, sessionId)
+        : 0;
 
     const constrainHeaderWidth = !(multiPaneEnabled
         && Platform.OS === 'web'
@@ -221,183 +220,24 @@ export const SessionView = React.memo((props: {
     }, [pane]);
 
     // Compute header props based on session state
-    const headerProps = useMemo(() => {
-        if (!isDataReady && !session) {
-            // Loading state - show empty header
-            return {
-                title: '',
-                subtitle: undefined,
-                avatarId: undefined,
-                onAvatarPress: undefined,
-                rightElement: undefined,
-                isConnected: false,
-                flavor: null
-            };
-        }
-
-        if (!session) {
-            // Deleted state - show deleted message in header
-            return {
-                title: t('errors.sessionDeleted'),
-                subtitle: undefined,
-                avatarId: undefined,
-                onAvatarPress: undefined,
-                rightElement: undefined,
-                isConnected: false,
-                flavor: null
-            };
-        }
-
-        // Normal state - show session info
-        const isConnected = session.presence === 'online';
-        const directSessionLink = readDirectSessionLink(session.metadata);
-        const shouldFoldHeaderIconActions = windowWidth < 520;
-        const badgeLabel =
-            sessionAutomationsEnabledCount > 99 ? '99+' : String(sessionAutomationsEnabledCount);
-        const storageBadge = directSessionLink ? t('sessionsList.storageDirectTab') : t('sessionsList.storagePersistedTab');
-        const providerBadge = directSessionLink
-            ? [
-                t(getAgentCore(directSessionLink.providerId).displayNameKey),
-                typeof session.metadata?.host === 'string' && session.metadata.host.trim()
-                    ? session.metadata.host.trim()
-                    : directSessionLink.machineId,
-            ].join(' · ')
-            : null;
-        const foldedHeaderItems = (() => {
-            if (!shouldFoldHeaderIconActions) return [] as DropdownMenuItem[];
-
-            const items: DropdownMenuItem[] = [];
-            if (shouldShowSubagentsButton) {
-                items.push({
-                    id: 'header.openSubagents',
-                    title: t('session.openSubagents', { count: subagentCounts.active }),
-                    icon: <DependabotIcon size={18} color={theme.colors.textSecondary} />,
-                });
-            }
-            if (sessionExecutionRunsSupported) {
-                items.push({
-                    id: 'header.openRuns',
-                    title: t('session.openRuns'),
-                    icon: <Ionicons name="play-outline" size={18} color={theme.colors.textSecondary} />,
-                });
-            }
-            if (showAutomations) {
-                items.push({
-                    id: 'header.openAutomations',
-                    title: t('session.openAutomations'),
-                    icon: <Ionicons name="timer-outline" size={18} color={theme.colors.textSecondary} />,
-                });
-            }
-            return items;
-        })();
-        const rightElement = (
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <SessionHeaderActionMenu
-                    sessionId={sessionId}
-                    session={session}
-                    extraItems={foldedHeaderItems.length > 0 ? foldedHeaderItems : undefined}
-                    onSelectExtraItem={handleHeaderExtraItemSelect}
-                />
-                {!shouldFoldHeaderIconActions ? (
-                    <SessionHeaderSubagentsButton
-                        scopeId={paneScopeId}
-                        activeCount={subagentCounts.active}
-                        hasAnySubagents={shouldShowSubagentsButton}
-                    />
-                ) : null}
-                <SessionHeaderTerminalButton sessionId={sessionId} scopeId={paneScopeId} />
-                {!shouldFoldHeaderIconActions && sessionExecutionRunsSupported ? (
-                    <Pressable
-                        onPress={() => router.push(`/session/${sessionId}/runs` as any)}
-                        hitSlop={15}
-                        style={({ pressed }) => ({
-                            width: 44,
-                            height: 44,
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            opacity: pressed ? 0.7 : 1,
-                        })}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('session.openRuns')}
-                    >
-                        <Ionicons name="play-outline" size={22} color={theme.colors.header.tint} />
-                    </Pressable>
-                ) : null}
-                {!shouldFoldHeaderIconActions && showAutomations ? (
-                    <Pressable
-                        onPress={() => navigateWithBlurOnWeb(() => router.push(`/session/${sessionId}/automations` as any))}
-                        hitSlop={15}
-                        style={({ pressed }) => ({
-                            width: 44,
-                            height: 44,
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            opacity: pressed ? 0.7 : 1,
-                        })}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('session.openAutomations')}
-                    >
-                        <View style={{ position: 'relative', width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                            <Ionicons name="timer-outline" size={22} color={theme.colors.header.tint} />
-                            {sessionAutomationsEnabledCount > 0 ? (
-                                <View style={{
-                                    position: 'absolute',
-                                    top: -2,
-                                    right: -6,
-                                    backgroundColor: theme.colors.status.error,
-                                    borderRadius: 8,
-                                    minWidth: 16,
-                                    height: 16,
-                                    paddingHorizontal: 4,
-                                    justifyContent: 'center',
-                                    alignItems: 'center',
-                                }}>
-	                                    <Text style={{
-	                                        color: theme.colors.overlay.text,
-	                                        fontSize: 10,
-	                                        fontWeight: '600',
-	                                    }}>
-	                                        {badgeLabel}
-	                                    </Text>
-                                </View>
-                            ) : null}
-                        </View>
-                    </Pressable>
-                ) : null}
-            </View>
-        );
-        return {
-            title: getSessionName(session),
-            subtitle: session.metadata?.path ? formatPathRelativeToHome(session.metadata.path, session.metadata?.homeDir) : undefined,
-            avatarId: getSessionAvatarId(session),
-            onAvatarPress: () => router.navigate((`/session/${sessionId}/info`) as any, {
-                dangerouslySingular() {
-                    return 'session-info';
-                },
-            } as any),
-	            rightElement,
-	            badges: providerBadge ? [storageBadge, providerBadge] : [storageBadge],
-	            isConnected: isConnected,
-	            flavor: session.metadata?.flavor || null,
-	        };
-	    }, [
-	        handleHeaderExtraItemSelect,
-	        isDataReady,
-        paneScopeId,
-        router,
+    const headerProps = resolveSessionViewHeaderProps({
+        isDataReady,
         session,
+        sessionId,
+        paneScopeId,
+        windowWidth,
         sessionAutomationsEnabledCount,
         sessionExecutionRunsSupported,
-        sessionId,
-        shouldShowSubagentsButton,
         showAutomations,
-        subagentCounts.active,
-        subagentCounts.total,
-        theme.colors.header.tint,
-        theme.colors.status.error,
-        theme.colors.textSecondary,
-        windowWidth,
-    ]);
+        shouldShowSubagentsButton,
+        subagentActiveCount: subagentCounts.active,
+        navigateWithBlurOnWeb,
+        handleHeaderExtraItemSelect,
+        router,
+        actionIconColor: theme.colors.textSecondary,
+        headerTintColor: theme.colors.header.tint,
+        statusErrorColor: theme.colors.status.error,
+    });
 
     return (
         <SessionScreenTestIdsProvider enabled={isFocused}>
@@ -518,13 +358,9 @@ function SessionViewLoaded({
     const applyLocalSettings = useApplyLocalSettings();
     const router = useRouter();
     const safeArea = useChromeSafeAreaInsets();
-    const directSessionLink = directSessionRuntime.directSessionLink;
     const isLandscape = useIsLandscape();
     const deviceType = useDeviceType();
-    const multiPaneDeviceType = React.useMemo(
-        () => resolveMultiPaneDeviceType({ platform: Platform.OS, deviceType }),
-        [deviceType],
-    );
+    const multiPaneDeviceType = resolveMultiPaneDeviceType({ platform: Platform.OS, deviceType });
     const { width: windowWidth } = useWindowDimensions();
     // Treat multi-pane panels as enabled unless explicitly disabled. `useLocalSetting` can return
     // `undefined` during hydration; failing closed here causes deep links like `?right=git` to be
@@ -534,13 +370,13 @@ function SessionViewLoaded({
     const realtimeStatus = useRealtimeStatus();
     const { ids: committedMessageIds, isLoaded } = useSessionTranscriptIds(sessionId);
     const acknowledgedCliVersions = useLocalSetting('acknowledgedCliVersions');
-    const isForkedSessionV1 = React.useMemo(() => {
+    const isForkedSessionV1 = (() => {
         const fork = (session.metadata as any)?.forkV1;
         if (!fork || typeof fork !== 'object') return false;
         if ((fork as any).v !== 1) return false;
         const parentSessionId = (fork as any).parentSessionId;
         return typeof parentSessionId === 'string' && parentSessionId.trim().length > 0;
-    }, [session.metadata]);
+    })();
     const reachableMachineTarget = React.useMemo(() => {
         return readMachineTargetForSession(sessionId);
     }, [sessionId, session.updatedAt, session.metadata]);
@@ -553,47 +389,26 @@ function SessionViewLoaded({
     const shouldShowCliWarning = Boolean(isCliOutdated && !isAcknowledged);
     // Get model mode from session object - default is agent-specific (Gemini needs an explicit default)
     const agentId = resolveAgentIdFromSessionMetadata(session.metadata) ?? resolveAgentIdFromFlavor(session.metadata?.flavor) ?? DEFAULT_AGENT_ID;
-    const liveAuthoringContext = React.useMemo(() => {
-        return buildLiveSessionAuthoringContext({
-            session,
-        });
-    }, [session]);
-    const liveComposerState = React.useMemo(() => {
-        return resolveSessionComposerStateFromAuthoringContext(liveAuthoringContext, {
-            fallbackAgentId: agentId,
-        });
-    }, [agentId, liveAuthoringContext]);
+    const liveAuthoringContext = buildLiveSessionAuthoringContext({
+        session,
+    });
+    const liveComposerState = resolveSessionComposerStateFromAuthoringContext(liveAuthoringContext, {
+        fallbackAgentId: agentId,
+    });
     const permissionMode = liveComposerState.permissionMode;
-    const sessionModeOptionIds = React.useMemo(() => {
-        const modeState =
-            (session.metadata as any)?.sessionModesV1
+    const sessionModeOptionIds = resolveSessionViewModeOptionIds(
+        liveComposerState.agentId,
+        (session.metadata as any)?.sessionModesV1
             ?? (session.metadata as any)?.acpSessionModesV1
-            ?? null;
-        if (
-            modeState
-            && modeState.provider === liveComposerState.agentId
-            && Array.isArray(modeState.availableModes)
-        ) {
-            return modeState.availableModes
-                .map((mode: { id?: unknown }) => (typeof mode?.id === 'string' ? mode.id.trim() : ''))
-                .filter((id: string) => id.length > 0);
-        }
-
-        const sessionModes = getAgentCore(liveComposerState.agentId)?.sessionModes;
-        if (sessionModes?.kind !== 'staticAgentModes') return [];
-        return (sessionModes.staticOptions ?? [])
-            .map((mode) => (typeof mode?.id === 'string' ? mode.id.trim() : ''))
-            .filter((id) => id.length > 0);
-    }, [liveComposerState.agentId, session.metadata]);
-    const enabledAgentIds = useEnabledAgentIds();
-    const sessionActionDefaultBackend = React.useMemo(
-        () => resolveSessionActionDefaultBackend({
-            session: session as any,
-            enabledAgentIds,
-            fallbackAgentId: agentId,
-        }),
-        [agentId, enabledAgentIds, session],
+            ?? null,
+        getAgentCore(liveComposerState.agentId)?.sessionModes,
     );
+    const enabledAgentIds = useEnabledAgentIds();
+    const sessionActionDefaultBackend = resolveSessionActionDefaultBackend({
+        session: session as any,
+        enabledAgentIds,
+        fallbackAgentId: agentId,
+    });
     const isVoiceConversationSession = isVoiceConversationSystemSessionMetadata(session.metadata ?? null);
     const isHiddenSystemSessionSession = isHiddenSystemSession({ metadata: session.metadata ?? null });
     const modelMode = liveComposerState.modelMode;
@@ -616,7 +431,7 @@ function SessionViewLoaded({
     const attachmentsUploadsFeatureEnabled = useFeatureEnabled('attachments.uploads');
     const attachmentsUploadsTransferAvailable = useSessionFileUploadAvailability(sessionId);
     const attachmentsUploadsEnabled = attachmentsUploadsFeatureEnabled && attachmentsUploadsTransferAvailable;
-    const reviewScope = React.useMemo(() => resolveWorkspaceScopeForSession(sessionId), [sessionId]);
+    const reviewScope = resolveWorkspaceScopeForSession(sessionId);
     const reviewCommentDrafts = useWorkspaceReviewCommentsDrafts(reviewScope);
     const hasReviewCommentDrafts = reviewCommentsEnabled && reviewCommentDrafts.length > 0;
 
@@ -647,15 +462,12 @@ function SessionViewLoaded({
         };
     }, [scmSessionAutoRefreshIntervalMs, sessionId]);
 
-    const actionExecutor = React.useMemo(
-        () => createDefaultActionExecutor({
-            resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId) ?? null,
-            openSession: (sid) => {
-                router.push((`/session/${sid}`) as any);
-            },
-        }),
-        [router]
-    );
+    const actionExecutor = createDefaultActionExecutor({
+        resolveServerIdForSessionId: (targetSessionId) => resolveSessionTargetServerId(targetSessionId, session?.serverId) ?? null,
+        openSession: (sid) => {
+            router.push((`/session/${sid}`) as any);
+        },
+    });
 
     // Inactive session resume state
     // Use `session.active` as the source of truth for whether the provider process is running.
@@ -676,22 +488,10 @@ function SessionViewLoaded({
 
     const isResumable = canResumeSessionWithOptions(session.metadata, resumeCapabilityOptions);
     const [isResuming, setIsResuming] = React.useState(false);
-    const persistedVoiceComposerRouting = React.useMemo(
-        () => resolveVoiceSessionComposerRouting({
-            conversationSessionId: sessionId,
-            sessionMetadata: session.metadata,
-        }),
-        [session.metadata, sessionId],
-    );
-
-    const inactiveUi = React.useMemo(() => {
-        return getInactiveSessionUiState({
-            isSessionActive,
-            isResumable,
-            isMachineOnline: isMachineReachable,
-            allowInputWhileInactive: persistedVoiceComposerRouting?.kind === 'adapter_text',
-        });
-    }, [isMachineReachable, isResumable, isSessionActive, persistedVoiceComposerRouting]);
+    const persistedVoiceComposerRouting = resolveVoiceSessionComposerRouting({
+        conversationSessionId: sessionId,
+        sessionMetadata: session.metadata,
+    });
 
     // Use draft hook for auto-saving message drafts
     const { clearDraft } = useDraft(sessionId, message, setMessage);
@@ -895,17 +695,6 @@ function SessionViewLoaded({
         void handleResumeSession();
     }, [handleResumeSession, sessionId]));
 
-    // Memoize header-dependent styles to prevent re-renders
-    const headerDependentStyles = React.useMemo(() => ({
-        contentContainer: {
-            flex: 1
-        },
-        flatListStyle: {
-            marginTop: 0 // No marginTop needed since header is handled by parent
-        },
-    }), []);
-
-
     // Handle microphone button press - memoized to prevent button flashing
     const handleMicrophonePress = React.useCallback(async () => {
         try {
@@ -922,55 +711,33 @@ function SessionViewLoaded({
     }, [sessionId, voiceProviderId]);
 
     // Memoize mic button state to prevent flashing during chat transitions
-    const micButtonState = useMemo(
-        () => ({
-            onMicPress:
-                voiceProviderId !== 'off' || voiceSnap.status !== 'disconnected'
-                    ? handleMicrophonePress
-                    : undefined,
-            isMicActive: voiceSnap.status !== 'disconnected',
-        }),
-        [handleMicrophonePress, voiceProviderId, voiceSnap.status],
-    );
+    const micButtonState = resolveSessionViewMicButtonState({
+        voiceProviderId,
+        voiceStatus: voiceSnap.status,
+        onMicPress:
+            voiceProviderId !== 'off' || voiceSnap.status !== 'disconnected'
+                ? handleMicrophonePress
+                : undefined,
+    });
 
-    // Trigger session visibility and initialize git status sync
-    React.useLayoutEffect(() => {
-
-        // Trigger session sync
-        sync.onSessionVisible(sessionId);
-    }, [sessionId]);
-
-    const showInactiveNotResumableNotice = inactiveUi.noticeKind === 'not-resumable';
-    const showMachineOfflineNotice = inactiveUi.noticeKind === 'machine-offline';
     const providerName = getAgentCore(agentId).connectedService?.name ?? t('status.unknown');
     const machineName = session.metadata?.host ?? t('status.unknown');
 
-    const bottomNotice = React.useMemo(() => {
-        if (showInactiveNotResumableNotice) {
-            return {
-                title: t('session.inactiveNotResumableNoticeTitle'),
-                body: t('session.inactiveNotResumableNoticeBody', { provider: providerName }),
-            };
-        }
-        if (showMachineOfflineNotice) {
-            return {
-                title: t('session.machineOfflineNoticeTitle'),
-                body: t('session.machineOfflineNoticeBody', { machine: machineName }),
-            };
-        }
-        return null;
-    }, [machineName, providerName, showInactiveNotResumableNotice, showMachineOfflineNotice]);
+    const runtimeDisplayState = resolveSessionViewRuntimeDisplayState({
+        session,
+        isSessionActive,
+        isResumable,
+        isMachineReachable,
+        allowInputWhileInactive: persistedVoiceComposerRouting?.kind === 'adapter_text',
+        providerName,
+        machineName,
+    });
+    const inactiveUi = runtimeDisplayState.inactiveUi;
+    const bottomNotice = runtimeDisplayState.bottomNotice;
 
     const hasWriteAccess = !session.accessLevel || session.accessLevel === 'edit' || session.accessLevel === 'admin';
     const isReadOnly = session.accessLevel === 'view';
-    const transcriptInteraction = React.useMemo(() => {
-        return deriveTranscriptInteractionFromSession({
-            accessLevel: session.accessLevel,
-            canApprovePermissions: session.canApprovePermissions,
-            active: session.active,
-            presence: session.presence,
-        });
-    }, [session.accessLevel, session.active, session.canApprovePermissions, session.presence]);
+    const transcriptInteraction = runtimeDisplayState.transcriptInteraction;
 
     const [pendingQueueResumeFailed, setPendingQueueResumeFailed] = React.useState(false);
     React.useEffect(() => {
@@ -979,7 +746,7 @@ function SessionViewLoaded({
         setPendingQueueResumeFailed(false);
     }, [isSessionActive, pendingQueueResumeFailed]);
 
-    const localControlState = React.useMemo(() => getSessionLocalControlState(session), [session]);
+    const localControlState = runtimeDisplayState.localControlState;
     const isLocallyAttached = !isHiddenSystemSessionSession && isSessionLocallyAttached(session);
     const [controlSwitchTo, setControlSwitchTo] = React.useState<'remote' | null>(null);
     const controlSwitchAttemptIdRef = React.useRef(0);
@@ -1055,39 +822,24 @@ function SessionViewLoaded({
         directSessionRuntime,
     });
 
-    const directControlFooter = React.useMemo(() => {
-        if (isHiddenSystemSessionSession) return null;
-        if (!directSessionLink) return null;
-        const status = directSessionRuntime.status;
-        return {
-            machineOnline: status?.machineOnline ?? true,
-            runnerActive: status?.runnerActive ?? false,
-            activity: status?.activity ?? 'unknown',
-            canTakeOverDirect: status?.canTakeOverDirect ?? false,
-            canTakeOverPersist: status?.canTakeOverPersist ?? false,
-            takeoverInFlight: directSessionTakeover.takeoverInFlight,
-            onRequestTakeOverDirect: (status?.canTakeOverDirect ?? false)
-                ? () => { void directSessionTakeover.requestTakeover('direct'); }
-                : undefined,
-            onRequestTakeOverPersist: (status?.canTakeOverPersist ?? false)
-                ? () => { void directSessionTakeover.requestTakeover('persisted'); }
-                : undefined,
-        } as const;
-    }, [directSessionLink, directSessionRuntime.status, directSessionTakeover, isHiddenSystemSessionSession]);
+    const directControlFooter = resolveSessionViewDirectControlFooter({
+        directSessionLink: directSessionRuntime.directSessionLink,
+        directSessionRuntime,
+        directSessionTakeover,
+        isHiddenSystemSessionSession,
+    });
 
-    const shouldRenderChatTimeline = React.useMemo(() => {
-        if (isEncryptedSessionLocked) return false;
-        return shouldRenderChatTimelineForSession({
-        committedMessagesCount: committedMessageIds.length,
-        pendingMessagesCount: pendingMessages.length,
-        controlledByUser: isLocallyAttached,
-        showLocalControlFooter: localControlState?.canAttach === true,
-        // Some sessions can have a non-zero committed transcript seq but end up with 0 visible
-        // main-timeline messages (e.g. newest page is sidechain-only). In that case, we must
-        // still render the transcript so it can page backwards to find visible messages.
-        forceRenderFooter: isForkedSessionV1 || (isLoaded === true && (session.seq ?? 0) > 0 && committedMessageIds.length === 0),
+    const shouldRenderChatTimeline = !isEncryptedSessionLocked
+        && shouldRenderChatTimelineForSession({
+            committedMessagesCount: committedMessageIds.length,
+            pendingMessagesCount: pendingMessages.length,
+            controlledByUser: isLocallyAttached,
+            showLocalControlFooter: localControlState?.canAttach === true,
+            // Some sessions can have a non-zero committed transcript seq but end up with 0 visible
+            // main-timeline messages (e.g. newest page is sidechain-only). In that case, we must
+            // still render the transcript so it can page backwards to find visible messages.
+            forceRenderFooter: isForkedSessionV1 || (isLoaded === true && (session.seq ?? 0) > 0 && committedMessageIds.length === 0),
         });
-    }, [committedMessageIds.length, isEncryptedSessionLocked, isForkedSessionV1, isLoaded, isLocallyAttached, localControlState?.canAttach, localControlState?.topology, pendingMessages.length, session.seq]);
 
       let content = (
           <>
@@ -1200,10 +952,7 @@ function SessionViewLoaded({
             participantTargets,
             recipientState,
         });
-        const agentInputExtraActionChips = React.useMemo(() => {
-            const chips = [...(extraActionChips ?? []), ...(routingControls.extraActionChips ?? [])];
-            return chips.length > 0 ? chips : undefined;
-        }, [extraActionChips, routingControls.extraActionChips]);
+        const agentInputExtraActionChips = combineSessionViewExtraActionChips(extraActionChips, routingControls.extraActionChips);
 
     const openFileViewer = React.useCallback(() => {
         const layoutIfOpened = resolvePaneLayout({

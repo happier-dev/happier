@@ -2,6 +2,9 @@ import { areSessionListRenderablesEqual } from '../domains/session/listing/sessi
 import type { MachineDisplayRenderable } from '../domains/machines/machineDisplayRenderable';
 import type { ServerScopedSessionListCache } from '../domains/session/listing/serverScopedSessionListCache';
 import type { SessionListViewItem } from '../domains/session/listing/sessionListViewData';
+import { normalizeTrimmedString } from '../domains/session/listing/normalizeTrimmedString';
+
+const EMPTY_SERVER_SCOPED_SESSION_LIST_CACHE: ServerScopedSessionListCache = {};
 
 function areMachineDisplayRenderablesEqual(
     previous: MachineDisplayRenderable | null | undefined,
@@ -86,7 +89,7 @@ export function setServerSessionListCache(
     serverIdRaw: string,
     sessionListViewData: SessionListViewItem[] | null,
 ): ServerScopedSessionListCache {
-    const serverId = String(serverIdRaw ?? '').trim();
+    const serverId = normalizeTrimmedString(serverIdRaw);
     if (!serverId) {
         return current;
     }
@@ -103,13 +106,16 @@ export function clearServerSessionListCache(
     current: ServerScopedSessionListCache | null | undefined,
     serverIdRaw: string,
 ): ServerScopedSessionListCache {
-    const serverId = String(serverIdRaw ?? '').trim();
-    const currentCache = current ?? {};
+    const serverId = normalizeTrimmedString(serverIdRaw);
+    const currentCache = current ?? EMPTY_SERVER_SCOPED_SESSION_LIST_CACHE;
     if (!serverId || !(serverId in currentCache)) {
         return currentCache;
     }
 
     const next = { ...currentCache };
     delete next[serverId];
+    if (Object.keys(next).length === 0) {
+        return EMPTY_SERVER_SCOPED_SESSION_LIST_CACHE;
+    }
     return next;
 }

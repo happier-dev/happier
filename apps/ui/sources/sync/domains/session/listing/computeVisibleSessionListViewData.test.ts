@@ -1,8 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { SessionListViewItem } from './sessionListViewData';
 import type { SessionListOrderingModeV1 } from './sessionListOrderingStateV1';
-import { computeVisibleSessionListViewData } from './computeVisibleSessionListViewData';
+import {
+    computeVisibleSessionListViewData,
+    normalizePinnedSessionKeys,
+} from './computeVisibleSessionListViewData';
 
 type AnySession = any;
 type OrderingMode = SessionListOrderingModeV1;
@@ -17,7 +20,7 @@ function makeSession(id: string, partial?: Partial<AnySession>): AnySession {
 }
 
 describe('computeVisibleSessionListViewData', () => {
-    it('returns the original array when no visibility transformations apply', () => {
+    it('returns the original array when keyed empty group order entries are already no-ops', () => {
         const source: SessionListViewItem[] = [
             { type: 'header', headerKind: 'date', title: 'Today', serverId: 's1', groupKey: 'server:s1:day:2026-02-17' },
             { type: 'session', session: makeSession('a', { createdAt: 10, updatedAt: 20 }), serverId: 's1', section: 'inactive', groupKey: 'server:s1:day:2026-02-17', groupKind: 'date' },
@@ -28,8 +31,9 @@ describe('computeVisibleSessionListViewData', () => {
             source,
             hideInactiveSessions: false,
             pinnedSessionKeysV1: [],
-            sessionListGroupOrderV1: {},
+            sessionListGroupOrderV1: { 'server:s1:day:2026-02-17': [] },
             presentation: { enabled: false, presentation: 'grouped', selectedServerIds: [] },
+            sessionListOrderingModeV1: 'custom' as OrderingMode,
         })!;
 
         expect(result).toBe(source);
@@ -321,6 +325,39 @@ describe('computeVisibleSessionListViewData', () => {
             'h:inactive:Inactive',
             'h:date:Today',
             's:b',
+        ]);
+    });
+});
+
+describe('normalizePinnedSessionKeys', () => {
+    it('reuses a shared empty array when pinned keys are missing, empty, or blank', () => {
+        const first = normalizePinnedSessionKeys(undefined);
+        const second = normalizePinnedSessionKeys([]);
+        const third = normalizePinnedSessionKeys(['   ']);
+
+        expect(first).toBe(second);
+        expect(second).toBe(third);
+        expect(first).toEqual([]);
+    });
+
+    it('returns the original array when pinned keys are already normalized', () => {
+        const pinnedSessionKeys = ['server-a:s1', 'server-b:s2'] as const;
+
+        expect(normalizePinnedSessionKeys(pinnedSessionKeys)).toBe(pinnedSessionKeys);
+    });
+
+    it('trims and drops blank pinned keys when normalization is required', () => {
+        expect(normalizePinnedSessionKeys([' server-a:s1 ', '', 'server-b:s2 '])).toEqual([
+            'server-a:s1',
+            'server-b:s2',
+        ]);
+    });
+
+    it('deduplicates repeated pinned keys while preserving first-seen order', () => {
+        expect(normalizePinnedSessionKeys(['server-a:s1', 'server-b:s2', 'server-a:s1', 'server-c:s3'])).toEqual([
+            'server-a:s1',
+            'server-b:s2',
+            'server-c:s3',
         ]);
     });
 });

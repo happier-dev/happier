@@ -77,6 +77,14 @@ describe('sessionListCache helpers', () => {
         expect(clearServerSessionListCache(current, 'server-b')).toEqual({ existing: null });
     });
 
+    it('reuses the shared empty cache reference when clearing the last server entry', () => {
+        const current = { 'server-b': [] };
+        const cleared = clearServerSessionListCache(current, 'server-b');
+
+        expect(cleared).toEqual({});
+        expect(cleared).toBe(clearServerSessionListCache(undefined, 'server-b'));
+    });
+
     it('keeps the cache reference when clearing a missing or blank server id', () => {
         const current = { existing: null };
         expect(clearServerSessionListCache(current, '')).toBe(current);
@@ -85,5 +93,12 @@ describe('sessionListCache helpers', () => {
 
     it('treats a missing cache object as empty when clearing a server id', () => {
         expect(clearServerSessionListCache(undefined, 'server-b')).toEqual({});
+    });
+
+    it('reuses the shared empty cache reference when clearing a missing cache object repeatedly', () => {
+        const first = clearServerSessionListCache(undefined, 'server-b');
+        const second = clearServerSessionListCache(undefined, 'server-b');
+
+        expect(first).toBe(second);
     });
 });

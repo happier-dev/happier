@@ -1,0 +1,99 @@
+import { Ionicons } from '@expo/vector-icons';
+import React from 'react';
+import { getPreferredLanguage, t } from '@/text';
+import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+
+const EMPTY_SESSIONS_LIST_HEADER_MENU_ITEMS: ReadonlyArray<DropdownMenuItem> = [];
+const SESSIONS_LIST_HEADER_MENU_ITEMS_CACHE = new Map<string, ReadonlyArray<DropdownMenuItem>>();
+
+export function resolveSessionsListHeaderMenuItems(input: Readonly<{
+    orderingMode: string;
+    activeGrouping: 'project' | 'date';
+    inactiveGrouping: 'project' | 'date';
+    isHideInactiveSessionsEnabled: boolean;
+    actionIconColor: string;
+}>): ReadonlyArray<DropdownMenuItem> {
+    const cacheKey = [
+        getPreferredLanguage(),
+        input.orderingMode,
+        input.activeGrouping,
+        input.inactiveGrouping,
+        input.isHideInactiveSessionsEnabled ? '1' : '0',
+        input.actionIconColor,
+    ].join('|');
+    const cached = SESSIONS_LIST_HEADER_MENU_ITEMS_CACHE.get(cacheKey);
+    if (cached) {
+        return cached;
+    }
+
+    const next: DropdownMenuItem[] = [
+        {
+            id: 'custom',
+            title: t('settingsSession.sessionList.orderingOptions.custom'),
+            rightElement: input.orderingMode === 'custom'
+                ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
+                : undefined,
+        },
+        {
+            id: 'created',
+            title: t('settingsSession.sessionList.orderingOptions.created'),
+            rightElement: input.orderingMode === 'created'
+                ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
+                : undefined,
+        },
+        {
+            id: 'updated',
+            title: t('settingsSession.sessionList.orderingOptions.updated'),
+            rightElement: input.orderingMode === 'updated'
+                ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
+                : undefined,
+        },
+        {
+            id: 'activeGroupingProject',
+            title: t('settingsFeatures.sessionListGrouping.projectTitle'),
+            subtitle: t('settingsFeatures.sessionListActiveGrouping'),
+            rightElement: input.activeGrouping === 'project'
+                ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
+                : undefined,
+        },
+        {
+            id: 'activeGroupingDate',
+            title: t('settingsFeatures.sessionListGrouping.dateTitle'),
+            subtitle: t('settingsFeatures.sessionListActiveGrouping'),
+            rightElement: input.activeGrouping === 'date'
+                ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
+                : undefined,
+        },
+        {
+            id: 'inactiveGroupingProject',
+            title: t('settingsFeatures.sessionListGrouping.projectTitle'),
+            subtitle: t('settingsFeatures.sessionListInactiveGrouping'),
+            rightElement: input.inactiveGrouping === 'project'
+                ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
+                : undefined,
+        },
+        {
+            id: 'inactiveGroupingDate',
+            title: t('settingsFeatures.sessionListGrouping.dateTitle'),
+            subtitle: t('settingsFeatures.sessionListInactiveGrouping'),
+            rightElement: input.inactiveGrouping === 'date'
+                ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
+                : undefined,
+        },
+        {
+            id: 'hideInactiveSessions',
+            title: t('settingsFeatures.hideInactiveSessions'),
+            subtitle: t('settingsFeatures.hideInactiveSessionsSubtitle'),
+            rightElement: input.isHideInactiveSessionsEnabled
+                ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
+                : undefined,
+        },
+    ];
+
+    if (next.length === 0) {
+        return EMPTY_SESSIONS_LIST_HEADER_MENU_ITEMS;
+    }
+
+    SESSIONS_LIST_HEADER_MENU_ITEMS_CACHE.set(cacheKey, next);
+    return next;
+}

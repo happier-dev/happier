@@ -36,9 +36,9 @@ import { forkSession } from '@/sync/ops';
 import { canForkFromMessage } from '@/sync/domains/sessionFork/forkUiSupport';
 import { resolveForkFromMessageSemantics } from '@/sync/domains/sessionFork/forkFromMessageSemantics';
 import { writeForkInitialPromptV1 } from '@/sync/domains/sessionFork/forkInitialPromptV1';
+import { resolveSessionTargetServerId } from '@/components/sessions/model/resolveSessionTargetServerId';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { getImageMimeTypeFromPath } from '@/scm/utils/filePresentation';
 import { normalizeVoiceAgentTurnTranscriptText } from '@happier-dev/agents';
 import { TranscriptRollbackActionButton } from '@/components/sessions/transcript/TranscriptRollbackActionButton';
@@ -296,8 +296,10 @@ function UserTextBlock(props: {
   }, [props.message, seq]);
 
   const executor = React.useMemo(
-    () => createDefaultActionExecutor({ resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId) ?? null }),
-    [],
+    () => createDefaultActionExecutor({
+      resolveServerIdForSessionId: (sessionId) => resolveSessionTargetServerId(sessionId, session?.serverId) ?? null,
+    }),
+    [session?.serverId],
   );
   const executionRunsEnabled = useFeatureEnabled('execution.runs');
   const sessionReplayStrategy = useSetting('sessionReplayStrategy');
@@ -348,7 +350,7 @@ function UserTextBlock(props: {
               : undefined;
           const result = await forkSession({
             machineId: reachableMachineTarget?.machineId ?? session?.metadata?.machineId,
-            serverId: resolvePreferredServerIdForSessionId(props.sessionId),
+            serverId: resolveSessionTargetServerId(props.sessionId, session?.serverId) ?? undefined,
             parentSessionId: props.sessionId,
             forkPoint: { type: 'seq', upToSeqInclusive },
             ...(typeof sessionReplayMaxSeedChars === 'number' ? { replayMaxSeedChars: sessionReplayMaxSeedChars } : {}),
@@ -737,8 +739,10 @@ function AgentTextBlock(props: {
     return resolveForkFromMessageSemantics({ message: props.message, messageSeqInclusive: seq });
   }, [props.message, seq]);
   const executor = React.useMemo(
-    () => createDefaultActionExecutor({ resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId) ?? null }),
-    [],
+    () => createDefaultActionExecutor({
+      resolveServerIdForSessionId: (sessionId) => resolveSessionTargetServerId(sessionId, session?.serverId) ?? null,
+    }),
+    [session?.serverId],
   );
   const executionRunsEnabled = useFeatureEnabled('execution.runs');
   const sessionReplayStrategy = useSetting('sessionReplayStrategy');
@@ -789,7 +793,7 @@ function AgentTextBlock(props: {
               : undefined;
           const result = await forkSession({
             machineId: reachableMachineTarget?.machineId ?? session?.metadata?.machineId,
-            serverId: resolvePreferredServerIdForSessionId(props.sessionId),
+            serverId: resolveSessionTargetServerId(props.sessionId, session?.serverId) ?? undefined,
             parentSessionId: props.sessionId,
             forkPoint: { type: 'seq', upToSeqInclusive },
             ...(typeof sessionReplayMaxSeedChars === 'number' ? { replayMaxSeedChars: sessionReplayMaxSeedChars } : {}),
@@ -1101,7 +1105,7 @@ function ForkMessageButton(props: {
           : undefined;
       const result = await forkSession({
         machineId: reachableMachineTarget?.machineId ?? session?.metadata?.machineId,
-        serverId: resolvePreferredServerIdForSessionId(props.sessionId),
+        serverId: resolveSessionTargetServerId(props.sessionId, session?.serverId) ?? undefined,
         parentSessionId: props.sessionId,
         forkPoint: { type: 'seq', upToSeqInclusive: props.upToSeqInclusive },
         ...(typeof sessionReplayMaxSeedChars === 'number' ? { replayMaxSeedChars: sessionReplayMaxSeedChars } : {}),

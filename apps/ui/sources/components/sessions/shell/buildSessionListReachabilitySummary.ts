@@ -14,12 +14,22 @@ export type SessionListReachabilitySummary = Readonly<{
     hasMultipleMachines: boolean;
 }>;
 
+const EMPTY_SESSION_LIST_REACHABILITY_SUMMARY: SessionListReachabilitySummary = {
+    displayById: new Map<string, ReachableSessionDisplay>(),
+    hasMultipleMachines: false,
+};
+const SESSION_LIST_REACHABILITY_SUMMARY_CACHE = new Map<string, SessionListReachabilitySummary>();
+
 export function buildSessionListReachabilitySummary(input: Readonly<{
     listItems: ReadonlyArray<SessionListViewItem>;
     machinesById: ReadonlyMap<string, unknown>;
 }>): SessionListReachabilitySummary {
-    const displayById = new Map<string, ReachableSessionDisplay>();
-    const machineKeys = new Set<string>();
+    const sessionDisplayRows: Array<Readonly<{
+        sessionId: string;
+        machineId: string | null;
+        machineLabel: string;
+        pathSubtitle: string;
+    }>> = [];
 
     for (const item of input.listItems) {
         if (!item || item.type !== 'session') {
@@ -37,20 +47,56 @@ export function buildSessionListReachabilitySummary(input: Readonly<{
             ? formatPathRelativeToHome(basePath, item.session?.metadata?.homeDir ?? undefined)
             : '';
 
-        displayById.set(item.session.id, {
+        sessionDisplayRows.push({
+            sessionId: item.session.id,
             machineId,
             machineLabel,
             pathSubtitle,
         });
+    }
 
-        const machineKey = machineId ?? machineLabel ?? '';
+    if (sessionDisplayRows.length === 0) {
+        SESSION_LIST_REACHABILITY_SUMMARY_CACHE.set(JSON.stringify(['__empty__']), EMPTY_SESSION_LIST_REACHABILITY_SUMMARY);
+        return EMPTY_SESSION_LIST_REACHABILITY_SUMMARY;
+    }
+
+    const cacheKey = JSON.stringify([
+        sessionDisplayRows,
+        Array.from(input.machinesById.entries()).map(([machineId, machine]) => [
+            machineId,
+            machine && typeof machine === 'object'
+                ? {
+                    id: (machine as { id?: unknown }).id ?? null,
+                    host: (machine as { metadata?: { host?: unknown } | null }).metadata?.host ?? null,
+                }
+                : machine,
+        ]),
+    ]);
+    const cached = SESSION_LIST_REACHABILITY_SUMMARY_CACHE.get(cacheKey);
+    if (cached) {
+        return cached;
+    }
+
+    const displayById = new Map<string, ReachableSessionDisplay>();
+    const machineKeys = new Set<string>();
+    for (const row of sessionDisplayRows) {
+        displayById.set(row.sessionId, {
+            machineId: row.machineId,
+            machineLabel: row.machineLabel,
+            pathSubtitle: row.pathSubtitle,
+        });
+
+        const machineKey = row.machineId ?? row.machineLabel ?? '';
         if (machineKey) {
             machineKeys.add(machineKey);
         }
     }
 
-    return {
+    const next = {
         displayById,
         hasMultipleMachines: machineKeys.size > 1,
     };
+
+    SESSION_LIST_REACHABILITY_SUMMARY_CACHE.set(cacheKey, next);
+    return next;
 }

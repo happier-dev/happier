@@ -6,6 +6,7 @@ import { t } from '@/text';
 import type { SessionListProjectHeaderViewModel } from './sessionListProjectHeaderViewModels';
 import { CollapsibleSectionHeader, ProjectGroupHeader } from './sessionListChrome';
 import { resolveSessionListHeaderViewState } from './resolveSessionListHeaderViewState';
+import { resolveSessionListHeaderActionHandlers } from './resolveSessionListHeaderActionHandlers';
 
 type SessionListHeaderItemProps = Readonly<{
     item: Extract<SessionListViewItem, { type: 'header' }>;
@@ -32,6 +33,17 @@ export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemPro
         projectHeaderViewModelByGroupKey: props.projectHeaderViewModelByGroupKey,
         translateServerHeader: (server) => t('sessionsList.serverHeader', { server }),
     });
+    const headerActionHandlers = resolveSessionListHeaderActionHandlers({
+        headerViewState,
+        onOpenProject: props.onOpenProject,
+        onRenameWorkspace: props.onRenameWorkspace,
+        onResetWorkspaceName: props.onResetWorkspaceName,
+        onToggleCollapse: props.onToggleCollapse,
+    });
+
+    if (headerViewState && !headerActionHandlers) {
+        return null;
+    }
 
     if (headerViewState?.kind === 'project') {
         return (
@@ -41,21 +53,11 @@ export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemPro
                 displayTitle={headerViewState.displayTitle}
                 hasCustomLabel={headerViewState.hasCustomLabel}
                 canOpenProject={Boolean(headerViewState.workspaceRefId)}
-                onOpenProject={() => {
-                    if (!headerViewState.workspaceRefId) return;
-                    props.onOpenProject(headerViewState.workspaceRefId);
-                }}
-                onRename={() => props.onRenameWorkspace({
-                    legacyWorkspaceKey: headerViewState.legacyWorkspaceKey,
-                    scopeHint: headerViewState.scopeHint,
-                    currentLabel: headerViewState.displayTitle,
-                })}
-                onReset={() => props.onResetWorkspaceName({
-                    legacyWorkspaceKey: headerViewState.legacyWorkspaceKey,
-                    scopeHint: headerViewState.scopeHint,
-                })}
+                onOpenProject={headerActionHandlers!.onOpenProject}
+                onRename={headerActionHandlers!.onRename}
+                onReset={headerActionHandlers!.onReset}
                 collapsed={headerViewState.collapsed}
-                onToggleCollapse={() => props.onToggleCollapse(headerViewState.collapseKey)}
+                onToggleCollapse={headerActionHandlers!.onToggleCollapse}
             />
         );
     }
@@ -66,7 +68,7 @@ export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemPro
         <CollapsibleSectionHeader
             title={headerViewState.title}
             collapsed={headerViewState.collapsed}
-            onPress={() => props.onToggleCollapse(headerViewState.collapseKey)}
+            onPress={headerActionHandlers!.onToggleCollapse}
         />
     );
 });

@@ -61,7 +61,7 @@ describe('buildHappierCliInstallAndRunCommand', () => {
             { appVariant },
             { action: 'setup', args: ['--relay-url', 'https://relay.example.test', '--skip-providers', '--yes'] },
         )).toBe(
-            'curl -fsSL https://happier.dev/install | bash -s -- --channel preview --run setup -- --relay-url https://relay.example.test --skip-providers --yes',
+            'curl -fsSL https://happier.dev/install | bash -s -- --channel preview && hprev setup --relay-url https://relay.example.test --skip-providers --yes',
         );
     });
 
@@ -71,7 +71,7 @@ describe('buildHappierCliInstallAndRunCommand', () => {
             { appVariant },
             { action: 'auth-login', args: ['--server-url', 'https://relay.example.test', '--persist'] },
         )).toBe(
-            'curl -fsSL https://happier.dev/install | bash -s -- --channel preview --run auth-login -- --server-url https://relay.example.test --persist',
+            'curl -fsSL https://happier.dev/install | bash -s -- --channel preview && hprev auth login --server-url https://relay.example.test --persist',
         );
     });
 });
@@ -106,7 +106,7 @@ describe('buildHappierCliInstallAndRunPowershellCommand', () => {
             { appVariant },
             { action: 'setup', args: ['--relay-url', 'https://relay.example.test', '--skip-providers', '--yes'] },
         )).toBe(
-            '& ([ScriptBlock]::Create((irm https://happier.dev/install.ps1))) -Channel preview -Run setup --relay-url https://relay.example.test --skip-providers --yes',
+            '& ([ScriptBlock]::Create((irm https://happier.dev/install.ps1))) -Channel preview; if ($?) { hprev setup --relay-url https://relay.example.test --skip-providers --yes }',
         );
     });
 });

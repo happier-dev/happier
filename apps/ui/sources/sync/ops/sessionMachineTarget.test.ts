@@ -143,6 +143,42 @@ describe('sessionMachineTarget', () => {
         });
     });
 
+    it('uses cached visible session metadata when the raw session is not hydrated', async () => {
+        const { readMachineTargetForSession } = await import('./sessionMachineTarget');
+        getStateSpy.mockReturnValue({
+            sessions: {},
+            sessionListViewData: [
+                {
+                    type: 'session',
+                    session: {
+                        id: 's1',
+                        active: false,
+                        seq: 0,
+                        createdAt: 0,
+                        activeAt: 0,
+                        updatedAt: 42,
+                        metadataVersion: 0,
+                        agentStateVersion: 0,
+                        thinking: false,
+                        thinkingAt: 0,
+                        presence: 'offline',
+                        metadata: {
+                            machineId: 'm-cached',
+                            path: '/workspace/rebound',
+                            host: 'cached.local',
+                        },
+                    },
+                },
+            ],
+            getProjectForSession: () => null,
+        });
+
+        expect(readMachineTargetForSession('s1')).toEqual({
+            machineId: 'm-cached',
+            basePath: '/workspace/rebound',
+        });
+    });
+
     it('resolves machine target from sibling sessions that share the same path', async () => {
         const { readMachineTargetForSession } = await import('./sessionMachineTarget');
         getStateSpy.mockReturnValue({

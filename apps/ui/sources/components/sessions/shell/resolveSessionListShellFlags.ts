@@ -10,16 +10,38 @@ export function resolveSessionListShellFlags(params: Readonly<{
     showServerBadge: boolean;
     showPinnedServerBadge: boolean;
 }> {
+    const cacheKey = [
+        params.selectedServerCount,
+        params.selectionEnabled ? '1' : '0',
+        params.selectionPresentation,
+        params.isTablet ? '1' : '0',
+        params.sessionListOrderingModeV1,
+    ].join('|');
+    const cached = SESSION_LIST_SHELL_FLAGS_CACHE.get(cacheKey);
+    if (cached) {
+        return cached;
+    }
+
     const selectable = params.isTablet;
     const canReorderSessions = params.sessionListOrderingModeV1 === 'custom';
     const hasMultiServerSelection = params.selectionEnabled && params.selectedServerCount > 1;
     const showServerBadge = hasMultiServerSelection && params.selectionPresentation === 'flat-with-badge';
     const showPinnedServerBadge = hasMultiServerSelection;
 
-    return {
+    const next = {
         selectable,
         canReorderSessions,
         showServerBadge,
         showPinnedServerBadge,
     };
+
+    SESSION_LIST_SHELL_FLAGS_CACHE.set(cacheKey, next);
+    return next;
 }
+
+const SESSION_LIST_SHELL_FLAGS_CACHE = new Map<string, Readonly<{
+    selectable: boolean;
+    canReorderSessions: boolean;
+    showServerBadge: boolean;
+    showPinnedServerBadge: boolean;
+}>>();

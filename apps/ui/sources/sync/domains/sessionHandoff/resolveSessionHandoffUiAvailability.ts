@@ -7,7 +7,6 @@ import {
 import { resolveMachineTransferAvailability } from '@/sync/domains/transfers/runtime/resolveTransferAvailability';
 import { readCachedMachineRpcDirectRoute } from '@/sync/domains/transfers/runtime/transferRouteCache';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
-import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 
 import { canHandoffConversation } from './handoffUiSupport';
 import { resolveSessionHandoffSourceMachineId } from './resolveSessionHandoffSourceMachineId';
@@ -44,15 +43,16 @@ function normalizeNonEmptyString(value: unknown): string | null {
 
 function readSourceMachineDaemonState(input: Readonly<{
     sessionId?: string | null;
+    serverId?: string | null;
     session: SessionLike | null | undefined;
 }>): unknown | null {
     const sessionId = normalizeNonEmptyString(input.sessionId);
+    const serverId = normalizeNonEmptyString(input.serverId);
     const sessionMetadata = input.session?.metadata ?? null;
     if (!sessionId || !sessionMetadata) {
         return null;
     }
 
-    const serverId = resolvePreferredServerIdForSessionId(sessionId);
     const reachableMachineId = readMachineTargetForSession(sessionId)?.machineId ?? null;
     const sourceMachineId = resolveSessionHandoffSourceMachineId({
         reachableMachineId,
@@ -78,6 +78,7 @@ function readSourceMachineDaemonState(input: Readonly<{
 
 function resolveSessionHandoffDaemonDirectPeerAvailability(input: Readonly<{
     sessionId?: string | null;
+    serverId?: string | null;
     session: SessionLike | null | undefined;
     machineDaemonState?: unknown | null;
 }>): SessionHandoffRuntimeAvailability {
@@ -117,6 +118,7 @@ export function resolveSessionHandoffRuntimeDirectPeerAvailability(input: Readon
 
 export function resolveSessionHandoffUiAvailability(input: Readonly<{
     sessionId?: string | null;
+    serverId?: string | null;
     session: SessionLike | null | undefined;
     sessionHandoffFeatureEnabled: boolean;
     serverSnapshot: unknown;
@@ -150,6 +152,7 @@ export function resolveSessionHandoffUiAvailability(input: Readonly<{
 
     const daemonRuntimeAvailability = resolveSessionHandoffDaemonDirectPeerAvailability({
         sessionId: input.sessionId,
+        serverId: input.serverId,
         session: input.session,
         machineDaemonState: input.machineDaemonState,
     });

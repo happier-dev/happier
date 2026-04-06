@@ -4,12 +4,14 @@ import { useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabiliti
 import { resolveSessionMachineId } from '@/sync/domains/session/directSessions/resolveSessionMachineId';
 import { useSession } from '@/sync/domains/state/storage';
 import { extractExecutionRunsBackendsFromMachineCapabilitiesState } from '@/sync/domains/executionRuns/extractExecutionRunsBackendsFromMachineCapabilities';
-import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
+import type { ExecutionRunBackendCapabilityMap } from '@/sync/domains/executionRuns/resolveExecutionRunAvailableBackends';
 
-export function useExecutionRunsBackendsForSession(sessionId: string): Record<string, any> | null {
+export function useExecutionRunsBackendsForSession(
+  sessionId: string,
+  serverId?: string | null,
+): ExecutionRunBackendCapabilityMap {
   const session = useSession(sessionId);
   const machineId = React.useMemo(() => resolveSessionMachineId((session as any)?.metadata), [(session as any)?.metadata]);
-  const serverId = usePreferredServerIdForSession(sessionId);
 
   const machineCapabilities = useMachineCapabilitiesCache({
     machineId,

@@ -9,6 +9,7 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 const useProfileSpy = vi.hoisted(() => vi.fn(() => ({ id: 'u1' })));
 const useSessionSpy = vi.hoisted(() => vi.fn(() => null));
 const useSessionListRenderableSpy = vi.hoisted(() => vi.fn(() => null));
+let hasUnreadMessagesValue = false;
 
 vi.mock('react-native-reanimated', () => ({}));
 
@@ -57,7 +58,7 @@ installSessionShellCommonModuleMocks({
     storage: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
-            useHasUnreadMessages: () => false,
+            useHasUnreadMessages: () => hasUnreadMessagesValue,
             useProfile: useProfileSpy,
             useSession: useSessionSpy,
             useSessionListRenderable: useSessionListRenderableSpy,
@@ -71,7 +72,7 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
 }));
 
 vi.mock('@/components/ui/avatar/Avatar', () => ({
-    Avatar: 'Avatar',
+    Avatar: (props: any) => React.createElement('Avatar', props),
 }));
 
 vi.mock('@/components/ui/status/StatusDot', () => ({
@@ -162,6 +163,7 @@ function createSession(id: string) {
 
 describe('SessionItem activity time', () => {
     beforeEach(() => {
+        hasUnreadMessagesValue = false;
         mockSessionStatus = {
             ...defaultSessionStatus,
         };
@@ -193,6 +195,28 @@ describe('SessionItem activity time', () => {
 
         expect(screen.findByTestId('session-list-item-sess_1')).toBeTruthy();
         expect(screen.getTextContent()).toContain('1m');
+    });
+
+    it('passes a stable unread indicator test id to the avatar when the row has unread activity', async () => {
+        hasUnreadMessagesValue = true;
+
+        const { SessionItem } = await import('./SessionItem');
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={createSession('sess_unread')}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+            />,
+        );
+
+        expect(screen.findByType('Avatar' as any)?.props.unreadBadgeTestID).toBe('session-list-item-unread-indicator-sess_unread');
     });
 
     it('renders a tiny status line in very compact mode when the session has a meaningful active state', async () => {

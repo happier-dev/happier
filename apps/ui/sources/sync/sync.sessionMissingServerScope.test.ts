@@ -364,6 +364,59 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         expect(Object.values(messagesById).some((message) => message.kind === 'user-text' && message.text === 'hello direct')).toBe(true);
     });
 
+    it('loads direct session transcripts even when the active server snapshot does not yet know the linked session', async () => {
+        const sessionId = 'direct_session_id_without_active_snapshot';
+        resolvePreferredServerIdForSessionIdMock.mockReturnValue(undefined);
+        storage.getState().applySessions([createDirectSession(sessionId)]);
+        emitSessionMetadataUpdateWithServerScopeMock.mockImplementation(async ({ expectedVersion, metadata }: any) => ({
+            result: 'success',
+            version: Number(expectedVersion ?? 0) + 1,
+            metadata,
+        }));
+        machineDirectSessionTranscriptPageMock.mockResolvedValueOnce({
+            ok: true,
+            items: [
+                {
+                    id: 'direct-msg-1',
+                    createdAtMs: 1,
+                    raw: { role: 'user', content: { type: 'text', text: 'hello direct snapshotless' } },
+                },
+            ],
+            nextCursor: 'older-cursor-1',
+            hasMore: true,
+        });
+        machineDirectSessionTranscriptReadAfterMock.mockResolvedValueOnce({
+            ok: true,
+            items: [],
+            nextCursor: 'tail-cursor-1',
+            truncated: false,
+        });
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = {
+            getSessionEncryption: () => null,
+        };
+        (sync as any).activeServerSessionIds = new Set<string>();
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+
+        await expect((sync as any).fetchMessages(sessionId)).resolves.toBeUndefined();
+
+        expect(machineDirectSessionTranscriptPageMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-1',
+            providerId: 'codex',
+            remoteSessionId: 'vendor-session-1',
+            direction: 'older',
+        }), { serverId: undefined });
+        expect(machineDirectSessionTranscriptReadAfterMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-1',
+            remoteSessionId: 'vendor-session-1',
+            cursor: 'tail',
+        }), { serverId: undefined });
+        expect(storage.getState().sessionMessages[sessionId]?.isLoaded).toBe(true);
+        const messagesById = storage.getState().sessionMessages[sessionId]?.messagesById ?? {};
+        expect(Object.values(messagesById).some((message) => message.kind === 'user-text' && message.text === 'hello direct snapshotless')).toBe(true);
+    });
+
     it('fetches persisted session messages through the preferred owner server when the owner is not active', async () => {
         const sessionId = 'persisted_session_remote_messages';
         const activeServer = upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });

@@ -18,10 +18,23 @@ export function normalizeSessionListShellState(input: Readonly<{
     workspaceLabels: Readonly<Record<string, string> | null | undefined>;
     workspaceRefs: ReadonlyArray<WorkspaceRefV1> | null | undefined;
 }>): NormalizedSessionListShellState {
+    const collapsedGroupKeys = input.collapsedGroupKeys && Object.keys(input.collapsedGroupKeys).length > 0
+        ? input.collapsedGroupKeys
+        : EMPTY_COLLAPSED_GROUP_KEYS;
+    const sessionTags = input.sessionTags && Object.keys(input.sessionTags).length > 0
+        ? input.sessionTags
+        : EMPTY_SESSION_TAGS;
+    const workspaceLabels = input.workspaceLabels && Object.keys(input.workspaceLabels).length > 0
+        ? input.workspaceLabels
+        : EMPTY_WORKSPACE_LABELS;
+    const workspaceRefs = input.workspaceRefs && input.workspaceRefs.length > 0
+        ? input.workspaceRefs
+        : EMPTY_WORKSPACE_REFS;
+
     return {
-        collapsedGroupKeys: input.collapsedGroupKeys ?? EMPTY_COLLAPSED_GROUP_KEYS,
-        sessionTags: input.sessionTags ?? EMPTY_SESSION_TAGS,
-        workspaceLabels: input.workspaceLabels ?? EMPTY_WORKSPACE_LABELS,
-        workspaceRefs: input.workspaceRefs ?? EMPTY_WORKSPACE_REFS,
+        collapsedGroupKeys,
+        sessionTags,
+        workspaceLabels,
+        workspaceRefs,
     };
 }

@@ -1,6 +1,12 @@
 import type { AgentState, Metadata, Session } from '@/sync/domains/state/storageTypes';
 import { resolveAgentRequestKind } from '@/utils/sessions/permissions/permissionPromptPolicy';
 import { resolveSessionProjectGroupingKeyParts } from './sessionListProjectGroupingKeys';
+import {
+    areSessionListRenderableMetadataComparisonsEqual,
+    buildSessionListRenderableMetadataComparison,
+    readSessionListRenderableMetadataComparison,
+    readSessionListRenderableMetadataComparisonFromRenderable,
+} from './sessionListRenderableMetadataComparison';
 
 export interface SessionListRenderableMetadata {
     name?: string;
@@ -43,9 +49,30 @@ export interface SessionListRenderableSession {
     keepVisibleWhenInactive?: boolean;
 }
 
-type DirectSessionRenderableMetadata = NonNullable<SessionListRenderableMetadata['directSessionV1']>;
-
 type AgentRequestRecord = NonNullable<AgentState['requests']>;
+
+export type SessionListRenderableFieldSnapshot = Readonly<{
+    active: boolean;
+    createdAt: number;
+    updatedAt: number;
+    activeAt: number;
+    archivedAt: number | null;
+    pendingVersion: number | null;
+    pendingCount: number | null;
+    metadataVersion: number;
+    agentStateVersion: number;
+    accessLevel: SessionListRenderableSession['accessLevel'] | null;
+    canApprovePermissions: boolean | null;
+    hasPendingPermissionRequests: boolean | null;
+    hasPendingUserActionRequests: boolean | null;
+    keepVisibleWhenInactive: boolean;
+    metadata: ReturnType<typeof readSessionListRenderableMetadataComparisonFromRenderable>;
+}>;
+
+const EMPTY_PENDING_REQUEST_FLAGS = {
+    hasPendingPermissionRequests: false,
+    hasPendingUserActionRequests: false,
+} as const;
 
 function listPendingRequestEntries(agentState: AgentState | null | undefined): Array<{ kind: string }> {
     const requests = agentState?.requests;
@@ -70,6 +97,9 @@ export function derivePendingRequestFlagsFromAgentState(agentState: AgentState |
     hasPendingUserActionRequests: boolean;
 } {
     const requests = listPendingRequestEntries(agentState);
+    if (requests.length === 0) {
+        return EMPTY_PENDING_REQUEST_FLAGS;
+    }
     return {
         hasPendingPermissionRequests: requests.some((request) => request.kind !== 'user_action'),
         hasPendingUserActionRequests: requests.some((request) => request.kind === 'user_action'),
@@ -86,10 +116,7 @@ function derivePendingRequestFlags(params: Readonly<{
     hasPendingUserActionRequests: boolean;
 } {
     if (params.active !== true) {
-        return {
-            hasPendingPermissionRequests: false,
-            hasPendingUserActionRequests: false,
-        };
+        return EMPTY_PENDING_REQUEST_FLAGS;
     }
 
     if (typeof params.pendingPermissionRequestCount === 'number' || typeof params.pendingUserActionRequestCount === 'number') {
@@ -127,30 +154,7 @@ export function buildSessionListRenderableMetadata(
     metadata: Metadata | null | undefined,
     previous?: SessionListRenderableMetadata | null,
 ): SessionListRenderableMetadata | null {
-    if (!metadata) return null;
-    const directSessionV1 = (() : DirectSessionRenderableMetadata | null => {
-        const candidate = metadata.directSessionV1;
-        if (!candidate || typeof candidate !== 'object') return null;
-        if (!('v' in candidate) || candidate.v !== 1) return null;
-        return {
-            v: 1,
-            ...('providerId' in candidate && typeof candidate.providerId === 'string'
-                ? { providerId: candidate.providerId }
-                : {}),
-        };
-    })();
-    const nextMetadata: SessionListRenderableMetadata = {
-        name: typeof metadata.name === 'string' ? metadata.name : undefined,
-        summaryText: typeof metadata.summary?.text === 'string' ? metadata.summary.text : null,
-        path: typeof metadata.path === 'string' ? metadata.path : '',
-        homeDir: typeof metadata.homeDir === 'string' ? metadata.homeDir : null,
-        host: typeof metadata.host === 'string' ? metadata.host : null,
-        machineId: typeof metadata.machineId === 'string' ? metadata.machineId : null,
-        flavor: typeof metadata.flavor === 'string' ? metadata.flavor : null,
-        directSessionV1,
-        hiddenSystemSession: metadata.systemSessionV1?.hidden === true,
-    };
-    return previous && areSessionListRenderableMetadataEqual(previous, nextMetadata) ? previous : nextMetadata;
+    return buildSessionListRenderableMetadataComparison(metadata, previous);
 }
 
 export function buildSessionListRenderableFromSession(
@@ -170,10 +174,12 @@ export function buildSessionListRenderableFromSession(
             pendingPermissionRequestCount: session.pendingPermissionRequestCount,
             pendingUserActionRequestCount: session.pendingUserActionRequestCount,
         });
-    const previousMetadata = previous?.metadata ?? null;
-    const nextMetadata = preserveMetadata
+    const previousMetadata: ReturnType<typeof readSessionListRenderableMetadataComparisonFromRenderable> = previous?.metadata
+        ? readSessionListRenderableMetadataComparisonFromRenderable(previous.metadata)
+        : null;
+    const nextMetadata: ReturnType<typeof readSessionListRenderableMetadataComparisonFromRenderable> = preserveMetadata
         ? previousMetadata
-        : buildSessionListRenderableMetadata(session.metadata, previousMetadata);
+        : readSessionListRenderableMetadataComparison(session.metadata, previousMetadata);
     const next: SessionListRenderableSession = {
         id: session.id,
         seq: session.seq,
@@ -186,7 +192,7 @@ export function buildSessionListRenderableFromSession(
         pendingCount: session.pendingCount,
         metadataVersion: preserveMetadata && previous ? previous.metadataVersion : session.metadataVersion,
         agentStateVersion: preservePendingFlags && previous ? previous.agentStateVersion : session.agentStateVersion,
-        metadata: previous && areSessionListRenderableMetadataEqual(previous.metadata, nextMetadata)
+        metadata: previous && areSessionListRenderableMetadataEqual(previousMetadata, nextMetadata)
             ? previous.metadata
             : nextMetadata,
         thinking: session.thinking,
@@ -209,6 +215,10 @@ export function preserveSessionListRenderableTransientState(
     next: SessionListRenderableSession,
 ): SessionListRenderableSession {
     if (previous?.keepVisibleWhenInactive !== true) {
+        return next;
+    }
+
+    if (next.keepVisibleWhenInactive === true) {
         return next;
     }
 
@@ -248,22 +258,10 @@ export function preserveSessionListRenderableStaleFields(
 }
 
 function areSessionListRenderableMetadataEqual(
-    previous: SessionListRenderableMetadata | null,
-    next: SessionListRenderableMetadata | null,
+    previous: ReturnType<typeof readSessionListRenderableMetadataComparisonFromRenderable>,
+    next: ReturnType<typeof readSessionListRenderableMetadataComparisonFromRenderable>,
 ): boolean {
-    if (previous === next) return true;
-    if (!previous || !next) return previous === next;
-
-    return previous.name === next.name
-        && (previous.summaryText ?? null) === (next.summaryText ?? null)
-        && previous.path === next.path
-        && (previous.homeDir ?? null) === (next.homeDir ?? null)
-        && (previous.host ?? null) === (next.host ?? null)
-        && (previous.machineId ?? null) === (next.machineId ?? null)
-        && (previous.flavor ?? null) === (next.flavor ?? null)
-        && (previous.hiddenSystemSession === true) === (next.hiddenSystemSession === true)
-        && (previous.directSessionV1?.v ?? null) === (next.directSessionV1?.v ?? null)
-        && (previous.directSessionV1?.providerId ?? null) === (next.directSessionV1?.providerId ?? null);
+    return areSessionListRenderableMetadataComparisonsEqual(previous, next);
 }
 
 export function areSessionListRenderablesEqual(
@@ -271,6 +269,8 @@ export function areSessionListRenderablesEqual(
     next: SessionListRenderableSession,
 ): boolean {
     if (!previous) return false;
+    const previousMetadata = readSessionListRenderableMetadataComparisonFromRenderable(previous.metadata);
+    const nextMetadata = readSessionListRenderableMetadataComparisonFromRenderable(next.metadata);
 
     return previous.id === next.id
         && previous.seq === next.seq
@@ -294,7 +294,7 @@ export function areSessionListRenderablesEqual(
         && (previous.hasPendingPermissionRequests ?? null) === (next.hasPendingPermissionRequests ?? null)
         && (previous.hasPendingUserActionRequests ?? null) === (next.hasPendingUserActionRequests ?? null)
         && (previous.keepVisibleWhenInactive === true) === (next.keepVisibleWhenInactive === true)
-        && areSessionListRenderableMetadataEqual(previous.metadata, next.metadata);
+        && areSessionListRenderableMetadataEqual(previousMetadata, nextMetadata);
 }
 
 export function didSessionListRenderableStructuralFieldsChange(
@@ -309,7 +309,6 @@ export function didSessionListRenderableStructuralFieldsChange(
 
     const prevMeta = previous.metadata;
     const nextMeta = next.metadata;
-
     if (String(prevMeta?.machineId ?? '') !== String(nextMeta?.machineId ?? '')) return true;
     if (String(prevMeta?.path ?? '') !== String(nextMeta?.path ?? '')) return true;
     if (String(prevMeta?.homeDir ?? '') !== String(nextMeta?.homeDir ?? '')) return true;
@@ -323,10 +322,8 @@ export function didSessionListRenderableProjectGroupingFieldsChange(
     next: SessionListRenderableSession,
 ): boolean {
     if (!previous) return true;
-
     const prevMeta = previous.metadata;
     const nextMeta = next.metadata;
-
     const prevParts = resolveSessionProjectGroupingKeyParts(prevMeta ?? null);
     const nextParts = resolveSessionProjectGroupingKeyParts(nextMeta ?? null);
 
@@ -361,7 +358,6 @@ export function didSessionListRenderableWarmCacheFieldsChange(
     next: SessionListRenderableSession,
 ): boolean {
     if (!previous) return true;
-
     if (previous.updatedAt !== next.updatedAt) return true;
     if (previous.createdAt !== next.createdAt) return true;
     if (previous.active !== next.active) return true;

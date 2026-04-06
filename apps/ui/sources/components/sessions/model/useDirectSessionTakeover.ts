@@ -4,7 +4,6 @@ import { showDirectSessionTakeoverDialog } from '@/components/sessions/directSes
 import { Modal } from '@/modal';
 import type { UseDirectSessionRuntimeResult } from '@/components/sessions/model/useDirectSessionRuntime';
 import { machineDirectSessionTakeover, machineDirectSessionTakeoverPersist } from '@/sync/ops/machineDirectSessions';
-import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
 
@@ -13,7 +12,7 @@ type DirectTakeoverMode = 'direct' | 'persisted';
 type UseDirectSessionTakeoverParams = Readonly<{
     sessionId: string;
     hasWriteAccess: boolean;
-    directSessionRuntime: Pick<UseDirectSessionRuntimeResult, 'directSessionLink' | 'status' | 'refreshNow'>;
+    directSessionRuntime: Pick<UseDirectSessionRuntimeResult, 'directSessionLink' | 'sessionServerId' | 'status' | 'refreshNow'>;
 }>;
 
 type UseDirectSessionTakeoverResult = Readonly<{
@@ -21,10 +20,6 @@ type UseDirectSessionTakeoverResult = Readonly<{
     requestTakeover: (mode: DirectTakeoverMode, options?: Readonly<{ forceStop?: boolean; promptForForceStop?: boolean }>) => Promise<boolean>;
     ensureReadyForSend: () => Promise<boolean>;
 }>;
-
-function resolveServerId(sessionId: string): string | undefined {
-    return resolvePreferredServerIdForSessionId(sessionId);
-}
 
 export function useDirectSessionTakeover(params: UseDirectSessionTakeoverParams): UseDirectSessionTakeoverResult {
     const [takeoverInFlight, setTakeoverInFlight] = React.useState<DirectTakeoverMode | null>(null);
@@ -79,7 +74,7 @@ export function useDirectSessionTakeover(params: UseDirectSessionTakeoverParams)
                 sessionId: params.sessionId,
                 ...(forceStop ? { forceStop: true } : {}),
             };
-            const serverId = resolveServerId(params.sessionId);
+            const serverId = params.directSessionRuntime.sessionServerId;
             const result = mode === 'persisted'
                 ? await machineDirectSessionTakeoverPersist(request, { serverId })
                 : await machineDirectSessionTakeover(request, { serverId });
@@ -137,9 +132,9 @@ export function useDirectSessionTakeover(params: UseDirectSessionTakeoverParams)
         });
     }, [params.directSessionRuntime, readLatestStatus, requestTakeover]);
 
-    return {
+    return React.useMemo(() => ({
         takeoverInFlight,
         requestTakeover,
         ensureReadyForSend,
-    };
+    }), [ensureReadyForSend, requestTakeover, takeoverInFlight]);
 }

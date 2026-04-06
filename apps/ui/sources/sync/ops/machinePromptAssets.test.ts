@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type {
+    PromptAssetDeleteRequest,
+    PromptAssetDiscoverRequest,
+    PromptAssetReadRequest,
+    PromptAssetWriteRequest,
+} from '@happier-dev/protocol';
+
 const deleteDaemonPromptAssetMock = vi.hoisted(() => vi.fn());
 const discoverDaemonPromptAssetsMock = vi.hoisted(() => vi.fn());
 const downloadDaemonPromptAssetMock = vi.hoisted(() => vi.fn());
@@ -38,7 +45,7 @@ describe('machine prompt assets ops', () => {
     it('delegates discovery to the transfer substrate', async () => {
         discoverDaemonPromptAssetsMock.mockResolvedValueOnce({ ok: true, items: [] });
         const { machinePromptAssetsDiscover } = await import('./machinePromptAssets');
-        const request = { assetTypeId: 'agents.skill', scope: 'project', directory: '/tmp/project' } as const;
+        const request: PromptAssetDiscoverRequest = { assetTypeId: 'agents.skill', scope: 'project', directory: '/tmp/project' };
 
         await expect(machinePromptAssetsDiscover('machine-1', request, { serverId: 'server-a' })).resolves.toEqual({
             ok: true,
@@ -67,7 +74,7 @@ describe('machine prompt assets ops', () => {
         };
         downloadDaemonPromptAssetMock.mockResolvedValueOnce({ ok: true, item });
         const { machinePromptAssetsDownload } = await import('./machinePromptAssets');
-        const request = { assetTypeId: 'agents.skill', scope: 'user', externalRef: { name: 'skill-a' } } as const;
+        const request: PromptAssetReadRequest = { assetTypeId: 'agents.skill', scope: 'user', externalRef: { name: 'skill-a' } };
 
         await expect(machinePromptAssetsDownload('machine-1', request, { serverId: 'server-a' })).resolves.toEqual({
             ok: true,
@@ -78,7 +85,7 @@ describe('machine prompt assets ops', () => {
     });
 
     it('delegates writes to the transfer substrate', async () => {
-        const request = {
+        const request: PromptAssetWriteRequest = {
             assetTypeId: 'agents.skill',
             scope: 'user',
             externalRef: null,
@@ -111,7 +118,7 @@ describe('machine prompt assets ops', () => {
     });
 
     it('delegates deletion to the transfer substrate', async () => {
-        const request = { assetTypeId: 'agents.skill', scope: 'user', externalRef: { name: 'skill-a' } } as const;
+        const request: PromptAssetDeleteRequest = { assetTypeId: 'agents.skill', scope: 'user', externalRef: { name: 'skill-a' } };
         deleteDaemonPromptAssetMock.mockResolvedValueOnce({ ok: true });
         const { machinePromptAssetsDelete } = await import('./machinePromptAssets');
 

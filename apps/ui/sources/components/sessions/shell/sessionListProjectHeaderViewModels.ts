@@ -18,11 +18,71 @@ export type SessionListProjectHeaderViewModelState = Readonly<{
     scopeHintByLegacyWorkspaceKey: Map<string, WorkspaceScopeBase>;
 }>;
 
+const EMPTY_SESSION_LIST_PROJECT_HEADER_VIEW_MODEL_STATE: SessionListProjectHeaderViewModelState = {
+    projectHeaderViewModelByGroupKey: new Map<string, SessionListProjectHeaderViewModel>(),
+    scopeHintByLegacyWorkspaceKey: new Map<string, WorkspaceScopeBase>(),
+};
+
+const SESSION_LIST_PROJECT_HEADER_VIEW_MODEL_STATE_CACHE = new Map<string, SessionListProjectHeaderViewModelState>();
+
+function appendCachePart(parts: string[], value: string): void {
+    parts.push(value);
+}
+
+function buildSessionListProjectHeaderViewModelStateCacheKey(input: Readonly<{
+    listItems: ReadonlyArray<SessionListViewItem>;
+    workspaceLabels: Readonly<Record<string, string> | null | undefined>;
+    workspaceRefs: ReadonlyArray<WorkspaceRefV1>;
+}>): string {
+    const parts: string[] = ['session-list-project-header-view-model-state'];
+
+    for (const [workspaceKey, workspaceLabel] of Object.entries(input.workspaceLabels ?? {}).sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))) {
+        appendCachePart(parts, `workspaceLabel:${workspaceKey}:${workspaceLabel}`);
+    }
+
+    for (const workspaceRef of input.workspaceRefs) {
+        appendCachePart(parts, [
+            'workspaceRef',
+            String(workspaceRef.id ?? ''),
+            String(workspaceRef.serverId ?? ''),
+            String(workspaceRef.machineId ?? ''),
+            String(workspaceRef.rootPath ?? ''),
+            String(workspaceRef.label ?? ''),
+        ].join('|'));
+    }
+
+    for (const item of input.listItems) {
+        if (item.type !== 'header' || item.headerKind !== 'project') {
+            continue;
+        }
+
+        appendCachePart(parts, [
+            'projectHeader',
+            String(item.groupKey ?? ''),
+            String(item.title ?? ''),
+            String(item.workspaceKey ?? ''),
+            String(item.workspaceScopeHint?.serverId ?? ''),
+            String(item.workspaceScopeHint?.machineId ?? ''),
+            String(item.workspaceScopeHint?.rootPath ?? ''),
+            String(item.serverId ?? ''),
+            String(item.serverName ?? ''),
+        ].join('|'));
+    }
+
+    return parts.join('::');
+}
+
 export function buildSessionListProjectHeaderViewModels(input: Readonly<{
     listItems: ReadonlyArray<SessionListViewItem>;
     workspaceLabels: Readonly<Record<string, string> | null | undefined>;
     workspaceRefs: ReadonlyArray<WorkspaceRefV1>;
 }>): SessionListProjectHeaderViewModelState {
+    const cacheKey = buildSessionListProjectHeaderViewModelStateCacheKey(input);
+    const cachedState = SESSION_LIST_PROJECT_HEADER_VIEW_MODEL_STATE_CACHE.get(cacheKey);
+    if (cachedState) {
+        return cachedState;
+    }
+
     const workspaceRefByScopeKey = new Map<string, WorkspaceRefV1>();
     for (const workspaceRef of input.workspaceRefs) {
         const scopeKey = tryBuildWorkspaceCacheKey(workspaceRef);
@@ -32,12 +92,17 @@ export function buildSessionListProjectHeaderViewModels(input: Readonly<{
         workspaceRefByScopeKey.set(scopeKey, workspaceRef);
     }
 
-    const projectHeaderViewModelByGroupKey = new Map<string, SessionListProjectHeaderViewModel>();
-    const scopeHintByLegacyWorkspaceKey = new Map<string, WorkspaceScopeBase>();
+    let projectHeaderViewModelByGroupKey: Map<string, SessionListProjectHeaderViewModel> | null = null;
+    let scopeHintByLegacyWorkspaceKey: Map<string, WorkspaceScopeBase> | null = null;
 
     for (const item of input.listItems) {
         if (item.type !== 'header' || item.headerKind !== 'project') {
             continue;
+        }
+
+        if (!projectHeaderViewModelByGroupKey || !scopeHintByLegacyWorkspaceKey) {
+            projectHeaderViewModelByGroupKey = new Map<string, SessionListProjectHeaderViewModel>();
+            scopeHintByLegacyWorkspaceKey = new Map<string, WorkspaceScopeBase>();
         }
 
         const groupKey = String(item.groupKey ?? '').trim();
@@ -73,8 +138,15 @@ export function buildSessionListProjectHeaderViewModels(input: Readonly<{
         });
     }
 
-    return {
+    if (!projectHeaderViewModelByGroupKey || !scopeHintByLegacyWorkspaceKey) {
+        return EMPTY_SESSION_LIST_PROJECT_HEADER_VIEW_MODEL_STATE;
+    }
+
+    const nextState: SessionListProjectHeaderViewModelState = {
         projectHeaderViewModelByGroupKey,
         scopeHintByLegacyWorkspaceKey,
     };
+
+    SESSION_LIST_PROJECT_HEADER_VIEW_MODEL_STATE_CACHE.set(cacheKey, nextState);
+    return nextState;
 }

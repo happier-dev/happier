@@ -2,11 +2,11 @@ import * as React from 'react';
 
 import { Modal } from '@/modal';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
-import { upsertWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
+import { findWorkspaceRefByScope, upsertWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
 import { t } from '@/text';
 
 export function useSessionListWorkspaceHeaderActions(input: Readonly<{
-    workspaceRefs: ReadonlyArray<WorkspaceRefV1> | null | undefined;
+    workspaceRefs: ReadonlyArray<WorkspaceRefV1>;
     setWorkspaceRefs: (value: WorkspaceRefV1[]) => void;
     collapsedGroupKeys: Readonly<Record<string, boolean>>;
     setCollapsedGroupKeys: (value: Record<string, boolean>) => void;
@@ -28,7 +28,11 @@ export function useSessionListWorkspaceHeaderActions(input: Readonly<{
             },
         );
         if (newName !== null && newName.trim()) {
-            input.setWorkspaceRefs(upsertWorkspaceRefByScope(input.workspaceRefs ?? [], {
+            const currentRef = findWorkspaceRefByScope(input.workspaceRefs, params.scopeHint);
+            if ((currentRef?.label ?? null) === newName.trim()) {
+                return;
+            }
+            input.setWorkspaceRefs(upsertWorkspaceRefByScope(input.workspaceRefs, {
                 scope: params.scopeHint,
                 nowMs: Date.now(),
                 patch: { label: newName.trim() },
@@ -41,7 +45,11 @@ export function useSessionListWorkspaceHeaderActions(input: Readonly<{
         scopeHint: Readonly<{ serverId: string; machineId: string; rootPath: string }> | null;
     }>) => {
         if (!params.scopeHint) return;
-        input.setWorkspaceRefs(upsertWorkspaceRefByScope(input.workspaceRefs ?? [], {
+        const currentRef = findWorkspaceRefByScope(input.workspaceRefs, params.scopeHint);
+        if ((currentRef?.label ?? null) === null) {
+            return;
+        }
+        input.setWorkspaceRefs(upsertWorkspaceRefByScope(input.workspaceRefs, {
             scope: params.scopeHint,
             nowMs: Date.now(),
             patch: { label: null },

@@ -1,7 +1,9 @@
 import type { ServerSelectionPresentation } from '@/sync/domains/server/selection/serverSelectionTypes';
 
 import { applySessionListPresentation } from './sessionListPresentation';
+import { normalizeTrimmedStringArrayWithSharedEmpty } from './normalizeTrimmedStringArrayWithSharedEmpty';
 import type { SessionListViewItem } from './sessionListViewData';
+import { normalizeSessionListKeyParts } from './sessionListKeyNormalization';
 import { sortSessionListViewItemsByOrderingMode } from './sessionListOrderingStateV1';
 import type { SessionListOrderingModeV1 } from './sessionListOrderingStateV1';
 
@@ -20,22 +22,23 @@ export type ComputeVisibleSessionListViewDataParams = Readonly<{
 
 const PINNED_GROUP_KEY_V1 = 'pinned-v1';
 
-function normalizeSessionKey(serverIdRaw: unknown, sessionIdRaw: unknown): string | null {
-    const serverId = typeof serverIdRaw === 'string' ? serverIdRaw.trim() : '';
-    const sessionId = typeof sessionIdRaw === 'string' ? sessionIdRaw.trim() : '';
-    if (!serverId || !sessionId) return null;
-    return `${serverId}:${sessionId}`;
+export function normalizePinnedSessionKeys(
+    pinnedSessionKeys: ReadonlyArray<string> | null | undefined,
+): ReadonlyArray<string> {
+    return normalizeTrimmedStringArrayWithSharedEmpty(pinnedSessionKeys);
 }
 
-function hasArchivedSessionItems(items: ReadonlyArray<SessionListViewItem>): boolean {
-    for (const item of items) {
-        if (item.type !== 'session') continue;
-        if (item.session?.archivedAt != null) return true;
-    }
-    return false;
-}
+type VisibleSessionListSourceState = Readonly<{
+    hasArchivedSessionItems: boolean;
+    hasInactiveSessionsThatNeedFiltering: boolean;
+    hasOrphanHeaders: boolean;
+}>;
 
-function hasOrphanHeaders(items: ReadonlyArray<SessionListViewItem>): boolean {
+function inspectVisibleSessionListSourceState(
+    items: ReadonlyArray<SessionListViewItem>,
+): VisibleSessionListSourceState {
+    let hasArchivedSessionItems = false;
+    let hasInactiveSessionsThatNeedFiltering = false;
     let pendingSectionHeader: Extract<SessionListViewItem, { type: 'header' }> | null = null;
     let pendingGroupHeader: Extract<SessionListViewItem, { type: 'header' }> | null = null;
 
@@ -49,31 +52,43 @@ function hasOrphanHeaders(items: ReadonlyArray<SessionListViewItem>): boolean {
             }
             continue;
         }
-        if (item.type === 'session') {
-            pendingSectionHeader = null;
-            pendingGroupHeader = null;
+
+        if (item.type !== 'session') {
+            continue;
+        }
+
+        pendingSectionHeader = null;
+        pendingGroupHeader = null;
+
+        if (!hasArchivedSessionItems && item.session?.archivedAt != null) {
+            hasArchivedSessionItems = true;
+        }
+
+        if (
+            !hasInactiveSessionsThatNeedFiltering
+            && item.section !== 'active'
+            && item.session.active !== true
+            && item.session.keepVisibleWhenInactive !== true
+        ) {
+            hasInactiveSessionsThatNeedFiltering = true;
         }
     }
 
-    return pendingSectionHeader != null || pendingGroupHeader != null;
-}
-
-function hasInactiveSessionsThatNeedFiltering(items: ReadonlyArray<SessionListViewItem>): boolean {
-    for (const item of items) {
-        if (item.type !== 'session') continue;
-        const isActive = item.section === 'active' || item.session.active === true;
-        if (isActive) continue;
-        if (item.session.keepVisibleWhenInactive === true) continue;
-        return true;
-    }
-
-    return false;
+    return {
+        hasArchivedSessionItems,
+        hasInactiveSessionsThatNeedFiltering,
+        hasOrphanHeaders: pendingSectionHeader != null || pendingGroupHeader != null,
+    };
 }
 
 function hasGroupOrderingOverrides(
     orderByGroupKey: Readonly<Record<string, ReadonlyArray<string> | undefined>>,
 ): boolean {
-    for (const keys of Object.values(orderByGroupKey)) {
+    for (const groupKey in orderByGroupKey) {
+        if (!Object.prototype.hasOwnProperty.call(orderByGroupKey, groupKey)) {
+            continue;
+        }
+        const keys = orderByGroupKey[groupKey];
         if (keys && keys.length > 0) return true;
     }
     return false;
@@ -91,7 +106,7 @@ function reorderSessionItemsByKeys(
     const remaining: Array<Extract<SessionListViewItem, { type: 'session' }>> = [];
 
     for (const item of items) {
-        const k = normalizeSessionKey(item.serverId, item.session?.id);
+        const k = normalizeSessionListKeyParts(item.serverId, item.session?.id).sessionKey;
         if (k) {
             byKey.set(k, item);
         }
@@ -171,28 +186,20 @@ function applyGroupOrdering(
 
 function pruneOrphanHeaders(items: ReadonlyArray<SessionListViewItem>): SessionListViewItem[] {
     const out: SessionListViewItem[] = [];
-    let pendingSectionHeader: Extract<SessionListViewItem, { type: 'header' }> | null = null;
-    let pendingGroupHeader: Extract<SessionListViewItem, { type: 'header' }> | null = null;
+    const headerState = createVisibleSessionListHeaderState();
 
     for (const item of items) {
         if (item.type === 'header') {
             if (item.headerKind === 'active' || item.headerKind === 'inactive') {
-                pendingSectionHeader = item;
-                pendingGroupHeader = null;
+                headerState.pendingSectionHeader = item;
+                headerState.pendingGroupHeader = null;
             } else {
-                pendingGroupHeader = item;
+                headerState.pendingGroupHeader = item;
             }
             continue;
         }
         if (item.type === 'session') {
-            if (pendingSectionHeader) {
-                out.push(pendingSectionHeader);
-                pendingSectionHeader = null;
-            }
-            if (pendingGroupHeader) {
-                out.push(pendingGroupHeader);
-                pendingGroupHeader = null;
-            }
+            flushVisibleSessionListHeaders(out, headerState);
             out.push(item);
             continue;
         }
@@ -203,16 +210,15 @@ function pruneOrphanHeaders(items: ReadonlyArray<SessionListViewItem>): SessionL
 
 function filterHideInactiveSessions(items: ReadonlyArray<SessionListViewItem>): SessionListViewItem[] {
     const out: SessionListViewItem[] = [];
-    let pendingSectionHeader: Extract<SessionListViewItem, { type: 'header' }> | null = null;
-    let pendingGroupHeader: Extract<SessionListViewItem, { type: 'header' }> | null = null;
+    const headerState = createVisibleSessionListHeaderState();
 
     for (const item of items) {
         if (item.type === 'header') {
             if (item.headerKind === 'active' || item.headerKind === 'inactive') {
-                pendingSectionHeader = item;
-                pendingGroupHeader = null;
+                headerState.pendingSectionHeader = item;
+                headerState.pendingGroupHeader = null;
             } else {
-                pendingGroupHeader = item;
+                headerState.pendingGroupHeader = item;
             }
             continue;
         }
@@ -221,21 +227,44 @@ function filterHideInactiveSessions(items: ReadonlyArray<SessionListViewItem>): 
             if (!isActive && item.session.keepVisibleWhenInactive !== true) {
                 continue;
             }
-            if (pendingSectionHeader) {
-                if (pendingSectionHeader.headerKind === 'active') {
-                    out.push(pendingSectionHeader);
+            if (headerState.pendingSectionHeader) {
+                if (headerState.pendingSectionHeader.headerKind === 'active') {
+                    out.push(headerState.pendingSectionHeader);
                 }
-                pendingSectionHeader = null;
+                headerState.pendingSectionHeader = null;
             }
-            if (pendingGroupHeader) {
-                out.push(pendingGroupHeader);
-                pendingGroupHeader = null;
-            }
+            flushVisibleSessionListHeaders(out, headerState);
             out.push(item);
         }
     }
 
     return out;
+}
+
+function flushVisibleSessionListHeaders(
+    out: SessionListViewItem[],
+    headerState: VisibleSessionListHeaderState,
+): void {
+    if (headerState.pendingSectionHeader) {
+        out.push(headerState.pendingSectionHeader);
+        headerState.pendingSectionHeader = null;
+    }
+    if (headerState.pendingGroupHeader) {
+        out.push(headerState.pendingGroupHeader);
+        headerState.pendingGroupHeader = null;
+    }
+}
+
+type VisibleSessionListHeaderState = {
+        pendingSectionHeader: Extract<SessionListViewItem, { type: 'header' }> | null;
+        pendingGroupHeader: Extract<SessionListViewItem, { type: 'header' }> | null;
+};
+
+function createVisibleSessionListHeaderState(): VisibleSessionListHeaderState {
+    return {
+        pendingSectionHeader: null,
+        pendingGroupHeader: null,
+    };
 }
 
 export function computeVisibleSessionListViewData(
@@ -245,9 +274,10 @@ export function computeVisibleSessionListViewData(
     if (!source) return null;
 
     const sessionListOrderingModeV1 = params.sessionListOrderingModeV1 ?? 'custom';
-    const pinnedSessionKeys = (params.pinnedSessionKeysV1 ?? []).map((k) => (typeof k === 'string' ? k.trim() : '')).filter(Boolean);
+    const pinnedSessionKeys = normalizePinnedSessionKeys(params.pinnedSessionKeysV1);
     const presentationEnabled = params.presentation.enabled === true;
     const noOrderingOverrides = !hasGroupOrderingOverrides(params.sessionListGroupOrderV1 ?? {});
+    const sourceState = inspectVisibleSessionListSourceState(source);
 
     if (
         sessionListOrderingModeV1 === 'custom'
@@ -255,8 +285,8 @@ export function computeVisibleSessionListViewData(
         && pinnedSessionKeys.length === 0
         && !presentationEnabled
         && noOrderingOverrides
-        && !hasArchivedSessionItems(source)
-        && !hasOrphanHeaders(source)
+        && !sourceState.hasArchivedSessionItems
+        && !sourceState.hasOrphanHeaders
     ) {
         return source as SessionListViewItem[];
     }
@@ -271,8 +301,8 @@ export function computeVisibleSessionListViewData(
         && !params.hideInactiveSessions
         && pinnedSessionKeys.length === 0
         && !presentationEnabled
-        && !hasArchivedSessionItems(source)
-        && !hasOrphanHeaders(source)
+        && !sourceState.hasArchivedSessionItems
+        && !sourceState.hasOrphanHeaders
     ) {
         return source as SessionListViewItem[];
     }
@@ -287,8 +317,8 @@ export function computeVisibleSessionListViewData(
         && !params.hideInactiveSessions
         && pinnedSessionKeys.length === 0
         && !presentationEnabled
-        && !hasArchivedSessionItems(source)
-        && !hasOrphanHeaders(source)
+        && !sourceState.hasArchivedSessionItems
+        && !sourceState.hasOrphanHeaders
     ) {
         return source as SessionListViewItem[];
     }
@@ -298,9 +328,9 @@ export function computeVisibleSessionListViewData(
         && pinnedSessionKeys.length === 0
         && !presentationEnabled
         && noOrderingOverrides
-        && !hasArchivedSessionItems(source)
-        && !hasOrphanHeaders(source)
-        && !hasInactiveSessionsThatNeedFiltering(source)
+        && !sourceState.hasArchivedSessionItems
+        && !sourceState.hasOrphanHeaders
+        && !sourceState.hasInactiveSessionsThatNeedFiltering
     ) {
         return source as SessionListViewItem[];
     }
@@ -321,7 +351,7 @@ export function computeVisibleSessionListViewData(
             remainder.push(item);
             continue;
         }
-        const key = normalizeSessionKey(item.serverId, item.session?.id);
+        const key = normalizeSessionListKeyParts(item.serverId, item.session?.id).sessionKey;
         if (key && pinnedSet.has(key)) {
             pinnedSessions.push({
                 ...item,

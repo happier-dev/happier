@@ -34,8 +34,6 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useSessionExecutionRunsSupported } from '@/hooks/server/useSessionExecutionRunsSupported';
 import { Text } from '@/components/ui/text/Text';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
-import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
-import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
 import { canForkConversation } from '@/sync/domains/sessionFork/forkUiSupport';
 import { executeSessionForkAction } from '@/sync/domains/sessionFork/executeSessionForkAction';
@@ -53,6 +51,7 @@ import {
     type SessionHandoffRuntimeAvailability,
 } from '@/sync/domains/sessionHandoff/useSessionHandoffSourceReachability';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { resolveSessionTargetServerId } from '@/components/sessions/model/resolveSessionTargetServerId';
 
 
 // Animated status dot component
@@ -108,7 +107,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     const sessionStatus = useSessionStatus(session);
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const sessionHandoffEnabled = useFeatureEnabled('sessions.handoff');
-    const sessionExecutionRunsSupported = useSessionExecutionRunsSupported(session.id);
+    const sessionExecutionRunsSupported = useSessionExecutionRunsSupported(session.id, sessionServerId);
     const serverSnapshot = useServerFeaturesSnapshotForServerId(sessionServerId, { enabled: Boolean(sessionServerId) });
     const useProfiles = useSetting('useProfiles') === true;
     const profilesSetting = useSetting('profiles');
@@ -127,12 +126,12 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     const core = getAgentCore(agentId);
     const executor = React.useMemo(
         () => createDefaultActionExecutor({
-            resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId) ?? null,
+            resolveServerIdForSessionId: (childSessionId) => resolveSessionTargetServerId(childSessionId, sessionServerId) ?? null,
             openSession: (childSessionId) => {
                 router.push((`/session/${childSessionId}`) as any);
             },
         }),
-        [router],
+        [router, sessionServerId],
     );
 
     const forkActionEnabled = React.useMemo(() => {
@@ -156,6 +155,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     }, [actionsSettingsV1]);
     const handoffAvailability = resolveSessionHandoffUiAvailability({
         sessionId: session.id,
+        serverId: sessionServerId,
         session,
         sessionHandoffFeatureEnabled: sessionHandoffEnabled,
         serverSnapshot,
@@ -256,7 +256,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     const canStopSession = !session.accessLevel;
     const isArchivedSession = session.archivedAt != null;
     const canArchiveSession = canManageSharing && !session.active && !isArchivedSession;
-    const resolvedServerId = resolvePreferredServerIdForSessionId(session.id);
+    const resolvedServerId = sessionServerId;
     const isPinnedSession = Boolean(
         resolvedServerId &&
         Array.isArray(pinnedSessionKeysV1) &&
@@ -836,7 +836,10 @@ export default () => {
     const sessionHydrated = useHydrateSessionForRoute(sessionId, 'SessionInfoRoute.ensureSessionVisible');
     const session = useSession(sessionId);
     const isDataReady = useIsDataReady();
-    const sessionServerId = usePreferredServerIdForSession(sessionId);
+    const sessionServerId = React.useMemo(
+        () => resolveSessionTargetServerId(sessionId, session?.serverId) ?? null,
+        [session?.serverId, sessionId],
+    );
     const reachableMachineIdForHandoff = React.useMemo(
         () => (session ? readMachineTargetForSession(session.id)?.machineId ?? null : null),
         [session?.id, session?.updatedAt, session?.metadata],

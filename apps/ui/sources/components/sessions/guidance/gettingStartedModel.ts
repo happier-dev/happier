@@ -59,7 +59,7 @@ export type SessionGettingStartedViewModelInput = Readonly<{
         allowedServerIds: ReadonlyArray<string>;
     }>;
     serverSelectionGroups: ReadonlyArray<Readonly<{ id: string; name: string }>> | null | undefined;
-    serverProfiles: ReadonlyArray<Readonly<{ id: string; name: string; serverUrl: string }>>;
+    activeServerProfile: Readonly<{ id: string; name: string; serverUrl: string }>;
     machineListByServerId: Readonly<Record<string, ReadonlyArray<Readonly<{ active: boolean }>> | null | undefined>>;
 }>;
 
@@ -72,16 +72,16 @@ export type SessionGettingStartedViewModel = Readonly<{
     showServerSetup: boolean;
 }>;
 
-function resolveActiveServerProfile(
+export function resolveActiveServerProfile(
     serverProfiles: ReadonlyArray<Readonly<{ id: string; name: string; serverUrl: string }>>,
     activeServerId: string,
-): { serverId: string; serverName: string; serverUrl: string } {
+): { id: string; name: string; serverUrl: string } {
     const byId = new Map(serverProfiles.map((p) => [p.id, p] as const));
     const match = byId.get(activeServerId) ?? serverProfiles[0] ?? null;
     if (match) {
-        return { serverId: match.id, serverName: match.name, serverUrl: match.serverUrl };
+        return { id: match.id, name: match.name, serverUrl: match.serverUrl };
     }
-    return { serverId: activeServerId, serverName: activeServerId || 'server', serverUrl: '' };
+    return { id: activeServerId, name: activeServerId || 'server', serverUrl: '' };
 }
 
 function resolveTargetLabel(input: SessionGettingStartedViewModelInput, activeServerName: string): string {
@@ -94,8 +94,8 @@ function resolveTargetLabel(input: SessionGettingStartedViewModelInput, activeSe
 }
 
 export function buildSessionGettingStartedViewModel(input: SessionGettingStartedViewModelInput): SessionGettingStartedViewModel {
-    const activeProfile = resolveActiveServerProfile(input.serverProfiles, input.selection.activeServerId);
-    const targetLabel = resolveTargetLabel(input, activeProfile.serverName);
+    const activeProfile = input.activeServerProfile;
+    const targetLabel = resolveTargetLabel(input, activeProfile.name);
 
     const perServer = input.selection.allowedServerIds.map((serverId) => {
         if (!Object.prototype.hasOwnProperty.call(input.machineListByServerId, serverId)) {
@@ -121,8 +121,8 @@ export function buildSessionGettingStartedViewModel(input: SessionGettingStarted
     return {
         kind,
         targetLabel,
-        serverId: activeProfile.serverId,
-        serverName: activeProfile.serverName,
+        serverId: activeProfile.id,
+        serverName: activeProfile.name,
         serverUrl: activeProfile.serverUrl,
         showServerSetup,
     };

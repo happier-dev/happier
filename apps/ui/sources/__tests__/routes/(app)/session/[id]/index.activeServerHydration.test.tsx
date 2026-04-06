@@ -6,11 +6,13 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
+import { createDeferred } from '@/dev/testkit';
 import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let mockSessionId = 'session-1';
+const hydrationReadyState = vi.hoisted(() => ({ current: true }));
 
 const hydrateSpy = vi.hoisted(() => vi.fn((_sessionId: string, _tag: string) => true));
 const serverRuntimeState = vi.hoisted(() => ({
@@ -52,7 +54,10 @@ vi.mock('@/components/sessions/panes/url/sessionPaneUrlState', () => ({
 }));
 
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
-    useHydrateSessionForRoute: (sessionId: string, tag: string) => hydrateSpy(sessionId, tag),
+    useHydrateSessionForRoute: (sessionId: string, tag: string) => {
+        hydrateSpy(sessionId, tag);
+        return hydrationReadyState.current;
+    },
 }));
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
@@ -80,6 +85,7 @@ describe('/session/[id] hydration (active server generation)', () => {
 
     beforeEach(() => {
         mockSessionId = 'session-1';
+        hydrationReadyState.current = true;
         hydrateSpy.mockClear();
         serverRuntimeState.generation = 0;
         serverRuntimeState.listener = null;
@@ -106,5 +112,14 @@ describe('/session/[id] hydration (active server generation)', () => {
 
         const lastTag = hydrateSpy.mock.calls.at(-1)?.[1] ?? '';
         expect(lastTag).toContain('gen=1');
+    });
+
+    it('waits for route hydration before mounting the session view', async () => {
+        hydrationReadyState.current = false;
+
+        const screen = await renderScreen(<SessionRouteScreen />);
+
+        expect(screen.findAllByType('SessionView')).toHaveLength(0);
+        expect(screen.findAllByType('ActivityIndicator')).toHaveLength(1);
     });
 });

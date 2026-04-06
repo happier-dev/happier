@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { SessionListViewItem } from './sessionListViewData';
 import {
@@ -8,7 +8,9 @@ import {
     sortSessionListViewItemsByOrderingMode,
 } from './sessionListOrderingStateV1';
 
-function makeSessionItem(opts: Readonly<{ serverId: string; sessionId: string; groupKey: string }>): SessionListViewItem {
+function makeSessionItem(
+    opts: Readonly<{ serverId: string; sessionId: string; groupKey: string }>,
+): Extract<SessionListViewItem, { type: 'session' }> {
     return {
         type: 'session',
         serverId: opts.serverId,
@@ -28,15 +30,37 @@ describe('sessionListOrderingStateV1', () => {
     });
 
     it('returns the original array when created ordering is already satisfied', () => {
+        const firstSession = makeSessionItem({ serverId: 's1', sessionId: 'b', groupKey: 'g' });
+        const secondSession = makeSessionItem({ serverId: 's1', sessionId: 'a', groupKey: 'g' });
         const source: SessionListViewItem[] = [
             { type: 'header', title: 'Today', headerKind: 'date', groupKey: 'g', serverId: 's1' },
-            makeSessionItem({ serverId: 's1', sessionId: 'b', groupKey: 'g' }),
-            makeSessionItem({ serverId: 's1', sessionId: 'a', groupKey: 'g' }),
+            firstSession,
+            secondSession,
         ];
-        (source[1].session as any).createdAt = 20;
-        (source[2].session as any).createdAt = 10;
+        (firstSession.session as any).createdAt = 20;
+        (secondSession.session as any).createdAt = 10;
 
         expect(sortSessionListViewItemsByOrderingMode(source, 'created')).toBe(source);
+    });
+
+    it('does not sort already ordered updated-mode groups', () => {
+        const firstSession = makeSessionItem({ serverId: 's1', sessionId: 'b', groupKey: 'g' });
+        const secondSession = makeSessionItem({ serverId: 's1', sessionId: 'a', groupKey: 'g' });
+        const source: SessionListViewItem[] = [
+            { type: 'header', title: 'Today', headerKind: 'date', groupKey: 'g', serverId: 's1' },
+            firstSession,
+            secondSession,
+        ];
+        (firstSession.session as any).updatedAt = 20;
+        (secondSession.session as any).updatedAt = 10;
+
+        const sortSpy = vi.spyOn(Array.prototype, 'sort');
+        try {
+            expect(sortSessionListViewItemsByOrderingMode(source, 'updated')).toBe(source);
+            expect(sortSpy).not.toHaveBeenCalled();
+        } finally {
+            sortSpy.mockRestore();
+        }
     });
 
     it('removes missing session keys from group order when the group is present in the source', () => {
@@ -71,6 +95,79 @@ describe('sessionListOrderingStateV1', () => {
         });
 
         expect(normalized).toBe(normalizedOrder);
+    });
+
+    it('reuses already-normalized group arrays when other entries still need normalization', () => {
+        const g = 'server:s1:day:2026-02-17';
+        const normalizedKeys = ['s1:a', 's1:b'];
+        const groupOrder = {
+            [g]: normalizedKeys,
+            '   ': [' s1:c '],
+        };
+        const source: SessionListViewItem[] = [
+            { type: 'header', title: 'Today', headerKind: 'date', groupKey: g, serverId: 's1' },
+            makeSessionItem({ serverId: 's1', sessionId: 'a', groupKey: g }),
+            makeSessionItem({ serverId: 's1', sessionId: 'b', groupKey: g }),
+        ];
+
+        const normalized = normalizeSessionListGroupOrderV1ForSource({
+            source,
+            pinnedSessionKeysV1: [],
+            sessionListGroupOrderV1: groupOrder,
+        });
+
+        expect(normalized).not.toBe(groupOrder);
+        expect(normalized[g]).toBe(normalizedKeys);
+        expect(normalized).toEqual({ [g]: normalizedKeys });
+    });
+
+    it('reuses a shared empty map when normalization removes all group order entries', () => {
+        const source: SessionListViewItem[] = [];
+
+        const firstNormalized = normalizeSessionListGroupOrderV1ForSource({
+            source,
+            pinnedSessionKeysV1: [],
+            sessionListGroupOrderV1: {},
+        });
+        const secondNormalized = normalizeSessionListGroupOrderV1ForSource({
+            source,
+            pinnedSessionKeysV1: [],
+            sessionListGroupOrderV1: {},
+        });
+
+        expect(firstNormalized).toBe(secondNormalized);
+        expect(firstNormalized).toEqual({});
+    });
+
+    it('returns the shared empty map without scanning the source when both pinned keys and group order are empty', () => {
+        const source = [
+            {
+                type: 'session' as const,
+                get groupKey() {
+                    throw new Error('source should not be inspected');
+                },
+                get serverId() {
+                    throw new Error('source should not be inspected');
+                },
+                get session() {
+                    throw new Error('source should not be inspected');
+                },
+            },
+        ] as unknown as SessionListViewItem[];
+
+        const normalized = normalizeSessionListGroupOrderV1ForSource({
+            source,
+            pinnedSessionKeysV1: [],
+            sessionListGroupOrderV1: {},
+        });
+        const secondNormalized = normalizeSessionListGroupOrderV1ForSource({
+            source,
+            pinnedSessionKeysV1: [],
+            sessionListGroupOrderV1: {},
+        });
+
+        expect(normalized).toEqual({});
+        expect(normalized).toBe(secondNormalized);
     });
 
     it('caps per-group order lists to the configured max', () => {

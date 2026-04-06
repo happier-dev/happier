@@ -1,4 +1,3 @@
-import * as React from 'react';
 import { Platform } from 'react-native';
 import type { SharedValue } from 'react-native-reanimated';
 
@@ -30,7 +29,7 @@ type SessionListSessionItemProps = Readonly<{
     compactMinimal: boolean;
 }>;
 
-export const SessionListSessionItem = React.memo((props: SessionListSessionItemProps) => {
+export function SessionListSessionItem(props: SessionListSessionItemProps) {
     const { rowViewModel } = props;
     if (!rowViewModel) {
         return null;
@@ -83,4 +82,4 @@ export const SessionListSessionItem = React.memo((props: SessionListSessionItemP
                 : null)}
         />
     );
-});
+}

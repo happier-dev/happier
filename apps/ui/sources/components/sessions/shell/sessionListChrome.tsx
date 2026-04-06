@@ -11,6 +11,8 @@ import { t } from '@/text';
 import type { SessionListViewItem } from '@/sync/domains/state/storage';
 
 import { sessionListStyles } from './sessionListStyles';
+import { resolveProjectGroupHeaderMenuItems } from './resolveProjectGroupHeaderMenuItems';
+import { resolveSessionsListHeaderMenuItems } from './resolveSessionsListHeaderMenuItems';
 
 const ORDERING_MENU_IDS = {
     custom: 'custom',
@@ -36,69 +38,13 @@ export const SessionsListHeader = React.memo(function SessionsListHeader() {
     const inactiveGrouping = sessionListInactiveGroupingV1 === 'date' ? 'date' : 'project';
     const isHideInactiveSessionsEnabled = hideInactiveSessions === true;
 
-    const menuItems = React.useMemo((): DropdownMenuItem[] => ([
-        {
-            id: ORDERING_MENU_IDS.custom,
-            title: t('settingsSession.sessionList.orderingOptions.custom'),
-            rightElement: orderingMode === ORDERING_MENU_IDS.custom
-                ? <Ionicons name="checkmark" size={16} color={actionIconColor} />
-                : undefined,
-        },
-        {
-            id: ORDERING_MENU_IDS.created,
-            title: t('settingsSession.sessionList.orderingOptions.created'),
-            rightElement: orderingMode === ORDERING_MENU_IDS.created
-                ? <Ionicons name="checkmark" size={16} color={actionIconColor} />
-                : undefined,
-        },
-        {
-            id: ORDERING_MENU_IDS.updated,
-            title: t('settingsSession.sessionList.orderingOptions.updated'),
-            rightElement: orderingMode === ORDERING_MENU_IDS.updated
-                ? <Ionicons name="checkmark" size={16} color={actionIconColor} />
-                : undefined,
-        },
-        {
-            id: ORDERING_MENU_IDS.activeGroupingProject,
-            title: t('settingsFeatures.sessionListGrouping.projectTitle'),
-            subtitle: t('settingsFeatures.sessionListActiveGrouping'),
-            rightElement: activeGrouping === 'project'
-                ? <Ionicons name="checkmark" size={16} color={actionIconColor} />
-                : undefined,
-        },
-        {
-            id: ORDERING_MENU_IDS.activeGroupingDate,
-            title: t('settingsFeatures.sessionListGrouping.dateTitle'),
-            subtitle: t('settingsFeatures.sessionListActiveGrouping'),
-            rightElement: activeGrouping === 'date'
-                ? <Ionicons name="checkmark" size={16} color={actionIconColor} />
-                : undefined,
-        },
-        {
-            id: ORDERING_MENU_IDS.inactiveGroupingProject,
-            title: t('settingsFeatures.sessionListGrouping.projectTitle'),
-            subtitle: t('settingsFeatures.sessionListInactiveGrouping'),
-            rightElement: inactiveGrouping === 'project'
-                ? <Ionicons name="checkmark" size={16} color={actionIconColor} />
-                : undefined,
-        },
-        {
-            id: ORDERING_MENU_IDS.inactiveGroupingDate,
-            title: t('settingsFeatures.sessionListGrouping.dateTitle'),
-            subtitle: t('settingsFeatures.sessionListInactiveGrouping'),
-            rightElement: inactiveGrouping === 'date'
-                ? <Ionicons name="checkmark" size={16} color={actionIconColor} />
-                : undefined,
-        },
-        {
-            id: ORDERING_MENU_IDS.hideInactiveSessions,
-            title: t('settingsFeatures.hideInactiveSessions'),
-            subtitle: t('settingsFeatures.hideInactiveSessionsSubtitle'),
-            rightElement: isHideInactiveSessionsEnabled
-                ? <Ionicons name="checkmark" size={16} color={actionIconColor} />
-                : undefined,
-        },
-    ]), [actionIconColor, activeGrouping, inactiveGrouping, isHideInactiveSessionsEnabled, orderingMode]);
+    const menuItems = resolveSessionsListHeaderMenuItems({
+        orderingMode,
+        activeGrouping,
+        inactiveGrouping,
+        isHideInactiveSessionsEnabled,
+        actionIconColor,
+    });
 
     const handleMenuSelect = React.useCallback((itemId: string) => {
         if (itemId === ORDERING_MENU_IDS.custom
@@ -139,7 +85,11 @@ export const SessionsListHeader = React.memo(function SessionsListHeader() {
 
     return (
         <View style={styles.listHeaderSection}>
-            <View style={styles.listHeaderMenuRow}>
+            <View
+                testID="session-list-ordering-menu-anchor"
+                style={styles.listHeaderMenuAnchor}
+                pointerEvents="box-none"
+            >
                 <DropdownMenu
                     open={menuOpen}
                     onOpenChange={setMenuOpen}
@@ -155,6 +105,7 @@ export const SessionsListHeader = React.memo(function SessionsListHeader() {
                     placement="bottom"
                     trigger={({ toggle }) => (
                         <Pressable
+                            testID="session-list-ordering-menu-trigger"
                             style={styles.listHeaderMenuButton}
                             onPress={(event) => {
                                 if (event && typeof event === 'object' && 'stopPropagation' in event) {
@@ -203,29 +154,12 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
     const menuEnabled = Boolean(item.workspaceScopeHint);
     const actionIconColor = theme.colors.textSecondary;
 
-    const menuItems = React.useMemo((): DropdownMenuItem[] => {
-        if (!item.workspaceScopeHint) return [];
-        const items: DropdownMenuItem[] = [
-            ...(canOpenProject ? [{
-                id: 'openProject',
-                title: t('sessionsList.openProject'),
-                icon: <Ionicons name="folder-outline" size={16} color={actionIconColor} />,
-            } satisfies DropdownMenuItem] : []),
-            {
-                id: 'rename',
-                title: t('sessionsList.renameWorkspace'),
-                icon: <Ionicons name="pencil-outline" size={16} color={actionIconColor} />,
-            },
-        ];
-        if (hasCustomLabel) {
-            items.push({
-                id: 'reset',
-                title: t('sessionsList.resetWorkspaceName'),
-                icon: <Ionicons name="refresh-outline" size={16} color={actionIconColor} />,
-            });
-        }
-        return items;
-    }, [canOpenProject, hasCustomLabel, actionIconColor, item.workspaceScopeHint]);
+    const menuItems = resolveProjectGroupHeaderMenuItems({
+        menuEnabled: Boolean(item.workspaceScopeHint),
+        canOpenProject,
+        hasCustomLabel,
+        actionIconColor,
+    });
 
     const handleMenuSelect = React.useCallback((itemId: string) => {
         if (itemId === 'openProject') {

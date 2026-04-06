@@ -1,4 +1,3 @@
-import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { useSessionListStorageKind } from '@/components/sessions/model/useSessionListStorageKind';
@@ -11,21 +10,18 @@ const stylesheet = StyleSheet.create(() => ({
     },
 }));
 
-export const SessionsListWrapper = React.memo(() => {
+export function SessionsListWrapper() {
     const { directSessionsEnabled, storageKind, setStorageKind } = useSessionListStorageKind();
     const styles = stylesheet;
-    const storageChrome = (
-        <SessionsListStorageChrome
-            directSessionsEnabled={directSessionsEnabled}
-            storageKind={storageKind}
-            onSelectStorageKind={setStorageKind}
-        />
-    );
 
     return (
         <View style={styles.container}>
-            {storageChrome}
+            <SessionsListStorageChrome
+                directSessionsEnabled={directSessionsEnabled}
+                storageKind={storageKind}
+                onSelectStorageKind={setStorageKind}
+            />
             <SessionsListPaneContent storageKind={storageKind} fallbackGuidanceVariant="phone" />
         </View>
     );
-});
+}

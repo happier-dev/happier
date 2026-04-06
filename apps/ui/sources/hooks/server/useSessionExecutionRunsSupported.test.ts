@@ -9,8 +9,14 @@ import { installServerHookCommonModuleMocks } from './serverHookModuleTestHelper
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const featureState = vi.hoisted(() => ({ enabled: true }));
-const backendsState = vi.hoisted(() => ({ backends: null as Record<string, unknown> | null }));
+const backendsState = vi.hoisted(() => ({
+  backendsByServerId: new Map<string, Record<string, unknown> | null>(),
+}));
 const messagesState = vi.hoisted(() => ({ messages: [] as any[] }));
+const sessionState = vi.hoisted(() => ({
+  preferredServerId: 'server-1' as string | null,
+  session: { active: true } as any,
+}));
 const listRunsSpy = vi.hoisted(() => vi.fn());
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
@@ -18,11 +24,13 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 }));
 
 vi.mock('@/hooks/server/useExecutionRunsBackendsForSession', () => ({
-  useExecutionRunsBackendsForSession: () => backendsState.backends,
+  useExecutionRunsBackendsForSession: (_sessionId: string, serverId?: string | null) =>
+    (serverId ? backendsState.backendsByServerId.get(serverId) ?? null : null),
 }));
 
 installServerHookCommonModuleMocks({
   storage: async () => createStorageModuleStub({
+    useSession: () => sessionState.session,
     useSessionMessages: () => ({ messages: messagesState.messages, isLoaded: true }),
   }),
 });
@@ -31,7 +39,11 @@ vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
   sessionExecutionRunList: (...args: unknown[]) => listRunsSpy(...args),
 }));
 
-async function renderHarness(sessionId = 'session-1'): Promise<{
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
+  resolvePreferredServerIdForSessionId: () => sessionState.preferredServerId,
+}));
+
+async function renderHarness(sessionId = 'session-1', sessionServerId?: string | null): Promise<{
   getValue: () => boolean;
   rerenderSync: (nextSessionId: string) => void;
   unmount: () => void;
@@ -40,7 +52,10 @@ async function renderHarness(sessionId = 'session-1'): Promise<{
   const { useSessionExecutionRunsSupported } = await import('./useSessionExecutionRunsSupported');
 
   function Harness(props: Readonly<{ sessionId: string }>) {
-    current = useSessionExecutionRunsSupported(props.sessionId);
+    current = (useSessionExecutionRunsSupported as unknown as (sessionId: string, serverId?: string | null) => boolean)(
+      props.sessionId,
+      sessionServerId,
+    );
     return null;
   }
 
@@ -64,8 +79,10 @@ async function renderHarness(sessionId = 'session-1'): Promise<{
 describe('useSessionExecutionRunsSupported', () => {
   beforeEach(() => {
     featureState.enabled = true;
-    backendsState.backends = null;
+    backendsState.backendsByServerId.clear();
     messagesState.messages = [];
+    sessionState.preferredServerId = 'server-1';
+    sessionState.session = { active: true } as any;
     listRunsSpy.mockReset();
   });
 
@@ -148,6 +165,30 @@ describe('useSessionExecutionRunsSupported', () => {
 
     // The old state should be cleared immediately (synchronously) before the async probe completes
     expect(harness.getValue()).toBe(false);
+    harness.unmount();
+  });
+
+  it('uses the session server id when preferred server resolution is unavailable', async () => {
+    sessionState.preferredServerId = null;
+    sessionState.session = { active: true, serverId: 'server-explicit' } as any;
+    backendsState.backendsByServerId.set('server-explicit', { backend: true });
+
+    const { useSessionExecutionRunsSupported } = await import('./useSessionExecutionRunsSupported');
+    const harness = await renderHarness('session-with-explicit-server');
+
+    expect(harness.getValue()).toBe(true);
+    harness.unmount();
+  });
+
+  it('prefers the explicit canonical server id when provided by the caller', async () => {
+    sessionState.preferredServerId = 'server-preferred';
+    sessionState.session = { active: true, serverId: 'server-explicit' } as any;
+    backendsState.backendsByServerId.set('server-explicit', { backend: true });
+
+    const { useSessionExecutionRunsSupported } = await import('./useSessionExecutionRunsSupported');
+    const harness = await renderHarness('session-explicit', 'server-explicit');
+
+    expect(harness.getValue()).toBe(true);
     harness.unmount();
   });
 });

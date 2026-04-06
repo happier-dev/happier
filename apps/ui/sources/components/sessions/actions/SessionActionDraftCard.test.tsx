@@ -13,6 +13,8 @@ import {
 
 type ExecuteResult = { ok: true; result: unknown } | { ok: false; error: string };
 const executeSpy = vi.fn<() => Promise<ExecuteResult>>(async () => ({ ok: true, result: {} }));
+const createDefaultActionExecutorMock = vi.hoisted(() => vi.fn((..._args: unknown[]) => ({ execute: executeSpy })));
+const useExecutionRunsBackendsForSessionMock = vi.hoisted(() => vi.fn((..._args: unknown[]) => null));
 const updateSessionActionDraftInput = vi.fn();
 const setSessionActionDraftStatus = vi.fn();
 const deleteSessionActionDraft = vi.fn();
@@ -66,7 +68,7 @@ installSessionActionsCommonModuleMocks({
     storage: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
-            useSession: () => ({ id: 's1', metadata: {} }),
+            useSession: () => ({ id: 's1', serverId: 'server-explicit', metadata: {} }),
             storage: {
                 getState: () => ({
                     updateSessionActionDraftInput,
@@ -96,7 +98,7 @@ vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({
 }));
 
 vi.mock('@/hooks/server/useExecutionRunsBackendsForSession', () => ({
-  useExecutionRunsBackendsForSession: () => null,
+  useExecutionRunsBackendsForSession: (...args: unknown[]) => useExecutionRunsBackendsForSessionMock(...args),
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
@@ -104,9 +106,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdFo
 }));
 
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
-  createDefaultActionExecutor: () => ({
-    execute: executeSpy,
-  }),
+  createDefaultActionExecutor: (...args: unknown[]) => createDefaultActionExecutorMock(...args),
 }));
 
 describe('SessionActionDraftCard', () => {
@@ -114,9 +114,33 @@ describe('SessionActionDraftCard', () => {
     resetSessionActionsCommonModuleMockState();
     vi.resetModules();
     executeSpy.mockClear();
+    createDefaultActionExecutorMock.mockClear();
+    useExecutionRunsBackendsForSessionMock.mockClear();
     updateSessionActionDraftInput.mockClear();
     setSessionActionDraftStatus.mockClear();
     deleteSessionActionDraft.mockClear();
+  });
+
+  it('threads the session server id into review backend lookup and default execution routing', async () => {
+    const { SessionActionDraftCard } = await import('./SessionActionDraftCard');
+
+    const draft = {
+      id: 'd1',
+      sessionId: 's1',
+      actionId: 'review.start',
+      createdAt: 1,
+      status: 'editing',
+      input: { engineIds: ['coderabbit'], instructions: 'Review this repository.', changeType: 'all', base: { kind: 'none' } },
+    } as const;
+
+    await renderScreen(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
+
+    expect(useExecutionRunsBackendsForSessionMock).toHaveBeenCalledWith('s1', 'server-explicit');
+    expect(createDefaultActionExecutorMock).toHaveBeenCalledTimes(1);
+    const executorConfig = createDefaultActionExecutorMock.mock.calls[0]?.[0] as {
+      resolveServerIdForSessionId: (sessionId: string) => string | null;
+    };
+    expect(executorConfig.resolveServerIdForSessionId('s1')).toBe('server-explicit');
   });
 
   it('submits a valid subagents.plan.start draft via the default action executor', async () => {

@@ -2670,7 +2670,9 @@ class Sync {
     }
 
     private fetchMessages = async (sessionId: string) => {
-        if (this.hasFetchedSessionsSnapshotForActiveServer && !this.isSessionKnownOnResolvedOwnerServer(sessionId)) {
+        const session = storage.getState().sessions[sessionId] ?? null;
+        const directSessionLink = readDirectSessionLink(session?.metadata);
+        if (!directSessionLink && this.hasFetchedSessionsSnapshotForActiveServer && !this.isSessionKnownOnResolvedOwnerServer(sessionId)) {
             // Do not fetch messages when we cannot resolve the session to either the active server
             // or a locally known owner server. This avoids cross-server message fetches while keeping
             // the UI state non-destructive during server-switch races.
@@ -2680,8 +2682,6 @@ class Sync {
             return;
         }
 
-          const session = storage.getState().sessions[sessionId] ?? null;
-          const directSessionLink = readDirectSessionLink(session?.metadata);
           const hasLoadedMessages = storage.getState().sessionMessages[sessionId]?.isLoaded === true;
           // IMPORTANT: `session.seq` is a "latest known session message seq" hint (often coming from `/sessions`),
           // not necessarily the last message seq that *this device has materialized*. Using it here can cause gaps.

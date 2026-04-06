@@ -25,7 +25,7 @@ const tabs: ReadonlyArray<SegmentedTab<SessionStorageKind>> = [
     { id: 'direct', label: t('sessionsList.storageDirectTab') },
 ];
 
-export const SessionListStorageTabsBar = React.memo((props: SessionListStorageTabsBarProps) => {
+export function SessionListStorageTabsBar(props: SessionListStorageTabsBarProps) {
     const styles = stylesheet;
     useUnistyles();
 
@@ -39,4 +39,4 @@ export const SessionListStorageTabsBar = React.memo((props: SessionListStorageTa
             />
         </View>
     );
-});
+}

@@ -3,8 +3,6 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { UseDirectSessionRuntimeResult } from './useDirectSessionRuntime';
-
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const machineDirectSessionTakeoverSpy = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
@@ -15,7 +13,6 @@ const showDirectSessionTakeoverDialogSpy = vi.hoisted(() =>
   vi.fn<() => Promise<{ action: 'direct' | 'persisted' | null; forceStop: boolean }>>(async () => ({ action: null, forceStop: false })),
 );
 const modalAlertSpy = vi.hoisted(() => vi.fn());
-const resolvePreferredServerIdForSessionIdSpy = vi.hoisted(() => vi.fn());
 
 let activeServerId = 'server-1';
 
@@ -40,9 +37,6 @@ vi.mock('@/text', async () => {
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({ serverId: activeServerId }),
 }));
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
-  resolvePreferredServerIdForSessionId: (sessionId: string) => resolvePreferredServerIdForSessionIdSpy(sessionId),
-}));
 vi.mock('@/sync/ops/machineDirectSessions', () => ({
   machineDirectSessionTakeover: machineDirectSessionTakeoverSpy,
   machineDirectSessionTakeoverPersist: machineDirectSessionTakeoverPersistSpy,
@@ -55,14 +49,15 @@ vi.mock('@/sync/sync', () => ({
 }));
 
 type HookValue = ReturnType<typeof import('./useDirectSessionTakeover')['useDirectSessionTakeover']>;
+type DirectSessionRuntimeLike = Parameters<typeof import('./useDirectSessionTakeover')['useDirectSessionTakeover']>[0]['directSessionRuntime'];
 
 async function renderHarness(
-  directSessionRuntime: Pick<UseDirectSessionRuntimeResult, 'directSessionLink' | 'status' | 'refreshNow'>,
+  directSessionRuntime: DirectSessionRuntimeLike,
 ): Promise<{ getCurrent: () => HookValue; unmount: () => void }> {
   const { useDirectSessionTakeover } = await import('./useDirectSessionTakeover');
 
   return renderHook(
-    (runtime: Pick<UseDirectSessionRuntimeResult, 'directSessionLink' | 'status' | 'refreshNow'>) =>
+    (runtime: DirectSessionRuntimeLike) =>
       useDirectSessionTakeover({ sessionId: 's1', hasWriteAccess: true, directSessionRuntime: runtime }),
     {
       initialProps: directSessionRuntime,
@@ -71,14 +66,14 @@ async function renderHarness(
 }
 
 describe('useDirectSessionTakeover', () => {
-  const directSessionLink: NonNullable<UseDirectSessionRuntimeResult['directSessionLink']> = {
+  const directSessionLink: NonNullable<DirectSessionRuntimeLike['directSessionLink']> = {
     v: 1,
     providerId: 'codex',
     machineId: 'machine-1',
     remoteSessionId: 'vendor-session-1',
     source: { kind: 'codexHome', home: 'user' },
   };
-  const status: NonNullable<UseDirectSessionRuntimeResult['status']> = {
+  const status: NonNullable<DirectSessionRuntimeLike['status']> = {
     ok: true,
     machineOnline: true,
     runnerActive: false,
@@ -90,8 +85,6 @@ describe('useDirectSessionTakeover', () => {
 
   beforeEach(() => {
     activeServerId = 'server-1';
-    resolvePreferredServerIdForSessionIdSpy.mockReset();
-    resolvePreferredServerIdForSessionIdSpy.mockReturnValue('server-owned');
     machineDirectSessionTakeoverSpy.mockReset();
     machineDirectSessionTakeoverPersistSpy.mockReset();
     machineDirectSessionTakeoverSpy.mockResolvedValue({ ok: true });
@@ -111,7 +104,7 @@ describe('useDirectSessionTakeover', () => {
 
   it('uses the owning session server when footer takeover is requested after an active-server switch', async () => {
     const refreshNow = vi.fn(async () => status);
-    const harness = await renderHarness({ directSessionLink, status, refreshNow });
+    const harness = await renderHarness({ directSessionLink, status, refreshNow, sessionServerId: 'server-owned' });
 
     activeServerId = 'server-2';
     await act(async () => {
@@ -125,12 +118,27 @@ describe('useDirectSessionTakeover', () => {
     await harness.unmount();
   });
 
+  it('uses the runtime-provided session server id for takeover requests', async () => {
+    const refreshNow = vi.fn(async () => status);
+    const harness = await renderHarness({ directSessionLink, status, refreshNow, sessionServerId: 'server-runtime' });
+
+    await act(async () => {
+      await harness.getCurrent().requestTakeover('direct');
+    });
+
+    expect(machineDirectSessionTakeoverSpy).toHaveBeenCalledWith(
+      { machineId: 'machine-1', sessionId: 's1' },
+      { serverId: 'server-runtime' },
+    );
+    await harness.unmount();
+  });
+
   it('re-checks direct-session status before manual takeover after a server switch', async () => {
     const refreshNow = vi.fn(async () => ({
       ...status,
       machineOnline: false,
     }));
-    const harness = await renderHarness({ directSessionLink, status, refreshNow });
+    const harness = await renderHarness({ directSessionLink, status, refreshNow, sessionServerId: 'server-owned' });
 
     activeServerId = 'server-2';
     let ready = true;
@@ -148,7 +156,7 @@ describe('useDirectSessionTakeover', () => {
   it('uses the owning session server when send takeover is confirmed after an active-server switch', async () => {
     const refreshNow = vi.fn(async () => status);
     showDirectSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: 'direct', forceStop: false });
-    const harness = await renderHarness({ directSessionLink, status, refreshNow });
+    const harness = await renderHarness({ directSessionLink, status, refreshNow, sessionServerId: 'server-owned' });
 
     activeServerId = 'server-2';
     await act(async () => {
@@ -172,7 +180,7 @@ describe('useDirectSessionTakeover', () => {
       ...status,
       runnerActive: true,
     }));
-    const harness = await renderHarness({ directSessionLink, status, refreshNow });
+    const harness = await renderHarness({ directSessionLink, status, refreshNow, sessionServerId: 'server-owned' });
 
     activeServerId = 'server-2';
     let ready = false;

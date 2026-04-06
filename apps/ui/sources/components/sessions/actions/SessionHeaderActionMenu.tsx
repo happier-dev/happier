@@ -15,8 +15,7 @@ import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Modal } from '@/modal';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
-import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
-import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
+import { resolveSessionTargetServerId } from '@/components/sessions/model/resolveSessionTargetServerId';
 import { canForkConversation } from '@/sync/domains/sessionFork/forkUiSupport';
 import { executeSessionForkAction } from '@/sync/domains/sessionFork/executeSessionForkAction';
 import { runSessionHandoffPickerFlow } from '@/sync/domains/sessionHandoff/runSessionHandoffPickerFlow';
@@ -82,7 +81,10 @@ export function SessionHeaderActionMenu(props: Readonly<{
   const voice = useSetting('voice');
   const hasGlobalVoiceAgentConversation = useHasGlobalVoiceAgentConversation();
   const sessionHandoffEnabled = useFeatureEnabled('sessions.handoff');
-  const sessionServerId = usePreferredServerIdForSession(props.sessionId);
+  const sessionServerId = React.useMemo(
+    () => resolveSessionTargetServerId(props.sessionId, props.session.serverId),
+    [props.session.serverId, props.sessionId],
+  );
   const reachableMachineId = React.useMemo(
     () => readMachineTargetForSession(props.sessionId)?.machineId ?? null,
     [props.sessionId, props.session.updatedAt, props.session.metadata],
@@ -101,6 +103,7 @@ export function SessionHeaderActionMenu(props: Readonly<{
   });
   const handoffAvailability = resolveSessionHandoffUiAvailability({
     sessionId: props.sessionId,
+    serverId: sessionServerId,
     session: props.session,
     sessionHandoffFeatureEnabled: sessionHandoffEnabled,
     serverSnapshot,
@@ -109,12 +112,12 @@ export function SessionHeaderActionMenu(props: Readonly<{
   const [open, setOpen] = React.useState(false);
   const executor = React.useMemo(
     () => createDefaultActionExecutor({
-      resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId) ?? null,
+      resolveServerIdForSessionId: (sessionId) => resolveSessionTargetServerId(sessionId, props.session.serverId) ?? null,
       openSession: (childSessionId: string) => {
         router.push((`/session/${childSessionId}`) as any);
       },
     }),
-    [router],
+    [router, props.session.serverId],
   );
   const teleportAvailability = React.useMemo(
     () => getVoiceAgentSessionTeleportAvailability({ voice, sessionId: props.sessionId }),

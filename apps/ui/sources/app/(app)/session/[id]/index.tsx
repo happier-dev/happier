@@ -67,6 +67,14 @@ export default React.memo(() => {
         return <SessionInvalidLinkFallback />;
     }
 
+    if (!sessionHydrated) {
+        return (
+            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                <ActivityIndicator size="small" />
+            </View>
+        );
+    }
+
     return (
         <SessionView
             id={sessionId}

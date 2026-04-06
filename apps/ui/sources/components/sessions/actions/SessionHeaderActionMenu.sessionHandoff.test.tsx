@@ -12,8 +12,7 @@ import {
 
 const runSessionHandoffPickerFlowMock = vi.hoisted(() => vi.fn());
 const createDefaultActionExecutorMock = vi.hoisted(() => vi.fn());
-const resolvePreferredServerIdForSessionIdMock = vi.hoisted(() => vi.fn());
-const usePreferredServerIdForSessionMock = vi.hoisted(() => vi.fn());
+const resolveSessionTargetServerIdMock = vi.hoisted(() => vi.fn());
 const fireAndForgetMock = vi.hoisted(() => vi.fn());
 const createSessionActionDraftMock = vi.hoisted(() => vi.fn());
 const buildActionDraftInputMock = vi.hoisted(() => vi.fn());
@@ -173,12 +172,14 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
   createDefaultActionExecutor: (...args: unknown[]) => createDefaultActionExecutorMock(...args),
 }));
 
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
-  resolvePreferredServerIdForSessionId: (...args: unknown[]) => resolvePreferredServerIdForSessionIdMock(...args),
+vi.mock('@/components/sessions/model/resolveSessionTargetServerId', () => ({
+  resolveSessionTargetServerId: (...args: unknown[]) => resolveSessionTargetServerIdMock(...args),
 }));
 
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession', () => ({
-  usePreferredServerIdForSession: (...args: unknown[]) => usePreferredServerIdForSessionMock(...args),
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
+  resolvePreferredServerIdForSessionId: () => {
+    throw new Error('legacy direct resolver should not be used in SessionHeaderActionMenu');
+  },
 }));
 
 vi.mock('@/sync/domains/sessionFork/forkUiSupport', () => ({
@@ -244,8 +245,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     resetSessionActionsCommonModuleMockState();
     runSessionHandoffPickerFlowMock.mockReset();
     createDefaultActionExecutorMock.mockReset();
-    resolvePreferredServerIdForSessionIdMock.mockReset();
-    usePreferredServerIdForSessionMock.mockReset();
+    resolveSessionTargetServerIdMock.mockReset();
     fireAndForgetMock.mockReset();
     createSessionActionDraftMock.mockReset();
     buildActionDraftInputMock.mockReset();
@@ -263,8 +263,7 @@ describe('SessionHeaderActionMenu handoff', () => {
       execute: vi.fn(),
     });
     buildActionDraftInputMock.mockReturnValue({ draft: true });
-    resolvePreferredServerIdForSessionIdMock.mockReturnValue('server_a');
-    usePreferredServerIdForSessionMock.mockReturnValue('server_a');
+    resolveSessionTargetServerIdMock.mockReturnValue('server_a');
     runSessionHandoffPickerFlowMock.mockResolvedValue({ ok: true, handoffId: 'handoff_1' });
     resolveSessionActionDefaultBackendMock.mockReturnValue({
       backendTarget: { kind: 'agent', agentId: 'claude' },
@@ -342,6 +341,58 @@ describe('SessionHeaderActionMenu handoff', () => {
       serverId: 'server_a',
       placement: 'session_action_menu',
     });
+  });
+
+  it('renders the session action menu trigger with the expected accessibility contract when actions are available', async () => {
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+          sessionId="sess_1"
+          session={{
+            id: 'sess_1',
+            metadata: {
+              machineId: 'machine_source',
+              flavor: 'claude',
+            },
+          } as any}
+        />);
+
+    const dropdown = screen.findByType('DropdownMenu' as any);
+    const trigger = dropdown.props.trigger({
+      open: false,
+      toggle: vi.fn(),
+      openMenu: vi.fn(),
+      closeMenu: vi.fn(),
+      selectedItem: null,
+    }) as any;
+
+    expect(trigger.props.testID).toBe('session-header-action-menu-trigger');
+    expect(trigger.props.accessibilityLabel).toBe('session.actionMenu.openA11y');
+  });
+
+  it('threads the session server id into the default action executor server lookup', async () => {
+    resolveSessionTargetServerIdMock.mockImplementation((_sessionId: string, fallbackServerId?: string | null) => fallbackServerId ?? null);
+
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+          sessionId="sess_1"
+          session={{
+            id: 'sess_1',
+            serverId: 'server-explicit',
+            metadata: {
+              machineId: 'machine_source',
+              flavor: 'claude',
+            },
+          } as any}
+        />);
+
+    expect(screen.findByType('DropdownMenu' as any)).toBeTruthy();
+    expect(createDefaultActionExecutorMock).toHaveBeenCalledTimes(1);
+    const executorConfig = createDefaultActionExecutorMock.mock.calls[0]?.[0] as {
+      resolveServerIdForSessionId: (sessionId: string) => string | null;
+    };
+    expect(executorConfig.resolveServerIdForSessionId('sess_1')).toBe('server-explicit');
   });
 
   it('fails closed (does not surface session.handoff) when machine transfer is disabled on the selected server', async () => {
@@ -529,7 +580,7 @@ describe('SessionHeaderActionMenu handoff', () => {
   });
 
   it('reacts when machine-rpc direct-peer viability becomes available after mount', async () => {
-    resolvePreferredServerIdForSessionIdMock.mockReturnValue('server_reactive_header');
+    resolveSessionTargetServerIdMock.mockReturnValue('server_reactive_header');
 
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
@@ -611,7 +662,7 @@ describe('SessionHeaderActionMenu handoff', () => {
   });
 
   it('surfaces session.handoff when source reachability is proven through server-scoped rpc even without a cached direct route', async () => {
-    resolvePreferredServerIdForSessionIdMock.mockReturnValue('server_scoped_only');
+    resolveSessionTargetServerIdMock.mockReturnValue('server_scoped_only');
     readMachineTargetForSessionMock.mockReturnValue({
       machineId: 'machine_scoped',
       basePath: '/workspace/repo',
@@ -638,9 +689,8 @@ describe('SessionHeaderActionMenu handoff', () => {
   });
 
   it('surfaces session.handoff when the local session cache misses but the preferred server resolver falls back to the active server', async () => {
-    resolvePreferredServerIdForSessionIdMock.mockReturnValue(null);
-    resolvePreferredServerIdForSessionIdMock.mockReturnValue('server_preferred_header');
-    usePreferredServerIdForSessionMock.mockReturnValue('server_preferred_header');
+    resolveSessionTargetServerIdMock.mockReturnValue(null);
+    resolveSessionTargetServerIdMock.mockReturnValue('server_preferred_header');
     readMachineTargetForSessionMock.mockReturnValue({
       machineId: 'machine_scoped',
       basePath: '/workspace/repo',

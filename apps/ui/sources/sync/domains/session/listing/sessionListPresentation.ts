@@ -1,6 +1,8 @@
 import type { ServerSelectionPresentation } from '@/sync/domains/server/selection/serverSelectionTypes';
 import type { SessionListViewItem } from './sessionListViewData';
 import { getSessionStorageKind, type SessionListStorageFilter } from '../sessionStorageKind';
+import { normalizeTrimmedStringArrayWithSharedEmpty } from './normalizeTrimmedStringArrayWithSharedEmpty';
+import { normalizeTrimmedString } from './normalizeTrimmedString';
 
 type ApplySessionListPresentationParams = Readonly<{
     enabled: boolean;
@@ -17,6 +19,16 @@ type ResolveSessionListSourceDataParams = Readonly<{
 }>;
 
 type ResolveVisibleSessionListSummaryParams = ResolveSessionListSourceDataParams;
+
+type ResolvedSelectedServerSources = Readonly<{
+    selectedServerIds: ReadonlyArray<string>;
+    activeServerId: string;
+    scoped: Readonly<Record<string, ReadonlyArray<SessionListViewItem> | null | undefined>>;
+    selectedSources: ReadonlyArray<ReadonlyArray<SessionListViewItem>>;
+    usedOnlyActiveDataSource: boolean;
+    hasResolvedSelectedSource: boolean;
+    hasUnresolvedSelectedSource: boolean;
+}>;
 
 export type VisibleSessionListSummary = Readonly<{
     sessionsReady: boolean;
@@ -36,7 +48,7 @@ const LOADING_VISIBLE_SESSION_LIST_SUMMARY: VisibleSessionListSummary = Object.f
 function toServerLabel(item: SessionListViewItem): string {
     const name = String(item.serverName ?? '').trim();
     if (name) return name;
-    const id = String(item.serverId ?? '').trim();
+    const id = normalizeTrimmedString(item.serverId);
     if (id) return id;
     return 'Unknown server';
 }
@@ -49,87 +61,92 @@ function hasSyntheticServerHeaders(data: ReadonlyArray<SessionListViewItem>): bo
     return data.some((item) => item.type === 'header' && item.headerKind === 'server');
 }
 
-function isAlreadyCanonicalGroupedServerPresentation(
-    data: ReadonlyArray<SessionListViewItem>,
-): boolean {
-    if (!hasSyntheticServerHeaders(data)) return false;
+type VisibleServerCoverage = Readonly<{
+    distinctServerCount: number;
+    coversVisibleServerIds: boolean;
+    coversVisibleSessionServerIds: boolean;
+    hasSyntheticServerHeaders: boolean;
+    isAlreadyCanonicalGroupedServerPresentation: boolean;
+}>;
 
+function resolveVisibleServerCoverage(
+    data: ReadonlyArray<SessionListViewItem>,
+    selectedServerSet: ReadonlySet<string>,
+): VisibleServerCoverage {
+    const distinctServerIds = new Set<string>();
     let currentServerId: string | null = null;
     let seenSessionInCurrentGroup = false;
     let sawServerGroup = false;
+    let coversVisibleServerIds = true;
+    let coversVisibleSessionServerIds = true;
+    let hasSyntheticServerHeaders = false;
+    let isAlreadyCanonicalGroupedServerPresentation = false;
 
     for (const item of data) {
         if (item.type === 'header') {
-            if (item.headerKind !== 'server') return false;
-            if (sawServerGroup && !seenSessionInCurrentGroup) return false;
+            if (item.headerKind === 'server') {
+                hasSyntheticServerHeaders = true;
+                coversVisibleServerIds = false;
+                if (sawServerGroup && !seenSessionInCurrentGroup) {
+                    coversVisibleSessionServerIds = false;
+                    isAlreadyCanonicalGroupedServerPresentation = false;
+                }
 
-            currentServerId = String(item.serverId ?? '').trim();
-            if (!currentServerId) return false;
+                currentServerId = normalizeTrimmedString(item.serverId);
+                if (!currentServerId) {
+                    coversVisibleServerIds = false;
+                    coversVisibleSessionServerIds = false;
+                    break;
+                }
 
-            sawServerGroup = true;
-            seenSessionInCurrentGroup = false;
+                sawServerGroup = true;
+                seenSessionInCurrentGroup = false;
+                isAlreadyCanonicalGroupedServerPresentation = true;
+                continue;
+            }
+
+            isAlreadyCanonicalGroupedServerPresentation = false;
             continue;
         }
 
-        if (item.type !== 'session') return false;
-        if (!currentServerId) return false;
+        if (item.type !== 'session') {
+            isAlreadyCanonicalGroupedServerPresentation = false;
+            break;
+        }
 
-        const serverId = String(item.serverId ?? '').trim();
-        if (!serverId || serverId !== currentServerId) return false;
+        const serverId = normalizeTrimmedString(item.serverId);
+        if (!serverId) {
+            isAlreadyCanonicalGroupedServerPresentation = false;
+            continue;
+        }
+
+        distinctServerIds.add(serverId);
+        if (!selectedServerSet.has(serverId)) {
+            coversVisibleServerIds = false;
+            coversVisibleSessionServerIds = false;
+        }
+
+        if (currentServerId && serverId !== currentServerId) {
+            coversVisibleServerIds = false;
+            coversVisibleSessionServerIds = false;
+            isAlreadyCanonicalGroupedServerPresentation = false;
+        }
 
         seenSessionInCurrentGroup = true;
     }
 
-    return sawServerGroup && seenSessionInCurrentGroup;
-}
-
-function selectionCoversAllVisibleServerIds(
-    data: ReadonlyArray<SessionListViewItem>,
-    selectedServerSet: ReadonlySet<string>,
-): boolean {
-    for (const item of data) {
-        if (item.type === 'header') {
-            if (item.headerKind === 'server') {
-                return false;
-            }
-            continue;
-        }
-
-        const serverId = String(item.serverId ?? '').trim();
-        if (!serverId) continue;
-        if (!selectedServerSet.has(serverId)) {
-            return false;
-        }
+    if (sawServerGroup && !seenSessionInCurrentGroup) {
+        coversVisibleSessionServerIds = false;
     }
 
-    return true;
-}
-
-function selectionCoversAllVisibleSessionServerIds(
-    data: ReadonlyArray<SessionListViewItem>,
-    selectedServerSet: ReadonlySet<string>,
-): boolean {
-    for (const item of data) {
-        if (item.type !== 'session') continue;
-
-        const serverId = String(item.serverId ?? '').trim();
-        if (!serverId) continue;
-        if (!selectedServerSet.has(serverId)) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-function countDistinctServerIds(data: ReadonlyArray<SessionListViewItem>): number {
-    const ids = new Set<string>();
-    for (const item of data) {
-        const serverId = String(item.serverId ?? '').trim();
-        if (!serverId) continue;
-        ids.add(serverId);
-    }
-    return ids.size;
+    return {
+        distinctServerCount: distinctServerIds.size,
+        coversVisibleServerIds,
+        coversVisibleSessionServerIds,
+        hasSyntheticServerHeaders,
+        isAlreadyCanonicalGroupedServerPresentation:
+            hasSyntheticServerHeaders && isAlreadyCanonicalGroupedServerPresentation && seenSessionInCurrentGroup,
+    };
 }
 
 function countSessionItems(data: ReadonlyArray<SessionListViewItem>): number {
@@ -159,6 +176,47 @@ function countSessionItemsByStorageFilter(
     return count;
 }
 
+function resolveSelectedServerSources(
+    params: ResolveSessionListSourceDataParams,
+): ResolvedSelectedServerSources | null {
+    const selectedServerIds = normalizeTrimmedStringArrayWithSharedEmpty(params.selectedServerIds);
+    if (selectedServerIds.length === 0) {
+        return null;
+    }
+
+    const activeServerId = normalizeTrimmedString(params.activeServerId);
+    const scoped = params.byServerId ?? {};
+    const selectedSources: ReadonlyArray<SessionListViewItem>[] = [];
+    let usedOnlyActiveDataSource = true;
+    let hasResolvedSelectedSource = false;
+    let hasUnresolvedSelectedSource = false;
+
+    for (const serverId of selectedServerIds) {
+        const fromCache = scoped[serverId];
+        const source = fromCache ?? (serverId === activeServerId ? params.activeData : null);
+        if (source == null) {
+            hasUnresolvedSelectedSource = true;
+            continue;
+        }
+
+        hasResolvedSelectedSource = true;
+        if (source !== params.activeData) {
+            usedOnlyActiveDataSource = false;
+        }
+        selectedSources.push(source);
+    }
+
+    return {
+        selectedServerIds,
+        activeServerId,
+        scoped,
+        selectedSources,
+        usedOnlyActiveDataSource,
+        hasResolvedSelectedSource,
+        hasUnresolvedSelectedSource,
+    };
+}
+
 export function resolveSessionListSourceData(
     params: ResolveSessionListSourceDataParams,
 ): ReadonlyArray<SessionListViewItem> | null {
@@ -166,38 +224,24 @@ export function resolveSessionListSourceData(
         return params.activeData;
     }
 
-    const selectedServerIds = Array.isArray(params.selectedServerIds)
-        ? params.selectedServerIds.map((id) => String(id ?? '').trim()).filter(Boolean)
-        : [];
-    if (selectedServerIds.length === 0) {
+    const selectedSourcesState = resolveSelectedServerSources(params);
+    if (!selectedSourcesState) {
         return params.activeData;
-    }
-
-    const activeServerId = String(params.activeServerId ?? '').trim();
-    const scoped = params.byServerId ?? {};
-    let usedOnlyActiveDataSource = true;
-    if (selectedServerIds.length === 1 && selectedServerIds[0] === activeServerId) {
-        const selectedSource = scoped[activeServerId] ?? params.activeData;
-        if (selectedSource === params.activeData) {
-            return params.activeData;
-        }
     }
 
     const merged: SessionListViewItem[] = [];
 
-    for (const serverId of selectedServerIds) {
-        const fromCache = scoped[serverId];
-        const source = fromCache ?? (serverId === activeServerId ? params.activeData : null);
-        if (!source || source.length === 0) continue;
-        if (source !== params.activeData) {
-            usedOnlyActiveDataSource = false;
-        }
+    for (const source of selectedSourcesState.selectedSources) {
         merged.push(...source);
+    }
+
+    if (selectedSourcesState.hasUnresolvedSelectedSource) {
+        return null;
     }
 
     if (merged.length > 0) {
         if (
-            usedOnlyActiveDataSource
+            selectedSourcesState.usedOnlyActiveDataSource
             && params.activeData
             && merged.length === params.activeData.length
         ) {
@@ -216,7 +260,15 @@ export function resolveSessionListSourceData(
         return merged;
     }
 
-    return params.activeData;
+    if (selectedSourcesState.hasResolvedSelectedSource) {
+        return selectedSourcesState.usedOnlyActiveDataSource && params.activeData ? params.activeData : merged;
+    }
+
+    if (selectedSourcesState.hasUnresolvedSelectedSource) {
+        return null;
+    }
+
+    return null;
 }
 
 export function resolveVisibleSessionListSummary(
@@ -241,34 +293,29 @@ export function resolveVisibleSessionListSummary(
         return countForSource(params.activeData);
     }
 
-    const selectedServerIds = Array.isArray(params.selectedServerIds)
-        ? params.selectedServerIds.map((id) => String(id ?? '').trim()).filter(Boolean)
-        : [];
-    if (selectedServerIds.length === 0) {
+    const selectedSourcesState = resolveSelectedServerSources(params);
+    if (!selectedSourcesState) {
         return countForSource(params.activeData);
     }
 
-    const activeServerId = String(params.activeServerId ?? '').trim();
-    const scoped = params.byServerId ?? {};
     let sessionCount = 0;
-    let hasResolvedSelectedSource = false;
 
-    for (const serverId of selectedServerIds) {
-        const fromCache = scoped[serverId];
-        const source = fromCache ?? (serverId === activeServerId ? params.activeData : null);
-        if (!source || source.length === 0) continue;
-        hasResolvedSelectedSource = true;
+    for (const source of selectedSourcesState.selectedSources) {
         sessionCount += countSessionItemsByStorageFilter(source, storageFilter);
     }
 
-    if (hasResolvedSelectedSource) {
+    if (selectedSourcesState.hasUnresolvedSelectedSource) {
+        return LOADING_VISIBLE_SESSION_LIST_SUMMARY;
+    }
+
+    if (selectedSourcesState.hasResolvedSelectedSource) {
         if (sessionCount === 0) {
             return EMPTY_VISIBLE_SESSION_LIST_SUMMARY;
         }
         return { sessionsReady: true, sessionCount };
     }
 
-    return countForSource(params.activeData);
+    return LOADING_VISIBLE_SESSION_LIST_SUMMARY;
 }
 
 export function applySessionListPresentation(
@@ -279,16 +326,15 @@ export function applySessionListPresentation(
         return data;
     }
 
-    const selectedServerIds = Array.isArray(params.selectedServerIds)
-        ? params.selectedServerIds.map((id) => String(id ?? '').trim()).filter(Boolean)
-        : [];
+    const selectedServerIds = normalizeTrimmedStringArrayWithSharedEmpty(params.selectedServerIds);
     const selectedServerSet = new Set(selectedServerIds);
+    const visibleServerCoverage = resolveVisibleServerCoverage(data, selectedServerSet);
 
-    if (selectedServerSet.size === 0 && !hasSyntheticServerHeaders(data)) {
+    if (selectedServerSet.size === 0 && !visibleServerCoverage.hasSyntheticServerHeaders) {
         if (params.presentation === 'flat-with-badge') {
             return data;
         }
-        if (countDistinctServerIds(data) <= 1) {
+        if (visibleServerCoverage.distinctServerCount <= 1) {
             return data;
         }
     }
@@ -296,8 +342,18 @@ export function applySessionListPresentation(
     if (
         params.presentation === 'flat-with-badge'
         && selectedServerSet.size > 0
-        && !hasSyntheticServerHeaders(data)
-        && selectionCoversAllVisibleServerIds(data, selectedServerSet)
+        && !visibleServerCoverage.hasSyntheticServerHeaders
+        && visibleServerCoverage.coversVisibleServerIds
+    ) {
+        return data;
+    }
+
+    if (
+        params.presentation === 'grouped'
+        && selectedServerSet.size > 0
+        && !visibleServerCoverage.hasSyntheticServerHeaders
+        && visibleServerCoverage.distinctServerCount <= 1
+        && visibleServerCoverage.coversVisibleServerIds
     ) {
         return data;
     }
@@ -310,7 +366,7 @@ export function applySessionListPresentation(
             const filtered: SessionListViewItem[] = [];
             const pendingUnscoped: SessionListViewItem[] = [];
             for (const item of withoutServerHeaders) {
-                const serverId = String(item.serverId ?? '').trim();
+                const serverId = normalizeTrimmedString(item.serverId);
                 if (!serverId) {
                     pendingUnscoped.push(item);
                     continue;
@@ -336,17 +392,17 @@ export function applySessionListPresentation(
     if (
         params.presentation === 'grouped'
         && selectedServerSet.size > 0
-        && isAlreadyCanonicalGroupedServerPresentation(data)
-        && selectionCoversAllVisibleSessionServerIds(data, selectedServerSet)
+        && visibleServerCoverage.isAlreadyCanonicalGroupedServerPresentation
+        && visibleServerCoverage.coversVisibleSessionServerIds
     ) {
         return data;
     }
 
-    if (selectedServerSet.size === 0 && isAlreadyCanonicalGroupedServerPresentation(data)) {
+    if (selectedServerSet.size === 0 && visibleServerCoverage.isAlreadyCanonicalGroupedServerPresentation) {
         return data;
     }
 
-    if (countDistinctServerIds(filteredBySelection) <= 1) {
+    if (resolveVisibleServerCoverage(filteredBySelection, selectedServerSet).distinctServerCount <= 1) {
         return filteredBySelection;
     }
 
@@ -356,7 +412,7 @@ export function applySessionListPresentation(
     const pendingUnscopedItems: SessionListViewItem[] = [];
 
     for (const item of filteredBySelection) {
-        const scopedId = String(item.serverId ?? '').trim();
+        const scopedId = normalizeTrimmedString(item.serverId);
         if (!scopedId) {
             pendingUnscopedItems.push(item);
             continue;
@@ -385,7 +441,7 @@ export function applySessionListPresentation(
     for (const serverId of serverOrder) {
         const items = groups.get(serverId);
         if (!items || items.length === 0) continue;
-        const scopedItem = items.find((item) => String(item.serverId ?? '').trim()) ?? items[0];
+        const scopedItem = items.find((item) => normalizeTrimmedString(item.serverId)) ?? items[0];
         grouped.push({
             type: 'header',
             title: toServerLabel(scopedItem),

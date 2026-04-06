@@ -386,6 +386,35 @@ describe('SessionsList pinning + per-group ordering', () => {
         expect(row.props.tagsEnabled).toBe(true);
     });
 
+    it('reuses the same known-tag array when rerendered with identical tag contents', async () => {
+        const { SessionsList: SessionsListComponent } = await import('./SessionsList');
+        sessionTagsV1 = {
+            'server_a:sess_a': ['important', 'review'],
+            'server_a:sess_b': ['review', 'blocked'],
+        };
+        const screen = await renderSessionsList();
+
+        const firstRow = expectPresent(
+            findSessionItem(screen, 'sess_a'),
+            'expected sess_a session row',
+        );
+        const firstKnownTags = firstRow.props.allKnownTags;
+
+        sessionTagsV1 = {
+            'server_a:sess_a': ['important', 'review'],
+            'server_a:sess_b': ['review', 'blocked'],
+        };
+
+        await screen.update(<SessionsListComponent />);
+
+        const updatedRow = expectPresent(
+            findSessionItem(screen, 'sess_a'),
+            'expected updated sess_a session row',
+        );
+        expect(updatedRow.props.allKnownTags).toBe(firstKnownTags);
+        expect(updatedRow.props.allKnownTags).toEqual(['blocked', 'important', 'review']);
+    });
+
     it('writes updated session tags back to settings as a value (not an updater function)', async () => {
         sessionTagsV1 = { 'server_a:sess_a': ['important'] };
         const screen = await renderSessionsList();
@@ -401,6 +430,21 @@ describe('SessionsList pinning + per-group ordering', () => {
         expect(setSessionTagsV1.mock.calls[0]?.[0]).toEqual({
             'server_a:sess_a': ['urgent'],
         });
+    });
+
+    it('does not write session tags when the requested tags already match the current value', async () => {
+        sessionTagsV1 = { 'server_a:sess_a': ['important'] };
+        setSessionTagsV1.mockClear();
+        const screen = await renderSessionsList();
+
+        const row = expectPresent(
+            findSessionItem(screen, 'sess_a'),
+            'expected sess_a session row',
+        );
+
+        invokeTestInstanceHandler(row, 'onSetTags', ['important'], 'expected sess_a session row');
+
+        expect(setSessionTagsV1).not.toHaveBeenCalled();
     });
 
     it('shows pinned server badges only when multiple servers are selected', async () => {

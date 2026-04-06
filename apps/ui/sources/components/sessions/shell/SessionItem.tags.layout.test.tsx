@@ -1,4 +1,5 @@
 import React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
@@ -215,5 +216,78 @@ describe('SessionItem tags (layout)', () => {
         );
 
         expect(screen.getTextContent()).toContain('tag-a');
+    });
+
+    it('reuses the same tag dropdown items when rerendered with absent tag inputs', async () => {
+        const { SessionItem } = await import('./SessionItem');
+        const onSetTags = vi.fn();
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={createSession()}
+                serverId="server_a"
+                serverName="Server A"
+                showServerBadge={true}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+                tagsEnabled={true}
+                onSetTags={onSetTags}
+            />,
+        );
+
+        const row = screen.findByTestId('session-list-item-sess_1') as any;
+
+        await act(async () => {
+            row.props.onLongPress();
+        });
+
+        const contextMenu = screen.findAllByType('DropdownMenu').find((dropdown: any) => dropdown.props.search !== true);
+        expect(contextMenu).toBeTruthy();
+        if (!contextMenu) {
+            throw new Error('Context menu not found');
+        }
+
+        await act(async () => {
+            contextMenu.props.onSelect('tags');
+        });
+
+        const tagDropdown = screen.findAllByType('DropdownMenu').find((dropdown: any) => dropdown.props.search === true);
+        expect(tagDropdown).toBeTruthy();
+        if (!tagDropdown) {
+            throw new Error('Tag dropdown not found');
+        }
+
+        const firstItems = tagDropdown.props.items;
+
+        await act(async () => {
+            screen.tree.update(
+                <SessionItem
+                    session={createSession()}
+                    serverId="server_a"
+                    serverName="Server A"
+                    showServerBadge={true}
+                    selected={false}
+                    isFirst={true}
+                    isLast={true}
+                    isSingle={true}
+                    variant="default"
+                    compact={false}
+                    tagsEnabled={true}
+                    onSetTags={onSetTags}
+                />,
+            );
+        });
+
+        const nextTagDropdown = screen.findAllByType('DropdownMenu').find((dropdown: any) => dropdown.props.search === true);
+        expect(nextTagDropdown).toBeTruthy();
+        if (!nextTagDropdown) {
+            throw new Error('Tag dropdown not found after rerender');
+        }
+
+        expect(nextTagDropdown.props.items).toBe(firstItems);
     });
 });
