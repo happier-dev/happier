@@ -7,8 +7,11 @@
 
   <p><img src="/.github/supported-ai-providers.png" title="Happier Dev" alt="Happier Dev" width="320" /></p>
   
-  **End-to-end encrypted. Self-hostable.<br />
-  Built by developers, for developers.**
+  **Voice assistant · Full Git client · File editor<br />
+  Subagents · Session sharing · Local memory**
+
+  End-to-end encrypted. Self-hostable.<br />
+  Built by developers, for developers.
 
   <p><img src="/.github/illustration.png" title="Happier Dev" alt="Happier Dev" width="650" /></p>
 </div>
