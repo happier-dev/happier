@@ -175,6 +175,10 @@ export function setPreferredLanguageFromSettings(value: unknown): void {
     preferredLanguageOverride = null;
 }
 
+export function getPreferredLanguage(): SupportedLanguage {
+    return resolveActiveLanguage();
+}
+
 export function t<K extends TranslationKey>(
     key: K,
     ...params: TranslationParams<K> extends never ? [] : [params: TranslationParams<K>]

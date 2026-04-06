@@ -2686,8 +2686,8 @@ export const pl: TranslationStructure = {
   },
 
   settingsDesktop: {
-    title: 'Pulpit',
-    footer: 'Steruje integracjami pulpitu Tauri na tym komputerze.',
+    title: 'Aplikacja desktopowa',
+    footer: 'Steruje integracjami desktopowymi Tauri na tym komputerze.',
     startOnLoginTitle: 'Uruchamiaj przy logowaniu',
     startOnLoginSubtitle: 'Uruchamiaj Happier automatycznie po zalogowaniu się na tym komputerze.',
     overlay: {

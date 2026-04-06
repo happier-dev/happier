@@ -201,6 +201,44 @@ describe('ActivityLocalNotificationRuntime', () => {
         });
     });
 
+    it('suppresses reused ready notifications for the active direct-session view', async () => {
+        activeViewingSessionIdValue = 'session-1';
+        sessionsByIdValue = {
+            'session-1': {
+                id: 'session-1',
+                metadata: {
+                    summary: {
+                        text: 'Direct session',
+                    },
+                    directSessionV1: {
+                        v: 1,
+                        providerId: 'claude',
+                        machineId: 'machine-1',
+                        remoteSessionId: 'remote-1',
+                        source: { kind: 'claudeConfig', configDir: '/tmp/.claude', projectId: 'proj-1' },
+                    },
+                },
+            },
+        };
+
+        const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+        const { notifyActivityReady } = await import('./activityLocalNotificationBus');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        tree = (await renderScreen(<ActivityLocalNotificationRuntime />)).tree;
+
+        await act(async () => {
+            notifyActivityReady('session-1', []);
+        });
+
+        expect(sendExpoLocalNotification).not.toHaveBeenCalled();
+        expect(sendTauriLocalNotification).not.toHaveBeenCalled();
+
+        await act(async () => {
+            tree?.unmount();
+        });
+    });
+
     it('respects per-topic device-local toggles and routes tauri events to the desktop channel', async () => {
         reactNativeRuntime.platformOs = 'web';
         isTauriDesktopValue = true;

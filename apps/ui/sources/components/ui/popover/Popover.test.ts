@@ -11,6 +11,7 @@ import {
 } from '@/dev/testkit/harness/popoverHarness';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderScreen } from '@/dev/testkit';
+import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { installPopoverCommonModuleMocks } from './popoverTestHelpers';
 
 
@@ -22,6 +23,7 @@ const POST_LAYOUT_TICKS = 2;
 
 let mockPopoverContentDomRect: { width: number; height: number } | null = null;
 let mockPopoverContentRefKind: 'dom' | 'opaque' = 'dom';
+let capturedTimingConfigs: any[] = [];
 
 async function flushInitialPositioning() {
     await flushHookEffects({ cycles: 1, turns: INITIAL_POSITIONING_TICKS });
@@ -81,6 +83,17 @@ installPopoverCommonModuleMocks({
                 return React.createElement('View', props, props.children);
             }),
             Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+            Animated: {
+                Value: function Value(this: any, initial: number) {
+                    this.__value = initial;
+                    this.interpolate = () => this;
+                },
+                timing: (_value: any, config: any) => {
+                    capturedTimingConfigs.push(config);
+                    return { start: () => undefined };
+                },
+                View: (props: any) => React.createElement('AnimatedView', props, props.children),
+            },
         });
     },
 });
@@ -97,6 +110,7 @@ describe('Popover (web)', () => {
         restorePopoverWebGlobals = null;
         mockPopoverContentDomRect = null;
         mockPopoverContentRefKind = 'dom';
+        capturedTimingConfigs = [];
         vi.useRealTimers();
         vi.unstubAllGlobals();
     });
@@ -137,6 +151,52 @@ describe('Popover (web)', () => {
         expect(contentZ).toBeGreaterThan(backdropZ);
     });
 
+    it('keeps closing content mounted until the shared exit animation finishes', async () => {
+        vi.useFakeTimers();
+
+        const { Popover } = await import('./Popover');
+
+        const anchorRef = { current: null } as any;
+
+        const screen = await renderScreen(React.createElement(
+            Popover,
+            {
+                open: true,
+                anchorRef,
+                backdrop: false,
+                onRequestClose: () => {},
+                children: () => React.createElement('PopoverChild'),
+            },
+        ));
+
+        expect(screen.findAllByType('PopoverChild' as any)).toHaveLength(1);
+
+        await act(async () => {
+            screen.tree.update(React.createElement(
+                Popover,
+                {
+                    open: false,
+                    anchorRef,
+                    backdrop: false,
+                    onRequestClose: () => {},
+                    children: () => React.createElement('PopoverChild'),
+                },
+            ));
+        });
+
+        expect(screen.findAllByType('PopoverChild' as any)).toHaveLength(1);
+
+        await act(async () => {
+            vi.advanceTimersByTime(motionTokens.overlay.popover.exitMs - 1);
+        });
+        expect(screen.findAllByType('PopoverChild' as any)).toHaveLength(1);
+
+        await act(async () => {
+            vi.advanceTimersByTime(1);
+        });
+        expect(screen.findAllByType('PopoverChild' as any)).toHaveLength(0);
+    });
+
     it('wraps portal-to-body popovers in a Radix DismissableLayer Branch so underlying Vaul/Radix layers don’t treat it as “outside”', async () => {
         const { Popover } = await import('./Popover');
 
@@ -154,6 +214,42 @@ describe('Popover (web)', () => {
                 ));
 
         expect(screen.findAllByType('DismissableLayerBranch' as any).length).toBe(1);
+    });
+
+    it('starts the enter animation only after a portal popover is ready to be shown', async () => {
+        const { Popover } = await import('./Popover');
+
+        capturedTimingConfigs = [];
+        mockPopoverContentDomRect = null;
+        const anchorRef = {
+            current: {
+                getBoundingClientRect: () => ({ left: 120, top: 140, width: 48, height: 22 }),
+            },
+        } as any;
+
+        const screen = await renderScreen(React.createElement(
+            Popover,
+            {
+                open: true,
+                anchorRef,
+                portal: { web: true },
+                onRequestClose: () => {},
+                children: () => React.createElement('PopoverChild'),
+            },
+        ));
+
+        expect(capturedTimingConfigs.some((cfg) => cfg.toValue === 1)).toBe(false);
+
+        await act(async () => {
+            await flushInitialPositioning();
+        });
+
+        const contentView = findPopoverContentView(screen);
+        await act(async () => {
+            contentView?.props?.onLayout?.({ nativeEvent: { layout: { width: 220, height: 160 } } });
+        });
+
+        expect(capturedTimingConfigs.some((cfg) => cfg.toValue === 1 && cfg.duration === motionTokens.overlay.popover.enterMs)).toBe(true);
     });
 
     it('does not fall back to document.body when a boundary portal target is requested but not ready yet', async () => {

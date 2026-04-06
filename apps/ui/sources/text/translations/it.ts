@@ -2982,7 +2982,7 @@ export const it: TranslationStructure = {
   },
 
   settingsDesktop: {
-    title: 'Scrivania',
+    title: 'App desktop',
     footer: 'Controlla le integrazioni desktop di Tauri su questo computer.',
     startOnLoginTitle: 'Avvia all’accesso',
     startOnLoginSubtitle: 'Avvia Happier automaticamente quando accedi a questo computer.',

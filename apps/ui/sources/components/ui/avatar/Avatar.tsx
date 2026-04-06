@@ -24,6 +24,7 @@ interface AvatarProps {
     imageUrl?: string | null;
     thumbhash?: string | null;
     hasUnreadMessages?: boolean;
+    unreadBadgeTestID?: string;
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -51,7 +52,7 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 export const Avatar = React.memo((props: AvatarProps) => {
-    const { flavor, size = 48, imageUrl, thumbhash, hasUnreadMessages, ...avatarProps } = props;
+    const { flavor, size = 48, imageUrl, thumbhash, hasUnreadMessages, unreadBadgeTestID, ...avatarProps } = props;
     const avatarStyle = useSetting('avatarStyle');
     const showFlavorIcons = useSetting('showFlavorIcons');
 
@@ -59,7 +60,10 @@ export const Avatar = React.memo((props: AvatarProps) => {
 
     const unreadBadgeSize = Math.round(size * 0.4);
     const unreadBadgeElement = hasUnreadMessages ? (
-        <View style={[styles.unreadBadge, { width: unreadBadgeSize, height: unreadBadgeSize }]} />
+        <View
+            testID={unreadBadgeTestID}
+            style={[styles.unreadBadge, { width: unreadBadgeSize, height: unreadBadgeSize }]}
+        />
     ) : null;
 
     // Render custom image if provided

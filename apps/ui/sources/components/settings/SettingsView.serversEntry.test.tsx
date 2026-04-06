@@ -23,6 +23,7 @@ const shared = vi.hoisted(() => ({
 }));
 
 const settingsViewWebDimensions = { width: 1600, height: 900, scale: 2, fontScale: 1 };
+const tauriDesktopState = vi.hoisted(() => ({ value: true }));
 
 function createPassthroughNode(name: string) {
     return ({ children }: any) => React.createElement(name, null, children);
@@ -98,6 +99,15 @@ vi.mock('@/utils/platform/navigateWithBlurOnWeb', () => ({
 vi.mock('@/utils/platform/deferOnWeb', () => ({
     deferOnWeb: (action: () => void) => shared.deferOnWebSpy(action),
 }));
+
+vi.mock('@/utils/platform/tauri', async () => {
+    const actual = await vi.importActual<typeof import('@/utils/platform/tauri')>('@/utils/platform/tauri');
+    return {
+        ...actual,
+        isTauriDesktop: () => tauriDesktopState.value,
+        invokeTauri: vi.fn(async () => false),
+    };
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -279,6 +289,28 @@ describe('SettingsView', () => {
         });
 
         expect(shared.routerPushSpy).toHaveBeenCalledWith('/(app)/settings/system-status');
+    });
+
+    it('includes a Desktop app entry that routes to /(app)/settings/desktop on Tauri desktop', async () => {
+        tauriDesktopState.value = true;
+        const { SettingsView } = await import('./SettingsView');
+        const screen = await renderSettingsView(React.createElement(SettingsView));
+
+        expect(screen.findRowByTitle('settingsDesktop.title')).toBeTruthy();
+
+        await act(async () => {
+            screen.pressRowByTitle('settingsDesktop.title');
+        });
+
+        expect(shared.routerPushSpy).toHaveBeenCalledWith('/(app)/settings/desktop');
+    });
+
+    it('hides the Desktop app entry on non-Tauri builds', async () => {
+        tauriDesktopState.value = false;
+        const { SettingsView } = await import('./SettingsView');
+        const screen = await renderSettingsView(React.createElement(SettingsView));
+
+        expect(screen.findRowByTitle('settingsDesktop.title')).toBeNull();
     });
 
     it('blurs the active element before routing to Features on web', async () => {

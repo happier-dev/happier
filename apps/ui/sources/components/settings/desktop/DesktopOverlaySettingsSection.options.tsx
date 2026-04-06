@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { Ionicons } from '@expo/vector-icons';
 
+import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { t } from '@/text';
 import type { TranslationKey } from '@/text';
 
@@ -165,32 +166,27 @@ export const COMPACT_STYLE_OPTIONS: readonly ChoiceOption<'pill' | 'panel'>[] = 
     },
 ];
 
-export function renderChoiceRows<T extends string | number>(
-    ItemComponent: React.ComponentType<{
-        title: React.ReactNode;
-        icon?: React.ReactNode;
-        selected?: boolean;
-        disabled?: boolean;
-        onPress?: () => void;
-        showChevron?: boolean;
-    }>,
+export function buildChoiceDropdownItems<T extends string | number>(
     choices: readonly ChoiceOption<T>[],
-    params: {
-        disabled: boolean;
-        selectedValue: T;
-        onSelect: (value: T) => void;
-        color: string;
-    },
-) {
-    return choices.map((choice) => (
-        <ItemComponent
-            key={String(choice.value)}
-            title={t(choice.titleKey)}
-            icon={<Ionicons name={choice.icon as keyof typeof Ionicons.glyphMap} size={29} color={params.color} />}
-            selected={params.selectedValue === choice.value}
-            disabled={params.disabled}
-            onPress={() => params.onSelect(choice.value)}
-            showChevron={false}
-        />
-    ));
+    color: string,
+): readonly DropdownMenuItem[] {
+    return choices.map((choice) => ({
+        id: String(choice.value),
+        title: t(choice.titleKey),
+        icon: <Ionicons name={choice.icon as keyof typeof Ionicons.glyphMap} size={29} color={color} />,
+    }));
+}
+
+export function findChoiceOption<T extends string | number>(
+    choices: readonly ChoiceOption<T>[],
+    value: T,
+): ChoiceOption<T> | null {
+    return choices.find((choice) => choice.value === value) ?? null;
+}
+
+export function findChoiceOptionById<T extends string | number>(
+    choices: readonly ChoiceOption<T>[],
+    id: string,
+): ChoiceOption<T> | null {
+    return choices.find((choice) => String(choice.value) === id) ?? null;
 }

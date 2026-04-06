@@ -2656,7 +2656,7 @@ export const es: TranslationStructure = {
   },
 
   settingsDesktop: {
-    title: 'Escritorio',
+    title: 'Aplicación de escritorio',
     footer: 'Controla las integraciones de escritorio de Tauri en este ordenador.',
     startOnLoginTitle: 'Iniciar al iniciar sesión',
     startOnLoginSubtitle: 'Inicia Happier automáticamente cuando inicies sesión en este ordenador.',

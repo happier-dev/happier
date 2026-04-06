@@ -2561,7 +2561,7 @@ export const zhHans: TranslationStructure = {
   },
 
   settingsDesktop: {
-    title: '桌面',
+    title: '桌面应用',
     footer: '控制此电脑上的 Tauri 桌面集成。',
     startOnLoginTitle: '登录时启动',
     startOnLoginSubtitle: '当你登录此电脑时自动启动 Happier。',

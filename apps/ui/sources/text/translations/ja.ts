@@ -2931,8 +2931,8 @@ localTailscale: {
   },
 
   settingsDesktop: {
-    title: 'デスクトップ',
-    footer: 'このコンピューター上の Tauri デスクトップ連携を管理します。',
+    title: 'デスクトップアプリ',
+    footer: 'このコンピュータの Tauri デスクトップ連携を制御します。',
     startOnLoginTitle: 'ログイン時に起動',
     startOnLoginSubtitle: 'このコンピューターにサインインしたときに Happier を自動的に起動します。',
     overlay: {

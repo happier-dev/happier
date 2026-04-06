@@ -26,12 +26,9 @@ describe('desktopActivityOverlayBridge', () => {
                 generatedAt: Date.now(),
                 collapsed: {
                     title: 'Primary',
-                    subtitle: null,
                     statusText: null,
-                    previewText: null,
                     defaultTarget: 'open-primary-session',
                     sessionCount: 1,
-                    attentionCount: 1,
                 },
                 expanded: {
                     title: 'Sessions',

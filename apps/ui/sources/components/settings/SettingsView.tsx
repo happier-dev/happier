@@ -40,7 +40,7 @@ import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristi
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { isTauriDesktop } from '@/utils/platform/tauri';
-import { DesktopSettingsSection } from '@/components/settings/desktop/DesktopSettingsSection';
+import { DesktopSettingsEntry } from '@/components/settings/desktop/DesktopSettingsEntry';
 
 export const SettingsView = React.memo(function SettingsView() {
     const { theme } = useUnistyles();
@@ -249,8 +249,6 @@ export const SettingsView = React.memo(function SettingsView() {
                     />
                 </ItemGroup>
             ) : null}
-
-            {showDesktopSettings ? <DesktopSettingsSection /> : null}
 
             {/* Connect Terminal */}
             {!isRunningOnMac() && (Platform.OS !== 'web' || isPhoneSizedWeb) && (
@@ -532,6 +530,7 @@ export const SettingsView = React.memo(function SettingsView() {
                     icon={<Ionicons name="pulse-outline" size={29} color={theme.colors.accent.indigo} />}
                     onPress={() => router.push('/(app)/settings/system-status')}
                 />
+                <DesktopSettingsEntry />
                 <Item
                     title={t('settings.notifications')}
                     subtitle={t('settings.notificationsSubtitle')}

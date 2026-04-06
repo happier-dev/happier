@@ -14,6 +14,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { DesktopActivityOverlayCollapsed } from './DesktopActivityOverlayCollapsed';
 import { DesktopActivityOverlayExpanded } from './DesktopActivityOverlayExpanded';
+import { DesktopActivityOverlayMotionFrame } from './DesktopActivityOverlayMotionFrame';
 
 function emitInteraction(actionIdentifier: string, data: Record<string, unknown> = {}) {
     fireAndForget(
@@ -78,11 +79,15 @@ export function DesktopActivityOverlayRoute(): React.ReactElement {
             return;
         }
 
-        const primaryRow = state.model.expanded.rows[0] ?? null;
         switch (state.policy.clickAction) {
             case 'open_primary_session': {
-                emitInteraction(primaryRow?.target ?? 'open-inbox', {
-                    primarySessionId: primaryRow?.sessionId ?? null,
+                const primarySessionId = state.model.expanded.rows[0]?.sessionId ?? null;
+                if (!primarySessionId) {
+                    emitInteraction('open-inbox');
+                    return;
+                }
+                emitInteraction(`open-session:${primarySessionId}`, {
+                    primarySessionId,
                 });
                 return;
             }
@@ -103,35 +108,39 @@ export function DesktopActivityOverlayRoute(): React.ReactElement {
     if (state.expanded) {
         return (
             <View style={styles.container}>
-                <DesktopActivityOverlayExpanded
-                    model={state.model}
-                    onCollapse={() => {
-                        fireAndForget(setDesktopActivityOverlayExpanded(false), {
-                            tag: 'DesktopActivityOverlayRoute.collapse',
-                        });
-                        emitInteraction('overlay-set-expanded', { expanded: false });
-                    }}
-                    onOpenSession={(sessionId) => {
-                        emitInteraction(`open-session:${sessionId}`, { sessionId });
-                    }}
-                    onOpenInbox={() => {
-                        emitInteraction('open-inbox');
-                    }}
-                />
+                <DesktopActivityOverlayMotionFrame key="expanded" visible={state.visible} expanded>
+                    <DesktopActivityOverlayExpanded
+                        model={state.model}
+                        onCollapse={() => {
+                            fireAndForget(setDesktopActivityOverlayExpanded(false), {
+                                tag: 'DesktopActivityOverlayRoute.collapse',
+                            });
+                            emitInteraction('overlay-set-expanded', { expanded: false });
+                        }}
+                        onOpenSession={(sessionId) => {
+                            emitInteraction(`open-session:${sessionId}`, { sessionId });
+                        }}
+                        onOpenInbox={() => {
+                            emitInteraction('open-inbox');
+                        }}
+                    />
+                </DesktopActivityOverlayMotionFrame>
             </View>
         );
     }
 
     return (
         <View style={styles.container}>
-            <DesktopActivityOverlayCollapsed
-                model={state.model}
-                compactStyle={state.policy.compactStyle}
-                interactive={collapsedIsInteractive}
-                dragHandlers={dragHandlers}
-                onPress={onCollapsedPress}
-                onHoverIn={collapsedIsInteractive && expandsOnHover ? expandOverlay : undefined}
-            />
+            <DesktopActivityOverlayMotionFrame key="collapsed" visible={state.visible} expanded={false}>
+                <DesktopActivityOverlayCollapsed
+                    model={state.model}
+                    compactStyle={state.policy.compactStyle}
+                    interactive={collapsedIsInteractive}
+                    dragHandlers={dragHandlers}
+                    onPress={onCollapsedPress}
+                    onHoverIn={collapsedIsInteractive && expandsOnHover ? expandOverlay : undefined}
+                />
+            </DesktopActivityOverlayMotionFrame>
         </View>
     );
 }

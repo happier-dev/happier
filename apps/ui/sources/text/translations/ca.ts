@@ -2506,7 +2506,7 @@ export const ca: TranslationStructure = {
     },
 
     settingsDesktop: {
-        title: 'Escriptori',
+        title: 'Aplicació d’escriptori',
         footer: 'Controla les integracions d’escriptori de Tauri en aquest ordinador.',
         startOnLoginTitle: 'Inicia en entrar',
         startOnLoginSubtitle: 'Inicia Happier automàticament quan iniciïs sessió en aquest ordinador.',

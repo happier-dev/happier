@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useRef } from 'react';
+import React, { useEffect, useLayoutEffect } from 'react';
 import {
     View,
     TouchableWithoutFeedback,
@@ -17,6 +17,13 @@ import type { ModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { ModalBoundaryProvider } from '@/modal/context/ModalBoundaryContext';
 import { t } from '@/text';
 import { createBackdropNativeStyle, createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
+import {
+    OverlayMotionFrame,
+    resolveOverlayMotionPreset,
+    useOverlayMotionAnimation,
+    useOverlayPresence,
+} from '@/components/ui/overlays/motion/overlayMotion';
+import { motionTokens } from '@/components/ui/motion/motionTokens';
 
 const isWeb = String(Platform.OS) === 'web';
 const WEB_MODAL_CARD_BOUNDARY_SELECTOR = '[data-happy-modal-card-boundary]';
@@ -149,13 +156,28 @@ export function BaseModal({
 }: BaseModalProps) {
     const { theme } = useUnistyles();
     const insets = useChromeSafeAreaInsets();
-    const fadeAnim = useRef(new Animated.Value(0)).current;
     const baseZ = zIndexBase ?? 100000;
     const [modalPortalTarget, setModalPortalTarget] = React.useState<HTMLElement | null>(null);
     const modalPortalHostRef = React.useRef<HTMLDivElement | null>(null);
     const radixDismissableLayer = React.useMemo(() => (isWeb ? requireRadixDismissableLayer() : null), []);
     const webContentShellRef = React.useRef<HTMLDivElement | null>(null);
     const webPreviousActiveElementRef = React.useRef<HTMLElement | null>(null);
+    const modalMotionPreset = React.useMemo(
+        () => resolveOverlayMotionPreset({ kind: 'modal' }),
+        [],
+    );
+    const modalMotion = useOverlayMotionAnimation({
+        visible,
+        preset: modalMotionPreset,
+    });
+    const modalPresence = useOverlayPresence(
+        visible,
+        modalMotion.exitMs,
+    );
+    const backdropOpacity = modalMotion.progress.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0, motionTokens.overlay.modal.backdropMaxOpacity],
+    });
 
     // On web, avoid setting React state inside a callback ref. In some browser/portal scenarios,
     // ref attach/detach churn can lead to nested update loops ("Maximum update depth exceeded").
@@ -166,23 +188,6 @@ export function BaseModal({
         if (!node) return;
         setModalPortalTarget((prev) => prev ?? node);
     }, [visible]);
-
-    useEffect(() => {
-        const useNativeDriver = !isWeb;
-        if (visible) {
-            Animated.timing(fadeAnim, {
-                toValue: 1,
-                duration: 200,
-                useNativeDriver,
-            }).start();
-        } else {
-            Animated.timing(fadeAnim, {
-                toValue: 0,
-                duration: 200,
-                useNativeDriver,
-            }).start();
-        }
-    }, [visible, fadeAnim]);
 
     useEffect(() => {
         if (!isWeb) return;
@@ -239,7 +244,7 @@ export function BaseModal({
     };
 
     if (isWeb) {
-        if (!visible) return null;
+        if (!modalPresence.present) return null;
 
         const { Branch: DismissableLayerBranch } = radixDismissableLayer!;
 
@@ -318,11 +323,10 @@ export function BaseModal({
         const webModalNode = (
             <>
                 {showBackdrop ? (
-                    <div
-                        style={overlayStyle}
-                        onClick={stopPropagation}
-                        onPointerDown={stopPropagation}
-                        onTouchStart={stopPropagation}
+                    <Animated.View
+                        pointerEvents={visible ? 'auto' : 'none'}
+                        style={[overlayStyle as unknown as ViewStyle, { opacity: backdropOpacity }]}
+                        {...(webEventHandlers as any)}
                     />
                 ) : null}
                 <DismissableLayerBranch style={{ display: 'contents' }}>
@@ -332,7 +336,7 @@ export function BaseModal({
                         aria-modal="true"
                         aria-label={title}
                         tabIndex={-1}
-                        style={contentStyle}
+                        style={{ ...contentStyle, pointerEvents: visible ? 'auto' : 'none' }}
                         onPointerDown={stopPropagation}
                         onTouchStart={stopPropagation}
                         onClick={(e) => {
@@ -362,14 +366,13 @@ export function BaseModal({
                                     style={[styles.container, autoPlacementContainerStyle]}
                                     behavior={undefined}
                                 >
-                                    <Animated.View
-                                        pointerEvents="auto"
+                                    <OverlayMotionFrame
+                                        visible={visible}
+                                        kind="modal"
+                                        pointerEvents={visible ? 'auto' : 'none'}
                                         style={[
                                             styles.content,
                                             topPlacementContentStyle,
-                                            {
-                                                opacity: fadeAnim,
-                                            }
                                         ]}
                                     >
                                         <View
@@ -379,7 +382,7 @@ export function BaseModal({
                                         >
                                             {children}
                                         </View>
-                                    </Animated.View>
+                                    </OverlayMotionFrame>
                                 </KeyboardAvoidingView>
                             </ModalBoundaryProvider>
                         </ModalPortalTargetProvider>
@@ -406,20 +409,20 @@ export function BaseModal({
     // On iOS, stacking native modals (expo-router / react-navigation modal screens + RN <Modal>)
     // can lead to the RN modal rendering behind the navigation modal, while still blocking touches.
     // To avoid this, we render "portal style" overlays on native (no RN <Modal>).
-      if (!visible) return null;
+    if (!modalPresence.present) return null;
 
-      return (
-          <View style={[styles.portalRoot, { zIndex: baseZ, elevation: baseZ }]} pointerEvents="auto">
-              <KeyboardAvoidingView
-                  style={[
-                      styles.container,
-                      {
-                          paddingTop: insets.top,
-                          paddingBottom: insets.bottom,
-                      },
-                  ]}
-                  behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                  {...webEventHandlers}
+    return (
+        <View style={[styles.portalRoot, { zIndex: baseZ, elevation: baseZ }]} pointerEvents={visible ? 'auto' : 'none'}>
+            <KeyboardAvoidingView
+                style={[
+                    styles.container,
+                    {
+                        paddingTop: insets.top,
+                        paddingBottom: insets.bottom,
+                    },
+                ]}
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                {...webEventHandlers}
             >
                 {showBackdrop ? (
                     <TouchableWithoutFeedback onPress={handleBackdropPress}>
@@ -430,23 +433,19 @@ export function BaseModal({
                                 ...createBackdropNativeStyle({
                                     backgroundColor: theme.colors.overlay.scrimWizard,
                                 }),
-                                    opacity: fadeAnim.interpolate({
-                                        inputRange: [0, 1],
-                                        outputRange: [0, 0.5]
-                                })
+                                    opacity: backdropOpacity,
                                 }
                             ]}
                         />
                     </TouchableWithoutFeedback>
                 ) : null}
 
-                <Animated.View
+                <OverlayMotionFrame
+                    visible={visible}
+                    kind="modal"
                     pointerEvents="box-none"
                     style={[
                         styles.content,
-                        {
-                            opacity: fadeAnim,
-                        }
                     ]}
                 >
                     <ModalBoundaryProvider>
@@ -462,7 +461,7 @@ export function BaseModal({
                             </View>
                         </ScrollView>
                     </ModalBoundaryProvider>
-                </Animated.View>
+                </OverlayMotionFrame>
             </KeyboardAvoidingView>
         </View>
     );

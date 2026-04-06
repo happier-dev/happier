@@ -135,9 +135,13 @@ describe('BaseModal (web)', () => {
         expect(screen.findAllByType('DialogOverlay' as any).length).toBe(0);
     });
 
-    it('does not rely on a scale transform animation (avoids fixed-position containing-block bugs on web)', async () => {
+    it('keeps transforms off the fixed-position shell while animating an inner content frame', async () => {
         const { BaseModal } = await import('./BaseModal');
         const screen = await renderBaseModalScreen(BaseModal, { showBackdrop: false });
+
+        const dialogShell = screen.findAll((node) => (node.props as any)?.role === 'dialog')?.[0];
+        expect(dialogShell).toBeTruthy();
+        expect((dialogShell?.props as any)?.style?.transform).toBeUndefined();
 
         const nodesWithScaleTransform = screen.findAll((node) => {
             const style = (node.props as any)?.style;
@@ -148,7 +152,7 @@ describe('BaseModal (web)', () => {
             return transform.some((entry: any) => entry && typeof entry === 'object' && 'scale' in entry);
         });
 
-        expect(nodesWithScaleTransform.length).toBe(0);
+        expect(nodesWithScaleTransform.length).toBeGreaterThan(0);
     });
 
     it('prevents outside dismissal when closeOnBackdrop is false', async () => {

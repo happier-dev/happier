@@ -2637,10 +2637,10 @@ export const ru: TranslationStructure = {
   },
 
   settingsDesktop: {
-    title: 'Рабочий стол',
-    footer: 'Управляет интеграциями Tauri для рабочего стола на этом компьютере.',
-    startOnLoginTitle: 'Запускать при входе',
-    startOnLoginSubtitle: 'Автоматически запускать Happier при входе на этом компьютере.',
+    title: "Настольное приложение",
+    footer: "Управление интеграциями Tauri на этом компьютере.",
+    startOnLoginTitle: "Запуск при входе",
+    startOnLoginSubtitle: "Запускать Happier автоматически при входе в систему.",
     overlay: {
       title: 'Desktop overlay',
       footer: 'Controls the local floating activity surface on this device.',

@@ -13,12 +13,22 @@ mod window_sizing;
 #[cfg(desktop)]
 mod activity_overlay;
 
+#[cfg(desktop)]
+mod web_runtime_config;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init());
+
+    #[cfg(desktop)]
+    if let Some(init_script) =
+        web_runtime_config::build_desktop_web_runtime_config_init_script_from_env()
+    {
+        builder = builder.append_invoke_initialization_script(init_script);
+    }
 
     #[cfg(debug_assertions)]
     {

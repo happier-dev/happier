@@ -2768,8 +2768,8 @@ export const pt: TranslationStructure = {
   },
 
   settingsDesktop: {
-    title: 'Área de trabalho',
-    footer: 'Controla as integrações de desktop do Tauri neste computador.',
+    title: 'Aplicativo para desktop',
+    footer: 'Controla as integrações desktop do Tauri neste computador.',
     startOnLoginTitle: 'Iniciar ao entrar',
     startOnLoginSubtitle: 'Inicie o Happier automaticamente ao entrar neste computador.',
     overlay: {

@@ -3,9 +3,9 @@ import * as React from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
+import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { Switch } from '@/components/ui/forms/Switch';
 import { t } from '@/text';
 import { resetDesktopActivityOverlayPosition } from '@/activity/adapters/desktop/runtime/desktopActivityOverlayBridge';
 import {
@@ -13,8 +13,8 @@ import {
     resolveDesktopOverlaySettingsVisibilityState,
 } from '@/activity/adapters/desktop/runtime/resolveDesktopOverlayPolicy';
 import { useLocalSettings } from '@/sync/domains/state/storage';
-import { useApplyLocalSettings } from '@/sync/store/settingsWriters';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
+import { useApplyLocalSettings } from '@/sync/store/settingsWriters';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import {
     ANCHOR_OPTIONS,
@@ -25,13 +25,14 @@ import {
     EXPANDED_BEHAVIOR_OPTIONS,
     PLACEMENT_MODE_OPTIONS,
     VISIBILITY_MODE_OPTIONS,
-    renderChoiceRows,
 } from './DesktopOverlaySettingsSection.options';
+import { DesktopOverlayChoiceDropdownRow } from './DesktopOverlayChoiceDropdownRow';
 
 export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlaySettingsSection() {
     const { theme } = useUnistyles();
     const localSettings = useLocalSettings();
     const applyLocalSettings = useApplyLocalSettings();
+
     const desktopPolicy = React.useMemo(
         () => resolveDesktopOverlayPolicy((localSettings ?? {}) as Record<string, unknown>),
         [localSettings],
@@ -78,18 +79,15 @@ export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlayS
                 />
                 {settingsVisibility.showOverlayConfiguration ? (
                     <>
-                        <Item
+                        <DesktopOverlayChoiceDropdownRow
+                            testID="settings-desktop-overlay-visibility-mode"
                             title={t('settingsDesktop.overlay.visibilityModeTitle')}
                             subtitle={t('settingsDesktop.overlay.visibilityModeSubtitle')}
                             icon={<Ionicons name="eye-outline" size={29} color={theme.colors.textSecondary} />}
-                            showChevron={false}
+                            selectedValue={desktopPolicy.visibilityMode}
+                            choices={VISIBILITY_MODE_OPTIONS}
+                            onSelect={(value) => setLocalSetting({ desktopOverlayVisibilityMode: value })}
                         />
-                        {renderChoiceRows(Item, VISIBILITY_MODE_OPTIONS, {
-                            disabled: false,
-                            selectedValue: desktopPolicy.visibilityMode,
-                            onSelect: (value) => setLocalSetting({ desktopOverlayVisibilityMode: value }),
-                            color: theme.colors.accent.blue,
-                        })}
                         <Item
                             title={t('settingsDesktop.overlay.showWhenRunningTitle')}
                             subtitle={t('settingsDesktop.overlay.showWhenRunningSubtitle')}
@@ -160,20 +158,15 @@ export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlayS
                         showChevron={false}
                     />
                     {settingsVisibility.showAutoHideDelay ? (
-                        <>
-                            <Item
-                                title={t('settingsDesktop.overlay.autoHideDelayTitle')}
-                                subtitle={t('settingsDesktop.overlay.autoHideDelaySubtitle')}
-                                icon={<Ionicons name="time-outline" size={29} color={theme.colors.textSecondary} />}
-                                showChevron={false}
-                            />
-                            {renderChoiceRows(Item, AUTO_HIDE_DELAY_OPTIONS, {
-                                disabled: false,
-                                selectedValue: desktopPolicy.autoHideDelayMs,
-                                onSelect: (value) => setLocalSetting({ desktopOverlayAutoHideDelayMs: value }),
-                                color: theme.colors.accent.blue,
-                            })}
-                        </>
+                        <DesktopOverlayChoiceDropdownRow
+                            testID="settings-desktop-overlay-auto-hide-delay"
+                            title={t('settingsDesktop.overlay.autoHideDelayTitle')}
+                            subtitle={t('settingsDesktop.overlay.autoHideDelaySubtitle')}
+                            icon={<Ionicons name="time-outline" size={29} color={theme.colors.textSecondary} />}
+                            selectedValue={desktopPolicy.autoHideDelayMs}
+                            choices={AUTO_HIDE_DELAY_OPTIONS}
+                            onSelect={(value) => setLocalSetting({ desktopOverlayAutoHideDelayMs: Number(value) })}
+                        />
                     ) : null}
                     <Item
                         title={t('settingsDesktop.overlay.interactiveCollapsedTitle')}
@@ -188,36 +181,26 @@ export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlayS
                         showChevron={false}
                     />
                     {settingsVisibility.showCollapsedClickAction ? (
-                        <>
-                            <Item
-                                title={t('settingsDesktop.overlay.collapsedClickActionTitle')}
-                                subtitle={t('settingsDesktop.overlay.collapsedClickActionSubtitle')}
-                                icon={<Ionicons name="return-down-forward-outline" size={29} color={theme.colors.textSecondary} />}
-                                showChevron={false}
-                            />
-                            {renderChoiceRows(Item, COLLAPSED_CLICK_ACTION_OPTIONS, {
-                                disabled: false,
-                                selectedValue: desktopPolicy.clickAction,
-                                onSelect: (value) => setLocalSetting({ desktopOverlayClickAction: value }),
-                                color: theme.colors.accent.blue,
-                            })}
-                        </>
+                        <DesktopOverlayChoiceDropdownRow
+                            testID="settings-desktop-overlay-collapsed-click-action"
+                            title={t('settingsDesktop.overlay.collapsedClickActionTitle')}
+                            subtitle={t('settingsDesktop.overlay.collapsedClickActionSubtitle')}
+                            icon={<Ionicons name="return-down-forward-outline" size={29} color={theme.colors.textSecondary} />}
+                            selectedValue={desktopPolicy.clickAction}
+                            choices={COLLAPSED_CLICK_ACTION_OPTIONS}
+                            onSelect={(value) => setLocalSetting({ desktopOverlayClickAction: value })}
+                        />
                     ) : null}
                     {settingsVisibility.showExpandedBehavior ? (
-                        <>
-                            <Item
-                                title={t('settingsDesktop.overlay.expandedBehaviorTitle')}
-                                subtitle={t('settingsDesktop.overlay.expandedBehaviorSubtitle')}
-                                icon={<Ionicons name="expand-outline" size={29} color={theme.colors.textSecondary} />}
-                                showChevron={false}
-                            />
-                            {renderChoiceRows(Item, EXPANDED_BEHAVIOR_OPTIONS, {
-                                disabled: false,
-                                selectedValue: desktopPolicy.expandedBehavior,
-                                onSelect: (value) => setLocalSetting({ desktopOverlayExpandedBehavior: value }),
-                                color: theme.colors.accent.blue,
-                            })}
-                        </>
+                        <DesktopOverlayChoiceDropdownRow
+                            testID="settings-desktop-overlay-expanded-behavior"
+                            title={t('settingsDesktop.overlay.expandedBehaviorTitle')}
+                            subtitle={t('settingsDesktop.overlay.expandedBehaviorSubtitle')}
+                            icon={<Ionicons name="expand-outline" size={29} color={theme.colors.textSecondary} />}
+                            selectedValue={desktopPolicy.expandedBehavior}
+                            choices={EXPANDED_BEHAVIOR_OPTIONS}
+                            onSelect={(value) => setLocalSetting({ desktopOverlayExpandedBehavior: value })}
+                        />
                     ) : null}
                 </ItemGroup>
             ) : null}
@@ -227,30 +210,24 @@ export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlayS
                     title={t('settingsDesktop.overlay.placementTitle')}
                     footer={t('settingsDesktop.overlay.placementFooter')}
                 >
-                    <Item
+                    <DesktopOverlayChoiceDropdownRow
+                        testID="settings-desktop-overlay-placement-mode"
                         title={t('settingsDesktop.overlay.placementModeTitle')}
                         subtitle={t('settingsDesktop.overlay.placementModeSubtitle')}
                         icon={<Ionicons name="move-outline" size={29} color={theme.colors.textSecondary} />}
-                        showChevron={false}
+                        selectedValue={desktopPolicy.placementMode}
+                        choices={PLACEMENT_MODE_OPTIONS}
+                        onSelect={(value) => setLocalSetting({ desktopOverlayPlacementMode: value })}
                     />
-                    {renderChoiceRows(Item, PLACEMENT_MODE_OPTIONS, {
-                        disabled: false,
-                        selectedValue: desktopPolicy.placementMode,
-                        onSelect: (value) => setLocalSetting({ desktopOverlayPlacementMode: value }),
-                        color: theme.colors.accent.blue,
-                    })}
-                    <Item
+                    <DesktopOverlayChoiceDropdownRow
+                        testID="settings-desktop-overlay-anchor-preset"
                         title={t('settingsDesktop.overlay.anchorPresetTitle')}
                         subtitle={t('settingsDesktop.overlay.anchorPresetSubtitle')}
                         icon={<Ionicons name="pin-outline" size={29} color={theme.colors.textSecondary} />}
-                        showChevron={false}
+                        selectedValue={desktopPolicy.anchor}
+                        choices={ANCHOR_OPTIONS}
+                        onSelect={(value) => setLocalSetting({ desktopOverlayAnchor: value })}
                     />
-                    {renderChoiceRows(Item, ANCHOR_OPTIONS, {
-                        disabled: false,
-                        selectedValue: desktopPolicy.anchor,
-                        onSelect: (value) => setLocalSetting({ desktopOverlayAnchor: value }),
-                        color: theme.colors.accent.blue,
-                    })}
                     {settingsVisibility.showCustomPlacementControls ? (
                         <>
                             <Item
@@ -294,30 +271,24 @@ export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlayS
                     title={t('settingsDesktop.overlay.presentationTitle')}
                     footer={t('settingsDesktop.overlay.presentationFooter')}
                 >
-                    <Item
+                    <DesktopOverlayChoiceDropdownRow
+                        testID="settings-desktop-overlay-density"
                         title={t('settingsDesktop.overlay.densityTitle')}
                         subtitle={t('settingsDesktop.overlay.densitySubtitle')}
                         icon={<Ionicons name="resize-outline" size={29} color={theme.colors.textSecondary} />}
-                        showChevron={false}
+                        selectedValue={desktopPolicy.density}
+                        choices={DENSITY_OPTIONS}
+                        onSelect={(value) => setLocalSetting({ desktopOverlayDensity: value })}
                     />
-                    {renderChoiceRows(Item, DENSITY_OPTIONS, {
-                        disabled: false,
-                        selectedValue: desktopPolicy.density,
-                        onSelect: (value) => setLocalSetting({ desktopOverlayDensity: value }),
-                        color: theme.colors.accent.blue,
-                    })}
-                    <Item
+                    <DesktopOverlayChoiceDropdownRow
+                        testID="settings-desktop-overlay-compact-style"
                         title={t('settingsDesktop.overlay.compactStyleTitle')}
                         subtitle={t('settingsDesktop.overlay.compactStyleSubtitle')}
-                        icon={<Ionicons name="albums-outline" size={29} color={theme.colors.textSecondary} />}
-                        showChevron={false}
+                        icon={<Ionicons name="square-outline" size={29} color={theme.colors.textSecondary} />}
+                        selectedValue={desktopPolicy.compactStyle}
+                        choices={COMPACT_STYLE_OPTIONS}
+                        onSelect={(value) => setLocalSetting({ desktopOverlayCompactStyle: value })}
                     />
-                    {renderChoiceRows(Item, COMPACT_STYLE_OPTIONS, {
-                        disabled: false,
-                        selectedValue: desktopPolicy.compactStyle,
-                        onSelect: (value) => setLocalSetting({ desktopOverlayCompactStyle: value }),
-                        color: theme.colors.accent.blue,
-                    })}
                     <Item
                         title={t('settingsDesktop.overlay.showSessionCountTitle')}
                         subtitle={t('settingsDesktop.overlay.showSessionCountSubtitle')}

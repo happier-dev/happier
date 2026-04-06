@@ -2358,7 +2358,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
 		    settingsDesktop: {
-		        title: '桌面',
+		        title: '桌面應用程式',
 		        footer: '控制此電腦上的 Tauri 桌面整合。',
 		        startOnLoginTitle: '登入時啟動',
 		        startOnLoginSubtitle: '當你登入此電腦時自動啟動 Happier。',

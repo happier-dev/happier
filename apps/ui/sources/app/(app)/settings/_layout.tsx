@@ -66,6 +66,7 @@ export default React.memo(function SettingsLayoutRoute() {
                 <Stack.Screen name="add-phone" options={buildHeaderTitleOptions(t('settings.addYourPhone'))} />
                 <Stack.Screen name="appearance" options={buildHeaderTitleOptions(t('settings.appearance'))} />
                 <Stack.Screen name="features" options={buildHeaderTitleOptions(t('settings.features'))} />
+                <Stack.Screen name="desktop" options={buildHeaderTitleOptions(t('settingsDesktop.title'))} />
                 <Stack.Screen name="source-control" options={buildHeaderTitleOptions(t('navigation.sourceControl'))} />
                 <Stack.Screen name="report-issue" options={buildHeaderTitleOptions(t('settings.reportIssue'))} />
                 <Stack.Screen name="system-status" options={buildHeaderTitleOptions(t('settings.systemStatus'))} />

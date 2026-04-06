@@ -2475,7 +2475,7 @@ export const en = {
     },
 
     settingsDesktop: {
-        title: 'Desktop',
+        title: 'Desktop app',
         footer: 'Controls Tauri desktop integrations on this computer.',
         startOnLoginTitle: 'Launch at login',
         startOnLoginSubtitle: 'Start Happier automatically when you sign in to this computer.',

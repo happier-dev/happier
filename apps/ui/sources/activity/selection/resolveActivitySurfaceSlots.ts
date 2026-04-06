@@ -8,8 +8,12 @@ import type {
 
 function isUrgentCandidate(candidate: SessionActivityAttention, selection: Pick<
     ActivitySurfaceSelectionSpec,
-    'includeUrgent' | 'includeReady'
+    'includeUrgent' | 'includeReady' | 'activeOnly'
 >): boolean {
+    if (selection.activeOnly && candidate.session.active !== true) {
+        return false;
+    }
+
     switch (candidate.attentionState) {
         case 'permission_required':
         case 'action_required':
@@ -26,10 +30,14 @@ function isUrgentCandidate(candidate: SessionActivityAttention, selection: Pick<
 
 function isRunningCandidate(candidate: SessionActivityAttention, selection: Pick<
     ActivitySurfaceSelectionSpec,
-    'includeUrgent' | 'includeReady' | 'includeThinking' | 'includeQuietActive'
+    'includeUrgent' | 'includeReady' | 'includeThinking' | 'includeQuietActive' | 'activeOnly'
 >): boolean {
     if (isUrgentCandidate(candidate, selection)) {
         return true;
+    }
+
+    if (selection.activeOnly && candidate.session.active !== true) {
+        return false;
     }
 
     if (selection.includeThinking && candidate.attentionState === 'thinking') {

@@ -26,5 +26,9 @@ export function isPublicRouteForUnauthenticated(segments: string[]): boolean {
     // Public share links must work unauthenticated.
     if (first === 'share') return true;
 
+    // Desktop activity overlay must stay reachable so the separate Tauri overlay window
+    // can bootstrap its own public utility surface before auth state settles.
+    if (first === 'desktop' && normalized[1] === 'activity-overlay') return true;
+
     return false;
 }

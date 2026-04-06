@@ -517,7 +517,27 @@ fn ensure_overlay_window<R: Runtime>(
     .skip_taskbar(true);
 
     let window = builder.build().map_err(|error| error.to_string())?;
+    navigate_overlay_window_to_route(&window)?;
     Ok(window)
+}
+
+#[cfg(desktop)]
+fn build_overlay_window_navigation_url(current_url: &tauri::Url) -> Result<tauri::Url, String> {
+    let mut next = current_url.clone();
+    next.set_path("/desktop/activity-overlay");
+    next.set_query(Some("desktopOverlayWindow=1"));
+    Ok(next)
+}
+
+#[cfg(desktop)]
+fn navigate_overlay_window_to_route<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
+    let current_url = window.url().map_err(|error| error.to_string())?;
+    let target_url = build_overlay_window_navigation_url(&current_url)?;
+    if current_url.as_str() == target_url.as_str() {
+        return Ok(());
+    }
+
+    window.navigate(target_url).map_err(|error| error.to_string())
 }
 
 #[cfg(desktop)]
@@ -545,6 +565,17 @@ mod tests {
         assert!(validate_overlay_command_caller(command_name, "main", &["main"]).is_ok());
         assert!(
             validate_overlay_command_caller(command_name, "activity_overlay", &["main"]).is_err()
+        );
+    }
+
+    #[test]
+    fn builds_the_overlay_window_navigation_url_with_the_overlay_route_and_marker() {
+        let current_url = tauri::Url::parse("http://localhost:8081/").expect("valid url");
+        let next_url = build_overlay_window_navigation_url(&current_url).expect("expected overlay url");
+
+        assert_eq!(
+            next_url.as_str(),
+            "http://localhost:8081/desktop/activity-overlay?desktopOverlayWindow=1"
         );
     }
 }

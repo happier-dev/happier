@@ -55,18 +55,16 @@ async function renderDesktopUpdaterHook(options: {
 }
 
 describe('useDesktopUpdater (hook)', () => {
-    const originalNodeEnv = process.env.NODE_ENV;
-
     beforeEach(() => {
         vi.clearAllMocks();
+        vi.unstubAllEnvs();
         clearDesktopGlobals();
-        process.env.NODE_ENV = originalNodeEnv;
     });
 
     afterEach(() => {
         standardCleanup();
+        vi.unstubAllEnvs();
         clearDesktopGlobals();
-        process.env.NODE_ENV = originalNodeEnv;
     });
 
     it('stays idle when not running in Tauri', async () => {
@@ -170,7 +168,7 @@ describe('useDesktopUpdater (hook)', () => {
     });
 
     it('does not check for updates when running in desktop dev mode (avoids prompting for self-built dev runs)', async () => {
-        process.env.NODE_ENV = 'development';
+        vi.stubEnv('NODE_ENV', 'development');
 
         const invokeMock = vi.fn(async (cmd: string) => {
             if (cmd === 'desktop_fetch_update') {

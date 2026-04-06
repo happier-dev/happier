@@ -43,6 +43,7 @@ describe('resolveDesktopOverlaySelectionSpec', () => {
             includeReady: true,
             includeThinking: true,
             includeQuietActive: false,
+            activeOnly: false,
         });
     });
 
@@ -58,10 +59,11 @@ describe('resolveDesktopOverlaySelectionSpec', () => {
             mode: 'running',
             selectionReason: 'all_eligible',
             maxSelected: null,
-            includeUrgent: false,
-            includeReady: false,
-            includeThinking: false,
+            includeUrgent: true,
+            includeReady: true,
+            includeThinking: true,
             includeQuietActive: true,
+            activeOnly: true,
         });
     });
 });

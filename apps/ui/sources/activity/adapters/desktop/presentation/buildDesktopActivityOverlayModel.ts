@@ -1,6 +1,5 @@
 import type { DesktopOverlayPolicy } from '@/activity/adapters/desktop/runtime/resolveDesktopOverlayPolicy';
-import type { ActivitySurfaceSnapshot } from '@/activity/presentation/activitySurfaceSnapshot';
-import type { ActivitySurfaceSessionViewModel } from '@/activity/presentation/activitySurfaceViewModels';
+import type { DesktopActivityOverlaySnapshot } from './buildDesktopActivityOverlaySnapshot';
 
 export type DesktopActivityOverlayModel = Readonly<{
     visible: boolean;
@@ -8,12 +7,9 @@ export type DesktopActivityOverlayModel = Readonly<{
     generatedAt: number;
     collapsed: Readonly<{
         title: string;
-        subtitle: string | null;
         statusText: string | null;
-        previewText: string | null;
         defaultTarget: string;
         sessionCount: number | null;
-        attentionCount: number;
     }>;
     expanded: Readonly<{
         title: string;
@@ -22,9 +18,6 @@ export type DesktopActivityOverlayModel = Readonly<{
             title: string;
             subtitle: string | null;
             statusText: string | null;
-            route: string;
-            target: string;
-            attentionState: ActivitySurfaceSessionViewModel['attentionState'];
         }>[];
     }>;
     window: Readonly<{
@@ -34,7 +27,7 @@ export type DesktopActivityOverlayModel = Readonly<{
 }>;
 
 function resolveVisibility(params: Readonly<{
-    snapshot: ActivitySurfaceSnapshot;
+    snapshot: DesktopActivityOverlaySnapshot;
     policy: DesktopOverlayPolicy;
 }>): boolean {
     if (!params.policy.enabled) {
@@ -84,7 +77,7 @@ function resolveWindowSize(params: Readonly<{
 }
 
 export function buildDesktopActivityOverlayModel(params: Readonly<{
-    snapshot: ActivitySurfaceSnapshot;
+    snapshot: DesktopActivityOverlaySnapshot;
     policy: DesktopOverlayPolicy;
     isExpanded: boolean;
 }>): DesktopActivityOverlayModel {
@@ -94,9 +87,6 @@ export function buildDesktopActivityOverlayModel(params: Readonly<{
             title: session.title,
             subtitle: session.subtitle ?? null,
             statusText: session.statusText ?? null,
-            route: session.route,
-            target: session.target,
-            attentionState: session.attentionState,
         }));
     const window = resolveWindowSize({
         density: params.policy.density,
@@ -109,12 +99,9 @@ export function buildDesktopActivityOverlayModel(params: Readonly<{
         generatedAt: params.snapshot.generatedAt,
         collapsed: {
             title: primary?.title ?? params.snapshot.labels.emptyTitle,
-            subtitle: primary?.subtitle ?? null,
             statusText: primary?.statusText ?? null,
-            previewText: params.policy.showPreviewText ? (primary?.previewText ?? null) : null,
             defaultTarget: params.snapshot.defaultTarget,
             sessionCount: params.policy.showSessionCount ? params.snapshot.sessions.length : null,
-            attentionCount: params.snapshot.counts.totalAttention,
         },
         expanded: {
             title: params.snapshot.labels.sessionsTitle,

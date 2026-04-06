@@ -6,6 +6,13 @@ import { requireRadixDismissableLayer } from '@/utils/web/radixCjs';
 import { useOverlayPortal } from './OverlayPortal';
 import { useHasModalPortalTargetProvider, useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { usePopoverPortalTarget } from './PopoverPortalTarget';
+import {
+    OverlayMotionFrame,
+    resolveOverlayMotionDirectionFromPlacement,
+    resolveOverlayMotionPreset,
+    useOverlayPresence,
+} from '@/components/ui/overlays/motion/overlayMotion';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import type {
     PopoverBackdropEffect,
     PopoverBackdropOptions,
@@ -138,6 +145,16 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         portalIdRef.current = `popover-${Math.random().toString(36).slice(2)}`;
     }
     const contentContainerRef = React.useRef<any>(null);
+    const reducedMotion = useReducedMotionPreference();
+    const popoverMotionPreset = React.useMemo(
+        () => resolveOverlayMotionPreset({ kind: 'popover' }),
+        [],
+    );
+    const overlayPresence = useOverlayPresence(
+        open,
+        reducedMotion ? 0 : popoverMotionPreset.exitMs,
+    );
+    const shouldRender = overlayPresence.present;
 
     const getDomElementFromNode = React.useCallback((candidate: any): HTMLElement | null => {
         let node: any = candidate;
@@ -294,6 +311,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         maxWidth: maxWidthCap,
         placement: placement === 'auto' ? 'top' : placement,
     }));
+    const popoverMotionDirection = resolveOverlayMotionDirectionFromPlacement(computed.placement);
     const [anchorRectState, setAnchorRectState] = React.useState<WindowRect | null>(null);
     const [boundaryRectState, setBoundaryRectState] = React.useState<WindowRect | null>(null);
     const [contentRectState, setContentRectState] = React.useState<WindowRect | null>(null);
@@ -926,6 +944,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         }
         return 1;
     })();
+    const motionVisible = open && (!(shouldPortalWeb || shouldPortalNative) || portalOpacity > 0);
 
     React.useLayoutEffect(() => {
         if (Platform.OS !== 'web') return;
@@ -1099,7 +1118,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         props.closeOnAnchorPress,
     ]);
 
-    const content = open ? (
+    const content = shouldRender ? (
         <>
             <PopoverBackdrop
                 backdrop={backdropEnabled ? backdrop : false}
@@ -1140,7 +1159,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                     (shouldPortalWeb || shouldPortalNative) ? { opacity: portalOpacity } : null,
                     shouldPortal ? { zIndex: portalZ + 1 } : null,
                 ]}
-                pointerEvents={(shouldPortalWeb || shouldPortalNative) && portalOpacity === 0 ? 'none' : 'auto'}
+                pointerEvents={overlayPresence.exiting || ((shouldPortalWeb || shouldPortalNative) && portalOpacity === 0) ? 'none' : 'auto'}
                 onLayout={(e) => {
                     // Used to improve portal alignment (especially left/right centering)
                     const layout = e?.nativeEvent?.layout;
@@ -1156,7 +1175,13 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                     });
                 }}
             >
-                {children(computed)}
+                <OverlayMotionFrame
+                    visible={motionVisible}
+                    kind="popover"
+                    direction={popoverMotionDirection}
+                >
+                    {children(computed)}
+                </OverlayMotionFrame>
             </ViewWithWheel>
         </>
     ) : null;
@@ -1187,7 +1212,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         content,
     });
 
-    if (!open) return null;
+    if (!shouldRender) return null;
 
     const webPortal = tryRenderWebPortal({
         shouldPortalWeb,

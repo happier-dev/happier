@@ -3,7 +3,9 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createExpoRouterMock, createModalModuleMock, flushHookEffects, renderScreen, type RenderScreenResult } from '@/dev/testkit';
+import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUtils';
 import type { PendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent.shared';
+import type { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 
 vi.mock('@/assets/images/logotype-light.png', () => ({ default: 'logotype-light' }));
 vi.mock('@/assets/images/logotype-dark.png', () => ({ default: 'logotype-dark' }));
@@ -76,9 +78,10 @@ vi.mock('@/components/account/auth/useAuthEntryOptions', () => ({
     }),
 }));
 
-const getServerFeaturesSnapshotMock = vi.hoisted(() => vi.fn());
+const getServerFeaturesSnapshotMock = vi.hoisted(() => vi.fn<typeof getServerFeaturesSnapshot>());
 vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
-    getServerFeaturesSnapshot: (...args: any[]) => (getServerFeaturesSnapshotMock as any)(...args),
+    getServerFeaturesSnapshot: (params?: Parameters<typeof getServerFeaturesSnapshot>[0]) =>
+        getServerFeaturesSnapshotMock(params),
 }));
 
 vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
@@ -108,10 +111,10 @@ const platformState = vi.hoisted(() => ({
 const tauriDesktopState = vi.hoisted(() => ({
     value: false,
 }));
-const invokeTauriSpy = vi.hoisted(() => vi.fn(async () => undefined));
+const invokeTauriSpy = vi.hoisted(() => vi.fn<(command: string, args?: Record<string, unknown>) => Promise<unknown>>(async () => undefined));
 vi.mock('@/utils/platform/tauri', () => ({
     isTauriDesktop: () => tauriDesktopState.value,
-    invokeTauri: (...args: any[]) => invokeTauriSpy(...args),
+    invokeTauri: (command: string, args?: Record<string, unknown>) => invokeTauriSpy(command, args),
 }));
 
 vi.mock('react-native', async () => {
@@ -331,25 +334,25 @@ function findActionButton(screen: RenderScreenResult, testID: string) {
 }
 
 function mockGithubAuthFeatures(action: 'provision' | 'login', mode: 'keyed' | 'keyless') {
+    const snapshot = buildServerFeaturesResponse({
+        authProviders: {
+            github: { enabled: true, configured: true },
+        },
+        oauthProviders: {
+            github: { enabled: true, configured: true },
+        },
+    });
+    Object.assign(snapshot.capabilities.auth, {
+        methods: [
+            {
+                id: 'github',
+                actions: [{ id: action, enabled: true, mode }],
+            },
+        ],
+    });
     getServerFeaturesSnapshotMock.mockResolvedValue({
         status: 'ready',
-        features: {
-            capabilities: {
-                oauth: {
-                    providers: {
-                        github: { configured: true },
-                    },
-                },
-                auth: {
-                    methods: [
-                        {
-                            id: 'github',
-                            actions: [{ id: action, enabled: true, mode }],
-                        },
-                    ],
-                },
-            },
-        },
+        features: snapshot,
     });
 }
 

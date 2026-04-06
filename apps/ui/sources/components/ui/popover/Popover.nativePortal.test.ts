@@ -11,6 +11,7 @@ import {
 } from '@/dev/testkit/harness/popoverHarness';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderScreen } from '@/dev/testkit';
+import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { installPopoverCommonModuleMocks } from './popoverTestHelpers';
 
 
@@ -62,6 +63,7 @@ describe('Popover (native portal)', () => {
     afterEach(() => {
         restorePopoverWebGlobals?.();
         restorePopoverWebGlobals = null;
+        vi.useRealTimers();
     });
 
     it('positions using anchor coordinates relative to the portal root when available (avoids iOS header/sheet offsets)', async () => {
@@ -115,6 +117,71 @@ describe('Popover (native portal)', () => {
         expect(style.left).toBe(10);
         expect(style.top).toBe(68);
         expect(style.width).toBe(30);
+    });
+
+    it('keeps native portal content mounted until the shared exit animation finishes', async () => {
+        vi.useFakeTimers();
+
+        const { OverlayPortalHost, OverlayPortalProvider } = await import('./OverlayPortal');
+        const { Popover } = await import('./Popover');
+
+        const anchorRef = {
+            current: {
+                measureInWindow: (cb: any) => {
+                    queueMicrotask(() => cb(100, 100, 20, 20));
+                },
+            },
+        } as any;
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        tree = (await renderScreen(React.createElement(
+            OverlayPortalProvider,
+            null,
+            React.createElement(Popover, {
+                open: true,
+                anchorRef,
+                placement: 'bottom',
+                portal: { native: true },
+                backdrop: false,
+                onRequestClose: () => {},
+                children: () => React.createElement(PopoverChild),
+            } as any),
+            React.createElement(OverlayPortalHost),
+        ))).tree;
+
+        await act(async () => {
+            await flushInitialPositioning();
+        });
+        expect(tree?.root.findAllByType('PopoverChild' as any)).toHaveLength(1);
+
+        await act(async () => {
+            tree?.update(React.createElement(
+                OverlayPortalProvider,
+                null,
+                React.createElement(Popover, {
+                    open: false,
+                    anchorRef,
+                    placement: 'bottom',
+                    portal: { native: true },
+                    backdrop: false,
+                    onRequestClose: () => {},
+                    children: () => React.createElement(PopoverChild),
+                } as any),
+                React.createElement(OverlayPortalHost),
+            ));
+        });
+
+        expect(tree?.root.findAllByType('PopoverChild' as any)).toHaveLength(1);
+
+        await act(async () => {
+            vi.advanceTimersByTime(motionTokens.overlay.popover.exitMs - 1);
+        });
+        expect(tree?.root.findAllByType('PopoverChild' as any)).toHaveLength(1);
+
+        await act(async () => {
+            vi.advanceTimersByTime(1);
+        });
+        expect(tree?.root.findAllByType('PopoverChild' as any)).toHaveLength(0);
     });
 
     it('anchors top-placed portals using the portal root height (not the window height) so contained sheets/drawers do not offset', async () => {
@@ -414,6 +481,8 @@ describe('Popover (native portal)', () => {
     });
 
     it('renders into OverlayPortalHost when usePortalOnNative is enabled', async () => {
+        vi.useFakeTimers();
+
         const { OverlayPortalHost, OverlayPortalProvider } = await import('./OverlayPortal');
         const { Popover } = await import('./Popover');
 
@@ -473,6 +542,9 @@ describe('Popover (native portal)', () => {
             );
         });
 
+        await act(async () => {
+            vi.advanceTimersByTime(motionTokens.overlay.popover.exitMs);
+        });
         expect(findFirstHostNodeByTestId(tree, 'host-slot')?.findAllByType('PopoverChild' as any).length).toBe(0);
     });
 

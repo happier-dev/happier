@@ -76,12 +76,9 @@ function createWindowState(
             generatedAt: Date.now(),
             collapsed: {
                 title: 'Session One',
-                subtitle: 'Repo',
                 statusText: 'Needs attention',
-                previewText: null,
                 defaultTarget: 'open-primary-session',
                 sessionCount: 2,
-                attentionCount: 1,
             },
             expanded: {
                 title: 'Active sessions',
@@ -91,9 +88,6 @@ function createWindowState(
                         title: 'Session One',
                         subtitle: 'Repo',
                         statusText: 'Needs attention',
-                        route: '/session/session-1',
-                        target: 'open-session:session-1',
-                        attentionState: 'permission_required',
                     },
                 ],
             },

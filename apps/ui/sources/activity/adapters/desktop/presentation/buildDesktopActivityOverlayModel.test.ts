@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ActivitySurfaceSnapshot } from '@/activity/presentation/activitySurfaceSnapshot';
+import type { DesktopActivityOverlaySnapshot } from './buildDesktopActivityOverlaySnapshot';
 import type { DesktopOverlayPolicy } from '@/activity/adapters/desktop/runtime/resolveDesktopOverlayPolicy';
 
 import { buildDesktopActivityOverlayModel } from './buildDesktopActivityOverlayModel';
 
-function createSnapshot(overrides: Partial<ActivitySurfaceSnapshot> = {}): ActivitySurfaceSnapshot {
-    const base: ActivitySurfaceSnapshot = {
+function createSnapshot(overrides: Partial<DesktopActivityOverlaySnapshot> = {}): DesktopActivityOverlaySnapshot {
+    const base: DesktopActivityOverlaySnapshot = {
         version: 1,
         generatedAt: 1_700_000_000_000,
         counts: {
@@ -26,53 +26,26 @@ function createSnapshot(overrides: Partial<ActivitySurfaceSnapshot> = {}): Activ
             sessionId: 'session-primary',
             title: 'Primary session',
             subtitle: 'agent on machine',
-            previewText: 'Primary preview',
             statusText: 'Permission required',
-            attentionState: 'permission_required',
-            route: '/session/session-primary',
-            target: 'open-session:session-primary',
-            defaultTarget: 'open-session:session-primary',
-            isPrimary: true,
-            updatedAt: 1_700_000_000_000,
         },
         sessions: [
             {
                 sessionId: 'session-primary',
                 title: 'Primary session',
                 subtitle: 'agent on machine',
-                previewText: 'Primary preview',
                 statusText: 'Permission required',
-                attentionState: 'permission_required',
-                route: '/session/session-primary',
-                target: 'open-session:session-primary',
-                defaultTarget: 'open-session:session-primary',
-                isPrimary: true,
-                updatedAt: 1_700_000_000_000,
             },
             {
                 sessionId: 'session-secondary',
                 title: 'Secondary session',
                 subtitle: 'agent on machine',
-                previewText: 'Secondary preview',
                 statusText: 'Running',
-                attentionState: 'thinking',
-                route: '/session/session-secondary',
-                target: 'open-session:session-secondary',
-                defaultTarget: 'open-session:session-secondary',
-                isPrimary: false,
-                updatedAt: 1_700_000_000_000,
             },
         ],
         defaultTarget: 'open-primary-session',
         labels: {
-            focusTitle: 'Focus',
             sessionsTitle: 'Sessions',
             emptyTitle: 'No active sessions',
-            openLabel: 'Open',
-            inboxLabel: 'Inbox',
-            attentionLabel: 'Attention',
-            runningLabel: 'Running',
-            permissionLabel: 'Permission',
         },
     };
 
@@ -168,17 +141,21 @@ describe('buildDesktopActivityOverlayModel', () => {
         expect(model.expanded.rows).toHaveLength(0);
     });
 
-    it('uses the canonical primary preview text when collapsed preview text is enabled', () => {
+    it('omits widget-only fields from the desktop overlay presentation contract', () => {
         const model = buildDesktopActivityOverlayModel({
             snapshot: createSnapshot(),
             policy: createPolicy({
                 visibilityMode: 'always_when_enabled',
-                showPreviewText: true,
             }),
-            isExpanded: false,
+            isExpanded: true,
         });
 
-        expect(model.collapsed.previewText).toBe('Primary preview');
+        expect(model.collapsed).not.toHaveProperty('subtitle');
+        expect(model.collapsed).not.toHaveProperty('previewText');
+        expect(model.collapsed).not.toHaveProperty('attentionCount');
+        expect(model.expanded.rows[0]).not.toHaveProperty('route');
+        expect(model.expanded.rows[0]).not.toHaveProperty('target');
+        expect(model.expanded.rows[0]).not.toHaveProperty('attentionState');
     });
 
     it('stays hidden in attention-only mode when sessions exist but every auto-show trigger is disabled', () => {

@@ -20,6 +20,8 @@ describe('isPublicRouteForUnauthenticated', () => {
         { name: 'nested terminal route', segments: ['(app)', 'terminal', 'connect'], expected: true },
         { name: 'oauth return route', segments: ['oauth', 'github'], expected: true },
         { name: 'grouped oauth return route', segments: ['(app)', 'oauth', 'github'], expected: true },
+        { name: 'desktop activity overlay route', segments: ['desktop', 'activity-overlay'], expected: true },
+        { name: 'grouped desktop activity overlay route', segments: ['(app)', 'desktop', 'activity-overlay'], expected: true },
         { name: 'private settings route', segments: ['settings'], expected: false },
         { name: 'grouped private settings route', segments: ['(app)', 'settings'], expected: false },
         { name: 'unknown private route', segments: ['inbox'], expected: false },

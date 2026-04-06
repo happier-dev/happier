@@ -32,6 +32,10 @@ vi.mock('@/activity/adapters/desktop/runtime/desktopActivityOverlayBridge', () =
     resetDesktopActivityOverlayPosition: () => resetDesktopActivityOverlayPositionMock(),
 }));
 
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
+    DropdownMenu: (props: Record<string, unknown>) => React.createElement('DropdownMenu', props),
+}));
+
 describe('DesktopOverlaySettingsSection', () => {
     beforeEach(() => {
         applyLocalSettingsMock.mockReset();
@@ -68,25 +72,47 @@ describe('DesktopOverlaySettingsSection', () => {
 
         expect(screen.findGroup('settingsDesktop.overlay.title')).toBeTruthy();
         expect(screen.findRow('settings-desktop-overlay-enabled')).toBeTruthy();
+        expect(screen.findAllByType('DropdownMenu' as any)).toHaveLength(8);
     });
 
-    it('writes overlay visibility and placement changes through the local settings writer', async () => {
+    it('writes overlay visibility and placement changes through the dropdown menu controls', async () => {
         const { DesktopOverlaySettingsSection } = await import('./DesktopOverlaySettingsSection');
         const screen = await renderSettingsView(<DesktopOverlaySettingsSection />);
+        const dropdownMenus = screen.findAllByType('DropdownMenu' as any);
 
-        screen.pressRowByTitle('settingsDesktop.overlay.visibilityAlwaysWhenEnabledTitle');
+        const visibilityMenu = dropdownMenus.find((menu) => menu.props.itemTrigger?.title === 'settingsDesktop.overlay.visibilityModeTitle');
+        expect(visibilityMenu).toBeTruthy();
+        visibilityMenu?.props.onSelect?.('always_when_enabled');
         expect(applyLocalSettingsMock).toHaveBeenCalledWith({
             desktopOverlayVisibilityMode: 'always_when_enabled',
         });
 
-        screen.pressRowByTitle('settingsDesktop.overlay.autoHideDelay10sTitle');
+        const autoHideMenu = dropdownMenus.find((menu) => menu.props.itemTrigger?.title === 'settingsDesktop.overlay.autoHideDelayTitle');
+        expect(autoHideMenu).toBeTruthy();
+        autoHideMenu?.props.onSelect?.('10000');
         expect(applyLocalSettingsMock).toHaveBeenCalledWith({
             desktopOverlayAutoHideDelayMs: 10_000,
         });
 
-        screen.pressRowByTitle('settingsDesktop.overlay.anchorBottomRightTitle');
+        const anchorMenu = dropdownMenus.find((menu) => menu.props.itemTrigger?.title === 'settingsDesktop.overlay.anchorPresetTitle');
+        expect(anchorMenu).toBeTruthy();
+        anchorMenu?.props.onSelect?.('bottom_right');
         expect(applyLocalSettingsMock).toHaveBeenCalledWith({
             desktopOverlayAnchor: 'bottom_right',
+        });
+
+        const densityMenu = dropdownMenus.find((menu) => menu.props.itemTrigger?.title === 'settingsDesktop.overlay.densityTitle');
+        expect(densityMenu).toBeTruthy();
+        densityMenu?.props.onSelect?.('comfortable');
+        expect(applyLocalSettingsMock).toHaveBeenCalledWith({
+            desktopOverlayDensity: 'comfortable',
+        });
+
+        const compactStyleMenu = dropdownMenus.find((menu) => menu.props.itemTrigger?.title === 'settingsDesktop.overlay.compactStyleTitle');
+        expect(compactStyleMenu).toBeTruthy();
+        compactStyleMenu?.props.onSelect?.('panel');
+        expect(applyLocalSettingsMock).toHaveBeenCalledWith({
+            desktopOverlayCompactStyle: 'panel',
         });
     });
 
@@ -123,19 +149,13 @@ describe('DesktopOverlaySettingsSection', () => {
         const { DesktopOverlaySettingsSection } = await import('./DesktopOverlaySettingsSection');
         const screen = await renderSettingsView(<DesktopOverlaySettingsSection />);
 
-        expect(screen.findRowByTitle('settingsDesktop.overlay.visibilityModeTitle')).toBeNull();
+        expect(screen.findAllByType('DropdownMenu' as any)).toHaveLength(0);
         expect(screen.findRowByTitle('settingsDesktop.overlay.showWhenRunningTitle')).toBeNull();
         expect(screen.findRowByTitle('settingsDesktop.overlay.showWhenAttentionRequiredTitle')).toBeNull();
         expect(screen.findRowByTitle('settingsDesktop.overlay.showWhenReadyTitle')).toBeNull();
         expect(screen.findRowByTitle('settingsDesktop.overlay.alwaysOnTopTitle')).toBeNull();
         expect(screen.findRowByTitle('settingsDesktop.overlay.autoHideEnabledTitle')).toBeNull();
-        expect(screen.findRowByTitle('settingsDesktop.overlay.expandedBehaviorTitle')).toBeNull();
         expect(screen.findRowByTitle('settingsDesktop.overlay.interactiveCollapsedTitle')).toBeNull();
-        expect(screen.findRowByTitle('settingsDesktop.overlay.collapsedClickActionTitle')).toBeNull();
-        expect(screen.findRowByTitle('settingsDesktop.overlay.placementModeTitle')).toBeNull();
-        expect(screen.findRowByTitle('settingsDesktop.overlay.densityTitle')).toBeNull();
-        expect(screen.findRowByTitle('settingsDesktop.overlay.compactStyleTitle')).toBeNull();
-        expect(screen.findRowByTitle('settingsDesktop.overlay.anchorPresetTitle')).toBeNull();
         expect(screen.findRowByTitle('settingsDesktop.overlay.allowRepositioningTitle')).toBeNull();
         expect(screen.findRowByTitle('settingsDesktop.overlay.lockPositionTitle')).toBeNull();
         expect(screen.findRowByTitle('settingsDesktop.overlay.resetPositionTitle')).toBeNull();
@@ -150,8 +170,8 @@ describe('DesktopOverlaySettingsSection', () => {
         const screen = await renderSettingsView(<DesktopOverlaySettingsSection />);
 
         expect(screen.findRowByTitle('settingsDesktop.overlay.interactiveCollapsedTitle')).toBeTruthy();
-        expect(screen.findRowByTitle('settingsDesktop.overlay.collapsedClickActionTitle')).toBeNull();
-        expect(screen.findRowByTitle('settingsDesktop.overlay.expandedBehaviorTitle')).toBeNull();
+        expect(screen.findAllByType('DropdownMenu' as any).some((menu) => menu.props.itemTrigger?.title === 'settingsDesktop.overlay.collapsedClickActionTitle')).toBe(false);
+        expect(screen.findAllByType('DropdownMenu' as any).some((menu) => menu.props.itemTrigger?.title === 'settingsDesktop.overlay.expandedBehaviorTitle')).toBe(false);
     });
 
     it('hides expanded behavior rows when collapsed clicks do not expand the overlay', async () => {
@@ -162,8 +182,8 @@ describe('DesktopOverlaySettingsSection', () => {
         const { DesktopOverlaySettingsSection } = await import('./DesktopOverlaySettingsSection');
         const screen = await renderSettingsView(<DesktopOverlaySettingsSection />);
 
-        expect(screen.findRowByTitle('settingsDesktop.overlay.collapsedClickActionTitle')).toBeTruthy();
-        expect(screen.findRowByTitle('settingsDesktop.overlay.expandedBehaviorTitle')).toBeNull();
+        expect(screen.findAllByType('DropdownMenu' as any).some((menu) => menu.props.itemTrigger?.title === 'settingsDesktop.overlay.collapsedClickActionTitle')).toBeTruthy();
+        expect(screen.findAllByType('DropdownMenu' as any).some((menu) => menu.props.itemTrigger?.title === 'settingsDesktop.overlay.expandedBehaviorTitle')).toBe(false);
     });
 
     it('resets custom placement back to anchored defaults', async () => {

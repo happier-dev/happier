@@ -205,6 +205,7 @@ describe('resolveActivitySurfaceSlots', () => {
                 includeReady: false,
                 includeThinking: false,
                 includeQuietActive: true,
+                activeOnly: true,
             },
         });
 

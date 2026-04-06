@@ -1,7 +1,5 @@
 import type { ActivityOverviewSnapshot, SessionActivityAttention } from '@/activity/attention/activityAttentionTypes';
 import type { ActivitySurfacePolicy } from '@/activity/attention/resolveActivitySurfacePolicy';
-
-export type ActivitySurfaceKind = 'liveActivities' | 'widgets';
 export type ActivitySurfaceSelectionMode = 'focused' | 'attention' | 'running' | 'summary';
 export type ActivitySurfaceSelectionReason = 'all_eligible' | 'dynamic_primary' | 'pinned_primary' | 'session_specific';
 
@@ -15,6 +13,7 @@ export type ActivitySurfaceSelectionSpec = Readonly<{
     includeReady: boolean;
     includeThinking: boolean;
     includeQuietActive: boolean;
+    activeOnly: boolean;
 }>;
 
 export type ResolveActivitySurfaceSlotsParams = Readonly<{
@@ -47,6 +46,7 @@ export function createLiveActivitySelectionSpec(policy: ActivitySurfacePolicy): 
         includeReady: policy.liveActivities.includeReady,
         includeThinking: policy.liveActivities.includeThinking,
         includeQuietActive: false,
+        activeOnly: false,
     };
 }
 
@@ -61,5 +61,6 @@ export function createWidgetSelectionSpec(policy: ActivitySurfacePolicy): Activi
         includeReady: true,
         includeThinking: true,
         includeQuietActive: false,
+        activeOnly: false,
     };
 }
