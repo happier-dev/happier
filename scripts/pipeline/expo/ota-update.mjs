@@ -132,9 +132,9 @@ function pickNonEmptyString(raw) {
 }
 
 /**
- * Expo runtimeVersion uses the fingerprint policy, so OTA updates must be generated with the
- * same env inputs as the corresponding native build profile; otherwise iOS/Android builds won't
- * be eligible to download the update.
+ * OTA updates must be generated with the same env inputs as the corresponding native build profile;
+ * otherwise iOS/Android builds won't be eligible to download the update. We also support an explicit
+ * runtimeVersion override for maintenance trains that need to target an older store binary.
  *
  * We merge the EAS build-profile env (following `extends`) from `apps/ui/eas.json`, and then
  * backfill identity env (name/bundle/package/scheme) from the canonical app environment config.
@@ -177,6 +177,7 @@ function main() {
     options: {
       environment: { type: 'string' },
       message: { type: 'string', default: '' },
+      'runtime-version': { type: 'string', default: '' },
       interactive: { type: 'string', default: 'auto' },
       'eas-cli-version': { type: 'string', default: '' },
       'dry-run': { type: 'boolean', default: false },
@@ -216,9 +217,13 @@ function main() {
   const updateLane = resolveMobileAppEnvironmentConfig(normalizedEnvironment).updatesChannel;
   const nodeEnvironment = resolveMobileBuildNodeEnvironment(normalizedEnvironment);
   const otaFingerprintEnv = resolveOtaFingerprintEnv(uiDir, normalizedEnvironment);
+  const explicitRuntimeVersion = String(values['runtime-version'] ?? '').trim();
 
   /** @type {Record<string, string>} */
   const injectedEnv = { ...otaFingerprintEnv };
+  if (explicitRuntimeVersion) {
+    injectedEnv.HAPPIER_EXPO_RUNTIME_VERSION = explicitRuntimeVersion;
+  }
   for (const [key, value] of Object.entries(injectedEnv)) {
     if (!pickNonEmptyString(value)) delete injectedEnv[key];
   }

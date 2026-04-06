@@ -34,6 +34,7 @@ function withCleanEnv<T>(fn: () => T): T {
         'EXPO_APP_VERSION',
         'EXPO_APP_OWNER',
         'EXPO_APP_SLUG',
+        'HAPPIER_EXPO_RUNTIME_VERSION',
         'EXPO_APP_LOCAL_CONFIG_PATH',
         'EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV',
         'EXPO_PUBLIC_IOS_BACKGROUND_AUDIO',
@@ -206,6 +207,16 @@ describe('app.config.js', () => {
             return getPublicConfig();
         });
         expect(exp.runtimeVersion).toEqual({ policy: 'appVersion' });
+    });
+
+    it('allows forcing an explicit Expo runtime version for maintenance OTA trains', () => {
+        const exp = withCleanEnv(() => {
+            process.env.APP_ENV = 'preview';
+            process.env.HAPPIER_EXPO_RUNTIME_VERSION = '18';
+            return getPublicConfig();
+        });
+
+        expect(exp.runtimeVersion).toBe('18');
     });
 
     it('uses EXPO_PUBLIC_EAS_PROJECT_ID with highest precedence for updates linkage', () => {

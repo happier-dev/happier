@@ -114,6 +114,38 @@ test('ui-mobile-release forwards explicit interactive setting to delegated Expo 
   assert.match(out, /--interactive\"?\s+\"?false\b/);
 });
 
+test('ui-mobile-release forwards an explicit runtime version to delegated Expo OTA commands', () => {
+  const out = execFileSync(
+    process.execPath,
+    [
+      path.join(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
+      'ui-mobile-release',
+      '--environment',
+      'preview',
+      '--action',
+      'ota',
+      '--platform',
+      'all',
+      '--runtime-version',
+      '18',
+      '--dry-run',
+      '--secrets-source',
+      'env',
+    ],
+    {
+      cwd: repoRoot,
+      env: { ...process.env, EXPO_TOKEN: 'expo-token' },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    },
+  );
+
+  assert.match(out, /\[pipeline\] ui-mobile release: environment=preview action=ota platform=all/);
+  assert.match(out, /scripts\/pipeline\/expo\/ota-update\.mjs/);
+  assert.match(out, /--runtime-version\"?\s+\"?18\b/);
+});
+
 test('ui-mobile-release rejects native_submit outside dev, preview, and production', () => {
   assert.throws(
     () =>

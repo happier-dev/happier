@@ -144,6 +144,8 @@ const parseOptionalBoolean = (raw) => {
     return null;
 };
 
+const explicitRuntimeVersion = String(process.env.HAPPIER_EXPO_RUNTIME_VERSION ?? '').trim();
+
 const devClientLaunchMode = (process.env.HAPPIER_EXPO_DEVCLIENT_LAUNCH_MODE || '').trim();
 const devClientSilentLaunch = parseOptionalBoolean(process.env.HAPPIER_EXPO_DEVCLIENT_SILENT_LAUNCH);
 const updatesNativeDebugEnabled =
@@ -230,7 +232,7 @@ const baseExpoConfig = {
         name,
         slug,
         version: versionOverride || packageJsonVersion || "0.1.0",
-        runtimeVersion: (() => {
+        runtimeVersion: explicitRuntimeVersion || (() => {
             const overrideRaw = String(process.env.HAPPIER_EXPO_RUNTIME_VERSION_POLICY ?? '').trim().toLowerCase();
             const override =
                 overrideRaw === 'fingerprint' ? 'fingerprint' :

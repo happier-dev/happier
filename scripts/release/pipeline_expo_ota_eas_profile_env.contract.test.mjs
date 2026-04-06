@@ -14,6 +14,7 @@ const ENV_KEYS = [
   'EXPO_APP_BUNDLE_ID',
   'EXPO_ANDROID_PACKAGE',
   'EXPO_APP_SCHEME',
+  'HAPPIER_EXPO_RUNTIME_VERSION',
   'HAPPIER_EXPO_DEVCLIENT_LAUNCH_MODE',
   'HAPPIER_EXPO_DEVCLIENT_SILENT_LAUNCH',
   'HAPPIER_EXPO_USE_NATIVE_DEBUG',
@@ -151,4 +152,37 @@ test('expo ota update passes identity env for publicdev without forcing internal
   assert.doesNotMatch(envLog, /^HAPPIER_EXPO_DEVCLIENT_SILENT_LAUNCH=/m);
   assert.doesNotMatch(envLog, /^HAPPIER_EXPO_USE_NATIVE_DEBUG=/m);
   assert.doesNotMatch(envLog, /^EX_UPDATES_NATIVE_DEBUG=/m);
+});
+
+test('expo ota update forwards an explicit maintenance runtime version when requested', () => {
+  const stub = createStubBin('happier-pipeline-eas-ota-runtime-version-');
+  execFileSync(
+    process.execPath,
+    [
+      path.join(repoRoot, 'scripts', 'pipeline', 'expo', 'ota-update.mjs'),
+      '--environment',
+      'preview',
+      '--interactive',
+      'true',
+      '--runtime-version',
+      '18',
+      '--message',
+      'preview runtime 18 maintenance ota',
+    ],
+    {
+      cwd: repoRoot,
+      env: {
+        ...buildCleanEnv(),
+        PATH: `${stub.binDir}:${process.env.PATH ?? ''}`,
+      },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    },
+  );
+
+  const envLog = fs.readFileSync(stub.envLogPath, 'utf8').replace(/\r/g, '');
+  assert.match(envLog, /^APP_ENV=preview$/m);
+  assert.match(envLog, /^EXPO_UPDATES_CHANNEL=preview$/m);
+  assert.match(envLog, /^HAPPIER_EXPO_RUNTIME_VERSION=18$/m);
 });

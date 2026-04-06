@@ -134,3 +134,35 @@ test('pipeline CLI forwards explicit interactive setting to Expo OTA', async () 
   assert.match(out, /scripts\/pipeline\/expo\/ota-update\.mjs/);
   assert.match(out, /--interactive\"?\s+\"?false\b/);
 });
+
+test('pipeline CLI forwards an explicit runtime version to Expo OTA dry-runs', async () => {
+  const out = execFileSync(
+    process.execPath,
+    [
+      resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
+      'expo-ota',
+      '--environment',
+      'preview',
+      '--runtime-version',
+      '18',
+      '--message',
+      'preview OTA runtime 18 test message',
+      '--dry-run',
+      '--secrets-source',
+      'env',
+    ],
+    {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        EXPO_TOKEN: 'expo-token',
+      },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    },
+  );
+
+  assert.match(out, /scripts\/pipeline\/expo\/ota-update\.mjs/);
+  assert.match(out, /--runtime-version\"?\s+\"?18\b/);
+});

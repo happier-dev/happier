@@ -1905,6 +1905,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         options: {
           environment: { type: 'string' },
           message: { type: 'string', default: '' },
+          'runtime-version': { type: 'string', default: '' },
           interactive: { type: 'string', default: 'auto' },
           'eas-cli-version': { type: 'string', default: '' },
           'dry-run': { type: 'boolean', default: false },
@@ -1920,6 +1921,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       fail(`--environment must be ${JSON.stringify(MOBILE_RELEASE_ENVIRONMENT_CHOICES)} (got: ${String(values.environment ?? '').trim() || '<empty>'})`);
     }
     const environmentArg = formatMobileReleaseEnvironment(environment);
+    const runtimeVersion = String(values['runtime-version'] ?? '').trim();
 
     const { env, sources } = loadPipelineEnv({
       repoRoot,
@@ -1962,6 +1964,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       args: [
         '--environment',
         environmentArg,
+        ...(runtimeVersion ? ['--runtime-version', runtimeVersion] : []),
         ...(message ? ['--message', message] : []),
         ...(interactive ? ['--interactive', interactive] : []),
         ...(easCliVersion ? ['--eas-cli-version', easCliVersion] : []),
@@ -2396,6 +2399,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         'dump-view': { type: 'string', default: 'true' },
         'fingerprint-mode': { type: 'string', default: 'always' },
         'release-message': { type: 'string', default: '' },
+        'runtime-version': { type: 'string', default: '' },
         'ui-version-bump': { type: 'string', default: '' },
         'ui-version': { type: 'string', default: '' },
         'allow-dirty': { type: 'string', default: 'false' },
@@ -2458,6 +2462,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     /** @type {'always' | 'if-changed'} */
     const fingerprintMode = fingerprintModeRaw;
     const releaseMessage = String(values['release-message'] ?? '').trim();
+    const runtimeVersion = String(values['runtime-version'] ?? '').trim();
 
     const uiVersionBump = String(values['ui-version-bump'] ?? '').trim().toLowerCase();
     const uiVersion = String(values['ui-version'] ?? '').trim();
@@ -2471,6 +2476,9 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     }
     if ((uiVersionBump || uiVersion) && environment !== 'production') {
       fail('--ui-version / --ui-version-bump is supported only for --environment production.');
+    }
+    if (runtimeVersion && action !== 'ota') {
+      fail('--runtime-version is supported only for --action ota.');
     }
 
     const nativeBuildModeRaw = String(values['native-build-mode'] ?? '').trim().toLowerCase() || 'cloud';
@@ -2542,6 +2550,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         args: [
           '--environment',
           environmentArg,
+          ...(runtimeVersion ? ['--runtime-version', runtimeVersion] : []),
           ...(interactive ? ['--interactive', interactive] : []),
           ...(easCliVersion ? ['--eas-cli-version', easCliVersion] : []),
           ...(dryRun ? ['--dry-run'] : []),
