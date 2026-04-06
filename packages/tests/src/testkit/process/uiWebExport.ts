@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync, closeSync } from 'node:fs';
 import { appendFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { extname, dirname, relative as relativePath, resolve as resolvePath } from 'node:path';
+import { basename, extname, dirname, relative as relativePath, resolve as resolvePath } from 'node:path';
 import { repoRootDir } from '../paths';
 import { reserveAvailablePort } from '../network/reserveAvailablePort';
 import { runLoggedCommand } from './spawnProcess';
@@ -71,22 +71,26 @@ type UiWebRuntimeConfig = Readonly<{
 type LockOwner = {
   pid: number | null;
   createdAtMs: number | null;
+  stagingDir: string | null;
 };
 
 function parseLockOwner(raw: string): LockOwner {
   const text = raw.trim();
-  if (!text) return { pid: null, createdAtMs: null };
+  if (!text) return { pid: null, createdAtMs: null, stagingDir: null };
   try {
-    const parsed = JSON.parse(text) as { pid?: unknown; createdAtMs?: unknown };
+    const parsed = JSON.parse(text) as { pid?: unknown; createdAtMs?: unknown; stagingDir?: unknown };
     return {
       pid: typeof parsed.pid === 'number' && Number.isFinite(parsed.pid) && parsed.pid > 0 ? parsed.pid : null,
       createdAtMs:
         typeof parsed.createdAtMs === 'number' && Number.isFinite(parsed.createdAtMs) && parsed.createdAtMs > 0
           ? parsed.createdAtMs
           : null,
+      stagingDir: typeof parsed.stagingDir === 'string' && parsed.stagingDir.trim().length > 0
+        ? parsed.stagingDir.trim()
+        : null,
     };
   } catch {
-    return { pid: null, createdAtMs: null };
+    return { pid: null, createdAtMs: null, stagingDir: null };
   }
 }
 
@@ -165,8 +169,8 @@ async function readLatestMtimeMs(currentPath: string): Promise<number> {
 }
 
 async function hasRecentUiWebExportStagingProgress(rootDir: string, staleAfterMs: number): Promise<boolean> {
-  const entries = await readdir(rootDir, { withFileTypes: true }).catch(() => []);
   const cutoffMs = Date.now() - staleAfterMs;
+  const entries = await readdir(rootDir, { withFileTypes: true }).catch(() => []);
   for (const entry of entries) {
     if (!entry.isDirectory() || !entry.name.startsWith('dist-staging-')) continue;
     const stagingLatestMtimeMs = await readLatestMtimeMs(resolvePath(rootDir, entry.name));
@@ -177,17 +181,54 @@ async function hasRecentUiWebExportStagingProgress(rootDir: string, staleAfterMs
   return false;
 }
 
+async function hasRecentUiWebExportOwnerStagingProgress(params: {
+  rootDir: string;
+  staleAfterMs: number;
+  ownerStagingDir: string;
+}): Promise<boolean> {
+  const cutoffMs = Date.now() - params.staleAfterMs;
+  const ownerStagingPath = params.ownerStagingDir.startsWith('/')
+    ? params.ownerStagingDir
+    : resolvePath(params.rootDir, params.ownerStagingDir);
+  if (!basename(ownerStagingPath).startsWith('dist-staging-')) {
+    return false;
+  }
+  const stagingLatestMtimeMs = await readLatestMtimeMs(ownerStagingPath);
+  return stagingLatestMtimeMs > cutoffMs;
+}
+
+function writeUiWebExportLockOwnerMetadata(lockPath: string, stagingDir: string): void {
+  try {
+    const existing = parseLockOwner(readFileSync(lockPath, 'utf8'));
+    writeFileSync(lockPath, JSON.stringify({
+      pid: process.pid,
+      createdAtMs: existing.createdAtMs ?? Date.now(),
+      stagingDir,
+    }), 'utf8');
+  } catch {
+    // ignore lock metadata update failures; lock semantics still rely on file existence.
+  }
+}
+
 export async function shouldReclaimUiWebExportLock(lockPath: string, staleAfterMs: number): Promise<boolean> {
   try {
     const owner = parseLockOwner(readFileSync(lockPath, 'utf8'));
+    const rootDir = dirname(lockPath);
     if (owner.pid == null && owner.createdAtMs == null) {
-      return !(await hasRecentUiWebExportStagingProgress(dirname(lockPath), staleAfterMs));
+      return !(await hasRecentUiWebExportStagingProgress(rootDir, staleAfterMs));
     }
     if (owner.pid != null && !isRunningPid(owner.pid)) {
       return true;
     }
     if (owner.createdAtMs != null && Date.now() - owner.createdAtMs > staleAfterMs) {
-      return !(await hasRecentUiWebExportStagingProgress(dirname(lockPath), staleAfterMs));
+      const ownerHasRecentProgress = owner.stagingDir
+        ? await hasRecentUiWebExportOwnerStagingProgress({
+          rootDir,
+          staleAfterMs,
+          ownerStagingDir: owner.stagingDir,
+        })
+        : await hasRecentUiWebExportStagingProgress(rootDir, staleAfterMs);
+      return !ownerHasRecentProgress;
     }
     return false;
   } catch {
@@ -584,6 +625,7 @@ async function ensureUiWebExportBuilt(params: { testDir: string; env: NodeJS.Pro
 
 	    await mkdir(exportedDistParent, { recursive: true });
 	    await removePathWithRetries(stagingDir).catch(() => {});
+      writeUiWebExportLockOwnerMetadata(exportedDistLockPath, stagingDir);
 
 	    for (;;) {
 	    try {
