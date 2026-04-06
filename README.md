@@ -7,8 +7,9 @@
 
   <p><img src="/.github/supported-ai-providers.png" title="Happier Dev" alt="Happier Dev" width="320" /></p>
   
-  **Voice assistant · Full Git client · File editor<br />
-  Subagents · Session sharing · Entreprise-ready**
+  **Mobile Claude, Codex, OpenCode client · Voice assistant<br />
+  Full Git client · File editor · Subagents · Session sharing<br />
+  Entreprise-ready**
 
   End-to-end encrypted. Self-hostable.<br />
   Built by developers, for developers.
