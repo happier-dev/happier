@@ -257,7 +257,7 @@ describe('createCodexRolloutSessionStore', () => {
 
         const appendedLines = Array.from({ length: 101 }, (_, index) =>
             responseItemLine({
-                timestamp: `2026-01-02T00:00:${String(index).padStart(2, '0')}.000Z`,
+                timestamp: `2026-01-02T00:${String(Math.floor(index / 60)).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}.000Z`,
                 payload: {
                     type: 'message',
                     role: 'assistant',
