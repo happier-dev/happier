@@ -67,14 +67,14 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
                 return;
             }
 
-            const parsed = DirectSessionTranscriptDeltaEphemeralSchema.strip().safeParse(data);
+            const parsed = DirectSessionTranscriptDeltaEphemeralSchema.safeParse(data);
             if (!parsed.success) {
                 return;
             }
 
             eventRouter.emitEphemeral({
                 userId,
-                payload: parsed.data as any,
+                payload: parsed.data,
                 recipientFilter: { type: 'all-interested-in-session', sessionId: parsed.data.sessionId },
             });
         } catch (error) {

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createSessionScanner } from './sessionScanner'
 import { RawJSONLines } from '../types'
+import { clearClaudeRawJsonlSessionStoreRegistriesForTests } from '../transcripts/sessionStore'
 import { mkdir, writeFile, appendFile, rm, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -65,6 +66,8 @@ describe('sessionScanner', () => {
     if (existsSync(testDir)) {
       await rm(testDir, { recursive: true, force: true })
     }
+
+    clearClaudeRawJsonlSessionStoreRegistriesForTests()
   })
   
   it('should process initial session and resumed session correctly', async () => {
@@ -531,6 +534,59 @@ describe('sessionScanner', () => {
     await waitFor(() => collectedMessages.length >= 1, 1000)
     expect(collectedMessages).toHaveLength(1)
     expect(collectedMessages[0].type).toBe('assistant')
+  })
+
+  it('keeps transcriptPath overrides scoped to the overridden session and still resolves later canonical sessions from the canonical project dir', async () => {
+    scanner = await createSessionScanner({
+      sessionId: null,
+      workingDirectory: testDir,
+      onMessage: (msg) => collectedMessages.push(msg),
+    })
+
+    const altProjectDir = join(testDir, 'alt-project')
+    await mkdir(altProjectDir, { recursive: true })
+
+    const overriddenSessionId = '44444444-4444-4444-4444-444444444444'
+    const overriddenTranscriptPath = join(altProjectDir, `${overriddenSessionId}.jsonl`)
+    await writeFile(
+      overriddenTranscriptPath,
+      JSON.stringify({
+        type: 'user',
+        uuid: 'override-message',
+        message: { content: 'hello from explicit override' },
+      }) + '\n',
+    )
+
+    scanner.onNewSession({ sessionId: overriddenSessionId, transcriptPath: overriddenTranscriptPath })
+    await waitFor(
+      () =>
+        collectedMessages.some(
+          (message) => message.type === 'user' && message.message.content === 'hello from explicit override',
+        ),
+      1000,
+    )
+
+    const messagesBeforeCanonical = collectedMessages.length
+    const canonicalSessionId = '55555555-5555-5555-5555-555555555555'
+    const canonicalTranscriptPath = join(projectDir, `${canonicalSessionId}.jsonl`)
+    await writeFile(
+      canonicalTranscriptPath,
+      JSON.stringify({
+        type: 'user',
+        uuid: 'canonical-message',
+        message: { content: 'hello from canonical project dir' },
+      }) + '\n',
+    )
+
+    scanner.onNewSession(canonicalSessionId)
+
+    await waitFor(() => collectedMessages.length >= messagesBeforeCanonical + 1, 1000)
+
+    expect(collectedMessages.at(-1)?.type).toBe('user')
+    const finalMessage = collectedMessages.at(-1)
+    if (finalMessage?.type === 'user') {
+      expect(finalMessage.message.content).toBe('hello from canonical project dir')
+    }
   })
 
   it('normalizes Claude Agent Teams tool names to canonical tool names', async () => {

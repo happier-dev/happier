@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDbMocks, installDbModuleMock } from "../testkit/dbMocks";
 import { createInTxHarness } from "../testkit/txHarness";
 import { createFakeSocket, getSocketHandler } from "../testkit/socketHarness";
+import type { EphemeralPayload } from "@/app/events/eventPayloadTypes";
 
 const emitUpdate = vi.fn();
 const emitEphemeral = vi.fn();
@@ -172,16 +173,7 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
     it("rebroadcasts validated direct-session transcript delta ephemerals", async () => {
         const { machineUpdateHandler } = await import("./machineUpdateHandler");
 
-        const socket = createFakeSocket({
-            data: {
-                clientType: "machine-scoped",
-                machineId: "m1",
-            },
-        });
-        machineUpdateHandler("u1", socket as any);
-        const handler = getSocketHandler(socket, "direct-session-transcript-delta");
-
-        await handler({
+        const payload = {
             type: "direct-session-transcript-delta",
             sessionId: "sess-1",
             items: [
@@ -198,15 +190,23 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
             ],
             nextCursor: "cursor-2",
             truncated: false,
+            futureField: { preserved: true },
+        } satisfies EphemeralPayload;
+
+        const socket = createFakeSocket({
+            data: {
+                clientType: "machine-scoped",
+                machineId: "m1",
+            },
         });
+        machineUpdateHandler("u1", socket as any);
+        const handler = getSocketHandler(socket, "direct-session-transcript-delta");
+
+        await handler(payload);
 
         expect(emitEphemeral).toHaveBeenCalledWith(expect.objectContaining({
             userId: "u1",
-            payload: expect.objectContaining({
-                type: "direct-session-transcript-delta",
-                sessionId: "sess-1",
-                truncated: false,
-            }),
+            payload,
             recipientFilter: { type: "all-interested-in-session", sessionId: "sess-1" },
         }));
     });

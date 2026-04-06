@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile, appendFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile, appendFile, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -123,6 +123,227 @@ describe('readAfterCodexTranscript', () => {
     expect(idle.items).toHaveLength(0);
     expect(idle.truncated).toBe(false);
     expect(idle.nextCursor).toBe(init.nextCursor);
+  });
+
+  it('continues from the last delivered unread line when maxItems truncates a readAfter batch', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-direct-tail-batch-progress-'));
+    const codexHome = join(root, 'codex-home');
+    const sessionsDir = join(codexHome, 'sessions');
+    await mkdir(sessionsDir, { recursive: true });
+
+    const sessionId = 'batch-progress-session';
+    const filePath = join(sessionsDir, `rollout-2026-01-02T00-00-00-${sessionId}.jsonl`);
+
+    await writeFile(
+      filePath,
+      sessionMetaLine({ id: sessionId, timestamp: '2026-01-02T00:00:00.000Z', cwd: '/repo/batch-progress' }),
+      'utf8',
+    );
+
+    const init = await readAfterCodexTranscript({
+      source: { kind: 'codexHome', home: 'user' },
+      env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+      activeServerDir: join(root, 'servers', 'cloud'),
+      remoteSessionId: sessionId,
+      cursor: 'tail',
+      maxBytes: 1024 * 1024,
+      maxItems: 100,
+    });
+
+    expect(init.items).toHaveLength(0);
+    expect(init.nextCursor).toBeTruthy();
+
+    await appendFile(
+      filePath,
+      responseItemLine({
+        timestamp: '2026-01-02T00:00:01.000Z',
+        payload: { type: 'message', role: 'assistant', content: [{ type: 'text', text: 'first unread item' }] },
+      })
+      + responseItemLine({
+        timestamp: '2026-01-02T00:00:02.000Z',
+        payload: { type: 'message', role: 'assistant', content: [{ type: 'text', text: 'second unread item' }] },
+      }),
+      'utf8',
+    );
+
+    const firstBatch = await readAfterCodexTranscript({
+      source: { kind: 'codexHome', home: 'user' },
+      env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+      activeServerDir: join(root, 'servers', 'cloud'),
+      remoteSessionId: sessionId,
+      cursor: init.nextCursor!,
+      maxBytes: 1024 * 1024,
+      maxItems: 1,
+    });
+
+    expect(firstBatch.items).toHaveLength(1);
+    expect(JSON.stringify(firstBatch.items[0] ?? null)).toContain('first unread item');
+    expect(firstBatch.truncated).toBe(true);
+    expect(firstBatch.nextCursor).toBeTruthy();
+
+    const secondBatch = await readAfterCodexTranscript({
+      source: { kind: 'codexHome', home: 'user' },
+      env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+      activeServerDir: join(root, 'servers', 'cloud'),
+      remoteSessionId: sessionId,
+      cursor: firstBatch.nextCursor!,
+      maxBytes: 1024 * 1024,
+      maxItems: 1,
+    });
+
+    expect(secondBatch.truncated).toBe(false);
+    expect(secondBatch.items).toHaveLength(1);
+    expect(JSON.stringify(secondBatch.items[0] ?? null)).toContain('second unread item');
+    expect(secondBatch.nextCursor).toBeTruthy();
+  });
+
+  it('continues within a single multi-item rollout line when maxItems truncates a readAfter batch', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-direct-tail-subindex-progress-'));
+    const codexHome = join(root, 'codex-home');
+    const sessionsDir = join(codexHome, 'sessions');
+    await mkdir(sessionsDir, { recursive: true });
+
+    const sessionId = 'subindex-progress-session';
+    const childThreadId = '56565656-5656-5656-5656-565656565656';
+    const filePath = join(sessionsDir, `rollout-2026-01-02T00-00-00-${sessionId}.jsonl`);
+
+    await writeFile(
+      filePath,
+      sessionMetaLine({ id: sessionId, timestamp: '2026-01-02T00:00:00.000Z', cwd: '/repo/subindex-progress' }),
+      'utf8',
+    );
+
+    const init = await readAfterCodexTranscript({
+      source: { kind: 'codexHome', home: 'user' },
+      env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+      activeServerDir: join(root, 'servers', 'cloud'),
+      remoteSessionId: sessionId,
+      cursor: 'tail',
+      maxBytes: 1024 * 1024,
+      maxItems: 100,
+    });
+
+    expect(init.items).toHaveLength(0);
+    expect(init.nextCursor).toBeTruthy();
+
+    await appendFile(
+      filePath,
+      `${JSON.stringify({
+        type: 'event_msg',
+        timestamp: '2026-01-02T00:00:01.000Z',
+        payload: {
+          type: 'collab_waiting_end',
+          sender_thread_id: sessionId,
+          agent_statuses: [{
+            thread_id: childThreadId,
+            agent_nickname: 'Lovelace',
+            agent_role: 'explorer',
+            status: { completed: 'done' },
+          }],
+        },
+      })}\n`,
+      'utf8',
+    );
+
+    const firstBatch = await readAfterCodexTranscript({
+      source: { kind: 'codexHome', home: 'user' },
+      env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+      activeServerDir: join(root, 'servers', 'cloud'),
+      remoteSessionId: sessionId,
+      cursor: init.nextCursor!,
+      maxBytes: 1024 * 1024,
+      maxItems: 1,
+    });
+
+    expect(firstBatch.items).toHaveLength(1);
+    expect(firstBatch.items[0]?.raw).toEqual(
+      expect.objectContaining({
+        role: 'agent',
+        content: expect.objectContaining({
+          data: expect.objectContaining({
+            type: 'tool-call',
+            callId: childThreadId,
+            name: 'SubAgent',
+          }),
+        }),
+      }),
+    );
+    expect(firstBatch.truncated).toBe(true);
+    expect(firstBatch.nextCursor).toBeTruthy();
+
+    const secondBatch = await readAfterCodexTranscript({
+      source: { kind: 'codexHome', home: 'user' },
+      env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+      activeServerDir: join(root, 'servers', 'cloud'),
+      remoteSessionId: sessionId,
+      cursor: firstBatch.nextCursor!,
+      maxBytes: 1024 * 1024,
+      maxItems: 1,
+    });
+
+    expect(secondBatch.truncated).toBe(false);
+    expect(secondBatch.items).toHaveLength(1);
+    expect(secondBatch.items[0]?.raw).toEqual(
+      expect.objectContaining({
+        role: 'agent',
+        content: expect.objectContaining({
+          data: expect.objectContaining({
+            type: 'tool-call-result',
+            callId: childThreadId,
+          }),
+        }),
+      }),
+    );
+    expect(secondBatch.nextCursor).toBeTruthy();
+  });
+
+  it('keeps the cached tail cursor stable after the rollout file disappears', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-direct-tail-cache-'));
+    const codexHome = join(root, 'codex-home');
+    const sessionsDir = join(codexHome, 'sessions');
+    await mkdir(sessionsDir, { recursive: true });
+
+    const sessionId = 'tail-cache-session';
+    const filePath = join(sessionsDir, `rollout-2026-01-02T00-00-00-${sessionId}.jsonl`);
+
+    await writeFile(
+      filePath,
+      sessionMetaLine({ id: sessionId, timestamp: '2026-01-02T00:00:00.000Z', cwd: '/repo/cache-tail' })
+        + responseItemLine({
+          timestamp: '2026-01-02T00:00:01.000Z',
+          payload: { type: 'message', role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
+        }),
+      'utf8',
+    );
+
+    const init = await readAfterCodexTranscript({
+      source: { kind: 'codexHome', home: 'user' },
+      env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+      activeServerDir: join(root, 'servers', 'cloud'),
+      remoteSessionId: sessionId,
+      cursor: 'tail',
+      maxBytes: 1024 * 1024,
+      maxItems: 100,
+    });
+
+    expect(init.items).toHaveLength(0);
+    expect(init.nextCursor).toBeTruthy();
+
+    await unlink(filePath);
+
+    const afterMissing = await readAfterCodexTranscript({
+      source: { kind: 'codexHome', home: 'user' },
+      env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+      activeServerDir: join(root, 'servers', 'cloud'),
+      remoteSessionId: sessionId,
+      cursor: init.nextCursor!,
+      maxBytes: 1024 * 1024,
+      maxItems: 100,
+    });
+
+    expect(afterMissing.items).toHaveLength(0);
+    expect(afterMissing.truncated).toBe(false);
+    expect(afterMissing.nextCursor).toBe(init.nextCursor);
   });
 
   it('keeps polling app-server-linked sessions when rollout files are missing, then forces a refresh when one appears', async () => {
@@ -397,6 +618,94 @@ describe('readAfterCodexTranscript', () => {
               data: expect.objectContaining({
                 type: 'message',
                 message: 'child summary',
+                sidechainId: childThreadId,
+              }),
+            }),
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it('returns newly discovered child rollout items even when they sort before the previously seen merged tail item', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-direct-tail-child-out-of-order-'));
+    const codexHome = join(root, 'codex-home');
+    const sessionsDir = join(codexHome, 'sessions');
+    await mkdir(sessionsDir, { recursive: true });
+
+    const sessionId = '12121212-1212-1212-1212-121212121212';
+    const childThreadId = '34343434-3434-3434-3434-343434343434';
+    const parentFilePath = join(sessionsDir, `rollout-2026-01-02T00-00-00-${sessionId}.jsonl`);
+    const childFilePath = join(sessionsDir, `rollout-2026-01-02T00-00-01-${childThreadId}.jsonl`);
+
+    await writeFile(
+      parentFilePath,
+      sessionMetaLine({ id: sessionId, timestamp: '2026-01-02T00:00:00.000Z', cwd: '/repo/out-of-order-child' })
+      + responseItemLine({
+        timestamp: '2026-01-02T00:00:03.000Z',
+        payload: { type: 'message', role: 'assistant', content: [{ type: 'text', text: 'parent tail anchor' }] },
+      }),
+      'utf8',
+    );
+
+    const init = await readAfterCodexTranscript({
+      source: { kind: 'codexHome', home: 'user' },
+      env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+      activeServerDir: join(root, 'servers', 'cloud'),
+      remoteSessionId: sessionId,
+      cursor: 'tail',
+      maxBytes: 1024 * 1024,
+      maxItems: 100,
+    });
+
+    expect(init.items).toHaveLength(0);
+    expect(init.nextCursor).toBeTruthy();
+
+    await appendFile(
+      parentFilePath,
+      `${JSON.stringify({
+        type: 'event_msg',
+        timestamp: '2026-01-02T00:00:04.000Z',
+        payload: {
+          type: 'collab_agent_spawn_end',
+          sender_thread_id: sessionId,
+          new_thread_id: childThreadId,
+          new_agent_nickname: 'Lovelace',
+          new_agent_role: 'explorer',
+          prompt: 'inspect the repo',
+        },
+      })}\n`,
+      'utf8',
+    );
+    await writeFile(
+      childFilePath,
+      responseItemLine({
+        timestamp: '2026-01-02T00:00:02.000Z',
+        payload: { type: 'message', role: 'assistant', content: [{ type: 'text', text: 'late-discovered child summary' }] },
+      }),
+      'utf8',
+    );
+
+    const next = await readAfterCodexTranscript({
+      source: { kind: 'codexHome', home: 'user' },
+      env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+      activeServerDir: join(root, 'servers', 'cloud'),
+      remoteSessionId: sessionId,
+      cursor: init.nextCursor!,
+      maxBytes: 1024 * 1024,
+      maxItems: 100,
+    });
+
+    expect(next.truncated).toBe(false);
+    expect(next.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          raw: expect.objectContaining({
+            role: 'agent',
+            content: expect.objectContaining({
+              data: expect.objectContaining({
+                type: 'message',
+                message: 'late-discovered child summary',
                 sidechainId: childThreadId,
               }),
             }),

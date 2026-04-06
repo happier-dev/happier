@@ -162,7 +162,7 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
                 reason: 'attached_view',
               }),
               emitDirectSessionTranscriptUpdate,
-              isBackgroundFollowEnabled: () => followLeaseManager.isBackgroundFollowEnabled(parsed.data.sessionId),
+              shouldProcessBackgroundFollowEffects: () => false,
             });
           }
           : undefined,
@@ -224,7 +224,9 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
               reason: 'background_follow',
             }),
             emitDirectSessionTranscriptUpdate,
-            isBackgroundFollowEnabled: () => followLeaseManager.isBackgroundFollowEnabled(parsed.data.sessionId),
+            shouldProcessBackgroundFollowEffects: () =>
+              followLeaseManager.isBackgroundFollowEnabled(parsed.data.sessionId)
+              && followLeaseManager.countActiveLeases(parsed.data.sessionId) === 0,
           })
           : undefined,
       });

@@ -35,6 +35,8 @@ class ClaudeProjectedJsonlSessionStore<TItem, TActivity, TPageParams, TReadAfter
     private tailCursor: string | null = null;
     private readonly subscriptionListeners = new Set<FileBackedTranscriptSubscriptionListener<TItem>>();
     private subscriptionFollower: JsonlFollower | null = null;
+    private subscriptionFollowerStartupPromise: Promise<void> | null = null;
+    private subscriptionFollowerStartupGeneration = 0;
     private subscriptionCursor: string | null = null;
     private subscriptionDrainPromise: Promise<void> | null = null;
     private subscriptionDrainQueued = false;
@@ -156,40 +158,74 @@ class ClaudeProjectedJsonlSessionStore<TItem, TActivity, TPageParams, TReadAfter
     }
 
     private async ensureSubscriptionFollower(): Promise<void> {
-        if (this.subscriptionFollower || this.lifecycleState === 'disposed') return;
+        if (this.subscriptionFollower || this.lifecycleState === 'disposed' || !this.shouldKeepSubscriptionFollower()) return;
+        if (this.subscriptionFollowerStartupPromise) {
+            await this.subscriptionFollowerStartupPromise;
+            return;
+        }
 
-        const resolved = await this.resolveFile();
-        if (!resolved?.filePath) return;
+        const startupGeneration = ++this.subscriptionFollowerStartupGeneration;
+        const startupPromise = (async () => {
+            const resolved = await this.resolveFile();
+            if (this.isSubscriptionFollowerStartupStale(startupGeneration) || !resolved?.filePath) return;
 
-        const follower = new JsonlFollower({
-            filePath: resolved.filePath,
-            pollIntervalMs: 250,
-            startAtEnd: false,
-            onJson: async () => {
-                await this.queueSubscriptionDrain();
-            },
+            const follower = new JsonlFollower({
+                filePath: resolved.filePath,
+                pollIntervalMs: 250,
+                startAtEnd: false,
+                onJson: async () => {
+                    await this.queueSubscriptionDrain();
+                },
+            });
+            this.subscriptionFollower = follower;
+            const currentTailCursor = this.tailCursor;
+            if (currentTailCursor) {
+                this.subscriptionCursor = currentTailCursor;
+            } else {
+                const initial = await this.readAfter(undefined);
+                if (this.isSubscriptionFollowerStartupStale(startupGeneration)) {
+                    this.subscriptionFollower = null;
+                    return;
+                }
+                this.subscriptionCursor = initial.nextCursor ?? 'tail';
+            }
+            await follower.start();
+            if (this.subscriptionFollower !== follower || this.isSubscriptionFollowerStartupStale(startupGeneration)) {
+                if (this.subscriptionFollower === follower) {
+                    this.subscriptionFollower = null;
+                }
+                await follower.stop();
+            }
+        })().finally(() => {
+            if (this.subscriptionFollowerStartupPromise === startupPromise) {
+                this.subscriptionFollowerStartupPromise = null;
+            }
         });
-        this.subscriptionFollower = follower;
-        const currentTailCursor = this.tailCursor;
-        if (currentTailCursor) {
-            this.subscriptionCursor = currentTailCursor;
-        } else {
-            const initial = await this.readAfter(undefined);
-            this.subscriptionCursor = initial.nextCursor ?? 'tail';
-        }
-        await follower.start();
-        if (this.subscriptionFollower !== follower) {
-            await follower.stop();
-        }
+        this.subscriptionFollowerStartupPromise = startupPromise;
+        await startupPromise;
     }
 
     private async stopSubscriptionFollower(): Promise<void> {
+        this.subscriptionFollowerStartupGeneration += 1;
+        this.subscriptionFollowerStartupPromise = null;
         const follower = this.subscriptionFollower;
         this.subscriptionFollower = null;
         this.subscriptionCursor = null;
         this.subscriptionDrainPromise = null;
         this.subscriptionDrainQueued = false;
         await follower?.stop();
+    }
+
+    private shouldKeepSubscriptionFollower(): boolean {
+        return this.lifecycleState === 'hot_attached' || this.subscriptionListeners.size > 0;
+    }
+
+    private isSubscriptionFollowerStartupStale(startupGeneration: number): boolean {
+        return (
+            this.lifecycleState === 'disposed'
+            || !this.shouldKeepSubscriptionFollower()
+            || this.subscriptionFollowerStartupGeneration !== startupGeneration
+        );
     }
 
     private async queueSubscriptionDrain(): Promise<void> {

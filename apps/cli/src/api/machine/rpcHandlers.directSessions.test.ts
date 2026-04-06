@@ -9,10 +9,24 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { writeFakeCodexAppServerThreadListScript } from '@/backends/codex/appServer/testkit/fakeCodexAppServer';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
 
-const readCredentialsMock = vi.fn();
-const fetchSessionByIdMock = vi.fn();
-const commitSessionStoredMessageMock = vi.fn();
-const updateSessionMetadataWithRetryMock = vi.fn();
+const {
+  readCredentialsMock,
+  fetchSessionByIdMock,
+  commitSessionStoredMessageMock,
+  updateSessionMetadataWithRetryMock,
+  dispatchActivityNotificationAsyncMock,
+  getActiveAccountSettingsSnapshotMock,
+} = vi.hoisted(() => ({
+  readCredentialsMock: vi.fn(),
+  fetchSessionByIdMock: vi.fn(),
+  commitSessionStoredMessageMock: vi.fn(),
+  updateSessionMetadataWithRetryMock: vi.fn(),
+  dispatchActivityNotificationAsyncMock: vi.fn(async () => ({
+    attemptedChannels: 1,
+    deliveredChannels: 1,
+  })),
+  getActiveAccountSettingsSnapshotMock: vi.fn(),
+}));
 
 vi.mock('@/configuration', () => ({
   configuration: {
@@ -25,20 +39,28 @@ vi.mock('@/configuration', () => ({
 }));
 
 vi.mock('@/persistence', () => ({
-  readCredentials: (...args: unknown[]) => readCredentialsMock(...args),
+  readCredentials: readCredentialsMock,
 }));
 
 vi.mock('@/session/transport/http/sessionsHttp', async () => {
   const actual = await vi.importActual<typeof import('@/session/transport/http/sessionsHttp')>('@/session/transport/http/sessionsHttp');
   return {
     ...actual,
-    fetchSessionById: (...args: unknown[]) => fetchSessionByIdMock(...args),
-    commitSessionStoredMessage: (...args: unknown[]) => commitSessionStoredMessageMock(...args),
+    fetchSessionById: fetchSessionByIdMock,
+    commitSessionStoredMessage: commitSessionStoredMessageMock,
   };
 });
 
 vi.mock('@/session/metadata/updateSessionMetadataWithRetry', () => ({
-  updateSessionMetadataWithRetry: (...args: unknown[]) => updateSessionMetadataWithRetryMock(...args),
+  updateSessionMetadataWithRetry: updateSessionMetadataWithRetryMock,
+}));
+
+vi.mock('@/activity/notifications/dispatchActivityNotification', () => ({
+  dispatchActivityNotificationAsync: dispatchActivityNotificationAsyncMock,
+}));
+
+vi.mock('@/settings/accountSettings/activeAccountSettingsSnapshot', () => ({
+  getActiveAccountSettingsSnapshot: getActiveAccountSettingsSnapshotMock,
 }));
 
 import { registerMachineDirectSessionsRpcHandlers } from './rpcHandlers.directSessions';
@@ -66,6 +88,18 @@ describe('registerMachineDirectSessionsRpcHandlers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.unstubAllEnvs();
+    getActiveAccountSettingsSnapshotMock.mockReturnValue({
+      source: 'active',
+      settings: {
+        notificationsSettingsV1: {
+          v: 1,
+          pushEnabled: true,
+          ready: true,
+          permissionRequest: false,
+        },
+      },
+      settingsSecretsReadKeys: [],
+    });
   });
 
   it('registers direct-session attach leases and detaches them', async () => {
@@ -426,6 +460,141 @@ describe('registerMachineDirectSessionsRpcHandlers', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 400));
     expect(emitDirectSessionTranscriptUpdate).not.toHaveBeenCalled();
+  });
+
+  it('suppresses detached background-follow metadata writes and ready notifications while a viewer is attached', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-directSessions-rpc-attached-suppression-'));
+    const configDir = join(root, '.claude');
+    const sessionDir = join(configDir, 'projects', 'proj-attached-suppression');
+    const sessionFile = join(sessionDir, 'sess-attached-suppression.jsonl');
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(
+      sessionFile,
+      jsonlLine({ type: 'assistant', uuid: 'a1', message: { model: 'm', content: [] } }),
+      'utf8',
+    );
+    vi.stubEnv('HAPPIER_CLAUDE_CONFIG_DIR', configDir);
+
+    readCredentialsMock.mockResolvedValue({
+      token: 'token-direct',
+      encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) },
+    });
+    fetchSessionByIdMock.mockResolvedValue({
+      id: 'sess_happy_attached_suppression',
+      metadataVersion: 7,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        path: '',
+        machineId: 'm1',
+        flavor: 'claude',
+        directSessionV1: {
+          v: 1,
+          providerId: 'claude',
+          machineId: 'm1',
+          remoteSessionId: 'sess-attached-suppression',
+          source: { kind: 'claudeConfig', configDir, projectId: 'proj-attached-suppression' },
+          linkedAtMs: Date.now(),
+        },
+      }),
+    });
+    updateSessionMetadataWithRetryMock.mockImplementation(async ({ updater }: { updater: (current: Record<string, unknown>) => Record<string, unknown> }) => ({
+      version: 8,
+      metadata: updater({
+        path: '',
+        machineId: 'm1',
+        flavor: 'claude',
+        directSessionV1: {
+          v: 1,
+          providerId: 'claude',
+          machineId: 'm1',
+          remoteSessionId: 'sess-attached-suppression',
+          source: { kind: 'claudeConfig', configDir, projectId: 'proj-attached-suppression' },
+          linkedAtMs: Date.now(),
+        },
+      }),
+    }));
+
+    const emitDirectSessionTranscriptUpdate = vi.fn(async () => {});
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    registerMachineDirectSessionsRpcHandlers({
+      rpcHandlerManager,
+      emitDirectSessionTranscriptUpdate,
+    } as any);
+
+    const policyHandler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET);
+    const attachHandler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH);
+    expect(policyHandler).toBeDefined();
+    expect(attachHandler).toBeDefined();
+
+    const policyResult = await policyHandler!({
+      machineId: 'm1',
+      sessionId: 'sess_happy_attached_suppression',
+      providerId: 'claude',
+      remoteSessionId: 'sess-attached-suppression',
+      source: { kind: 'claudeConfig', configDir, projectId: 'proj-attached-suppression' },
+      enabled: true,
+    });
+
+    expect(policyResult).toEqual(expect.objectContaining({
+      ok: true,
+      enabled: true,
+      leaseActive: true,
+    }));
+
+    updateSessionMetadataWithRetryMock.mockClear();
+    dispatchActivityNotificationAsyncMock.mockClear();
+
+    const attached = await attachHandler!({
+      machineId: 'm1',
+      sessionId: 'sess_happy_attached_suppression',
+      providerId: 'claude',
+      remoteSessionId: 'sess-attached-suppression',
+      source: { kind: 'claudeConfig', configDir, projectId: 'proj-attached-suppression' },
+      ttlMs: 30_000,
+    });
+
+    expect(attached).toEqual(expect.objectContaining({ ok: true }));
+
+    await writeFile(
+      sessionFile,
+      [
+        jsonlLine({ type: 'assistant', uuid: 'a1', message: { model: 'm', content: [] } }),
+        jsonlLine({ type: 'assistant', uuid: 'a2', message: { model: 'm', content: [{ type: 'text', text: 'attached suppression delta' }] } }),
+      ].join(''),
+      'utf8',
+    );
+
+    await waitForExpectation(() => {
+      expect(emitDirectSessionTranscriptUpdate).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: 'sess_happy_attached_suppression',
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            raw: expect.objectContaining({
+              content: expect.objectContaining({
+                data: expect.objectContaining({
+                  message: expect.objectContaining({
+                    content: expect.arrayContaining([
+                      expect.objectContaining({ text: 'attached suppression delta' }),
+                    ]),
+                  }),
+                }),
+              }),
+            }),
+          }),
+        ]),
+      }));
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    expect(updateSessionMetadataWithRetryMock).not.toHaveBeenCalled();
+    expect(dispatchActivityNotificationAsyncMock).not.toHaveBeenCalled();
   });
 
   it('takes over a direct claude session using provider cwd and config dir', async () => {

@@ -9,14 +9,17 @@ export function createClaudeScannerSessionPathResolver(params: Readonly<{
     claudeConfigDir?: string | null;
 }>) {
     const initialProjectDir = getProjectPath(params.workingDirectory, params.claudeConfigDir ?? null);
-    let projectDirOverride: string | null = null;
     const sessionFileOverrides = new Map<string, string>();
 
-    const effectiveProjectDir = (): string => projectDirOverride ?? initialProjectDir;
+    const getProjectDirForSession = (sessionId: string | null | undefined): string => {
+        if (!sessionId) return initialProjectDir;
+        const override = sessionFileOverrides.get(sessionId);
+        return override ? dirname(override) : initialProjectDir;
+    };
 
     const getSessionFilePath = (sessionId: string): string => {
         const override = sessionFileOverrides.get(sessionId);
-        return override ?? join(effectiveProjectDir(), `${sessionId}.jsonl`);
+        return override ?? join(initialProjectDir, `${sessionId}.jsonl`);
     };
 
     const applyTranscriptPathOverride = (sessionId: string, transcriptPath: string | null | undefined): boolean => {
@@ -34,12 +37,6 @@ export function createClaudeScannerSessionPathResolver(params: Readonly<{
             didUpdatePaths = true;
         }
 
-        const nextProjectDir = dirname(normalizedTranscriptPath);
-        if (!projectDirOverride || projectDirOverride !== nextProjectDir) {
-            projectDirOverride = nextProjectDir;
-            didUpdatePaths = true;
-        }
-
         return didUpdatePaths;
     };
 
@@ -49,7 +46,7 @@ export function createClaudeScannerSessionPathResolver(params: Readonly<{
 
     return {
         applyTranscriptPathOverride,
-        effectiveProjectDir,
+        getProjectDirForSession,
         getSessionFilePath,
     };
 }

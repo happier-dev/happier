@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createSessionScanner } from './sessionScanner'
+import { clearClaudeRawJsonlSessionStoreRegistriesForTests } from '../transcripts/sessionStore'
 import { mkdir, writeFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -50,6 +51,8 @@ describe('sessionScanner onMessage errors', () => {
     if (existsSync(testDir)) {
       await rm(testDir, { recursive: true, force: true })
     }
+
+    clearClaudeRawJsonlSessionStoreRegistriesForTests()
   })
 
   it('logs and continues when onMessage callback throws', async () => {
@@ -75,4 +78,3 @@ describe('sessionScanner onMessage errors', () => {
     await waitFor(() => debugSpy.mock.calls.some((c) => String(c[0]).includes('[SESSION_SCANNER] onMessage callback threw')))
   })
 })
-

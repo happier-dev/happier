@@ -59,7 +59,7 @@ export async function createManagedDirectSessionFollowLease(params: Readonly<{
     reason: DirectSessionFollowLeaseReason;
     acquireProviderFollowLease: () => Promise<DirectSessionFollowLease | null>;
     emitDirectSessionTranscriptUpdate?: (payload: DirectSessionTranscriptDeltaEphemeral) => void;
-    isBackgroundFollowEnabled: () => boolean;
+    shouldProcessBackgroundFollowEffects: () => boolean;
 }>): Promise<DirectSessionFollowLease | null> {
     const acquiredLease = await params.acquireProviderFollowLease();
     if (!acquiredLease) {
@@ -70,7 +70,14 @@ export async function createManagedDirectSessionFollowLease(params: Readonly<{
     }
 
     let released = false;
+    let providerLeaseReleased = false;
     let metadataWriteContextPromise: Promise<MetadataWriteContext | null> | null = null;
+
+    const releaseProviderLease = async (): Promise<void> => {
+        if (providerLeaseReleased) return;
+        providerLeaseReleased = true;
+        await acquiredLease.release().catch(() => undefined);
+    };
 
     const resolveCachedMetadataWriteContext = async (): Promise<MetadataWriteContext | null> => {
         if (!metadataWriteContextPromise) {
@@ -92,7 +99,7 @@ export async function createManagedDirectSessionFollowLease(params: Readonly<{
             })).catch(() => undefined);
         }
 
-        if (!params.isBackgroundFollowEnabled()) {
+        if (params.reason !== 'background_follow' || !params.shouldProcessBackgroundFollowEffects()) {
             return;
         }
 
@@ -134,6 +141,10 @@ export async function createManagedDirectSessionFollowLease(params: Readonly<{
         }).catch(() => undefined);
     });
 
+    if (params.reason === 'background_follow') {
+        await releaseProviderLease();
+    }
+
     return {
         release: async () => {
             released = true;
@@ -142,7 +153,7 @@ export async function createManagedDirectSessionFollowLease(params: Readonly<{
             } catch {
                 // Best-effort cleanup only.
             }
-            await acquiredLease.release().catch(() => undefined);
+            await releaseProviderLease();
         },
         getTailCursor: typeof acquiredLease.getTailCursor === 'function'
             ? () => acquiredLease.getTailCursor?.() ?? null

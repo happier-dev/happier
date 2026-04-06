@@ -17,6 +17,8 @@ type DirectSessionFollowLeaseManagerParams = Readonly<{
     clearTimer?: typeof clearTimeout;
 }>;
 
+type FollowLeaseAcquirer = () => Promise<DirectSessionFollowLease | null>;
+
 function clearManagedTimer(
     timer: ReturnType<typeof setTimeout> | null,
     clearTimer: typeof clearTimeout,
@@ -36,6 +38,7 @@ export function createDirectSessionFollowLeaseManager(params?: DirectSessionFoll
     });
     const followLeasesById = new Map<string, ManagedFollowLeaseRecord>();
     const backgroundFollowEnabledBySessionId = new Map<string, boolean>();
+    const backgroundFollowAcquireBySessionId = new Map<string, FollowLeaseAcquirer>();
     const backgroundFollowLeasesBySessionId = new Map<string, ManagedFollowLeaseRecord>();
 
     const releaseFollowLease = async (leaseId: string, sessionId: string): Promise<boolean> => {
@@ -67,6 +70,28 @@ export function createDirectSessionFollowLeaseManager(params?: DirectSessionFoll
                 await releaseFollowLease(leaseId, sessionId);
             })();
         }, delayMs);
+    };
+
+    const acquireDetachedBackgroundFollowLease = async (
+        sessionId: string,
+        acquireFollowLease: FollowLeaseAcquirer | null | undefined,
+    ): Promise<boolean> => {
+        if (backgroundFollowLeasesBySessionId.has(sessionId)) {
+            return false;
+        }
+        if (!acquireFollowLease) {
+            return false;
+        }
+        const followLease = await acquireFollowLease();
+        if (!followLease) {
+            return false;
+        }
+        backgroundFollowLeasesBySessionId.set(sessionId, {
+            sessionId,
+            release: followLease.release,
+            expiryTimer: null,
+        });
+        return true;
     };
 
     return {
@@ -115,28 +140,17 @@ export function createDirectSessionFollowLeaseManager(params?: DirectSessionFoll
         async detach(input: Readonly<{ sessionId: string; leaseId: string }>) {
             const detached = viewerLeaseRegistry.detach(input);
             if (detached.detached) {
-                const followLease = followLeasesById.get(input.leaseId) ?? null;
-                const keepAliveForBackgroundFollow = backgroundFollowEnabledBySessionId.get(input.sessionId) === true
-                    && Boolean(followLease?.release)
-                    && !backgroundFollowLeasesBySessionId.has(input.sessionId);
+                await releaseFollowLease(input.leaseId, input.sessionId);
 
-                if (keepAliveForBackgroundFollow && followLease) {
-                    followLeasesById.delete(input.leaseId);
-                    clearManagedTimer(followLease.expiryTimer, clearTimer);
-                    backgroundFollowLeasesBySessionId.set(input.sessionId, {
-                        sessionId: input.sessionId,
-                        release: followLease.release,
-                        expiryTimer: null,
-                    });
-                } else {
-                    await releaseFollowLease(input.leaseId, input.sessionId);
-                }
-
-                if (
-                    backgroundFollowEnabledBySessionId.get(input.sessionId) !== true
-                    && viewerLeaseRegistry.countActiveLeases(input.sessionId) === 0
-                ) {
-                    await releaseBackgroundFollowLease(input.sessionId);
+                if (viewerLeaseRegistry.countActiveLeases(input.sessionId) === 0) {
+                    if (backgroundFollowEnabledBySessionId.get(input.sessionId) === true) {
+                        const acquireFollowLease = backgroundFollowAcquireBySessionId.get(input.sessionId) ?? null;
+                        if (acquireFollowLease) {
+                            await acquireDetachedBackgroundFollowLease(input.sessionId, acquireFollowLease).catch(() => false);
+                        }
+                    } else {
+                        await releaseBackgroundFollowLease(input.sessionId);
+                    }
                 }
             }
             return detached;
@@ -150,10 +164,13 @@ export function createDirectSessionFollowLeaseManager(params?: DirectSessionFoll
             backgroundFollowEnabledBySessionId.set(input.sessionId, input.enabled);
 
             if (!input.enabled) {
-                if (viewerLeaseRegistry.countActiveLeases(input.sessionId) === 0) {
-                    await releaseBackgroundFollowLease(input.sessionId);
-                }
+                backgroundFollowAcquireBySessionId.delete(input.sessionId);
+                await releaseBackgroundFollowLease(input.sessionId);
                 return { enabled: false, leaseAcquired: false } as const;
+            }
+
+            if (input.acquireFollowLease) {
+                backgroundFollowAcquireBySessionId.set(input.sessionId, input.acquireFollowLease);
             }
 
             if (backgroundFollowLeasesBySessionId.has(input.sessionId)) {
@@ -164,11 +181,16 @@ export function createDirectSessionFollowLeaseManager(params?: DirectSessionFoll
                 return { enabled: true, leaseAcquired: false } as const;
             }
 
-            const followLease = (await input.acquireFollowLease?.()) ?? null;
-            if (!followLease) {
+            const acquireFollowLease =
+                input.acquireFollowLease ?? backgroundFollowAcquireBySessionId.get(input.sessionId) ?? null;
+            if (!acquireFollowLease) {
                 return { enabled: true, leaseAcquired: false } as const;
             }
 
+            const followLease = await acquireFollowLease();
+            if (!followLease) {
+                return { enabled: true, leaseAcquired: false } as const;
+            }
             backgroundFollowLeasesBySessionId.set(input.sessionId, {
                 sessionId: input.sessionId,
                 release: followLease.release,

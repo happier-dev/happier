@@ -85,10 +85,12 @@ describe('createDirectSessionFollowLeaseManager', () => {
         expect(manager.countActiveLeases('session-expiring')).toBe(0);
     });
 
-    it('keeps a background follow lease alive after detach until background follow is disabled', async () => {
+    it('releases the attached follow lease on detach and acquires a detached background lease until disabled', async () => {
         let nowMs = 1_000;
-        const release = vi.fn(async () => {});
-        const acquireFollowLease = vi.fn(async () => ({ release }));
+        const attachedRelease = vi.fn(async () => {});
+        const backgroundRelease = vi.fn(async () => {});
+        const acquireAttachedFollowLease = vi.fn(async () => ({ release: attachedRelease }));
+        const acquireBackgroundFollowLease = vi.fn(async () => ({ release: backgroundRelease }));
         const manager = createDirectSessionFollowLeaseManager({
             now: () => nowMs,
             randomId: () => 'lease-background',
@@ -97,25 +99,28 @@ describe('createDirectSessionFollowLeaseManager', () => {
         await manager.attach({
             sessionId: 'session-background',
             ttlMs: 30_000,
-            acquireFollowLease,
+            acquireFollowLease: acquireAttachedFollowLease,
         });
-        expect(acquireFollowLease).toHaveBeenCalledTimes(1);
+        expect(acquireAttachedFollowLease).toHaveBeenCalledTimes(1);
 
         const backgroundFollow = await manager.setBackgroundFollowEnabled({
             sessionId: 'session-background',
             enabled: true,
-            acquireFollowLease,
+            acquireFollowLease: acquireBackgroundFollowLease,
         });
 
         expect(backgroundFollow).toEqual(expect.objectContaining({ enabled: true, leaseAcquired: false }));
-        expect(acquireFollowLease).toHaveBeenCalledTimes(1);
+        expect(acquireBackgroundFollowLease).toHaveBeenCalledTimes(0);
 
         await manager.detach({
             sessionId: 'session-background',
             leaseId: 'lease-background',
         });
-        expect(release).not.toHaveBeenCalled();
+        expect(attachedRelease).toHaveBeenCalledTimes(1);
+        expect(acquireBackgroundFollowLease).toHaveBeenCalledTimes(1);
+        expect(backgroundRelease).toHaveBeenCalledTimes(0);
         expect(manager.countActiveLeases('session-background')).toBe(0);
+        expect(manager.hasBackgroundFollowLease('session-background')).toBe(true);
 
         const disabled = await manager.setBackgroundFollowEnabled({
             sessionId: 'session-background',
@@ -123,6 +128,6 @@ describe('createDirectSessionFollowLeaseManager', () => {
         });
 
         expect(disabled).toEqual({ enabled: false, leaseAcquired: false });
-        expect(release).toHaveBeenCalledTimes(1);
+        expect(backgroundRelease).toHaveBeenCalledTimes(1);
     });
 });

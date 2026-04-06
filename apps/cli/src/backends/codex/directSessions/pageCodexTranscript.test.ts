@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile, utimes } from 'node:fs/promises';
+import { mkdir, mkdtemp, unlink, writeFile, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -148,6 +148,65 @@ describe('pageCodexTranscript', () => {
     ]);
     expect(result.tailCursor).toBeTruthy();
     expect(result.hasMore).toBe(false);
+  });
+
+  it('reuses cached direct-session history across older-page requests after the rollout file disappears', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-direct-page-cache-'));
+    const codexHome = join(root, 'codex-home');
+    const sessionsDir = join(codexHome, 'sessions');
+    await mkdir(sessionsDir, { recursive: true });
+
+    const sessionId = 'page-cache-session';
+    const filePath = join(sessionsDir, `rollout-2026-01-02T00-00-00-${sessionId}.jsonl`);
+
+    await writeFile(
+      filePath,
+      sessionMetaLine({ id: sessionId, timestamp: '2026-01-02T00:00:00.000Z', cwd: '/repo/cache' })
+        + responseItemLine({
+          timestamp: '2026-01-02T00:00:01.000Z',
+          payload: { type: 'message', role: 'user', content: [{ type: 'text', text: 'first' }] },
+        })
+        + responseItemLine({
+          timestamp: '2026-01-02T00:00:02.000Z',
+          payload: { type: 'message', role: 'assistant', content: [{ type: 'text', text: 'second' }] },
+        })
+        + responseItemLine({
+          timestamp: '2026-01-02T00:00:03.000Z',
+          payload: { type: 'message', role: 'assistant', content: [{ type: 'text', text: 'third' }] },
+        }),
+      'utf8',
+    );
+
+    const first = await pageCodexTranscript({
+      source: { kind: 'codexHome', home: 'user' },
+      env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+      activeServerDir: join(root, 'servers', 'cloud'),
+      remoteSessionId: sessionId,
+      direction: 'older',
+      maxBytes: 1024 * 1024,
+      maxItems: 1,
+    });
+
+    expect(first.items).toHaveLength(1);
+    expect(JSON.stringify(first.items[0] ?? null)).toContain('third');
+    expect(first.nextCursor).toBeTruthy();
+
+    await unlink(filePath);
+
+    const second = await pageCodexTranscript({
+      source: { kind: 'codexHome', home: 'user' },
+      env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+      activeServerDir: join(root, 'servers', 'cloud'),
+      remoteSessionId: sessionId,
+      direction: 'older',
+      cursor: first.nextCursor ?? undefined,
+      maxBytes: 1024 * 1024,
+      maxItems: 1,
+    });
+
+    expect(second.items).toHaveLength(1);
+    expect(JSON.stringify(second.items[0] ?? null)).toContain('second');
+    expect(second.hasMore).toBe(true);
   });
 
   it('maps Codex collaboration rollout events into generic SubAgent tool rows for direct transcripts', async () => {

@@ -6,7 +6,7 @@ import type { DirectSessionCandidateV1 } from '@happier-dev/protocol';
 import { deriveDirectSessionActivityFromTimestamp } from '@/api/directSessions/activity/deriveDirectSessionActivityFromTimestamp';
 
 import { readCodexSessionMetaFromRollout } from '../rollout/discovery/rolloutDiscovery';
-import { readCodexSessionTitleFromRollout } from './readCodexSessionTitleFromRollout';
+import { withCodexRolloutSessionStore } from '../rollout/sessionStore/codexRolloutSessionStoreRegistry';
 import type { CodexDirectSessionHomeEntry } from './resolveCodexHomeEntriesForDirectSessionsSource';
 import { resolveCodexHomeEntriesForDirectSessionsSource } from './resolveCodexHomeEntriesForDirectSessionsSource';
 
@@ -71,30 +71,55 @@ function parseRolloutTimestampMs(filePath: string): number {
 }
 
 async function buildRolloutCandidate(params: Readonly<{
+  activeServerDir: string;
   remoteSessionId: string;
   group: RolloutCandidateGroup;
   env: NodeJS.ProcessEnv;
   source: CodexDirectSessionHomeEntry['source'];
 }>): Promise<DirectSessionCandidateV1> {
-  const [latestMeta, earliestMeta, title] = await Promise.all([
+  const [latestMeta, earliestMeta, storeMetadata] = await Promise.all([
     readCodexSessionMetaFromRollout(params.group.latestFilePath),
     readCodexSessionMetaFromRollout(params.group.earliestFilePath),
-    readCodexSessionTitleFromRollout(params.group.earliestFilePath),
+    withCodexRolloutSessionStore(
+      {
+        activeServerDir: params.activeServerDir,
+        env: params.env,
+        key: {
+          providerId: 'codex',
+          source: params.source,
+          remoteSessionId: params.remoteSessionId,
+        },
+      },
+      async (store) => {
+        const [title, cwd, activity] = await Promise.all([
+          store.getTitle(),
+          store.getWorkingDirectory(),
+          store.getActivity(),
+        ]);
+        const typedActivity = activity as Readonly<{ lastActivityAtMs: number | null }> | null;
+        return {
+          title,
+          cwd,
+          lastActivityAtMs: typedActivity?.lastActivityAtMs ?? null,
+        };
+      },
+    ),
   ]);
-  const cwd = latestMeta && typeof latestMeta.cwd === 'string' ? latestMeta.cwd : undefined;
+  const cwd = storeMetadata.cwd ?? (latestMeta && typeof latestMeta.cwd === 'string' ? latestMeta.cwd : undefined);
   const createdAtMs = (() => {
     const ts = earliestMeta && typeof earliestMeta.timestamp === 'string' ? Date.parse(earliestMeta.timestamp) : NaN;
     if (Number.isFinite(ts) && ts >= 0) return Math.trunc(ts);
     return Math.trunc(params.group.earliestMtimeMs);
   })();
+  const updatedAtMs = storeMetadata.lastActivityAtMs ?? Math.trunc(params.group.updatedAtMs);
 
   return {
     remoteSessionId: params.remoteSessionId,
-    ...(title ? { title } : {}),
+    ...(storeMetadata.title ? { title: storeMetadata.title } : {}),
     createdAtMs,
-    updatedAtMs: Math.trunc(params.group.updatedAtMs),
+    updatedAtMs,
     archived: params.group.archived,
-    activity: deriveDirectSessionActivityFromTimestamp({ updatedAtMs: params.group.updatedAtMs, env: params.env }),
+    activity: deriveDirectSessionActivityFromTimestamp({ updatedAtMs, env: params.env }),
     details: {
       ...(cwd ? { cwd } : {}),
       source: params.source,
@@ -169,13 +194,25 @@ export async function listCodexDirectSessionCandidatesViaRollouts(params: Readon
   if (!searchTerm) {
     const pageEntries = groupedCandidates.slice(offset, offset + limit);
     const candidates = await Promise.all(pageEntries.map(({ remoteSessionId, entry }) =>
-      buildRolloutCandidate({ remoteSessionId, group: entry.group, env, source: entry.source }),
+      buildRolloutCandidate({
+        activeServerDir: params.activeServerDir,
+        remoteSessionId,
+        group: entry.group,
+        env,
+        source: entry.source,
+      }),
     ));
     return { candidates, totalCount: groupedCandidates.length };
   }
 
   const allCandidates = await Promise.all(groupedCandidates.map(({ remoteSessionId, entry }) =>
-    buildRolloutCandidate({ remoteSessionId, group: entry.group, env, source: entry.source }),
+    buildRolloutCandidate({
+      activeServerDir: params.activeServerDir,
+      remoteSessionId,
+      group: entry.group,
+      env,
+      source: entry.source,
+    }),
   ));
   const filtered = allCandidates
     .filter((candidate) => {

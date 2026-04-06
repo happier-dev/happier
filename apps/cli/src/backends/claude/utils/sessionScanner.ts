@@ -85,7 +85,7 @@ export async function createSessionScanner(opts: {
             const sanitized = String(agentId ?? '').trim();
             if (!sanitized) return null;
             return resolveClaudeSubagentJsonlPath({
-                projectDir: sessionPathResolver.effectiveProjectDir(),
+                projectDir: sessionPathResolver.getProjectDirForSession(sessionCoordinator.getCurrentSessionId()),
                 claudeSessionId,
                 agentId: sanitized,
             });

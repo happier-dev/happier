@@ -19,7 +19,21 @@ type CodexMergedForwardCursorV3 = Readonly<{
   lastId: string | null;
 }>;
 
-export type CodexDirectForwardCursor = CodexForwardCursorV1 | CodexAppServerForwardCursorV2 | CodexMergedForwardCursorV3;
+type CodexStreamVectorForwardCursorV4 = Readonly<{
+  v: 4;
+  kind: 'codexForwardStreamVector';
+  streams: readonly Readonly<{
+    fileRelPath: string;
+    nextOffsetBytes: number;
+    subIndex?: number;
+  }>[];
+}>;
+
+export type CodexDirectForwardCursor =
+  | CodexForwardCursorV1
+  | CodexAppServerForwardCursorV2
+  | CodexMergedForwardCursorV3
+  | CodexStreamVectorForwardCursorV4;
 
 export function encodeCodexDirectForwardCursor(value: CodexDirectForwardCursor): string {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
@@ -57,6 +71,29 @@ export function decodeCodexDirectForwardCursor(raw: string): CodexDirectForwardC
         : null;
       if (!Number.isFinite(lastCreatedAtMs) || lastCreatedAtMs < 0) return null;
       return { v: 3, kind: 'codexForwardMerged', lastCreatedAtMs, lastId };
+    }
+    if (record.v === 4 && record.kind === 'codexForwardStreamVector') {
+      const rawStreams = Array.isArray(record.streams) ? record.streams : [];
+      const streams = rawStreams
+        .map((entry) => {
+          if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+          const streamRecord = entry as Record<string, unknown>;
+          const fileRelPath = typeof streamRecord.fileRelPath === 'string' ? streamRecord.fileRelPath.trim() : '';
+          const nextOffsetBytes =
+            typeof streamRecord.nextOffsetBytes === 'number' && Number.isFinite(streamRecord.nextOffsetBytes)
+              ? Math.trunc(streamRecord.nextOffsetBytes)
+              : NaN;
+          const subIndex =
+            typeof streamRecord.subIndex === 'number' && Number.isFinite(streamRecord.subIndex)
+              ? Math.trunc(streamRecord.subIndex)
+              : 0;
+          if (!fileRelPath || !Number.isFinite(nextOffsetBytes) || nextOffsetBytes < 0 || subIndex < 0) {
+            return null;
+          }
+          return { fileRelPath, nextOffsetBytes, subIndex };
+        })
+        .filter((entry): entry is { fileRelPath: string; nextOffsetBytes: number; subIndex: number } => entry !== null);
+      return { v: 4, kind: 'codexForwardStreamVector', streams };
     }
     return null;
   } catch {

@@ -7,6 +7,7 @@ import { resolveCodexHomesForDirectSessionsSource } from './resolveCodexHomesFor
 type CodexDirectSessionAppServerMetadata = Readonly<{
   updatedAtMs: number;
   previewText: string | null;
+  workingDirectory: string | null;
 }>;
 
 function toPreviewText(candidate: DirectSessionCandidateV1 | null): string | null {
@@ -45,9 +46,16 @@ export async function resolveCodexDirectSessionAppServerMetadata(params: Readonl
     if (!Number.isFinite(updatedAtMs) || updatedAtMs < 0) continue;
 
     if (!best || updatedAtMs > best.updatedAtMs) {
+      const cwd =
+        candidate?.details && typeof candidate.details === 'object' && !Array.isArray(candidate.details)
+          ? typeof (candidate.details as Record<string, unknown>).cwd === 'string'
+            ? String((candidate.details as Record<string, unknown>).cwd).trim() || null
+            : null
+          : null;
       best = {
         updatedAtMs,
         previewText: toPreviewText(candidate),
+        workingDirectory: cwd,
       };
     }
   }

@@ -154,4 +154,53 @@ describe('createClaudeJsonlSessionStore', () => {
 
         expect(store.getTailCursor()).not.toBe(initialTailCursor);
     });
+
+    it('does not keep following appended transcript items after the last listener unsubscribes during startup', async () => {
+        const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'happier-claude-store-unsubscribe-startup-')));
+        const configDir = join(root, '.claude');
+        const projectDir = join(configDir, 'projects', 'proj-detached');
+        await mkdir(projectDir, { recursive: true });
+
+        const filePath = join(projectDir, 'session-detached.jsonl');
+        await writeFile(
+            filePath,
+            jsonlLine({
+                type: 'assistant',
+                uuid: 'assistant-1',
+                message: { content: 'initial message' },
+            }),
+            'utf8',
+        );
+
+        const store = createClaudeJsonlSessionStore({
+            providerId: 'claude',
+            source: { kind: 'claudeConfig', configDir, projectId: 'proj-detached' },
+            remoteSessionId: 'session-detached',
+        });
+
+        const initialPage = await store.pageOlder({ maxBytes: 1024 * 1024, maxItems: 10 });
+        expect(initialPage.tailCursor).toBeTruthy();
+
+        const unsubscribe = store.subscribe(() => {
+            throw new Error('detached Claude store should not emit after immediate unsubscribe');
+        });
+        unsubscribe();
+
+        await new Promise((resolve) => setTimeout(resolve, 100));
+
+        const initialTailCursor = store.getTailCursor();
+        await appendFile(
+            filePath,
+            jsonlLine({
+                type: 'assistant',
+                uuid: 'assistant-2',
+                message: { content: 'detached follow-up' },
+            }),
+            'utf8',
+        );
+
+        await new Promise((resolve) => setTimeout(resolve, 400));
+
+        expect(store.getTailCursor()).toBe(initialTailCursor);
+    });
 });

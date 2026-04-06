@@ -537,6 +537,59 @@ describe('listCodexSessionCandidates', () => {
     ]);
   });
 
+  it('aligns candidate title and cwd to the authoritative connected-service home for one session', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-direct-list-authoritative-home-'));
+    const activeServerDir = join(root, 'servers', 'cloud');
+    const homesRoot = join(activeServerDir, 'daemon', 'connected-services', 'homes', 'svc_1');
+    const olderHome = join(homesRoot, 'profile-a', 'codex', 'codex-home');
+    const newerHome = join(homesRoot, 'profile-b', 'codex', 'codex-home');
+    const olderSessionsDir = join(olderHome, 'sessions');
+    const newerSessionsDir = join(newerHome, 'sessions');
+    await mkdir(olderSessionsDir, { recursive: true });
+    await mkdir(newerSessionsDir, { recursive: true });
+
+    const sessionId = 'authoritative-home-session';
+    const olderRollout = join(olderSessionsDir, `rollout-2026-01-01T00-00-00-${sessionId}.jsonl`);
+    const newerRollout = join(newerSessionsDir, `rollout-2026-01-02T00-00-00-${sessionId}.jsonl`);
+    await writeFile(
+      olderRollout,
+      sessionMetaLine({ id: sessionId, timestamp: '2026-01-01T00:00:00.000Z', cwd: '/repo/older-home' })
+        + responseItemLine({ type: 'message', role: 'user', content: [{ type: 'text', text: 'Older Home Title' }] }),
+      'utf8',
+    );
+    await writeFile(
+      newerRollout,
+      sessionMetaLine({ id: sessionId, timestamp: '2026-01-02T00:00:00.000Z', cwd: '/repo/newer-home' })
+        + responseItemLine({ type: 'message', role: 'user', content: [{ type: 'text', text: 'Newer Home Title' }] }),
+      'utf8',
+    );
+    await utimes(olderRollout, new Date('2026-01-01T00:00:01.000Z'), new Date('2026-01-01T00:00:01.000Z'));
+    await utimes(newerRollout, new Date('2026-01-02T00:00:01.000Z'), new Date('2026-01-02T00:00:01.000Z'));
+
+    const result = await listCodexSessionCandidates({
+      source: { kind: 'codexHome', home: 'connectedService', connectedServiceId: 'svc_1' },
+      env: {} as NodeJS.ProcessEnv,
+      activeServerDir,
+      limit: 10,
+    });
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({
+        remoteSessionId: sessionId,
+        title: 'Newer Home Title',
+        details: expect.objectContaining({
+          cwd: '/repo/newer-home',
+          source: expect.objectContaining({
+            kind: 'codexHome',
+            home: 'connectedService',
+            connectedServiceId: 'svc_1',
+            connectedServiceProfileId: 'profile-b',
+          }),
+        }),
+      }),
+    ]);
+  });
+
   it('uses an exact connected-service homePath without scanning all service profiles', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-direct-list-exact-home-'));
     const activeServerDir = join(root, 'servers', 'cloud');
