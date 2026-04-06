@@ -8,7 +8,7 @@
   <p><img src="/.github/supported-ai-providers.png" title="Happier Dev" alt="Happier Dev" width="320" /></p>
   
   **Voice assistant · Full Git client · File editor<br />
-  Subagents · Session sharing · Local memory**
+  Subagents · Session sharing · Entreprise-ready**
 
   End-to-end encrypted. Self-hostable.<br />
   Built by developers, for developers.
@@ -129,89 +129,92 @@ Happier is about exploring a faster-moving, more collaborative direction, while 
 
 ## Key Features
 
-- **Broad provider support**
+- **Broad provider support**<br />
   Works with **Claude Code, Codex, OpenCode, Gemini, GitHub Copilot, Kiro, Pi, Kilo, Kimi, Qwen, Augment**, and any custom ACP-compatible CLI — all from one unified interface.
 
-- **Browse, follow, and take over existing sessions**
+- **Browse, follow, and take over existing sessions**<br />
   Open any existing Codex, Claude, or OpenCode session on your machine directly in Happier, follow a live session started outside the app in real time, or take control and import it into Happier with full continuity.
 
-- **Session forking and replay**
+- **Session forking and replay**<br />
   Fork a session at any message without losing context. Uses provider-native forking when available (OpenCode, Codex); falls back to Happier Replay for any provider.
 
-- **Session handoff between machines**
+- **Session handoff between machines**<br />
   Move a live session — including provider state and project directory — to another machine. The same session ID stays in place; the active machine changes.
 
-- **Attach to a running session**
+- **Attach to a running session**<br />
   Start a session from the app and later reconnect to it in your terminal with `happier attach`, or the other way around — switch between local CLI control and remote app control at any time.
 
-- **Persistent sessions**
+- **Persistent sessions**<br />
   Resume sessions after restarts; archive and return to them later. Supports tmux-backed resume for terminal-started sessions.
 
-- **Seamless switching**
+- **Seamless switching**<br />
   Move between terminal, desktop app, web, and mobile while keeping full session context. Multi-device continuity is built in.
 
-- **Collaborative sessions**
+- **Collaborative sessions**<br />
   Share a live session with teammates or via view-only public links. Friends can be added by username directly in the app.
 
-- **Agents, subagents, and Claude teams**
+- **Agents, subagents, and Claude teams**<br />
   Launch parallel review, plan, or delegate runs from any session. Create and manage Claude teams, send messages to individual teammates, and monitor all subagents from the Agents panel.
 
-- **Voice assistant — a real AI colleague, not just speech-to-text**
+- **Voice assistant — a real AI colleague, not just speech-to-text**<br />
   The voice agent is a first-class assistant backed by the same action system as the UI and CLI. It monitors all your running sessions, can switch focus between them, reads pending permission requests and answers them on your behalf, sends messages to any session you dictate to, and discusses what your agents are doing with full access to recent session context. Every action it can take maps to a Happier action that can be individually approval-gated. Runs on a daemon-backed AI brain (Claude or any configured backend) or a local OpenAI-compatible endpoint, with ElevenLabs realtime, BYO ElevenLabs, Kokoro neural TTS, and device/Google STT as the voice layer.
 
-- **Inbox**
+- **Inbox**<br />
   A global attention center for permission requests, user-action prompts (`AskUserQuestion`, `ExitPlanMode`), approval-gated actions, and unread sessions — across all sessions and machines at once.
 
-- **Pending queue**
+- **Pending queue**<br />
   Queue messages while the agent is busy, offline, or not yet ready. Edit, reorder, and remove queued messages before they run. The queue is session-wide and shared with collaborators.
 
-- **Steering and interrupts**
+- **Steering and interrupts**<br />
   Steer compatible sessions while they are running. New messages are injected into the active turn when the backend supports it; otherwise they queue safely.
 
-- **Git and file browser**
+- **Git and file browser**<br />
   Full repository-aware workspace inside sessions and projects: browse files, review diffs, edit files, and run complete Git operations (commit, pull, push, branch, stash, worktrees, remotes) without leaving the app.
 
-- **Projects and worktrees**
+- **Projects and worktrees**<br />
   Persistent repository surfaces outside sessions. Browse a repo, inspect source control state, collect review comments, switch between worktrees, and then launch a session into the exact checkout context.
 
-- **Embedded terminal**
+- **Embedded terminal**<br />
   A live shell backed by your connected machine, dockable in the bottom panel, sidebar, or as a full-screen — shared across session and project views.
 
-- **Attachments**
+- **Attachments**<br />
   Attach files and images to any message in new or existing sessions. Works across desktop, web, and mobile.
 
-- **MCP servers**
+- **MCP servers**<br />
   Define MCP servers once in Happier and reuse them across all providers, all machines, and all sessions. Previews the effective tool surface before you start. Works with native-MCP and shell-bridge providers alike.
 
-- **Prompts and skills**
+- **Prompts and skills**<br />
   Manage reusable system prompts and skill bundles in one synced library. Attach them to coding agents, voice, or profiles; install/export to provider-native locations; integrate with `skills.sh` registries.
 
-- **Connected services and quota monitoring**
+- **Connected services and quota monitoring**<br />
   Link Codex, Claude, and other provider subscriptions once; reuse credentials across backends and machines. Monitor usage and quota snapshots directly in the app.
 
-- **Profiles**
+- **Profiles**<br />
   Save named backend configurations (endpoint, auth scheme, environment variables, secrets) and select them at session start or via `--profile` from the CLI.
 
-- **Custom ACP backends**
+- **Custom ACP backends**<br />
   Add any ACP-compatible CLI as a selectable backend — internal tools, review bots, planning agents — without modifying Happier's source.
 
-- **Local memory search**
+- **Local memory search**<br />
   Build a machine-local index from your decrypted transcripts and search past session context from the app, or let coding and voice agents use memory tools for recall.
 
-- **Mode, model, and permission controls**
+- **Mode, model, and permission controls**<br />
   Pick model, engine, mode (plan/build), reasoning effort, and permission level per session. Session-only overrides are separate from account defaults.
 
-- **Multi-server support**
+- **Multi-server support**<br />
   Use Happier Cloud, personal self-host, and company self-host side by side. Auth is scoped per server; daemon state is isolated per server profile.
 
-- **Smart notification routing**
+- **Smart notification routing**<br />
   Notification taps open the exact session and server that needs attention. Permission actions and approvals are routed safely, never silently applied to the wrong server.
 
-- **Server feature toggles**
+- **Server feature toggles**<br />
   Server owners can selectively disable capabilities (voice, social, bug reports, etc.) so users only see what is appropriate for their deployment.
 
-- **In-app bug reports and diagnostics**
+- **In-app bug reports and diagnostics**<br />
   Submit bug reports with attached diagnostics, Sentry artifacts, and `happier doctor --json` snapshots. Crash recovery shows a safe fallback screen with pre-crash diagnostics preserved.
+
+- **Enterprise-ready**<br />
+  Run your own relay server and lock it down to your organization. Supports **GitHub OAuth with org/team membership gating**, **OIDC** (Okta, any provider, with per-provider user/email/group allowlists and RFC 9207 `iss` passthrough), **mTLS** (certificate-based auth via reverse proxy or direct, with SAN email/UPN identity mapping), and **keyless external auth** for SSO-only environments. Configurable auto-provisioning, offboarding re-checks at configurable intervals, and strict vs. permissive enforcement. Storage policy is independently configurable: end-to-end encrypted (default), mixed, or plaintext-only (for organizations that manage encryption at the infrastructure layer). Server-level feature flags let you enable or disable voice, automations, social, attachments, bug report uploads, embedded terminal, session handoff, and more — all via environment variables, advertised to clients at runtime so the UI adapts automatically. Rate limiting, file transfer size limits, session retention policies, and a diagnostics endpoint with configurable access control (owner-only or all authenticated users) are all included. Deployable via Docker, with PostgreSQL, SQLite or MySQL as the database backend.
 
 
 ## Security & Privacy
