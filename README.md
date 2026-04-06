@@ -276,7 +276,7 @@ alias happier='hdev'
 
 ### Running from source
 
-[See below](#Running from source)
+[See below](#running-from-source-1)
 
 ## Architecture & Components
 
