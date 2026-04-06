@@ -7,7 +7,7 @@
 
   <p><img src="/.github/supported-ai-providers.png" title="Happier Dev" alt="Happier Dev" width="320" /></p>
   
-  **Mobile Claude, Codex, OpenCode client · Voice assistant<br />
+  **Claude, Codex, OpenCode mobile client · Voice assistant<br />
   Full Git client · File editor · Subagents · Session sharing<br />
   Entreprise-ready**
 
