@@ -1,4 +1,5 @@
 import { storage } from '@/sync/domains/state/storage';
+import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListCacheState';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 
 import { readVoiceConversationBindingMetadata } from './voiceConversationBindingMetadata';
@@ -53,8 +54,12 @@ function listPersistedBindings(
     const out: VoiceSessionBinding[] = [];
     for (const session of Object.values(state?.sessions ?? {}) as any[]) {
         if (!session || typeof session?.id !== 'string') continue;
-        if (!isVoiceConversationSystemSessionMetadata(session?.metadata ?? null)) continue;
-        const binding = readVoiceConversationBindingMetadata(session.id, session.metadata ?? null);
+        const cachedSessionMetadata = resolveSessionListPreferredSessionMetadataFromState(state, session.id);
+        const sessionMetadata = cachedSessionMetadata ?? session.metadata ?? null;
+        if (!isVoiceConversationSystemSessionMetadata(sessionMetadata)) continue;
+        const binding =
+            readVoiceConversationBindingMetadata(session.id, sessionMetadata)
+            ?? readVoiceConversationBindingMetadata(session.id, session.metadata ?? null);
         if (!binding) continue;
         out.push(binding);
     }
@@ -77,8 +82,10 @@ export function resolveVoiceSessionBindingByConversationSessionId(params: Readon
     const store = params.store ?? voiceSessionBindingStore;
     const state = readState(params.state);
     const storeBinding = store.getState().getByConversationSessionId(conversationSessionId);
+    const cachedSessionMetadata = resolveSessionListPreferredSessionMetadataFromState(state, conversationSessionId);
     const persistedBinding =
-        readVoiceConversationBindingMetadata(conversationSessionId, params.sessionMetadata)
+        readVoiceConversationBindingMetadata(conversationSessionId, cachedSessionMetadata)
+        ?? readVoiceConversationBindingMetadata(conversationSessionId, params.sessionMetadata)
         ?? readVoiceConversationBindingMetadata(
             conversationSessionId,
             state?.sessions?.[conversationSessionId]?.metadata ?? null,

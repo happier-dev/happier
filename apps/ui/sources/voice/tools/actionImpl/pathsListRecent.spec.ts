@@ -171,4 +171,57 @@ describe('listRecentPathsForVoiceTool', () => {
         expect(result.items[0]).not.toHaveProperty('machineId');
         expect(result.items[0]).not.toHaveProperty('path');
     });
+
+    it('counts lastUsedAt from cached visible session metadata when the raw session path is stale', async () => {
+        state.sessions = {
+            s1: {
+                id: 's1',
+                active: true,
+                presence: 'online',
+                updatedAt: 1000,
+                metadata: {
+                    machineId: 'm1',
+                    path: '/Users/leeroy/projects/old',
+                },
+            },
+        };
+        state.sessionListViewData = [
+            {
+                type: 'session',
+                session: {
+                    id: 's1',
+                    active: true,
+                    seq: 0,
+                    createdAt: 0,
+                    activeAt: 0,
+                    updatedAt: 1000,
+                    metadataVersion: 0,
+                    agentStateVersion: 0,
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 'online',
+                    metadata: {
+                        machineId: 'm1',
+                        path: '/Users/leeroy/projects/happier',
+                    },
+                },
+            },
+        ];
+        state.settings.recentMachinePaths = [
+            { machineId: 'm1', path: '/Users/leeroy/projects/happier' },
+        ];
+
+        const { listRecentPathsForVoiceTool } = await import('./pathsListRecent');
+
+        const result: any = await listRecentPathsForVoiceTool({ machineId: 'm1', limit: 10 });
+
+        expect(result).toMatchObject({
+            items: [
+                {
+                    label: 'happier — Leeroy MacBook Pro',
+                    lastUsedAt: 1000,
+                },
+            ],
+        });
+    });
 });

@@ -134,6 +134,110 @@ describe('resolveVoiceSessionBinding', () => {
         expect(store.getState().getByConversationSessionId('carrier_old')).toBeNull();
     });
 
+    it('prefers cached visible binding metadata over stale raw session metadata for the same control session', () => {
+        const store = createVoiceSessionBindingStore();
+        storage.setState((current) => ({
+            ...current,
+            sessions: {
+                carrier_raw: createTestSession(
+                    'carrier_raw',
+                    createVoiceConversationMetadata({
+                        adapterId: 'local_conversation',
+                        controlSessionId: '__voice_agent__',
+                        conversationSessionId: 'carrier_raw',
+                        transcriptMode: 'native_session',
+                        targetSessionId: 'raw-target',
+                        updatedAt: 10,
+                    }),
+                ),
+            },
+            sessionListViewData: [
+                {
+                    type: 'session',
+                    session: {
+                        ...createTestSession(
+                            'carrier_raw',
+                            createVoiceConversationMetadata({
+                                adapterId: 'local_conversation',
+                                controlSessionId: '__voice_agent__',
+                                conversationSessionId: 'carrier_raw',
+                                transcriptMode: 'native_session',
+                                targetSessionId: 'cached-target',
+                                updatedAt: 30,
+                            }),
+                        ),
+                    },
+                },
+            ],
+        }));
+
+        const binding = resolveVoiceSessionBindingByControlSessionId({
+            controlSessionId: '__voice_agent__',
+            store,
+        });
+
+        expect(binding).toEqual({
+            adapterId: 'local_conversation',
+            controlSessionId: '__voice_agent__',
+            conversationSessionId: 'carrier_raw',
+            transcriptMode: 'native_session',
+            targetSessionId: 'cached-target',
+            updatedAt: 30,
+        });
+    });
+
+    it('recovers a binding by control session id from cached visible system metadata when raw session metadata is stale', () => {
+        const store = createVoiceSessionBindingStore();
+        storage.setState((current) => ({
+            ...current,
+            sessions: {
+                carrier_cached: createTestSession(
+                    'carrier_cached',
+                    {
+                        adapterId: 'local_conversation',
+                        controlSessionId: '__voice_agent__',
+                        conversationSessionId: 'carrier_cached',
+                        transcriptMode: 'native_session',
+                        targetSessionId: 'raw-target',
+                        updatedAt: 10,
+                    },
+                ),
+            },
+            sessionListViewData: [
+                {
+                    type: 'session',
+                    session: {
+                        ...createTestSession(
+                            'carrier_cached',
+                            createVoiceConversationMetadata({
+                                adapterId: 'local_conversation',
+                                controlSessionId: '__voice_agent__',
+                                conversationSessionId: 'carrier_cached',
+                                transcriptMode: 'native_session',
+                                targetSessionId: 'cached-target',
+                                updatedAt: 40,
+                            }),
+                        ),
+                    },
+                },
+            ],
+        }));
+
+        const binding = resolveVoiceSessionBindingByControlSessionId({
+            controlSessionId: '__voice_agent__',
+            store,
+        });
+
+        expect(binding).toEqual({
+            adapterId: 'local_conversation',
+            controlSessionId: '__voice_agent__',
+            conversationSessionId: 'carrier_cached',
+            transcriptMode: 'native_session',
+            targetSessionId: 'cached-target',
+            updatedAt: 40,
+        });
+    });
+
     it('recovers a binding by conversation session id from session metadata when runtime bindings are empty', () => {
         const store = createVoiceSessionBindingStore();
 
@@ -159,6 +263,58 @@ describe('resolveVoiceSessionBinding', () => {
             updatedAt: 321,
         });
         expect(store.getState().getByConversationSessionId('carrier_s1')).toEqual(binding);
+    });
+
+    it('prefers cached visible binding metadata over stale raw session metadata for the same conversation session', () => {
+        const store = createVoiceSessionBindingStore();
+        storage.setState((current) => ({
+            ...current,
+            sessions: {
+                carrier_s1: createTestSession(
+                    'carrier_s1',
+                    createVoiceConversationMetadata({
+                        adapterId: 'realtime_elevenlabs',
+                        controlSessionId: '__voice_agent__',
+                        conversationSessionId: 'carrier_s1',
+                        transcriptMode: 'synthetic',
+                        targetSessionId: 'raw-target',
+                        updatedAt: 10,
+                    }),
+                ),
+            },
+            sessionListViewData: [
+                {
+                    type: 'session',
+                    session: {
+                        ...createTestSession(
+                            'carrier_s1',
+                            createVoiceConversationMetadata({
+                            adapterId: 'realtime_elevenlabs',
+                            controlSessionId: '__voice_agent__',
+                            conversationSessionId: 'carrier_s1',
+                            transcriptMode: 'synthetic',
+                            targetSessionId: 'cached-target',
+                            updatedAt: 30,
+                        }),
+                        ),
+                    },
+                },
+            ],
+        }));
+
+        const binding = resolveVoiceSessionBindingByConversationSessionId({
+            conversationSessionId: 'carrier_s1',
+            store,
+        });
+
+        expect(binding).toEqual({
+            adapterId: 'realtime_elevenlabs',
+            controlSessionId: '__voice_agent__',
+            conversationSessionId: 'carrier_s1',
+            transcriptMode: 'synthetic',
+            targetSessionId: 'cached-target',
+            updatedAt: 30,
+        });
     });
 
     it('returns the latest matching binding across recovered and in-memory entries', () => {

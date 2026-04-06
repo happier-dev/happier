@@ -5,6 +5,7 @@ import { runVoiceAgentTurnWithTools } from '@/voice/local/runVoiceAgentTurnWithT
 import type { VoiceSessionBinding } from '@/voice/sessionBinding/voiceSessionBindingTypes';
 import { buildVoiceInitialContext } from '@/voice/context/buildVoiceInitialContext';
 import { captureAssistantTextMessageBaseline } from '@/voice/runtime/waitForNextAssistantTextMessage';
+import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListCacheState';
 
 import { formatVoiceQaErrorMessage } from './formatVoiceQaErrorMessage';
 import { createDefaultVoiceQaControllerDeps } from './voiceQaRuntimeDeps';
@@ -108,8 +109,10 @@ export function createVoiceQaController(
           );
         }
         if (targetSessionId !== VOICE_AGENT_GLOBAL_SESSION_ID) {
-          const targetSession = (storage.getState() as any)?.sessions?.[targetSessionId] ?? null;
-          const permissionMode = normalizeVoiceQaText(targetSession?.permissionMode);
+          const state = storage.getState() as any;
+          const targetSessionMetadata = resolveSessionListPreferredSessionMetadataFromState(state, targetSessionId);
+          const targetSession = state?.sessions?.[targetSessionId] ?? null;
+          const permissionMode = normalizeVoiceQaText(targetSessionMetadata?.permissionMode ?? targetSession?.permissionMode);
           if (permissionMode === 'read-only' || permissionMode === 'plan') {
             deps.qaStore
               .getState()

@@ -7,6 +7,7 @@ const state: any = {
     sys_voice: { id: 'sys_voice', updatedAt: 10, metadata: { systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } } },
     s1: { id: 's1', updatedAt: 1, metadata: { flavor: 'claude' } },
   },
+  sessionListViewData: [],
 };
 
 vi.mock('@/sync/domains/state/storage', async () => {
@@ -33,6 +34,7 @@ describe('voiceAgentRunMetadata', () => {
     vi.resetModules();
     patchSessionMetadataWithRetry.mockReset();
     state.sessions.sys_voice.metadata = { systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } };
+    state.sessionListViewData = [];
   });
 
   it('reads voiceAgentRunV1 from voice conversation session metadata when present', async () => {
@@ -130,5 +132,58 @@ describe('voiceAgentRunMetadata', () => {
 
     await clearVoiceAgentRunMetadataFromSession({ sessionId: 's1' });
     expect(readVoiceAgentRunMetadataFromSession({ sessionId: 's1' })).toBeNull();
+  });
+
+  it('prefers cached visible voice-agent run metadata when the raw session metadata is stale', async () => {
+    state.sessions.s1.metadata.voiceAgentRunV1 = {
+      v: 1,
+      runId: 'run_raw',
+      backendTarget: claudeTarget,
+      backendId: 'claude',
+      resumeHandle: { kind: 'vendor_session.v1', backendTarget: claudeTarget, vendorSessionId: 'vs_raw' },
+      updatedAtMs: 111,
+    };
+    state.sessionListViewData = [
+      {
+        type: 'session',
+        session: {
+          id: 's1',
+          seq: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          active: true,
+          activeAt: 1,
+          archivedAt: null,
+          metadataVersion: 1,
+          agentStateVersion: 1,
+          metadata: {
+            voiceAgentRunV1: {
+              v: 1,
+              runId: 'run_cached',
+              backendTarget: claudeTarget,
+              backendId: 'claude',
+              resumeHandle: { kind: 'vendor_session.v1', backendTarget: claudeTarget, vendorSessionId: 'vs_cached' },
+              updatedAtMs: 222,
+            },
+          },
+          thinking: false,
+          thinkingAt: 0,
+          presence: 'online',
+          optimisticThinkingAt: null,
+          thinkingGraceUntil: null,
+          owner: undefined,
+          accessLevel: undefined,
+          canApprovePermissions: undefined,
+          hasPendingPermissionRequests: false,
+          hasPendingUserActionRequests: false,
+        },
+      },
+    ];
+
+    const { readVoiceAgentRunMetadataFromSession } = await import('./voiceAgentRunMetadata');
+    expect(readVoiceAgentRunMetadataFromSession({ sessionId: 's1' })).toMatchObject({
+      runId: 'run_cached',
+      updatedAtMs: 222,
+    });
   });
 });

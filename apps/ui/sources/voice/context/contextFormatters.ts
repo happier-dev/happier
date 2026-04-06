@@ -1,6 +1,8 @@
 import { formatPermissionRequestSummary, isAskUserQuestionToolName } from "@happier-dev/protocol";
 import { Session } from "@/sync/domains/state/storageTypes";
 import { Message } from "@/sync/domains/messages/messageTypes";
+import { storage } from '@/sync/domains/state/storage';
+import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListCacheState';
 import { trimIdent } from "@/utils/strings/trimIdent";
 import { listPendingPermissionRequests, listPendingUserActionRequests } from "@/utils/sessions/sessionUtils";
 import { resolveAgentRequestKind, type AgentRequestKind } from "@/utils/sessions/permissions/permissionPromptPolicy";
@@ -455,16 +457,24 @@ function formatRecentMessages(sessionId: string, messages: Message[], prefs?: Vo
 
 export function formatSessionFull(session: Session, messages: Message[], prefs?: VoiceContextFormatterPrefs): string {
     const resolved = resolvePrefs(prefs);
-    const rawSessionSummary = session.metadata?.summary?.text;
-    const sessionSummary = typeof rawSessionSummary === 'string'
+    const state: any = storage.getState();
+    const cachedSessionMetadata = resolveSessionListPreferredSessionMetadataFromState(state, session.id);
+    const sessionMetadata = cachedSessionMetadata ?? session.metadata;
+    const rawSessionSummary =
+        typeof sessionMetadata?.summary?.text === 'string'
+            ? sessionMetadata.summary.text
+            : typeof sessionMetadata?.summaryText === 'string'
+                ? sessionMetadata.summaryText
+                : null;
+    const sessionSummary = rawSessionSummary
         ? maybeRedactVoiceString(rawSessionSummary, resolved.voiceShareFilePaths)
-        : rawSessionSummary;
+        : null;
     const lines: string[] = [];
 
     // Add session context
-    lines.push(`# Session: ${resolveVoiceSessionLabel(session.id, resolved, { metadata: session.metadata, fallbackLabel: 'the current session' })}`);
-    if (resolved.voiceShareFilePaths && session.metadata && typeof (session.metadata as any).path === 'string') {
-        const path = String((session.metadata as any).path);
+    lines.push(`# Session: ${resolveVoiceSessionLabel(session.id, resolved, { metadata: sessionMetadata, fallbackLabel: 'the current session' })}`);
+    if (resolved.voiceShareFilePaths && sessionMetadata && typeof (sessionMetadata as any).path === 'string') {
+        const path = String((sessionMetadata as any).path);
         if (path.trim().length > 0) {
             lines.push('## Session Path');
             lines.push(path);

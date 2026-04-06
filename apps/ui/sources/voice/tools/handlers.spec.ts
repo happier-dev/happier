@@ -1232,7 +1232,7 @@ describe('voice tool handlers', () => {
     });
   });
 
-  it('uses session list renderables as a fallback human title source when raw sessions are stale', async () => {
+  it('falls back to the raw session title when the visible cache is unavailable', async () => {
     state.sessionListViewData = null;
 
     const { createVoiceToolHandlers } = await import('./handlers');
@@ -1245,7 +1245,7 @@ describe('voice tool handlers', () => {
     expect(matrix).toBeTruthy();
     expect(matrix).toMatchObject({
       id: 's_matrix',
-      title: 'Session QA Voice Matrix',
+      title: 'leeroy',
     });
   });
 

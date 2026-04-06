@@ -1,10 +1,14 @@
-import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import {
   listSessionListCachedActiveSessions,
   listSessionListCachedServerSessions,
 } from '@/sync/domains/session/listing/sessionListCacheState';
+import type { SessionMetadataLike } from '@/sync/domains/session/listing/sessionListCacheState';
 
 import { normalizeNonEmptyString } from './shared';
+import {
+  resolveVoiceSessionLocationLabelFromMetadata,
+  resolveVoiceSessionTitleFromMetadata,
+} from './sessionMetadata';
 
 export type VoiceSessionRow = Readonly<{
   id: string;
@@ -32,41 +36,12 @@ type VoiceSessionRowDraft = {
   statusSourcePriority: number;
 };
 
-function resolveVoiceSessionTitle(session: unknown): string | null {
-  const record = session && typeof session === 'object' ? (session as Record<string, unknown>) : null;
-  const metadata = record?.metadata && typeof record.metadata === 'object'
-    ? (record.metadata as Record<string, unknown>)
-    : null;
-  const summary = metadata?.summary && typeof metadata.summary === 'object'
-    ? (metadata.summary as Record<string, unknown>)
-    : null;
-
-  const path = normalizeNonEmptyString(metadata?.path);
-  const pathLabel = path ? normalizeNonEmptyString(path.split('/').filter(Boolean).at(-1)) : null;
-
-  return (
-    normalizeNonEmptyString(summary?.text)
-    ?? normalizeNonEmptyString(metadata?.summaryText)
-    ?? normalizeNonEmptyString(metadata?.name)
-    ?? pathLabel
-  );
-}
-
 function resolveVoiceSessionLocationLabel(session: unknown): string | null {
   const record = session && typeof session === 'object' ? (session as Record<string, unknown>) : null;
   const metadata = record?.metadata && typeof record.metadata === 'object'
     ? (record.metadata as Record<string, unknown>)
     : null;
-  const path = normalizeNonEmptyString(metadata?.path);
-  if (!path) return null;
-
-  const homeDir = normalizeNonEmptyString(metadata?.homeDir) ?? undefined;
-  const displayPath = formatPathRelativeToHome(path, homeDir).trim();
-  if (displayPath === '~') return '~';
-
-  const withoutTrailingSlash = displayPath.replace(/\/+$/, '');
-  const tail = withoutTrailingSlash.split('/').filter(Boolean).at(-1);
-  return normalizeNonEmptyString(tail ?? withoutTrailingSlash);
+  return resolveVoiceSessionLocationLabelFromMetadata(metadata);
 }
 
 function mergeVoiceSessionRow(
@@ -152,7 +127,7 @@ function toVoiceSessionRowDraft(
   const locationLabel = resolveVoiceSessionLocationLabel(record);
   return {
     id,
-    title: resolveVoiceSessionTitle(record),
+    title: resolveVoiceSessionTitleFromMetadata(record?.metadata as SessionMetadataLike),
     ...(locationLabel ? { locationLabel } : {}),
     updatedAt: typeof record?.updatedAt === 'number' ? record.updatedAt : 0,
     active: Boolean(record?.active),
@@ -171,9 +146,6 @@ export function collectVoiceSessionRows(state: unknown): readonly VoiceSessionRo
   const sessions = stateRecord?.sessions && typeof stateRecord.sessions === 'object'
     ? (stateRecord.sessions as Record<string, unknown>)
     : null;
-  const renderables = stateRecord?.sessionListRenderables && typeof stateRecord.sessionListRenderables === 'object'
-    ? (stateRecord.sessionListRenderables as Record<string, unknown>)
-    : null;
   const rows = new Map<string, VoiceSessionRowDraft>();
 
   const pushRow = (session: unknown, sourcePriority: number, options?: Readonly<{ serverId?: string | null; serverName?: string | null }>) => {
@@ -188,21 +160,15 @@ export function collectVoiceSessionRows(state: unknown): readonly VoiceSessionRo
     }
   }
 
-  if (renderables) {
-    for (const session of Object.values(renderables)) {
-      pushRow(session, 1);
-    }
-  }
-
   for (const entry of listSessionListCachedServerSessions(stateRecord)) {
-    pushRow(entry.session, 2, {
+    pushRow(entry.session, 1, {
       serverId: entry.serverId,
       serverName: entry.serverName,
     });
   }
 
   for (const entry of listSessionListCachedActiveSessions(stateRecord)) {
-    pushRow(entry.session, 3, {
+    pushRow(entry.session, 2, {
       serverId: entry.serverId,
       serverName: entry.serverName,
     });

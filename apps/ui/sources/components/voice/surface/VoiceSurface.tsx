@@ -23,7 +23,6 @@ import { useVoiceSessionSnapshot, voiceSessionManager } from '@/voice/session/vo
 import { hydrateVoiceAgentActivityFromCarrierSession } from '@/voice/persistence/hydrateVoiceAgentActivityFromCarrierSession';
 import { teleportVoiceAgentToSessionRoot } from '@/voice/agent/teleportVoiceAgentToSessionRoot';
 import { formatVoiceActivityEvent, sortVoiceActivityEventsByTsThenId } from '@/voice/activity/formatVoiceActivityEvent';
-import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Text } from '@/components/ui/text/Text';
 import { voiceSessionBindingStore } from '@/voice/sessionBinding/voiceSessionBindingStore';
@@ -72,10 +71,20 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
     const map = new Map<string, string>();
     for (const s of allSessions as any[]) {
       if (!s || typeof s.id !== 'string') continue;
-      map.set(s.id, getSessionName(s));
+      const label = resolveVoiceSessionLabel(
+        s.id,
+        {
+          voiceShareSessionSummary: voicePrivacy.shareSessionSummary,
+          voiceShareFilePaths: voicePrivacy.shareFilePaths,
+        },
+        { metadata: s.metadata },
+      );
+      if (label) {
+        map.set(s.id, label);
+      }
     }
     return map;
-  }, [allSessions]);
+  }, [allSessions, voicePrivacy.shareSessionSummary, voicePrivacy.shareFilePaths]);
 
   const feedSessionId = props.variant === 'session' && typeof props.sessionId === 'string' ? props.sessionId : null;
   const lastFocusedSessionId = useVoiceTargetStore((s) => s.lastFocusedSessionId);

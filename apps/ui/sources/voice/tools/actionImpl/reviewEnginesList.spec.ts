@@ -9,13 +9,14 @@ const state: any = {
     },
   },
   sessions: {
-    s1: {
-      id: 's1',
-      metadata: {
-        machineId: 'm1',
+      s1: {
+        id: 's1',
+        metadata: {
+          machineId: 'm1',
+        },
       },
     },
-  },
+  sessionListViewData: [],
 };
 
 const getMachineCapabilitiesSnapshot = vi.fn();
@@ -78,5 +79,26 @@ describe('review engine voice tool', () => {
     const gemini = (res.items ?? []).find((item: any) => item.engineId === 'gemini');
     expect(gemini).toBeTruthy();
     expect(gemini.enabled).toBe(false);
+  });
+
+  it('prefers cached visible session metadata over stale raw session metadata when resolving review engines', async () => {
+    state.sessions.s1.metadata.machineId = 'raw-machine';
+    state.sessionListViewData = [
+      {
+        type: 'session',
+        session: {
+          id: 's1',
+          updatedAt: 321,
+          metadata: {
+            machineId: 'cached-machine',
+          },
+        },
+      },
+    ];
+
+    const { listReviewEnginesForVoiceTool } = await import('./reviewEnginesList');
+    await listReviewEnginesForVoiceTool({ sessionId: 's1' });
+
+    expect(getMachineCapabilitiesSnapshot).toHaveBeenCalledWith('cached-machine', 'server-a');
   });
 });

@@ -1,6 +1,7 @@
 import { readSystemSessionMetadataFromMetadata } from '@happier-dev/protocol';
 
 import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
+import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListCacheState';
 
 export const VOICE_CONVERSATION_SYSTEM_SESSION_KEY = 'voice_conversation';
 export const VOICE_CONVERSATION_RETIRED_SYSTEM_SESSION_KEY = 'voice_conversation_retired';
@@ -13,6 +14,10 @@ export function isVoiceConversationSystemSessionMetadata(metadata: unknown): boo
         systemSession?.hidden === true
         && (key === VOICE_CONVERSATION_SYSTEM_SESSION_KEY || key === VOICE_CARRIER_LEGACY_SYSTEM_SESSION_KEY)
     );
+}
+
+function resolveVoiceConversationSessionMetadataFromState(state: any, sessionId: string): unknown {
+    return resolveSessionListPreferredSessionMetadataFromState(state, sessionId) ?? state?.sessions?.[sessionId]?.metadata ?? null;
 }
 
 function shouldRetireLegacyVoiceConversationSession(session: any): boolean {
@@ -31,8 +36,9 @@ export function findReusableVoiceConversationRuntimeSessionId(state: any): strin
 
     for (const session of Object.values(sessionsObj) as any[]) {
         if (!session || typeof session.id !== 'string') continue;
-        if (!isVoiceConversationSystemSessionMetadata(session.metadata ?? null)) continue;
-        if (shouldRetireLegacyVoiceConversationSession(session)) continue;
+        const metadata = resolveVoiceConversationSessionMetadataFromState(state, session.id);
+        if (!isVoiceConversationSystemSessionMetadata(metadata)) continue;
+        if (shouldRetireLegacyVoiceConversationSession({ metadata })) continue;
         if (!isReusableVoiceConversationRuntimeSession(session)) continue;
 
         const updatedAt = typeof session.updatedAt === 'number' && Number.isFinite(session.updatedAt) ? session.updatedAt : 0;
@@ -50,8 +56,9 @@ export function findVoiceConversationSessionId(state: any): string | null {
 
     for (const session of Object.values(sessionsObj) as any[]) {
         if (!session || typeof session.id !== 'string') continue;
-        if (!isVoiceConversationSystemSessionMetadata(session.metadata ?? null)) continue;
-        if (shouldRetireLegacyVoiceConversationSession(session)) continue;
+        const metadata = resolveVoiceConversationSessionMetadataFromState(state, session.id);
+        if (!isVoiceConversationSystemSessionMetadata(metadata)) continue;
+        if (shouldRetireLegacyVoiceConversationSession({ metadata })) continue;
 
         const updatedAt = typeof session.updatedAt === 'number' && Number.isFinite(session.updatedAt) ? session.updatedAt : 0;
         if (!best || updatedAt > best.updatedAt || (updatedAt === best.updatedAt && session.id < best.id)) {

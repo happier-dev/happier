@@ -1,4 +1,5 @@
 import { storage } from '@/sync/domains/state/storage';
+import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListCacheState';
 import { resolveVoiceOperationalSessionId } from '@/voice/sessionBinding/resolveVoiceOperationalSessionId';
 import { isVoiceConversationSystemSessionMetadata } from '@/voice/sessionBinding/voiceConversationSystemSessionLookup';
 import type { VoiceSessionBinding } from '@/voice/sessionBinding/voiceSessionBindingTypes';
@@ -50,8 +51,10 @@ export function resolveConfiguredVoiceQaProvider(settings: any): VoiceQaProvider
 export function isHiddenVoiceQaConversationSessionId(sessionId: string | null | undefined): boolean {
     const normalizedSessionId = normalizeVoiceQaText(sessionId);
     if (!normalizedSessionId) return false;
-    const session = (storage.getState() as any)?.sessions?.[normalizedSessionId] ?? null;
-    return isVoiceConversationSystemSessionMetadata(session?.metadata ?? null);
+    const state = storage.getState() as any;
+    const cachedSessionMetadata = resolveSessionListPreferredSessionMetadataFromState(state, normalizedSessionId);
+    const session = state?.sessions?.[normalizedSessionId] ?? null;
+    return isVoiceConversationSystemSessionMetadata(cachedSessionMetadata ?? session?.metadata ?? null);
 }
 
 export function resolveEffectiveVoiceQaSessionId(

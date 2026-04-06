@@ -3,6 +3,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { formatSessionFull } from '@/voice/context/contextFormatters';
 import { resolveEffectiveVoiceTargetState } from '@/voice/context/resolveEffectiveVoiceTargetState';
 import { getVoiceContextFormatterPrefs } from '@/voice/context/voiceContextPrefs';
+import { resolveVoiceContextSessionFromState } from './resolveVoiceContextSession';
 
 function normalizeSessionId(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -16,8 +17,8 @@ export function buildVoiceInitialContext(
 ): string {
   const state: any = storage.getState();
   const targetSessionId = normalizeSessionId(options?.targetSessionId);
-  const contextSessionId = targetSessionId && state.sessions?.[targetSessionId] ? targetSessionId : sessionId;
-  const session = state.sessions?.[contextSessionId] ?? null;
+  const contextSessionId = targetSessionId && resolveVoiceContextSessionFromState(targetSessionId, state) ? targetSessionId : sessionId;
+  const session = resolveVoiceContextSessionFromState(contextSessionId, state);
   if (!session) return '';
   const messages = readStoredSessionMessages(state, contextSessionId);
   const targetState = resolveEffectiveVoiceTargetState(contextSessionId, { targetSessionId });

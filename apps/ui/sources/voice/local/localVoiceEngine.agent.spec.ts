@@ -30,11 +30,9 @@ type MockWithCalls = {
 };
 
 async function waitForCondition(check: () => boolean, timeoutMessage: string) {
-    for (let i = 0; i < 4000; i++) {
-        if (check()) return;
-        await Promise.resolve();
-    }
-    throw new Error(`Timed out waiting for ${timeoutMessage}`);
+    await vi.waitFor(() => {
+        expect(check()).toBe(true);
+    });
 }
 
 async function waitForMockCalls(mock: MockWithCalls, expectedCount: number) {
@@ -132,8 +130,6 @@ describe('local voice engine agent behavior', () => {
         await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
         const stopPromise = toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
 
-        const fetchMock = globalThis.fetch as unknown as MockWithCalls;
-        await waitForMockCalls(fetchMock, 3);
         await waitForCreatedAudioPlayer();
         expect(createdAudioPlayers.length).toBeGreaterThan(0);
         await waitForCreatedAudioPlayerListener('playbackStatusUpdate');
@@ -218,8 +214,6 @@ describe('local voice engine agent behavior', () => {
         await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
         const stopPromise = toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
 
-        const fetchMock = globalThis.fetch as unknown as MockWithCalls;
-        await waitForMockCalls(fetchMock, 3);
         await stopPromise;
 
         expect(sendMessage).toHaveBeenCalledTimes(1);
@@ -479,6 +473,7 @@ describe('local voice engine agent behavior', () => {
             sessionId: 's1',
             method: 'permission',
             payload: { id: 'req_question', approved: true, answers: { 'Continue?': 'Yes' } },
+            serverId: 'server-a',
         });
 
         const chatCalls = (globalThis.fetch as any).mock.calls.filter((call: any[]) => String(call?.[0] ?? '').includes('/chat/completions'));
@@ -1549,8 +1544,6 @@ describe('local voice engine agent behavior', () => {
         await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
         const stopPromise = toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
 
-        const fetchMock = globalThis.fetch as unknown as MockWithCalls;
-        await waitForMockCalls(fetchMock, 3);
         await stopPromise;
 
         expect(sessionExecutionRunStart).toHaveBeenCalledWith(
@@ -1645,8 +1638,6 @@ describe('local voice engine agent behavior', () => {
         await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
         const stopPromise = toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
 
-        const fetchMock = globalThis.fetch as unknown as MockWithCalls;
-        await waitForMockCalls(fetchMock, 3);
         await stopPromise;
 
         expect(setActiveServerAndSwitch).toHaveBeenCalledWith(expect.objectContaining({ serverId: 'server-b' }));

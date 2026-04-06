@@ -7,6 +7,7 @@ import { buildLocalVoiceAgentSystemPrompt } from '@happier-dev/agents';
 import { resolveDisabledVoiceActionIdsFromState } from '@/voice/tools/resolveDisabledVoiceActionIds';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveUiMemoryRecallGuidanceEnabled } from '@/sync/domains/memory/resolveUiMemoryRecallGuidanceEnabled';
+import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListCacheState';
 import { resolveUiVoicePromptStackBlocks } from '@/voice/agent/resolveUiVoicePromptStackBlocks';
 
 import type { VoiceAgentClient, VoiceAgentStartParams, VoiceAgentStartResult, VoiceAgentTurnStreamEvent } from './types';
@@ -57,11 +58,11 @@ export class OpenAiCompatVoiceAgentClient implements VoiceAgentClient {
     const disabledActionIds = Array.isArray(params.disabledActionIds)
       ? params.disabledActionIds
       : resolveDisabledVoiceActionIdsFromState(storage.getState() as any);
-    const session = (storage.getState() as any)?.sessions?.[params.sessionId] ?? null;
+    const sessionMetadata = resolveSessionListPreferredSessionMetadataFromState(storage.getState() as any, params.sessionId);
     const memoryRecallGuidanceEnabled = await resolveUiMemoryRecallGuidanceEnabled({
       settings,
       serverId: getActiveServerSnapshot().serverId,
-      machineId: typeof session?.metadata?.machineId === 'string' ? session.metadata.machineId : null,
+      machineId: typeof sessionMetadata?.machineId === 'string' ? sessionMetadata.machineId : null,
       surfaces: ['voice_action_block'],
     });
     const systemAppendBlocks = await resolveUiVoicePromptStackBlocks({

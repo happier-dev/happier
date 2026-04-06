@@ -22,6 +22,7 @@ import { useVoiceContextSeenStore } from '@/voice/runtime/voiceContextSeenStore'
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { resolveVoiceSessionUpdatePolicy, type VoiceSessionUpdatePolicy } from '@/voice/runtime/voiceUpdatePolicy';
 import type { AgentRequestKind } from '@/utils/sessions/permissions/permissionPromptPolicy';
+import { resolveVoiceContextSessionFromState } from '@/voice/context/resolveVoiceContextSession';
 
 /**
  * Centralized voice assistant hooks for multi-session context updates.
@@ -116,7 +117,7 @@ function reportSession(sessionId: string) {
   if (seen.hasShownSession(sessionId)) return;
   const level = resolvePolicy(sessionId).level;
   if (level !== 'summaries' && level !== 'snippets') return;
-  const session = (storage.getState() as any).sessions?.[sessionId];
+  const session = resolveVoiceContextSessionFromState(sessionId, storage.getState());
   if (!session) return;
   const messages = readStoredSessionMessages(storage.getState(), sessionId);
   const contextUpdate = formatSessionFull(session, messages, getVoiceContextPrefs(sessionId));
@@ -262,7 +263,7 @@ export const voiceHooks = {
       );
     }
 
-    const session = state.sessions?.[normalized] ?? null;
+    const session = resolveVoiceContextSessionFromState(normalized, state);
     if (!session) {
       return (
         'VOICE SESSION STARTED\n\n' +

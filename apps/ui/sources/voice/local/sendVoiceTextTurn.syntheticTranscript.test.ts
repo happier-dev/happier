@@ -8,20 +8,25 @@ const sendSessionMessageHandler = vi.fn<(args: unknown) => Promise<string>>(
   async () => JSON.stringify({ ok: true, status: 'sent' }),
 );
 
-vi.mock('@/voice/sessionBinding/resolveVoiceSessionBinding', () => ({
-  resolveVoiceSessionBindingByControlSessionId: (params: { controlSessionId: string }) =>
-    params.controlSessionId === 'voice-global'
-      ? {
-          adapterId: 'local_conversation',
-          controlSessionId: 'voice-global',
-          conversationSessionId: 'carrier-s1',
-          transcriptMode: 'synthetic',
-          targetSessionId: 's1',
-          updatedAt: 1,
-        }
-      : null,
-  resolveVoiceSessionBindingByConversationSessionId: () => null,
-}));
+vi.mock('@/voice/sessionBinding/resolveVoiceSessionBinding', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/voice/sessionBinding/resolveVoiceSessionBinding')>();
+
+  return {
+    ...actual,
+    resolveVoiceSessionBindingByControlSessionId: (params: { controlSessionId: string }) =>
+      params.controlSessionId === 'voice-global'
+        ? {
+            adapterId: 'local_conversation',
+            controlSessionId: 'voice-global',
+            conversationSessionId: 'carrier-s1',
+            transcriptMode: 'synthetic',
+            targetSessionId: 's1',
+            updatedAt: 1,
+          }
+        : null,
+    resolveVoiceSessionBindingByConversationSessionId: () => null,
+  };
+});
 
 vi.mock('@/voice/sessionBinding/voiceConversationTranscript', () => ({
   appendVoiceConversationUserText: (params: any) => appendUser(params),

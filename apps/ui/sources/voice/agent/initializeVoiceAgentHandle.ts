@@ -33,6 +33,7 @@ import {
     resolvePersistedDaemonConversationSessionId,
     resolveVoiceRunMetadataSessionId,
 } from '@/voice/agent/voiceAgentRunState';
+import { findSessionListCachedSession } from '@/sync/domains/session/listing/sessionListCacheState';
 
 type InitializeVoiceAgentHandleParams = Readonly<{
     sessionId: string;
@@ -40,6 +41,15 @@ type InitializeVoiceAgentHandleParams = Readonly<{
     getOpenAiCompatVoiceAgentClient: () => VoiceAgentClient;
     enqueuePendingContextUpdate: (sessionId: string, update: string) => void;
 }>;
+
+type VoiceAgentSessionLike = Readonly<{
+    id: string;
+    modelMode?: unknown;
+    metadata?: Readonly<{
+        flavor?: unknown;
+        profileId?: unknown;
+    }> | null;
+}> | null;
 
 export async function initializeVoiceAgentHandle({
     sessionId,
@@ -73,6 +83,12 @@ export async function initializeVoiceAgentHandle({
         return undefined;
     };
 
+    const resolveDaemonSessionFromState = (daemonSessionId: string): VoiceAgentSessionLike => {
+        const cachedSession = findSessionListCachedSession(storage.getState() as any, daemonSessionId)?.session ?? null;
+        if (cachedSession) return cachedSession as VoiceAgentSessionLike;
+        return (storage.getState() as any)?.sessions?.[daemonSessionId] ?? null;
+    };
+
     const resolveModelIds = (backend: 'daemon' | 'openai_compat', daemonSessionId: string) => {
         if (backend === 'openai_compat') {
             const openaiCompatCfg = agentCfg?.openaiCompat ?? null;
@@ -81,7 +97,7 @@ export async function initializeVoiceAgentHandle({
             return { chatModelId, commitModelId };
         }
 
-        const session = storage.getState().sessions?.[daemonSessionId] ?? null;
+        const session = resolveDaemonSessionFromState(daemonSessionId);
         if (!session) {
             const chatModelId = String(agentCfg?.chatModelId ?? 'default');
             const commitModelId = String(agentCfg?.commitModelId ?? chatModelId);
@@ -89,7 +105,7 @@ export async function initializeVoiceAgentHandle({
         }
 
         return resolveDaemonVoiceAgentModelIds({
-            session,
+            session: session as any,
             agent: agentCfg ?? {},
         });
     };
@@ -206,8 +222,8 @@ export async function initializeVoiceAgentHandle({
             const explicit = String(agentId ?? '').trim();
             return explicit.length > 0 ? explicit : DEFAULT_AGENT_ID;
         }
-        const session = storage.getState().sessions?.[daemonSessionId] ?? null;
-        return resolveAgentIdFromFlavor(session?.metadata?.flavor) ?? DEFAULT_AGENT_ID;
+        const session = resolveDaemonSessionFromState(daemonSessionId);
+        return resolveAgentIdFromFlavor((session?.metadata as any)?.flavor) ?? DEFAULT_AGENT_ID;
     };
     let chatModelId = '';
     let commitModelId = '';
@@ -303,7 +319,7 @@ export async function initializeVoiceAgentHandle({
 
     const startArgsBase = {
         agentSource,
-        profileId: normalizeNonEmptyString((storage.getState() as any)?.sessions?.[rpcSessionId]?.metadata?.profileId),
+        profileId: normalizeNonEmptyString((resolveDaemonSessionFromState(rpcSessionId)?.metadata as any)?.profileId),
         verbosity,
         permissionPolicy,
         idleTtlSeconds,

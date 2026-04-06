@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
+import { storage } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import {
@@ -75,6 +76,94 @@ function prefs(overrides: Partial<VoiceContextFormatterPrefs>): VoiceContextForm
 }
 
 describe('voice context privacy (opt-out defaults)', () => {
+  beforeEach(() => {
+    storage.setState((state: any) => ({
+      ...state,
+      sessions: {},
+      sessionListViewData: [],
+      sessionListViewDataByServerId: {},
+    }));
+  });
+
+  it('prefers cached visible session metadata over stale raw session metadata when formatting the full session', () => {
+    storage.setState((state: any) => ({
+      ...state,
+      sessions: {
+        s1: {
+          id: 's1',
+          seq: 0,
+          createdAt: 0,
+          updatedAt: 1,
+          active: true,
+          activeAt: 0,
+          metadata: {
+            path: '/Users/alice/Company/RawRepo',
+            host: 'localhost',
+            summary: { text: 'Raw session summary', updatedAt: 0 },
+          },
+          metadataVersion: 1,
+          agentState: null,
+          agentStateVersion: 0,
+          thinking: false,
+          thinkingAt: 0,
+          presence: 'online',
+        },
+      },
+      sessionListViewData: [
+        {
+          type: 'session',
+          session: {
+            id: 's1',
+            seq: 0,
+            createdAt: 0,
+            updatedAt: 99,
+            active: true,
+            activeAt: 0,
+            metadata: {
+              path: '/Users/alice/Company/CachedRepo',
+              host: 'localhost',
+              summary: { text: 'Cached session summary', updatedAt: 0 },
+            },
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+          },
+        },
+      ],
+    }));
+
+    const out = formatSessionFull(
+      {
+        id: 's1',
+        seq: 0,
+        createdAt: 0,
+        updatedAt: 1,
+        active: true,
+        activeAt: 0,
+        metadata: {
+          path: '/Users/alice/Company/RawRepo',
+          host: 'localhost',
+          summary: { text: 'Raw session summary', updatedAt: 0 },
+        },
+        metadataVersion: 1,
+        agentState: null,
+        agentStateVersion: 0,
+        thinking: false,
+        thinkingAt: 0,
+        presence: 'online',
+      } as Session,
+      [],
+    );
+
+    expect(out).toContain('Cached session summary');
+    expect(out).toContain('/Users/alice/Company/CachedRepo');
+    expect(out).not.toContain('Raw session summary');
+    expect(out).not.toContain('/Users/alice/Company/RawRepo');
+  });
+
   it('includes local project paths by default', () => {
     const out = formatSessionFull(createSession('/Users/alice/Company/SecretRepo'), []);
 

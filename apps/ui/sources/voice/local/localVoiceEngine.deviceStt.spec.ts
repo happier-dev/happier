@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
     emitSpeechRecEvent,
@@ -18,18 +18,10 @@ type CallCountSpy = {
     };
 };
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-const waitForCallCount = async (spy: CallCountSpy, expectedCount: number, timeoutMs = 500, pollMs = 5) => {
-    const deadline = Date.now() + timeoutMs;
-
-    while (spy.mock.calls.length < expectedCount) {
-        if (Date.now() >= deadline) {
-            throw new Error(`Timed out waiting for ${expectedCount} calls; saw ${spy.mock.calls.length}`);
-        }
-
-        await sleep(pollMs);
-    }
+const waitForCallCount = async (spy: CallCountSpy, expectedCount: number) => {
+    await vi.waitFor(() => {
+        expect(spy.mock.calls.length).toBeGreaterThanOrEqual(expectedCount);
+    });
 };
 
 describe('local voice engine device STT (experimental)', () => {
@@ -321,7 +313,7 @@ describe('local voice engine device STT (experimental)', () => {
         emitSpeechRecEvent('result', { isFinal: true, results: [{ transcript: 'timed hands free', confidence: 0.9, segments: [] }] });
         expect(speechRecStop).not.toHaveBeenCalled();
 
-        await sleep(5);
+        await new Promise((resolve) => setTimeout(resolve, 5));
         expect(speechRecStop).not.toHaveBeenCalled();
 
         await waitForCallCount(speechRecStop, 1);

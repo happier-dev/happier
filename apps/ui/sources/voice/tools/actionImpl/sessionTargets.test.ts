@@ -115,4 +115,49 @@ describe('voice session target actions', () => {
       },
     });
   });
+
+  it('returns the visible cached title when a stale raw title normalizes to the same lookup text', async () => {
+    const previousSessions = state.sessions;
+    const previousVisibleRows = state.sessionListViewData;
+    state.sessions = {
+      ...previousSessions,
+      s4: {
+        id: 's4',
+        metadata: { summaryText: 'Session QA Voice Matrix!' },
+        updatedAt: 10,
+      },
+    };
+    state.sessionListViewData = [
+      {
+        type: 'session',
+        session: {
+          id: 's4',
+          updatedAt: 10,
+          metadata: { summaryText: 'Session QA Voice Matrix' },
+        },
+      },
+    ];
+
+    try {
+      const { setPrimaryActionSessionId } = await import('./sessionTargets');
+
+      const result = await setPrimaryActionSessionId({ sessionId: null, sessionTitle: 'Session QA Voice Matrix' });
+
+      expect(syncTargetSession).toHaveBeenCalledWith({
+        controlSessionId: '__voice_agent__',
+        targetSessionId: 's4',
+      });
+      expect(result).toMatchObject({
+        ok: true,
+        sessionId: 's4',
+        session: {
+          id: 's4',
+          title: 'Session QA Voice Matrix',
+        },
+      });
+    } finally {
+      state.sessions = previousSessions;
+      state.sessionListViewData = previousVisibleRows;
+    }
+  });
 });

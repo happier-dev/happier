@@ -143,9 +143,14 @@ installRealtimeCommonModuleMocks({
         });
     },
 });
-vi.mock('@/voice/sessionBinding/resolveVoiceSessionBinding', () => ({
-  resolveVoiceSessionBindingByControlSessionId: (params: any) => resolveVoiceSessionBindingByControlSessionId(params),
-}));
+vi.mock('@/voice/sessionBinding/resolveVoiceSessionBinding', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/voice/sessionBinding/resolveVoiceSessionBinding')>();
+
+  return {
+    ...actual,
+    resolveVoiceSessionBindingByControlSessionId: (params: any) => resolveVoiceSessionBindingByControlSessionId(params),
+  };
+});
 
 function createJsonResponse(payload: unknown, ok = true, status = 200): Response {
   return {

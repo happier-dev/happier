@@ -34,10 +34,15 @@ vi.mock('@/voice/local/localVoiceEngine', () => ({
     announceLocalVoiceAgentAssistantText(sessionId, text),
 }));
 
-vi.mock('@/voice/sessionBinding/resolveVoiceSessionBinding', () => ({
-  resolveVoiceSessionBindingByControlSessionId: (params: { controlSessionId: string }) =>
-    resolveVoiceBindingByControlSessionId(params.controlSessionId),
-}));
+vi.mock('@/voice/sessionBinding/resolveVoiceSessionBinding', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/voice/sessionBinding/resolveVoiceSessionBinding')>();
+
+  return {
+    ...actual,
+    resolveVoiceSessionBindingByControlSessionId: (params: { controlSessionId: string }) =>
+      resolveVoiceBindingByControlSessionId(params.controlSessionId),
+  };
+});
 
 import { voiceHooks } from './voiceHooks';
 

@@ -1,18 +1,14 @@
 import { storage } from '@/sync/domains/state/storage';
-import { findSessionListCachedSession } from '@/sync/domains/session/listing/sessionListCacheState';
+import {
+  resolveSessionListPreferredSessionMetadataFromState,
+  type SessionMetadataLike,
+} from '@/sync/domains/session/listing/sessionListCacheState';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { VoiceContextFormatterPrefs } from '@/voice/context/contextFormatters';
 
 import { redactVoicePathLikeString } from '@/voice/shared/redactVoicePathLikeData';
 
 type VoiceSessionLabelPrefs = Readonly<Pick<VoiceContextFormatterPrefs, 'voiceShareSessionSummary' | 'voiceShareFilePaths'>>;
-
-type SessionMetadataLike = Readonly<{
-  summary?: Readonly<{ text?: unknown }> | null;
-  summaryText?: unknown;
-  name?: unknown;
-  path?: unknown;
-}> | null | undefined;
 
 function normalizeNonEmptyString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -47,12 +43,6 @@ function labelFromMetadata(
   return normalizeNonEmptyString(lastSegment);
 }
 
-function findCachedSessionMetadata(state: any, sessionId: string): SessionMetadataLike {
-  const cachedMatch = findSessionListCachedSession(state, sessionId);
-  const metadata = cachedMatch?.session?.metadata;
-  return metadata && typeof metadata === 'object' ? (metadata as SessionMetadataLike) : null;
-}
-
 export function resolveVoiceSessionLabel(
   sessionId: string,
   prefs: VoiceSessionLabelPrefs,
@@ -63,10 +53,10 @@ export function resolveVoiceSessionLabel(
 ): string {
   const state: any = storage.getState();
   const session = (state?.sessions?.[sessionId] ?? null) as Session | null;
-  const cachedMetadata = findCachedSessionMetadata(state, sessionId);
+  const cachedMetadata = resolveSessionListPreferredSessionMetadataFromState(state, sessionId);
   const label =
-    labelFromMetadata(session?.metadata, prefs)
-    ?? labelFromMetadata(cachedMetadata, prefs)
+    labelFromMetadata(cachedMetadata, prefs)
+    ?? labelFromMetadata(session?.metadata, prefs)
     ?? labelFromMetadata(options?.metadata, prefs);
 
   if (label === sessionId) {

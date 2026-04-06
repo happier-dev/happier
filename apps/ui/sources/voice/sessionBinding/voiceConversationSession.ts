@@ -12,6 +12,7 @@ import { resolveMachineForActiveServerFromState, resolveVisibleMachinesForActive
 import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
 import { machineSpawnNewSession } from '@/sync/ops/machines';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListCacheState';
 import { sync } from '@/sync/sync';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
@@ -47,14 +48,18 @@ function buildVoiceConversationSystemSessionMetadata() {
   return buildSystemSessionMetadataV1({ key: VOICE_CONVERSATION_SYSTEM_SESSION_KEY, hidden: true });
 }
 
-function shouldRetireLegacyVoiceConversationSession(session: any): boolean {
-  if (!session || typeof session !== 'object') return false;
-  return readDirectSessionLink(session.metadata ?? null) !== null;
+function shouldRetireLegacyVoiceConversationSession(metadata: any): boolean {
+  if (!metadata || typeof metadata !== 'object') return false;
+  return readDirectSessionLink(metadata ?? null) !== null;
 }
 
 function isReusableVoiceConversationRuntimeSession(session: any): boolean {
   if (!session || typeof session !== 'object') return false;
   return session.active === true;
+}
+
+function resolveVoiceConversationSessionMetadataFromState(state: any, sessionId: string): any | null {
+  return resolveSessionListPreferredSessionMetadataFromState(state, sessionId);
 }
 
 function joinFsPath(base: string, child: string): string {
@@ -228,12 +233,14 @@ function isSpawnWebhookTimeout(spawned: unknown): boolean {
 }
 
 function matchesLateSpawnedVoiceConversationTarget(
+  state: any,
   session: any,
   params: Readonly<{ machineId: string; directory: string }>,
 ): boolean {
+  const metadata = resolveVoiceConversationSessionMetadataFromState(state, typeof session?.id === 'string' ? session.id : '');
   return (
-    normalizeNonEmptyString(session?.metadata?.machineId) === params.machineId
-    && normalizeNonEmptyString(session?.metadata?.path) === params.directory
+    normalizeNonEmptyString(metadata?.machineId) === params.machineId
+    && normalizeNonEmptyString(metadata?.path) === params.directory
   );
 }
 
@@ -249,7 +256,7 @@ function findLateSpawnedVoiceConversationSessionId(params: Readonly<{
     if (!session || typeof session.id !== 'string') continue;
     if (params.knownSessionIds.has(session.id)) continue;
     if (session.active !== true) continue;
-    if (!matchesLateSpawnedVoiceConversationTarget(session, params)) continue;
+    if (!matchesLateSpawnedVoiceConversationTarget(storage.getState(), session, params)) continue;
 
     const updatedAt = typeof session.updatedAt === 'number' && Number.isFinite(session.updatedAt) ? session.updatedAt : 0;
     if (!best || updatedAt > best.updatedAt || (updatedAt === best.updatedAt && session.id < best.id)) {
@@ -294,7 +301,7 @@ async function recoverLateSpawnedVoiceConversationSessionId(params: Readonly<{
     for (const candidateSessionId of listLateSpawnedVoiceConversationCandidateIds(params)) {
       await Promise.resolve(sync.ensureSessionVisibleForMessageRoute(candidateSessionId, { forceRefresh: true } as any)).catch(() => {});
       const candidateSession = (storage.getState() as any)?.sessions?.[candidateSessionId] ?? null;
-      if (matchesLateSpawnedVoiceConversationTarget(candidateSession, params)) {
+      if (matchesLateSpawnedVoiceConversationTarget(storage.getState(), candidateSession, params)) {
         return candidateSessionId;
       }
     }
@@ -308,8 +315,8 @@ async function recoverLateSpawnedVoiceConversationSessionId(params: Readonly<{
 async function waitForSessionMetadata(sessionId: string, timeoutMs: number): Promise<void> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    const session = storage.getState().sessions?.[sessionId] ?? null;
-    if (session?.metadata) return;
+    const metadata = resolveSessionListPreferredSessionMetadataFromState(storage.getState() as any, sessionId);
+    if (metadata) return;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error('voice_conversation_session_not_ready');
@@ -389,7 +396,8 @@ async function applyVoiceConversationRetentionPolicy(params: Readonly<{ keepSess
   const sessions: Array<{ id: string; updatedAt: number }> = [];
   for (const session of Object.values(state?.sessions ?? {}) as any[]) {
     if (!session || typeof session.id !== 'string') continue;
-    if (!isVoiceConversationSystemSessionMetadata(session.metadata ?? null)) continue;
+    const sessionMetadata = resolveVoiceConversationSessionMetadataFromState(state, session.id);
+    if (!isVoiceConversationSystemSessionMetadata(sessionMetadata)) continue;
     if (session.id === keepSessionId) continue;
     const updatedAt = typeof session.updatedAt === 'number' && Number.isFinite(session.updatedAt) ? session.updatedAt : 0;
     sessions.push({ id: session.id, updatedAt });
@@ -418,10 +426,11 @@ async function retireLegacyVoiceConversationSessions(params: Readonly<{
   const toRetire: string[] = [];
   for (const session of Object.values(state.sessions ?? {}) as any[]) {
     if (!session || typeof session.id !== 'string') continue;
-    if (!isVoiceConversationSystemSessionMetadata(session.metadata ?? null)) continue;
-    if (!shouldRetireLegacyVoiceConversationSession(session)) continue;
-    if (normalizeNonEmptyString(session.metadata?.machineId) !== machineId) continue;
-    if (normalizeNonEmptyString(session.metadata?.path) !== directory) continue;
+    const sessionMetadata = resolveVoiceConversationSessionMetadataFromState(state, session.id);
+    if (!isVoiceConversationSystemSessionMetadata(sessionMetadata)) continue;
+    if (!shouldRetireLegacyVoiceConversationSession(sessionMetadata)) continue;
+    if (normalizeNonEmptyString(sessionMetadata?.machineId) !== machineId) continue;
+    if (normalizeNonEmptyString(sessionMetadata?.path) !== directory) continue;
     toRetire.push(session.id);
   }
 
@@ -440,10 +449,11 @@ export async function ensureVoiceConversationSessionForVoiceHome(): Promise<stri
   let bestExisting: { id: string; updatedAt: number } | null = null;
   for (const session of Object.values(state.sessions ?? {}) as any[]) {
     if (!session || typeof session.id !== 'string') continue;
-    if (!isVoiceConversationSystemSessionMetadata(session.metadata ?? null)) continue;
-    if (normalizeNonEmptyString(session.metadata?.machineId) !== target.machineId) continue;
-    if (normalizeNonEmptyString(session.metadata?.path) !== target.directory) continue;
-    if (!matchesVoiceConversationScope(session.metadata ?? null, { kind: 'voice_home' })) continue;
+    const sessionMetadata = resolveVoiceConversationSessionMetadataFromState(state, session.id);
+    if (!isVoiceConversationSystemSessionMetadata(sessionMetadata)) continue;
+    if (normalizeNonEmptyString(sessionMetadata?.machineId) !== target.machineId) continue;
+    if (normalizeNonEmptyString(sessionMetadata?.path) !== target.directory) continue;
+    if (!matchesVoiceConversationScope(sessionMetadata ?? null, { kind: 'voice_home' })) continue;
     if (!isReusableVoiceConversationRuntimeSession(session)) continue;
     const updatedAt = typeof session.updatedAt === 'number' && Number.isFinite(session.updatedAt) ? session.updatedAt : 0;
     if (!bestExisting || updatedAt > bestExisting.updatedAt || (updatedAt === bestExisting.updatedAt && session.id < bestExisting.id)) {
@@ -521,13 +531,29 @@ export async function ensureVoiceConversationSessionForSessionRoot(params: Reado
   await retireLegacyVoiceConversationSessions({ machineId, directory }).catch(() => {});
   const state: any = storage.getState();
 
+  const reusableSessionId = findVoiceConversationSessionId(state);
+  if (reusableSessionId) {
+    const reusableMetadata = resolveVoiceConversationSessionMetadataFromState(state, reusableSessionId);
+    if (
+      isVoiceConversationSystemSessionMetadata(reusableMetadata)
+      && normalizeNonEmptyString(reusableMetadata?.machineId) === machineId
+      && normalizeNonEmptyString(reusableMetadata?.path) === directory
+      && matchesVoiceConversationScope(reusableMetadata ?? null, { kind: 'session_root', sessionRootId: sessionId })
+    ) {
+      await touchVoiceConversationSessionWithScope(reusableSessionId, { kind: 'session_root', sessionRootId: sessionId }).catch(() => {});
+      await applyVoiceConversationRetentionPolicy({ keepSessionId: reusableSessionId }).catch(() => {});
+      return reusableSessionId;
+    }
+  }
+
   let bestExisting: { id: string; updatedAt: number } | null = null;
   for (const existingSession of Object.values(state.sessions ?? {}) as any[]) {
     if (!existingSession || typeof existingSession.id !== 'string') continue;
-    if (!isVoiceConversationSystemSessionMetadata(existingSession.metadata ?? null)) continue;
-    if (normalizeNonEmptyString(existingSession.metadata?.machineId) !== machineId) continue;
-    if (normalizeNonEmptyString(existingSession.metadata?.path) !== directory) continue;
-    if (!matchesVoiceConversationScope(existingSession.metadata ?? null, { kind: 'session_root', sessionRootId: sessionId })) continue;
+    const existingMetadata = resolveVoiceConversationSessionMetadataFromState(state, existingSession.id);
+    if (!isVoiceConversationSystemSessionMetadata(existingMetadata)) continue;
+    if (normalizeNonEmptyString(existingMetadata?.machineId) !== machineId) continue;
+    if (normalizeNonEmptyString(existingMetadata?.path) !== directory) continue;
+    if (!matchesVoiceConversationScope(existingMetadata ?? null, { kind: 'session_root', sessionRootId: sessionId })) continue;
     if (!isReusableVoiceConversationRuntimeSession(existingSession)) continue;
     const updatedAt = typeof existingSession.updatedAt === 'number' && Number.isFinite(existingSession.updatedAt) ? existingSession.updatedAt : 0;
     if (!bestExisting || updatedAt > bestExisting.updatedAt || (updatedAt === bestExisting.updatedAt && existingSession.id < bestExisting.id)) {

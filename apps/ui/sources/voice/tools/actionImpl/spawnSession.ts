@@ -3,6 +3,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { resolveEffectiveWindowsRemoteSessionLaunchMode } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode';
+import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListCacheState';
 import { buildSafeWorkspaceLabel } from '@/utils/worktree/workspaceHandles';
 
 import { normalizeNonEmptyString, resolveVoiceMachineLabel } from './shared';
@@ -19,9 +20,9 @@ function resolveSpawnTarget(state: any): { machineId: string; directory: string 
     .filter(Boolean) as string[];
 
   for (const sid of candidates) {
-    const s = sessionsObj?.[sid] ?? null;
-    const machineId = normalizeNonEmptyString(s?.metadata?.machineId);
-    const directory = normalizeNonEmptyString(s?.metadata?.path);
+    const metadata = resolveSessionListPreferredSessionMetadataFromState(state, sid);
+    const machineId = normalizeNonEmptyString(metadata?.machineId);
+    const directory = normalizeNonEmptyString(metadata?.path);
     if (machineId && directory) return { machineId, directory };
   }
 
@@ -30,9 +31,10 @@ function resolveSpawnTarget(state: any): { machineId: string; directory: string 
   const directory = normalizeNonEmptyString(recent?.path);
   if (machineId && directory) return { machineId, directory };
 
-  for (const s of Object.values(sessionsObj) as any[]) {
-    const fallbackMachineId = normalizeNonEmptyString(s?.metadata?.machineId);
-    const fallbackDirectory = normalizeNonEmptyString(s?.metadata?.path);
+  for (const sid of Object.keys(sessionsObj)) {
+    const metadata = resolveSessionListPreferredSessionMetadataFromState(state, sid);
+    const fallbackMachineId = normalizeNonEmptyString(metadata?.machineId);
+    const fallbackDirectory = normalizeNonEmptyString(metadata?.path);
     if (fallbackMachineId && fallbackDirectory) return { machineId: fallbackMachineId, directory: fallbackDirectory };
   }
 

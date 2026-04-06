@@ -1,3 +1,12 @@
+import {
+  resolveSessionListCachedSessionServerName,
+  resolveSessionListPreferredSessionMetadataFromState,
+  resolveSessionListPreferredServerIdFromState,
+} from '@/sync/domains/session/listing/sessionListCacheState';
+import {
+  resolveVoiceSessionLocationLabelFromMetadata,
+  resolveVoiceSessionTitleFromMetadata,
+} from './sessionMetadata';
 import { normalizeNonEmptyString } from './shared';
 import { collectVoiceSessionRows } from './voiceSessionRows';
 
@@ -17,11 +26,16 @@ export function resolveVoiceSessionRef(
   const normalizedSessionId = normalizeNonEmptyString(sessionId);
   if (!normalizedSessionId) return null;
 
-  const row = collectVoiceSessionRows(state).find((candidate) => candidate.id === normalizedSessionId);
-  const title = row?.title ?? null;
-  const locationLabel = row?.locationLabel ?? null;
-  const serverId = normalizeNonEmptyString(options?.serverId) ?? row?.serverId ?? null;
-  const serverName = normalizeNonEmptyString(options?.serverName) ?? row?.serverName ?? null;
+  const lookupState = state as Parameters<typeof resolveSessionListPreferredSessionMetadataFromState>[0];
+  const metadata = resolveSessionListPreferredSessionMetadataFromState(lookupState, normalizedSessionId);
+  const title = resolveVoiceSessionTitleFromMetadata(metadata);
+  const locationLabel = resolveVoiceSessionLocationLabelFromMetadata(metadata);
+  const serverId = normalizeNonEmptyString(options?.serverId)
+    ?? resolveSessionListPreferredServerIdFromState(lookupState, normalizedSessionId)
+    ?? null;
+  const serverName = normalizeNonEmptyString(options?.serverName)
+    ?? resolveSessionListCachedSessionServerName(lookupState, normalizedSessionId)
+    ?? null;
 
   return {
     id: normalizedSessionId,

@@ -337,6 +337,66 @@ describe('VoiceSurface', () => {
     expect(screen.getTextContent()).not.toContain('s_target');
   });
 
+  it('shows the cached visible target label instead of stale raw session metadata in the sidebar', async () => {
+    vi.resetModules();
+    featureEnabledState['voice.agent'] = true;
+    voiceSettingState.current = {
+      providerId: 'local_conversation',
+      ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
+      privacy: { shareSessionSummary: true, shareFilePaths: true },
+    };
+    allSessionsState.current = [
+      {
+        id: 's_target',
+        metadata: {
+          summaryText: 'Raw target session summary',
+        },
+      },
+    ];
+    storageState.current = {
+      sessions: {
+        s_target: {
+          id: 's_target',
+          metadata: {
+            summaryText: 'Raw target session summary',
+          },
+        },
+      },
+      sessionListViewData: [
+        {
+          type: 'session',
+          session: {
+            id: 's_target',
+            updatedAt: 99,
+            metadata: {
+              summaryText: 'Cached target session summary',
+            },
+          },
+        },
+      ],
+      sessionListViewDataByServerId: {},
+    };
+    const { useVoiceTargetStore } = await import('@/voice/runtime/voiceTargetStore');
+    useVoiceTargetStore.getState().setScope('global');
+    useVoiceTargetStore.getState().setPrimaryActionSessionId('s_target');
+
+    const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({
+      adapterId: 'local_conversation',
+      sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      status: 'connected',
+      mode: 'idle',
+      canStop: true,
+    });
+
+    const { VoiceSurface } = await import('./VoiceSurface');
+
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
+
+    expect(screen.getTextContent()).toContain('Cached target session summary');
+    expect(screen.getTextContent()).not.toContain('Raw target session summary');
+  });
+
   it('shows the voice conversation icon from a persisted hidden voice session even without an active binding', async () => {
     vi.resetModules();
     featureEnabledState['voice.agent'] = true;

@@ -71,6 +71,7 @@ const state: any = {
       },
     },
   },
+  sessionListViewData: [],
   sessions: {
     sys_voice: {
       id: 'sys_voice',
@@ -232,6 +233,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
     state.sessions.sys_voice.active = true;
     state.sessions.sys_voice.presence = 'online';
     state.sessions.sys_voice.metadata = { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } };
+    state.sessionListViewData = [];
     state.settings.voice.adapters.local_conversation.streaming.enabled = false;
     state.settings.voice.adapters.local_conversation.agent.transcript = { persistenceMode: 'persistent', epoch: 1 };
     state.settings.voice.adapters.local_conversation.agent.resumabilityMode = 'replay';
@@ -1061,6 +1063,81 @@ describe('VoiceAgentSessionController (persistence)', () => {
     });
 
     expect(start).not.toHaveBeenCalled();
+  });
+
+  it('prefers cached visible target session metadata when raw target metadata is stale', async () => {
+    state.sessions.s_cached_target = {
+      id: 's_cached_target',
+      updatedAt: 1,
+      active: false,
+      presence: 'offline',
+      modelMode: 'default',
+      metadata: {
+        flavor: 'kimi',
+        machineId: 'm_raw',
+      },
+    };
+    state.sessionListViewData = [
+      {
+        type: 'session',
+        session: {
+          id: 's_cached_target',
+          seq: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          active: true,
+          activeAt: 1,
+          archivedAt: null,
+          metadataVersion: 1,
+          agentStateVersion: 1,
+          metadata: {
+            flavor: 'claude',
+            machineId: 'm_live',
+          },
+          thinking: false,
+          thinkingAt: 0,
+          presence: 'online',
+          optimisticThinkingAt: null,
+          thinkingGraceUntil: null,
+          owner: undefined,
+          accessLevel: undefined,
+          canApprovePermissions: undefined,
+          hasPendingPermissionRequests: false,
+          hasPendingUserActionRequests: false,
+        },
+      },
+    ];
+    state.machines.m_live = {
+      id: 'm_live',
+      seq: 1,
+      createdAt: 0,
+      updatedAt: 0,
+      active: true,
+      activeAt: 0,
+      revokedAt: null,
+      metadata: null,
+      metadataVersion: 0,
+      daemonState: null,
+      daemonStateVersion: 0,
+    };
+
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController, voiceSessionBindingStore } =
+      await loadVoiceAgentPersistenceHarness();
+    voiceSessionBindingStore.getState().bind({
+      adapterId: 'local_conversation',
+      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      conversationSessionId: 'sys_voice',
+      transcriptMode: 'native_session',
+      targetSessionId: 's_cached_target',
+      updatedAt: 1,
+    });
+    const controller = createVoiceAgentSessionController();
+
+    await expect(controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello')).resolves.toMatchObject({
+      assistantText: 'ok',
+    });
+
+    expect(start).toHaveBeenCalled();
   });
 
   it('switches away from a sticky global voice machine when the reused hidden voice session returns daemon RPC unavailable', async () => {

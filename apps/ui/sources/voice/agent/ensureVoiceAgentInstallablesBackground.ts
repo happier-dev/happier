@@ -1,6 +1,7 @@
 import type { AgentId } from '@/agents/catalog/catalog';
 import { ensureAgentInstallablesBackground } from '@/capabilities/ensureAgentInstallablesBackground';
 import { isAgentId } from '@/agents/registry/registryCore';
+import { findSessionListCachedSession } from '@/sync/domains/session/listing/sessionListCacheState';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
@@ -13,7 +14,8 @@ export async function ensureVoiceAgentInstallablesBackground(params: Readonly<{
   if (!normalizedAgentId || !isAgentId(normalizedAgentId)) return;
 
   const state: any = storage.getState();
-  const session = state?.sessions?.[params.sessionId] ?? null;
+  const cachedSession = findSessionListCachedSession(state, params.sessionId)?.session ?? null;
+  const session = cachedSession ?? state?.sessions?.[params.sessionId] ?? null;
   const machineId = normalizeNonEmptyString(session?.metadata?.machineId);
   if (!machineId) return;
 

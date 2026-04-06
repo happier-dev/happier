@@ -18,14 +18,40 @@ const settingsState: any = {
     },
   },
 };
+const state: any = {
+  settings: settingsState,
+  sessions: {
+    s1: {
+      id: 's1',
+      active: true,
+      presence: 'online',
+      modelMode: 'default',
+      metadata: { flavor: 'claude', machineId: 'machine-raw' },
+    },
+  },
+  sessionListViewData: [
+    {
+      type: 'session',
+      serverId: 'server-a',
+      serverName: 'Server A',
+      session: {
+        id: 's1',
+        active: true,
+        presence: 'online',
+        modelMode: 'default',
+        metadata: { flavor: 'claude', machineId: 'machine-cached' },
+      },
+    },
+  ],
+};
+const getState = vi.fn(() => state);
 const resolveUiVoicePromptStackBlocks = vi.fn(async (_args?: { profileId?: string | null }) => []);
+const resolveUiMemoryRecallGuidanceEnabled = vi.fn(async (_args: any) => false);
 
 installVoiceAgentCommonModuleMocks({
   storage: async () => ({
     storage: {
-      getState: () => ({
-        settings: settingsState,
-      }),
+      getState,
     },
   }),
 });
@@ -41,7 +67,7 @@ vi.mock('@/voice/agent/resolveUiVoicePromptStackBlocks', () => ({
 }));
 
 vi.mock('@/sync/domains/memory/resolveUiMemoryRecallGuidanceEnabled', () => ({
-  resolveUiMemoryRecallGuidanceEnabled: async () => false,
+  resolveUiMemoryRecallGuidanceEnabled: (args: any) => resolveUiMemoryRecallGuidanceEnabled(args),
 }));
 
 describe('OpenAiCompatVoiceAgentClient', () => {
@@ -52,6 +78,10 @@ describe('OpenAiCompatVoiceAgentClient', () => {
     settingsState.voice.adapters.local_conversation.networkTimeoutMs = 5_000;
     resolveUiVoicePromptStackBlocks.mockClear();
     resolveUiVoicePromptStackBlocks.mockResolvedValue([]);
+    resolveUiMemoryRecallGuidanceEnabled.mockClear();
+    resolveUiMemoryRecallGuidanceEnabled.mockResolvedValue(false);
+    state.sessions.s1.metadata = { flavor: 'claude', machineId: 'machine-raw' };
+    state.sessionListViewData[0].session.metadata = { flavor: 'claude', machineId: 'machine-cached' };
   });
 
   afterEach(() => {
@@ -164,6 +194,37 @@ describe('OpenAiCompatVoiceAgentClient', () => {
     });
 
     expect(resolveUiVoicePromptStackBlocks).toHaveBeenCalledWith({ profileId: 'work' });
+  });
+
+  it('prefers cached visible session metadata when resolving memory recall guidance machine ids', async () => {
+    const guidanceCalls: any[] = [];
+    resolveUiMemoryRecallGuidanceEnabled.mockImplementationOnce(async (args: any) => {
+      guidanceCalls.push(args);
+      return false;
+    });
+
+    (globalThis.fetch as any).mockImplementation(async (_url: string, init?: any) => {
+      return {
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: 'ok' } }] }),
+      };
+    });
+
+    const { OpenAiCompatVoiceAgentClient } = await import('./openaiCompatVoiceAgentClient');
+    const client = new OpenAiCompatVoiceAgentClient();
+    await client.start({
+      sessionId: 's1',
+      chatModelId: 'fast-model',
+      commitModelId: 'commit-model',
+      permissionPolicy: 'read_only',
+      idleTtlSeconds: 300,
+      initialContext: 'Initial context',
+    });
+
+    expect(guidanceCalls[0]).toMatchObject({
+      machineId: 'machine-cached',
+      surfaces: ['voice_action_block'],
+    });
   });
 
   it('welcome inserts an assistant greeting into message history', async () => {

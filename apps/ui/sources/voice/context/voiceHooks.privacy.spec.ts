@@ -4,6 +4,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
+import { useVoiceContextSeenStore } from '@/voice/runtime/voiceContextSeenStore';
 
 const { fakeSink, getVoiceContextSinkForSession } = vi.hoisted(() => {
   const fakeSink = {
@@ -57,9 +58,16 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
     fakeSink.sendTextMessage.mockReset();
     fakeSink.sendContextualUpdate.mockReset();
     getVoiceContextSinkForSession.mockClear();
-    storage.setState((s: any) => ({ ...s, settings: { ...settingsDefaults } }));
+    storage.setState((s: any) => ({
+      ...s,
+      settings: { ...settingsDefaults },
+      sessionListViewData: [],
+      sessionListViewDataByServerId: {},
+    }));
     seedSession('s1');
     useVoiceTargetStore.getState().setPrimaryActionSessionId('s1');
+    useVoiceTargetStore.getState().setTrackedSessionIds(['s1']);
+    useVoiceContextSeenStore.getState().clearShownSessions();
   });
 
   it('does not forward permission requests when sharePermissionRequests is false', () => {
@@ -188,6 +196,40 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
     expect(() => voiceHooks.onVoiceStarted('missing_session')).not.toThrow();
     const prompt = voiceHooks.onVoiceStarted('missing_session');
     expect(prompt).toContain('<session_not_found>true</session_not_found>');
+  });
+
+  it('prefers cached visible session metadata over stale raw session metadata when voice starts', () => {
+    storage.setState((state: any) => ({
+      ...state,
+      sessions: {
+        s1: {
+          ...state.sessions.s1,
+          metadata: {
+            ...state.sessions.s1.metadata,
+            summary: { text: 'Raw session summary', updatedAt: 1 },
+          },
+        },
+      },
+      sessionListViewData: [
+        {
+          type: 'session',
+          session: {
+            id: 's1',
+            updatedAt: 99,
+            metadata: {
+              ...state.sessions.s1.metadata,
+              summary: { text: 'Cached session summary', updatedAt: 2 },
+            },
+          },
+        },
+      ],
+    }));
+    useVoiceTargetStore.getState().setTrackedSessionIds(['s1']);
+
+    const prompt = voiceHooks.onVoiceStarted('s1');
+
+    expect(prompt).toContain('Cached session summary');
+    expect(prompt).not.toContain('Raw session summary');
   });
 
   it('does not mark activity-only sessions as shown, so later tracking can emit full context', () => {

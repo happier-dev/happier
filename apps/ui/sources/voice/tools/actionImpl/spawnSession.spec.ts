@@ -7,8 +7,8 @@ const resolveEffectiveWindowsRemoteSessionLaunchMode = vi.fn((_params: any) => (
 const postprocessSpawnedSession = vi.fn(async (_params: any) => {});
 const resolveSpawnAgentIdFromState = vi.fn((_value: any) => 'claude');
 const voiceTargetState = {
-  primaryActionSessionId: null,
-  lastFocusedSessionId: null,
+  primaryActionSessionId: null as string | null,
+  lastFocusedSessionId: null as string | null,
 };
 
 const state: any = {
@@ -129,6 +129,42 @@ describe('spawnSessionForVoiceTool', () => {
     expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'm1',
       directory: 'C:/Repo/.worktrees/Feature-Auth',
+    }));
+  });
+
+  it('prefers cached visible session metadata when choosing a spawn target for the voice session', async () => {
+    state.sessions = {
+      ...state.sessions,
+      s_spawn_target: {
+        id: 's_spawn_target',
+        metadata: {
+          machineId: 'm_stale',
+          path: '/Users/leeroy/projects/stale-target',
+        },
+      },
+    };
+    state.sessionListViewData = [
+      {
+        type: 'session',
+        session: {
+          id: 's_spawn_target',
+          updatedAt: 999,
+          metadata: {
+            machineId: 'm1',
+            path: '/Users/leeroy/projects/happier',
+          },
+        },
+      },
+    ];
+    voiceTargetState.primaryActionSessionId = 's_spawn_target';
+
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    await spawnSessionForVoiceTool({});
+
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'm1',
+      directory: '/Users/leeroy/projects/happier',
     }));
   });
 
