@@ -25,7 +25,19 @@ const ORDERING_MENU_IDS = {
     hideInactiveSessions: 'hideInactiveSessions',
 } as const;
 
-export const SessionsListHeader = React.memo(function SessionsListHeader() {
+function stopPressEventPropagation(event: unknown): void {
+    if (!event || typeof event !== 'object' || !('stopPropagation' in event)) {
+        return;
+    }
+    const stopPropagation = (event as { stopPropagation?: () => void }).stopPropagation;
+    if (typeof stopPropagation === 'function') {
+        (event as { stopPropagation: () => void }).stopPropagation();
+    }
+}
+
+const SessionListOrderingMenuButton = React.memo(function SessionListOrderingMenuButton(props: Readonly<{
+    placement?: 'top' | 'bottom' | 'left' | 'right';
+}>) {
     const styles = sessionListStyles;
     const { theme } = useUnistyles();
     const [orderingMode, setOrderingMode] = useSettingMutable('sessionListOrderingModeV1');
@@ -84,47 +96,43 @@ export const SessionsListHeader = React.memo(function SessionsListHeader() {
     ]);
 
     return (
+        <DropdownMenu
+            open={menuOpen}
+            onOpenChange={setMenuOpen}
+            items={menuItems}
+            onSelect={handleMenuSelect}
+            selectedId={orderingMode}
+            variant="slim"
+            search={false}
+            showCategoryTitles={false}
+            matchTriggerWidth={false}
+            maxWidthCap={220}
+            popoverPortalWebTarget="body"
+            placement={props.placement ?? 'left'}
+            trigger={({ toggle }) => (
+                <Pressable
+                    testID="session-list-ordering-menu-trigger"
+                    style={styles.headerActionButton}
+                    onPress={(event) => {
+                        stopPressEventPropagation(event);
+                        toggle();
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('settingsSession.sessionList.orderingTitle')}
+                    hitSlop={8}
+                >
+                    <Ionicons name="filter-outline" size={16} color={actionIconColor} />
+                </Pressable>
+            )}
+        />
+    );
+});
+
+export const SessionsListHeader = React.memo(function SessionsListHeader() {
+    const styles = sessionListStyles;
+
+    return (
         <View style={styles.listHeaderSection}>
-            <View
-                testID="session-list-ordering-menu-anchor"
-                style={styles.listHeaderMenuAnchor}
-                pointerEvents="box-none"
-            >
-                <DropdownMenu
-                    open={menuOpen}
-                    onOpenChange={setMenuOpen}
-                    items={menuItems}
-                    onSelect={handleMenuSelect}
-                    selectedId={orderingMode}
-                    variant="slim"
-                    search={false}
-                    showCategoryTitles={false}
-                    matchTriggerWidth={false}
-                    maxWidthCap={220}
-                    popoverPortalWebTarget="body"
-                    placement="bottom"
-                    trigger={({ toggle }) => (
-                        <Pressable
-                            testID="session-list-ordering-menu-trigger"
-                            style={styles.listHeaderMenuButton}
-                            onPress={(event) => {
-                                if (event && typeof event === 'object' && 'stopPropagation' in event) {
-                                    const stopPropagation = (event as { stopPropagation?: unknown }).stopPropagation;
-                                    if (typeof stopPropagation === 'function') {
-                                        stopPropagation();
-                                    }
-                                }
-                                toggle();
-                            }}
-                            accessibilityRole="button"
-                            accessibilityLabel={t('settingsSession.sessionList.orderingTitle')}
-                            hitSlop={8}
-                        >
-                            <Ionicons name="filter-outline" size={16} color={actionIconColor} />
-                        </Pressable>
-                    )}
-                />
-            </View>
             <RecoveryKeyReminderBanner />
             <UpdateBanner />
         </View>
@@ -220,12 +228,7 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
                                 <Pressable
                                     style={styles.groupHeaderActionButton}
                                     onPress={(event) => {
-                                        if (event && typeof event === 'object' && 'stopPropagation' in event) {
-                                            const stopPropagation = (event as { stopPropagation?: unknown }).stopPropagation;
-                                            if (typeof stopPropagation === 'function') {
-                                                stopPropagation();
-                                            }
-                                        }
+                                        stopPressEventPropagation(event);
                                         toggle();
                                     }}
                                     accessibilityRole="button"
@@ -247,6 +250,7 @@ export const CollapsibleSectionHeader = React.memo(function CollapsibleSectionHe
     title: string;
     collapsed: boolean;
     onPress: () => void;
+    showOrderingMenu?: boolean;
 }>) {
     const styles = sessionListStyles;
     const { theme } = useUnistyles();
@@ -273,6 +277,9 @@ export const CollapsibleSectionHeader = React.memo(function CollapsibleSectionHe
                         />
                     </View>
                 </View>
+                {props.showOrderingMenu ? (
+                    <SessionListOrderingMenuButton placement="left" />
+                ) : null}
             </View>
         </Pressable>
     );

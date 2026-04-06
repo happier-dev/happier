@@ -69,6 +69,7 @@ export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemPro
             title={headerViewState.title}
             collapsed={headerViewState.collapsed}
             onPress={headerActionHandlers!.onToggleCollapse}
+            showOrderingMenu={props.item.headerKind === 'active' || props.item.headerKind === 'inactive'}
         />
     );
 });
