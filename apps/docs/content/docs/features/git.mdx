@@ -3,7 +3,10 @@ title: Git & Files
 description: Browse files, review diffs, edit workspace content, and manage source control directly from Happier.
 ---
 
-Happier includes a repository-aware workspace surface inside sessions.
+Happier includes a repository-aware workspace surface in two places:
+
+- **inside sessions**, when you are already talking to an agent
+- **inside Projects**, when you want to work with a repository outside a session first
 
 On larger layouts, this appears as:
 
@@ -11,6 +14,12 @@ On larger layouts, this appears as:
 - a **details pane** for file previews, editors, review tabs, commit history details, and stash details
 
 On phone-sized or narrow layouts, the same workflows are shown as full-screen screens instead of trying to keep several docked panels visible at once.
+
+Projects add one more user-facing layer on top of the same repository tooling:
+
+- a persistent project header with **back**, **worktrees**, and **terminal**
+- a project overview that stays anchored to the repository itself
+- remembered project state such as the selected worktree and the last active mobile project screen
 
 This page covers the full user-facing workflow for:
 
@@ -21,13 +30,29 @@ This page covers the full user-facing workflow for:
 - staging, unstaging, committing, fetching, pulling, pushing, and reverting
 - browsing commit history and opening historical diffs
 - linking project files into the session composer
+- drafting review comments in files and diffs
+- reusing those review comments when you start a new session for the same checkout
 
 ## Availability
 
-- **Files** browsing is part of the normal session UI.
+- **Files** browsing is available in both sessions and Projects.
+- **Source control** is available in both sessions and Projects.
 - **Source control write actions** remain behind **Settings → Features → Git operations**.
 - Some actions require the current machine/daemon to be reachable.
 - If the session is inactive but the machine is still online, Happier can still load repository/file data that comes from the machine-level workspace APIs.
+
+For the full project-specific model, see [Projects & worktrees](./projects-and-worktrees).
+
+## Sessions vs Projects
+
+The repository tooling is shared, but the surrounding UX is different:
+
+- **Sessions** keep repository context alongside a transcript
+- **Projects** keep repository context as a persistent standalone surface
+
+Use **Projects** when you want to prepare, inspect, or review a repository before starting a session.
+
+Use **Sessions** when you want the repository surface next to an active agent conversation.
 
 ## Desktop layout: sidebar + details pane
 
@@ -59,6 +84,8 @@ Important behaviors:
 - If you start editing a file, Happier keeps that editor state instead of reloading it on every tab switch.
 - Pinned tabs stay open until you explicitly close them.
 - On smaller layouts, the details surface can switch into an overlay/focused mode instead of permanently shrinking the main session area.
+
+In Projects, these details tabs are also part of the remembered project state, so reopening the project restores the same general working context instead of always returning to a blank project overview.
 
 ### Focus / fullscreen mode
 
@@ -253,6 +280,57 @@ This is useful for prompts like:
 - “Compare these two files”
 
 You can also use `@`-style file search in the composer where supported. The goal is the same: quickly attach relevant workspace context.
+
+## Review comments in files and diffs
+
+Happier supports drafting review comments directly from repository surfaces.
+
+You can add review comments from:
+
+- file details views
+- diff review views
+
+This works in both:
+
+- sessions
+- Projects
+
+### What review comments are for
+
+Review comments are for “collect the exact issues first, then ask the agent to act on them”.
+
+Typical use cases:
+
+- mark a risky line in a file and add the question you want answered
+- annotate several changed files during diff review
+- collect review notes in a worktree before opening a fresh session for that change set
+
+### How they are scoped
+
+Review comments are stored per exact checkout scope:
+
+- server
+- machine
+- root path / worktree path
+
+That means:
+
+- the main repository root keeps its own comments
+- each worktree keeps its own comments
+- switching worktrees changes which review comments are active
+
+### Reusing them in a new session
+
+When the new-session screen is pointed at a machine + directory that already has review comments, Happier shows a **Review comments (N)** chip with a switch.
+
+Important behavior:
+
+- the chip appears whether you came from a Project or opened `/new` directly
+- it starts enabled by default when matching review comments exist
+- turning it off does **not** delete the saved review comments
+- changing the selected directory/worktree re-evaluates the available review comments automatically
+
+Projects also expose a quick “start a new session from these review comments” action when the current checkout has saved review comments.
 
 ## Source control
 

@@ -21,6 +21,12 @@ Use attachments when you want to send things like:
 - PDFs or docs from outside the repo
 - generated output files that are not already in the workspace
 
+Attachment sending stays on Happier’s shared transfer path. The end result is the same whether you are on desktop, web, or mobile:
+
+- your files are uploaded first
+- the session receives stable file paths
+- the agent reads those files from disk
+
 ## How to add attachments
 
 Happier supports several attachment flows depending on platform:
@@ -36,6 +42,8 @@ You can attach both images and non-image files in the same message.
 Before you send the message, Happier keeps attachments as **drafts** in the composer.
 
 In the **new-session flow**, those draft attachments are kept while you move around the same in-app flow, such as opening picker screens and returning to the composer.
+
+That includes path-sensitive setup flows such as choosing a different machine or directory before the session is created.
 
 They are still treated as **temporary unsent draft state**, not durable stored content. A full page reload or app restart can still clear unsent attachments.
 
@@ -99,6 +107,8 @@ That has a few practical benefits:
 - the agent can read the exact file path it was given
 - image attachments and non-image attachments follow the same core workflow
 
+If you start the session from a project worktree, the attachment storage path is resolved from that selected checkout, not from some unrelated global machine directory.
+
 ## How images behave after sending
 
 Sent user messages keep their attachments in the transcript.
@@ -154,7 +164,9 @@ By default, Happier uses this workspace-relative directory:
 .happier/uploads
 ```
 
-This path is relative to the workspace root, which keeps attachments alongside the rest of the session’s project context.
+This path is relative to the selected session/project root, which keeps attachments alongside the rest of the session’s project context.
+
+If you start the session from a Git worktree, the upload directory is resolved inside that worktree.
 
 ### OS temp
 
@@ -173,6 +185,22 @@ When workspace storage is enabled, Happier can also help keep attachment files o
 Attachment settings let you choose the ignore strategy for workspace uploads.
 
 This matters when you want the convenience of workspace-backed attachments without accidentally treating them as project files you intend to commit.
+
+## Attachments together with review comments
+
+The new-session flow can also discover saved review comments for the currently selected machine + directory.
+
+If both are present:
+
+- attachments still upload first
+- the review-comments follow-up includes the attachment file references too
+
+This lets you start a session with both:
+
+- a structured review-comments handoff, and
+- the local files that support those comments
+
+Turning the **Review comments** chip off does not affect attachment drafts.
 
 ## Limits and important things to know
 

@@ -23,6 +23,7 @@
     "connected-services",
     "attachments",
     "git",
+    "projects-and-worktrees",
     "multi-server",
     "friends",
     "feature-flags",

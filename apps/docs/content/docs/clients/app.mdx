@@ -132,6 +132,26 @@ On smaller layouts, the same workflows are shown as focused full-screen screens 
 
 Full guide: [Git & Files](/docs/features/git).
 
+## Projects
+
+The app also includes a **Projects** surface for repository work that happens outside a session.
+
+Use Projects when you want to:
+
+- reopen a repository where you left off
+- inspect files or source control before starting a session
+- switch between the main checkout and Git worktrees
+- keep project details tabs and drafts around between visits
+- collect review comments and then launch a new session from that exact checkout
+
+Important behavior:
+
+- the project itself stays anchored to the repository
+- selecting a worktree changes the active checkout used by Files, Source control, terminals, and new sessions
+- reopening a project restores the remembered project state when possible
+
+Full guide: [Projects & worktrees](/docs/features/projects-and-worktrees).
+
 ### Persistent tab/workspace state
 
 The details pane is designed for multi-step work:
@@ -191,6 +211,7 @@ Current user-facing behavior:
 - sent image attachments render inline in the transcript
 - clicking a sent transcript image opens the same preview modal
 - per-file upload progress is shown while files are uploading
+- if the selected new-session path already has saved review comments, the composer also offers a **Review comments** switch for that same path
 
 Full guide: [Attachments & image previews](/docs/features/attachments).
 
