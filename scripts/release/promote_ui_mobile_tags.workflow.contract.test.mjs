@@ -51,3 +51,12 @@ test('promote-ui labels mobile releases as UI Mobile for clarity', async () => {
   assert.doesNotMatch(raw, /format\('Happier UI v\{0\}'/);
   assert.doesNotMatch(raw, /'Happier UI Preview'/);
 });
+
+test('promote-ui runs a dedicated public APK release build for preview and production lanes', async () => {
+  const raw = await loadWorkflow('promote-ui.yml');
+
+  assert.match(raw, /uses:\s*\.\/\.github\/workflows\/build-ui-mobile-local\.yml/);
+  assert.match(raw, /platform:\s*android/);
+  assert.match(raw, /profile:\s*\$\{\{\s*inputs\.environment == 'production' && 'production-apk' \|\| 'preview-apk'\s*\}\}/);
+  assert.match(raw, /publish_apk_release:\s*"true"/);
+});

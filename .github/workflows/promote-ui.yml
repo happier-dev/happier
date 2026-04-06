@@ -358,6 +358,22 @@ jobs:
       action: ${{ inputs.expo_action == 'native_submit' && 'build_and_submit' || 'build_only' }}
       publish_apk_release: "false"
 
+  mobile_apk_release:
+    name: Mobile APK release (local runner)
+    if: ${{ needs.promote.result == 'success' && (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') }}
+    needs: [promote]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/build-ui-mobile-local.yml
+    secrets: inherit
+    with:
+      source_ref: ${{ needs.promote.outputs.release_sha }}
+      environment: ${{ inputs.environment }}
+      platform: android
+      profile: ${{ inputs.environment == 'production' && 'production-apk' || 'preview-apk' }}
+      action: build_only
+      publish_apk_release: "true"
+
   desktop:
     name: Desktop bundles (Tauri)
     if: ${{ inputs.desktop_mode != 'none' }}

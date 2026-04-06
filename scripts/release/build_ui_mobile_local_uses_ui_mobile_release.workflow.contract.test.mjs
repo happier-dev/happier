@@ -17,8 +17,12 @@ test('build-ui-mobile-local workflow delegates local builds to ui-mobile-release
   assert.match(src, /-\s+internaldev-store\b/);
   assert.match(src, /-\s+internalpreview-apk\b/);
   assert.match(src, /-\s+dev-apk\b/);
+  assert.match(src, /-\s+preview-apk\b/);
+  assert.match(src, /-\s+production-apk\b/);
   assert.match(src, /-\s+ota\b/);
   assert.doesNotMatch(src, /inputs\.environment == 'publicdev'/);
   assert.doesNotMatch(src, /\benv_name\b[\s\S]*?"publicdev"/);
+  assert.doesNotMatch(src, /-\s+production-preview\b/);
+  assert.doesNotMatch(src, /-\s+production-preview-apk\b/);
   assert.doesNotMatch(src, /node scripts\/pipeline\/run\.mjs expo-submit/);
 });
