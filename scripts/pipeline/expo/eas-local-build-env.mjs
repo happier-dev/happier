@@ -38,7 +38,7 @@ export function createEasLocalBuildEnv(opts) {
   }
 
   if (opts.platform === 'android') {
-    const gradleHeapMb = parseNonNegativeInt(env.HAPPIER_EAS_ANDROID_GRADLE_HEAP_MB) ?? 6144;
+    const gradleHeapMb = parseNonNegativeInt(env.HAPPIER_EAS_ANDROID_GRADLE_HEAP_MB) ?? 8192;
     const kotlinDaemonHeapMb = parseNonNegativeInt(env.HAPPIER_EAS_ANDROID_KOTLIN_DAEMON_HEAP_MB) ?? 2048;
     const gradleWorkersMax = parseNonNegativeInt(env.HAPPIER_EAS_ANDROID_GRADLE_WORKERS_MAX) ?? 1;
     const gradleJvmArgs = `-Xmx${gradleHeapMb}m -Dfile.encoding=UTF-8`;
