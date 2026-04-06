@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet as ReactNativeStyleSheet } from 'react-native';
+import { Animated, StyleSheet as ReactNativeStyleSheet } from 'react-native';
 import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
@@ -83,12 +83,15 @@ describe('BaseModal (web)', () => {
         expect(contentStyle.alignItems).toBe('stretch');
     });
 
-    it('renders using Radix Dialog instead of react-native Modal', async () => {
+    it('renders a plain web dialog shell instead of react-native Modal', async () => {
         const { BaseModal } = await import('./BaseModal');
         const screen = await renderBaseModalScreen(BaseModal);
 
-        expect(screen.findAllByType('DialogRoot' as any).length).toBe(1);
+        const dialogShell = screen.findAll((node) => (node.props as any)?.role === 'dialog');
+        expect(dialogShell).toHaveLength(1);
+        expect((dialogShell[0]?.props as any)?.['aria-modal']).toBe('true');
         expect(screen.findAllByType('RNModal' as any).length).toBe(0);
+        expect(screen.findAllByType('DialogRoot' as any).length).toBe(0);
     });
 
     it('wraps the dialog content in a DismissableLayer Branch (so underlying Vaul/Radix layers don’t dismiss)', async () => {
@@ -110,11 +113,12 @@ describe('BaseModal (web)', () => {
         expect((portalHosts[0] as any).props['data-happy-modal-card-boundary']).toBeDefined();
     });
 
-    it('renders a DialogTitle for accessibility', async () => {
+    it('labels the web dialog shell for accessibility', async () => {
         const { BaseModal } = await import('./BaseModal');
         const screen = await renderBaseModalScreen(BaseModal);
 
-        expect(screen.findAllByType('DialogTitle' as any).length).toBe(1);
+        const dialogShell = screen.findAll((node) => (node.props as any)?.role === 'dialog')?.[0];
+        expect((dialogShell?.props as any)?.['aria-label']).toBe('common.dialog');
     });
 
     it('renders a scrollable modal overlay container so the overlay owns overflow (no nested scroll hosts by default)', async () => {
@@ -124,8 +128,8 @@ describe('BaseModal (web)', () => {
         const scrollViews = screen.findAllByType('ScrollView' as any);
         expect(scrollViews).toHaveLength(0);
 
-        const content = screen.findAllByType('DialogContent' as any)?.[0];
-        expect(content?.props.style?.overflowY).toBe('auto');
+        const dialogShell = screen.findAll((node) => (node.props as any)?.role === 'dialog')?.[0];
+        expect((dialogShell?.props as any)?.style?.overflowY).toBe('auto');
     });
 
     it('omits the overlay when showBackdrop is false', async () => {
@@ -157,15 +161,20 @@ describe('BaseModal (web)', () => {
 
     it('prevents outside dismissal when closeOnBackdrop is false', async () => {
         const { BaseModal } = await import('./BaseModal');
+        const onClose = vi.fn();
 
-        const screen = await renderBaseModalScreen(BaseModal, { closeOnBackdrop: false, onClose: () => {} });
+        const screen = await renderBaseModalScreen(BaseModal, { closeOnBackdrop: false, onClose });
 
-        const content = screen.findAllByType('DialogContent' as any)?.[0];
-        expect(content?.props.onPointerDownOutside).toBeTypeOf('function');
+        const dialogShell = screen.findAll((node) => (node.props as any)?.role === 'dialog')?.[0];
+        expect((dialogShell?.props as any)?.onClick).toBeTypeOf('function');
 
-        const preventDefault = vi.fn();
-        content?.props.onPointerDownOutside({ preventDefault });
-        expect(preventDefault).toHaveBeenCalled();
+        (dialogShell?.props as any)?.onClick({
+            target: { closest: () => null },
+            currentTarget: {},
+            preventDefault: vi.fn(),
+            stopPropagation: vi.fn(),
+        });
+        expect(onClose).toHaveBeenCalledTimes(0);
     });
 
     it('dismisses when clicking outside the modal card boundary (backdrop click)', async () => {
@@ -174,11 +183,11 @@ describe('BaseModal (web)', () => {
         const onClose = vi.fn();
         const screen = await renderBaseModalScreen(BaseModal, { onClose });
 
-        const content = screen.findAllByType('DialogContent' as any)?.[0];
-        expect(content?.props.onClick).toBeTypeOf('function');
+        const dialogShell = screen.findAll((node) => (node.props as any)?.role === 'dialog')?.[0];
+        expect((dialogShell?.props as any)?.onClick).toBeTypeOf('function');
 
         const target = { closest: () => null };
-        content?.props.onClick({ target, currentTarget: {}, preventDefault: () => {}, stopPropagation: () => {} });
+        (dialogShell?.props as any)?.onClick({ target, currentTarget: {}, preventDefault: () => {}, stopPropagation: () => {} });
 
         expect(onClose).toHaveBeenCalledTimes(1);
     });
@@ -189,12 +198,12 @@ describe('BaseModal (web)', () => {
         const onClose = vi.fn();
         const screen = await renderBaseModalScreen(BaseModal, { onClose });
 
-        const content = screen.findAllByType('DialogContent' as any)?.[0];
-        expect(content?.props.onClick).toBeTypeOf('function');
+        const dialogShell = screen.findAll((node) => (node.props as any)?.role === 'dialog')?.[0];
+        expect((dialogShell?.props as any)?.onClick).toBeTypeOf('function');
 
         const currentTarget = {};
         const innerTarget = { closest: () => ({}) };
-        content?.props.onClick({ target: innerTarget, currentTarget, preventDefault: () => {}, stopPropagation: () => {} });
+        (dialogShell?.props as any)?.onClick({ target: innerTarget, currentTarget, preventDefault: () => {}, stopPropagation: () => {} });
         expect(onClose).toHaveBeenCalledTimes(0);
     });
 
@@ -237,6 +246,8 @@ describe('BaseModal (web)', () => {
             body: {
                 style: bodyStyle,
             },
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
         };
         (globalThis as any).MutationObserver = FakeMutationObserver;
 
@@ -265,11 +276,11 @@ describe('BaseModal (web)', () => {
         const { BaseModal } = await import('./BaseModal');
         const screen = await renderBaseModalScreen(BaseModal, { zIndexBase: 1234 });
 
-        const overlay = screen.findAllByType('DialogOverlay' as any)?.[0];
-        const content = screen.findAllByType('DialogContent' as any)?.[0];
+        const overlay = screen.findAllByType(Animated.View as any)?.[0];
+        const dialogShell = screen.findAll((node) => (node.props as any)?.role === 'dialog')?.[0];
 
-        expect(overlay?.props.style?.zIndex).toBe(1234);
-        expect(content?.props.style?.zIndex).toBe(1235);
+        expect(flattenStyleProp(overlay?.props?.style).zIndex).toBe(1234);
+        expect((dialogShell?.props as any)?.style?.zIndex).toBe(1235);
     });
 
     it('provides a modal portal target to descendants (so popovers can portal inside the dialog subtree)', async () => {
@@ -310,7 +321,7 @@ describe('BaseModal (web)', () => {
 
         const host = findPortalHost() as any;
         const initialRef = host?.props?.ref;
-        expect(typeof initialRef).toBe('function');
+        expect(typeof initialRef).toBe('object');
 
         act(() => {
             screen.tree.update(React.createElement(BaseModal, {
@@ -324,17 +335,30 @@ describe('BaseModal (web)', () => {
         expect(hostAfterUpdate?.props?.ref).toBe(initialRef);
     });
 
-    it('calls onClose when Radix reports onOpenChange(false)', async () => {
+    it('calls onClose when Escape is pressed on web', async () => {
         const { BaseModal } = await import('./BaseModal');
         const onClose = vi.fn();
-        const screen = await renderBaseModalScreen(BaseModal, { onClose });
+        const originalDocument = (globalThis as any).document;
+        const listeners = new Map<string, ((event: { key: string; preventDefault: () => void; stopPropagation: () => void }) => void)[]>();
+        (globalThis as any).document = {
+            body: { style: { pointerEvents: 'auto' } },
+            activeElement: null,
+            addEventListener: (type: string, callback: (event: { key: string; preventDefault: () => void; stopPropagation: () => void }) => void) => {
+                listeners.set(type, [...(listeners.get(type) ?? []), callback]);
+            },
+            removeEventListener: vi.fn(),
+        };
 
-        const root = screen.findByType('DialogRoot' as any);
-        expect(root?.props.onOpenChange).toBeTypeOf('function');
-
-        act(() => {
-            root?.props.onOpenChange(false);
-        });
+        try {
+            await renderBaseModalScreen(BaseModal, { onClose });
+            act(() => {
+                for (const callback of listeners.get('keydown') ?? []) {
+                    callback({ key: 'Escape', preventDefault: vi.fn(), stopPropagation: vi.fn() });
+                }
+            });
+        } finally {
+            (globalThis as any).document = originalDocument;
+        }
 
         expect(onClose).toHaveBeenCalledTimes(1);
     });

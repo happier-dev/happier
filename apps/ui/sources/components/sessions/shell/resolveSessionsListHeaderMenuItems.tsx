@@ -30,6 +30,7 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
         {
             id: 'custom',
             title: t('settingsSession.sessionList.orderingOptions.custom'),
+            category: t('settingsSession.sessionList.menuSections.sortBy'),
             rightElement: input.orderingMode === 'custom'
                 ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
                 : undefined,
@@ -37,6 +38,7 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
         {
             id: 'created',
             title: t('settingsSession.sessionList.orderingOptions.created'),
+            category: t('settingsSession.sessionList.menuSections.sortBy'),
             rightElement: input.orderingMode === 'created'
                 ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
                 : undefined,
@@ -44,6 +46,7 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
         {
             id: 'updated',
             title: t('settingsSession.sessionList.orderingOptions.updated'),
+            category: t('settingsSession.sessionList.menuSections.sortBy'),
             rightElement: input.orderingMode === 'updated'
                 ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
                 : undefined,
@@ -51,7 +54,7 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
         {
             id: 'activeGroupingProject',
             title: t('settingsFeatures.sessionListGrouping.projectTitle'),
-            subtitle: t('settingsFeatures.sessionListActiveGrouping'),
+            category: t('settingsFeatures.sessionListActiveGrouping'),
             rightElement: input.activeGrouping === 'project'
                 ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
                 : undefined,
@@ -59,7 +62,7 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
         {
             id: 'activeGroupingDate',
             title: t('settingsFeatures.sessionListGrouping.dateTitle'),
-            subtitle: t('settingsFeatures.sessionListActiveGrouping'),
+            category: t('settingsFeatures.sessionListActiveGrouping'),
             rightElement: input.activeGrouping === 'date'
                 ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
                 : undefined,
@@ -67,7 +70,7 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
         {
             id: 'inactiveGroupingProject',
             title: t('settingsFeatures.sessionListGrouping.projectTitle'),
-            subtitle: t('settingsFeatures.sessionListInactiveGrouping'),
+            category: t('settingsFeatures.sessionListInactiveGrouping'),
             rightElement: input.inactiveGrouping === 'project'
                 ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
                 : undefined,
@@ -75,7 +78,7 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
         {
             id: 'inactiveGroupingDate',
             title: t('settingsFeatures.sessionListGrouping.dateTitle'),
-            subtitle: t('settingsFeatures.sessionListInactiveGrouping'),
+            category: t('settingsFeatures.sessionListInactiveGrouping'),
             rightElement: input.inactiveGrouping === 'date'
                 ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
                 : undefined,
@@ -83,7 +86,7 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
         {
             id: 'hideInactiveSessions',
             title: t('settingsFeatures.hideInactiveSessions'),
-            subtitle: t('settingsFeatures.hideInactiveSessionsSubtitle'),
+            category: t('settingsSession.sessionList.menuSections.show'),
             rightElement: input.isHideInactiveSessionsEnabled
                 ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
                 : undefined,

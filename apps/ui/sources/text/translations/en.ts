@@ -5363,6 +5363,11 @@ settingsSession: {
                   created: 'Created',
                   updated: 'Updated',
               },
+              menuSections: {
+                  organize: 'Organize',
+                  sortBy: 'Sort by',
+                  show: 'Show',
+              },
           },
           input: {
               title: 'Input',

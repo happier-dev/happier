@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { DirectSessionFollowLease } from '@/backends/directSessions/providerOps';
 
 const {
     dispatchActivityNotificationAsyncMock,
@@ -43,6 +44,8 @@ vi.mock('./directSessionBackgroundFollowMetadata', async () => {
 
 import { createManagedDirectSessionFollowLease } from './createManagedDirectSessionFollowLease';
 
+type TranscriptUpdateListener = Parameters<NonNullable<DirectSessionFollowLease['subscribeToTranscriptUpdates']>>[0];
+
 describe('createManagedDirectSessionFollowLease', () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -79,11 +82,7 @@ describe('createManagedDirectSessionFollowLease', () => {
     });
 
     it('suppresses detached background-follow side effects for attached_view updates even when background follow is enabled', async () => {
-        let listener: ((update: Readonly<{
-            items: readonly Record<string, unknown>[];
-            nextCursor: string | null;
-            truncated: boolean;
-        }>) => void | Promise<void>) | null = null;
+        let listener: TranscriptUpdateListener | null = null;
         const emitDirectSessionTranscriptUpdate = vi.fn(async () => {});
 
         const lease = await createManagedDirectSessionFollowLease({
@@ -92,7 +91,7 @@ describe('createManagedDirectSessionFollowLease', () => {
             acquireProviderFollowLease: async () => ({
                 release: async () => {},
                 subscribeToTranscriptUpdates: (nextListener) => {
-                    listener = nextListener as typeof listener;
+                    listener = nextListener;
                     return () => {
                         listener = null;
                     };
@@ -104,10 +103,16 @@ describe('createManagedDirectSessionFollowLease', () => {
 
         expect(lease).not.toBeNull();
         expect(listener).not.toBeNull();
+        if (!listener) {
+            throw new Error('expected transcript update listener');
+        }
 
-        const attachedListener = listener as NonNullable<typeof listener>;
+        const attachedListener: TranscriptUpdateListener = listener;
         await attachedListener({
             items: [{
+                id: 'msg-attached-1',
+                createdAtMs: 1,
+                raw: {},
                 role: 'assistant',
                 content: {
                     type: 'provider',
@@ -156,11 +161,7 @@ describe('createManagedDirectSessionFollowLease', () => {
     });
 
     it('suppresses detached metadata and ready notifications for background_follow updates when active-view suppression is enabled', async () => {
-        let listener: ((update: Readonly<{
-            items: readonly Record<string, unknown>[];
-            nextCursor: string | null;
-            truncated: boolean;
-        }>) => void | Promise<void>) | null = null;
+        let listener: TranscriptUpdateListener | null = null;
         const release = vi.fn(async () => {});
         const emitDirectSessionTranscriptUpdate = vi.fn(async () => {});
 
@@ -170,7 +171,7 @@ describe('createManagedDirectSessionFollowLease', () => {
             acquireProviderFollowLease: async () => ({
                 release,
                 subscribeToTranscriptUpdates: (nextListener) => {
-                    listener = nextListener as typeof listener;
+                    listener = nextListener;
                     return () => {
                         listener = null;
                     };
@@ -182,10 +183,16 @@ describe('createManagedDirectSessionFollowLease', () => {
 
         expect(lease).not.toBeNull();
         expect(listener).not.toBeNull();
+        if (!listener) {
+            throw new Error('expected transcript update listener');
+        }
 
-        const backgroundListener = listener as NonNullable<typeof listener>;
+        const backgroundListener: TranscriptUpdateListener = listener;
         await backgroundListener({
             items: [{
+                id: 'msg-background-1',
+                createdAtMs: 1,
+                raw: {},
                 role: 'assistant',
                 content: {
                     type: 'provider',

@@ -257,12 +257,12 @@ function saveWarmSessionCacheForState(
     );
 }
 
-function finalizeSessionListViewDataUpdate(
-    state: SessionsDomain & SessionsDomainDependencies,
-    nextStateBase: SessionsDomain & SessionsDomainDependencies,
+function finalizeSessionListViewDataUpdate<S extends SessionsDomain & SessionsDomainDependencies>(
+    state: S,
+    nextStateBase: S,
     needsSessionListViewDataRebuild: boolean,
     didAnyWarmCacheRelevantRenderableChange: boolean,
-): SessionsDomain & SessionsDomainDependencies {
+): S {
     const rebuiltListState = needsSessionListViewDataRebuild
         ? resolveActiveServerSessionListState({
             state: nextStateBase,
@@ -281,7 +281,7 @@ function finalizeSessionListViewDataUpdate(
         saveWarmSessionCacheForState(nextState);
     }
 
-    return nextState;
+    return nextState as S;
 }
 
 export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDependencies>({

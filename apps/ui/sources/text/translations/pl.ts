@@ -1732,7 +1732,7 @@ export const pl: TranslationStructure = {
       installTitle: 'Wymagana instalacja',
       installSubtitle: 'Zainstaluj Tailscale, a potem wróć tutaj.',
       loginTitle: 'Wymagane logowanie',
-      loginSubtitle: 'Dokończ logowanie do Tailscale, a potem wróć tutaj.',
+      loginSubtitle: 'Dokończ logowanie w Tailscale, a potem wróć tutaj.',
       enableAction: 'Włącz prywatny dostęp z Tailscale',
       refreshAction: 'Sprawdź ponownie prywatny dostęp',
       openApprovalAction: 'Otwórz zatwierdzanie Tailscale',
@@ -2685,7 +2685,7 @@ export const pl: TranslationStructure = {
     },
   },
 
-  settingsDesktop: {
+settingsDesktop: {
     title: 'Aplikacja desktopowa',
     footer: 'Steruje integracjami desktopowymi Tauri na tym komputerze.',
     startOnLoginTitle: 'Uruchamiaj przy logowaniu',
@@ -3202,7 +3202,7 @@ export const pl: TranslationStructure = {
                         subtitle: "Włącza logi debug Claude Code (odpowiednik --debug)."
                     },
                     claudeRemoteVerboseEnabled: {
-                        title: "Szczegółowo",
+                        title: "Szczegółowe",
                         subtitle: "Włącza szczegółowe logowanie (odpowiednik --verbose)."
                     },
                     claudeRemoteDebugCategories: {
@@ -5785,6 +5785,11 @@ settingsSession: {
               custom: 'Niestandardowe',
               created: 'Utworzono',
               updated: 'Zaktualizowano',
+          },
+          menuSections: {
+              organize: 'Organizuj',
+              sortBy: 'Sortuj według',
+              show: 'Pokaż',
           },
       },
       input: {

@@ -4631,6 +4631,11 @@ settingsSession: {
                   created: '建立時間',
                   updated: '更新時間',
               },
+              menuSections: {
+                  organize: '整理方式',
+                  sortBy: '排序方式',
+                  show: '顯示',
+              },
             },
         input: {
             title: '輸入',

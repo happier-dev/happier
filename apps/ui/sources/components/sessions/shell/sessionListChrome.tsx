@@ -104,11 +104,12 @@ const SessionListOrderingMenuButton = React.memo(function SessionListOrderingMen
             selectedId={orderingMode}
             variant="slim"
             search={false}
-            showCategoryTitles={false}
+            showCategoryTitles={true}
             matchTriggerWidth={false}
             maxWidthCap={220}
             popoverPortalWebTarget="body"
-            placement={props.placement ?? 'left'}
+            placement={props.placement ?? 'bottom'}
+            popoverAnchorAlign="end"
             trigger={({ toggle }) => (
                 <Pressable
                     testID="session-list-ordering-menu-trigger"
@@ -218,7 +219,8 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
                             onOpenChange={setMenuOpen}
                             items={menuItems}
                             onSelect={handleMenuSelect}
-                            placement="left"
+                            placement="bottom"
+                            popoverAnchorAlign="end"
                             variant="slim"
                             matchTriggerWidth={false}
                             maxWidthCap={220}
@@ -278,7 +280,7 @@ export const CollapsibleSectionHeader = React.memo(function CollapsibleSectionHe
                     </View>
                 </View>
                 {props.showOrderingMenu ? (
-                    <SessionListOrderingMenuButton placement="left" />
+                    <SessionListOrderingMenuButton placement="bottom" />
                 ) : null}
             </View>
         </Pressable>

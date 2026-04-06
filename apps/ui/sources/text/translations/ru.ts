@@ -5771,6 +5771,11 @@ settingsSession: {
             created: 'Создано',
             updated: 'Обновлено',
         },
+        menuSections: {
+            organize: 'Организация',
+            sortBy: 'Сортировка',
+            show: 'Показать',
+        },
     },
     input: {
         title: 'Ввод',

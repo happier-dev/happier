@@ -41,7 +41,7 @@ import {
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { normalizeSpawnSessionResult } from './_shared';
 import { isSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
-import { canUseSessionRpc, readMachineTargetForSession, resolveMachinePathFromSessionBase, shouldFallbackToSessionRpc } from './sessionMachineTarget';
+import { readMachineTargetForSession } from './sessionMachineTarget';
 import type { Metadata } from '../domains/state/storageTypes';
 export {
     sessionScmBranchCheckout,
@@ -107,6 +107,22 @@ interface SessionBashResponse {
     stdout: string;
     stderr: string;
     exitCode: number;
+    error?: string;
+}
+
+// Read file operation types
+// Session log tail operation types
+interface SessionReadLogTailRequest {
+    maxBytes?: number;
+}
+
+interface SessionReadLogTailResponse {
+    success: boolean;
+    path?: string;
+    tail?: string;
+    truncated?: boolean;
+    bytesRead?: number;
+    totalBytes?: number;
     error?: string;
 }
 
@@ -682,57 +698,6 @@ export async function sessionReadLogTail(
         return {
             success: false,
             error: error instanceof Error ? error.message : 'Unknown error',
-        };
-    }
-}
-
-/**
- * Run ripgrep in the session
- */
-export async function sessionRipgrep(
-    sessionId: string,
-    args: string[],
-    cwd?: string
-): Promise<SessionRipgrepResponse> {
-    try {
-        const machineTarget = readMachineTargetForSession(sessionId);
-        if (machineTarget) {
-            try {
-                const request: SessionRipgrepRequest = {
-                    args,
-                    cwd: resolveMachinePathFromSessionBase({ basePath: machineTarget.basePath, requestPath: cwd }),
-                };
-                const response = await apiSocket.machineRPC<SessionRipgrepResponse, SessionRipgrepRequest>(
-                    machineTarget.machineId,
-                    'ripgrep',
-                    request,
-                );
-                return assertRpcResponseWithSuccess<SessionRipgrepResponse>(response);
-            } catch (error) {
-                if (!shouldFallbackToSessionRpc(sessionId, error)) {
-                    throw error;
-                }
-            }
-        }
-
-        if (!canUseSessionRpc(sessionId)) {
-            return {
-                success: false,
-                error: INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
-            };
-        }
-
-        const request: SessionRipgrepRequest = { args, cwd };
-        const response = await sessionRpcWithPreferredSessionScope<SessionRipgrepResponse, SessionRipgrepRequest>({
-            sessionId,
-            method: 'ripgrep',
-            payload: request,
-        });
-        return assertRpcResponseWithSuccess<SessionRipgrepResponse>(response);
-    } catch (error) {
-        return {
-            success: false,
-            error: error instanceof Error ? error.message : 'Unknown error'
         };
     }
 }

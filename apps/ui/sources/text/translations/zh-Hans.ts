@@ -5550,6 +5550,11 @@ settingsSession: {
             created: '创建时间',
             updated: '更新时间',
         },
+        menuSections: {
+            organize: '组织方式',
+            sortBy: '排序方式',
+            show: '显示',
+        },
     },
     input: {
         title: '输入',

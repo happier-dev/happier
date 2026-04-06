@@ -5779,6 +5779,11 @@ settingsSession: {
               created: 'Creado',
               updated: 'Actualizado',
           },
+          menuSections: {
+              organize: 'Organizar',
+              sortBy: 'Ordenar por',
+              show: 'Mostrar',
+          },
       },
       input: {
           title: 'Entrada',

@@ -502,7 +502,10 @@ describe('listCodexSessionCandidates', () => {
 
     const result = await listCodexSessionCandidates({
       source: { kind: 'codexHome', home: 'connectedService', connectedServiceId: 'svc_1' },
-      env: createCodexAppServerProcessEnv(fakeAppServer, { CODEX_HOME: firstHome }),
+      env: createCodexAppServerProcessEnv(fakeAppServer, {
+        CODEX_HOME: firstHome,
+        HAPPIER_CODEX_DIRECT_SESSIONS_APP_SERVER_LIST_TIMEOUT_MS: '5000',
+      }),
       activeServerDir,
       limit: 10,
     });
@@ -629,6 +632,40 @@ describe('listCodexSessionCandidates', () => {
             connectedServiceId: 'svc_1',
             connectedServiceProfileId: 'profile-b',
           }),
+        }),
+      }),
+    ]);
+  });
+
+  it('derives candidate session ids from session_meta for flat rollout files whose filename does not encode the remote session id', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-direct-list-flat-rollout-meta-id-'));
+    const codexHome = join(root, 'codex-home');
+    const sessionsDir = join(codexHome, 'sessions');
+    await mkdir(sessionsDir, { recursive: true });
+
+    const remoteSessionId = 'flat-rollout-session-id';
+    const rollout = join(sessionsDir, 'rollout-2026-01-10T00-00-00-manual-export.jsonl');
+    await writeFile(
+      rollout,
+      sessionMetaLine({ id: remoteSessionId, timestamp: '2026-01-10T00:00:00.000Z', cwd: '/repo/flat-rollout' })
+        + responseItemLine({ type: 'message', role: 'user', content: [{ type: 'text', text: 'Flat rollout title' }] }),
+      'utf8',
+    );
+    await utimes(rollout, new Date('2026-01-10T00:00:00.000Z'), new Date('2026-01-10T00:00:00.000Z'));
+
+    const result = await listCodexSessionCandidates({
+      source: { kind: 'codexHome', home: 'user' },
+      env: createDirectSessionsEnv(codexHome),
+      activeServerDir: join(root, 'servers', 'cloud'),
+      limit: 10,
+    });
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({
+        remoteSessionId,
+        title: 'Flat rollout title',
+        details: expect.objectContaining({
+          cwd: '/repo/flat-rollout',
         }),
       }),
     ]);

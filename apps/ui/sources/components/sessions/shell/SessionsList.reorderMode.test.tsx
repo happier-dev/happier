@@ -46,8 +46,9 @@ type DropdownMenuTriggerParams = {
 };
 
 type DropdownMenuCapture = {
-    items?: Array<{ id?: string; rightElement?: unknown }>;
+    items?: Array<{ id?: string; category?: string; subtitle?: string; rightElement?: unknown }>;
     selectedId?: string;
+    showCategoryTitles?: boolean;
     onSelect?: (id: string) => void;
     trigger?: (params: DropdownMenuTriggerParams) => unknown;
     triggerParams?: DropdownMenuTriggerParams;
@@ -321,6 +322,7 @@ describe('SessionsList (inline reorder)', () => {
         });
         expect(menuProps).toBeTruthy();
         expect(menuProps?.selectedId).toBe('custom');
+        expect(menuProps?.showCategoryTitles).toBe(true);
         const itemIds = (menuProps?.items ?? []).map((item: any) => String(item?.id ?? ''));
         expect(itemIds).toEqual(expect.arrayContaining([
             'custom',
@@ -332,8 +334,22 @@ describe('SessionsList (inline reorder)', () => {
             'inactiveGroupingDate',
             'hideInactiveSessions',
         ]));
+        expect(menuProps?.items?.map((item: any) => item?.category)).toEqual([
+            'settingsSession.sessionList.menuSections.sortBy',
+            'settingsSession.sessionList.menuSections.sortBy',
+            'settingsSession.sessionList.menuSections.sortBy',
+            'settingsFeatures.sessionListActiveGrouping',
+            'settingsFeatures.sessionListActiveGrouping',
+            'settingsFeatures.sessionListInactiveGrouping',
+            'settingsFeatures.sessionListInactiveGrouping',
+            'settingsSession.sessionList.menuSections.show',
+        ]);
         const activeGroupingProjectItem = menuProps?.items?.find((item: any) => item?.id === 'activeGroupingProject');
         const inactiveGroupingDateItem = menuProps?.items?.find((item: any) => item?.id === 'inactiveGroupingDate');
+        const hideInactiveSessionsItem = menuProps?.items?.find((item: any) => item?.id === 'hideInactiveSessions');
+        expect(activeGroupingProjectItem?.subtitle).toBeUndefined();
+        expect(inactiveGroupingDateItem?.subtitle).toBeUndefined();
+        expect(hideInactiveSessionsItem?.subtitle).toBeUndefined();
         expect((activeGroupingProjectItem as { rightElement?: unknown } | undefined)?.rightElement).toBeTruthy();
         expect((inactiveGroupingDateItem as { rightElement?: unknown } | undefined)?.rightElement).toBeTruthy();
 
@@ -372,8 +388,8 @@ describe('SessionsList (inline reorder)', () => {
         const triggers = screen.findAllByProps({ testID: 'session-list-ordering-menu-trigger' });
         expect(triggers).toHaveLength(2);
         expect(triggers[0].props.style).toEqual(expect.objectContaining({
-            width: 28,
-            height: 28,
+            width: 18,
+            height: 14,
         }));
         expect(triggers[0].props.style.backgroundColor).toBeUndefined();
         expect(triggers[0].props.style.borderWidth).toBeUndefined();

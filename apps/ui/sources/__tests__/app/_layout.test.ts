@@ -353,7 +353,7 @@ describe('RootLayout restore navigation', () => {
 });
 
 describe('RootLayout settings routes', () => {
-    it('registers settings as a nested navigator (no settings/* screens in the root stack)', async () => {
+    it('registers the settings navigator and keeps the settings index route nested', async () => {
         stubFeatureFetch();
 
         const { default: RootLayout } = await import('@/app/(app)/_layout');
@@ -366,6 +366,6 @@ describe('RootLayout settings routes', () => {
 
         expect(names).toContain('settings');
         expect(names).not.toContain('settings/index');
-        expect(names.some((name) => name.startsWith('settings/'))).toBe(false);
+        expect(names).toContain('settings/account');
     }, 60_000);
 });

@@ -22,6 +22,7 @@ describe('session header menu item translation caching', () => {
     it('refreshes sessions list header labels after the preferred language changes', () => {
         setPreferredLanguageFromSettings('en');
         const englishCustomTitle = t('settingsSession.sessionList.orderingOptions.custom');
+        const englishSortByTitle = t('settingsSession.sessionList.menuSections.sortBy');
         const english = resolveSessionsListHeaderMenuItems({
             orderingMode: 'custom',
             activeGrouping: 'project',
@@ -32,6 +33,7 @@ describe('session header menu item translation caching', () => {
 
         setPreferredLanguageFromSettings('es');
         const spanishCustomTitle = t('settingsSession.sessionList.orderingOptions.custom');
+        const spanishSortByTitle = t('settingsSession.sessionList.menuSections.sortBy');
         const spanish = resolveSessionsListHeaderMenuItems({
             orderingMode: 'custom',
             activeGrouping: 'project',
@@ -41,8 +43,11 @@ describe('session header menu item translation caching', () => {
         });
 
         expect(english.find((item) => item.id === 'custom')?.title).toBe(englishCustomTitle);
+        expect(english.find((item) => item.id === 'custom')?.category).toBe(englishSortByTitle);
         expect(spanish.find((item) => item.id === 'custom')?.title).toBe(spanishCustomTitle);
+        expect(spanish.find((item) => item.id === 'custom')?.category).toBe(spanishSortByTitle);
         expect(spanish.find((item) => item.id === 'custom')?.title).not.toBe(englishCustomTitle);
+        expect(spanish.find((item) => item.id === 'custom')?.category).not.toBe(englishSortByTitle);
     });
 
     it('refreshes project group header labels after the preferred language changes', () => {

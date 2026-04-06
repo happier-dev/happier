@@ -10,6 +10,7 @@ import {
 import { getCodexDirectSessionWorkingDirectory } from './getCodexDirectSessionWorkingDirectory';
 import { listCodexSessionCandidates } from './listCodexSessionCandidates';
 import { resolveCodexHomeEntriesForDirectSessionsSource } from './resolveCodexHomeEntriesForDirectSessionsSource';
+import { resolveCodexRolloutDirectTranscriptSnapshot } from '../rollout/sessionStore/codexRolloutTranscriptHistory';
 import { acquireCodexRolloutSessionStore, withCodexRolloutSessionStore } from '../rollout/sessionStore/codexRolloutSessionStoreRegistry';
 
 export const codexDirectSessionProviderOps: DirectSessionProviderOps = {
@@ -121,12 +122,19 @@ export const codexDirectSessionProviderOps: DirectSessionProviderOps = {
     };
   },
   resolveTakeoverSpawnOptions: async ({ linked, sessionId }) => {
-    const homeEntries = await resolveCodexHomeEntriesForDirectSessionsSource({
+    const snapshot = await resolveCodexRolloutDirectTranscriptSnapshot({
+      source: linked.source,
+      activeServerDir: configuration.activeServerDir,
+      remoteSessionId: linked.remoteSessionId,
+      env: process.env,
+    });
+    const codexHome = snapshot.rolloutHome;
+    const fallbackHomeEntries = codexHome ? null : await resolveCodexHomeEntriesForDirectSessionsSource({
       source: linked.source,
       activeServerDir: configuration.activeServerDir,
       env: process.env,
     });
-    const codexHome = homeEntries.length === 1 ? homeEntries[0]?.codexHome ?? null : null;
+    const fallbackCodexHome = fallbackHomeEntries?.length === 1 ? fallbackHomeEntries[0]?.codexHome ?? null : null;
     const directory =
       linked.sessionPath ??
       (await getCodexDirectSessionWorkingDirectory({
@@ -135,7 +143,8 @@ export const codexDirectSessionProviderOps: DirectSessionProviderOps = {
         remoteSessionId: linked.remoteSessionId,
         env: process.env,
       }));
-    if (!directory || !codexHome) return null;
+    const effectiveCodexHome = codexHome ?? fallbackCodexHome;
+    if (!directory || !effectiveCodexHome) return null;
     return {
       directory,
       backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
@@ -146,7 +155,7 @@ export const codexDirectSessionProviderOps: DirectSessionProviderOps = {
       ...buildCodexSpawnRuntimeAffinityCompatFields(
         linked.codexBackendMode ? { backendMode: linked.codexBackendMode } : null,
       ),
-      environmentVariables: mergeDirectSessionEnvironmentVariables([codexHome ? { CODEX_HOME: codexHome } : null]),
+      environmentVariables: mergeDirectSessionEnvironmentVariables([effectiveCodexHome ? { CODEX_HOME: effectiveCodexHome } : null]),
     };
   },
 };

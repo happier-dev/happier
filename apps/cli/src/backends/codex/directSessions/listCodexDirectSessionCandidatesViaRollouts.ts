@@ -105,6 +105,11 @@ async function buildRolloutCandidate(params: Readonly<{
       },
     ),
   ]);
+  const canonicalRemoteSessionId = [
+    latestMeta?.id,
+    earliestMeta?.id,
+    params.remoteSessionId,
+  ].find((value): value is string => typeof value === 'string' && value.trim().length > 0) ?? params.remoteSessionId;
   const cwd = storeMetadata.cwd ?? (latestMeta && typeof latestMeta.cwd === 'string' ? latestMeta.cwd : undefined);
   const createdAtMs = (() => {
     const ts = earliestMeta && typeof earliestMeta.timestamp === 'string' ? Date.parse(earliestMeta.timestamp) : NaN;
@@ -114,7 +119,7 @@ async function buildRolloutCandidate(params: Readonly<{
   const updatedAtMs = storeMetadata.lastActivityAtMs ?? Math.trunc(params.group.updatedAtMs);
 
   return {
-    remoteSessionId: params.remoteSessionId,
+    remoteSessionId: canonicalRemoteSessionId,
     ...(storeMetadata.title ? { title: storeMetadata.title } : {}),
     createdAtMs,
     updatedAtMs,
@@ -125,6 +130,16 @@ async function buildRolloutCandidate(params: Readonly<{
       source: params.source,
     },
   };
+}
+
+async function resolveRolloutCandidateSessionId(filePath: string): Promise<string | null> {
+  const fromFilename = parseResumeIdFromRolloutFilename(filePath);
+  if (fromFilename) {
+    return fromFilename;
+  }
+  const sessionMeta = await readCodexSessionMetaFromRollout(filePath);
+  const sessionId = typeof sessionMeta?.id === 'string' ? sessionMeta.id.trim() : '';
+  return sessionId || null;
 }
 
 export async function listCodexDirectSessionCandidatesViaRollouts(params: Readonly<{
@@ -149,7 +164,7 @@ export async function listCodexDirectSessionCandidatesViaRollouts(params: Readon
       ...(await collectRolloutFiles({ rootDir: join(homeEntry.codexHome, 'archived_sessions'), maxDepth: 10, archived: true })),
     ];
     for (const entry of files) {
-      const resumeId = parseResumeIdFromRolloutFilename(entry.filePath);
+      const resumeId = await resolveRolloutCandidateSessionId(entry.filePath);
       if (!resumeId) continue;
       const existing = grouped.get(resumeId);
       if (!existing) {

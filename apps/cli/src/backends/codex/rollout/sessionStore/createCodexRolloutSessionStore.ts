@@ -8,6 +8,7 @@ import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
 import { createCodexRolloutSemanticTracker } from '../createCodexRolloutSemanticTracker';
 import { mapCodexRolloutEventToActions } from '../projection/mapCodexRolloutEventToActions';
 import { CodexRolloutFollowerRuntime } from '../runtime/CodexRolloutFollowerRuntime';
+import { resolveCodexRolloutSessionStoreMaxRetainedItems } from './codexRolloutSessionStoreCachePolicy';
 
 import type {
     CodexRolloutSessionStoreOptions,
@@ -38,17 +39,22 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Direc
     private subscriptionDiscoveryTimer: NodeJS.Timeout | null = null;
     private subscriptionSemanticTracker = createCodexRolloutSemanticTracker();
     private subscriptionCursor: string | null = null;
+    private replayDiscoveredHistoryOnNextDrain = false;
     private subscriptionDrainPromise: Promise<void> | null = null;
     private subscriptionDrainQueued = false;
     private transcriptSnapshotPromise: Promise<Awaited<ReturnType<typeof resolveCodexRolloutDirectTranscriptSnapshot>>> | null = null;
     private transcriptSnapshot: Awaited<ReturnType<typeof resolveCodexRolloutDirectTranscriptSnapshot>> | null = null;
+    private readonly maxRetainedItems: number;
 
-    constructor(private readonly options: CodexRolloutSessionStoreOptions) {}
+    constructor(private readonly options: CodexRolloutSessionStoreOptions) {
+        this.maxRetainedItems = resolveCodexRolloutSessionStoreMaxRetainedItems(options.env);
+    }
 
     async warm(): Promise<void> {}
 
     async dispose(): Promise<void> {
         this.lifecycleState = 'disposed';
+        this.invalidateTranscriptSnapshot();
         await this.stopSubscriptionRuntime();
     }
 
@@ -59,31 +65,34 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Direc
             return;
         }
         if (this.subscriptionListeners.size === 0) {
+            this.invalidateTranscriptSnapshot();
             await this.stopSubscriptionRuntime();
         }
     }
 
     async pageOlder(params?: unknown): Promise<CodexRolloutSessionStorePageResult> {
         const pageParams = params as CodexRolloutSessionStorePageParams | undefined;
-        const snapshot = await this.resolveTranscriptSnapshot();
-        const result = pageCodexRolloutDirectTranscriptSnapshot(snapshot, {
-            direction: pageParams?.direction ?? 'older',
-            cursor: pageParams?.cursor,
-            maxBytes: pageParams?.maxBytes ?? 1024 * 1024,
-            maxItems: pageParams?.maxItems ?? 100,
-        });
+        const result = await this.withTranscriptSnapshot((snapshot) =>
+            pageCodexRolloutDirectTranscriptSnapshot(snapshot, {
+                direction: pageParams?.direction ?? 'older',
+                cursor: pageParams?.cursor,
+                maxBytes: pageParams?.maxBytes ?? 1024 * 1024,
+                maxItems: pageParams?.maxItems ?? 100,
+            }),
+        );
         this.tailCursor = result.tailCursor ?? this.tailCursor;
         return result;
     }
 
     async readAfter(params?: unknown): Promise<CodexRolloutSessionStoreReadAfterResult> {
         const readParams = params as CodexRolloutSessionStoreReadAfterParams | undefined;
-        const snapshot = await this.resolveTranscriptSnapshot();
-        const result = readAfterCodexRolloutDirectTranscriptSnapshot(snapshot, {
-            cursor: readParams?.cursor ?? 'tail',
-            maxBytes: readParams?.maxBytes ?? 1024 * 1024,
-            maxItems: readParams?.maxItems ?? 100,
-        });
+        const result = await this.withTranscriptSnapshot((snapshot) =>
+            readAfterCodexRolloutDirectTranscriptSnapshot(snapshot, {
+                cursor: readParams?.cursor ?? 'tail',
+                maxBytes: readParams?.maxBytes ?? 1024 * 1024,
+                maxItems: readParams?.maxItems ?? 100,
+            }),
+        );
         this.tailCursor = result.nextCursor ?? this.tailCursor;
         return result;
     }
@@ -109,22 +118,40 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Direc
     }
 
     async getTitle(): Promise<string | null> {
-        const snapshot = await this.resolveTranscriptSnapshot();
-        return snapshot.title;
+        return this.withTranscriptSnapshot((snapshot) => snapshot.title);
     }
 
     async getWorkingDirectory(): Promise<string | null> {
-        const snapshot = await this.resolveTranscriptSnapshot();
-        return snapshot.workingDirectory;
+        return this.withTranscriptSnapshot((snapshot) => snapshot.workingDirectory);
     }
 
     async getActivity(): Promise<CodexRolloutStoreActivity | null> {
-        const snapshot = await this.resolveTranscriptSnapshot();
-        return { lastActivityAtMs: snapshot.lastActivityAtMs };
+        return this.withTranscriptSnapshot((snapshot) => ({ lastActivityAtMs: snapshot.lastActivityAtMs }));
     }
 
     async getPreview(): Promise<string | null> {
         return this.getTitle();
+    }
+
+    private async withTranscriptSnapshot<TResult>(
+        readSnapshot: (
+            snapshot: Awaited<ReturnType<typeof resolveCodexRolloutDirectTranscriptSnapshot>>,
+        ) => TResult | Promise<TResult>,
+    ): Promise<TResult> {
+        const snapshot = await this.resolveTranscriptSnapshot();
+        try {
+            return await readSnapshot(snapshot);
+        } finally {
+            this.maybeInvalidateOversizedSnapshot(snapshot);
+        }
+    }
+
+    private maybeInvalidateOversizedSnapshot(
+        snapshot: Awaited<ReturnType<typeof resolveCodexRolloutDirectTranscriptSnapshot>>,
+    ): void {
+        if (snapshot.rolloutHome === null) return;
+        if (snapshot.mergedRecords.length <= this.maxRetainedItems) return;
+        this.invalidateTranscriptSnapshot();
     }
 
     private async resolveTranscriptSnapshot(): Promise<Awaited<ReturnType<typeof resolveCodexRolloutDirectTranscriptSnapshot>>> {
@@ -160,6 +187,11 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Direc
                 return;
             }
             if (!primaryRolloutFilePath) {
+                if (this.subscriptionCursor === null && this.tailCursor === null) {
+                    this.replayDiscoveredHistoryOnNextDrain = true;
+                }
+                // Avoid pinning an empty snapshot forever while discovery waits for a late rollout file.
+                this.invalidateTranscriptSnapshot();
                 this.ensureSubscriptionDiscoveryTimer();
                 return;
             }
@@ -183,7 +215,7 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Direc
                 },
             });
             this.subscriptionRuntime = runtime;
-            this.subscriptionCursor = this.tailCursor ?? null;
+            this.subscriptionCursor = this.replayDiscoveredHistoryOnNextDrain ? null : (this.tailCursor ?? null);
             await runtime.start();
             if (this.subscriptionRuntime !== runtime || this.isSubscriptionRuntimeStartupStale(startupGeneration)) {
                 if (this.subscriptionRuntime === runtime) {
@@ -216,6 +248,7 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Direc
         this.subscriptionRuntime = null;
         this.clearSubscriptionDiscoveryTimer();
         this.subscriptionCursor = null;
+        this.replayDiscoveredHistoryOnNextDrain = false;
         this.subscriptionDrainPromise = null;
         this.subscriptionDrainQueued = false;
         this.subscriptionSemanticTracker = createCodexRolloutSemanticTracker();
@@ -286,6 +319,17 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Direc
 
     private async replaySubscriptionHistory(): Promise<CodexRolloutSessionStoreReadAfterResult> {
         const snapshot = await this.resolveTranscriptSnapshot();
+        if (this.replayDiscoveredHistoryOnNextDrain) {
+            this.replayDiscoveredHistoryOnNextDrain = false;
+            const startCursor = buildStartCursorFromSnapshot(snapshot);
+            if (startCursor) {
+                return this.readAfter({
+                    cursor: startCursor,
+                    maxBytes: this.subscriptionDrainMaxBytes,
+                    maxItems: this.subscriptionDrainMaxItems,
+                });
+            }
+        }
         const tailCursor = buildTailCursorFromSnapshot(snapshot);
         if (tailCursor) {
             this.subscriptionCursor = tailCursor;
@@ -310,7 +354,7 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Direc
     }
 
     private ensureSubscriptionDiscoveryTimer(): void {
-        if (this.subscriptionDiscoveryTimer || this.lifecycleState !== 'hot_attached') {
+        if (this.subscriptionDiscoveryTimer || !this.shouldKeepSubscriptionRuntime()) {
             return;
         }
         this.subscriptionDiscoveryTimer = setInterval(() => {
@@ -332,8 +376,7 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Direc
     }
 
     private async resolvePrimaryRolloutFilePath(): Promise<string | null> {
-        const snapshot = await this.resolveTranscriptSnapshot();
-        return snapshot.primaryRolloutFilePath;
+        return this.withTranscriptSnapshot((snapshot) => snapshot.primaryRolloutFilePath);
     }
 }
 
@@ -355,6 +398,23 @@ function buildTailCursorFromSnapshot(snapshot: Awaited<ReturnType<typeof resolve
             .map((state) => ({
                 fileRelPath: state.stream.fileRelPath,
                 nextOffsetBytes: state.nextOffsetBytes,
+                subIndex: 0,
+            }))
+            .sort((left, right) => left.fileRelPath.localeCompare(right.fileRelPath)),
+    });
+}
+
+function buildStartCursorFromSnapshot(snapshot: Awaited<ReturnType<typeof resolveCodexRolloutDirectTranscriptSnapshot>>): string | null {
+    if (snapshot.rolloutHome === null) {
+        return null;
+    }
+    return encodeCodexDirectForwardCursor({
+        v: 4,
+        kind: 'codexForwardStreamVector',
+        streams: snapshot.streamStates
+            .map((state) => ({
+                fileRelPath: state.stream.fileRelPath,
+                nextOffsetBytes: 0,
                 subIndex: 0,
             }))
             .sort((left, right) => left.fileRelPath.localeCompare(right.fileRelPath)),

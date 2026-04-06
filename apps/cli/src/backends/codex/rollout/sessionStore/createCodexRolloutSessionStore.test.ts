@@ -282,6 +282,60 @@ describe('createCodexRolloutSessionStore', () => {
         expect(JSON.stringify(totalItems)).toContain('live backlog item 101');
     });
 
+    it('replays the first rollout history when the primary rollout file appears after live follow started', async () => {
+        const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'happier-codex-rollout-subscribe-late-file-')));
+        const codexHome = join(root, 'codex-home');
+        const sessionsDir = join(codexHome, 'sessions');
+        await mkdir(sessionsDir, { recursive: true });
+
+        const sessionId = 'late-rollout-follow-session';
+        const filePath = join(sessionsDir, `rollout-2026-01-02T00-00-00-${sessionId}.jsonl`);
+
+        const store = createCodexRolloutSessionStore({
+            key: {
+                providerId: 'codex',
+                source: { kind: 'codexHome', home: 'user' },
+                remoteSessionId: sessionId,
+            },
+            activeServerDir: join(root, 'servers', 'cloud'),
+            env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+        });
+
+        const events: Array<{ items: readonly unknown[]; nextCursor: string | null; truncated: boolean }> = [];
+        const unsubscribe = store.subscribe((event) => {
+            events.push(event);
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(events).toHaveLength(0);
+
+        await writeFile(
+            filePath,
+            sessionMetaLine({ id: sessionId, timestamp: '2026-01-02T00:00:00.000Z', cwd: '/repo/late-rollout' })
+            + responseItemLine({
+                timestamp: '2026-01-02T00:00:01.000Z',
+                payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'late rollout first item' }] },
+            }),
+            'utf8',
+        );
+
+        const deadline = Date.now() + 5_000;
+        while (events.length === 0 && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+
+        const page = await store.pageOlder({ direction: 'older', maxBytes: 1024 * 1024, maxItems: 10 });
+
+        unsubscribe();
+
+        expect(page.items).toHaveLength(1);
+        expect(JSON.stringify(page.items[0] ?? null)).toContain('late rollout first item');
+        expect(events).toHaveLength(1);
+        expect(events[0]?.items).toHaveLength(1);
+        expect(JSON.stringify(events[0]?.items[0] ?? null)).toContain('late rollout first item');
+        expect(events[0]?.truncated).toBe(false);
+    });
+
     it('uses one authoritative connected-service home for paging, metadata, and live follow', async () => {
         const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'happier-codex-rollout-store-multi-home-')));
         const activeServerDir = join(root, 'servers', 'cloud');
@@ -748,6 +802,57 @@ describe('createCodexRolloutSessionStore', () => {
         expect(events[0]?.truncated).toBe(false);
     });
 
+    it('delivers the first discovered rollout history when subscription starts before any rollout file exists', async () => {
+        const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'happier-codex-rollout-late-discovery-')));
+        const codexHome = join(root, 'codex-home');
+        const sessionsDir = join(codexHome, 'sessions');
+        await mkdir(sessionsDir, { recursive: true });
+
+        const sessionId = 'late-discovery-session';
+        const filePath = join(sessionsDir, `rollout-2026-01-02T00-00-00-${sessionId}.jsonl`);
+
+        const store = createCodexRolloutSessionStore({
+            key: {
+                providerId: 'codex',
+                source: { kind: 'codexHome', home: 'user' },
+                remoteSessionId: sessionId,
+            },
+            activeServerDir: join(root, 'servers', 'cloud'),
+            env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+        });
+
+        const events: Array<{ items: readonly unknown[]; nextCursor: string | null; truncated: boolean }> = [];
+        const unsubscribe = store.subscribe((event) => {
+            events.push(event);
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(events).toHaveLength(0);
+
+        await writeFile(
+            filePath,
+            sessionMetaLine({ id: sessionId, timestamp: '2026-01-02T00:00:00.000Z', cwd: '/repo/late-discovery' })
+            + responseItemLine({
+                timestamp: '2026-01-02T00:00:01.000Z',
+                payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hello-after-late-discovery' }] },
+            }),
+            'utf8',
+        );
+
+        const deadline = Date.now() + 5_000;
+        while (events.length === 0 && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+
+        unsubscribe();
+
+        expect(events).toHaveLength(1);
+        expect(events[0]?.items).toHaveLength(1);
+        expect(JSON.stringify(events[0]?.items[0] ?? null)).toContain('hello-after-late-discovery');
+        expect(events[0]?.nextCursor).toBeTruthy();
+        expect(events[0]?.truncated).toBe(false);
+    });
+
     it('keeps following appended rollout items while the lifecycle is hot_attached even without listeners', async () => {
         const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'happier-codex-rollout-hot-attached-')));
         const codexHome = join(root, 'codex-home');
@@ -850,5 +955,91 @@ describe('createCodexRolloutSessionStore', () => {
         await new Promise((resolve) => setTimeout(resolve, 400));
 
         expect(store.getTailCursor()).toBe(initialTailCursor);
+    });
+
+    it('drops cached rollout history when the lifecycle downgrades to warm_detached', async () => {
+        const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'happier-codex-rollout-warm-detached-drop-')));
+        const codexHome = join(root, 'codex-home');
+        const sessionsDir = join(codexHome, 'sessions');
+        await mkdir(sessionsDir, { recursive: true });
+
+        const sessionId = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+        const filePath = join(sessionsDir, `rollout-2026-01-02T00-00-00-${sessionId}.jsonl`);
+        await writeFile(
+            filePath,
+            sessionMetaLine({ id: sessionId, timestamp: '2026-01-02T00:00:00.000Z', cwd: '/repo/warm-detached' })
+            + responseItemLine({
+                timestamp: '2026-01-02T00:00:01.000Z',
+                payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'cached while hot' }] },
+            }),
+            'utf8',
+        );
+
+        const store = createCodexRolloutSessionStore({
+            key: {
+                providerId: 'codex',
+                source: { kind: 'codexHome', home: 'user' },
+                remoteSessionId: sessionId,
+            },
+            activeServerDir: join(root, 'servers', 'cloud'),
+            env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+        });
+
+        const initialPage = await store.pageOlder({ direction: 'older', maxBytes: 1024 * 1024, maxItems: 10 });
+        expect(initialPage.items).toHaveLength(1);
+
+        await store.setLifecycleState('warm_detached');
+        await unlink(filePath);
+
+        const afterDowngrade = await store.pageOlder({ direction: 'older', maxBytes: 1024 * 1024, maxItems: 10 });
+
+        expect(afterDowngrade.items).toEqual([]);
+        expect(afterDowngrade.hasMore).toBe(false);
+    });
+
+    it('does not retain oversized cached rollout history between reads', async () => {
+        const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'happier-codex-rollout-oversized-drop-')));
+        const codexHome = join(root, 'codex-home');
+        const sessionsDir = join(codexHome, 'sessions');
+        await mkdir(sessionsDir, { recursive: true });
+
+        const sessionId = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+        const filePath = join(sessionsDir, `rollout-2026-01-02T00-00-00-${sessionId}.jsonl`);
+        await writeFile(
+            filePath,
+            sessionMetaLine({ id: sessionId, timestamp: '2026-01-02T00:00:00.000Z', cwd: '/repo/oversized-retention' })
+            + responseItemLine({
+                timestamp: '2026-01-02T00:00:01.000Z',
+                payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'oversized item one' }] },
+            })
+            + responseItemLine({
+                timestamp: '2026-01-02T00:00:02.000Z',
+                payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'oversized item two' }] },
+            }),
+            'utf8',
+        );
+
+        const store = createCodexRolloutSessionStore({
+            key: {
+                providerId: 'codex',
+                source: { kind: 'codexHome', home: 'user' },
+                remoteSessionId: sessionId,
+            },
+            activeServerDir: join(root, 'servers', 'cloud'),
+            env: {
+                CODEX_HOME: codexHome,
+                HAPPIER_CODEX_ROLLOUT_SESSION_STORE_MAX_RETAINED_ITEMS: '1',
+            } as NodeJS.ProcessEnv,
+        });
+
+        const initialPage = await store.pageOlder({ direction: 'older', maxBytes: 1024 * 1024, maxItems: 10 });
+        expect(initialPage.items).toHaveLength(2);
+
+        await unlink(filePath);
+
+        const afterUnlink = await store.pageOlder({ direction: 'older', maxBytes: 1024 * 1024, maxItems: 10 });
+
+        expect(afterUnlink.items).toEqual([]);
+        expect(afterUnlink.hasMore).toBe(false);
     });
 });
