@@ -15,6 +15,19 @@ import {
   runTauriMcpCliJson,
   writeTextArtifact,
 } from './tauriMcpCli.mjs';
+import {
+  resolveDefaultDriverSessionPort,
+  resolveCandidateDriverSessionPorts,
+  startTargetedDriverSession,
+} from './tauriDriverSessionSelection.mjs';
+import { appendTauriQaHmrOptOut } from './tauriQaPathing.mjs';
+export {
+  doesDriverSessionStatusMatchRequestedPort,
+  resolveCandidateDriverSessionPorts,
+  resolveConnectedAppIdentifierFromDriverStatus,
+  resolveExactDriverSessionTarget,
+  resolvePreferredAppIdentifierFromDriverStatus,
+} from './tauriDriverSessionSelection.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const packageRoot = dirname(dirname(scriptDir));
@@ -36,47 +49,6 @@ const cliInteractTimeoutMs = 20000;
 function readString(value, fallback = '') {
   const text = String(value ?? '').trim();
   return text || fallback;
-}
-
-function readNumber(value, fallback) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
-}
-
-export function resolveCandidateDriverSessionPorts({ preferredPort, env = process.env } = {}) {
-  const ports = [];
-  const seen = new Set();
-
-  function push(value) {
-    const port = Number(value);
-    if (!Number.isFinite(port) || port <= 0) return;
-    const normalized = Math.floor(port);
-    if (seen.has(normalized)) return;
-    seen.add(normalized);
-    ports.push(normalized);
-  }
-
-  const preferred = readNumber(
-    preferredPort
-      ?? env.HAPPIER_TAURI_MCP_APP_IDENTIFIER
-      ?? env.HAPPIER_TAURI_MCP_PORT
-      ?? env.HAPPIER_TAURI_APP_PORT,
-    0,
-  );
-  if (preferred) {
-    push(preferred);
-    push(preferred + 1);
-    push(preferred + 2);
-    push(preferred - 1);
-  }
-
-  // Include known defaults used in our repo scripts and the upstream CLI default.
-  push(9225);
-  push(9226);
-  push(9227);
-  push(9223);
-
-  return ports;
 }
 
 function buildStepPlan() {
@@ -184,16 +156,13 @@ function buildStepPlan() {
 export function buildOnboardingWizardPath(stepId = null) {
   const normalized = String(stepId ?? '').trim();
   if (!normalized) {
-    return '/';
+    return appendTauriQaHmrOptOut('/');
   }
-  return `/?happier_wizard_step=${encodeURIComponent(normalized)}`;
+  return appendTauriQaHmrOptOut(`/?happier_wizard_step=${encodeURIComponent(normalized)}`);
 }
 
 export function buildTauriOnboardingWizardQaPlan({ env = process.env } = {}) {
-  const driverSessionPort = readNumber(
-    env.HAPPIER_TAURI_MCP_APP_IDENTIFIER ?? env.HAPPIER_TAURI_MCP_PORT ?? env.HAPPIER_TAURI_APP_PORT,
-    9225,
-  );
+  const driverSessionPort = resolveDefaultDriverSessionPort({ env });
   const trackerPathRaw = readString(env.HAPPIER_TAURI_QA_TRACKER_PATH, defaultTrackerPath);
   const artifactRootRaw = readString(
     env.HAPPIER_TAURI_QA_OUTDIR,
@@ -231,39 +200,6 @@ export function buildTauriOnboardingWizardQaPlan({ env = process.env } = {}) {
       'If a native picker or browser chooser appears, select the expected file / browser once and continue.',
     ],
   };
-}
-
-function tryParseDriverSessionStatus(response) {
-  const raw = readString(response?.text, '');
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function resolveAppIdentifierFromDriverStatus(status) {
-  const singlePort = Number(status?.port ?? 0);
-  if (Number.isFinite(singlePort) && singlePort > 0) {
-    return Math.floor(singlePort);
-  }
-  const defaultPort = Number(status?.defaultPort ?? 0);
-  if (Number.isFinite(defaultPort) && defaultPort > 0) {
-    return Math.floor(defaultPort);
-  }
-  const apps = Array.isArray(status?.apps) ? status.apps : [];
-  const defaultApp = apps.find((app) => app && app.isDefault === true && Number.isFinite(Number(app.port ?? 0)) && Number(app.port) > 0);
-  if (defaultApp) {
-    return Math.floor(Number(defaultApp.port));
-  }
-  const first = apps.find((app) => Number.isFinite(Number(app?.port ?? 0)) && Number(app.port) > 0);
-  if (first) {
-    return Math.floor(Number(first.port));
-  }
-  return null;
 }
 
 async function waitForAnySelector(step, { appIdentifier, env }) {
@@ -567,57 +503,18 @@ async function main(argv = process.argv.slice(2)) {
 
   const driverSessionAttemptsFile = join(plan.artifactRoot, '00-driver-session-attempts.jsonl');
   const candidatePorts = resolveCandidateDriverSessionPorts({ preferredPort: plan.driverSessionPort, env: process.env });
+  const targetedDriverSession = await startTargetedDriverSession({
+    candidatePorts,
+    runCliJson: (args) => runTauriMcpCliJson(args, { cwd: plan.packageRoot, env: process.env }),
+    appendAttempt: (entry) => appendJsonLineArtifact(driverSessionAttemptsFile, entry),
+  });
 
-  let usedDriverSessionPort = null;
-  let driverSessionResponse = null;
-  let driverSessionStatusResponse = null;
-
-  // Ensure we always start from a fresh driver session. Stale sessions can keep
-  // the MCP bridge "connected" while the underlying plugin/webview connection is
-  // dead, leading to `Not connected to plugin and reconnection failed`.
-  for (const candidatePort of candidatePorts) {
-    // eslint-disable-next-line no-await-in-loop
-    await runTauriMcpCli(
-      ['driver-session', 'stop', '--port', String(candidatePort)],
-      { cwd: plan.packageRoot, env: process.env },
-    ).catch(() => {});
-
-    try {
-      // eslint-disable-next-line no-await-in-loop
-      driverSessionResponse = await runTauriMcpCliJson(['driver-session', 'start', '--port', String(candidatePort)], {
-        cwd: plan.packageRoot,
-        env: process.env,
-      });
-      // eslint-disable-next-line no-await-in-loop
-      driverSessionStatusResponse = await runTauriMcpCliJson(
-        ['driver-session', 'status', '--port', String(candidatePort)],
-        { cwd: plan.packageRoot, env: process.env },
-      );
-      const parsed = tryParseDriverSessionStatus(driverSessionStatusResponse);
-      const resolved = resolveAppIdentifierFromDriverStatus(parsed);
-      if (resolved) {
-        usedDriverSessionPort = candidatePort;
-        // eslint-disable-next-line no-await-in-loop
-        await appendJsonLineArtifact(driverSessionAttemptsFile, { ok: true, port: candidatePort, appIdentifier: resolved });
-        break;
-      }
-      // eslint-disable-next-line no-await-in-loop
-      await appendJsonLineArtifact(driverSessionAttemptsFile, { ok: false, port: candidatePort, reason: 'no-app-identifier' });
-    } catch (error) {
-      // eslint-disable-next-line no-await-in-loop
-      await appendJsonLineArtifact(driverSessionAttemptsFile, {
-        ok: false,
-        port: candidatePort,
-        reason: 'error',
-        message: error instanceof Error ? error.message : String(error),
-      });
-      continue;
-    }
-  }
-
-  if (!usedDriverSessionPort || !driverSessionResponse || !driverSessionStatusResponse) {
-    throw new Error(`Unable to resolve a connected Tauri app identifier from driver-session status. Tried ports: ${candidatePorts.join(', ')}`);
-  }
+  const {
+    driverSessionPort: usedDriverSessionPort,
+    driverSessionResponse,
+    driverSessionStatusResponse,
+    resolvedAppTarget,
+  } = targetedDriverSession;
 
   const driverSessionCommand = ['yarn', ...plan.driverSession.baseArgs, 'driver-session', 'start', '--port', String(usedDriverSessionPort)].join(' ');
   const driverSessionResponseFile = join(plan.artifactRoot, '00-driver-session.json');
@@ -627,11 +524,10 @@ async function main(argv = process.argv.slice(2)) {
   const driverSessionStatusResponseFile = join(plan.artifactRoot, '00-driver-session-status.json');
   await writeTextArtifact(driverSessionStatusResponseFile, `${JSON.stringify(driverSessionStatusResponse, null, 2)}\n`);
 
-  const parsedStatus = tryParseDriverSessionStatus(driverSessionStatusResponse);
-  const resolvedAppIdentifier = resolveAppIdentifierFromDriverStatus(parsedStatus);
-  if (!resolvedAppIdentifier) {
+  if (!resolvedAppTarget) {
     throw new Error('Unable to resolve a connected Tauri app identifier from driver-session status.');
   }
+  const resolvedAppIdentifier = resolvedAppTarget.port;
 
   const backendStateFile = join(plan.artifactRoot, '00-backend-state.json');
   const backendState = await runTauriMcpCli(

@@ -199,7 +199,7 @@ describe('uiWebExport (cache clearing)', () => {
           HAPPIER_E2E_UI_WEB_EXPORT_STARTUP_STALL_POLL_MS: '10',
         },
       }),
-    ).rejects.toThrow(/timed out after 250ms/i);
+    ).rejects.toThrow(/classification=startup_stalled_after_metro_startup_no_staging_progress/);
   }, 10_000);
 
   it('fails export startup when staging keeps growing without publish-required files', async () => {
@@ -262,7 +262,7 @@ describe('uiWebExport (cache clearing)', () => {
       new Promise<never>((_, reject) => {
         setTimeout(() => reject(new Error('startUiWebExport did not reject growing partial staging quickly')), 2_000);
       }),
-    ])).rejects.toThrow(/classification=timed_out_after_metro_partial_staging/);
+    ])).rejects.toThrow(/classification=startup_stalled_after_metro_startup_no_staging_progress/);
   });
 
   it('times out export startup even when the command runner ignores aborts', async () => {
@@ -397,6 +397,42 @@ describe('uiWebExport (cache clearing)', () => {
     }
   });
 
+  it('reclaims a stale export lock when only unrelated staging directories are progressing', async () => {
+    const helper = (uiWebExportTestables as Record<string, unknown>).shouldReclaimUiWebExportLock;
+    expect(helper).toBeTypeOf('function');
+
+    const rootDir = mkdtempSync(join(tmpdir(), 'happier-uiwebexport-lock-'));
+    const lockPath = resolve(rootDir, 'build.lock');
+    const ownerStagingDir = resolve(rootDir, `dist-staging-99999-${Date.now() - 60_000}`);
+    const unrelatedStagingDir = resolve(rootDir, `dist-staging-${process.pid}-${Date.now()}`);
+
+    try {
+      await mkdir(resolve(ownerStagingDir, 'nested'), { recursive: true });
+      await mkdir(resolve(unrelatedStagingDir, 'nested'), { recursive: true });
+      await writeFile(resolve(ownerStagingDir, 'nested', 'stale-chunk.js'), 'stale', 'utf8');
+      await writeFile(resolve(unrelatedStagingDir, 'nested', 'fresh-chunk.js'), 'fresh', 'utf8');
+      await writeFile(
+        lockPath,
+        JSON.stringify({
+          pid: process.pid,
+          createdAtMs: Date.now() - 10_000,
+          stagingDir: ownerStagingDir,
+        }),
+        'utf8',
+      );
+
+      // Keep unrelated staging fresh while the owner staging stays stale.
+      const now = new Date();
+      await utimes(resolve(unrelatedStagingDir, 'nested', 'fresh-chunk.js'), now, now);
+
+      await expect(
+        (helper as (lockPath: string, staleAfterMs: number) => Promise<boolean>)(lockPath, 1_000),
+      ).resolves.toBe(true);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
   it('rejects a completed export when the staging dir is missing publish-required files', async () => {
     runLoggedCommandMock.mockImplementationOnce(async (params?: RunLoggedCommandMockParams) => {
       if (!params?.args) {
@@ -418,6 +454,119 @@ describe('uiWebExport (cache clearing)', () => {
         },
       }),
     ).rejects.toThrow(/metadata\.json|publish-required|incomplete export/i);
+  });
+
+  it('classifies a frozen partial export failure during export', async () => {
+    runLoggedCommandMock.mockImplementationOnce(async (params?: RunLoggedCommandMockParams) => {
+      if (!params?.args) {
+        throw new Error('missing runLoggedCommand args');
+      }
+      const outputDir = resolveOutputDirFromArgs(params.args);
+      await mkdir(resolve(outputDir, 'monaco'), { recursive: true });
+      await writeFile(resolve(outputDir, 'monaco', 'chunk.js'), 'chunk', 'utf8');
+      await writeFile(
+        params.stdoutPath,
+        ['Expo Autolinking module resolution enabled', 'Starting Metro Bundler', 'Web apps/ui/index.ts ▓▓▓▓ 63.5% (133/210)'].join('\n'),
+        'utf8',
+      );
+      await writeFile(
+        params.stderrPath ?? params.stdoutPath,
+        'Error: export process exited after partial staging output was written',
+        'utf8',
+      );
+
+      throw new Error('command exited with code 1');
+    });
+
+    const testDir = mkdtempSync(join(tmpdir(), 'happier-uiwebexport-test-'));
+    await expect(
+      startUiWebExport({
+        testDir,
+        env: {
+          ...process.env,
+          EXPO_PUBLIC_DEBUG: '1',
+          HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: `frozen-partial-${Date.now()}`,
+        },
+      }),
+    ).rejects.toThrow(/classification=expo_export_frozen_partial_output/);
+  });
+
+  it('classifies an unresolved web import failure during export', async () => {
+    runLoggedCommandMock.mockImplementationOnce(async (params?: RunLoggedCommandMockParams) => {
+      if (!params) {
+        throw new Error('missing runLoggedCommand params');
+      }
+
+      await writeFile(
+        params.stdoutPath,
+        ['Expo Autolinking module resolution enabled', 'Starting Metro Bundler'].join('\n'),
+        'utf8',
+      );
+      await writeFile(
+        params.stderrPath ?? params.stdoutPath,
+        [
+          'Error: Unable to resolve module ../presentation/buildDesktopActivityOverlaySnapshot from /Users/leeroy/Documents/Development/happier/dev/apps/ui/sources/activity/adapters/desktop/runtime/DesktopActivityOverlayRuntime.tsx:',
+          '',
+          'None of these files exist:',
+          '  * sources/activity/adapters/desktop/presentation/buildDesktopActivityOverlaySnapshot(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css)',
+        ].join('\n'),
+        'utf8',
+      );
+
+      throw new Error('command exited with code 1');
+    });
+
+    const testDir = mkdtempSync(join(tmpdir(), 'happier-uiwebexport-test-'));
+    await expect(
+      startUiWebExport({
+        testDir,
+        env: {
+          ...process.env,
+          EXPO_PUBLIC_DEBUG: '1',
+          HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: `unresolved-module-${Date.now()}`,
+        },
+      }),
+    ).rejects.toThrow(/classification=expo_export_unresolved_module_import/);
+  });
+
+  it('classifies a missing source file ENOENT as an unresolved import even when partial staging exists', async () => {
+    runLoggedCommandMock.mockImplementationOnce(async (params?: RunLoggedCommandMockParams) => {
+      if (!params?.args) {
+        throw new Error('missing runLoggedCommand args');
+      }
+
+      const outputDir = resolveOutputDirFromArgs(params.args);
+      await mkdir(resolve(outputDir, 'monaco'), { recursive: true });
+      await writeFile(resolve(outputDir, 'monaco', 'chunk.js'), 'chunk', 'utf8');
+      await writeFile(
+        params.stdoutPath,
+        ['Expo Autolinking module resolution enabled', 'Starting Metro Bundler', 'Web apps/ui/index.ts ▓▓▓▓ 63.5% (133/210)'].join('\n'),
+        'utf8',
+      );
+      await writeFile(
+        params.stderrPath ?? params.stdoutPath,
+        [
+          "SyntaxError: sources/components/settings/remoteHosts/buildRemoteSshManageHostSystemTaskSpec.ts: ENOENT: no such file or directory, open '/Users/leeroy/Documents/Development/happier/dev/apps/ui/sources/components/settings/remoteHosts/buildRemoteSshManageHostSystemTaskSpec.ts'",
+          '',
+          'Web Bundling failed',
+        ].join('\n'),
+        'utf8',
+      );
+
+      throw new Error('command exited with code 1');
+    });
+
+    const testDir = mkdtempSync(join(tmpdir(), 'happier-uiwebexport-test-'));
+    await expect(
+      startUiWebExport({
+        testDir,
+        env: {
+          ...process.env,
+          EXPO_PUBLIC_DEBUG: '1',
+          HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: `enoent-unresolved-module-${Date.now()}`,
+        },
+      }),
+    ).rejects.toThrow(/classification=expo_export_unresolved_module_import/);
   });
 
   it('reuses the persisted export when cache clear is not requested', async () => {
@@ -519,6 +668,81 @@ describe('uiWebExport (cache clearing)', () => {
     } finally {
       await ui.stop();
     }
+  });
+
+  it('retries expo export when Metro cache cleanup briefly hits ENOTEMPTY', async () => {
+    runLoggedCommandMock
+      .mockImplementationOnce(async (params?: RunLoggedCommandMockParams) => {
+        if (!params?.stdoutPath) {
+          throw new Error('missing runLoggedCommand params');
+        }
+        await writeFile(
+          params.stdoutPath,
+          ['Expo Autolinking module resolution enabled', 'Starting Metro Bundler'].join('\n'),
+          'utf8',
+        );
+        const error = new Error('directory not empty') as NodeJS.ErrnoException;
+        error.code = 'ENOTEMPTY';
+        throw error;
+      })
+      .mockImplementationOnce(async (params?: RunLoggedCommandMockParams) => {
+        if (!params?.args) {
+          throw new Error('missing runLoggedCommand args');
+        }
+        const outputDir = resolveOutputDirFromArgs(params.args);
+        await mkdir(resolve(outputDir, '_expo/static/js/web'), { recursive: true });
+        await writeFile(
+          resolve(outputDir, 'index.html'),
+          '<!doctype html><html><head><script src="/_expo/static/js/web/index.js"></script></head><body>rebuilt</body></html>',
+          'utf8',
+        );
+        await writeFile(resolve(outputDir, 'metadata.json'), JSON.stringify({ version: 1 }), 'utf8');
+        await writeFile(resolve(outputDir, '_expo/static/js/web/index.js'), 'globalThis.__HAPPIER_E2E__ = true;', 'utf8');
+      });
+
+    const testDir = mkdtempSync(join(tmpdir(), 'happier-uiwebexport-test-'));
+    const ui = await startUiWebExport({
+      testDir,
+      env: {
+        ...process.env,
+        EXPO_PUBLIC_DEBUG: '1',
+        HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: `cache-clear-enotempty-retry-${Date.now()}`,
+        HAPPIER_E2E_UI_WEB_EXPORT_STARTUP_STALL_TIMEOUT_MS: '1000',
+        HAPPIER_E2E_UI_WEB_EXPORT_STARTUP_STALL_POLL_MS: '5',
+        EXPO_UPDATES_CHANNEL: `cache-clear-enotempty-retry-${Date.now()}`,
+      },
+    });
+
+    try {
+      expect(runLoggedCommandMock).toHaveBeenCalledTimes(2);
+    } finally {
+      await ui.stop();
+    }
+  });
+
+  it('retries removing a path when recursive cleanup briefly hits ENOTEMPTY', async () => {
+    const helper = (uiWebExportTestables as Record<string, unknown>).removePathWithRetries;
+    expect(helper).toBeTypeOf('function');
+
+    let callCount = 0;
+    const removePath = vi.fn(async () => {
+      callCount += 1;
+      if (callCount === 1) {
+        const error = new Error('directory not empty') as NodeJS.ErrnoException;
+        error.code = 'ENOTEMPTY';
+        throw error;
+      }
+    });
+
+    await expect((helper as (path: string, options: Readonly<{ timeoutMs?: number; intervalMs?: number; removePath?: (path: string, options?: { recursive?: boolean; force?: boolean }) => Promise<void>; }>) => Promise<void>)(
+      '/tmp/happier-uiwebexport-cleanup',
+      {
+        timeoutMs: 1_000,
+        intervalMs: 1,
+        removePath,
+      },
+    )).resolves.toBeUndefined();
+    expect(removePath).toHaveBeenCalledTimes(2);
   });
 
   it('retries expo export with --clear when a corrupted startup attempt never resolves after abort', async () => {

@@ -5,10 +5,13 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let spawnStdoutText = '';
 let lastSpawnEnv: NodeJS.ProcessEnv | null = null;
+let sourceFingerprint = 'fingerprint-a';
+let reservedMetroPort = 19077;
+let fetchResponder: ((input: unknown, init?: RequestInit) => Promise<unknown>) | null = null;
 
 vi.mock('./spawnProcess', () => ({
     spawnLoggedProcess: (params: { stdoutPath: string; stderrPath: string; env?: NodeJS.ProcessEnv }) => {
@@ -33,6 +36,14 @@ vi.mock('./spawnProcess', () => ({
     },
 }));
 
+vi.mock('./uiWebSourceFingerprint', () => ({
+    resolveUiWebSourceFingerprint: () => sourceFingerprint,
+}));
+
+vi.mock('../network/reserveAvailablePort', () => ({
+    reserveAvailablePort: async () => reservedMetroPort,
+}));
+
 import {
     resolveUiWebMetroOwnershipLeasesDir,
     startUiWebMetro,
@@ -42,12 +53,22 @@ import { spawnDetachedTestProcess } from './testSpawn';
 afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    vi.resetModules();
+});
+
+afterAll(() => {
+    vi.doUnmock('./spawnProcess');
+    vi.doUnmock('./uiWebSourceFingerprint');
+    vi.doUnmock('../network/reserveAvailablePort');
+    vi.resetModules();
 });
 
 beforeEach(() => {
     spawnStdoutText = 'http://127.0.0.1:19077\n';
     lastSpawnEnv = null;
-    vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+    sourceFingerprint = 'fingerprint-a';
+    reservedMetroPort = 19077;
+    fetchResponder = async (input: unknown) => {
         const url = String(input);
         if (url.endsWith('/status')) {
             return {
@@ -68,7 +89,8 @@ beforeEach(() => {
             headers: { get: () => 'text/html' },
             text: async () => '<!doctype html><html><head><script src="/index.js"></script></head><body></body></html>',
         };
-    }));
+    };
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown, init?: RequestInit) => await fetchResponder!(input, init)));
 });
 
 function readProcessStartTime(pid: number): string {
@@ -153,4 +175,140 @@ describe('startUiWebMetro', () => {
             await rm(testDir, { recursive: true, force: true });
         }
     });
+
+    it('changes the Metro cache version bust when the source fingerprint changes', async () => {
+        const testDir = await mkdtemp(join(tmpdir(), 'happier-ui-web-metro-cache-bust-source-'));
+
+        try {
+            await mkdir(testDir, { recursive: true });
+
+            sourceFingerprint = 'fingerprint-a';
+            const startedA = await startUiWebMetro({
+                testDir,
+                env: {},
+                port: 19077,
+            });
+            const bustA = lastSpawnEnv?.HAPPIER_UI_METRO_CACHE_VERSION_BUST;
+
+            sourceFingerprint = 'fingerprint-b';
+            const startedB = await startUiWebMetro({
+                testDir,
+                env: {},
+                port: 19078,
+            });
+            const bustB = lastSpawnEnv?.HAPPIER_UI_METRO_CACHE_VERSION_BUST;
+
+            expect(bustA).toMatch(/^[a-f0-9]{16,}$/u);
+            expect(bustB).toMatch(/^[a-f0-9]{16,}$/u);
+            expect(bustB).not.toBe(bustA);
+
+            await startedA.stop();
+            await startedB.stop();
+        } finally {
+            await rm(testDir, { recursive: true, force: true });
+        }
+    });
+
+    it('reanchors to the live reserved metro port when stdout still advertises a stale prior entry page', async () => {
+        const testDir = await mkdtemp(join(tmpdir(), 'happier-ui-web-metro-reanchor-'));
+        reservedMetroPort = 19079;
+        spawnStdoutText = ['http://127.0.0.1:19077', `Waiting on http://localhost:${reservedMetroPort}`].join('\n');
+        let liveEntryPageReady = false;
+
+        fetchResponder = async (input: unknown) => {
+            const url = String(input);
+
+            if (url === `http://localhost:${reservedMetroPort}/status` || url === `http://127.0.0.1:${reservedMetroPort}/status`) {
+                liveEntryPageReady = true;
+                return {
+                    ok: true,
+                    headers: { get: () => 'text/plain' },
+                    text: async () => 'packager-status:running',
+                };
+            }
+
+            if (url === 'http://127.0.0.1:19077/status' || url === 'http://localhost:19077/status') {
+                return {
+                    ok: false,
+                    headers: { get: () => 'text/plain' },
+                    text: async () => '',
+                };
+            }
+
+            if (url === 'http://127.0.0.1:19077' || url === 'http://localhost:19077') {
+                return {
+                    ok: true,
+                    headers: { get: () => 'text/html' },
+                    text: async () => '<!doctype html><html><head><script src="/index.js"></script></head><body></body></html>',
+                };
+            }
+
+            if (url === 'http://127.0.0.1:19077/index.js' || url === 'http://localhost:19077/index.js') {
+                return {
+                    ok: true,
+                    headers: { get: () => 'application/javascript' },
+                    text: async () => 'globalThis.__HAPPIER_E2E__ = true;',
+                };
+            }
+
+            if (url === `http://127.0.0.1:${reservedMetroPort}` || url === `http://localhost:${reservedMetroPort}`) {
+                if (!liveEntryPageReady) {
+                    return {
+                        ok: false,
+                        headers: { get: () => 'text/plain' },
+                        text: async () => '',
+                    };
+                }
+                return {
+                    ok: true,
+                    headers: { get: () => 'text/html' },
+                    text: async () => '<!doctype html><html><head><script src="/index.js"></script></head><body></body></html>',
+                };
+            }
+
+            if (url === `http://127.0.0.1:${reservedMetroPort}/index.js` || url === `http://localhost:${reservedMetroPort}/index.js`) {
+                if (!liveEntryPageReady) {
+                    return {
+                        ok: false,
+                        headers: { get: () => 'text/plain' },
+                        text: async () => '',
+                    };
+                }
+                return {
+                    ok: true,
+                    headers: { get: () => 'application/javascript' },
+                    text: async () => 'globalThis.__HAPPIER_E2E__ = true;',
+                };
+            }
+
+            return {
+                ok: false,
+                headers: { get: () => 'text/plain' },
+                text: async () => '',
+            };
+        };
+
+        try {
+            await mkdir(testDir, { recursive: true });
+
+            const started = await startUiWebMetro({
+                testDir,
+                env: {
+                    HAPPIER_E2E_UI_WEB_ENTRY_PROBE_TIMEOUT_MS: '25',
+                    HAPPIER_E2E_UI_WEB_METRO_STATUS_TIMEOUT_MS: '500',
+                    HAPPIER_E2E_UI_WEB_METRO_STATUS_ATTEMPT_TIMEOUT_MS: '25',
+                    HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: '500',
+                    HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS: '25',
+                },
+            });
+
+            expect(new URL(started.baseUrl).port).toBe(String(reservedMetroPort));
+            expect(['127.0.0.1', 'localhost']).toContain(new URL(started.baseUrl).hostname);
+
+            await started.stop();
+        } finally {
+            await rm(testDir, { recursive: true, force: true });
+        }
+    });
+
 });

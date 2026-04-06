@@ -4,6 +4,7 @@ import { mkdir, readFile } from 'node:fs/promises';
 import { relative, resolve as resolvePath } from 'node:path';
 
 import { reserveAvailablePort } from '../network/reserveAvailablePort';
+import { expandLoopbackBaseUrlCandidates } from '../network/loopbackBaseUrl';
 import { repoRootDir } from '../paths';
 import { sleep, waitFor } from '../timing';
 import {
@@ -14,6 +15,7 @@ import {
 } from './processOwnershipLease';
 import { readPositiveEnvInt, resolveUiWebEntryProbeTimeoutMs } from './uiWebEnv';
 import { resolveScriptUrlsFromHtml, selectPrimaryAppScriptUrl } from './uiWebHtml';
+import { resolveUiWebSourceFingerprint } from './uiWebSourceFingerprint';
 import { spawnLoggedProcess } from './spawnProcess';
 import type { StartedUiWeb } from './uiWebTypes';
 
@@ -49,12 +51,12 @@ function resolveUiWebMetroSessionCacheBust(): string {
 
 function resolveUiWebMetroCacheVersionBust(env: NodeJS.ProcessEnv): string {
   const sessionBust = resolveUiWebMetroSessionCacheBust();
+  const sourceFingerprint = resolveUiWebSourceFingerprint();
   const explicitBust = String(env.HAPPIER_UI_METRO_CACHE_VERSION_BUST ?? '').trim();
-  if (!explicitBust) {
-    return sessionBust;
-  }
   return createHash('sha256')
     .update(sessionBust)
+    .update('\0')
+    .update(sourceFingerprint)
     .update('\0')
     .update(explicitBust)
     .digest('hex');
@@ -144,6 +146,7 @@ async function inspectUiWebEntryPage(url: string, env: NodeJS.ProcessEnv): Promi
 type ResolvedExpoWebBaseUrl = Readonly<{
   baseUrl: string;
   hasScriptTags: boolean;
+  stdoutAdvertisesExpectedPort: boolean;
 }>;
 
 function resolveUrlPort(url: string): number | null {
@@ -183,24 +186,28 @@ async function resolveExpoWebBaseUrl(params: {
   expectedPort?: number;
   env: NodeJS.ProcessEnv;
 }): Promise<ResolvedExpoWebBaseUrl> {
-  const defaultCandidates = [
-    'http://localhost:19006',
-    'http://127.0.0.1:19006',
-    'http://localhost:8081',
-    'http://127.0.0.1:8081',
-  ];
-
   const expectedCandidates =
     typeof params.expectedPort === 'number' && Number.isFinite(params.expectedPort) && params.expectedPort > 0
-      ? [`http://localhost:${params.expectedPort}`, `http://127.0.0.1:${params.expectedPort}`]
+      ? expandLoopbackBaseUrlCandidates(`http://localhost:${params.expectedPort}`)
       : [];
+  const defaultCandidates = [
+    ...expandLoopbackBaseUrlCandidates('http://localhost:19006'),
+    ...expandLoopbackBaseUrlCandidates('http://localhost:8081'),
+  ];
 
   const startedAt = Date.now();
   let lastOrderedCandidates: string[] = [];
 
   while (Date.now() - startedAt < params.timeoutMs) {
     const text = await readFile(params.stdoutPath, 'utf8').catch(() => '');
-    const stdoutCandidates = extractHttpUrls(text).map((url) => url.replace(/\/+$/, ''));
+    const stdoutCandidates = extractHttpUrls(text)
+      .flatMap((url) => expandLoopbackBaseUrlCandidates(url))
+      .map((url) => url.replace(/\/+$/, ''));
+    const stdoutAdvertisesExpectedPort =
+      typeof params.expectedPort === 'number'
+      && Number.isFinite(params.expectedPort)
+      && params.expectedPort > 0
+      && stdoutCandidates.some((url) => resolveUrlPort(url) === params.expectedPort);
     const orderedCandidates: string[] = [];
     const seen = new Set<string>();
 
@@ -218,10 +225,29 @@ async function resolveExpoWebBaseUrl(params: {
       const probe = await inspectUiWebEntryPage(url, params.env);
       if (probe.isEntryPage) {
         if (!firstEntryPage) {
-          firstEntryPage = { baseUrl: url, hasScriptTags: probe.hasScriptTags };
+          firstEntryPage = {
+            baseUrl: url,
+            hasScriptTags: probe.hasScriptTags,
+            stdoutAdvertisesExpectedPort,
+          };
         }
         if (entryPageMatchesExpectedMetroPort(probe, url, params.expectedPort)) {
-          return { baseUrl: url, hasScriptTags: probe.hasScriptTags };
+          return {
+            baseUrl: url,
+            hasScriptTags: probe.hasScriptTags,
+            stdoutAdvertisesExpectedPort,
+          };
+        }
+      }
+    }
+    if (stdoutAdvertisesExpectedPort && expectedCandidates.length > 0) {
+      for (const url of expectedCandidates) {
+        if (await isMetroPackagerReady(url, params.env)) {
+          return {
+            baseUrl: url,
+            hasScriptTags: false,
+            stdoutAdvertisesExpectedPort,
+          };
         }
       }
     }
@@ -232,7 +258,24 @@ async function resolveExpoWebBaseUrl(params: {
   }
 
   if (expectedCandidates.length === 0 && lastOrderedCandidates.length > 0) {
-    return { baseUrl: lastOrderedCandidates[0] as string, hasScriptTags: false };
+    return {
+      baseUrl: lastOrderedCandidates[0] as string,
+      hasScriptTags: false,
+      stdoutAdvertisesExpectedPort: false,
+    };
+  }
+
+  if (expectedCandidates.length > 0) {
+    const advertisedExpectedPortCandidate = lastOrderedCandidates.find(
+      (url) => typeof params.expectedPort === 'number' && resolveUrlPort(url) === params.expectedPort,
+    );
+    if (advertisedExpectedPortCandidate) {
+      return {
+        baseUrl: advertisedExpectedPortCandidate,
+        hasScriptTags: false,
+        stdoutAdvertisesExpectedPort: true,
+      };
+    }
   }
 
   throw new Error(`Failed to resolve Expo web baseUrl from stdout log: ${params.stdoutPath}`);
@@ -242,6 +285,7 @@ export const __testables = {
   resolveExpoWebBaseUrl,
   resolveExpoCliPath,
   resolvePreferredLiveMetroBaseUrl,
+  isMetroPackagerReady,
 };
 
 function resolveExpoCliPath(params: Readonly<{ rootDir: string; uiWorkspaceDir: string }>): string {
@@ -258,9 +302,11 @@ async function isMetroPackagerReady(baseUrl: string, env: NodeJS.ProcessEnv): Pr
       method: 'GET',
       signal: AbortSignal.timeout(resolveUiWebMetroStatusAttemptTimeoutMs(env)),
     });
-    if (!res.ok) return false;
-    const text = await res.text().catch(() => '');
-    return text.includes('packager-status:running');
+    if (!res.ok) {
+      return false;
+    }
+    const body = await res.text().catch(() => '');
+    return body.includes('packager-status:running');
   } catch {
     return false;
   }
@@ -278,14 +324,19 @@ async function resolvePreferredLiveMetroBaseUrl(params: {
       return {
         baseUrl: params.currentBaseUrl,
         hasScriptTags: currentProbe.hasScriptTags,
+        stdoutAdvertisesExpectedPort: false,
       };
     }
   }
 
+  const currentHostCandidateUrl = new URL(params.currentBaseUrl);
+  currentHostCandidateUrl.port = String(params.metroPort);
+  currentHostCandidateUrl.pathname = '';
+  currentHostCandidateUrl.search = '';
+  currentHostCandidateUrl.hash = '';
   const candidates = [
-    `${currentUrl.protocol}//${currentUrl.hostname}:${params.metroPort}`,
-    `${currentUrl.protocol}//127.0.0.1:${params.metroPort}`,
-    `${currentUrl.protocol}//localhost:${params.metroPort}`,
+    ...expandLoopbackBaseUrlCandidates(currentHostCandidateUrl.toString()),
+    ...expandLoopbackBaseUrlCandidates(`${currentUrl.protocol}//localhost:${params.metroPort}`),
   ];
   const seen = new Set<string>();
 
@@ -297,6 +348,7 @@ async function resolvePreferredLiveMetroBaseUrl(params: {
     return {
       baseUrl: candidate,
       hasScriptTags: probe.hasScriptTags,
+      stdoutAdvertisesExpectedPort: false,
     };
   }
 
@@ -656,34 +708,43 @@ export async function startUiWebMetro(params: {
     ]);
     baseUrl = resolved.baseUrl;
     let hasReadyEntryPage = resolved.hasScriptTags;
-    const requiresLivePortReanchor = typeof params.port === 'number' && Number.isFinite(params.port) && params.port > 0;
+    const requiresLivePortReanchor = resolved.stdoutAdvertisesExpectedPort && resolveUrlPort(baseUrl) !== metroPort;
     if (requiresLivePortReanchor || !hasReadyEntryPage) {
       await waitFor(
         async () => {
-          const metroStatusReady =
-            (await isMetroPackagerReady(`http://localhost:${metroPort}`, params.env))
-            || (await isMetroPackagerReady(`http://127.0.0.1:${metroPort}`, params.env));
-
-        if (metroStatusReady) {
-          if (resolveUrlPort(baseUrl) !== metroPort) {
-            const preferredBaseUrl = await resolvePreferredLiveMetroBaseUrl({
-              currentBaseUrl: baseUrl,
-              metroPort,
-              env: params.env,
-            });
-            if (preferredBaseUrl) {
-              baseUrl = preferredBaseUrl.baseUrl;
-              hasReadyEntryPage = preferredBaseUrl.hasScriptTags;
-              return true;
+          const metroStatusCandidates = expandLoopbackBaseUrlCandidates(`http://localhost:${metroPort}`);
+          let metroStatusReady = false;
+          for (const candidate of metroStatusCandidates) {
+            if (await isMetroPackagerReady(candidate, params.env)) {
+              metroStatusReady = true;
+              break;
             }
-          } else {
-            const probe = await inspectUiWebEntryPage(baseUrl, params.env);
-            if (probe.isEntryPage) {
-              hasReadyEntryPage = probe.hasScriptTags;
-            }
-            return true;
           }
-        }
+
+          if (metroStatusReady) {
+            if (resolveUrlPort(baseUrl) !== metroPort) {
+              const preferredBaseUrl = await resolvePreferredLiveMetroBaseUrl({
+                currentBaseUrl: baseUrl,
+                metroPort,
+                env: params.env,
+              });
+              if (preferredBaseUrl) {
+                baseUrl = preferredBaseUrl.baseUrl;
+                hasReadyEntryPage = preferredBaseUrl.hasScriptTags;
+                return true;
+              }
+            } else {
+              const probe = await inspectUiWebEntryPage(baseUrl, params.env);
+              if (probe.isEntryPage) {
+                hasReadyEntryPage = probe.hasScriptTags;
+                return true;
+              }
+              if (resolveUiWebAllowScriptReadyTimeout(params.env)) {
+                hasReadyEntryPage = false;
+                return true;
+              }
+            }
+          }
 
           if (requiresLivePortReanchor && resolveUrlPort(baseUrl) !== metroPort) {
             return false;

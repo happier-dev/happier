@@ -14,6 +14,75 @@ type WaitForAuthenticatedHomeUiPage = Readonly<{
 }>;
 
 describe('gotoDomContentLoadedWithRetries', () => {
+  it('falls back to localhost when the requested IPv4 loopback origin refuses connections', async () => {
+    const goto = vi
+      .fn<(_url: string, _options: { waitUntil: 'domcontentloaded'; timeout: number }) => Promise<void>>()
+      .mockImplementation(async (url) => {
+        if (url.startsWith('http://127.0.0.1:3000')) {
+          throw new Error('net::ERR_CONNECTION_REFUSED');
+        }
+      });
+    const waitForTimeout = vi.fn(async () => {});
+
+    const page = {
+      goto,
+      waitForTimeout,
+      url: () => 'about:blank',
+    };
+
+    await gotoDomContentLoadedWithRetries(page as never, 'http://127.0.0.1:3000');
+
+    expect(goto).toHaveBeenCalledTimes(2);
+    expect(goto).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:3000',
+      expect.objectContaining({ waitUntil: 'domcontentloaded' }),
+    );
+    expect(goto).toHaveBeenNthCalledWith(
+      2,
+      'http://localhost:3000',
+      expect.objectContaining({ waitUntil: 'domcontentloaded' }),
+    );
+    expect(waitForTimeout).not.toHaveBeenCalled();
+  });
+
+  it('falls back to IPv6 loopback when localhost and IPv4 loopback both refuse connections', async () => {
+    const goto = vi
+      .fn<(_url: string, _options: { waitUntil: 'domcontentloaded'; timeout: number }) => Promise<void>>()
+      .mockImplementation(async (url) => {
+        if (url.startsWith('http://localhost:3000') || url.startsWith('http://127.0.0.1:3000')) {
+          throw new Error('net::ERR_CONNECTION_REFUSED');
+        }
+      });
+    const waitForTimeout = vi.fn(async () => {});
+
+    const page = {
+      goto,
+      waitForTimeout,
+      url: () => 'about:blank',
+    };
+
+    await gotoDomContentLoadedWithRetries(page as never, 'http://localhost:3000');
+
+    expect(goto).toHaveBeenCalledTimes(3);
+    expect(goto).toHaveBeenNthCalledWith(
+      1,
+      'http://localhost:3000',
+      expect.objectContaining({ waitUntil: 'domcontentloaded' }),
+    );
+    expect(goto).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:3000',
+      expect.objectContaining({ waitUntil: 'domcontentloaded' }),
+    );
+    expect(goto).toHaveBeenNthCalledWith(
+      3,
+      'http://[::1]:3000',
+      expect.objectContaining({ waitUntil: 'domcontentloaded' }),
+    );
+    expect(waitForTimeout).not.toHaveBeenCalled();
+  });
+
   it('retries retryable network errors before succeeding', async () => {
     const goto = vi
       .fn<(_url: string, _options: { waitUntil: 'domcontentloaded'; timeout: number }) => Promise<void>>()
@@ -31,6 +100,32 @@ describe('gotoDomContentLoadedWithRetries', () => {
 
     expect(goto).toHaveBeenCalledTimes(2);
     expect(waitForTimeout).toHaveBeenCalledWith(500);
+  });
+
+  it('keeps retrying connection-refused navigations until the page becomes reachable', async () => {
+    let nowMs = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+
+    const goto = vi.fn(async () => {
+      const attempt = goto.mock.calls.length;
+      if (attempt <= 12) {
+        throw new Error('net::ERR_CONNECTION_REFUSED');
+      }
+    });
+    const waitForTimeout = vi.fn(async (delayMs: number) => {
+      nowMs += delayMs;
+    });
+
+    const page = {
+      goto,
+      waitForTimeout,
+      url: () => 'about:blank',
+    };
+
+    await expect(gotoDomContentLoadedWithRetries(page as never, 'http://localhost:3000', 30_000)).resolves.toBeUndefined();
+
+    expect(goto).toHaveBeenCalledTimes(13);
+    expect(waitForTimeout).toHaveBeenCalled();
   });
 
   it('rejects a timed-out navigation when waiting for DOM content (even if the target URL committed)', async () => {
@@ -125,6 +220,9 @@ describe('normalizeLoopbackBaseUrl', () => {
     expect(normalizeLoopbackBaseUrl('http://127.0.0.1:60674/')).toBe('http://127.0.0.1:60674');
     expect(normalizeLoopbackBaseUrl('http://0.0.0.0:60674/')).toBe('http://127.0.0.1:60674');
     expect(normalizeLoopbackBaseUrl('http://[::1]:60674/')).toBe('http://127.0.0.1:60674');
+    expect(normalizeLoopbackBaseUrl('http://happier-transcript-rollout-unify-0405.localhost:60674/')).toBe(
+      'http://127.0.0.1:60674',
+    );
   });
 });
 
@@ -136,9 +234,13 @@ describe('waitForAuthenticatedHomeUi', () => {
       'setupWizard.surface': [0, 0, 0, 0],
     };
     const counts = new Map<string, number>();
+    let sessionsTabActivated = false;
     const nextCount = (key: string): number => {
       const index = counts.get(key) ?? 0;
       counts.set(key, index + 1);
+      if (key === 'session-getting-started-kind-select_session') {
+        return sessionsTabActivated ? 1 : 0;
+      }
       const sequence = testIdCounts[key] ?? [0];
       return sequence[Math.min(index, sequence.length - 1)] ?? 0;
     };
@@ -165,5 +267,159 @@ describe('waitForAuthenticatedHomeUi', () => {
     expect(page.reload).not.toHaveBeenCalled();
     expect(counts.get('welcome-create-account')).toBeGreaterThanOrEqual(2);
     expect(counts.get('session-getting-started-kind-connect_machine')).toBeGreaterThanOrEqual(2);
+  });
+
+  it('recovers to the sessions chooser when the authenticated root lands on the settings tab', async () => {
+    const testIdCounts: Record<string, number[]> = {
+      'welcome-create-account': [0, 0, 0, 0],
+      'session-getting-started-kind-connect_machine': [0, 0, 0, 0],
+      'session-getting-started-kind-create_session': [0, 0, 1, 1],
+      'session-getting-started-kind-select_session': [0, 0, 0, 0],
+      'setupWizard.surface': [0, 0, 0, 0],
+      'tabbar-tab-sessions': [1, 1, 1, 1],
+    };
+    const counts = new Map<string, number>();
+    let nowMs = 0;
+    let onSessionsTabClickCount = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+
+    const nextCount = (key: string): number => {
+      const index = counts.get(key) ?? 0;
+      counts.set(key, index + 1);
+      const sequence = testIdCounts[key] ?? [0];
+      return sequence[Math.min(index, sequence.length - 1)] ?? 0;
+    };
+
+    const page = {
+      getByTestId: (testId: string) => ({
+        count: async () => nextCount(testId),
+        click: async () => {
+          if (testId === 'tabbar-tab-sessions') {
+            onSessionsTabClickCount += 1;
+            testIdCounts['session-getting-started-kind-create_session'] = [0, 0, 0, 1];
+            testIdCounts['session-getting-started-kind-select_session'] = [0, 0, 1, 1];
+          }
+        },
+      }),
+      waitForTimeout: vi.fn(async (delayMs: number) => {
+        nowMs += delayMs;
+      }),
+      reload: vi.fn(async () => {}),
+      url: () => 'http://127.0.0.1:3000/',
+    };
+
+    const helper = (pageNavigation as Record<string, unknown>).waitForAuthenticatedHomeUi;
+    expect(helper).toBeTypeOf('function');
+
+    await expect(
+      (helper as (
+        params: Readonly<{ page: WaitForAuthenticatedHomeUiPage; timeoutMs?: number; reloadOnFailure?: boolean }>,
+      ) => Promise<void>)({ page, timeoutMs: 1_000, reloadOnFailure: false }),
+    ).resolves.toBeUndefined();
+
+    expect(onSessionsTabClickCount).toBeGreaterThan(0);
+    expect(counts.get('session-getting-started-kind-select_session')).toBeGreaterThanOrEqual(2);
+  });
+
+  it('retries the sessions tab switch when the first click fails before confirming navigation', async () => {
+    const testIdCounts: Record<string, number[]> = {
+      'welcome-create-account': [0, 0, 0, 0, 0],
+      'session-getting-started-kind-connect_machine': [0, 0, 0, 0, 0],
+      'session-getting-started-kind-create_session': [0, 0, 0, 0, 0],
+      'session-getting-started-kind-select_session': [0, 0, 0, 0, 0],
+      'setupWizard.surface': [0, 0, 0, 0, 0],
+      'tabbar-tab-sessions': [1, 1, 1, 1, 1],
+    };
+    const counts = new Map<string, number>();
+    let nowMs = 0;
+    let onSessionsTabClickCount = 0;
+    let sessionsTabActivated = false;
+    vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+
+    const nextCount = (key: string): number => {
+      const index = counts.get(key) ?? 0;
+      counts.set(key, index + 1);
+      if (key === 'session-getting-started-kind-select_session') {
+        return sessionsTabActivated ? 1 : 0;
+      }
+      const sequence = testIdCounts[key] ?? [0];
+      return sequence[Math.min(index, sequence.length - 1)] ?? 0;
+    };
+
+    const page = {
+      getByTestId: (testId: string) => ({
+        count: async () => nextCount(testId),
+        click: async () => {
+          if (testId !== 'tabbar-tab-sessions') return;
+          onSessionsTabClickCount += 1;
+          if (onSessionsTabClickCount === 1) {
+            throw new Error('intermittent click failure');
+          }
+          sessionsTabActivated = true;
+        },
+      }),
+      waitForTimeout: vi.fn(async (delayMs: number) => {
+        nowMs += delayMs;
+      }),
+      reload: vi.fn(async () => {}),
+      url: () => 'http://127.0.0.1:3000/',
+    };
+
+    const helper = (pageNavigation as Record<string, unknown>).waitForAuthenticatedHomeUi;
+    expect(helper).toBeTypeOf('function');
+
+    await expect(
+      (helper as (
+        params: Readonly<{ page: WaitForAuthenticatedHomeUiPage; timeoutMs?: number; reloadOnFailure?: boolean }>,
+      ) => Promise<void>)({ page, timeoutMs: 1_000, reloadOnFailure: false }),
+    ).resolves.toBeUndefined();
+
+    expect(onSessionsTabClickCount).toBeGreaterThan(1);
+    expect(sessionsTabActivated).toBe(true);
+  });
+
+  it('accepts the authenticated sessions list as home after restore', async () => {
+    const testIdCounts: Record<string, number[]> = {
+      'welcome-create-account': [0, 0, 0, 0],
+      'session-getting-started-kind-connect_machine': [0, 0, 0, 0],
+      'session-getting-started-kind-create_session': [0, 0, 0, 0],
+      'session-getting-started-kind-select_session': [0, 0, 0, 0],
+      'main-header-start-new-session': [1, 1, 1, 1],
+      'setupWizard.surface': [0, 0, 0, 0],
+    };
+    const counts = new Map<string, number>();
+    let nowMs = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+
+    const nextCount = (key: string): number => {
+      const index = counts.get(key) ?? 0;
+      counts.set(key, index + 1);
+      const sequence = testIdCounts[key] ?? [0];
+      return sequence[Math.min(index, sequence.length - 1)] ?? 0;
+    };
+
+    const page = {
+      getByTestId: (testId: string) => ({
+        count: async () => nextCount(testId),
+        click: async () => {},
+      }),
+      waitForTimeout: vi.fn(async (delayMs: number) => {
+        nowMs += delayMs;
+      }),
+      reload: vi.fn(async () => {}),
+      url: () => 'http://127.0.0.1:3000/',
+    };
+
+    const helper = (pageNavigation as Record<string, unknown>).waitForAuthenticatedHomeUi;
+    expect(helper).toBeTypeOf('function');
+
+    await expect(
+      (helper as (
+        params: Readonly<{ page: WaitForAuthenticatedHomeUiPage; timeoutMs?: number; reloadOnFailure?: boolean }>,
+      ) => Promise<void>)({ page, timeoutMs: 1_000, reloadOnFailure: false }),
+    ).resolves.toBeUndefined();
+
+    expect(page.reload).not.toHaveBeenCalled();
+    expect(counts.get('main-header-start-new-session')).toBeGreaterThanOrEqual(1);
   });
 });

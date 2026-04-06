@@ -47,7 +47,7 @@ describe('createUiWebExportStartupStallGuard', () => {
     }
   });
 
-  it('stays alive while staging churn continues before publish-phase files appear', async () => {
+  it('times out when only partial worker files keep churning before publish-phase files appear', async () => {
     const rootDir = mkdtempSync(join(tmpdir(), 'happier-uiwebexport-guard-'));
     const stdoutPath = resolve(rootDir, 'stdout.log');
     const stderrPath = resolve(rootDir, 'stderr.log');
@@ -76,18 +76,17 @@ describe('createUiWebExportStartupStallGuard', () => {
       while (keepRunning) {
         counter += 1;
         await writeFile(resolve(monacoDir, `progress-${counter}.js`), `progress-${counter}`, 'utf8');
-        await appendFile(stdoutPath, `progress-heartbeat-${counter}\n`);
         await new Promise((resolveNext) => setTimeout(resolveNext, 0));
       }
     })();
 
     try {
       await expect(Promise.race([
-        guard.promise.then(() => 'resolved'),
-        new Promise<'still-pending'>((resolve) => {
-          setTimeout(() => resolve('still-pending'), 200);
+        guard.promise.then(() => 'resolved').catch(() => 'rejected'),
+        new Promise<'timed-out'>((resolve) => {
+          setTimeout(() => resolve('timed-out'), 200);
         }),
-      ])).resolves.toBe('still-pending');
+      ])).resolves.toBe('rejected');
     } finally {
       keepRunning = false;
       guard.stop();

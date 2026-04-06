@@ -60,6 +60,7 @@ export const __testables = {
     sharedExportRootDir = null;
   },
   shouldReclaimUiWebExportLock,
+  removePathWithRetries,
 };
 
 type UiWebRuntimeConfig = Readonly<{
@@ -101,6 +102,46 @@ function isRunningPid(pid: number): boolean {
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function removePathWithRetries(
+  path: string,
+  options?: Readonly<{
+    timeoutMs?: number;
+    intervalMs?: number;
+    removePath?: typeof rm;
+  }>,
+): Promise<void> {
+  const removePath = options?.removePath ?? rm;
+  const timeoutMs = options?.timeoutMs ?? 15_000;
+  const intervalMs = options?.intervalMs ?? 100;
+  const retryableCodes = new Set(['ENOTEMPTY', 'EBUSY', 'EPERM']);
+  const startedAtMs = Date.now();
+
+  while (true) {
+    try {
+      await removePath(path, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException | undefined)?.code;
+      if (!retryableCodes.has(code ?? '')) {
+        throw error;
+      }
+      if (Date.now() - startedAtMs >= timeoutMs) {
+        throw error;
+      }
+      await sleep(intervalMs);
+    }
+  }
+}
+
+function isTransientUiWebExportMetroCleanupError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  if (code === 'ENOTEMPTY' || code === 'EBUSY' || code === 'EPERM') {
+    return true;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('ENOTEMPTY') || message.includes('EBUSY') || message.includes('EPERM');
 }
 
 async function readLatestMtimeMs(currentPath: string): Promise<number> {
@@ -374,6 +415,8 @@ async function classifyUiWebExportFailure(params: {
 }): Promise<string | null> {
   const message = params.error instanceof Error ? params.error.message : String(params.error);
   const metroStarted = `${params.stdoutTail}\n${params.stderrTail}`.includes('Starting Metro Bundler');
+  const stderrLooksLikeUnresolvedModuleImport = params.stderrTail.includes('Unable to resolve module')
+    || /ENOENT: no such file or directory, open '.*\/apps\/ui\/sources\/.+\.(?:ts|tsx|js|jsx|mjs|cjs)'/i.test(params.stderrTail);
 
   if (message.includes('expo export startup stalled after')) {
     return metroStarted
@@ -382,6 +425,13 @@ async function classifyUiWebExportFailure(params: {
   }
 
   if (!message.includes('expo export timed out after')) {
+    if (stderrLooksLikeUnresolvedModuleImport) {
+      return 'expo_export_unresolved_module_import';
+    }
+    const snapshot = await readUiWebExportFailureSnapshot(params.stagingDir);
+    if (snapshot.fileCount > 0 && snapshot.publishPhaseFileCount < REQUIRED_UI_WEB_EXPORT_FILES.length) {
+      return 'expo_export_frozen_partial_output';
+    }
     return null;
   }
 
@@ -533,7 +583,7 @@ async function ensureUiWebExportBuilt(params: { testDir: string; env: NodeJS.Pro
 	    const stderrPath = resolvePath(params.testDir, 'ui.web.export.stderr.log');
 
 	    await mkdir(exportedDistParent, { recursive: true });
-	    await rm(stagingDir, { recursive: true, force: true }).catch(() => {});
+	    await removePathWithRetries(stagingDir).catch(() => {});
 
 	    for (;;) {
 	    try {
@@ -622,7 +672,13 @@ async function ensureUiWebExportBuilt(params: { testDir: string; env: NodeJS.Pro
           const stderrTail = await readFile(stderrPath, 'utf8').catch(() => '');
           if (!clearCache && stderrHasUiWebExportMetroCacheCorruption(stderrTail)) {
             clearCache = true;
-            await rm(stagingDir, { recursive: true, force: true }).catch(() => {});
+            await removePathWithRetries(stagingDir).catch(() => {});
+            await writeFile(stdoutPath, '', 'utf8').catch(() => {});
+            await writeFile(stderrPath, '', 'utf8').catch(() => {});
+            await runExportBuildAttempt(true);
+          } else if (!clearCache && isTransientUiWebExportMetroCleanupError(error)) {
+            clearCache = true;
+            await removePathWithRetries(stagingDir).catch(() => {});
             await writeFile(stdoutPath, '', 'utf8').catch(() => {});
             await writeFile(stderrPath, '', 'utf8').catch(() => {});
             await runExportBuildAttempt(true);
@@ -632,7 +688,7 @@ async function ensureUiWebExportBuilt(params: { testDir: string; env: NodeJS.Pro
         }
 
       await assertCompleteUiWebExportDir(stagingDir);
-      await rm(exportedDistDir, { recursive: true, force: true }).catch(() => {});
+      await removePathWithRetries(exportedDistDir).catch(() => {});
       await rename(stagingDir, exportedDistDir);
       writePersistedUiWebExportCacheKey(exportedDistCacheKeyPath, cacheKey);
       writePersistedUiWebExportManifest(exportedDistManifestPath);
@@ -642,7 +698,7 @@ async function ensureUiWebExportBuilt(params: { testDir: string; env: NodeJS.Pro
       const stderrTail = await readFile(stderrPath, 'utf8').catch(() => '');
       if (!clearCache && stderrTail.includes('Unable to deserialize cloned data')) {
         clearCache = true;
-        await rm(stagingDir, { recursive: true, force: true }).catch(() => {});
+        await removePathWithRetries(stagingDir).catch(() => {});
         continue;
       }
       const classification = await classifyUiWebExportFailure({
@@ -659,7 +715,7 @@ async function ensureUiWebExportBuilt(params: { testDir: string; env: NodeJS.Pro
         `stderrTail=${JSON.stringify(stderrTail.slice(Math.max(0, stderrTail.length - tailLimit)))}`,
       ].filter(Boolean).join(' | '));
     } finally {
-      await rm(stagingDir, { recursive: true, force: true }).catch(() => {});
+      await removePathWithRetries(stagingDir).catch(() => {});
     }
 	    }
   }, {

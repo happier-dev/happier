@@ -13,7 +13,9 @@ import {
   createAccountAndReachConnectMachineState,
   gotoDomContentLoadedWithRetries,
   normalizeLoopbackBaseUrl,
-} from '../../src/testkit/uiE2E/pageNavigation';
+  dismissSetupWizardIfVisible,
+  waitForAuthenticatedHomeUi,
+} from '../../src/testkit/uiE2e/pageNavigation';
 import { approveTerminalConnect } from '../../src/testkit/uiE2e/approveTerminalConnect';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
@@ -216,7 +218,7 @@ test.describe('ui e2e: auth + terminal connect', () => {
     try {
       await page.goto(uiBaseUrl, { waitUntil: 'domcontentloaded' });
 
-      await createAccountAndReachConnectMachineState(page);
+      await createAccountAndReachConnectMachineState({ page });
 
       cliLogin = await startCliAuthLoginForTerminalConnect({
         testDir,
@@ -498,14 +500,35 @@ test.describe('ui e2e: auth + terminal connect', () => {
       await restoreAccountUsingSecretKey(page, uiBaseUrl, accountSecretKeyFormatted);
 
       await page.goto(`${uiBaseUrl}/`, { waitUntil: 'domcontentloaded' });
-      await dismissSetupWizardIfVisible(page);
+      await dismissSetupWizardIfVisible({ page });
       const machineId = await waitForLatestMachineId({ suiteDir, timeoutMs: 120_000 });
+      await waitForAuthenticatedHomeUi({ page, timeoutMs: 180_000 });
+      const startNewSessionButton = page.getByTestId('main-header-start-new-session');
       const directMachineAction = page.getByTestId(`sessions-empty-state-machine:${machineId}`);
-      if ((await directMachineAction.count()) > 0) {
+      const createSessionAction = page.getByTestId('session-getting-started-kind-create_session');
+      const selectSessionAction = page.getByTestId('session-getting-started-kind-select_session');
+
+      await expect
+        .poll(
+          async () => {
+            const startNewCount = await startNewSessionButton.count();
+            const directCount = await directMachineAction.count();
+            const createCount = await createSessionAction.count();
+            const selectCount = await selectSessionAction.count();
+            return startNewCount > 0 || directCount > 0 || createCount > 0 || selectCount > 0;
+          },
+          { timeout: 120_000 },
+        )
+        .toBe(true);
+
+      if ((await startNewSessionButton.count()) > 0) {
+        await startNewSessionButton.click();
+      } else if ((await directMachineAction.count()) > 0) {
         await directMachineAction.click();
+      } else if ((await createSessionAction.count()) > 0) {
+        await createSessionAction.click();
       } else {
-        await expect(page.getByTestId('session-getting-started-start-new-session')).toHaveCount(1, { timeout: 120_000 });
-        await page.getByTestId('session-getting-started-start-new-session').click();
+        await selectSessionAction.click();
       }
 
       await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 120_000 });

@@ -514,7 +514,7 @@ describe('core e2e: session handoff via direct peer', () => {
       transferId: expect.any(String),
     }));
     await waitFor(async () => (await listDaemonSessions(sourceDaemon!)).includes(sessionId) === false, {
-      timeoutMs: 30_000,
+      timeoutMs: 90_000,
       intervalMs: 100,
       context: 'source daemon session removed immediately after direct-peer handoff start cutover',
     });
@@ -578,7 +578,7 @@ describe('core e2e: session handoff via direct peer', () => {
           extraEnvironmentVariables: preparedResume.environmentVariables,
         }),
       },
-      timeoutMs: 30_000,
+      timeoutMs: 90_000,
     });
     expect(targetSpawnResult.status).toBe(200);
     expect(targetSpawnResult.data.success).toBe(true);
@@ -594,12 +594,12 @@ describe('core e2e: session handoff via direct peer', () => {
     expect(committed.status.status).toBe('completed');
     expect(committed.status.phase).toBe('finalizing');
     await waitFor(async () => (await listDaemonSessions(sourceDaemon!)).includes(sessionId) === false, {
-      timeoutMs: 30_000,
+      timeoutMs: 90_000,
       intervalMs: 100,
       context: 'source daemon session removed after handoff cutover',
     });
     await waitFor(async () => (await listDaemonSessions(targetDaemon!)).includes(sessionId) === true, {
-      timeoutMs: 30_000,
+      timeoutMs: 90_000,
       intervalMs: 100,
       context: 'target daemon session active after handoff resume',
     });

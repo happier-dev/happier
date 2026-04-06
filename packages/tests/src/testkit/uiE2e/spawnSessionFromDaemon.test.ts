@@ -10,7 +10,7 @@ describe('spawnSessionFromDaemon', () => {
   });
 
   it('forwards additional spawn-session request fields to the daemon', async () => {
-    const fetchMock = vi.fn(async () => new Response(
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(
       JSON.stringify({ success: true, sessionId: 'session-123' }),
       { status: 200, headers: { 'content-type': 'application/json' } },
     ));
@@ -42,7 +42,9 @@ describe('spawnSessionFromDaemon', () => {
 
     await expect(spawnSessionFromDaemon(params)).resolves.toBe('session-123');
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0] ?? [];
+    const call = fetchMock.mock.calls[0];
+    if (!call) throw new Error('missing fetch call');
+    const [url, init] = call;
     expect(url).toBe('http://127.0.0.1:4231/spawn-session');
     expect(init).toMatchObject({
       method: 'POST',

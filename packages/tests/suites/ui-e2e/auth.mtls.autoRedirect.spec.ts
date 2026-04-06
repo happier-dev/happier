@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { startForwardedHeaderProxy } from '../../src/testkit/uiE2e/forwardedHeaderProxy';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
@@ -16,6 +16,16 @@ test.describe('ui e2e: mTLS auto-redirect', () => {
   test.describe.configure({ mode: 'serial' });
 
   const suiteDir = run.testDir('auth-mtls-auto-redirect-suite');
+  const uiWebEnv = {
+    ...process.env,
+    EXPO_PUBLIC_DEBUG: '1',
+    EXPO_PUBLIC_HAPPY_SERVER_URL: '',
+    EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
+    HAPPIER_E2E_UI_WEB_MODE: 'export',
+    HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS ?? '900000',
+    HAPPIER_E2E_UI_WEB_EXPORT_FALLBACK_TO_METRO: '0',
+    HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS ?? '480000',
+  };
 
   let server: StartedServer | null = null;
   let ui: StartedUiWeb | null = null;
@@ -28,7 +38,7 @@ test.describe('ui e2e: mTLS auto-redirect', () => {
   }
 
   test.beforeAll(async () => {
-    test.setTimeout(600_000);
+    test.setTimeout(resolveUiWebBeforeAllTimeoutMs(uiWebEnv));
     await mkdir(suiteDir, { recursive: true });
 
     server = await startServerLight({
@@ -70,15 +80,10 @@ test.describe('ui e2e: mTLS auto-redirect', () => {
     proxyBaseUrl = proxy.baseUrl;
     proxyStop = proxy.stop;
 
+    uiWebEnv.EXPO_PUBLIC_HAPPY_SERVER_URL = proxy.baseUrl;
     ui = await startUiWeb({
       testDir: suiteDir,
-      env: {
-        ...process.env,
-        EXPO_PUBLIC_DEBUG: '1',
-        EXPO_PUBLIC_HAPPY_SERVER_URL: proxy.baseUrl,
-        EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
-        HAPPIER_E2E_UI_WEB_MODE: 'export',
-      },
+      env: uiWebEnv,
     });
     uiBaseUrl = normalizeLoopbackBaseUrl(ui.baseUrl);
   });

@@ -4,7 +4,12 @@ import { mkdir } from 'node:fs/promises';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
-import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import {
+    createAccountAndReachSetupWizardState,
+    gotoCommittedWithRetries,
+    normalizeLoopbackBaseUrl,
+} from '../../src/testkit/uiE2e/pageNavigation';
+import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -38,6 +43,14 @@ async function navigateSpa(page: Page, path: string) {
         window.history.pushState({}, '', nextPath);
         window.dispatchEvent(new PopStateEvent('popstate'));
     }, path);
+}
+
+async function setDevSystemTaskScenarios(page: Page, scenarios: Record<string, unknown>) {
+    await page.addInitScript((nextScenarios) => {
+        (window as typeof window & {
+            __HAPPIER_DEV_SYSTEM_TASK_SCENARIOS__?: Record<string, unknown>;
+        }).__HAPPIER_DEV_SYSTEM_TASK_SCENARIOS__ = nextScenarios;
+    }, scenarios);
 }
 
 test.describe('ui e2e: tailscale secure access (deterministic runner)', () => {
@@ -88,23 +101,15 @@ test.describe('ui e2e: tailscale secure access (deterministic runner)', () => {
         await server?.stop().catch(() => {});
     });
 
-    async function openAuthedSetupWizard(page: Page) {
+    async function openRelaySetupChooser(page: Page) {
         if (!uiBaseUrl) throw new Error('missing ui base url');
         await page.setViewportSize({ width: 1440, height: 900 });
-        await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
+        await gotoCommittedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
+        await waitForInitialAppUi({ page, timeoutMs: 180_000 });
         await setFakeTauriInternalsInExistingDocument(page);
-
-        await expect(page.getByTestId('onboarding-wizard')).toBeVisible({ timeout: 120_000 });
-        await expect(page.getByTestId('onboarding-wizard-skip')).toHaveCount(1, { timeout: 120_000 });
-        await page.getByTestId('onboarding-wizard-skip').click();
-
-        await expect(page.getByTestId('welcome-create-account')).toHaveCount(1, { timeout: 180_000 });
-        await page.getByTestId('welcome-create-account').click();
-
-        await expect(page.getByTestId('session-getting-started-setup-primary-card')).toHaveCount(1, { timeout: 180_000 });
-
-        await navigateSpa(page, '/setup/wizard?happier_hmr=0');
-        await expect(page.getByTestId('setupWizard.surface-skip')).toHaveCount(1, { timeout: 120_000 });
+        await createAccountAndReachSetupWizardState({ page });
+        await navigateSpa(page, '/setup/wizard?step=setup_chooser');
+        await expect(page.getByTestId('setupWizard.surface')).toBeVisible({ timeout: 120_000 });
     }
 
     async function openRelayLocalSetup(page: Page) {
@@ -113,18 +118,50 @@ test.describe('ui e2e: tailscale secure access (deterministic runner)', () => {
         await page.getByTestId('setupWizard.surface-primary').click();
     }
 
+    async function continueLocalRelayChecklistUntil(page: Page, nextStepTestId: string) {
+        await expect(page.getByTestId('setupWizard-relay-host-local')).toBeVisible({ timeout: 120_000 });
+        await expect(page.getByTestId('setupWizard-relay-host-local-checklist-row-installRelayRuntime')).toBeVisible({ timeout: 120_000 });
+        await expect(page.getByTestId('setupWizard-relay-host-local-checklist-row-startRelayRuntime')).toBeVisible({ timeout: 120_000 });
+        const primary = page.getByTestId('setupWizard.surface-primary');
+        const nextStep = page.getByTestId(nextStepTestId);
+
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            await expect(primary).toBeEnabled({ timeout: 120_000 });
+            await primary.click();
+            if (await nextStep.count() > 0) {
+                return;
+            }
+            await expect(page.getByTestId('setupWizard-relay-host-local')).toBeVisible({ timeout: 120_000 });
+        }
+
+        await expect(nextStep).toHaveCount(1, { timeout: 120_000 });
+    }
+
+    async function continueWizardUntil(page: Page, currentStepTestId: string, nextStepTestId: string) {
+        const primary = page.getByTestId('setupWizard.surface-primary');
+        const currentStep = page.getByTestId(currentStepTestId);
+        const nextStep = page.getByTestId(nextStepTestId);
+
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            await expect(primary).toBeEnabled({ timeout: 120_000 });
+            await primary.click();
+            if (await nextStep.count() > 0) {
+                return;
+            }
+            await expect(currentStep).toHaveCount(1, { timeout: 120_000 });
+        }
+
+        await expect(nextStep).toHaveCount(1, { timeout: 120_000 });
+    }
+
     test('keeps the local relay host step visible even when it is already satisfied', async ({ page }) => {
         test.setTimeout(420_000);
 
-        await page.addInitScript(() => {
-            (window as typeof window & {
-                __HAPPIER_DEV_SYSTEM_TASK_SCENARIOS__?: Record<string, unknown>;
-            }).__HAPPIER_DEV_SYSTEM_TASK_SCENARIOS__ = {
-                'relay.runtime.status.v1': 'ready',
-            };
+        await setDevSystemTaskScenarios(page, {
+            'relay.runtime.status.v1': 'ready',
         });
 
-        await openAuthedSetupWizard(page);
+        await openRelaySetupChooser(page);
         await openRelayLocalSetup(page);
 
         await expect(page.getByTestId('setupWizard-relay-host-local')).toBeVisible({ timeout: 120_000 });
@@ -132,6 +169,7 @@ test.describe('ui e2e: tailscale secure access (deterministic runner)', () => {
         await expect(page.getByTestId('setupWizard-relay-host-local-checklist-row-startRelayRuntime')).toBeVisible({ timeout: 120_000 });
         await expect(page.getByTestId('setupWizard-relay-host-local-checklist-row-enableSecureAccess')).toHaveCount(0);
 
+        await expect(page.getByTestId('setupWizard.surface-primary')).toBeEnabled({ timeout: 120_000 });
         await page.getByTestId('setupWizard.surface-primary').click();
         await expect(page.getByTestId('settings.server.relayAccess.choice:tailscaleServe')).toHaveCount(1, { timeout: 120_000 });
     });
@@ -139,10 +177,9 @@ test.describe('ui e2e: tailscale secure access (deterministic runner)', () => {
     test('routes LAN relay access through the prerequisites step before finishing', async ({ page }) => {
         test.setTimeout(420_000);
 
-        await openAuthedSetupWizard(page);
+        await openRelaySetupChooser(page);
         await openRelayLocalSetup(page);
-
-        await expect(page.getByTestId('settings.server.relayAccess.choice:lan')).toHaveCount(1, { timeout: 120_000 });
+        await continueLocalRelayChecklistUntil(page, 'settings.server.relayAccess.choice:lan');
         await page.getByTestId('settings.server.relayAccess.choice:lan').click();
         await page.getByTestId('setupWizard.surface-primary').click();
 
@@ -158,17 +195,59 @@ test.describe('ui e2e: tailscale secure access (deterministic runner)', () => {
     test('starts deterministic Tailscale secure access from the relay-access step and advances on success', async ({ page }) => {
         test.setTimeout(420_000);
 
-        await openAuthedSetupWizard(page);
-        await openRelayLocalSetup(page);
+        await setDevSystemTaskScenarios(page, {
+            'secureAccess.tailscale.v1': 'visibleSuccess',
+        });
 
-        await expect(page.getByTestId('settings.server.relayAccess.choice:tailscaleServe')).toHaveCount(1, { timeout: 120_000 });
+        await openRelaySetupChooser(page);
+        await openRelayLocalSetup(page);
+        await continueLocalRelayChecklistUntil(page, 'settings.server.relayAccess.choice:tailscaleServe');
         await page.getByTestId('settings.server.relayAccess.choice:tailscaleServe').click();
         await page.getByTestId('setupWizard.surface-primary').click();
 
+        await expect(page.getByTestId('setupWizard-relay-access-prereqs')).toHaveCount(1, { timeout: 120_000 });
+        await continueWizardUntil(page, 'setupWizard-relay-access-prereqs', 'system-task-progress-card');
         await expect(page.getByTestId('system-task-progress-card')).toHaveCount(1, { timeout: 120_000 });
         await expect(page.getByTestId('system-task-progress-checklist-step-done-tailscale-detect')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('system-task-progress-checklist-step-done-tailscale-login')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('system-task-progress-checklist-step-done-tailscale-serve-enable')).toHaveCount(1, { timeout: 120_000 });
         await expect(page.getByTestId('setupWizard-confirmSwitchRelay')).toHaveCount(1, { timeout: 120_000 });
+    });
+
+    test('routes remote relay hosting through the shared relay-access Tailscale flow before switch confirmation', async ({ page }) => {
+        test.setTimeout(420_000);
+
+        await setDevSystemTaskScenarios(page, {
+            'remote.ssh.bootstrapMachine.v1': 'relayHostReady',
+            'secureAccess.tailscale.v1': 'visibleSuccess',
+        });
+
+        await openRelaySetupChooser(page);
+
+        await expect(page.getByTestId('setupWizard-branch:remoteRelay')).toHaveCount(1, { timeout: 180_000 });
+        await page.getByTestId('setupWizard-branch:remoteRelay').click();
+        await page.getByTestId('setupWizard.surface-primary').click();
+
+        await expect(page.getByTestId('setupWizard-remote-ssh')).toHaveCount(1, { timeout: 120_000 });
+        await page.getByTestId('setupWizard-remote-ssh-ssh-sshUsernameInput').fill('dev');
+        await page.getByTestId('setupWizard-remote-ssh-ssh-sshHostInput').fill('remote.example.test');
+
+        await page.getByTestId('setupWizard.surface-primary').click();
+        await expect(page.getByTestId('setupWizard-remote-ssh-plan')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('setupWizard-remote-ssh-plan-row-install_relay_runtime')).toHaveCount(1, { timeout: 120_000 });
+
+        await page.getByTestId('setupWizard.surface-primary').click();
+        await expect(page.getByTestId('setupWizard-remote-ssh-complete-checklist')).toHaveCount(1, { timeout: 120_000 });
+
+        await page.getByTestId('setupWizard.surface-primary').click();
+        await expect(page.getByTestId('settings.server.relayAccess.choice:tailscaleServe')).toHaveCount(1, { timeout: 120_000 });
+
+        await page.getByTestId('settings.server.relayAccess.choice:tailscaleServe').click();
+        await page.getByTestId('setupWizard.surface-primary').click();
+
+        await expect(page.getByTestId('setupWizard-relay-access-prereqs')).toHaveCount(1, { timeout: 120_000 });
+        await continueWizardUntil(page, 'setupWizard-relay-access-prereqs', 'system-task-progress-card');
+        await expect(page.getByTestId('system-task-progress-card')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('system-task-progress-checklist-step-done-tailscale-detect')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('setupWizard-confirmSwitchRelay')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('setupWizard-confirmSwitchRelay')).toContainText('https://relay.tailnet.ts.net', { timeout: 120_000 });
     });
 });

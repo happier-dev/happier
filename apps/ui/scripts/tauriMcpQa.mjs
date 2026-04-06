@@ -64,6 +64,48 @@ async function ensureDir(dirPath) {
   await mkdir(dirPath, { recursive: true });
 }
 
+async function resolveStackTauriWebRuntimeServerUrl({ env = process.env } = {}) {
+  const resolvedEnv = env && typeof env === 'object' ? env : process.env;
+  const explicitRuntimeUrl = String(resolvedEnv.HAPPIER_TAURI_WEB_RUNTIME_SERVER_URL ?? '').trim();
+  if (explicitRuntimeUrl) return explicitRuntimeUrl;
+
+  const explicitServerUrl = String(resolvedEnv.HAPPIER_SERVER_URL ?? '').trim();
+  if (explicitServerUrl) {
+    try {
+      const parsed = new URL(explicitServerUrl);
+      const host = String(parsed.hostname ?? '').trim().toLowerCase();
+      const isLoopbackHost =
+        host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]' || host === '0.0.0.0';
+      if (!isLoopbackHost) return explicitServerUrl;
+    } catch {
+      return explicitServerUrl;
+    }
+  }
+
+  const stackServerPort = Number(String(resolvedEnv.HAPPIER_STACK_SERVER_PORT ?? '').trim());
+  if (Number.isFinite(stackServerPort) && stackServerPort > 0) {
+    return `http://127.0.0.1:${Math.floor(stackServerPort)}`;
+  }
+
+  const stackCliHomeDir = String(resolvedEnv.HAPPIER_STACK_CLI_HOME_DIR ?? '').trim();
+  if (!stackCliHomeDir) return '';
+
+  try {
+    const settingsPath = join(stackCliHomeDir, 'settings.json');
+    const settings = await readJsonFile(settingsPath);
+    const activeServerId = String(settings?.activeServerId ?? '').trim();
+    const serverRecord = activeServerId && settings && typeof settings === 'object' && settings.servers && typeof settings.servers === 'object'
+      ? settings.servers[activeServerId]
+      : null;
+    const serverUrl = String(serverRecord?.serverUrl ?? '').trim();
+    if (serverUrl) return serverUrl;
+  } catch {
+    // ignore and fall through to the empty result below
+  }
+
+  return '';
+}
+
 function spawnLoggedProcess({ label, command, args, cwd, env, logFilePath, tee = false }) {
   const child = spawn(command, args, {
     cwd,
@@ -155,6 +197,19 @@ function readBooleanEnv(value, fallback) {
   return fallback;
 }
 
+function appendServerQueryParamToUrl(rawUrl, serverUrl) {
+  const resolvedServerUrl = String(serverUrl ?? '').trim();
+  if (!resolvedServerUrl) return String(rawUrl ?? '').trim();
+
+  try {
+    const url = new URL(String(rawUrl ?? '').trim());
+    url.searchParams.set('server', resolvedServerUrl);
+    return url.toString();
+  } catch {
+    return String(rawUrl ?? '').trim();
+  }
+}
+
 export function resolveTauriMcpQaRunMode({ argv = [], env = process.env } = {}) {
   const args = Array.isArray(argv) ? argv : [];
   const keepRunning = args.includes('--serve') || readBooleanEnv(env.HAPPIER_TAURI_QA_KEEP_RUNNING, false);
@@ -210,7 +265,11 @@ export async function resolveTauriMcpQaPlan({ argv = [], env = process.env } = {
   const stackName = String(env.HAPPIER_STACK_STACK ?? '').trim();
   const runtimeState = stackName ? await readStackRuntimeStateFile(getStackRuntimeStatePath(stackName)) : null;
   const defaultPort = Number(env.HAPPIER_STACK_TAURI_DEV_PORT ?? 8081);
-  const devUrl = resolveStackTauriDevUrl({ runtimeState, defaultPort });
+  const stackTauriWebRuntimeServerUrl = await resolveStackTauriWebRuntimeServerUrl({ env });
+  const devUrl = appendServerQueryParamToUrl(
+    resolveStackTauriDevUrl({ runtimeState, defaultPort }),
+    stackTauriWebRuntimeServerUrl
+  );
   const baseConfig = await readJsonFile(join(packageRoot, 'src-tauri', 'tauri.conf.json'));
   const overlayConfig = await readJsonFile(join(packageRoot, 'src-tauri', 'tauri.publicdev.conf.json'));
   const configPath = join(packageRoot, 'src-tauri', 'tauri.conf.json');
@@ -218,6 +277,17 @@ export async function resolveTauriMcpQaPlan({ argv = [], env = process.env } = {
   const tauriDev = buildStackTauriDevProcessInvocation({
     rootDir: repoRoot,
     env,
+    stackEnv: stackTauriWebRuntimeServerUrl
+      ? {
+          HAPPIER_TAURI_WEB_RUNTIME_SERVER_URL: stackTauriWebRuntimeServerUrl,
+          HAPPIER_TAURI_WEB_RUNTIME_SERVER_CONTEXT: 'stack',
+          HAPPIER_SERVER_URL: stackTauriWebRuntimeServerUrl,
+          EXPO_PUBLIC_HAPPIER_SERVER_URL: stackTauriWebRuntimeServerUrl,
+          EXPO_PUBLIC_HAPPY_SERVER_URL: stackTauriWebRuntimeServerUrl,
+          EXPO_PUBLIC_SERVER_URL: stackTauriWebRuntimeServerUrl,
+          EXPO_PUBLIC_HAPPY_SERVER_CONTEXT: 'stack',
+        }
+      : null,
     configPath,
     configOverride: tauriConfig,
   });

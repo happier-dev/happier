@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,6 +6,37 @@ import { createServer } from 'node:http';
 
 import { reserveAvailablePort } from '../network/reserveAvailablePort';
 import { __testables } from './uiWebMetro';
+
+type FakeFetchResponse = Readonly<{
+  ok: boolean;
+  text: () => Promise<string>;
+  headers: Headers;
+}>;
+
+function okText(body: string, contentType: string): FakeFetchResponse {
+  return {
+    ok: true,
+    text: async () => body,
+    headers: new Headers({ 'content-type': contentType }),
+  };
+}
+
+function notOk(): FakeFetchResponse {
+  return {
+    ok: false,
+    text: async () => '',
+    headers: new Headers(),
+  };
+}
+
+function resolveUrlString(input: unknown): string {
+  if (typeof input === 'string') return input;
+  if (input instanceof URL) return input.toString();
+  if (input && typeof input === 'object' && 'url' in input && typeof input.url === 'string') {
+    return input.url;
+  }
+  throw new Error(`Unsupported fetch input: ${String(input)}`);
+}
 
 describe('uiWebMetro resolveExpoWebBaseUrl', () => {
   it('waits for the dev server url to appear in stdout and then resolves it', async () => {
@@ -110,4 +141,149 @@ describe('uiWebMetro resolveExpoWebBaseUrl', () => {
       server.close(() => resolve());
     });
   }, 10_000);
+
+  it('falls back to the IPv4 loopback variant when stdout advertises localhost but only 127.0.0.1 is reachable', async () => {
+    const port = await reserveAvailablePort();
+    const stdoutBaseUrl = `http://localhost:${port}`;
+    const ipv4BaseUrl = `http://127.0.0.1:${port}`;
+
+    const dir = await mkdtemp(join(tmpdir(), 'happier-uiwebmetro-'));
+    const stdoutPath = join(dir, 'ui.web.stdout.log');
+    await writeFile(stdoutPath, `Waiting on ${stdoutBaseUrl}\n`, 'utf8');
+
+    const fetchMock = vi.fn(async (input: unknown): Promise<FakeFetchResponse> => {
+      const url = resolveUrlString(input);
+      const parsed = new URL(url);
+
+      if (parsed.hostname === 'localhost') {
+        throw new TypeError('connect ECONNREFUSED ::1');
+      }
+
+      if (parsed.hostname === '127.0.0.1' && parsed.port === String(port) && (parsed.pathname === '/' || parsed.pathname === '/index.html')) {
+        return okText('<!doctype html><html><head></head><body><div id="root"></div><script src="/app.js"></script></body></html>', 'text/html');
+      }
+
+      if (parsed.hostname === '127.0.0.1' && parsed.port === String(port) && parsed.pathname === '/app.js') {
+        return okText('console.log("ok");', 'application/javascript');
+      }
+
+      return notOk();
+    });
+
+    const originalFetch = globalThis.fetch;
+    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    try {
+      const resolved = await __testables.resolveExpoWebBaseUrl({
+        stdoutPath,
+        timeoutMs: 1_000,
+        env: {
+          NODE_ENV: 'test',
+          HAPPIER_E2E_UI_WEB_ENTRY_PROBE_TIMEOUT_MS: '25',
+        },
+      });
+
+      expect(resolved.baseUrl).toBe(ipv4BaseUrl);
+      expect(resolved.hasScriptTags).toBe(true);
+    } finally {
+      if (typeof originalFetch === 'function') {
+        (globalThis as { fetch: typeof fetch }).fetch = originalFetch;
+      } else {
+        delete (globalThis as { fetch?: unknown }).fetch;
+      }
+    }
+  });
+
+  it('falls back to the IPv6 loopback variant when stdout advertises localhost but only ::1 is reachable', async () => {
+    const port = await reserveAvailablePort();
+    const stdoutBaseUrl = `http://localhost:${port}`;
+    const ipv6BaseUrl = `http://[::1]:${port}`;
+
+    const dir = await mkdtemp(join(tmpdir(), 'happier-uiwebmetro-'));
+    const stdoutPath = join(dir, 'ui.web.stdout.log');
+    await writeFile(stdoutPath, `Waiting on ${stdoutBaseUrl}\n`, 'utf8');
+
+    const fetchMock = vi.fn(async (input: unknown): Promise<FakeFetchResponse> => {
+      const url = resolveUrlString(input);
+      const parsed = new URL(url);
+
+      if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
+        throw new TypeError('connect ECONNREFUSED');
+      }
+
+      if (parsed.hostname === '[::1]' && parsed.port === String(port) && (parsed.pathname === '/' || parsed.pathname === '/index.html')) {
+        return okText('<!doctype html><html><head></head><body><div id="root"></div><script src="/app.js"></script></body></html>', 'text/html');
+      }
+
+      if (parsed.hostname === '[::1]' && parsed.port === String(port) && parsed.pathname === '/app.js') {
+        return okText('console.log("ok");', 'application/javascript');
+      }
+
+      return notOk();
+    });
+
+    const originalFetch = globalThis.fetch;
+    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    try {
+      const resolved = await __testables.resolveExpoWebBaseUrl({
+        stdoutPath,
+        timeoutMs: 1_000,
+        env: {
+          NODE_ENV: 'test',
+          HAPPIER_E2E_UI_WEB_ENTRY_PROBE_TIMEOUT_MS: '25',
+        },
+      });
+
+      expect(resolved.baseUrl).toBe(ipv6BaseUrl);
+      expect(resolved.hasScriptTags).toBe(true);
+    } finally {
+      if (typeof originalFetch === 'function') {
+        (globalThis as { fetch: typeof fetch }).fetch = originalFetch;
+      } else {
+        delete (globalThis as { fetch?: unknown }).fetch;
+      }
+    }
+  });
+
+  it('falls back to the ANSI-formatted advertised expected port when no entry page is ready before timeout', async () => {
+    const port = await reserveAvailablePort();
+    const baseUrl = `http://localhost:${port}`;
+
+    const dir = await mkdtemp(join(tmpdir(), 'happier-uiwebmetro-'));
+    const stdoutPath = join(dir, 'ui.web.stdout.log');
+    await writeFile(
+      stdoutPath,
+      `\u001b[2mStarting Metro Bundler\u001b[22m\n\nWaiting on \u001b[4m${baseUrl}\u001b[24m\n`,
+      'utf8',
+    );
+
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn(async () => {
+      throw new TypeError('connect ECONNREFUSED');
+    });
+    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    try {
+      const resolved = await __testables.resolveExpoWebBaseUrl({
+        stdoutPath,
+        timeoutMs: 120,
+        expectedPort: port,
+        env: {
+          NODE_ENV: 'test',
+          HAPPIER_E2E_UI_WEB_ENTRY_PROBE_TIMEOUT_MS: '25',
+        },
+      });
+
+      expect(resolved.baseUrl).toBe(baseUrl);
+      expect(resolved.hasScriptTags).toBe(false);
+      expect(resolved.stdoutAdvertisesExpectedPort).toBe(true);
+    } finally {
+      if (typeof originalFetch === 'function') {
+        (globalThis as { fetch: typeof fetch }).fetch = originalFetch;
+      } else {
+        delete (globalThis as { fetch?: unknown }).fetch;
+      }
+    }
+  });
 });

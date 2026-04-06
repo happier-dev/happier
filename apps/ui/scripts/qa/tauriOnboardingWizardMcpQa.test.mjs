@@ -60,9 +60,60 @@ test('tauri onboarding wizard QA can derive fallback MCP ports', async () => {
 
   assert.equal(typeof module.resolveCandidateDriverSessionPorts, 'function');
   const ports = module.resolveCandidateDriverSessionPorts({ preferredPort: 9225, env: {} });
-  assert.equal(ports[0], 9225);
+  assert.deepEqual(ports.slice(0, 5), [9225, 9223, 9224, 9226, 9227]);
   assert.equal(ports.includes(9226), true);
   assert.equal(ports.includes(9223), true);
+});
+
+test('tauri onboarding wizard QA only accepts the preferred connected app when multiple apps are reported', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const scriptPath = join(scriptsDir, 'tauriOnboardingWizardMcpQa.mjs');
+  const module = await import(pathToFileURL(scriptPath).href);
+
+  assert.equal(typeof module.resolveConnectedAppIdentifierFromDriverStatus, 'function');
+  assert.equal(typeof module.resolvePreferredAppIdentifierFromDriverStatus, 'function');
+
+  const status = {
+    connected: true,
+    apps: [
+      { name: 'Tauri App (localhost:9223)', identifier: 'dev.happier.app.publicdev', host: 'localhost', port: 9223, isDefault: true },
+      { name: 'Tauri App (localhost:9224)', identifier: 'com.happier.stack.activity-surfaces-qa', host: 'localhost', port: 9224, isDefault: false },
+    ],
+    totalCount: 2,
+    defaultPort: 9223,
+  };
+
+  assert.equal(module.resolveConnectedAppIdentifierFromDriverStatus(status), 9223);
+  assert.equal(module.resolvePreferredAppIdentifierFromDriverStatus(status, 9224), 9224);
+  assert.equal(module.resolvePreferredAppIdentifierFromDriverStatus(status, 9225), null);
+});
+
+test('tauri onboarding wizard QA only accepts a driver session that resolves to the requested port', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const scriptPath = join(scriptsDir, 'tauriOnboardingWizardMcpQa.mjs');
+  const module = await import(pathToFileURL(scriptPath).href);
+
+  assert.equal(typeof module.resolveExactDriverSessionTarget, 'function');
+  assert.deepEqual(
+    module.resolveExactDriverSessionTarget(
+      { connected: true, port: 9224, apps: [] },
+      9224,
+    ),
+    {
+      port: 9224,
+      identifier: null,
+      host: null,
+      name: null,
+      isDefault: false,
+    },
+  );
+  assert.equal(
+    module.resolveExactDriverSessionTarget(
+      { connected: true, port: 9223, apps: [] },
+      9224,
+    ),
+    null,
+  );
 });
 
 test('tauri onboarding wizard QA builds the debug relay selection deep-link', async () => {
@@ -70,8 +121,8 @@ test('tauri onboarding wizard QA builds the debug relay selection deep-link', as
   const scriptPath = join(scriptsDir, 'tauriOnboardingWizardMcpQa.mjs');
   const module = await import(pathToFileURL(scriptPath).href);
 
-  assert.equal(module.buildOnboardingWizardPath(), '/');
-  assert.equal(module.buildOnboardingWizardPath('relay_select'), '/?happier_wizard_step=relay_select');
+  assert.equal(module.buildOnboardingWizardPath(), '/?happier_hmr=0');
+  assert.equal(module.buildOnboardingWizardPath('relay_select'), '/?happier_wizard_step=relay_select&happier_hmr=0');
 });
 
 test('tauri onboarding wizard QA resolves relative outdir against repo root', async () => {

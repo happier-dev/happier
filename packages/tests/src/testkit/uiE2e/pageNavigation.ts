@@ -1,28 +1,14 @@
 import type { Page } from '@playwright/test';
 
+export { normalizeLoopbackBaseUrl } from '../network/loopbackBaseUrl';
+import { expandLoopbackBaseUrlCandidates } from '../network/loopbackBaseUrl';
 import { dismissSetupWizardIfVisible } from './createAccountAndReachConnectMachineState';
 
-export { createAccountAndReachConnectMachineState, dismissSetupWizardIfVisible } from './createAccountAndReachConnectMachineState';
-
-export function normalizeLoopbackBaseUrl(input: string): string {
-  try {
-    const parsed = new URL(input);
-    // Keep browser navigation on a routable IPv4 loopback. Some local environments resolve
-    // `localhost` to IPv6 first, while these test servers only listen on 127.0.0.1.
-    if (
-      parsed.hostname === '127.0.0.1'
-      || parsed.hostname === '0.0.0.0'
-      || parsed.hostname === '::1'
-      || parsed.hostname === '[::1]'
-    ) {
-      const port = parsed.port ? `:${parsed.port}` : '';
-      return `${parsed.protocol}//127.0.0.1${port}${parsed.pathname}${parsed.search}${parsed.hash}`.replace(/\/+$/, '');
-    }
-    return parsed.toString().replace(/\/+$/, '');
-  } catch {
-    return input.replace(/\/+$/, '');
-  }
-}
+export {
+  createAccountAndReachConnectMachineState,
+  createAccountAndReachSetupWizardState,
+  dismissSetupWizardIfVisible,
+} from './createAccountAndReachConnectMachineState';
 
 export async function gotoDomContentLoadedWithRetries(page: Page, url: string, timeoutMs = 90_000): Promise<void> {
   await gotoWithRetries(page, url, timeoutMs, 'domcontentloaded');
@@ -34,7 +20,6 @@ export async function gotoCommittedWithRetries(page: Page, url: string, timeoutM
 
 async function gotoWithRetries(page: Page, url: string, timeoutMs: number, waitUntil: 'commit' | 'domcontentloaded'): Promise<void> {
   const normalizeUrl = (value: string): string => value.replace(/\/+$/, '');
-  const targetUrl = normalizeUrl(url);
   const retryable = (error: unknown): boolean => {
     const message = error instanceof Error ? error.message : String(error);
     return (
@@ -45,26 +30,53 @@ async function gotoWithRetries(page: Page, url: string, timeoutMs: number, waitU
     );
   };
 
-  const isCommittedTimeout = (error: unknown): boolean => {
+  const isConnectionRefused = (error: unknown): boolean => {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.includes('net::ERR_CONNECTION_REFUSED');
+  };
+
+  const isCommittedTimeout = (error: unknown, candidateUrl: string): boolean => {
     const message = error instanceof Error ? error.message : String(error);
     if (!message.toLowerCase().includes('timeout')) return false;
-    return normalizeUrl(page.url()) === targetUrl;
+    return normalizeUrl(page.url()) === normalizeUrl(candidateUrl);
   };
 
   const start = Date.now();
   let attempt = 0;
+  const candidateUrls = expandLoopbackBaseUrlCandidates(url);
   // Metro can briefly restart or drop connections during bundling; retry a few times for stability.
-  while (attempt < 4) {
+  let lastRetryableError: unknown = null;
+  while (Date.now() - start < timeoutMs) {
     attempt += 1;
-    try {
-      const remaining = Math.max(5_000, timeoutMs - (Date.now() - start));
-      await page.goto(url, { waitUntil, timeout: remaining });
-      return;
-    } catch (error) {
-      if (waitUntil === 'commit' && isCommittedTimeout(error)) return;
-      if (attempt >= 4 || !retryable(error)) throw error;
-      await page.waitForTimeout(500 * attempt);
+    lastRetryableError = null;
+    for (const candidateUrl of candidateUrls) {
+      try {
+        const remaining = Math.max(5_000, timeoutMs - (Date.now() - start));
+        await page.goto(candidateUrl, { waitUntil, timeout: remaining });
+        return;
+      } catch (error) {
+        if (waitUntil === 'commit' && isCommittedTimeout(error, candidateUrl)) return;
+        if (!retryable(error)) throw error;
+        lastRetryableError = error;
+        if (!isConnectionRefused(error)) break;
+      }
     }
+
+    if (lastRetryableError == null) {
+      throw new Error('Navigation failed.');
+    }
+
+    if (Date.now() - start >= timeoutMs) {
+      break;
+    }
+
+    await page.waitForTimeout(Math.min(5_000, 500 * attempt));
+  }
+
+  if (lastRetryableError != null) {
+    throw lastRetryableError instanceof Error
+      ? lastRetryableError
+      : new Error(String(lastRetryableError ?? 'Navigation failed.'));
   }
 }
 
@@ -113,6 +125,7 @@ export async function waitForAuthenticatedHomeUi(params: Readonly<{
 
   const waitForAuthenticatedHomeUiOnce = async (): Promise<void> => {
     const startedAt = Date.now();
+    let switchedToSessionsTab = false;
     while (Date.now() - startedAt < timeoutMs) {
       let pathname: string;
       try {
@@ -128,13 +141,39 @@ export async function waitForAuthenticatedHomeUi(params: Readonly<{
 
       const welcomeVisible = await params.page.getByTestId('welcome-create-account').count();
       const connectMachineVisible = await params.page.getByTestId('session-getting-started-kind-connect_machine').count();
+      const createSessionVisible = await params.page.getByTestId('session-getting-started-kind-create_session').count();
+      const selectSessionVisible = await params.page.getByTestId('session-getting-started-kind-select_session').count();
+      const startNewSessionVisible = await params.page.getByTestId('main-header-start-new-session').count();
       const setupWizardVisible = await params.page.getByTestId('setupWizard.surface').count();
 
-      if (welcomeVisible === 0 && connectMachineVisible > 0) {
+      if (
+        welcomeVisible === 0
+        && (
+          connectMachineVisible > 0
+          || createSessionVisible > 0
+          || selectSessionVisible > 0
+          || startNewSessionVisible > 0
+        )
+      ) {
         if (setupWizardVisible > 0) {
           await dismissSetupWizardIfVisible({ page: params.page });
         }
         return;
+      }
+
+      if (!switchedToSessionsTab) {
+        const sessionsTab = params.page.getByTestId('tabbar-tab-sessions');
+        if (await sessionsTab.count() > 0) {
+          try {
+            await sessionsTab.click();
+            switchedToSessionsTab = true;
+          } catch {
+            await params.page.waitForTimeout(250);
+            continue;
+          }
+          await params.page.waitForTimeout(250);
+          continue;
+        }
       }
 
       await params.page.waitForTimeout(250);

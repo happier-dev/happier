@@ -219,6 +219,7 @@ test.describe('ui e2e: Files upload + rename/delete + download (+ zip)', () => {
   let ui: StartedUiWeb | null = null;
   let uiBaseUrl: string | null = null;
   let daemon: StartedDaemon | null = null;
+  let sessionId: string | null = null;
 
   test.beforeAll(async () => {
     const uiWebEnv = {
@@ -227,6 +228,7 @@ test.describe('ui e2e: Files upload + rename/delete + download (+ zip)', () => {
       EXPO_PUBLIC_HAPPY_SERVER_URL: '',
       EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
       HAPPIER_E2E_UI_WEB_MODE: 'metro',
+      HAPPIER_E2E_UI_WEB_BASE_URL_TIMEOUT_MS: '300000',
       HAPPIER_E2E_UI_WEB_METRO_STATUS_TIMEOUT_MS: '600000',
       HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS:
         process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS
@@ -267,6 +269,9 @@ test.describe('ui e2e: Files upload + rename/delete + download (+ zip)', () => {
   test('uploads file, renames, downloads, deletes, and downloads folder zip', async ({ page }) => {
     test.setTimeout(420_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
+    const resolvedServer = server;
+    const resolvedUiBaseUrl = uiBaseUrl;
+    const sameMachineNavigationTimeoutMs = 300_000;
 
     const browserDiagnostics = collectBrowserDiagnostics({ page });
     const directPeerOpenRequests = collectDirectPeerOpenRequests(page);
@@ -276,7 +281,7 @@ test.describe('ui e2e: Files upload + rename/delete + download (+ zip)', () => {
     try {
       await test.step('reach authenticated home UI', async () => {
         await page.setViewportSize({ width: 1440, height: 900 });
-        await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
+        await gotoDomContentLoadedWithRetries(page, resolvedUiBaseUrl, sameMachineNavigationTimeoutMs);
 
         await waitForInitialAppUi({ page, browserDiagnostics });
         await maybeDismissDetectedClisModal(page, 1_000).catch(() => {});
@@ -289,8 +294,9 @@ test.describe('ui e2e: Files upload + rename/delete + download (+ zip)', () => {
       const cliLogin: StartedCliTerminalConnect = await startCliAuthLoginForTerminalConnect({
         testDir,
         cliHomeDir,
-        serverUrl: server.baseUrl,
-        webappUrl: uiBaseUrl,
+        serverUrl: resolvedServer.baseUrl,
+        webappUrl: resolvedUiBaseUrl,
+        waitForConnectUrlReady: false,
         env: {
           ...process.env,
           HOME: cliHomeDir,
@@ -301,7 +307,7 @@ test.describe('ui e2e: Files upload + rename/delete + download (+ zip)', () => {
         },
       });
       await test.step('complete terminal connect login', async () => {
-        await page.goto(cliLogin.connectUrl, { waitUntil: 'domcontentloaded' });
+        await gotoDomContentLoadedWithRetries(page, cliLogin.connectUrl, sameMachineNavigationTimeoutMs);
         await expect(page.getByTestId('terminal-connect-approve')).toHaveCount(1, { timeout: 60_000 });
         await page.getByTestId('terminal-connect-approve').click();
         await cliLogin.waitForSuccess();
@@ -320,8 +326,8 @@ test.describe('ui e2e: Files upload + rename/delete + download (+ zip)', () => {
             HOME: cliHomeDir,
             CI: '1',
             HAPPIER_HOME_DIR: cliHomeDir,
-            HAPPIER_SERVER_URL: server.baseUrl,
-            HAPPIER_WEBAPP_URL: uiBaseUrl,
+            HAPPIER_SERVER_URL: resolvedServer.baseUrl,
+            HAPPIER_WEBAPP_URL: resolvedUiBaseUrl,
             HAPPIER_DISABLE_CAFFEINATE: '1',
             HAPPIER_VARIANT: 'dev',
             HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
@@ -342,8 +348,12 @@ test.describe('ui e2e: Files upload + rename/delete + download (+ zip)', () => {
         const uploadSourcePath = resolve(join(testDir, 'upload-source.txt'));
         await writeFile(uploadSourcePath, 'hello upload\n', 'utf8');
 
-        const sessionId = await spawnSessionFromDaemon({ daemon: runDaemon, directory: workspaceDir });
-        const sessionResponse = await page.goto(`${uiBaseUrl}/session/${sessionId}?right=files`, { waitUntil: 'domcontentloaded' });
+        sessionId = await spawnSessionFromDaemon({ daemon: runDaemon, directory: workspaceDir });
+        await gotoDomContentLoadedWithRetries(
+          page,
+          `${resolvedUiBaseUrl}/session/${sessionId}?right=files`,
+          sameMachineNavigationTimeoutMs,
+        );
         try {
           await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 180_000 });
         } catch (error) {
@@ -351,7 +361,6 @@ test.describe('ui e2e: Files upload + rename/delete + download (+ zip)', () => {
             page,
             outputPath: resolve(join(testDir, 'browser-diagnostics.session-route.md')),
             browserDiagnostics,
-            response: sessionResponse,
           });
           throw error;
         }
@@ -437,7 +446,11 @@ test.describe('ui e2e: Files upload + rename/delete + download (+ zip)', () => {
             timeoutMs: 120_000,
           });
 
-          await runDaemon.stop();
+          const currentRunDaemon: StartedDaemon | null = runDaemon;
+          if (!currentRunDaemon) {
+            throw new Error('missing daemon before restart');
+          }
+          await currentRunDaemon.stop();
           daemon = null;
 
           runDaemon = await startTestDaemon({
@@ -445,8 +458,8 @@ test.describe('ui e2e: Files upload + rename/delete + download (+ zip)', () => {
             happyHomeDir: cliHomeDir,
             env: buildFileManagerDaemonEnv({
               cliHomeDir,
-              serverBaseUrl: server.baseUrl,
-              uiBaseUrl,
+              serverBaseUrl: resolvedServer.baseUrl,
+              uiBaseUrl: resolvedUiBaseUrl,
               testDir,
               fakeClaudePath,
               fakeClaudeLogPath,
@@ -455,9 +468,12 @@ test.describe('ui e2e: Files upload + rename/delete + download (+ zip)', () => {
           });
           daemon = runDaemon;
 
-          const sessionUrl = `${uiBaseUrl}/session/${sessionId}?right=files`;
+          if (!sessionId) {
+            throw new Error('session id missing before post-restart reload');
+          }
+          const sessionUrl = `${resolvedUiBaseUrl}/session/${sessionId}?right=files`;
           await gotoDomContentLoadedWithRetries(page, sessionUrl);
-          await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 180_000 });
+          await expect(page.getByTestId('session-rightpanel-surface-files')).toHaveCount(1, { timeout: 180_000 });
           await expect(rightPaneLocator(page)).toHaveCount(1, { timeout: 60_000 });
           const refreshedRightPane = rightPaneLocator(page);
           await clickScopedButtonByTestIdOrRole({
@@ -581,7 +597,10 @@ test.describe('ui e2e: Files upload + rename/delete + download (+ zip)', () => {
     } catch (error) {
       throw new Error(`${String(error)}\n\n${browserDiagnostics()}`);
     } finally {
-      await runDaemon?.stop().catch(() => {});
+      const activeRunDaemon: StartedDaemon | null = runDaemon;
+      if (activeRunDaemon) {
+        await (activeRunDaemon as StartedDaemon).stop().catch(() => {});
+      }
     }
   });
 });

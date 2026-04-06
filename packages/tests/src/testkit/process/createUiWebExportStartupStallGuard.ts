@@ -58,14 +58,6 @@ async function readExistingFile(path: string): Promise<string> {
     return await readFile(path, 'utf8').catch(() => '');
 }
 
-async function readCombinedLogSize(stdoutPath: string, stderrPath: string): Promise<number> {
-    const [stdoutSize, stderrSize] = await Promise.all([
-        stat(stdoutPath).then((value) => value.size).catch(() => 0),
-        stat(stderrPath).then((value) => value.size).catch(() => 0),
-    ]);
-    return stdoutSize + stderrSize;
-}
-
 async function walkProgressSnapshot(rootDir: string, currentPath: string): Promise<ExportProgressSnapshot> {
     const entryStats = await stat(currentPath).catch(() => null);
     if (!entryStats) {
@@ -113,6 +105,9 @@ async function readExportProgressSnapshot(stagingDir: string): Promise<ExportPro
 }
 
 function didExportProgressChange(previous: ExportProgressSnapshot, next: ExportProgressSnapshot): boolean {
+    if (next.publishPhaseFileCount <= 0) {
+        return false;
+    }
     return previous.fileCount !== next.fileCount
         || previous.totalBytes !== next.totalBytes
         || previous.latestMtimeMs !== next.latestMtimeMs
@@ -133,7 +128,6 @@ export function createUiWebExportStartupStallGuard(params: {
     let settled = false;
     let markerSeen = false;
     let markerSeenAtMs = 0;
-    let lastObservedSize = 0;
     let lastProgressAtMs = Date.now();
     let lastExportProgress: ExportProgressSnapshot = {
         fileCount: 0,
@@ -180,10 +174,9 @@ export function createUiWebExportStartupStallGuard(params: {
     const tick = async () => {
         if (stopped) return;
 
-        const [stdoutText, stderrText, combinedSize, exportProgress] = await Promise.all([
+        const [stdoutText, stderrText, exportProgress] = await Promise.all([
             readExistingFile(params.stdoutPath),
             readExistingFile(params.stderrPath),
-            readCombinedLogSize(params.stdoutPath, params.stderrPath),
             readExportProgressSnapshot(params.stagingDir),
         ]);
 
@@ -191,7 +184,6 @@ export function createUiWebExportStartupStallGuard(params: {
             markerSeen = true;
             markerSeenAtMs = Date.now();
             lastProgressAtMs = markerSeenAtMs;
-            lastObservedSize = combinedSize;
             lastExportProgress = exportProgress;
             return;
         }
@@ -206,12 +198,10 @@ export function createUiWebExportStartupStallGuard(params: {
         }
 
         const now = Date.now();
-        const logsChanged = combinedSize !== lastObservedSize;
         const exportProgressChanged = didExportProgressChange(lastExportProgress, exportProgress);
-        lastObservedSize = combinedSize;
         lastExportProgress = exportProgress;
 
-        if (logsChanged || exportProgressChanged) {
+        if (exportProgressChanged) {
             lastProgressAtMs = now;
             return;
         }

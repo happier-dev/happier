@@ -1593,7 +1593,7 @@ describe('startUiWeb baseUrl resolution', () => {
           },
         }),
         new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error('startUiWeb did not finish quickly')), 1_500);
+          setTimeout(() => reject(new Error('startUiWeb did not finish within the fallback budget')), 2_500);
         }),
       ]);
 

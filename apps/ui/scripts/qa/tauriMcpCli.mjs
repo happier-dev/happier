@@ -1,9 +1,6 @@
-import { execFile } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, writeFile, appendFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { promisify } from 'node:util';
-
-const execFileAsync = promisify(execFile);
 
 export function isTauriMcpCliErrorText(text) {
   const trimmed = String(text ?? '').trimStart();
@@ -28,14 +25,122 @@ export function buildTauriMcpCliCommand(args) {
   };
 }
 
-export async function runTauriMcpCli(args, { cwd, env, timeoutMs = 90_000 } = {}) {
+function createTauriMcpTimeoutError(invocation, timeoutMs) {
+  const error = new Error(
+    `Command timed out after ${timeoutMs}ms: ${invocation.command} ${invocation.args.join(' ')}`,
+  );
+  error.code = 'ETIMEDOUT';
+  return error;
+}
+
+function createTauriMcpExitError(invocation, code, signal, stdout, stderr) {
+  const error = new Error(`Command failed: ${invocation.command} ${invocation.args.join(' ')}`);
+  error.code = code;
+  error.signal = signal;
+  error.stdout = stdout;
+  error.stderr = stderr;
+  return error;
+}
+
+export function killSpawnedProcessTree(childProcess, signal = 'SIGKILL') {
+  const pid = Number(childProcess?.pid);
+  if (!Number.isFinite(pid) || pid <= 0) {
+    return;
+  }
+
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
+    return;
+  }
+
+  try {
+    process.kill(-pid, signal);
+  } catch {
+    try {
+      childProcess?.kill?.(signal);
+    } catch {}
+  }
+}
+
+export async function runTauriMcpCli(args, {
+  cwd,
+  env,
+  timeoutMs = 90_000,
+  spawnImpl = spawn,
+  killProcessTree = killSpawnedProcessTree,
+} = {}) {
   const invocation = buildTauriMcpCliCommand(args);
-  const result = await execFileAsync(invocation.command, invocation.args, {
+  const child = spawnImpl(invocation.command, invocation.args, {
     cwd,
     env,
-    encoding: 'utf8',
-    maxBuffer: 20 * 1024 * 1024,
-    timeout: timeoutMs,
+    detached: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
+  let stdout = '';
+  let stderr = '';
+  let timeoutError = null;
+  let timeoutHandle = null;
+
+  if (child.stdout && typeof child.stdout.setEncoding === 'function') {
+    child.stdout.setEncoding('utf8');
+  }
+  if (child.stdout && typeof child.stdout.on === 'function') {
+    child.stdout.on('data', (chunk) => {
+      stdout += String(chunk ?? '');
+    });
+  }
+  if (child.stderr && typeof child.stderr.setEncoding === 'function') {
+    child.stderr.setEncoding('utf8');
+  }
+  if (child.stderr && typeof child.stderr.on === 'function') {
+    child.stderr.on('data', (chunk) => {
+      stderr += String(chunk ?? '');
+    });
+  }
+
+  const result = await new Promise((resolve, reject) => {
+    const cleanup = () => {
+      if (timeoutHandle != null) {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = null;
+      }
+    };
+
+    child.once('error', (error) => {
+      cleanup();
+      reject(error);
+    });
+
+    child.once('close', (code, signal) => {
+      cleanup();
+
+      if (timeoutError) {
+        timeoutError.stdout = stdout;
+        timeoutError.stderr = stderr;
+        timeoutError.code = timeoutError.code ?? 'ETIMEDOUT';
+        timeoutError.signal = signal ?? null;
+        reject(timeoutError);
+        return;
+      }
+
+      if (code !== 0) {
+        reject(createTauriMcpExitError(invocation, code, signal ?? null, stdout, stderr));
+        return;
+      }
+
+      resolve({
+        stdout,
+        stderr,
+        code,
+        signal: signal ?? null,
+      });
+    });
+
+    timeoutHandle = setTimeout(() => {
+      timeoutError = createTauriMcpTimeoutError(invocation, timeoutMs);
+      killProcessTree(child);
+    }, timeoutMs);
   });
   throwIfTauriMcpCliError(result);
   return {

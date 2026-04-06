@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { createServer } from 'node:http';
 import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
 import { writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -8,6 +9,8 @@ import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 let stopCalls = 0;
+const defaultTerminalConnectStdout = 'https://127.0.0.1:4011/terminal/connect#key=test-key\n';
+let terminalConnectStdout = defaultTerminalConnectStdout;
 
 vi.mock('../process/cliLaunchSpec', () => ({
     resolveCliTestLaunchSpec: vi.fn(async (params: { testDir: string }) => ({
@@ -20,11 +23,7 @@ vi.mock('../process/cliLaunchSpec', () => ({
 
 vi.mock('../process/spawnProcess', () => ({
     spawnLoggedProcess: (params: { stdoutPath: string; stderrPath: string }) => {
-        writeFileSync(
-            params.stdoutPath,
-            'https://127.0.0.1:4011/terminal/connect#key=test-key\n',
-            'utf8',
-        );
+        writeFileSync(params.stdoutPath, terminalConnectStdout, 'utf8');
         writeFileSync(params.stderrPath, '', 'utf8');
         const child = new EventEmitter() as EventEmitter & {
             exitCode: number | null;
@@ -46,16 +45,27 @@ vi.mock('../process/spawnProcess', () => ({
     },
 }));
 
+vi.mock('../timing', async () => {
+    const actual = await vi.importActual<typeof import('../timing')>('../timing');
+    return {
+        ...actual,
+        waitFor: vi.fn(actual.waitFor),
+    };
+});
+
 import {
     resolveCliTerminalConnectOwnershipLeasesDir,
     startCliAuthLoginForTerminalConnect,
 } from './cliTerminalConnect';
+import { reserveAvailablePort } from '../network/reserveAvailablePort';
 import { spawnDetachedTestProcess } from '../process/testSpawn';
+import { waitFor } from '../timing';
 
 afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     stopCalls = 0;
+    terminalConnectStdout = defaultTerminalConnectStdout;
 });
 
 function readProcessStartTime(pid: number): string {
@@ -72,10 +82,20 @@ describe('startCliAuthLoginForTerminalConnect', () => {
 
         const testDir = await mkdtemp(join(tmpdir(), 'happier-cli-terminal-connect-'));
         const cliHomeDir = resolve(testDir, 'cli-home');
+        const port = await reserveAvailablePort();
+        const server = createServer((_, res) => {
+            res.writeHead(200, { 'content-type': 'text/plain' });
+            res.end('ok');
+        });
         let stalePid: number | null = null;
 
         try {
             await mkdir(cliHomeDir, { recursive: true });
+            terminalConnectStdout = `http://127.0.0.1:${port}/terminal/connect#key=test-key\n`;
+            await new Promise<void>((resolveListen, rejectListen) => {
+                server.once('error', rejectListen);
+                server.listen(port, '127.0.0.1', () => resolveListen());
+            });
 
             const staleProc = spawnDetachedTestProcess(
                 process.execPath,
@@ -122,6 +142,120 @@ describe('startCliAuthLoginForTerminalConnect', () => {
                     // ignore
                 }
             }
+            await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+            await rm(testDir, { recursive: true, force: true });
+        }
+    });
+
+    it('waits for the terminal-connect URL to respond before returning it', async () => {
+        const testDir = await mkdtemp(join(tmpdir(), 'happier-cli-terminal-connect-ready-'));
+        const cliHomeDir = resolve(testDir, 'cli-home');
+        const port = await reserveAvailablePort();
+        const server = createServer((_, res) => {
+            res.writeHead(200, { 'content-type': 'text/plain' });
+            res.end('ok');
+        });
+        let startedListening: Promise<void> | null = null;
+
+        try {
+            await mkdir(cliHomeDir, { recursive: true });
+            terminalConnectStdout = `http://127.0.0.1:${port}/terminal/connect#key=test-key\n`;
+
+            startedListening = new Promise<void>((resolveListening, rejectListening) => {
+                server.once('error', rejectListening);
+                setTimeout(() => {
+                    server.listen(port, '127.0.0.1', () => resolveListening());
+                }, 3_000);
+            });
+
+            const started = await startCliAuthLoginForTerminalConnect({
+                testDir,
+                cliHomeDir,
+                serverUrl: 'http://127.0.0.1:4011',
+                webappUrl: 'http://127.0.0.1:19006',
+                env: {},
+            });
+
+            await expect(fetch(started.connectUrl)).resolves.toMatchObject({ status: 200 });
+
+            await started.stop();
+        } finally {
+            if (startedListening) {
+                await startedListening.catch(() => {});
+            }
+            await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+            await rm(testDir, { recursive: true, force: true });
+        }
+    });
+
+    it('can skip the terminal-connect readiness probe when the caller will retry navigation', async () => {
+        const testDir = await mkdtemp(join(tmpdir(), 'happier-cli-terminal-connect-no-readiness-'));
+        const cliHomeDir = resolve(testDir, 'cli-home');
+        const fetchSpy = vi.fn(async () => {
+            throw new Error('unexpected fetch during terminal-connect startup');
+        });
+
+        try {
+            await mkdir(cliHomeDir, { recursive: true });
+            terminalConnectStdout = 'http://127.0.0.1:65533/terminal/connect#key=test-key\n';
+            vi.stubGlobal('fetch', fetchSpy);
+
+            const started = await startCliAuthLoginForTerminalConnect({
+                testDir,
+                cliHomeDir,
+                serverUrl: 'http://127.0.0.1:4011',
+                webappUrl: 'http://127.0.0.1:19006',
+                waitForConnectUrlReady: false,
+                env: {},
+            });
+
+            expect(started.connectUrl).toContain('/terminal/connect#key=');
+            expect(fetchSpy).not.toHaveBeenCalled();
+
+            await started.stop();
+        } finally {
+            await rm(testDir, { recursive: true, force: true });
+        }
+    });
+
+    it('honors an override for the terminal-connect readiness timeout', async () => {
+        const testDir = await mkdtemp(join(tmpdir(), 'happier-cli-terminal-connect-timeout-'));
+        const cliHomeDir = resolve(testDir, 'cli-home');
+        const port = await reserveAvailablePort();
+        const server = createServer((_, res) => {
+            res.writeHead(200, { 'content-type': 'text/plain' });
+            res.end('ok');
+        });
+
+        try {
+            await mkdir(cliHomeDir, { recursive: true });
+            terminalConnectStdout = `http://127.0.0.1:${port}/terminal/connect#key=test-key\n`;
+
+            await new Promise<void>((resolveListen, rejectListen) => {
+                server.once('error', rejectListen);
+                server.listen(port, '127.0.0.1', () => resolveListen());
+            });
+
+            await startCliAuthLoginForTerminalConnect({
+                testDir,
+                cliHomeDir,
+                serverUrl: 'http://127.0.0.1:4011',
+                webappUrl: 'http://127.0.0.1:19006',
+                env: {
+                    HAPPIER_E2E_CLI_TERMINAL_CONNECT_READY_TIMEOUT_MS: '1234',
+                },
+            });
+
+            expect(vi.mocked(waitFor)).toHaveBeenCalledWith(
+                expect.any(Function),
+                expect.objectContaining({
+                    timeoutMs: 1234,
+                    intervalMs: 250,
+                    context: 'terminal connect URL readiness',
+                }),
+            );
+        } finally {
+            await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
             await rm(testDir, { recursive: true, force: true });
         }
     });

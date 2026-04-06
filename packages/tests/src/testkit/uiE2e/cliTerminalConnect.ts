@@ -10,6 +10,7 @@ import {
 } from '../process/processOwnershipLease';
 import { spawnLoggedProcess, type SpawnedProcess } from '../process/spawnProcess';
 import { repoRootDir } from '../paths';
+import { waitFor } from '../timing';
 import { waitForRegexInFile } from '../waitForRegexInFile';
 
 function extractHttpUrls(text: string): string[] {
@@ -58,6 +59,30 @@ async function stderrTail(path: string): Promise<string> {
   return raw.slice(Math.max(0, raw.length - 8_000));
 }
 
+async function waitForTerminalConnectUrlReady(connectUrl: string, timeoutMs = 60_000): Promise<void> {
+  await waitFor(
+    async () => {
+      try {
+        const res = await fetch(connectUrl, { signal: AbortSignal.timeout(2_000) });
+        return res.ok;
+      } catch {
+        return false;
+      }
+    },
+    {
+      timeoutMs,
+      intervalMs: 250,
+      context: 'terminal connect URL readiness',
+    },
+  );
+}
+
+function resolveTerminalConnectReadyTimeoutMs(env: NodeJS.ProcessEnv): number {
+  const raw = String(env.HAPPIER_E2E_CLI_TERMINAL_CONNECT_READY_TIMEOUT_MS ?? '').trim();
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 60_000;
+}
+
 async function waitForExit(proc: SpawnedProcess, timeoutMs: number): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
   if (proc.child.exitCode !== null || proc.child.signalCode !== null) {
     return { code: proc.child.exitCode, signal: proc.child.signalCode as NodeJS.Signals | null };
@@ -85,6 +110,7 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
   cliHomeDir: string;
   serverUrl: string;
   webappUrl: string;
+  waitForConnectUrlReady?: boolean;
   env: NodeJS.ProcessEnv;
 }>): Promise<StartedCliTerminalConnect> {
   const currentOwnerInspection = inspectOwnedProcess(process.pid);
@@ -156,6 +182,10 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
     const tail = await stdoutTail(stdoutPath);
     await proc.stop().catch(() => {});
     throw new Error(`Failed to extract terminal connect URL from CLI stdout | stdoutTail=${JSON.stringify(tail)}`);
+  }
+
+  if (params.waitForConnectUrlReady !== false) {
+    await waitForTerminalConnectUrlReady(connectUrl, resolveTerminalConnectReadyTimeoutMs(params.env));
   }
 
   return {

@@ -4,7 +4,12 @@ import { mkdir } from 'node:fs/promises';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
-import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import {
+    createAccountAndReachSetupWizardState,
+    gotoCommittedWithRetries,
+    normalizeLoopbackBaseUrl,
+} from '../../src/testkit/uiE2e/pageNavigation';
+import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -98,36 +103,16 @@ test.describe('ui e2e: setup control panel flow (deterministic runner)', () => {
 
         await page.setViewportSize({ width: 1440, height: 900 });
 
-        await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
+        await gotoCommittedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
+        await waitForInitialAppUi({ page, timeoutMs: 180_000 });
         await setFakeTauriInternalsInExistingDocument(page);
-        await navigateSpa(page, '/setup?happier_hmr=0');
+        await createAccountAndReachSetupWizardState({ page });
 
-        // Pre-auth setup route continues into the auth flow.
-        await expect(page.getByTestId('setup.continueToAuth')).toHaveCount(1, { timeout: 120_000 });
-        await page.getByTestId('setup.continueToAuth').click();
-
-        await expect(page.getByTestId('welcome-create-account')).toHaveCount(1, { timeout: 180_000 });
-        await page.getByTestId('welcome-create-account').click();
-
-        // Completing auth should redirect back into setup with a pending setup intent.
-        // The post-auth setup route auto-starts local setup; avoid clicking the start action to prevent spawning a second task.
-        await expect(page.getByTestId('setup.postAuth')).toHaveCount(1, { timeout: 180_000 });
-        await expect(page.getByTestId('settings.machineSetup.startLocalTask')).toHaveCount(1, { timeout: 180_000 });
-
-        // If auto-start is disabled for any reason, fall back to starting the task explicitly.
-        const progressCard = page.getByTestId('system-task-progress-card');
-        try {
-            await expect(progressCard).toHaveCount(1, { timeout: 30_000 });
-        } catch {
-            await page.getByTestId('settings.machineSetup.startLocalTask').click();
-            await expect(progressCard).toHaveCount(1, { timeout: 180_000 });
-        }
-
-        await expect(page.getByTestId('system-task-progress-card')).toHaveCount(1, { timeout: 120_000 });
-
-        // Deterministic bridge finishes quickly; assert on stable status ids instead of copy.
-        await expect(page.getByTestId('system-task-progress-status-succeeded')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('system-task-step-label')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('setupWizard-setup-this-computer')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('setupWizard-setup-this-computer-checklist-row-setup.thisComputer.resolveRelay')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('setupWizard-setup-this-computer-checklist-row-setup.thisComputer.checkAuth')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('setupWizard-setup-this-computer-checklist-row-setup.thisComputer.installService')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('setupWizard.surface-primary')).toBeEnabled({ timeout: 120_000 });
     });
 
     test('shows the host relay checklist with satisfied rows in desktop mode', async ({ page }) => {
@@ -144,10 +129,12 @@ test.describe('ui e2e: setup control panel flow (deterministic runner)', () => {
             };
         });
 
-        await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/setup/wizard?happier_hmr=0`, 180_000);
+        await gotoCommittedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
+        await waitForInitialAppUi({ page, timeoutMs: 180_000 });
         await setFakeTauriInternalsInExistingDocument(page);
+        await createAccountAndReachSetupWizardState({ page });
+        await navigateSpa(page, '/setup/wizard?step=setup_chooser');
 
-        await expect(page.getByTestId('setupWizard.surface')).toBeVisible({ timeout: 120_000 });
         await expect(page.getByTestId('setupWizard-branch:relayLocal')).toHaveCount(1, { timeout: 120_000 });
         await page.getByTestId('setupWizard-branch:relayLocal').click();
         await expect(page.getByTestId('setupWizard.surface-primary')).toBeEnabled({ timeout: 120_000 });

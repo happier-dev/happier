@@ -1,5 +1,6 @@
 export type HappierWebRuntimeConfig = Readonly<{
     serverUrl?: string;
+    serverContext?: string;
 }>;
 
 type RuntimeWindow = Window & {
@@ -19,5 +20,10 @@ export function readWebRuntimeConfig(): HappierWebRuntimeConfig | null {
 
 export function readWebRuntimeConfigServerUrl(): string {
     const raw = readWebRuntimeConfig()?.serverUrl;
+    return typeof raw === 'string' ? raw.trim() : '';
+}
+
+export function readWebRuntimeConfigServerContext(): string {
+    const raw = readWebRuntimeConfig()?.serverContext;
     return typeof raw === 'string' ? raw.trim() : '';
 }

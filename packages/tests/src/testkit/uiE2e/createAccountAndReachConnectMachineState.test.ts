@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createAccountAndReachConnectMachineState,
+  createAccountAndReachSetupWizardState,
   dismissSetupWizardIfVisible,
   type CreateAccountAndReachConnectMachineStatePage,
 } from './createAccountAndReachConnectMachineState';
@@ -13,6 +14,7 @@ type FakeLocator = Locator & {
 
 function createFakePage(params: Readonly<{
   testIdCounts?: Record<string, number[]>;
+  onEvaluate?: () => void;
 }>): CreateAccountAndReachConnectMachineStatePage {
   const testIdCalls = new Map<string, number>();
   const testIdCounts = params.testIdCounts ?? {};
@@ -38,6 +40,10 @@ function createFakePage(params: Readonly<{
 
   return {
     getByTestId: ((testId) => makeLocator(String(testId))) as Page['getByTestId'],
+    evaluate: vi.fn(async (_fn: unknown, _arg?: unknown) => {
+      params.onEvaluate?.();
+      return undefined;
+    }) as unknown as Page['evaluate'],
   };
 }
 
@@ -92,5 +98,53 @@ describe('createAccountAndReachConnectMachineState', () => {
     });
 
     await expect(dismissSetupWizardIfVisible({ page })).resolves.toBeUndefined();
+  });
+});
+
+describe('createAccountAndReachSetupWizardState', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('clicks create-account and waits for the setup wizard', async () => {
+    const page = createFakePage({
+      testIdCounts: {
+        'welcome-create-account': [1, 1],
+        'setupWizard.surface': [0, 1, 1],
+      },
+    });
+
+    await expect(createAccountAndReachSetupWizardState({ page })).resolves.toBeUndefined();
+  });
+
+  it('accepts an already-visible setup wizard without requiring create-account first', async () => {
+    const page = createFakePage({
+      testIdCounts: {
+        'welcome-create-account': [0],
+        'setupWizard.surface': [1, 1],
+      },
+    });
+
+    await expect(createAccountAndReachSetupWizardState({ page })).resolves.toBeUndefined();
+  });
+
+  it('navigates to the setup wizard when the authenticated shell is visible but the modal did not auto-open', async () => {
+    const testIdCounts = {
+      'welcome-create-account': [1, 1],
+      'setupWizard.surface': [0, 0, 0, 1],
+      'setup.postAuth': [0, 1, 1],
+    };
+
+    const page = createFakePage({
+      testIdCounts: {
+        ...testIdCounts,
+      },
+      onEvaluate: () => {
+        testIdCounts['setupWizard.surface'] = [1, 1];
+      },
+    });
+
+    await expect(createAccountAndReachSetupWizardState({ page })).resolves.toBeUndefined();
+    expect(page.evaluate).toHaveBeenCalledTimes(1);
   });
 });
