@@ -1942,6 +1942,10 @@ export {
 } from './bugReports.js';
 
 export {
+  type BugReportMachineDiagnosticsSnapshot,
+} from './diagnostics/bugReportMachineDiagnostics.js';
+
+export {
   DoctorSnapshotSchema,
   DoctorSnapshotServerProfileSchema,
   parseDoctorSnapshotSafe,

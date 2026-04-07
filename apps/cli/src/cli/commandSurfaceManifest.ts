@@ -88,6 +88,8 @@ const COMMAND_SURFACE_MANIFEST: readonly CliCommandSurfaceEntry[] = [
   },
   {
     command: 'uninstall',
+    rootHelpLabel: 'happier uninstall',
+    rootHelpDescription: 'Uninstall the current managed Happier CLI',
     allowTmux: false,
   },
   {

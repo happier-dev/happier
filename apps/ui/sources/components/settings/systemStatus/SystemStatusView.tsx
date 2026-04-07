@@ -6,10 +6,7 @@ import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 import {
-  DoctorSnapshotSchema,
   sanitizeBugReportUrl,
-  sanitizeDoctorSnapshotUrls,
-  type DoctorSnapshot,
 } from '@happier-dev/protocol';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -22,7 +19,6 @@ import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { listServerProfiles, type ServerProfile } from '@/sync/domains/server/serverProfiles';
 import {
-  useAllMachines,
   useIsDataReady,
   useLastSyncAt,
   useMachineListByServerId,
@@ -31,18 +27,15 @@ import {
   useRealtimeStatus,
   useSocketStatus,
 } from '@/sync/domains/state/storage';
-import { machineCollectBugReportDiagnostics } from '@/sync/ops/machines';
 import { t } from '@/text';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
-import { readCachedMachineDoctorSnapshot, writeCachedMachineDoctorSnapshot } from './cache/machineDoctorSnapshotCache';
-
-type MachineDoctorFetchStatus =
-  | { status: 'idle' }
-  | { status: 'loading' }
-  | { status: 'ready'; snapshot: DoctorSnapshot; cachedAt: number; source: 'rpc' | 'cache' }
-  | { status: 'error'; detail: string };
+import { MachineDoctorRuntimeInventorySection } from '@/components/machines/doctorSnapshot/MachineDoctorRuntimeInventorySection';
+import {
+  buildMachineDoctorSnapshotTargetKey,
+  useMachineDoctorSnapshotCollection,
+} from '@/components/machines/doctorSnapshot/useMachineDoctorSnapshotCollection';
 
 function formatRelativeTimeMs(ms: number | null | undefined): string {
   if (!ms) return t('status.unknown');
@@ -85,7 +78,6 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
   const socket = useSocketStatus();
   const lastSyncAt = useLastSyncAt();
 
-  const machines = useAllMachines();
   const machineListByServerId = useMachineListByServerId();
   const machineListStatusByServerId = useMachineListStatusByServerId();
 
@@ -97,79 +89,51 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
     }
   }, [activeServerSnapshot.generation]);
 
-  const machineServerIdByMachineId = React.useMemo(() => {
-    const map = new Map<string, string>();
+  const activeServerOnlineMachineTargets = React.useMemo(() => {
+    const serverMachines = Array.isArray(machineListByServerId[activeServerSnapshot.serverId])
+      ? (machineListByServerId[activeServerSnapshot.serverId] ?? [])
+      : [];
+    return serverMachines
+      .filter((machine) => isMachineOnline(machine))
+      .slice(0, 3)
+      .map((machine) => ({
+        serverId: activeServerSnapshot.serverId,
+        machineId: machine.id,
+      }));
+  }, [activeServerSnapshot.serverId, machineListByServerId]);
+
+  const activeServerOnlineMachineTargetKeys = React.useMemo(() => (
+    activeServerOnlineMachineTargets.map((target) => buildMachineDoctorSnapshotTargetKey(target))
+  ), [activeServerOnlineMachineTargets]);
+
+  const machineDoctorTargetsByKey = React.useMemo(() => {
+    const map = new Map<string, { machineId: string; serverId: string }>();
     for (const [serverId, list] of Object.entries(machineListByServerId)) {
       if (!Array.isArray(list)) continue;
-      for (const machine of list) map.set(machine.id, serverId);
+      for (const machine of list) {
+        const machineId = String(machine.id ?? '').trim();
+        if (!machineId) continue;
+        const target = { machineId, serverId };
+        map.set(buildMachineDoctorSnapshotTargetKey(target), target);
+      }
     }
     return map;
   }, [machineListByServerId]);
 
-  const [doctorFetchByMachineId, setDoctorFetchByMachineId] = React.useState<Record<string, MachineDoctorFetchStatus>>(() => ({}));
-
-  const seedCachedDoctorSnapshots = React.useCallback(() => {
-    const next: Record<string, MachineDoctorFetchStatus> = {};
-    for (const [machineId, serverId] of machineServerIdByMachineId.entries()) {
-      const cached = readCachedMachineDoctorSnapshot({ serverId, machineId });
-      if (!cached) continue;
-      next[machineId] = {
-        status: 'ready',
-        snapshot: cached.snapshot,
-        cachedAt: cached.cachedAt,
-        source: 'cache',
-      };
-    }
-    setDoctorFetchByMachineId((prev) => ({ ...next, ...prev }));
-  }, [machineServerIdByMachineId]);
-
-  React.useEffect(() => {
-    seedCachedDoctorSnapshots();
-  }, [seedCachedDoctorSnapshots]);
-
-  const fetchDoctorSnapshotForMachine = React.useCallback(async (params: { machineId: string; serverId: string; timeoutMs: number }) => {
-    setDoctorFetchByMachineId((prev) => ({
-      ...prev,
-      [params.machineId]: { status: 'loading' },
-    }));
-
-    const diagnostics = await machineCollectBugReportDiagnostics(params.machineId, { timeoutMs: params.timeoutMs });
-    const fetchedAt = Date.now();
-
-    const rawDoctorSnapshot = (diagnostics as { doctorSnapshot?: unknown } | null)?.doctorSnapshot;
-    const parsed = DoctorSnapshotSchema.safeParse(rawDoctorSnapshot);
-    if (!parsed.success) {
-      setDoctorFetchByMachineId((prev) => ({
-        ...prev,
-        [params.machineId]: { status: 'error', detail: t('systemStatus.machine.fetchDoctorSnapshot.invalid') },
-      }));
-      return;
-    }
-
-    const snapshot = sanitizeDoctorSnapshotUrls(parsed.data);
-    const cachedAt = fetchedAt;
-    writeCachedMachineDoctorSnapshot({ serverId: params.serverId, machineId: params.machineId, cachedAt, snapshot });
-
-    setDoctorFetchByMachineId((prev) => ({
-      ...prev,
-      [params.machineId]: { status: 'ready', snapshot, cachedAt, source: 'rpc' },
-    }));
-  }, []);
-
-  const [refreshingMachines, refreshMachineAttribution] = useHappyAction(async () => {
-    const serverMachines = Array.isArray(machineListByServerId[activeServerSnapshot.serverId])
-      ? (machineListByServerId[activeServerSnapshot.serverId] ?? [])
-      : [];
-    const online = serverMachines.filter((m) => isMachineOnline(m)).slice(0, 3);
-    for (const machine of online) {
-      // Sequential to avoid creating bursts of RPCs.
-      await fetchDoctorSnapshotForMachine({
-        machineId: machine.id,
-        serverId: activeServerSnapshot.serverId,
-        timeoutMs: 4_000,
-      });
-    }
+  const {
+    machineDoctorSnapshotByTargetKey,
+    fetchMachineDoctorSnapshots,
+  } = useMachineDoctorSnapshotCollection({
+    machineDoctorTargetsByKey,
+    prefetchMachineTargetKeys: activeServerOnlineMachineTargetKeys,
+    enabled: true,
   });
+
+  const refreshMachineAttribution = React.useCallback(async () => {
+    await fetchMachineDoctorSnapshots(activeServerOnlineMachineTargets);
+  }, [activeServerOnlineMachineTargets, fetchMachineDoctorSnapshots]);
+
+  const [refreshingMachines, runRefreshMachineAttribution] = useHappyAction(refreshMachineAttribution);
 
   const [copying, copySystemStatusJson] = useHappyAction(async () => {
     const payload = {
@@ -206,41 +170,42 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
         serverUrl: sanitizeBugReportUrl(p.serverUrl) ?? p.serverUrl,
         lastUsedAt: p.lastUsedAt,
       })),
-      machines: machines.map((m) => ({
-        id: m.id,
-        serverId: machineServerIdByMachineId.get(m.id) ?? null,
-        active: m.active,
-        activeAt: m.activeAt,
-        updatedAt: m.updatedAt,
-        metadata: m.metadata
-          ? {
-            host: m.metadata.host,
-            platform: m.metadata.platform,
-            arch: m.metadata.arch ?? null,
-            username: m.metadata.username ?? null,
-            displayName: m.metadata.displayName ?? null,
-            happyCliVersion: m.metadata.happyCliVersion,
-            happyHomeDirBasename: String(m.metadata.happyHomeDir ?? '').split('/').filter(Boolean).slice(-1)[0] ?? '',
-          }
-          : null,
-        doctorSnapshot: (() => {
-          const entry = doctorFetchByMachineId[m.id];
-          if (!entry || entry.status !== 'ready') return null;
-          return { cachedAt: entry.cachedAt, source: entry.source, snapshot: entry.snapshot };
-        })(),
-      })),
+      machines: Object.entries(machineListByServerId).flatMap(([serverId, list]) =>
+        (Array.isArray(list) ? list : []).map((machine) => {
+          const snapshotKey = buildMachineDoctorSnapshotTargetKey({
+            serverId,
+            machineId: machine.id,
+          });
+          const entry = machineDoctorSnapshotByTargetKey[snapshotKey];
+          return {
+            id: machine.id,
+            serverId,
+            active: machine.active,
+            activeAt: machine.activeAt,
+            updatedAt: machine.updatedAt,
+            metadata: machine.metadata
+              ? {
+                host: machine.metadata.host,
+                platform: machine.metadata.platform,
+                arch: machine.metadata.arch ?? null,
+                username: machine.metadata.username ?? null,
+                displayName: machine.metadata.displayName ?? null,
+                happyCliVersion: machine.metadata.happyCliVersion,
+                happyHomeDirBasename: String(machine.metadata.happyHomeDir ?? '').split('/').filter(Boolean).slice(-1)[0] ?? '',
+              }
+              : null,
+            doctorSnapshot: entry && entry.status === 'ready'
+              ? { cachedAt: entry.cachedAt, source: entry.source, snapshot: entry.snapshot }
+              : null,
+          };
+        }),
+      ),
       machineListStatusByServerId,
     };
 
     await Clipboard.setStringAsync(JSON.stringify(payload, null, 2));
     Modal.alert(t('common.copied'), t('items.copiedToClipboard', { label: t('settings.systemStatus') }));
   });
-
-  React.useEffect(() => {
-    // Best-effort: warm cached attribution into the UI, then refresh a few online machines.
-    refreshMachineAttribution();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeServerSnapshot.serverId]);
 
   const machineGroups = React.useMemo(() => {
     const ids = new Set<string>();
@@ -371,13 +336,17 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
               >
                 {list.map((machine) => {
                   const meta = machine.metadata;
+                  const snapshotKey = buildMachineDoctorSnapshotTargetKey({
+                    serverId,
+                    machineId: machine.id,
+                  });
                   const displayName = resolveMachineDisplayName({
                     host: meta?.host,
                     displayName: meta?.displayName ?? null,
                   });
                   const online = isMachineOnline(machine);
 
-                  const fetchEntry = doctorFetchByMachineId[machine.id] ?? { status: 'idle' as const };
+                  const fetchEntry = machineDoctorSnapshotByTargetKey[snapshotKey] ?? { status: 'idle' as const };
                   const doctorRow = (() => {
                     if (fetchEntry.status === 'loading') {
                       return <Text style={{ color: theme.colors.textSecondary }}>{t('systemStatus.machine.fetchDoctorSnapshot.loading')}</Text>;
@@ -422,25 +391,28 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
                   );
 
                   return (
-                    <Item
-                      key={machine.id}
-                      title={displayName}
-                      subtitle={subtitle}
-                      icon={<Ionicons name="laptop-outline" size={24} color={online ? theme.colors.success : theme.colors.textSecondary} />}
-                      onPress={() => {
-                        const query = serverId ? `?serverId=${encodeURIComponent(serverId)}` : '';
-                        router.push(`/machine/${machine.id}${query}`);
-                      }}
-                      onLongPress={() => {
-                        if (!online) return;
-                        fireAndForget(fetchDoctorSnapshotForMachine({
-                          machineId: machine.id,
-                          serverId,
-                          timeoutMs: 4_000,
-                        }), { tag: 'SystemStatusView.fetchDoctorSnapshotForMachine' });
-                      }}
-                      detail={formatRelativeTimeMs(machine.activeAt)}
-                    />
+                    <React.Fragment key={snapshotKey}>
+                      <Item
+                        title={displayName}
+                        subtitle={subtitle}
+                        icon={<Ionicons name="laptop-outline" size={24} color={online ? theme.colors.success : theme.colors.textSecondary} />}
+                        onPress={() => {
+                          const query = serverId ? `?serverId=${encodeURIComponent(serverId)}` : '';
+                          router.push(`/machine/${machine.id}${query}`);
+                        }}
+                        onLongPress={() => {
+                          if (!online) return;
+                          fireAndForget(fetchMachineDoctorSnapshots([{
+                            serverId,
+                            machineId: machine.id,
+                          }]), { tag: 'SystemStatusView.fetchDoctorSnapshotForMachine' });
+                        }}
+                        detail={formatRelativeTimeMs(machine.activeAt)}
+                      />
+                      {fetchEntry.status !== 'idle' ? (
+                        <MachineDoctorRuntimeInventorySection snapshotState={fetchEntry} mode="summary" />
+                      ) : null}
+                    </React.Fragment>
                   );
                 })}
               </ItemGroup>
@@ -460,7 +432,7 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
             title={t('systemStatus.actions.refreshMachineAttribution')}
             subtitle={t('systemStatus.actions.refreshMachineAttributionSubtitle')}
             icon={<Ionicons name="refresh-outline" size={24} color={theme.colors.accent.blue} />}
-            onPress={refreshMachineAttribution}
+            onPress={runRefreshMachineAttribution}
             loading={refreshingMachines}
             showChevron={false}
           />

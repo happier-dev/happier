@@ -31,6 +31,11 @@
       "import": "./dist/service/index.js",
       "default": "./dist/service/index.js"
     },
+    "./service/discovery": {
+      "types": "./dist/service/discovery/index.d.ts",
+      "import": "./dist/service/discovery/index.js",
+      "default": "./dist/service/discovery/index.js"
+    },
     "./providers": {
       "types": "./dist/providers/index.d.ts",
       "import": "./dist/providers/index.js",
@@ -65,6 +70,11 @@
       "types": "./dist/firstPartyRuntime/index.d.ts",
       "import": "./dist/firstPartyRuntime/index.js",
       "default": "./dist/firstPartyRuntime/index.js"
+    },
+    "./happierRuntime": {
+      "types": "./dist/happierRuntime/index.d.ts",
+      "import": "./dist/happierRuntime/index.js",
+      "default": "./dist/happierRuntime/index.js"
     },
     "./relayHost": {
       "types": "./dist/relayHost/index.d.ts",

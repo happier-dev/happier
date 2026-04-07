@@ -62,6 +62,7 @@ function main() {
       'publish-cli': { type: 'string', default: 'false' },
       'publish-stack': { type: 'string', default: 'false' },
       'publish-server': { type: 'string', default: 'false' },
+      'publish-support': { type: 'string', default: 'false' },
       'server-runner-dir': { type: 'string', default: 'packages/relay-server' },
       write: { type: 'string', default: 'true' },
     },
@@ -72,6 +73,7 @@ function main() {
   const publishCli = parseBoolString(values['publish-cli'], '--publish-cli');
   const publishStack = parseBoolString(values['publish-stack'], '--publish-stack');
   const publishServer = parseBoolString(values['publish-server'], '--publish-server');
+  const publishSupport = parseBoolString(values['publish-support'], '--publish-support');
   const serverRunnerDir = String(values['server-runner-dir'] ?? '').trim() || 'packages/relay-server';
   const shouldWrite = parseBoolString(values.write, '--write');
 
@@ -109,6 +111,14 @@ function main() {
     versions.server = `${base}-preview.${run}.${attempt}`;
     if (shouldWrite) {
       writePackageVersion(repoRoot, path.join(serverRunnerDir, 'package.json'), versions.server);
+    }
+  }
+
+  if (publishSupport) {
+    const base = normalizeBase(readPackageVersion(repoRoot, path.join('packages', 'support', 'package.json')));
+    versions.support = `${base}-preview.${run}.${attempt}`;
+    if (shouldWrite) {
+      writePackageVersion(repoRoot, path.join('packages', 'support', 'package.json'), versions.support);
     }
   }
 

@@ -3,6 +3,25 @@ import { z } from 'zod';
 import { sanitizeBugReportUrl } from '../bugReports/sanitize.js';
 
 const NonEmptyString = z.string().trim().min(1);
+const PublicReleaseChannelLabelSchema = z.enum(['stable', 'preview', 'dev']);
+const HappierInstallationSourceSchema = z.enum([
+  'firstPartyManaged',
+  'stackManaged',
+  'fromSource',
+  'npmGlobal',
+  'pathBinary',
+  'unknown',
+]);
+const HappierServicePlatformSchema = z.enum(['darwin', 'linux', 'win32']);
+const HappierServiceBackendSchema = z.enum([
+  'launchd',
+  'systemd-user',
+  'systemd-system',
+  'schtasks-user',
+  'schtasks-system',
+]);
+const HappierServiceVerificationSchema = z.enum(['verified', 'candidate']);
+const HappierWarningSeveritySchema = z.enum(['info', 'warning', 'error']);
 
 function sanitizeUrl(raw: string): string {
   const sanitized = sanitizeBugReportUrl(raw) ?? raw;
@@ -35,6 +54,8 @@ export const DoctorSnapshotDaemonStatusSchema = z.object({
     running: z.boolean(),
     pid: z.number().int().positive().nullable(),
     httpPort: z.number().int().positive().nullable(),
+    startedWithCliVersion: NonEmptyString.optional(),
+    startedWithPublicReleaseChannel: PublicReleaseChannelLabelSchema.nullable().optional(),
   }),
   service: z.object({
     installed: z.boolean(),
@@ -51,6 +72,60 @@ export const DoctorSnapshotDaemonStatusSchema = z.object({
 
 export type DoctorSnapshotDaemonStatus = z.infer<typeof DoctorSnapshotDaemonStatusSchema>;
 
+export const HappierDoctorActiveInvocationSchema = z.object({
+  path: NonEmptyString,
+  realPath: NonEmptyString.nullable(),
+  invokerName: NonEmptyString.nullable(),
+  ring: PublicReleaseChannelLabelSchema.nullable(),
+  version: NonEmptyString.nullable(),
+  installationId: NonEmptyString.nullable(),
+});
+
+export const HappierDoctorInstallationSchema = z.object({
+  id: NonEmptyString,
+  source: HappierInstallationSourceSchema,
+  components: z.array(NonEmptyString).min(1),
+  ring: PublicReleaseChannelLabelSchema.nullable(),
+  version: NonEmptyString.nullable(),
+  path: NonEmptyString,
+  realPath: NonEmptyString.nullable(),
+  shimName: NonEmptyString.nullable(),
+  onPath: z.boolean(),
+  managedRoot: NonEmptyString.nullable(),
+});
+
+export const HappierDoctorInstallationInventorySchema = z.object({
+  activeInvocation: HappierDoctorActiveInvocationSchema.nullable(),
+  installations: z.array(HappierDoctorInstallationSchema),
+});
+
+export const HappierDoctorServiceSchema = z.object({
+  id: NonEmptyString,
+  serviceType: NonEmptyString,
+  platform: HappierServicePlatformSchema,
+  backend: HappierServiceBackendSchema,
+  label: NonEmptyString,
+  verification: HappierServiceVerificationSchema,
+  ring: PublicReleaseChannelLabelSchema.nullable(),
+  instanceId: NonEmptyString.nullable(),
+  scope: z.enum(['user', 'system']),
+  definitionPath: NonEmptyString,
+  executablePath: NonEmptyString.nullable(),
+  installed: z.boolean(),
+  running: z.boolean(),
+});
+
+export const HappierDoctorServiceInventorySchema = z.object({
+  services: z.array(HappierDoctorServiceSchema),
+});
+
+export const HappierDoctorWarningSchema = z.object({
+  code: NonEmptyString,
+  severity: HappierWarningSeveritySchema,
+  message: NonEmptyString,
+  repairCommands: z.array(NonEmptyString),
+});
+
 export const DoctorSnapshotSchema = z.object({
   capturedAt: NonEmptyString,
   server: z.object({
@@ -66,6 +141,13 @@ export const DoctorSnapshotSchema = z.object({
     knownAccountIds: z.array(NonEmptyString),
   }),
   daemonStatus: DoctorSnapshotDaemonStatusSchema.optional(),
+  installations: z.object({
+    happier: HappierDoctorInstallationInventorySchema.optional(),
+  }).optional(),
+  services: z.object({
+    happier: HappierDoctorServiceInventorySchema.optional(),
+  }).optional(),
+  warnings: z.array(HappierDoctorWarningSchema).optional(),
 });
 
 export type DoctorSnapshot = z.infer<typeof DoctorSnapshotSchema>;

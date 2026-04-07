@@ -7,6 +7,8 @@ import { configuration } from '@/configuration';
 import { readDaemonState } from '@/persistence';
 import { isBun } from '@/utils/runtime';
 import { resolveJavaScriptRuntimeExecutable } from '@/runtime/js/resolveJavaScriptRuntimeExecutable';
+import { discoverHappierServices } from '@happier-dev/cli-common/happierRuntime';
+import { kv, neutral, ok, sectionTitle, warn } from '@happier-dev/cli-common/output';
 
 import { installDaemonService, uninstallDaemonService } from './installer';
 import {
@@ -27,10 +29,12 @@ import { commandExistsInPath } from './commandExistsInPath';
 import { resolveDaemonServiceRuntimeTarget } from './runtimeTarget';
 import { resolveDaemonServiceInstallRuntimeTarget } from './resolveDaemonServiceInstallRuntimeTarget';
 import { resolveLinuxSystemUserPaths } from './resolveLinuxSystemUserPaths';
+import { parseDaemonServiceUninstallFlagValue, resolveDaemonServiceUninstallSelection } from './uninstallSelection';
 import { inferPublicReleaseRingIdFromEnvAndArgv } from '@/cli/runtime/publicReleaseChannel';
 import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 export type DaemonServiceCliAction =
+  | 'list'
   | 'paths'
   | 'install'
   | 'uninstall'
@@ -58,12 +62,13 @@ function resolvePlatformFromProcess(): SupportedPlatform | null {
   return null;
 }
 
-function parseCliFlags(argv: readonly string[]): Readonly<{ json: boolean; dryRun: boolean; help: boolean }> {
+function parseCliFlags(argv: readonly string[]): Readonly<{ json: boolean; dryRun: boolean; help: boolean; deep: boolean }> {
   const flags = new Set(argv.filter((a) => a.startsWith('-')));
   return {
     json: flags.has('--json'),
     dryRun: flags.has('--dry-run') || flags.has('--plan'),
     help: flags.has('--help') || flags.has('-h'),
+    deep: flags.has('--deep'),
   };
 }
 
@@ -81,7 +86,17 @@ function resolveOptionalModeFromText(raw: string, source: string): DaemonService
 
 function parseDaemonServiceCliInvocation(argv: readonly string[]): Readonly<{
   argvFiltered: string[];
-  flags: Readonly<{ json: boolean; dryRun: boolean; help: boolean }>;
+  flags: Readonly<{
+    json: boolean;
+    dryRun: boolean;
+    help: boolean;
+    deep: boolean;
+    yes: boolean;
+    replaceExisting: 'ring' | 'all' | null;
+    all: boolean;
+    ring: PublicReleaseRingId | null;
+    instanceId: string | null;
+  }>;
   action: DaemonServiceCliAction;
   mode: DaemonServiceMode;
   systemUser: string;
@@ -89,6 +104,11 @@ function parseDaemonServiceCliInvocation(argv: readonly string[]): Readonly<{
   const filtered: string[] = [];
   let modeFromArgs: DaemonServiceMode | null = null;
   let systemUserFromArgs: string | null = null;
+  let yes = false;
+  let replaceExisting: 'ring' | 'all' | null = null;
+  let all = false;
+  let ring: PublicReleaseRingId | null = null;
+  let instanceId: string | null = null;
 
   for (let i = 0; i < argv.length; i += 1) {
     const a = String(argv[i] ?? '');
@@ -114,6 +134,67 @@ function parseDaemonServiceCliInvocation(argv: readonly string[]): Readonly<{
       modeFromArgs = 'user';
       continue;
     }
+    if (a === '--yes' || a === '-y' || a === '--allow-multiple') {
+      yes = true;
+      continue;
+    }
+    if (a === '--all') {
+      all = true;
+      continue;
+    }
+    if (a === '--ring') {
+      const next = String(argv[i + 1] ?? '').trim();
+      if (!next || next.startsWith('-')) {
+        throw new Error('Missing value for --ring (expected stable|preview|dev)');
+      }
+      ring = parseDaemonServiceUninstallFlagValue(next);
+      if (!ring) {
+        throw new Error(`Invalid --ring value "${next}" (expected stable|preview|dev)`);
+      }
+      i += 1;
+      continue;
+    }
+    if (a.startsWith('--ring=')) {
+      const value = a.slice('--ring='.length);
+      ring = parseDaemonServiceUninstallFlagValue(value);
+      if (!ring) {
+        throw new Error(`Invalid --ring value "${value}" (expected stable|preview|dev)`);
+      }
+      continue;
+    }
+    if (a === '--instance') {
+      const next = String(argv[i + 1] ?? '').trim();
+      if (!next || next.startsWith('-')) {
+        throw new Error('Missing value for --instance');
+      }
+      instanceId = next;
+      i += 1;
+      continue;
+    }
+    if (a.startsWith('--instance=')) {
+      instanceId = a.slice('--instance='.length).trim() || null;
+      continue;
+    }
+    if (a === '--replace-existing') {
+      const next = String(argv[i + 1] ?? '').trim().toLowerCase();
+      if (!next || next.startsWith('-')) {
+        throw new Error('Missing value for --replace-existing (expected ring|all)');
+      }
+      if (next !== 'ring' && next !== 'all') {
+        throw new Error(`Invalid --replace-existing value "${next}" (expected ring|all)`);
+      }
+      replaceExisting = next;
+      i += 1;
+      continue;
+    }
+    if (a.startsWith('--replace-existing=')) {
+      const value = a.slice('--replace-existing='.length).trim().toLowerCase();
+      if (value !== 'ring' && value !== 'all') {
+        throw new Error(`Invalid --replace-existing value "${value}" (expected ring|all)`);
+      }
+      replaceExisting = value;
+      continue;
+    }
 
     if (a === '--system-user') {
       const next = String(argv[i + 1] ?? '');
@@ -133,11 +214,14 @@ function parseDaemonServiceCliInvocation(argv: readonly string[]): Readonly<{
   }
 
   const flags = parseCliFlags(filtered);
+  if (replaceExisting && !yes) {
+    throw new Error('--replace-existing requires --yes');
+  }
   const action = resolveAction(filtered);
   const mode = modeFromArgs ?? resolveOptionalModeFromText(process.env.HAPPIER_DAEMON_SERVICE_MODE ?? '', 'HAPPIER_DAEMON_SERVICE_MODE') ?? 'user';
   const systemUser = systemUserFromArgs ?? String(process.env.HAPPIER_DAEMON_SERVICE_SYSTEM_USER ?? '').trim();
 
-  return { argvFiltered: filtered, flags, action, mode, systemUser };
+  return { argvFiltered: filtered, flags: { ...flags, yes, replaceExisting, all, ring, instanceId }, action, mode, systemUser };
 }
 
 function resolveAction(argv: readonly string[]): DaemonServiceCliAction {
@@ -345,28 +429,63 @@ export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readon
 
   if (flags.help) {
     if (flags.json) {
-      printJson({
-        ok: true,
-        commands: ['paths', 'install', 'uninstall', 'start', 'stop', 'restart', 'status', 'logs', 'tail'],
-        flags: ['--json', '--dry-run'],
-      });
-      return;
+        printJson({
+          ok: true,
+          commands: ['list', 'paths', 'install', 'uninstall', 'start', 'stop', 'restart', 'status', 'logs', 'tail'],
+          flags: ['--json', '--deep', '--dry-run', '--yes', '--replace-existing=ring|all', '--ring', '--instance', '--all'],
+        });
+        return;
     }
     process.stdout.write(
       [
         'happier daemon service',
         '',
         'Usage:',
+        '  happier daemon service list [--deep] [--json]',
         '  happier daemon service paths [--json]',
         '  happier daemon service status [--json]',
-        '  happier daemon service install [--dry-run] [--json]',
-        '  happier daemon service uninstall [--dry-run] [--json]',
+        '  happier daemon service install [--mode user|system] [--dry-run] [--yes] [--replace-existing=ring|all] [--json]',
+        '  happier daemon service uninstall [--mode user|system] [--ring <stable|preview|dev>] [--instance <id>] [--all] [--yes] [--dry-run] [--json]',
         '  happier daemon service start|stop|restart [--dry-run] [--json]',
         '  happier daemon service logs [--json]',
         '  happier daemon service tail',
         '',
       ].join('\n'),
     );
+    return;
+  }
+
+  if (action === 'list') {
+    const inventory = await discoverHappierServices({
+      processEnv: process.env,
+      platform: runtime.platform,
+      deep: flags.deep,
+    });
+    const services = inventory.services;
+
+    if (flags.json) {
+      printJson({ ok: true, platform: runtime.platform, services });
+      return;
+    }
+
+    if (services.length === 0) {
+      process.stdout.write(`${neutral('(no Happier services discovered)')}\n`);
+      return;
+    }
+
+    process.stdout.write(`${sectionTitle('Happier services')}\n`);
+    for (const service of services) {
+      const statusText = service.running ? ok(service.label) : warn(service.label);
+      process.stdout.write(`${statusText}\n`);
+      process.stdout.write(`  ${kv('Installed:', service.installed ? 'yes' : 'no')}\n`);
+      process.stdout.write(`  ${kv('Running:', service.running ? 'yes' : 'no')}\n`);
+      process.stdout.write(`  ${kv('Type:', service.serviceType)}\n`);
+      process.stdout.write(`  ${kv('Backend:', service.backend)}\n`);
+      process.stdout.write(`  ${kv('Definition:', service.definitionPath)}\n`);
+      if (service.ring) process.stdout.write(`  ${kv('Ring:', service.ring)}\n`);
+      if (service.instanceId) process.stdout.write(`  ${kv('Instance:', service.instanceId)}\n`);
+      if (service.executablePath) process.stdout.write(`  ${kv('Executable:', service.executablePath)}\n`);
+    }
     return;
   }
 
@@ -442,22 +561,44 @@ export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readon
       return;
     }
 
-    await installDaemonService({
-      platform: installRuntime.platform,
-      uid: installRuntime.uid ?? undefined,
-      userHomeDir: installRuntime.userHomeDir,
-      happierHomeDir: installRuntime.happierHomeDir,
-      mode,
-      systemUser,
-      channel: installRuntime.channel,
-      instanceId: installRuntime.instanceId,
-      serverUrl: installRuntime.serverUrl,
-      webappUrl: installRuntime.webappUrl,
-      publicServerUrl: installRuntime.publicServerUrl,
-      nodePath: installRuntime.nodePath,
-      entryPath: installRuntime.entryPath,
-      runCommands: true,
-    });
+    const strategy =
+      flags.replaceExisting === 'ring' ? 'replace-ring'
+      : flags.replaceExisting === 'all' ? 'replace-all'
+      : flags.yes ? 'add'
+      : undefined;
+
+    try {
+      await installDaemonService({
+        platform: installRuntime.platform,
+        uid: installRuntime.uid ?? undefined,
+        userHomeDir: installRuntime.userHomeDir,
+        happierHomeDir: installRuntime.happierHomeDir,
+        mode,
+        systemUser,
+        channel: installRuntime.channel,
+        instanceId: installRuntime.instanceId,
+        serverUrl: installRuntime.serverUrl,
+        webappUrl: installRuntime.webappUrl,
+        publicServerUrl: installRuntime.publicServerUrl,
+        nodePath: installRuntime.nodePath,
+        entryPath: installRuntime.entryPath,
+        strategy,
+        runCommands: true,
+      });
+    } catch (error) {
+      const conflict = error as Error & { code?: string; conflicts?: Array<{ label?: string }> };
+      if (flags.json && conflict.code === 'daemon_service_conflict') {
+        printJson({
+          ok: false,
+          error: conflict.code,
+          message: conflict.message,
+          conflicts: conflict.conflicts ?? [],
+          platform: installRuntime.platform,
+        });
+        return;
+      }
+      throw error;
+    }
 
     if (flags.json) {
       printJson({ ok: true, platform: installRuntime.platform });
@@ -474,39 +615,107 @@ export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readon
       }
     }
 
-    const plan = planDaemonServiceUninstall({
-      platform: runtime.platform,
-      mode,
-      channel: runtime.channel,
-      instanceId: runtime.instanceId,
+    const hasExplicitSelection = flags.all || Boolean(flags.ring) || Boolean(flags.instanceId);
+    const inventory = hasExplicitSelection
+      ? await discoverHappierServices({ processEnv: process.env, platform: runtime.platform })
+      : null;
+    const selectedServices = inventory
+      ? resolveDaemonServiceUninstallSelection({
+          services: inventory.services,
+          platform: runtime.platform,
+          mode,
+          defaultRing: runtime.channel,
+          defaultInstanceId: runtime.instanceId,
+          filters: {
+            ring: flags.ring,
+            instanceId: flags.instanceId,
+            all: flags.all,
+          },
+        })
+      : [];
+    const uninstallTargets = selectedServices.length > 0
+      ? selectedServices.map((service) => ({
+          platform: service.platform,
+          mode: service.scope === 'system' ? 'system' as const : 'user' as const,
+          channel: service.ring ? normalizePublicReleaseRingId(service.ring) || runtime.channel : runtime.channel,
+          instanceId: service.instanceId ?? runtime.instanceId,
+        }))
+      : [{
+          platform: runtime.platform,
+          mode,
+          channel: runtime.channel,
+          instanceId: runtime.instanceId,
+        }];
+    if (hasExplicitSelection && selectedServices.length === 0) {
+      const message = 'No verified daemon services matched the requested uninstall target.';
+      if (flags.json) {
+        printJson({ ok: false, error: 'service_not_found', message, platform: runtime.platform });
+        return;
+      }
+      throw new Error(message);
+    }
+    const plans = uninstallTargets.map((target) => planDaemonServiceUninstall({
+      platform: target.platform,
+      mode: target.mode,
+      channel: target.channel,
+      instanceId: target.instanceId,
       uid: runtime.uid ?? undefined,
       userHomeDir: runtime.userHomeDir,
       happierHomeDir: runtime.happierHomeDir,
-    });
+    }));
+    const previewOnly = flags.dryRun || ((selectedServices.length > 1 || flags.all) && !flags.yes);
 
-    if (flags.dryRun) {
+    if (previewOnly) {
       if (flags.json) {
-        printJson({ ok: true, platform: runtime.platform, plan });
+        printJson({
+          ok: true,
+          platform: runtime.platform,
+          executed: false,
+          ...(plans.length === 1 ? { plan: plans[0] } : { plans }),
+          selectedServices: selectedServices.map((service) => ({
+            id: service.id,
+            label: service.label,
+            ring: service.ring,
+            instanceId: service.instanceId,
+          })),
+        });
         return;
       }
-      process.stdout.write(`[dry-run] would remove: ${plan.filesToRemove.join(', ')}\n`);
-      for (const c of plan.commands) process.stdout.write(`[dry-run] would run: ${c.cmd} ${c.args.join(' ')}\n`);
+      for (const plan of plans) {
+        process.stdout.write(`[dry-run] would remove: ${plan.filesToRemove.join(', ')}\n`);
+        for (const c of plan.commands) process.stdout.write(`[dry-run] would run: ${c.cmd} ${c.args.join(' ')}\n`);
+      }
+      if ((selectedServices.length > 1 || flags.all) && !flags.yes && !flags.dryRun) {
+        process.stdout.write('Re-run with --yes to apply multi-service removal.\n');
+      }
       return;
     }
 
-    await uninstallDaemonService({
-      platform: runtime.platform,
-      uid: runtime.uid ?? undefined,
-      userHomeDir: runtime.userHomeDir,
-      happierHomeDir: runtime.happierHomeDir,
-      mode,
-      channel: runtime.channel,
-      instanceId: runtime.instanceId,
-      runCommands: true,
-    });
+    for (const target of uninstallTargets) {
+      await uninstallDaemonService({
+        platform: target.platform,
+        uid: runtime.uid ?? undefined,
+        userHomeDir: runtime.userHomeDir,
+        happierHomeDir: runtime.happierHomeDir,
+        mode: target.mode,
+        channel: target.channel,
+        instanceId: target.instanceId,
+        runCommands: true,
+      });
+    }
 
     if (flags.json) {
-      printJson({ ok: true, platform: runtime.platform });
+      printJson({
+        ok: true,
+        platform: runtime.platform,
+        executed: true,
+        selectedServices: selectedServices.map((service) => ({
+          id: service.id,
+          label: service.label,
+          ring: service.ring,
+          instanceId: service.instanceId,
+        })),
+      });
       return;
     }
     process.stdout.write('Daemon service uninstalled.\n');

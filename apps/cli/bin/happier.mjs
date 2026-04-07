@@ -7,6 +7,19 @@ import { createRequire } from 'module';
 
 import { prepareRuntimeEntrypoint } from './_prepareRuntimeEntrypoint.mjs';
 
+function buildRuntimeInvocationEnv() {
+  const invokedPath = String(process.argv[1] ?? '').trim();
+  const invokerName = invokedPath
+    ? invokedPath.split(/[\\/]/).pop()?.replace(/\.m?js$/i, '').replace(/\.exe$/i, '').trim() ?? ''
+    : '';
+
+  return {
+    ...process.env,
+    ...(invokedPath ? { HAPPIER_CLI_INVOKED_PATH: invokedPath } : {}),
+    ...(invokerName ? { HAPPIER_CLI_INVOKER_NAME: invokerName } : {}),
+  };
+}
+
 function preflightRequiredDependencies(projectRoot) {
   const cliRequire = createRequire(import.meta.url);
   let protocolEntryPath;
@@ -71,7 +84,7 @@ if (!hasNoWarnings || !hasNoDeprecation) {
       ...process.argv.slice(2)
     ], {
       stdio: 'inherit',
-      env: process.env
+      env: buildRuntimeInvocationEnv(),
     });
   } catch (error) {
     // execFileSync throws if the process exits with non-zero
@@ -83,5 +96,6 @@ if (!hasNoWarnings || !hasNoDeprecation) {
   const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
   const entrypoint = await prepareRuntimeEntrypoint(projectRoot, 'index.mjs');
   preflightRequiredDependencies(projectRoot);
+  Object.assign(process.env, buildRuntimeInvocationEnv());
   import(entrypoint);
 }

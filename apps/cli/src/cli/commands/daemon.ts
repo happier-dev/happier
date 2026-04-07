@@ -11,14 +11,12 @@ import { runDoctorCommand } from '@/ui/doctor';
 import { listDaemonStatusesForAllKnownServers, stopAllDaemonsBestEffort } from '@/daemon/multiDaemon';
 import { spawnDetachedDaemonStartSync } from '@/daemon/runtime/spawnDetachedDaemonStartSync';
 import { readCredentials, readSettings } from '@/persistence';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { resolveLaunchAgentPlistPath, resolveSystemdUserUnitPath } from '@/daemon/service/plan';
 import { configuration } from '@/configuration';
 import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
 import { waitForDaemonRunningWithinBudget } from '@/daemon/waitForDaemonRunningWithinBudget';
 import { readDaemonStatusSnapshot } from '@/daemon/statusSnapshot';
+import { restartDaemonAndWait } from '@/daemon/restartDaemonAndWait';
 
 import type { CommandContext } from '@/cli/commandRegistry';
 import { cmd, errorFrame, kv, neutral, ok, sectionTitle, warn } from '@happier-dev/cli-common/output';
@@ -28,64 +26,6 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
   const daemonSubcommand = args[1];
 
   if (daemonSubcommand === 'service') {
-    const serviceAction = args[2];
-    if (serviceAction === 'list') {
-      const json = args.includes('--json');
-      const userHomeDir = (process.env.HAPPIER_DAEMON_SERVICE_USER_HOME_DIR ?? '').trim() || homedir();
-      const happierHomeDir = (process.env.HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR ?? '').trim() || configuration.happyHomeDir;
-      const settings = await readSettings();
-      const servers = settings.servers ?? {};
-      const entries = Object.values(servers);
-      if (entries.length === 0) {
-        if (json) {
-          process.stdout.write(`${JSON.stringify({ entries: [] })}\n`);
-          return;
-        }
-        console.log(neutral('(no server profiles configured)'));
-        return;
-      }
-
-      const normalizedEntries = entries
-        .sort((a, b) => (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0))
-        .map((profile) => {
-          const instanceId = String(profile.id ?? '').trim();
-          const env = {
-            ...process.env,
-            HAPPIER_DAEMON_SERVICE_INSTANCE_ID: instanceId,
-            HAPPIER_DAEMON_SERVICE_SERVER_URL: String(profile.serverUrl ?? '').trim(),
-            HAPPIER_DAEMON_SERVICE_WEBAPP_URL: String(profile.webappUrl ?? '').trim(),
-            HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: userHomeDir,
-            HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: happierHomeDir,
-          };
-          const service = resolveDaemonServiceInstallationSnapshotFromEnv({ processEnv: env });
-          return {
-            serverId: instanceId,
-            name: String(profile.name ?? instanceId).trim() || instanceId,
-            installed: service.installed,
-            path: service.installedPath,
-            platform: service.platform,
-          };
-        })
-        .filter((entry) => entry.installed);
-
-      if (json) {
-        process.stdout.write(`${JSON.stringify({ entries: normalizedEntries })}\n`);
-        return;
-      }
-
-      if (normalizedEntries.length === 0) {
-        console.log(neutral('(no daemon services installed)'));
-        return;
-      }
-
-      for (const entry of normalizedEntries) {
-        console.log(ok(`${entry.name} (${entry.serverId})`));
-        console.log(`  ${kv('Installed:', entry.path)}`);
-        if (entry.platform) console.log(`  ${kv('Platform:', entry.platform)}`);
-      }
-      return;
-    }
-
     await runDaemonServiceCliCommand({ argv: args.slice(2) });
     return;
   }
@@ -179,22 +119,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     }
 
     const stopSessions = args.includes('--kill-sessions');
-    try {
-      await stopDaemon({ stopSessions });
-    } catch {
-      // best-effort; restart should still attempt to start even if the daemon wasn't running
-    }
-
-    const child = await spawnDetachedDaemonStartSync();
-    child.unref();
-
-    const timeoutMs = readPositiveIntEnv('HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS', 5000);
-    const pollMs = readPositiveIntEnv('HAPPIER_DAEMON_START_WAIT_POLL_MS', 100);
-    const started = await waitForDaemonRunningWithinBudget({
-      isRunning: () => checkIfDaemonRunningAndCleanupStaleState(),
-      timeoutMs,
-      pollMs,
-    });
+    const started = await restartDaemonAndWait({ stopSessions });
 
     if (started) {
       console.log(ok('Daemon restarted successfully'));
@@ -342,7 +267,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     `  ${cmd('happier daemon install')}               Install daemon as a user service (macOS/Linux)`,
     `  ${cmd('happier daemon uninstall')}             Uninstall daemon user service (macOS/Linux)`,
     `  ${cmd('happier daemon service')}               Manage daemon as a user service`,
-    `  ${cmd('happier daemon service list')}          List installed daemon services by server profile`,
+    `  ${cmd('happier daemon service list')}          List detected Happier service definitions`,
     '',
     '  Prefix with --server/--server-url to target a specific server profile for this invocation.',
     `  Example: ${cmd('happier --server company daemon service install')}`,

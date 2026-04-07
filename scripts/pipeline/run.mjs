@@ -1196,6 +1196,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         'publish-cli': { type: 'string', default: 'false' },
         'publish-stack': { type: 'string', default: 'false' },
         'publish-server': { type: 'string', default: 'false' },
+        'publish-support': { type: 'string', default: 'false' },
         'server-runner-dir': { type: 'string', default: 'packages/relay-server' },
         write: { type: 'string', default: 'true' },
       },
@@ -1206,6 +1207,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     const publishCli = String(values['publish-cli'] ?? '').trim() || 'false';
     const publishStack = String(values['publish-stack'] ?? '').trim() || 'false';
     const publishServer = String(values['publish-server'] ?? '').trim() || 'false';
+    const publishSupport = String(values['publish-support'] ?? '').trim() || 'false';
     const serverRunnerDir = String(values['server-runner-dir'] ?? '').trim() || 'packages/relay-server';
     const write = String(values.write ?? '').trim() || 'true';
 
@@ -1221,6 +1223,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         publishStack,
         '--publish-server',
         publishServer,
+        '--publish-support',
+        publishSupport,
         '--server-runner-dir',
         serverRunnerDir,
         '--write',
@@ -1313,6 +1317,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           'publish-cli': { type: 'string', default: 'false' },
           'publish-stack': { type: 'string', default: 'false' },
           'publish-server': { type: 'string', default: 'false' },
+          'publish-support': { type: 'string', default: 'false' },
           'server-runner-dir': { type: 'string', default: 'packages/relay-server' },
           'run-tests': { type: 'string', default: 'auto' },
           mode: { type: 'string', default: 'pack+publish' },
@@ -1359,6 +1364,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     const publishCli = String(values['publish-cli'] ?? '').trim();
     const publishStack = String(values['publish-stack'] ?? '').trim();
     const publishServer = String(values['publish-server'] ?? '').trim();
+    const publishSupport = String(values['publish-support'] ?? '').trim();
       const runnerDir = String(values['server-runner-dir'] ?? '').trim();
       const runTests = String(values['run-tests'] ?? '').trim();
       const mode = String(values.mode ?? '').trim();
@@ -1378,6 +1384,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         ...(publishCli ? ['--publish-cli', publishCli] : []),
         ...(publishStack ? ['--publish-stack', publishStack] : []),
         ...(publishServer ? ['--publish-server', publishServer] : []),
+        ...(publishSupport ? ['--publish-support', publishSupport] : []),
         ...(runnerDir ? ['--server-runner-dir', runnerDir] : []),
         ...(runTests ? ['--run-tests', runTests] : []),
         ...(mode ? ['--mode', mode] : []),

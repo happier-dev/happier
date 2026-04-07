@@ -31,6 +31,11 @@ import { resolveAbsolutePath } from '@/utils/path/pathUtils';
 import { MultiTextInput, type MultiTextInputHandle } from '@/components/ui/forms/MultiTextInput';
 import { DetectedClisList } from '@/components/machines/DetectedClisList';
 import { MachineTransferExposureSection } from '@/components/machines/MachineTransferExposureSection';
+import { MachineDoctorRuntimeInventorySection } from '@/components/machines/doctorSnapshot/MachineDoctorRuntimeInventorySection';
+import {
+    buildMachineDoctorSnapshotTargetKey,
+    useMachineDoctorSnapshotCollection,
+} from '@/components/machines/doctorSnapshot/useMachineDoctorSnapshotCollection';
 import { useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { resolveTerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
@@ -252,6 +257,30 @@ export default function MachineDetailScreen() {
 
     const tmuxOverride = machineId ? terminalTmuxByMachineId?.[machineId] : undefined;
     const tmuxOverrideEnabled = Boolean(tmuxOverride);
+    const machineDoctorSnapshotServerId = requestedServerId || activeServerId;
+    const machineDoctorSnapshotSwitchReady = Boolean(
+        machineId
+        && !isServerSwitching
+        && (!requestedServerId || requestedServerId === activeServerId),
+    );
+    const canPrefetchMachineDoctorSnapshot = machineDoctorSnapshotSwitchReady;
+    const machineDoctorSnapshotTargets = useMemo(() => {
+        if (!machineDoctorSnapshotSwitchReady || !machineId || !machineDoctorSnapshotServerId) return [];
+        return [{ machineId, serverId: machineDoctorSnapshotServerId }];
+    }, [machineDoctorSnapshotServerId, machineDoctorSnapshotSwitchReady, machineId]);
+    const machineDoctorSnapshotPrefetchTargets = useMemo(() => {
+        if (!machineDoctorSnapshotSwitchReady || !machineId || !isOnline || !machineDoctorSnapshotServerId) return [];
+        return [{ machineId, serverId: machineDoctorSnapshotServerId }];
+    }, [isOnline, machineDoctorSnapshotServerId, machineDoctorSnapshotSwitchReady, machineId]);
+
+    const {
+        fetchMachineDoctorSnapshots,
+        readMachineDoctorSnapshotState,
+    } = useMachineDoctorSnapshotCollection({
+        machineDoctorSnapshotTargets,
+        prefetchMachineDoctorSnapshotTargets: machineDoctorSnapshotPrefetchTargets,
+        enabled: canPrefetchMachineDoctorSnapshot,
+    });
 
     const tmuxAvailable = React.useMemo(() => {
         const snapshot =
@@ -443,6 +472,9 @@ export default function MachineDetailScreen() {
         try {
             await sync.refreshMachines();
             refreshDetectedCapabilities({ bypassCache: true });
+            if (canPrefetchMachineDoctorSnapshot && machineDoctorSnapshotPrefetchTargets.length > 0) {
+                await fetchMachineDoctorSnapshots(machineDoctorSnapshotPrefetchTargets);
+            }
             if (machineId && isOnline && !isServerSwitching) {
                 setExecutionRunsState((prev) => ({ status: 'loading', runs: prev.runs }));
                 const res = await machineExecutionRunsList(machineId, { serverId: activeServerId });
@@ -1123,6 +1155,18 @@ export default function MachineDetailScreen() {
                             subtitle={String(machine.daemonStateVersion)}
                         />
                 </ItemGroup>
+
+                {!!machineId && machineDoctorSnapshotSwitchReady && (
+                    <MachineDoctorRuntimeInventorySection
+                        snapshotState={machineId
+                            ? readMachineDoctorSnapshotState({
+                                machineId,
+                                serverId: machineDoctorSnapshotServerId,
+                            })
+                            : null}
+                        mode="details"
+                    />
+                )}
 
                 <MachineTransferExposureSection daemonState={machine.daemonState ?? null} />
 

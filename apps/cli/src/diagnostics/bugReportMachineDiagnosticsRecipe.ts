@@ -1,6 +1,6 @@
 import { collectBugReportMachineDiagnosticsSnapshot } from '@/diagnostics/bugReportMachineDiagnostics';
 
-import type { BugReportMachineDiagnosticsSnapshot } from '@/diagnostics/bugReportMachineDiagnostics';
+import type { BugReportMachineDiagnosticsSnapshot } from '@happier-dev/protocol';
 
 export const BUG_REPORT_MACHINE_DIAGNOSTICS_RECIPE = {
   daemonLogLimit: 5,
@@ -11,4 +11,3 @@ export const BUG_REPORT_MACHINE_DIAGNOSTICS_RECIPE = {
 export async function collectBugReportMachineDiagnosticsSnapshotForBugReport(): Promise<BugReportMachineDiagnosticsSnapshot> {
   return await collectBugReportMachineDiagnosticsSnapshot(BUG_REPORT_MACHINE_DIAGNOSTICS_RECIPE);
 }
-

@@ -19,12 +19,12 @@ export type BugReportMachineStackContextLike = {
   stackName?: string | null;
   stackEnvPath?: string | null;
   runtimeStatePath?: string | null;
-  logCandidates?: string[];
+  logCandidates?: readonly string[];
 };
 
 export type BugReportMachineDiagnosticsLike = {
   daemonState: BugReportMachineDaemonStateLike | null;
-  daemonLogs: BugReportMachineDaemonLogLike[];
+  daemonLogs: readonly BugReportMachineDaemonLogLike[];
   runtime: BugReportMachineRuntimeLike;
   stackContext?: BugReportMachineStackContextLike | null;
 };

@@ -54,6 +54,8 @@ export type { FirstPartyPruneRetainedVersionsResult } from './pruneRetainedVersi
 
 export { rollbackVersionedPayload } from './rollbackVersionedPayload.js';
 export type { FirstPartyRollbackResult } from './rollbackVersionedPayload.js';
+export { uninstallManagedFirstPartyComponent } from './uninstallManagedFirstPartyComponent.js';
+export type { UninstallManagedFirstPartyComponentResult } from './uninstallManagedFirstPartyComponent.js';
 
 export { syncInstalledFirstPartyShims } from './syncInstalledFirstPartyShims.js';
 export type { SyncInstalledFirstPartyShimsResult } from './syncInstalledFirstPartyShims.js';

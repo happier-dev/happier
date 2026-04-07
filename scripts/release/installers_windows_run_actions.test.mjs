@@ -18,6 +18,9 @@ test('install.ps1 supports a whitelisted post-install -Run action', async () => 
   assert.match(trimmed, /\$SetupRelay\b/i);
   assert.match(trimmed, /HAPPIER_INSTALLER_RUN_ACTION/i);
   assert.match(trimmed, /HAPPIER_INSTALLER_SETUP_RELAY/i);
+  assert.match(trimmed, /HAPPIER_DAEMON_SERVICE_CHANNEL/i);
+  assert.match(trimmed, /HAPPIER_PUBLIC_RELEASE_CHANNEL/i);
+  assert.match(trimmed, /HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY/i);
   assert.match(trimmed, /auth-login/i);
   assert.match(trimmed, /daemon-install/i);
   assert.match(trimmed, /providers-setup/i);

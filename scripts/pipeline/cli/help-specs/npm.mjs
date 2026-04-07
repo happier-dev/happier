@@ -13,14 +13,15 @@
 /** @type {Record<string, CommandHelpSpec>} */
 export const COMMAND_HELP_NPM = {
   'npm-release': {
-    summary: 'Pack and publish npm packages (CLI / stack / relay-server).',
+    summary: 'Pack and publish npm packages (CLI / stack / relay-server / support).',
     usage:
-      'node scripts/pipeline/run.mjs npm-release --channel <preview|production> --publish-cli <true|false> --publish-stack <true|false> --publish-server <true|false> [--mode pack|pack+publish]',
+      'node scripts/pipeline/run.mjs npm-release --channel <preview|production> --publish-cli <true|false> --publish-stack <true|false> --publish-server <true|false> --publish-support <true|false> [--mode pack|pack+publish]',
     options: [
       '--channel <preview|production>    Required.',
       '--publish-cli <bool>              Publish apps/cli (default: false).',
       '--publish-stack <bool>            Publish apps/stack (default: false).',
       '--publish-server <bool>           Publish packages/relay-server (default: false).',
+      '--publish-support <bool>          Publish packages/support (default: false).',
       '--server-runner-dir <dir>         (default: packages/relay-server).',
       '--run-tests <auto|true|false>     (default: auto).',
       '--mode <pack|pack+publish>        (default: pack+publish).',
@@ -37,6 +38,7 @@ export const COMMAND_HELP_NPM = {
     examples: [
       'node scripts/pipeline/run.mjs npm-release --channel preview --publish-cli true --publish-stack true --mode pack+publish',
       'node scripts/pipeline/run.mjs npm-release --channel preview --publish-server true --mode pack+publish',
+      'node scripts/pipeline/run.mjs npm-release --channel preview --publish-support true --mode pack+publish',
     ],
   },
 
@@ -62,17 +64,17 @@ export const COMMAND_HELP_NPM = {
   'npm-set-preview-versions': {
     summary: 'Compute (and optionally write) preview versions into package.json files.',
     usage:
-      'node scripts/pipeline/run.mjs npm-set-preview-versions --publish-cli <true|false> --publish-stack <true|false> --publish-server <true|false> [--write true|false]',
+      'node scripts/pipeline/run.mjs npm-set-preview-versions --publish-cli <true|false> --publish-stack <true|false> --publish-server <true|false> --publish-support <true|false> [--write true|false]',
     options: [
       '--repo-root <path>               Optional override.',
       '--publish-cli <bool>             (default: false).',
       '--publish-stack <bool>           (default: false).',
       '--publish-server <bool>          (default: false).',
+      '--publish-support <bool>         (default: false).',
       '--server-runner-dir <dir>        (default: packages/relay-server).',
       '--write <bool>                   true|false (default: true).',
     ],
     bullets: ['Mainly used internally by npm-release / release; most operators should use npm-release.'],
-    examples: ['node scripts/pipeline/run.mjs npm-set-preview-versions --publish-cli true --publish-stack true --write false'],
+    examples: ['node scripts/pipeline/run.mjs npm-set-preview-versions --publish-cli true --publish-stack true --publish-support true --write false'],
   },
 };
-

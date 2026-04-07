@@ -7,6 +7,19 @@ import { homedir } from 'os';
 
 import { prepareRuntimeEntrypoint } from './_prepareRuntimeEntrypoint.mjs';
 
+function buildRuntimeInvocationEnv() {
+  const invokedPath = String(process.argv[1] ?? '').trim();
+  const invokerName = invokedPath
+    ? invokedPath.split(/[\\/]/).pop()?.replace(/\.m?js$/i, '').replace(/\.exe$/i, '').trim() ?? ''
+    : '';
+
+  return {
+    ...process.env,
+    ...(invokedPath ? { HAPPIER_CLI_INVOKED_PATH: invokedPath } : {}),
+    ...(invokerName ? { HAPPIER_CLI_INVOKER_NAME: invokerName } : {}),
+  };
+}
+
 // Check if we're already running with the flags
 const hasNoWarnings = process.execArgv.includes('--no-warnings');
 const hasNoDeprecation = process.execArgv.includes('--no-deprecation');
@@ -27,7 +40,7 @@ if (!hasNoWarnings || !hasNoDeprecation) {
       ['--no-warnings', '--no-deprecation', scriptPath, ...process.argv.slice(2)],
       {
         stdio: 'inherit',
-        env: process.env
+        env: buildRuntimeInvocationEnv(),
       }
     );
   } catch (error) {
@@ -37,5 +50,6 @@ if (!hasNoWarnings || !hasNoDeprecation) {
 } else {
   // Already have the flags, import normally
   const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+  Object.assign(process.env, buildRuntimeInvocationEnv());
   await import(await prepareRuntimeEntrypoint(projectRoot, 'index.mjs'));
 }

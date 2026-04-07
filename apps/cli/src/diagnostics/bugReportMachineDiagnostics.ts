@@ -4,33 +4,8 @@ import { dirname, join, sep } from 'node:path';
 
 import { readDaemonState } from '@/persistence';
 import { listDaemonLogFiles } from '@/ui/logger';
-import { redactBugReportSensitiveText } from '@happier-dev/protocol';
+import { redactBugReportSensitiveText, type BugReportMachineDiagnosticsSnapshot } from '@happier-dev/protocol';
 import { buildDoctorSnapshot, type DoctorSnapshot } from '@/ui/doctorSnapshot';
-
-export type BugReportMachineDiagnosticsSnapshot = {
-  daemonState: {
-    pid: number;
-    httpPort: number;
-    startedAt: number;
-    startedWithCliVersion: string;
-    hasControlToken: boolean;
-    daemonLogPath: string | null;
-  } | null;
-  daemonLogs: Array<{ file: string; path: string; modifiedAt: string }>;
-  doctorSnapshot: DoctorSnapshot | null;
-  runtime: {
-    cwd: string;
-    platform: string;
-    nodeVersion: string;
-  };
-  stackContext: {
-    stackName: string | null;
-    stackEnvPath: string | null;
-    runtimeStatePath: string | null;
-    runtimeState: string | null;
-    logCandidates: string[];
-  } | null;
-};
 
 type CollectMachineDiagnosticsOptions = {
   daemonLogLimit?: number;

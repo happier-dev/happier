@@ -21,6 +21,7 @@ import {
     formatDoctorRuntimeLabel,
     formatDoctorSpawnPathLabel,
 } from '@/ui/doctorRuntimeDiagnostics'
+import { renderDoctorHappierRuntimeInventory } from '@/ui/doctorRuntimeInventory'
 
 export function maskValue(value: string): string;
 export function maskValue(value: string | undefined): string | undefined;
@@ -206,6 +207,7 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
             } else {
                 console.log(`Configured servers: ${chalk.gray('(none)')}`);
             }
+
         }
 
         // Settings
@@ -232,6 +234,13 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
             }
         } catch (error) {
             console.log(chalk.red('❌ Error reading credentials'));
+        }
+
+        if (snapshot) {
+            const runtimeInventory = renderDoctorHappierRuntimeInventory(snapshot);
+            if (runtimeInventory.trim()) {
+                console.log(`\n${runtimeInventory}`);
+            }
         }
     }
 

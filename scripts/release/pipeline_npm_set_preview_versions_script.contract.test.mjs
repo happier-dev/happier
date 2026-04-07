@@ -26,6 +26,7 @@ test('set-preview-versions updates selected package.json versions and prints JSO
   writeJson(dir, 'apps/cli/package.json', { name: '@happier-dev/cli', version: '1.2.3' });
   writeJson(dir, 'apps/stack/package.json', { name: '@happier-dev/stack', version: '9.9.9' });
   writeJson(dir, 'packages/relay-server/package.json', { name: '@happier-dev/relay-server', version: '3.4.5' });
+  writeJson(dir, 'packages/support/package.json', { name: '@happier-dev/support', version: '7.8.9' });
 
   const out = execFileSync(
     process.execPath,
@@ -38,6 +39,8 @@ test('set-preview-versions updates selected package.json versions and prints JSO
       '--publish-stack',
       'false',
       '--publish-server',
+      'true',
+      '--publish-support',
       'true',
       '--server-runner-dir',
       'packages/relay-server',
@@ -54,10 +57,11 @@ test('set-preview-versions updates selected package.json versions and prints JSO
   const parsed = JSON.parse(out);
   assert.equal(parsed.cli, '1.2.3-preview.123.2');
   assert.equal(parsed.server, '3.4.5-preview.123.2');
+  assert.equal(parsed.support, '7.8.9-preview.123.2');
   assert.equal(parsed.stack, undefined);
 
   assert.equal(readJson(dir, 'apps/cli/package.json').version, '1.2.3-preview.123.2');
   assert.equal(readJson(dir, 'apps/stack/package.json').version, '9.9.9');
   assert.equal(readJson(dir, 'packages/relay-server/package.json').version, '3.4.5-preview.123.2');
+  assert.equal(readJson(dir, 'packages/support/package.json').version, '7.8.9-preview.123.2');
 });
-

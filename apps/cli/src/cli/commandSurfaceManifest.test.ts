@@ -19,6 +19,7 @@ describe('CLI command-surface manifest', () => {
       'install',
       'daemon',
       'doctor',
+      'uninstall',
     ]);
 
     for (const entry of entries) {

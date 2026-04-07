@@ -198,4 +198,54 @@ describe('apps/cli bin/happier.mjs preflight', () => {
       cleanup();
     }
   });
+
+  it('preserves the original invoked CLI path for the runtime entrypoint', () => {
+    const { rootDir: tmp, cleanup } = createCliBinPreflightSandbox('happier-bin-preflight-');
+    try {
+      const projectRoot = join(tmp, 'apps', 'cli');
+      const { binDir } = writeCliProjectFixture({
+        projectRoot,
+        entrypointDir: 'dist',
+        entrypointContent: [
+          'console.log(JSON.stringify({',
+          '  invokedPath: process.env.HAPPIER_CLI_INVOKED_PATH ?? null,',
+          '  invokerName: process.env.HAPPIER_CLI_INVOKER_NAME ?? null,',
+          '  argv1: process.argv[1] ?? null,',
+          '}));',
+          'process.exit(0);',
+        ].join('\n'),
+      });
+
+      copyCliBinRuntimeFiles({ binDir });
+      writeProtocolBundleStub({
+        packageDir: join(tmp, 'node_modules', '@happier-dev', 'protocol'),
+      });
+      writeNodeModuleStub({
+        packageDir: join(tmp, 'node_modules', 'tweetnacl'),
+        files: { 'index.js': 'module.exports = {};\n' },
+      });
+      writeNodeModuleStub({
+        packageDir: join(tmp, 'node_modules', 'base64-js'),
+        files: { 'index.js': 'module.exports = {};\n' },
+      });
+      writeNodeModuleStub({
+        packageDir: join(tmp, 'node_modules', '@noble', 'hashes'),
+        manifest: { name: '@noble/hashes' },
+        files: {
+          'hmac.js': 'module.exports = {};\n',
+          'sha512.js': 'module.exports = {};\n',
+        },
+      });
+
+      const res = runHappierBin({ binDir, cwd: projectRoot, args: ['doctor', '--json'] });
+
+      expect(res.status).toBe(0);
+      const parsed = JSON.parse(res.stdout.trim()) as { invokedPath: string | null; invokerName: string | null; argv1: string | null };
+      expect(parsed.invokedPath).toBe(join(binDir, 'happier.mjs'));
+      expect(parsed.invokerName).toBe('happier');
+      expect(parsed.argv1).toContain(join(projectRoot, 'dist', 'index.mjs'));
+    } finally {
+      cleanup();
+    }
+  });
 });

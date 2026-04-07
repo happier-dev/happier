@@ -40,6 +40,8 @@ const { readDaemonStatusSnapshotMock } = vi.hoisted(() => ({
       running: true,
       pid: 7777,
       httpPort: 3005,
+      startedWithCliVersion: '1.2.3',
+      startedWithPublicReleaseChannel: 'preview',
     },
     service: {
       installed: true,
@@ -89,6 +91,11 @@ describe('buildDoctorSnapshot', () => {
     expect(snapshot.accountId).toBe('acct_123');
     expect(snapshot.daemonStatus?.auth.needsAuth).toBe(true);
     expect(snapshot.daemonStatus?.server.publicServerUrl).toBe('https://relay.happier.dev');
+    expect(snapshot.daemonStatus?.daemon.startedWithCliVersion).toBe('1.2.3');
+    expect(snapshot.daemonStatus?.daemon.startedWithPublicReleaseChannel).toBe('preview');
+    expect(Array.isArray(snapshot.installations?.happier?.installations)).toBe(true);
+    expect(Array.isArray(snapshot.services?.happier?.services)).toBe(true);
+    expect(Array.isArray(snapshot.warnings)).toBe(true);
     expect(JSON.stringify(snapshot)).not.toContain('?token=');
   });
 });

@@ -58,10 +58,10 @@ echo Linux
     const artifactName = `${artifactStem}.tar.gz`;
     const artifactDir = join(fixtureDir, artifactStem);
     await mkdir(join(artifactDir, 'package-dist'), { recursive: true });
-    const happierBin = join(artifactDir, 'happier');
-    await writeFile(
-      happierBin,
-      `#!/usr/bin/env bash
+  const happierBin = join(artifactDir, 'happier');
+  await writeFile(
+    happierBin,
+    `#!/usr/bin/env bash
 set -euo pipefail
 copy_tree() {
   local source="$1"
@@ -106,7 +106,7 @@ if [[ "$1" = "self" && "$2" = "__install-payload" ]]; then
   exit 0
 fi
 if [[ "$1" = "daemon" && "$2" = "service" && "$3" = "install" ]]; then
-  echo "daemon service install ${version}" >> "${logPath}"
+  echo "daemon service install ${version} channel=\${HAPPIER_DAEMON_SERVICE_CHANNEL:-unset} public=\${HAPPIER_PUBLIC_RELEASE_CHANNEL:-unset} strategy=\${HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY:-unset}" >> "${logPath}"
   exit 0
 fi
 exit 0
@@ -226,6 +226,7 @@ printf '%s' '${releaseJson}'
     HAPPIER_BIN_DIR: outBinDir,
     HAPPIER_NO_PATH_UPDATE: '1',
     HAPPIER_NONINTERACTIVE: '1',
+    HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY: 'replace-ring',
     HAPPIER_GITHUB_TOKEN: '',
     GITHUB_TOKEN: '',
     HAPPIER_TEST_LOG: logPath,
@@ -237,7 +238,7 @@ printf '%s' '${releaseJson}'
   assert.equal(res.status, 0, `installer failed:\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`);
 
   const log = await readFile(logPath, 'utf8').catch(() => '');
-  assert.match(log, /daemon service install 1\.2\.4/);
+  assert.match(log, /daemon service install 1\.2\.4 channel=stable public=stable strategy=replace-ring/);
 
   const versionRes = spawnSync(join(outBinDir, 'happier'), ['--version'], { env, encoding: 'utf8' });
   assert.equal(versionRes.status, 0, `installed binary failed: ${String(versionRes.stderr ?? '')}`);

@@ -23,6 +23,7 @@ import { handleServerCliCommand } from './commands/server';
 import { handleSelfCliCommand } from './commands/self';
 import { handleSelfUpdateCliCommand } from './commands/selfUpdate';
 import { handleToolsCliCommand } from './commands/tools';
+import { handleUninstallCliCommand } from './commands/uninstall';
 import { handleConfiguredAcpCatalogCliCommand } from '@/agent/acp/catalog/configured/handleConfiguredAcpCatalogCliCommand';
 
 export type CommandContext = Readonly<{
@@ -74,5 +75,6 @@ export const commandRegistry: Readonly<Record<string, CommandHandler>> = {
   self: handleSelfCliCommand,
   'self-update': handleSelfUpdateCliCommand,
   tools: handleToolsCliCommand,
+  uninstall: handleUninstallCliCommand,
   ...buildAgentCommandRegistry(),
 };

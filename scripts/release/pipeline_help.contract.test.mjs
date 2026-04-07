@@ -52,6 +52,20 @@ test('pipeline CLI supports help for npm-release', async () => {
   assert.match(out, /\bnpm-release\b/);
   assert.match(out, /--channel/);
   assert.match(out, /--publish-cli/);
+  assert.match(out, /--publish-support/);
+});
+
+test('pipeline CLI supports help for npm-set-preview-versions', async () => {
+  const out = execFileSync(process.execPath, [pipelineCli, 'help', 'npm-set-preview-versions'], {
+    cwd: repoRoot,
+    env: { ...process.env },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 30_000,
+  });
+
+  assert.match(out, /\bnpm-set-preview-versions\b/);
+  assert.match(out, /--publish-support/);
 });
 
 test('pipeline CLI supports help for checks', async () => {

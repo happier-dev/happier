@@ -1,0 +1,51 @@
+{
+  "name": "@happier-dev/support",
+  "version": "0.0.0",
+  "description": "Happier support collector and bug-report submitter.",
+  "repository": "https://github.com/happier-dev/happier.git",
+  "author": "Leeroy Brun <leeroy.brun@gmail.com>",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "happier-support": "./bin/happier-support.mjs"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "scripts",
+    "package.json"
+  ],
+  "bundledDependencies": [
+    "@happier-dev/agents",
+    "@happier-dev/cli-common",
+    "@happier-dev/protocol",
+    "@happier-dev/release-runtime"
+  ],
+  "dependencies": {
+    "@happier-dev/agents": "0.0.0",
+    "@happier-dev/cli-common": "0.0.0",
+    "@happier-dev/protocol": "0.0.0",
+    "@happier-dev/release-runtime": "0.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "prepack": "yarn -s build && node ./scripts/bundleWorkspaceDeps.mjs",
+    "build": "node ./scripts/rmDist.mjs && tsc -p tsconfig.json",
+    "clean": "node ./scripts/rmDist.mjs",
+    "test": "node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -1,0 +1,452 @@
+import { accessSync, constants as fsConstants } from 'node:fs';
+import { access, readFile, realpath } from 'node:fs/promises';
+import { basename, delimiter, dirname, join, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
+
+import {
+  getReleaseRingCatalogEntry,
+  PUBLIC_RELEASE_RING_IDS,
+  resolvePublicReleaseRingIdForCliInvokerName,
+  type PublicReleaseRingId,
+  type PublicReleaseRingLabel,
+} from '@happier-dev/release-runtime/releaseRings';
+
+import {
+  FIRST_PARTY_COMPONENT_IDS,
+  resolveInstalledFirstPartyComponentPaths,
+  resolveFirstPartyInstallLayout,
+  type FirstPartyComponentId,
+} from '../../firstPartyRuntime/index.js';
+import { resolveWindowsCommandOnPath } from '../../process/index.js';
+import type { HappierActiveInvocation, HappierInstallation, HappierInstallationInventory, HappierInstallationSource } from '../types.js';
+
+type DiscoverFs = Readonly<{
+  access?: typeof access;
+  readFile?: typeof readFile;
+  realpath?: typeof realpath;
+}>;
+
+type DiscoverCommandRunner = Readonly<{
+  run?: (input: Readonly<{ cmd: string; args: readonly string[] }>) => string | null;
+}>;
+
+function uniqueById<T extends { id: string }>(items: readonly T[]): T[] {
+  const byId = new Map<string, T>();
+  for (const item of items) {
+    byId.set(item.id, item);
+  }
+  return [...byId.values()];
+}
+
+async function pathExists(path: string, fsApi: DiscoverFs): Promise<boolean> {
+  try {
+    await (fsApi.access ?? access)(path, fsConstants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function readJsonVersion(packageJsonPath: string, fsApi: DiscoverFs): Promise<string | null> {
+  try {
+    const raw = await (fsApi.readFile ?? readFile)(packageJsonPath, 'utf8');
+    const parsed = JSON.parse(String(raw)) as { version?: unknown };
+    const version = typeof parsed.version === 'string' ? parsed.version.trim() : '';
+    return version || null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveRealPathSafe(path: string, fsApi: DiscoverFs): Promise<string | null> {
+  try {
+    return await (fsApi.realpath ?? realpath)(path);
+  } catch {
+    return null;
+  }
+}
+
+function installationComponentsFor(componentId: FirstPartyComponentId): string[] {
+  if (componentId === 'happier-cli') {
+    return ['happier-cli', 'happier-daemon'];
+  }
+  return [componentId];
+}
+
+function createManagedInstallationId(params: Readonly<{
+  ring: PublicReleaseRingLabel | null;
+  currentPath: string;
+}>): string {
+  return `managed:${params.ring ?? 'unknown'}:${params.currentPath}`;
+}
+
+async function discoverManagedInstallationEntries(params: Readonly<{
+  processEnv: NodeJS.ProcessEnv;
+  fsApi: DiscoverFs;
+}>): Promise<HappierInstallation[]> {
+  const entries: HappierInstallation[] = [];
+  const componentIds: FirstPartyComponentId[] = ['happier-cli', 'hstack', 'happier-server'];
+  for (const componentId of componentIds) {
+    for (const channel of PUBLIC_RELEASE_RING_IDS) {
+      const paths = resolveInstalledFirstPartyComponentPaths({
+        componentId,
+        channel,
+        processEnv: params.processEnv,
+      });
+      const hasCurrent = await pathExists(paths.currentPath, params.fsApi);
+      const hasBinary = await pathExists(paths.binaryPath, params.fsApi);
+      const hasEntrypoint = paths.nodeEntrypointPath ? await pathExists(paths.nodeEntrypointPath, params.fsApi) : false;
+      if (!hasCurrent && !hasBinary && !hasEntrypoint) {
+        continue;
+      }
+      const realPath = await resolveRealPathSafe(paths.currentPath, params.fsApi);
+      const version = await readJsonVersion(join(paths.currentPath, 'package.json'), params.fsApi);
+      const ring = getReleaseRingCatalogEntry(channel).publicLabel;
+      entries.push({
+        id: createManagedInstallationId({ ring, currentPath: paths.currentPath }),
+        source: componentId === 'hstack' ? 'stackManaged' : 'firstPartyManaged',
+        components: installationComponentsFor(componentId),
+        ring,
+        version,
+        path: paths.currentPath,
+        realPath,
+        shimName: basename(paths.shimPaths[0] ?? '') || null,
+        onPath: false,
+        managedRoot: resolveFirstPartyInstallLayout({ componentId, channel, processEnv: params.processEnv }).installRoot,
+      });
+    }
+  }
+  return entries;
+}
+
+function resolveCommandPathsOnPath(command: string, processEnv: NodeJS.ProcessEnv): string[] {
+  const pathEnv = String(processEnv.PATH ?? '');
+  const dirs = pathEnv.split(delimiter).map((value) => value.trim()).filter(Boolean);
+  const isWindows = process.platform === 'win32';
+  const extensions = isWindows
+    ? Array.from(new Set([
+      '',
+      ...String(processEnv.PATHEXT ?? (processEnv as NodeJS.ProcessEnv & { Pathext?: string }).Pathext ?? '')
+        .split(';')
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ]))
+    : [''];
+  const seen = new Set<string>();
+  const matches: string[] = [];
+
+  for (const dir of dirs) {
+    for (const extension of extensions) {
+      const candidate = isWindows && extension && !command.toLowerCase().endsWith(extension.toLowerCase())
+        ? join(dir, `${command}${extension}`)
+        : join(dir, command);
+      try {
+        accessSync(candidate, isWindows ? fsConstants.F_OK : fsConstants.F_OK | fsConstants.X_OK);
+        const resolvedCandidate = resolve(candidate);
+        if (!seen.has(resolvedCandidate)) {
+          seen.add(resolvedCandidate);
+          matches.push(resolvedCandidate);
+        }
+      } catch {
+        continue;
+      }
+    }
+  }
+  if (matches.length === 0 && process.platform === 'win32') {
+    const fallback = resolveWindowsCommandOnPath(command, processEnv);
+    if (fallback) matches.push(fallback);
+  }
+  return matches;
+}
+
+function defaultCommandRunner(input: Readonly<{ cmd: string; args: readonly string[] }>): string | null {
+  try {
+    const result = spawnSync(input.cmd, [...input.args], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+      env: process.env,
+      encoding: 'utf8',
+    });
+    const output = `${String(result.stdout ?? '')}${String(result.stderr ?? '')}`.trim();
+    return output || null;
+  } catch {
+    return null;
+  }
+}
+
+function inferRingFromVersion(version: string | null): PublicReleaseRingLabel | null {
+  const normalized = String(version ?? '').trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized.includes('preview')) return 'preview';
+  if (normalized.includes('dev')) return 'dev';
+  return 'stable';
+}
+
+async function discoverNpmInstallationEntries(params: Readonly<{
+  processEnv: NodeJS.ProcessEnv;
+  fsApi: DiscoverFs;
+  commands?: DiscoverCommandRunner;
+}>): Promise<HappierInstallation[]> {
+  const runner = params.commands?.run ?? defaultCommandRunner;
+  const npmExecutable = resolveCommandPathsOnPath('npm', params.processEnv)[0];
+  if (!npmExecutable && params.commands?.run === undefined) {
+    return [];
+  }
+
+  const prefix = String(runner({ cmd: npmExecutable || 'npm', args: ['prefix', '-g'] }) ?? '').trim();
+  const npmRoot = String(runner({ cmd: npmExecutable || 'npm', args: ['root', '-g'] }) ?? '').trim();
+  if (!prefix && !npmRoot) {
+    return [];
+  }
+
+  const packageRoots = [
+    {
+      packageDir: npmRoot ? join(npmRoot, '@happier-dev', 'cli') : '',
+      components: ['happier-cli', 'happier-daemon'],
+    },
+    {
+      packageDir: npmRoot ? join(npmRoot, '@happier-dev', 'stack') : '',
+      components: ['hstack'],
+    },
+  ];
+
+  const entries: HappierInstallation[] = [];
+  for (const packageRoot of packageRoots) {
+    if (!packageRoot.packageDir || !(await pathExists(packageRoot.packageDir, params.fsApi))) {
+      continue;
+    }
+    const version = await readJsonVersion(join(packageRoot.packageDir, 'package.json'), params.fsApi);
+    entries.push({
+      id: `npmGlobal:${packageRoot.packageDir}`,
+      source: 'npmGlobal',
+      components: [...packageRoot.components],
+      ring: packageRoot.components.includes('hstack') ? null : inferRingFromVersion(version),
+      version,
+      path: packageRoot.packageDir,
+      realPath: await resolveRealPathSafe(packageRoot.packageDir, params.fsApi),
+      shimName: null,
+      onPath: false,
+      managedRoot: prefix || null,
+    });
+  }
+  return entries;
+}
+
+async function findNearestPackageVersion(startPath: string, fsApi: DiscoverFs): Promise<string | null> {
+  let currentDir = dirname(startPath);
+  for (let depth = 0; depth < 8; depth += 1) {
+    const candidate = join(currentDir, 'package.json');
+    const version = await readJsonVersion(candidate, fsApi);
+    if (version) {
+      return version;
+    }
+    const parent = dirname(currentDir);
+    if (parent === currentDir) break;
+    currentDir = parent;
+  }
+  return null;
+}
+
+function classifyPathInstallation(params: Readonly<{
+  commandName: string;
+  commandPath: string;
+  realPath: string | null;
+  managedInstallations: readonly HappierInstallation[];
+}>): Readonly<{
+  source: HappierInstallationSource;
+  ring: PublicReleaseRingLabel | null;
+  components: string[];
+  managedMatch: HappierInstallation | null;
+}> {
+  const resolvedPath = params.realPath ?? params.commandPath;
+  const managedMatch = params.managedInstallations.find((entry) => {
+    const candidates = [entry.path, entry.realPath].filter((value): value is string => Boolean(value));
+    return candidates.some((candidate) => resolvedPath === candidate || resolvedPath.startsWith(`${candidate}/`));
+  }) ?? null;
+  if (managedMatch) {
+    return {
+      source: managedMatch.source,
+      ring: managedMatch.ring,
+      components: managedMatch.components,
+      managedMatch,
+    };
+  }
+  if (resolvedPath.includes('/node_modules/@happier-dev/cli/') || resolvedPath.includes('\\node_modules\\@happier-dev\\cli\\')) {
+    return { source: 'npmGlobal', ring: params.commandName === 'hprev' ? 'preview' : params.commandName === 'hdev' ? 'dev' : 'stable', components: ['happier-cli', 'happier-daemon'], managedMatch: null };
+  }
+  if (resolvedPath.includes('/node_modules/@happier-dev/stack/') || resolvedPath.includes('\\node_modules\\@happier-dev\\stack\\')) {
+    return { source: 'npmGlobal', ring: null, components: ['hstack'], managedMatch: null };
+  }
+  if (resolvedPath.endsWith('/apps/cli/bin/happier-dev.mjs') || resolvedPath.endsWith('\\apps\\cli\\bin\\happier-dev.mjs')) {
+    return {
+      source: 'fromSource',
+      ring: 'dev',
+      components: ['happier-cli', 'happier-daemon'],
+      managedMatch: null,
+    };
+  }
+  if (resolvedPath.endsWith('/apps/cli/bin/happier.mjs') || resolvedPath.endsWith('\\apps\\cli\\bin\\happier.mjs')) {
+    return {
+      source: 'fromSource',
+      ring: (() => {
+        const ringId = resolvePublicReleaseRingIdForCliInvokerName(params.commandName);
+        return ringId ? getReleaseRingCatalogEntry(ringId).publicLabel : 'stable';
+      })(),
+      components: ['happier-cli', 'happier-daemon'],
+      managedMatch: null,
+    };
+  }
+  if (resolvedPath.endsWith('/apps/stack/bin/hstack.mjs') || resolvedPath.endsWith('\\apps\\stack\\bin\\hstack.mjs')) {
+    return { source: 'fromSource', ring: null, components: ['hstack'], managedMatch: null };
+  }
+  return {
+    source: 'pathBinary',
+    ring: params.commandName === 'hprev' ? 'preview' : params.commandName === 'hdev' ? 'dev' : params.commandName === 'happier' ? 'stable' : null,
+    components: params.commandName === 'hstack' ? ['hstack'] : params.commandName === 'happier-server' ? ['happier-server'] : ['happier-cli', 'happier-daemon'],
+    managedMatch: null,
+  };
+}
+
+async function discoverPathInstallationEntries(params: Readonly<{
+  processEnv: NodeJS.ProcessEnv;
+  fsApi: DiscoverFs;
+  managedInstallations: readonly HappierInstallation[];
+}>): Promise<HappierInstallation[]> {
+  const commandNames = ['happier', 'hprev', 'hdev', 'hstack', 'happier-server'] as const;
+  const results: HappierInstallation[] = [];
+  for (const commandName of commandNames) {
+    const commandPaths = resolveCommandPathsOnPath(commandName, params.processEnv);
+    for (const commandPath of commandPaths) {
+      const realPath = await resolveRealPathSafe(commandPath, params.fsApi);
+      const classified = classifyPathInstallation({
+        commandName,
+        commandPath,
+        realPath,
+        managedInstallations: params.managedInstallations,
+      });
+      if (classified.managedMatch) {
+        results.push({
+          ...classified.managedMatch,
+          onPath: true,
+          shimName: commandName,
+        });
+        continue;
+      }
+      results.push({
+        id: `${classified.source}:${realPath ?? commandPath}`,
+        source: classified.source,
+        components: classified.components,
+        ring: classified.ring,
+        version: await findNearestPackageVersion(realPath ?? commandPath, params.fsApi),
+        path: commandPath,
+        realPath,
+        shimName: commandName,
+        onPath: true,
+        managedRoot: null,
+      });
+    }
+  }
+  return results;
+}
+
+async function buildActiveInvocation(params: Readonly<{
+  invokedPath: string | null;
+  invokerName: string | null;
+  installations: readonly HappierInstallation[];
+  fsApi: DiscoverFs;
+}>): Promise<HappierActiveInvocation | null> {
+  const invokedPath = String(params.invokedPath ?? '').trim();
+  const invokerName = String(params.invokerName ?? '').trim() || null;
+  if (!invokedPath && !invokerName) {
+    return null;
+  }
+
+  if (invokedPath) {
+    const invokedRealPath = await resolveRealPathSafe(invokedPath, params.fsApi);
+    const directMatch = params.installations.find((entry) => {
+      const candidates = [entry.path, entry.realPath].filter((value): value is string => Boolean(value));
+      return candidates.includes(invokedPath) || (invokedRealPath ? candidates.includes(invokedRealPath) : false);
+    }) ?? null;
+
+    if (directMatch) {
+      return {
+        path: invokedPath,
+        realPath: directMatch.realPath ?? invokedRealPath,
+        invokerName,
+        ring: directMatch.ring ?? null,
+        version: directMatch.version ?? null,
+        installationId: directMatch.id ?? null,
+      };
+    }
+
+    const classified = classifyPathInstallation({
+      commandName: invokerName ?? basename(invokedPath).replace(/\.exe$/i, '').replace(/\.m?js$/i, ''),
+      commandPath: invokedPath,
+      realPath: invokedRealPath,
+      managedInstallations: params.installations,
+    });
+
+    if (classified.managedMatch) {
+      return {
+        path: invokedPath,
+        realPath: classified.managedMatch.realPath ?? invokedRealPath,
+        invokerName,
+        ring: classified.managedMatch.ring ?? null,
+        version: classified.managedMatch.version ?? null,
+        installationId: classified.managedMatch.id ?? null,
+      };
+    }
+
+    return {
+      path: invokedPath,
+      realPath: invokedRealPath,
+      invokerName,
+      ring: classified.ring ?? null,
+      version: await findNearestPackageVersion(invokedRealPath ?? invokedPath, params.fsApi),
+      installationId: `${classified.source}:${invokedRealPath ?? invokedPath}`,
+    };
+  }
+
+  const installation = params.installations.find((entry) => invokerName && entry.shimName === invokerName) ?? null;
+  return {
+    path: invokedPath || installation?.path || '',
+    realPath: installation?.realPath ?? null,
+    invokerName,
+    ring: installation?.ring ?? null,
+    version: installation?.version ?? null,
+    installationId: installation?.id ?? null,
+  };
+}
+
+export async function discoverHappierInstallations(params: Readonly<{
+  processEnv?: NodeJS.ProcessEnv;
+  invokedPath?: string | null;
+  invokerName?: string | null;
+  fs?: DiscoverFs;
+  commands?: DiscoverCommandRunner;
+}> = {}): Promise<HappierInstallationInventory> {
+  const processEnv = params.processEnv ?? process.env;
+  const fsApi = params.fs ?? {};
+  const managedInstallations = await discoverManagedInstallationEntries({ processEnv, fsApi });
+  const pathInstallations = await discoverPathInstallationEntries({
+    processEnv,
+    fsApi,
+    managedInstallations,
+  });
+  const npmInstallations = await discoverNpmInstallationEntries({
+    processEnv,
+    fsApi,
+    commands: params.commands,
+  });
+  const installations = uniqueById([...managedInstallations, ...pathInstallations, ...npmInstallations])
+    .sort((left, right) => left.path.localeCompare(right.path));
+  return {
+    activeInvocation: await buildActiveInvocation({
+      invokedPath: params.invokedPath ?? null,
+      invokerName: params.invokerName ?? null,
+      installations,
+      fsApi,
+    }),
+    installations,
+  };
+}

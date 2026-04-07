@@ -44,6 +44,10 @@ describe('commandRegistry install/update aliases', () => {
     expect(commandRegistry.tools).toBeTypeOf('function');
   });
 
+  it('registers uninstall top-level command', () => {
+    expect(commandRegistry.uninstall).toBeTypeOf('function');
+  });
+
   it('registers built-in generic ACP agent commands', () => {
     expect(commandRegistry.customAcp).toBeTypeOf('function');
     expect(commandRegistry.kiro).toBeTypeOf('function');

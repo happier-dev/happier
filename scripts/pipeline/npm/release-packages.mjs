@@ -248,6 +248,7 @@ function main() {
       'publish-cli': { type: 'string', default: 'false' },
       'publish-stack': { type: 'string', default: 'false' },
       'publish-server': { type: 'string', default: 'false' },
+      'publish-support': { type: 'string', default: 'false' },
       'server-runner-dir': { type: 'string', default: 'packages/relay-server' },
       'run-tests': { type: 'string', default: 'auto' },
       mode: { type: 'string', default: 'pack+publish' },
@@ -265,6 +266,7 @@ function main() {
   const publishCli = parseBool(values['publish-cli'], '--publish-cli');
   const publishStack = parseBool(values['publish-stack'], '--publish-stack');
   const publishServer = parseBool(values['publish-server'], '--publish-server');
+  const publishSupport = parseBool(values['publish-support'], '--publish-support');
   const runnerDir = String(values['server-runner-dir'] ?? '').trim() || 'packages/relay-server';
   const runTests = resolveAutoBool(values['run-tests'], '--run-tests', process.env.GITHUB_ACTIONS === 'true');
   const mode = String(values.mode ?? '').trim() || 'pack+publish';
@@ -275,7 +277,7 @@ function main() {
     fail(`--mode must be 'pack' or 'pack+publish' (got: ${mode})`);
   }
 
-  /** @type {Array<{ key: 'cli' | 'stack' | 'server'; dir: string; outDir: string; prepare: () => void; }>} */
+  /** @type {Array<{ key: 'cli' | 'stack' | 'server' | 'support'; dir: string; outDir: string; prepare: () => void; }>} */
   const packages = [];
 
   if (publishCli) {
@@ -317,8 +319,20 @@ function main() {
     });
   }
 
+  if (publishSupport) {
+    packages.push({
+      key: 'support',
+      dir: 'packages/support',
+      outDir: 'dist/release-assets/support',
+      prepare: () => {
+        run(opts, 'yarn', ['build'], { cwd: withinRepo(repoRoot, 'packages/support') });
+        run(opts, process.execPath, ['scripts/bundleWorkspaceDeps.mjs'], { cwd: withinRepo(repoRoot, 'packages/support') });
+      },
+    });
+  }
+
   if (packages.length === 0) {
-    fail('At least one of --publish-cli/--publish-stack/--publish-server must be true');
+    fail('At least one of --publish-cli/--publish-stack/--publish-server/--publish-support must be true');
   }
 
   const previewSuffix = resolvePreviewSuffix(channel);

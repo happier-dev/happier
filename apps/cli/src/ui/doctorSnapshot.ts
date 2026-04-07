@@ -1,7 +1,14 @@
+import { basename } from 'node:path';
+
 import { configuration } from '@/configuration';
 import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import { readDaemonStatusSnapshot } from '@/daemon/statusSnapshot';
 import { readCredentials, readSettings } from '@/persistence';
+import {
+  buildHappierRuntimeWarnings,
+  discoverHappierInstallations,
+  discoverHappierServices,
+} from '@happier-dev/cli-common/happierRuntime';
 
 import {
   DoctorSnapshotSchema,
@@ -15,12 +22,47 @@ function uniqueSorted(values: string[]): string[] {
   return Array.from(new Set(values.filter(Boolean))).sort();
 }
 
+function resolveInvokerName(): string | null {
+  const envInvokerName = basename(String(process.env.HAPPIER_CLI_INVOKER_NAME ?? '').trim())
+    .replace(/\.exe$/i, '')
+    .replace(/\.m?js$/i, '')
+    .trim();
+  if (envInvokerName) {
+    return envInvokerName;
+  }
+
+  const candidates = [process.argv[1] ?? '', process.argv[0] ?? ''];
+  for (const candidate of candidates) {
+    const normalized = basename(String(candidate ?? '').trim())
+      .replace(/\.exe$/i, '')
+      .replace(/\.m?js$/i, '')
+      .trim();
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return null;
+}
+
 export async function buildDoctorSnapshot(): Promise<DoctorSnapshot> {
-  const [settings, credentials, daemonStatus] = await Promise.all([
+  const envInvokedPath = String(process.env.HAPPIER_CLI_INVOKED_PATH ?? '').trim();
+  const invokedPath = envInvokedPath || (process.argv[1] ?? null);
+  const [settings, credentials, daemonStatus, installations, services] = await Promise.all([
     readSettings(),
     readCredentials(),
     readDaemonStatusSnapshot().catch(() => undefined),
+    discoverHappierInstallations({
+      processEnv: process.env,
+      invokedPath,
+      invokerName: resolveInvokerName(),
+    }),
+    discoverHappierServices(),
   ]);
+  const warnings = buildHappierRuntimeWarnings({
+    installations,
+    services,
+    ...(daemonStatus ? { daemonStatus } : {}),
+  });
 
   const token = credentials?.token ?? '';
   const payload = token ? decodeJwtPayload(token) : null;
@@ -66,6 +108,13 @@ export async function buildDoctorSnapshot(): Promise<DoctorSnapshot> {
       servers,
       knownAccountIds: uniqueSorted(knownAccountIds),
     },
+    installations: {
+      happier: installations,
+    },
+    services: {
+      happier: services,
+    },
+    warnings,
     ...(daemonStatus ? { daemonStatus } : {}),
   };
 
@@ -81,6 +130,9 @@ export async function buildDoctorSnapshot(): Promise<DoctorSnapshot> {
         servers: [],
         knownAccountIds: candidate.settings.knownAccountIds,
       },
+      installations: candidate.installations,
+      services: candidate.services,
+      warnings: candidate.warnings,
       ...(candidate.daemonStatus ? { daemonStatus: candidate.daemonStatus } : {}),
     });
   }

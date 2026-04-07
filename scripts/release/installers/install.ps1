@@ -89,6 +89,65 @@ function Resolve-InstalledCliInvoker {
   return $null
 }
 
+function Invoke-InstallerCommandWithDaemonServiceContext {
+  param (
+    [Parameter(Mandatory = $true)] [string] $CliPath,
+    [Parameter(Mandatory = $true)] [string[]] $CommandArgs,
+    [Parameter(Mandatory = $true)] [string] $HomeDir
+  )
+
+  $previousHomeDir = $env:HAPPIER_HOME_DIR
+  $previousNoninteractive = $env:HAPPIER_NONINTERACTIVE
+  $previousPublicReleaseChannel = $env:HAPPIER_PUBLIC_RELEASE_CHANNEL
+  $previousDaemonServiceChannel = $env:HAPPIER_DAEMON_SERVICE_CHANNEL
+  $previousInstallerDaemonServiceStrategy = $env:HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY
+  try {
+    $channelLabel = if ($Channel -eq "publicdev") { "dev" } else { $Channel }
+    $env:HAPPIER_HOME_DIR = $HomeDir
+    if ($null -eq $previousNoninteractive) {
+      Remove-Item Env:HAPPIER_NONINTERACTIVE -ErrorAction SilentlyContinue
+    }
+    else {
+      $env:HAPPIER_NONINTERACTIVE = $previousNoninteractive
+    }
+    $env:HAPPIER_PUBLIC_RELEASE_CHANNEL = $channelLabel
+    $env:HAPPIER_DAEMON_SERVICE_CHANNEL = $channelLabel
+    & $CliPath @CommandArgs
+  }
+  finally {
+    if ($null -eq $previousHomeDir) {
+      Remove-Item Env:HAPPIER_HOME_DIR -ErrorAction SilentlyContinue
+    }
+    else {
+      $env:HAPPIER_HOME_DIR = $previousHomeDir
+    }
+    if ($null -eq $previousNoninteractive) {
+      Remove-Item Env:HAPPIER_NONINTERACTIVE -ErrorAction SilentlyContinue
+    }
+    else {
+      $env:HAPPIER_NONINTERACTIVE = $previousNoninteractive
+    }
+    if ($null -eq $previousPublicReleaseChannel) {
+      Remove-Item Env:HAPPIER_PUBLIC_RELEASE_CHANNEL -ErrorAction SilentlyContinue
+    }
+    else {
+      $env:HAPPIER_PUBLIC_RELEASE_CHANNEL = $previousPublicReleaseChannel
+    }
+    if ($null -eq $previousDaemonServiceChannel) {
+      Remove-Item Env:HAPPIER_DAEMON_SERVICE_CHANNEL -ErrorAction SilentlyContinue
+    }
+    else {
+      $env:HAPPIER_DAEMON_SERVICE_CHANNEL = $previousDaemonServiceChannel
+    }
+    if ($null -eq $previousInstallerDaemonServiceStrategy) {
+      Remove-Item Env:HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY -ErrorAction SilentlyContinue
+    }
+    else {
+      $env:HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY = $previousInstallerDaemonServiceStrategy
+    }
+  }
+}
+
 function Invoke-PostInstallAction {
   param (
     [Parameter(Mandatory = $true)] [string] $CliPath
@@ -136,40 +195,21 @@ function Invoke-PostInstallAction {
     }
   }
 
-  $previousHappyHomeDir = $env:HAPPIER_HOME_DIR
-  $previousNoninteractive = $env:HAPPIER_NONINTERACTIVE
-  $env:HAPPIER_HOME_DIR = $InstallDir
-  try {
-    if ($requiredSubcommand) {
-      $invokerName = (Split-Path -Leaf $CliPath)
-      if ([string]::IsNullOrWhiteSpace($invokerName)) { $invokerName = "happier" }
+  if ($requiredSubcommand) {
+    $invokerName = (Split-Path -Leaf $CliPath)
+    if ([string]::IsNullOrWhiteSpace($invokerName)) { $invokerName = "happier" }
+    $helpOutput = ""
+    try {
+      $helpOutput = (& $CliPath --help 2>$null | Out-String)
+    } catch {
       $helpOutput = ""
-      try {
-        $helpOutput = (& $CliPath --help 2>$null | Out-String)
-      } catch {
-        $helpOutput = ""
-      }
-      $pattern = "(?m)^\\s*($([Regex]::Escape($invokerName))|happier)\\s+$([Regex]::Escape($requiredSubcommand))\\b"
-      if (-not ($helpOutput -match $pattern)) {
-        throw "Installed Happier CLI does not support the '$requiredSubcommand' command surface required for -Run $runValue. Update your Happier CLI (or switch installer channel) and try again."
-      }
     }
-    & $CliPath @argsToPass
-  }
-  finally {
-    if ($null -eq $previousHappyHomeDir) {
-      Remove-Item Env:HAPPIER_HOME_DIR -ErrorAction SilentlyContinue
-    }
-    else {
-      $env:HAPPIER_HOME_DIR = $previousHappyHomeDir
-    }
-    if ($null -eq $previousNoninteractive) {
-      Remove-Item Env:HAPPIER_NONINTERACTIVE -ErrorAction SilentlyContinue
-    }
-    else {
-      $env:HAPPIER_NONINTERACTIVE = $previousNoninteractive
+    $pattern = "(?m)^\\s*($([Regex]::Escape($invokerName))|happier)\\s+$([Regex]::Escape($requiredSubcommand))\\b"
+    if (-not ($helpOutput -match $pattern)) {
+      throw "Installed Happier CLI does not support the '$requiredSubcommand' command surface required for -Run $runValue. Update your Happier CLI (or switch installer channel) and try again."
     }
   }
+  Invoke-InstallerCommandWithDaemonServiceContext -CliPath $CliPath -CommandArgs $argsToPass -HomeDir $InstallDir
 }
 
 if (($SetupRelay -or $Run) -and ($existing = Resolve-InstalledCliInvoker)) {
@@ -360,7 +400,7 @@ try {
   if ($WithDaemon -ne "0") {
     Write-Host "Installing daemon service (user-mode)..."
     try {
-      & $invoker daemon service install *> $null
+      Invoke-InstallerCommandWithDaemonServiceContext -CliPath $invoker -CommandArgs @("daemon", "service", "install") -HomeDir $InstallDir *> $null
     } catch {
       Write-Warning "daemon service install failed. You can retry manually: `"$invoker daemon service install`""
     }

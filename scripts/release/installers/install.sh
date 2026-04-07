@@ -396,6 +396,31 @@ display_channel_label() {
   esac
 }
 
+invoke_installer_command_with_daemon_service_context() {
+  local cli_bin="$1"
+  shift
+
+  local channel_label=""
+  channel_label="$(display_channel_label "${CHANNEL}")"
+  local installer_strategy="${HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY:-}"
+
+  local -a env_cmd=(env
+    "HAPPIER_HOME_DIR=${INSTALL_DIR}"
+    "HAPPIER_PUBLIC_RELEASE_CHANNEL=${channel_label}"
+    "HAPPIER_DAEMON_SERVICE_CHANNEL=${channel_label}"
+    ${installer_strategy:+"HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY=${installer_strategy}"}
+  )
+  if [[ -n "${HAPPIER_NONINTERACTIVE:-}" ]]; then
+    env_cmd+=("HAPPIER_NONINTERACTIVE=${HAPPIER_NONINTERACTIVE}")
+  fi
+  env_cmd+=("${cli_bin}")
+  if [[ $# -gt 0 ]]; then
+    env_cmd+=("$@")
+  fi
+
+  "${env_cmd[@]}"
+}
+
 resolve_release_tag() {
   local product="$1"
   local channel="$2"
@@ -799,15 +824,12 @@ run_post_install_action() {
     args+=("${RUN_ACTION_ARGS[@]}")
   fi
 
-  local -a env_cmd=(env "HAPPIER_HOME_DIR=${INSTALL_DIR}")
-  if [[ -n "${HAPPIER_NONINTERACTIVE:-}" ]]; then
-    env_cmd+=("HAPPIER_NONINTERACTIVE=${HAPPIER_NONINTERACTIVE}")
-  fi
-  env_cmd+=("${cli_bin}" "${cmd[@]}")
+  local -a command_args=("${cmd[@]}")
   if [[ ${#args[@]} -gt 0 ]]; then
-    env_cmd+=("${args[@]}")
+    command_args+=("${args[@]}")
   fi
-  "${env_cmd[@]}"
+
+  invoke_installer_command_with_daemon_service_context "${cli_bin}" "${command_args[@]}"
 }
 
 if [[ "${ACTION}" == "check" ]]; then
@@ -1289,7 +1311,7 @@ append_path_hint
 if [[ "${PRODUCT}" == "cli" && "${WITH_DAEMON}" == "1" ]]; then
   echo
   info "Installing daemon service (user-mode)..."
-  if ! "${DISPLAY_SHIM_PATH}" daemon service install >/dev/null 2>&1; then
+  if ! invoke_installer_command_with_daemon_service_context "${DISPLAY_SHIM_PATH}" daemon service install >/dev/null 2>&1; then
     echo "Warning: daemon service install failed. You can retry manually:" >&2
     echo "  ${DISPLAY_SHIM_PATH} daemon service install" >&2
   fi
