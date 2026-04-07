@@ -1,2 +1,7 @@
 export { createStreamedTranscriptWriter } from './createStreamedTranscriptWriter';
-export type { StreamedTranscriptWriter, StreamedTranscriptWriterSession } from './types';
+export type {
+  StreamedTranscriptFlushSummary,
+  StreamedTranscriptSegmentFlushSummary,
+  StreamedTranscriptWriter,
+  StreamedTranscriptWriterSession,
+} from './types';

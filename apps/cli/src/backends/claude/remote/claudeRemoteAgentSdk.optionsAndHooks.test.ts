@@ -481,6 +481,266 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         expect(assistantMessagesWithText).toHaveLength(0);
     });
 
+    it('emits result assistant text when the streamed transcript writer did not durably flush the turn', async () => {
+        const assistantText = 'hello from stream events';
+        const resultText = 'hello from result fallback';
+        const emittedMessages: any[] = [];
+
+        const streamedTranscriptWriter = {
+            appendAssistantDelta: vi.fn(async () => {}),
+            appendThinkingDelta: vi.fn(async () => {}),
+            overrideAssistantText: vi.fn(() => true),
+            overrideThinkingText: vi.fn(() => false),
+            flushAll: vi.fn(async () => ({
+                assistant: { sawText: true, didDurablyFlush: false },
+                assistantRoot: { sawText: true, didDurablyFlush: false },
+                thinking: { sawText: false, didDurablyFlush: false },
+                thinkingRoot: { sawText: false, didDurablyFlush: false },
+            })),
+        };
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield {
+                        type: 'stream_event',
+                        session_id: '',
+                        parent_tool_use_id: null,
+                        event: { type: 'content_block_start', content_block: { type: 'text', text: assistantText } },
+                    } as any;
+
+                    yield {
+                        type: 'assistant',
+                        session_id: '',
+                        parent_tool_use_id: null,
+                        message: { role: 'assistant', content: [{ type: 'text', text: assistantText }] },
+                    } as any;
+
+                    yield { type: 'system', subtype: 'task_notification', task_id: 'task_1', status: 'completed' } as any;
+                    yield { type: 'result', subtype: 'success', result: resultText } as any;
+                },
+                stopTask: vi.fn(async () => {}),
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (didSendFirst) return null;
+            didSendFirst = true;
+            return { message: 'hello', mode: makeMode({ permissionMode: 'default' } as any) };
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage: (message: any) => emittedMessages.push(message),
+            streamedTranscriptWriter,
+            createQuery,
+        } as any);
+
+        const assistantTexts = emittedMessages
+            .filter((msg) => msg?.type === 'assistant' && Array.isArray((msg as any).message?.content))
+            .flatMap((msg) =>
+                ((msg as any).message.content as any[])
+                    .filter((block) => block?.type === 'text' && typeof block?.text === 'string')
+                    .map((block) => block.text),
+            );
+
+        expect(assistantTexts).toContain(resultText);
+    });
+
+    it('does not emit result assistant text when the streamed transcript writer durably flushed the turn', async () => {
+        const assistantText = 'hello from stream events';
+        const resultText = 'hello from result fallback';
+        const emittedMessages: any[] = [];
+
+        const streamedTranscriptWriter = {
+            appendAssistantDelta: vi.fn(async () => {}),
+            appendThinkingDelta: vi.fn(async () => {}),
+            overrideAssistantText: vi.fn(() => true),
+            overrideThinkingText: vi.fn(() => false),
+            flushAll: vi.fn(async () => ({
+                assistant: { sawText: true, didDurablyFlush: true },
+                assistantRoot: { sawText: true, didDurablyFlush: true },
+                thinking: { sawText: false, didDurablyFlush: false },
+                thinkingRoot: { sawText: false, didDurablyFlush: false },
+            })),
+        };
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield {
+                        type: 'stream_event',
+                        session_id: '',
+                        parent_tool_use_id: null,
+                        event: { type: 'content_block_start', content_block: { type: 'text', text: assistantText } },
+                    } as any;
+
+                    yield {
+                        type: 'assistant',
+                        session_id: '',
+                        parent_tool_use_id: null,
+                        message: { role: 'assistant', content: [{ type: 'text', text: assistantText }] },
+                    } as any;
+
+                    yield { type: 'system', subtype: 'task_notification', task_id: 'task_1', status: 'completed' } as any;
+                    yield { type: 'result', subtype: 'success', result: resultText } as any;
+                },
+                stopTask: vi.fn(async () => {}),
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (didSendFirst) return null;
+            didSendFirst = true;
+            return { message: 'hello', mode: makeMode({ permissionMode: 'default' } as any) };
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage: (message: any) => emittedMessages.push(message),
+            streamedTranscriptWriter,
+            createQuery,
+        } as any);
+
+        const assistantTexts = emittedMessages
+            .filter((msg) => msg?.type === 'assistant' && Array.isArray((msg as any).message?.content))
+            .flatMap((msg) =>
+                ((msg as any).message.content as any[])
+                    .filter((block) => block?.type === 'text' && typeof block?.text === 'string')
+                    .map((block) => block.text),
+            );
+
+        expect(assistantTexts).not.toContain(resultText);
+    });
+
+    it('still emits the root result assistant text when only sidechain assistant text durably flushed', async () => {
+        const sidechainAssistantText = 'hello from sidechain stream events';
+        const resultText = 'hello from root result fallback';
+        const emittedMessages: any[] = [];
+
+        const streamedTranscriptWriter = {
+            appendAssistantDelta: vi.fn(async () => {}),
+            appendThinkingDelta: vi.fn(async () => {}),
+            overrideAssistantText: vi.fn(() => true),
+            overrideThinkingText: vi.fn(() => false),
+            flushAll: vi.fn(async () => ({
+                assistant: { sawText: true, didDurablyFlush: true },
+                assistantRoot: { sawText: false, didDurablyFlush: false },
+                thinking: { sawText: false, didDurablyFlush: false },
+                thinkingRoot: { sawText: false, didDurablyFlush: false },
+                segments: [
+                    {
+                        kind: 'assistant',
+                        sidechainId: 'tool_1',
+                        sawText: true,
+                        didDurablyFlush: true,
+                        lastCommittedState: 'complete',
+                    },
+                ],
+            })),
+        };
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield {
+                        type: 'stream_event',
+                        session_id: '',
+                        parent_tool_use_id: 'tool_1',
+                        event: { type: 'content_block_start', content_block: { type: 'text', text: sidechainAssistantText } },
+                    } as any;
+
+                    yield {
+                        type: 'assistant',
+                        session_id: '',
+                        parent_tool_use_id: 'tool_1',
+                        message: { role: 'assistant', content: [{ type: 'text', text: sidechainAssistantText }] },
+                    } as any;
+
+                    yield { type: 'system', subtype: 'task_notification', task_id: 'task_1', status: 'completed' } as any;
+                    yield {
+                        type: 'result',
+                        subtype: 'success',
+                        parent_tool_use_id: null,
+                        result: resultText,
+                    } as any;
+                },
+                stopTask: vi.fn(async () => {}),
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (didSendFirst) return null;
+            didSendFirst = true;
+            return { message: 'hello', mode: makeMode({ permissionMode: 'default' } as any) };
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage: (message: any) => emittedMessages.push(message),
+            streamedTranscriptWriter,
+            createQuery,
+        } as any);
+
+        const assistantTexts = emittedMessages
+            .filter((msg) => msg?.type === 'assistant' && Array.isArray((msg as any).message?.content))
+            .flatMap((msg) =>
+                ((msg as any).message.content as any[])
+                    .filter((block) => block?.type === 'text' && typeof block?.text === 'string')
+                    .map((block) => block.text),
+            );
+
+        expect(assistantTexts).toContain(resultText);
+    });
+
     it('repairs transcript on turn interrupt even when sessionId is discovered at runtime', async () => {
         const claudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-interrupt-repair-'));
         process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;

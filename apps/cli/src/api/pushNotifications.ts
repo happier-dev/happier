@@ -4,7 +4,11 @@ import { Expo, ExpoPushMessage } from 'expo-server-sdk'
 import { withServerUrlInPushData } from './pushNotificationData'
 import { serializeAxiosErrorForLog } from './client/serializeAxiosErrorForLog'
 import { summarizeExpoPushTicketErrorsForLog } from './pushTicketLogSummary'
-import { isPushDebugEnabled, readPushFetchTokensTimeoutMs } from './pushNotificationsConfig'
+import {
+    isPushDebugEnabled,
+    readPushFetchTokensFailureCooldownMs,
+    readPushFetchTokensTimeoutMs,
+} from './pushNotificationsConfig'
 import {
     collectExpoPushTokensMarkedUnregistered,
     PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS,
@@ -86,6 +90,8 @@ export class PushNotificationClient {
     private readonly token: string
     private readonly baseUrl: string
     private readonly expo: Expo
+    private pushTokenFetchFailureCooldownUntilMs = 0
+    private didLogPushTokenFetchCooldown = false
 
     constructor(token: string, baseUrl: string = 'https://api.happier.dev') {
         this.token = token
@@ -98,6 +104,16 @@ export class PushNotificationClient {
      */
     async fetchPushTokens(): Promise<PushToken[]> {
         const debugPush = isPushDebugEnabled()
+        const nowMs = Date.now()
+        if (this.pushTokenFetchFailureCooldownUntilMs > nowMs) {
+            if (!this.didLogPushTokenFetchCooldown) {
+                logger.debug('[PUSH] Skipping push token fetch during failure cooldown', {
+                    remainingMs: this.pushTokenFetchFailureCooldownUntilMs - nowMs,
+                })
+                this.didLogPushTokenFetchCooldown = true
+            }
+            return []
+        }
         try {
             const response = await axios.get<{ tokens: PushToken[] }>(
                 `${this.baseUrl}/v1/push-tokens`,
@@ -110,6 +126,9 @@ export class PushNotificationClient {
                 }
             )
 
+            this.pushTokenFetchFailureCooldownUntilMs = 0
+            this.didLogPushTokenFetchCooldown = false
+
             if (debugPush) logger.debug(`Fetched ${response.data.tokens.length} push tokens`)
             
             // Log token information
@@ -121,8 +140,17 @@ export class PushNotificationClient {
             
             return response.data.tokens
         } catch (error) {
+            const cooldownMs = readPushFetchTokensFailureCooldownMs()
+            this.pushTokenFetchFailureCooldownUntilMs = cooldownMs > 0 ? Date.now() + cooldownMs : 0
+            this.didLogPushTokenFetchCooldown = false
             logger.debug('[PUSH] [ERROR] Failed to fetch push tokens:', serializeAxiosErrorForLog(error))
-            throw new Error(`Failed to fetch push tokens: ${error instanceof Error ? error.message : 'Unknown error'}`)
+            const errorMessage =
+                error instanceof Error
+                    ? error.message
+                    : typeof (error as { message?: unknown } | null | undefined)?.message === 'string'
+                        ? String((error as { message: string }).message)
+                        : 'Unknown error'
+            throw new Error(`Failed to fetch push tokens: ${errorMessage}`)
         }
     }
 

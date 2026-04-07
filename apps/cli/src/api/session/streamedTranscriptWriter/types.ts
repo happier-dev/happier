@@ -1,5 +1,6 @@
 import type { TranscriptSessionPort } from '../transcriptPort';
 import type { StreamedTranscriptSegmentKind } from './segmentKey';
+import type { StreamedTranscriptSegmentState } from './segmentRuntime';
 
 export type StreamedTranscriptWriterSession = TranscriptSessionPort;
 
@@ -11,5 +12,21 @@ export type StreamedTranscriptWriter = Readonly<{
   flushAll: (opts: {
     reason: 'tool-call-boundary' | 'turn-end' | 'abort';
     interruptedReason?: string;
-  }) => Promise<void>;
+  }) => Promise<StreamedTranscriptFlushSummary>;
+}>;
+
+export type StreamedTranscriptSegmentFlushSummary = Readonly<{
+  kind: StreamedTranscriptSegmentKind;
+  sidechainId: string | null;
+  sawText: boolean;
+  didDurablyFlush: boolean;
+  lastCommittedState: StreamedTranscriptSegmentState | null;
+}>;
+
+export type StreamedTranscriptFlushSummary = Readonly<{
+  assistant: Readonly<{ sawText: boolean; didDurablyFlush: boolean }>;
+  assistantRoot: Readonly<{ sawText: boolean; didDurablyFlush: boolean }>;
+  thinking: Readonly<{ sawText: boolean; didDurablyFlush: boolean }>;
+  thinkingRoot: Readonly<{ sawText: boolean; didDurablyFlush: boolean }>;
+  segments: ReadonlyArray<StreamedTranscriptSegmentFlushSummary>;
 }>;

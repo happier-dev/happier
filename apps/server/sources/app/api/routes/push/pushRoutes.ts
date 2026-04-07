@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { type Fastify } from "../../types";
 import { db } from "@/storage/db";
+import { redactSentryLogAttributes } from "@/app/monitoring/sentryLogRedaction";
 
 function normalizeClientServerUrl(raw: unknown): string | null {
     const value = typeof raw === "string" ? raw.trim() : "";
@@ -67,6 +68,7 @@ export function pushRoutes(app: Fastify) {
 
             return reply.send({ success: true });
         } catch (error) {
+            app.log.error({ err: error, userId }, 'Failed to register push token');
             return reply.code(500).send({ error: 'Failed to register push token' });
         }
     });
@@ -101,6 +103,7 @@ export function pushRoutes(app: Fastify) {
 
             return reply.send({ success: true });
         } catch (error) {
+            app.log.error(redactSentryLogAttributes({ err: error, userId, token }), 'Failed to delete push token');
             return reply.code(500).send({ error: 'Failed to delete push token' });
         }
     });
@@ -131,6 +134,7 @@ export function pushRoutes(app: Fastify) {
                 }))
             });
         } catch (error) {
+            app.log.error({ err: error, userId }, 'Failed to get push tokens');
             return reply.code(500).send({ error: 'Failed to get push tokens' });
         }
     });

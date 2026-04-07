@@ -9,11 +9,15 @@ export type StreamedTranscriptSegmentRuntime = {
   segmentLocalId: string;
   startedAtMs: number;
   accumulatedText: string;
+  textVersion: number;
   didWriteDurable: boolean;
   didWriteLive: boolean;
   lastDurableText: string;
   lastCheckpointAtMs: number;
   lastCheckpointTextLen: number;
+  lastCommittedTextVersion: number;
+  lastCommittedState: StreamedTranscriptSegmentState | null;
+  lastCommitFailedAtMs: number;
   lastLiveSnapshotAtMs: number;
   lastLiveSnapshotTextLen: number;
   lastLiveSnapshotText: string;

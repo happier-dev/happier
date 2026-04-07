@@ -49,7 +49,7 @@ import {
     recordSeenToolBlocks,
     stripSeenToolBlocksFromMessage,
 } from './agentSdk/streamEventToolBlocks';
-import type { StreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
+import type { StreamedTranscriptFlushSummary, StreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
 
 type AgentSdkQueryFactory = (params: {
     prompt: string | AsyncIterable<SDKUserMessage>;
@@ -666,15 +666,16 @@ export async function claudeRemoteAgentSdk(opts: {
 	    const flushStreamedTranscriptWriter = async (
 	        reason: 'tool-call-boundary' | 'turn-end' | 'abort',
 	        interruptedReason?: string,
-	    ) => {
-	        if (!streamedTranscriptWriter) return;
+	    ): Promise<StreamedTranscriptFlushSummary | null> => {
+	        if (!streamedTranscriptWriter) return null;
         try {
-            await streamedTranscriptWriter.flushAll({
+            return await streamedTranscriptWriter.flushAll({
                 reason,
                 ...(reason === 'abort' && interruptedReason ? { interruptedReason } : {}),
             });
         } catch (error) {
             logger.debug('[claudeRemoteAgentSdk] Failed flushing streamed transcript writer (non-fatal)', { error, reason });
+            return null;
 	        }
 	    };
 
@@ -826,6 +827,7 @@ export async function claudeRemoteAgentSdk(opts: {
             { sessionId: string; parentToolUseId: string | null; text: string; thinking: string; lastUuid: string | null }
         >();
         let didPublishAssistantTextThisTurn = false;
+        let lastTurnFlushSummary: StreamedTranscriptFlushSummary | null = null;
         const turnDiagnostics = {
             streamEventCount: 0,
             assistantMessageCount: 0,
@@ -837,6 +839,7 @@ export async function claudeRemoteAgentSdk(opts: {
             streamedThinkingDeltaChars: 0,
             streamedToolUseDeltaChars: 0,
             didPublishAssistantTextThisTurn: false,
+            didDurablyFlushAssistantTextThisTurn: false,
         };
         const resetTurnDiagnostics = () => {
             turnDiagnostics.streamEventCount = 0;
@@ -849,6 +852,7 @@ export async function claudeRemoteAgentSdk(opts: {
             turnDiagnostics.streamedThinkingDeltaChars = 0;
             turnDiagnostics.streamedToolUseDeltaChars = 0;
             turnDiagnostics.didPublishAssistantTextThisTurn = false;
+            turnDiagnostics.didDurablyFlushAssistantTextThisTurn = false;
         };
         const seen = { toolUseIds: new Set<string>(), toolResultIds: new Set<string>() };
         let lastCheckpointId: string | null = null;
@@ -890,6 +894,80 @@ export async function claudeRemoteAgentSdk(opts: {
             if (typeof text !== 'string' || text.trim().length === 0) return;
             didPublishAssistantTextThisTurn = true;
             turnDiagnostics.didPublishAssistantTextThisTurn = true;
+        };
+
+        const resolveAssistantSegmentFlushSummary = (
+            summary: StreamedTranscriptFlushSummary | null,
+            sidechainId: string | null,
+        ): { sawText: boolean; didDurablyFlush: boolean } | null => {
+            if (!summary) return null;
+            const segmentSummaries = Array.isArray(summary.segments) ? summary.segments : [];
+            const exact = segmentSummaries.find(
+                (segment) => segment.kind === 'assistant' && segment.sidechainId === sidechainId,
+            );
+            if (exact) {
+                return {
+                    sawText: exact.sawText,
+                    didDurablyFlush: exact.didDurablyFlush,
+                };
+            }
+            if (sidechainId !== null) return null;
+            return summary.assistantRoot;
+        };
+
+        const emitAssistantTextMessage = (params: {
+            sessionId: string;
+            parentToolUseId: string | null;
+            assistantText: string;
+            thinkingText?: string;
+            defaultUuid?: string | null;
+        }) => {
+            const assistantText = params.assistantText.trim();
+            const thinkingText = (params.thinkingText ?? '').trim();
+            if (assistantText.length === 0 && thinkingText.length === 0) return;
+            const content = [
+                ...(thinkingText.length > 0 ? [{ type: 'thinking' as const, thinking: params.thinkingText ?? '' }] : []),
+                ...(assistantText.length > 0 ? [{ type: 'text' as const, text: params.assistantText }] : []),
+            ];
+            emitMessage({
+                type: 'assistant',
+                session_id: params.sessionId,
+                parent_tool_use_id: params.parentToolUseId,
+                ...(params.defaultUuid ? { uuid: params.defaultUuid } : null),
+                message: {
+                    role: 'assistant',
+                    content,
+                },
+            } as any, params.defaultUuid ? { defaultUuid: params.defaultUuid } : undefined);
+            markAssistantTextPublished(params.assistantText);
+        };
+
+        const maybeEmitResultAssistantFallback = (message: unknown, resultText: string | null): boolean => {
+            if (!streamedTranscriptWriter || typeof resultText !== 'string' || resultText.trim().length === 0) {
+                return false;
+            }
+            const sidechainId = normalizeSidechainIdForStream(message);
+            const assistantFlush = resolveAssistantSegmentFlushSummary(lastTurnFlushSummary, sidechainId);
+            if (sidechainId === null) {
+                if (assistantFlush?.didDurablyFlush === true) {
+                    return false;
+                }
+            } else if (assistantFlush?.sawText !== true || assistantFlush.didDurablyFlush === true) {
+                return false;
+            }
+            const sessionId = typeof (message as any)?.session_id === 'string' ? (message as any).session_id : '';
+            const uuid = typeof (message as any)?.uuid === 'string' ? (message as any).uuid : null;
+            emitAssistantTextMessage({
+                sessionId,
+                parentToolUseId: sidechainId,
+                assistantText: resultText,
+                defaultUuid: uuid,
+            });
+            logger.debug('[claudeRemoteAgentSdk] Materialized result assistant fallback after non-durable streamed flush', {
+                sidechainId,
+                resultTextLength: resultText.length,
+            });
+            return true;
         };
 
         const buildBufferedStreamEventAssistantMessageKey = (message: unknown) => {
@@ -1127,6 +1205,7 @@ export async function claudeRemoteAgentSdk(opts: {
                         }
 
                         mode = next.mode;
+                        lastTurnFlushSummary = null;
 
                         try {
                             await applyRuntimeSettingsUpdatesIfNeeded(resolveDesiredRuntimeSettingsSnapshot(mode));
@@ -1164,10 +1243,11 @@ export async function claudeRemoteAgentSdk(opts: {
             const interruptedReason = deferredInterruptedReason;
             deferredInterruptedReason = null;
             if (typeof interruptedReason === 'string' && interruptedReason.trim().length > 0) {
-                await flushStreamedTranscriptWriter('abort', interruptedReason);
+                lastTurnFlushSummary = await flushStreamedTranscriptWriter('abort', interruptedReason);
             } else {
-                await flushStreamedTranscriptWriter('turn-end');
+                lastTurnFlushSummary = await flushStreamedTranscriptWriter('turn-end');
             }
+            turnDiagnostics.didDurablyFlushAssistantTextThisTurn = lastTurnFlushSummary?.assistantRoot.didDurablyFlush === true;
             logger.debug('[claudeRemoteAgentSdk] Turn summary', {
                 ...turnDiagnostics,
                 didPublishAssistantTextThisTurn,
@@ -1580,7 +1660,7 @@ export async function claudeRemoteAgentSdk(opts: {
 
             if (message && message.type === 'result') {
                 const resultText = extractResultText(message);
-                if (!didPublishAssistantTextThisTurn && resultText) {
+                if (!streamedTranscriptWriter && !didPublishAssistantTextThisTurn && resultText) {
                     const { key, sessionId, parentToolUseId } = buildBufferedStreamEventAssistantMessageKey(message);
                     bufferedStreamEventAssistantMessages.set(key, {
                         sessionId,
@@ -1592,17 +1672,20 @@ export async function claudeRemoteAgentSdk(opts: {
                     flushBufferedStreamEventAssistantMessage(message);
                 }
 
+                if (!didFinalizeTurn) {
+                    if (isCompactCommand) {
+                        isCompactCommand = false;
+                        await finalizeCurrentTurn({ completionEvent: 'Compaction completed' });
+                    } else {
+                        await finalizeCurrentTurn();
+                    }
+                }
+
+                maybeEmitResultAssistantFallback(message, resultText);
+
                 if (didFinalizeTurn) {
                     continue;
                 }
-
-                if (isCompactCommand) {
-                    isCompactCommand = false;
-                    await finalizeCurrentTurn({ completionEvent: 'Compaction completed' });
-                    continue;
-                }
-
-                await finalizeCurrentTurn();
             }
         }
 	    } catch (e) {
