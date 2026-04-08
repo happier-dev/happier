@@ -163,19 +163,19 @@ export async function pairLocalMachineIfNeeded(authStatus: AuthStatusSnapshot): 
 }
 
 export async function installService(): Promise<void> {
-  await runLocalHappierJsonCommand({ args: ['daemon', 'service', 'install', '--json'] });
+  await runLocalHappierJsonCommand({ args: ['service', 'install', '--json'] });
 }
 
 export async function startService(): Promise<void> {
-  await runLocalHappierJsonCommand({ args: ['daemon', 'service', 'start', '--json'] });
+  await runLocalHappierJsonCommand({ args: ['service', 'start', '--json'] });
 }
 
 export async function stopService(): Promise<void> {
-  await runLocalHappierJsonCommand({ args: ['daemon', 'service', 'stop', '--json'] });
+  await runLocalHappierJsonCommand({ args: ['service', 'stop', '--json'] });
 }
 
 export async function restartService(): Promise<void> {
-  await runLocalHappierJsonCommand({ args: ['daemon', 'service', 'restart', '--json'] });
+  await runLocalHappierJsonCommand({ args: ['service', 'restart', '--json'] });
 }
 
 export async function readDaemonStatus(): Promise<DaemonStatusSnapshot> {

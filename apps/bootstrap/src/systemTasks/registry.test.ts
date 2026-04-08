@@ -203,7 +203,20 @@ if (argv[0] === 'server' && argv[1] === 'set' && argv.includes('--json')) {
   process.exit(0);
 }
 
-if (argv[0] === 'daemon' && argv[1] === 'service' && (argv[2] === 'install' || argv[2] === 'start' || argv[2] === 'stop' || argv[2] === 'restart') && argv.includes('--json')) {
+if (
+  argv.includes('--json')
+  && (
+    (
+      argv[0] === 'service'
+      && (argv[1] === 'install' || argv[1] === 'start' || argv[1] === 'stop' || argv[1] === 'restart')
+    )
+    || (
+      argv[0] === 'daemon'
+      && argv[1] === 'service'
+      && (argv[2] === 'install' || argv[2] === 'start' || argv[2] === 'stop' || argv[2] === 'restart')
+    )
+  )
+) {
   printJson({ ok: true, platform: process.platform });
   process.exit(0);
 }
@@ -313,18 +326,15 @@ describe('createHsetupSystemTaskRegistry', () => {
       expect(result).toEqual({
         protocolVersion: 1,
         taskId: 'task_setup_release_ring_publicdev',
-        ok: true,
-        data: {
-          machineId: 'machine-local-1',
+        ok: false,
+        error: {
+          code: 'prompt_required',
+          message: 'Make dev the default release-channel before installing the background service for https://relay.example.test?',
         },
       });
       expect(fakeCli.readInvocations()).toEqual([
         ['server', 'current', '--json'],
         ['auth', 'status', '--json'],
-        ['server', 'set', '--server-url', 'https://relay.example.test', '--webapp-url', 'https://app.example.test', '--json'],
-        ['daemon', 'service', 'install', '--json'],
-        ['daemon', 'service', 'start', '--json'],
-        ['daemon', 'status', '--json'],
       ]);
     } finally {
       restoreEnvVar('HAPPIER_HOME_DIR', previousHomeDir);
@@ -384,8 +394,8 @@ describe('createHsetupSystemTaskRegistry', () => {
         ['server', 'current', '--json'],
         ['auth', 'status', '--json'],
         ['server', 'set', '--server-url', 'https://relay.example.test', '--webapp-url', 'https://app.example.test', '--json'],
-        ['daemon', 'service', 'install', '--json'],
-        ['daemon', 'service', 'start', '--json'],
+        ['service', 'install', '--json'],
+        ['service', 'start', '--json'],
         ['daemon', 'status', '--json'],
       ]);
     } finally {
@@ -453,6 +463,115 @@ describe('createHsetupSystemTaskRegistry', () => {
     }
   });
 
+  it('returns prompt_required for setup.thisComputer.v1 when guided setup wants to switch the default release channel first', async () => {
+    const events: unknown[] = [];
+
+    const result = await executeSystemTask({
+      spec: {
+        protocolVersion: 1,
+        kind: 'setup.thisComputer.v1',
+        params: {
+          surface: 'desktop.ui',
+          target: 'thisComputer',
+          channel: 'preview',
+        },
+      },
+      taskId: 'task_local_setup_prompt_release_channel',
+      registry: createHsetupSystemTaskRegistry({
+        setupThisComputer: {
+          readActiveRelayProfile: async () => ({
+            serverUrl: 'https://relay.example.test',
+            webappUrl: 'https://app.example.test',
+            localServerUrl: null,
+          }),
+          createRecipeExecutor: () => ({
+            configureRelay: async () => undefined,
+            readAuthStatus: async () => ({ authenticated: true, machineId: 'machine-local-1' }),
+            requestAuthPairing: async () => ({ publicKey: 'pub-key' }),
+            waitForAuthPairing: async () => ({ machineId: 'machine-local-1' }),
+            installDaemonService: async () => undefined,
+            startDaemonService: async () => undefined,
+            waitForReadyDaemon: async () => ({
+              serviceInstalled: true,
+              daemonRunning: true,
+              needsAuth: false,
+              machineId: 'machine-local-1',
+            }),
+          }),
+          readBackgroundServiceSetupGuidance: async () => ({
+            targetReleaseChannel: 'preview',
+            targetServerUrl: 'https://relay.example.test',
+            currentDefaultReleaseChannel: 'stable',
+            managedReleaseChannels: [
+              {
+                releaseChannel: 'stable',
+                label: 'stable',
+                version: '1.0.0',
+                installationId: 'stable-install',
+                installationPath: '/managed/stable',
+                invokerName: 'happier',
+                isDefault: true,
+                onPath: true,
+              },
+              {
+                releaseChannel: 'preview',
+                label: 'preview',
+                version: '2.0.0',
+                installationId: 'preview-install',
+                installationPath: '/managed/preview',
+                invokerName: 'hprev',
+                isDefault: false,
+                onPath: true,
+              },
+            ],
+            exactDefaultServiceExists: true,
+            conflictingServices: [],
+            shouldOfferDefaultReleaseChannelSwitch: true,
+            shouldPromptForServiceReplacement: false,
+          }),
+          switchDefaultReleaseChannel: async () => undefined,
+          uninstallExistingDaemonServices: async () => undefined,
+        },
+      }),
+      now: () => 1700000000000,
+      emitEvent(event) {
+        events.push(event);
+      },
+    });
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'progress',
+        stepId: 'setup.thisComputer.resolveRelay',
+      }),
+      expect.objectContaining({
+        type: 'progress',
+        stepId: 'setup.thisComputer.checkAuth',
+      }),
+      expect.objectContaining({
+        type: 'prompt',
+        stepId: 'setup.thisComputer.preflight.releaseChannel',
+        message: 'Make preview the default release-channel before installing the background service for https://relay.example.test?',
+        data: {
+          kind: 'releaseChannel.switchDefaultForSetup',
+          targetReleaseChannel: 'preview',
+          currentDefaultReleaseChannel: 'stable',
+          targetServerUrl: 'https://relay.example.test',
+          managedReleaseChannels: expect.any(Array),
+        },
+      }),
+    ]));
+    expect(result).toEqual({
+      protocolVersion: 1,
+      taskId: 'task_local_setup_prompt_release_channel',
+      ok: false,
+      error: {
+        code: 'prompt_required',
+        message: 'Make preview the default release-channel before installing the background service for https://relay.example.test?',
+      },
+    });
+  });
+
   it('runs setup.repairThisComputer.v1 when already authenticated', async () => {
     const fakeCli = createFakeHappierCli({});
     const previousCliPath = process.env.HAPPIER_BOOTSTRAP_CLI_PATH;
@@ -477,8 +596,8 @@ describe('createHsetupSystemTaskRegistry', () => {
         ['server', 'current', '--json'],
         ['server', 'set', '--server-url', 'https://relay.example.test', '--webapp-url', 'https://app.example.test', '--json'],
         ['auth', 'status', '--json'],
-        ['daemon', 'service', 'install', '--json'],
-        ['daemon', 'service', 'start', '--json'],
+        ['service', 'install', '--json'],
+        ['service', 'start', '--json'],
         ['daemon', 'status', '--json'],
       ]);
     } finally {
@@ -639,8 +758,8 @@ describe('createHsetupSystemTaskRegistry', () => {
         ['server', 'set', '--server-url', 'https://relay.example.test', '--webapp-url', 'https://app.example.test', '--json'],
         ['auth', 'request', '--json'],
         ['auth', 'wait', '--public-key', 'public-key-local-1', '--json'],
-        ['daemon', 'service', 'install', '--json'],
-        ['daemon', 'service', 'start', '--json'],
+        ['service', 'install', '--json'],
+        ['service', 'start', '--json'],
         ['daemon', 'status', '--json'],
       ]);
     } finally {
@@ -770,8 +889,8 @@ describe('createHsetupSystemTaskRegistry', () => {
         ['auth', 'request', '--json'],
         ['auth', 'approve', '--public-key', 'public-key-local-2', '--json'],
         ['auth', 'wait', '--public-key', 'public-key-local-2', '--json'],
-        ['daemon', 'service', 'install', '--json'],
-        ['daemon', 'service', 'start', '--json'],
+        ['service', 'install', '--json'],
+        ['service', 'start', '--json'],
         ['daemon', 'status', '--json'],
       ]);
     } finally {
@@ -1006,7 +1125,7 @@ describe('createHsetupSystemTaskRegistry', () => {
       });
       expect(fakeCli.readInvocations()).toEqual([
         ['daemon', 'status', '--json'],
-        ['daemon', 'service', 'start', '--json'],
+        ['service', 'start', '--json'],
         ['daemon', 'status', '--json'],
       ]);
     } finally {
@@ -1107,7 +1226,7 @@ describe('createHsetupSystemTaskRegistry', () => {
       });
       expect(fakeCli.readInvocations()).toEqual([
         ['daemon', 'status', '--json'],
-        ['daemon', 'service', 'stop', '--json'],
+        ['service', 'stop', '--json'],
         ['daemon', 'status', '--json'],
       ]);
     } finally {
@@ -1208,7 +1327,7 @@ describe('createHsetupSystemTaskRegistry', () => {
       });
       expect(fakeCli.readInvocations()).toEqual([
         ['daemon', 'status', '--json'],
-        ['daemon', 'service', 'restart', '--json'],
+        ['service', 'restart', '--json'],
         ['daemon', 'status', '--json'],
       ]);
     } finally {
@@ -1462,8 +1581,8 @@ describe('createHsetupSystemTaskRegistry', () => {
         ['auth', 'request', '--json'],
         ['auth', 'approve', '--public-key', 'public-key-drift-1', '--json'],
         ['auth', 'wait', '--public-key', 'public-key-drift-1', '--json'],
-        ['daemon', 'service', 'install', '--json'],
-        ['daemon', 'service', 'start', '--json'],
+        ['service', 'install', '--json'],
+        ['service', 'start', '--json'],
         ['daemon', 'status', '--json'],
       ]);
     } finally {

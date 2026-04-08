@@ -19,7 +19,10 @@ import {
   createDaemonServiceStatusHandler,
   createDaemonServiceStopHandler,
 } from './kinds/daemonService.js';
-import { createSetupThisComputerHandler } from './kinds/setupThisComputer.js';
+import {
+  createSetupThisComputerInteractiveTaskKind,
+  type SetupThisComputerInteractiveDeps,
+} from './kinds/setupThisComputerInteractiveKind.js';
 import {
   type AuthStatusSnapshot,
   configureRelay,
@@ -69,6 +72,7 @@ type HsetupRegistryDeps = Readonly<{
   remoteSshBootstrap?: Partial<RemoteSshBootstrapDeps>;
   relayDriftRepair?: Partial<RelayDriftRepairDeps>;
   relayAccess?: Partial<RelayAccessDeps>;
+  setupThisComputer?: Partial<SetupThisComputerInteractiveDeps>;
 }>;
 
 type RelayRuntimeDeps = Readonly<{
@@ -149,6 +153,9 @@ export function createHsetupSystemTaskRegistry(deps: HsetupRegistryDeps = {}): S
   const remoteManageHostHandler = systemTasks.createExecutionRunnerFromKind(
     systemTasks.createRemoteSshManageHostTaskKind(createRemoteSshManageHostDeps(deps.remoteSshBootstrap)),
   );
+  const setupThisComputerHandler = systemTasks.createExecutionRunnerFromKind(
+    createSetupThisComputerInteractiveTaskKind(deps.setupThisComputer),
+  );
   const daemonServiceStatusHandler = createDaemonServiceStatusHandler();
   const daemonServiceStartHandler = createDaemonServiceStartHandler();
   const daemonServiceStopHandler = createDaemonServiceStopHandler();
@@ -216,7 +223,7 @@ export function createHsetupSystemTaskRegistry(deps: HsetupRegistryDeps = {}): S
     },
     {
       kind: 'setup.thisComputer.v1',
-      handler: createSetupThisComputerHandler(),
+      handler: setupThisComputerHandler,
     },
     {
       kind: 'setup.repairThisComputer.v1',

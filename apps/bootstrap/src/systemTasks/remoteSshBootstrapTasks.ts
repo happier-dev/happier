@@ -130,9 +130,11 @@ export async function runRemoteBootstrapCommandDefault(params: Readonly<{
     | 'server.configure'
     | 'auth.request'
     | 'auth.wait'
-  | 'daemon.service.install'
-  | 'daemon.service.start'
-  | 'relay.runtime.install';
+    | 'daemon.service.list'
+    | 'daemon.service.install'
+    | 'daemon.service.uninstallAll'
+    | 'daemon.service.start'
+    | 'relay.runtime.install';
   parsed: RemoteBootstrapMachineParams;
   auth: Readonly<{ mode: 'agent' } | { mode: 'keyFile'; privateKeyPath: string } | { mode: 'password'; password: string }>;
   knownHostsMode: 'app' | 'system';
@@ -178,14 +180,18 @@ export async function runRemoteBootstrapCommandDefault(params: Readonly<{
     command = `${happier} auth status --json`;
   } else if (params.label === 'server.configure') {
     command = `${happier} server set ${relayArgs.map(safeBashSingleQuote).join(' ')} --json`;
+  } else if (params.label === 'daemon.service.list') {
+    command = `${happier} service list --json`;
+  } else if (params.label === 'daemon.service.uninstallAll') {
+    command = `${happier} service uninstall --all --yes --json`;
   } else if (params.label === 'auth.request') {
     command = `${happier} auth request --json --persist ${authRelayArgs.map(safeBashSingleQuote).join(' ')}`;
   } else if (params.label === 'auth.wait') {
     command = `${happier} auth wait --public-key ${safeBashSingleQuote(String(params.data?.publicKey ?? ''))} --json --persist ${authRelayArgs.map(safeBashSingleQuote).join(' ')}`;
   } else if (params.label === 'daemon.service.install') {
-    command = `${daemonEnv} ${happier} daemon service install --mode=${params.parsed.serviceMode === 'none' ? 'user' : params.parsed.serviceMode ?? 'user'} --json`;
+    command = `${daemonEnv} ${happier} service install --mode=${params.parsed.serviceMode === 'none' ? 'user' : params.parsed.serviceMode ?? 'user'} --json`;
   } else if (params.label === 'daemon.service.start') {
-    command = `${daemonEnv} ${happier} daemon service start --mode=${params.parsed.serviceMode === 'none' ? 'user' : params.parsed.serviceMode ?? 'user'} --json`;
+    command = `${daemonEnv} ${happier} service start --mode=${params.parsed.serviceMode === 'none' ? 'user' : params.parsed.serviceMode ?? 'user'} --json`;
   } else if (params.label === 'relay.runtime.install') {
     const installed = await installOrUpdateRelayRuntimeDefault({
       target: {

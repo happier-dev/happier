@@ -18,6 +18,7 @@ import {
   resolveRemoteSshHostTrustDefault,
   runRemoteBootstrapCommandDefault,
 } from '../systemTasks/remoteSshBootstrapTasks.js';
+import { createSetupThisComputerInteractiveTaskKind } from '../systemTasks/kinds/setupThisComputerInteractiveKind.js';
 
 export type HsetupIo = Readonly<{
   stdin: {
@@ -170,6 +171,7 @@ async function readSpecJsonFromStdin(stdin: HsetupIo['stdin']): Promise<string> 
 
 function createDefaultInteractiveKinds(): InteractiveSystemTaskKindMap {
   return {
+    'setup.thisComputer.v1': createSetupThisComputerInteractiveTaskKind(),
     'remote.ssh.bootstrapMachine.v1': systemTasks.createRemoteSshBootstrapMachineTaskKind({
       resolveHostTrust: resolveRemoteSshHostTrustDefault,
       installRemoteCli: installRemoteCliDefault,
