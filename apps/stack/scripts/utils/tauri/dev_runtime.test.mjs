@@ -14,8 +14,28 @@ test('resolveStackTauriDevUrl prefers the stack expo web port', () => {
   );
 });
 
-test('resolveStackTauriDevUrl falls back to the default Metro port', () => {
+test('resolveStackTauriDevUrl prefers the stack server port when a runtime snapshot is active and Expo is absent', () => {
+  assert.equal(
+    resolveStackTauriDevUrl({
+      runtimeState: {
+        runtimeSnapshotId: 'snap-1',
+        ports: { server: 3009 },
+      },
+    }),
+    'http://localhost:3009',
+  );
+});
+
+test('resolveStackTauriDevUrl falls back to the default Metro port when no runtime snapshot is active', () => {
   assert.equal(resolveStackTauriDevUrl({ runtimeState: null }), 'http://localhost:8081');
+  assert.equal(
+    resolveStackTauriDevUrl({
+      runtimeState: {
+        ports: { server: 3009 },
+      },
+    }),
+    'http://localhost:8081',
+  );
 });
 
 test('buildStackTauriDevConfig disables beforeDevCommand and points Tauri at the existing dev server', () => {
@@ -76,4 +96,27 @@ test('buildStackTauriDevConfig applies explicit stack overrides after merging co
   assert.equal(config.productName, 'Happier (stack exp1)');
   assert.equal(config.identifier, 'com.happier.stack.exp1');
   assert.equal(config.app.windows[0]?.title, 'Happier (stack exp1)');
+});
+
+test('buildStackTauriDevConfig derives stack defaults from the stack name when explicit overrides are absent', () => {
+  const config = buildStackTauriDevConfig({
+    baseConfig: {
+      productName: 'Happier',
+      identifier: 'dev.happier.app',
+      build: {},
+      app: { windows: [{ title: 'Happier' }] },
+    },
+    overlayConfig: {
+      productName: 'Happier (dev)',
+      identifier: 'dev.happier.app.publicdev',
+    },
+    devUrl: 'http://localhost:18081',
+    env: {
+      HAPPIER_STACK_STACK: 'activity-surfaces-qa',
+    },
+  });
+
+  assert.equal(config.productName, 'Happier (activity-surfaces-qa)');
+  assert.equal(config.identifier, 'com.happier.stack.activity-surfaces-qa');
+  assert.equal(config.app.windows[0]?.title, 'Happier (activity-surfaces-qa)');
 });

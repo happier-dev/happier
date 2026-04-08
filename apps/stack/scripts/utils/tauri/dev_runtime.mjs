@@ -1,3 +1,4 @@
+import { sanitizeDnsLabel } from '../net/dns.mjs';
 import { applyStackTauriOverrides } from './stack_overrides.mjs';
 
 function isPlainObject(value) {
@@ -21,25 +22,51 @@ function mergeTauriConfig(baseValue, overlayValue) {
 
 export function resolveStackTauriDevUrl({ runtimeState, defaultPort = 8081 } = {}) {
   const expo = runtimeState && typeof runtimeState === 'object' ? runtimeState.expo : null;
-  const port = Number(expo?.webPort ?? expo?.port ?? defaultPort);
-  return `http://localhost:${Number.isFinite(port) && port > 0 ? Math.floor(port) : defaultPort}`;
+  const expoPort = Number(expo?.webPort ?? expo?.port ?? 0);
+  if (Number.isFinite(expoPort) && expoPort > 0) {
+    return `http://localhost:${Math.floor(expoPort)}`;
+  }
+
+  // When a runtime snapshot is active, the web UI is served via the stack server (no Expo/Metro).
+  // Prefer the stack server port so the Tauri WebView can connect without requiring a dev server.
+  const hasRuntimeSnapshot = Boolean(
+    runtimeState
+    && typeof runtimeState === 'object'
+    && String(runtimeState.runtimeSnapshotId ?? '').trim(),
+  );
+  const serverPort = Number(runtimeState?.ports?.server ?? 0);
+  if (hasRuntimeSnapshot && Number.isFinite(serverPort) && serverPort > 0) {
+    return `http://localhost:${Math.floor(serverPort)}`;
+  }
+
+  return `http://localhost:${defaultPort}`;
 }
 
 export function buildStackTauriDevConfig({ baseConfig, overlayConfig, devUrl, env = process.env } = {}) {
-  const merged = mergeTauriConfig(baseConfig ?? {}, overlayConfig ?? {});
-  merged.build = {
-    ...(merged.build ?? {}),
-    devUrl: String(devUrl ?? '').trim() || 'http://localhost:8081',
-    beforeDevCommand: '',
-    beforeBuildCommand: '',
-  };
-  const hasExplicitStackOverride =
-    String(env?.HAPPIER_STACK_TAURI_IDENTIFIER ?? '').trim() !== ''
-    || String(env?.HAPPIER_STACK_TAURI_PRODUCT_NAME ?? '').trim() !== ''
-    || String(env?.HAPPIER_STACK_TAURI_CREATE_UPDATER_ARTIFACTS ?? '').trim() !== ''
-    || String(env?.TAURI_SIGNING_PRIVATE_KEY ?? '').trim() !== '';
-  if (hasExplicitStackOverride) {
-    applyStackTauriOverrides({ tauriConfig: merged, env });
-  }
-  return merged;
+    const merged = mergeTauriConfig(baseConfig ?? {}, overlayConfig ?? {});
+    merged.build = {
+        ...(merged.build ?? {}),
+        devUrl: String(devUrl ?? '').trim() || 'http://localhost:8081',
+        beforeDevCommand: '',
+        beforeBuildCommand: '',
+    };
+    const normalizedStack = String(env?.HAPPIER_STACK_STACK ?? '').trim()
+        ? sanitizeDnsLabel(String(env.HAPPIER_STACK_STACK).trim())
+        : '';
+    const derivedStackOverrideEnv = normalizedStack
+        ? {
+            ...env,
+            HAPPIER_STACK_TAURI_IDENTIFIER: String(env?.HAPPIER_STACK_TAURI_IDENTIFIER ?? '').trim() || `com.happier.stack.${normalizedStack}`,
+            HAPPIER_STACK_TAURI_PRODUCT_NAME: String(env?.HAPPIER_STACK_TAURI_PRODUCT_NAME ?? '').trim() || `Happier (${normalizedStack})`,
+        }
+        : env;
+    const hasExplicitStackOverride =
+    String(derivedStackOverrideEnv?.HAPPIER_STACK_TAURI_IDENTIFIER ?? '').trim() !== ''
+    || String(derivedStackOverrideEnv?.HAPPIER_STACK_TAURI_PRODUCT_NAME ?? '').trim() !== ''
+    || String(derivedStackOverrideEnv?.HAPPIER_STACK_TAURI_CREATE_UPDATER_ARTIFACTS ?? '').trim() !== ''
+    || String(derivedStackOverrideEnv?.TAURI_SIGNING_PRIVATE_KEY ?? '').trim() !== '';
+    if (hasExplicitStackOverride) {
+    applyStackTauriOverrides({ tauriConfig: merged, env: derivedStackOverrideEnv });
+    }
+    return merged;
 }

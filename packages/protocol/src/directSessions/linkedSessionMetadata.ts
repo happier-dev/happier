@@ -40,6 +40,10 @@ function buildProgressToken(message: Pick<DirectTranscriptRawMessageV1, 'created
   return `${message.createdAtMs}:${message.id}`;
 }
 
+function compareProgressTokens(left: string, right: string): number {
+  return left.localeCompare(right);
+}
+
 export function readDirectSessionFollowPolicyV1(value: unknown): DirectSessionFollowPolicyV1 | null {
   const candidate = asRecord(value);
   if (!candidate || candidate.v !== 1) return null;
@@ -104,23 +108,28 @@ export function deriveDirectSessionObservedProgress(
   items: ReadonlyArray<Pick<DirectTranscriptRawMessageV1, 'createdAtMs' | 'id'>>,
 ): DirectSessionObservedProgress | null {
   let latest: Pick<DirectTranscriptRawMessageV1, 'createdAtMs' | 'id'> | null = null;
+  let latestToken: string | null = null;
   for (const item of items) {
+    const itemToken = buildProgressToken(item);
     if (!latest) {
       latest = item;
+      latestToken = itemToken;
       continue;
     }
     if (item.createdAtMs > latest.createdAtMs) {
       latest = item;
+      latestToken = itemToken;
       continue;
     }
-    if (item.createdAtMs === latest.createdAtMs) {
+    if (item.createdAtMs === latest.createdAtMs && latestToken && compareProgressTokens(itemToken, latestToken) > 0) {
       latest = item;
+      latestToken = itemToken;
     }
   }
 
   if (!latest) return null;
   return {
-    token: buildProgressToken(latest),
+    token: latestToken ?? buildProgressToken(latest),
     atMs: latest.createdAtMs,
   };
 }
@@ -136,6 +145,15 @@ export function applyObservedProgressToDirectSessionAttentionV1(
 
   const currentObservedAtMs = current?.observedAtMs;
   if (typeof currentObservedAtMs === 'number' && currentObservedAtMs > nextObservedProgress.atMs) {
+    return current ?? null;
+  }
+  if (
+    typeof currentObservedAtMs === 'number'
+    && currentObservedAtMs === nextObservedProgress.atMs
+    && typeof current?.observedProgressToken === 'string'
+    && current.observedProgressToken.trim().length > 0
+    && compareProgressTokens(current.observedProgressToken, nextObservedProgress.token) >= 0
+  ) {
     return current ?? null;
   }
   if (

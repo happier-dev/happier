@@ -59,10 +59,21 @@ export async function readStackInfoSnapshot({ rootDir, stackName }) {
         ? Number(runtimePorts.server)
         : null;
   const backendPort = Number(runtimePorts?.backend) > 0 ? Number(runtimePorts.backend) : null;
-  const uiPort =
+  const serveUiWanted = String(getEnvValueAny(stackEnv, ['HAPPIER_STACK_SERVE_UI']) ?? '1').trim() !== '0';
+  const runtimeSnapshotId = String(runtimeState?.runtimeSnapshotId ?? '').trim();
+  const runtimeBackedStart = Boolean(runtimeSnapshotId);
+  const uiPortFromExpo =
     runtimeState?.expo && typeof runtimeState.expo === 'object' && Number(runtimeState.expo.webPort) > 0
       ? Number(runtimeState.expo.webPort)
       : null;
+  // Runtime snapshots serve the web UI via the stack server port (no Expo/Metro), so surface that
+  // URL when UI serving is enabled.
+  const uiPort =
+    Number.isFinite(uiPortFromExpo) && uiPortFromExpo > 0
+      ? uiPortFromExpo
+      : serveUiWanted && runtimeBackedStart && Number.isFinite(serverPort) && serverPort > 0
+        ? serverPort
+        : null;
   const mobilePort =
     runtimeState?.expo && typeof runtimeState.expo === 'object' && Number(runtimeState.expo.mobilePort) > 0
       ? Number(runtimeState.expo.mobilePort)

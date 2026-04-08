@@ -81,7 +81,7 @@ describe("inferAndApplyTailscaleServePublicServerUrl", () => {
         expect(env.HAPPIER_PUBLIC_SERVER_URL).toBe("https://my-machine.tailnet.ts.net");
     });
 
-    it("falls back to extracting the first https URL when the proxy port does not match", async () => {
+    it("fails closed when the proxy port does not match", async () => {
         const env: Record<string, string | undefined> = {
             PORT: "3005",
             HAPPIER_PUBLIC_SERVER_URL: "",
@@ -95,8 +95,8 @@ describe("inferAndApplyTailscaleServePublicServerUrl", () => {
                     "",
                 ].join("\n"),
         });
-        expect(applied).toBe("https://my-machine.tailnet.ts.net");
-        expect(env.HAPPIER_PUBLIC_SERVER_URL).toBe("https://my-machine.tailnet.ts.net");
+        expect(applied).toBeNull();
+        expect(env.HAPPIER_PUBLIC_SERVER_URL).toBe("");
     });
 
     it("does not override HAPPIER_PUBLIC_SERVER_URL when already set", async () => {

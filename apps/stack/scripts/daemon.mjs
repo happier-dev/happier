@@ -1409,37 +1409,35 @@ export async function startLocalDaemonWithAuth({
       return false;
     };
 
-    const exitCode = await new Promise((resolve) => {
+    let resolvedExitCode = null;
+    const exitPromise = new Promise((resolve) => {
       const proc = spawnProc('daemon', daemonCommand.command, [...daemonCommand.argsPrefix, 'daemon', 'start'], daemonEnv, {
         stdio: ['ignore', 'pipe', 'pipe'],
         // In TUI mode, stream the daemon-start output so it routes to the daemon pane.
         // (The background daemon itself still logs to files.)
         silent: !isTui,
       });
-      proc.on('exit', (code) => resolve(code ?? 0));
+      proc.on('exit', (code) => {
+        resolvedExitCode = code ?? 0;
+        resolve(resolvedExitCode);
+      });
     });
 
-    if (exitCode === 0) {
-      const runningStable = await waitForRunningStable();
-      if (runningStable) {
-        return { ok: true, exitCode, excerpt: null, logPath: null };
-      }
-      const logPath = getLatestDaemonLogPath(cliHomeDir);
-      const excerpt = logPath ? await readLastLines(logPath, 120) : null;
-      return { ok: false, exitCode, excerpt, logPath };
-    }
-
-    // Some daemon versions (or transient races) can return non-zero even if the daemon
-    // still finishes starting for this stack home dir shortly afterwards.
-    // Wait for the same verification window before treating the start as failed.
+    // Some launch paths keep the start command itself alive after the daemon is already
+    // healthy (for example synchronous start-sync mode). Success must be keyed off stable
+    // daemon state, not only the wrapper process exiting.
     const runningStable = await waitForRunningStable();
     if (runningStable) {
-      return { ok: true, exitCode, excerpt: null, logPath: null };
+      return { ok: true, exitCode: resolvedExitCode, excerpt: null, logPath: null };
     }
+
+    // Allow the exit code to settle immediately if it already has, but do not block here
+    // once the verification window elapsed.
+    await Promise.race([exitPromise, delay(0)]);
 
     const logPath = getLatestDaemonLogPath(cliHomeDir);
     const excerpt = logPath ? await readLastLines(logPath, 120) : null;
-    return { ok: false, exitCode, excerpt, logPath };
+    return { ok: false, exitCode: resolvedExitCode, excerpt, logPath };
   };
 
   const first = await startOnce();

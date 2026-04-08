@@ -62,6 +62,51 @@ describe('direct session linked metadata helpers', () => {
     });
   });
 
+  it('derives same-timestamp observed progress deterministically regardless of batch order', () => {
+    const derive = (protocol as any).deriveDirectSessionObservedProgress;
+
+    const first = derive([
+      { id: 'msg-b', createdAtMs: 20 },
+      { id: 'msg-a', createdAtMs: 20 },
+    ]);
+    const second = derive([
+      { id: 'msg-a', createdAtMs: 20 },
+      { id: 'msg-b', createdAtMs: 20 },
+    ]);
+
+    expect(first).toEqual({
+      token: '20:msg-b',
+      atMs: 20,
+    });
+    expect(second).toEqual(first);
+  });
+
+  it('does not regress observed progress when a same-timestamp batch arrives out of order', () => {
+    const apply = (protocol as any).applyObservedProgressToDirectSessionAttentionV1;
+
+    const current = {
+      observedProgressToken: '20:msg-b',
+      viewedProgressToken: '20:msg-a',
+      observedAtMs: 20,
+      viewedAtMs: 20,
+    };
+
+    expect(apply(current, {
+      token: '20:msg-a',
+      atMs: 20,
+    })).toEqual(current);
+
+    expect(apply(current, {
+      token: '20:msg-c',
+      atMs: 20,
+    })).toEqual({
+      observedProgressToken: '20:msg-c',
+      viewedProgressToken: '20:msg-a',
+      observedAtMs: 20,
+      viewedAtMs: 20,
+    });
+  });
+
   it('marks attention viewed and derives unread from the normalized snapshot', () => {
     expect(typeof (protocol as any).readDirectSessionAttentionV1).toBe('function');
     expect(typeof (protocol as any).markDirectSessionAttentionViewedV1).toBe('function');

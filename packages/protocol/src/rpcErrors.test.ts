@@ -33,21 +33,21 @@ describe('rpcErrors', () => {
     expect(isRpcMethodNotAvailableError({ rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE })).toBe(true);
   });
 
-  it('does not detect method-not-available errors from message alone', () => {
-    expect(isRpcMethodNotAvailableError({ message: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE })).toBe(false);
-    expect(isRpcMethodNotAvailableError({ message: `${RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE}: daemon.bulkTransfer.download.init` })).toBe(false);
-    expect(isRpcMethodNotAvailableError({ message: 'rpc METHOD NOT available ' })).toBe(false);
-  });
+	  it('does not detect method-not-available errors from message alone', () => {
+	    expect(isRpcMethodNotAvailableError({ message: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE })).toBe(false);
+	    expect(isRpcMethodNotAvailableError({ message: `${RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE}: daemon.transfer.download.init` })).toBe(false);
+	    expect(isRpcMethodNotAvailableError({ message: 'rpc METHOD NOT available ' })).toBe(false);
+	  });
 
   it('detects method-not-found errors from rpcErrorCode', () => {
     expect(isRpcMethodNotFoundError({ rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND })).toBe(true);
   });
 
-  it('does not detect method-not-found errors from message alone', () => {
-    expect(isRpcMethodNotFoundError({ message: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND })).toBe(false);
-    expect(isRpcMethodNotFoundError({ message: `${RPC_ERROR_MESSAGES.METHOD_NOT_FOUND}: daemon.bulkTransfer.download.init` })).toBe(false);
-    expect(isRpcMethodNotFoundError({ message: 'rpc method not found ' })).toBe(false);
-  });
+	  it('does not detect method-not-found errors from message alone', () => {
+	    expect(isRpcMethodNotFoundError({ message: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND })).toBe(false);
+	    expect(isRpcMethodNotFoundError({ message: `${RPC_ERROR_MESSAGES.METHOD_NOT_FOUND}: daemon.transfer.download.init` })).toBe(false);
+	    expect(isRpcMethodNotFoundError({ message: 'rpc method not found ' })).toBe(false);
+	  });
 
   it('detects RpcError instances', () => {
     expect(isRpcError(new RpcError('x', RPC_ERROR_CODES.METHOD_NOT_FOUND))).toBe(true);

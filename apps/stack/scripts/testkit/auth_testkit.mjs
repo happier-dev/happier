@@ -77,6 +77,7 @@ export async function createAuthStackFixture({
         storageDir,
         stackName,
         envPath,
+        stripStackEnv: true,
         extraEnv: extra,
       });
     },

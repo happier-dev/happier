@@ -120,6 +120,16 @@ describe('session handoff schemas', () => {
       }).success,
     ).toBe(true);
 
+    expect(
+      mod.SessionHandoffStatusSchema.safeParse({
+        handoffId: 'handoff_2',
+        status: 'ready_for_cutover',
+        phase: 'staging_target',
+        transportStrategy: 'transfer_snapshot',
+        recoveryActions: [],
+      }).success,
+    ).toBe(true);
+
     expect(mod.resolveSessionHandoffProgressTimeline('scan_source')).toEqual([
       'scan_source',
       'plan',
@@ -224,6 +234,7 @@ describe('session handoff schemas', () => {
           handoffId: 'handoff_1',
           status: 'ready_for_cutover',
           phase: 'staging_target',
+          workspaceReplicationJobId: 'workspace-replication-job-1',
           recoveryActions: [],
         },
         remoteSessionId: 'remote_session_1',
@@ -238,6 +249,31 @@ describe('session handoff schemas', () => {
           transcriptStorage: 'persisted',
           approvedNewDirectoryCreation: true,
         },
+      }).success,
+    ).toBe(true);
+
+    expect(
+      mod.SessionHandoffPrepareTargetResponseSchema.safeParse({
+        handoffId: 'handoff_1',
+        status: {
+          handoffId: 'handoff_1',
+          status: 'ready_for_cutover',
+          phase: 'staging_target',
+          recoveryActions: [],
+        },
+        remoteSessionId: 'remote_session_1',
+        directSource: {
+          kind: 'claudeConfig',
+          configDir: '/tmp/claude',
+        },
+        resume: {
+          directory: '/repo',
+          agent: 'claude',
+          resume: 'resume-token',
+          transcriptStorage: 'persisted',
+          approvedNewDirectoryCreation: true,
+        },
+        workspaceReplicationJobId: 'workspace-replication-job-1',
       }).success,
     ).toBe(true);
 

@@ -21,6 +21,7 @@ import { TransferChunkEnvelopeSchema, TransferEndpointCandidateSchema } from '..
 
 const MAX_HANDOFF_ID_LENGTH = 256;
 const MAX_MACHINE_ID_LENGTH = 256;
+const MAX_JOB_ID_LENGTH = 256;
 const MAX_PATH_LENGTH = 4096;
 const MAX_TRANSFER_ID_LENGTH = 512;
 const MAX_MANIFEST_HASH_LENGTH = 256;
@@ -213,6 +214,7 @@ export const SessionHandoffPrepareTargetResponseSchema = z
     directSource: DirectSessionsSourceSchema.optional(),
     agentRuntimeDescriptorV1: AgentRuntimeDescriptorV1Schema.optional(),
     resume: SessionHandoffResumePlanSchema.optional(),
+    workspaceReplicationJobId: z.string().min(1).max(MAX_JOB_ID_LENGTH).optional(),
   })
   .strict();
 export type SessionHandoffPrepareTargetResponse = z.infer<typeof SessionHandoffPrepareTargetResponseSchema>;
@@ -225,6 +227,7 @@ export const SessionHandoffPrepareTargetResultGetResponseSchema = z
     directSource: DirectSessionsSourceSchema,
     agentRuntimeDescriptorV1: AgentRuntimeDescriptorV1Schema.optional(),
     resume: SessionHandoffResumePlanSchema,
+    workspaceReplicationJobId: z.string().min(1).max(MAX_JOB_ID_LENGTH).optional(),
   })
   .strict();
 export type SessionHandoffPrepareTargetResultGetResponse = z.infer<typeof SessionHandoffPrepareTargetResultGetResponseSchema>;

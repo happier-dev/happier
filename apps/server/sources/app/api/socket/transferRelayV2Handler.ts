@@ -70,6 +70,26 @@ function clearRelayV2TransferKey(key: TransferRelayV2Key): void {
   }
 }
 
+function releaseRelayV2TransferAccounting(key: TransferRelayV2Key): void {
+  // Clear the active-transfer accounting for this key, but intentionally do not
+  // touch `globalBlockedTransfers` or the socket/participant metadata. Blocked
+  // transfers stay on the socket-owned disconnect cleanup path so they can fail
+  // closed until the last socket goes away without pinning the key forever.
+  globalTransferBytesByKey.delete(key);
+
+  const scopeKey = globalTransferScopeByKey.get(key);
+  if (!scopeKey) {
+    return;
+  }
+
+  globalTransferScopeByKey.delete(key);
+  const active = globalActiveTransfersByScope.get(scopeKey);
+  active?.delete(key);
+  if (active && active.size === 0) {
+    globalActiveTransfersByScope.delete(scopeKey);
+  }
+}
+
 function getRelayV2ChunkPayloadSizeBytes(raw: TransferRelayV2SendEnvelope['envelope']): number | null {
   if (raw.kind !== 'chunk') {
     return null;
@@ -241,6 +261,18 @@ export function transferRelayV2Handler(
       }
 
       if (globalBlockedTransfers.has(transferKey)) {
+        // The transfer key has already been force-aborted (for example due to max-bytes). Fail closed by
+        // re-emitting an abort envelope so relay recipients do not hang waiting for more frames.
+        emitRelayV2Abort({
+          io: ctx.io,
+          userId,
+          recipientRoom,
+          senderRoom,
+          sender: relayEnvelope.sender,
+          recipient: relayEnvelope.recipient,
+          transferId: relayEnvelope.envelope.transferId,
+          reason: TRANSFER_RELAY_V2_MAX_BYTES_ERROR,
+        });
         socket.emit(SOCKET_RPC_EVENTS.ERROR, {
           type: 'transfer-relay',
           error: TRANSFER_RELAY_V2_MAX_BYTES_ERROR,
@@ -291,7 +323,6 @@ export function transferRelayV2Handler(
       const nextBytes = relayEnvelope.envelope.kind === 'chunk' ? priorBytes + (payloadSizeBytes ?? 0) : priorBytes;
       if (relayEnvelope.envelope.kind === 'chunk' && typeof ctx.serverRelayTransferMaxBytes === 'number' && nextBytes > ctx.serverRelayTransferMaxBytes) {
         globalBlockedTransfers.add(transferKey);
-        globalTransferBytesByKey.set(transferKey, nextBytes);
         emitRelayV2Abort({
           io: ctx.io,
           userId,
@@ -306,6 +337,9 @@ export function transferRelayV2Handler(
           type: 'transfer-relay',
           error: TRANSFER_RELAY_V2_MAX_BYTES_ERROR,
         });
+        // Release the active-transfer accounting for this key so we do not leak the socket budget
+        // while still failing closed on subsequent frames for the same transfer key.
+        releaseRelayV2TransferAccounting(transferKey);
         return;
       }
 
@@ -317,6 +351,22 @@ export function transferRelayV2Handler(
 
   socket.on('disconnect', () => {
     for (const transferKey of socketTransferKeys) {
+      if (globalBlockedTransfers.has(transferKey)) {
+        const sockets = globalTransferSocketsByKey.get(transferKey);
+        if (!sockets) {
+          clearRelayV2TransferKey(transferKey);
+          continue;
+        }
+
+        sockets.delete(socket.id);
+        if (sockets.size === 0) {
+          clearRelayV2TransferKey(transferKey);
+        } else {
+          globalTransferSocketsByKey.set(transferKey, sockets);
+        }
+        continue;
+      }
+
       const sockets = globalTransferSocketsByKey.get(transferKey);
       if (!sockets) {
         continue;

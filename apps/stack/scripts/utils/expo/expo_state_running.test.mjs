@@ -47,6 +47,35 @@ test('isStateProcessRunning does not treat occupied port as running when /status
   }
 });
 
+test('isStateProcessRunning does not trust a live pid when /status is not Metro', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-expo-state-running-live-pid-'));
+  const srv = http.createServer((req, res) => {
+    if (req.url === '/status') {
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.end('not-metro');
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'text/plain' });
+    res.end('ok');
+  });
+
+  try {
+    await listen(srv);
+    const addr = srv.address();
+    assert.ok(addr && typeof addr === 'object' && typeof addr.port === 'number', 'expected server to be listening');
+    const port = addr.port;
+
+    const statePath = join(tmp, 'expo.state.json');
+    await writeFile(statePath, JSON.stringify({ pid: process.pid, port }, null, 2) + '\n', 'utf-8');
+
+    const res = await isStateProcessRunning(statePath);
+    assert.equal(res.running, false);
+  } finally {
+    await close(srv).catch(() => {});
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
 async function spawnMetroLikeServer({ includeNeedle = '' } = {}) {
   const needle = String(includeNeedle ?? '').trim();
   const script = `

@@ -324,9 +324,18 @@ function applyStackScopedServerDefaults(env, { preferStackDefaults = false } = {
 
 export function buildTauriRuntimeEnv({ env = process.env, resolveUserHomeDir } = {}) {
   const nextEnv = { ...(env && typeof env === 'object' ? env : process.env) };
+  const stackName = String(nextEnv.HAPPIER_STACK_STACK ?? '').trim();
   const stackCliHomeDir = String(nextEnv.HAPPIER_STACK_CLI_HOME_DIR ?? '').trim();
   if (stackCliHomeDir && !String(nextEnv.HAPPIER_HOME_DIR ?? '').trim()) {
     nextEnv.HAPPIER_HOME_DIR = stackCliHomeDir;
+  }
+  const existingStorageScope = String(nextEnv.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE ?? '').trim();
+  const preferredStorageScope = String(
+    nextEnv.HAPPIER_STACK_STORAGE_SCOPE
+    ?? stackName,
+  ).trim();
+  if (!existingStorageScope && preferredStorageScope) {
+    nextEnv.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = preferredStorageScope;
   }
   applyStackScopedServerDefaults(nextEnv, {
     preferStackDefaults: Boolean(String(nextEnv.HAPPIER_STACK_ENV_FILE ?? '').trim()),

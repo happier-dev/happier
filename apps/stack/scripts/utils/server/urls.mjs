@@ -6,27 +6,30 @@ import { resolvePublicServerUrl } from '../../tailscale.mjs';
 import { resolveServerPortFromEnv } from './port.mjs';
 import { normalizeUrlNoTrailingSlash } from '../net/url.mjs';
 
-function stackEnvExplicitlySetsPublicUrl({ env, stackName }) {
+function readStackEnvRaw({ env, stackName }) {
   try {
     const envPath =
       (env.HAPPIER_STACK_ENV_FILE ?? '').toString().trim() ||
-      resolveStackEnvPath(stackName).envPath;
-    if (!envPath || !existsSync(envPath)) return false;
-    const raw = readFileSync(envPath, 'utf-8');
-    return /^HAPPIER_PUBLIC_SERVER_URL=/m.test(raw) || /^HAPPIER_STACK_SERVER_URL=/m.test(raw);
+      resolveStackEnvPath(stackName, env).envPath;
+    if (!envPath || !existsSync(envPath)) return null;
+    return readFileSync(envPath, 'utf-8');
+  } catch {
+    return null;
+  }
+}
+
+function stackEnvExplicitlySetsPublicUrl(stackEnvRaw) {
+  try {
+    return typeof stackEnvRaw === 'string' &&
+      (/^HAPPIER_PUBLIC_SERVER_URL=/m.test(stackEnvRaw) || /^HAPPIER_STACK_SERVER_URL=/m.test(stackEnvRaw));
   } catch {
     return false;
   }
 }
 
-function stackEnvExplicitlySetsWebappUrl({ env, stackName }) {
+function stackEnvExplicitlySetsWebappUrl(stackEnvRaw) {
   try {
-    const envPath =
-      (env.HAPPIER_STACK_ENV_FILE ?? '').toString().trim() ||
-      resolveStackEnvPath(stackName).envPath;
-    if (!envPath || !existsSync(envPath)) return false;
-    const raw = readFileSync(envPath, 'utf-8');
-    return /^HAPPIER_WEBAPP_URL=/m.test(raw);
+    return typeof stackEnvRaw === 'string' && /^HAPPIER_WEBAPP_URL=/m.test(stackEnvRaw);
   } catch {
     return false;
   }
@@ -38,6 +41,7 @@ export function getPublicServerUrlEnvOverride({ env = process.env, serverPort, s
     (env.HAPPIER_STACK_STACK ?? '').toString().trim() ||
     getStackName(env);
   const defaultPublicUrl = `http://localhost:${serverPort}`;
+  const stackEnvRaw = readStackEnvRaw({ env, stackName: name });
 
   let envPublicUrl =
     (env.HAPPIER_PUBLIC_SERVER_URL ?? '').toString().trim() ||
@@ -45,8 +49,10 @@ export function getPublicServerUrlEnvOverride({ env = process.env, serverPort, s
     '';
   envPublicUrl = normalizeUrlNoTrailingSlash(envPublicUrl);
 
-  // Safety: for non-main stacks, ignore a global SERVER_URL unless it was explicitly set in the stack env file.
-  if (name !== 'main' && envPublicUrl && !stackEnvExplicitlySetsPublicUrl({ env, stackName: name })) {
+  // Safety: when a stack env file is in play, it is authoritative for public URL overrides.
+  // This prevents a stale machine-level HAPPIER_PUBLIC_SERVER_URL from leaking a different stack's
+  // share URL into localhost-oriented auth/dev flows.
+  if (envPublicUrl && !stackEnvExplicitlySetsPublicUrl(stackEnvRaw)) {
     envPublicUrl = '';
   }
 
@@ -58,12 +64,13 @@ export function getWebappUrlEnvOverride({ env = process.env, stackName = null } 
     (stackName ?? '').toString().trim() ||
     (env.HAPPIER_STACK_STACK ?? '').toString().trim() ||
     getStackName(env);
+  const stackEnvRaw = readStackEnvRaw({ env, stackName: name });
 
   let envWebappUrl = (env.HAPPIER_WEBAPP_URL ?? '').toString().trim() || '';
 
   // Safety: ignore a global HAPPIER_WEBAPP_URL unless it was explicitly set in the stack env file.
   // This prevents surprising launches of the hosted app due to shell env leakage.
-  if (envWebappUrl && !stackEnvExplicitlySetsWebappUrl({ env, stackName: name })) {
+  if (envWebappUrl && !stackEnvExplicitlySetsWebappUrl(stackEnvRaw)) {
     envWebappUrl = '';
   }
 

@@ -6,6 +6,7 @@ const NonEmptyString = z.string().trim().min(1);
 const PublicReleaseChannelLabelSchema = z.enum(['stable', 'preview', 'dev']);
 const HappierInstallationSourceSchema = z.enum([
   'firstPartyManaged',
+  'selfHostManaged',
   'stackManaged',
   'fromSource',
   'npmGlobal',
@@ -21,6 +22,7 @@ const HappierServiceBackendSchema = z.enum([
   'schtasks-system',
 ]);
 const HappierServiceVerificationSchema = z.enum(['verified', 'candidate']);
+const HappierServiceTargetModeSchema = z.enum(['pinned', 'default-following']);
 const HappierWarningSeveritySchema = z.enum(['info', 'warning', 'error']);
 
 function sanitizeUrl(raw: string): string {
@@ -106,11 +108,14 @@ export const HappierDoctorServiceSchema = z.object({
   backend: HappierServiceBackendSchema,
   label: NonEmptyString,
   verification: HappierServiceVerificationSchema,
+  targetMode: HappierServiceTargetModeSchema.optional(),
   ring: PublicReleaseChannelLabelSchema.nullable(),
   instanceId: NonEmptyString.nullable(),
   scope: z.enum(['user', 'system']),
   definitionPath: NonEmptyString,
   executablePath: NonEmptyString.nullable(),
+  serverUrl: NonEmptyString.nullable().optional(),
+  publicServerUrl: NonEmptyString.nullable().optional(),
   installed: z.boolean(),
   running: z.boolean(),
 });
@@ -182,6 +187,21 @@ export function sanitizeDoctorSnapshotUrls(snapshot: DoctorSnapshot): DoctorSnap
             publicServerUrl: sanitizeUrl(snapshot.daemonStatus.server.publicServerUrl),
             webappUrl: sanitizeUrl(snapshot.daemonStatus.server.webappUrl),
           },
+        }
+      : undefined,
+    services: snapshot.services
+      ? {
+          ...snapshot.services,
+          happier: snapshot.services.happier
+            ? {
+                ...snapshot.services.happier,
+                services: snapshot.services.happier.services.map((entry) => ({
+                  ...entry,
+                  serverUrl: entry.serverUrl ? sanitizeUrl(entry.serverUrl) : entry.serverUrl,
+                  publicServerUrl: entry.publicServerUrl ? sanitizeUrl(entry.publicServerUrl) : entry.publicServerUrl,
+                })),
+              }
+            : undefined,
         }
       : undefined,
   };

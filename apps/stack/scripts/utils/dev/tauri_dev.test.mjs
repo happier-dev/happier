@@ -835,6 +835,30 @@ test('buildTauriRuntimeEnv derives a stack-scoped HAPPIER_SERVER_URL and active 
   assert.equal(env.HAPPIER_ACTIVE_SERVER_ID, 'stack_activity-surfaces-qa__id_default');
 });
 
+test('buildTauriRuntimeEnv seeds EXPO_PUBLIC_HAPPY_STORAGE_SCOPE for stack-owned Tauri launches when it is missing', async () => {
+  const realHome = await mkdir(`${tmpdir()}/happier-tauri-storage-scope-${Date.now()}`, { recursive: true });
+  const stackCliHome = `${realHome}/stack-cli-home`;
+  const cargoBinDir = `${realHome}/.cargo/bin`;
+  await mkdir(cargoBinDir, { recursive: true });
+  await mkdir(stackCliHome, { recursive: true });
+  const cargoBinary = `${cargoBinDir}/${process.platform === 'win32' ? 'cargo.exe' : 'cargo'}`;
+  await writeFile(cargoBinary, '#!/bin/sh\nexit 0\n', 'utf-8');
+  await chmod(cargoBinary, 0o755);
+
+  const env = buildTauriRuntimeEnv({
+    env: {
+      ...process.env,
+      PATH: '/usr/bin:/bin',
+      HAPPIER_STACK_STACK: 'activity-surfaces-qa',
+      HAPPIER_STACK_CLI_HOME_DIR: stackCliHome,
+      EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: '',
+    },
+    resolveUserHomeDir: () => realHome,
+  });
+
+  assert.equal(env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE, 'activity-surfaces-qa');
+});
+
 test('buildTauriRuntimeEnv preserves explicit remote server selection when only HAPPIER_STACK_STACK is present', async () => {
   const realHome = await mkdir(`${tmpdir()}/happier-tauri-stack-name-only-${Date.now()}`, { recursive: true });
   const cargoBinDir = `${realHome}/.cargo/bin`;

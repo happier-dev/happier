@@ -48,6 +48,12 @@ function resolveCacheTtlMs(env: NodeJS.ProcessEnv): number {
     return parseIntEnv(raw, 60_000, { min: 1_000, max: 3_600_000 });
 }
 
+function resolveInternalServerUrl(env: NodeJS.ProcessEnv): string {
+    const rawPort = String(env.PORT ?? "").trim();
+    const port = parseIntEnv(rawPort, 3005, { min: 1, max: 65_535 });
+    return `http://127.0.0.1:${port}`;
+}
+
 function isEnvPublicServerUrlInferred(env: NodeJS.ProcessEnv): boolean {
     return String(env[INFERRED_ENV_FLAG] ?? "").trim() === "1";
 }
@@ -127,7 +133,9 @@ export async function resolveCachedCanonicalPublicServerUrl(
     cache.inflight = (async () => {
         try {
             const relayAccessCandidate = inferRelayAccess
-                ? await resolveRelayAccessConfiguredCanonicalPublicServerUrl(env)
+                ? await resolveRelayAccessConfiguredCanonicalPublicServerUrl(env, {
+                    upstreamUrl: resolveInternalServerUrl(env),
+                })
                 : null;
             if (relayAccessCandidate) {
                 env.HAPPIER_PUBLIC_SERVER_URL = relayAccessCandidate;

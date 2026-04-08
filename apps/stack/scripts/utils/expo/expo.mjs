@@ -20,20 +20,55 @@ export async function looksLikeExpoMetro({ port, timeoutMs = null } = {}) {
   const p = Number(port);
   if (!Number.isFinite(p) || p <= 0) return false;
   const ms = Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0 ? Number(timeoutMs) : resolveMetroStatusTimeoutMsFromEnv();
-  const url = `http://127.0.0.1:${p}/status`;
-  try {
+  const probeHosts = ['127.0.0.1', 'localhost', '[::1]'];
+  async function fetchText(url) {
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const timeout = setTimeout(() => controller?.abort(), ms);
     try {
       const res = await fetch(url, { signal: controller?.signal });
       const txt = await res.text().catch(() => '');
-      return res.ok && String(txt).toLowerCase().includes('packager-status:running');
+      return {
+        ok: res.ok,
+        contentType: String(res.headers?.get?.('content-type') ?? '').toLowerCase(),
+        projectRoot: String(res.headers?.get?.('x-react-native-project-root') ?? '').trim(),
+        text: String(txt),
+      };
     } finally {
       clearTimeout(timeout);
     }
-  } catch {
-    return false;
   }
+
+  for (const host of probeHosts) {
+    try {
+      const statusResponse = await fetchText(`http://${host}:${p}/status`);
+      if (
+        statusResponse.ok
+        && (
+          statusResponse.text.toLowerCase().includes('packager-status:running')
+          || statusResponse.projectRoot
+        )
+      ) {
+        return true;
+      }
+    } catch {
+      // Fall back to the next host and then to the root document probes below.
+    }
+  }
+
+  for (const host of probeHosts) {
+    try {
+      const rootResponse = await fetchText(`http://${host}:${p}/`);
+      if (!rootResponse.ok) {
+        continue;
+      }
+      return rootResponse.contentType.includes('text/html')
+        || /<!doctype html|<html|<div id="root"/i.test(rootResponse.text);
+    } catch {
+      // Keep probing alternate loopback hosts before giving up.
+    }
+  }
+
+  return false;
 }
 
 function resolveMetroWaitTimeoutMsFromEnv(env = process.env) {
@@ -161,10 +196,6 @@ export async function isStateProcessRunning(statePath) {
   const state = await readPidState(statePath);
   if (!state) return { running: false, state: null };
   const pid = Number(state.pid);
-  if (isPidAlive(pid)) {
-    return { running: true, state, reason: 'pid' };
-  }
-
   async function looksOwnedByProjectDir(port, projectDir) {
     const p = Number(port);
     const raw = String(projectDir ?? '').trim();
@@ -182,10 +213,29 @@ export async function isStateProcessRunning(statePath) {
     return false;
   }
 
+  const port = Number(state?.port);
+  const hasPort = Number.isFinite(port) && port > 0;
+
+  if (isPidAlive(pid)) {
+    if (hasPort) {
+      const ok = await looksLikeExpoMetro({ port });
+      if (!ok) {
+        return { running: false, state };
+      }
+      const projectDir = String(state?.projectDir ?? '').trim() || String(state?.uiDir ?? '').trim();
+      if (projectDir) {
+        const owned = await looksOwnedByProjectDir(port, projectDir);
+        if (!owned) {
+          return { running: false, state, reason: 'port_project_mismatch' };
+        }
+      }
+    }
+    return { running: true, state, reason: 'pid' };
+  }
+
   // Expo/Metro can sometimes be “up” even if the original wrapper pid exited (pm/yarn layers).
   // If we have a port and something is listening on it, treat it as running only if it looks like Metro.
-  const port = Number(state?.port);
-  if (Number.isFinite(port) && port > 0) {
+  if (hasPort) {
     try {
       const free = await isTcpPortFree(port, { host: '127.0.0.1' });
       if (!free) {

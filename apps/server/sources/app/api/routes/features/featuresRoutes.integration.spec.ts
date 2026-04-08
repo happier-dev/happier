@@ -513,7 +513,7 @@ describe("featuresRoutes", () => {
             expect(payload.capabilities.server.webappUrl).toBe("https://ui.example.test");
         });
 
-        it("infers canonicalServerUrl via relay access tailscaleFunnel when HAPPIER_PUBLIC_SERVER_URL is unset", async () => {
+        it("infers canonicalServerUrl via relay access tailscaleFunnel when the current port matches", async () => {
             const { chmod, mkdir, mkdtemp, rm, writeFile } = await import("node:fs/promises");
             const { tmpdir } = await import("node:os");
             const { join } = await import("node:path");
@@ -527,10 +527,17 @@ describe("featuresRoutes", () => {
                     [
                         "#!/usr/bin/env bash",
                         "set -euo pipefail",
-                        'if [[ \"${1:-}\" == \"status\" && \"${2:-}\" == \"--json\" ]]; then',
+                        'if [[ "${1:-}" == "status" && "${2:-}" == "--json" ]]; then',
                         "  cat <<'JSON'",
                         '{"BackendState":"Running","HaveNodeKey":true,"Self":{"DNSName":"my-machine.tailnet.ts.net"}}',
                         "JSON",
+                        "  exit 0",
+                        "fi",
+                        'if [[ "${1:-}" == "funnel" && "${2:-}" == "status" ]]; then',
+                        "  cat <<'TXT'",
+                        "https://my-machine.tailnet.ts.net",
+                        "|-- / proxy http://127.0.0.1:3005",
+                        "TXT",
                         "  exit 0",
                         "fi",
                         "echo \"unexpected args: $*\" >&2",
@@ -540,7 +547,6 @@ describe("featuresRoutes", () => {
                     "utf8",
                 );
                 await chmod(tailscaleBin, 0o755);
-
                 await mkdir(join(homeDir, ".happier", "relay", "access"), { recursive: true });
                 await writeFile(
                     join(homeDir, ".happier", "relay", "access", "local.json"),
@@ -668,7 +674,7 @@ describe("featuresRoutes", () => {
                 HAPPIER_SERVER_RETENTION__ACCOUNT_CHANGES__DAYS: "30",
             });
 
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
 
             expect(payload.capabilities.server.retention).toBeUndefined();
         });

@@ -7,6 +7,7 @@ import net from 'node:net';
 
 import { withPatchedProcessEnv } from './testkit/core/env_scope.mjs';
 import { readStackInfoSnapshot } from './stack/stack_info_snapshot.mjs';
+import { createRuntimeSnapshotFixture } from './testkit/runtime_snapshot_testkit.mjs';
 
 async function withListeningServer() {
   const server = net.createServer();
@@ -93,6 +94,40 @@ test('readStackInfoSnapshot reports running when owner pid is stale but stack se
     restore();
     await listener.close();
     await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('readStackInfoSnapshot exposes the server-served web UI when a runtime snapshot is active and Expo is absent', async (t) => {
+  const fixture = await createRuntimeSnapshotFixture(t, { stackName: 'runtime-ui' });
+  const listener = await withListeningServer();
+  await writeFile(
+    join(fixture.stackDir, 'env'),
+    `HAPPIER_STACK_SERVER_COMPONENT=happier-server-light\nHAPPIER_STACK_SERVER_PORT=${listener.port}\n`,
+    'utf-8',
+  );
+  await writeFile(
+    join(fixture.stackDir, 'stack.runtime.json'),
+    JSON.stringify({
+      version: 1,
+      stackName: fixture.stackName,
+      ownerPid: 999_999_999,
+      runtimeSnapshotId: 'snap-1',
+      processes: { serverPid: 999_999_998 },
+      ports: { server: listener.port },
+    }) + '\n',
+    'utf-8',
+  );
+
+  const restore = withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: fixture.storageDir });
+  try {
+    const out = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName: fixture.stackName });
+    assert.equal(out.runtime.components.server.running, true);
+    assert.equal(out.runtime.components.ui.running, true);
+    assert.equal(out.ports.ui, listener.port);
+    assert.ok(out.urls.uiUrl && out.urls.uiUrl.includes(`:${listener.port}`), `expected uiUrl to include server port\nuiUrl=${out.urls.uiUrl}`);
+  } finally {
+    restore();
+    await listener.close();
   }
 });
 

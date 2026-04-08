@@ -97,6 +97,8 @@ describe('DoctorSnapshotSchema', () => {
               scope: 'user',
               definitionPath: '/Users/tester/Library/LaunchAgents/com.happier.cli.daemon.preview.cloud.plist',
               executablePath: '/Users/tester/.happier/cli-preview/current/happier',
+              serverUrl: 'https://admin:secret@api.happier.dev/path?token=abc#frag',
+              publicServerUrl: 'https://api.happier.dev/path?token=abc',
               installed: true,
               running: true,
             },
@@ -127,6 +129,8 @@ describe('DoctorSnapshotSchema', () => {
     expect(parsed.snapshot.daemonStatus?.daemon.startedWithPublicReleaseChannel).toBe('preview');
     expect(parsed.snapshot.installations?.happier.installations[0]?.ring).toBe('preview');
     expect(parsed.snapshot.services?.happier.services[0]?.label).toContain('com.happier.cli.daemon.preview.cloud');
+    expect(parsed.snapshot.services?.happier.services[0]?.serverUrl).toBe('https://api.happier.dev/path');
+    expect(parsed.snapshot.services?.happier.services[0]?.publicServerUrl).toBe('https://api.happier.dev/path');
     expect(parsed.snapshot.warnings?.[0]?.code).toBe('MULTIPLE_HAPPIER_INSTALLATIONS_ON_PATH');
   });
 

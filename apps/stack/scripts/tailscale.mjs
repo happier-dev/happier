@@ -8,7 +8,6 @@ import { getStackName, resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { banner, bullets, cmd as cmdFmt, kv, ok, sectionTitle } from './utils/ui/layout.mjs';
 import { cyan, dim, green } from './utils/ui/ansi.mjs';
 import {
-  extractTailscaleServeHttpsUrl,
   runTailscaleServeEnable as runSharedTailscaleServeEnable,
   runTailscaleServeReset as runSharedTailscaleServeReset,
   runTailscaleServeStatus as runSharedTailscaleServeStatus,
@@ -28,7 +27,7 @@ import { resolveRelayAccessConfiguredCanonicalPublicServerUrl } from '@happier-d
  * - status
  * - enable
  * - disable (alias: reset)
- * - url (print the first https:// URL from status output)
+ * - url (print the HTTPS URL for the current configured upstream)
  */
 
 function getServeConfig(internalServerUrl) {
@@ -91,10 +90,7 @@ export async function tailscaleServeHttpsUrl({ internalServerUrl } = {}) {
     const comparableInternalServerUrl =
       String(internalServerUrl ?? '').trim() ||
       getInternalServerUrl({ env: process.env, defaultPort: 3005 }).internalServerUrl;
-    return (
-      tailscaleServeHttpsUrlForInternalServerUrlFromStatus(status, comparableInternalServerUrl) ??
-      extractTailscaleServeHttpsUrl(status)
-    );
+    return tailscaleServeHttpsUrlForInternalServerUrlFromStatus(status, comparableInternalServerUrl);
   } catch {
     return null;
   }
@@ -204,7 +200,10 @@ export async function resolvePublicServerUrl({
     (normalizedEnvPublicUrl === defaultPublicUrl || normalizedEnvPublicUrl === internalServerUrl);
   const relayAccessPublicUrl =
     (!normalizedEnvPublicUrl || envPublicUrlIsLocalDefault)
-      ? await resolveRelayAccessConfiguredCanonicalPublicServerUrl(env)
+      ? await resolveRelayAccessConfiguredCanonicalPublicServerUrl(env, {
+        upstreamUrl: internalServerUrl,
+        allowTailscaleProviders: preferTailscalePublicUrl,
+      })
       : null;
   const effectiveEnvPublicUrl =
     (!normalizedEnvPublicUrl || envPublicUrlIsLocalDefault)

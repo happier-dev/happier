@@ -134,3 +134,47 @@ test('tailscale url returns the relay-comparable ts.net URL when multiple serve 
     rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+test('tailscale url fails closed when serve status points at a different local port', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir);
+  const repoRoot = dirname(dirname(packageRoot));
+
+  const tmp = mkdtempSync(join(tmpdir(), 'happier-tailscale-url-mismatch-test-'));
+  try {
+    const binDir = join(tmp, 'bin');
+    mkdirSync(binDir, { recursive: true });
+    const tailscaleBin = join(binDir, 'tailscale');
+
+    writeFileSync(
+      tailscaleBin,
+      [
+        '#!/usr/bin/env node',
+        'const args = process.argv.slice(2);',
+        "if (args[0] === 'serve' && args[1] === 'status') {",
+        "  process.stdout.write('https://other-service.ts.net\\n');",
+        "  process.stdout.write('|-- / proxy http://127.0.0.1:8080\\n');",
+        '  process.exit(0);',
+        '}',
+        'process.exit(0);',
+        '',
+      ].join('\n')
+    );
+    chmodSync(tailscaleBin, 0o755);
+
+    const res = await runNode([join(packageRoot, 'scripts', 'tailscale.mjs'), 'url'], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        HAPPIER_TAILSCALE_BIN: tailscaleBin,
+        HAPPIER_STACK_SERVER_PORT: '35555',
+        HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL: '1',
+      },
+    });
+
+    assert.notEqual(res.code, 0, `expected non-zero exit, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+    assert.match(stripAnsi(res.stderr), /no https:\/\/ URL found/i);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});

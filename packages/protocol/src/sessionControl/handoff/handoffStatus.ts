@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   SessionHandoffRecoveryActionSchema,
   SessionHandoffTransportStrategySchema,
+  SessionHandoffWorkspaceTransferStrategySchema,
 } from './handoffTypes.js';
 
 const MAX_HANDOFF_ID_LENGTH = 256;
@@ -35,6 +36,11 @@ export const SessionHandoffStatusCodeSchema = z.enum([
   'failed',
 ]);
 export type SessionHandoffStatusCode = z.infer<typeof SessionHandoffStatusCodeSchema>;
+
+const SessionHandoffStatusTransportStrategySchema = z.union([
+  SessionHandoffTransportStrategySchema,
+  SessionHandoffWorkspaceTransferStrategySchema,
+]);
 
 export const SessionHandoffProgressCheckpointSchema = z.enum([
   'scan_source',
@@ -140,9 +146,10 @@ export const SessionHandoffStatusSchema = z
     status: SessionHandoffStatusCodeSchema,
     phase: SessionHandoffPhaseSchema,
     jobId: z.string().min(1).max(MAX_JOB_ID_LENGTH).optional(),
+    workspaceReplicationJobId: z.string().min(1).max(MAX_JOB_ID_LENGTH).optional(),
     progress: SessionHandoffProgressSchema.optional(),
     workspacePreflightSummary: SessionHandoffWorkspacePreflightSummarySchema.optional(),
-    transportStrategy: SessionHandoffTransportStrategySchema.nullable().optional(),
+    transportStrategy: SessionHandoffStatusTransportStrategySchema.nullable().optional(),
     recoveryActions: z
       .array(SessionHandoffRecoveryActionSchema)
       .max(MAX_RECOVERY_ACTIONS)

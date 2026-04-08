@@ -81,6 +81,65 @@ describe("publicServerUrlInference", () => {
             }
         });
 
+        it("infers the canonical public URL from persisted relay access tailscaleFunnel config when the current port matches", async () => {
+            const { chmod, mkdtemp, writeFile, rm, mkdir } = await import("node:fs/promises");
+            const { tmpdir } = await import("node:os");
+            const { join } = await import("node:path");
+
+            const homeDir = await mkdtemp(join(tmpdir(), "happier-public-url-"));
+            const binDir = await mkdtemp(join(tmpdir(), "happier-public-url-bin-"));
+            const previousHome = process.env.HOME;
+            process.env.HOME = homeDir;
+            try {
+                const tailscaleBin = join(binDir, "tailscale");
+                await writeFile(
+                    tailscaleBin,
+                    [
+                        "#!/usr/bin/env bash",
+                        "set -euo pipefail",
+                        'if [[ "${1:-}" == "status" && "${2:-}" == "--json" ]]; then',
+                        "  cat <<'JSON'",
+                        '{"BackendState":"Running","HaveNodeKey":true,"Self":{"DNSName":"my-machine.tailnet.ts.net"}}',
+                        "JSON",
+                        "  exit 0",
+                        "fi",
+                        'if [[ "${1:-}" == "funnel" && "${2:-}" == "status" ]]; then',
+                        "  cat <<'TXT'",
+                        "https://funnel.example.test",
+                        "|-- / proxy http://127.0.0.1:3005",
+                        "TXT",
+                        "  exit 0",
+                        "fi",
+                        "echo \"unexpected args: $*\" >&2",
+                        "exit 1",
+                        "",
+                    ].join("\n"),
+                    "utf8",
+                );
+                await chmod(tailscaleBin, 0o755);
+                await mkdir(join(homeDir, ".happier", "relay", "access"), { recursive: true });
+                await writeFile(
+                    join(homeDir, ".happier", "relay", "access", "local.json"),
+                    JSON.stringify({ providerId: "tailscaleFunnel" }),
+                    "utf8",
+                );
+
+                const env = {
+                    HOME: homeDir,
+                    HAPPIER_TAILSCALE_BIN: tailscaleBin,
+                    HAPPIER_TAILSCALE_INFER_PUBLIC_URL: "0",
+                    HAPPIER_RELAY_ACCESS_INFER_PUBLIC_URL: "1",
+                } as NodeJS.ProcessEnv;
+                resetPublicServerUrlInferenceCacheForTests();
+                const resolved = await resolveCachedCanonicalPublicServerUrl(env);
+                expect(resolved).toBe("https://funnel.example.test");
+            } finally {
+                process.env.HOME = previousHome;
+                await rm(homeDir, { recursive: true, force: true });
+                await rm(binDir, { recursive: true, force: true });
+            }
+        });
+
         it("falls back to tailscale funnel inference after serve inference returns null", async () => {
             const { inferAndApplyTailscaleServePublicServerUrl } = await import("@/app/integrations/tailscale/tailscaleServePublicUrlInference");
             const { inferAndApplyTailscaleFunnelPublicServerUrl } = await import("@/app/integrations/tailscale/tailscaleFunnelPublicUrlInference");

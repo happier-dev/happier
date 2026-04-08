@@ -24,6 +24,46 @@ function runNode(args, { cwd, env }) {
   });
 }
 
+function runNodeWithTimeout(args, { cwd, env, timeoutMs }) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(process.execPath, args, {
+      cwd,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true,
+    });
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    };
+    const timer = setTimeout(() => {
+      try {
+        process.kill(-proc.pid, 'SIGKILL');
+      } catch {
+        // ignore
+      }
+      finish({ code: null, signal: 'SIGKILL', stdout, stderr, timedOut: true });
+    }, timeoutMs);
+    proc.stdout.on('data', (d) => (stdout += String(d)));
+    proc.stderr.on('data', (d) => (stderr += String(d)));
+    proc.on('error', fail);
+    proc.on('exit', (code, signal) =>
+      finish({ code: code ?? (signal ? 1 : 0), signal: signal ?? null, stdout, stderr, timedOut: false })
+    );
+  });
+}
+
 async function writeStubHappyCli({ cliDir }) {
   const distScript = `
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -718,6 +758,110 @@ process.exit(0);
     } catch {
       // ignore
     }
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('startLocalDaemonWithAuth returns once a synchronous daemon start command becomes stably running', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-sync-running-'));
+  const cliHomeDir = join(tmp, 'stack', 'cli');
+  const cliBin = join(tmp, 'bin', 'happier');
+  const cliCommandScript = join(tmp, 'cli-command.mjs');
+  const runnerPath = join(tmp, 'runner.mjs');
+
+  try {
+    await mkdir(dirname(cliBin), { recursive: true });
+    await mkdir(cliHomeDir, { recursive: true });
+    await writeFile(join(cliHomeDir, 'access.key'), 'seed-access-key\n', 'utf-8');
+    await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
+    await writeFile(cliBin, '#!/bin/sh\nexit 0\n', 'utf-8');
+    await chmod(cliBin, 0o755);
+
+    await writeFile(
+      cliCommandScript,
+      `
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+const args = process.argv.slice(2);
+const home = process.env.HAPPIER_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR;
+if (!home) process.exit(2);
+
+if (args[0] !== 'daemon') process.exit(0);
+const sub = args[1] || '';
+if (sub === 'stop') process.exit(0);
+if (sub === 'status') process.exit(1);
+
+if (sub === 'start') {
+  setTimeout(() => {
+    const serverDir = join(${JSON.stringify(cliHomeDir)}, 'servers', 'stack_dev__id_default');
+    mkdirSync(serverDir, { recursive: true });
+    writeFileSync(
+      join(serverDir, 'daemon.state.json'),
+      JSON.stringify({ pid: process.pid, httpPort: 1, startedAt: Date.now(), startedWithCliVersion: 'test' }) + '\\n',
+      'utf-8'
+    );
+  }, 250);
+  process.on('SIGTERM', () => process.exit(0));
+  setInterval(() => {}, 1000);
+} else {
+  process.exit(0);
+}
+      `.trimStart(),
+      'utf-8'
+    );
+
+    await writeFile(
+      runnerPath,
+      `
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { startLocalDaemonWithAuth } from ${JSON.stringify(join(rootDir, 'scripts', 'daemon.mjs'))};
+
+const cliHomeDir = ${JSON.stringify(cliHomeDir)};
+const statePath = join(cliHomeDir, 'servers', 'stack_dev__id_default', 'daemon.state.json');
+
+await startLocalDaemonWithAuth({
+  cliBin: ${JSON.stringify(cliBin)},
+  cliCommand: ${JSON.stringify(cliCommandScript)},
+  cliHomeDir,
+  internalServerUrl: 'http://127.0.0.1:4301',
+  publicServerUrl: 'http://localhost:4301',
+  isShuttingDown: () => false,
+  forceRestart: true,
+  env: {
+    ...process.env,
+    HAPPIER_STACK_STACK: 'dev',
+    HAPPIER_STACK_AUTO_AUTH_SEED: '0',
+    HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
+    HAPPIER_STACK_CLI_BUILD: '0',
+    HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '1500',
+    HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '50',
+    HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
+  },
+  stackName: 'dev',
+  cliIdentity: 'default',
+});
+
+const state = JSON.parse(await readFile(statePath, 'utf-8'));
+console.log(JSON.stringify({ ok: true, pid: state.pid }));
+process.kill(state.pid, 'SIGTERM');
+      `.trimStart(),
+      'utf-8'
+    );
+
+    const res = await runNodeWithTimeout([runnerPath], {
+      cwd: tmp,
+      env: process.env,
+      timeoutMs: 4_000,
+    });
+
+    assert.equal(res.timedOut, false, `runner should not hang once daemon becomes running\n${res.stdout}\n${res.stderr}`);
+    assert.equal(res.code, 0, `runner should exit cleanly\n${res.stdout}\n${res.stderr}`);
+    assert.match(res.stdout, /"ok":true/);
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
