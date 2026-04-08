@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import type { SessionListViewItem } from '@/sync/domains/state/storage';
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import { t } from '@/text';
 
 import type { SessionListProjectHeaderViewModel } from './sessionListProjectHeaderViewModels';
@@ -9,7 +9,7 @@ import { resolveSessionListHeaderViewState } from './resolveSessionListHeaderVie
 import { resolveSessionListHeaderActionHandlers } from './resolveSessionListHeaderActionHandlers';
 
 type SessionListHeaderItemProps = Readonly<{
-    item: Extract<SessionListViewItem, { type: 'header' }>;
+    item: Extract<SessionListIndexItem, { type: 'header' }>;
     collapsedKeys: Readonly<Record<string, boolean>>;
     projectHeaderViewModelByGroupKey: ReadonlyMap<string, SessionListProjectHeaderViewModel>;
     hasMultipleMachines: boolean;
@@ -41,11 +41,11 @@ export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemPro
         onToggleCollapse: props.onToggleCollapse,
     });
 
-    if (headerViewState && !headerActionHandlers) {
+    if (!headerViewState || !headerActionHandlers) {
         return null;
     }
 
-    if (headerViewState?.kind === 'project') {
+    if (headerViewState.kind === 'project') {
         return (
             <ProjectGroupHeader
                 item={props.item}
@@ -53,22 +53,20 @@ export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemPro
                 displayTitle={headerViewState.displayTitle}
                 hasCustomLabel={headerViewState.hasCustomLabel}
                 canOpenProject={Boolean(headerViewState.workspaceRefId)}
-                onOpenProject={headerActionHandlers!.onOpenProject}
-                onRename={headerActionHandlers!.onRename}
-                onReset={headerActionHandlers!.onReset}
+                onOpenProject={headerActionHandlers.onOpenProject}
+                onRename={headerActionHandlers.onRename}
+                onReset={headerActionHandlers.onReset}
                 collapsed={headerViewState.collapsed}
-                onToggleCollapse={headerActionHandlers!.onToggleCollapse}
+                onToggleCollapse={headerActionHandlers.onToggleCollapse}
             />
         );
     }
-
-    if (!headerViewState) return null;
 
     return (
         <CollapsibleSectionHeader
             title={headerViewState.title}
             collapsed={headerViewState.collapsed}
-            onPress={headerActionHandlers!.onToggleCollapse}
+            onPress={headerActionHandlers.onToggleCollapse}
             showOrderingMenu={props.item.headerKind === 'active' || props.item.headerKind === 'inactive'}
         />
     );

@@ -23,12 +23,6 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
     listHeaderSection: {
         backgroundColor: theme.colors.groupped.background,
     },
-    listHeaderMenuButton: {
-        width: 28,
-        height: 28,
-        alignItems: 'center' as const,
-        justifyContent: 'center' as const,
-    },
     headerText: {
         fontSize: 14,
         fontWeight: '600',

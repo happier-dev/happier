@@ -8,7 +8,7 @@ import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropd
 import { Text } from '@/components/ui/text/Text';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import { t } from '@/text';
-import type { SessionListViewItem } from '@/sync/domains/state/storage';
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 
 import { sessionListStyles } from './sessionListStyles';
 import { resolveProjectGroupHeaderMenuItems } from './resolveProjectGroupHeaderMenuItems';
@@ -141,7 +141,7 @@ export const SessionsListHeader = React.memo(function SessionsListHeader() {
 });
 
 export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: Readonly<{
-    item: Extract<SessionListViewItem, { type: 'header' }>;
+    item: Extract<SessionListIndexItem, { type: 'header' }>;
     hasMultipleMachines: boolean;
     displayTitle: string;
     hasCustomLabel: boolean;
@@ -169,16 +169,6 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
         hasCustomLabel,
         actionIconColor,
     });
-
-    const handleMenuSelect = React.useCallback((itemId: string) => {
-        if (itemId === 'openProject') {
-            onOpenProject();
-        } else if (itemId === 'rename') {
-            onRename();
-        } else if (itemId === 'reset') {
-            onReset();
-        }
-    }, [onOpenProject, onRename, onReset]);
 
     const chevronColor = theme.colors.textSecondary;
     return (
@@ -218,7 +208,15 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
                             open={menuOpen}
                             onOpenChange={setMenuOpen}
                             items={menuItems}
-                            onSelect={handleMenuSelect}
+                            onSelect={(itemId) => {
+                                if (itemId === 'openProject') {
+                                    onOpenProject();
+                                } else if (itemId === 'rename') {
+                                    onRename();
+                                } else if (itemId === 'reset') {
+                                    onReset();
+                                }
+                            }}
                             placement="bottom"
                             popoverAnchorAlign="end"
                             variant="slim"
