@@ -113,9 +113,9 @@ export class ApiMachineClient {
             getAdditionalAllowedWriteDirs: () => this.additionalAllowedWriteDirs,
         });
         this.fileSystemTransferRelayOwner = {
-            store: fileSystemHandlers.bulkTransferStore,
+            store: fileSystemHandlers.transferSessionStore,
             lifecycle: createTransferSessionLifecycle({
-                store: fileSystemHandlers.bulkTransferStore,
+                store: fileSystemHandlers.transferSessionStore,
                 chunkSizeBytes: configuration.filesTransferChunkBytes,
             }),
         };

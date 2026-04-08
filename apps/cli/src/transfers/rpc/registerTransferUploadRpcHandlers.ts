@@ -14,15 +14,15 @@ import {
 } from '../targets/resolveTransferUploadInitTarget';
 import { registerUploadTransferLifecycleHandlers } from './registerUploadTransferLifecycleHandlers';
 
-type BulkTransferUploadInitResponse =
+type TransferUploadInitResponse =
   | Readonly<{ success: true; uploadId: string; chunkSizeBytes: number; recipientPublicKeyBase64: string }>
   | Readonly<{ success: false; error: string }>;
 
-type BulkTransferUploadFinalizeResponse =
+type TransferUploadFinalizeResponse =
   | Readonly<{ success: true; path: string; sizeBytes: number; sha256: string }>
   | Readonly<{ success: false; error: string }>;
 
-export function registerBulkTransferUploadRpcHandlers(
+export function registerTransferUploadRpcHandlers(
   rpcHandlerManager: RpcHandlerRegistrar,
   deps: Readonly<{
     workingDirectory: string;
@@ -36,14 +36,14 @@ export function registerBulkTransferUploadRpcHandlers(
 ): void {
   const tempUploadRoot = join(tmpdir(), 'happier', 'uploads', randomUUID());
 
-  registerUploadTransferLifecycleHandlers<BulkTransferUploadInitResponse, BulkTransferUploadFinalizeResponse>({
+  registerUploadTransferLifecycleHandlers<TransferUploadInitResponse, TransferUploadFinalizeResponse>({
     rpcHandlerManager,
     store: deps.store,
     methods: {
-      init: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT,
-      chunk: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK,
-      finalize: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE,
-      abort: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_ABORT,
+      init: RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT,
+      chunk: RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK,
+      finalize: RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE,
+      abort: RPC_METHODS.DAEMON_TRANSFER_UPLOAD_ABORT,
     },
     resolveInit: async (data) => {
       const request = data as TransferUploadInitRequest | null;

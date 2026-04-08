@@ -6,18 +6,18 @@ import { TransferSessionStore } from '../core/transferSessionStore';
 import { resolveWorkspaceFileDownloadSource } from '../targets/resolveWorkspaceFileDownloadSource';
 import { registerDownloadTransferLifecycleHandlers } from './registerDownloadTransferLifecycleHandlers';
 
-type BulkTransferDownloadInitRequest = Readonly<{
+type TransferDownloadInitRequest = Readonly<{
   t: 'session_file_download_v1';
   path: string;
   asZip?: boolean;
   recipientPublicKeyBase64?: string;
 }>;
 
-type BulkTransferDownloadInitResponse =
+type TransferDownloadInitResponse =
   | Readonly<{ success: true; downloadId: string; chunkSizeBytes: number; sizeBytes: number; name: string }>
   | Readonly<{ success: false; error: string }>;
 
-export function registerBulkTransferDownloadRpcHandlers(
+export function registerTransferDownloadRpcHandlers(
   rpcHandlerManager: RpcHandlerRegistrar,
   deps: Readonly<{
     workingDirectory: string;
@@ -26,17 +26,17 @@ export function registerBulkTransferDownloadRpcHandlers(
     sessionRpcTransferMaxBytes?: number | null;
   }>,
 ): void {
-  registerDownloadTransferLifecycleHandlers<BulkTransferDownloadInitResponse>({
+  registerDownloadTransferLifecycleHandlers<TransferDownloadInitResponse>({
     rpcHandlerManager,
     store: deps.store,
     methods: {
-      init: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT,
-      chunk: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_CHUNK,
-      finalize: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE,
-      abort: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT,
+      init: RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT,
+      chunk: RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_CHUNK,
+      finalize: RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_FINALIZE,
+      abort: RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_ABORT,
     },
     resolveInit: async (data) => {
-      const request = data as BulkTransferDownloadInitRequest | null;
+      const request = data as TransferDownloadInitRequest | null;
       if (!request || request.t !== 'session_file_download_v1') {
         return {
           kind: 'rejected',

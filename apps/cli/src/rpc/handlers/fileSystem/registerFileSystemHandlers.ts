@@ -1,13 +1,15 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
+import { configuration } from '@/configuration';
 
 import { registerReadFileHandler } from './readFileHandler';
 import { registerWriteFileHandler } from './writeFileHandler';
 import { registerDirectoryHandlers } from './directoryHandlers';
 import { registerPathMutationHandlers } from './pathMutationHandlers';
-import { registerBulkTransferRpcHandlers } from '@/transfers/rpc/registerBulkTransferRpcHandlers';
 import { resolveServerRoutedTransferMaxBytes } from '@/transfers/policy/serverRoutedTransferPolicy';
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
-import type { TransferSessionStore } from '@/transfers/core/transferSessionStore';
+import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
+import { registerTransferDownloadRpcHandlers } from '@/transfers/rpc/registerTransferDownloadRpcHandlers';
+import { registerTransferUploadRpcHandlers } from '@/transfers/rpc/registerTransferUploadRpcHandlers';
 
 function normalizeAllowedDirectories(getDirectories?: () => ReadonlyArray<string>): string[] {
   const value = getDirectories?.() ?? [];
@@ -28,7 +30,7 @@ export function registerFileSystemHandlers(
     getAdditionalAllowedWriteDirs?: () => ReadonlyArray<string>;
   }>,
 ): Readonly<{
-  bulkTransferStore: TransferSessionStore;
+  transferSessionStore: TransferSessionStore;
 }> {
   const getAdditionalAllowedReadDirs = opts?.getAdditionalAllowedReadDirs;
   const getAdditionalAllowedWriteDirs = opts?.getAdditionalAllowedWriteDirs;
@@ -52,17 +54,25 @@ export function registerFileSystemHandlers(
     getAdditionalAllowedReadDirs: resolveReadDirs,
   });
   registerPathMutationHandlers(rpcHandlerManager, { workingDirectory });
-  const bulkTransferStore = registerBulkTransferRpcHandlers(rpcHandlerManager, {
+  const transferSessionStore = new TransferSessionStore({ ttlMs: configuration.filesTransferSessionTtlMs });
+
+  registerTransferUploadRpcHandlers(rpcHandlerManager, {
     workingDirectory,
-    getAdditionalAllowedReadDirs: resolveReadDirs,
     getAdditionalAllowedWriteDirs: resolveWriteDirs,
+    store: transferSessionStore,
     sessionRpcTransferMaxBytes: resolveServerRoutedTransferMaxBytes(),
     attachmentUpload: {
       pathAllowanceRegistry,
     },
   });
+  registerTransferDownloadRpcHandlers(rpcHandlerManager, {
+    workingDirectory,
+    getAdditionalAllowedReadDirs: resolveReadDirs,
+    store: transferSessionStore,
+    sessionRpcTransferMaxBytes: resolveServerRoutedTransferMaxBytes(),
+  });
 
   return {
-    bulkTransferStore,
+    transferSessionStore,
   };
 }

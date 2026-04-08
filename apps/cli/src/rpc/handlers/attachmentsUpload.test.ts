@@ -13,8 +13,10 @@ import {
 } from '@/machines/transfer/transferChunkEncryption';
 
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
+import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
 import { SERVER_ROUTED_FILE_TRANSFER_SIZE_LIMIT_ERROR } from '@/transfers/policy/serverRoutedTransferPolicy';
-import { registerBulkTransferRpcHandlers } from '@/transfers/rpc/registerBulkTransferRpcHandlers';
+import { registerTransferDownloadRpcHandlers } from '@/transfers/rpc/registerTransferDownloadRpcHandlers';
+import { registerTransferUploadRpcHandlers } from '@/transfers/rpc/registerTransferUploadRpcHandlers';
 import { restoreProcessEnv, snapshotProcessEnv } from '@/testkit/env/envSnapshot';
 
 type Handler = (data: unknown) => Promise<unknown> | unknown;
@@ -50,6 +52,33 @@ function createRpcHandlerManager(): { handlers: Map<string, Handler>; registerHa
   };
 }
 
+function registerAttachmentTransferHandlers(params: Readonly<{
+  mgr: RpcHandlerManager;
+  workingDirectory: string;
+  getAdditionalAllowedReadDirs?: () => ReadonlyArray<string>;
+  getAdditionalAllowedWriteDirs?: () => ReadonlyArray<string>;
+  sessionRpcTransferMaxBytes?: number | null;
+  attachmentUpload?: Readonly<{
+    pathAllowanceRegistry: ReturnType<typeof createTransferPathAllowanceRegistry>;
+  }>;
+}>): void {
+  const store = new TransferSessionStore({ ttlMs: configuration.filesTransferSessionTtlMs });
+
+  registerTransferUploadRpcHandlers(params.mgr as unknown as RpcHandlerManager, {
+    workingDirectory: params.workingDirectory,
+    store,
+    getAdditionalAllowedWriteDirs: params.getAdditionalAllowedWriteDirs,
+    sessionRpcTransferMaxBytes: params.sessionRpcTransferMaxBytes ?? null,
+    ...(params.attachmentUpload ? { attachmentUpload: params.attachmentUpload } : {}),
+  });
+  registerTransferDownloadRpcHandlers(params.mgr as unknown as RpcHandlerManager, {
+    workingDirectory: params.workingDirectory,
+    store,
+    getAdditionalAllowedReadDirs: params.getAdditionalAllowedReadDirs,
+    sessionRpcTransferMaxBytes: params.sessionRpcTransferMaxBytes ?? null,
+  });
+}
+
 describe('attachments upload (chunked)', () => {
   const envBackup = snapshotProcessEnv();
 
@@ -78,7 +107,8 @@ describe('attachments upload (chunked)', () => {
           writeAllowedDirs.current = [...dirs];
         },
       });
-      registerBulkTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+      registerAttachmentTransferHandlers({
+        mgr: mgr as unknown as RpcHandlerManager,
         workingDirectory,
         getAdditionalAllowedReadDirs: () => readAllowedDirs.current,
         getAdditionalAllowedWriteDirs: () => writeAllowedDirs.current,
@@ -87,7 +117,7 @@ describe('attachments upload (chunked)', () => {
         },
       });
 
-      const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
+      const init = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT);
       if (!init) throw new Error('expected attachments upload handlers to be registered');
 
       const initRes = await init({
@@ -127,7 +157,8 @@ describe('attachments upload (chunked)', () => {
           writeAllowedDirs.current = [...dirs];
         },
       });
-      registerBulkTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+      registerAttachmentTransferHandlers({
+        mgr: mgr as unknown as RpcHandlerManager,
         workingDirectory,
         getAdditionalAllowedReadDirs: () => readAllowedDirs.current,
         getAdditionalAllowedWriteDirs: () => writeAllowedDirs.current,
@@ -137,7 +168,7 @@ describe('attachments upload (chunked)', () => {
         },
       });
 
-      const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
+      const init = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT);
       if (!init) throw new Error('expected attachments upload handlers to be registered');
 
       const initRes = await init({
@@ -178,7 +209,8 @@ describe('attachments upload (chunked)', () => {
           writeAllowedDirs.current = [...dirs];
         },
       });
-      registerBulkTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+      registerAttachmentTransferHandlers({
+        mgr: mgr as unknown as RpcHandlerManager,
         workingDirectory,
         getAdditionalAllowedReadDirs: () => readAllowedDirs.current,
         getAdditionalAllowedWriteDirs: () => writeAllowedDirs.current,
@@ -187,7 +219,7 @@ describe('attachments upload (chunked)', () => {
         },
       });
 
-      const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
+      const init = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT);
       if (!init) throw new Error('expected attachments upload handlers to be registered');
 
       const initRes = await init({
@@ -224,7 +256,8 @@ describe('attachments upload (chunked)', () => {
           writeAllowedDirs.current = [...dirs];
         },
       });
-      registerBulkTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+      registerAttachmentTransferHandlers({
+        mgr: mgr as unknown as RpcHandlerManager,
         workingDirectory,
         getAdditionalAllowedReadDirs: () => readAllowedDirs.current,
         getAdditionalAllowedWriteDirs: () => writeAllowedDirs.current,
@@ -233,7 +266,7 @@ describe('attachments upload (chunked)', () => {
         },
       });
 
-      const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
+      const init = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT);
       if (!init) throw new Error('expected attachments upload handlers to be registered');
 
       const initRes = await init({
@@ -272,7 +305,8 @@ describe('attachments upload (chunked)', () => {
           writeAllowedDirs.current = [...dirs];
         },
       });
-      registerBulkTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+      registerAttachmentTransferHandlers({
+        mgr: mgr as unknown as RpcHandlerManager,
         workingDirectory,
         getAdditionalAllowedReadDirs: () => readAllowedDirs.current,
         getAdditionalAllowedWriteDirs: () => writeAllowedDirs.current,
@@ -281,7 +315,7 @@ describe('attachments upload (chunked)', () => {
         },
       });
 
-      const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
+      const init = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT);
       if (!init) throw new Error('expected attachments upload handlers to be registered');
 
       const initRes = await init({
@@ -323,7 +357,8 @@ describe('attachments upload (chunked)', () => {
           writeAllowedDirs.current = [...dirs];
         },
       });
-      registerBulkTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+      registerAttachmentTransferHandlers({
+        mgr: mgr as unknown as RpcHandlerManager,
         workingDirectory,
         getAdditionalAllowedReadDirs: () => readAllowedDirs.current,
         getAdditionalAllowedWriteDirs: () => writeAllowedDirs.current,
@@ -332,7 +367,7 @@ describe('attachments upload (chunked)', () => {
         },
       });
 
-      const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
+      const init = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT);
       if (!init) throw new Error('expected attachments upload handlers to be registered');
 
       const initRes = await init({
@@ -370,7 +405,8 @@ describe('attachments upload (chunked)', () => {
           writeAllowedDirs.current = [...dirs];
         },
       });
-      registerBulkTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+      registerAttachmentTransferHandlers({
+        mgr: mgr as unknown as RpcHandlerManager,
         workingDirectory,
         getAdditionalAllowedReadDirs: () => readAllowedDirs.current,
         getAdditionalAllowedWriteDirs: () => writeAllowedDirs.current,
@@ -379,15 +415,15 @@ describe('attachments upload (chunked)', () => {
         },
       });
 
-      expect(mgr.handlers.has(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT)).toBe(true);
-      expect(mgr.handlers.has(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK)).toBe(true);
-      expect(mgr.handlers.has(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE)).toBe(true);
-      expect(mgr.handlers.has(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_ABORT)).toBe(true);
+      expect(mgr.handlers.has(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT)).toBe(true);
+      expect(mgr.handlers.has(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK)).toBe(true);
+      expect(mgr.handlers.has(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE)).toBe(true);
+      expect(mgr.handlers.has(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_ABORT)).toBe(true);
       expect(mgr.handlers.has(['daemon.sessionAttachments.', 'upload.init'].join(''))).toBe(false);
 
-      const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
-      const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK);
-      const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE);
+      const init = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT);
+      const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK);
+      const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE);
       if (!init || !chunk || !finalize) {
         throw new Error('expected attachment upload handlers to be registered');
       }
@@ -442,7 +478,8 @@ describe('attachments upload (chunked)', () => {
           writeAllowedDirs.current = [...dirs];
         },
       });
-      registerBulkTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+      registerAttachmentTransferHandlers({
+        mgr: mgr as unknown as RpcHandlerManager,
         workingDirectory: handlerWorkingDirectory,
         getAdditionalAllowedReadDirs: () => readAllowedDirs.current,
         getAdditionalAllowedWriteDirs: () => writeAllowedDirs.current,
@@ -451,9 +488,9 @@ describe('attachments upload (chunked)', () => {
         },
       });
 
-      const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
-      const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK);
-      const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE);
+      const init = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT);
+      const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK);
+      const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE);
       if (!init || !chunk || !finalize) {
         throw new Error('expected attachment upload handlers to be registered');
       }
@@ -508,7 +545,8 @@ describe('attachments upload (chunked)', () => {
           writeAllowedDirs.current = [...dirs];
         },
       });
-      registerBulkTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+      registerAttachmentTransferHandlers({
+        mgr: mgr as unknown as RpcHandlerManager,
         workingDirectory,
         getAdditionalAllowedReadDirs: () => readAllowedDirs.current,
         getAdditionalAllowedWriteDirs: () => writeAllowedDirs.current,
@@ -517,12 +555,12 @@ describe('attachments upload (chunked)', () => {
         },
       });
 
-      const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
-      const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK);
-      const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE);
-      const downloadInit = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT);
-      const downloadChunk = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_CHUNK);
-      const downloadFinalize = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE);
+      const init = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT);
+      const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK);
+      const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE);
+      const downloadInit = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT);
+      const downloadChunk = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_CHUNK);
+      const downloadFinalize = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_FINALIZE);
       if (!init || !chunk || !finalize || !downloadInit || !downloadChunk || !downloadFinalize) {
         throw new Error('expected dedicated attachment upload and file download handlers to be registered');
       }
@@ -597,7 +635,8 @@ describe('attachments upload (chunked)', () => {
           writeAllowedDirs.current = [...dirs];
         },
       });
-      registerBulkTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+      registerAttachmentTransferHandlers({
+        mgr: mgr as unknown as RpcHandlerManager,
         workingDirectory,
         getAdditionalAllowedReadDirs: () => readAllowedDirs.current,
         getAdditionalAllowedWriteDirs: () => writeAllowedDirs.current,
@@ -606,8 +645,8 @@ describe('attachments upload (chunked)', () => {
         },
       });
 
-      const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
-      const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK);
+      const init = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT);
+      const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK);
       if (!init || !chunk) {
         throw new Error('expected attachment upload handlers to be registered');
       }

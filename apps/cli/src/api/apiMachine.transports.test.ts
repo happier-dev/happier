@@ -17,7 +17,7 @@ const { configurationMock, mockIo } = vi.hoisted(() => ({
 }));
 
 const registerFileSystemHandlersMock = vi.hoisted(() => vi.fn(() => ({
-  bulkTransferStore: {},
+  transferSessionStore: {},
 })));
 
 vi.mock('socket.io-client', () => ({
@@ -64,7 +64,7 @@ describe('ApiMachineClient transports', () => {
     configurationMock.apiServerUrl = 'http://localhost:3005';
     configurationMock.socketIoTransports = ['websocket', 'polling'];
     registerFileSystemHandlersMock.mockReset();
-    registerFileSystemHandlersMock.mockReturnValue({ bulkTransferStore: {} });
+    registerFileSystemHandlersMock.mockReturnValue({ transferSessionStore: {} });
     bindApiSessionSocketMock(mockIo, createApiSessionSocketStub());
   });
 

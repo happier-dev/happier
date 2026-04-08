@@ -5,17 +5,18 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-const CANONICAL_BULK_TRANSFER_RPC_TOKENS = [
-    'RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_',
-    'RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_',
+const CANONICAL_TRANSFER_RPC_TOKENS = [
+    'RPC_METHODS.DAEMON_TRANSFER_UPLOAD_',
+    'RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_',
 ] as const;
 
-const CANONICAL_BULK_TRANSFER_RPC_LITERAL_PREFIXES = [
-    'daemon.bulkTransfer.upload.',
-    'daemon.bulkTransfer.download.',
+const CANONICAL_TRANSFER_RPC_LITERAL_PREFIXES = [
+    'daemon.transfer.upload.',
+    'daemon.transfer.download.',
 ] as const;
 
 const LEGACY_BULK_TRANSFER_RPC_TOKENS = [
+    'daemon.bulkTransfer.',
     ['DAEMON_SESSION_', 'FILES_'].join(''),
     ['DAEMON_SESSION_ATTACHMENTS_', 'UPLOAD_'].join(''),
     ['ATTACHMENTS_', 'CONFIGURE'].join(''),
@@ -61,8 +62,8 @@ function isProductionTsFile(filePath: string): boolean {
     return true;
 }
 
-describe('bulk transfer rpc family (import-boundary)', () => {
-    it('confines canonical DAEMON_BULK_TRANSFER_* tokens to the transfer substrate', async () => {
+describe('transfer rpc family (import-boundary)', () => {
+    it('confines canonical DAEMON_TRANSFER_* tokens to transfer rpc and handler wiring', async () => {
         const cliRoot = fileURLToPath(new URL('../../..', import.meta.url)); // apps/cli/src
         const transfersRoot = fileURLToPath(new URL('..', import.meta.url)); // apps/cli/src/transfers
         const rpcHandlersRoot = fileURLToPath(new URL('../../rpc/handlers', import.meta.url)); // apps/cli/src/rpc/handlers
@@ -72,7 +73,7 @@ describe('bulk transfer rpc family (import-boundary)', () => {
         for (const filePath of files) {
             const content = await readFile(filePath, 'utf8');
 
-            for (const prefix of CANONICAL_BULK_TRANSFER_RPC_LITERAL_PREFIXES) {
+            for (const prefix of CANONICAL_TRANSFER_RPC_LITERAL_PREFIXES) {
                 expect(content).not.toContain(prefix);
             }
 
@@ -80,11 +81,11 @@ describe('bulk transfer rpc family (import-boundary)', () => {
                 expect(content).not.toContain(token);
             }
 
-            // Canonical DAEMON_BULK_TRANSFER_* tokens are allowed only in canonical transfer registrar/handler code.
+            // Canonical DAEMON_TRANSFER_* tokens are allowed only in canonical transfer registrar/handler code.
             if (filePath.startsWith(transfersRoot) || filePath.startsWith(rpcHandlersRoot)) {
                 continue;
             }
-            for (const token of CANONICAL_BULK_TRANSFER_RPC_TOKENS) {
+            for (const token of CANONICAL_TRANSFER_RPC_TOKENS) {
                 expect(content).not.toContain(token);
             }
         }

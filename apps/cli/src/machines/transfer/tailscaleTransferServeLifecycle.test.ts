@@ -104,6 +104,56 @@ describe('createTailscaleTransferServeLifecycle', () => {
     expect(runTailscaleServeEnable).toHaveBeenCalledTimes(1);
   });
 
+  it('disables and re-enables the owned mapping when the shared transfer server port changes', async () => {
+    const runTailscaleServeEnable = vi.fn(async ({ upstreamUrl }: { upstreamUrl: string }) => ({
+      approvalUrl: null,
+      httpsUrl: 'https://machine.tailnet.ts.net:8443',
+      rawStatus: `https://machine.tailnet.ts.net:8443\n|-- /__happier/transfer proxy ${upstreamUrl}`,
+    }));
+    const runTailscaleServeDisable = vi.fn(async () => undefined);
+
+    const lifecycle = createTailscaleTransferServeLifecycle({
+      enabled: true,
+      servePath: '/__happier/transfer',
+      httpsPort: 8443,
+      runTailscaleServeEnable,
+      runTailscaleServeDisable,
+    });
+
+    await lifecycle.observeDirectTransferServerLifecycleState({
+      status: 'running',
+      listenerClasses: ['loopback_http'],
+      port: 46001,
+      publishedTransferCount: 1,
+    });
+    await lifecycle.observeDirectTransferServerLifecycleState({
+      status: 'running',
+      listenerClasses: ['loopback_http'],
+      port: 46002,
+      publishedTransferCount: 1,
+    });
+
+    expect(runTailscaleServeEnable).toHaveBeenCalledTimes(2);
+    expect(runTailscaleServeDisable).toHaveBeenCalledTimes(1);
+    expect(runTailscaleServeEnable).toHaveBeenNthCalledWith(1, {
+      env: process.env,
+      upstreamUrl: 'http://127.0.0.1:46001',
+      servePath: '/__happier/transfer',
+      httpsPort: 8443,
+    });
+    expect(runTailscaleServeEnable).toHaveBeenNthCalledWith(2, {
+      env: process.env,
+      upstreamUrl: 'http://127.0.0.1:46002',
+      servePath: '/__happier/transfer',
+      httpsPort: 8443,
+    });
+    expect(runTailscaleServeDisable).toHaveBeenCalledWith({
+      env: process.env,
+      servePath: '/__happier/transfer',
+      httpsPort: 8443,
+    });
+  });
+
   it('publishes approval-needed serve results as configured but not active', async () => {
     const listenerStates: Array<{
       enabled: boolean;

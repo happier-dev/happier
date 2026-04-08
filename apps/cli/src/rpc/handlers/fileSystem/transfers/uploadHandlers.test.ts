@@ -11,7 +11,7 @@ import { createEncryptedTransferChunkEnvelope } from '@/machines/transfer/transf
 import { registerFileSystemHandlers } from '@/rpc/handlers/fileSystem';
 import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
 import { SERVER_ROUTED_FILE_TRANSFER_SIZE_LIMIT_ERROR } from '@/transfers/policy/serverRoutedTransferPolicy';
-import { registerBulkTransferUploadRpcHandlers } from '@/transfers/rpc/registerBulkTransferUploadRpcHandlers';
+import { registerTransferUploadRpcHandlers } from '@/transfers/rpc/registerTransferUploadRpcHandlers';
 
 type Handler = (data: any) => Promise<any>;
 type UploadSessionHandle = NonNullable<ReturnType<TransferSessionStore['getUploadSession']>>;
@@ -58,9 +58,9 @@ describe('file transfers (upload)', () => {
     const mgr = createRpcHandlerManager();
     registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, workspace);
 
-    const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
-    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK);
-    const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE);
+    const init = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT);
+    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK);
+    const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE);
     if (!init || !chunk || !finalize) throw new Error('expected upload handlers');
 
     const content = 'hello world\n';
@@ -96,9 +96,9 @@ describe('file transfers (upload)', () => {
     const mgr = createRpcHandlerManager();
     registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, workspace);
 
-    const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
-    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK);
-    const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE);
+    const init = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT);
+    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK);
+    const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE);
     if (!init || !chunk || !finalize) throw new Error('expected upload handlers');
 
     const content = 'new\n';
@@ -133,9 +133,9 @@ describe('file transfers (upload)', () => {
     const mgr = createRpcHandlerManager();
     registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, workspace);
 
-    const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
-    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK);
-    const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE);
+    const init = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT);
+    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK);
+    const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE);
     if (!init || !chunk || !finalize) throw new Error('expected upload handlers');
 
     const content = 'file\n';
@@ -174,11 +174,11 @@ describe('file transfers (upload)', () => {
     const workspace = mkdtempSync(join(tmpdir(), 'happier-files-upload-'));
     const store = new TransferSessionStore({ ttlMs: 1000 });
     const mgr = createRpcHandlerManager();
-    registerBulkTransferUploadRpcHandlers(mgr as unknown as RpcHandlerManager, { workingDirectory: workspace, store });
+    registerTransferUploadRpcHandlers(mgr as unknown as RpcHandlerManager, { workingDirectory: workspace, store });
 
-    const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
-    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK);
-    const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE);
+    const init = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT);
+    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK);
+    const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE);
     if (!init || !chunk || !finalize) throw new Error('expected upload handlers');
 
     const firstChunk = Buffer.alloc(configuration.filesTransferChunkBytes, 'a');
@@ -222,8 +222,8 @@ describe('file transfers (upload)', () => {
     const mgr = createRpcHandlerManager();
     registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, workspace);
 
-    const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
-    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK);
+    const init = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT);
+    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK);
     if (!init || !chunk) throw new Error('expected upload handlers');
 
     const initResp = await init({
@@ -254,14 +254,14 @@ describe('file transfers (upload)', () => {
 
     const store = new TransferSessionStore({ ttlMs: 1000 });
     const mgr = createRpcHandlerManager();
-    registerBulkTransferUploadRpcHandlers(mgr as unknown as RpcHandlerManager, {
+    registerTransferUploadRpcHandlers(mgr as unknown as RpcHandlerManager, {
       workingDirectory: workspace,
       store,
     });
 
-    const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
-    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK);
-    const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE);
+    const init = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT);
+    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK);
+    const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE);
     if (!init || !chunk || !finalize) throw new Error('expected upload handlers');
 
     const content = 'new\n';
@@ -304,13 +304,13 @@ describe('file transfers (upload)', () => {
     const workspace = mkdtempSync(join(tmpdir(), 'happier-files-upload-'));
     const store = new TransferSessionStore({ ttlMs: 1000 });
     const mgr = createRpcHandlerManager();
-    registerBulkTransferUploadRpcHandlers(mgr as unknown as RpcHandlerManager, {
+    registerTransferUploadRpcHandlers(mgr as unknown as RpcHandlerManager, {
       workingDirectory: workspace,
       store,
       sessionRpcTransferMaxBytes: 4,
     });
 
-    const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
+    const init = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT);
     if (!init) throw new Error('expected upload init handler');
 
     await expect(
@@ -333,7 +333,7 @@ describe('file transfers (upload)', () => {
     const mgr = createRpcHandlerManager();
     registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, workspace);
 
-    const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
+    const init = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT);
     if (!init) throw new Error('expected upload init handler');
 
     await expect(

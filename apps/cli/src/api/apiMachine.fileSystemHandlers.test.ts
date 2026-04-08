@@ -38,14 +38,14 @@ describe('ApiMachineClient filesystem handlers', () => {
     expect(rpc.hasHandler(RPC_METHODS.STAT_FILE)).toBe(true);
     expect(rpc.hasHandler(RPC_METHODS.RENAME_PATH)).toBe(true);
     expect(rpc.hasHandler(RPC_METHODS.DELETE_PATH)).toBe(true);
-    expect(rpc.hasHandler(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT)).toBe(true);
-    expect(rpc.hasHandler(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK)).toBe(true);
-    expect(rpc.hasHandler(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE)).toBe(true);
-    expect(rpc.hasHandler(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_ABORT)).toBe(true);
-    expect(rpc.hasHandler(RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT)).toBe(true);
-    expect(rpc.hasHandler(RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_CHUNK)).toBe(true);
-    expect(rpc.hasHandler(RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE)).toBe(true);
-    expect(rpc.hasHandler(RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_ABORT)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_CHUNK)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_FINALIZE)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_ABORT)).toBe(true);
   });
 
   it('streams workspace file downloads over the live relay-v2 channel when RPC handlers are attached', async () => {
@@ -92,7 +92,7 @@ describe('ApiMachineClient filesystem handlers', () => {
       });
 
       const recipientKeyPair = createTransferRecipientKeyPair();
-      const init = await rpc.invokeLocal(RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT, {
+      const init = await rpc.invokeLocal(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT, {
         t: 'session_file_download_v1',
         path: join(workspace, 'hello.txt'),
         recipientPublicKeyBase64: recipientKeyPair.recipientPublicKeyBase64,

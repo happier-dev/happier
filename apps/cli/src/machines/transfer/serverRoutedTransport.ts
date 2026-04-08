@@ -55,6 +55,7 @@ const TRANSFER_OPEN_RETRY_INITIAL_DELAY_MS = 200;
 const TRANSFER_OPEN_RETRY_MAX_DELAY_MS = 2000;
 
 export type MachineTransferChannel = Readonly<{
+  serverId?: string;
   onEnvelope: (listener: (payload: MachineTransferReceiveEnvelope) => void) => () => void;
   sendEnvelope: (payload: MachineTransferSendEnvelope) => void;
 }>;

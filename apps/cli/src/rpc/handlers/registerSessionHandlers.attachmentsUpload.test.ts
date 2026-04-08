@@ -29,10 +29,10 @@ describe('registerSessionHandlers attachments uploads', () => {
 
     registerSessionHandlers(mgr, workingDirectory);
 
-    expect(handlers.has(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT)).toBe(false);
-    expect(handlers.has(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK)).toBe(false);
-    expect(handlers.has(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE)).toBe(false);
-    expect(handlers.has(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_ABORT)).toBe(false);
+    expect(handlers.has(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT)).toBe(false);
+    expect(handlers.has(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK)).toBe(false);
+    expect(handlers.has(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE)).toBe(false);
+    expect(handlers.has(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_ABORT)).toBe(false);
     expect(handlers.has(['daemon.sessionAttachments.', 'upload.init'].join(''))).toBe(false);
     expect(handlers.has(['daemon.sessionAttachments.', 'upload.chunk'].join(''))).toBe(false);
     expect(handlers.has(['daemon.sessionAttachments.', 'upload.finalize'].join(''))).toBe(false);
