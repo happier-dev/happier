@@ -121,6 +121,10 @@ describe("startServerLight planning helpers", () => {
 
     mkdirSync(resolve(rootDir, "packages", "cli-common", "dist", "systemTasks"), { recursive: true });
     writeFileSync(resolve(rootDir, "packages", "cli-common", "dist", "systemTasks", "index.js"), "export {};\n", "utf8");
+    expect(hasServerSharedDepsOutputs(rootDir)).toBe(false);
+
+    mkdirSync(resolve(rootDir, "packages", "cli-common", "dist", "process"), { recursive: true });
+    writeFileSync(resolve(rootDir, "packages", "cli-common", "dist", "process", "commandExists.js"), "export {};\n", "utf8");
     expect(hasServerSharedDepsOutputs(rootDir)).toBe(true);
   });
 
@@ -163,6 +167,19 @@ describe("startServerLight planning helpers", () => {
       preflightPortAvailable: true,
       error: new Error("server-light exited before /health was ready (code=1)"),
       stderrTail: "Error: listen EADDRINUSE: address already in use 127.0.0.1:58786",
+      stdoutTail: "",
+    });
+    expect(retry).toBe(true);
+  });
+
+  it("retries server start when internal workspace dist exports are missing", () => {
+    const retry = shouldRetryServerStartFromFailureContext({
+      attempt: 1,
+      maxAttempts: 5,
+      preflightPortAvailable: true,
+      error: new Error("server-light exited before /health was ready (code=1)"),
+      stderrTail:
+        "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Users/leeroy/Documents/Development/happier/dev/node_modules/@happier-dev/cli-common/dist/process/commandExists.js' imported from /Users/leeroy/Documents/Development/happier/dev/node_modules/@happier-dev/cli-common/dist/process/index.js",
       stdoutTail: "",
     });
     expect(retry).toBe(true);

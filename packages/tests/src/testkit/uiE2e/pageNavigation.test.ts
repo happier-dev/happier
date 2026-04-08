@@ -216,21 +216,24 @@ describe('gotoCommittedWithRetries', () => {
 });
 
 describe('normalizeLoopbackBaseUrl', () => {
-  it('preserves routable IPv4 loopback hosts and rewrites non-routable loopback hosts to 127.0.0.1', () => {
+  it('preserves explicitly routable loopback hosts and only rewrites derived loopback aliases', () => {
     expect(normalizeLoopbackBaseUrl('http://127.0.0.1:60674/')).toBe('http://127.0.0.1:60674');
-    expect(normalizeLoopbackBaseUrl('http://0.0.0.0:60674/')).toBe('http://127.0.0.1:60674');
-    expect(normalizeLoopbackBaseUrl('http://[::1]:60674/')).toBe('http://127.0.0.1:60674');
+    expect(normalizeLoopbackBaseUrl('http://localhost:60674/')).toBe('http://localhost:60674');
+    expect(normalizeLoopbackBaseUrl('http://[::1]:60674/')).toBe('http://[::1]:60674');
+    expect(normalizeLoopbackBaseUrl('http://0.0.0.0:60674/')).toBe('http://localhost:60674');
     expect(normalizeLoopbackBaseUrl('http://happier-transcript-rollout-unify-0405.localhost:60674/')).toBe(
-      'http://127.0.0.1:60674',
+      'http://localhost:60674',
     );
   });
 });
 
 describe('waitForAuthenticatedHomeUi', () => {
-  it('waits for the authenticated root shell after terminal-connect success', async () => {
+  it('waits past connect_machine until the authenticated root exposes session actions after terminal-connect success', async () => {
     const testIdCounts: Record<string, number[]> = {
       'welcome-create-account': [1, 1, 0, 0],
-      'session-getting-started-kind-connect_machine': [0, 0, 1, 1],
+      'session-getting-started-kind-connect_machine': [1, 1, 1, 1],
+      'session-getting-started-kind-create_session': [0, 0, 1, 1],
+      'session-getting-started-kind-select_session': [0, 0, 1, 1],
       'setupWizard.surface': [0, 0, 0, 0],
     };
     const counts = new Map<string, number>();
@@ -267,6 +270,8 @@ describe('waitForAuthenticatedHomeUi', () => {
     expect(page.reload).not.toHaveBeenCalled();
     expect(counts.get('welcome-create-account')).toBeGreaterThanOrEqual(2);
     expect(counts.get('session-getting-started-kind-connect_machine')).toBeGreaterThanOrEqual(2);
+    expect(counts.get('session-getting-started-kind-create_session')).toBeGreaterThanOrEqual(2);
+    expect(nowMs).toBeGreaterThanOrEqual(500);
   });
 
   it('recovers to the sessions chooser when the authenticated root lands on the settings tab', async () => {
@@ -421,5 +426,124 @@ describe('waitForAuthenticatedHomeUi', () => {
 
     expect(page.reload).not.toHaveBeenCalled();
     expect(counts.get('main-header-start-new-session')).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('waitForAuthenticatedRouteUi', () => {
+  it('waits for an authenticated route to expose its required test ids after storage-based restore', async () => {
+    const counts = new Map<string, number>();
+    let nowMs = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+
+    const nextCount = (testId: string): number => {
+      const index = counts.get(testId) ?? 0;
+      counts.set(testId, index + 1);
+
+      if (testId === 'welcome-create-account') {
+        return nowMs < 500 ? 1 : 0;
+      }
+
+      if (testId === 'settings-provider-field-codexBackendMode') {
+        return nowMs < 750 ? 0 : 1;
+      }
+
+      return 0;
+    };
+
+    const page = {
+      getByTestId: (testId: string) => ({ count: async () => nextCount(testId) }),
+      waitForTimeout: vi.fn(async (delayMs: number) => {
+        nowMs += delayMs;
+      }),
+      reload: vi.fn(async () => {}),
+      url: () => (nowMs < 250
+        ? 'http://127.0.0.1:3000/'
+        : 'http://127.0.0.1:3000/settings/providers/codex'),
+    };
+
+    const helper = (pageNavigation as Record<string, unknown>).waitForAuthenticatedRouteUi;
+    expect(helper).toBeTypeOf('function');
+
+    await expect(
+      (helper as (
+        params: Readonly<{
+          page: WaitForAuthenticatedHomeUiPage;
+          expectedPathname: string;
+          requiredTestIds: readonly string[];
+          timeoutMs?: number;
+          reloadOnFailure?: boolean;
+        }>,
+      ) => Promise<void>)({
+        page,
+        expectedPathname: '/settings/providers/codex',
+        requiredTestIds: ['settings-provider-field-codexBackendMode'],
+        timeoutMs: 2_000,
+        reloadOnFailure: false,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(page.reload).not.toHaveBeenCalled();
+    expect(counts.get('welcome-create-account')).toBeGreaterThanOrEqual(2);
+    expect(counts.get('settings-provider-field-codexBackendMode')).toBeGreaterThanOrEqual(2);
+    expect(nowMs).toBeGreaterThanOrEqual(750);
+  });
+});
+
+describe('waitForSessionActionsHomeUi', () => {
+  it('waits for the later home shell to expose session actions after terminal-connect', async () => {
+    const testIdCounts: Record<string, number[]> = {
+      'welcome-create-account': [0, 0, 0, 0, 0],
+      'session-getting-started-kind-connect_machine': [1, 1, 1, 1, 1],
+      'session-getting-started-kind-create_session': [0, 0, 0, 1, 1],
+      'session-getting-started-kind-select_session': [0, 0, 0, 1, 1],
+      'setupWizard.surface': [0, 0, 0, 0, 0],
+      'tabbar-tab-sessions': [1, 1, 1, 1, 1],
+    };
+    const counts = new Map<string, number>();
+    let nowMs = 0;
+    let sessionsTabActivated = false;
+    vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+
+    const nextCount = (key: string): number => {
+      const index = counts.get(key) ?? 0;
+      counts.set(key, index + 1);
+      if (key === 'main-header-start-new-session') {
+        return sessionsTabActivated ? 1 : 0;
+      }
+      if (key === 'session-getting-started-kind-select_session') {
+        return sessionsTabActivated ? 1 : 0;
+      }
+      const sequence = testIdCounts[key] ?? [0];
+      return sequence[Math.min(index, sequence.length - 1)] ?? 0;
+    };
+
+    const page = {
+      getByTestId: (testId: string) => ({
+        count: async () => nextCount(testId),
+        click: async () => {
+          if (testId === 'tabbar-tab-sessions') {
+            sessionsTabActivated = true;
+          }
+        },
+      }),
+      waitForTimeout: vi.fn(async (delayMs: number) => {
+        nowMs += delayMs;
+      }),
+      reload: vi.fn(async () => {}),
+      url: () => 'http://127.0.0.1:3000/',
+    };
+
+    const helper = (pageNavigation as Record<string, unknown>).waitForSessionActionsHomeUi;
+    expect(helper).toBeTypeOf('function');
+
+    await expect(
+      (helper as (
+        params: Readonly<{ page: WaitForAuthenticatedHomeUiPage; timeoutMs?: number; reloadOnFailure?: boolean }>,
+      ) => Promise<void>)({ page, timeoutMs: 1_000, reloadOnFailure: false }),
+    ).resolves.toBeUndefined();
+
+    expect(sessionsTabActivated).toBe(true);
+    expect(counts.get('session-getting-started-kind-connect_machine')).toBeGreaterThanOrEqual(2);
+    expect(counts.get('session-getting-started-kind-create_session')).toBeGreaterThanOrEqual(1);
   });
 });

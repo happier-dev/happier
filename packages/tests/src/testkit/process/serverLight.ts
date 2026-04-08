@@ -99,6 +99,15 @@ function composeServerStartTail(stderrTail: string, stdoutTail: string): string 
   return `${stderrTail}\n${stdoutTail}`.trim();
 }
 
+function looksLikeMissingInternalWorkspaceDistExport(params: { stderrTail: string; stdoutTail: string }): boolean {
+  const tail = composeServerStartTail(params.stderrTail, params.stdoutTail);
+  if (!tail) return false;
+  if (!tail.includes('ERR_MODULE_NOT_FOUND') && !tail.includes('Cannot find module')) return false;
+  // Typical failure shape when internal workspace `dist/` outputs are stale/missing under workspaces.
+  // Example: "...node_modules/@happier-dev/cli-common/dist/process/commandExists.js..."
+  return /node_modules\/@happier-dev\/[^/]+\/dist\//u.test(tail);
+}
+
 function looksLikeServerLightCommand(command: string): boolean {
   const normalized = command.replaceAll('\\', '/');
   return normalized.includes('start:light')
@@ -193,6 +202,12 @@ export function shouldRetryServerStartFromFailureContext(params: {
   ) {
     return true;
   }
+  if (
+    params.attempt < params.maxAttempts
+    && looksLikeMissingInternalWorkspaceDistExport({ stderrTail: params.stderrTail, stdoutTail: params.stdoutTail })
+  ) {
+    return true;
+  }
   return shouldRetryServerStart({
     attempt: params.attempt,
     maxAttempts: params.maxAttempts,
@@ -255,6 +270,9 @@ function resolveServerSharedDepsOutputPaths(rootDir: string): string[] {
     resolve(rootDir, 'packages', 'cli-common', 'dist', 'tailscale', 'index.js'),
     resolve(rootDir, 'packages', 'cli-common', 'dist', 'relayAccess', 'index.js'),
     resolve(rootDir, 'packages', 'cli-common', 'dist', 'systemTasks', 'index.js'),
+    // Server startup (and its `tsx`/ESM loader) relies on cli-common process helpers; missing outputs
+    // can manifest as `ERR_MODULE_NOT_FOUND` under `node_modules/@happier-dev/cli-common/dist/process/*`.
+    resolve(rootDir, 'packages', 'cli-common', 'dist', 'process', 'commandExists.js'),
   ];
 }
 

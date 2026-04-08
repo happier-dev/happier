@@ -126,17 +126,40 @@ export async function runManagedChildCommand(params) {
     onParentDeath: params.onParentDeath,
   });
 
+  const maxRuntimeMs = Number.isFinite(params.maxRuntimeMs) && params.maxRuntimeMs > 0 ? params.maxRuntimeMs : null;
+  let timedOut = false;
+  let runtimeTimer = null;
+
+  function clearRuntimeTimer() {
+    if (!runtimeTimer) return;
+    clearTimeout(runtimeTimer);
+    runtimeTimer = null;
+  }
+
   return await new Promise((resolve) => {
+    if (maxRuntimeMs) {
+      runtimeTimer = setTimeout(() => {
+        timedOut = true;
+        void Promise.resolve(params.onMaxRuntime?.(maxRuntimeMs))
+          .catch(() => {})
+          .then(() => lifecycle.cleanupChild('SIGTERM'));
+      }, maxRuntimeMs);
+      runtimeTimer.unref?.();
+    }
+
     child.once('error', (error) => {
+      clearRuntimeTimer();
       lifecycle.dispose();
       resolve({
         child,
         ok: false,
         error,
+        timedOut,
       });
     });
 
     child.once('exit', async (code, signal) => {
+      clearRuntimeTimer();
       await lifecycle.finalizeChildExit({
         graceMs: params.exitCleanupGraceMs,
         pollMs: params.cleanupPollMs,
@@ -147,6 +170,7 @@ export async function runManagedChildCommand(params) {
         ok: true,
         code,
         signal,
+        timedOut,
       });
     });
   });

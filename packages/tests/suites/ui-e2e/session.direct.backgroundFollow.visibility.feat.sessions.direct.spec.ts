@@ -4,17 +4,65 @@ import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebExportSuiteTimeoutMs } from '../../src/testkit/process/uiWebEnv';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
+import { approveTerminalConnect } from '../../src/testkit/uiE2e/approveTerminalConnect';
 import { enableDirectSessionsFeature } from '../../src/testkit/uiE2e/enableDirectSessionsFeature';
 import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
+import { sleep } from '../../src/testkit/timing';
+import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
+const attachLeaseTtlMs = 1_000;
+const attachRenewLeadMs = 500;
+const attachRetryMs = 1_000;
+const detachLeaseSettledDelayMs = Math.max(6_000, attachLeaseTtlMs + attachRetryMs + attachRenewLeadMs);
+
+type TranscriptMessageMatch = Readonly<{
+  testId: string;
+  messageId: string;
+}>;
 
 function jsonlLine(value: unknown): string {
   return `${JSON.stringify(value)}\n`;
+}
+
+async function collectCommittedTranscriptMessageMatches(params: {
+  page: Page;
+  text: string;
+}): Promise<TranscriptMessageMatch[]> {
+  return await params.page.locator('[data-testid^="transcript-message-"]').evaluateAll((nodes, text) => {
+    const targetText = String(text);
+    const matches = nodes.flatMap((node) => {
+      const testId = node.getAttribute('data-testid') ?? '';
+      if (!testId.startsWith('transcript-message-')) return [];
+      if (testId.includes(':')) return [];
+      if (!(node.textContent ?? '').includes(targetText)) return [];
+      return [{
+        testId,
+        messageId: testId.replace(/^transcript-message-/, ''),
+      }];
+    });
+    return Array.from(new Map(matches.map((match) => [match.messageId, match])).values());
+  }, params.text);
+}
+
+async function waitForCommittedTranscriptMessageMatches(params: {
+  page: Page;
+  text: string;
+  expectedCount: number;
+  timeoutMs?: number;
+}): Promise<TranscriptMessageMatch[]> {
+  const timeoutMs = params.timeoutMs ?? 120_000;
+  let matches: TranscriptMessageMatch[] = [];
+  await expect.poll(async () => {
+    matches = await collectCommittedTranscriptMessageMatches({ page: params.page, text: params.text });
+    return matches.length;
+  }, { timeout: timeoutMs }).toBe(params.expectedCount);
+  return matches;
 }
 
 function createFixtureSessionLines(): string {
@@ -37,8 +85,10 @@ async function chooseClaudeDirectCandidate(page: Page): Promise<void> {
   await expect(page.getByTestId('dropdown-option-claude')).toHaveCount(1, { timeout: 60_000 });
   await page.getByTestId('dropdown-option-claude').click();
 
-  await expect(page.getByTestId('direct-session-candidate:sess-ui-direct')).toHaveCount(1, { timeout: 120_000 });
-  await page.getByTestId('direct-session-candidate:sess-ui-direct').click();
+  const candidate = page.getByTestId('direct-session-candidate:sess-ui-direct');
+  await expect(candidate).toHaveCount(1, { timeout: 120_000 });
+  await candidate.focus();
+  await candidate.press('Enter');
 }
 
 async function openDirectSessionFromList(page: Page, uiBaseUrl: string): Promise<string> {
@@ -47,6 +97,8 @@ async function openDirectSessionFromList(page: Page, uiBaseUrl: string): Promise
   await page.getByTestId('sessions-list-storage-tab:direct').click();
   await chooseClaudeDirectCandidate(page);
   await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
+  await expect(page.getByText('latest direct fixture message')).toHaveCount(1, { timeout: 60_000 });
+  await expect(page.getByText('latest direct fixture reply')).toHaveCount(1, { timeout: 60_000 });
 
   const sessionUrl = new URL(page.url());
   const sessionIdMatch = sessionUrl.pathname.match(/\/session\/([^/]+)/);
@@ -59,8 +111,23 @@ async function openDirectSessionFromList(page: Page, uiBaseUrl: string): Promise
 async function enableBackgroundFollow(page: Page): Promise<void> {
   await expect(page.getByTestId('session-header-action-menu-trigger')).toHaveCount(1, { timeout: 60_000 });
   await page.getByTestId('session-header-action-menu-trigger').click();
-  await expect(page.getByTestId('dropdown-option-session_directSession_backgroundFollow')).toHaveCount(1, { timeout: 60_000 });
-  await page.getByTestId('dropdown-option-session_directSession_backgroundFollow').click();
+  const backgroundFollowItem = page.getByTestId('dropdown-option-session_directSession_backgroundFollow');
+  await expect(backgroundFollowItem).toHaveCount(1, { timeout: 60_000 });
+  await expect(backgroundFollowItem).toContainText('Disabled', { timeout: 60_000 });
+  await backgroundFollowItem.click();
+
+  await expect(page.getByTestId('session-header-action-menu-trigger')).toHaveCount(1, { timeout: 60_000 });
+  await page.getByTestId('session-header-action-menu-trigger').click();
+  await expect(page.getByTestId('dropdown-option-session_directSession_backgroundFollow')).toContainText('Enabled', {
+    timeout: 60_000,
+  });
+}
+
+async function navigateHomeAndOpenDirectTab(page: Page): Promise<void> {
+  await expect(page.getByRole('button', { name: 'Home' })).toHaveCount(1, { timeout: 60_000 });
+  await page.getByRole('button', { name: 'Home' }).click();
+  await expect(page.getByTestId('sessions-list-storage-tab:direct')).toHaveCount(1, { timeout: 120_000 });
+  await page.getByTestId('sessions-list-storage-tab:direct').click();
 }
 
 async function authenticateAndStartDaemon(params: Readonly<{
@@ -73,6 +140,7 @@ async function authenticateAndStartDaemon(params: Readonly<{
 }>): Promise<StartedDaemon> {
   await params.page.setViewportSize({ width: 1440, height: 900 });
   await gotoDomContentLoadedWithRetries(params.page, params.uiBaseUrl);
+  await waitForInitialAppUi({ page: params.page, timeoutMs: 180_000 });
   await createAccountAndReachConnectMachineState({ page: params.page });
 
   const cliLogin: StartedCliTerminalConnect = await startCliAuthLoginForTerminalConnect({
@@ -80,6 +148,7 @@ async function authenticateAndStartDaemon(params: Readonly<{
     cliHomeDir: params.cliHomeDir,
     serverUrl: params.server.baseUrl,
     webappUrl: params.uiBaseUrl,
+    waitForConnectUrlReady: false,
     env: {
       ...process.env,
       HOME: params.cliHomeDir,
@@ -90,13 +159,15 @@ async function authenticateAndStartDaemon(params: Readonly<{
     },
   });
 
-  await params.page.goto(cliLogin.connectUrl, { waitUntil: 'domcontentloaded' });
-  await expect(params.page.getByTestId('terminal-connect-approve')).toHaveCount(1, { timeout: 60_000 });
-  await params.page.getByTestId('terminal-connect-approve').click();
+  await gotoDomContentLoadedWithRetries(params.page, cliLogin.connectUrl);
+  await approveTerminalConnect({ page: params.page });
   await cliLogin.waitForSuccess();
   await cliLogin.stop().catch(() => {});
 
-  return await startTestDaemon({
+  await gotoDomContentLoadedWithRetries(params.page, `${params.uiBaseUrl}/`);
+  await expect(params.page.getByTestId('session-getting-started-kind-start_daemon')).toHaveCount(0, { timeout: 120_000 });
+
+  const daemon = await startTestDaemon({
     testDir: params.testDir,
     happyHomeDir: params.cliHomeDir,
     env: {
@@ -117,6 +188,21 @@ async function authenticateAndStartDaemon(params: Readonly<{
       HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
     },
   });
+
+  await gotoDomContentLoadedWithRetries(params.page, `${params.uiBaseUrl}/`);
+  await expect(params.page.getByTestId('session-getting-started-kind-start_daemon')).toHaveCount(0, { timeout: 120_000 });
+  await expect
+    .poll(
+      async () => {
+        const createCount = await params.page.getByTestId('session-getting-started-kind-create_session').count();
+        const selectCount = await params.page.getByTestId('session-getting-started-kind-select_session').count();
+        return createCount > 0 || selectCount > 0;
+      },
+      { timeout: 180_000 },
+    )
+    .toBe(true);
+
+  return daemon;
 }
 
 test.describe('ui e2e: direct-session background follow + visibility catch-up', () => {
@@ -134,7 +220,28 @@ test.describe('ui e2e: direct-session background follow + visibility catch-up', 
   let daemon: StartedDaemon | null = null;
 
   test.beforeAll(async () => {
-    test.setTimeout(540_000);
+    const uiWebExportSuiteTimeoutMs = String(resolveUiWebExportSuiteTimeoutMs(process.env));
+    const uiWebEnv = {
+      ...process.env,
+      EXPO_PUBLIC_DEBUG: '1',
+      EXPO_PUBLIC_HAPPY_SERVER_URL: server?.baseUrl ?? '',
+      EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}-direct-follow`,
+      EXPO_PUBLIC_HAPPIER_DIRECT_SESSIONS_ATTACH_LEASE_TTL_MS: String(attachLeaseTtlMs),
+      EXPO_PUBLIC_HAPPIER_DIRECT_SESSIONS_ATTACH_RENEW_LEAD_MS: String(attachRenewLeadMs),
+      EXPO_PUBLIC_HAPPIER_DIRECT_SESSIONS_ATTACH_RETRY_MS: String(attachRetryMs),
+      HAPPIER_E2E_UI_WEB_MODE: process.env.HAPPIER_E2E_UI_WEB_MODE ?? 'export',
+      HAPPIER_E2E_UI_WEB_EXPORT_FALLBACK_TO_METRO:
+        process.env.HAPPIER_E2E_UI_WEB_EXPORT_FALLBACK_TO_METRO ?? '0',
+      HAPPIER_E2E_UI_WEB_EXPORT_STARTUP_STALL_TIMEOUT_MS:
+        process.env.HAPPIER_E2E_UI_WEB_EXPORT_STARTUP_STALL_TIMEOUT_MS ?? '600000',
+      HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS:
+        process.env.HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS ?? uiWebExportSuiteTimeoutMs,
+      HAPPIER_E2E_UI_WEB_EXPORT_HARD_TIMEOUT_MS:
+        process.env.HAPPIER_E2E_UI_WEB_EXPORT_HARD_TIMEOUT_MS ?? uiWebExportSuiteTimeoutMs,
+      HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS:
+        process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS ?? '480000',
+    };
+    test.setTimeout(resolveUiWebBeforeAllTimeoutMs(uiWebEnv));
     await mkdir(cliHomeDir, { recursive: true });
     await mkdir(join(claudeConfigDir, 'projects', 'proj-direct-ui'), { recursive: true });
     await writeFile(claudeSessionFile, createFixtureSessionLines(), 'utf8');
@@ -156,10 +263,8 @@ test.describe('ui e2e: direct-session background follow + visibility catch-up', 
     ui = await startUiWeb({
       testDir: suiteDir,
       env: {
-        ...process.env,
-        EXPO_PUBLIC_DEBUG: '1',
+        ...uiWebEnv,
         EXPO_PUBLIC_HAPPY_SERVER_URL: server.baseUrl,
-        EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}-direct-follow`,
       },
     });
 
@@ -199,10 +304,10 @@ test.describe('ui e2e: direct-session background follow + visibility catch-up', 
     const sessionId = await openDirectSessionFromList(page, uiBaseUrl);
     await enableBackgroundFollow(page);
 
-    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/`);
-    await page.getByTestId('sessions-list-storage-tab:direct').click();
+    await navigateHomeAndOpenDirectTab(page);
     await expect(page.getByTestId(`session-list-item-${sessionId}`)).toHaveCount(1, { timeout: 120_000 });
     await expect(page.getByTestId(`session-list-item-unread-indicator-${sessionId}`)).toHaveCount(0);
+    await sleep(detachLeaseSettledDelayMs);
 
     await appendFile(
       claudeSessionFile,
@@ -218,10 +323,14 @@ test.describe('ui e2e: direct-session background follow + visibility catch-up', 
     await expect(page.getByTestId(`session-list-item-unread-indicator-${sessionId}`)).toHaveCount(1, { timeout: 60_000 });
 
     await page.getByTestId(`session-list-item-${sessionId}`).click();
-    await expect(page.getByText('detached background follow ui delta')).toHaveCount(1, { timeout: 120_000 });
+    await waitForCommittedTranscriptMessageMatches({
+      page,
+      text: 'detached background follow ui delta',
+      expectedCount: 1,
+      timeoutMs: 120_000,
+    });
 
-    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/`);
-    await page.getByTestId('sessions-list-storage-tab:direct').click();
+    await navigateHomeAndOpenDirectTab(page);
     await expect(page.getByTestId(`session-list-item-unread-indicator-${sessionId}`)).toHaveCount(0, { timeout: 60_000 });
   });
 

@@ -245,6 +245,6 @@ test.describe('ui e2e: relay max-bytes abort falls back safely', () => {
     expect(relayTraffic.sawAbort()).toBe(true);
     expect(relayEvidence).toContain('Server-relayed transfer exceeds the configured max-bytes limit');
     // After relay-v2 abort, bridge-state must fall back to legacy bulk transfer chunk RPCs.
-    expect(relayEvidence.includes('daemon.bulkTransfer.download.chunk')).toBe(true);
+    expect(relayEvidence.includes('daemon.transfer.download.chunk')).toBe(true);
   });
 });

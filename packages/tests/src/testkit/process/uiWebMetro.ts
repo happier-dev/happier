@@ -73,6 +73,38 @@ export function resolveUiWebMetroOwnershipLeasesDir(rootDir: string = repoRootDi
   return resolveProcessOwnershipLeasesDir({ rootDir, leaseKind: 'ui-web-metro' });
 }
 
+function resolveUiWebMetroSpawnEnv(params: Readonly<{
+  env: NodeJS.ProcessEnv;
+  tmpDir: string;
+  metroCacheVersionBust: string;
+  noDev: boolean;
+}>): NodeJS.ProcessEnv {
+  // In "no-dev" mode we force `CI=1` to avoid Expo interactive prompts/noise and to
+  // better match production behavior. When running with dev enabled, allow callers
+  // to opt out of CI so React errors are not minified and debugging is practical.
+  const baseEnv: NodeJS.ProcessEnv = {
+    ...params.env,
+    EXPO_NO_TELEMETRY: '1',
+    EXPO_UNSTABLE_WEB_MODAL: '1',
+    BROWSER: 'none',
+    ...(typeof params.env.HAPPIER_UI_METRO_WATCH_MONOREPO_ROOT_NODE_MODULES === 'string'
+      ? {
+          HAPPIER_UI_METRO_WATCH_MONOREPO_ROOT_NODE_MODULES:
+            params.env.HAPPIER_UI_METRO_WATCH_MONOREPO_ROOT_NODE_MODULES,
+        }
+      : {}),
+    HAPPIER_UI_METRO_CACHE_VERSION_BUST: params.metroCacheVersionBust,
+    TMPDIR: params.tmpDir,
+    TMP: params.tmpDir,
+    TEMP: params.tmpDir,
+  };
+
+  if (params.noDev) {
+    return { ...baseEnv, CI: '1' };
+  }
+  return baseEnv;
+}
+
 export function resolveUiWebBaseUrlTimeoutMs(env: NodeJS.ProcessEnv): number {
   return readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_BASE_URL_TIMEOUT_MS, 180_000);
 }
@@ -98,6 +130,15 @@ export function resolveUiWebMetroBeforeAllTimeoutMs(env: NodeJS.ProcessEnv): num
     + resolveUiWebScriptFetchTotalTimeoutMs(env)
     + headroomMs;
   return Math.max(minTimeoutMs, requiredBudgetMs);
+}
+
+function resolveUiWebMetroStartAttempts(env: NodeJS.ProcessEnv): number {
+  return readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_METRO_START_ATTEMPTS, 2);
+}
+
+function shouldRetryUiWebMetroStartFromError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('expo web dev server exited before ready');
 }
 
 function extractHttpUrls(text: string): string[] {
@@ -224,6 +265,14 @@ async function resolveExpoWebBaseUrl(params: {
     for (const url of orderedCandidates) {
       const probe = await inspectUiWebEntryPage(url, params.env);
       if (probe.isEntryPage) {
+        const matchesExpectedPort =
+          typeof params.expectedPort === 'number'
+          && Number.isFinite(params.expectedPort)
+          && params.expectedPort > 0
+          && (entryPageMatchesExpectedMetroPort(probe, url, params.expectedPort) || resolveUrlPort(url) === params.expectedPort);
+        if (stdoutAdvertisesExpectedPort && expectedCandidates.length > 0 && !matchesExpectedPort) {
+          continue;
+        }
         if (!firstEntryPage) {
           firstEntryPage = {
             baseUrl: url,
@@ -286,6 +335,8 @@ export const __testables = {
   resolveExpoCliPath,
   resolvePreferredLiveMetroBaseUrl,
   isMetroPackagerReady,
+  probeScriptReady,
+  resolveUiWebMetroSpawnEnv,
 };
 
 function resolveExpoCliPath(params: Readonly<{ rootDir: string; uiWorkspaceDir: string }>): string {
@@ -306,7 +357,11 @@ async function isMetroPackagerReady(baseUrl: string, env: NodeJS.ProcessEnv): Pr
       return false;
     }
     const body = await res.text().catch(() => '');
-    return body.includes('packager-status:running');
+    if (body.length > 0) {
+      return body.includes('packager-status:running');
+    }
+    const projectRootHeader = res.headers.get('x-react-native-project-root');
+    return typeof projectRootHeader === 'string' && projectRootHeader.trim().length > 0;
   } catch {
     return false;
   }
@@ -364,7 +419,7 @@ export function resolveUiWebScriptHtmlRefreshRetryCount(env: NodeJS.ProcessEnv):
 }
 
 export function resolveUiWebAllowScriptReadyTimeout(env: NodeJS.ProcessEnv): boolean {
-  const raw = String(env.HAPPIER_E2E_UI_WEB_ALLOW_SCRIPT_READY_TIMEOUT ?? '1').trim().toLowerCase();
+  const raw = String(env.HAPPIER_E2E_UI_WEB_ALLOW_SCRIPT_READY_TIMEOUT ?? '0').trim().toLowerCase();
   return !(raw === '0' || raw === 'false' || raw === 'no' || raw === 'off');
 }
 
@@ -480,6 +535,11 @@ async function probeScriptReady(url: string, timeoutMs: number): Promise<ScriptR
   try {
     const res = await fetchWithTimeout(url, { method: 'GET' }, timeoutMs);
     const contentType = (res.headers.get('content-type') ?? '').toLowerCase();
+
+    if (res.ok && contentType.includes('javascript')) {
+      return 'ready';
+    }
+
     const text = await res.text().catch(() => '');
 
     if (!res.ok) {
@@ -494,8 +554,6 @@ async function probeScriptReady(url: string, timeoutMs: number): Promise<ScriptR
       }
       return 'refresh-html';
     }
-
-    if (contentType.includes('javascript')) return 'ready';
 
     const detail = resolveMetroBundleFailureResponseDetail({
       url,
@@ -614,6 +672,31 @@ export async function startUiWebMetro(params: {
   env: NodeJS.ProcessEnv;
   port?: number;
 }): Promise<StartedUiWeb> {
+  const maxAttempts = Math.max(1, resolveUiWebMetroStartAttempts(params.env));
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await startUiWebMetroSingleAttempt(params);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= maxAttempts || !shouldRetryUiWebMetroStartFromError(error)) {
+        throw error;
+      }
+    }
+  }
+
+  if (lastError instanceof Error) {
+    throw lastError;
+  }
+  throw new Error(String(lastError));
+}
+
+async function startUiWebMetroSingleAttempt(params: {
+  testDir: string;
+  env: NodeJS.ProcessEnv;
+  port?: number;
+}): Promise<StartedUiWeb> {
   const currentOwnerInspection = inspectOwnedProcess(process.pid);
   if (currentOwnerInspection.ok) {
     await sweepProcessOwnershipLeases({
@@ -656,17 +739,12 @@ export async function startUiWebMetro(params: {
     ],
     command: process.execPath,
     cwd: uiWorkspaceDir,
-    env: {
-      ...params.env,
-      CI: '1',
-      EXPO_NO_TELEMETRY: '1',
-      EXPO_UNSTABLE_WEB_MODAL: '1',
-      BROWSER: 'none',
-      HAPPIER_UI_METRO_CACHE_VERSION_BUST: metroCacheVersionBust,
-      TMPDIR: tmpDir,
-      TMP: tmpDir,
-      TEMP: tmpDir,
-    },
+    env: resolveUiWebMetroSpawnEnv({
+      env: params.env,
+      tmpDir,
+      metroCacheVersionBust,
+      noDev,
+    }),
     stdoutPath,
     stderrPath,
   });
@@ -731,16 +809,12 @@ export async function startUiWebMetro(params: {
               if (preferredBaseUrl) {
                 baseUrl = preferredBaseUrl.baseUrl;
                 hasReadyEntryPage = preferredBaseUrl.hasScriptTags;
-                return true;
+                return preferredBaseUrl.hasScriptTags;
               }
             } else {
               const probe = await inspectUiWebEntryPage(baseUrl, params.env);
-              if (probe.isEntryPage) {
+              if (probe.isEntryPage && probe.hasScriptTags) {
                 hasReadyEntryPage = probe.hasScriptTags;
-                return true;
-              }
-              if (resolveUiWebAllowScriptReadyTimeout(params.env)) {
-                hasReadyEntryPage = false;
                 return true;
               }
             }
@@ -751,7 +825,7 @@ export async function startUiWebMetro(params: {
           }
 
           const probe = await inspectUiWebEntryPage(baseUrl, params.env);
-          if (!probe.isEntryPage) {
+          if (!(probe.isEntryPage && probe.hasScriptTags)) {
             return false;
           }
           hasReadyEntryPage = probe.hasScriptTags;

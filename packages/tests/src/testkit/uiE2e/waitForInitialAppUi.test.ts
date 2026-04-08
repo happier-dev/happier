@@ -6,11 +6,13 @@ import { waitForInitialAppUi, type InitialAppUiPage } from './waitForInitialAppU
 function createFakePage(params: Readonly<{
   testIdCounts?: Record<string, number[]>;
   roleCounts?: Record<string, number[]>;
+  throwOnRoleNames?: readonly string[];
 }>): InitialAppUiPage & { reloadCalls: number } {
   const testIdCalls = new Map<string, number>();
   const roleCalls = new Map<string, number>();
   const testIdCounts = params.testIdCounts ?? {};
   const roleCounts = params.roleCounts ?? {};
+  const throwOnRoleNames = new Set(params.throwOnRoleNames ?? []);
 
   const nextCount = (map: Map<string, number>, source: Record<string, number[]>, key: string): number => {
     const idx = map.get(key) ?? 0;
@@ -26,7 +28,13 @@ function createFakePage(params: Readonly<{
   const page: InitialAppUiPage & { reloadCalls: number } = {
     reloadCalls: 0,
     getByTestId: ((testId) => makeLocator(String(testId), testIdCounts, testIdCalls)) as Page['getByTestId'],
-    getByRole: ((_role, options) => makeLocator(String(options?.name ?? ''), roleCounts, roleCalls)) as Page['getByRole'],
+    getByRole: ((_role, options) => {
+      const name = String(options?.name ?? '');
+      if (throwOnRoleNames.has(name)) {
+        throw new Error(`unexpected role lookup for ${name}`);
+      }
+      return makeLocator(name, roleCounts, roleCalls);
+    }) as Page['getByRole'],
     waitForTimeout: async () => {},
     reload: async () => {
       page.reloadCalls += 1;
@@ -79,6 +87,18 @@ describe('waitForInitialAppUi', () => {
       testIdCounts: {
         'welcome-server-loading': [1],
       },
+    });
+
+    await expect(waitForInitialAppUi({ page, timeoutMs: 50, reloadOnFailure: false })).resolves.toBeUndefined();
+    expect(page.reloadCalls).toBe(0);
+  });
+
+  it('returns when the authenticated shell is visible via a stable shell test id', async () => {
+    const page = createFakePage({
+      testIdCounts: {
+        'sidebar-expand-button': [1],
+      },
+      throwOnRoleNames: ['Settings'],
     });
 
     await expect(waitForInitialAppUi({ page, timeoutMs: 50, reloadOnFailure: false })).resolves.toBeUndefined();

@@ -97,6 +97,7 @@ Baseline updates are explicit:
 
 - `suites/core-e2e/*`: release-gate candidates (fast + slow split)
 - `suites/ui-e2e/*`: Playwright-driven browser E2E against Expo web (covers critical UI flows like auth + terminal connect)
+- Native desktop E2E (Tauri MCP) is app-owned in `apps/ui/scripts/qa/**` and is invoked via `yarn test:e2e:desktop:native` (or `yarn workspace @happier-dev/tests test:desktop:native`).
 - `suites/stress/*`: nightly/on-demand (repeat + chaos + flake classification)
 - `suites/providers/*`: opt-in “real provider contract” tests (slow, may consume provider credits)
 

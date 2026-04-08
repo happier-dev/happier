@@ -142,6 +142,87 @@ describe('uiWebMetro resolveExpoWebBaseUrl', () => {
     });
   }, 10_000);
 
+  it('does not fall back to an unrelated entry page when stdout advertises the expected port but that port is not ready yet', async () => {
+    const expectedPort = await reserveAvailablePort();
+    const wrongPort = await reserveAvailablePort();
+    expect(wrongPort).not.toBe(expectedPort);
+
+    const expectedBaseUrl = `http://localhost:${expectedPort}`;
+    const wrongBaseUrl = `http://localhost:${wrongPort}`;
+
+    const wrongServer = createServer((req, res) => {
+      if (req.url === '/' || req.url === '/index.html') {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end('<!doctype html><html><head></head><body><div id="root"></div><script src="/app.js"></script></body></html>');
+        return;
+      }
+      if (req.url === '/app.js') {
+        res.writeHead(200, { 'content-type': 'application/javascript' });
+        res.end('console.log("wrong");');
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+
+    const expectedServer = createServer((req, res) => {
+      if (req.url === '/' || req.url === '/index.html') {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end('<!doctype html><html><head></head><body><div id="root"></div><script src="/app.js"></script></body></html>');
+        return;
+      }
+      if (req.url === '/app.js') {
+        res.writeHead(200, { 'content-type': 'application/javascript' });
+        res.end('console.log("expected");');
+        return;
+      }
+      if (req.url === '/status') {
+        res.writeHead(200, { 'content-type': 'text/plain' });
+        res.end('packager-status:running');
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+
+    await new Promise<void>((resolve) => {
+      wrongServer.listen(wrongPort, '127.0.0.1', () => resolve());
+    });
+
+    const dir = await mkdtemp(join(tmpdir(), 'happier-uiwebmetro-'));
+    const stdoutPath = join(dir, 'ui.web.stdout.log');
+    // stdout contains both ports; expected port appears, but the wrong entry page should not win.
+    await writeFile(stdoutPath, `Waiting on ${wrongBaseUrl}\nWaiting on ${expectedBaseUrl}\n`, 'utf8');
+
+    const startExpectedServer = new Promise<void>((resolve, reject) => {
+      setTimeout(() => {
+        expectedServer.once('error', reject);
+        expectedServer.listen(expectedPort, '127.0.0.1', () => resolve());
+      }, 200);
+    });
+
+    try {
+      const resolved = await __testables.resolveExpoWebBaseUrl({
+        stdoutPath,
+        timeoutMs: 1_500,
+        expectedPort,
+        env: {
+          NODE_ENV: 'test',
+          HAPPIER_E2E_UI_WEB_ENTRY_PROBE_TIMEOUT_MS: '25',
+          HAPPIER_E2E_UI_WEB_METRO_STATUS_ATTEMPT_TIMEOUT_MS: '25',
+        },
+      });
+
+      expect(new URL(resolved.baseUrl).port).toBe(String(expectedPort));
+      expect(resolved.baseUrl).toBe(expectedBaseUrl);
+      expect(resolved.hasScriptTags).toBe(true);
+    } finally {
+      await startExpectedServer.catch(() => {});
+      await new Promise<void>((resolve) => wrongServer.close(() => resolve()));
+      await new Promise<void>((resolve) => expectedServer.close(() => resolve()));
+    }
+  }, 10_000);
+
   it('falls back to the IPv4 loopback variant when stdout advertises localhost but only 127.0.0.1 is reachable', async () => {
     const port = await reserveAvailablePort();
     const stdoutBaseUrl = `http://localhost:${port}`;
@@ -286,4 +367,51 @@ describe('uiWebMetro resolveExpoWebBaseUrl', () => {
       }
     }
   });
+
+  it('allows a slow but eventually ready entry page to resolve with the default probe budget', async () => {
+    const port = await reserveAvailablePort();
+    const baseUrl = `http://localhost:${port}`;
+
+    const server = createServer(async (req, res) => {
+      if (req.url === '/' || req.url === '/index.html') {
+        await new Promise((resolve) => setTimeout(resolve, 1_250));
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end('<!doctype html><html><head></head><body><div id="root"></div><script src="/app.js"></script></body></html>');
+        return;
+      }
+      if (req.url === '/app.js') {
+        res.writeHead(200, { 'content-type': 'application/javascript' });
+        res.end('console.log("ok");');
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+
+    await new Promise<void>((resolve) => {
+      server.listen(port, '127.0.0.1', () => resolve());
+    });
+
+    const dir = await mkdtemp(join(tmpdir(), 'happier-uiwebmetro-'));
+    const stdoutPath = join(dir, 'ui.web.stdout.log');
+    await writeFile(stdoutPath, `Waiting on ${baseUrl}\n`, 'utf8');
+
+    try {
+      const resolved = await __testables.resolveExpoWebBaseUrl({
+        stdoutPath,
+        timeoutMs: 4_000,
+        expectedPort: port,
+        env: {
+          NODE_ENV: 'test',
+        },
+      });
+
+      expect(resolved.baseUrl).toBe(baseUrl);
+      expect(resolved.hasScriptTags).toBe(true);
+    } finally {
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+    }
+  }, 10_000);
 });

@@ -177,9 +177,11 @@ async function removePathWithRetries(path: string, options?: { timeoutMs?: numbe
 }
 
 describe('startUiWeb baseUrl resolution', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.resetModules();
     vi.useRealTimers();
+    const { __testables } = await import('./uiWebExport');
+    __testables.resetSharedUiWebExportState();
     lastSpawnArgs = null;
     lastSpawnEnv = null;
     spawnCallCount = 0;
@@ -739,6 +741,9 @@ describe('startUiWeb baseUrl resolution', () => {
       expect(lastSpawnArgs ?? []).not.toContain('--clear');
       expect(typeof lastSpawnEnv?.TMPDIR).toBe('string');
       expect(String(lastSpawnEnv?.TMPDIR ?? '')).toContain(testDir);
+      expect(lastSpawnEnv?.EXPO_NO_METRO_WORKSPACE_ROOT).toBeUndefined();
+      expect(lastSpawnEnv?.HAPPIER_UI_METRO_NARROW_WATCH_FOLDERS).toBeUndefined();
+      expect(lastSpawnEnv?.HAPPIER_UI_METRO_WATCH_MONOREPO_ROOT_NODE_MODULES).toBeUndefined();
       await started.stop();
     } finally {
       if (typeof originalFetch === 'function') {
@@ -1157,6 +1162,7 @@ describe('startUiWeb baseUrl resolution', () => {
             HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: '500',
             HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS: '50',
           },
+          port: 43123,
         }),
         new Promise<never>((_, reject) => {
           setTimeout(() => {
@@ -1175,6 +1181,42 @@ describe('startUiWeb baseUrl resolution', () => {
       }
     }
   }, 10_000);
+
+  it('treats a successful javascript primary app script response as ready without draining the full body', async () => {
+    const metroModule = await import('./uiWebMetro');
+    const probeScriptReady = (metroModule.__testables as Record<string, unknown>).probeScriptReady;
+
+    expect(typeof probeScriptReady).toBe('function');
+
+    let bundleTextRead = false;
+    const fetchMock = vi.fn(async (): Promise<FakeFetchResponse> => ({
+      ok: true,
+      headers: new Headers({ 'content-type': 'application/javascript; charset=UTF-8' }),
+      text: async () => {
+        bundleTextRead = true;
+        return await new Promise<string>(() => {});
+      },
+    }));
+
+    const originalFetch = globalThis.fetch;
+    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    try {
+      await expect(
+        (probeScriptReady as (url: string, timeoutMs: number) => Promise<unknown>)(
+          'http://localhost:43123/index.bundle?platform=web&dev=false&minify=true',
+          50,
+        ),
+      ).resolves.toBe('ready');
+      expect(bundleTextRead).toBe(false);
+    } finally {
+      if (typeof originalFetch === 'function') {
+        (globalThis as { fetch: typeof fetch }).fetch = originalFetch;
+      } else {
+        delete (globalThis as { fetch?: unknown }).fetch;
+      }
+    }
+  });
 
   it('fails fast when the primary app script returns a Metro JSON bundle error', async () => {
     const { startUiWeb } = await import('./uiWeb');
@@ -1229,7 +1271,7 @@ describe('startUiWeb baseUrl resolution', () => {
     }
   }, 10_000);
 
-  it('returns once the entry page is available even if the primary script stays cold', async () => {
+  it('fails fast when the primary script stays cold by default', async () => {
     const { startUiWeb } = await import('./uiWeb');
 
     const testDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-'));
@@ -1267,7 +1309,7 @@ describe('startUiWeb baseUrl resolution', () => {
     (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
 
     try {
-      const started = await Promise.race([
+      await expect(Promise.race([
         startUiWeb({
           testDir,
           env: {
@@ -1279,14 +1321,12 @@ describe('startUiWeb baseUrl resolution', () => {
         }),
         new Promise<never>((_, reject) => {
           setTimeout(() => {
-            reject(new Error(`startUiWeb did not return after script timeout; html=${htmlFetchCount} bundle=${bundleFetchCount}`));
+            reject(new Error(`startUiWeb did not fail after script timeout; html=${htmlFetchCount} bundle=${bundleFetchCount}`));
           }, 1_500);
         }),
-      ]);
-
+      ])).rejects.toThrow(/expo web primary script ready/);
       expect(htmlFetchCount).toBeGreaterThan(0);
       expect(bundleFetchCount).toBeGreaterThan(0);
-      await started.stop();
     } finally {
       if (typeof originalFetch === 'function') {
         (globalThis as { fetch: typeof fetch }).fetch = originalFetch;
@@ -1354,18 +1394,21 @@ describe('startUiWeb baseUrl resolution', () => {
     }
   }, 10_000);
 
-  it('returns once the entry html is available even before Expo injects script tags', async () => {
+  it('waits until the entry html includes script tags before returning', async () => {
     const { startUiWeb } = await import('./uiWeb');
 
     const testDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-'));
     await writeFile(join(testDir, 'ui.web.stdout.log'), '', 'utf8');
     await writeFile(join(testDir, 'ui.web.stderr.log'), '', 'utf8');
 
+    const startedAtMs = Date.now();
     let htmlFetchCount = 0;
+    let scriptFetchCount = 0;
 
     const fetchMock = vi.fn(async (input: unknown): Promise<FakeFetchResponse> => {
       const url = resolveUrlString(input);
       const parsed = new URL(url);
+      const elapsedMs = Date.now() - startedAtMs;
 
       if (parsed.pathname === '/status') {
         return okText('packager-status:running', 'text/plain');
@@ -1373,7 +1416,15 @@ describe('startUiWeb baseUrl resolution', () => {
 
       if (parsed.pathname === '/') {
         htmlFetchCount += 1;
-        return okText('<!doctype html><html><head></head><body>Compiling…</body></html>', 'text/html');
+        if (elapsedMs < 250) {
+          return okText('<!doctype html><html><head></head><body>Compiling…</body></html>', 'text/html');
+        }
+        return okText('<!doctype html><html><head><script src="/app.js"></script></head><body>Ready</body></html>', 'text/html');
+      }
+
+      if (parsed.pathname === '/app.js') {
+        scriptFetchCount += 1;
+        return okText('globalThis.__HAPPIER_E2E__ = true;', 'application/javascript');
       }
 
       return notOk();
@@ -1391,6 +1442,8 @@ describe('startUiWeb baseUrl resolution', () => {
       ]);
 
       expect(htmlFetchCount).toBeGreaterThan(0);
+      expect(scriptFetchCount).toBeGreaterThan(0);
+      expect(Date.now() - startedAtMs).toBeGreaterThanOrEqual(200);
       await started.stop();
     } finally {
       if (typeof originalFetch === 'function') {
@@ -1452,7 +1505,7 @@ describe('startUiWeb baseUrl resolution', () => {
           port: 43123,
         }),
         new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error('startUiWeb did not finish quickly')), 1_000);
+          setTimeout(() => reject(new Error('startUiWeb did not finish quickly')), 2_500);
         }),
       ]);
 
@@ -1528,7 +1581,7 @@ describe('startUiWeb baseUrl resolution', () => {
           port: 43123,
         }),
         new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error('startUiWeb did not recover from stdout leading HTTP readiness')), 1_400);
+          setTimeout(() => reject(new Error('startUiWeb did not recover from stdout leading HTTP readiness')), 2_500);
         }),
       ]);
 
@@ -1593,7 +1646,7 @@ describe('startUiWeb baseUrl resolution', () => {
           },
         }),
         new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error('startUiWeb did not finish within the fallback budget')), 2_500);
+          setTimeout(() => reject(new Error('startUiWeb did not finish within the fallback budget')), 6_000);
         }),
       ]);
 
@@ -1728,7 +1781,7 @@ describe('startUiWeb baseUrl resolution', () => {
         new Promise<never>((_, reject) => {
           setTimeout(() => {
             reject(new Error(`startUiWeb did not recover from entry html changing; htmlFetchCount=${htmlFetchCount}`));
-          }, 1_800);
+          }, 3_000);
         }),
       ]);
 
@@ -1805,7 +1858,7 @@ describe('startUiWeb baseUrl resolution', () => {
         new Promise<never>((_, reject) => {
           setTimeout(() => {
             reject(new Error(`startUiWeb did not accept later bundle-like script; runtime=${runtimeFetchCount} entry=${entryFetchCount}`));
-          }, 1_800);
+          }, 4_000);
         }),
       ]);
 

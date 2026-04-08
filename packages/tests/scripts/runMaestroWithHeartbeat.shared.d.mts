@@ -19,6 +19,7 @@ export const runHeartbeatWrappedCommand: (params: {
   command: string;
   args: readonly string[];
   spawnOptions: SpawnOptions;
+  defaultTimeoutMs?: number | null;
   resolveExitCode: (result: { code: number | null; signal: NodeJS.Signals | null }) => number;
 }) => Promise<void>;
 

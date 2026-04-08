@@ -5,6 +5,8 @@ import {
   resolveSignalExitCode,
 } from './runPlaywrightWithHeartbeat.shared.mjs';
 
+const DEFAULT_PLAYWRIGHT_WRAPPER_TIMEOUT_MS = 15 * 60 * 1000;
+
 function yarnCommand() {
   return process.platform === 'win32' ? 'yarn.cmd' : 'yarn';
 }
@@ -24,6 +26,7 @@ await runHeartbeatWrappedCommand({
   command: yarnCommand(),
   args: childArgs,
   spawnOptions: createPlaywrightSpawnOptions(process.env),
+  defaultTimeoutMs: DEFAULT_PLAYWRIGHT_WRAPPER_TIMEOUT_MS,
   resolveExitCode(result) {
     return typeof result.code === 'number' ? result.code : resolveSignalExitCode(result.signal);
   },

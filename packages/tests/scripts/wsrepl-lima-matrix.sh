@@ -237,6 +237,7 @@ REPO_DIR="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 STACK_DIR="$(cd "${REPO_DIR}/apps/stack" && pwd)"
 LIMA_VM_SCRIPT="${SCRIPT_DIR}/lima-vm.sh"
 PAYLOAD_TAR_HELPER="${SCRIPT_DIR}/create-wsrepl-payload-tar.py"
+REWRITE_GUEST_SETTINGS_FOR_VM_MACHINE_ID_HELPER="${SCRIPT_DIR}/rewriteGuestSettingsForVmMachineId.py"
 
 if [[ ! -f "${LIMA_VM_SCRIPT}" ]]; then
   echo "[wsrepl-qa] missing tests-owned Lima helper: ${LIMA_VM_SCRIPT}" >&2
@@ -750,6 +751,37 @@ print(f"{ms/1000.0:.3f}")
 PY
 }
 
+read_wsrepl_guest_daemon_start_poll_retries() {
+  local raw="${WSREPL_QA_GUEST_DAEMON_START_POLL_RETRIES:-}"
+  if [[ -z "${raw}" ]]; then
+    echo "120"
+    return 0
+  fi
+  if [[ "${raw}" -lt 0 ]]; then
+    echo "0"
+    return 0
+  fi
+  echo "${raw}"
+  return 0
+}
+
+read_wsrepl_guest_daemon_start_poll_delay_s() {
+  local raw="${WSREPL_QA_GUEST_DAEMON_START_POLL_DELAY_MS:-}"
+  if [[ -z "${raw}" ]]; then
+    raw="500"
+  fi
+  python3 - <<'PY' "${raw}" 2>/dev/null || true
+import sys
+try:
+  ms = int(sys.argv[1])
+except Exception:
+  ms = 500
+if ms < 0:
+  ms = 0
+print(f"{ms/1000.0:.3f}")
+PY
+}
+
 read_wsrepl_machine_id_poll_retries() {
   local raw="${WSREPL_QA_MACHINE_ID_POLL_RETRIES:-}"
   if [[ -z "${raw}" ]]; then
@@ -977,6 +1009,74 @@ wait_for_host_daemon_health_after_start() {
     attempt=$((attempt + 1))
     sleep "${delay_s}" || true
     refresh_host_daemon_status_best_effort "${status_file}" "${server_url}" "${stack_cli_root}" "${stack_active_server_id}"
+  done
+
+  if [[ -s "${status_file}" ]] \
+    && ! grep -qi "Daemon is not running" "${status_file}" 2>/dev/null \
+    && ! grep -Eq "Cannot find module '.*/apps/cli/dist/index\\.mjs'" "${status_file}" 2>/dev/null; then
+    refresh_daemon_log_tail_best_effort "${log_path_file}" "${log_tail_file}"
+    return 0
+  fi
+
+  return 1
+}
+
+refresh_guest_daemon_status_best_effort() {
+  local status_file="${1:-}"
+  local server_url="${2:-}"
+  local guest_happier_home_rel="${3:-}"
+  local guest_active_server_id="${4:-}"
+  if [[ -z "${status_file}" ]]; then
+    return 0
+  fi
+
+  limactl shell "${VM_NAME}" -- env \
+    HAPPIER_SERVER_URL="${server_url}" \
+    ${guest_happier_home_rel:+WSREPL_QA_GUEST_HOME_REL="${guest_happier_home_rel}"} \
+    ${guest_active_server_id:+HAPPIER_ACTIVE_SERVER_ID="${guest_active_server_id}"} \
+    bash -lc '
+    set -euo pipefail
+    if [[ -n "${WSREPL_QA_GUEST_HOME_REL:-}" ]]; then
+      export HAPPIER_HOME_DIR="$HOME/${WSREPL_QA_GUEST_HOME_REL}"
+    fi
+    if [[ -z "${HAPPIER_CLAUDE_PATH:-}" && -f "$HOME/.happier/wsrepl-qa/fixtures/fake-claude-code-cli.js" ]]; then
+      export HAPPIER_CLAUDE_PATH="$HOME/.happier/wsrepl-qa/fixtures/fake-claude-code-cli.js"
+    fi
+    HAPPY=""
+    if [[ -x "$HOME/.happier/bin/happier" ]]; then
+      HAPPY="$HOME/.happier/bin/happier"
+    elif command -v happier >/dev/null 2>&1; then
+      HAPPY="happier"
+    fi
+    if [[ -z "$HAPPY" ]]; then exit 0; fi
+    "$HAPPY" daemon status 2>&1 || true
+  ' >"${status_file}" 2>&1 || true
+  return 0
+}
+
+wait_for_guest_daemon_health_after_start() {
+  local status_file="${1:-}"
+  local log_path_file="${2:-}"
+  local log_tail_file="${3:-}"
+  local server_url="${4:-}"
+  local guest_happier_home_rel="${5:-}"
+  local guest_active_server_id="${6:-}"
+  local retries
+  retries="$(read_wsrepl_guest_daemon_start_poll_retries)"
+  local delay_s
+  delay_s="$(read_wsrepl_guest_daemon_start_poll_delay_s)"
+
+  local attempt=0
+  while [[ "${attempt}" -lt "${retries}" ]]; do
+    if [[ -s "${status_file}" ]] \
+      && ! grep -qi "Daemon is not running" "${status_file}" 2>/dev/null \
+      && ! grep -Eq "Cannot find module '.*/apps/cli/dist/index\\.mjs'" "${status_file}" 2>/dev/null; then
+      refresh_daemon_log_tail_best_effort "${log_path_file}" "${log_tail_file}"
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    sleep "${delay_s}" || true
+    refresh_guest_daemon_status_best_effort "${status_file}" "${server_url}" "${guest_happier_home_rel}" "${guest_active_server_id}"
   done
 
   if [[ -s "${status_file}" ]] \
@@ -1851,7 +1951,67 @@ PY
     printf '%s' '${encoded}' | decode_base64 > \"${access_key_dst}\"
     chmod 600 \"${access_key_dst}\" 2>/dev/null || true
   "
+  printf "%s\n" "${access_key_dst}"
   return 0
+}
+
+derive_guest_happier_home_rel_from_access_key_path() {
+  local access_key_path="${1:-}"
+  if [[ -z "${access_key_path}" ]]; then
+    echo ""
+    return 0
+  fi
+
+  python3 - <<'PY' "${access_key_path}" 2>/dev/null || true
+import os
+import sys
+from pathlib import Path
+
+raw = (sys.argv[1] or "").strip()
+if not raw:
+    print("")
+    raise SystemExit(0)
+
+path = Path(raw)
+home = Path(os.environ.get("HOME", "")).resolve()
+try:
+    rel = path.resolve().relative_to(home)
+except Exception:
+    print("")
+    raise SystemExit(0)
+
+parts = rel.parts
+if len(parts) < 4 or parts[-3] != "servers" or parts[-1] != "access.key":
+    print("")
+    raise SystemExit(0)
+
+print(str(Path(*parts[:-3])))
+PY
+}
+
+derive_guest_active_server_id_from_access_key_path() {
+  local access_key_path="${1:-}"
+  if [[ -z "${access_key_path}" ]]; then
+    echo ""
+    return 0
+  fi
+
+  python3 - <<'PY' "${access_key_path}" 2>/dev/null || true
+import sys
+from pathlib import Path
+
+raw = (sys.argv[1] or "").strip()
+if not raw:
+    print("")
+    raise SystemExit(0)
+
+parts = Path(raw).parts
+if len(parts) < 4 or parts[-3] != "servers" or parts[-1] != "access.key":
+    print("")
+    raise SystemExit(0)
+
+print(parts[-2])
+PY
 }
 
 restart_host_daemon_and_capture_logs() {
@@ -2401,18 +2561,27 @@ restart_guest_daemon_and_capture_logs() {
   # stack credentials used by the host/UI (guest VMs often carry stale credentials for other stacks).
   local guest_happier_home_rel=""
   local guest_active_server_id=""
+  local guest_vm_machine_id="${WSREPL_QA_VM_MACHINE_ID:-}"
   local guest_access_key_src=""
   local guest_direct_peer_bind_port=""
   local guest_direct_peer_advertised_hosts=""
   local guest_direct_peer_feature_enabled=""
   local guest_direct_peer_server_enabled=""
   local guest_server_routed_max_bytes=""
+  local guest_stack_cli_root=""
   local stack_home_hint
   stack_home_hint="$(resolve_stack_cli_home_and_active_server_id_for_ui_url)"
   if [[ -n "${stack_home_hint}" ]]; then
+    guest_stack_cli_root="$(printf "%s" "${stack_home_hint}" | cut -d '|' -f 1)"
     guest_active_server_id="$(printf "%s" "${stack_home_hint}" | cut -d '|' -f 2)"
   fi
   guest_access_key_src="$(resolve_stack_cli_access_key_path_for_ui_url || true)"
+  # Guest daemons run from the default Happier home in this harness unless the caller has
+  # explicitly opted into a different isolated home. That makes the credential seed path stable
+  # and lets us pre-seed the same account the UI is using before the daemon starts.
+  if [[ -z "${guest_happier_home_rel}" ]]; then
+    guest_happier_home_rel=".happier"
+  fi
   if [[ -z "${server_routed_max_bytes_seed}" ]]; then
     server_routed_max_bytes_seed="$(resolve_machine_transfer_server_routed_max_bytes_seed_from_server_features "${server_url}")"
   fi
@@ -2423,18 +2592,25 @@ restart_guest_daemon_and_capture_logs() {
     guest_direct_peer_feature_enabled="${WSREPL_QA_VM_DIRECT_PEER_FEATURE_ENABLED:-true}"
     guest_direct_peer_server_enabled="${WSREPL_QA_VM_DIRECT_PEER_SERVER_ENABLED:-true}"
   fi
-  if [[ -n "${guest_active_server_id}" && -n "${guest_access_key_src}" && -f "${guest_access_key_src}" ]]; then
-    guest_happier_home_rel=".happier/wsrepl-qa"
-  fi
-
   # If the guest does not have Happier installed yet (common in local harness tests, or when mode=skip),
-  # keep the wrapper non-fatal and leave the placeholder diagnostics in place.
+  # keep the wrapper non-fatal only in explicit skip mode. In require/autoupdate modes, this is a
+  # real live-proof blocker: the guest daemon cannot become fresh enough for handoff start.
   if ! limactl shell "${VM_NAME}" -- bash -lc '[[ -x "$HOME/.happier/bin/happier" ]] || command -v happier >/dev/null 2>&1' >/dev/null 2>&1; then
     printf "%s\n" "(guest happier not found; skipping daemon restart)" > "${start_file}"
     printf "%s\n" "(guest happier not found)" > "${status_file}"
     printf "%s\n" "" > "${log_path_file}"
     printf "%s\n" "(no daemon log file found)" > "${log_tail_file}"
-    return 0
+    case "${WSREPL_QA_VM_HAPPIER_MODE:-require}" in
+      skip)
+        return 0
+        ;;
+      *)
+        FAILURE_STAGE="guest_daemon"
+        FAILURE_REASON="guest_happier_missing"
+        echo "[wsrepl-qa] guest happier not found; cannot restart guest daemon in mode=${WSREPL_QA_VM_HAPPIER_MODE:-require}; see ${start_file}" >&2
+        return 1
+        ;;
+    esac
   fi
 
   # Seed stack credentials into the isolated guest home before starting the daemon so the guest
@@ -2463,11 +2639,16 @@ PY
         fi
         base64 --decode
       }
-      home_dir=\"\$HOME/${guest_happier_home_rel}\"
+      export HAPPIER_HOME_DIR=\"\$HOME/${guest_happier_home_rel}\"
+      home_dir=\"\$HAPPIER_HOME_DIR\"
       dst=\"\$home_dir/servers/${guest_active_server_id}/access.key\"
       mkdir -p \"\$(dirname \"\$dst\")\"
       printf '%s' '${encoded_key}' | decode_base64 > \"\$dst\"
       chmod 600 \"\$dst\" 2>/dev/null || true
+      if [[ -f \"\$dst\" ]]; then
+        python3 \"${REWRITE_GUEST_SETTINGS_FOR_VM_MACHINE_ID_HELPER}\" \"\$home_dir/settings.json\" \"${guest_active_server_id}\" \"${guest_vm_machine_id}\" \"${server_url}\" \"\$dst\"
+        chmod 600 \"\$home_dir/settings.json\" 2>/dev/null || true
+      fi
     " >/dev/null 2>&1 || true
   fi
 
@@ -2610,8 +2791,40 @@ PY
 	  }
 
 	  # `happier daemon status` is a doctor-style command and may exit 0 even when the daemon
-	  # isn't running. Detect health from the rendered output we captured above.
-	  if ! grep -qi "Daemon is not running" "${status_file}" 2>/dev/null; then
+	  # isn't running. A freshly restarted guest can also report "Daemon is not running" for a
+	  # few polls before the same daemon becomes healthy, so retry briefly before treating that
+	  # snapshot as fatal.
+	  local guest_status_ready=0
+	  for attempt in {1..20}; do
+	    if ! grep -qi "Daemon is not running" "${status_file}" 2>/dev/null; then
+	      guest_status_ready=1
+	      break
+	    fi
+	    sleep 0.25
+	    limactl shell "${VM_NAME}" -- env \
+	      HAPPIER_SERVER_URL="${server_url}" \
+	      ${guest_happier_home_rel:+WSREPL_QA_GUEST_HOME_REL="${guest_happier_home_rel}"} \
+	      ${guest_active_server_id:+HAPPIER_ACTIVE_SERVER_ID="${guest_active_server_id}"} \
+	      bash -lc '
+	      set -euo pipefail
+	      if [[ -n "${WSREPL_QA_GUEST_HOME_REL:-}" ]]; then
+	        export HAPPIER_HOME_DIR="$HOME/${WSREPL_QA_GUEST_HOME_REL}"
+	      fi
+	      if [[ -z "${HAPPIER_CLAUDE_PATH:-}" && -f "$HOME/.happier/wsrepl-qa/fixtures/fake-claude-code-cli.js" ]]; then
+	        export HAPPIER_CLAUDE_PATH="$HOME/.happier/wsrepl-qa/fixtures/fake-claude-code-cli.js"
+	      fi
+	      HAPPY=""
+	      if [[ -x "$HOME/.happier/bin/happier" ]]; then
+	        HAPPY="$HOME/.happier/bin/happier"
+	      elif command -v happier >/dev/null 2>&1; then
+	        HAPPY="happier"
+	      fi
+	      if [[ -z "$HAPPY" ]]; then exit 0; fi
+	      "$HAPPY" daemon status 2>&1 || true
+	    ' >"${status_file}" 2>&1 || true
+	  done
+
+	  if [[ "${guest_status_ready}" == "1" ]]; then
 	    if [[ -z "${WSREPL_QA_VM_MACHINE_ID:-}" && "${WSREPL_QA_DERIVE_STEPS_LATER:-0}" == "1" ]]; then
 	      poll_guest_machine_id_if_needed_best_effort
 	    fi
@@ -2621,15 +2834,46 @@ PY
       # Guest daemon can be waiting for credentials (same as host). That is non-fatal for the
       # harness, but the matrix itself requires the daemon to actually come online.
       if grep -qi "Waiting for credentials" "${log_tail_file}" 2>/dev/null; then
-        if ! seed_guest_daemon_access_key_if_possible "${log_tail_file}"; then
+        local guest_access_key_dst
+        guest_access_key_dst="$(seed_guest_daemon_access_key_if_possible "${log_tail_file}")"
+        if [[ -z "${guest_access_key_dst}" ]]; then
           FAILURE_STAGE="guest_daemon"
           FAILURE_REASON="guest_daemon_waiting_for_credentials"
           echo "[wsrepl-qa] guest daemon is waiting for credentials and could not be seeded automatically; see ${log_tail_file}" >&2
           return 1
         fi
 
+        local guest_home_rel_from_seed
+        guest_home_rel_from_seed="$(derive_guest_happier_home_rel_from_access_key_path "${guest_access_key_dst}")"
+        if [[ -n "${guest_home_rel_from_seed}" ]]; then
+          guest_happier_home_rel="${guest_home_rel_from_seed}"
+        fi
+
+        local guest_active_server_id_from_seed
+        guest_active_server_id_from_seed="$(derive_guest_active_server_id_from_access_key_path "${guest_access_key_dst}")"
+        if [[ -n "${guest_active_server_id_from_seed}" ]]; then
+          guest_active_server_id="${guest_active_server_id_from_seed}"
+        fi
+
+        if [[ -n "${guest_vm_machine_id}" && -n "${guest_active_server_id}" ]]; then
+          limactl shell "${VM_NAME}" -- bash -lc "set -euo pipefail;
+            if [[ -n \"${guest_happier_home_rel}\" ]]; then
+              export HAPPIER_HOME_DIR=\"\$HOME/${guest_happier_home_rel}\"
+            fi
+            home_dir=\"\${HAPPIER_HOME_DIR:-\$HOME}\"
+            if [[ -n \"${guest_access_key_dst}\" ]]; then
+              python3 \"${REWRITE_GUEST_SETTINGS_FOR_VM_MACHINE_ID_HELPER}\" \"\$home_dir/settings.json\" \"${guest_active_server_id}\" \"${guest_vm_machine_id}\" \"${server_url}\" \"${guest_access_key_dst}\"
+              chmod 600 \"\$home_dir/settings.json\" 2>/dev/null || true
+            fi
+          " >/dev/null 2>&1 || true
+        fi
+
         # Retry once after seeding, and require status to be healthy so the matrix does not hang.
-        limactl shell "${VM_NAME}" -- env HAPPIER_SERVER_URL="${server_url}" bash -lc '
+        limactl shell "${VM_NAME}" -- env \
+          HAPPIER_SERVER_URL="${server_url}" \
+          ${guest_happier_home_rel:+WSREPL_QA_GUEST_HOME_REL="${guest_happier_home_rel}"} \
+          ${guest_active_server_id:+HAPPIER_ACTIVE_SERVER_ID="${guest_active_server_id}"} \
+          bash -lc '
           set -euo pipefail
           HAPPY=""
           if [[ -x "$HOME/.happier/bin/happier" ]]; then
@@ -2638,13 +2882,24 @@ PY
             HAPPY="happier"
           fi
           if [[ -z "$HAPPY" ]]; then exit 2; fi
+          HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
+          HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
           "$HAPPY" daemon start >/dev/null 2>&1 || true
           "$HAPPY" daemon status 2>&1 || true
         ' >"${status_file}" 2>&1 || true
 
-        if ! grep -qi "Daemon is not running" "${status_file}" 2>/dev/null; then
+        if wait_for_guest_daemon_health_after_start "${status_file}" "${log_path_file}" "${log_tail_file}" "${server_url}" "${guest_happier_home_rel}" "${guest_active_server_id}"; then
           return 0
         fi
+
+        case "${WSREPL_QA_VM_HAPPIER_MODE:-require}" in
+          skip|autoupdate)
+            echo "[wsrepl-qa] guest daemon status not healthy after seeding credentials (non-fatal in mode=${WSREPL_QA_VM_HAPPIER_MODE:-require}); see ${status_file}" >&2
+            return 0
+            ;;
+          *)
+            ;;
+        esac
 
         FAILURE_STAGE="guest_daemon"
         FAILURE_REASON="guest_daemon_start_failed"
@@ -3434,6 +3689,8 @@ NODE
   limactl shell "${VM_NAME}" -- bash -lc 'set -euo pipefail;
     mkdir -p "$HOME/.happier/wsrepl-dev"
     rm -rf "$HOME/.happier/wsrepl-dev/payload.tmp"
+    rm -rf "$HOME/.happier/wsrepl-dev/payload"
+    rm -rf "$HOME/.happier/wsrepl-dev"/payload.wsrepl-backup.*
     rm -f "$HOME/.happier/wsrepl-dev/payload.tar"
   '
 
@@ -3498,9 +3755,6 @@ PY
 
     mkdir -p "$HOME/.happier/bin"
     if [[ -d "$HOME/.happier/wsrepl-dev/payload.tmp" ]]; then
-      if [[ -d "$HOME/.happier/wsrepl-dev/payload" ]]; then
-        mv "$HOME/.happier/wsrepl-dev/payload" "$HOME/.happier/wsrepl-dev/payload.wsrepl-backup.$(date +%Y%m%d-%H%M%S)" || true
-      fi
       mv "$HOME/.happier/wsrepl-dev/payload.tmp" "$HOME/.happier/wsrepl-dev/payload"
     fi
     if [[ ! -x "$HOME/.happier/wsrepl-dev/payload/happier" ]]; then
@@ -4031,7 +4285,9 @@ if [[ "${WSREPL_QA_DERIVE_STEPS_LATER:-0}" == "1" && -z "${HAPPIER_QA_STEPS_JSON
   vm_machine_name_pattern="$(resolve_vm_machine_name_pattern_for_ui)"
   host_machine_name_pattern="$(resolve_host_machine_name_pattern_for_ui)"
   export HAPPIER_QA_STEPS_JSON
-  HAPPIER_QA_STEPS_JSON="$(python3 - "$vm_machine_id" "$host_machine_id" "$vm_machine_name_pattern" "$host_machine_name_pattern" "$step_out_strategy" "$step_back_strategy" "$step_out_after_back_strategy" <<'PY'
+  # Late-derive mode is for source-machine diagnostics only; the handoff UI resolves target rows
+  # by the visible machine names, so keep the generated steps on the name-pattern path here.
+  HAPPIER_QA_STEPS_JSON="$(python3 - "" "" "$vm_machine_name_pattern" "$host_machine_name_pattern" "$step_out_strategy" "$step_back_strategy" "$step_out_after_back_strategy" <<'PY'
 import json
 import sys
 

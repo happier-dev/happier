@@ -189,7 +189,7 @@ test.describe('ui e2e: transcript background/foreground catch-up (visibility)', 
     const machineId = await waitForLatestMachineId({ suiteDir, timeoutMs: 120_000 });
     const sessionId = await createSessionFromComposer({ page, uiBaseUrl, machineId, prompt: `hello vis ${run.runId}` });
     await page.goto(`${uiBaseUrl}/session/${sessionId}`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
+    await expect(page.locator('[data-testid="transcript-chat-list"]:visible')).toHaveCount(1, { timeout: 120_000 });
 
     const requests: Array<{ url: string; ts: number }> = [];
     page.on('request', (req) => requests.push({ url: req.url(), ts: Date.now() }));
@@ -245,7 +245,7 @@ test.describe('ui e2e: transcript background/foreground catch-up (visibility)', 
 
     // --- Unpinned behavior across background/foreground ---
     // Ensure we can unpin, background, generate more activity, and return without auto-scrolling.
-    const transcript = page.getByTestId('transcript-chat-list');
+    const transcript = page.locator('[data-testid="transcript-chat-list"]:visible').first();
     await transcript.hover();
 
     // Seed enough messages to make the list scrollable.

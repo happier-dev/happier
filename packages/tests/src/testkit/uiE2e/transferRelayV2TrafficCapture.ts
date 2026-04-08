@@ -61,6 +61,36 @@ function shouldCapture(decoded: string): boolean {
     || (decoded.includes('"encryptedDataKeyEnvelopeBase64"') && decoded.includes('"payloadBase64"'));
 }
 
+function shouldCaptureBulkTransferEvidence(decoded: string): boolean {
+  return decoded.includes('bulkTransfer') || decoded.includes('daemon.transfer.');
+}
+
+function recordCapturedTransferEvidence(
+  decoded: string,
+  options: Readonly<{
+    captureBulkTransfer: boolean;
+    onRelayV2Evidence: () => void;
+    onAbort: () => void;
+    onChunkEnvelope: () => void;
+  }>,
+): boolean {
+  const capturedRelayV2 = shouldCapture(decoded);
+  if (!capturedRelayV2 && !(options.captureBulkTransfer && shouldCaptureBulkTransferEvidence(decoded))) {
+    return false;
+  }
+
+  if (capturedRelayV2) {
+    options.onRelayV2Evidence();
+  }
+  if (decoded.includes('"kind":"abort"')) {
+    options.onAbort();
+  }
+  if (decoded.includes('"kind":"chunk"') && decoded.includes('"encryptedDataKeyEnvelopeBase64"')) {
+    options.onChunkEnvelope();
+  }
+  return true;
+}
+
 export type TransferRelayV2TrafficCapture = Readonly<{
   sawRelayV2EventName: () => boolean;
   sawAbort: () => boolean;
@@ -93,23 +123,23 @@ export function collectTransferRelayV2Traffic(
     ws.on('framereceived', (event) => {
       const decoded = decodeSocketPayload((event as { payload?: unknown }).payload);
       if (!decoded) return;
-      if (!shouldCapture(decoded) && !(captureBulkTransfer && decoded.includes('bulkTransfer'))) return;
-      if (decoded.includes('transfer.relay.v2')) sawRelayV2EventName = true;
-      if (decoded.includes('"kind":"abort"')) sawAbort = true;
-      if (decoded.includes('"kind":"chunk"') && decoded.includes('"encryptedDataKeyEnvelopeBase64"')) {
-        sawChunkEnvelope = true;
-      }
+      if (!recordCapturedTransferEvidence(decoded, {
+        captureBulkTransfer,
+        onRelayV2Evidence: () => { sawRelayV2EventName = true; },
+        onAbort: () => { sawAbort = true; },
+        onChunkEnvelope: () => { sawChunkEnvelope = true; },
+      })) return;
       pushLimited(frames, truncateCapturedFrame(decoded, maxChars), maxFrames);
     });
     ws.on('framesent', (event) => {
       const decoded = decodeSocketPayload((event as { payload?: unknown }).payload);
       if (!decoded) return;
-      if (!shouldCapture(decoded) && !(captureBulkTransfer && decoded.includes('bulkTransfer'))) return;
-      if (decoded.includes('transfer.relay.v2')) sawRelayV2EventName = true;
-      if (decoded.includes('"kind":"abort"')) sawAbort = true;
-      if (decoded.includes('"kind":"chunk"') && decoded.includes('"encryptedDataKeyEnvelopeBase64"')) {
-        sawChunkEnvelope = true;
-      }
+      if (!recordCapturedTransferEvidence(decoded, {
+        captureBulkTransfer,
+        onRelayV2Evidence: () => { sawRelayV2EventName = true; },
+        onAbort: () => { sawAbort = true; },
+        onChunkEnvelope: () => { sawChunkEnvelope = true; },
+      })) return;
       pushLimited(frames, truncateCapturedFrame(decoded, maxChars), maxFrames);
     });
   });
@@ -118,7 +148,8 @@ export function collectTransferRelayV2Traffic(
     const url = response.url();
     const isUpdates = url.includes('/v1/updates/');
     const isSocketIoPolling = url.includes('/socket.io/') && url.includes('transport=polling');
-    if (!isUpdates && !isSocketIoPolling) {
+    const isRpc = captureBulkTransfer && url.includes('/rpc');
+    if (!isUpdates && !isSocketIoPolling && !isRpc) {
       return;
     }
 
@@ -126,12 +157,12 @@ export function collectTransferRelayV2Traffic(
       try {
         const body = await response.text();
         if (!body) return;
-        if (!shouldCapture(body) && !(captureBulkTransfer && body.includes('bulkTransfer'))) return;
-        if (body.includes('transfer.relay.v2')) sawRelayV2EventName = true;
-        if (body.includes('"kind":"abort"')) sawAbort = true;
-        if (body.includes('"kind":"chunk"') && body.includes('"encryptedDataKeyEnvelopeBase64"')) {
-          sawChunkEnvelope = true;
-        }
+        if (!recordCapturedTransferEvidence(body, {
+          captureBulkTransfer,
+          onRelayV2Evidence: () => { sawRelayV2EventName = true; },
+          onAbort: () => { sawAbort = true; },
+          onChunkEnvelope: () => { sawChunkEnvelope = true; },
+        })) return;
         pushLimited(
           updateBodies,
           truncateCapturedFrame(`[response ${response.status()}] ${url}\n${body}`, maxChars),
@@ -151,12 +182,12 @@ export function collectTransferRelayV2Traffic(
     if (request.method() !== 'POST') return;
     const postData = request.postData();
     if (!postData) return;
-    if (!shouldCapture(postData) && !postData.includes('bulkTransfer')) return;
-    if (postData.includes('transfer.relay.v2')) sawRelayV2EventName = true;
-    if (postData.includes('"kind":"abort"')) sawAbort = true;
-    if (postData.includes('"kind":"chunk"') && postData.includes('"encryptedDataKeyEnvelopeBase64"')) {
-      sawChunkEnvelope = true;
-    }
+    if (!recordCapturedTransferEvidence(postData, {
+      captureBulkTransfer,
+      onRelayV2Evidence: () => { sawRelayV2EventName = true; },
+      onAbort: () => { sawAbort = true; },
+      onChunkEnvelope: () => { sawChunkEnvelope = true; },
+    })) return;
     pushLimited(updateBodies, truncateCapturedFrame(`[request POST] ${url}\n${postData}`, maxChars), maxUpdateBodies);
   });
 

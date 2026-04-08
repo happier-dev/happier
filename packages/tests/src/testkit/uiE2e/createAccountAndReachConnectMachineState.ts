@@ -2,6 +2,75 @@ import { expect, type Page } from '@playwright/test';
 
 export type CreateAccountAndReachConnectMachineStatePage = Pick<Page, 'getByTestId'> & Partial<Pick<Page, 'evaluate'>>;
 
+async function hasPersistedAuthCredentials(page: CreateAccountAndReachConnectMachineStatePage): Promise<boolean> {
+    if (!page.evaluate) return true;
+
+    try {
+        const result = await page.evaluate(() => {
+            if (typeof window === 'undefined' || !window.localStorage) return true;
+
+            const validCredentialKeys: string[] = [];
+            let activeServerId: string | null = null;
+
+            for (let index = 0; index < window.localStorage.length; index += 1) {
+                const key = window.localStorage.key(index);
+                if (!key) continue;
+                const raw = window.localStorage.getItem(key);
+                if (!raw) continue;
+
+                if (key.includes('server-state-v1')) {
+                    try {
+                        const parsed = JSON.parse(raw) as {
+                            activeServerId?: unknown;
+                        };
+                        const candidateActiveServerId = typeof parsed?.activeServerId === 'string'
+                            ? parsed.activeServerId.trim()
+                            : '';
+                        if (candidateActiveServerId) {
+                            activeServerId = candidateActiveServerId;
+                        }
+                    } catch {
+                        // ignore malformed server state
+                    }
+                    continue;
+                }
+
+                if (key !== 'auth_credentials' && !key.startsWith('auth_credentials__srv_')) continue;
+
+                try {
+                    const parsed = JSON.parse(raw) as {
+                        token?: unknown;
+                        secret?: unknown;
+                        encryption?: { publicKey?: unknown; machineKey?: unknown } | null;
+                    };
+                    const hasToken = typeof parsed?.token === 'string' && parsed.token.trim().length > 0;
+                    const hasLegacySecret = typeof parsed?.secret === 'string' && parsed.secret.trim().length > 0;
+                    const hasEncryption =
+                        typeof parsed?.encryption?.publicKey === 'string'
+                        && parsed.encryption.publicKey.trim().length > 0
+                        && typeof parsed?.encryption?.machineKey === 'string'
+                        && parsed.encryption.machineKey.trim().length > 0;
+                    if (hasToken && (hasLegacySecret || hasEncryption)) {
+                        validCredentialKeys.push(key);
+                    }
+                } catch {
+                    continue;
+                }
+            }
+
+            if (validCredentialKeys.length === 0) return false;
+            if (!activeServerId) return true;
+
+            const expectedKeyFragment = `auth_credentials__srv_${activeServerId.toLowerCase()}`;
+            return validCredentialKeys.some((key) => key.toLowerCase().includes(expectedKeyFragment));
+        });
+
+        return typeof result === 'boolean' ? result : true;
+    } catch {
+        return true;
+  }
+}
+
 async function countAuthenticatedShellSurfaces(page: CreateAccountAndReachConnectMachineStatePage): Promise<number> {
   return (
     (await page.getByTestId('setup.postAuth').count())
@@ -47,7 +116,8 @@ export async function createAccountAndReachConnectMachineState(params: Readonly<
   let initialState: 'create-account' | 'connect-machine' | 'setup-wizard' | null = null;
   await expect
     .poll(async () => {
-      if ((await createButton.count()) > 0) {
+      const createAccountVisible = (await createButton.count()) > 0;
+      if (createAccountVisible) {
         initialState = 'create-account';
         return true;
       }
@@ -70,12 +140,19 @@ export async function createAccountAndReachConnectMachineState(params: Readonly<
 
   await expect
     .poll(async () => {
-      return (await connectMachine.count()) > 0 || (await setupWizard.count()) > 0;
+      const createAccountVisible = (await createButton.count()) > 0;
+      if ((await setupWizard.count()) > 0) return true;
+      if (createAccountVisible) return false;
+      return (await connectMachine.count()) > 0;
     }, { timeout: 120_000 })
     .toBe(true);
 
   await dismissSetupWizardIfVisible({ page: params.page });
-  await expect.poll(async () => await connectMachine.count(), { timeout: 120_000 }).toBe(1);
+  await expect.poll(async () => {
+    if ((await createButton.count()) > 0) return 0;
+    if ((await connectMachine.count()) !== 1) return 0;
+    return (await hasPersistedAuthCredentials(params.page)) ? 1 : 0;
+  }, { timeout: 120_000 }).toBe(1);
 }
 
 export async function createAccountAndReachSetupWizardState(params: Readonly<{

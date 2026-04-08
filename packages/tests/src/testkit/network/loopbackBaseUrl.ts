@@ -1,16 +1,13 @@
 export function normalizeLoopbackBaseUrl(input: string): string {
   try {
     const parsed = new URL(input);
-    if (
-      parsed.hostname === '127.0.0.1'
-      || parsed.hostname === '0.0.0.0'
-      || parsed.hostname === '::1'
-      || parsed.hostname === '[::1]'
-      || parsed.hostname === 'localhost'
-      || parsed.hostname.endsWith('.localhost')
-    ) {
-      const port = parsed.port ? `:${parsed.port}` : '';
-      return `${parsed.protocol}//127.0.0.1${port}${parsed.pathname}${parsed.search}${parsed.hash}`.replace(/\/+$/, '');
+    const port = parsed.port ? `:${parsed.port}` : '';
+    const path = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    if (parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost' || parsed.hostname === '::1' || parsed.hostname === '[::1]') {
+      return `${parsed.protocol}//${parsed.host}${path}`.replace(/\/+$/, '');
+    }
+    if (parsed.hostname === '0.0.0.0' || parsed.hostname.endsWith('.localhost')) {
+      return `${parsed.protocol}//localhost${port}${path}`.replace(/\/+$/, '');
     }
     return parsed.toString().replace(/\/+$/, '');
   } catch {

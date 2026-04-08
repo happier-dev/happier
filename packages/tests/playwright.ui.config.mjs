@@ -18,6 +18,8 @@ export default defineConfig({
     navigationTimeout: 90_000,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
-    video: 'retain-on-failure',
+    // Video finalization can stall long enough that the heartbeat wrapper hits its global timeout,
+    // which prevents teardown and leaks server/daemon processes. Use traces/screenshots for debugging in CI.
+    video: process.env.CI ? 'off' : 'retain-on-failure',
   },
 });

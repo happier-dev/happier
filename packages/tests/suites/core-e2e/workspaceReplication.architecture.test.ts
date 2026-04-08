@@ -7,6 +7,7 @@ import { repoRootDir } from '../../src/testkit/paths';
 
 const PRODUCTION_FILE_SUFFIXES = ['.ts', '.tsx'] as const;
 const UI_BULK_TRANSFER_PIPELINE_DIR_FRAGMENT = '/sync/domains/transfers/runtime/bulkTransferPipeline/' as const;
+const UI_TRANSFER_RUNTIME_DIR_FRAGMENT = '/sync/domains/transfers/runtime/transferRuntime/' as const;
 const BANNED_HANDOFF_BASE64_TOKENS = [
   "contentBase64",
 ] as const;
@@ -17,7 +18,7 @@ const BANNED_UI_TRANSFER_PLUMBING_TOKENS = [
   'downloadMachineTransferJsonPayload',
 ] as const;
 const BANNED_UI_TRANSFER_RPC_PREFIXES = [
-  'RPC_METHODS.DAEMON_BULK_TRANSFER_',
+  'RPC_METHODS.DAEMON_TRANSFER_',
 ] as const;
 const BANNED_LEGACY_SESSION_TRANSFER_FAMILY_TOKENS = [
   // Legacy app↔daemon transfer family (should be fully deleted, not just unused).
@@ -128,7 +129,7 @@ describe('workspace replication architecture closures', () => {
     const sources = await readProductionSources('apps/ui/sources');
 
     for (const { path, content } of sources) {
-      if (path.includes(UI_BULK_TRANSFER_PIPELINE_DIR_FRAGMENT) || path.includes('/transferSubstrate/')) {
+      if (path.includes(UI_TRANSFER_RUNTIME_DIR_FRAGMENT)) {
         continue;
       }
 
@@ -156,7 +157,9 @@ describe('workspace replication architecture closures', () => {
     }
   });
 
-  it('does not reference the legacy app↔daemon session files/attachments transfer family in production sources', async () => {
+  it('does not reference the legacy app↔daemon session files/attachments transfer family in production sources', {
+    timeout: 20_000,
+  }, async () => {
     const sources = await readProductionSourceFiles([
       'apps/ui/sources',
       'apps/cli/src',
@@ -170,8 +173,8 @@ describe('workspace replication architecture closures', () => {
     }
   });
 
-  it('keeps retired UI transfer helper modules deleted and the canonical bulkTransferPipeline entrypoint present', async () => {
-    expect(await pathExists('apps/ui/sources/sync/domains/transfers/runtime/bulkTransferPipeline/index.ts')).toBe(true);
+  it('keeps retired UI transfer helper modules and the old bulkTransferPipeline public barrel deleted', async () => {
+    expect(await pathExists('apps/ui/sources/sync/domains/transfers/runtime/bulkTransferPipeline/index.ts')).toBe(false);
 
     for (const rootRelativePath of RETIRED_UI_TRANSFER_MODULE_PATHS) {
       expect(await pathExists(rootRelativePath), rootRelativePath).toBe(false);

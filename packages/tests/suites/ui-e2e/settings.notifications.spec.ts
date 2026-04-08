@@ -82,6 +82,9 @@ test.describe('ui e2e: settings notifications', () => {
         await waitForInitialAppUi({ page, timeoutMs: 180_000 });
         await createAccountIfNeeded(page);
 
+        await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings?happier_hmr=0`, 180_000);
+        await expect(page.getByTestId('settings-desktop-entry')).toHaveCount(0);
+
         await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/notifications?happier_hmr=0`, 180_000);
 
         await expect(page.getByTestId('settings-notifications-screen')).toHaveCount(1, { timeout: 60_000 });

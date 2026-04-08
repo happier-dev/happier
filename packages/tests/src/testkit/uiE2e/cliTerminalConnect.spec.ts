@@ -188,6 +188,44 @@ describe('startCliAuthLoginForTerminalConnect', () => {
         }
     });
 
+    it('accepts a loopback-equivalent terminal-connect URL during readiness', async () => {
+        const testDir = await mkdtemp(join(tmpdir(), 'happier-cli-terminal-connect-loopback-'));
+        const cliHomeDir = resolve(testDir, 'cli-home');
+        const fetchSpy = vi.fn(async (input: string | URL) => {
+            const url = String(input);
+            if (url === 'http://localhost:52576/terminal/connect#key=test-key') {
+                return new Response('ok', { status: 200 });
+            }
+            throw new Error(`unreachable: ${url}`);
+        });
+
+        try {
+            await mkdir(cliHomeDir, { recursive: true });
+            terminalConnectStdout = 'http://127.0.0.1:52576/terminal/connect#key=test-key\n';
+            vi.stubGlobal('fetch', fetchSpy);
+
+            const started = await startCliAuthLoginForTerminalConnect({
+                testDir,
+                cliHomeDir,
+                serverUrl: 'http://127.0.0.1:4011',
+                webappUrl: 'http://localhost:19006',
+                env: {
+                    HAPPIER_E2E_CLI_TERMINAL_CONNECT_READY_TIMEOUT_MS: '1000',
+                },
+            });
+
+            expect(started.connectUrl).toBe('http://localhost:52576/terminal/connect#key=test-key');
+            expect(fetchSpy).toHaveBeenCalledWith(
+                'http://localhost:52576/terminal/connect#key=test-key',
+                expect.any(Object),
+            );
+
+            await started.stop();
+        } finally {
+            await rm(testDir, { recursive: true, force: true });
+        }
+    });
+
     it('can skip the terminal-connect readiness probe when the caller will retry navigation', async () => {
         const testDir = await mkdtemp(join(tmpdir(), 'happier-cli-terminal-connect-no-readiness-'));
         const cliHomeDir = resolve(testDir, 'cli-home');

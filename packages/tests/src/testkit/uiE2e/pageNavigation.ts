@@ -118,12 +118,106 @@ export async function waitForAuthenticatedHomeUi(params: Readonly<{
   browserDiagnostics?: (() => string) | undefined;
   reloadOnFailure?: boolean | undefined;
 }>): Promise<void> {
+  await waitForHomeUi({
+    page: params.page,
+    timeoutMs: params.timeoutMs,
+    browserDiagnostics: params.browserDiagnostics,
+    reloadOnFailure: params.reloadOnFailure,
+    requireSessionActions: false,
+  });
+}
+
+export async function waitForSessionActionsHomeUi(params: Readonly<{
+  page: Pick<Page, 'getByTestId' | 'reload' | 'url' | 'waitForTimeout'>;
+  timeoutMs?: number;
+  browserDiagnostics?: (() => string) | undefined;
+  reloadOnFailure?: boolean | undefined;
+}>): Promise<void> {
+  await waitForHomeUi({
+    page: params.page,
+    timeoutMs: params.timeoutMs,
+    browserDiagnostics: params.browserDiagnostics,
+    reloadOnFailure: params.reloadOnFailure,
+    requireSessionActions: true,
+  });
+}
+
+export async function waitForAuthenticatedRouteUi(params: Readonly<{
+  page: Pick<Page, 'getByTestId' | 'reload' | 'url' | 'waitForTimeout'>;
+  expectedPathname: string;
+  requiredTestIds: readonly string[];
+  blockedTestIds?: readonly string[] | undefined;
+  timeoutMs?: number;
+  browserDiagnostics?: (() => string) | undefined;
+  reloadOnFailure?: boolean | undefined;
+}>): Promise<void> {
+  const timeoutMs = typeof params.timeoutMs === 'number' && Number.isFinite(params.timeoutMs) && params.timeoutMs > 0
+    ? params.timeoutMs
+    : 120_000;
+  const reloadOnFailure = params.reloadOnFailure !== false;
+  const requiredTestIds = params.requiredTestIds.filter((value) => typeof value === 'string' && value.trim().length > 0);
+  const blockedTestIds = (params.blockedTestIds ?? ['welcome-create-account'])
+    .filter((value) => typeof value === 'string' && value.trim().length > 0);
+
+  if (requiredTestIds.length === 0) {
+    throw new Error('waitForAuthenticatedRouteUi requires at least one required test id.');
+  }
+
+  const waitForRouteUiOnce = async (): Promise<void> => {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      let pathname: string;
+      try {
+        pathname = normalizePathname(new URL(params.page.url()).pathname);
+      } catch {
+        pathname = '';
+      }
+
+      if (pathname !== normalizePathname(params.expectedPathname)) {
+        await params.page.waitForTimeout(250);
+        continue;
+      }
+
+      const blockedCounts = await Promise.all(blockedTestIds.map((testId) => params.page.getByTestId(testId).count()));
+      const requiredCounts = await Promise.all(requiredTestIds.map((testId) => params.page.getByTestId(testId).count()));
+      const blockedVisible = blockedCounts.some((count) => count > 0);
+      const requiredVisible = requiredCounts.every((count) => count > 0);
+
+      if (!blockedVisible && requiredVisible) {
+        return;
+      }
+
+      await params.page.waitForTimeout(250);
+    }
+
+    const diagnostics = params.browserDiagnostics ? `\n\n${params.browserDiagnostics()}` : '';
+    throw new Error(
+      `App did not reach the authenticated route UI for ${normalizePathname(params.expectedPathname)} within ${timeoutMs}ms.${diagnostics}`,
+    );
+  };
+
+  try {
+    await waitForRouteUiOnce();
+  } catch (error) {
+    if (!reloadOnFailure) throw error;
+    await params.page.reload({ waitUntil: 'domcontentloaded' });
+    await waitForRouteUiOnce();
+  }
+}
+
+async function waitForHomeUi(params: Readonly<{
+  page: Pick<Page, 'getByTestId' | 'reload' | 'url' | 'waitForTimeout'>;
+  timeoutMs?: number;
+  browserDiagnostics?: (() => string) | undefined;
+  reloadOnFailure?: boolean | undefined;
+  requireSessionActions: boolean;
+}>): Promise<void> {
   const timeoutMs = typeof params.timeoutMs === 'number' && Number.isFinite(params.timeoutMs) && params.timeoutMs > 0
     ? params.timeoutMs
     : 120_000;
   const reloadOnFailure = params.reloadOnFailure !== false;
 
-  const waitForAuthenticatedHomeUiOnce = async (): Promise<void> => {
+  const waitForHomeUiOnce = async (): Promise<void> => {
     const startedAt = Date.now();
     let switchedToSessionsTab = false;
     while (Date.now() - startedAt < timeoutMs) {
@@ -145,16 +239,11 @@ export async function waitForAuthenticatedHomeUi(params: Readonly<{
       const selectSessionVisible = await params.page.getByTestId('session-getting-started-kind-select_session').count();
       const startNewSessionVisible = await params.page.getByTestId('main-header-start-new-session').count();
       const setupWizardVisible = await params.page.getByTestId('setupWizard.surface').count();
+      const authenticatedHomeVisible = params.requireSessionActions
+        ? createSessionVisible > 0 || selectSessionVisible > 0
+        : connectMachineVisible > 0 || createSessionVisible > 0 || selectSessionVisible > 0 || startNewSessionVisible > 0;
 
-      if (
-        welcomeVisible === 0
-        && (
-          connectMachineVisible > 0
-          || createSessionVisible > 0
-          || selectSessionVisible > 0
-          || startNewSessionVisible > 0
-        )
-      ) {
+      if (welcomeVisible === 0 && authenticatedHomeVisible) {
         if (setupWizardVisible > 0) {
           await dismissSetupWizardIfVisible({ page: params.page });
         }
@@ -184,10 +273,10 @@ export async function waitForAuthenticatedHomeUi(params: Readonly<{
   };
 
   try {
-    await waitForAuthenticatedHomeUiOnce();
+    await waitForHomeUiOnce();
   } catch (error) {
     if (!reloadOnFailure) throw error;
     await params.page.reload({ waitUntil: 'domcontentloaded' });
-    await waitForAuthenticatedHomeUiOnce();
+    await waitForHomeUiOnce();
   }
 }

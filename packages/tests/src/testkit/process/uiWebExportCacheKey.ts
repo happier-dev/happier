@@ -22,6 +22,7 @@ export function buildUiWebExportCacheKey(env: NodeJS.ProcessEnv): string {
   const relevantEntries = Object.entries(buildUiWebExportEnv(env))
     .filter(([key]) =>
       key.startsWith('EXPO_PUBLIC_')
+      || key.startsWith('HAPPIER_E2E_UI_WEB_EXPORT_')
       || key === 'APP_ENV'
       || key === 'APP_VARIANT'
       || key === 'HAPPIER_APP_VARIANT_OVERRIDE'

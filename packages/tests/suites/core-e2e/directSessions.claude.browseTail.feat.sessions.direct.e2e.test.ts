@@ -420,6 +420,162 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
     }
   }, 240_000);
 
+  it('keeps detached background-follow metadata fresh after an attached lease expires without an explicit detach', async () => {
+    const testDir = run.testDir('direct-sessions-claude-background-follow-after-expiry');
+    const daemonHomeDir = resolve(join(testDir, 'daemon-home'));
+    const claudeConfigDir = resolve(join(testDir, '.claude'));
+    const claudeSessionFile = resolve(join(claudeConfigDir, 'projects', 'proj-direct-background-expiry', 'sess-direct-background-expiry.jsonl'));
+
+    await mkdir(daemonHomeDir, { recursive: true });
+    await mkdir(join(claudeConfigDir, 'projects', 'proj-direct-background-expiry'), { recursive: true });
+    await writeFile(
+      claudeSessionFile,
+      [
+        jsonlLine({ type: 'user', uuid: 'bgx-u1', cwd: '/tmp/direct-background-expiry-project', message: { content: 'background expiry seed prompt' } }),
+        jsonlLine({ type: 'assistant', uuid: 'bgx-a1', cwd: '/tmp/direct-background-expiry-project', message: { model: 'claude-test', content: [{ type: 'text', text: 'background expiry seed reply' }] } }),
+      ].join(''),
+      'utf8',
+    );
+
+    server = await startServerLight({
+      testDir,
+      dbProvider: 'sqlite',
+      extraEnv: {
+        HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: '1',
+      },
+    });
+    const auth = await createTestAuth(server.baseUrl);
+
+    const machineKey = Uint8Array.from(randomBytes(32));
+    const seeded = await seedCliDataKeyAuthForServer({
+      cliHome: daemonHomeDir,
+      serverUrl: server.baseUrl,
+      token: auth.token,
+      machineKey,
+    });
+
+    daemon = await startTestDaemon({
+      testDir,
+      happyHomeDir: daemonHomeDir,
+      startupTimeoutMs: daemonStartupTimeoutMs,
+      env: {
+        ...process.env,
+        CI: '1',
+        HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+        HAPPIER_HOME_DIR: daemonHomeDir,
+        HAPPIER_SERVER_URL: server.baseUrl,
+        HAPPIER_CLAUDE_CONFIG_DIR: claudeConfigDir,
+        HAPPIER_DIRECT_SESSIONS_PAGE_MAX_ITEMS: '2',
+        HAPPIER_DIRECT_SESSIONS_ATTACH_LEASE_TTL_MS: '1000',
+      },
+    });
+
+    const ui = createUserScopedSocketCollector(server.baseUrl, auth.token);
+    ui.connect();
+
+    try {
+      await waitFor(() => ui.isConnected(), { timeoutMs: 20_000, context: 'socket connected for attached-expiry background-follow e2e' });
+
+      const machineRpc = createDataKeyRpcClient(ui, machineKey);
+
+      const link = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE}`, {
+        machineId: seeded.machineId,
+        providerId: 'claude',
+        remoteSessionId: 'sess-direct-background-expiry',
+        titleHint: 'Attached expiry background follow fixture',
+        directoryHint: '/tmp/direct-background-expiry-project',
+        source: { kind: 'claudeConfig', configDir: claudeConfigDir, projectId: 'proj-direct-background-expiry' },
+      });
+      const linkResult = unwrapDataKeyRpcResult(link, 'direct Claude attached-expiry background-follow link');
+      expect(linkResult).toEqual(expect.objectContaining({
+        ok: true,
+        created: true,
+      }));
+      const sessionId = (linkResult as { sessionId: string }).sessionId;
+
+      const attach = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH}`, {
+        machineId: seeded.machineId,
+        sessionId,
+        providerId: 'claude',
+        remoteSessionId: 'sess-direct-background-expiry',
+        source: { kind: 'claudeConfig', configDir: claudeConfigDir, projectId: 'proj-direct-background-expiry' },
+        ttlMs: 1_000,
+      });
+      const attachResult = unwrapDataKeyRpcResult(attach, 'direct Claude attach before background-follow expiry');
+      expect(attachResult).toEqual(expect.objectContaining({
+        ok: true,
+        renewed: false,
+      }));
+
+      const follow = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET}`, {
+        machineId: seeded.machineId,
+        sessionId,
+        providerId: 'claude',
+        remoteSessionId: 'sess-direct-background-expiry',
+        source: { kind: 'claudeConfig', configDir: claudeConfigDir, projectId: 'proj-direct-background-expiry' },
+        enabled: true,
+      });
+      const followResult = unwrapDataKeyRpcResult(follow, 'direct Claude attached-expiry background-follow policy set');
+      expect(followResult).toEqual(expect.objectContaining({
+        ok: true,
+        enabled: true,
+      }));
+
+      await waitFor(
+        async () => {
+          const metadata = await fetchSessionMetadataV2({
+            baseUrl: server!.baseUrl,
+            token: auth.token,
+            sessionId,
+            machineKeys: [machineKey],
+          });
+          return isRecord(metadata.directSessionV1)
+            && isRecord(metadata.directSessionV1.followPolicyV1)
+            && metadata.directSessionV1.followPolicyV1.policy === 'background_follow';
+        },
+        { timeoutMs: 30_000, context: 'attached-expiry background-follow policy persisted on linked direct session' },
+      );
+
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 3_000));
+
+      await appendFile(
+        claudeSessionFile,
+        jsonlLine({
+          type: 'assistant',
+          uuid: 'bgx-a2',
+          cwd: '/tmp/direct-background-expiry-project',
+          message: { model: 'claude-test', content: [{ type: 'text', text: 'attached expiry detached delta' }] },
+        }),
+        'utf8',
+      );
+
+      await waitFor(
+        async () => {
+          const metadata = await fetchSessionMetadataV2({
+            baseUrl: server!.baseUrl,
+            token: auth.token,
+            sessionId,
+            machineKeys: [machineKey],
+          });
+          const directSession = isRecord(metadata.directSessionV1) ? metadata.directSessionV1 : null;
+          const attention = isRecord(metadata.directSessionAttentionV1) ? metadata.directSessionAttentionV1 : null;
+          return Boolean(
+            directSession
+              && typeof directSession.lastKnownActivityAtMs === 'number'
+              && attention
+              && typeof attention.observedProgressToken === 'string'
+              && attention.observedProgressToken.length > 0
+              && typeof attention.observedAtMs === 'number'
+              && attention.viewedProgressToken === undefined,
+          );
+        },
+        { timeoutMs: 30_000, context: 'attached-expiry background-follow metadata advances after external transcript activity' },
+      );
+    } finally {
+      ui.close();
+    }
+  }, 240_000);
+
   it('converts a linked direct Claude session to persisted mode and resumes it through the persisted runner', async () => {
     const testDir = run.testDir('direct-sessions-claude-takeover-persist');
     const daemonHomeDir = resolve(join(testDir, 'daemon-home'));

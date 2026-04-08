@@ -4,7 +4,8 @@ import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb } from '../../src/testkit/process/uiWeb';
+import type { StartedUiWeb } from '../../src/testkit/process/uiWebTypes';
 import { startTestDaemon, type StartedDaemon, waitForDaemonState } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
@@ -119,48 +120,58 @@ test.describe('ui e2e: relay-v2 workspace download works when direct peer is dis
 
   let server: StartedServer | null = null;
   let ui: StartedUiWeb | null = null;
-  let uiBaseUrl: string | null = null;
-  let daemon: StartedDaemon | null = null;
+	  let uiBaseUrl: string | null = null;
+	  let daemon: StartedDaemon | null = null;
 
-  test.beforeAll(async () => {
-    const uiWebEnv = {
-      ...process.env,
-      EXPO_PUBLIC_DEBUG: '1',
-      EXPO_PUBLIC_HAPPY_SERVER_URL: '',
-      EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
-      HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: `session-files-relay-v2-${run.runId}`,
-      HAPPIER_E2E_UI_WEB_MODE: 'export',
-      HAPPIER_E2E_UI_WEB_EXPORT_FALLBACK_TO_METRO: '0',
-      HAPPIER_E2E_UI_WEB_EXPORT_STARTUP_STALL_TIMEOUT_MS: '600000',
-      HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS: '900000',
-      HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS:
-        process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS
-        ?? '480000',
-    };
-    test.setTimeout(resolveUiWebBeforeAllTimeoutMs(uiWebEnv));
-    await mkdir(cliHomeDir, { recursive: true });
-    await writeFile(resolve(join(cliHomeDir, 'AGENTS.md')), '# UI e2e fixture\n', 'utf8');
+	  test.beforeAll(async () => {
+	    const uiWebEnv = {
+	      ...process.env,
+	      EXPO_PUBLIC_DEBUG: '1',
+	      EXPO_PUBLIC_HAPPY_SERVER_URL: '',
+	      EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
+	      HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: `session-files-relay-v2-${run.runId}`,
+	      HAPPIER_E2E_UI_WEB_MODE: 'export',
+	      HAPPIER_E2E_UI_WEB_EXPORT_FALLBACK_TO_METRO: '0',
+	      HAPPIER_E2E_UI_WEB_EXPORT_STARTUP_STALL_TIMEOUT_MS: '600000',
+	      HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS: '900000',
+	      HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS:
+	        process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS
+	        ?? '480000',
+	    };
+	    test.setTimeout(resolveUiWebBeforeAllTimeoutMs(uiWebEnv));
+	    await mkdir(cliHomeDir, { recursive: true });
+	    await writeFile(resolve(join(cliHomeDir, 'AGENTS.md')), '# UI e2e fixture\n', 'utf8');
+	    let startedServer: StartedServer | null = null;
+	    let startedUi: StartedUiWeb | null = null;
+	    try {
+	      startedServer = await startServerLight({
+	        testDir: suiteDir,
+	        dbProvider: 'sqlite',
+	        extraEnv: {
+	          HAPPIER_BUILD_FEATURES_DENY: 'sharing.contentKeys',
+	          HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__ENABLED: '1',
+	          HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: '1',
+	          HAPPIER_PRESENCE_SESSION_TIMEOUT_MS: '60000',
+	          HAPPIER_PRESENCE_MACHINE_TIMEOUT_MS: '60000',
+	          HAPPIER_PRESENCE_TIMEOUT_TICK_MS: '1000',
+	          HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: '1',
+	          HAPPIER_E2E_PROVIDER_SKIP_SERVER_GENERATE: '1',
+	          HAPPIER_E2E_PROVIDER_USE_SERVER_SOURCE_ENTRYPOINT: '1',
+	        },
+	      });
 
-    server = await startServerLight({
-      testDir: suiteDir,
-      dbProvider: 'sqlite',
-      extraEnv: {
-        HAPPIER_BUILD_FEATURES_DENY: 'sharing.contentKeys',
-        HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__ENABLED: '1',
-        HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: '1',
-        HAPPIER_PRESENCE_SESSION_TIMEOUT_MS: '60000',
-        HAPPIER_PRESENCE_MACHINE_TIMEOUT_MS: '60000',
-        HAPPIER_PRESENCE_TIMEOUT_TICK_MS: '1000',
-        HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: '1',
-        HAPPIER_E2E_PROVIDER_SKIP_SERVER_GENERATE: '1',
-        HAPPIER_E2E_PROVIDER_USE_SERVER_SOURCE_ENTRYPOINT: '1',
-      },
-    });
+	      uiWebEnv.EXPO_PUBLIC_HAPPY_SERVER_URL = startedServer.baseUrl;
+	      startedUi = await startUiWeb({ testDir: suiteDir, env: uiWebEnv });
 
-    uiWebEnv.EXPO_PUBLIC_HAPPY_SERVER_URL = server.baseUrl;
-    ui = await startUiWeb({ testDir: suiteDir, env: uiWebEnv });
-    uiBaseUrl = normalizeLoopbackBaseUrl(ui.baseUrl);
-  });
+	      server = startedServer;
+	      ui = startedUi;
+	      uiBaseUrl = normalizeLoopbackBaseUrl(startedUi.baseUrl);
+	    } catch (error) {
+	      await startedUi?.stop().catch(() => {});
+	      await startedServer?.stop().catch(() => {});
+	      throw error;
+	    }
+	  });
 
   test.afterAll(async () => {
     test.setTimeout(120_000);
@@ -279,7 +290,7 @@ test.describe('ui e2e: relay-v2 workspace download works when direct peer is dis
     try {
       await expect.poll(async () => relayTraffic.sawRelayV2EventName(), { timeout: 60_000 }).toBe(true);
       const evidence = [...relayTraffic.frames, ...relayTraffic.updateBodies].join('\n\n---\n\n');
-      expect(evidence.includes('daemon.bulkTransfer.download.chunk')).toBe(false);
+      expect(evidence.includes('daemon.transfer.download.chunk')).toBe(false);
     } catch (error) {
       await testInfo.attach('relay-v2-frames', {
         body: relayTraffic.frames.join('\n\n---\n\n'),
@@ -421,7 +432,7 @@ test.describe('ui e2e: relay-v2 workspace download works when direct peer is dis
 
     if (relayTraffic.frames.length > 0 || relayTraffic.updateBodies.length > 0) {
       const evidence = [...relayTraffic.frames, ...relayTraffic.updateBodies].join('\n\n---\n\n');
-      expect(evidence.includes('daemon.bulkTransfer.download.chunk')).toBe(false);
+      expect(evidence.includes('daemon.transfer.download.chunk')).toBe(false);
     }
   });
 });

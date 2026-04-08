@@ -275,7 +275,7 @@ test.describe('ui e2e: relay fallback when direct peer is disabled', () => {
         if (relayTraffic.sawRelayV2EventName() || relayTraffic.sawChunkEnvelope()) {
           return true;
         }
-        return relayTraffic.frames.some((frame) => frame.includes('daemon.bulkTransfer.download.chunk'));
+        return relayTraffic.frames.some((frame) => frame.includes('daemon.transfer.download.chunk'));
       }, { timeout: 60_000 }).toBe(true);
     } catch (error) {
       await testInfo.attach('relay-v2-ws-frames', {

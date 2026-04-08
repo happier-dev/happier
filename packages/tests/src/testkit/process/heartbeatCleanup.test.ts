@@ -1,7 +1,8 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { chmod, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { mkdirSync, writeFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
@@ -142,7 +143,7 @@ async function createFakeToolchain(
 
 async function runWrapperCleanupScenario(
   caseItem: WrapperCase,
-  opts?: Readonly<{ exitAfterSpawn?: boolean; signalAfterSpawn?: NodeJS.Signals }>,
+  opts?: Readonly<{ exitAfterSpawn?: boolean; signalAfterSpawn?: NodeJS.Signals; wrapperTimeoutMs?: number }>,
 ): Promise<{ code: number | null; signal: string | null } | void> {
   const wrapperPath = resolve(repoRootDir(), caseItem.scriptPath);
 
@@ -154,6 +155,7 @@ async function runWrapperCleanupScenario(
       ...tempPathBin.env,
       HAPPIER_HEARTBEAT_MARKER: markerPath,
       HAPPIER_TEST_HEARTBEAT_MS: '1000',
+      HAPPIER_TEST_WRAPPER_TIMEOUT_MS: opts?.wrapperTimeoutMs ? String(opts.wrapperTimeoutMs) : '',
       HAPPIER_HEARTBEAT_EXIT_AFTER_SPAWN: opts?.exitAfterSpawn === true ? '1' : '',
       ...caseItem.extraEnv,
     };
@@ -187,11 +189,20 @@ async function runWrapperCleanupScenario(
         return await childExitPromise;
       }
 
-      if (opts?.exitAfterSpawn === true) {
-        await childExitPromise;
+      let exitResult: { code: number | null; signal: string | null } | null = null;
+
+      if (opts?.wrapperTimeoutMs) {
+        exitResult = await Promise.race([
+          childExitPromise,
+          new Promise<{ code: number | null; signal: string | null }>((_, reject) => {
+            setTimeout(() => reject(new Error(`${caseItem.name} wrapper did not exit after timeout`)), 5_000);
+          }),
+        ]);
+      } else if (opts?.exitAfterSpawn === true) {
+        exitResult = await childExitPromise;
       } else {
         child.kill('SIGTERM');
-        await childExitPromise;
+        exitResult = await childExitPromise;
       }
 
       await waitFor(() => !isProcessAlive(marker.childPid), {
@@ -205,6 +216,8 @@ async function runWrapperCleanupScenario(
         intervalMs: 100,
         context: `${caseItem.name} wrapper descendant shutdown`,
       });
+
+      return exitResult ?? undefined;
     } finally {
       if (!child.killed) {
         child.kill('SIGTERM');
@@ -360,5 +373,87 @@ describe.each(WRAPPER_CASES)('%s', (caseItem) => {
 
   it('terminates descendant test processes when the wrapper loses its parent', async () => {
     await runWrapperParentExitCleanupScenario(caseItem);
+  }, 30_000);
+});
+
+describe('run-playwright-with-heartbeat timeout cleanup', () => {
+  it('terminates descendant test processes when the wrapper runtime timeout elapses', async () => {
+    const caseItem = WRAPPER_CASES.find((item) => item.name === 'run-playwright-with-heartbeat');
+    expect(caseItem).toBeDefined();
+
+    const result = await runWrapperCleanupScenario(caseItem!, { wrapperTimeoutMs: 250 });
+
+    expect(result).toEqual({ code: 124, signal: null });
+  }, 30_000);
+
+  it('sweeps stale process ownership leases after completion', async () => {
+    const caseItem = WRAPPER_CASES.find((item) => item.name === 'run-playwright-with-heartbeat');
+    expect(caseItem).toBeDefined();
+
+    const wrapperPath = resolve(repoRootDir(), caseItem!.scriptPath);
+
+    await withTempPathBin({ prefix: 'happier-heartbeat-lease-sweep-' }, async (tempPathBin) => {
+      const rootDir = tempPathBin.dir;
+      const leaseDir = resolve(rootDir, '.project', 'tmp', 'ui-web-metro-processes');
+      mkdirSync(leaseDir, { recursive: true });
+
+      // Spawn a long-running child that looks like an Expo web dev server.
+      const orphan = spawn(process.execPath, [
+        '-e',
+        'setInterval(() => {}, 1000)',
+        'start',
+        '--web',
+        '--host',
+        'localhost',
+      ], { stdio: 'ignore' });
+      if (!orphan.pid) throw new Error('failed to spawn orphan process');
+
+      const childPid = orphan.pid;
+      const childStartTimeRes = spawnSync('ps', ['-o', 'lstart=', '-p', String(childPid), '-ww'], { encoding: 'utf8' });
+      const childStartTime = String(childStartTimeRes.stdout ?? '').trim();
+      expect(childStartTime.length).toBeGreaterThan(0);
+
+      // Use a PID that will definitely be dead by the time the wrapper performs the sweep.
+      const deadOwner = spawnSync(process.execPath, ['-e', 'process.exit(0)'], { encoding: 'utf8' });
+      const ownerPid = deadOwner.pid ?? 999999;
+
+      writeFileSync(resolve(leaseDir, `pid-${childPid}.json`), JSON.stringify({
+        childPid,
+        childStartTime,
+        ownerPid,
+        ownerStartTime: 'dead',
+        createdAtMs: Date.now(),
+        metadata: { port: 0, testDir: rootDir },
+      }), 'utf8');
+
+      try {
+        const markerPath = join(rootDir, 'process-marker.json');
+        const configPath = join(rootDir, 'playwright.config.mjs');
+        await writeFile(configPath, '// test config\n', 'utf8');
+        await createFakeToolchain(rootDir, caseItem!.toolCommandName, markerPath);
+
+        const child = spawn(process.execPath, [wrapperPath, '--config', configPath], {
+          env: {
+            ...tempPathBin.env,
+            HAPPIER_TEST_PROCESS_LEASE_ROOT_DIR: rootDir,
+            HAPPIER_HEARTBEAT_MARKER: markerPath,
+            HAPPIER_TEST_HEARTBEAT_MS: '1000',
+            HAPPIER_TEST_WRAPPER_TIMEOUT_MS: '250',
+          },
+          stdio: ['ignore', 'ignore', 'ignore'],
+        });
+
+        const { code } = await once(child, 'exit').then(([exitCode]) => ({ code: exitCode as number | null }));
+        expect(code).toBe(124);
+
+        await waitFor(() => !isProcessAlive(childPid), {
+          timeoutMs: 10_000,
+          intervalMs: 100,
+          context: 'orphan metro lease process should be terminated by wrapper sweep',
+        });
+      } finally {
+        await terminateProcessTreeByPid(childPid, { graceMs: 0, pollMs: 25, skipAliveCheck: true }).catch(() => {});
+      }
+    });
   }, 30_000);
 });

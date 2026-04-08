@@ -1,10 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createPlaywrightSpawnOptions,
   parseHeartbeatArgs,
   resolveSignalExitCode,
 } from '../../scripts/runPlaywrightWithHeartbeat.shared.mjs';
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.resetModules();
+});
 
 describe('runPlaywrightWithHeartbeat helpers', () => {
   it('supports both config flag forms while preserving passthrough args', () => {
@@ -55,5 +60,54 @@ describe('runPlaywrightWithHeartbeat helpers', () => {
     expect(resolveSignalExitCode('SIGINT')).toBe(130);
     expect(resolveSignalExitCode('SIGTERM')).toBe(143);
     expect(resolveSignalExitCode(null)).toBe(1);
+  });
+
+  it('sweeps stale lease-owned processes before and after the wrapped child run', async () => {
+    const events: string[] = [];
+    const sweepStaleProcessOwnershipLeases = vi.fn(async () => {
+      events.push('sweep');
+    });
+    const runManagedChildCommand = vi.fn(async () => {
+      events.push('run');
+      return {
+        child: { pid: 12345 },
+        ok: true,
+        code: 0,
+        signal: null,
+        timedOut: false,
+      };
+    });
+
+    vi.doMock('../../scripts/managedChildLifecycle.mjs', () => ({
+      installParentDeathCleanupWatchdog: () => () => {},
+      resolveSignalExitCode: (signal: string | null) => (signal === 'SIGINT' ? 130 : 1),
+      runManagedChildCommand,
+    }));
+    vi.doMock('../../scripts/sweepProcessOwnershipLeases.mjs', () => ({
+      sweepStaleProcessOwnershipLeases,
+    }));
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`process.exit:${code ?? ''}`);
+    }) as never);
+
+    const { runHeartbeatWrappedCommand } = await import('../../scripts/runPlaywrightWithHeartbeat.shared.mjs');
+
+    await expect(runHeartbeatWrappedCommand({
+      command: 'yarn',
+      args: ['-s', 'playwright', 'test'],
+      config: 'playwright.ui.config.mjs',
+      toolName: 'playwright',
+      spawnOptions: createPlaywrightSpawnOptions({ CI: '1' }),
+      resolveExitCode: () => 0,
+    })).rejects.toThrow('process.exit:0');
+
+    expect(events).toEqual(['sweep', 'run', 'sweep']);
+
+    void logSpy;
+    void errorSpy;
+    void exitSpy;
   });
 });

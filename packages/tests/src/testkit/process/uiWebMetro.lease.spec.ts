@@ -12,10 +12,14 @@ let lastSpawnEnv: NodeJS.ProcessEnv | null = null;
 let sourceFingerprint = 'fingerprint-a';
 let reservedMetroPort = 19077;
 let fetchResponder: ((input: unknown, init?: RequestInit) => Promise<unknown>) | null = null;
+let spawnStdoutTextSequence: string[] | null = null;
+let spawnExitSignalSequence: Array<NodeJS.Signals | null> | null = null;
+let spawnInvocationIndex = 0;
 
 vi.mock('./spawnProcess', () => ({
     spawnLoggedProcess: (params: { stdoutPath: string; stderrPath: string; env?: NodeJS.ProcessEnv }) => {
-        writeFileSync(params.stdoutPath, spawnStdoutText, 'utf8');
+        const currentStdout = spawnStdoutTextSequence?.[spawnInvocationIndex] ?? spawnStdoutText;
+        writeFileSync(params.stdoutPath, currentStdout, 'utf8');
         writeFileSync(params.stderrPath, '', 'utf8');
         lastSpawnEnv = params.env && typeof params.env === 'object' ? params.env as NodeJS.ProcessEnv : null;
         const child = new EventEmitter() as EventEmitter & {
@@ -24,6 +28,17 @@ vi.mock('./spawnProcess', () => ({
         };
         child.exitCode = null;
         child.signalCode = null;
+
+        const exitSignal = spawnExitSignalSequence?.[spawnInvocationIndex] ?? null;
+        spawnInvocationIndex += 1;
+        if (exitSignal) {
+            setImmediate(() => {
+                child.exitCode = null;
+                child.signalCode = exitSignal;
+                child.emit('exit', null, exitSignal);
+            });
+        }
+
         return {
             child,
             stdoutPath: params.stdoutPath,
@@ -91,6 +106,9 @@ beforeEach(() => {
         };
     };
     vi.stubGlobal('fetch', vi.fn(async (input: unknown, init?: RequestInit) => await fetchResponder!(input, init)));
+    spawnStdoutTextSequence = null;
+    spawnExitSignalSequence = null;
+    spawnInvocationIndex = 0;
 });
 
 function readProcessStartTime(pid: number): string {
@@ -102,6 +120,54 @@ function readProcessStartTime(pid: number): string {
 }
 
 describe('startUiWebMetro', () => {
+    it('retries once when the expo web dev server exits before ready', async () => {
+        const testDir = await mkdtemp(join(tmpdir(), 'happier-ui-web-metro-retry-'));
+
+        try {
+            await mkdir(testDir, { recursive: true });
+            spawnStdoutTextSequence = [
+                '',
+                'http://127.0.0.1:19077\n',
+            ];
+            spawnExitSignalSequence = [
+                'SIGKILL',
+                null,
+            ];
+
+            const started = await startUiWebMetro({
+                testDir,
+                env: { HAPPIER_E2E_UI_WEB_METRO_START_ATTEMPTS: '2' },
+                port: 19077,
+            });
+
+            expect(started.baseUrl).toBe('http://127.0.0.1:19077');
+            await started.stop();
+        } finally {
+            await rm(testDir, { recursive: true, force: true });
+        }
+    });
+
+    it('does not force narrowed metro workspace/node_modules flags unless explicitly requested', async () => {
+        const testDir = await mkdtemp(join(tmpdir(), 'happier-ui-web-metro-spawn-env-'));
+
+        try {
+            await mkdir(testDir, { recursive: true });
+
+            const started = await startUiWebMetro({
+                testDir,
+                env: {},
+                port: 19077,
+            });
+
+            expect(lastSpawnEnv?.EXPO_NO_METRO_WORKSPACE_ROOT).toBeUndefined();
+            expect(lastSpawnEnv?.HAPPIER_UI_METRO_NARROW_WATCH_FOLDERS).toBeUndefined();
+
+            await started.stop();
+        } finally {
+            await rm(testDir, { recursive: true, force: true });
+        }
+    });
+
     it('reclaims stale metro leases from dead owners before launching Expo web', async () => {
         if (process.platform === 'win32') return;
 
@@ -170,6 +236,81 @@ describe('startUiWebMetro', () => {
 
             expect(lastSpawnEnv?.HAPPIER_UI_METRO_CACHE_VERSION_BUST).toMatch(/^[a-f0-9]{16,}$/u);
 
+            await started.stop();
+        } finally {
+            await rm(testDir, { recursive: true, force: true });
+        }
+    });
+
+    it('waits for the entry html to include scripts before treating metro as ready', async () => {
+        const testDir = await mkdtemp(join(tmpdir(), 'happier-ui-web-metro-entry-ready-'));
+        reservedMetroPort = 19079;
+        spawnStdoutText = `Waiting on http://localhost:${reservedMetroPort}`;
+        const startedAtMs = Date.now();
+
+        fetchResponder = async (input: unknown) => {
+            const url = String(input);
+            const elapsedMs = Date.now() - startedAtMs;
+
+            if (url === `http://localhost:${reservedMetroPort}/status` || url === `http://127.0.0.1:${reservedMetroPort}/status`) {
+                return {
+                    ok: true,
+                    headers: { get: () => 'text/plain' },
+                    text: async () => 'packager-status:running',
+                };
+            }
+
+            if (url === `http://localhost:${reservedMetroPort}` || url === `http://127.0.0.1:${reservedMetroPort}`) {
+                if (elapsedMs < 250) {
+                    return {
+                        ok: true,
+                        headers: { get: () => 'text/plain' },
+                        text: async () => 'still compiling',
+                    };
+                }
+                if (elapsedMs < 500) {
+                    return {
+                        ok: true,
+                        headers: { get: () => 'text/html' },
+                        text: async () => '<!doctype html><html><head></head><body><div id="root"></div></body></html>',
+                    };
+                }
+                return {
+                    ok: true,
+                        headers: { get: () => 'text/html' },
+                        text: async () => '<!doctype html><html><head><script src="/app.js"></script></head><body><div id="root"></div></body></html>',
+                };
+            }
+
+            if (url === `http://localhost:${reservedMetroPort}/app.js` || url === `http://127.0.0.1:${reservedMetroPort}/app.js`) {
+                return {
+                    ok: true,
+                    headers: { get: () => 'application/javascript' },
+                    text: async () => 'globalThis.__HAPPIER_E2E__ = true;',
+                };
+            }
+
+            return {
+                ok: false,
+                headers: { get: () => 'text/plain' },
+                text: async () => '',
+            };
+        };
+
+        try {
+            await mkdir(testDir, { recursive: true });
+
+            const started = await startUiWebMetro({
+                testDir,
+                env: {
+                    HAPPIER_E2E_UI_WEB_ENTRY_PROBE_TIMEOUT_MS: '25',
+                    HAPPIER_E2E_UI_WEB_METRO_STATUS_TIMEOUT_MS: '1000',
+                    HAPPIER_E2E_UI_WEB_METRO_STATUS_ATTEMPT_TIMEOUT_MS: '25',
+                },
+                port: reservedMetroPort,
+            });
+
+            expect(Date.now() - startedAtMs).toBeGreaterThanOrEqual(450);
             await started.stop();
         } finally {
             await rm(testDir, { recursive: true, force: true });

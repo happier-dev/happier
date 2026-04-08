@@ -172,7 +172,7 @@ test.describe('ui e2e: transcript small reconnect catch-up', () => {
     const sessionId = await createSessionFromComposer({ page, uiBaseUrl, machineId, prompt: 'hello small gap' });
 
     await page.goto(`${uiBaseUrl}/session/${sessionId}`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
+    await expect(page.locator('[data-testid="transcript-chat-list"]:visible')).toHaveCount(1, { timeout: 120_000 });
 
     const requests: Array<{ url: string; ts: number }> = [];
     page.on('request', (req) => requests.push({ url: req.url(), ts: Date.now() }));

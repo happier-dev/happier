@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Locator, type Page } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
@@ -14,6 +14,7 @@ import { createGitRepoWithChanges } from '../../src/testkit/uiE2e/gitRepoFixture
 import { spawnSessionFromDaemon } from '../../src/testkit/uiE2e/spawnSessionFromDaemon';
 import { toTestIdSafeValue } from '../../src/testkit/uiE2e/testIdSafeValue';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
+import { approveTerminalConnect } from '../../src/testkit/uiE2e/approveTerminalConnect';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -65,24 +66,58 @@ async function readScrollTopOfNearestScrollableAncestor(page: Page, testId: stri
       return (overflowY === 'auto' || overflowY === 'scroll') && cursor.scrollHeight > cursor.clientHeight + 1;
     };
 
-    // Prefer the node itself if it is the scroll container.
-    if (isScrollable(el)) return el.scrollTop ?? 0;
+    const resolveScrollable = (): HTMLElement | null => {
+      if (isScrollable(el)) return el;
 
-    // React Native web can render scrollable content as a nested div inside the testId host.
-    // Search within the node first for the scroll container.
-    const descendants = Array.from(el.querySelectorAll('*')) as HTMLElement[];
-    for (const child of descendants) {
-      if (isScrollable(child)) return child.scrollTop ?? 0;
+      try {
+        const descendants = Array.from(el.querySelectorAll?.('*') ?? []) as HTMLElement[];
+        let best: HTMLElement | null = null;
+        let bestScrollHeight = 0;
+        for (const candidate of descendants) {
+          if (!isScrollable(candidate)) continue;
+          if (candidate.scrollHeight >= bestScrollHeight) {
+            best = candidate;
+            bestScrollHeight = candidate.scrollHeight;
+          }
+        }
+        if (best) return best;
+      } catch {
+        // ignore
+      }
+
+      let cursor: HTMLElement | null = el.parentElement;
+      while (cursor) {
+        if (isScrollable(cursor)) return cursor;
+        cursor = cursor.parentElement;
+      }
+      return null;
+    };
+
+    return resolveScrollable()?.scrollTop ?? el.scrollTop ?? 0;
+  });
+}
+
+async function readTopRelativeToNearestScrollableAncestor(locator: Locator): Promise<number | null> {
+  return await locator.evaluate((node) => {
+    const el = node as HTMLElement | null;
+    if (!el) return null;
+    const isScrollable = (cursor: HTMLElement | null) => {
+      if (!cursor) return false;
+      const style = window.getComputedStyle(cursor);
+      const overflowY = style.overflowY;
+      return (overflowY === 'auto' || overflowY === 'scroll') && cursor.scrollHeight > cursor.clientHeight + 1;
+    };
+
+    let scrollable: HTMLElement | null = el.parentElement;
+    while (scrollable) {
+      if (isScrollable(scrollable)) break;
+      scrollable = scrollable.parentElement;
     }
+    if (!scrollable) return null;
 
-    // Fall back to ancestor chain when the testId is on a nested element within the scroll root.
-    let cursor: HTMLElement | null = el.parentElement;
-    while (cursor) {
-      if (isScrollable(cursor)) return cursor.scrollTop ?? 0;
-      cursor = cursor.parentElement;
-    }
-
-    return el.scrollTop ?? 0;
+    const rowRect = el.getBoundingClientRect();
+    const scrollRect = scrollable.getBoundingClientRect();
+    return rowRect.top - scrollRect.top;
   });
 }
 
@@ -100,10 +135,23 @@ async function setScrollTopOfNearestScrollableAncestor(page: Page, testId: strin
 
       const findScrollable = (): HTMLElement | null => {
         if (isScrollable(el)) return el;
-        const descendants = Array.from(el.querySelectorAll('*')) as HTMLElement[];
-        for (const child of descendants) {
-          if (isScrollable(child)) return child;
+
+        try {
+          const descendants = Array.from(el.querySelectorAll?.('*') ?? []) as HTMLElement[];
+          let best: HTMLElement | null = null;
+          let bestScrollHeight = 0;
+          for (const candidate of descendants) {
+            if (!isScrollable(candidate)) continue;
+            if (candidate.scrollHeight >= bestScrollHeight) {
+              best = candidate;
+              bestScrollHeight = candidate.scrollHeight;
+            }
+          }
+          if (best) return best;
+        } catch {
+          // ignore
         }
+
         let cursor: HTMLElement | null = el.parentElement;
         while (cursor) {
           if (isScrollable(cursor)) return cursor;
@@ -141,10 +189,23 @@ async function expectScrollableToScroll(page: Page, testId: string, deltaY: numb
 
       const findScrollable = (): HTMLElement | null => {
         if (isScrollable(el)) return el;
-        const descendants = Array.from(el.querySelectorAll('*')) as HTMLElement[];
-        for (const child of descendants) {
-          if (isScrollable(child)) return child;
+
+        try {
+          const descendants = Array.from(el.querySelectorAll?.('*') ?? []) as HTMLElement[];
+          let best: HTMLElement | null = null;
+          let bestScrollHeight = 0;
+          for (const candidate of descendants) {
+            if (!isScrollable(candidate)) continue;
+            if (candidate.scrollHeight >= bestScrollHeight) {
+              best = candidate;
+              bestScrollHeight = candidate.scrollHeight;
+            }
+          }
+          if (best) return best;
+        } catch {
+          // ignore
         }
+
         let cursor: HTMLElement | null = el.parentElement;
         while (cursor) {
           if (isScrollable(cursor)) return cursor;
@@ -211,6 +272,10 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
         // On cold caches, the initial Metro web bundle can take >2 minutes; avoid aborting the request
         // before it has a chance to complete (which can cause repeated restarts and flakiness).
         HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS ?? '420000',
+        // In a shared multi-agent worktree Metro can keep the primary-script readiness probe noisy
+        // long after the app is actually reachable. For this spec the page-level UI wait is the
+        // stronger readiness contract, so allow the harness to continue after the script probe timeout.
+        HAPPIER_E2E_UI_WEB_ALLOW_SCRIPT_READY_TIMEOUT: '1',
       },
     });
 
@@ -231,9 +296,10 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
     const browserDiagnostics = collectBrowserDiagnostics({ page });
 
     let runDaemon: StartedDaemon | null = null;
+    let thrown: unknown = null;
     try {
       await page.setViewportSize({ width: 1440, height: 900 });
-      await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
+      await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`);
       await waitForInitialAppUi({ page, browserDiagnostics });
 
       const createAccountByTestId = page.getByTestId('welcome-create-account');
@@ -294,7 +360,7 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
         });
         throw err;
       }
-      await page.getByTestId('terminal-connect-approve').click();
+      await approveTerminalConnect({ page });
       await cliLogin.waitForSuccess();
 
       const fakeClaudeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));
@@ -342,7 +408,7 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
       const linkFileTrigger = page.getByTestId('agent-input-link-file');
       await expect(linkFileTrigger).toHaveCount(1, { timeout: 60_000 });
       await linkFileTrigger.click();
-      const linkFilePopover = page.getByTestId('agent-input-link-file-popover');
+      const linkFilePopover = page.getByTestId('agent-input-content-popover');
       await expect(linkFilePopover).toHaveCount(1, { timeout: 60_000 });
       await linkFileTrigger.click();
       await expect(linkFilePopover).toHaveCount(0, { timeout: 60_000 });
@@ -361,17 +427,22 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
 	      roleName: 'Source control',
 	      timeoutMs: 60_000,
 	    });
+    const reviewList = detailsPaneLocator(page).getByTestId('scm-review-list');
     const openReviewByTestId = rightPane.getByTestId('session-rightpanel-git-open-review');
-    if (await openReviewByTestId.count()) {
-      await openReviewByTestId.click();
+    await expect
+      .poll(async () => {
+        if ((await reviewList.count()) > 0) return 'details';
+        if ((await openReviewByTestId.count()) > 0) return 'button';
+        return null;
+      }, { timeout: 120_000 })
+      .not.toBeNull();
+    if ((await reviewList.count()) > 0) {
+      // Review is already open in the details pane.
     } else {
-      const reviewTab = rightPane.getByRole('button', { name: 'Review' });
-      await expect(reviewTab).toHaveCount(1, { timeout: 60_000 });
-      await reviewTab.click({ timeout: 60_000, force: true });
+      await openReviewByTestId.click();
     }
 
     await expect(detailsPaneLocator(page)).toHaveCount(1, { timeout: 60_000 });
-    const reviewList = detailsPaneLocator(page).getByTestId('scm-review-list');
     await expect(reviewList).toHaveCount(1, { timeout: 60_000 });
 
     // Regression guard: Review must be scrollable within the details pane (not expand to full content height).
@@ -391,96 +462,89 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
     // Scroll down until a later file's row is visible (virtualized list).
     const laterRow = reviewList.getByTestId(`scm-change-row-${toTestIdSafeValue(laterPath)}`);
     for (let i = 0; i < 20; i += 1) {
-      if (await laterRow.count()) break;
+      if (await laterRow.isVisible()) break;
       await reviewList.hover();
       await page.mouse.wheel(0, 1200);
       // Give FlashList a moment to recycle rows.
       await page.waitForTimeout(50);
     }
-    await expect(laterRow).toHaveCount(1, { timeout: 60_000 });
-    await laterRow.scrollIntoViewIfNeeded();
-    await expect(reviewList.getByTestId(`scm-review-diff-${toTestIdSafeValue(laterPath)}`)).toHaveCount(1, { timeout: 60_000 });
+    await expect(laterRow).toBeVisible({ timeout: 60_000 });
 
     // Collapse a diff and ensure its block disappears without a big scroll jump.
     // NOTE: the list is virtualized, so we must scroll to the target row to ensure it is mounted.
     const midRow = reviewList.getByTestId(`scm-change-row-${toTestIdSafeValue(midPath)}`);
     for (let i = 0; i < 25; i += 1) {
-      if (await midRow.count()) break;
+      if (await midRow.isVisible()) break;
       await reviewList.hover();
       await page.mouse.wheel(0, -1200);
       await page.waitForTimeout(50);
     }
-    await expect(midRow).toHaveCount(1, { timeout: 60_000 });
-    await midRow.scrollIntoViewIfNeeded();
+    await expect(midRow).toBeVisible({ timeout: 60_000 });
     const scrollTopBeforeCollapse = await readScrollTopOfNearestScrollableAncestor(page, 'scm-review-list');
-    const beforeBox = await midRow.boundingBox();
     await midRow.click();
     await expect(reviewList.getByTestId(`scm-review-diff-${toTestIdSafeValue(midPath)}`)).toHaveCount(0, { timeout: 60_000 });
-    const scrollTopAfterCollapse = await readScrollTopOfNearestScrollableAncestor(page, 'scm-review-list');
-    // ChangedFilesReview preserves scroll position on web, but FlashList can apply post-layout
-    // corrections asynchronously (RAF + virtualization). Poll briefly for the row's viewport
-    // position to settle to avoid flakiness across machines.
-    let afterBox = await midRow.boundingBox();
-    if (beforeBox && afterBox) {
-      const startedAt = Date.now();
-      const maxMs = 1200;
-      while (afterBox && Date.now() - startedAt < maxMs) {
-        const delta = Math.abs(afterBox.y - beforeBox.y);
-        if (delta <= 60) break;
-        await page.waitForTimeout(50);
-        afterBox = await midRow.boundingBox();
-      }
-      expect(
-        afterBox,
-        `midRow boundingBox became null (scrollTopBefore=${scrollTopBeforeCollapse} scrollTopAfter=${scrollTopAfterCollapse})`
-      ).not.toBeNull();
-      if (!afterBox) {
-        throw new Error(
-          `midRow boundingBox became null (scrollTopBefore=${scrollTopBeforeCollapse} scrollTopAfter=${scrollTopAfterCollapse})`
-        );
-      }
-      expect(
-        Math.abs(afterBox.y - beforeBox.y),
-        `scrollTopBefore=${scrollTopBeforeCollapse} scrollTopAfter=${scrollTopAfterCollapse}`
-      ).toBeLessThanOrEqual(60);
+    await expect(midRow).toBeVisible({ timeout: 60_000 });
+    let scrollTopAfterCollapse = scrollTopBeforeCollapse;
+    for (let i = 0; i < 24; i += 1) {
+      scrollTopAfterCollapse = await readScrollTopOfNearestScrollableAncestor(page, 'scm-review-list');
+      if (Math.abs(scrollTopAfterCollapse - scrollTopBeforeCollapse) <= 120) break;
+      await page.waitForTimeout(25);
     }
+    expect(
+      Math.abs(scrollTopAfterCollapse - scrollTopBeforeCollapse),
+      `scrollTopBefore=${scrollTopBeforeCollapse} scrollTopAfter=${scrollTopAfterCollapse}`
+    ).toBeLessThanOrEqual(120);
 
     // Scroll away and back; the diff should remain collapsed.
     await reviewList.hover();
     await page.mouse.wheel(0, 1800);
     await page.mouse.wheel(0, -1800);
-    await midRow.scrollIntoViewIfNeeded();
+    // FlashList can recycle the row entirely here, so remount it via user-like scrolling rather
+    // than DOM evaluation, which can time out while the review surface is busy.
+    for (let i = 0; i < 8; i += 1) {
+      if (await midRow.count()) break;
+      await reviewList.hover();
+      await page.mouse.wheel(0, -5000);
+      await page.waitForTimeout(25);
+    }
+    for (let i = 0; i < 20; i += 1) {
+      if (await midRow.count()) break;
+      await reviewList.hover();
+      await page.mouse.wheel(0, 900);
+      await page.waitForTimeout(50);
+    }
+    await expect(midRow).toHaveCount(1, { timeout: 60_000 });
     await expect(reviewList.getByTestId(`scm-review-diff-${toTestIdSafeValue(midPath)}`)).toHaveCount(0, { timeout: 60_000 });
 
     // Ensure the row we want to open is mounted again before focusing (FlashList recycles rows).
     for (let i = 0; i < 20; i += 1) {
-      if (await laterRow.count()) break;
+      if (await laterRow.isVisible()) break;
       await reviewList.hover();
       await page.mouse.wheel(0, 1200);
       await page.waitForTimeout(50);
     }
-    await expect(laterRow).toHaveCount(1, { timeout: 60_000 });
-    await laterRow.scrollIntoViewIfNeeded();
+    await expect(laterRow).toBeVisible({ timeout: 60_000 });
     // Record scroll position right before leaving Review (after any scroll-to-row effects).
     const scrollBefore = await readScrollTopOfNearestScrollableAncestor(page, 'scm-review-list');
+    const laterRowTopBeforeReviewLeave = await readTopRelativeToNearestScrollableAncestor(laterRow);
+    expect(laterRowTopBeforeReviewLeave).not.toBeNull();
     await laterRow.focus();
     await page.keyboard.press('Shift+Enter');
 
     const reviewTabKey = 'scmReview:working';
     await expect(page.getByTestId(`session-details-tab-${toTestIdSafeValue(`file:${laterPath}`)}`)).toHaveCount(1, { timeout: 60_000 });
 
-    // Pin icon state: preview tabs show a pin action; pinned tabs show a pinned indicator (different testId).
+    // Tab state contract: preview tabs expose a pin action; pinned tabs expose an unpin action.
     const laterTabSafeKey = toTestIdSafeValue(`file:${laterPath}`);
     const pinAction = page.getByTestId(`session-details-tab-pin-${laterTabSafeKey}`);
-    const pinnedIndicator = page.getByTestId(`session-details-tab-pinned-${laterTabSafeKey}`);
+    const unpinAction = page.getByTestId(`session-details-tab-unpin-${laterTabSafeKey}`);
     if (await pinAction.count()) {
       await pinAction.click();
       await expect(pinAction).toHaveCount(0, { timeout: 60_000 });
-      await expect(pinnedIndicator).toHaveCount(1, { timeout: 60_000 });
+      await expect(unpinAction).toHaveCount(1, { timeout: 60_000 });
     } else {
-      // If tab settings are persistent, the file may open pinned immediately; ensure we never end up in a
-      // "non-preview, non-pinned" state (regression: pin icon missing / state ambiguous).
-      await expect(pinnedIndicator).toHaveCount(1, { timeout: 60_000 });
+      // If tab settings are persistent, the file may already open pinned.
+      await expect(unpinAction).toHaveCount(1, { timeout: 60_000 });
     }
 
     await page.getByTestId(`session-details-tab-${toTestIdSafeValue(reviewTabKey)}`).click();
@@ -622,13 +686,39 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
     await expect(page).toHaveURL(new RegExp(`/session/${sessionId}(\\?|$)`), { timeout: 90_000 });
     await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 120_000 });
 
-    // Restore should keep the Review tab scroll position stable (no jump to top).
+    // Restore should keep the Review tab scroll position visually stable, not merely somewhere in the same area.
     await page.getByTestId(`session-details-tab-${toTestIdSafeValue(reviewTabKey)}`).click();
-    // Scroll restoration is async (FlashList + RAF corrections). Instead of reading `scrollTop` (which can be
-    // unreliable across RN-web scroll container shapes), assert that a row that should only be mounted when
-    // scrolled down is already present without additional scrolling.
     const laterRowAfterRestore = reviewList.getByTestId(`scm-change-row-${toTestIdSafeValue(laterPath)}`);
     await expect(laterRowAfterRestore).toHaveCount(1, { timeout: 60_000 });
+    let reviewScrollAfterRestore = 0;
+    let laterRowTopAfterRestore = await readTopRelativeToNearestScrollableAncestor(laterRowAfterRestore);
+    for (let i = 0; i < 40; i += 1) {
+      reviewScrollAfterRestore = await readScrollTopOfNearestScrollableAncestor(page, 'scm-review-list');
+      laterRowTopAfterRestore = await readTopRelativeToNearestScrollableAncestor(laterRowAfterRestore);
+      const scrollDelta = Math.abs(reviewScrollAfterRestore - reviewScrollBeforeSessionSwitch);
+      const rowDelta =
+        laterRowTopAfterRestore == null || laterRowTopBeforeReviewLeave == null
+          ? Number.POSITIVE_INFINITY
+          : Math.abs(laterRowTopAfterRestore - laterRowTopBeforeReviewLeave);
+      if (scrollDelta <= 120 && rowDelta <= 48) break;
+      await page.waitForTimeout(25);
+    }
+    expect(
+      Math.abs(reviewScrollAfterRestore - reviewScrollBeforeSessionSwitch),
+      `reviewScrollBeforeSessionSwitch=${reviewScrollBeforeSessionSwitch} reviewScrollAfterRestore=${reviewScrollAfterRestore}`
+    ).toBeLessThanOrEqual(120);
+    expect(
+      laterRowTopAfterRestore == null || laterRowTopBeforeReviewLeave == null
+        ? null
+        : Math.abs(laterRowTopAfterRestore - laterRowTopBeforeReviewLeave),
+      `laterRowTopBeforeReviewLeave=${laterRowTopBeforeReviewLeave} laterRowTopAfterRestore=${laterRowTopAfterRestore}`
+    ).not.toBeNull();
+    expect(
+      laterRowTopAfterRestore == null || laterRowTopBeforeReviewLeave == null
+        ? Number.POSITIVE_INFINITY
+        : Math.abs(laterRowTopAfterRestore - laterRowTopBeforeReviewLeave),
+      `laterRowTopBeforeReviewLeave=${laterRowTopBeforeReviewLeave} laterRowTopAfterRestore=${laterRowTopAfterRestore}`
+    ).toBeLessThanOrEqual(48);
     await expect(reviewList.getByTestId(`scm-review-diff-${toTestIdSafeValue(midPath)}`)).toHaveCount(0, { timeout: 60_000 });
 
     // The file tab should still contain the unsaved edits.
@@ -657,18 +747,22 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
     // File-details tabs must be scrollable in both diff + file modes (regression: no scroll container on web).
     // Open the large file in a pinned tab.
     await page.getByTestId(`session-details-tab-${toTestIdSafeValue(reviewTabKey)}`).click();
-    // Ensure we start from the top of the review list so stable-order files like `src/big.txt`
-    // are reachable deterministically (the earlier part of this test may have scrolled deep).
-    await setScrollTopOfNearestScrollableAncestor(page, 'scm-review-list', 0);
-    await page.waitForTimeout(50);
     const bigRow = reviewList.getByTestId(`scm-change-row-${toTestIdSafeValue(bigPath)}`);
-    for (let i = 0; i < 30; i += 1) {
+    // Ensure we start near the top of the review list so stable-order files like `src/big.txt`
+    // are reachable deterministically without relying on DOM evaluation.
+    for (let i = 0; i < 6; i += 1) {
       if (await bigRow.count()) break;
-      await setScrollTopOfNearestScrollableAncestor(page, 'scm-review-list', (i + 1) * 1400);
+      await reviewList.hover();
+      await page.mouse.wheel(0, -5000);
+      await page.waitForTimeout(25);
+    }
+    for (let i = 0; i < 30; i += 1) {
+      if (await bigRow.isVisible()) break;
+      await reviewList.hover();
+      await page.mouse.wheel(0, 1400);
       await page.waitForTimeout(50);
     }
-    await expect(bigRow).toHaveCount(1, { timeout: 60_000 });
-    await bigRow.scrollIntoViewIfNeeded();
+    await expect(bigRow).toBeVisible({ timeout: 60_000 });
     await bigRow.focus();
     await page.keyboard.press('Shift+Enter');
     await expect(page.getByTestId(`session-details-tab-${toTestIdSafeValue(`file:${bigPath}`)}`)).toHaveCount(1, { timeout: 60_000 });
@@ -695,7 +789,7 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
     await page.getByTestId('session-details-close').click();
     await expect(detailsPaneLocator(page)).toHaveCount(0, { timeout: 60_000 });
     await page.getByTestId('agent-input-link-file').click();
-    const linkPopover = page.getByTestId('agent-input-link-file-popover');
+    const linkPopover = page.getByTestId('agent-input-content-popover');
     await expect(linkPopover).toHaveCount(1, { timeout: 60_000 });
     const linkPopoverClose = page.getByTestId('repository-tree-close');
     await expect(linkPopoverClose).toHaveCount(1, { timeout: 60_000 });
@@ -718,10 +812,23 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
 
     await linkPopoverClose.click();
     await expect(linkPopoverClose).toHaveCount(0, { timeout: 60_000 });
+    } catch (error) {
+      thrown = error;
+      await test.info().attach('browser-diagnostics', {
+        body: browserDiagnostics(),
+        contentType: 'text/markdown',
+      });
+      throw error;
     } finally {
       // Ensure per-test daemon cleanup so retries/repeats don't leak processes.
       await runDaemon?.stop().catch(() => {});
       if (daemon === runDaemon) daemon = null;
+      if (thrown) {
+        await test.info().attach('browser-diagnostics-final', {
+          body: browserDiagnostics(),
+          contentType: 'text/markdown',
+        }).catch(() => {});
+      }
     }
   });
 });

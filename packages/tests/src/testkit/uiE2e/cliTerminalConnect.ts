@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve as resolvePath } from 'node:path';
 
 import { resolveCliTestLaunchSpec } from '../process/cliLaunchSpec';
+import { expandLoopbackBaseUrlCandidates } from '../network/loopbackBaseUrl';
 import {
   inspectOwnedProcess,
   registerProcessOwnershipLease,
@@ -59,15 +60,23 @@ async function stderrTail(path: string): Promise<string> {
   return raw.slice(Math.max(0, raw.length - 8_000));
 }
 
-async function waitForTerminalConnectUrlReady(connectUrl: string, timeoutMs = 60_000): Promise<void> {
+async function waitForTerminalConnectUrlReady(connectUrl: string, timeoutMs = 60_000): Promise<string> {
+  const connectUrlCandidates = expandLoopbackBaseUrlCandidates(connectUrl);
+  let readyUrl = connectUrl;
   await waitFor(
     async () => {
-      try {
-        const res = await fetch(connectUrl, { signal: AbortSignal.timeout(2_000) });
-        return res.ok;
-      } catch {
-        return false;
+      for (const candidateUrl of connectUrlCandidates) {
+        try {
+          const res = await fetch(candidateUrl, { signal: AbortSignal.timeout(2_000) });
+          if (res.ok) {
+            readyUrl = candidateUrl;
+            return true;
+          }
+        } catch {
+          // Try the next loopback-equivalent candidate.
+        }
       }
+      return false;
     },
     {
       timeoutMs,
@@ -75,6 +84,7 @@ async function waitForTerminalConnectUrlReady(connectUrl: string, timeoutMs = 60
       context: 'terminal connect URL readiness',
     },
   );
+  return readyUrl;
 }
 
 function resolveTerminalConnectReadyTimeoutMs(env: NodeJS.ProcessEnv): number {
@@ -185,7 +195,7 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
   }
 
   if (params.waitForConnectUrlReady !== false) {
-    await waitForTerminalConnectUrlReady(connectUrl, resolveTerminalConnectReadyTimeoutMs(params.env));
+    connectUrl = await waitForTerminalConnectUrlReady(connectUrl, resolveTerminalConnectReadyTimeoutMs(params.env));
   }
 
   return {

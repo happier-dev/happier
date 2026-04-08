@@ -9,9 +9,19 @@ import { readCliAccessKey } from '../../src/testkit/cliAccessKey';
 import { fetchJson } from '../../src/testkit/http';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { acknowledgeTerminalConnectSuccessIfPresent } from '../../src/testkit/uiE2e/acknowledgeTerminalConnectSuccessIfPresent';
+import { approveTerminalConnect } from '../../src/testkit/uiE2e/approveTerminalConnect';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
-import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import {
+  createAccountAndReachConnectMachineState,
+  gotoDomContentLoadedWithRetries,
+  normalizeLoopbackBaseUrl,
+  waitForAuthenticatedHomeUi,
+} from '../../src/testkit/uiE2e/pageNavigation';
+import { readLegacyAuthSecretFromLocalStorage } from '../../src/testkit/uiE2e/readLegacyAuthSecretFromLocalStorage';
+import { resolveTerminalConnectUrlForBrowser } from '../../src/testkit/uiE2e/resolveTerminalConnectUrlForBrowser';
+import { ensurePendingTerminalConnectReadyForApproval } from '../../src/testkit/uiE2e/terminalConnectApprovalFlow';
 import { spawnSessionFromDaemon } from '../../src/testkit/uiE2e/spawnSessionFromDaemon';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
@@ -113,6 +123,291 @@ async function waitForSessionInfoMachineTarget(params: {
   );
 }
 
+async function openEnabledSessionHandoffFromHeader(page: Page): Promise<void> {
+  const sessionActionsTrigger = page.getByLabel('Open session actions');
+  await expect(sessionActionsTrigger).toHaveCount(1, { timeout: 60_000 });
+  await sessionActionsTrigger.click();
+
+  const handoffOption = page.getByTestId('dropdown-option-session_handoff');
+  await expect(handoffOption).toHaveCount(1, { timeout: 60_000 });
+  await expect(handoffOption).toBeEnabled({ timeout: 60_000 });
+  await handoffOption.click();
+}
+
+async function restoreAccountUsingSecretKeyOnCurrentPage(page: Page, secretKeyFormatted: string): Promise<void> {
+  await expect(page.getByTestId('welcome-restore')).toHaveCount(1, { timeout: 60_000 });
+  await page.getByTestId('welcome-restore').click();
+
+  await expect(page.getByTestId('restore-open-manual')).toHaveCount(1, { timeout: 60_000 });
+  await page.getByTestId('restore-open-manual').click();
+
+  await page.getByTestId('restore-manual-secret-input').fill(secretKeyFormatted);
+  const authOk = page.waitForResponse((resp) => resp.url().endsWith('/v1/auth') && resp.status() === 200, { timeout: 60_000 });
+  await page.getByTestId('restore-manual-submit').click();
+  await authOk;
+
+  await page.waitForURL((url) => !url.pathname.endsWith('/restore/manual'), { timeout: 60_000 });
+}
+
+type BrowserStorageSnapshot = Readonly<{
+  activeServerId: string;
+  activeServerIdIsExplicit: boolean | null;
+  localStorage: Record<string, string>;
+  machineListByServerIdSummaries: Array<Readonly<{
+    storageKey: string;
+    activeServerId: string;
+    machineCountsByServerId: Record<string, number>;
+    activeCountsByServerId: Record<string, number>;
+    machineIdsByServerId: Record<string, string[]>;
+  }>>;
+  parsedSettings: unknown;
+  rawSettings: string;
+  rawServerState: string;
+  serverStateSnapshot: unknown;
+  sessionStorageActiveServerId: string;
+  sessionStorage: Record<string, string>;
+}>;
+
+function toRecord(storage: Storage): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (let index = 0; index < storage.length; index += 1) {
+    const key = storage.key(index);
+    if (!key) continue;
+    const value = storage.getItem(key);
+    if (value !== null) out[key] = value;
+  }
+  return out;
+}
+
+function parseJsonOrNull(value: string | null | undefined): unknown | null {
+  if (typeof value !== 'string' || value.trim().length === 0) return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return { parseError: true, raw: value };
+  }
+}
+
+function summarizeMachineLists(storage: Record<string, string>): BrowserStorageSnapshot['machineListByServerIdSummaries'] {
+  const summaries: BrowserStorageSnapshot['machineListByServerIdSummaries'] = [];
+  for (const [storageKey, raw] of Object.entries(storage)) {
+    const parsed = parseJsonOrNull(raw);
+    if (!parsed || typeof parsed !== 'object') continue;
+    const maybeMachineListByServerId = (parsed as Record<string, unknown>).machineListByServerId;
+    if (!maybeMachineListByServerId || typeof maybeMachineListByServerId !== 'object') continue;
+
+    const machineCountsByServerId: Record<string, number> = {};
+    const activeCountsByServerId: Record<string, number> = {};
+    const machineIdsByServerId: Record<string, string[]> = {};
+
+    for (const [serverId, value] of Object.entries(maybeMachineListByServerId as Record<string, unknown>)) {
+      if (!Array.isArray(value)) continue;
+      const machineIds: string[] = [];
+      let activeCount = 0;
+      for (const entry of value) {
+        if (!entry || typeof entry !== 'object') continue;
+        const entryRecord = entry as Record<string, unknown>;
+        const machineId = typeof entryRecord.id === 'string' ? entryRecord.id.trim() : '';
+        if (machineId) machineIds.push(machineId);
+        if (entryRecord.active === true) activeCount += 1;
+      }
+      machineCountsByServerId[serverId] = value.length;
+      activeCountsByServerId[serverId] = activeCount;
+      machineIdsByServerId[serverId] = machineIds;
+    }
+
+    summaries.push({
+      storageKey,
+      activeServerId: typeof (parsed as Record<string, unknown>).activeServerId === 'string'
+        ? String((parsed as Record<string, unknown>).activeServerId)
+        : '',
+      machineCountsByServerId,
+      activeCountsByServerId,
+      machineIdsByServerId,
+    });
+  }
+  return summaries;
+}
+
+async function collectBrowserStateDiagnostics(
+  page: Page,
+  options: Readonly<{
+    pageConsole?: readonly string[];
+    pageErrors?: readonly string[];
+  }> = {},
+): Promise<string> {
+  const url = page.url();
+  const origin = (() => {
+    try {
+      return new URL(url).origin;
+    } catch {
+      return '';
+    }
+  })();
+  const [cookies, storageSnapshot, visibleMachineTestIds] = await Promise.all([
+    origin ? page.context().cookies([origin]).catch(() => []) : page.context().cookies().catch(() => []),
+    page.evaluate(() => {
+      const toObject = (storage: Storage): Record<string, string> => {
+        const out: Record<string, string> = {};
+        for (let index = 0; index < storage.length; index += 1) {
+          const key = storage.key(index);
+          if (!key) continue;
+          const value = storage.getItem(key);
+          if (value !== null) out[key] = value;
+        }
+        return out;
+      };
+      const rawSettings = window.localStorage.getItem('mmkv.default\\settings');
+      const rawServerState = window.localStorage.getItem('server-state-v1');
+      const sessionStorageActiveServerId = window.sessionStorage.getItem('activeServerId') ?? '';
+      let activeServerId = sessionStorageActiveServerId;
+      let activeServerIdIsExplicit: boolean | null = null;
+      let parsedSettings: unknown = null;
+      let serverStateSnapshot: unknown = null;
+      if (rawSettings) {
+        try {
+          parsedSettings = JSON.parse(rawSettings);
+          const settings = typeof parsedSettings === 'object' && parsedSettings
+            ? (parsedSettings as Record<string, unknown>).settings
+            : null;
+          const candidate = settings && typeof settings === 'object'
+            ? (settings as Record<string, unknown>).activeServerId
+            : null;
+          const explicitCandidate = settings && typeof settings === 'object'
+            ? (settings as Record<string, unknown>).activeServerIdIsExplicit
+            : null;
+          if (typeof candidate === 'string' && candidate.trim().length > 0) activeServerId = candidate.trim();
+          if (typeof explicitCandidate === 'boolean') activeServerIdIsExplicit = explicitCandidate;
+        } catch {
+          parsedSettings = { parseError: true };
+        }
+      }
+      if (rawServerState) {
+        try {
+          serverStateSnapshot = JSON.parse(rawServerState);
+          const state = typeof serverStateSnapshot === 'object' && serverStateSnapshot
+            ? (serverStateSnapshot as Record<string, unknown>)
+            : null;
+          const candidate = state?.activeServerId;
+          const explicitCandidate = state?.activeServerIdIsExplicit;
+          if ((!activeServerId || activeServerId.length === 0) && typeof candidate === 'string' && candidate.trim().length > 0) {
+            activeServerId = candidate.trim();
+          }
+          if (activeServerIdIsExplicit == null && typeof explicitCandidate === 'boolean') {
+            activeServerIdIsExplicit = explicitCandidate;
+          }
+        } catch {
+          serverStateSnapshot = { parseError: true };
+        }
+      }
+      return {
+        activeServerId,
+        activeServerIdIsExplicit,
+        rawServerState,
+        rawSettings,
+        parsedSettings,
+        serverStateSnapshot,
+        localStorage: toObject(window.localStorage),
+        sessionStorage: toObject(window.sessionStorage),
+        sessionStorageActiveServerId,
+      };
+    }).catch(() => null),
+    page.locator('[data-testid^="sessions-empty-state-machine:"]').evaluateAll((nodes) =>
+      nodes
+        .map((node) => node.getAttribute('data-testid'))
+        .filter((value): value is string => typeof value === 'string' && value.length > 0),
+    ).catch(() => []),
+  ]);
+  const pageSnapshot = await page.evaluate(() => {
+    const root = document.getElementById('root');
+    const main = document.querySelector('main');
+    return {
+      readyState: document.readyState,
+      title: document.title,
+      rootHtml: root?.innerHTML?.slice(0, 4_000) ?? '',
+      mainHtml: main?.innerHTML?.slice(0, 4_000) ?? '',
+      bodyText: (document.body?.innerText ?? '').slice(0, 4_000),
+    };
+  }).catch(() => null);
+
+  const counts = {
+    connectMachine: await page.getByTestId('session-getting-started-kind-connect_machine').count().catch(() => 0),
+    createSession: await page.getByTestId('session-getting-started-kind-create_session').count().catch(() => 0),
+    selectSession: await page.getByTestId('session-getting-started-kind-select_session').count().catch(() => 0),
+    startNewSession: await page.getByTestId('main-header-start-new-session').count().catch(() => 0),
+    setupWizard: await page.getByTestId('setupWizard.surface').count().catch(() => 0),
+    sessionsEmptyStateList: await page.getByTestId('sessions-empty-state-list').count().catch(() => 0),
+  };
+
+  const storageSnapshotOrNull = storageSnapshot as BrowserStorageSnapshot | null;
+  const machineListByServerIdSummaries = storageSnapshotOrNull ? summarizeMachineLists(storageSnapshotOrNull.localStorage) : [];
+
+  return [
+    '# Browser state',
+    `- url: ${url || '(unknown)'}`,
+    `- origin: ${origin || '(unknown)'}`,
+    '',
+    '## Counts',
+    '```json',
+    JSON.stringify(counts, null, 2),
+    '```',
+    '',
+    '## Cookies',
+    '```json',
+    JSON.stringify(cookies, null, 2),
+    '```',
+    '',
+    '## Storage',
+    '```json',
+    JSON.stringify(storageSnapshot, null, 2),
+    '```',
+    '',
+    '## Derived active server state',
+    '```json',
+    JSON.stringify(
+      storageSnapshotOrNull
+        ? {
+            activeServerId: storageSnapshotOrNull.activeServerId,
+            activeServerIdIsExplicit: storageSnapshotOrNull.activeServerIdIsExplicit,
+            sessionStorageActiveServerId: storageSnapshotOrNull.sessionStorageActiveServerId,
+            rawSettings: storageSnapshotOrNull.rawSettings,
+            rawServerState: storageSnapshotOrNull.localStorage['server-state-v1'] ?? null,
+            serverStateSnapshot: storageSnapshotOrNull.serverStateSnapshot,
+            parsedSettings: storageSnapshotOrNull.parsedSettings,
+          }
+        : null,
+      null,
+      2,
+    ),
+    '```',
+    '',
+    '## Machine list summaries',
+    '```json',
+    JSON.stringify(machineListByServerIdSummaries, null, 2),
+    '```',
+    '',
+    '## Visible machine test IDs',
+    '```json',
+    JSON.stringify(visibleMachineTestIds, null, 2),
+    '```',
+    '',
+    '## DOM snapshot',
+    '```json',
+    JSON.stringify(pageSnapshot, null, 2),
+    '```',
+    '',
+    '## Page console',
+    '```json',
+    JSON.stringify(options.pageConsole ?? [], null, 2),
+    '```',
+    '',
+    '## Page errors',
+    '```json',
+    JSON.stringify(options.pageErrors ?? [], null, 2),
+    '```',
+  ].join('\n');
+}
+
 async function expectTransferredWorkspaceReadmeOnTarget(params: {
   fakeClaudeLogPath: string;
   expectedContents: string;
@@ -161,34 +456,26 @@ async function enableWorkspaceTransferForHandoff(page: Page): Promise<void> {
   throw new Error('workspace transfer toggle control not found in session handoff modal');
 }
 
+function buildServerScopedUiUrl(uiBaseUrl: string, serverBaseUrl: string, path: string = '/'): string {
+  const url = new URL(path, uiBaseUrl.endsWith('/') ? uiBaseUrl : `${uiBaseUrl}/`);
+  url.searchParams.set('server', serverBaseUrl);
+  return url.toString();
+}
+
 async function connectTerminalForHome(params: {
   page: Page;
   testDir: string;
   cliHomeDir: string;
   serverBaseUrl: string;
   uiBaseUrl: string;
+  accountSecretKeyFormatted: string;
 }): Promise<void> {
-  function resolveConnectUrlForBrowser(paramsInner: { connectUrl: string; uiBaseUrl: string }): string {
-    try {
-      const connectUrl = new URL(paramsInner.connectUrl);
-      const uiUrl = new URL(paramsInner.uiBaseUrl);
-      const loopbackHosts = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]']);
-      if (loopbackHosts.has(connectUrl.hostname) && loopbackHosts.has(uiUrl.hostname) && connectUrl.host !== uiUrl.host) {
-        connectUrl.protocol = uiUrl.protocol;
-        connectUrl.hostname = uiUrl.hostname;
-        connectUrl.port = uiUrl.port;
-      }
-      return connectUrl.toString();
-    } catch {
-      return paramsInner.connectUrl;
-    }
-  }
-
   const cliLogin: StartedCliTerminalConnect = await startCliAuthLoginForTerminalConnect({
     testDir: params.testDir,
     cliHomeDir: params.cliHomeDir,
     serverUrl: params.serverBaseUrl,
     webappUrl: params.uiBaseUrl,
+    waitForConnectUrlReady: false,
     env: {
       ...process.env,
       HOME: params.cliHomeDir,
@@ -200,21 +487,35 @@ async function connectTerminalForHome(params: {
   });
 
   try {
-    const connectUrlForBrowser = resolveConnectUrlForBrowser({
+    const connectUrlForBrowser = resolveTerminalConnectUrlForBrowser({
       connectUrl: cliLogin.connectUrl,
       uiBaseUrl: params.uiBaseUrl,
+      serverUrl: params.serverBaseUrl,
     });
     await gotoDomContentLoadedWithRetries(params.page, connectUrlForBrowser);
-    const approveButton = params.page.getByTestId('terminal-connect-approve');
-    await expect(approveButton).toHaveCount(1, { timeout: 60_000 });
-    await expect(approveButton).toBeEnabled({ timeout: 60_000 });
-    await approveButton.click({ noWaitAfter: true });
+    await ensurePendingTerminalConnectReadyForApproval({
+      page: params.page,
+      connectUrlForBrowser,
+      gotoConnectUrl: async (url) => {
+        await gotoDomContentLoadedWithRetries(params.page, url);
+      },
+      restoreAccount: async () => {
+        await restoreAccountUsingSecretKeyOnCurrentPage(params.page, params.accountSecretKeyFormatted);
+      },
+    });
+    await expect(params.page.getByTestId('terminal-connect-approve')).toHaveCount(1, { timeout: 120_000 });
+    await approveTerminalConnect({ page: params.page });
     await cliLogin.waitForSuccess();
   } finally {
     await cliLogin.stop().catch(() => {});
   }
 
-  await gotoDomContentLoadedWithRetries(params.page, `${params.uiBaseUrl}/`);
+  await gotoDomContentLoadedWithRetries(
+    params.page,
+    buildServerScopedUiUrl(params.uiBaseUrl, params.serverBaseUrl),
+  );
+  await acknowledgeTerminalConnectSuccessIfPresent(params.page);
+  await waitForAuthenticatedHomeUi({ page: params.page, timeoutMs: 120_000 });
 }
 
 async function spawnClaudeSessionInWorkspace(params: Readonly<{
@@ -263,6 +564,8 @@ test.describe('ui e2e: session handoff from header action menu via direct peer',
       EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}-direct-peer`,
       HAPPIER_E2E_UI_WEB_MODE: 'export',
       HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS: uiWebExportTimeoutMs,
+      HAPPIER_E2E_UI_WEB_EXPORT_STARTUP_STALL_TIMEOUT_MS:
+        process.env.HAPPIER_E2E_UI_WEB_EXPORT_STARTUP_STALL_TIMEOUT_MS ?? '600000',
       HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS:
         process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS ?? '15000',
       HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS ?? '480000',
@@ -303,142 +606,173 @@ test.describe('ui e2e: session handoff from header action menu via direct peer',
     await server?.stop().catch(() => {});
   });
 
-  test('hands off a Claude session to a second online machine and updates the session machine binding', async ({ page }) => {
+  test('hands off a Claude session to a second online machine and updates the session machine binding', async ({ page }, testInfo) => {
     test.setTimeout(540_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     const fakeClaudePath = fakeClaudeFixturePath();
+    const browserStateOutputPath = resolve(join(suiteDir, 'browser-state.md'));
+    const pageConsole: string[] = [];
+    const pageErrors: string[] = [];
+    page.on('console', (msg) => pageConsole.push(`[${msg.type()}] ${msg.text()}`));
+    page.on('pageerror', (err) => pageErrors.push(String(err)));
 
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
-    await createAccountAndReachConnectMachineState({ page });
+    let thrown: unknown = null;
+    try {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await gotoDomContentLoadedWithRetries(page, buildServerScopedUiUrl(uiBaseUrl, server.baseUrl));
+      await createAccountAndReachConnectMachineState({ page });
+      const accountSecretKeyFormatted = await readLegacyAuthSecretFromLocalStorage(page);
 
-    const sourceDir = resolve(join(suiteDir, 't1-source'));
-    const targetDir = resolve(join(suiteDir, 't1-target'));
-    const targetFakeClaudeLogPath = resolve(join(targetDir, 'fake-claude-target.jsonl'));
-    await mkdir(sourceDir, { recursive: true });
-    await mkdir(targetDir, { recursive: true });
+      const sourceDir = resolve(join(suiteDir, 't1-source'));
+      const targetDir = resolve(join(suiteDir, 't1-target'));
+      const targetFakeClaudeLogPath = resolve(join(targetDir, 'fake-claude-target.jsonl'));
+      await mkdir(sourceDir, { recursive: true });
+      await mkdir(targetDir, { recursive: true });
 
-    await connectTerminalForHome({
-      page,
-      testDir: sourceDir,
-      cliHomeDir: sourceCliHomeDir,
-      serverBaseUrl: server.baseUrl,
-      uiBaseUrl,
-    });
+      await connectTerminalForHome({
+        page,
+        testDir: sourceDir,
+        cliHomeDir: sourceCliHomeDir,
+        serverBaseUrl: server.baseUrl,
+        uiBaseUrl,
+        accountSecretKeyFormatted,
+      });
 
-    sourceDaemon = await startTestDaemon({
-      testDir: sourceDir,
-      happyHomeDir: sourceCliHomeDir,
-      env: {
-        ...process.env,
-        HOME: sourceCliHomeDir,
-        CI: '1',
-        HAPPIER_HOME_DIR: sourceCliHomeDir,
-        HAPPIER_SERVER_URL: server.baseUrl,
-        HAPPIER_WEBAPP_URL: uiBaseUrl,
-        HAPPIER_DISABLE_CAFFEINATE: '1',
-        HAPPIER_VARIANT: 'dev',
-        HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
-        HAPPIER_CLAUDE_PATH: fakeClaudePath,
-        HAPPIER_E2E_FAKE_CLAUDE_LOG: resolve(join(sourceDir, 'fake-claude-source.jsonl')),
-        HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-source-${run.runId}`,
-        HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: `fake-claude-source-invocation-${run.runId}`,
-        HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS: '127.0.0.1',
-        HAPPIER_SESSION_HANDOFF_DIRECT_PEER_BIND_HOST: '127.0.0.1',
-      },
-    });
+      sourceDaemon = await startTestDaemon({
+        testDir: sourceDir,
+        happyHomeDir: sourceCliHomeDir,
+        env: {
+          ...process.env,
+          HOME: sourceCliHomeDir,
+          CI: '1',
+          HAPPIER_HOME_DIR: sourceCliHomeDir,
+          HAPPIER_SERVER_URL: server.baseUrl,
+          HAPPIER_WEBAPP_URL: uiBaseUrl,
+          HAPPIER_DISABLE_CAFFEINATE: '1',
+          HAPPIER_VARIANT: 'dev',
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+          HAPPIER_CLAUDE_PATH: fakeClaudePath,
+          HAPPIER_E2E_FAKE_CLAUDE_LOG: resolve(join(sourceDir, 'fake-claude-source.jsonl')),
+          HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-source-${run.runId}`,
+          HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: `fake-claude-source-invocation-${run.runId}`,
+          HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS: '127.0.0.1',
+          HAPPIER_SESSION_HANDOFF_DIRECT_PEER_BIND_HOST: '127.0.0.1',
+        },
+      });
 
-    const [sourceMachineId] = await waitForMachineIds({
-      cliHomeDir: sourceCliHomeDir,
-      serverBaseUrl: server.baseUrl,
-      count: 1,
-      timeoutMs: 120_000,
-    });
-    if (!sourceMachineId) throw new Error('missing source machine id');
+      const [sourceMachineId] = await waitForMachineIds({
+        cliHomeDir: sourceCliHomeDir,
+        serverBaseUrl: server.baseUrl,
+        count: 1,
+        timeoutMs: 120_000,
+      });
+      if (!sourceMachineId) throw new Error('missing source machine id');
 
-    const sessionWorkspaceDir = resolve(join(sourceDir, 'workspace'));
-    const sessionId = await spawnClaudeSessionInWorkspace({
-      page,
-      uiBaseUrl,
-      daemon: sourceDaemon,
-      workspaceDir: sessionWorkspaceDir,
-      prompt: `handoff-header-parent-1 ${run.runId}`,
-    });
+      const sessionWorkspaceDir = resolve(join(sourceDir, 'workspace'));
+      const sessionId = await spawnClaudeSessionInWorkspace({
+        page,
+        uiBaseUrl,
+        daemon: sourceDaemon,
+        workspaceDir: sessionWorkspaceDir,
+        prompt: `handoff-header-parent-1 ${run.runId}`,
+      });
 
-    await connectTerminalForHome({
-      page,
-      testDir: targetDir,
-      cliHomeDir: targetCliHomeDir,
-      serverBaseUrl: server.baseUrl,
-      uiBaseUrl,
-    });
+      await connectTerminalForHome({
+        page,
+        testDir: targetDir,
+        cliHomeDir: targetCliHomeDir,
+        serverBaseUrl: server.baseUrl,
+        uiBaseUrl,
+        accountSecretKeyFormatted,
+      });
 
-    targetDaemon = await startTestDaemon({
-      testDir: targetDir,
-      happyHomeDir: targetCliHomeDir,
-      env: {
-        ...process.env,
-        HOME: targetCliHomeDir,
-        CI: '1',
-        HAPPIER_HOME_DIR: targetCliHomeDir,
-        HAPPIER_SERVER_URL: server.baseUrl,
-        HAPPIER_WEBAPP_URL: uiBaseUrl,
-        HAPPIER_DISABLE_CAFFEINATE: '1',
-        HAPPIER_VARIANT: 'dev',
-        HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
-        HAPPIER_CLAUDE_PATH: fakeClaudePath,
-        HAPPIER_E2E_FAKE_CLAUDE_LOG: targetFakeClaudeLogPath,
-        HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-target-${run.runId}`,
-        HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: `fake-claude-target-invocation-${run.runId}`,
-        HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS: '127.0.0.1',
-        HAPPIER_SESSION_HANDOFF_DIRECT_PEER_BIND_HOST: '127.0.0.1',
-      },
-    });
+      targetDaemon = await startTestDaemon({
+        testDir: targetDir,
+        happyHomeDir: targetCliHomeDir,
+        env: {
+          ...process.env,
+          HOME: targetCliHomeDir,
+          CI: '1',
+          HAPPIER_HOME_DIR: targetCliHomeDir,
+          HAPPIER_SERVER_URL: server.baseUrl,
+          HAPPIER_WEBAPP_URL: uiBaseUrl,
+          HAPPIER_DISABLE_CAFFEINATE: '1',
+          HAPPIER_VARIANT: 'dev',
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+          HAPPIER_CLAUDE_PATH: fakeClaudePath,
+          HAPPIER_E2E_FAKE_CLAUDE_LOG: targetFakeClaudeLogPath,
+          HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-target-${run.runId}`,
+          HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: `fake-claude-target-invocation-${run.runId}`,
+          HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS: '127.0.0.1',
+          HAPPIER_SESSION_HANDOFF_DIRECT_PEER_BIND_HOST: '127.0.0.1',
+        },
+      });
 
-    const machineIds = await waitForMachineIds({
-      cliHomeDir: sourceCliHomeDir,
-      serverBaseUrl: server.baseUrl,
-      count: 2,
-      timeoutMs: 120_000,
-    });
-    const targetMachineId = machineIds.find((id) => id !== sourceMachineId) ?? null;
-    if (!targetMachineId) throw new Error(`failed to resolve target machine id from ${JSON.stringify(machineIds)}`);
+      const machineIds = await waitForMachineIds({
+        cliHomeDir: sourceCliHomeDir,
+        serverBaseUrl: server.baseUrl,
+        count: 2,
+        timeoutMs: 120_000,
+      });
+      const targetMachineId = machineIds.find((id) => id !== sourceMachineId) ?? null;
+      if (!targetMachineId) throw new Error(`failed to resolve target machine id from ${JSON.stringify(machineIds)}`);
 
-    await page.goto(`${uiBaseUrl}/session/${sessionId}`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
+      await page.goto(`${uiBaseUrl}/session/${sessionId}`, { waitUntil: 'domcontentloaded' });
+      await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
 
-    const sessionActionsTrigger = page.getByLabel('Open session actions');
-    await expect(sessionActionsTrigger).toHaveCount(1, { timeout: 60_000 });
-    await sessionActionsTrigger.click();
-    await expect(page.getByTestId('dropdown-option-session_handoff')).toHaveCount(1, { timeout: 60_000 });
-    await page.getByTestId('dropdown-option-session_handoff').click();
+      await openEnabledSessionHandoffFromHeader(page);
 
-    await expect(page.getByTestId('session-handoff-modal')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId(`session-handoff-machine:${targetMachineId}`)).toHaveCount(1, { timeout: 120_000 });
-    await page.getByTestId(`session-handoff-machine:${targetMachineId}`).click();
-    await enableWorkspaceTransferForHandoff(page);
-    await page.getByTestId('session-handoff-workspace-transfer-strategy-trigger').click();
-    await expect(page.getByTestId('dropdown-option-sync_changes')).toHaveCount(1, { timeout: 60_000 });
-    await page.getByTestId('dropdown-option-sync_changes').click();
-    await page.getByTestId('session-handoff-start').click();
-    await expect(page.getByTestId('web-modal-confirm')).toHaveCount(1, { timeout: 60_000 });
-    await page.getByTestId('web-modal-confirm').click();
+      await expect(page.getByTestId('session-handoff-modal')).toHaveCount(1, { timeout: 60_000 });
+      await expect(page.getByTestId(`session-handoff-machine:${targetMachineId}`)).toHaveCount(1, { timeout: 120_000 });
+      await page.getByTestId(`session-handoff-machine:${targetMachineId}`).click();
+      await enableWorkspaceTransferForHandoff(page);
+      await page.getByTestId('session-handoff-workspace-transfer-strategy-trigger').click();
+      await expect(page.getByTestId('dropdown-option-sync_changes')).toHaveCount(1, { timeout: 60_000 });
+      await page.getByTestId('dropdown-option-sync_changes').click();
+      await page.getByTestId('session-handoff-start').click();
+      await expect(page.getByTestId('web-modal-confirm')).toHaveCount(1, { timeout: 60_000 });
+      await page.getByTestId('web-modal-confirm').click();
 
-    await waitForSessionInfoMachineTarget({
-      page,
-      uiBaseUrl,
-      serverBaseUrl: server.baseUrl,
-      cliHomeDir: sourceCliHomeDir,
-      sessionId,
-      expectedMachineId: targetMachineId,
-      timeoutMs: 180_000,
-    });
-    await expectTransferredWorkspaceReadmeOnTarget({
-      fakeClaudeLogPath: targetFakeClaudeLogPath,
-      expectedContents: 'session handoff ui e2e\n',
-      timeoutMs: 180_000,
-    });
+      await waitForSessionInfoMachineTarget({
+        page,
+        uiBaseUrl,
+        serverBaseUrl: server.baseUrl,
+        cliHomeDir: sourceCliHomeDir,
+        sessionId,
+        expectedMachineId: targetMachineId,
+        timeoutMs: 180_000,
+      });
+      await expectTransferredWorkspaceReadmeOnTarget({
+        fakeClaudeLogPath: targetFakeClaudeLogPath,
+        expectedContents: 'session handoff ui e2e\n',
+        timeoutMs: 180_000,
+      });
+    } catch (error) {
+      thrown = error;
+      const browserStateDiagnostics = await collectBrowserStateDiagnostics(page, {
+        pageConsole,
+        pageErrors,
+      }).catch((collectError) => [
+        '# Browser state',
+        `- diagnostics collection failed: ${String(collectError)}`,
+        `- url: ${page.url() || '(unknown)'}`,
+      ].join('\n'));
+      await writeFile(browserStateOutputPath, browserStateDiagnostics, 'utf8').catch(() => {});
+      await testInfo.attach('browser-state.md', {
+        body: browserStateDiagnostics,
+        contentType: 'text/markdown',
+      }).catch(() => {});
+      throw error;
+    } finally {
+      if (thrown) {
+        // Attach a stable marker for the runner log trail while keeping the failure surface in the test artifact.
+        await testInfo.attach('failure-marker.txt', {
+          body: `direct-peer-recovered-proof-failed:${String((thrown as Error)?.message ?? thrown)}`,
+          contentType: 'text/plain',
+        }).catch(() => {});
+      }
+    }
   });
 });
 
@@ -463,6 +797,8 @@ test.describe('ui e2e: session handoff from header action menu via forced server
       EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}-server-routed`,
       HAPPIER_E2E_UI_WEB_MODE: 'export',
       HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS: uiWebExportTimeoutMs,
+      HAPPIER_E2E_UI_WEB_EXPORT_STARTUP_STALL_TIMEOUT_MS:
+        process.env.HAPPIER_E2E_UI_WEB_EXPORT_STARTUP_STALL_TIMEOUT_MS ?? '600000',
       HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS:
         process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS ?? '15000',
       HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS ?? '480000',
@@ -510,8 +846,9 @@ test.describe('ui e2e: session handoff from header action menu via forced server
     const fakeClaudePath = fakeClaudeFixturePath();
 
     await page.setViewportSize({ width: 1440, height: 900 });
-    await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
+    await gotoDomContentLoadedWithRetries(page, buildServerScopedUiUrl(uiBaseUrl, server.baseUrl));
     await createAccountAndReachConnectMachineState({ page });
+    const accountSecretKeyFormatted = await readLegacyAuthSecretFromLocalStorage(page);
 
     const sourceDir = resolve(join(suiteDir, 't1-source'));
     const targetDir = resolve(join(suiteDir, 't1-target'));
@@ -525,6 +862,7 @@ test.describe('ui e2e: session handoff from header action menu via forced server
       cliHomeDir: sourceCliHomeDir,
       serverBaseUrl: server.baseUrl,
       uiBaseUrl,
+      accountSecretKeyFormatted,
     });
 
     sourceDaemon = await startTestDaemon({
@@ -570,6 +908,7 @@ test.describe('ui e2e: session handoff from header action menu via forced server
       cliHomeDir: targetCliHomeDir,
       serverBaseUrl: server.baseUrl,
       uiBaseUrl,
+      accountSecretKeyFormatted,
     });
 
     targetDaemon = await startTestDaemon({
@@ -604,11 +943,7 @@ test.describe('ui e2e: session handoff from header action menu via forced server
     await page.goto(`${uiBaseUrl}/session/${sessionId}`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
 
-    const sessionActionsTrigger = page.getByLabel('Open session actions');
-    await expect(sessionActionsTrigger).toHaveCount(1, { timeout: 60_000 });
-    await sessionActionsTrigger.click();
-    await expect(page.getByTestId('dropdown-option-session_handoff')).toHaveCount(1, { timeout: 60_000 });
-    await page.getByTestId('dropdown-option-session_handoff').click();
+    await openEnabledSessionHandoffFromHeader(page);
 
     await expect(page.getByTestId('session-handoff-modal')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByTestId(`session-handoff-machine:${targetMachineId}`)).toHaveCount(1, { timeout: 120_000 });
@@ -659,6 +994,8 @@ test.describe('ui e2e: session handoff failure recovery from header action menu'
       EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}-recovery`,
       HAPPIER_E2E_UI_WEB_MODE: 'export',
       HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS: uiWebExportTimeoutMs,
+      HAPPIER_E2E_UI_WEB_EXPORT_STARTUP_STALL_TIMEOUT_MS:
+        process.env.HAPPIER_E2E_UI_WEB_EXPORT_STARTUP_STALL_TIMEOUT_MS ?? '600000',
       HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS:
         process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS ?? '15000',
       HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS ?? '480000',
@@ -706,8 +1043,9 @@ test.describe('ui e2e: session handoff failure recovery from header action menu'
     const fakeClaudePath = fakeClaudeFixturePath();
 
     await page.setViewportSize({ width: 1440, height: 900 });
-    await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
+    await gotoDomContentLoadedWithRetries(page, buildServerScopedUiUrl(uiBaseUrl, server.baseUrl));
     await createAccountAndReachConnectMachineState({ page });
+    const accountSecretKeyFormatted = await readLegacyAuthSecretFromLocalStorage(page);
 
     const sourceDir = resolve(join(suiteDir, 't1-source'));
     const targetDir = resolve(join(suiteDir, 't1-target'));
@@ -720,6 +1058,7 @@ test.describe('ui e2e: session handoff failure recovery from header action menu'
       cliHomeDir: sourceCliHomeDir,
       serverBaseUrl: server.baseUrl,
       uiBaseUrl,
+      accountSecretKeyFormatted,
     });
 
     sourceDaemon = await startTestDaemon({
@@ -767,6 +1106,7 @@ test.describe('ui e2e: session handoff failure recovery from header action menu'
       cliHomeDir: targetCliHomeDir,
       serverBaseUrl: server.baseUrl,
       uiBaseUrl,
+      accountSecretKeyFormatted,
     });
 
     targetDaemon = await startTestDaemon({
@@ -797,11 +1137,7 @@ test.describe('ui e2e: session handoff failure recovery from header action menu'
     await page.goto(`${uiBaseUrl}/session/${sessionId}`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
 
-    const sessionActionsTrigger = page.getByLabel('Open session actions');
-    await expect(sessionActionsTrigger).toHaveCount(1, { timeout: 60_000 });
-    await sessionActionsTrigger.click();
-    await expect(page.getByTestId('dropdown-option-session_handoff')).toHaveCount(1, { timeout: 60_000 });
-    await page.getByTestId('dropdown-option-session_handoff').click();
+    await openEnabledSessionHandoffFromHeader(page);
 
     await expect(page.getByTestId('session-handoff-modal')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByTestId(`session-handoff-machine:${targetMachineId}`)).toHaveCount(1, { timeout: 120_000 });

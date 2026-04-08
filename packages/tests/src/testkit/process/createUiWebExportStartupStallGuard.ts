@@ -1,12 +1,14 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { resolve as resolvePath, relative as relativePath } from 'node:path';
 
-import { readPositiveEnvInt } from './uiWebEnv';
+import { readPositiveEnvInt, resolveUiWebExportFallbackToMetro } from './uiWebEnv';
 
 const STARTUP_MARKER = 'Starting Metro Bundler';
 const REQUIRED_PUBLISH_PHASE_FILES = new Set(['index.html', 'metadata.json']);
 const UI_WEB_EXPORT_METRO_CACHE_CORRUPTION_MESSAGE =
     'expo export startup detected Metro cache corruption; retry with --clear';
+const DEFAULT_UI_WEB_EXPORT_STARTUP_STALL_TIMEOUT_MS = 60_000;
+const MAX_UI_WEB_EXPORT_STARTUP_STALL_TIMEOUT_MS = 60_000;
 
 type StartupStallGuard = {
     promise: Promise<void>;
@@ -46,8 +48,18 @@ function normalizeAbortReason(reason: unknown, fallbackMessage: string): Error {
     return new Error(fallbackMessage);
 }
 
-function resolveUiWebExportStartupStallTimeoutMs(env: NodeJS.ProcessEnv): number {
-    return readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_EXPORT_STARTUP_STALL_TIMEOUT_MS, 60_000);
+export function resolveUiWebExportStartupStallTimeoutMs(env: NodeJS.ProcessEnv): number {
+    const requestedTimeoutMs = readPositiveEnvInt(
+        env.HAPPIER_E2E_UI_WEB_EXPORT_STARTUP_STALL_TIMEOUT_MS,
+        DEFAULT_UI_WEB_EXPORT_STARTUP_STALL_TIMEOUT_MS,
+    );
+    if (!resolveUiWebExportFallbackToMetro(env)) {
+        return requestedTimeoutMs;
+    }
+    // Once Expo has reached "Starting Metro Bundler", an export that produces zero staging output
+    // for a full minute is not making useful progress for UI-e2e. Cap suite-local overrides so the
+    // harness can fail over to Metro instead of waiting for multi-minute dead starts.
+    return Math.min(requestedTimeoutMs, MAX_UI_WEB_EXPORT_STARTUP_STALL_TIMEOUT_MS);
 }
 
 function resolveUiWebExportStartupStallPollMs(env: NodeJS.ProcessEnv): number {
