@@ -28,6 +28,7 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { useAllMachines } from '@/sync/store/hooks';
 import { useSetting, useSettings } from '@/sync/domains/state/storage';
 import { resolvePreferredMachineId } from '@/components/settings/pickers/resolvePreferredMachineId';
+import { resolveVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
 
 function normalizeSecretStringPromptInput(value: string | null): SecretString | null {
   if (value === null) return null;
@@ -65,7 +66,7 @@ export function LocalConversationSection(props: {
   >(null);
 
   const cfg = props.voice.adapters.local_conversation;
-  const enabled = props.voice.providerId === 'local_conversation';
+  const enabled = resolveVoiceProviderId(props.voice.providerId) === 'local_conversation';
   const machines = useAllMachines();
   const recentMachinePaths = useSetting('recentMachinePaths') as any[] | undefined;
 

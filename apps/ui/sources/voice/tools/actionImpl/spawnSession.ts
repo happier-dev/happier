@@ -3,7 +3,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { resolveEffectiveWindowsRemoteSessionLaunchMode } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode';
-import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListCacheState';
+import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
 import { buildSafeWorkspaceLabel } from '@/utils/worktree/workspaceHandles';
 
 import { normalizeNonEmptyString, resolveVoiceMachineLabel } from './shared';

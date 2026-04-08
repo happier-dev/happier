@@ -72,8 +72,9 @@ export function buildOpenAiTranscriptionRequest(opts: {
     form.append('file', { uri: opts.file.uri, name: opts.file.name, type: opts.file.mimeType } as any);
   }
   form.append('model', opts.model);
-  if (opts.language) {
-    form.append('language', opts.language);
+  const language = typeof opts.language === 'string' ? opts.language.trim() : '';
+  if (language) {
+    form.append('language', language);
   }
 
   return {

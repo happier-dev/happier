@@ -7,7 +7,7 @@ import { buildLocalVoiceAgentSystemPrompt } from '@happier-dev/agents';
 import { resolveDisabledVoiceActionIdsFromState } from '@/voice/tools/resolveDisabledVoiceActionIds';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveUiMemoryRecallGuidanceEnabled } from '@/sync/domains/memory/resolveUiMemoryRecallGuidanceEnabled';
-import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListCacheState';
+import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
 import { resolveUiVoicePromptStackBlocks } from '@/voice/agent/resolveUiVoicePromptStackBlocks';
 
 import type { VoiceAgentClient, VoiceAgentStartParams, VoiceAgentStartResult, VoiceAgentTurnStreamEvent } from './types';

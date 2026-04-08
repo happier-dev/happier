@@ -3,7 +3,7 @@ import { createStorageModuleStub } from '../../../dev/testkit/mocks/storage';
 import { installVoiceToolActionImplCommonModuleMocks } from './voiceToolActionImplTestHelpers';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
-import type { ServerScopedSessionListCache } from '@/sync/domains/session/listing/serverScopedSessionListCache';
+import type { ConcurrentSessionListCacheByServerId } from '@/sync/domains/session/listing/concurrentSessionListCache';
 import type { StorageState } from '@/sync/store/types';
 import type { StoreApi, UseBoundStore } from 'zustand';
 
@@ -17,7 +17,7 @@ const state = vi.hoisted(() => ({
             },
         },
     },
-    sessionListViewDataByServerId: {},
+    concurrentSessionListCacheByServerId: {},
 })) as {
     settings: {
         voice: {
@@ -26,7 +26,7 @@ const state = vi.hoisted(() => ({
             };
         };
     };
-    sessionListViewDataByServerId: ServerScopedSessionListCache;
+    concurrentSessionListCacheByServerId: ConcurrentSessionListCacheByServerId;
 };
 
 function createCachedSession(sessionId: string) {
@@ -52,11 +52,11 @@ installVoiceToolActionImplCommonModuleMocks({
     storage: async () => {
         const getSnapshot = () => ({
             settings: settingsParse(state.settings),
-            sessionListViewDataByServerId: state.sessionListViewDataByServerId,
+            concurrentSessionListCacheByServerId: state.concurrentSessionListCacheByServerId,
         } as StorageState);
 
         return createStorageModuleStub({
-            // Boundary-only dynamic store stub: this action reads `settings` and `sessionListViewDataByServerId`
+            // Boundary-only dynamic store stub: this action reads `settings` and the session list cache
             // directly from `storage.getState()`, so the test only models that contract surface.
             storage: Object.assign(
                 ((selector?: (value: StorageState) => unknown) => {
@@ -92,15 +92,13 @@ describe('listServersForVoiceTool', () => {
 
     it('prefers saved server profile names over raw server ids', async () => {
         state.settings.voice.privacy.shareDeviceInventory = true;
-        state.sessionListViewDataByServerId = {
-            'server-b': [
-                {
-                    type: 'session',
-                    serverId: 'server-b',
-                    serverName: 'Review Server',
-                    session: createCachedSession('s-review'),
+        state.concurrentSessionListCacheByServerId = {
+            'server-b': {
+                serverName: 'Review Server',
+                sessions: {
+                    's-review': createCachedSession('s-review'),
                 },
-            ],
+            },
         };
         getActiveServerSnapshot.mockReturnValue({ serverId: 'server-a' });
         getServerProfileById.mockImplementation((serverId: string) => {
@@ -130,21 +128,19 @@ describe('listServersForVoiceTool', () => {
 
     it('falls back to human-friendly generic labels instead of raw server ids', async () => {
         state.settings.voice.privacy.shareDeviceInventory = true;
-        state.sessionListViewDataByServerId = {
-            'server-b': [
-                {
-                    type: 'session',
-                    serverId: 'server-b',
-                    session: createCachedSession('s-review'),
+        state.concurrentSessionListCacheByServerId = {
+            'server-b': {
+                serverName: null,
+                sessions: {
+                    's-review': createCachedSession('s-review'),
                 },
-            ],
-            'server-c': [
-                {
-                    type: 'session',
-                    serverId: 'server-c',
-                    session: createCachedSession('s-mobile'),
+            },
+            'server-c': {
+                serverName: null,
+                sessions: {
+                    's-mobile': createCachedSession('s-mobile'),
                 },
-            ],
+            },
         };
         getActiveServerSnapshot.mockReturnValue({ serverId: 'server-a' });
         getServerProfileById.mockReturnValue(null);

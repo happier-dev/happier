@@ -3,7 +3,7 @@ import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import { sessionExecutionRunStop } from '@/sync/ops/sessionExecutionRuns';
 import { supportsEffectiveLocalControlForSession } from '@/sync/domains/session/control/effectiveRuntimeControlSurface';
 import { storage } from '@/sync/domains/state/storage';
-import { findSessionListCachedSession } from '@/sync/domains/session/listing/sessionListCacheState';
+import { findSessionListLookupSession } from '@/sync/domains/session/listing/sessionListLookupState';
 import { resolveMachineForActiveServerFromState } from '@/sync/store/domains/machines/resolveMachinesForActiveServerFromState';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
@@ -31,7 +31,7 @@ function resolvePreferredVoiceAgentSessionFromState(sessionId: string): Readonly
     metadata?: Readonly<{ flavor?: unknown; machineId?: unknown }> | null;
 }> | null {
     const state = storage.getState() as any;
-    return findSessionListCachedSession(state, sessionId)?.session ?? state.sessions?.[sessionId] ?? null;
+    return findSessionListLookupSession(state, sessionId)?.session ?? state.sessions?.[sessionId] ?? null;
 }
 
 export function assertActiveDaemonTargetSession(sessionId: string): void {

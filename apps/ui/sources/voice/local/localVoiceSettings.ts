@@ -1,9 +1,11 @@
+import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
+
 export function resolveLocalVoiceAdapterSettings(settings: any): {
   adapterId: 'local_direct' | 'local_conversation';
   config: any;
 } {
   const voice = settings?.voice ?? null;
-  const providerId = voice?.providerId;
+  const providerId = normalizeNonEmptyString(voice?.providerId);
   if (providerId === 'local_direct') {
     return { adapterId: 'local_direct', config: voice?.adapters?.local_direct ?? {} };
   }
@@ -19,7 +21,7 @@ export function resolveLocalVoiceAdapterSettings(settings: any): {
 export function resolveLocalSttProvider(settings: any): 'device' | 'openai_compat' | 'google_gemini' | 'local_neural' {
   const { config } = resolveLocalVoiceAdapterSettings(settings);
   const stt = config?.stt ?? null;
-  const provider = typeof stt?.provider === 'string' ? stt.provider : null;
+  const provider = normalizeNonEmptyString(stt?.provider);
   if (provider === 'device' || provider === 'openai_compat' || provider === 'google_gemini' || provider === 'local_neural') {
     return provider;
   }

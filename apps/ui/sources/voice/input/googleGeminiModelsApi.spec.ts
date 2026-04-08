@@ -35,5 +35,38 @@ describe('fetchGoogleGeminiModelCatalog', () => {
       },
     ]);
   });
-});
 
+  it('deduplicates models by canonical id', async () => {
+    const fetchSpy = async () => {
+      return {
+        ok: true,
+        json: async () => ({
+          models: [
+            {
+              name: 'models/gemini-2.5-flash',
+              displayName: 'Gemini 2.5 Flash',
+              supportedGenerationMethods: ['generateContent'],
+            },
+            {
+              name: ' models/gemini-2.5-flash ',
+              displayName: 'Gemini 2.5 Flash Duplicate',
+              supportedGenerationMethods: ['generateContent'],
+            },
+          ],
+        }),
+      } as any;
+    };
+    (globalThis as any).fetch = fetchSpy as any;
+
+    const { fetchGoogleGeminiModelCatalog } = await import('./googleGeminiModelsApi');
+    const models = await fetchGoogleGeminiModelCatalog({ apiKey: 'k', timeoutMs: 15_000 });
+
+    expect(models).toHaveLength(1);
+    expect(models[0]).toEqual({
+      id: 'gemini-2.5-flash',
+      name: 'models/gemini-2.5-flash',
+      displayName: 'Gemini 2.5 Flash',
+      description: null,
+    });
+  });
+});

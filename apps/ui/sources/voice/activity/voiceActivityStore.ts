@@ -18,6 +18,11 @@ function clampMaxEvents(value: number | null | undefined): number {
   return Math.max(1, Math.min(1000, n || 200));
 }
 
+function normalizeSessionId(value: unknown): string | null {
+  const normalized = String(value ?? '').trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
 function createInitializer(opts?: Readonly<{ maxEventsPerSession?: number }>) {
   const maxEventsPerSession = clampMaxEvents(opts?.maxEventsPerSession);
   return (set: any): VoiceActivityState => ({
@@ -25,7 +30,7 @@ function createInitializer(opts?: Readonly<{ maxEventsPerSession?: number }>) {
     maxEventsPerSession,
 
     clearSession: (sessionId) => {
-      const normalized = String(sessionId).trim();
+      const normalized = normalizeSessionId(sessionId);
       if (!normalized) return;
       set((state: VoiceActivityState) => {
         if (!state.eventsBySessionId[normalized]) return state as any;
@@ -40,7 +45,8 @@ function createInitializer(opts?: Readonly<{ maxEventsPerSession?: number }>) {
     },
     append: (event) => {
       set((state: VoiceActivityState) => {
-        const sid = event.sessionId;
+        const sid = normalizeSessionId(event.sessionId);
+        if (!sid) return state as any;
         const existing = state.eventsBySessionId[sid] ?? [];
         const next = [...existing, event];
         const capped =
@@ -55,7 +61,7 @@ function createInitializer(opts?: Readonly<{ maxEventsPerSession?: number }>) {
       });
     },
     replaceSessionEvents: (sessionId, events) => {
-      const normalized = String(sessionId).trim();
+      const normalized = normalizeSessionId(sessionId);
       if (!normalized) return;
       const nextEvents = Array.isArray(events) ? events : [];
       set((state: VoiceActivityState) => {

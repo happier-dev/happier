@@ -1,5 +1,5 @@
 import { storage } from '@/sync/domains/state/storage';
-import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListCacheState';
+import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
 import { resolveVoiceOperationalSessionId } from '@/voice/sessionBinding/resolveVoiceOperationalSessionId';
 import { isVoiceConversationSystemSessionMetadata } from '@/voice/sessionBinding/voiceConversationSystemSessionLookup';
 import type { VoiceSessionBinding } from '@/voice/sessionBinding/voiceSessionBindingTypes';
@@ -52,9 +52,9 @@ export function isHiddenVoiceQaConversationSessionId(sessionId: string | null | 
     const normalizedSessionId = normalizeVoiceQaText(sessionId);
     if (!normalizedSessionId) return false;
     const state = storage.getState() as any;
-    const cachedSessionMetadata = resolveSessionListPreferredSessionMetadataFromState(state, normalizedSessionId);
+    const lookupSessionMetadata = resolveSessionListPreferredSessionMetadataFromState(state, normalizedSessionId);
     const session = state?.sessions?.[normalizedSessionId] ?? null;
-    return isVoiceConversationSystemSessionMetadata(cachedSessionMetadata ?? session?.metadata ?? null);
+    return isVoiceConversationSystemSessionMetadata(lookupSessionMetadata ?? session?.metadata ?? null);
 }
 
 export function resolveEffectiveVoiceQaSessionId(
@@ -116,14 +116,15 @@ export function syncLatestLocalVoiceQaResolvedSessions(
     controlSessionId: string,
     fallbackBinding: VoiceSessionBinding | null,
 ): VoiceSessionBinding | null {
-    const latestBinding = deps.getLocalBinding?.(controlSessionId) ?? fallbackBinding;
+    const normalizedControlSessionId = normalizeVoiceQaText(controlSessionId);
+    const latestBinding = deps.getLocalBinding?.(normalizedControlSessionId || controlSessionId) ?? fallbackBinding;
     const targetState = deps.getVoiceTargetState();
     const activePrimaryTargetSessionId = normalizeVoiceQaText(targetState.primaryActionSessionId);
     const activeFocusedTargetSessionId = normalizeVoiceQaText(targetState.lastFocusedSessionId);
     const latestTargetSessionId =
         normalizeVoiceQaText(latestBinding?.targetSessionId)
         || (
-            controlSessionId === '__voice_agent__'
+            normalizedControlSessionId === '__voice_agent__'
                 ? (
                     (activePrimaryTargetSessionId && !isHiddenVoiceQaConversationSessionId(activePrimaryTargetSessionId)
                         ? activePrimaryTargetSessionId

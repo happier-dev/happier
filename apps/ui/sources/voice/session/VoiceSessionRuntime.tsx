@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { useSetting } from '@/sync/domains/state/storage';
 import { createBuiltinVoiceAdapters } from '@/voice/adapters/registerBuiltinVoiceAdapters';
+import { resolveVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
 
 import { getVoiceAdapterRegistry, registerVoiceAdapters } from './voiceAdapterRegistry';
 import { setVoiceSessionSnapshot } from './voiceSessionStore';
@@ -9,7 +10,7 @@ import type { VoiceSessionSnapshot } from './types';
 
 export function VoiceSessionRuntime(): React.ReactElement | null {
   const voice = useSetting('voice') as any;
-  const providerId = voice?.providerId ?? 'off';
+  const providerId = resolveVoiceProviderId(voice?.providerId);
   const [registered, setRegistered] = React.useState(false);
 
   // Ensure adapters are registered before the user can interact with voice controls.
@@ -22,6 +23,15 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
     const registry = getVoiceAdapterRegistry();
     const adapters = registry.list();
     const snapshots = adapters.map((adapter) => adapter.getSnapshot());
+    if (providerId === null) {
+      return {
+        adapterId: null,
+        sessionId: null,
+        status: 'disconnected',
+        mode: 'idle',
+        canStop: false,
+      };
+    }
 
     const preferred =
       providerId !== 'off'

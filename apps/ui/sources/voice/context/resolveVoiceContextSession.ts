@@ -1,4 +1,4 @@
-import { findSessionListCachedSession } from '@/sync/domains/session/listing/sessionListCacheState';
+import { findSessionListLookupSession } from '@/sync/domains/session/listing/sessionListLookupState';
 import type { Session } from '@/sync/domains/state/storageTypes';
 
 function normalizeSessionId(value: unknown): string | null {
@@ -14,11 +14,11 @@ export function resolveVoiceContextSessionFromState(sessionId: string, state: un
   const stateRecord = state as {
     sessions?: Readonly<Record<string, Session | null>> | null | undefined;
   };
-  const cachedSession = findSessionListCachedSession(
-    state as Parameters<typeof findSessionListCachedSession>[0],
+  const lookupSession = findSessionListLookupSession(
+    state as Parameters<typeof findSessionListLookupSession>[0],
     normalizedSessionId,
   )?.session as Session | null;
-  if (cachedSession) return cachedSession;
+  if (lookupSession) return lookupSession;
 
   return stateRecord.sessions?.[normalizedSessionId] ?? null;
 }

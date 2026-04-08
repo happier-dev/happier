@@ -25,42 +25,40 @@ const state: any = {
       },
     },
   },
-  sessionListViewData: [
-    {
-      type: 'session',
-      session: {
-        id: 's_visible',
-        updatedAt: 321,
-        metadata: {
-          summaryText: 'Visible only in current list',
-        },
+  sessionListRenderables: {
+    s_visible: {
+      id: 's_visible',
+      updatedAt: 321,
+      metadata: {
+        summaryText: 'Visible only in current list',
       },
     },
-    {
-      type: 'session',
-      session: {
-        id: 's_matrix',
-        updatedAt: 322,
-        metadata: {
-          summaryText: 'Session QA Voice Matrix',
-        },
+    s_matrix: {
+      id: 's_matrix',
+      updatedAt: 322,
+      metadata: {
+        summaryText: 'Session QA Voice Matrix',
       },
     },
-  ],
-  sessionListViewDataByServerId: {
-    'server-b': [
-      {
-        type: 'session',
-        serverId: 'server-b',
-        serverName: 'Server B',
-        session: {
+  },
+  sessionListIndexByServerId: {
+    'server-a': [
+      { type: 'session', sessionId: 's_visible', serverId: 'server-a', serverName: 'Server A' },
+      { type: 'session', sessionId: 's_matrix', serverId: 'server-a', serverName: 'Server A' },
+    ],
+  },
+  concurrentSessionListCacheByServerId: {
+    'server-b': {
+      serverName: 'Server B',
+      sessions: {
+        s_other: {
           id: 's_other',
           metadata: {
             summary: { text: 'Other summary' },
           },
         },
       },
-    ],
+    },
   },
 };
 
@@ -188,7 +186,7 @@ describe('openSessionForVoiceTool', () => {
     });
   });
 
-  it('opens a session by title when the cached title lives on metadata.summaryText', async () => {
+  it('opens a session by title when the lookup title lives on metadata.summaryText', async () => {
     const { openSessionForVoiceTool } = await import('./openSession');
 
     const result = await openSessionForVoiceTool({
@@ -230,7 +228,7 @@ describe('openSessionForVoiceTool', () => {
     });
   });
 
-  it('opens a session by title when the session only exists in sessionListViewData', async () => {
+  it('opens a session by title when the session only exists in the active session lookup index', async () => {
     const { openSessionForVoiceTool } = await import('./openSession');
 
     const result = await openSessionForVoiceTool({

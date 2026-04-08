@@ -9,6 +9,7 @@ type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 function makeAdapter(id: VoiceAdapterId, opts?: { initial?: Partial<VoiceSessionSnapshot> }) {
   let started = false;
   let lastSessionId: string | null = null;
+  const contextUpdates: Array<{ sessionId: string; update: string }> = [];
   const snapshot: Mutable<VoiceSessionSnapshot> = {
     adapterId: id,
     sessionId: null,
@@ -44,7 +45,9 @@ function makeAdapter(id: VoiceAdapterId, opts?: { initial?: Partial<VoiceSession
       await controller.start({ sessionId });
     },
     interrupt: async () => {},
-    sendContextUpdate: () => {},
+    sendContextUpdate: ({ sessionId, update }) => {
+      contextUpdates.push({ sessionId, update });
+    },
   };
 
   return {
@@ -54,6 +57,9 @@ function makeAdapter(id: VoiceAdapterId, opts?: { initial?: Partial<VoiceSession
     },
     get lastSessionId() {
       return lastSessionId;
+    },
+    get contextUpdates() {
+      return contextUpdates;
     },
   };
 }
@@ -70,7 +76,7 @@ describe('voiceSessionManager (core)', () => {
   });
 
   it('starts the active adapter when toggled from disconnected', async () => {
-    const a = makeAdapter('test_adapter' as VoiceAdapterId);
+    const a = makeAdapter('local_direct' as VoiceAdapterId);
     const mgr = createVoiceSessionManager({
       resolveActiveAdapterId: () => a.controller.id,
       getAdapter: (id) => (id === a.controller.id ? a.controller : null),
@@ -91,7 +97,7 @@ describe('voiceSessionManager (core)', () => {
   });
 
   it('stops the active adapter when toggled from connected', async () => {
-    const a = makeAdapter('test_adapter' as VoiceAdapterId);
+    const a = makeAdapter('local_direct' as VoiceAdapterId);
     const mgr = createVoiceSessionManager({
       resolveActiveAdapterId: () => a.controller.id,
       getAdapter: (id) => (id === a.controller.id ? a.controller : null),
@@ -110,7 +116,7 @@ describe('voiceSessionManager (core)', () => {
   });
 
   it('is a no-op when adapter id resolves to off', async () => {
-    const a = makeAdapter('test_adapter' as VoiceAdapterId);
+    const a = makeAdapter('local_direct' as VoiceAdapterId);
     const mgr = createVoiceSessionManager({
       resolveActiveAdapterId: () => 'off',
       getAdapter: (_id) => a.controller,
@@ -122,7 +128,7 @@ describe('voiceSessionManager (core)', () => {
   });
 
   it('stops the active adapter when toggled but the adapter id resolves to off', async () => {
-    const a = makeAdapter('test_adapter' as VoiceAdapterId);
+    const a = makeAdapter('local_direct' as VoiceAdapterId);
     await a.controller.start({ sessionId: 's1' });
     setVoiceSessionSnapshot(a.controller.getSnapshot());
 
@@ -134,5 +140,47 @@ describe('voiceSessionManager (core)', () => {
     expect(mgr.getSnapshot().status).toBe('connected');
     await mgr.toggle('s1');
     expect(mgr.getSnapshot().status).toBe('disconnected');
+  });
+
+  it('starts the active adapter when the resolved adapter id is padded', async () => {
+    const a = makeAdapter('local_direct' as VoiceAdapterId);
+    const mgr = createVoiceSessionManager({
+      resolveActiveAdapterId: () => ' local_direct ',
+      getAdapter: (id) => (id === a.controller.id ? a.controller : null),
+    });
+
+    await mgr.toggle('s1');
+
+    const snap = mgr.getSnapshot();
+    expect(a.started).toBe(true);
+    expect(a.lastSessionId).toBe('s1');
+    expect(snap.status).toBe('connected');
+    expect(snap.adapterId).toBe(a.controller.id);
+    expect(snap.sessionId).toBe('s1');
+  });
+
+  it('treats unsupported adapter ids as off when toggling', async () => {
+    const a = makeAdapter('local_direct' as VoiceAdapterId);
+    const mgr = createVoiceSessionManager({
+      resolveActiveAdapterId: () => 'unsupported_provider' as VoiceAdapterId,
+      getAdapter: () => a.controller,
+    });
+
+    await mgr.toggle('s1');
+
+    expect(mgr.getSnapshot().status).toBe('disconnected');
+    expect(a.started).toBe(false);
+  });
+
+  it('does not route context updates through unsupported adapter ids', () => {
+    const a = makeAdapter('local_direct' as VoiceAdapterId);
+    const mgr = createVoiceSessionManager({
+      resolveActiveAdapterId: () => 'unsupported_provider' as VoiceAdapterId,
+      getAdapter: () => a.controller,
+    });
+
+    mgr.sendContextUpdate('s1', 'hello');
+
+    expect(a.contextUpdates).toEqual([]);
   });
 });

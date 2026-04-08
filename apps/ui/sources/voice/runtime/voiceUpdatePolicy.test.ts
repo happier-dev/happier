@@ -68,4 +68,25 @@ describe('voiceUpdatePolicy', () => {
     expect(policy.isTrackedSession).toBe(false);
     expect(policy.level).toBe('snippets');
   });
+
+  it('treats malformed tracked session ids as untracked instead of throwing', () => {
+    const policy = resolveVoiceSessionUpdatePolicy({
+      sessionId: 's2',
+      trackedSessionIds: null as unknown as ReadonlyArray<string>,
+      settings: {
+        voice: {
+          ui: {
+            updates: {
+              activeSession: 'none',
+              otherSessions: 'snippets',
+              otherSessionsSnippetsMode: 'auto',
+            },
+          },
+        },
+      },
+    });
+
+    expect(policy.isTrackedSession).toBe(false);
+    expect(policy.level).toBe('snippets');
+  });
 });

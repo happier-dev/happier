@@ -130,19 +130,19 @@ describe('VoiceSessionRuntime', () => {
 
   it('prefers the selected provider adapter snapshot when multiple adapters are active', async () => {
     useSetting.mockImplementation((key: string) => {
-      if (key === 'voice') return { providerId: 'adapter_b' };
+      if (key === 'voice') return { providerId: 'local_conversation' };
       return null;
     });
 
     const snapA: Snapshot = {
-      adapterId: 'adapter_a',
+      adapterId: 'local_direct',
       sessionId: 's1',
       status: 'connected',
       mode: 'idle',
       canStop: true,
     };
     const snapB: Snapshot = {
-      adapterId: 'adapter_b',
+      adapterId: 'local_conversation',
       sessionId: 's2',
       status: 'connected',
       mode: 'speaking',
@@ -152,7 +152,7 @@ describe('VoiceSessionRuntime', () => {
     vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
       createBuiltinVoiceAdapters: () => [
         {
-          id: 'adapter_a',
+          id: 'local_direct',
           start: vi.fn(async () => {}),
           stop: vi.fn(async () => {}),
           toggle: vi.fn(async () => {}),
@@ -162,7 +162,7 @@ describe('VoiceSessionRuntime', () => {
           subscribe: () => () => {},
         },
         {
-          id: 'adapter_b',
+          id: 'local_conversation',
           start: vi.fn(async () => {}),
           stop: vi.fn(async () => {}),
           toggle: vi.fn(async () => {}),
@@ -180,5 +180,102 @@ describe('VoiceSessionRuntime', () => {
     await renderScreen(React.createElement(VoiceSessionRuntime));
 
     expect(getVoiceSessionSnapshot()).toEqual(snapB);
+  });
+
+  it('prefers the selected provider adapter snapshot when the provider id is padded', async () => {
+    useSetting.mockImplementation((key: string) => {
+      if (key === 'voice') return { providerId: ' local_conversation ' };
+      return null;
+    });
+
+    const snapA: Snapshot = {
+      adapterId: 'local_direct',
+      sessionId: 's1',
+      status: 'connected',
+      mode: 'idle',
+      canStop: true,
+    };
+    const snapB: Snapshot = {
+      adapterId: 'local_conversation',
+      sessionId: 's2',
+      status: 'connected',
+      mode: 'speaking',
+      canStop: true,
+    };
+
+    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+      createBuiltinVoiceAdapters: () => [
+        {
+          id: 'local_direct',
+          start: vi.fn(async () => {}),
+          stop: vi.fn(async () => {}),
+          toggle: vi.fn(async () => {}),
+          interrupt: vi.fn(async () => {}),
+          sendContextUpdate: vi.fn(() => {}),
+          getSnapshot: () => snapA,
+          subscribe: () => () => {},
+        },
+        {
+          id: 'local_conversation',
+          start: vi.fn(async () => {}),
+          stop: vi.fn(async () => {}),
+          toggle: vi.fn(async () => {}),
+          interrupt: vi.fn(async () => {}),
+          sendContextUpdate: vi.fn(() => {}),
+          getSnapshot: () => snapB,
+          subscribe: () => () => {},
+        },
+      ],
+    }));
+
+    const { VoiceSessionRuntime } = await import('./VoiceSessionRuntime');
+    const { getVoiceSessionSnapshot } = await import('./voiceSessionStore');
+
+    await renderScreen(React.createElement(VoiceSessionRuntime));
+
+    expect(getVoiceSessionSnapshot()).toEqual(snapB);
+  });
+
+  it('fails closed when the configured provider id is unsupported', async () => {
+    useSetting.mockImplementation((key: string) => {
+      if (key === 'voice') return { providerId: 'unsupported_provider' };
+      return null;
+    });
+
+    const snapA: Snapshot = {
+      adapterId: 'adapter_a',
+      sessionId: 's1',
+      status: 'connected',
+      mode: 'idle',
+      canStop: true,
+    };
+
+    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+      createBuiltinVoiceAdapters: () => [
+        {
+          id: 'adapter_a',
+          start: vi.fn(async () => {}),
+          stop: vi.fn(async () => {}),
+          toggle: vi.fn(async () => {}),
+          interrupt: vi.fn(async () => {}),
+          sendContextUpdate: vi.fn(() => {}),
+          getSnapshot: () => snapA,
+          subscribe: () => () => {},
+        },
+      ],
+    }));
+
+    const { VoiceSessionRuntime } = await import('./VoiceSessionRuntime');
+    const { getVoiceSessionSnapshot } = await import('./voiceSessionStore');
+
+    await renderScreen(React.createElement(VoiceSessionRuntime));
+
+    expect(getVoiceSessionSnapshot()).toEqual({
+      adapterId: null,
+      sessionId: null,
+      status: 'disconnected',
+      mode: 'idle',
+      canStop: false,
+    });
   });
 });

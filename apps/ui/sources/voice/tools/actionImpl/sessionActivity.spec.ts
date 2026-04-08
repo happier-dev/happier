@@ -55,18 +55,12 @@ describe('getSessionActivityForVoiceTool', () => {
             sessions: {
                 s1: createTestSession('s1'),
             },
-            sessionListViewData: [
-                {
-                    type: 'session',
-                    session: {
-                        ...createTestSession('s1'),
-                        metadata: {
-                            path: '',
-                            host: '',
-                        },
-                    },
-                },
-            ],
+            sessionListIndexByServerId: {
+                'server-a': [
+                    { type: 'session', sessionId: 's1', serverId: 'server-a', serverName: 'Server A' },
+                ],
+            },
+            concurrentSessionListCacheByServerId: {},
             sessionMessages: {
                 s1: createTestSessionMessages([
                     { id: 'm1', kind: 'user-text', localId: null, text: 'hi', createdAt: 1 },
@@ -119,42 +113,49 @@ describe('getSessionActivityForVoiceTool', () => {
         });
     });
 
-    it('uses cached visible session state when the raw session is not hydrated', async () => {
+    it('uses visible lookup session state when the raw session is not hydrated', async () => {
         const { getSessionActivityForVoiceTool } = await import('./sessionActivity');
 
         storage.setState((current) => ({
             ...current,
             sessions: {},
-            sessionListViewData: [
-                {
-                    type: 'session',
-                    session: {
-                        id: 's_cached',
-                        seq: 0,
-                        createdAt: 0,
-                        active: false,
-                        activeAt: 0,
-                        updatedAt: 456,
-                        metadataVersion: 0,
-                        agentStateVersion: 0,
-                        thinking: false,
-                        thinkingAt: 0,
-                        presence: 'online',
-                        agentState: {
-                            requests: {
-                                req_cached: {
-                                    tool: 'session.open',
-                                    arguments: {},
+            sessionListIndexByServerId: {
+                'server-a': [
+                    { type: 'session', sessionId: 's_cached', serverId: 'server-a', serverName: 'Server A' },
+                ],
+            },
+            concurrentSessionListCacheByServerId: {
+                'server-a': {
+                    serverName: 'Server A',
+                    sessions: {
+                        s_cached: {
+                            id: 's_cached',
+                            seq: 0,
+                            createdAt: 0,
+                            active: false,
+                            activeAt: 0,
+                            updatedAt: 456,
+                            metadataVersion: 0,
+                            agentStateVersion: 0,
+                            thinking: false,
+                            thinkingAt: 0,
+                            presence: 'online',
+                            agentState: {
+                                requests: {
+                                    req_cached: {
+                                        tool: 'session.open',
+                                        arguments: {},
+                                    },
                                 },
                             },
-                        },
-                        metadata: {
-                            path: '/tmp/cached',
-                            host: 'cached-host',
+                            metadata: {
+                                path: '/tmp/cached',
+                                host: 'cached-host',
+                            },
                         },
                     },
                 },
-            ],
+            },
             sessionMessages: {
                 s_cached: createTestSessionMessages([
                     { id: 'm1', kind: 'user-text', localId: null, text: 'cached hi', createdAt: 1 },
@@ -187,7 +188,8 @@ describe('getSessionActivityForVoiceTool', () => {
             sessions: {
                 s_raw: createTestSession('s_raw'),
             },
-            sessionListViewData: [],
+            sessionListIndexByServerId: {},
+            concurrentSessionListCacheByServerId: {},
             sessionMessages: {
                 s_raw: createTestSessionMessages([
                     { id: 'm1', kind: 'user-text', localId: null, text: 'raw hi', createdAt: 1 },

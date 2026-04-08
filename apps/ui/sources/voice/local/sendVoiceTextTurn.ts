@@ -16,6 +16,7 @@ import {
   resolveVoiceSessionBindingByConversationSessionId,
 } from '@/voice/sessionBinding/resolveVoiceSessionBinding';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
+import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 
 import { patchLocalVoiceState, setIdleStateUnlessRecording } from './localVoiceState';
 import { resolveLocalVoiceAdapterSettings } from './localVoiceSettings';
@@ -49,7 +50,11 @@ export async function sendVoiceTextTurn(params: {
   voiceAgentSessions: VoiceAgentSessionsLike;
   signal?: AbortSignal;
 }): Promise<void> {
-  const { sessionId, settings, userText } = params;
+  const sessionId = normalizeNonEmptyString(params.sessionId);
+  if (!sessionId) {
+    throw new Error('session_id_required');
+  }
+  const { settings, userText } = params;
   const { adapterId, config } = resolveLocalVoiceAdapterSettings(settings);
   const networkTimeoutMs = resolveVoiceNetworkTimeoutMs(config?.networkTimeoutMs, 15_000);
   const conversationMode =

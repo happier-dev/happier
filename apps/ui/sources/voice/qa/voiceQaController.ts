@@ -5,7 +5,7 @@ import { runVoiceAgentTurnWithTools } from '@/voice/local/runVoiceAgentTurnWithT
 import type { VoiceSessionBinding } from '@/voice/sessionBinding/voiceSessionBindingTypes';
 import { buildVoiceInitialContext } from '@/voice/context/buildVoiceInitialContext';
 import { captureAssistantTextMessageBaseline } from '@/voice/runtime/waitForNextAssistantTextMessage';
-import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListCacheState';
+import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
 
 import { formatVoiceQaErrorMessage } from './formatVoiceQaErrorMessage';
 import { createDefaultVoiceQaControllerDeps } from './voiceQaRuntimeDeps';

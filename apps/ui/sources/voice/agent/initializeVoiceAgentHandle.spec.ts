@@ -52,24 +52,29 @@ const state: any = {
             },
         },
     },
-    sessionListViewData: [
-        {
-            type: 'session',
-            serverId: 'server-a',
-            serverName: 'Server A',
-            session: {
-                id: 's1',
-                active: true,
-                presence: 'online',
-                modelMode: 'default',
-                metadata: {
-                    flavor: 'codex',
-                    profileId: 'cached-profile',
-                },
+    sessionListRenderables: {
+        s1: {
+            id: 's1',
+            active: true,
+            presence: 'online',
+            modelMode: 'default',
+            metadata: {
+                flavor: 'codex',
+                profileId: 'cached-profile',
             },
         },
-    ],
-    sessionListViewDataByServerId: {},
+    },
+    sessionListIndexByServerId: {
+        'server-a': [
+            {
+                type: 'session',
+                sessionId: 's1',
+                serverId: 'server-a',
+                serverName: 'Server A',
+            },
+        ],
+    },
+    concurrentSessionListCacheByServerId: {},
     machines: {},
     machineListByServerId: {},
     sessionMessages: {},
@@ -156,13 +161,13 @@ describe('initializeVoiceAgentHandle', () => {
             flavor: 'claude',
             profileId: 'raw-profile',
         };
-        state.sessionListViewData[0].session.metadata = {
+        state.sessionListRenderables.s1.metadata = {
             flavor: 'codex',
             profileId: 'cached-profile',
         };
     });
 
-    it('prefers cached visible session metadata when deriving daemon startup models and profile data', async () => {
+    it('prefers visible lookup session metadata when deriving daemon startup models and profile data', async () => {
         const { initializeVoiceAgentHandle } = await import('./initializeVoiceAgentHandle');
 
         const handle = await initializeVoiceAgentHandle({

@@ -49,9 +49,17 @@ vi.mock('@/voice/agent/voiceAgentSessions', () => ({
   },
 }));
 
-vi.mock('@/voice/persistence/voiceAgentRunMetadata', () => ({
-  clearVoiceAgentRunMetadataFromSession: (input: { sessionId: string }) => clearVoiceAgentRunMetadataFromSession(input),
-}));
+vi.mock('@/voice/persistence/voiceAgentRunMetadata', async () => {
+  const actual = await vi.importActual<typeof import('@/voice/persistence/voiceAgentRunMetadata')>(
+    '@/voice/persistence/voiceAgentRunMetadata',
+  );
+
+  return {
+    ...actual,
+    clearVoiceAgentRunMetadataFromSession: (input: { sessionId: string }) =>
+      clearVoiceAgentRunMetadataFromSession(input),
+  };
+});
 
 describe('hydrateVoiceAgentActivityFromCarrierSession', () => {
   beforeEach(async () => {
@@ -145,6 +153,36 @@ describe('hydrateVoiceAgentActivityFromCarrierSession', () => {
     await hydrateVoiceAgentActivityFromCarrierSession();
 
     expect(onSessionVisible).toHaveBeenCalledWith('sys_voice');
+    const { useVoiceActivityStore } = await import('@/voice/activity/voiceActivityStore');
+    const { VOICE_AGENT_GLOBAL_SESSION_ID } = await import('@/voice/agent/voiceAgentGlobalSessionId');
+    const events = useVoiceActivityStore.getState().eventsBySessionId[VOICE_AGENT_GLOBAL_SESSION_ID] ?? [];
+    expect(events).toHaveLength(1);
+    expect((events[0] as any).kind).toBe('user.text');
+  });
+
+  it('hydrates carrier transcript when the persistence mode is padded', async () => {
+    state.settings.voice.adapters.local_conversation.agent.transcript.persistenceMode = ' persistent ';
+    state.sessions = {
+      sys_voice: { id: 'sys_voice', updatedAt: 10, metadata: { systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true } } },
+    };
+
+    state.sessionMessages.sys_voice = {
+      isLoaded: true,
+      messages: [
+        {
+          kind: 'user-text',
+          id: 'm1',
+          localId: null,
+          createdAt: 100,
+          text: 'USER',
+          meta: { happier: { kind: 'voice_agent_turn.v1', payload: { v: 1, epoch: 3, role: 'user', voiceAgentId: 'mid', ts: 100 } } },
+        },
+      ],
+    };
+
+    const { hydrateVoiceAgentActivityFromCarrierSession } = await import('./hydrateVoiceAgentActivityFromCarrierSession');
+    await hydrateVoiceAgentActivityFromCarrierSession();
+
     const { useVoiceActivityStore } = await import('@/voice/activity/voiceActivityStore');
     const { VOICE_AGENT_GLOBAL_SESSION_ID } = await import('@/voice/agent/voiceAgentGlobalSessionId');
     const events = useVoiceActivityStore.getState().eventsBySessionId[VOICE_AGENT_GLOBAL_SESSION_ID] ?? [];

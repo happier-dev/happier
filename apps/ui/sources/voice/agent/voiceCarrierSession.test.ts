@@ -24,14 +24,14 @@ const state: any = {
 
 installVoiceAgentCommonModuleMocks({
     storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            storage: {
-                getState: () => state,
+                const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+                return createStorageModuleStub({
+                    storage: {
+                        getState: () => ({ ...state }),
+                    },
+                });
             },
         });
-    },
-});
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => getActiveServerSnapshot(),

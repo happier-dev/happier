@@ -5,6 +5,7 @@ import { getOptionalHappierSherpaNativeModule } from '@happier-dev/sherpa-native
 import { ensureModelPackInstalled } from '@/voice/modelPacks/installer.native';
 import { resolveModelPackManifestUrl } from '@/voice/modelPacks/manifests';
 import { VoiceLocalSttSchema } from '@/sync/domains/settings/voiceLocalSttSettings';
+import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 
 type DeviceSttStatePatch = {
   status?: 'idle' | 'recording' | 'transcribing' | 'sending' | 'speaking' | 'error';
@@ -67,6 +68,7 @@ export function createSherpaStreamingSttController(deps: {
   let handle: SherpaSttHandle | null = null;
   let handsFreeSessionId: string | null = null;
   const MAX_QUEUED_FRAMES = 8;
+  const normalizeSessionId = (sessionId: string | null | undefined): string | null => normalizeNonEmptyString(sessionId);
 
   const uriToFilePath = (uri: string): string => {
     return uri.startsWith('file://') ? uri.slice('file://'.length) : uri;
@@ -105,11 +107,15 @@ export function createSherpaStreamingSttController(deps: {
   };
 
   const clearHandsFreeSession = (sessionId?: string) => {
-    if (sessionId && handsFreeSessionId && handsFreeSessionId !== sessionId) return;
+    const normalizedSessionId = normalizeSessionId(sessionId);
+    if (normalizedSessionId && handsFreeSessionId && handsFreeSessionId !== normalizedSessionId) return;
     handsFreeSessionId = null;
   };
 
   const start = async (sessionId: string) => {
+    const normalizedSessionId = normalizeSessionId(sessionId);
+    if (!normalizedSessionId) return;
+
     const permission = await requestMicrophonePermission();
     if (!permission.granted) {
       showMicrophonePermissionDeniedAlert(permission.canAskAgain);
@@ -185,7 +191,7 @@ export function createSherpaStreamingSttController(deps: {
 
     const processFrame = async (frame: { pcm16leBase64: string; sampleRate: number; channels: number }) => {
       const active = handle;
-      if (!active || active.sessionId !== sessionId || active.jobId !== jobId) return;
+      if (!active || active.sessionId !== normalizedSessionId || active.jobId !== jobId) return;
       if (active.abortController.signal.aborted) return;
 
       const res = await sherpa.pushAudioFrame({
@@ -196,14 +202,14 @@ export function createSherpaStreamingSttController(deps: {
       });
 
       const after = handle;
-      if (!after || after.sessionId !== sessionId || after.jobId !== jobId) return;
+      if (!after || after.sessionId !== normalizedSessionId || after.jobId !== jobId) return;
       const text = typeof res?.text === 'string' ? res.text : '';
       if (text.trim().length > 0) after.transcript = text.trim();
     };
 
     const startPushLoop = (first: { pcm16leBase64: string; sampleRate: number; channels: number }) => {
       const active = handle;
-      if (!active || active.sessionId !== sessionId || active.jobId !== jobId) return;
+      if (!active || active.sessionId !== normalizedSessionId || active.jobId !== jobId) return;
       if (active.pushing) return;
       active.pushing = true;
 
@@ -217,13 +223,13 @@ export function createSherpaStreamingSttController(deps: {
           }
 
           const after = handle;
-          if (!after || after.sessionId !== sessionId || after.jobId !== jobId) return;
+          if (!after || after.sessionId !== normalizedSessionId || after.jobId !== jobId) return;
           if (after.abortController.signal.aborted) return;
           currentFrame = after.queuedFrames.shift() ?? null;
         }
       })().finally(() => {
         const after = handle;
-        if (!after || after.sessionId !== sessionId || after.jobId !== jobId) return;
+        if (!after || after.sessionId !== normalizedSessionId || after.jobId !== jobId) return;
         after.pushing = false;
         after.pushLoop = null;
       });
@@ -232,7 +238,7 @@ export function createSherpaStreamingSttController(deps: {
     const subscriptions: SherpaSttHandle['subscriptions'] = [];
     subscriptions.push(
       audioStream.addListener('audioFrame', (event) => {
-        if (!handle || handle.sessionId !== sessionId || handle.streamId !== event.streamId) return;
+        if (!handle || handle.sessionId !== normalizedSessionId || handle.streamId !== event.streamId) return;
         const frame = {
           pcm16leBase64: String(event.pcm16leBase64 ?? ''),
           sampleRate: event.sampleRate ?? sampleRate,
@@ -253,7 +259,7 @@ export function createSherpaStreamingSttController(deps: {
     );
 
     handle = {
-      sessionId,
+      sessionId: normalizedSessionId,
       jobId,
       streamId,
       transcript: '',
@@ -263,11 +269,12 @@ export function createSherpaStreamingSttController(deps: {
       queuedFrames: [],
       pushLoop: null,
     };
-    deps.setState({ status: 'recording', sessionId, error: null });
+    deps.setState({ status: 'recording', sessionId: normalizedSessionId, error: null });
   };
 
   const stop = async (sessionId: string): Promise<string> => {
-    if (!handle || handle.sessionId !== sessionId) return '';
+    const normalizedSessionId = normalizeSessionId(sessionId);
+    if (!handle || !normalizedSessionId || handle.sessionId !== normalizedSessionId) return '';
     const current = handle;
 
     try {
@@ -297,7 +304,7 @@ export function createSherpaStreamingSttController(deps: {
       }
     }
 
-    if (handle && handle.sessionId === sessionId) {
+    if (handle && handle.sessionId === normalizedSessionId) {
       handle = null;
     }
     return current.transcript.trim();
@@ -305,9 +312,9 @@ export function createSherpaStreamingSttController(deps: {
 
   return {
     clearHandsFreeSession,
-    isHandsFreeSession: (sessionId: string) => handsFreeSessionId === sessionId,
+    isHandsFreeSession: (sessionId: string) => handsFreeSessionId === normalizeSessionId(sessionId),
     setHandsFreeSession: (sessionId: string | null) => {
-      handsFreeSessionId = sessionId;
+      handsFreeSessionId = normalizeSessionId(sessionId);
     },
     start,
     stop,

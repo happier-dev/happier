@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 import type { VoiceSessionSnapshot } from './types';
+import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 
 type VoiceSessionState = VoiceSessionSnapshot & {
   setSnapshot: (snapshot: VoiceSessionSnapshot) => void;
@@ -19,6 +20,8 @@ export const useVoiceSessionStore = create<VoiceSessionState>((set) => ({
   setSnapshot: (snapshot) =>
     set(() => ({
       ...snapshot,
+      adapterId: normalizeNonEmptyString(snapshot.adapterId),
+      sessionId: normalizeNonEmptyString(snapshot.sessionId),
       // Ensure optional error fields clear when omitted from a later snapshot.
       errorCode: snapshot.errorCode,
       errorMessage: snapshot.errorMessage,

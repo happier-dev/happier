@@ -87,5 +87,21 @@ describe('voiceSessionStore', () => {
     expect(snap.errorCode).toBeUndefined();
     expect(snap.errorMessage).toBeUndefined();
   });
-});
 
+  it('canonicalizes adapter and session ids when storing a snapshot', async () => {
+    vi.resetModules();
+
+    const { getVoiceSessionSnapshot, setVoiceSessionSnapshot } = await import('./voiceSessionStore');
+
+    setVoiceSessionSnapshot({
+      adapterId: ' local_direct ',
+      sessionId: ' session-1 ',
+      status: 'connected',
+      mode: 'idle',
+      canStop: true,
+    });
+
+    expect(getVoiceSessionSnapshot().adapterId).toBe('local_direct');
+    expect(getVoiceSessionSnapshot().sessionId).toBe('session-1');
+  });
+});

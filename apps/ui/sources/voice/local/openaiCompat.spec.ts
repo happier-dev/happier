@@ -74,6 +74,19 @@ describe('local voice OpenAI-compatible helpers', () => {
     expect(withoutLanguageBody.get('language')).toBeNull();
   });
 
+  it('trims the language field before adding it to STT requests', () => {
+    const req = buildOpenAiTranscriptionRequest({
+      baseUrl: 'http://localhost:8000',
+      apiKey: null,
+      model: 'whisper-1',
+      language: ' en-US ',
+      file: { kind: 'native', uri: 'file:///tmp/rec.m4a', name: 'rec.m4a', mimeType: 'audio/mp4' },
+    });
+
+    expect(req.init.body).toBeInstanceOf(FormData);
+    expect((req.init.body as FormData).get('language')).toBe('en-US');
+  });
+
   it('throws when baseUrl is empty', () => {
     expect(() =>
       buildOpenAiSpeechRequest({

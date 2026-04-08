@@ -1,5 +1,5 @@
 import { storage } from '@/sync/domains/state/storage';
-import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListCacheState';
+import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 
 import { readVoiceConversationBindingMetadata } from './voiceConversationBindingMetadata';
@@ -54,8 +54,8 @@ function listPersistedBindings(
     const out: VoiceSessionBinding[] = [];
     for (const session of Object.values(state?.sessions ?? {}) as any[]) {
         if (!session || typeof session?.id !== 'string') continue;
-        const cachedSessionMetadata = resolveSessionListPreferredSessionMetadataFromState(state, session.id);
-        const sessionMetadata = cachedSessionMetadata ?? session.metadata ?? null;
+        const lookupSessionMetadata = resolveSessionListPreferredSessionMetadataFromState(state, session.id);
+        const sessionMetadata = lookupSessionMetadata ?? session.metadata ?? null;
         if (!isVoiceConversationSystemSessionMetadata(sessionMetadata)) continue;
         const binding =
             readVoiceConversationBindingMetadata(session.id, sessionMetadata)
@@ -82,9 +82,9 @@ export function resolveVoiceSessionBindingByConversationSessionId(params: Readon
     const store = params.store ?? voiceSessionBindingStore;
     const state = readState(params.state);
     const storeBinding = store.getState().getByConversationSessionId(conversationSessionId);
-    const cachedSessionMetadata = resolveSessionListPreferredSessionMetadataFromState(state, conversationSessionId);
+    const lookupSessionMetadata = resolveSessionListPreferredSessionMetadataFromState(state, conversationSessionId);
     const persistedBinding =
-        readVoiceConversationBindingMetadata(conversationSessionId, cachedSessionMetadata)
+        readVoiceConversationBindingMetadata(conversationSessionId, lookupSessionMetadata)
         ?? readVoiceConversationBindingMetadata(conversationSessionId, params.sessionMetadata)
         ?? readVoiceConversationBindingMetadata(
             conversationSessionId,

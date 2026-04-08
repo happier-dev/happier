@@ -10,6 +10,7 @@ export function resolveEffectiveVoiceTargetState(
     trackedSessionIds: ReadonlyArray<string>;
 }> {
     const store = useVoiceTargetStore.getState();
+    const trackedSessionIds = Array.isArray(store.trackedSessionIds) ? store.trackedSessionIds : [];
     const explicitTargetSessionId = normalizeNonEmptyString(options?.targetSessionId);
     const activeLocalBinding = resolveActiveLocalVoiceAgentBinding();
     const boundTargetSessionId =
@@ -18,14 +19,14 @@ export function resolveEffectiveVoiceTargetState(
     if (boundTargetSessionId !== sessionId) {
         return {
             primaryActionSessionId: store.primaryActionSessionId,
-            trackedSessionIds: store.trackedSessionIds,
+            trackedSessionIds,
         };
     }
 
     return {
         primaryActionSessionId: sessionId,
-        trackedSessionIds: store.trackedSessionIds.includes(sessionId)
-            ? store.trackedSessionIds
-            : [...store.trackedSessionIds, sessionId],
+        trackedSessionIds: trackedSessionIds.includes(sessionId)
+            ? trackedSessionIds
+            : [...trackedSessionIds, sessionId],
     };
 }

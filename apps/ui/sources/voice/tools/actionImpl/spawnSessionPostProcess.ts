@@ -1,9 +1,5 @@
 import { sync } from '@/sync/sync';
-
-function normalizeNonEmptyString(value: unknown): string | null {
-  const text = typeof value === 'string' ? value.trim() : '';
-  return text.length > 0 ? text : null;
-}
+import { normalizeNonEmptyString } from './shared';
 
 export async function postprocessSpawnedSession(params: Readonly<{
   sessionId: string | null;
@@ -36,4 +32,3 @@ export async function postprocessSpawnedSession(params: Readonly<{
     }
   }
 }
-

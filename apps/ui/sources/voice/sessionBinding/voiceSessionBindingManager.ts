@@ -2,6 +2,7 @@ import type { StoreApi } from 'zustand/vanilla';
 
 import { voiceSessionBindingStore } from './voiceSessionBindingStore';
 import type { VoiceConversationBindingResolution, VoiceSessionBinding } from './voiceSessionBindingTypes';
+import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 
 type VoiceSessionBindingStoreLike = StoreApi<Readonly<{
   bindingsByConversationSessionId: Record<string, VoiceSessionBinding>;
@@ -55,16 +56,25 @@ export function createVoiceSessionBindingManager(deps: Readonly<{
     controlSessionId: string;
     requestedTargetSessionId?: string | null;
   }>): Promise<VoiceSessionBinding | null> => {
-    const existing = store.getState().getByControlSessionId(params.controlSessionId);
-    const resolution = await deps.resolveBinding(params);
+    const adapterId = normalizeNonEmptyString(params.adapterId);
+    const controlSessionId = normalizeNonEmptyString(params.controlSessionId);
+    const requestedTargetSessionId = normalizeTargetSessionId(params.requestedTargetSessionId);
+    if (!adapterId || !controlSessionId) return null;
+
+    const existing = store.getState().getByControlSessionId(controlSessionId);
+    const resolution = await deps.resolveBinding({
+      adapterId,
+      controlSessionId,
+      requestedTargetSessionId,
+    });
     if (!resolution) return null;
-    if (existing && hasSameBindingSemantics(existing, params.adapterId, resolution)) {
+    if (existing && hasSameBindingSemantics(existing, adapterId, resolution)) {
       return existing;
     }
 
     const previous = store.getState().getByConversationSessionId(resolution.conversationSessionId);
     const nextBinding: VoiceSessionBinding = {
-      adapterId: params.adapterId,
+      adapterId,
       controlSessionId: resolution.controlSessionId,
       conversationSessionId: resolution.conversationSessionId,
       transcriptMode: resolution.transcriptMode,
@@ -94,13 +104,16 @@ export function createVoiceSessionBindingManager(deps: Readonly<{
     controlSessionId: string;
     targetSessionId: string | null;
   }>): VoiceSessionBinding | null => {
-    const previous = store.getState().getByControlSessionId(params.controlSessionId);
+    const controlSessionId = normalizeNonEmptyString(params.controlSessionId);
+    if (!controlSessionId) return null;
+    const previous = store.getState().getByControlSessionId(controlSessionId);
     if (!previous) return null;
-    if (previous.targetSessionId === params.targetSessionId) return previous;
+    const targetSessionId = normalizeTargetSessionId(params.targetSessionId);
+    if (previous.targetSessionId === targetSessionId) return previous;
 
     const nextBinding: VoiceSessionBinding = {
       ...previous,
-      targetSessionId: params.targetSessionId,
+      targetSessionId,
       updatedAt: nowMs(),
     };
     store.getState().bind(nextBinding);

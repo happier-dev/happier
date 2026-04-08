@@ -26,7 +26,7 @@ describe('ensureVoiceAgentInstallablesBackground', () => {
     storageGetState.mockReset();
   });
 
-  it('prefers cached visible session metadata machine ids when the raw session metadata is stale', async () => {
+  it('prefers visible lookup session metadata machine ids when the raw session metadata is stale', async () => {
     storageGetState.mockReturnValue({
       settings: { voice: { adapters: { local_conversation: {} } } },
       sessions: {
@@ -35,33 +35,19 @@ describe('ensureVoiceAgentInstallablesBackground', () => {
           metadata: { machineId: 'machine-raw' },
         },
       },
-      sessionListViewData: [
-        {
-          type: 'session',
-          session: {
-            id: 's1',
-            seq: 1,
-            createdAt: 1,
-            updatedAt: 1,
-            active: true,
-            activeAt: 1,
-            archivedAt: null,
-            metadataVersion: 1,
-            agentStateVersion: 1,
-            metadata: { machineId: 'machine-cached' },
-            thinking: false,
-            thinkingAt: 0,
-            presence: 'online',
-            optimisticThinkingAt: null,
-            thinkingGraceUntil: null,
-            owner: undefined,
-            accessLevel: undefined,
-            canApprovePermissions: undefined,
-            hasPendingPermissionRequests: false,
-            hasPendingUserActionRequests: false,
-          },
+      sessionListRenderables: {
+        s1: {
+          id: 's1',
+          updatedAt: 1,
+          metadata: { machineId: 'machine-cached', path: '/tmp/cached' },
         },
-      ],
+      },
+      sessionListIndexByServerId: {
+        'server-a': [
+          { type: 'session', sessionId: 's1', serverId: 'server-a', serverName: 'Server A' },
+        ],
+      },
+      concurrentSessionListCacheByServerId: {},
     });
 
     const { ensureVoiceAgentInstallablesBackground } = await import('./ensureVoiceAgentInstallablesBackground');

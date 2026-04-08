@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 
 export type LocalVoiceStatus = 'idle' | 'recording' | 'transcribing' | 'sending' | 'speaking' | 'error';
 
@@ -29,13 +30,15 @@ export function patchLocalVoiceState(patch: Partial<LocalVoiceState>): void {
 }
 
 export function setIdleStateUnlessRecording(sessionId: string): void {
+  const normalizedSessionId = normalizeNonEmptyString(sessionId);
+  if (!normalizedSessionId) return;
+
   const current = getLocalVoiceState();
-  if (current.status === 'recording' && current.sessionId === sessionId) {
+  if (current.status === 'recording' && current.sessionId === normalizedSessionId) {
     return;
   }
   // A completed voice turn returns to an idle (ready) state, but we keep the active sessionId
   // until the user explicitly hangs up.
   // Preserve any existing error so the UI can surface it until the user retries.
-  patchLocalVoiceState({ status: 'idle', sessionId });
+  patchLocalVoiceState({ status: 'idle', sessionId: normalizedSessionId });
 }
-

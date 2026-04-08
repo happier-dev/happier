@@ -1,4 +1,5 @@
 import type { VoiceAdapterController, VoiceAdapterId } from './types';
+import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 
 type Registry = Readonly<{
   get: (id: VoiceAdapterId) => VoiceAdapterController | null;
@@ -8,13 +9,22 @@ type Registry = Readonly<{
 let controllers: VoiceAdapterController[] = [];
 
 export function registerVoiceAdapters(next: ReadonlyArray<VoiceAdapterController>): void {
-  controllers = [...next];
+  const seen = new Set<string>();
+  controllers = next.flatMap((controller) => {
+    const id = normalizeNonEmptyString(controller.id);
+    if (id === null || seen.has(id)) return [];
+    seen.add(id);
+    return [{ ...controller, id }];
+  });
 }
 
 export function getVoiceAdapterRegistry(): Registry {
   return {
-    get: (id) => controllers.find((c) => c.id === id) ?? null,
+    get: (id) => {
+      const normalizedId = normalizeNonEmptyString(id);
+      if (normalizedId === null) return null;
+      return controllers.find((c) => c.id === normalizedId) ?? null;
+    },
     list: () => controllers,
   };
 }
-

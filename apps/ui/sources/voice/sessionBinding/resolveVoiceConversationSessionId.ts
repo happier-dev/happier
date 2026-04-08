@@ -48,6 +48,8 @@ export async function ensureVoiceConversationBindingResolution(params: Readonly<
   requestedTargetSessionId?: string | null;
   settings: any;
 }>): Promise<VoiceConversationBindingResolution | null> {
+  const providerId = normalizeNonEmptyString(params.providerId);
+  if (!providerId) return null;
   const controlSessionId = normalizeNonEmptyString(params.controlSessionId);
   if (!controlSessionId) return null;
 
@@ -62,7 +64,7 @@ export async function ensureVoiceConversationBindingResolution(params: Readonly<
       ? await ensureVoiceConversationSessionForSessionRoot({ sessionId: rootSessionId })
       : await ensureVoiceHomeConversationSessionIdWithRecovery(params);
 
-  if (params.providerId === 'realtime_elevenlabs') {
+  if (providerId === 'realtime_elevenlabs') {
     const conversationSessionId = await resolveConversationSessionId();
     return {
       controlSessionId,
@@ -72,7 +74,7 @@ export async function ensureVoiceConversationBindingResolution(params: Readonly<
     };
   }
 
-  if (params.providerId === 'local_conversation') {
+  if (providerId === 'local_conversation') {
     const transcriptMode = resolveLocalConversationTranscriptMode(params.settings);
     if (!transcriptMode) return null;
     const conversationSessionId = await resolveConversationSessionId();

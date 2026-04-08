@@ -2,23 +2,26 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { installVoiceToolActionImplCommonModuleMocks } from './voiceToolActionImplTestHelpers';
 
 const syncTargetSession = vi.fn();
-const state: any = {
+let state: any = {
   sessions: {
     s1: { id: 's1', metadata: { summary: { text: 'Primary session' } } },
     s2: { id: 's2', metadata: { summary: { text: 'Tracked session' } } },
     s3: { id: 's3', metadata: { summary: { text: 'Session Setup' } } },
     s4: { id: 's4', metadata: { name: 'leeroy' }, updatedAt: 10 },
   },
-  sessionListViewData: [
-    {
-      type: 'session',
-      session: {
-        id: 's4',
-        updatedAt: 10,
-        metadata: { summaryText: 'Session QA Voice Matrix' },
-      },
+  sessionListRenderables: {
+    s4: {
+      id: 's4',
+      updatedAt: 10,
+      metadata: { summaryText: 'Session QA Voice Matrix' },
     },
-  ],
+  },
+  sessionListIndexByServerId: {
+    'server-a': [
+      { type: 'session', sessionId: 's4', serverId: 'server-a', serverName: 'Server A' },
+    ],
+  },
+  concurrentSessionListCacheByServerId: {},
 };
 
 vi.mock('@/voice/sessionBinding/voiceSessionBindingRuntime', () => ({
@@ -116,27 +119,27 @@ describe('voice session target actions', () => {
     });
   });
 
-  it('returns the visible cached title when a stale raw title normalizes to the same lookup text', async () => {
-    const previousSessions = state.sessions;
-    const previousVisibleRows = state.sessionListViewData;
-    state.sessions = {
-      ...previousSessions,
-      s4: {
-        id: 's4',
-        metadata: { summaryText: 'Session QA Voice Matrix!' },
-        updatedAt: 10,
+  it('returns the visible lookup title when a stale raw title normalizes to the same lookup text', async () => {
+    const previousState = state;
+    state = {
+      ...previousState,
+      sessions: {
+        ...previousState.sessions,
+        s4: {
+          id: 's4',
+          metadata: { summaryText: 'Session QA Voice Matrix!' },
+          updatedAt: 10,
+        },
       },
-    };
-    state.sessionListViewData = [
-      {
-        type: 'session',
-        session: {
+      sessionListRenderables: {
+        ...previousState.sessionListRenderables,
+        s4: {
           id: 's4',
           updatedAt: 10,
           metadata: { summaryText: 'Session QA Voice Matrix' },
         },
       },
-    ];
+    };
 
     try {
       const { setPrimaryActionSessionId } = await import('./sessionTargets');
@@ -156,8 +159,7 @@ describe('voice session target actions', () => {
         },
       });
     } finally {
-      state.sessions = previousSessions;
-      state.sessionListViewData = previousVisibleRows;
+      state = previousState;
     }
   });
 });

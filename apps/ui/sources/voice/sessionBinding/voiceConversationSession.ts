@@ -12,7 +12,7 @@ import { resolveMachineForActiveServerFromState, resolveVisibleMachinesForActive
 import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
 import { machineSpawnNewSession } from '@/sync/ops/machines';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
-import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListCacheState';
+import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
 import { sync } from '@/sync/sync';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
@@ -125,7 +125,9 @@ function resolveSpawnTarget(state: any): { machineId: string; directory: string 
 
 function resolveVoiceHomeSpawnTarget(state: any): { machineId: string; directory: string } | null {
   const agentCfg: any = state?.settings?.voice?.adapters?.local_conversation?.agent ?? {};
-  const fixedMachineId = agentCfg?.machineTargetMode === 'fixed' ? normalizeNonEmptyString(agentCfg?.machineTargetId) : null;
+  const fixedMachineId = (normalizeNonEmptyString(agentCfg?.machineTargetMode) ?? 'auto') === 'fixed'
+    ? normalizeNonEmptyString(agentCfg?.machineTargetId)
+    : null;
   if (fixedMachineId) {
     const fixedDirectory = resolveVoiceHomeDirectory(state, fixedMachineId);
     if (fixedDirectory) return { machineId: fixedMachineId, directory: fixedDirectory };
@@ -186,7 +188,7 @@ function resolveVoiceHomeSpawnTarget(state: any): { machineId: string; directory
 
 function resolveVoiceConversationAgentId(state: any): AgentId {
   const agentCfg = state?.settings?.voice?.adapters?.local_conversation?.agent ?? {};
-  const agentSource = String(agentCfg?.agentSource ?? 'session');
+  const agentSource = normalizeNonEmptyString(agentCfg?.agentSource) ?? 'session';
   const requestedAgentId = normalizeNonEmptyString(agentCfg?.agentId);
   const lastUsedAgent = normalizeNonEmptyString(state?.settings?.lastUsedAgent);
   const fallback = isAgentId(lastUsedAgent) ? lastUsedAgent : DEFAULT_AGENT_ID;

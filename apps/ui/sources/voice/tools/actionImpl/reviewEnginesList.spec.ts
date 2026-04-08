@@ -16,7 +16,9 @@ const state: any = {
         },
       },
     },
-  sessionListViewData: [],
+  sessionListRenderables: {},
+  sessionListIndexByServerId: {},
+  concurrentSessionListCacheByServerId: {},
 };
 
 const getMachineCapabilitiesSnapshot = vi.fn();
@@ -81,24 +83,27 @@ describe('review engine voice tool', () => {
     expect(gemini.enabled).toBe(false);
   });
 
-  it('prefers cached visible session metadata over stale raw session metadata when resolving review engines', async () => {
+  it('prefers visible lookup session metadata over stale raw session metadata when resolving review engines', async () => {
     state.sessions.s1.metadata.machineId = 'raw-machine';
-    state.sessionListViewData = [
-      {
-        type: 'session',
-        session: {
-          id: 's1',
-          updatedAt: 321,
-          metadata: {
-            machineId: 'cached-machine',
-          },
+    state.sessionListRenderables = {
+      s1: {
+        id: 's1',
+        updatedAt: 321,
+        metadata: {
+          machineId: 'lookup-machine',
+          path: '/tmp/lookup',
         },
       },
-    ];
+    };
+    state.sessionListIndexByServerId = {
+      'server-a': [
+        { type: 'session', sessionId: 's1', serverId: 'server-a', serverName: 'Server A' },
+      ],
+    };
 
     const { listReviewEnginesForVoiceTool } = await import('./reviewEnginesList');
     await listReviewEnginesForVoiceTool({ sessionId: 's1' });
 
-    expect(getMachineCapabilitiesSnapshot).toHaveBeenCalledWith('cached-machine', 'server-a');
+    expect(getMachineCapabilitiesSnapshot).toHaveBeenCalledWith('lookup-machine', 'server-a');
   });
 });

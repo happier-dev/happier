@@ -57,18 +57,17 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
           ],
         },
       },
-      sessionListViewDataByServerId: {
-        'server-a': [
-          {
-            type: 'session',
-            serverId: 'server-a',
-            session: {
+      concurrentSessionListCacheByServerId: {
+        'server-a': {
+          serverName: null,
+          sessions: {
+            s1: {
               id: 's1',
               presence: 'online',
               active: true,
             },
           },
-        ],
+        },
       },
     });
 
@@ -140,18 +139,17 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
           ],
         },
       },
-      sessionListViewDataByServerId: {
-        'server-a': [
-          {
-            type: 'session',
-            serverId: 'server-a',
-            session: {
+      concurrentSessionListCacheByServerId: {
+        'server-a': {
+          serverName: null,
+          sessions: {
+            s1: {
               id: 's1',
               presence: 'online',
               active: true,
             },
           },
-        ],
+        },
       },
     });
 
@@ -227,18 +225,17 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
           metadata: { path: '/tmp/project-a', host: 'test-machine' },
         },
       },
-      sessionListViewDataByServerId: {
-        'server-a': [
-          {
-            type: 'session',
-            serverId: 'server-a',
-            session: {
+      concurrentSessionListCacheByServerId: {
+        'server-a': {
+          serverName: null,
+          sessions: {
+            s1: {
               id: 's1',
               presence: 'online',
               active: true,
             },
           },
-        ],
+        },
       },
     });
 
@@ -359,27 +356,22 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
           ],
         },
       },
-      sessionListViewDataByServerId: {
-        'server-a': [
-          {
-            type: 'session',
-            serverId: 'server-a',
-            session: {
+      concurrentSessionListCacheByServerId: {
+        'server-a': {
+          serverName: null,
+          sessions: {
+            s1: {
               id: 's1',
               presence: 'online',
               active: true,
             },
-          },
-          {
-            type: 'session',
-            serverId: 'server-a',
-            session: {
+            s_stale: {
               id: 's_stale',
               presence: 'online',
               active: true,
             },
           },
-        ],
+        },
       },
     });
 
@@ -474,11 +466,14 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
           ],
         },
       },
-      sessionListViewDataByServerId: {
-        'server-a': [
-          { type: 'session', serverId: 'server-a', session: { id: 'sys_voice', presence: 'online', active: true } },
-          { type: 'session', serverId: 'server-a', session: { id: 's_other', presence: 'online', active: true } },
-        ],
+      concurrentSessionListCacheByServerId: {
+        'server-a': {
+          serverName: null,
+          sessions: {
+            sys_voice: { id: 'sys_voice', presence: 'online', active: true },
+            s_other: { id: 's_other', presence: 'online', active: true },
+          },
+        },
       },
     });
 
@@ -549,18 +544,17 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
           ],
         },
       },
-      sessionListViewDataByServerId: {
-        'server-a': [
-          {
-            type: 'session',
-            serverId: 'server-a',
-            session: {
+      concurrentSessionListCacheByServerId: {
+        'server-a': {
+          serverName: null,
+          sessions: {
+            s1: {
               id: 's1',
               presence: 'online',
               active: true,
             },
           },
-        ],
+        },
       },
     });
 

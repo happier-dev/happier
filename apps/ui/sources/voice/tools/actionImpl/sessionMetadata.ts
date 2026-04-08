@@ -1,7 +1,7 @@
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 
 import { normalizeNonEmptyString } from './shared';
-import type { SessionMetadataLike } from '@/sync/domains/session/listing/sessionListCacheState';
+import type { SessionMetadataLike } from '@/sync/domains/session/listing/sessionListLookupState';
 
 export function resolveVoiceSessionTitleFromMetadata(metadata: SessionMetadataLike): string | null {
   const summary = metadata && typeof metadata === 'object' && metadata.summary && typeof metadata.summary === 'object'

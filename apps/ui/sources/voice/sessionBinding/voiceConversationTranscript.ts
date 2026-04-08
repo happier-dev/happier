@@ -2,6 +2,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import { storage } from '@/sync/domains/state/storage';
 import { nowServerMs } from '@/sync/runtime/time';
 import type { NormalizedMessage } from '@/sync/typesRaw';
+import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 
 function appendNormalizedMessage(conversationSessionId: string, message: NormalizedMessage): void {
   const state: any = storage.getState();
@@ -13,9 +14,11 @@ export function appendVoiceConversationUserText(params: Readonly<{
   conversationSessionId: string;
   text: string;
 }>): void {
+  const conversationSessionId = normalizeNonEmptyString(params.conversationSessionId);
+  if (!conversationSessionId) return;
   const text = String(params.text ?? '').trim();
   if (!text) return;
-  appendNormalizedMessage(params.conversationSessionId, {
+  appendNormalizedMessage(conversationSessionId, {
     id: randomUUID(),
     localId: null,
     createdAt: nowServerMs(),
@@ -29,10 +32,12 @@ export function appendVoiceConversationAssistantText(params: Readonly<{
   conversationSessionId: string;
   text: string;
 }>): void {
+  const conversationSessionId = normalizeNonEmptyString(params.conversationSessionId);
+  if (!conversationSessionId) return;
   const text = String(params.text ?? '').trim();
   if (!text) return;
   const uuid = randomUUID();
-  appendNormalizedMessage(params.conversationSessionId, {
+  appendNormalizedMessage(conversationSessionId, {
     id: randomUUID(),
     localId: null,
     createdAt: nowServerMs(),

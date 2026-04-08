@@ -2,7 +2,7 @@ import { storage } from '@/sync/domains/state/storage';
 import {
   resolveSessionListPreferredSessionMetadataFromState,
   type SessionMetadataLike,
-} from '@/sync/domains/session/listing/sessionListCacheState';
+} from '@/sync/domains/session/listing/sessionListLookupState';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { VoiceContextFormatterPrefs } from '@/voice/context/contextFormatters';
 
@@ -53,9 +53,9 @@ export function resolveVoiceSessionLabel(
 ): string {
   const state: any = storage.getState();
   const session = (state?.sessions?.[sessionId] ?? null) as Session | null;
-  const cachedMetadata = resolveSessionListPreferredSessionMetadataFromState(state, sessionId);
+  const lookupMetadata = resolveSessionListPreferredSessionMetadataFromState(state, sessionId);
   const label =
-    labelFromMetadata(cachedMetadata, prefs)
+    labelFromMetadata(lookupMetadata, prefs)
     ?? labelFromMetadata(session?.metadata, prefs)
     ?? labelFromMetadata(options?.metadata, prefs);
 

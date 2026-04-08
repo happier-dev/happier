@@ -145,6 +145,34 @@ describe('sendVoiceTextTurn synthetic transcript mirroring', () => {
     expect(appendNote).not.toHaveBeenCalled();
   });
 
+  it('trims the control session id before mirroring synthetic transcript turns', async () => {
+    const { sendVoiceTextTurn } = await import('./sendVoiceTextTurn');
+
+    await sendVoiceTextTurn({
+      sessionId: ' voice-global ',
+      settings: {},
+      userText: 'list the backends',
+      playbackController: {
+        registerStopper: () => () => {},
+        interrupt: () => {},
+        captureEpoch: () => 1,
+        isEpochCurrent: () => true,
+      },
+      voiceAgentSessions: {
+        sendTurn: async () => ({ assistantText: 'I found Claude and Codex.', actions: [] }),
+      },
+    });
+
+    expect(appendUser).toHaveBeenCalledWith({
+      conversationSessionId: 'carrier-s1',
+      text: 'list the backends',
+    });
+    expect(appendAssistant).toHaveBeenCalledWith({
+      conversationSessionId: 'carrier-s1',
+      text: 'I found Claude and Codex.',
+    });
+  });
+
   it('normalizes sendSessionMessage preambles and appends concise tool execution notes into the hidden conversation session', async () => {
     const { sendVoiceTextTurn } = await import('./sendVoiceTextTurn');
 

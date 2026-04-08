@@ -35,7 +35,9 @@ export async function transcribeRecordedAudioWithHttpStt(params: {
   }
 
   const sttApiKey = openaiCompat?.apiKey ? (sync.decryptSecretValue(openaiCompat.apiKey) ?? null) : null;
-  const sttModel = (openaiCompat?.model ?? 'whisper-1') as string;
+  const sttModel = typeof openaiCompat?.model === 'string' && openaiCompat.model.trim()
+    ? openaiCompat.model.trim()
+    : 'whisper-1';
 
   const fileName = (RecordingPresets.HIGH_QUALITY as any)?.extension
     ? `recording${(RecordingPresets.HIGH_QUALITY as any).extension}`

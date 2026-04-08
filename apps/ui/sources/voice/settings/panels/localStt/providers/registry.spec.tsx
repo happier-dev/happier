@@ -32,12 +32,16 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
 
 import { VoiceLocalSttProviderSchema } from '@/sync/domains/settings/voiceLocalSttSettings';
 
-import { localSttProviderSpecs } from './registry';
+import { getLocalSttProviderSpec, localSttProviderSpecs } from './registry';
 
 describe('local STT provider registry', () => {
   it('covers every provider id in the settings schema', () => {
     const schemaIds = new Set<string>(VoiceLocalSttProviderSchema.options);
     const registryIds = new Set<string>(localSttProviderSpecs.map((spec) => spec.id));
     expect(registryIds).toEqual(schemaIds);
+  });
+
+  it('trims provider ids before resolving a provider spec', () => {
+    expect(getLocalSttProviderSpec(' openai_compat ').id).toBe('openai_compat');
   });
 });

@@ -22,4 +22,8 @@ describe('TtsChunker', () => {
         expect(resolveStreamingTtsChunkChars(10_000)).toBe(2000);
         expect(resolveStreamingTtsChunkChars(128)).toBe(128);
     });
+
+    it('accepts padded numeric chunk sizes', () => {
+        expect(resolveStreamingTtsChunkChars(' 128 ')).toBe(128);
+    });
 });

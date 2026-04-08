@@ -2,7 +2,7 @@ import { formatPermissionRequestSummary, isAskUserQuestionToolName } from "@happ
 import { Session } from "@/sync/domains/state/storageTypes";
 import { Message } from "@/sync/domains/messages/messageTypes";
 import { storage } from '@/sync/domains/state/storage';
-import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListCacheState';
+import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
 import { trimIdent } from "@/utils/strings/trimIdent";
 import { listPendingPermissionRequests, listPendingUserActionRequests } from "@/utils/sessions/sessionUtils";
 import { resolveAgentRequestKind, type AgentRequestKind } from "@/utils/sessions/permissions/permissionPromptPolicy";
@@ -458,8 +458,8 @@ function formatRecentMessages(sessionId: string, messages: Message[], prefs?: Vo
 export function formatSessionFull(session: Session, messages: Message[], prefs?: VoiceContextFormatterPrefs): string {
     const resolved = resolvePrefs(prefs);
     const state: any = storage.getState();
-    const cachedSessionMetadata = resolveSessionListPreferredSessionMetadataFromState(state, session.id);
-    const sessionMetadata = cachedSessionMetadata ?? session.metadata;
+    const lookupSessionMetadata = resolveSessionListPreferredSessionMetadataFromState(state, session.id);
+    const sessionMetadata = lookupSessionMetadata ?? session.metadata;
     const rawSessionSummary =
         typeof sessionMetadata?.summary?.text === 'string'
             ? sessionMetadata.summary.text

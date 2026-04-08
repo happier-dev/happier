@@ -17,22 +17,45 @@ function normalizeId(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function normalizeBinding(binding: VoiceSessionBinding): VoiceSessionBinding | null {
+  const adapterId = normalizeId(binding.adapterId);
+  const controlSessionId = normalizeId(binding.controlSessionId);
+  const conversationSessionId = normalizeId(binding.conversationSessionId);
+  const transcriptMode = binding.transcriptMode === 'native_session' || binding.transcriptMode === 'synthetic'
+    ? binding.transcriptMode
+    : null;
+  if (!adapterId || !controlSessionId || !conversationSessionId || !transcriptMode) return null;
+
+  return {
+    adapterId,
+    controlSessionId,
+    conversationSessionId,
+    transcriptMode,
+    targetSessionId: normalizeId(binding.targetSessionId),
+    updatedAt: Number.isFinite(binding.updatedAt) ? Number(binding.updatedAt) : 0,
+  };
+}
+
 export function createVoiceSessionBindingStore() {
   return createStore<VoiceSessionBindingStoreState>((set, get) => ({
     bindingsByConversationSessionId: {},
     bind: (binding) =>
-      set((state) => ({
-        ...state,
-        bindingsByConversationSessionId: {
-          ...Object.fromEntries(
-            Object.entries(state.bindingsByConversationSessionId).filter(
-              ([conversationSessionId, existing]) =>
-                existing.controlSessionId !== binding.controlSessionId || conversationSessionId === binding.conversationSessionId,
+      set((state) => {
+        const normalized = normalizeBinding(binding);
+        if (!normalized) return state;
+        return {
+          ...state,
+          bindingsByConversationSessionId: {
+            ...Object.fromEntries(
+              Object.entries(state.bindingsByConversationSessionId).filter(
+                ([conversationSessionId, existing]) =>
+                  existing.controlSessionId !== normalized.controlSessionId || conversationSessionId === normalized.conversationSessionId,
+              ),
             ),
-          ),
-          [binding.conversationSessionId]: binding,
-        },
-      })),
+            [normalized.conversationSessionId]: normalized,
+          },
+        };
+      }),
     unbind: (conversationSessionId) =>
       set((state) => {
         const normalized = normalizeId(conversationSessionId);

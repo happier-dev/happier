@@ -33,7 +33,7 @@ import {
     resolvePersistedDaemonConversationSessionId,
     resolveVoiceRunMetadataSessionId,
 } from '@/voice/agent/voiceAgentRunState';
-import { findSessionListCachedSession } from '@/sync/domains/session/listing/sessionListCacheState';
+import { findSessionListLookupSession } from '@/sync/domains/session/listing/sessionListLookupState';
 
 type InitializeVoiceAgentHandleParams = Readonly<{
     sessionId: string;
@@ -84,8 +84,8 @@ export async function initializeVoiceAgentHandle({
     };
 
     const resolveDaemonSessionFromState = (daemonSessionId: string): VoiceAgentSessionLike => {
-        const cachedSession = findSessionListCachedSession(storage.getState() as any, daemonSessionId)?.session ?? null;
-        if (cachedSession) return cachedSession as VoiceAgentSessionLike;
+        const lookupSession = findSessionListLookupSession(storage.getState() as any, daemonSessionId)?.session ?? null;
+        if (lookupSession) return lookupSession as VoiceAgentSessionLike;
         return (storage.getState() as any)?.sessions?.[daemonSessionId] ?? null;
     };
 

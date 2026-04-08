@@ -60,7 +60,7 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
     const bootstrapTimeoutMs =
       Number.isFinite(explicitBootstrapTimeoutMs) && explicitBootstrapTimeoutMs > 0
         ? Math.floor(explicitBootstrapTimeoutMs)
-        : (resolveVoiceAgentBootstrapTimeoutMs(localConversationSettings) ?? 0);
+        : resolveVoiceAgentBootstrapTimeoutMs(localConversationSettings);
     return Math.max(networkTimeoutMs, bootstrapTimeoutMs, 30_000);
   }
 

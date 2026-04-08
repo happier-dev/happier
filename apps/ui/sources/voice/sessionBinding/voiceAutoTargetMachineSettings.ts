@@ -3,7 +3,7 @@ import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString'
 
 export function readVoiceAutoTargetMachineId(state: any): string | null {
     const agentCfg: any = state?.settings?.voice?.adapters?.local_conversation?.agent ?? {};
-    if ((agentCfg?.machineTargetMode ?? 'auto') !== 'auto') return null;
+    if ((normalizeNonEmptyString(agentCfg?.machineTargetMode) ?? 'auto') !== 'auto') return null;
     return normalizeNonEmptyString(agentCfg?.autoTargetMachineId);
 }
 
@@ -14,7 +14,7 @@ export function persistVoiceAutoTargetMachineId(machineId: string | null): void 
     const localConversation = voiceSettings?.adapters?.local_conversation ?? null;
     const agent = localConversation?.agent ?? null;
     if (!voiceSettings || !localConversation || !agent) return;
-    if ((agent.machineTargetMode ?? 'auto') !== 'auto') return;
+    if ((normalizeNonEmptyString(agent.machineTargetMode) ?? 'auto') !== 'auto') return;
     if (normalizeNonEmptyString(agent.autoTargetMachineId) === normalizedMachineId) return;
 
     state.applySettingsLocal?.({

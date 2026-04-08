@@ -1,5 +1,5 @@
 import { storage } from '@/sync/domains/state/storage';
-import { listSessionListCachedServers } from '@/sync/domains/session/listing/sessionListCacheState';
+import { listSessionListLookupServers } from '@/sync/domains/session/listing/sessionListLookupState';
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
@@ -41,7 +41,7 @@ export async function listServersForVoiceTool(params: Readonly<{ limit?: number 
     });
   }
 
-  for (const entry of listSessionListCachedServers(state)) {
+  for (const entry of listSessionListLookupServers(state)) {
     const serverId = normalizeId(entry.serverId);
     if (!serverId) continue;
     if (seen.has(serverId)) continue;

@@ -18,6 +18,13 @@ const modalConfirm = vi.fn<(title?: unknown, message?: unknown, options?: unknow
   _message?: unknown,
   _options?: unknown,
 ) => false);
+const modalAlert = vi.fn((_: unknown, __: unknown, buttons?: unknown) => {
+  if (!Array.isArray(buttons) || buttons.length === 0) return;
+  const cancelButton = buttons.find((button) => button?.style === 'cancel') ?? buttons[buttons.length - 1];
+  if (typeof cancelButton?.onPress === 'function') {
+    cancelButton.onPress();
+  }
+});
 const ensureVoiceAgentInstallablesBackground = vi.fn(async (_args: unknown) => {});
 const resolveRuntimeFeatureDecision = vi.fn<(args: any) => Promise<any>>(async () => ({
   featureId: 'voice.agent',
@@ -58,34 +65,70 @@ vi.mock('@/voice/agent/ensureVoiceAgentInstallablesBackground', () => ({
   ensureVoiceAgentInstallablesBackground: (args: unknown) => ensureVoiceAgentInstallablesBackground(args),
 }));
 
-const state: any = {
-  settings: {
-    voice: {
-      providerId: 'local_conversation',
-      adapters: {
-        local_conversation: {
-          streaming: { enabled: false },
-          agent: { backend: 'daemon', transcript: { persistenceMode: 'persistent', epoch: 1 } },
-          networkTimeoutMs: 15_000,
-        },
-      },
-    },
-  },
-  sessionListViewData: [],
-  sessions: {
+const createVoiceAgentPersistenceTestState = (): any => {
+  const sessions = {
     sys_voice: {
       id: 'sys_voice',
+      serverId: 'server-a',
       updatedAt: 10,
       active: true,
       presence: 'online',
       modelMode: 'default',
       metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } },
     },
-    s1: { id: 's1', updatedAt: 1, active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
-  },
-  machines: {},
-  machineListByServerId: {},
-  sessionMessages: {},
+    s1: {
+      id: 's1',
+      serverId: 'server-a',
+      updatedAt: 1,
+      active: true,
+      presence: 'online',
+      modelMode: 'default',
+      metadata: { flavor: 'claude' },
+    },
+  };
+
+  return {
+    settings: {
+      voice: {
+        providerId: 'local_conversation',
+        adapters: {
+          local_conversation: {
+            streaming: { enabled: false },
+            agent: { backend: 'daemon', transcript: { persistenceMode: 'persistent', epoch: 1 } },
+            networkTimeoutMs: 15_000,
+          },
+        },
+      },
+    },
+    sessionListIndexByServerId: {
+      'server-a': [
+        { type: 'session', sessionId: 'sys_voice', serverId: 'server-a', serverName: null },
+        { type: 'session', sessionId: 's1', serverId: 'server-a', serverName: null },
+      ],
+    },
+    sessionListRenderables: {
+      sys_voice: sessions.sys_voice,
+      s1: sessions.s1,
+    },
+    sessions,
+    machines: {},
+    machineListByServerId: {},
+    sessionMessages: {},
+  };
+};
+
+let state: any = createVoiceAgentPersistenceTestState();
+
+const applySettingsLocal = (delta: any) => {
+  if (delta?.voice) {
+    state = {
+      ...state,
+      settings: {
+        ...state.settings,
+        voice: delta.voice,
+      },
+    };
+  }
 };
 
 installVoiceAgentCommonModuleMocks({
@@ -94,25 +137,21 @@ installVoiceAgentCommonModuleMocks({
     return createModalModuleMock({
       spies: {
         confirm: (title?: unknown, message?: unknown, options?: unknown) => modalConfirm(title, message, options),
-        alert: vi.fn(),
+        alert: modalAlert,
       },
     }).module;
   },
-  storage: async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-      storage: {
-        getState: () => state,
-      },
-    });
-  },
-});
+	  storage: async () => {
+	    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+	    return createStorageModuleStub({
+	      storage: {
+	        getState: () => state,
+	      },
+	    });
+	  },
+	});
 
-state.applySettingsLocal = (delta: any) => {
-  if (delta?.voice) {
-    state.settings.voice = delta.voice;
-  }
-};
+state.applySettingsLocal = applySettingsLocal;
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({ serverId: 'server-a', serverUrl: 'http://localhost', generation: 1 }),
@@ -150,7 +189,27 @@ vi.mock('@/sync/domains/features/featureDecisionInputs', () => ({
 }));
 
 const patchSessionMetadataWithRetry = vi.fn<(sessionId: string, updater: (m: any) => any) => Promise<void>>(async (sessionId: string, updater: (m: any) => any) => {
-  state.sessions[sessionId].metadata = updater(state.sessions[sessionId].metadata);
+  const existing = state.sessions?.[sessionId];
+  if (!existing) return;
+  const nextMetadata = updater(existing.metadata);
+
+  state = {
+    ...state,
+    sessions: {
+      ...state.sessions,
+      [sessionId]: {
+        ...existing,
+        metadata: nextMetadata,
+      },
+    },
+    sessionListRenderables: {
+      ...(state.sessionListRenderables ?? {}),
+      [sessionId]: {
+        ...(state.sessionListRenderables?.[sessionId] ?? existing),
+        metadata: nextMetadata,
+      },
+    },
+  };
 });
 const ensureSessionVisibleForMessageRoute = vi.fn(async (_sessionId: string, _options?: { forceRefresh?: boolean }) => {});
 const refreshSessionMessages = vi.fn(async (_sessionId: string) => {});
@@ -194,6 +253,7 @@ async function loadVoiceAgentPersistenceHarness() {
 
 describe('VoiceAgentSessionController (persistence)', () => {
   beforeEach(() => {
+    vi.useRealTimers();
     vi.resetModules();
     start.mockReset();
     start.mockImplementation(async (params?: any) => ({ voiceAgentId: params?.existingRunId ?? 'run_1' }));
@@ -230,22 +290,13 @@ describe('VoiceAgentSessionController (persistence)', () => {
       scope: { scopeKind: 'runtime' },
     });
 
-    state.sessions.sys_voice.active = true;
-    state.sessions.sys_voice.presence = 'online';
-    state.sessions.sys_voice.metadata = { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } };
-    state.sessionListViewData = [];
-    state.settings.voice.adapters.local_conversation.streaming.enabled = false;
-    state.settings.voice.adapters.local_conversation.agent.transcript = { persistenceMode: 'persistent', epoch: 1 };
+    state = createVoiceAgentPersistenceTestState();
+    state.applySettingsLocal = applySettingsLocal;
+
     state.settings.voice.adapters.local_conversation.agent.resumabilityMode = 'replay';
     state.settings.voice.adapters.local_conversation.agent.machineTargetMode = 'auto';
     state.settings.voice.adapters.local_conversation.agent.machineTargetId = null;
     state.settings.voice.adapters.local_conversation.agent.autoTargetMachineId = null;
-    delete state.sessions.s2;
-    delete state.sessions.active_voice;
-    delete state.sessions.sys_voice_new;
-    state.machines = {};
-    state.machineListByServerId = {};
-    state.sessionMessages = {};
   });
 
   it('persists runId and resumeHandle into carrier session metadata when transcript persistence is enabled', async () => {
@@ -555,6 +606,12 @@ describe('VoiceAgentSessionController (persistence)', () => {
 
     const firstController = createVoiceAgentSessionController();
     await firstController.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
+
+    expect(state.sessions.sys_voice.metadata.voiceAgentRunV1).toMatchObject({
+      v: 1,
+      runId: 'run_1',
+      backendId: 'claude',
+    });
 
     start.mockClear();
     sendTurn.mockClear();
@@ -1065,7 +1122,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
     expect(start).not.toHaveBeenCalled();
   });
 
-  it('prefers cached visible target session metadata when raw target metadata is stale', async () => {
+  it('prefers visible lookup target session metadata when raw target metadata is stale', async () => {
     state.sessions.s_cached_target = {
       id: 's_cached_target',
       updatedAt: 1,
@@ -1077,36 +1134,27 @@ describe('VoiceAgentSessionController (persistence)', () => {
         machineId: 'm_raw',
       },
     };
-    state.sessionListViewData = [
-      {
-        type: 'session',
-        session: {
-          id: 's_cached_target',
-          seq: 1,
-          createdAt: 1,
-          updatedAt: 1,
-          active: true,
-          activeAt: 1,
-          archivedAt: null,
-          metadataVersion: 1,
-          agentStateVersion: 1,
-          metadata: {
-            flavor: 'claude',
-            machineId: 'm_live',
-          },
-          thinking: false,
-          thinkingAt: 0,
-          presence: 'online',
-          optimisticThinkingAt: null,
-          thinkingGraceUntil: null,
-          owner: undefined,
-          accessLevel: undefined,
-          canApprovePermissions: undefined,
-          hasPendingPermissionRequests: false,
-          hasPendingUserActionRequests: false,
+    state.sessionListIndexByServerId = {
+      ...(state.sessionListIndexByServerId ?? {}),
+      'server-a': [
+        ...(state.sessionListIndexByServerId?.['server-a'] ?? []),
+        { type: 'session', sessionId: 's_cached_target', serverId: 'server-a', serverName: null },
+      ],
+    };
+    state.sessionListRenderables = {
+      ...(state.sessionListRenderables ?? {}),
+      s_cached_target: {
+        id: 's_cached_target',
+        updatedAt: 1,
+        active: true,
+        presence: 'online',
+        modelMode: 'default',
+        metadata: {
+          flavor: 'claude',
+          machineId: 'm_live',
         },
       },
-    ];
+    };
     state.machines.m_live = {
       id: 'm_live',
       seq: 1,
@@ -1141,8 +1189,9 @@ describe('VoiceAgentSessionController (persistence)', () => {
   });
 
   it('switches away from a sticky global voice machine when the reused hidden voice session returns daemon RPC unavailable', async () => {
-    state.sessions.sys_voice = {
+    const nextSysVoice = {
       id: 'sys_voice',
+      serverId: 'server-a',
       updatedAt: 10,
       active: true,
       presence: 'online',
@@ -1152,6 +1201,17 @@ describe('VoiceAgentSessionController (persistence)', () => {
         machineId: 'm_old',
         path: '/old/.happier/voice-agent',
         systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
+      },
+    };
+    state = {
+      ...state,
+      sessions: {
+        ...state.sessions,
+        sys_voice: nextSysVoice,
+      },
+      sessionListRenderables: {
+        ...(state.sessionListRenderables ?? {}),
+        sys_voice: nextSysVoice,
       },
     };
     state.sessionMessages.sys_voice = {
@@ -1203,18 +1263,19 @@ describe('VoiceAgentSessionController (persistence)', () => {
       'server-a': Object.values(state.machines),
     };
     state.settings.recentMachinePaths = [];
-    state.settings.voice.adapters.local_conversation.agent.machineTargetMode = 'auto';
-    state.settings.voice.adapters.local_conversation.agent.machineTargetId = null;
-    state.settings.voice.adapters.local_conversation.agent.autoTargetMachineId = 'm_old';
-    start
-      .mockRejectedValueOnce(Object.assign(new Error('RPC method not available'), { rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE' }))
-      .mockResolvedValueOnce({ voiceAgentId: 'run_new' });
-    modalConfirm
-      .mockResolvedValueOnce(true)
-      .mockResolvedValueOnce(true);
+	    state.settings.voice.adapters.local_conversation.agent.machineTargetMode = 'auto';
+	    state.settings.voice.adapters.local_conversation.agent.machineTargetId = null;
+	    state.settings.voice.adapters.local_conversation.agent.autoTargetMachineId = 'm_old';
+	    start
+	      .mockRejectedValueOnce(Object.assign(new Error('voice agent runtime unavailable'), { code: 'VOICE_AGENT_RUNTIME_UNAVAILABLE' }))
+	      .mockResolvedValueOnce({ voiceAgentId: 'run_new' });
+		    modalConfirm
+		      .mockResolvedValueOnce(true)
+		      .mockResolvedValueOnce(true);
     refreshSessions.mockImplementation(async () => {
-      state.sessions.sys_voice_new = {
+      const sysVoiceNew = {
         id: 'sys_voice_new',
+        serverId: 'server-a',
         updatedAt: 11,
         active: true,
         presence: 'online',
@@ -1224,6 +1285,24 @@ describe('VoiceAgentSessionController (persistence)', () => {
           machineId: 'm_new',
           path: '/new/.happier/voice-agent',
           systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
+        },
+      };
+      state = {
+        ...state,
+        sessions: {
+          ...state.sessions,
+          sys_voice_new: sysVoiceNew,
+        },
+        sessionListIndexByServerId: {
+          ...(state.sessionListIndexByServerId ?? {}),
+          'server-a': [
+            ...(state.sessionListIndexByServerId?.['server-a'] ?? []),
+            { type: 'session', sessionId: 'sys_voice_new', serverId: 'server-a', serverName: null },
+          ],
+        },
+        sessionListRenderables: {
+          ...(state.sessionListRenderables ?? {}),
+          sys_voice_new: sysVoiceNew,
         },
       };
     });
@@ -1252,8 +1331,9 @@ describe('VoiceAgentSessionController (persistence)', () => {
   });
 
   it('refreshes machines before prompting to switch away from a stale sticky global voice machine', async () => {
-    state.sessions.sys_voice = {
+    const nextSysVoice = {
       id: 'sys_voice',
+      serverId: 'server-a',
       updatedAt: 10,
       active: true,
       presence: 'online',
@@ -1263,6 +1343,17 @@ describe('VoiceAgentSessionController (persistence)', () => {
         machineId: 'm_old',
         path: '/old/.happier/voice-agent',
         systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
+      },
+    };
+    state = {
+      ...state,
+      sessions: {
+        ...state.sessions,
+        sys_voice: nextSysVoice,
+      },
+      sessionListRenderables: {
+        ...(state.sessionListRenderables ?? {}),
+        sys_voice: nextSysVoice,
       },
     };
     state.sessionMessages.sys_voice = {
@@ -1282,8 +1373,8 @@ describe('VoiceAgentSessionController (persistence)', () => {
         seq: 1,
         createdAt: 0,
         updatedAt: 0,
-        active: false,
-        activeAt: 0,
+        active: true,
+        activeAt: Date.now(),
         revokedAt: null,
         metadata: { host: 'old-box', happyHomeDir: '/old/.happier', homeDir: '/Users/old' },
         metadataVersion: 0,
@@ -1296,7 +1387,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
         createdAt: 0,
         updatedAt: 0,
         active: true,
-        activeAt: Date.now(),
+        activeAt: Date.now() - 120_000,
         revokedAt: null,
         metadata: { host: 'new-box', happyHomeDir: '/new/.happier', homeDir: '/Users/new' },
         metadataVersion: 0,
@@ -1306,19 +1397,48 @@ describe('VoiceAgentSessionController (persistence)', () => {
     };
     state.machineListByServerId = {
       'server-a': [state.machines.m_old],
+      'active-server': [state.machines.m_old],
     };
     state.settings.voice.adapters.local_conversation.agent.machineTargetMode = 'auto';
     state.settings.voice.adapters.local_conversation.agent.machineTargetId = null;
     state.settings.voice.adapters.local_conversation.agent.autoTargetMachineId = 'm_old';
+    start
+      .mockRejectedValueOnce(Object.assign(new Error('RPC method not available'), { rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE' }))
+      .mockResolvedValueOnce({ voiceAgentId: 'run_new' });
     modalConfirm
       .mockResolvedValueOnce(true)
       .mockResolvedValueOnce(true);
     refreshMachinesThrottled.mockImplementation(async () => {
-      state.machineListByServerId['server-a'] = [state.machines.m_old, state.machines.m_new];
+      const nextMachines = {
+        ...(state.machines ?? {}),
+        m_new: {
+          id: 'm_new',
+          seq: 2,
+          createdAt: 0,
+          updatedAt: 0,
+          active: true,
+          activeAt: Date.now(),
+          revokedAt: null,
+          metadata: { host: 'new-box', happyHomeDir: '/new/.happier', homeDir: '/Users/new' },
+          metadataVersion: 0,
+          daemonState: null,
+          daemonStateVersion: 0,
+        },
+      };
+      state = {
+        ...state,
+        machines: nextMachines,
+        machineListByServerId: {
+          ...(state.machineListByServerId ?? {}),
+          'server-a': [nextMachines.m_old, nextMachines.m_new],
+          'active-server': [nextMachines.m_old, nextMachines.m_new],
+        },
+      };
     });
     refreshSessions.mockImplementation(async () => {
-      state.sessions.sys_voice_new = {
+      const sysVoiceNew = {
         id: 'sys_voice_new',
+        serverId: 'server-a',
         updatedAt: 11,
         active: true,
         presence: 'online',
@@ -1328,6 +1448,24 @@ describe('VoiceAgentSessionController (persistence)', () => {
           machineId: 'm_new',
           path: '/new/.happier/voice-agent',
           systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
+        },
+      };
+      state = {
+        ...state,
+        sessions: {
+          ...state.sessions,
+          sys_voice_new: sysVoiceNew,
+        },
+        sessionListIndexByServerId: {
+          ...(state.sessionListIndexByServerId ?? {}),
+          'server-a': [
+            ...(state.sessionListIndexByServerId?.['server-a'] ?? []),
+            { type: 'session', sessionId: 'sys_voice_new', serverId: 'server-a', serverName: null },
+          ],
+        },
+        sessionListRenderables: {
+          ...(state.sessionListRenderables ?? {}),
+          sys_voice_new: sysVoiceNew,
         },
       };
     });

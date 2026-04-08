@@ -1,9 +1,10 @@
 import { storage } from '@/sync/domains/state/storage';
+import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 
 export function invalidatePersistentVoiceTranscript(): number | null {
     const state: any = storage.getState();
     const transcriptCfg = state?.settings?.voice?.adapters?.local_conversation?.agent?.transcript ?? null;
-    if (transcriptCfg?.persistenceMode !== 'persistent') return null;
+    if (normalizeNonEmptyString(transcriptCfg?.persistenceMode) !== 'persistent') return null;
     if (typeof state?.applySettingsLocal !== 'function') return null;
 
     const currentEpochRaw = Number(transcriptCfg.epoch ?? 0);

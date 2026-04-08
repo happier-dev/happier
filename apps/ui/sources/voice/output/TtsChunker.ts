@@ -4,7 +4,11 @@ export type TtsChunker = Readonly<{
 }>;
 
 function clampChunkChars(raw: unknown): number {
-    const n = typeof raw === 'number' && Number.isFinite(raw) ? Math.floor(raw) : 200;
+    const candidate =
+        typeof raw === 'string'
+            ? Number(raw.trim())
+            : raw;
+    const n = typeof candidate === 'number' && Number.isFinite(candidate) ? Math.floor(candidate) : 200;
     return Math.max(32, Math.min(2000, n));
 }
 

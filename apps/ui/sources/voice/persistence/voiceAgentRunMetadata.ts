@@ -8,7 +8,7 @@ import {
 import {
     resolveSessionListPreferredSessionMetadataFromState,
     type SessionMetadataLike,
-} from '@/sync/domains/session/listing/sessionListCacheState';
+} from '@/sync/domains/session/listing/sessionListLookupState';
 import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';

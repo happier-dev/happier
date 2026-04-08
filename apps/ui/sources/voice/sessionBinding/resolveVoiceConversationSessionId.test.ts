@@ -49,6 +49,36 @@ describe('ensureVoiceConversationBindingResolution', () => {
     expect(ensureVoiceConversationSessionForVoiceHome).not.toHaveBeenCalled();
   });
 
+  it('trims provider ids before resolving local conversation bindings', async () => {
+    ensureVoiceConversationSessionForVoiceHome.mockResolvedValue('voice-home');
+
+    const { ensureVoiceConversationBindingResolution } = await import('./resolveVoiceConversationSessionId');
+    const resolution = await ensureVoiceConversationBindingResolution({
+      providerId: ' local_conversation ',
+      controlSessionId: '__voice_agent__',
+      requestedTargetSessionId: null,
+      settings: {
+        voice: {
+          adapters: {
+            local_conversation: {
+              conversationMode: 'agent',
+              agent: { backend: 'daemon' },
+            },
+          },
+        },
+      },
+    });
+
+    expect(resolution).toEqual({
+      conversationSessionId: 'voice-home',
+      controlSessionId: '__voice_agent__',
+      transcriptMode: 'native_session',
+      targetSessionId: null,
+    });
+    expect(ensureVoiceConversationSessionForVoiceHome).toHaveBeenCalledTimes(1);
+    expect(ensureVoiceConversationSessionForSessionRoot).not.toHaveBeenCalled();
+  });
+
   it('uses voice home and native transcript mode for local daemon agent sessions when no target session exists', async () => {
     ensureVoiceConversationSessionForVoiceHome.mockResolvedValue('voice-home');
 

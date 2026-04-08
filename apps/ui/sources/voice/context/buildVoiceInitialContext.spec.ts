@@ -60,8 +60,9 @@ describe('buildVoiceInitialContext', () => {
       },
       sessions: { s1: createSession('Summary visible only for tracked sessions') },
       sessionMessages: { s1: { messages: [createUserMessage('Recent context')] } },
-      sessionListViewData: [],
-      sessionListViewDataByServerId: {},
+      sessionListRenderables: {},
+      sessionListIndexByServerId: {},
+      concurrentSessionListCacheByServerId: {},
     }));
     useVoiceTargetStore.getState().setTrackedSessionIds([]);
   });
@@ -91,7 +92,7 @@ describe('buildVoiceInitialContext', () => {
     expect(out).toContain('Recent context');
   });
 
-  it('prefers cached visible session metadata over stale raw session metadata in the prompt', () => {
+  it('prefers visible lookup session metadata over stale raw session metadata in the prompt', () => {
     storage.setState((state: any) => ({
       ...state,
       sessions: {
@@ -103,25 +104,32 @@ describe('buildVoiceInitialContext', () => {
           },
         },
       },
-      sessionListViewData: [
-        {
-          type: 'session',
-          session: {
-            id: 's1',
-            updatedAt: 99,
-            metadata: {
-              ...createSession('Cached session summary').metadata,
-              path: '/Users/alice/project-alpha',
-            },
+      sessionListRenderables: {
+        s1: {
+          id: 's1',
+          updatedAt: 99,
+          metadata: {
+            ...createSession('Lookup session summary').metadata,
+            path: '/Users/alice/project-alpha',
           },
         },
-      ],
+      },
+      sessionListIndexByServerId: {
+        'active-server': [
+          {
+            type: 'session',
+            sessionId: 's1',
+            serverId: 'active-server',
+            serverName: 'Active',
+          },
+        ],
+      },
     }));
     useVoiceTargetStore.getState().setTrackedSessionIds(['s1']);
 
     const out = buildVoiceInitialContext('s1');
 
-    expect(out).toContain('Cached session summary');
+    expect(out).toContain('Lookup session summary');
     expect(out).not.toContain('Raw session summary');
   });
 
@@ -147,8 +155,8 @@ describe('buildVoiceInitialContext', () => {
           messagesMap: { m1: createUserMessage('Target transcript') },
         },
       },
-      sessionListViewData: [],
-      sessionListViewDataByServerId: {},
+      sessionListIndexByServerId: {},
+      concurrentSessionListCacheByServerId: {},
     }));
     useVoiceTargetStore.getState().setTrackedSessionIds(['s1']);
 

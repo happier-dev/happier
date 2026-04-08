@@ -15,6 +15,17 @@ function normalizeId(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function normalizeUpdatedAt(value: unknown): number {
+  const numeric = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function requireNormalizedId(value: unknown, fieldName: string): string {
+  const normalized = normalizeId(value);
+  if (normalized) return normalized;
+  throw new TypeError(`Invalid ${fieldName}`);
+}
+
 export function readVoiceConversationBindingMetadata(
   conversationSessionId: string,
   metadata: unknown,
@@ -30,7 +41,7 @@ export function readVoiceConversationBindingMetadata(
   const transcriptMode = raw.transcriptMode === 'native_session' ? 'native_session' : raw.transcriptMode === 'synthetic' ? 'synthetic' : null;
   if (!adapterId || !controlSessionId || !transcriptMode) return null;
 
-  const updatedAt = Number.isFinite(raw.updatedAt) ? Number(raw.updatedAt) : 0;
+  const updatedAt = normalizeUpdatedAt(raw.updatedAt);
   return {
     adapterId,
     controlSessionId,
@@ -58,15 +69,18 @@ export function writeVoiceConversationBindingMetadata(
   binding: VoiceSessionBinding,
 ): VoiceConversationBindingMetadataRecord {
   const base = metadata && typeof metadata === 'object' ? { ...(metadata as Record<string, unknown>) } : {};
+  const adapterId = requireNormalizedId(binding.adapterId, 'voice conversation adapter id');
+  const controlSessionId = requireNormalizedId(binding.controlSessionId, 'voice conversation control session id');
+  const targetSessionId = normalizeId(binding.targetSessionId);
   return {
     ...base,
     voiceConversationBindingV1: {
-    v: 1,
-    adapterId: binding.adapterId,
-    controlSessionId: binding.controlSessionId,
-    transcriptMode: binding.transcriptMode,
-    targetSessionId: binding.targetSessionId,
-    updatedAt: binding.updatedAt,
+      v: 1,
+      adapterId,
+      controlSessionId,
+      transcriptMode: binding.transcriptMode,
+      targetSessionId,
+      updatedAt: Number.isFinite(binding.updatedAt) ? Number(binding.updatedAt) : 0,
     } satisfies PersistedVoiceConversationBindingV1,
   };
 }

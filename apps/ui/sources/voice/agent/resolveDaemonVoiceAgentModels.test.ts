@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { storage } from '@/sync/domains/state/storage';
 import { resolveDaemonVoiceAgentModelIds } from './resolveDaemonVoiceAgentModels';
 import { getAgentCore } from '@/agents/catalog/catalog';
 
@@ -86,58 +85,25 @@ describe('resolveDaemonVoiceAgentModelIds', () => {
         });
     });
 
-    it('uses raw session flavor even when the cached renderable session metadata is incomplete', () => {
-        const previousState = storage.getState();
-        storage.setState((current: any) => ({
-            ...current,
-            sessions: {
-                ...current.sessions,
-                s1: {
-                    id: 's1',
-                    modelMode: 'default',
-                    metadata: {
-                        flavor: 'codex',
-                    },
+    it('uses raw session flavor even when other metadata is missing', () => {
+        const result = resolveDaemonVoiceAgentModelIds({
+            session: {
+                id: 's1',
+                modelMode: 'default',
+                metadata: {
+                    flavor: 'codex',
                 },
+            } as any,
+            agent: {
+                chatModelSource: 'session',
+                commitModelSource: 'session',
             },
-            sessionListViewData: [
-                {
-                    type: 'session',
-                    serverId: 'server-a',
-                    serverName: 'Server A',
-                    session: {
-                        id: 's1',
-                        metadata: {
-                            summaryText: 'cached-visible-session',
-                        },
-                    },
-                },
-            ],
-            sessionListViewDataByServerId: {},
-        }));
+        });
 
-        try {
-            const result = resolveDaemonVoiceAgentModelIds({
-                session: {
-                    id: 's1',
-                    modelMode: 'default',
-                    metadata: {
-                        flavor: 'codex',
-                    },
-                } as any,
-                agent: {
-                    chatModelSource: 'session',
-                    commitModelSource: 'session',
-                },
-            });
-
-            expect(result).toEqual({
-                chatModelId: getAgentCore('codex').model.defaultMode,
-                commitModelId: getAgentCore('codex').model.defaultMode,
-            });
-        } finally {
-            storage.setState(previousState);
-        }
+        expect(result).toEqual({
+            chatModelId: getAgentCore('codex').model.defaultMode,
+            commitModelId: getAgentCore('codex').model.defaultMode,
+        });
     });
 
 });

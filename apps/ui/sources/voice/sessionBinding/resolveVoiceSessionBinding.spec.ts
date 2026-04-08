@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { storage } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 
@@ -134,8 +135,19 @@ describe('resolveVoiceSessionBinding', () => {
         expect(store.getState().getByConversationSessionId('carrier_old')).toBeNull();
     });
 
-    it('prefers cached visible binding metadata over stale raw session metadata for the same control session', () => {
+    it('prefers visible lookup binding metadata over stale raw session metadata for the same control session', () => {
         const store = createVoiceSessionBindingStore();
+        const lookupMetadata = createTestSession(
+            'carrier_raw',
+            createVoiceConversationMetadata({
+                adapterId: 'local_conversation',
+                controlSessionId: '__voice_agent__',
+                conversationSessionId: 'carrier_raw',
+                transcriptMode: 'native_session',
+                targetSessionId: 'lookup-target',
+                updatedAt: 30,
+            }),
+        ).metadata;
         storage.setState((current) => ({
             ...current,
             sessions: {
@@ -151,24 +163,17 @@ describe('resolveVoiceSessionBinding', () => {
                     }),
                 ),
             },
-            sessionListViewData: [
-                {
-                    type: 'session',
-                    session: {
-                        ...createTestSession(
-                            'carrier_raw',
-                            createVoiceConversationMetadata({
-                                adapterId: 'local_conversation',
-                                controlSessionId: '__voice_agent__',
-                                conversationSessionId: 'carrier_raw',
-                                transcriptMode: 'native_session',
-                                targetSessionId: 'cached-target',
-                                updatedAt: 30,
-                            }),
-                        ),
-                    },
-                },
-            ],
+            sessionListRenderables: {
+                carrier_raw: createSessionListRenderableSessionFixture({
+                    id: 'carrier_raw',
+                    metadata: lookupMetadata,
+                }),
+            },
+            sessionListIndexByServerId: {
+                'server-a': [
+                    { type: 'session', sessionId: 'carrier_raw', serverId: 'server-a', serverName: 'Server A' },
+                ],
+            },
         }));
 
         const binding = resolveVoiceSessionBindingByControlSessionId({
@@ -181,13 +186,24 @@ describe('resolveVoiceSessionBinding', () => {
             controlSessionId: '__voice_agent__',
             conversationSessionId: 'carrier_raw',
             transcriptMode: 'native_session',
-            targetSessionId: 'cached-target',
+            targetSessionId: 'lookup-target',
             updatedAt: 30,
         });
     });
 
-    it('recovers a binding by control session id from cached visible system metadata when raw session metadata is stale', () => {
+    it('recovers a binding by control session id from visible lookup system metadata when raw session metadata is stale', () => {
         const store = createVoiceSessionBindingStore();
+        const lookupMetadata = createTestSession(
+            'carrier_cached',
+            createVoiceConversationMetadata({
+                adapterId: 'local_conversation',
+                controlSessionId: '__voice_agent__',
+                conversationSessionId: 'carrier_cached',
+                transcriptMode: 'native_session',
+                targetSessionId: 'lookup-target',
+                updatedAt: 40,
+            }),
+        ).metadata;
         storage.setState((current) => ({
             ...current,
             sessions: {
@@ -203,24 +219,17 @@ describe('resolveVoiceSessionBinding', () => {
                     },
                 ),
             },
-            sessionListViewData: [
-                {
-                    type: 'session',
-                    session: {
-                        ...createTestSession(
-                            'carrier_cached',
-                            createVoiceConversationMetadata({
-                                adapterId: 'local_conversation',
-                                controlSessionId: '__voice_agent__',
-                                conversationSessionId: 'carrier_cached',
-                                transcriptMode: 'native_session',
-                                targetSessionId: 'cached-target',
-                                updatedAt: 40,
-                            }),
-                        ),
-                    },
-                },
-            ],
+            sessionListRenderables: {
+                carrier_cached: createSessionListRenderableSessionFixture({
+                    id: 'carrier_cached',
+                    metadata: lookupMetadata,
+                }),
+            },
+            sessionListIndexByServerId: {
+                'server-a': [
+                    { type: 'session', sessionId: 'carrier_cached', serverId: 'server-a', serverName: 'Server A' },
+                ],
+            },
         }));
 
         const binding = resolveVoiceSessionBindingByControlSessionId({
@@ -233,7 +242,7 @@ describe('resolveVoiceSessionBinding', () => {
             controlSessionId: '__voice_agent__',
             conversationSessionId: 'carrier_cached',
             transcriptMode: 'native_session',
-            targetSessionId: 'cached-target',
+            targetSessionId: 'lookup-target',
             updatedAt: 40,
         });
     });
@@ -265,8 +274,19 @@ describe('resolveVoiceSessionBinding', () => {
         expect(store.getState().getByConversationSessionId('carrier_s1')).toEqual(binding);
     });
 
-    it('prefers cached visible binding metadata over stale raw session metadata for the same conversation session', () => {
+    it('prefers visible lookup binding metadata over stale raw session metadata for the same conversation session', () => {
         const store = createVoiceSessionBindingStore();
+        const lookupMetadata = createTestSession(
+            'carrier_s1',
+            createVoiceConversationMetadata({
+                adapterId: 'realtime_elevenlabs',
+                controlSessionId: '__voice_agent__',
+                conversationSessionId: 'carrier_s1',
+                transcriptMode: 'synthetic',
+                targetSessionId: 'lookup-target',
+                updatedAt: 30,
+            }),
+        ).metadata;
         storage.setState((current) => ({
             ...current,
             sessions: {
@@ -282,24 +302,17 @@ describe('resolveVoiceSessionBinding', () => {
                     }),
                 ),
             },
-            sessionListViewData: [
-                {
-                    type: 'session',
-                    session: {
-                        ...createTestSession(
-                            'carrier_s1',
-                            createVoiceConversationMetadata({
-                            adapterId: 'realtime_elevenlabs',
-                            controlSessionId: '__voice_agent__',
-                            conversationSessionId: 'carrier_s1',
-                            transcriptMode: 'synthetic',
-                            targetSessionId: 'cached-target',
-                            updatedAt: 30,
-                        }),
-                        ),
-                    },
-                },
-            ],
+            sessionListRenderables: {
+                carrier_s1: createSessionListRenderableSessionFixture({
+                    id: 'carrier_s1',
+                    metadata: lookupMetadata,
+                }),
+            },
+            sessionListIndexByServerId: {
+                'server-a': [
+                    { type: 'session', sessionId: 'carrier_s1', serverId: 'server-a', serverName: 'Server A' },
+                ],
+            },
         }));
 
         const binding = resolveVoiceSessionBindingByConversationSessionId({
@@ -312,7 +325,7 @@ describe('resolveVoiceSessionBinding', () => {
             controlSessionId: '__voice_agent__',
             conversationSessionId: 'carrier_s1',
             transcriptMode: 'synthetic',
-            targetSessionId: 'cached-target',
+            targetSessionId: 'lookup-target',
             updatedAt: 30,
         });
     });

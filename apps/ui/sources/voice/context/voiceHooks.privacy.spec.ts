@@ -61,8 +61,9 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
     storage.setState((s: any) => ({
       ...s,
       settings: { ...settingsDefaults },
-      sessionListViewData: [],
-      sessionListViewDataByServerId: {},
+      sessionListRenderables: {},
+      sessionListIndexByServerId: {},
+      concurrentSessionListCacheByServerId: {},
     }));
     seedSession('s1');
     useVoiceTargetStore.getState().setPrimaryActionSessionId('s1');
@@ -198,7 +199,7 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
     expect(prompt).toContain('<session_not_found>true</session_not_found>');
   });
 
-  it('prefers cached visible session metadata over stale raw session metadata when voice starts', () => {
+  it('prefers visible lookup session metadata over stale raw session metadata when voice starts', () => {
     storage.setState((state: any) => ({
       ...state,
       sessions: {
@@ -210,25 +211,32 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
           },
         },
       },
-      sessionListViewData: [
-        {
-          type: 'session',
-          session: {
-            id: 's1',
-            updatedAt: 99,
-            metadata: {
-              ...state.sessions.s1.metadata,
-              summary: { text: 'Cached session summary', updatedAt: 2 },
-            },
+      sessionListRenderables: {
+        s1: {
+          id: 's1',
+          updatedAt: 99,
+          metadata: {
+            ...state.sessions.s1.metadata,
+            summary: { text: 'Lookup session summary', updatedAt: 2 },
           },
         },
-      ],
+      },
+      sessionListIndexByServerId: {
+        'active-server': [
+          {
+            type: 'session',
+            sessionId: 's1',
+            serverId: 'active-server',
+            serverName: 'Active',
+          },
+        ],
+      },
     }));
     useVoiceTargetStore.getState().setTrackedSessionIds(['s1']);
 
     const prompt = voiceHooks.onVoiceStarted('s1');
 
-    expect(prompt).toContain('Cached session summary');
+    expect(prompt).toContain('Lookup session summary');
     expect(prompt).not.toContain('Raw session summary');
   });
 

@@ -30,4 +30,12 @@ describe('voiceTargetStore', () => {
     useVoiceTargetStore.getState().setTrackedSessionIds(['  s2  ', 's1', 's2', '   ', 's1']);
     expect(useVoiceTargetStore.getState().trackedSessionIds).toEqual(['s1', 's2']);
   });
+
+  it('treats malformed trackedSessionIds input as empty instead of throwing', async () => {
+    vi.resetModules();
+    const { useVoiceTargetStore } = await import('./voiceTargetStore');
+
+    useVoiceTargetStore.getState().setTrackedSessionIds(null as unknown as ReadonlyArray<string>);
+    expect(useVoiceTargetStore.getState().trackedSessionIds).toEqual([]);
+  });
 });

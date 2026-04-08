@@ -34,4 +34,34 @@ describe('createVoiceSessionBindingStore', () => {
     );
     expect(store.getState().list()).toHaveLength(1);
   });
+
+  it('canonicalizes binding ids when storing and looking up bindings', () => {
+    const store = createVoiceSessionBindingStore();
+
+    store.getState().bind({
+      adapterId: '  local_conversation  ',
+      controlSessionId: '  voice-global  ',
+      conversationSessionId: '  carrier-a  ',
+      transcriptMode: 'synthetic',
+      targetSessionId: '  s1  ',
+      updatedAt: 1,
+    });
+
+    expect(store.getState().getByConversationSessionId('carrier-a')).toEqual(
+      expect.objectContaining({
+        adapterId: 'local_conversation',
+        controlSessionId: 'voice-global',
+        conversationSessionId: 'carrier-a',
+        targetSessionId: 's1',
+      }),
+    );
+    expect(store.getState().getByControlSessionId('voice-global')).toEqual(
+      expect.objectContaining({
+        adapterId: 'local_conversation',
+        controlSessionId: 'voice-global',
+        conversationSessionId: 'carrier-a',
+        targetSessionId: 's1',
+      }),
+    );
+  });
 });

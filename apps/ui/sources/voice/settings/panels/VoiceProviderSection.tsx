@@ -7,6 +7,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { t } from '@/text';
+import { resolveVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
 
 export function VoiceProviderSection(props: {
   voice: VoiceSettings;
@@ -16,11 +17,12 @@ export function VoiceProviderSection(props: {
   const { theme } = useUnistyles();
   const select = (next: VoiceSettings) => props.setVoice(next);
 
+  const providerId = resolveVoiceProviderId(props.voice.providerId);
   const billingMode = props.voice.adapters.realtime_elevenlabs.billingMode;
-  const isOff = props.voice.providerId === 'off';
-  const isHappier = props.voice.providerId === 'realtime_elevenlabs' && billingMode === 'happier';
-  const isByo = props.voice.providerId === 'realtime_elevenlabs' && billingMode === 'byo';
-  const isLocal = props.voice.providerId === 'local_direct' || props.voice.providerId === 'local_conversation';
+  const isOff = providerId === 'off';
+  const isHappier = providerId === 'realtime_elevenlabs' && billingMode === 'happier';
+  const isByo = providerId === 'realtime_elevenlabs' && billingMode === 'byo';
+  const isLocal = providerId === 'local_direct' || providerId === 'local_conversation';
 
   return (
     <ItemGroup title={t('settingsVoice.modeTitle')}>

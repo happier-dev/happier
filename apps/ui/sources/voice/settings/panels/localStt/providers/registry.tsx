@@ -1,4 +1,5 @@
 import type { LocalSttProviderId, LocalSttProviderSpec } from './_types';
+import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 
 import { deviceSttProviderSpec } from './device/deviceSttProvider';
 import { googleGeminiSttProviderSpec } from './googleGemini/googleGeminiSttProvider';
@@ -15,6 +16,7 @@ export const localSttProviderSpecs = [
 const providerById = new Map<LocalSttProviderId, LocalSttProviderSpec>(localSttProviderSpecs.map((spec) => [spec.id, spec]));
 
 export function getLocalSttProviderSpec(id: unknown): LocalSttProviderSpec {
-  const resolved = typeof id === 'string' ? providerById.get(id as LocalSttProviderId) : undefined;
+  const resolvedId = normalizeNonEmptyString(id);
+  const resolved = resolvedId ? providerById.get(resolvedId as LocalSttProviderId) : undefined;
   return resolved ?? openaiCompatSttProviderSpec;
 }

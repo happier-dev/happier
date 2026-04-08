@@ -176,6 +176,52 @@ describe('createVoiceSessionBindingManager', () => {
     expect(store.getState().getByControlSessionId('voice-global')).toEqual(initial);
   });
 
+  it('canonicalizes ids before resolving and storing a binding', async () => {
+    const { createVoiceSessionBindingStore } = await import('./voiceSessionBindingStore');
+    const { createVoiceSessionBindingManager } = await import('./voiceSessionBindingManager');
+
+    const store = createVoiceSessionBindingStore();
+    const nowMs = vi.fn()
+      .mockReturnValueOnce(123)
+      .mockReturnValueOnce(456);
+    const resolveBinding = vi.fn(async () => ({
+      conversationSessionId: 'carrier-s1',
+      controlSessionId: 'voice-global',
+      transcriptMode: 'synthetic' as const,
+      targetSessionId: 's1',
+    }));
+    const manager = createVoiceSessionBindingManager({
+      store,
+      nowMs,
+      resolveBinding,
+    });
+
+    const initial = await manager.ensureBound({
+      adapterId: ' realtime_elevenlabs ',
+      controlSessionId: ' voice-global ',
+      requestedTargetSessionId: ' s1 ',
+    });
+    const rebound = await manager.ensureBound({
+      adapterId: ' realtime_elevenlabs ',
+      controlSessionId: ' voice-global ',
+      requestedTargetSessionId: ' s1 ',
+    });
+
+    expect(resolveBinding).toHaveBeenNthCalledWith(1, {
+      adapterId: 'realtime_elevenlabs',
+      controlSessionId: 'voice-global',
+      requestedTargetSessionId: 's1',
+    });
+    expect(resolveBinding).toHaveBeenNthCalledWith(2, {
+      adapterId: 'realtime_elevenlabs',
+      controlSessionId: 'voice-global',
+      requestedTargetSessionId: 's1',
+    });
+    expect(rebound).toEqual(initial);
+    expect(nowMs).toHaveBeenCalledTimes(1);
+    expect(store.getState().getByControlSessionId('voice-global')).toEqual(initial);
+  });
+
   it('rebinds when re-resolution changes binding semantics for the same control session and target session', async () => {
     const { createVoiceSessionBindingStore } = await import('./voiceSessionBindingStore');
     const { createVoiceSessionBindingManager } = await import('./voiceSessionBindingManager');

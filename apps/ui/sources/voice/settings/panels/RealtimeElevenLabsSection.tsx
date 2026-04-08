@@ -19,6 +19,7 @@ import {
 } from '@/realtime/elevenlabs/autoprovision';
 import { listElevenLabsVoices, type ElevenLabsVoiceSummary } from '@/realtime/elevenlabs/elevenLabsVoices';
 import { showElevenLabsAgentReuseDialog } from '@/voice/settings/modals/showElevenLabsAgentReuseDialog';
+import { resolveVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
 
 function normalizeSecretStringPromptInput(value: string | null): SecretString | null {
   if (value === null) return null;
@@ -39,7 +40,7 @@ export function RealtimeElevenLabsSection(props: {
 }) {
   const { theme } = useUnistyles();
   const cfg = props.voice.adapters.realtime_elevenlabs;
-  const enabled = props.voice.providerId === 'realtime_elevenlabs';
+  const enabled = resolveVoiceProviderId(props.voice.providerId) === 'realtime_elevenlabs';
   const isByo = enabled && cfg.billingMode === 'byo';
   const [busy, setBusy] = React.useState<null | 'autoprovCreate' | 'autoprovUpdate'>(null);
   const [openMenu, setOpenMenu] = React.useState<null | 'voiceId' | 'modelId' | 'speakerBoost' | 'welcomeMode'>(null);

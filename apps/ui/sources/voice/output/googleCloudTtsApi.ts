@@ -15,7 +15,13 @@ function parseGoogleCloudTtsVoices(json: any): GoogleCloudTtsVoice[] {
       const name = typeof v?.name === 'string' ? v.name.trim() : '';
       if (!name) return null;
       const languageCodes = Array.isArray(v?.languageCodes)
-        ? v.languageCodes.filter((c: any) => typeof c === 'string' && c.trim()).map((c: string) => c.trim())
+        ? Array.from(
+            new Set(
+              v.languageCodes
+                .filter((c: any) => typeof c === 'string' && c.trim())
+                .map((c: string) => c.trim()),
+            ),
+          )
         : [];
       const ssmlGender = typeof v?.ssmlGender === 'string' && v.ssmlGender.trim() ? v.ssmlGender.trim() : null;
       const naturalSampleRateHertz =
@@ -56,4 +62,3 @@ export async function fetchGoogleCloudTtsVoiceCatalog(opts: {
   const json = await res.json().catch(() => null);
   return parseGoogleCloudTtsVoices(json);
 }
-

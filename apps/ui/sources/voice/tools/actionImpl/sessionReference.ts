@@ -1,8 +1,8 @@
 import {
-  resolveSessionListCachedSessionServerName,
+  resolveSessionListLookupSessionServerScopeFromState,
   resolveSessionListPreferredSessionMetadataFromState,
   resolveSessionListPreferredServerIdFromState,
-} from '@/sync/domains/session/listing/sessionListCacheState';
+} from '@/sync/domains/session/listing/sessionListLookupState';
 import {
   resolveVoiceSessionLocationLabelFromMetadata,
   resolveVoiceSessionTitleFromMetadata,
@@ -34,7 +34,7 @@ export function resolveVoiceSessionRef(
     ?? resolveSessionListPreferredServerIdFromState(lookupState, normalizedSessionId)
     ?? null;
   const serverName = normalizeNonEmptyString(options?.serverName)
-    ?? resolveSessionListCachedSessionServerName(lookupState, normalizedSessionId)
+    ?? resolveSessionListLookupSessionServerScopeFromState(lookupState, normalizedSessionId)?.serverName
     ?? null;
 
   return {

@@ -125,4 +125,33 @@ describe('SherpaStreamingSttController (native)', () => {
     expect(seen).not.toContain('frame-2');
     expect(seen).not.toContain('frame-3');
   });
+
+  it('normalizes session ids when tracking hands-free state', async () => {
+    const patches: any[] = [];
+    const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
+
+    const controller = createSherpaStreamingSttController({
+      setState: (patch) => patches.push(patch),
+      getSettings: () => ({
+        voice: {
+          providerId: 'local_direct',
+          adapters: {
+            local_direct: {
+              stt: { provider: 'local_neural', localNeural: { assetId: 'dummy-pack', language: 'en' } },
+            },
+          },
+        },
+      }),
+    });
+
+    controller.setHandsFreeSession(' session-2 ');
+    expect(controller.isHandsFreeSession('session-2')).toBe(true);
+
+    await controller.start(' session-2 ');
+    expect(patches[patches.length - 1]).toEqual({ status: 'recording', sessionId: 'session-2', error: null });
+    expect(controller.isHandsFreeSession(' session-2 ')).toBe(true);
+
+    controller.clearHandsFreeSession(' session-2 ');
+    expect(controller.isHandsFreeSession('session-2')).toBe(false);
+  });
 });

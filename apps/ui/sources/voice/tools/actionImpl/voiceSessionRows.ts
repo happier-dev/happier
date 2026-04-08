@@ -1,8 +1,8 @@
 import {
-  listSessionListCachedActiveSessions,
-  listSessionListCachedServerSessions,
-} from '@/sync/domains/session/listing/sessionListCacheState';
-import type { SessionMetadataLike } from '@/sync/domains/session/listing/sessionListCacheState';
+  listSessionListLookupActiveSessions,
+  listSessionListLookupServerSessions,
+} from '@/sync/domains/session/listing/sessionListLookupState';
+import type { SessionMetadataLike } from '@/sync/domains/session/listing/sessionListLookupState';
 
 import { normalizeNonEmptyString } from './shared';
 import {
@@ -160,14 +160,14 @@ export function collectVoiceSessionRows(state: unknown): readonly VoiceSessionRo
     }
   }
 
-  for (const entry of listSessionListCachedServerSessions(stateRecord)) {
+  for (const entry of listSessionListLookupServerSessions(stateRecord)) {
     pushRow(entry.session, 1, {
       serverId: entry.serverId,
       serverName: entry.serverName,
     });
   }
 
-  for (const entry of listSessionListCachedActiveSessions(stateRecord)) {
+  for (const entry of listSessionListLookupActiveSessions(stateRecord)) {
     pushRow(entry.session, 2, {
       serverId: entry.serverId,
       serverName: entry.serverName,

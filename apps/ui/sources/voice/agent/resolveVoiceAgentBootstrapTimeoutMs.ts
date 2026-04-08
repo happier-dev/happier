@@ -8,7 +8,7 @@ function normalizePositiveInteger(value: unknown): number | null {
   return Math.floor(numeric);
 }
 
-export function resolveVoiceAgentBootstrapTimeoutMs(localConversationSettings: any): number | undefined {
+export function resolveVoiceAgentBootstrapTimeoutMs(localConversationSettings: any): number {
   const configuredBootstrapTimeoutMs = normalizePositiveInteger(localConversationSettings?.agent?.bootstrapTimeoutMs);
   if (configuredBootstrapTimeoutMs) return configuredBootstrapTimeoutMs;
 

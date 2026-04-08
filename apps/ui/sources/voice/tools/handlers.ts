@@ -4,8 +4,8 @@ import { getActionSpec, listActionSpecs } from '@happier-dev/protocol';
 import { sync } from '@/sync/sync';
 import { storage } from '@/sync/domains/state/storage';
 import {
-  resolveSessionListCachedSessionServerName,
-} from '@/sync/domains/session/listing/sessionListCacheState';
+  resolveSessionListLookupSessionServerScopeFromState,
+} from '@/sync/domains/session/listing/sessionListLookupState';
 import { trackPermissionResponse } from '@/track';
 import { voiceActivityController } from '@/voice/activity/voiceActivityController';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
@@ -312,7 +312,7 @@ export function createVoiceToolHandlers(
 
   const executor = createDefaultActionExecutor({
     resolveServerIdForSessionId: (sessionId: string) => resolvePreferredServerIdForSessionId(sessionId) ?? null,
-    resolveServerNameForSessionId: (sessionId: string) => resolveSessionListCachedSessionServerName(storage.getState(), sessionId),
+    resolveServerNameForSessionId: (sessionId: string) => resolveSessionListLookupSessionServerScopeFromState(storage.getState(), sessionId)?.serverName ?? null,
   });
 
   const execute = async (toolName: string, parameters: unknown, ctx?: { serverId?: string | null }): Promise<string> => {

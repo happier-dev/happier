@@ -9,12 +9,13 @@ describe('resolveVoiceSessionLabel', () => {
     storage.setState((state: any) => ({
       ...state,
       sessions: {},
-      sessionListViewData: [],
-      sessionListViewDataByServerId: {},
+      sessionListRenderables: {},
+      sessionListIndexByServerId: {},
+      concurrentSessionListCacheByServerId: {},
     }));
   });
 
-  it('prefers the visible cached session metadata over stale raw session metadata', () => {
+  it('prefers the visible lookup session metadata over stale raw session metadata', () => {
     storage.setState((state: any) => ({
       ...state,
       sessions: {
@@ -26,19 +27,26 @@ describe('resolveVoiceSessionLabel', () => {
           },
         },
       },
-      sessionListViewData: [
-        {
-          type: 'session',
-          session: {
-            id: 's_matrix',
-            updatedAt: 42,
-            metadata: {
-              summaryText: 'Cached session summary',
-              path: '/Users/alice/project-alpha',
-            },
+      sessionListRenderables: {
+        s_matrix: {
+          id: 's_matrix',
+          updatedAt: 42,
+          metadata: {
+            summaryText: 'Lookup session summary',
+            path: '/Users/alice/project-alpha',
           },
         },
-      ],
+      },
+      sessionListIndexByServerId: {
+        'active-server': [
+          {
+            type: 'session',
+            sessionId: 's_matrix',
+            serverId: 'active-server',
+            serverName: 'Active',
+          },
+        ],
+      },
     }));
 
     expect(
@@ -46,6 +54,71 @@ describe('resolveVoiceSessionLabel', () => {
         voiceShareSessionSummary: true,
         voiceShareFilePaths: true,
       }),
-    ).toBe('Cached session summary');
+    ).toBe('Lookup session summary');
+  });
+
+  it('trims the session id before resolving the label', () => {
+    storage.setState((state: any) => ({
+      ...state,
+      sessions: {
+        s_matrix: {
+          id: 's_matrix',
+          metadata: {
+            summaryText: 'Raw session summary!',
+            path: '/Users/alice/project-alpha',
+          },
+        },
+      },
+      sessionListRenderables: {
+        s_matrix: {
+          id: 's_matrix',
+          updatedAt: 42,
+          metadata: {
+            summaryText: 'Trimmed session summary',
+            path: '/Users/alice/project-alpha',
+          },
+        },
+      },
+      sessionListIndexByServerId: {
+        'active-server': [
+          {
+            type: 'session',
+            sessionId: 's_matrix',
+            serverId: 'active-server',
+            serverName: 'Active',
+          },
+        ],
+      },
+    }));
+
+    expect(
+      resolveVoiceSessionLabel(' s_matrix ', {
+        voiceShareSessionSummary: true,
+        voiceShareFilePaths: true,
+      }),
+    ).toBe('Trimmed session summary');
+  });
+
+  it('trims the session id before resolving a raw session name', () => {
+    storage.setState((state: any) => ({
+      ...state,
+      sessions: {
+        s_matrix: {
+          id: 's_matrix',
+          metadata: {
+            name: 'Raw session name',
+            path: '/Users/alice/project-alpha',
+          },
+        },
+      },
+      sessionListIndexByServerId: {},
+    }));
+
+    expect(
+      resolveVoiceSessionLabel(' s_matrix ', {
+        voiceShareSessionSummary: false,
+        voiceShareFilePaths: true,
+      }),
+    ).toBe('Raw session name');
   });
 });

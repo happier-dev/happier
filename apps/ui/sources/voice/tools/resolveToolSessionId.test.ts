@@ -45,4 +45,13 @@ describe('resolveToolSessionId', () => {
     useVoiceTargetStore.setState({ scope: 'session', primaryActionSessionId: 's_global', lastFocusedSessionId: 's_last' } as any);
     expect(resolveToolSessionId({ explicitSessionId: null, currentSessionId: 's_current' })).toBe('s_current');
   });
+
+  it('trims stored global target ids before falling back to them', async () => {
+    vi.resetModules();
+    const { useVoiceTargetStore } = await import('@/voice/runtime/voiceTargetStore');
+    const { resolveToolSessionId } = await import('./resolveToolSessionId');
+
+    useVoiceTargetStore.setState({ scope: 'global', primaryActionSessionId: ' s_primary ', lastFocusedSessionId: ' s_last ' } as any);
+    expect(resolveToolSessionId({ explicitSessionId: null, currentSessionId: null })).toBe('s_primary');
+  });
 });

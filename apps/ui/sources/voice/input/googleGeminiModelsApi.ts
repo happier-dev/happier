@@ -16,6 +16,7 @@ function normalizeModelId(name: string): string {
 function parseModelCatalog(json: any): GoogleGeminiModelSummary[] {
   const models = Array.isArray(json?.models) ? json.models : [];
   const out: GoogleGeminiModelSummary[] = [];
+  const seenIds = new Set<string>();
 
   for (const m of models) {
     const name = typeof m?.name === 'string' ? m.name.trim() : '';
@@ -25,7 +26,10 @@ function parseModelCatalog(json: any): GoogleGeminiModelSummary[] {
 
     const displayName = typeof m?.displayName === 'string' && m.displayName.trim() ? m.displayName.trim() : name;
     const description = typeof m?.description === 'string' && m.description.trim() ? m.description.trim() : null;
-    out.push({ id: normalizeModelId(name), name, displayName, description });
+    const id = normalizeModelId(name);
+    if (seenIds.has(id)) continue;
+    seenIds.add(id);
+    out.push({ id, name, displayName, description });
   }
 
   out.sort((a, b) => a.displayName.localeCompare(b.displayName));
@@ -53,4 +57,3 @@ export async function fetchGoogleGeminiModelCatalog(opts: {
   const json = await res.json().catch(() => null);
   return parseModelCatalog(json);
 }
-

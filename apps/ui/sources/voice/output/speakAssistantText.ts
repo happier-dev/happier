@@ -1,6 +1,7 @@
 import type { VoicePlaybackStopperRegistrar } from '@/voice/runtime/VoicePlaybackController';
 import { VoiceLocalTtsSchema } from '@/sync/domains/settings/voiceLocalTtsSettings';
 import { speakWithLocalTtsProvider } from '@/voice/backends/tts/runtime';
+import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 
 export async function speakAssistantText(params: {
   text: string;
@@ -13,7 +14,7 @@ export async function speakAssistantText(params: {
   if (!trimmed) return;
 
   const voice = params.settings?.voice ?? null;
-  const providerId = voice?.providerId;
+  const providerId = normalizeNonEmptyString(voice?.providerId);
   const adapter =
     providerId === 'local_direct'
       ? voice?.adapters?.local_direct

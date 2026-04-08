@@ -1,4 +1,5 @@
 import { storage } from '@/sync/domains/state/storage';
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 
 export type VoiceUpdateLevel = 'none' | 'activity' | 'summaries' | 'snippets';
@@ -30,12 +31,18 @@ export function resolveVoiceSessionUpdatePolicy(params: Readonly<{
 }>): VoiceSessionUpdatePolicy {
   const settings = (params.settings ?? {}) as any;
   const updates = settings?.voice?.ui?.updates ?? {};
+  const trackedSessionIds = Array.isArray(params.trackedSessionIds)
+    ? params.trackedSessionIds
+        .map((sessionId) => normalizeSessionId(sessionId))
+        .filter((sessionId) => sessionId.length > 0)
+    : [];
+  const sessionId = normalizeSessionId(params.sessionId);
 
   const activeLevel = normalizeUpdateLevel(updates.activeSession, 'summaries');
   const otherLevel = normalizeUpdateLevel(updates.otherSessions, 'activity');
   const otherSnippetsMode = String(updates.otherSessionsSnippetsMode ?? 'on_demand_only');
 
-  const isTrackedSession = params.trackedSessionIds.includes(params.sessionId);
+  const isTrackedSession = trackedSessionIds.includes(sessionId);
   const baseLevel = isTrackedSession ? activeLevel : otherLevel;
 
   const level = (!isTrackedSession && baseLevel === 'snippets' && otherSnippetsMode !== 'auto')

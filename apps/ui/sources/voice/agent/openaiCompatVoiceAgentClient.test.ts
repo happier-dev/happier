@@ -29,20 +29,19 @@ const state: any = {
       metadata: { flavor: 'claude', machineId: 'machine-raw' },
     },
   },
-  sessionListViewData: [
-    {
-      type: 'session',
-      serverId: 'server-a',
-      serverName: 'Server A',
-      session: {
-        id: 's1',
-        active: true,
-        presence: 'online',
-        modelMode: 'default',
-        metadata: { flavor: 'claude', machineId: 'machine-cached' },
-      },
+  sessionListRenderables: {
+    s1: {
+      id: 's1',
+      updatedAt: 0,
+      metadata: { flavor: 'claude', machineId: 'machine-cached', path: '/tmp/project' },
     },
-  ],
+  },
+  sessionListIndexByServerId: {
+    'server-a': [
+      { type: 'session', sessionId: 's1', serverId: 'server-a', serverName: 'Server A' },
+    ],
+  },
+  concurrentSessionListCacheByServerId: {},
 };
 const getState = vi.fn(() => state);
 const resolveUiVoicePromptStackBlocks = vi.fn(async (_args?: { profileId?: string | null }) => []);
@@ -81,7 +80,7 @@ describe('OpenAiCompatVoiceAgentClient', () => {
     resolveUiMemoryRecallGuidanceEnabled.mockClear();
     resolveUiMemoryRecallGuidanceEnabled.mockResolvedValue(false);
     state.sessions.s1.metadata = { flavor: 'claude', machineId: 'machine-raw' };
-    state.sessionListViewData[0].session.metadata = { flavor: 'claude', machineId: 'machine-cached' };
+    state.sessionListRenderables.s1.metadata = { flavor: 'claude', machineId: 'machine-cached', path: '/tmp/project' };
   });
 
   afterEach(() => {
@@ -196,7 +195,7 @@ describe('OpenAiCompatVoiceAgentClient', () => {
     expect(resolveUiVoicePromptStackBlocks).toHaveBeenCalledWith({ profileId: 'work' });
   });
 
-  it('prefers cached visible session metadata when resolving memory recall guidance machine ids', async () => {
+  it('prefers visible lookup session metadata when resolving memory recall guidance machine ids', async () => {
     const guidanceCalls: any[] = [];
     resolveUiMemoryRecallGuidanceEnabled.mockImplementationOnce(async (args: any) => {
       guidanceCalls.push(args);

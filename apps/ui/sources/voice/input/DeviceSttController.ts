@@ -1,5 +1,6 @@
 import { requestMicrophonePermission, showMicrophonePermissionDeniedAlert } from '@/utils/platform/microphonePermissions';
 import { computeTurnEndpointDelayMs, normalizeTurnEndpointPolicy } from '@/voice/input/TurnEndpointDetector';
+import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import { Platform } from 'react-native';
 
 type DeviceSttStatePatch = {
@@ -39,11 +40,12 @@ export function createDeviceSttController(deps: {
   let handsFreeSessionId: string | null = null;
 
   const isDomRuntime = (): boolean => typeof window !== 'undefined' && typeof document !== 'undefined';
+  const normalizeSessionId = (sessionId: string | null | undefined): string | null => normalizeNonEmptyString(sessionId);
 
   const isHandsFreeDeviceSttEnabled = (): boolean => {
     const settings = deps.getSettings();
     const voice = settings?.voice ?? null;
-    const providerId = voice?.providerId;
+    const providerId = normalizeNonEmptyString(voice?.providerId);
     const adapter =
       providerId === 'local_direct'
         ? voice?.adapters?.local_direct
@@ -74,7 +76,7 @@ export function createDeviceSttController(deps: {
 
     const settings = deps.getSettings();
     const voice = settings?.voice ?? null;
-    const providerId = voice?.providerId;
+    const providerId = normalizeNonEmptyString(voice?.providerId);
     const adapter =
       providerId === 'local_direct'
         ? voice?.adapters?.local_direct
@@ -113,13 +115,17 @@ export function createDeviceSttController(deps: {
   };
 
   const clearHandsFreeSession = (sessionId?: string) => {
-    if (sessionId && handsFreeSessionId && handsFreeSessionId !== sessionId) {
+    const normalizedSessionId = normalizeSessionId(sessionId);
+    if (normalizedSessionId && handsFreeSessionId && handsFreeSessionId !== normalizedSessionId) {
       return;
     }
     handsFreeSessionId = null;
   };
 
   const start = async (sessionId: string) => {
+    const normalizedSessionId = normalizeSessionId(sessionId);
+    if (!normalizedSessionId) return;
+
     const microphonePermission = await requestMicrophonePermission();
     if (!microphonePermission.granted) {
       showMicrophonePermissionDeniedAlert(microphonePermission.canAskAgain);
@@ -156,7 +162,7 @@ export function createDeviceSttController(deps: {
     });
 
     const nextHandle: DeviceSttHandle = {
-      sessionId,
+      sessionId: normalizedSessionId,
       transcript: '',
       isFinal: false,
       pendingAutoStop: false,
@@ -181,7 +187,7 @@ export function createDeviceSttController(deps: {
           nextHandle.isFinal = true;
           if (!nextHandle.pendingAutoStop && isHandsFreeDeviceSttEnabled()) {
             nextHandle.pendingAutoStop = true;
-            scheduleHandsFreeStop(sessionId, nextHandle);
+            scheduleHandsFreeStop(normalizedSessionId, nextHandle);
           }
         }
       })
@@ -217,11 +223,12 @@ export function createDeviceSttController(deps: {
       throw error;
     }
 
-    deps.setState({ status: 'recording', sessionId, error: null });
+    deps.setState({ status: 'recording', sessionId: normalizedSessionId, error: null });
   };
 
   const stop = async (sessionId: string): Promise<string> => {
-    if (!handle || handle.sessionId !== sessionId) {
+    const normalizedSessionId = normalizeSessionId(sessionId);
+    if (!handle || !normalizedSessionId || handle.sessionId !== normalizedSessionId) {
       return '';
     }
 
@@ -253,9 +260,9 @@ export function createDeviceSttController(deps: {
 
   return {
     clearHandsFreeSession,
-    isHandsFreeSession: (sessionId: string) => handsFreeSessionId === sessionId,
+    isHandsFreeSession: (sessionId: string) => handsFreeSessionId === normalizeSessionId(sessionId),
     setHandsFreeSession: (sessionId: string | null) => {
-      handsFreeSessionId = sessionId;
+      handsFreeSessionId = normalizeSessionId(sessionId);
     },
     start,
     stop,

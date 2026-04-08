@@ -11,25 +11,32 @@ const voiceTargetState = {
   lastFocusedSessionId: null as string | null,
 };
 
-const state: any = {
-  sessions: {
-    s_new: {
-      id: 's_new',
-      metadata: { summary: { text: 'Voice Workspace Label Probe' } },
+function createBaseState(): any {
+  return {
+    sessions: {
+      s_new: {
+        id: 's_new',
+        metadata: { summary: { text: 'Voice Workspace Label Probe' } },
+      },
     },
-  },
-  machines: {
-    m1: {
-      id: 'm1',
-      metadata: { displayName: 'Leeroy MacBook Pro', host: 'leeroy-mbp' },
+    machines: {
+      m1: {
+        id: 'm1',
+        metadata: { displayName: 'Leeroy MacBook Pro', host: 'leeroy-mbp' },
+      },
     },
-  },
-  settings: {
-    recentMachinePaths: [
-      { machineId: 'm1', path: '/Users/leeroy/projects/happier' },
-    ],
-  },
-};
+    settings: {
+      recentMachinePaths: [
+        { machineId: 'm1', path: '/Users/leeroy/projects/happier' },
+      ],
+    },
+    sessionListRenderables: {},
+    sessionListIndexByServerId: {},
+    concurrentSessionListCacheByServerId: {},
+  };
+}
+
+let state: any = createBaseState();
 
 installVoiceToolActionImplCommonModuleMocks({
   storage: async () => {
@@ -70,6 +77,7 @@ vi.mock('./spawnSessionAgent', () => ({
 
 describe('spawnSessionForVoiceTool', () => {
   beforeEach(() => {
+    state = createBaseState();
     machineSpawnNewSession.mockClear();
     postprocessSpawnedSession.mockClear();
     getActiveServerSnapshot.mockClear();
@@ -132,7 +140,7 @@ describe('spawnSessionForVoiceTool', () => {
     }));
   });
 
-  it('prefers cached visible session metadata when choosing a spawn target for the voice session', async () => {
+  it('prefers visible lookup session metadata when choosing a spawn target for the voice session', async () => {
     state.sessions = {
       ...state.sessions,
       s_spawn_target: {
@@ -143,19 +151,22 @@ describe('spawnSessionForVoiceTool', () => {
         },
       },
     };
-    state.sessionListViewData = [
-      {
-        type: 'session',
-        session: {
-          id: 's_spawn_target',
-          updatedAt: 999,
-          metadata: {
-            machineId: 'm1',
-            path: '/Users/leeroy/projects/happier',
-          },
+    state.sessionListRenderables = {
+      ...state.sessionListRenderables,
+      s_spawn_target: {
+        id: 's_spawn_target',
+        updatedAt: 999,
+        metadata: {
+          machineId: 'm1',
+          path: '/Users/leeroy/projects/happier',
         },
       },
-    ];
+    };
+    state.sessionListIndexByServerId = {
+      'server-a': [
+        { type: 'session', sessionId: 's_spawn_target', serverId: 'server-a', serverName: 'Server A' },
+      ],
+    };
     voiceTargetState.primaryActionSessionId = 's_spawn_target';
 
     const { spawnSessionForVoiceTool } = await import('./spawnSession');

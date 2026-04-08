@@ -172,7 +172,7 @@ describe('listRecentPathsForVoiceTool', () => {
         expect(result.items[0]).not.toHaveProperty('path');
     });
 
-    it('counts lastUsedAt from cached visible session metadata when the raw session path is stale', async () => {
+    it('counts lastUsedAt from visible lookup session metadata when the raw session path is stale', async () => {
         state.sessions = {
             s1: {
                 id: 's1',
@@ -185,28 +185,22 @@ describe('listRecentPathsForVoiceTool', () => {
                 },
             },
         };
-        state.sessionListViewData = [
-            {
-                type: 'session',
-                session: {
-                    id: 's1',
-                    active: true,
-                    seq: 0,
-                    createdAt: 0,
-                    activeAt: 0,
-                    updatedAt: 1000,
-                    metadataVersion: 0,
-                    agentStateVersion: 0,
-                    thinking: false,
-                    thinkingAt: 0,
-                    presence: 'online',
-                    metadata: {
-                        machineId: 'm1',
-                        path: '/Users/leeroy/projects/happier',
-                    },
+        state.sessionListRenderables = {
+            s1: {
+                id: 's1',
+                updatedAt: 1000,
+                metadata: {
+                    machineId: 'm1',
+                    path: '/Users/leeroy/projects/happier',
                 },
             },
-        ];
+        };
+        state.sessionListIndexByServerId = {
+            'server-a': [
+                { type: 'session', sessionId: 's1', serverId: 'server-a', serverName: 'Server A' },
+            ],
+        };
+        state.concurrentSessionListCacheByServerId = {};
         state.settings.recentMachinePaths = [
             { machineId: 'm1', path: '/Users/leeroy/projects/happier' },
         ];

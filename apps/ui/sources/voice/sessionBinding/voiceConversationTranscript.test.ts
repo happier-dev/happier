@@ -45,6 +45,27 @@ describe('voiceConversationTranscript', () => {
     );
   });
 
+  it('trims the conversation session id before appending transcript messages', async () => {
+    const { appendVoiceConversationUserText } = await import('./voiceConversationTranscript');
+
+    appendVoiceConversationUserText({
+      conversationSessionId: '  carrier-s1  ',
+      text: 'hello from voice',
+    });
+
+    expect(applyMessagesLoaded).toHaveBeenCalledWith('carrier-s1');
+    expect(applyMessages).toHaveBeenCalledWith(
+      'carrier-s1',
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'user',
+          content: { type: 'text', text: 'hello from voice' },
+          isSidechain: false,
+        }),
+      ]),
+    );
+  });
+
   it('appends assistant text and plain note messages as agent transcript messages', async () => {
     const {
       appendVoiceConversationAssistantText,

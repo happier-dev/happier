@@ -18,6 +18,12 @@ function normalizeId(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function requireNormalizedId(value: unknown, fieldName: string): string {
+  const normalized = normalizeId(value);
+  if (normalized) return normalized;
+  throw new TypeError(`Invalid ${fieldName}`);
+}
+
 export type VoiceConversationScopeMetadata = Readonly<
   | { kind: 'voice_home' }
   | { kind: 'session_root'; sessionRootId: string }
@@ -53,7 +59,11 @@ export function writeVoiceConversationScopeMetadata(
   const nextScope: PersistedVoiceConversationScopeV1 =
     scope.kind === 'voice_home'
       ? { v: 1, kind: 'voice_home' }
-      : { v: 1, kind: 'session_root', sessionRootId: scope.sessionRootId };
+      : {
+          v: 1,
+          kind: 'session_root',
+          sessionRootId: requireNormalizedId(scope.sessionRootId, 'voice conversation scope session root id'),
+        };
 
   return {
     ...base,

@@ -8,6 +8,7 @@ import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { t } from '@/text';
 import { LocalVoiceTtsGroup } from '@/voice/settings/panels/localTts/LocalVoiceTtsGroup';
 import { LocalVoiceSttGroup } from '@/voice/settings/panels/localStt/LocalVoiceSttGroup';
+import { resolveVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 export function LocalDirectSection(props: {
@@ -15,7 +16,7 @@ export function LocalDirectSection(props: {
   setVoice: (next: VoiceSettings) => void;
   popoverBoundaryRef?: React.RefObject<any> | null;
 }) {
-  const enabled = props.voice.providerId === 'local_direct';
+  const enabled = resolveVoiceProviderId(props.voice.providerId) === 'local_direct';
   if (!enabled) return null;
 
   const cfg = props.voice.adapters.local_direct;

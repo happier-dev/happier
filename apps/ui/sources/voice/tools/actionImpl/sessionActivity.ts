@@ -1,5 +1,5 @@
 import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSessionMessages';
-import { findSessionListCachedSession } from '@/sync/domains/session/listing/sessionListCacheState';
+import { findSessionListLookupSession } from '@/sync/domains/session/listing/sessionListLookupState';
 import { storage } from '@/sync/domains/state/storage';
 
 export async function getSessionActivityForVoiceTool(params: Readonly<{ sessionId: string; windowSeconds?: number }>): Promise<
@@ -8,7 +8,7 @@ export async function getSessionActivityForVoiceTool(params: Readonly<{ sessionI
 > {
   const sessionId = String(params.sessionId ?? '').trim();
   const state: any = storage.getState();
-  const session: any = findSessionListCachedSession(state, sessionId)?.session ?? null;
+  const session: any = findSessionListLookupSession(state, sessionId)?.session ?? null;
   if (!session) {
     return { ok: false, errorCode: 'session_not_found', errorMessage: 'session_not_found', sessionId };
   }

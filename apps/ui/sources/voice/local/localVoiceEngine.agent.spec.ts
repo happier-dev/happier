@@ -415,25 +415,35 @@ describe('local voice engine agent behavior', () => {
                     },
                 },
             },
-            sessions: {
-                ...storage.getState().sessions,
-                s1: {
-                    id: 's1',
-                    active: true,
-                    presence: 'online',
-                    metadata: { path: '/tmp', host: 'test' },
-                    agentState: {
-                        requests: {
-                            req_question: {
-                                id: 'req_question',
-                                tool: 'AskUserQuestion',
-                                kind: 'user_action',
-                            },
-                        },
-                    },
-                },
-            },
-        });
+	            sessions: {
+	                ...storage.getState().sessions,
+	                s1: {
+	                    id: 's1',
+	                    serverId: 'server-a',
+	                    active: true,
+	                    presence: 'online',
+	                    metadata: { path: '/tmp', host: 'test' },
+	                    agentState: {
+	                        requests: {
+	                            req_question: {
+	                                id: 'req_question',
+	                                tool: 'AskUserQuestion',
+	                                kind: 'user_action',
+	                            },
+	                        },
+	                    },
+	                },
+	            },
+	            concurrentSessionListCacheByServerId: {
+	                ...(storage.getState() as any).concurrentSessionListCacheByServerId,
+	                'server-a': {
+	                    serverName: null,
+	                    sessions: {
+	                        s1: { id: 's1', active: true, presence: 'online', metadata: { path: '/tmp', host: 'test' } },
+	                    },
+	                },
+	            },
+	        });
 
         const actionBlock = [
             '<voice_actions>',
@@ -1596,16 +1606,14 @@ describe('local voice engine agent behavior', () => {
                     },
                 },
             },
-            sessionListViewDataByServerId: {
-                ...(storage.getState() as any).sessionListViewDataByServerId,
-                'server-b': [
-                    {
-                        type: 'session',
-                        serverId: 'server-b',
-                        serverName: 'Server B',
-                        session: { id: 's_other', active: false, updatedAt: 10, presence: 'offline', metadata: { path: '/tmp', host: 'b-host' } },
+            concurrentSessionListCacheByServerId: {
+                ...(storage.getState() as any).concurrentSessionListCacheByServerId,
+                'server-b': {
+                    serverName: 'Server B',
+                    sessions: {
+                        s_other: { id: 's_other', active: false, updatedAt: 10, presence: 'offline', metadata: { path: '/tmp', host: 'b-host' } },
                     },
-                ],
+                },
             },
             sessions: {
                 ...storage.getState().sessions,

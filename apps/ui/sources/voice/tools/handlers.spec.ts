@@ -24,10 +24,11 @@ const sessionRpcWithServerScope = vi.fn();
 const teleportVoiceAgentToSessionRoot = vi.fn();
 
 function createBaseState(): any {
-  return {
+  const base: any = {
     sessions: {
       s1: {
         id: 's1',
+        serverId: 'server-a',
         active: true,
         updatedAt: 200,
         presence: 'online',
@@ -41,6 +42,7 @@ function createBaseState(): any {
       },
       s2: {
         id: 's2',
+        serverId: 'server-a',
         active: true,
         updatedAt: 100,
         presence: 'offline',
@@ -53,6 +55,7 @@ function createBaseState(): any {
       },
       sys_voice: {
         id: 'sys_voice',
+        serverId: 'server-a',
         active: false,
         updatedAt: 300,
         presence: 'offline',
@@ -61,6 +64,7 @@ function createBaseState(): any {
       },
       s_matrix: {
         id: 's_matrix',
+        serverId: 'server-a',
         active: false,
         updatedAt: 60,
         presence: 'offline',
@@ -68,29 +72,21 @@ function createBaseState(): any {
         metadata: { path: '/tmp/matrix', machineId: 'm1', host: 'a-host', name: 'leeroy' },
       },
     },
-    sessionListViewData: [
-      {
-        type: 'session',
-        session: {
-          id: 's_visible_only',
-          active: true,
-          updatedAt: 75,
-          presence: 'online',
-          metadata: { summaryText: 'Visible only in current list', path: '/tmp/visible-only' },
-        },
-      },
-      {
-        type: 'session',
-        session: {
-          id: 's_matrix',
-          active: false,
-          updatedAt: 60,
-          presence: 'offline',
-          metadata: { summaryText: 'Session QA Voice Matrix', path: '/tmp/matrix' },
-        },
-      },
-    ],
     sessionListRenderables: {
+      s_visible_only: {
+        id: 's_visible_only',
+        active: true,
+        updatedAt: 75,
+        activeAt: 75,
+        createdAt: 70,
+        seq: 1,
+        metadataVersion: 1,
+        agentStateVersion: 1,
+        thinking: false,
+        thinkingAt: 0,
+        presence: 'online',
+        metadata: { summaryText: 'Visible only in current list', path: '/tmp/visible-only' },
+      },
       s_matrix: {
         id: 's_matrix',
         active: false,
@@ -106,13 +102,17 @@ function createBaseState(): any {
         metadata: { summaryText: 'Session QA Voice Matrix', path: '/tmp/matrix' },
       },
     },
-    sessionListViewDataByServerId: {
-      'server-b': [
-        {
-          type: 'session',
-          serverId: 'server-b',
-          serverName: 'Server B',
-          session: {
+    sessionListIndexByServerId: {
+      'server-a': [
+        { type: 'session', sessionId: 's_visible_only', serverId: 'server-a', serverName: 'Server A' },
+        { type: 'session', sessionId: 's_matrix', serverId: 'server-a', serverName: 'Server A' },
+      ],
+    },
+    concurrentSessionListCacheByServerId: {
+      'server-b': {
+        serverName: 'Server B',
+        sessions: {
+          s_other: {
             id: 's_other',
             active: false,
             updatedAt: 50,
@@ -121,7 +121,7 @@ function createBaseState(): any {
             metadata: { path: '/tmp/other', host: 'b-host', summary: { text: 'Other summary' } },
           },
         },
-      ],
+      },
     },
     machines: {
       m1: { id: 'm1', metadata: { host: 'a-host' } },
@@ -184,6 +184,21 @@ function createBaseState(): any {
       ],
     },
   };
+
+  base.concurrentSessionListCacheByServerId = {
+    'server-a': {
+      serverName: 'Server A',
+      sessions: {
+        s1: base.sessions.s1,
+        s2: base.sessions.s2,
+        sys_voice: base.sessions.sys_voice,
+        s_matrix: base.sessions.s_matrix,
+      },
+    },
+    ...base.concurrentSessionListCacheByServerId,
+  };
+
+  return base;
 }
 
 let state: any = createBaseState();
@@ -1233,7 +1248,8 @@ describe('voice tool handlers', () => {
   });
 
   it('falls back to the raw session title when the visible cache is unavailable', async () => {
-    state.sessionListViewData = null;
+    state.sessionListIndexByServerId = {};
+    state.sessionListRenderables = {};
 
     const { createVoiceToolHandlers } = await import('./handlers');
     const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
@@ -1250,28 +1266,41 @@ describe('voice tool handlers', () => {
   });
 
   it('uses a larger default session list page when limit is omitted so older visible titles stay discoverable', async () => {
-    state.sessionListViewData = [
-      ...Array.from({ length: 30 }, (_, index) => ({
-        type: 'session',
-        session: {
-          id: `s_recent_${index + 1}`,
-          active: true,
-          updatedAt: 1000 - index,
-          presence: 'online',
-          metadata: { summaryText: `Recent session ${index + 1}`, path: `/tmp/recent-${index + 1}` },
-        },
-      })),
-      {
-        type: 'session',
-        session: {
-          id: 's_matrix',
-          active: false,
-          updatedAt: 60,
-          presence: 'offline',
-          metadata: { summaryText: 'Session QA Voice Matrix', path: '/tmp/matrix' },
-        },
+    state.sessionListRenderables = {
+      ...Object.fromEntries(
+        Array.from({ length: 30 }, (_, index) => {
+          const id = `s_recent_${index + 1}`;
+          return [
+            id,
+            {
+              id,
+              active: true,
+              updatedAt: 1000 - index,
+              presence: 'online',
+              metadata: { summaryText: `Recent session ${index + 1}`, path: `/tmp/recent-${index + 1}` },
+            },
+          ];
+        }),
+      ),
+      s_matrix: {
+        id: 's_matrix',
+        active: false,
+        updatedAt: 60,
+        presence: 'offline',
+        metadata: { summaryText: 'Session QA Voice Matrix', path: '/tmp/matrix' },
       },
-    ];
+    };
+    state.sessionListIndexByServerId = {
+      'server-a': [
+        ...Array.from({ length: 30 }, (_, index) => ({
+          type: 'session' as const,
+          sessionId: `s_recent_${index + 1}`,
+          serverId: 'server-a',
+          serverName: 'Server A',
+        })),
+        { type: 'session' as const, sessionId: 's_matrix', serverId: 'server-a', serverName: 'Server A' },
+      ],
+    };
 
     const { createVoiceToolHandlers } = await import('./handlers');
     const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });

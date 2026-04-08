@@ -4,6 +4,7 @@ import { sync } from '@/sync/sync';
 import { useVoiceActivityStore } from '@/voice/activity/voiceActivityStore';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { findVoiceConversationSessionId } from '@/voice/sessionBinding/voiceConversationSession';
+import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 
 type VoiceAgentTurnPayloadV1 = Readonly<{
   v: 1;
@@ -15,7 +16,7 @@ type VoiceAgentTurnPayloadV1 = Readonly<{
 
 function resolveTranscriptConfig(state: any): Readonly<{ persistenceMode: 'ephemeral' | 'persistent'; epoch: number }> {
   const cfg = state?.settings?.voice?.adapters?.local_conversation?.agent?.transcript ?? null;
-  const persistenceMode = cfg?.persistenceMode === 'persistent' ? 'persistent' : 'ephemeral';
+  const persistenceMode = normalizeNonEmptyString(cfg?.persistenceMode) === 'persistent' ? 'persistent' : 'ephemeral';
   const epochRaw = Number(cfg?.epoch ?? 0);
   const epoch = Number.isFinite(epochRaw) && epochRaw >= 0 ? Math.floor(epochRaw) : 0;
   return { persistenceMode, epoch };

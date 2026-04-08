@@ -30,6 +30,49 @@ vi.mock('@/sync/sync', () => ({
 import { speakAssistantText } from '@/voice/output/speakAssistantText';
 
 describe('speakAssistantText', () => {
+  it('trims the voice provider id before selecting the TTS adapter', async () => {
+    speakDeviceTextSpy.mockClear();
+    speakOpenAiCompatTextSpy.mockClear();
+
+    const onSpeaking = vi.fn();
+    const registerPlaybackStopper = (_s: () => void) => () => {};
+
+    await speakAssistantText({
+      text: 'hello',
+      settings: {
+        voice: {
+          providerId: ' local_direct ',
+          adapters: {
+            local_direct: {
+              tts: {
+                provider: 'device',
+                openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
+                localNeural: { model: 'kokoro', assetId: null, voiceId: null, speed: null },
+                autoSpeakReplies: true,
+                bargeInEnabled: true,
+              },
+            },
+            local_conversation: {
+              tts: {
+                provider: 'openai_compat',
+                openaiCompat: { baseUrl: 'http://example.com/v1', apiKey: null, model: 'm', voice: 'v', format: 'wav' },
+                localNeural: { model: 'kokoro', assetId: null, voiceId: null, speed: null },
+                autoSpeakReplies: true,
+                bargeInEnabled: true,
+              },
+            },
+          },
+        },
+      },
+      networkTimeoutMs: 15000,
+      registerPlaybackStopper,
+      onSpeaking,
+    });
+
+    expect(speakDeviceTextSpy).toHaveBeenCalledWith('hello', onSpeaking);
+    expect(speakOpenAiCompatTextSpy).not.toHaveBeenCalled();
+  });
+
   it('routes device TTS provider to expo speech', async () => {
     const onSpeaking = vi.fn();
     let stopper: (() => void) | null = null;

@@ -1,6 +1,6 @@
 import { storage } from '@/sync/domains/state/storage';
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
-import { findSessionListViewDataSession } from '@/sync/domains/session/listing/sessionListViewDataAccess';
+import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { getRecentPathsForMachine } from '@/utils/sessions/recentPaths';
@@ -65,14 +65,14 @@ export async function listRecentPathsForVoiceTool(params: Readonly<{ machineId?:
       for (const s of sessions as any[]) {
         if (!s || typeof s !== 'object') continue;
         const sessionId = typeof s.id === 'string' ? s.id : '';
-        const cachedSessionMetadata = findSessionListViewDataSession(state?.sessionListViewData, sessionId)?.session?.metadata ?? null;
+        const lookupSessionMetadata = resolveSessionListPreferredSessionMetadataFromState(state, sessionId);
         const sessionMachineId =
           readMachineTargetForSession(sessionId)
           ?.machineId
-          ?? normalizeNonEmptyString(cachedSessionMetadata?.machineId)
+          ?? normalizeNonEmptyString(lookupSessionMetadata?.machineId)
           ?? normalizeNonEmptyString(s?.metadata?.machineId);
         if (sessionMachineId !== targetMachineId) continue;
-        const sessionPath = normalizeNonEmptyString(cachedSessionMetadata?.path) ?? normalizeNonEmptyString(s?.metadata?.path);
+        const sessionPath = normalizeNonEmptyString(lookupSessionMetadata?.path) ?? normalizeNonEmptyString(s?.metadata?.path);
         if (sessionPath !== path) continue;
         const updatedAtRaw = Number(s?.updatedAt ?? 0);
         const updatedAt = Number.isFinite(updatedAtRaw) ? Math.floor(updatedAtRaw) : 0;

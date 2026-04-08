@@ -1,6 +1,23 @@
 import { describe, expect, it } from 'vitest';
 
 describe('voiceActivityStore', () => {
+  it('normalizes session ids when appending events', async () => {
+    const { createVoiceActivityStore } = await import('./voiceActivityStore');
+
+    const store = createVoiceActivityStore({ maxEventsPerSession: 3 });
+    store.getState().append({
+      id: 'e1',
+      ts: 1,
+      sessionId: ' s1 ',
+      adapterId: 'local_conversation',
+      kind: 'user.text',
+      text: 'hi',
+    });
+
+    expect(store.getState().eventsBySessionId['s1']?.map((event) => event.id)).toEqual(['e1']);
+    expect(store.getState().eventsBySessionId[' s1 ']).toBeUndefined();
+  });
+
   it('appends events per session and caps to maxEvents', async () => {
     const { createVoiceActivityStore } = await import('./voiceActivityStore');
 

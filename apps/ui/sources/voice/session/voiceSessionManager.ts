@@ -1,4 +1,5 @@
 import type { VoiceAdapterController, VoiceAdapterId, VoiceSessionSnapshot } from './types';
+import { resolveVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
 import { getVoiceSessionSnapshot, setVoiceSessionSnapshot } from './voiceSessionStore';
 
 export type VoiceSessionManager = Readonly<{
@@ -19,8 +20,8 @@ export function createVoiceSessionManager(deps: Readonly<{
   };
 
   const resolveActiveAdapter = (): VoiceAdapterController | null => {
-    const adapterId = deps.resolveActiveAdapterId();
-    if (adapterId === 'off') return null;
+    const adapterId = resolveVoiceProviderId(deps.resolveActiveAdapterId());
+    if (adapterId === null || adapterId === 'off') return null;
     return deps.getAdapter(adapterId);
   };
 
@@ -38,9 +39,9 @@ export function createVoiceSessionManager(deps: Readonly<{
 
   const toggle = async (sessionId: string) => {
     const snap = getVoiceSessionSnapshot();
-    const adapterId = deps.resolveActiveAdapterId();
+    const adapterId = resolveVoiceProviderId(deps.resolveActiveAdapterId());
     // If voice is currently active but settings flipped to off, allow toggle to hang up.
-    if (adapterId === 'off') {
+    if (adapterId === null || adapterId === 'off') {
       if (snap.status !== 'disconnected') {
         await stop(snap.sessionId ?? sessionId);
       }

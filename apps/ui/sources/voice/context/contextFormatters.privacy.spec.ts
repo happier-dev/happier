@@ -80,12 +80,13 @@ describe('voice context privacy (opt-out defaults)', () => {
     storage.setState((state: any) => ({
       ...state,
       sessions: {},
-      sessionListViewData: [],
-      sessionListViewDataByServerId: {},
+      sessionListRenderables: {},
+      sessionListIndexByServerId: {},
+      concurrentSessionListCacheByServerId: {},
     }));
   });
 
-  it('prefers cached visible session metadata over stale raw session metadata when formatting the full session', () => {
+  it('prefers visible lookup session metadata over stale raw session metadata when formatting the full session', () => {
     storage.setState((state: any) => ({
       ...state,
       sessions: {
@@ -109,30 +110,27 @@ describe('voice context privacy (opt-out defaults)', () => {
           presence: 'online',
         },
       },
-      sessionListViewData: [
-        {
-          type: 'session',
-          session: {
-            id: 's1',
-            seq: 0,
-            createdAt: 0,
-            updatedAt: 99,
-            active: true,
-            activeAt: 0,
-            metadata: {
-              path: '/Users/alice/Company/CachedRepo',
-              host: 'localhost',
-              summary: { text: 'Cached session summary', updatedAt: 0 },
-            },
-            metadataVersion: 1,
-            agentState: null,
-            agentStateVersion: 0,
-            thinking: false,
-            thinkingAt: 0,
-            presence: 'online',
+      sessionListRenderables: {
+        s1: {
+          id: 's1',
+          updatedAt: 99,
+          metadata: {
+            path: '/Users/alice/Company/LookupRepo',
+            host: 'localhost',
+            summary: { text: 'Lookup session summary', updatedAt: 0 },
           },
         },
-      ],
+      },
+      sessionListIndexByServerId: {
+        'active-server': [
+          {
+            type: 'session',
+            sessionId: 's1',
+            serverId: 'active-server',
+            serverName: 'Active',
+          },
+        ],
+      },
     }));
 
     const out = formatSessionFull(
@@ -158,8 +156,8 @@ describe('voice context privacy (opt-out defaults)', () => {
       [],
     );
 
-    expect(out).toContain('Cached session summary');
-    expect(out).toContain('/Users/alice/Company/CachedRepo');
+    expect(out).toContain('Lookup session summary');
+    expect(out).toContain('/Users/alice/Company/LookupRepo');
     expect(out).not.toContain('Raw session summary');
     expect(out).not.toContain('/Users/alice/Company/RawRepo');
   });

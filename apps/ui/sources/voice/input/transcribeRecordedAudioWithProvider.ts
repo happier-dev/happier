@@ -5,6 +5,7 @@ import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import { MissingSttBaseUrlError, transcribeRecordedAudioWithHttpStt } from '@/voice/input/HttpSttController';
 import { transcribeWithGoogleGeminiStt } from '@/voice/input/googleGeminiStt';
 import { resolveVoiceNetworkTimeoutMs } from '@/voice/runtime/fetchWithTimeout';
+import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 
 export { MissingSttBaseUrlError };
 
@@ -17,7 +18,7 @@ export class MissingGeminiApiKeyError extends Error {
 
 function resolveLocalAdapter(settings: any): any {
   const voice = settings?.voice ?? null;
-  const providerId = voice?.providerId;
+  const providerId = normalizeNonEmptyString(voice?.providerId);
   if (providerId === 'local_direct') return voice?.adapters?.local_direct ?? null;
   if (providerId === 'local_conversation') return voice?.adapters?.local_conversation ?? voice?.adapters?.local_direct ?? null;
   return voice?.adapters?.local_conversation ?? voice?.adapters?.local_direct ?? null;

@@ -19,6 +19,16 @@ describe('collectVoiceSessionRows', () => {
         },
       },
       sessionListRenderables: {
+        s2: {
+          id: 's2',
+          updatedAt: 60,
+          active: true,
+          presence: 'away',
+          metadata: {
+            summaryText: 'Visible active session',
+            path: '/Users/alice/project-two/session-2',
+          },
+        },
         stale_only: {
           id: 'stale_only',
           updatedAt: 999,
@@ -37,35 +47,21 @@ describe('collectVoiceSessionRows', () => {
           },
         },
       },
-      sessionListViewData: [
-        {
-          type: 'session',
-          serverId: 'active-server',
-          serverName: 'Active',
-          session: {
-            id: 's2',
-            updatedAt: 60,
-            active: true,
-            presence: 'away',
-            metadata: {
-              summaryText: 'Visible active session',
-              path: '/Users/alice/project-two/session-2',
-            },
-          },
-        },
-      ],
-      sessionListViewDataByServerId: {
-        'side-server': [
-          {
-            type: 'header',
-            title: 'Side',
-            serverId: 'side-server',
-          },
+      sessionListIndexByServerId: {
+        'active-server': [
           {
             type: 'session',
-            serverId: 'side-server',
-            serverName: 'Side',
-            session: {
+            sessionId: 's2',
+            serverId: 'active-server',
+            serverName: 'Active',
+          },
+        ],
+      },
+      concurrentSessionListCacheByServerId: {
+        'side-server': {
+          serverName: 'Side',
+          sessions: {
+            s3: {
               id: 's3',
               updatedAt: 70,
               active: false,
@@ -76,7 +72,7 @@ describe('collectVoiceSessionRows', () => {
               },
             },
           },
-        ],
+        },
       },
     });
 

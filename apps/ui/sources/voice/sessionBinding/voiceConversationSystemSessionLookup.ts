@@ -1,7 +1,7 @@
 import { readSystemSessionMetadataFromMetadata } from '@happier-dev/protocol';
 
 import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
-import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListCacheState';
+import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
 
 export const VOICE_CONVERSATION_SYSTEM_SESSION_KEY = 'voice_conversation';
 export const VOICE_CONVERSATION_RETIRED_SYSTEM_SESSION_KEY = 'voice_conversation_retired';
@@ -9,7 +9,7 @@ export const VOICE_CARRIER_LEGACY_SYSTEM_SESSION_KEY = 'voice_carrier';
 
 export function isVoiceConversationSystemSessionMetadata(metadata: unknown): boolean {
     const systemSession = readSystemSessionMetadataFromMetadata({ metadata });
-    const key = String(systemSession?.key ?? '');
+    const key = String(systemSession?.key ?? '').trim();
     return (
         systemSession?.hidden === true
         && (key === VOICE_CONVERSATION_SYSTEM_SESSION_KEY || key === VOICE_CARRIER_LEGACY_SYSTEM_SESSION_KEY)

@@ -16,8 +16,9 @@ const state: any = {
     s1: { id: 's1', metadata: { summary: { text: 'Private summary A' } } },
     s2: { id: 's2', metadata: { summary: { text: 'Private summary B' } } },
   },
-  sessionListViewData: null,
-  sessionListViewDataByServerId: {},
+  sessionListRenderables: {},
+  sessionListIndexByServerId: {},
+  concurrentSessionListCacheByServerId: {},
 };
 
 installVoiceSessionBindingCommonModuleMocks({
@@ -45,8 +46,9 @@ describe('appendVoiceTargetSessionSwitchNote', () => {
       s1: { id: 's1', metadata: { summary: { text: 'Private summary A' } } },
       s2: { id: 's2', metadata: { summary: { text: 'Private summary B' } } },
     };
-    state.sessionListViewData = null;
-    state.sessionListViewDataByServerId = {};
+    state.sessionListRenderables = {};
+    state.sessionListIndexByServerId = {};
+    state.concurrentSessionListCacheByServerId = {};
   });
 
   it('falls back to human-readable generic labels when voice privacy disables summary sharing', async () => {
@@ -101,25 +103,27 @@ describe('appendVoiceTargetSessionSwitchNote', () => {
     });
   });
 
-  it('uses cached session-list names before generic placeholders when summaries are unavailable', async () => {
+  it('uses lookup session-list names before generic placeholders when summaries are unavailable', async () => {
     state.settings.voice.privacy.shareSessionSummary = false;
     state.sessions = {};
-    state.sessionListViewData = [
-      {
-        type: 'session',
-        session: {
-          id: 's1',
-          metadata: { name: 'Voice Target Alpha', summaryText: 'Private summary A', path: '/tmp/alpha' },
-        },
+    state.sessionListRenderables = {
+      s1: {
+        id: 's1',
+        updatedAt: 1,
+        metadata: { name: 'Voice Target Alpha', summaryText: 'Private summary A', path: '/tmp/alpha' },
       },
-      {
-        type: 'session',
-        session: {
-          id: 's2',
-          metadata: { name: 'Voice Tracked Beta', summaryText: 'Private summary B', path: '/tmp/beta' },
-        },
+      s2: {
+        id: 's2',
+        updatedAt: 2,
+        metadata: { name: 'Voice Tracked Beta', summaryText: 'Private summary B', path: '/tmp/beta' },
       },
-    ];
+    };
+    state.sessionListIndexByServerId = {
+      'active-server': [
+        { type: 'session', sessionId: 's1', serverId: 'active-server', serverName: 'Active' },
+        { type: 'session', sessionId: 's2', serverId: 'active-server', serverName: 'Active' },
+      ],
+    };
     const { appendVoiceTargetSessionSwitchNote } = await import('./voiceSessionTargetAnnotations');
 
     appendVoiceTargetSessionSwitchNote({

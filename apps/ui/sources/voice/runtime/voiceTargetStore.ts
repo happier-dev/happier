@@ -20,7 +20,8 @@ function normalizeSessionId(value: string | null): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function normalizeTrackedSessionIds(values: ReadonlyArray<string>): ReadonlyArray<string> {
+function normalizeTrackedSessionIds(values: ReadonlyArray<string> | null | undefined): ReadonlyArray<string> {
+  if (!Array.isArray(values)) return [];
   const out: string[] = [];
   const seen = new Set<string>();
   for (const raw of values) {
@@ -43,10 +44,16 @@ export const useVoiceTargetStore = create<VoiceTargetState>((set) => ({
   setPrimaryActionSessionId: (sessionId) => set(() => ({ primaryActionSessionId: normalizeSessionId(sessionId) })),
   setTrackedSessionIds: (sessionIds) => set(() => ({ trackedSessionIds: normalizeTrackedSessionIds(sessionIds) })),
   addTrackedSessionId: (sessionId) =>
-    set((state) => ({ trackedSessionIds: normalizeTrackedSessionIds([...state.trackedSessionIds, sessionId]) })),
+    set((state) => {
+      const trackedSessionIds = Array.isArray(state.trackedSessionIds) ? state.trackedSessionIds : [];
+      return { trackedSessionIds: normalizeTrackedSessionIds([...trackedSessionIds, sessionId]) };
+    }),
   removeTrackedSessionId: (sessionId) =>
-    set((state) => ({
-      trackedSessionIds: state.trackedSessionIds.filter((id) => id !== normalizeSessionId(sessionId)),
-    })),
+    set((state) => {
+      const trackedSessionIds = Array.isArray(state.trackedSessionIds) ? state.trackedSessionIds : [];
+      return {
+        trackedSessionIds: trackedSessionIds.filter((id) => id !== normalizeSessionId(sessionId)),
+      };
+    }),
   setLastFocusedSessionId: (sessionId) => set(() => ({ lastFocusedSessionId: normalizeSessionId(sessionId) })),
 }));
