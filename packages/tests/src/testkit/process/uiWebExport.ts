@@ -3,12 +3,14 @@ import { createReadStream, existsSync, mkdirSync, openSync, readFileSync, unlink
 import { appendFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { basename, extname, dirname, relative as relativePath, resolve as resolvePath } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { repoRootDir } from '../paths';
 import { reserveAvailablePort } from '../network/reserveAvailablePort';
 import { runLoggedCommand } from './spawnProcess';
 import { yarnCommand } from './commands';
 import { readPositiveEnvInt } from './uiWebEnv';
 import type { StartedUiWeb } from './uiWebTypes';
+import { terminateProcessTreeByPid } from './processTree';
 import { buildUiWebExportCacheKey } from './uiWebExportCacheKey';
 import {
   createUiWebExportStartupStallGuard,
@@ -210,6 +212,43 @@ function writeUiWebExportLockOwnerMetadata(lockPath: string, stagingDir: string)
   }
 }
 
+function listUiWebExportOwnerProcessPids(ownerStagingPath: string): number[] {
+  const result = spawnSync('ps', ['-axo', 'pid=,args=', '-ww'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+
+  if (result.status !== 0 || typeof result.stdout !== 'string' || result.stdout.length === 0) {
+    return [];
+  }
+
+  const matches = new Set<number>();
+  for (const line of result.stdout.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const match = trimmed.match(/^(\d+)\s+(.*)$/);
+    if (!match) continue;
+    const pid = Number.parseInt(match[1] ?? '', 10);
+    const command = match[2] ?? '';
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    if (!command.includes('expo export')) continue;
+    if (!command.includes('--output-dir')) continue;
+    if (!command.includes(ownerStagingPath)) continue;
+    matches.add(pid);
+  }
+  return [...matches];
+}
+
+async function terminateOrphanedUiWebExportOwnerProcesses(ownerStagingPath: string): Promise<void> {
+  const processPids = listUiWebExportOwnerProcessPids(ownerStagingPath);
+  for (const pid of processPids) {
+    await terminateProcessTreeByPid(pid, {
+      graceMs: 250,
+      pollMs: 25,
+    }).catch(() => {});
+  }
+}
+
 export async function shouldReclaimUiWebExportLock(lockPath: string, staleAfterMs: number): Promise<boolean> {
   try {
     const owner = parseLockOwner(readFileSync(lockPath, 'utf8'));
@@ -218,6 +257,12 @@ export async function shouldReclaimUiWebExportLock(lockPath: string, staleAfterM
       return !(await hasRecentUiWebExportStagingProgress(rootDir, staleAfterMs));
     }
     if (owner.pid != null && !isRunningPid(owner.pid)) {
+      if (owner.stagingDir) {
+        const ownerStagingPath = owner.stagingDir.startsWith('/')
+          ? owner.stagingDir
+          : resolvePath(rootDir, owner.stagingDir);
+        await terminateOrphanedUiWebExportOwnerProcesses(ownerStagingPath);
+      }
       return true;
     }
     if (owner.createdAtMs != null && Date.now() - owner.createdAtMs > staleAfterMs) {
@@ -299,6 +344,10 @@ export function resolveUiWebExportHardTimeoutMs(env: NodeJS.ProcessEnv): number 
   return readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_EXPORT_HARD_TIMEOUT_MS, 0);
 }
 
+export function resolveUiWebExportAbortSettleTimeoutMs(env: NodeJS.ProcessEnv): number {
+  return readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_EXPORT_ABORT_SETTLE_TIMEOUT_MS, 500);
+}
+
 export function resolveUiWebExportLockTimeoutMs(env: NodeJS.ProcessEnv): number {
   return readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_EXPORT_LOCK_TIMEOUT_MS, resolveUiWebExportBeforeAllTimeoutMs(env));
 }
@@ -334,6 +383,8 @@ function buildRuntimeConfig(env: NodeJS.ProcessEnv): UiWebRuntimeConfig {
 
 function buildExportEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const debug = String(env.EXPO_PUBLIC_DEBUG ?? '1').trim() || '1';
+  const nodeEnvRaw = String(env.HAPPIER_E2E_UI_WEB_EXPORT_NODE_ENV ?? 'production').trim().toLowerCase();
+  const nodeEnv = nodeEnvRaw === 'development' ? 'development' : 'production';
   const metroCacheVersionBust = createHash('sha256')
     .update(buildUiWebExportCacheKey(env))
     .digest('hex')
@@ -342,7 +393,7 @@ function buildExportEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     ...process.env,
     ...env,
     CI: '1',
-    NODE_ENV: 'production',
+    NODE_ENV: nodeEnv,
     EXPO_NO_TELEMETRY: '1',
     EXPO_PUBLIC_DEBUG: debug,
     EXPO_PUBLIC_POSTHOG_KEY: String(env.EXPO_PUBLIC_POSTHOG_KEY ?? 'phc-clear-export').trim() || 'phc-clear-export',
@@ -353,6 +404,60 @@ function buildExportEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     EXPO_PUBLIC_HAPPIER_SYNC_TUNING_JSON: '',
     HAPPIER_UI_METRO_CACHE_VERSION_BUST: metroCacheVersionBust,
   };
+}
+
+function parseEnvBool(raw: unknown): boolean {
+  const value = String(raw ?? '').trim().toLowerCase();
+  return value === '1' || value === 'true' || value === 'yes' || value === 'y' || value === 'on';
+}
+
+function resolveUiWebExportNoMinify(env: NodeJS.ProcessEnv): boolean {
+  return parseEnvBool(env.HAPPIER_E2E_UI_WEB_EXPORT_NO_MINIFY);
+}
+
+function resolveUiWebExportDev(env: NodeJS.ProcessEnv): boolean {
+  return parseEnvBool(env.HAPPIER_E2E_UI_WEB_EXPORT_DEV);
+}
+
+function resolveUiWebExportSourceMapsMode(env: NodeJS.ProcessEnv): string | null {
+  const raw = String(env.HAPPIER_E2E_UI_WEB_EXPORT_SOURCE_MAPS ?? '').trim().toLowerCase();
+  if (!raw) return null;
+  if (raw === 'true' || raw === 'false' || raw === 'inline' || raw === 'external') return raw;
+  return null;
+}
+
+function shouldBoundUiWebExportAbortDrain(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('expo export startup stalled after');
+}
+
+async function waitForUiWebExportRunPromiseAfterAbort(params: {
+  runPromise: Promise<void>;
+  error: unknown;
+  env: NodeJS.ProcessEnv;
+  stagingDir: string;
+}): Promise<void> {
+  if (!shouldBoundUiWebExportAbortDrain(params.error)) {
+    await params.runPromise.catch(() => {});
+    return;
+  }
+
+  let settled = false;
+  await Promise.race([
+    params.runPromise.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    ),
+    sleep(resolveUiWebExportAbortSettleTimeoutMs(params.env)),
+  ]);
+
+  if (!settled) {
+    await terminateOrphanedUiWebExportOwnerProcesses(params.stagingDir).catch(() => {});
+  }
 }
 
 function readPersistedUiWebExportCacheKey(cacheKeyPath: string): string | null {
@@ -670,18 +775,24 @@ async function ensureUiWebExportBuilt(params: { testDir: string; env: NodeJS.Pro
               }
             });
           const runPromise = runLoggedCommand({
-	          command: yarnCommand(),
-	          args: [
-	            'expo',
-	            'export',
+            command: yarnCommand(),
+            args: [
+              'expo',
+              'export',
               '--platform',
               'web',
-	            '--output-dir',
-	            stagingDir,
-	            ...((clearCache || forceClear) ? ['--clear'] : []),
-	          ],
-	          cwd: resolvePath(repoRootDir(), 'apps', 'ui'),
-	          env: pinnedExportEnv,
+              '--output-dir',
+              stagingDir,
+              ...(resolveUiWebExportDev(params.env) ? ['--dev'] : []),
+              ...(resolveUiWebExportNoMinify(params.env) ? ['--no-minify'] : []),
+              ...(() => {
+                const mode = resolveUiWebExportSourceMapsMode(params.env);
+                return mode ? ['--source-maps', mode] : [];
+              })(),
+              ...((clearCache || forceClear) ? ['--clear'] : []),
+            ],
+            cwd: resolvePath(repoRootDir(), 'apps', 'ui'),
+            env: pinnedExportEnv,
 	          stdoutPath,
 	          stderrPath,
 	          timeoutMs: buildHardTimeoutMs ?? 2_147_483_647,
@@ -696,7 +807,12 @@ async function ensureUiWebExportBuilt(params: { testDir: string; env: NodeJS.Pro
             abortController.abort(error);
           }
           if (!timedOut && !isUiWebExportMetroCacheCorruptionError(error)) {
-            await runPromise.catch(() => {});
+            await waitForUiWebExportRunPromiseAfterAbort({
+              runPromise,
+              error,
+              env: params.env,
+              stagingDir,
+            });
           }
           throw error;
         } finally {

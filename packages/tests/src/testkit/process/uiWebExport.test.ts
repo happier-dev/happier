@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { spawn } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { appendFile, mkdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -147,6 +148,40 @@ describe('uiWebExport (cache clearing)', () => {
       }),
     ])).rejects.toThrow(/classification=startup_stalled_after_metro_startup_no_staging_progress/);
   });
+
+  it('fails export startup promptly when a stalled exporter ignores the abort signal', async () => {
+    runLoggedCommandMock.mockImplementationOnce(async (params?: RunLoggedCommandMockParams) => {
+      if (!params) {
+        throw new Error('missing runLoggedCommand params');
+      }
+      await writeFile(
+        params.stdoutPath,
+        ['Expo Autolinking module resolution enabled', 'Starting Metro Bundler'].join('\n'),
+        'utf8',
+      );
+      await new Promise<void>(() => {
+        // Simulate a hung exporter that never settles even after abort.
+      });
+    });
+
+    const testDir = mkdtempSync(join(tmpdir(), 'happier-uiwebexport-test-'));
+    await expect(Promise.race([
+      startUiWebExport({
+        testDir,
+        env: {
+          ...process.env,
+          EXPO_PUBLIC_DEBUG: '1',
+          HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: `stall-ignores-abort-${Date.now()}`,
+          HAPPIER_E2E_UI_WEB_EXPORT_STARTUP_STALL_TIMEOUT_MS: '100',
+          HAPPIER_E2E_UI_WEB_EXPORT_STARTUP_STALL_POLL_MS: '5',
+          HAPPIER_E2E_UI_WEB_EXPORT_ABORT_SETTLE_TIMEOUT_MS: '25',
+        },
+      }),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('startUiWebExport did not reject quickly when exporter ignored abort')), 4_000);
+      }),
+    ])).rejects.toThrow(/classification=startup_stalled_after_metro_startup_no_staging_progress/);
+  }, 10_000);
 
   it('fails export startup when logs keep moving but the staging dir stays partial', async () => {
     runLoggedCommandMock.mockImplementationOnce(async (params?: RunLoggedCommandMockParams) => {
@@ -422,13 +457,75 @@ describe('uiWebExport (cache clearing)', () => {
       );
 
       // Keep unrelated staging fresh while the owner staging stays stale.
-      const now = new Date();
-      await utimes(resolve(unrelatedStagingDir, 'nested', 'fresh-chunk.js'), now, now);
+      const staleTime = new Date(Date.now() - 60_000);
+      const freshTime = new Date();
+      await utimes(ownerStagingDir, staleTime, staleTime);
+      await utimes(resolve(ownerStagingDir, 'nested'), staleTime, staleTime);
+      await utimes(resolve(ownerStagingDir, 'nested', 'stale-chunk.js'), staleTime, staleTime);
+      await utimes(resolve(unrelatedStagingDir, 'nested', 'fresh-chunk.js'), freshTime, freshTime);
 
       await expect(
         (helper as (lockPath: string, staleAfterMs: number) => Promise<boolean>)(lockPath, 1_000),
       ).resolves.toBe(true);
     } finally {
+      await rm(rootDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it('reclaims a stale export lock and terminates orphaned expo export processes for the owner staging dir', async () => {
+    const helper = (uiWebExportTestables as Record<string, unknown>).shouldReclaimUiWebExportLock;
+    expect(helper).toBeTypeOf('function');
+
+    const rootDir = mkdtempSync(join(tmpdir(), 'happier-uiwebexport-lock-'));
+    const lockPath = resolve(rootDir, 'build.lock');
+    const ownerStagingDir = resolve(rootDir, `dist-staging-99999-${Date.now()}`);
+
+    const orphan = spawn(
+      process.execPath,
+      ['-e', 'setInterval(() => {}, 1_000)', 'expo', 'export', '--output-dir', ownerStagingDir],
+      {
+        stdio: 'ignore',
+        detached: true,
+      },
+    );
+    orphan.unref();
+
+    try {
+      await mkdir(resolve(ownerStagingDir, 'nested'), { recursive: true });
+      await writeFile(resolve(ownerStagingDir, 'nested', 'chunk.js'), 'chunk', 'utf8');
+      await writeFile(
+        lockPath,
+        JSON.stringify({
+          pid: 99999,
+          createdAtMs: Date.now() - 10_000,
+          stagingDir: ownerStagingDir,
+        }),
+        'utf8',
+      );
+
+      await expect(
+        (helper as (lockPath: string, staleAfterMs: number) => Promise<boolean>)(lockPath, 1_000),
+      ).resolves.toBe(true);
+
+      await expect.poll(() => {
+        try {
+          process.kill(orphan.pid!, 0);
+          return 'alive';
+        } catch (error: any) {
+          return error?.code === 'ESRCH' ? 'dead' : 'unknown';
+        }
+      }, { timeout: 5_000, interval: 50 }).toBe('dead');
+    } finally {
+      try {
+        process.kill(-orphan.pid!, 'SIGKILL');
+      } catch {
+        // ignore cleanup when the orphan is already gone
+      }
+      try {
+        process.kill(orphan.pid!, 'SIGKILL');
+      } catch {
+        // ignore cleanup when the orphan is already gone
+      }
       await rm(rootDir, { recursive: true, force: true }).catch(() => {});
     }
   });
@@ -570,14 +667,24 @@ describe('uiWebExport (cache clearing)', () => {
   });
 
   it('reuses the persisted export when cache clear is not requested', async () => {
+    const distDir = resolve(exportedRootDir, 'dist');
+    await mkdir(distDir, { recursive: true });
+    await writeFile(resolve(distDir, 'index.html'), '<!doctype html><html><head></head><body>ok</body></html>', 'utf8');
+    await writeFile(resolve(distDir, 'metadata.json'), JSON.stringify({ version: 1 }), 'utf8');
+
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      EXPO_PUBLIC_DEBUG: '1',
+      HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: namespace,
+    };
+    const cacheKey = buildUiWebExportCacheKey(env);
+    await writeFile(resolve(exportedRootDir, 'cache-key.json'), JSON.stringify({ cacheKey }), 'utf8');
+    await writeFile(resolve(exportedRootDir, 'export-manifest.json'), JSON.stringify({ formatVersion: 1, createdAtMs: Date.now() }), 'utf8');
+
     const testDir = mkdtempSync(join(tmpdir(), 'happier-uiwebexport-test-'));
     const ui = await startUiWebExport({
       testDir,
-      env: {
-        ...process.env,
-        EXPO_PUBLIC_DEBUG: '1',
-        HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: namespace,
-      },
+      env,
     });
     await ui.stop();
   });
