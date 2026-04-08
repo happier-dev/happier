@@ -1,7 +1,6 @@
-import { join } from 'node:path';
-
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
+import { joinPathForPathShape } from '../path/pathShape.js';
 import type { FirstPartyComponentId } from './componentCatalog.js';
 import { getFirstPartyComponentCatalogEntry } from './componentCatalog.js';
 import { resolveFirstPartyInstallLayout } from './installLayout.js';
@@ -29,16 +28,24 @@ export function resolveInstalledFirstPartyComponentPaths(params: Readonly<{
     processEnv: params.processEnv,
   });
   const component = getFirstPartyComponentCatalogEntry(params.componentId);
+  const binaryRelativePath =
+    process.platform === 'win32'
+      ? `${component.binaryRelativePath}.exe`
+      : component.binaryRelativePath;
+  const shimNames =
+    process.platform === 'win32'
+      ? layout.installShims.map((shimName) => `${shimName}.exe`)
+      : layout.installShims;
 
   return {
     installRoot: layout.installRoot,
     currentPath: layout.currentPath,
     previousPath: layout.previousPath,
     versionsDir: layout.versionsDir,
-    binaryPath: join(layout.currentPath, component.binaryRelativePath),
+    binaryPath: joinPathForPathShape(layout.currentPath, binaryRelativePath),
     nodeEntrypointPath: component.nodeEntrypointRelativePath
-      ? join(layout.currentPath, component.nodeEntrypointRelativePath)
+      ? joinPathForPathShape(layout.currentPath, component.nodeEntrypointRelativePath)
       : null,
-    shimPaths: layout.installShims.map((shimName) => join(layout.shimDir, shimName)),
+    shimPaths: shimNames.map((shimName) => joinPathForPathShape(layout.shimDir, shimName)),
   };
 }

@@ -4,8 +4,11 @@ import { output as cliOutput } from '@happier-dev/cli-common';
 import type { BugReportFormPayload } from '@happier-dev/protocol';
 import { defaultSupportRuntimeInventory } from '../runtime/defaultSupportRuntimeInventory.js';
 import { runCollectSupportCommand } from '../commands/collectSupportCommand.js';
+import { runCleanupSupportCommand } from '../commands/cleanupSupportCommand.js';
 import { runSubmitSupportCommand } from '../commands/submitSupportCommand.js';
+import { runUninstallSupportCommand } from '../commands/uninstallSupportCommand.js';
 import { submitSupportReport as submitSupportReportImpl } from '../bugReports/submitSupportReport.js';
+import { collectSupportMaintenanceContext as collectSupportMaintenanceContextImpl } from '../runtime/collectSupportMaintenanceContext.js';
 import type { SupportRuntimeInventory } from '../types.js';
 
 export type RunSupportCliResult = Readonly<{
@@ -34,6 +37,7 @@ export async function runSupportCli(
   argv: readonly string[],
   deps: Readonly<{
     collectRuntimeInventory?: () => Promise<SupportRuntimeInventory> | SupportRuntimeInventory;
+    collectMaintenanceContext?: () => Promise<Awaited<ReturnType<typeof collectSupportMaintenanceContextImpl>>> | Awaited<ReturnType<typeof collectSupportMaintenanceContextImpl>>;
     submitSupportReport?: typeof submitSupportReportImpl;
     stdout?: { write: (text: string) => void };
     stderr?: { write: (text: string) => void };
@@ -44,6 +48,9 @@ export async function runSupportCli(
     args: [...argv],
     options: {
       json: { type: 'boolean', default: false },
+      yes: { type: 'boolean', default: false },
+      'dry-run': { type: 'boolean', default: false },
+      'keep-service': { type: 'boolean', default: false },
       'provider-url': { type: 'string', default: '' },
       'issue-owner': { type: 'string', default: 'happier-dev' },
       'issue-repo': { type: 'string', default: 'happier' },
@@ -59,7 +66,7 @@ export async function runSupportCli(
   const collectRuntimeInventory = deps.collectRuntimeInventory ?? defaultSupportRuntimeInventory;
 
   const command = String(positionals[0] ?? 'collect').trim() || 'collect';
-  if (command !== 'collect' && command !== 'submit') {
+  if (command !== 'collect' && command !== 'submit' && command !== 'cleanup' && command !== 'repair' && command !== 'uninstall') {
     stderr.write(`Unknown command: ${command}\n`);
     return { exitCode: 1, stdout: '' };
   }
@@ -68,6 +75,34 @@ export async function runSupportCli(
     const result = await runCollectSupportCommand(
       { json: values.json === true, presentation: deps.presentation ?? cliOutput.terminalPresentation },
       { collectRuntimeInventory },
+    );
+    stdout.write(result.output);
+    return { exitCode: 0, stdout: result.output };
+  }
+
+  if (command === 'cleanup' || command === 'repair') {
+    const result = await runCleanupSupportCommand(
+      { json: values.json === true, yes: values.yes === true },
+      {
+        collectMaintenanceContext: deps.collectMaintenanceContext ?? collectSupportMaintenanceContextImpl,
+        presentation: deps.presentation ?? cliOutput.terminalPresentation,
+      },
+    );
+    stdout.write(result.output);
+    return { exitCode: 0, stdout: result.output };
+  }
+
+  if (command === 'uninstall') {
+    const result = await runUninstallSupportCommand(
+      {
+        json: values.json === true,
+        yes: values.yes === true,
+        dryRun: values['dry-run'] === true,
+        keepService: values['keep-service'] === true,
+      },
+      {
+        collectMaintenanceContext: deps.collectMaintenanceContext ?? collectSupportMaintenanceContextImpl,
+      },
     );
     stdout.write(result.output);
     return { exitCode: 0, stdout: result.output };

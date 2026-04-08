@@ -1,7 +1,6 @@
-import { join } from 'node:path';
-
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
+import { joinPathForPathShape } from '../path/pathShape.js';
 import { resolveHappyHomeDirFromEnvironment } from '../providers/resolveHappyHomeDir.js';
 import type { FirstPartyComponentId } from './componentCatalog.js';
 import {
@@ -34,7 +33,7 @@ export function resolveFirstPartyInstallLayout(params: Readonly<{
     channel,
   });
   const happyHomeDir = resolveHappyHomeDirFromEnvironment(processEnv);
-  const installRoot = join(happyHomeDir, component.installRootName);
+  const installRoot = joinPathForPathShape(happyHomeDir, component.installRootName);
 
   return {
     componentId: params.componentId,
@@ -43,10 +42,10 @@ export function resolveFirstPartyInstallLayout(params: Readonly<{
     installShims: component.installShims,
     happyHomeDir,
     installRoot,
-    versionsDir: join(installRoot, 'versions'),
-    currentPath: join(installRoot, 'current'),
-    previousPath: join(installRoot, 'previous'),
-    shimDir: join(happyHomeDir, 'bin'),
+    versionsDir: joinPathForPathShape(installRoot, 'versions'),
+    currentPath: joinPathForPathShape(installRoot, 'current'),
+    previousPath: joinPathForPathShape(installRoot, 'previous'),
+    shimDir: joinPathForPathShape(happyHomeDir, 'bin'),
   };
 }
 
@@ -63,5 +62,5 @@ export function resolveFirstPartyVersionInstallPath(params: Readonly<{
     releaseRing: params.releaseRing,
     processEnv: params.processEnv,
   });
-  return join(layout.versionsDir, params.versionId);
+  return joinPathForPathShape(layout.versionsDir, params.versionId);
 }

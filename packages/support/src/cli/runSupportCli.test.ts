@@ -10,6 +10,7 @@ const inventory: SupportRuntimeInventory = {
   platform: 'linux',
   installations: [],
   services: [],
+  runtimeTargets: [],
   warnings: [],
 };
 
@@ -88,5 +89,47 @@ describe('runSupportCli', () => {
     expect(capturedAppVersion).toBe('1.2.3');
     expect(capturedNote).toBe('note for support bundle');
     expect(writes.join('')).toContain('Submitted support report support-1');
+  });
+
+  it('dispatches cleanup through the support cleanup flow', async () => {
+    const writes: string[] = [];
+    const result = await runSupportCli(['cleanup', '--json'], {
+      collectMaintenanceContext: async () => ({
+        preferredCliCommand: 'happier',
+        warnings: [],
+      }),
+      stdout: { write: (text) => writes.push(text) },
+      stderr: { write: () => {} },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      ok: true,
+      executed: false,
+      actions: [],
+    });
+    expect(writes.join('')).toContain('"actions"');
+  });
+
+  it('dispatches uninstall through the delegated uninstall flow', async () => {
+    const writes: string[] = [];
+    const result = await runSupportCli(['uninstall', '--json'], {
+      collectMaintenanceContext: async () => ({
+        preferredCliCommand: 'happier',
+        warnings: [],
+      }),
+      stdout: { write: (text) => writes.push(text) },
+      stderr: { write: () => {} },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      ok: true,
+      executed: false,
+      actions: [
+        { command: 'happier uninstall --yes', reason: 'current-managed-installation' },
+      ],
+    });
+    expect(writes.join('')).toContain('"current-managed-installation"');
   });
 });

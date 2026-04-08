@@ -17,6 +17,7 @@ const report: SupportReport = {
       { id: 'daemon', kind: 'daemon', label: 'Daemon', status: 'running', ring: 'stable' },
       { id: 'stack', kind: 'stack-service', label: 'Stack service', status: 'running', ring: null },
     ],
+    runtimeTargets: [],
     warnings: [
       { code: 'DUPLICATE_SERVICE', title: 'Duplicate daemon services detected', severity: 'error' },
     ],

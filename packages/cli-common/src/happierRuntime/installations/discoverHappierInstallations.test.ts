@@ -1,6 +1,6 @@
 import { chmod, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { mkdtempSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
@@ -55,6 +55,55 @@ describe('discoverHappierInstallations', () => {
                 invokerName: 'hprev',
                 ring: 'preview',
                 version: '1.2.3-preview.4',
+            }));
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it('derives managed installation versions from the current symlink target when package metadata is absent', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'happier-runtime-installations-managed-version-'));
+        try {
+            const processEnv = {
+                HAPPIER_HOME_DIR: join(root, '.happier'),
+                PATH: [join(root, '.happier', 'bin')].join(delimiter),
+            } as NodeJS.ProcessEnv;
+
+            const paths = resolveInstalledFirstPartyComponentPaths({
+                componentId: 'happier-cli',
+                channel: 'publicdev',
+                processEnv,
+            });
+
+            await mkdir(join(root, '.happier', 'bin'), { recursive: true });
+            await mkdir(join(dirname(paths.currentPath), 'versions', '0.2.2-dev.33.1', 'package-dist'), { recursive: true });
+            await writeFile(join(dirname(paths.currentPath), 'versions', '0.2.2-dev.33.1', 'package-dist', 'index.mjs'), '#!/usr/bin/env node\n', 'utf8');
+            await symlink('versions/0.2.2-dev.33.1', paths.currentPath);
+            await writeFile(paths.binaryPath, '#!/bin/sh\n', 'utf8');
+            await chmod(paths.binaryPath, 0o755);
+            await symlink(paths.binaryPath, join(root, '.happier', 'bin', 'hdev'));
+
+            const inventory = await discoverHappierInstallations({
+                processEnv,
+                invokedPath: join(root, '.happier', 'bin', 'hdev'),
+                invokerName: 'hdev',
+            });
+
+            expect(inventory.installations).toEqual([
+                expect.objectContaining({
+                    source: 'firstPartyManaged',
+                    ring: 'dev',
+                    version: '0.2.2-dev.33.1',
+                    path: paths.currentPath,
+                    shimName: 'hdev',
+                    onPath: true,
+                }),
+            ]);
+            expect(inventory.activeInvocation).toEqual(expect.objectContaining({
+                path: join(root, '.happier', 'bin', 'hdev'),
+                invokerName: 'hdev',
+                ring: 'dev',
+                version: '0.2.2-dev.33.1',
             }));
         } finally {
             await rm(root, { recursive: true, force: true });
@@ -198,6 +247,50 @@ describe('discoverHappierInstallations', () => {
             }));
             expect(inventory.activeInvocation?.installationId).toBe(`fromSource:${inventory.activeInvocation?.realPath ?? cliBinPath}`);
             expect(inventory.installations).toEqual([]);
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it('discovers self-host relay runtime installs from canonical self-host roots even when they are not on PATH', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'happier-runtime-installations-self-host-'));
+        try {
+            const processEnv = {
+                HAPPIER_HOME_DIR: join(root, '.happier'),
+                HOME: root,
+                PATH: '',
+            } as NodeJS.ProcessEnv;
+
+            const selfHostRoot = join(root, '.happier', 'self-host-dev');
+            await mkdir(join(selfHostRoot, 'bin'), { recursive: true });
+            await writeFile(join(selfHostRoot, 'bin', 'happier-server'), '#!/bin/sh\n', 'utf8');
+            await chmod(join(selfHostRoot, 'bin', 'happier-server'), 0o755);
+            await writeFile(
+                join(selfHostRoot, 'self-host-state.json'),
+                JSON.stringify({
+                    channel: 'publicdev',
+                    mode: 'user',
+                    version: '0.1.2',
+                    updatedAt: '2026-04-05T10:34:02.834Z',
+                }, null, 2),
+                'utf8',
+            );
+
+            const inventory = await discoverHappierInstallations({
+                processEnv,
+            });
+
+            expect(inventory.installations).toEqual(expect.arrayContaining([
+                expect.objectContaining({
+                    source: 'selfHostManaged',
+                    components: ['happier-server'],
+                    ring: 'dev',
+                    version: '0.1.2',
+                    path: selfHostRoot,
+                    managedRoot: selfHostRoot,
+                    onPath: false,
+                }),
+            ]));
         } finally {
             await rm(root, { recursive: true, force: true });
         }

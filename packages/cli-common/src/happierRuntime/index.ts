@@ -9,10 +9,16 @@ export type {
   DaemonServiceInstallTarget,
 } from './daemonInstallConflict.js';
 export { buildHappierRuntimeWarnings } from './warnings/buildHappierRuntimeWarnings.js';
+export { deriveManagedReleaseChannelInventory } from './deriveManagedReleaseChannelInventory.js';
+export type {
+  ManagedReleaseChannelInventory,
+  ManagedReleaseChannelInventoryEntry,
+} from './deriveManagedReleaseChannelInventory.js';
 export {
   isHappierRuntimePathWithinRoot,
   normalizeHappierRuntimePath,
 } from './runtimePathMatching.js';
+export { resolveHappierServiceRuntimeTarget } from './resolveServiceRuntimeTarget.js';
 export type {
   HappierActiveInvocation,
   HappierInstallation,
@@ -23,6 +29,9 @@ export type {
   HappierServiceBackend,
   HappierServiceInventory,
   HappierServicePlatform,
+  HappierServiceRuntimeTarget,
+  HappierServiceRuntimeTargetKind,
+  HappierServiceTargetMode,
   HappierServiceVerification,
   HappierWarningSeverity,
 } from './types.js';

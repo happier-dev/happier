@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, join, win32 as win32Path } from 'node:path';
 
 import type { PublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
 
@@ -25,6 +25,8 @@ import type {
     HappierServiceBackend,
     HappierServiceInventory,
     HappierServicePlatform,
+    HappierServiceTargetMode,
+    HappierServiceType,
     HappierServiceVerification,
 } from '../types.js';
 
@@ -42,13 +44,15 @@ type DiscoverCommandRunner = Readonly<{
 }>;
 
 type DiscoveredServiceIdentity = Readonly<{
-    serviceType: 'daemon' | 'stack-service';
+    serviceType: HappierServiceType;
+    targetMode: HappierServiceTargetMode;
     ring: PublicReleaseRingLabel | null;
     instanceId: string | null;
 }>;
 
 const DAEMON_LAUNCHD_LABEL_PREFIX = 'com.happier.cli.daemon';
 const DAEMON_SYSTEMD_LABEL_PREFIX = 'happier-daemon';
+const SELF_HOST_LAUNCHD_LABEL_PREFIX = 'happier-server';
 const STACK_LABEL_PREFIX = 'dev.happier.stack';
 const WINDOWS_SYSTEM_HAPPIER_SERVICES_DIR = 'C:\\ProgramData\\happier\\services';
 const EXECUTABLE_NAMES = new Set(['happier', 'hprev', 'hdev', 'hstack', 'happier-server']);
@@ -121,6 +125,21 @@ function resolveDaemonIdentity(label: string, definition: ServiceDefinition): Di
             : null;
     if (parts === null) return null;
 
+    const targetMode =
+        String(definition.env.HAPPIER_DAEMON_SERVICE_TARGET_MODE ?? '').trim().toLowerCase() === 'default-following'
+            || parts[0] === 'default'
+            ? 'default-following'
+            : 'pinned';
+
+    if (targetMode === 'default-following') {
+        return {
+            serviceType: 'daemon',
+            targetMode,
+            ring: null,
+            instanceId: null,
+        };
+    }
+
     const envRing = parseReleaseRingLabel(definition.env.HAPPIER_PUBLIC_RELEASE_CHANNEL);
     const ring = envRing ?? parseReleaseRingLabel(parts[0]) ?? 'stable';
     const instanceId = String(
@@ -130,8 +149,25 @@ function resolveDaemonIdentity(label: string, definition: ServiceDefinition): Di
 
     return {
         serviceType: 'daemon',
+        targetMode,
         ring,
         instanceId,
+    };
+}
+
+function resolveSelfHostIdentity(label: string, definition: ServiceDefinition): DiscoveredServiceIdentity | null {
+    if (!label.startsWith(SELF_HOST_LAUNCHD_LABEL_PREFIX)) return null;
+
+    const remainder = label.slice(SELF_HOST_LAUNCHD_LABEL_PREFIX.length).replace(/^[._-]+/u, '');
+    const parts = remainder ? remainder.split(/[._-]+/u).map((value) => value.trim()).filter(Boolean) : [];
+    const envRing = parseReleaseRingLabel(definition.env.HAPPIER_PUBLIC_RELEASE_CHANNEL);
+    const ring = envRing ?? parseReleaseRingLabel(parts[0]) ?? null;
+
+    return {
+        serviceType: 'self-host-service',
+        targetMode: 'pinned',
+        ring,
+        instanceId: null,
     };
 }
 
@@ -140,23 +176,30 @@ function resolveStackIdentity(label: string): DiscoveredServiceIdentity | null {
     const parts = splitLabelAfterPrefix(label, STACK_LABEL_PREFIX);
     return {
         serviceType: 'stack-service',
+        targetMode: 'pinned',
         ring: null,
         instanceId: String(parts[0] ?? 'main').trim() || 'main',
     };
 }
 
 function resolveServiceIdentity(label: string, definition: ServiceDefinition): DiscoveredServiceIdentity | null {
-    return resolveDaemonIdentity(label, definition) ?? resolveStackIdentity(label);
+    return resolveDaemonIdentity(label, definition) ?? resolveSelfHostIdentity(label, definition) ?? resolveStackIdentity(label);
+}
+
+function basenameForAnyPlatform(pathValue: string): string {
+    const text = String(pathValue ?? '').trim();
+    if (!text) return '';
+    return text.includes('\\') ? win32Path.basename(text) : basename(text);
 }
 
 function resolveExecutablePath(programArgs: readonly string[]): string | null {
     if (programArgs.length === 0) return null;
-    const primaryBase = basename(programArgs[0] ?? '').toLowerCase();
+    const primaryBase = basenameForAnyPlatform(String(programArgs[0] ?? '')).toLowerCase();
     if (JAVASCRIPT_RUNTIME_NAMES.has(primaryBase)) {
         return String(programArgs[1] ?? '').trim() || String(programArgs[0] ?? '').trim() || null;
     }
     for (const arg of programArgs) {
-        const normalized = basename(String(arg ?? '').trim()).replace(/\.(exe|mjs|js)$/iu, '').toLowerCase();
+        const normalized = basenameForAnyPlatform(String(arg ?? '').trim()).replace(/\.(exe|mjs|js)$/iu, '').toLowerCase();
         if (EXECUTABLE_NAMES.has(normalized)) {
             return String(arg ?? '').trim() || null;
         }
@@ -170,11 +213,16 @@ function resolveVerification(params: Readonly<{
     executablePath: string | null;
 }>): HappierServiceVerification {
     const programArgs = params.definition.programArgs.map((value) => String(value ?? '').trim().toLowerCase());
-    const executableName = basename(String(params.executablePath ?? '')).replace(/\.(exe|mjs|js)$/iu, '').toLowerCase();
+    const executableName = basenameForAnyPlatform(String(params.executablePath ?? '')).replace(/\.(exe|mjs|js)$/iu, '').toLowerCase();
     if (params.identity.serviceType === 'daemon') {
         return programArgs.includes('daemon') && programArgs.includes('start-sync') ? 'verified' : 'candidate';
     }
-    return executableName === 'hstack' || programArgs.some((value) => basename(value).replace(/\.(exe|mjs|js)$/iu, '').toLowerCase() === 'hstack')
+    if (params.identity.serviceType === 'self-host-service') {
+        return executableName === 'happier-server' || programArgs.some((value) => basenameForAnyPlatform(value).replace(/\.(exe|mjs|js)$/iu, '').toLowerCase() === 'happier-server')
+            ? 'verified'
+            : 'candidate';
+    }
+    return executableName === 'hstack' || programArgs.some((value) => basenameForAnyPlatform(value).replace(/\.(exe|mjs|js)$/iu, '').toLowerCase() === 'hstack')
         ? 'verified'
         : 'candidate';
 }
@@ -297,6 +345,7 @@ export async function discoverHappierServices(params: Readonly<{
             platform,
             backend,
             label: definition.label,
+            targetMode: identity.targetMode,
             verification: resolveVerification({ identity, definition, executablePath }),
             ring: identity.ring,
             instanceId: identity.instanceId,

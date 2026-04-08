@@ -2,6 +2,7 @@ import type { PublicReleaseRingLabel } from '@happier-dev/release-runtime/releas
 
 export type HappierInstallationSource =
   | 'firstPartyManaged'
+  | 'selfHostManaged'
   | 'stackManaged'
   | 'fromSource'
   | 'npmGlobal'
@@ -16,6 +17,8 @@ export type HappierServiceBackend =
   | 'schtasks-user'
   | 'schtasks-system';
 export type HappierServiceVerification = 'verified' | 'candidate';
+export type HappierServiceTargetMode = 'pinned' | 'default-following';
+export type HappierServiceType = 'daemon' | 'stack-service' | 'self-host-service';
 export type HappierWarningSeverity = 'info' | 'warning' | 'error';
 
 export type HappierInstallation = Readonly<{
@@ -47,10 +50,11 @@ export type HappierInstallationInventory = Readonly<{
 
 export type HappierService = Readonly<{
   id: string;
-  serviceType: string;
+  serviceType: HappierServiceType;
   platform: HappierServicePlatform;
   backend: HappierServiceBackend;
   label: string;
+  targetMode?: HappierServiceTargetMode;
   verification: HappierServiceVerification;
   ring: PublicReleaseRingLabel | null;
   instanceId: string | null;
@@ -72,4 +76,21 @@ export type HappierRuntimeWarning = Readonly<{
   severity: HappierWarningSeverity;
   message: string;
   repairCommands: string[];
+}>;
+
+export type HappierServiceRuntimeTargetKind =
+  | 'installation'
+  | 'stack-runtime'
+  | 'source-checkout'
+  | 'managed-js-runtime'
+  | 'unmatched-executable';
+
+export type HappierServiceRuntimeTarget = Readonly<{
+  id: string;
+  kind: HappierServiceRuntimeTargetKind;
+  label: string;
+  path: string;
+  executablePath: string;
+  installationId: string | null;
+  installationPath: string | null;
 }>;

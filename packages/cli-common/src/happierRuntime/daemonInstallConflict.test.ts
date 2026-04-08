@@ -10,6 +10,7 @@ function createDaemonService(overrides: Partial<HappierService> = {}): HappierSe
     platform: 'linux',
     backend: 'systemd-user',
     label: 'happier-daemon.cloud',
+    targetMode: 'pinned',
     verification: 'verified',
     ring: 'stable',
     instanceId: 'cloud',
@@ -30,6 +31,7 @@ describe('resolveDaemonServiceInstallConflictPlan', () => {
       target: {
         platform: 'linux',
         backend: 'systemd-user',
+        targetMode: 'pinned',
         ring: 'stable',
         instanceId: 'cloud',
         serverUrl: 'https://cloud.example.test',
@@ -55,6 +57,7 @@ describe('resolveDaemonServiceInstallConflictPlan', () => {
       target: {
         platform: 'linux',
         backend: 'systemd-user',
+        targetMode: 'pinned',
         ring: 'stable',
         instanceId: 'cloud',
         serverUrl: 'https://cloud.example.test',
@@ -88,6 +91,7 @@ describe('resolveDaemonServiceInstallConflictPlan', () => {
       target: {
         platform: 'linux',
         backend: 'systemd-user',
+        targetMode: 'pinned',
         ring: 'stable',
         instanceId: 'cloud',
         serverUrl: 'https://cloud.example.test',
@@ -104,5 +108,49 @@ describe('resolveDaemonServiceInstallConflictPlan', () => {
 
     expect(plan.competingServices.map((service) => service.label)).toEqual(['happier-daemon.preview.cloud']);
     expect(plan.servicesToRemove.map((service) => service.label)).toEqual(['happier-daemon.preview.cloud']);
+  });
+
+  it('treats duplicate default-following daemon services as competing', () => {
+    const plan = resolveDaemonServiceInstallConflictPlan({
+      target: {
+        platform: 'linux',
+        backend: 'systemd-user',
+        targetMode: 'default-following',
+        ring: null,
+        instanceId: null,
+        serverUrl: null,
+      },
+      strategy: 'replace-all',
+      services: [
+        createDaemonService({
+          id: 'service:default:one',
+          label: 'happier-daemon.default',
+          targetMode: 'default-following',
+          ring: null,
+          instanceId: null,
+          serverUrl: null,
+          publicServerUrl: null,
+        }),
+        createDaemonService({
+          id: 'service:default:two',
+          label: 'happier-daemon.default.backup',
+          definitionPath: '/tmp/happier-daemon.default.backup.service',
+          targetMode: 'default-following',
+          ring: null,
+          instanceId: null,
+          serverUrl: null,
+          publicServerUrl: null,
+        }),
+      ],
+    });
+
+    expect(plan.competingServices.map((service) => service.label)).toEqual([
+      'happier-daemon.default',
+      'happier-daemon.default.backup',
+    ]);
+    expect(plan.servicesToRemove.map((service) => service.label)).toEqual([
+      'happier-daemon.default',
+      'happier-daemon.default.backup',
+    ]);
   });
 });

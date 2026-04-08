@@ -5,18 +5,60 @@ import type { SupportReport } from '../types';
 
 const report: SupportReport = {
   capturedAt: '2026-04-07T10:11:12.000Z',
-  inventory: {
-    invokedBinaryPath: '/opt/happier/bin/happier',
-    invokedVersion: '1.2.3',
-    nodeVersion: 'v22.0.0',
-    platform: 'darwin',
-    installations: [
-      { id: 'cli', label: 'Happier CLI', version: '1.2.3', path: '/opt/happier/bin/happier' },
+    inventory: {
+        invokedBinaryPath: '/opt/happier/bin/happier',
+        invokedVersion: '1.2.3',
+        nodeVersion: 'v22.0.0',
+        platform: 'darwin',
+        installations: [
+      {
+        id: 'cli',
+        label: 'Happier CLI',
+        version: '1.2.3',
+        path: '/opt/happier/cli/current',
+        realPath: '/opt/happier/cli/versions/1.2.3',
+        status: 'on-path',
+        ring: 'stable',
+        shimName: 'happier',
+      },
+        ],
+        services: [
+      {
+        id: 'daemon',
+        label: 'Daemon',
+        status: 'running',
+        targetMode: 'default-following',
+        ring: 'stable',
+        path: '/Library/LaunchDaemons/com.happier.cli.daemon.plist',
+        executablePath: '/opt/happier/cli/current/happier',
+        linkedInstallationPath: '/opt/happier/cli/current',
+        serverUrl: 'https://relay.example.test',
+      },
+      {
+        id: 'stack-runtime-service',
+        label: 'Daemon service: com.happier.cli.daemon.stack_main_id_default',
+        status: 'installed',
+        targetMode: 'pinned',
+        ring: 'stable',
+        path: '/Users/tester/Library/LaunchAgents/com.happier.cli.daemon.stack_main_id_default.plist',
+        executablePath: '/Users/tester/.happier/stacks/main/cli/tools/js-runtime/current/bin/happier-js-runtime',
+        linkedRuntimeTargetLabel: 'Stack runtime (main)',
+        linkedRuntimeTargetPath: '/Users/tester/.happier/stacks/main/cli',
+        serverUrl: 'https://stack.example.test',
+      },
+        ],
+        runtimeTargets: [
+      {
+        id: 'stack-runtime:/Users/tester/.happier/stacks/main/cli',
+        kind: 'runtime-target',
+        label: 'Stack runtime (main)',
+        category: 'stack-runtime',
+        path: '/Users/tester/.happier/stacks/main/cli',
+        executablePath: '/Users/tester/.happier/stacks/main/cli/tools/js-runtime/current/bin/happier-js-runtime',
+        linkedServiceLabels: ['Daemon service: com.happier.cli.daemon.stack_main_id_default'],
+      },
     ],
-    services: [
-      { id: 'daemon', label: 'Daemon', status: 'running', path: '/Library/LaunchDaemons/com.happier.cli.daemon.plist' },
-    ],
-    warnings: [
+        warnings: [
       { code: 'RING_MISMATCH', title: 'Daemon ring differs from invoked ring', severity: 'warning' },
     ],
     note: 'Please compare the live daemon against the CLI install.',
@@ -39,9 +81,29 @@ describe('renderSupportReport', () => {
     expect(output).toContain('[Runtime]');
     expect(output).toContain('Binary=/opt/happier/bin/happier');
     expect(output).toContain('[Installations]');
+    expect(output).toContain('[Installations]\n\nHappier CLI (1.2.3)');
     expect(output).toContain('Happier CLI (1.2.3)');
+    expect(output).toContain('Location=/opt/happier/cli/current');
+    expect(output).toContain('Resolved=/opt/happier/cli/versions/1.2.3');
+    expect(output).toContain('PATH=happier');
     expect(output).toContain('[Services]');
+    expect(output).toContain('[Services]\n\nDaemon (running)');
     expect(output).toContain('Daemon (running)');
+    expect(output).toContain('Mode=default-following');
+    expect(output).toContain('Definition=/Library/LaunchDaemons/com.happier.cli.daemon.plist');
+    expect(output).toContain('Executable=/opt/happier/cli/current/happier');
+    expect(output).toContain('Installation=/opt/happier/cli/current');
+    expect(output).toContain('Server=https://relay.example.test');
+    expect(output).toContain('Daemon service: com.happier.cli.daemon.stack_main_id_default (installed)');
+    expect(output).toContain('Mode=pinned');
+    expect(output).toContain('Runtime=Stack runtime (main)');
+    expect(output).toContain('Target=/Users/tester/.happier/stacks/main/cli');
+    expect(output).toContain('[Additional Runtimes]');
+    expect(output).toContain('[Additional Runtimes]\n\nStack runtime (main)');
+    expect(output).toContain('Type=stack-runtime');
+    expect(output).toContain('Location=/Users/tester/.happier/stacks/main/cli');
+    expect(output).toContain('Services=Daemon service: com.happier.cli.daemon.stack_main_id_default');
+    expect(output).not.toContain(' — ring:');
     expect(output).toContain('[Warnings]');
     expect(output).toContain('RING_MISMATCH: Daemon ring differs from invoked ring');
     expect(output).toContain('[Note]');

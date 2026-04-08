@@ -15,6 +15,7 @@ import {
   FIRST_PARTY_COMPONENT_IDS,
   resolveInstalledFirstPartyComponentPaths,
   resolveFirstPartyInstallLayout,
+  resolveRelayRuntimeDefaults,
   type FirstPartyComponentId,
 } from '../../firstPartyRuntime/index.js';
 import { resolveWindowsCommandOnPath } from '../../process/index.js';
@@ -58,6 +59,15 @@ async function readJsonVersion(packageJsonPath: string, fsApi: DiscoverFs): Prom
   }
 }
 
+async function readTrimmedText(path: string, fsApi: DiscoverFs): Promise<string | null> {
+  try {
+    const value = String(await (fsApi.readFile ?? readFile)(path, 'utf8')).trim();
+    return value || null;
+  } catch {
+    return null;
+  }
+}
+
 async function resolveRealPathSafe(path: string, fsApi: DiscoverFs): Promise<string | null> {
   try {
     return await (fsApi.realpath ?? realpath)(path);
@@ -80,6 +90,33 @@ function createManagedInstallationId(params: Readonly<{
   return `managed:${params.ring ?? 'unknown'}:${params.currentPath}`;
 }
 
+function inferVersionFromManagedRealPath(realPath: string | null): string | null {
+  const normalized = String(realPath ?? '').trim();
+  if (!normalized) {
+    return null;
+  }
+  const versionId = basename(normalized);
+  if (!versionId || versionId === 'current' || versionId === 'previous') {
+    return null;
+  }
+  const parentDir = basename(dirname(normalized));
+  return parentDir === 'versions' ? versionId : null;
+}
+
+async function resolveManagedInstallationVersion(params: Readonly<{
+  currentPath: string;
+  installRoot: string;
+  realPath: string | null;
+  fsApi: DiscoverFs;
+}>): Promise<string | null> {
+  return (
+    await readJsonVersion(join(params.currentPath, 'package.json'), params.fsApi)
+    ?? await readJsonVersion(join(params.realPath ?? '', 'package.json'), params.fsApi)
+    ?? await readTrimmedText(join(params.installRoot, 'current.version'), params.fsApi)
+    ?? inferVersionFromManagedRealPath(params.realPath)
+  );
+}
+
 async function discoverManagedInstallationEntries(params: Readonly<{
   processEnv: NodeJS.ProcessEnv;
   fsApi: DiscoverFs;
@@ -99,8 +136,14 @@ async function discoverManagedInstallationEntries(params: Readonly<{
       if (!hasCurrent && !hasBinary && !hasEntrypoint) {
         continue;
       }
+      const installLayout = resolveFirstPartyInstallLayout({ componentId, channel, processEnv: params.processEnv });
       const realPath = await resolveRealPathSafe(paths.currentPath, params.fsApi);
-      const version = await readJsonVersion(join(paths.currentPath, 'package.json'), params.fsApi);
+      const version = await resolveManagedInstallationVersion({
+        currentPath: paths.currentPath,
+        installRoot: installLayout.installRoot,
+        realPath,
+        fsApi: params.fsApi,
+      });
       const ring = getReleaseRingCatalogEntry(channel).publicLabel;
       entries.push({
         id: createManagedInstallationId({ ring, currentPath: paths.currentPath }),
@@ -112,10 +155,90 @@ async function discoverManagedInstallationEntries(params: Readonly<{
         realPath,
         shimName: basename(paths.shimPaths[0] ?? '') || null,
         onPath: false,
-        managedRoot: resolveFirstPartyInstallLayout({ componentId, channel, processEnv: params.processEnv }).installRoot,
+        managedRoot: installLayout.installRoot,
       });
     }
   }
+  return entries;
+}
+
+type SelfHostRuntimeState = Readonly<{
+  channel: PublicReleaseRingId | null;
+  mode: 'user' | 'system' | null;
+  version: string | null;
+}>;
+
+async function readSelfHostRuntimeState(params: Readonly<{
+  installRoot: string;
+  fsApi: DiscoverFs;
+}>): Promise<SelfHostRuntimeState | null> {
+  try {
+    const raw = await (params.fsApi.readFile ?? readFile)(join(params.installRoot, 'self-host-state.json'), 'utf8');
+    const parsed = JSON.parse(String(raw)) as {
+      channel?: unknown;
+      mode?: unknown;
+      version?: unknown;
+    };
+    const rawChannel = String(parsed.channel ?? '').trim();
+    const channel = rawChannel === 'stable' || rawChannel === 'preview' || rawChannel === 'publicdev'
+      ? rawChannel
+      : null;
+    const rawMode = String(parsed.mode ?? '').trim();
+    const mode = rawMode === 'user' || rawMode === 'system' ? rawMode : null;
+    const version = typeof parsed.version === 'string' && parsed.version.trim()
+      ? parsed.version.trim()
+      : null;
+    return { channel, mode, version };
+  } catch {
+    return null;
+  }
+}
+
+async function discoverSelfHostInstallationEntries(params: Readonly<{
+  processEnv: NodeJS.ProcessEnv;
+  fsApi: DiscoverFs;
+}>): Promise<HappierInstallation[]> {
+  const entries: HappierInstallation[] = [];
+  const platform = process.platform;
+  const executableName = platform === 'win32' ? 'happier-server.exe' : 'happier-server';
+
+  for (const channel of PUBLIC_RELEASE_RING_IDS) {
+    for (const mode of ['user', 'system'] as const) {
+      const defaults = resolveRelayRuntimeDefaults({
+        channel,
+        mode,
+        platform,
+        homeDir: params.processEnv.HOME ?? params.processEnv.USERPROFILE ?? '',
+      });
+      const installRoot = defaults.installRoot;
+      const binaryPath = join(installRoot, 'bin', executableName);
+      const hasState = await pathExists(join(installRoot, 'self-host-state.json'), params.fsApi);
+      const hasBinary = await pathExists(binaryPath, params.fsApi);
+      if (!hasState && !hasBinary) {
+        continue;
+      }
+
+      const state = await readSelfHostRuntimeState({ installRoot, fsApi: params.fsApi });
+      const resolvedChannel = state?.channel ?? channel;
+      const ring = getReleaseRingCatalogEntry(resolvedChannel).publicLabel;
+      const shimPath = join(defaults.binDir, executableName);
+      const hasShim = await pathExists(shimPath, params.fsApi);
+
+      entries.push({
+        id: `selfHostManaged:${mode}:${ring}:${installRoot}`,
+        source: 'selfHostManaged',
+        components: ['happier-server'],
+        ring,
+        version: state?.version ?? null,
+        path: installRoot,
+        realPath: await resolveRealPathSafe(installRoot, params.fsApi),
+        shimName: hasShim ? 'happier-server' : null,
+        onPath: false,
+        managedRoot: installRoot,
+      });
+    }
+  }
+
   return entries;
 }
 
@@ -427,7 +550,9 @@ export async function discoverHappierInstallations(params: Readonly<{
 }> = {}): Promise<HappierInstallationInventory> {
   const processEnv = params.processEnv ?? process.env;
   const fsApi = params.fs ?? {};
-  const managedInstallations = await discoverManagedInstallationEntries({ processEnv, fsApi });
+  const firstPartyManagedInstallations = await discoverManagedInstallationEntries({ processEnv, fsApi });
+  const selfHostInstallations = await discoverSelfHostInstallationEntries({ processEnv, fsApi });
+  const managedInstallations = uniqueById([...firstPartyManagedInstallations, ...selfHostInstallations]);
   const pathInstallations = await discoverPathInstallationEntries({
     processEnv,
     fsApi,

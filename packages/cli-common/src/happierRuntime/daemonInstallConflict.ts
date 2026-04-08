@@ -2,6 +2,7 @@ import type {
     HappierService,
     HappierServiceBackend,
     HappierServicePlatform,
+    HappierServiceTargetMode,
     HappierServiceVerification,
 } from './types.js';
 import type { PublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
@@ -11,8 +12,9 @@ export type DaemonServiceInstallStrategy = 'require-explicit' | 'add' | 'replace
 export type DaemonServiceInstallTarget = Readonly<{
     platform: HappierServicePlatform;
     backend: HappierServiceBackend;
-    ring: PublicReleaseRingLabel;
-    instanceId: string;
+    targetMode: HappierServiceTargetMode;
+    ring: PublicReleaseRingLabel | null;
+    instanceId: string | null;
     serverUrl: string | null;
 }>;
 
@@ -23,6 +25,17 @@ export type DaemonServiceInstallConflictPlan = Readonly<{
 }>;
 
 function matchesTarget(service: HappierService, target: DaemonServiceInstallTarget): boolean {
+    const serviceTargetMode = service.targetMode ?? 'pinned';
+    if (serviceTargetMode !== target.targetMode) {
+        return false;
+    }
+    if (target.targetMode === 'default-following') {
+        return (
+            service.serviceType === 'daemon' &&
+            service.platform === target.platform &&
+            service.backend === target.backend
+        );
+    }
     return (
         service.serviceType === 'daemon' &&
         service.platform === target.platform &&
@@ -44,6 +57,7 @@ function resolveTupleKey(service: HappierService): string {
     return [
         service.platform,
         service.backend,
+        service.targetMode ?? 'pinned',
         service.ring ?? 'stable',
         service.instanceId ?? 'cloud',
     ].join(':');
@@ -59,6 +73,9 @@ function sharesServerUrl(service: HappierService, target: DaemonServiceInstallTa
 function isCompetingService(service: HappierService, target: DaemonServiceInstallTarget): boolean {
     if (!isVerifiedDaemonService(service) || matchesTarget(service, target)) {
         return false;
+    }
+    if (target.targetMode === 'default-following') {
+        return (service.targetMode ?? 'pinned') === 'default-following';
     }
     if (service.instanceId && service.instanceId === target.instanceId) {
         return true;
@@ -87,12 +104,24 @@ export function resolveDaemonServiceInstallConflictPlan(params: Readonly<{
     const competingServices = verifiedDaemons.filter((service) =>
         isCompetingService(service, params.target) || duplicateTupleKeys.has(resolveTupleKey(service)),
     );
+    const resolveServicesToRemove = (): readonly HappierService[] => {
+        if (params.strategy === 'replace-all') {
+            return competingServices;
+        }
+        if (params.strategy === 'replace-ring') {
+            if (params.target.targetMode === 'default-following') {
+                return competingServices.filter((service) => (service.targetMode ?? 'pinned') === 'default-following');
+            }
+            return competingServices.filter((service) => service.ring === params.target.ring);
+        }
+        return [];
+    };
 
     if (exactTargetExists) {
         return {
             exactTargetExists: true,
             competingServices,
-            servicesToRemove: [],
+            servicesToRemove: resolveServicesToRemove(),
         };
     }
 
@@ -108,7 +137,7 @@ export function resolveDaemonServiceInstallConflictPlan(params: Readonly<{
         return {
             exactTargetExists: false,
             competingServices,
-            servicesToRemove: competingServices.filter((service) => service.ring === params.target.ring),
+            servicesToRemove: resolveServicesToRemove(),
         };
     }
 
@@ -116,7 +145,7 @@ export function resolveDaemonServiceInstallConflictPlan(params: Readonly<{
         return {
             exactTargetExists: false,
             competingServices,
-            servicesToRemove: competingServices,
+            servicesToRemove: resolveServicesToRemove(),
         };
     }
 
