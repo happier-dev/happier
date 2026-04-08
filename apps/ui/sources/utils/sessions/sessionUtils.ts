@@ -1,16 +1,21 @@
 import * as React from 'react';
 import { Message } from '@/sync/domains/messages/messageTypes';
-import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSessionMessages';
-import { storage } from '@/sync/domains/state/storage';
+import { useSession, useSessionMessagesVersion } from '@/sync/domains/state/storage';
 import { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import {
+    derivePendingRequestFlagsFromSession,
+    listPendingPermissionRequestsFromSession,
+    listPendingTranscriptRequests as listPendingTranscriptRequestsFromSession,
+    listPendingUserActionRequestsFromSession,
+    type SessionPendingRequest,
+} from '@/sync/domains/session/pending/listPendingSessionRequests';
 import {
     readDisplayMachineIdForSession,
     readDisplayPathForSession,
     readMachineTargetForSession,
 } from '@/sync/ops/sessionMachineTarget';
 import { t } from '@/text';
-import { resolveAgentRequestKind, shouldShowGenericPermissionPromptForRequest, type AgentRequestKind } from '@/utils/sessions/permissions/permissionPromptPolicy';
 import { formatPathRelativeToHome } from './formatPathRelativeToHome';
 export { formatPathRelativeToHome } from './formatPathRelativeToHome';
 
@@ -28,212 +33,37 @@ export interface SessionStatus {
 
 export const OPTIMISTIC_SESSION_THINKING_TIMEOUT_MS = 15_000;
 
-export type PendingPermissionRequest = Readonly<{
-    id: string;
-    tool: string;
-    kind: AgentRequestKind;
-    arguments: unknown;
-    createdAt: number | null;
-    permissionSuggestions?: unknown;
-}>;
+export type PendingPermissionRequest = SessionPendingRequest;
 
 type SessionStatusSource = Session | SessionListRenderableSession;
-
-function getRequestPermissionSuggestions(req: unknown): unknown[] | null {
-    if (!req || typeof req !== 'object') return null;
-    const suggestions = (req as { permissionSuggestions?: unknown }).permissionSuggestions;
-    if (!Array.isArray(suggestions) || suggestions.length === 0) return null;
-    return suggestions as unknown[];
-}
-
-function stringifyPendingRequestArguments(value: unknown): string | null {
-    if (typeof value === 'undefined') return null;
-    try {
-        return JSON.stringify(value);
-    } catch {
-        return null;
-    }
-}
-
-function arePendingRequestsEquivalent(left: PendingPermissionRequest, right: PendingPermissionRequest): boolean {
-    if (left.kind !== right.kind || left.tool !== right.tool) return false;
-
-    const leftArgs = stringifyPendingRequestArguments(left.arguments);
-    const rightArgs = stringifyPendingRequestArguments(right.arguments);
-    if (leftArgs && rightArgs && leftArgs === rightArgs) {
-        return true;
-    }
-
-    return left.createdAt !== null && right.createdAt !== null && left.createdAt === right.createdAt;
-}
-
-function mergePendingRequestMetadata(
-    preferred: PendingPermissionRequest,
-    secondary: PendingPermissionRequest,
-): PendingPermissionRequest {
-    return {
-        ...preferred,
-        arguments: typeof preferred.arguments !== 'undefined' ? preferred.arguments : secondary.arguments,
-        createdAt: preferred.createdAt ?? secondary.createdAt,
-        ...(preferred.permissionSuggestions
-            ? { permissionSuggestions: preferred.permissionSuggestions }
-            : secondary.permissionSuggestions
-                ? { permissionSuggestions: secondary.permissionSuggestions }
-                : {}),
-    };
-}
-
-function getRequestCompletedAt(completed: unknown): number {
-    const completedAt = typeof (completed as { completedAt?: unknown })?.completedAt === 'number'
-        ? (completed as { completedAt: number }).completedAt
-        : 0;
-    const createdAt = typeof (completed as { createdAt?: unknown })?.createdAt === 'number'
-        ? (completed as { createdAt: number }).createdAt
-        : 0;
-    return Math.max(completedAt, createdAt);
-}
-
-function isPendingRequestCoveredByCompleted(
-    completedRequests: Record<string, unknown> | null | undefined,
-    requestId: string,
-    createdAt: number | null,
-): boolean {
-    if (!completedRequests || typeof completedRequests !== 'object') return false;
-    const completed = completedRequests[requestId];
-    if (!completed) return false;
-    return (createdAt ?? 0) <= getRequestCompletedAt(completed);
-}
-
-function visitPendingTranscriptRequests(
-    messages: ReadonlyArray<Message> | null | undefined,
-    completedRequests: Record<string, unknown> | null | undefined,
-    out: Map<string, PendingPermissionRequest>,
-): void {
-    if (!Array.isArray(messages) || messages.length === 0) return;
-
-    for (const message of messages) {
-        if (!message || message.kind !== 'tool-call') continue;
-
-        const permission = message.tool?.permission;
-        const requestId = typeof permission?.id === 'string'
-            ? permission.id.trim()
-            : typeof message.tool?.id === 'string'
-                ? message.tool.id.trim()
-                : '';
-        const toolName = typeof message.tool?.name === 'string' ? message.tool.name.trim() : '';
-        const createdAt = typeof message.createdAt === 'number' ? message.createdAt : null;
-
-        if (
-            permission?.status === 'pending' &&
-            requestId &&
-            toolName &&
-            !out.has(requestId) &&
-            !isPendingRequestCoveredByCompleted(completedRequests, requestId, createdAt)
-        ) {
-            out.set(requestId, {
-                id: requestId,
-                tool: toolName,
-                kind: resolveAgentRequestKind({ toolName, requestKind: permission.kind }),
-                arguments: message.tool?.input,
-                createdAt,
-                ...(Array.isArray(permission.suggestions) && permission.suggestions.length > 0
-                    ? { permissionSuggestions: permission.suggestions }
-                    : {}),
-            });
-        }
-
-        visitPendingTranscriptRequests(message.children ?? [], completedRequests, out);
-    }
-}
 
 export function listPendingTranscriptRequests(
     session: Session,
     messages?: ReadonlyArray<Message>,
 ): PendingPermissionRequest[] {
-    const transcriptMessages =
-        messages ??
-        readStoredSessionMessages(storage.getState(), session.id) ??
-        [];
-    const out = new Map<string, PendingPermissionRequest>();
-    visitPendingTranscriptRequests(
-        transcriptMessages,
-        (session.agentState?.completedRequests as Record<string, unknown> | null | undefined) ?? null,
-        out,
-    );
-    return Array.from(out.values());
-}
-
-function listPendingAgentRequests(session: Session, messages?: ReadonlyArray<Message>): PendingPermissionRequest[] {
-    // Pending permission/action prompts are only meaningful while the provider process is running.
-    // When `active` is missing/unknown, be conservative and avoid surfacing un-actionable prompts.
-    if (session.active !== true) {
-        return [];
-    }
-    const requests = session.agentState?.requests;
-    const completed = session.agentState?.completedRequests ?? null;
-    const pending = new Map<string, PendingPermissionRequest>();
-    const transcriptRequests = listPendingTranscriptRequests(session, messages);
-
-    for (const request of transcriptRequests) {
-        pending.set(request.id, request);
-    }
-
-    if (requests && Object.keys(requests).length > 0) {
-        for (const [permId, req] of Object.entries(requests)) {
-            const createdAt = typeof req?.createdAt === 'number' ? req.createdAt : null;
-            if (isPendingRequestCoveredByCompleted(completed, permId, createdAt)) continue;
-            const request: PendingPermissionRequest = {
-                id: permId,
-                tool: req.tool,
-                kind: resolveAgentRequestKind({ toolName: req.tool, requestKind: req.kind }),
-                arguments: req.arguments,
-                createdAt,
-                ...(getRequestPermissionSuggestions(req) ? { permissionSuggestions: getRequestPermissionSuggestions(req) } : {}),
-            };
-
-            const transcriptMatch = transcriptRequests.find((transcriptRequest) =>
-                arePendingRequestsEquivalent(transcriptRequest, request)
-            );
-            if (transcriptMatch) {
-                pending.set(
-                    transcriptMatch.id,
-                    mergePendingRequestMetadata(
-                        pending.get(transcriptMatch.id) ?? transcriptMatch,
-                        request,
-                    ),
-                );
-                continue;
-            }
-
-            pending.set(permId, request);
-        }
-    }
-
-    return Array.from(pending.values());
+    return listPendingTranscriptRequestsFromSession(session, messages);
 }
 
 export function listPendingPermissionRequests(session: Session, messages?: ReadonlyArray<Message>): PendingPermissionRequest[] {
-    return listPendingAgentRequests(session, messages).filter((r) =>
-        shouldShowGenericPermissionPromptForRequest({ toolName: r.tool, requestKind: r.kind })
-    );
+    return listPendingPermissionRequestsFromSession(session, messages);
 }
 
 export function listPendingUserActionRequests(session: Session, messages?: ReadonlyArray<Message>): PendingPermissionRequest[] {
-    return listPendingAgentRequests(session, messages).filter((r) => r.kind === 'user_action');
+    return listPendingUserActionRequestsFromSession(session, messages);
 }
 
 function hasPendingPermissionRequests(session: SessionStatusSource): boolean {
     if (typeof (session as SessionListRenderableSession).hasPendingPermissionRequests === 'boolean') {
         return (session as SessionListRenderableSession).hasPendingPermissionRequests === true;
     }
-    return listPendingPermissionRequests(session as Session).length > 0;
+    return derivePendingRequestFlagsFromSession(session as Session).hasPendingPermissionRequests;
 }
 
 function hasPendingUserActionRequests(session: SessionStatusSource): boolean {
     if (typeof (session as SessionListRenderableSession).hasPendingUserActionRequests === 'boolean') {
         return (session as SessionListRenderableSession).hasPendingUserActionRequests === true;
     }
-    return listPendingUserActionRequests(session as Session).length > 0;
+    return derivePendingRequestFlagsFromSession(session as Session).hasPendingUserActionRequests;
 }
 
 export function shouldShowAbortButtonForSessionState(state: SessionState): boolean {
@@ -328,22 +158,28 @@ export function getSessionStatus(session: SessionStatusSource, nowMs: number = D
  * Hook wrapper around `getSessionStatus` that keeps vibing text stable while the session is thinking.
  */
 export function useSessionStatus(session: SessionStatusSource): SessionStatus {
-    const isOnline = session.presence === "online";
-    const hasPermissions = hasPendingPermissionRequests(session);
-    const hasUserActions = hasPendingUserActionRequests(session);
+    const sessionId = typeof session.id === 'string' ? session.id : '';
+    const rawSession = useSession(sessionId);
+    const transcriptVersion = useSessionMessagesVersion(sessionId, sessionId.length > 0);
+    void transcriptVersion;
+
+    const resolvedSession = rawSession ?? session;
+    const isOnline = resolvedSession.presence === "online";
+    const hasPermissions = hasPendingPermissionRequests(resolvedSession);
+    const hasUserActions = hasPendingUserActionRequests(resolvedSession);
 
     const now = Date.now();
-    const optimisticThinkingAt = session.optimisticThinkingAt ?? null;
+    const optimisticThinkingAt = resolvedSession.optimisticThinkingAt ?? null;
     const isOptimisticThinking = typeof optimisticThinkingAt === 'number' && now - optimisticThinkingAt < OPTIMISTIC_SESSION_THINKING_TIMEOUT_MS;
-    const thinkingGraceUntil = session.thinkingGraceUntil ?? null;
+    const thinkingGraceUntil = resolvedSession.thinkingGraceUntil ?? null;
     const isThinkingGraceActive = typeof thinkingGraceUntil === 'number' && now < thinkingGraceUntil;
-    const isThinking = session.thinking === true || isOptimisticThinking || isThinkingGraceActive;
+    const isThinking = resolvedSession.thinking === true || isOptimisticThinking || isThinkingGraceActive;
 
     const vibingIndex = React.useMemo(() => {
         return Math.floor(Math.random() * vibingMessages.length);
     }, [isOnline, hasPermissions, hasUserActions, isThinking]);
 
-    return getSessionStatus(session, now, vibingIndex);
+    return getSessionStatus(resolvedSession, now, vibingIndex);
 }
 
 /**

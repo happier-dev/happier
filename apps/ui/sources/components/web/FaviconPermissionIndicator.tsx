@@ -1,8 +1,8 @@
 import React from 'react';
 import { Platform } from 'react-native';
 import { storage } from '@/sync/domains/state/storage';
+import { derivePendingRequestFlagsFromSession } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import { updateFaviconWithNotification, resetFavicon } from '@/utils/web/faviconGenerator';
-import { derivePendingRequestFlagsFromAgentState } from '@/sync/domains/session/listing/sessionListRenderable';
 
 /**
  * Component that monitors all sessions and updates the favicon
@@ -18,7 +18,7 @@ export const FaviconPermissionIndicator = React.memo(() => {
             // Use centralized presence logic - only "online" sessions matter
             const isOnline = session.presence === 'online';
             const isSessionActive = session.active === true;
-            const hasPermissions = derivePendingRequestFlagsFromAgentState(session.agentState).hasPendingPermissionRequests;
+            const hasPermissions = derivePendingRequestFlagsFromSession(session).hasPendingPermissionRequests;
 
             return isOnline && isSessionActive && hasPermissions;
         });

@@ -294,6 +294,19 @@ export function applyAgentStateUpdateToSessionMessages(params: Readonly<{
         ? { ...existing.reducerState.latestUsage }
         : undefined;
 
+    const didMessageChange = processedMessages.length > 0;
+    const didThinkingMetadataChange =
+        latestThinkingMessageId !== existing.latestThinkingMessageId
+        || latestThinkingMessageActivityAtMs !== (existing.latestThinkingMessageActivityAtMs ?? null);
+
+    if (!didMessageChange && !didThinkingMetadataChange) {
+        return {
+            sessionMessages: existing,
+            sessionLatestUsage: latestUsage,
+            sessionTodos: reducerResult.todos,
+        };
+    }
+
     return {
         sessionMessages: {
             ...existing,

@@ -1,10 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { renderHook, standardCleanup } from '@/dev/testkit';
 import { installSessionUtilsCommonModuleMocks } from './sessionUtilsTestHelpers';
 import type { Session } from '@/sync/domains/state/storageTypes';
 
 type MockStorageState = {
-    sessionMessages: Record<string, { messages: unknown[] }>;
+    sessionMessages: Record<string, { messages: unknown[]; messagesVersion?: number }>;
     sessions?: Record<string, unknown>;
     machines?: Record<string, unknown>;
     getProjectForSession?: (sessionId: string) => { key?: { machineId?: string; path?: string } } | null;
@@ -34,8 +35,14 @@ installSessionUtilsCommonModuleMocks({
                     mockStorageState.sessionMessages = next.sessionMessages;
                 },
             },
+            useSession: (id: string) => (mockStorageState.sessions?.[id] as Session | null | undefined) ?? null,
+            useSessionMessagesVersion: (id: string) => mockStorageState.sessionMessages[id]?.messagesVersion ?? 0,
         });
     },
+});
+
+afterEach(() => {
+    standardCleanup();
 });
 
 beforeEach(() => {
@@ -186,6 +193,56 @@ describe('getSessionStatus', () => {
                 },
             },
         });
+        const status = getSessionStatus(session, 1_000, 0);
+        expect(status.state).toBe('waiting');
+    });
+
+    it('does not return action_required when transcript marks the same request as canceled', async () => {
+        const { getSessionStatus } = await import('./sessionUtils');
+        const session = createBaseSession({
+            id: 's-transcript-canceled',
+            agentState: {
+                controlledByUser: null,
+                requests: {
+                    req1: {
+                        tool: 'AskUserQuestion',
+                        kind: 'user_action',
+                        arguments: { q: 'continue?' },
+                        createdAt: 100,
+                    },
+                },
+                completedRequests: null,
+            },
+        });
+
+        mockStorageState.sessionMessages = {
+            's-transcript-canceled': {
+                messages: [
+                    {
+                        kind: 'tool-call',
+                        id: 'm-tool-1',
+                        localId: null,
+                        createdAt: 100,
+                        children: [],
+                        tool: {
+                            id: 'req1',
+                            name: 'AskUserQuestion',
+                            state: 'error',
+                            input: { q: 'continue?' },
+                            createdAt: 100,
+                            completedAt: 101,
+                            permission: {
+                                id: 'req1',
+                                status: 'canceled',
+                                kind: 'user_action',
+                            },
+                        },
+                    },
+                ],
+                messagesVersion: 1,
+            },
+        };
+
         const status = getSessionStatus(session, 1_000, 0);
         expect(status.state).toBe('waiting');
     });
@@ -567,6 +624,102 @@ describe('listPendingTranscriptRequests', () => {
     });
 });
 
+describe('listPendingUserActionRequests', () => {
+    it('does not return requests that are terminal in the transcript even if agentState.requests still contains them', async () => {
+        const { listPendingUserActionRequests } = await import('./sessionUtils');
+        const session = createBaseSession({
+            id: 's-terminal-transcript',
+            agentState: {
+                controlledByUser: null,
+                requests: {
+                    req1: {
+                        tool: 'AskUserQuestion',
+                        kind: 'user_action',
+                        arguments: { q: 'continue?' },
+                        createdAt: 100,
+                    },
+                },
+                completedRequests: null,
+            },
+        });
+
+        expect(listPendingUserActionRequests(session, [
+            {
+                kind: 'tool-call',
+                id: 'm-tool-1',
+                localId: null,
+                createdAt: 100,
+                children: [],
+                tool: {
+                    id: 'req1',
+                    name: 'AskUserQuestion',
+                    state: 'error',
+                    input: { q: 'continue?' },
+                    createdAt: 100,
+                    completedAt: 101,
+                    permission: {
+                        id: 'req1',
+                        status: 'canceled',
+                        kind: 'user_action',
+                    },
+                },
+            } as any,
+        ])).toEqual([]);
+    });
+
+    it('keeps requests pending when the transcript only shows a synthetic Request interrupted placeholder', async () => {
+        const { listPendingUserActionRequests } = await import('./sessionUtils');
+        const session = createBaseSession({
+            id: 's-interrupted-transcript',
+            agentState: {
+                controlledByUser: null,
+                requests: {
+                    req1: {
+                        tool: 'AskUserQuestion',
+                        kind: 'user_action',
+                        arguments: { q: 'continue?' },
+                        createdAt: 100,
+                    },
+                },
+                completedRequests: null,
+            },
+        });
+
+        expect(listPendingUserActionRequests(session, [
+            {
+                kind: 'tool-call',
+                id: 'm-tool-1',
+                localId: null,
+                createdAt: 100,
+                children: [],
+                tool: {
+                    id: 'req1',
+                    name: 'AskUserQuestion',
+                    state: 'error',
+                    input: { q: 'continue?' },
+                    createdAt: 100,
+                    completedAt: 101,
+                    result: { error: 'Request interrupted' },
+                    permission: {
+                        id: 'req1',
+                        status: 'canceled',
+                        kind: 'user_action',
+                        reason: 'Request interrupted',
+                    },
+                },
+            } as any,
+        ])).toEqual([
+            expect.objectContaining({
+                id: 'req1',
+                tool: 'AskUserQuestion',
+                kind: 'user_action',
+                arguments: { q: 'continue?' },
+                createdAt: 100,
+            }),
+        ]);
+    });
+});
+
 describe('getSessionStatus', () => {
     it('treats transcript-backed pending permissions as permission_required when agentState is missing', async () => {
         const { storage } = await import('@/sync/domains/state/storage');
@@ -610,6 +763,81 @@ describe('getSessionStatus', () => {
 
         const status = getSessionStatus(session, 1_000, 0);
         expect(status.state).toBe('permission_required');
+    });
+});
+
+describe('useSessionStatus', () => {
+    it('uses the raw session state when a renderable session still has stale pending flags', async () => {
+        const { useSessionStatus } = await import('./sessionUtils');
+
+        mockStorageState.sessions = {
+            's-renderable-stale': createBaseSession({
+                id: 's-renderable-stale',
+                agentState: {
+                    controlledByUser: null,
+                    requests: {
+                        req1: {
+                            tool: 'AskUserQuestion',
+                            kind: 'user_action',
+                            arguments: { q: 'continue?' },
+                            createdAt: 100,
+                        },
+                    },
+                    completedRequests: null,
+                },
+            }),
+        };
+        mockStorageState.sessionMessages = {
+            's-renderable-stale': {
+                messages: [
+                    {
+                        kind: 'tool-call',
+                        id: 'm-tool-1',
+                        localId: null,
+                        createdAt: 100,
+                        children: [],
+                        tool: {
+                            id: 'req1',
+                            name: 'AskUserQuestion',
+                            state: 'error',
+                            input: { q: 'continue?' },
+                            createdAt: 100,
+                            completedAt: 101,
+                            permission: {
+                                id: 'req1',
+                                status: 'canceled',
+                                kind: 'user_action',
+                            },
+                        },
+                    },
+                ],
+                messagesVersion: 1,
+            },
+        };
+
+        const hook = await renderHook(() => useSessionStatus({
+            id: 's-renderable-stale',
+            seq: 1,
+            createdAt: 0,
+            updatedAt: 0,
+            active: true,
+            activeAt: 0,
+            archivedAt: null,
+            pendingVersion: 0,
+            pendingCount: 0,
+            metadataVersion: 0,
+            agentStateVersion: 0,
+            metadata: null,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+            accessLevel: undefined,
+            canApprovePermissions: undefined,
+            hasPendingPermissionRequests: false,
+            hasPendingUserActionRequests: true,
+        } as any));
+
+        expect(hook.getCurrent().state).toBe('waiting');
     });
 });
 

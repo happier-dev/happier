@@ -65,4 +65,66 @@ describe('runAgentStatePermissionsPhase (pending request resets canceled tool)',
     expect(message?.tool?.result).toBeUndefined();
     expect(changed.has(messageId)).toBe(true);
   });
+
+  it('does not restore a real canceled permission back to pending when AgentState.requests is stale', () => {
+    const state = createReducer();
+    const changed = new Set<string>();
+
+    const permId = 'que_2';
+    const messageId = 'msg_2';
+
+    state.toolIdToMessageId.set(permId, messageId);
+    state.messages.set(messageId, {
+      id: messageId,
+      localId: null,
+      realID: 'real-msg-2',
+      seq: 22,
+      role: 'agent',
+      createdAt: 20,
+      text: null,
+      event: null,
+      tool: {
+        id: permId,
+        name: 'AskUserQuestion',
+        state: 'error',
+        input: { questions: [{ header: 'H', question: 'Q', options: [], multiSelect: false }] },
+        createdAt: 20,
+        startedAt: null,
+        completedAt: 21,
+        description: null,
+        result: { error: 'User canceled' },
+        permission: {
+          id: permId,
+          status: 'canceled',
+          reason: 'User canceled',
+        },
+      },
+    });
+
+    runAgentStatePermissionsPhase({
+      state,
+      agentState: {
+        controlledByUser: null,
+        requests: {
+          [permId]: {
+            tool: 'AskUserQuestion',
+            kind: 'user_action',
+            arguments: { questions: [{ header: 'H', question: 'Q', options: [], multiSelect: false }] },
+            createdAt: 22,
+          },
+        },
+        completedRequests: null,
+      },
+      incomingToolIds: new Set<string>(),
+      changed,
+      allocateId: () => 'alloc',
+      enableLogging: false,
+    });
+
+    const message = state.messages.get(messageId);
+    expect(message?.tool?.permission?.status).toBe('canceled');
+    expect(message?.tool?.state).toBe('error');
+    expect(message?.tool?.completedAt).toBe(21);
+    expect(message?.tool?.result).toEqual({ error: 'User canceled' });
+  });
 });

@@ -1,8 +1,8 @@
 import { computeHasUnreadActivity } from '@/sync/domains/messages/unread';
 import { deriveDirectSessionAttentionHasUnread } from '@/sync/domains/session/directSessions/readDirectSessionAttention';
 import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
+import { derivePendingRequestFlagsFromSession } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import { resolveLastViewedSessionSeq } from '@/sync/domains/session/readCursor/resolveLastViewedSessionSeq';
-import { derivePendingRequestFlagsFromAgentState } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { Session } from '@/sync/domains/state/storageTypes';
 
 export type SessionAttentionOptions = Readonly<{
@@ -24,7 +24,7 @@ export function deriveSessionAttentionFlags(
     options?: SessionAttentionOptions,
 ): SessionAttentionFlags {
     const isSessionActive = session.active === true;
-    const pendingFlags = derivePendingRequestFlagsFromAgentState(session.agentState);
+    const pendingFlags = derivePendingRequestFlagsFromSession(session);
     const directSessionHasUnread = readDirectSessionLink(session.metadata)
         ? deriveDirectSessionAttentionHasUnread(session.metadata)
         : null;
@@ -39,15 +39,11 @@ export function deriveSessionAttentionFlags(
         });
 
     const hasPendingPermissionRequests = isSessionActive && options?.showPendingPermissionRequests !== false
-        ? typeof session.pendingPermissionRequestCount === 'number'
-            ? session.pendingPermissionRequestCount > 0
-            : pendingFlags.hasPendingPermissionRequests
+        ? pendingFlags.hasPendingPermissionRequests
         : false;
 
     const hasPendingUserActionRequests = isSessionActive && options?.showPendingUserActionRequests !== false
-        ? typeof session.pendingUserActionRequestCount === 'number'
-            ? session.pendingUserActionRequestCount > 0
-            : pendingFlags.hasPendingUserActionRequests
+        ? pendingFlags.hasPendingUserActionRequests
         : false;
 
     const hasQueuedUserInput = options?.showQueuedUserInput === false

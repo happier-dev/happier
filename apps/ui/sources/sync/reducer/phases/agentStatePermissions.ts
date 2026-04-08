@@ -1,6 +1,7 @@
 import { compareToolCalls } from '../../../utils/tools/toolComparison';
 import type { AgentState } from '../../domains/state/storageTypes';
 import type { ToolCall } from '../../domains/messages/messageTypes';
+import { isRequestInterruptedPlaceholder } from '../../domains/session/pending/requestInterruptedPlaceholder';
 import { equalOptionalStringArrays } from '../helpers/arrays';
 import type { ReducerState } from '../reducer';
 import { drainAndApplyOrphanToolResultsToMessage } from '../helpers/drainAndApplyOrphanToolResultsToMessage';
@@ -34,6 +35,19 @@ function mergePermissionRequestArgumentsPreservingExecpolicy(
     }
 
     return merged;
+}
+
+function shouldRestorePendingPermissionFromAgentState(message: Readonly<{ tool?: ToolCall | null }>): boolean {
+    const permission = message.tool?.permission;
+    if (!permission || permission.status === 'pending') return false;
+
+    // The reducer locally synthesizes "Request interrupted" cancellations during reconnect/abort
+    // flows. Those placeholders may be safely reopened if AgentState still advertises the request
+    // as pending. Real terminal provider outcomes should not be resurrected by stale requests.
+    return isRequestInterruptedPlaceholder({
+        permission,
+        result: message.tool?.result as { error?: unknown } | null | undefined,
+    });
 }
 
 export function runAgentStatePermissionsPhase(params: Readonly<{
@@ -149,7 +163,7 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                             };
                             hasChanged = true;
                         }
-                        if (message.tool.permission && message.tool.permission.status !== 'pending') {
+                        if (message.tool.permission && shouldRestorePendingPermissionFromAgentState(message)) {
                             // AgentState.requests is the authoritative source of truth for pending user input.
                             // If a tool was previously marked canceled/denied due to a transient UI disconnect
                             // (e.g. web reload), restore it back to pending so the user can answer.

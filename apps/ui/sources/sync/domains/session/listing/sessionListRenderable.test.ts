@@ -1,11 +1,32 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
     buildSessionListRenderableFromSession,
-    buildSessionListRenderableMetadata,
     derivePendingRequestFlagsFromAgentState,
     preserveSessionListRenderableTransientState,
 } from './sessionListRenderable';
+import { buildSessionListRenderableMetadataComparison } from './sessionListRenderableMetadataComparison';
+
+const storageState = vi.hoisted(() => ({
+    sessionMessages: {} as Record<string, unknown>,
+}));
+
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+        storage: {
+            getState: () => storageState,
+            getInitialState: () => storageState,
+            setState: () => undefined,
+            subscribe: () => () => undefined,
+            destroy: () => undefined,
+        },
+    } as any);
+});
+
+beforeEach(() => {
+    storageState.sessionMessages = {};
+});
 
 describe('derivePendingRequestFlagsFromAgentState', () => {
     it('reuses a shared empty flags object when there are no requests', () => {
@@ -67,6 +88,41 @@ describe('buildSessionListRenderableFromSession', () => {
         expect(renderable.hasPendingUserActionRequests).toBe(true);
     });
 
+    it('still prefers projected pending-request counts when completedRequests history exists', () => {
+        const renderable = buildSessionListRenderableFromSession({
+            id: 's1',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: {
+                controlledByUser: null,
+                requests: {},
+                completedRequests: {
+                    old_req: {
+                        tool: 'Bash',
+                        arguments: { command: 'pwd' },
+                        createdAt: 1,
+                        completedAt: 2,
+                        status: 'approved',
+                    },
+                },
+            },
+            agentStateVersion: 3,
+            pendingPermissionRequestCount: 1,
+            pendingUserActionRequestCount: 0,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any);
+
+        expect(renderable.hasPendingPermissionRequests).toBe(true);
+        expect(renderable.hasPendingUserActionRequests).toBe(false);
+    });
+
     it('does not mark pending requests as attention when the session is inactive', () => {
         const renderable = buildSessionListRenderableFromSession({
             id: 's1',
@@ -95,6 +151,114 @@ describe('buildSessionListRenderableFromSession', () => {
 
         expect(renderable.hasPendingPermissionRequests).toBe(false);
         expect(renderable.hasPendingUserActionRequests).toBe(false);
+    });
+
+    it('does not keep stale pending flags when the transcript already marked the request canceled', () => {
+        storageState.sessionMessages = {
+            s1: {
+                messages: [
+                    {
+                        kind: 'tool-call',
+                        id: 'm-tool-1',
+                        localId: null,
+                        createdAt: 100,
+                        children: [],
+                        tool: {
+                            id: 'req1',
+                            name: 'AskUserQuestion',
+                            state: 'error',
+                            input: { q: 'continue?' },
+                            createdAt: 100,
+                            completedAt: 101,
+                            permission: {
+                                id: 'req1',
+                                status: 'canceled',
+                                kind: 'user_action',
+                            },
+                        },
+                    },
+                ],
+            },
+        };
+
+        const renderable = buildSessionListRenderableFromSession({
+            id: 's1',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: {
+                controlledByUser: null,
+                requests: {
+                    req1: { tool: 'AskUserQuestion', kind: 'user_action', arguments: { q: 'continue?' }, createdAt: 100 },
+                },
+                completedRequests: null,
+            },
+            agentStateVersion: 0,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any);
+
+        expect(renderable.hasPendingPermissionRequests).toBe(false);
+        expect(renderable.hasPendingUserActionRequests).toBe(false);
+    });
+
+    it('keeps a newer pending request visible when an older transcript entry with the same id was canceled', () => {
+        storageState.sessionMessages = {
+            s1: {
+                messages: [
+                    {
+                        kind: 'tool-call',
+                        id: 'm-tool-1',
+                        localId: null,
+                        createdAt: 100,
+                        children: [],
+                        tool: {
+                            id: 'req1',
+                            name: 'AskUserQuestion',
+                            state: 'error',
+                            input: { q: 'continue?' },
+                            createdAt: 100,
+                            completedAt: 101,
+                            permission: {
+                                id: 'req1',
+                                status: 'canceled',
+                                kind: 'user_action',
+                            },
+                        },
+                    },
+                ],
+            },
+        };
+
+        const renderable = buildSessionListRenderableFromSession({
+            id: 's1',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: {
+                controlledByUser: null,
+                requests: {
+                    req1: { tool: 'AskUserQuestion', kind: 'user_action', arguments: { q: 'continue again?' }, createdAt: 200 },
+                },
+                completedRequests: null,
+            },
+            agentStateVersion: 0,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any);
+
+        expect(renderable.hasPendingPermissionRequests).toBe(false);
+        expect(renderable.hasPendingUserActionRequests).toBe(true);
     });
 
     it('reuses the previous renderable when the session data is semantically identical', () => {
@@ -207,8 +371,8 @@ describe('buildSessionListRenderableFromSession', () => {
             systemSessionV1: { hidden: false },
         };
 
-        const previous = buildSessionListRenderableMetadata(metadata as any);
-        const next = buildSessionListRenderableMetadata(metadata as any, previous);
+        const previous = buildSessionListRenderableMetadataComparison(metadata as any);
+        const next = buildSessionListRenderableMetadataComparison(metadata as any, previous);
 
         expect(next).toBe(previous);
     });
@@ -226,8 +390,8 @@ describe('buildSessionListRenderableFromSession', () => {
             systemSessionV1: { hidden: false },
         };
 
-        const previous = buildSessionListRenderableMetadata(baseMetadata as any);
-        const next = buildSessionListRenderableMetadata({
+        const previous = buildSessionListRenderableMetadataComparison(baseMetadata as any);
+        const next = buildSessionListRenderableMetadataComparison({
             ...baseMetadata,
             summary: { text: 'Updated summary' },
         } as any, previous);

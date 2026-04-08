@@ -1,12 +1,21 @@
 import type { AgentState, Metadata, Session } from '@/sync/domains/state/storageTypes';
-import { resolveAgentRequestKind } from '@/utils/sessions/permissions/permissionPromptPolicy';
+import { computeHasUnreadActivity } from '@/sync/domains/messages/unread';
+import type { Message } from '@/sync/domains/messages/messageTypes';
+import { deriveDirectSessionAttentionHasUnread } from '@/sync/domains/session/directSessions/readDirectSessionAttention';
+import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
+import {
+    derivePendingRequestFlagsFromAgentState,
+    derivePendingRequestFlagsFromSession,
+} from '@/sync/domains/session/pending/listPendingSessionRequests';
+import { resolveLastViewedSessionSeq } from '@/sync/domains/session/readCursor/resolveLastViewedSessionSeq';
 import { resolveSessionProjectGroupingKeyParts } from './sessionListProjectGroupingKeys';
 import {
     areSessionListRenderableMetadataComparisonsEqual,
-    buildSessionListRenderableMetadataComparison,
     readSessionListRenderableMetadataComparison,
     readSessionListRenderableMetadataComparisonFromRenderable,
 } from './sessionListRenderableMetadataComparison';
+
+export { derivePendingRequestFlagsFromAgentState } from '@/sync/domains/session/pending/listPendingSessionRequests';
 
 export interface SessionListRenderableMetadata {
     name?: string;
@@ -46,10 +55,9 @@ export interface SessionListRenderableSession {
     canApprovePermissions?: boolean;
     hasPendingPermissionRequests?: boolean;
     hasPendingUserActionRequests?: boolean;
+    hasUnreadMessages?: boolean;
     keepVisibleWhenInactive?: boolean;
 }
-
-type AgentRequestRecord = NonNullable<AgentState['requests']>;
 
 export type SessionListRenderableFieldSnapshot = Readonly<{
     active: boolean;
@@ -69,111 +77,94 @@ export type SessionListRenderableFieldSnapshot = Readonly<{
     metadata: ReturnType<typeof readSessionListRenderableMetadataComparisonFromRenderable>;
 }>;
 
-const EMPTY_PENDING_REQUEST_FLAGS = {
-    hasPendingPermissionRequests: false,
-    hasPendingUserActionRequests: false,
-} as const;
+type SessionListRenderableStaleFieldSource = Readonly<{
+    active?: boolean;
+    agentState?: AgentState | null | undefined;
+    pendingPermissionRequestCount?: number;
+    pendingUserActionRequestCount?: number;
+    hasPendingPermissionRequests?: boolean;
+    hasPendingUserActionRequests?: boolean;
+}>;
 
-function listPendingRequestEntries(agentState: AgentState | null | undefined): Array<{ kind: string }> {
-    const requests = agentState?.requests;
-    if (!requests) return [];
-    const completed = agentState?.completedRequests ?? null;
+function deriveSessionListRenderableDirectSessionUnread(
+    metadata: Metadata | null | undefined,
+): boolean | null {
+    if (!readDirectSessionLink(metadata)) {
+        return null;
+    }
+    return deriveDirectSessionAttentionHasUnread(metadata);
+}
 
-    return Object.entries(requests as AgentRequestRecord).flatMap(([id, request]) => {
-        if (!request || typeof request !== 'object') return [];
-        const completedEntry = completed?.[id];
-        if (completedEntry && completedEntry.completedAt != null) return [];
-        return [{
-            kind: resolveAgentRequestKind({
-                toolName: typeof request.tool === 'string' ? request.tool : '',
-                requestKind: request.kind,
-            }),
-        }];
+export function deriveSessionListRenderableHasUnreadMessagesFromSession(
+    session: Pick<Session, 'seq' | 'metadata' | 'lastViewedSessionSeq'>,
+): boolean {
+    const directSessionHasUnread = deriveSessionListRenderableDirectSessionUnread(session.metadata);
+    if (directSessionHasUnread !== null) {
+        return directSessionHasUnread;
+    }
+
+    return computeHasUnreadActivity({
+        sessionSeq: session.seq ?? 0,
+        pendingActivityAt: 0,
+        lastViewedSessionSeq: resolveLastViewedSessionSeq(session),
+        lastViewedPendingActivityAt: session.metadata?.readStateV1?.pendingActivityAt,
     });
 }
 
-export function derivePendingRequestFlagsFromAgentState(agentState: AgentState | null | undefined): {
-    hasPendingPermissionRequests: boolean;
-    hasPendingUserActionRequests: boolean;
-} {
-    const requests = listPendingRequestEntries(agentState);
-    if (requests.length === 0) {
-        return EMPTY_PENDING_REQUEST_FLAGS;
-    }
-    return {
-        hasPendingPermissionRequests: requests.some((request) => request.kind !== 'user_action'),
-        hasPendingUserActionRequests: requests.some((request) => request.kind === 'user_action'),
-    };
-}
-
-function derivePendingRequestFlags(params: Readonly<{
-    active?: boolean;
-    agentState: AgentState | null | undefined;
-    pendingPermissionRequestCount?: number;
-    pendingUserActionRequestCount?: number;
-}>): {
-    hasPendingPermissionRequests: boolean;
-    hasPendingUserActionRequests: boolean;
-} {
-    if (params.active !== true) {
-        return EMPTY_PENDING_REQUEST_FLAGS;
+export function deriveSessionListRenderableHasUnreadMessagesFromMetadataPatch(params: Readonly<{
+    metadata: Metadata | null | undefined;
+    nextSessionSeq: number;
+    nextLastViewedSessionSeq?: number;
+    previousHasUnreadMessages?: boolean;
+}>): boolean {
+    if (params.metadata !== undefined) {
+        const directSessionHasUnread = deriveSessionListRenderableDirectSessionUnread(params.metadata);
+        if (directSessionHasUnread !== null) {
+            return directSessionHasUnread;
+        }
     }
 
-    if (typeof params.pendingPermissionRequestCount === 'number' || typeof params.pendingUserActionRequestCount === 'number') {
-        return {
-            hasPendingPermissionRequests: (params.pendingPermissionRequestCount ?? 0) > 0,
-            hasPendingUserActionRequests: (params.pendingUserActionRequestCount ?? 0) > 0,
-        };
+    if (typeof params.nextLastViewedSessionSeq === 'number') {
+        return computeHasUnreadActivity({
+            sessionSeq: params.nextSessionSeq,
+            pendingActivityAt: 0,
+            lastViewedSessionSeq: params.nextLastViewedSessionSeq,
+            lastViewedPendingActivityAt: undefined,
+        });
     }
 
-    return derivePendingRequestFlagsFromAgentState(params.agentState);
-}
-
-function shouldPreserveSessionListRenderableMetadata(
-    session: Session,
-    previous: SessionListRenderableSession | undefined,
-): boolean {
-    return session.metadata == null && previous?.metadata != null;
+    return params.previousHasUnreadMessages === true;
 }
 
 function shouldPreserveSessionListRenderablePendingFlags(
-    session: Session,
+    current: SessionListRenderableStaleFieldSource,
     previous: SessionListRenderableSession | undefined,
 ): boolean {
     return (
-        session.active === true
-        && session.agentState == null
-        && typeof session.pendingPermissionRequestCount !== 'number'
-        && typeof session.pendingUserActionRequestCount !== 'number'
+        current.active === true
+        && current.agentState == null
+        && typeof current.pendingPermissionRequestCount !== 'number'
+        && typeof current.pendingUserActionRequestCount !== 'number'
+        && typeof current.hasPendingPermissionRequests !== 'boolean'
+        && typeof current.hasPendingUserActionRequests !== 'boolean'
         && typeof previous?.hasPendingPermissionRequests === 'boolean'
         && typeof previous?.hasPendingUserActionRequests === 'boolean'
     );
 }
 
-export function buildSessionListRenderableMetadata(
-    metadata: Metadata | null | undefined,
-    previous?: SessionListRenderableMetadata | null,
-): SessionListRenderableMetadata | null {
-    return buildSessionListRenderableMetadataComparison(metadata, previous);
-}
-
 export function buildSessionListRenderableFromSession(
     session: Session,
     previous?: SessionListRenderableSession,
+    messages?: ReadonlyArray<Message>,
 ): SessionListRenderableSession {
-    const preserveMetadata = shouldPreserveSessionListRenderableMetadata(session, previous);
+    const preserveMetadata = session.metadata == null && previous?.metadata != null;
     const preservePendingFlags = shouldPreserveSessionListRenderablePendingFlags(session, previous);
     const pending = preservePendingFlags && previous
         ? {
             hasPendingPermissionRequests: previous.hasPendingPermissionRequests,
             hasPendingUserActionRequests: previous.hasPendingUserActionRequests,
         }
-        : derivePendingRequestFlags({
-            active: session.active === true,
-            agentState: session.agentState,
-            pendingPermissionRequestCount: session.pendingPermissionRequestCount,
-            pendingUserActionRequestCount: session.pendingUserActionRequestCount,
-        });
+        : derivePendingRequestFlagsFromSession(session, messages);
     const previousMetadata: ReturnType<typeof readSessionListRenderableMetadataComparisonFromRenderable> = previous?.metadata
         ? readSessionListRenderableMetadataComparisonFromRenderable(previous.metadata)
         : null;
@@ -192,7 +183,7 @@ export function buildSessionListRenderableFromSession(
         pendingCount: session.pendingCount,
         metadataVersion: preserveMetadata && previous ? previous.metadataVersion : session.metadataVersion,
         agentStateVersion: preservePendingFlags && previous ? previous.agentStateVersion : session.agentStateVersion,
-        metadata: previous && areSessionListRenderableMetadataEqual(previousMetadata, nextMetadata)
+        metadata: previous && areSessionListRenderableMetadataComparisonsEqual(previousMetadata, nextMetadata)
             ? previous.metadata
             : nextMetadata,
         thinking: session.thinking,
@@ -205,6 +196,7 @@ export function buildSessionListRenderableFromSession(
         canApprovePermissions: session.canApprovePermissions,
         hasPendingPermissionRequests: pending.hasPendingPermissionRequests,
         hasPendingUserActionRequests: pending.hasPendingUserActionRequests,
+        hasUnreadMessages: deriveSessionListRenderableHasUnreadMessagesFromSession(session),
     };
 
     return previous && areSessionListRenderablesEqual(previous, next) ? previous : next;
@@ -233,21 +225,34 @@ export function preserveSessionListRenderableStaleFields(
     next: SessionListRenderableSession,
 ): SessionListRenderableSession {
     const preserveMetadata = next.metadata == null && previous?.metadata != null;
-    const preservePendingFlags =
-        typeof next.hasPendingPermissionRequests !== 'boolean'
-        && typeof next.hasPendingUserActionRequests !== 'boolean'
-        && typeof previous?.hasPendingPermissionRequests === 'boolean'
-        && typeof previous?.hasPendingUserActionRequests === 'boolean';
+    const preservePendingFlags = shouldPreserveSessionListRenderablePendingFlags(next, previous);
+    const preserveDirectSessionClassification =
+        previous?.metadata?.directSessionV1 != null
+        && next.metadata != null
+        && next.metadata.directSessionV1 == null
+        && previous.metadataVersion === next.metadataVersion;
 
-    if (previous == null || (!preserveMetadata && !preservePendingFlags)) {
+    if (
+        previous == null
+        || (!preserveMetadata && !preservePendingFlags && !preserveDirectSessionClassification)
+    ) {
         return next;
     }
+
+    const nextMetadata = preserveMetadata
+        ? previous.metadata
+        : preserveDirectSessionClassification
+            ? {
+                ...(next.metadata as SessionListRenderableMetadata),
+                directSessionV1: previous.metadata?.directSessionV1 ?? null,
+            }
+            : next.metadata;
 
     return {
         ...next,
         metadataVersion: preserveMetadata ? previous.metadataVersion : next.metadataVersion,
         agentStateVersion: preservePendingFlags ? previous.agentStateVersion : next.agentStateVersion,
-        metadata: preserveMetadata ? previous.metadata : next.metadata,
+        metadata: nextMetadata,
         hasPendingPermissionRequests: preservePendingFlags
             ? previous.hasPendingPermissionRequests
             : next.hasPendingPermissionRequests,
@@ -255,13 +260,6 @@ export function preserveSessionListRenderableStaleFields(
             ? previous.hasPendingUserActionRequests
             : next.hasPendingUserActionRequests,
     };
-}
-
-function areSessionListRenderableMetadataEqual(
-    previous: ReturnType<typeof readSessionListRenderableMetadataComparisonFromRenderable>,
-    next: ReturnType<typeof readSessionListRenderableMetadataComparisonFromRenderable>,
-): boolean {
-    return areSessionListRenderableMetadataComparisonsEqual(previous, next);
 }
 
 export function areSessionListRenderablesEqual(
@@ -293,8 +291,9 @@ export function areSessionListRenderablesEqual(
         && (previous.canApprovePermissions ?? null) === (next.canApprovePermissions ?? null)
         && (previous.hasPendingPermissionRequests ?? null) === (next.hasPendingPermissionRequests ?? null)
         && (previous.hasPendingUserActionRequests ?? null) === (next.hasPendingUserActionRequests ?? null)
+        && (previous.hasUnreadMessages === true) === (next.hasUnreadMessages === true)
         && (previous.keepVisibleWhenInactive === true) === (next.keepVisibleWhenInactive === true)
-        && areSessionListRenderableMetadataEqual(previousMetadata, nextMetadata);
+        && areSessionListRenderableMetadataComparisonsEqual(previousMetadata, nextMetadata);
 }
 
 export function didSessionListRenderableStructuralFieldsChange(
@@ -312,6 +311,8 @@ export function didSessionListRenderableStructuralFieldsChange(
     if (String(prevMeta?.machineId ?? '') !== String(nextMeta?.machineId ?? '')) return true;
     if (String(prevMeta?.path ?? '') !== String(nextMeta?.path ?? '')) return true;
     if (String(prevMeta?.homeDir ?? '') !== String(nextMeta?.homeDir ?? '')) return true;
+    if ((prevMeta?.directSessionV1?.v ?? null) !== (nextMeta?.directSessionV1?.v ?? null)) return true;
+    if ((prevMeta?.directSessionV1?.providerId ?? null) !== (nextMeta?.directSessionV1?.providerId ?? null)) return true;
     if ((prevMeta?.hiddenSystemSession === true) !== (nextMeta?.hiddenSystemSession === true)) return true;
 
     return false;
