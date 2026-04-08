@@ -18,6 +18,7 @@ export type DesktopActivityOverlayModel = Readonly<{
             title: string;
             subtitle: string | null;
             statusText: string | null;
+            previewText: string | null;
         }>[];
     }>;
     window: Readonly<{
@@ -52,6 +53,7 @@ function resolveVisibility(params: Readonly<{
 
 function resolveWindowSize(params: Readonly<{
     density: DesktopOverlayPolicy['density'];
+    compactStyle: DesktopOverlayPolicy['compactStyle'];
     rowCount: number;
 }>): Readonly<{
     collapsed: Readonly<{ width: number; height: number }>;
@@ -59,13 +61,21 @@ function resolveWindowSize(params: Readonly<{
 }> {
     const collapsed =
         params.density === 'comfortable'
-            ? { width: 380, height: 84 }
-            : { width: 340, height: 72 };
-    const expandedWidth = params.density === 'comfortable' ? 460 : 420;
-    const rowHeight = params.density === 'comfortable' ? 64 : 58;
+            ? (
+                params.compactStyle === 'pill'
+                    ? { width: 268, height: 48 }
+                    : { width: 372, height: 76 }
+            )
+            : (
+                params.compactStyle === 'pill'
+                    ? { width: 240, height: 42 }
+                    : { width: 336, height: 68 }
+            );
+    const expandedWidth = params.density === 'comfortable' ? 444 : 408;
+    const rowHeight = params.density === 'comfortable' ? 60 : 54;
     const expandedHeight = Math.min(
-        params.density === 'comfortable' ? 520 : 460,
-        Math.max(params.density === 'comfortable' ? 180 : 160, 96 + rowHeight * params.rowCount),
+        params.density === 'comfortable' ? 500 : 432,
+        Math.max(params.density === 'comfortable' ? 168 : 148, 86 + rowHeight * params.rowCount),
     );
     return {
         collapsed,
@@ -83,13 +93,15 @@ export function buildDesktopActivityOverlayModel(params: Readonly<{
 }>): DesktopActivityOverlayModel {
     const primary = params.snapshot.primary;
     const rows = params.snapshot.sessions.slice(0, 8).map((session) => ({
-            sessionId: session.sessionId,
-            title: session.title,
-            subtitle: session.subtitle ?? null,
-            statusText: session.statusText ?? null,
-        }));
+        sessionId: session.sessionId,
+        title: session.title,
+        subtitle: session.subtitle ?? null,
+        statusText: session.statusText ?? null,
+        previewText: session.previewText ?? null,
+    }));
     const window = resolveWindowSize({
         density: params.policy.density,
+        compactStyle: params.policy.compactStyle,
         rowCount: rows.length,
     });
 

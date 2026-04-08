@@ -1,12 +1,42 @@
 import { invokeTauri, listenTauriEvent } from '@/utils/platform/tauri';
 
 import type { DesktopActivityOverlayModel } from '@/activity/adapters/desktop/presentation/buildDesktopActivityOverlayModel';
-import type { DesktopOverlayPolicy } from './resolveDesktopOverlayPolicy';
+import type { DesktopOverlayAnchor, DesktopOverlayPolicy } from './resolveDesktopOverlayPolicy';
 
 export const DESKTOP_ACTIVITY_OVERLAY_EVENTS = {
     state: 'activityOverlay://state',
     interaction: 'activityOverlay://interaction',
 } as const;
+
+export type DesktopActivityOverlayRect = Readonly<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+}>;
+
+export type DesktopActivityOverlayPlacementDiagnostics = Readonly<{
+    monitorSource: 'main_window' | 'overlay_window' | 'primary';
+    effectiveMonitor: DesktopActivityOverlayRect;
+    anchor: DesktopOverlayAnchor;
+    placementMode: DesktopOverlayPolicy['placementMode'];
+    hostMode: 'floating' | 'notch_integrated';
+    displayContext?: Readonly<{
+        isMacos: boolean;
+        isBuiltinDisplay: boolean;
+        hasPhysicalNotch: boolean;
+        safeAreaTop: number;
+        screenFrame: DesktopActivityOverlayRect;
+        visibleFrame: DesktopActivityOverlayRect;
+    }> | null;
+    effectiveOffsetX: number;
+    effectiveOffsetY: number;
+    computedPosition: Readonly<{
+        x: number;
+        y: number;
+    }>;
+    appliedNativeFrame?: DesktopActivityOverlayRect | null;
+}>;
 
 export type DesktopActivityOverlayWindowStatePayload = Readonly<{
     visible: boolean;
@@ -14,6 +44,7 @@ export type DesktopActivityOverlayWindowStatePayload = Readonly<{
     model: DesktopActivityOverlayModel;
     policy: DesktopOverlayPolicy;
     window: DesktopActivityOverlayModel['window'];
+    placementDiagnostics?: DesktopActivityOverlayPlacementDiagnostics | null;
 }>;
 
 export type DesktopActivityOverlaySyncPayload = Readonly<{

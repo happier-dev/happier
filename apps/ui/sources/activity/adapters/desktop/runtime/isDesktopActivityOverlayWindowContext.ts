@@ -17,9 +17,9 @@ export function isDesktopActivityOverlayWindowContext(): boolean {
 
     try {
         const current = new URL(window.location.href);
-        if (current.searchParams.get('desktopOverlayWindow') !== '1') {
-            return false;
-        }
+        // The overlay window is intentionally owned by a dedicated route path.
+        // Keep the path itself as the canonical marker so the window still stays
+        // recognized if a navigation step drops the auxiliary query string.
         return normalizePathname(current.pathname) === '/desktop/activity-overlay';
     } catch {
         return false;

@@ -1,4 +1,5 @@
 import type { ActivitySurfaceSelectionSpec } from '@/activity/selection/activitySurfaceSelectionTypes';
+import { ACTIVITY_SURFACE_SELECTION_IDS } from '@/activity/selection/activitySurfaceSelectionTypes';
 
 import type { DesktopOverlayPolicy } from './resolveDesktopOverlayPolicy';
 
@@ -8,7 +9,7 @@ export function resolveDesktopOverlaySelectionSpec(
     const selectsActiveSessions = policy.visibilityMode === 'active_sessions';
 
     return {
-        surfaceId: 'desktop_overlay',
+        surfaceId: ACTIVITY_SURFACE_SELECTION_IDS.desktopOverlay,
         enabled: policy.enabled,
         mode: 'running',
         selectionReason: 'all_eligible',

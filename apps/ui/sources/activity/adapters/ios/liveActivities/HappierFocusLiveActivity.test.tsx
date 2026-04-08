@@ -16,11 +16,28 @@ vi.mock('@expo/ui/swift-ui', () => ({
 }));
 
 vi.mock('@expo/ui/swift-ui/modifiers', () => ({
+    background: (value: unknown, shape?: unknown) => ({ $type: 'background', value, shape }),
+    border: (value: unknown) => ({ $type: 'border', value }),
     buttonStyle: (value: unknown) => value,
-    controlSize: (value: unknown) => value,
+    clipShape: (shape: unknown, cornerRadius?: unknown) => ({ $type: 'clipShape', shape, cornerRadius }),
     font: (value: unknown) => value,
+    foregroundStyle: (value: unknown) => value,
+    lineLimit: (value: unknown) => ({ $type: 'lineLimit', value }),
     padding: (value: unknown) => value,
+    shadow: (value: unknown) => ({ $type: 'shadow', value }),
+    shapes: {
+        capsule: (value?: unknown) => ({ $type: 'capsule', value }),
+        roundedRectangle: (value?: unknown) => ({ $type: 'roundedRectangle', value }),
+    },
 }));
+
+vi.mock('react-native', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('react-native')>();
+    return {
+        ...actual,
+        PlatformColor: (value: string) => value,
+    };
+});
 
 import { HappierFocusLiveActivityComponent } from './HappierFocusLiveActivity';
 
@@ -96,13 +113,16 @@ describe('HappierFocusLiveActivityComponent', () => {
 
         expect(asElementWithProps<{ systemName?: string }>(rendered.compactLeading).props.systemName).toBe('exclamationmark.bubble.fill');
         expect(asElementWithProps<{ systemName?: string }>(rendered.minimal).props.systemName).toBe('exclamationmark.bubble.fill');
-        expect(asElementWithProps<{ children?: React.ReactNode }>(rendered.compactTrailing).props.children).toBe('+2');
+        const compactTrailing = asElementWithProps<{ children?: React.ReactNode; modifiers?: Array<{ $type?: string }> }>(rendered.compactTrailing);
+        expect(compactTrailing.props.children).toBe('+2');
+        expect(compactTrailing.props.modifiers?.some((modifier) => modifier?.$type === 'background')).toBe(true);
 
         const expandedLeading = asElementWithProps<{ children?: React.ReactNode }>(rendered.expandedLeading);
         const textChildren = React.Children.toArray(expandedLeading.props.children)
             .filter((child): child is React.ReactElement<{ children?: React.ReactNode }> => React.isValidElement(child))
             .flatMap((child) => React.Children.toArray(child.props.children));
 
-        expect(textChildren).toContain('Choose whether to continue');
+        expect(textChildren).toEqual(expect.arrayContaining(['Action required', 'Choose whether to continue']));
+        expect(textChildren.indexOf('Action required')).toBeLessThan(textChildren.indexOf('Choose whether to continue'));
     });
 });

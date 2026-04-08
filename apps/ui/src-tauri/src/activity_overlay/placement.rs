@@ -1,8 +1,8 @@
-use tauri::{Runtime, WebviewWindow};
+use super::{DesktopActivityOverlayAnchor, DesktopActivityOverlayPlacementMode};
+use serde::{Deserialize, Serialize};
 
-use super::DesktopActivityOverlayAnchor;
-
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct Rect {
     pub(crate) x: f64,
     pub(crate) y: f64,
@@ -10,37 +10,74 @@ pub(crate) struct Rect {
     pub(crate) height: f64,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct OverlayPlacementRect {
     pub(crate) x: f64,
     pub(crate) y: f64,
 }
 
-pub(crate) fn resolve_overlay_monitor_rect<R: Runtime>(
-    window: &WebviewWindow<R>,
-) -> Result<Rect, String> {
-    if let Some(monitor) = window
-        .current_monitor()
-        .map_err(|error| error.to_string())?
-    {
-        return Ok(Rect {
-            x: monitor.position().x as f64,
-            y: monitor.position().y as f64,
-            width: monitor.size().width as f64,
-            height: monitor.size().height as f64,
-        });
-    }
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DesktopActivityOverlayMonitorSource {
+    MainWindow,
+    OverlayWindow,
+    Primary,
+}
 
-    if let Some(monitor) = window
-        .primary_monitor()
-        .map_err(|error| error.to_string())?
-    {
-        return Ok(Rect {
-            x: monitor.position().x as f64,
-            y: monitor.position().y as f64,
-            width: monitor.size().width as f64,
-            height: monitor.size().height as f64,
-        });
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ResolvedOverlayAnchorMonitorRect {
+    pub(crate) source: DesktopActivityOverlayMonitorSource,
+    pub(crate) rect: Rect,
+}
+
+pub(crate) fn resolve_overlay_anchor_monitor_resolution_for_placement_mode(
+    placement_mode: DesktopActivityOverlayPlacementMode,
+    main_window_monitor: Option<Rect>,
+    overlay_window_monitor: Option<Rect>,
+    primary_monitor: Option<Rect>,
+) -> Result<ResolvedOverlayAnchorMonitorRect, String> {
+    match placement_mode {
+        DesktopActivityOverlayPlacementMode::Anchored => {
+            if let Some(monitor) = main_window_monitor {
+                return Ok(ResolvedOverlayAnchorMonitorRect {
+                    source: DesktopActivityOverlayMonitorSource::MainWindow,
+                    rect: monitor,
+                });
+            }
+            if let Some(monitor) = overlay_window_monitor {
+                return Ok(ResolvedOverlayAnchorMonitorRect {
+                    source: DesktopActivityOverlayMonitorSource::OverlayWindow,
+                    rect: monitor,
+                });
+            }
+            if let Some(monitor) = primary_monitor {
+                return Ok(ResolvedOverlayAnchorMonitorRect {
+                    source: DesktopActivityOverlayMonitorSource::Primary,
+                    rect: monitor,
+                });
+            }
+        }
+        DesktopActivityOverlayPlacementMode::Custom => {
+            if let Some(monitor) = overlay_window_monitor {
+                return Ok(ResolvedOverlayAnchorMonitorRect {
+                    source: DesktopActivityOverlayMonitorSource::OverlayWindow,
+                    rect: monitor,
+                });
+            }
+            if let Some(monitor) = main_window_monitor {
+                return Ok(ResolvedOverlayAnchorMonitorRect {
+                    source: DesktopActivityOverlayMonitorSource::MainWindow,
+                    rect: monitor,
+                });
+            }
+            if let Some(monitor) = primary_monitor {
+                return Ok(ResolvedOverlayAnchorMonitorRect {
+                    source: DesktopActivityOverlayMonitorSource::Primary,
+                    rect: monitor,
+                });
+            }
+        }
     }
 
     Err("Unable to resolve a monitor for desktop activity overlay".to_string())
@@ -207,5 +244,115 @@ mod tests {
         assert!(placement.y.is_finite());
         assert!((placement.x - 520.0).abs() < 0.001);
         assert!((placement.y - 10.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn resolves_overlay_top_center_on_a_non_zero_origin_monitor() {
+        let monitor = Rect {
+            x: 3000.0,
+            y: 0.0,
+            width: 1280.0,
+            height: 800.0,
+        };
+        let overlay = Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 360.0,
+            height: 72.0,
+        };
+
+        let placement = resolve_overlay_placement(
+            monitor,
+            overlay,
+            DesktopActivityOverlayAnchor::TopCenter,
+            0.0,
+            0.0,
+            10.0,
+        );
+
+        assert!((placement.x - 3460.0).abs() < 0.001);
+        assert!((placement.y - 10.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn anchored_prefers_main_window_monitor_for_overlay_anchor_resolution() {
+        let resolved = resolve_overlay_anchor_monitor_resolution_for_placement_mode(
+            DesktopActivityOverlayPlacementMode::Anchored,
+            Some(Rect {
+                x: 200.0,
+                y: 40.0,
+                width: 1600.0,
+                height: 1000.0,
+            }),
+            Some(Rect {
+                x: 3000.0,
+                y: 0.0,
+                width: 1280.0,
+                height: 800.0,
+            }),
+            Some(Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 1920.0,
+                height: 1080.0,
+            }),
+        )
+        .expect("expected a resolved monitor");
+
+        assert_eq!(resolved.source, DesktopActivityOverlayMonitorSource::MainWindow);
+        assert!((resolved.rect.x - 200.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn anchored_falls_back_to_overlay_window_monitor_when_the_main_window_monitor_is_unavailable() {
+        let resolved = resolve_overlay_anchor_monitor_resolution_for_placement_mode(
+            DesktopActivityOverlayPlacementMode::Anchored,
+            None,
+            Some(Rect {
+                x: 3000.0,
+                y: 0.0,
+                width: 1280.0,
+                height: 800.0,
+            }),
+            Some(Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 1920.0,
+                height: 1080.0,
+            }),
+        )
+        .expect("expected a resolved monitor");
+
+        assert_eq!(resolved.source, DesktopActivityOverlayMonitorSource::OverlayWindow);
+        assert!((resolved.rect.x - 3000.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn custom_prefers_overlay_window_monitor_for_overlay_anchor_resolution() {
+        let resolved = resolve_overlay_anchor_monitor_resolution_for_placement_mode(
+            DesktopActivityOverlayPlacementMode::Custom,
+            Some(Rect {
+                x: 200.0,
+                y: 40.0,
+                width: 1600.0,
+                height: 1000.0,
+            }),
+            Some(Rect {
+                x: 3000.0,
+                y: 0.0,
+                width: 1280.0,
+                height: 800.0,
+            }),
+            Some(Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 1920.0,
+                height: 1080.0,
+            }),
+        )
+        .expect("expected a resolved monitor");
+
+        assert_eq!(resolved.source, DesktopActivityOverlayMonitorSource::OverlayWindow);
+        assert!((resolved.rect.x - 3000.0).abs() < 0.001);
     }
 }

@@ -1,13 +1,21 @@
 import * as React from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
+import { Pressable, View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 
+import { desktopActivityOverlayChromeMetrics } from './DesktopActivityOverlayChromeMetrics';
+import type { DesktopActivityOverlayHoverablePressableState } from './DesktopActivityOverlayHoverablePressableState';
+import { DesktopActivityOverlayLeadingIndicator } from './DesktopActivityOverlayLeadingIndicator';
+import type { DesktopActivityOverlayVisualMode } from './DesktopActivityOverlayVisualMode';
+
 export function DesktopActivityOverlaySessionRow(props: Readonly<{
+    visualMode: DesktopActivityOverlayVisualMode;
+    isLast?: boolean;
     title: string;
     subtitle: string | null;
     statusText: string | null;
+    previewText: string | null;
     onPress: () => void;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
@@ -15,51 +23,91 @@ export function DesktopActivityOverlaySessionRow(props: Readonly<{
     return (
         <Pressable
             onPress={props.onPress}
-            style={({ pressed }) => [
-                styles.container,
-                {
-                    borderColor: theme.colors.divider,
-                    backgroundColor: pressed ? theme.colors.surfacePressed : theme.colors.surfaceHigh,
-                },
-            ]}
+            style={(state) => {
+                const { pressed } = state;
+                const hovered = (state as DesktopActivityOverlayHoverablePressableState).hovered === true;
+
+                return [
+                    styles.container,
+                    hovered ? [styles.hoveredSurface, { backgroundColor: theme.colors.overlay.scrimStrong }] : null,
+                    pressed ? { opacity: 0.9 } : null,
+                ];
+            }}
         >
-            <View style={styles.textWrap}>
-                <Text style={[styles.title, { color: theme.colors.text }]}>
-                    {props.title}
-                </Text>
-                {props.subtitle ? (
-                    <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]}>
-                        {props.subtitle}
+            <View style={styles.contentRow}>
+                <DesktopActivityOverlayLeadingIndicator
+                    visualMode={props.visualMode}
+                    tone="row"
+                />
+                <View style={styles.textWrap}>
+                    <Text numberOfLines={1} style={[styles.title, { color: theme.colors.overlay.text }]}>
+                        {props.title}
                     </Text>
-                ) : null}
-                {props.statusText ? (
-                    <Text style={[styles.status, { color: theme.colors.textSecondary }]}>
-                        {props.statusText}
-                    </Text>
-                ) : null}
+                    {props.subtitle ? (
+                        <Text numberOfLines={1} style={[styles.subtitle, { color: theme.colors.overlay.textSecondary }]}>
+                            {props.subtitle}
+                        </Text>
+                    ) : null}
+                    {props.statusText ? (
+                        <Text numberOfLines={1} style={[styles.status, { color: theme.colors.overlay.textSecondary }]}>
+                            {props.statusText}
+                        </Text>
+                    ) : null}
+                    {props.previewText ? (
+                        <Text numberOfLines={1} style={[styles.previewText, { color: theme.colors.overlay.textSecondary }]}>
+                            {props.previewText}
+                        </Text>
+                    ) : null}
+                </View>
             </View>
+            {!props.isLast ? (
+                <View style={[styles.separator, { backgroundColor: theme.colors.overlay.text }]} />
+            ) : null}
         </Pressable>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
-        borderWidth: StyleSheet.hairlineWidth,
+        position: 'relative',
+    },
+    hoveredSurface: {
         borderRadius: 12,
-        paddingHorizontal: 12,
-        paddingVertical: 10,
+        opacity: 0.98,
+    },
+    contentRow: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: desktopActivityOverlayChromeMetrics.row.gap,
+        paddingHorizontal: desktopActivityOverlayChromeMetrics.row.paddingHorizontal,
+        paddingVertical: desktopActivityOverlayChromeMetrics.row.paddingVertical,
     },
     textWrap: {
-        gap: 2,
+        flex: 1,
+        minWidth: 0,
+        gap: 1,
     },
     title: {
-        fontSize: 13,
+        fontSize: 12,
         fontWeight: '700',
+        letterSpacing: 0.08,
     },
     subtitle: {
-        fontSize: 12,
+        fontSize: 10,
+        opacity: 0.78,
     },
     status: {
-        fontSize: 12,
+        fontSize: 10,
+        opacity: 0.82,
+    },
+    previewText: {
+        fontSize: 10,
+        opacity: 0.8,
+    },
+    separator: {
+        height: StyleSheet.hairlineWidth,
+        opacity: 0.08,
+        marginLeft: 18,
+        marginRight: 6,
     },
 });

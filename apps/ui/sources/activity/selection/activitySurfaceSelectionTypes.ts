@@ -3,8 +3,17 @@ import type { ActivitySurfacePolicy } from '@/activity/attention/resolveActivity
 export type ActivitySurfaceSelectionMode = 'focused' | 'attention' | 'running' | 'summary';
 export type ActivitySurfaceSelectionReason = 'all_eligible' | 'dynamic_primary' | 'pinned_primary' | 'session_specific';
 
+export const ACTIVITY_SURFACE_SELECTION_IDS = {
+    liveActivities: 'live_activities',
+    widgets: 'widgets',
+    desktopOverlay: 'desktop_overlay',
+} as const;
+
+export type ActivitySurfaceSelectionId =
+    (typeof ACTIVITY_SURFACE_SELECTION_IDS)[keyof typeof ACTIVITY_SURFACE_SELECTION_IDS];
+
 export type ActivitySurfaceSelectionSpec = Readonly<{
-    surfaceId: string;
+    surfaceId: ActivitySurfaceSelectionId;
     enabled: boolean;
     mode: ActivitySurfaceSelectionMode;
     selectionReason: ActivitySurfaceSelectionReason;
@@ -35,7 +44,7 @@ export type ActivitySurfaceSlots = Readonly<{
 
 export function createLiveActivitySelectionSpec(policy: ActivitySurfacePolicy): ActivitySurfaceSelectionSpec {
     return {
-        surfaceId: 'ios_live_activities',
+        surfaceId: ACTIVITY_SURFACE_SELECTION_IDS.liveActivities,
         enabled: policy.liveActivities.enabled,
         mode: policy.liveActivities.mode,
         selectionReason: policy.liveActivities.strategy,
@@ -52,7 +61,7 @@ export function createLiveActivitySelectionSpec(policy: ActivitySurfacePolicy): 
 
 export function createWidgetSelectionSpec(policy: ActivitySurfacePolicy): ActivitySurfaceSelectionSpec {
     return {
-        surfaceId: 'ios_widgets',
+        surfaceId: ACTIVITY_SURFACE_SELECTION_IDS.widgets,
         enabled: policy.widgets.enabled,
         mode: policy.widgets.mode,
         selectionReason: 'all_eligible',

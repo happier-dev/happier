@@ -1,4 +1,5 @@
 export type DesktopOverlayVisibilityMode = 'attention_only' | 'active_sessions' | 'always_when_enabled';
+export type DesktopOverlayPresentationMode = 'automatic' | 'notch_integrated' | 'floating_overlay';
 export type DesktopOverlayPlacementMode = 'anchored' | 'custom';
 export type DesktopOverlayAnchor =
     | 'top_center'
@@ -18,6 +19,8 @@ export type DesktopOverlaySettingsVisibilityState = Readonly<{
     showAutoHideDelay: boolean;
     showCollapsedClickAction: boolean;
     showExpandedBehavior: boolean;
+    showHostModeFallbackNotice: boolean;
+    showFloatingPlacementControls: boolean;
     showCustomPlacementControls: boolean;
 }>;
 
@@ -32,6 +35,7 @@ export type DesktopOverlayPolicy = Readonly<{
     autoHideDelayMs: number;
     expandedBehavior: DesktopOverlayExpandedBehavior;
     interactiveCollapsed: boolean;
+    presentationMode: DesktopOverlayPresentationMode;
     clickAction: DesktopOverlayClickAction;
     density: DesktopOverlayDensity;
     compactStyle: DesktopOverlayCompactStyle;
@@ -44,6 +48,8 @@ export type DesktopOverlayPolicy = Readonly<{
     enableDragReposition: boolean;
     lockPosition: boolean;
 }>;
+
+export type DesktopOverlayEffectiveHostMode = 'floating' | 'notch_integrated' | null;
 
 function readBoolean(value: unknown, fallback: boolean): boolean {
     return typeof value === 'boolean' ? value : fallback;
@@ -61,6 +67,10 @@ function readNumber(value: unknown, fallback: number, min: number, max: number):
 }
 
 export function resolveDesktopOverlayPolicy(settings: Readonly<Record<string, unknown>>): DesktopOverlayPolicy {
+    const placementMode = readEnum(settings.desktopOverlayPlacementMode, ['anchored', 'custom'], 'anchored');
+    const offsetX = readNumber(settings.desktopOverlayOffsetX, 0, -4000, 4000);
+    const offsetY = readNumber(settings.desktopOverlayOffsetY, 0, -4000, 4000);
+
     return {
         enabled: readBoolean(settings.desktopOverlayEnabled, false),
         visibilityMode: readEnum(settings.desktopOverlayVisibilityMode, ['attention_only', 'active_sessions', 'always_when_enabled'], 'attention_only'),
@@ -72,12 +82,13 @@ export function resolveDesktopOverlayPolicy(settings: Readonly<Record<string, un
         autoHideDelayMs: readNumber(settings.desktopOverlayAutoHideDelayMs, 6000, 1000, 120000),
         expandedBehavior: readEnum(settings.desktopOverlayExpandedBehavior, ['click', 'hover'], 'click'),
         interactiveCollapsed: readBoolean(settings.desktopOverlayInteractiveCollapsed, true),
+        presentationMode: readEnum(settings.desktopOverlayPresentationMode, ['automatic', 'notch_integrated', 'floating_overlay'], 'automatic'),
         clickAction: readEnum(settings.desktopOverlayClickAction, ['expand_overlay', 'open_primary_session', 'open_sessions'], 'expand_overlay'),
         density: readEnum(settings.desktopOverlayDensity, ['compact', 'comfortable'], 'compact'),
         compactStyle: readEnum(settings.desktopOverlayCompactStyle, ['pill', 'panel'], 'pill'),
         showSessionCount: readBoolean(settings.desktopOverlayShowSessionCount, true),
         showPreviewText: readBoolean(settings.desktopOverlayShowPreviewText, false),
-        placementMode: readEnum(settings.desktopOverlayPlacementMode, ['anchored', 'custom'], 'anchored'),
+        placementMode,
         anchor: readEnum(settings.desktopOverlayAnchor, [
             'top_center',
             'top_left',
@@ -88,8 +99,8 @@ export function resolveDesktopOverlayPolicy(settings: Readonly<Record<string, un
             'left_center',
             'right_center',
         ], 'top_center'),
-        offsetX: readNumber(settings.desktopOverlayOffsetX, 0, -4000, 4000),
-        offsetY: readNumber(settings.desktopOverlayOffsetY, 0, -4000, 4000),
+        offsetX: placementMode === 'custom' ? offsetX : 0,
+        offsetY: placementMode === 'custom' ? offsetY : 0,
         enableDragReposition: readBoolean(settings.desktopOverlayEnableDragReposition, false),
         lockPosition: readBoolean(settings.desktopOverlayLockPosition, true),
     };
@@ -97,15 +108,32 @@ export function resolveDesktopOverlayPolicy(settings: Readonly<Record<string, un
 
 export function resolveDesktopOverlaySettingsVisibilityState(
     policy: DesktopOverlayPolicy,
+    hostMode: DesktopOverlayEffectiveHostMode = null,
 ): DesktopOverlaySettingsVisibilityState {
     const showOverlayConfiguration = policy.enabled;
     const showCollapsedClickAction = showOverlayConfiguration && policy.interactiveCollapsed;
+    const effectiveHostMode = hostMode
+        ?? (policy.presentationMode === 'notch_integrated'
+            ? 'notch_integrated'
+            : policy.presentationMode === 'floating_overlay'
+                ? 'floating'
+                : null);
+    const showHostModeFallbackNotice = showOverlayConfiguration
+        && effectiveHostMode === 'floating'
+        && policy.presentationMode !== 'floating_overlay';
+    const showFloatingPlacementControls = showOverlayConfiguration
+        && (
+            effectiveHostMode === 'floating'
+            || (effectiveHostMode === null && policy.presentationMode === 'floating_overlay')
+        );
 
     return {
         showOverlayConfiguration,
         showAutoHideDelay: showOverlayConfiguration && policy.autoHideEnabled,
         showCollapsedClickAction,
         showExpandedBehavior: showCollapsedClickAction && policy.clickAction === 'expand_overlay',
-        showCustomPlacementControls: showOverlayConfiguration && policy.placementMode === 'custom',
+        showHostModeFallbackNotice,
+        showFloatingPlacementControls,
+        showCustomPlacementControls: showFloatingPlacementControls && policy.placementMode === 'custom',
     };
 }

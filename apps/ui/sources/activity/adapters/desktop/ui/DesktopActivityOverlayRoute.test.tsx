@@ -88,6 +88,7 @@ function createWindowState(
                         title: 'Session One',
                         subtitle: 'Repo',
                         statusText: 'Needs attention',
+                        previewText: null,
                     },
                 ],
             },
@@ -107,6 +108,7 @@ function createWindowState(
             autoHideDelayMs: 6000,
             expandedBehavior: 'click',
             interactiveCollapsed: true,
+            presentationMode: 'automatic',
             clickAction: 'expand_overlay',
             density: 'compact',
             compactStyle: 'pill',
@@ -362,7 +364,7 @@ describe('DesktopActivityOverlayRoute', () => {
         });
 
         expect(screen.findByTestId('desktop-activity-overlay-collapsed')).toBeNull();
-        expect(findTestInstanceByTypeContainingText(screen, 'Pressable', 'common.close')).toBeTruthy();
+        expect(screen.findByTestId('desktop-activity-overlay-expanded-action-collapse')).toBeTruthy();
     });
 
     it('routes expanded overlay actions through the shared interaction bridge', async () => {
@@ -375,10 +377,7 @@ describe('DesktopActivityOverlayRoute', () => {
         const screen = await renderRoute();
 
         await act(async () => {
-            pressTestInstance(
-                findTestInstanceByTypeContainingText(screen, 'Pressable', 'common.close'),
-                'expanded overlay close action',
-            );
+            screen.pressByTestId('desktop-activity-overlay-expanded-action-collapse');
         });
         expect(setDesktopActivityOverlayExpandedMock).toHaveBeenCalledWith(false);
         expect(emitDesktopActivityOverlayInteractionMock).toHaveBeenCalledWith({
@@ -402,10 +401,7 @@ describe('DesktopActivityOverlayRoute', () => {
         emitDesktopActivityOverlayInteractionMock.mockClear();
 
         await act(async () => {
-            pressTestInstance(
-                findTestInstanceByTypeContainingText(screen, 'Pressable', ['common.open', 'tabs.inbox']),
-                'expanded overlay inbox action',
-            );
+            screen.pressByTestId('desktop-activity-overlay-expanded-action-open-inbox');
         });
         expect(emitDesktopActivityOverlayInteractionMock).toHaveBeenCalledWith({
             actionIdentifier: 'open-inbox',
@@ -424,5 +420,175 @@ describe('DesktopActivityOverlayRoute', () => {
         expect(screen.findByTestId('desktop-activity-overlay-loading')).toBeNull();
         expect(getDesktopActivityOverlayWindowStateMock).not.toHaveBeenCalled();
         expect(listenDesktopActivityOverlayWindowStateMock).not.toHaveBeenCalled();
+    });
+
+    it('forces the web document background transparent only while the overlay window route is mounted', async () => {
+        isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
+        getDesktopActivityOverlayWindowStateMock.mockResolvedValue(createWindowState());
+        listenDesktopActivityOverlayWindowStateMock.mockResolvedValue(() => {});
+
+        const originalDocument = (globalThis as { document?: Document }).document;
+        const fakeRoot = {
+            style: {
+                backgroundColor: 'rgb(255, 255, 255)',
+                margin: '12px',
+                padding: '12px',
+            },
+        };
+        const fakeDocument = {
+            createElement: () => ({
+                id: '',
+                nodeName: 'STYLE',
+                textContent: '',
+                remove: () => {},
+            }),
+            getElementById: (id: string) => (id === 'root' ? fakeRoot : null),
+            head: {
+                appendChild: () => {},
+            },
+            documentElement: {
+                style: {
+                    backgroundColor: 'rgb(255, 255, 255)',
+                    background: 'rgb(255, 255, 255)',
+                },
+            },
+            body: {
+                style: {
+                    backgroundColor: 'rgb(255, 255, 255)',
+                    background: 'rgb(255, 255, 255)',
+                    margin: '8px',
+                    padding: '8px',
+                    overflow: 'scroll',
+                },
+            },
+        } as unknown as Document;
+
+        (globalThis as { document?: Document }).document = fakeDocument;
+
+        try {
+            const screen = await renderRoute();
+
+            expect(fakeDocument.documentElement.style.backgroundColor).toBe('transparent');
+            expect(fakeDocument.body.style.backgroundColor).toBe('transparent');
+            expect(fakeDocument.body.style.margin).toBe('0px');
+            expect(fakeDocument.body.style.padding).toBe('0px');
+            expect(fakeDocument.body.style.overflow).toBe('hidden');
+            expect(fakeRoot.style.backgroundColor).toBe('transparent');
+            expect(fakeRoot.style.margin).toBe('0px');
+            expect(fakeRoot.style.padding).toBe('0px');
+
+            await screen.unmount();
+
+            expect(fakeDocument.documentElement.style.backgroundColor).toBe('rgb(255, 255, 255)');
+            expect(fakeDocument.body.style.backgroundColor).toBe('rgb(255, 255, 255)');
+            expect(fakeDocument.body.style.margin).toBe('8px');
+            expect(fakeDocument.body.style.padding).toBe('8px');
+            expect(fakeDocument.body.style.overflow).toBe('scroll');
+            expect(fakeRoot.style.backgroundColor).toBe('rgb(255, 255, 255)');
+            expect(fakeRoot.style.margin).toBe('12px');
+            expect(fakeRoot.style.padding).toBe('12px');
+        } finally {
+            (globalThis as { document?: Document }).document = originalDocument;
+        }
+    });
+
+    it('keeps the injected transparency stylesheet up to date when it already exists', async () => {
+        isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
+        getDesktopActivityOverlayWindowStateMock.mockResolvedValue(createWindowState());
+        listenDesktopActivityOverlayWindowStateMock.mockResolvedValue(() => {});
+
+        const originalDocument = (globalThis as { document?: Document }).document;
+        const removeSpy = vi.fn();
+        const existingStyleElement = {
+            id: 'desktop-activity-overlay-transparent-style',
+            nodeName: 'STYLE',
+            textContent: '/* stale */',
+            remove: removeSpy,
+        };
+        const fakeDocument = {
+            createElement: () => {
+                throw new Error('createElement should not be called when the style element already exists');
+            },
+            getElementById: (id: string) => (id === 'desktop-activity-overlay-transparent-style'
+                ? existingStyleElement
+                : null),
+            head: {
+                appendChild: () => {},
+            },
+            documentElement: {
+                style: {
+                    backgroundColor: 'rgb(255, 255, 255)',
+                    background: 'rgb(255, 255, 255)',
+                },
+            },
+            body: {
+                style: {
+                    backgroundColor: 'rgb(255, 255, 255)',
+                    background: 'rgb(255, 255, 255)',
+                    margin: '8px',
+                    padding: '8px',
+                    overflow: 'scroll',
+                },
+            },
+        } as unknown as Document;
+
+        (globalThis as { document?: Document }).document = fakeDocument;
+
+        try {
+            const screen = await renderRoute();
+
+            expect(existingStyleElement.textContent).toContain('#expo-root');
+            expect(existingStyleElement.textContent).toContain('#root > div > div > div');
+
+            await screen.unmount();
+
+            expect(removeSpy).not.toHaveBeenCalled();
+        } finally {
+            (globalThis as { document?: Document }).document = originalDocument;
+        }
+    });
+
+    it('uses native host mode to resolve notch-integrated chrome while presentation mode stays automatic', async () => {
+        isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
+        getDesktopActivityOverlayWindowStateMock.mockResolvedValue(
+            createWindowState({
+                expanded: true,
+                placementDiagnostics: {
+                    monitorSource: 'primary',
+                    effectiveMonitor: { x: 0, y: 0, width: 1512, height: 982 },
+                    anchor: 'top_center',
+                    placementMode: 'anchored',
+                    hostMode: 'notch_integrated',
+                    displayContext: null,
+                    effectiveOffsetX: 0,
+                    effectiveOffsetY: 0,
+                    computedPosition: { x: 576, y: 0 },
+                },
+                policy: {
+                    ...createWindowState().policy,
+                    presentationMode: 'automatic',
+                    compactStyle: 'panel',
+                },
+            }),
+        );
+        listenDesktopActivityOverlayWindowStateMock.mockResolvedValue(() => {});
+
+        const screen = await renderRoute();
+
+        expect(screen.findByTestId('desktop-activity-overlay-expanded-notch')).toBeTruthy();
+    });
+
+    it('keeps automatic pill chrome floating when host diagnostics are unavailable', async () => {
+        isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
+        getDesktopActivityOverlayWindowStateMock.mockResolvedValue(
+            createWindowState({
+                placementDiagnostics: null,
+            }),
+        );
+        listenDesktopActivityOverlayWindowStateMock.mockResolvedValue(() => {});
+
+        const screen = await renderRoute();
+
+        expect(screen.findByTestId('desktop-activity-overlay-collapsed-floating')).toBeTruthy();
     });
 });

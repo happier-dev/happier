@@ -19,6 +19,7 @@ function createDesktopPolicy(overrides: Partial<DesktopOverlayPolicy> = {}): Des
         autoHideDelayMs: 6000,
         expandedBehavior: 'click',
         interactiveCollapsed: true,
+        presentationMode: 'automatic',
         clickAction: 'expand_overlay',
         density: 'compact',
         compactStyle: 'pill',
@@ -118,5 +119,72 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
             'quiet-active',
         ]);
         expect(model.collapsed.sessionCount).toBe(3);
+    });
+
+    it('keeps desktop preview text in the snapshot when the overlay setting enables it', () => {
+        const snapshot = buildDesktopActivityOverlaySnapshot({
+            sessions: [
+                createSessionFixture({
+                    id: 'preview-session',
+                    active: true,
+                    presence: 'online',
+                    pendingPermissionRequestCount: 1,
+                    metadata: {
+                        path: '/Users/tester/project/preview',
+                        host: 'tester.local',
+                        homeDir: '/Users/tester',
+                        summary: { text: 'Need your approval', updatedAt: 3 },
+                    },
+                }),
+            ],
+            activityPolicy: resolveActivitySurfacePolicy({
+                activitySurfacePrivacyMode: 'include_preview',
+            }),
+            desktopPolicy: createDesktopPolicy({
+                showPreviewText: true,
+            }),
+            nowMs: 1_000,
+        });
+
+        expect(snapshot.sessions[0]).toHaveProperty('previewText', 'Need your approval');
+    });
+
+    it('falls back to recent sessions in always-when-enabled mode when no desktop selection candidates qualify', () => {
+        const snapshot = buildDesktopActivityOverlaySnapshot({
+            sessions: [
+                createSessionFixture({
+                    id: 'quiet-inactive',
+                    active: false,
+                    presence: 'online',
+                    thinking: false,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    pendingCount: 0,
+                    seq: 5,
+                    lastViewedSessionSeq: 5,
+                    metadata: {
+                        path: '/Users/tester/project/quiet-inactive',
+                        host: 'tester.local',
+                        homeDir: '/Users/tester',
+                        summary: { text: 'Quiet recent work', updatedAt: 5 },
+                    },
+                }),
+            ],
+            activityPolicy: resolveActivitySurfacePolicy({
+                activitySurfacePrivacyMode: 'include_preview',
+            }),
+            desktopPolicy: createDesktopPolicy({
+                visibilityMode: 'always_when_enabled',
+                showWhenRunning: false,
+                showWhenAttentionRequired: false,
+                showWhenReady: false,
+                showPreviewText: true,
+            }),
+            nowMs: 1_000,
+        });
+
+        expect(snapshot.sessions.map((session) => session.sessionId)).toEqual(['quiet-inactive']);
+        expect(snapshot.primary?.sessionId).toBe('quiet-inactive');
+        expect(snapshot.defaultTarget).toBe('open-session:quiet-inactive');
     });
 });

@@ -1,54 +1,135 @@
 import * as React from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
+import { Pressable, ScrollView, View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { DesktopActivityOverlayModel } from '@/activity/adapters/desktop/presentation/buildDesktopActivityOverlayModel';
+import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { Text } from '@/components/ui/text/Text';
-import { createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
 import { t } from '@/text';
 
+import {
+    DesktopActivityOverlayChromeBackdrop,
+    createDesktopActivityOverlayChromeStyle,
+    createDesktopActivityOverlayInteriorSurfaceStyle,
+    DesktopActivityOverlayChromeHighlights,
+} from './DesktopActivityOverlayChrome';
+import { DesktopActivityOverlayBrandMark } from './DesktopActivityOverlayBrandMark';
+import { desktopActivityOverlayChromeMetrics } from './DesktopActivityOverlayChromeMetrics';
 import { DesktopActivityOverlaySessionRow } from './DesktopActivityOverlaySessionRow';
+import {
+    resolveDesktopActivityOverlaySurfaceTestID,
+    type DesktopActivityOverlayVisualMode,
+} from './DesktopActivityOverlayVisualMode';
+import type { DesktopActivityOverlayHoverablePressableState } from './DesktopActivityOverlayHoverablePressableState';
 
 export function DesktopActivityOverlayExpanded(props: Readonly<{
     model: DesktopActivityOverlayModel;
+    visualMode: DesktopActivityOverlayVisualMode;
     onCollapse: () => void;
     onOpenSession: (sessionId: string) => void;
     onOpenInbox: () => void;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
+    const isNotchIntegrated = props.visualMode === 'notch_integrated';
+    const surfaceTestID = resolveDesktopActivityOverlaySurfaceTestID('desktop-activity-overlay-expanded', props.visualMode);
 
     return (
         <View
             testID="desktop-activity-overlay-expanded"
             style={[
                 styles.container,
-                {
-                    borderColor: theme.colors.divider,
-                    backgroundColor: theme.colors.overlay.scrim,
-                    ...(createBackdropWebStyle({
-                        backgroundColor: theme.colors.overlay.scrim,
-                        blurPx: 18,
-                    }) as object),
-                },
+                createDesktopActivityOverlayChromeStyle(theme, {
+                    visualMode: props.visualMode,
+                    tone: 'expanded',
+                }),
             ]}
         >
-            <View style={styles.headerRow}>
-                <Text style={[styles.headerTitle, { color: theme.colors.overlay.text }]}>
-                    {props.model.expanded.title}
-                </Text>
-                <Pressable onPress={props.onCollapse} style={styles.headerAction}>
-                    <Text style={[styles.headerActionLabel, { color: theme.colors.button.primary.tint }]}>
-                        {t('common.close')}
-                    </Text>
-                </Pressable>
+            <View
+                pointerEvents="none"
+                testID={surfaceTestID}
+                style={StyleSheet.absoluteFill}
+            >
+                <DesktopActivityOverlayChromeBackdrop
+                    theme={theme}
+                    tone="expanded"
+                    visualMode={props.visualMode}
+                    width={props.model.window.expanded.width}
+                    height={props.model.window.expanded.height}
+                />
+                <DesktopActivityOverlayChromeHighlights
+                    theme={theme}
+                    tone="expanded"
+                    visualMode={props.visualMode}
+                />
             </View>
-            <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-                {props.model.expanded.rows.map((row) => (
+            <View style={styles.headerRow}>
+                <View style={styles.headerIdentity}>
+                    <DesktopActivityOverlayBrandMark visualMode={props.visualMode} />
+                    {!isNotchIntegrated ? (
+                        <Text numberOfLines={1} style={[styles.headerTitle, { color: theme.colors.overlay.text }]}>
+                            {props.model.expanded.title}
+                        </Text>
+                    ) : null}
+                </View>
+                <View style={styles.headerActions}>
+                    <Pressable
+                        accessibilityLabel={`${t('common.open')} ${t('tabs.inbox')}`}
+                        testID="desktop-activity-overlay-expanded-action-open-inbox"
+                        onPress={props.onOpenInbox}
+                        style={(state) => {
+                            const { pressed } = state;
+                            const hovered = (state as DesktopActivityOverlayHoverablePressableState).hovered === true;
+
+                            return [
+                                styles.headerAction,
+                                createDesktopActivityOverlayInteriorSurfaceStyle(theme, {
+                                    visualMode: props.visualMode,
+                                    kind: 'action',
+                                }),
+                                hovered ? { opacity: 0.98 } : null,
+                                pressed ? { opacity: 0.92 } : null,
+                            ];
+                        }}
+                    >
+                        <SafeIonicons name="albums-outline" size={13} color={theme.colors.overlay.text} />
+                    </Pressable>
+                    <Pressable
+                        accessibilityLabel={t('common.close')}
+                        testID="desktop-activity-overlay-expanded-action-collapse"
+                        onPress={props.onCollapse}
+                        style={(state) => {
+                            const { pressed } = state;
+                            const hovered = (state as DesktopActivityOverlayHoverablePressableState).hovered === true;
+
+                            return [
+                                styles.headerAction,
+                                createDesktopActivityOverlayInteriorSurfaceStyle(theme, {
+                                    visualMode: props.visualMode,
+                                    kind: 'action',
+                                }),
+                                hovered ? { opacity: 0.98 } : null,
+                                pressed ? { opacity: 0.92 } : null,
+                            ];
+                        }}
+                    >
+                        <SafeIonicons name="chevron-up" size={14} color={theme.colors.overlay.text} />
+                    </Pressable>
+                </View>
+            </View>
+            <ScrollView
+                style={styles.scroll}
+                contentContainerStyle={styles.scrollContent}
+                showsVerticalScrollIndicator={false}
+            >
+                {props.model.expanded.rows.map((row, rowIndex) => (
                     <DesktopActivityOverlaySessionRow
                         key={row.sessionId}
+                        isLast={rowIndex === props.model.expanded.rows.length - 1}
+                        visualMode={props.visualMode}
                         title={row.title}
                         subtitle={row.subtitle}
                         statusText={row.statusText}
+                        previewText={row.previewText}
                         onPress={() => props.onOpenSession(row.sessionId)}
                     />
                 ))}
@@ -58,59 +139,63 @@ export function DesktopActivityOverlayExpanded(props: Readonly<{
                     </Text>
                 ) : null}
             </ScrollView>
-            <Pressable onPress={props.onOpenInbox} style={styles.footerAction}>
-                <Text style={[styles.footerLabel, { color: theme.colors.button.primary.tint }]}>
-                    {`${t('common.open')} ${t('tabs.inbox')}`}
-                </Text>
-            </Pressable>
         </View>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
-        borderWidth: StyleSheet.hairlineWidth,
-        borderRadius: 18,
-        padding: 12,
-        gap: 10,
+        width: '100%',
+        height: '100%',
+        position: 'relative',
+        overflow: 'hidden',
+        paddingHorizontal: desktopActivityOverlayChromeMetrics.expanded.paddingHorizontal,
+        paddingTop: desktopActivityOverlayChromeMetrics.expanded.paddingTop,
+        paddingBottom: desktopActivityOverlayChromeMetrics.expanded.paddingBottom,
+        gap: desktopActivityOverlayChromeMetrics.expanded.gap,
     },
     headerRow: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
+        gap: desktopActivityOverlayChromeMetrics.expanded.headerGap,
+    },
+    headerIdentity: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        minWidth: 0,
+    },
+    headerActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        flexShrink: 0,
     },
     headerTitle: {
-        fontSize: 14,
+        fontSize: 12,
         fontWeight: '700',
+        letterSpacing: 0.12,
+        flex: 1,
     },
     headerAction: {
-        paddingVertical: 4,
-        paddingHorizontal: 8,
+        width: 28,
+        height: 28,
         borderRadius: 8,
-    },
-    headerActionLabel: {
-        fontSize: 12,
-        fontWeight: '600',
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     scroll: {
-        maxHeight: 340,
+        flex: 1,
     },
     scrollContent: {
-        gap: 8,
+        gap: desktopActivityOverlayChromeMetrics.expanded.rowGap,
+        paddingBottom: 0,
     },
     emptyText: {
-        fontSize: 12,
+        fontSize: 11,
         textAlign: 'center',
-        paddingVertical: 14,
-    },
-    footerAction: {
-        alignSelf: 'flex-start',
-        paddingHorizontal: 8,
-        paddingVertical: 6,
-        borderRadius: 8,
-    },
-    footerLabel: {
-        fontSize: 12,
-        fontWeight: '700',
+        paddingVertical: 16,
     },
 });

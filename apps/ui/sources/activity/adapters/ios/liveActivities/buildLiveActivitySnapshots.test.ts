@@ -6,6 +6,44 @@ import { resolveActivitySurfacePolicy } from '@/activity/attention/resolveActivi
 import { buildLiveActivitySnapshots } from './buildLiveActivitySnapshots';
 
 describe('buildLiveActivitySnapshots', () => {
+    it('does not promote ready unread sessions into focused live activities when includeReady is disabled', () => {
+        const snapshots = buildLiveActivitySnapshots({
+            sessions: [
+                createSessionFixture({
+                    id: 'unread',
+                    seq: 5,
+                    lastViewedSessionSeq: 2,
+                    metadata: {
+                        path: '/Users/tester/project/unread',
+                        host: 'tester.local',
+                        homeDir: '/Users/tester',
+                        summary: { text: 'Unread work', updatedAt: 3 },
+                    },
+                }),
+                createSessionFixture({
+                    id: 'thinking',
+                    active: true,
+                    presence: 'online',
+                    thinking: true,
+                    metadata: {
+                        path: '/Users/tester/project/thinking',
+                        host: 'tester.local',
+                        homeDir: '/Users/tester',
+                        summary: { text: 'Thinking work', updatedAt: 2 },
+                    },
+                }),
+            ],
+            policy: resolveActivitySurfacePolicy({
+                liveActivitiesMode: 'focused',
+                liveActivitiesIncludeReady: false,
+                liveActivitiesIncludeThinking: true,
+            }),
+            nowMs: 1_000,
+        });
+
+        expect(snapshots.map((snapshot) => snapshot.sessionId)).toEqual(['thinking']);
+    });
+
     it('builds one live activity entry per selected session', () => {
         const snapshots = buildLiveActivitySnapshots({
             sessions: [

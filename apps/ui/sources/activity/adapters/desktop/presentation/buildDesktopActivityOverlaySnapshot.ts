@@ -5,6 +5,7 @@ import {
     buildActivitySurfaceViewModels,
     resolvePrimaryActivitySurfaceTarget,
 } from '@/activity/presentation/buildActivitySurfaceViewModel';
+import type { ActivitySurfaceSessionViewModel } from '@/activity/presentation/activitySurfaceViewModels';
 import { resolveActivitySurfaceSlots } from '@/activity/selection/resolveActivitySurfaceSlots';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
@@ -12,12 +13,10 @@ import { t } from '@/text';
 import type { DesktopOverlayPolicy } from '../runtime/resolveDesktopOverlayPolicy';
 import { resolveDesktopOverlaySelectionSpec } from '../runtime/resolveDesktopOverlaySelectionSpec';
 
-export type DesktopActivityOverlaySessionSnapshot = Readonly<{
-    sessionId: string;
-    title: string;
-    subtitle: string | null;
-    statusText: string | null;
-}>;
+export type DesktopActivityOverlaySessionSnapshot = Pick<
+    ActivitySurfaceSessionViewModel,
+    'sessionId' | 'title' | 'subtitle' | 'statusText' | 'previewText'
+>;
 
 export type DesktopActivityOverlaySnapshotLabels = Readonly<{
     sessionsTitle: string;
@@ -42,20 +41,30 @@ function buildDesktopActivityOverlaySnapshotLabels(): DesktopActivityOverlaySnap
     };
 }
 
-function buildDesktopActivityOverlaySessionSnapshots(params: Readonly<{
-    sessions: readonly {
-        sessionId: string;
-        title: string;
-        subtitle: string | null;
-        statusText: string | null;
-    }[];
+function resolveDesktopOverlaySessions(params: Readonly<{
+    overview: ReturnType<typeof buildActivityOverviewSnapshot>;
+    selectedSessions: readonly ActivitySurfaceSessionViewModel[];
+    activityPolicy: ActivitySurfacePolicy;
+    desktopPolicy: DesktopOverlayPolicy;
+    nowMs: number;
 }>): readonly DesktopActivityOverlaySessionSnapshot[] {
-    return params.sessions.map((session) => ({
-        sessionId: session.sessionId,
-        title: session.title,
-        subtitle: session.subtitle ?? null,
-        statusText: session.statusText ?? null,
-    }));
+    if (params.selectedSessions.length > 0) {
+        return params.selectedSessions;
+    }
+    if (params.desktopPolicy.visibilityMode !== 'always_when_enabled') {
+        return [];
+    }
+    if (params.overview.candidates.length === 0) {
+        return [];
+    }
+
+    return buildActivitySurfaceViewModels({
+        candidates: params.overview.candidates,
+        policy: params.activityPolicy,
+        showMachinePath: true,
+        showPreviewText: params.desktopPolicy.showPreviewText,
+        nowMs: params.nowMs,
+    });
 }
 
 export function buildDesktopActivityOverlaySnapshot(params: Readonly<{
@@ -77,11 +86,15 @@ export function buildDesktopActivityOverlaySnapshot(params: Readonly<{
         candidates: slots.selectedSessions,
         policy: params.activityPolicy,
         showMachinePath: true,
-        showPreviewText: false,
+        showPreviewText: params.desktopPolicy.showPreviewText,
         nowMs,
     });
-    const desktopSessions = buildDesktopActivityOverlaySessionSnapshots({
-        sessions: selectedSessions,
+    const desktopSessions = resolveDesktopOverlaySessions({
+        overview,
+        selectedSessions,
+        activityPolicy: params.activityPolicy,
+        desktopPolicy: params.desktopPolicy,
+        nowMs,
     });
 
     return {

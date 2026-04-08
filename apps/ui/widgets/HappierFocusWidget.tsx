@@ -1,1 +1,1 @@
-export { default } from '../sources/activity/widgets/HappierFocusWidget';
+export { default } from '../sources/activity/adapters/ios/widgets/HappierFocusWidget';

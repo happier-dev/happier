@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { DesktopOverlayPolicy } from './resolveDesktopOverlayPolicy';
+import { ACTIVITY_SURFACE_SELECTION_IDS } from '@/activity/selection/activitySurfaceSelectionTypes';
 
 import { resolveDesktopOverlaySelectionSpec } from './resolveDesktopOverlaySelectionSpec';
 
@@ -16,6 +17,7 @@ function createPolicy(overrides: Partial<DesktopOverlayPolicy> = {}): DesktopOve
         autoHideDelayMs: 6000,
         expandedBehavior: 'click',
         interactiveCollapsed: true,
+        presentationMode: 'automatic',
         clickAction: 'expand_overlay',
         density: 'compact',
         compactStyle: 'pill',
@@ -34,7 +36,7 @@ function createPolicy(overrides: Partial<DesktopOverlayPolicy> = {}): DesktopOve
 describe('resolveDesktopOverlaySelectionSpec', () => {
     it('maps attention-only mode to an attention-triggered desktop selection without quiet active sessions', () => {
         expect(resolveDesktopOverlaySelectionSpec(createPolicy())).toEqual({
-            surfaceId: 'desktop_overlay',
+            surfaceId: ACTIVITY_SURFACE_SELECTION_IDS.desktopOverlay,
             enabled: true,
             mode: 'running',
             selectionReason: 'all_eligible',
@@ -54,7 +56,7 @@ describe('resolveDesktopOverlaySelectionSpec', () => {
             showWhenAttentionRequired: false,
             showWhenReady: false,
         }))).toEqual({
-            surfaceId: 'desktop_overlay',
+            surfaceId: ACTIVITY_SURFACE_SELECTION_IDS.desktopOverlay,
             enabled: true,
             mode: 'running',
             selectionReason: 'all_eligible',

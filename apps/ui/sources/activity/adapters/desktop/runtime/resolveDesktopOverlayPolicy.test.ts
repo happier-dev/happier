@@ -19,6 +19,7 @@ describe('resolveDesktopOverlayPolicy', () => {
         expect(policy.autoHideDelayMs).toBe(6000);
         expect(policy.expandedBehavior).toBe('click');
         expect(policy.interactiveCollapsed).toBe(true);
+        expect(policy.presentationMode).toBe('automatic');
         expect(policy.placementMode).toBe('anchored');
         expect(policy.anchor).toBe('top_center');
     });
@@ -35,6 +36,7 @@ describe('resolveDesktopOverlayPolicy', () => {
             desktopOverlayAutoHideDelayMs: 10000,
             desktopOverlayExpandedBehavior: 'hover',
             desktopOverlayInteractiveCollapsed: false,
+            desktopOverlayPresentationMode: 'floating_overlay',
             desktopOverlayPlacementMode: 'custom',
             desktopOverlayAnchor: 'bottom_right',
             desktopOverlayOffsetX: 24,
@@ -58,6 +60,7 @@ describe('resolveDesktopOverlayPolicy', () => {
         expect(policy.autoHideDelayMs).toBe(10000);
         expect(policy.expandedBehavior).toBe('hover');
         expect(policy.interactiveCollapsed).toBe(false);
+        expect(policy.presentationMode).toBe('floating_overlay');
         expect(policy.placementMode).toBe('custom');
         expect(policy.anchor).toBe('bottom_right');
         expect(policy.offsetX).toBe(24);
@@ -79,6 +82,29 @@ describe('resolveDesktopOverlayPolicy', () => {
         expect(policy.expandedBehavior).toBe('click');
     });
 
+    it('falls back to automatic when the presentation mode is invalid', () => {
+        const policy = resolveDesktopOverlayPolicy({
+            desktopOverlayPresentationMode: 'invalid',
+        });
+
+        expect(policy.presentationMode).toBe('automatic');
+    });
+
+    it('ignores stale placement offsets while anchored placement is active', () => {
+        const policy = resolveDesktopOverlayPolicy({
+            desktopOverlayPlacementMode: 'anchored',
+            desktopOverlayAnchor: 'top_center',
+            desktopOverlayOffsetX: 240,
+            desktopOverlayOffsetY: -160,
+            desktopOverlayEnableDragReposition: true,
+            desktopOverlayLockPosition: false,
+        });
+
+        expect(policy.placementMode).toBe('anchored');
+        expect(policy.offsetX).toBe(0);
+        expect(policy.offsetY).toBe(0);
+    });
+
     it('hides non-applicable settings rows from the centralized settings visibility resolver', () => {
         const hiddenWhenDisabled = resolveDesktopOverlaySettingsVisibilityState(
             resolveDesktopOverlayPolicy({
@@ -90,6 +116,7 @@ describe('resolveDesktopOverlayPolicy', () => {
         expect(hiddenWhenDisabled.showCollapsedClickAction).toBe(false);
         expect(hiddenWhenDisabled.showExpandedBehavior).toBe(false);
         expect(hiddenWhenDisabled.showCustomPlacementControls).toBe(false);
+        expect(hiddenWhenDisabled.showFloatingPlacementControls).toBe(false);
 
         const hiddenWhenCollapsedInteractionIsOff = resolveDesktopOverlaySettingsVisibilityState(
             resolveDesktopOverlayPolicy({
@@ -110,5 +137,67 @@ describe('resolveDesktopOverlayPolicy', () => {
         );
         expect(hiddenWhenClickDoesNotExpand.showCollapsedClickAction).toBe(true);
         expect(hiddenWhenClickDoesNotExpand.showExpandedBehavior).toBe(false);
+
+        const hiddenWhenNotchIntegrated = resolveDesktopOverlaySettingsVisibilityState(
+            resolveDesktopOverlayPolicy({
+                desktopOverlayEnabled: true,
+                desktopOverlayPresentationMode: 'notch_integrated',
+                desktopOverlayPlacementMode: 'custom',
+            }),
+        );
+        expect(hiddenWhenNotchIntegrated.showFloatingPlacementControls).toBe(false);
+        expect(hiddenWhenNotchIntegrated.showHostModeFallbackNotice).toBe(false);
+
+        const shownWhenFloatingOverlay = resolveDesktopOverlaySettingsVisibilityState(
+            resolveDesktopOverlayPolicy({
+                desktopOverlayEnabled: true,
+                desktopOverlayPresentationMode: 'floating_overlay',
+                desktopOverlayPlacementMode: 'custom',
+            }),
+        );
+        expect(shownWhenFloatingOverlay.showFloatingPlacementControls).toBe(true);
+        expect(shownWhenFloatingOverlay.showHostModeFallbackNotice).toBe(false);
+
+        const hiddenWhenResolvedHostModeIsNotchIntegrated = resolveDesktopOverlaySettingsVisibilityState(
+            resolveDesktopOverlayPolicy({
+                desktopOverlayEnabled: true,
+                desktopOverlayPresentationMode: 'floating_overlay',
+                desktopOverlayPlacementMode: 'custom',
+            }),
+            'notch_integrated',
+        );
+        expect(hiddenWhenResolvedHostModeIsNotchIntegrated.showFloatingPlacementControls).toBe(false);
+
+        const shownWhenResolvedHostModeIsFloating = resolveDesktopOverlaySettingsVisibilityState(
+            resolveDesktopOverlayPolicy({
+                desktopOverlayEnabled: true,
+                desktopOverlayPresentationMode: 'notch_integrated',
+                desktopOverlayPlacementMode: 'custom',
+            }),
+            'floating',
+        );
+        expect(shownWhenResolvedHostModeIsFloating.showFloatingPlacementControls).toBe(true);
+        expect(shownWhenResolvedHostModeIsFloating.showHostModeFallbackNotice).toBe(true);
+
+        const shownWhenAutomaticFallsBackToFloating = resolveDesktopOverlaySettingsVisibilityState(
+            resolveDesktopOverlayPolicy({
+                desktopOverlayEnabled: true,
+                desktopOverlayPresentationMode: 'automatic',
+                desktopOverlayPlacementMode: 'custom',
+            }),
+            'floating',
+        );
+        expect(shownWhenAutomaticFallsBackToFloating.showFloatingPlacementControls).toBe(true);
+        expect(shownWhenAutomaticFallsBackToFloating.showHostModeFallbackNotice).toBe(true);
+
+        const hiddenWhenHostModeIsStillUnknown = resolveDesktopOverlaySettingsVisibilityState(
+            resolveDesktopOverlayPolicy({
+                desktopOverlayEnabled: true,
+                desktopOverlayPresentationMode: 'automatic',
+                desktopOverlayPlacementMode: 'custom',
+            }),
+        );
+        expect(hiddenWhenHostModeIsStillUnknown.showFloatingPlacementControls).toBe(false);
+        expect(hiddenWhenHostModeIsStillUnknown.showHostModeFallbackNotice).toBe(false);
     });
 });

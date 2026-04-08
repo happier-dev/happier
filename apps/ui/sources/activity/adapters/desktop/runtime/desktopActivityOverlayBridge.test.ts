@@ -54,6 +54,7 @@ describe('desktopActivityOverlayBridge', () => {
                 autoHideDelayMs: 6000,
                 expandedBehavior: 'click',
                 interactiveCollapsed: true,
+                presentationMode: 'automatic',
                 clickAction: 'expand_overlay',
                 density: 'compact',
                 compactStyle: 'pill',

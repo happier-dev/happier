@@ -4,10 +4,57 @@ import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { buildActivityOverviewSnapshot } from '@/activity/attention/buildActivityOverviewSnapshot';
 import { resolveActivitySurfacePolicy } from '@/activity/attention/resolveActivitySurfacePolicy';
 
-import { createLiveActivitySelectionSpec, createWidgetSelectionSpec } from './activitySurfaceSelectionTypes';
+import {
+    ACTIVITY_SURFACE_SELECTION_IDS,
+    createLiveActivitySelectionSpec,
+    createWidgetSelectionSpec,
+} from './activitySurfaceSelectionTypes';
 import { resolveActivitySurfaceSlots } from './resolveActivitySurfaceSlots';
 
 describe('resolveActivitySurfaceSlots', () => {
+    it('excludes ready unread sessions from focused live-activity selection when includeReady is disabled', () => {
+        const overview = buildActivityOverviewSnapshot({
+            sessions: [
+                createSessionFixture({
+                    id: 'unread',
+                    seq: 5,
+                    lastViewedSessionSeq: 2,
+                    metadata: {
+                        path: '/Users/tester/project/unread',
+                        host: 'tester.local',
+                        homeDir: '/Users/tester',
+                        summary: { text: 'Unread work', updatedAt: 3 },
+                    },
+                }),
+                createSessionFixture({
+                    id: 'thinking',
+                    active: true,
+                    presence: 'online',
+                    thinking: true,
+                    metadata: {
+                        path: '/Users/tester/project/thinking',
+                        host: 'tester.local',
+                        homeDir: '/Users/tester',
+                        summary: { text: 'Thinking work', updatedAt: 2 },
+                    },
+                }),
+            ],
+            nowMs: 1_000,
+        });
+
+        const slots = resolveActivitySurfaceSlots({
+            overview,
+            selection: createLiveActivitySelectionSpec(resolveActivitySurfacePolicy({
+                liveActivitiesMode: 'focused',
+                liveActivitiesIncludeReady: false,
+                liveActivitiesIncludeThinking: true,
+            })),
+        });
+
+        expect(slots.selectedSessions.map((candidate) => candidate.sessionId)).toEqual(['thinking']);
+        expect(slots.eligibleSessions.map((candidate) => candidate.sessionId)).toEqual(['thinking']);
+    });
+
     it('keeps only one live activity in dynamic-primary mode and reports overflow', () => {
         const overview = buildActivityOverviewSnapshot({
             sessions: [
@@ -196,7 +243,7 @@ describe('resolveActivitySurfaceSlots', () => {
         const slots = resolveActivitySurfaceSlots({
             overview,
             selection: {
-                surfaceId: 'desktop_overlay',
+                surfaceId: ACTIVITY_SURFACE_SELECTION_IDS.desktopOverlay,
                 enabled: true,
                 mode: 'running',
                 selectionReason: 'all_eligible',

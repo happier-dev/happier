@@ -27,6 +27,7 @@ function createSnapshot(overrides: Partial<DesktopActivityOverlaySnapshot> = {})
             title: 'Primary session',
             subtitle: 'agent on machine',
             statusText: 'Permission required',
+            previewText: null,
         },
         sessions: [
             {
@@ -34,12 +35,14 @@ function createSnapshot(overrides: Partial<DesktopActivityOverlaySnapshot> = {})
                 title: 'Primary session',
                 subtitle: 'agent on machine',
                 statusText: 'Permission required',
+                previewText: null,
             },
             {
                 sessionId: 'session-secondary',
                 title: 'Secondary session',
                 subtitle: 'agent on machine',
                 statusText: 'Running',
+                previewText: null,
             },
         ],
         defaultTarget: 'open-primary-session',
@@ -67,6 +70,7 @@ function createPolicy(overrides: Partial<DesktopOverlayPolicy> = {}): DesktopOve
         autoHideDelayMs: 6000,
         expandedBehavior: 'click',
         interactiveCollapsed: true,
+        presentationMode: 'automatic',
         clickAction: 'expand_overlay',
         density: 'compact',
         compactStyle: 'pill',
@@ -101,6 +105,51 @@ describe('buildDesktopActivityOverlayModel', () => {
         expect(model.expanded.rows).toHaveLength(2);
         expect(model.window.collapsed.width).toBeGreaterThan(200);
         expect(model.window.expanded.height).toBeGreaterThan(model.window.collapsed.height);
+    });
+
+    it('keeps pill collapsed windows tighter than panel collapsed windows for the same density', () => {
+        const pillModel = buildDesktopActivityOverlayModel({
+            snapshot: createSnapshot(),
+            policy: createPolicy({
+                compactStyle: 'pill',
+                density: 'compact',
+            }),
+            isExpanded: false,
+        });
+        const panelModel = buildDesktopActivityOverlayModel({
+            snapshot: createSnapshot(),
+            policy: createPolicy({
+                compactStyle: 'panel',
+                density: 'compact',
+            }),
+            isExpanded: false,
+        });
+
+        expect(pillModel.window.collapsed.width).toBeLessThan(panelModel.window.collapsed.width);
+        expect(pillModel.window.collapsed.height).toBeLessThan(panelModel.window.collapsed.height);
+    });
+
+    it('keeps compact collapsed windows in the tighter premium range', () => {
+        const pillModel = buildDesktopActivityOverlayModel({
+            snapshot: createSnapshot(),
+            policy: createPolicy({
+                compactStyle: 'pill',
+                density: 'compact',
+            }),
+            isExpanded: false,
+        });
+        const panelModel = buildDesktopActivityOverlayModel({
+            snapshot: createSnapshot(),
+            policy: createPolicy({
+                compactStyle: 'panel',
+                density: 'compact',
+            }),
+            isExpanded: false,
+        });
+
+        expect(pillModel.window.collapsed.width).toBeLessThanOrEqual(312);
+        expect(pillModel.window.collapsed.height).toBeLessThanOrEqual(60);
+        expect(panelModel.window.collapsed.height).toBeLessThanOrEqual(68);
     });
 
     it('stays hidden when disabled regardless of counts', () => {

@@ -1,6 +1,27 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildActivityBadgeState } from './buildActivityBadgeState';
+
+const storageState = vi.hoisted(() => ({
+    sessionMessages: {} as Record<string, unknown>,
+}));
+
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+        storage: {
+            getState: () => storageState,
+            getInitialState: () => storageState,
+            setState: () => undefined,
+            subscribe: () => () => undefined,
+            destroy: () => undefined,
+        },
+    } as any);
+});
+
+beforeEach(() => {
+    storageState.sessionMessages = {};
+});
 
 describe('buildActivityBadgeState', () => {
     it('counts a session once even when multiple attention reasons are active', () => {
@@ -38,6 +59,67 @@ describe('buildActivityBadgeState', () => {
                     pendingUserActionRequestCount: 1,
                     pendingCount: 0,
                     metadata: { path: '', host: '' },
+                } as any,
+            ],
+            numericInboxCount: 0,
+            hasNonNumericInboxAttention: false,
+        });
+
+        expect(state).toEqual({
+            count: 0,
+            showNonNumericDot: false,
+        });
+    });
+
+    it('does not count stale pending requests when the transcript already marked them canceled', () => {
+        storageState.sessionMessages = {
+            s1: {
+                messages: [
+                    {
+                        kind: 'tool-call',
+                        id: 'm-tool-1',
+                        localId: null,
+                        createdAt: 100,
+                        children: [],
+                        tool: {
+                            id: 'req1',
+                            name: 'AskUserQuestion',
+                            state: 'error',
+                            input: { q: 'continue?' },
+                            createdAt: 100,
+                            completedAt: 101,
+                            permission: {
+                                id: 'req1',
+                                status: 'canceled',
+                                kind: 'user_action',
+                            },
+                        },
+                    },
+                ],
+            },
+        };
+
+        const state = buildActivityBadgeState({
+            sessions: [
+                {
+                    id: 's1',
+                    seq: 5,
+                    active: true,
+                    lastViewedSessionSeq: 5,
+                    pendingCount: 0,
+                    metadata: { path: '', host: '' },
+                    agentState: {
+                        controlledByUser: null,
+                        requests: {
+                            req1: {
+                                tool: 'AskUserQuestion',
+                                kind: 'user_action',
+                                arguments: { q: 'continue?' },
+                                createdAt: 100,
+                            },
+                        },
+                        completedRequests: null,
+                    },
                 } as any,
             ],
             numericInboxCount: 0,

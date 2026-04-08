@@ -4,9 +4,12 @@ import { HStack, Image, Text, VStack } from '@expo/ui/swift-ui';
 import { font, padding } from '@expo/ui/swift-ui/modifiers';
 
 import {
+    renderActivitySurfaceAttentionCountBadge,
+    isActivitySurfaceUrgentAttentionState,
     renderActivitySurfaceOpenInboxButton,
     renderActivitySurfaceOpenPrimaryButton,
     renderActivitySurfaceOverflowBadge,
+    renderActivitySurfacePrimarySummary,
     resolveActivitySurfaceAttentionSymbol,
     resolveActivitySurfaceCompactLabel,
     resolveActivitySurfaceDetailLines,
@@ -25,57 +28,37 @@ export const HappierFocusLiveActivityComponent: LiveActivityComponent<LiveActivi
         overflowCount: props.overflowCount,
     });
     const attentionSymbol = resolveActivitySurfaceAttentionSymbol(props.attentionState);
+    const prioritizeStatusText = isActivitySurfaceUrgentAttentionState(props.attentionState);
     const detailLines = resolveActivitySurfaceDetailLines(props, {
+        prioritizeStatusText,
         maxLines: 2,
     });
 
     return {
         banner: (
-            <VStack modifiers={[padding({ all: 12 })]} spacing={8}>
-                <HStack spacing={8}>
-                    <Text modifiers={[font({ weight: 'bold', size: 16 })]}>
+            <VStack modifiers={[padding({ all: 10 })]} spacing={8}>
+                <HStack spacing={6}>
+                    <Text modifiers={[font({ weight: 'semibold', design: 'rounded', size: 11 })]}>
                         {props.labels.title}
                     </Text>
                     {renderActivitySurfaceOverflowBadge(props.overflowCount)}
                 </HStack>
-                <Text modifiers={[font({ weight: 'semibold', size: 15 })]}>
-                    {props.title}
-                </Text>
-                {detailLines.map((line) => (
-                    <Text key={line} modifiers={[font({ size: 12 })]}>
-                        {line}
-                    </Text>
-                ))}
+                {renderActivitySurfacePrimarySummary(props.title, detailLines)}
             </VStack>
         ),
         compactLeading: <Image systemName={attentionSymbol} />,
-        compactTrailing: <Text modifiers={[font({ weight: 'semibold', size: 12 })]}>{compactLabel}</Text>,
+        compactTrailing: props.overflowCount > 0
+            ? renderActivitySurfaceOverflowBadge(props.overflowCount)
+            : <Text modifiers={[font({ weight: 'semibold', design: 'rounded', size: 12 })]}>{compactLabel}</Text>,
         minimal: <Image systemName={attentionSymbol} />,
-        expandedLeading: (
-            <VStack modifiers={[padding({ all: 12 })]} spacing={8}>
-                <Text modifiers={[font({ weight: 'semibold', size: 15 })]}>
-                    {props.title}
-                </Text>
-                {detailLines.map((line) => (
-                    <Text key={line} modifiers={[font({ size: 12 })]}>
-                        {line}
-                    </Text>
-                ))}
-            </VStack>
-        ),
-        expandedTrailing: (
-            <VStack modifiers={[padding({ all: 12 })]} spacing={8}>
-                <Text modifiers={[font({ weight: 'bold', size: 18 })]}>
-                    {props.totalAttentionCount}
-                </Text>
-                <Text modifiers={[font({ size: 12 })]}>
-                    {props.labels.attentionLabel}
-                </Text>
-            </VStack>
+        expandedLeading: renderActivitySurfacePrimarySummary(props.title, detailLines),
+        expandedTrailing: renderActivitySurfaceAttentionCountBadge(
+            props.totalAttentionCount,
+            props.labels.attentionLabel,
         ),
         expandedBottom: props.allowActionButtons
             ? (
-                <HStack modifiers={[padding({ all: 12 })]} spacing={8}>
+                <HStack modifiers={[padding({ all: 10 })]} spacing={6}>
                     {renderActivitySurfaceOpenPrimaryButton(props.labels.openLabel, props.sessionTarget)}
                     {props.defaultTarget === props.sessionTarget
                         ? null

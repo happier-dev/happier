@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { Animated, StyleSheet } from 'react-native';
+import { Animated } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
@@ -23,11 +24,11 @@ export function DesktopActivityOverlayMotionFrame(props: Readonly<{
 
     const translateY = progress.interpolate({
         inputRange: [0, 1],
-        outputRange: [props.expanded ? 10 : 8, 0],
+        outputRange: [props.expanded ? 5 : 4, 0],
     });
     const scale = progress.interpolate({
         inputRange: [0, 1],
-        outputRange: [props.expanded ? 0.975 : 0.985, 1],
+        outputRange: [props.expanded ? 0.992 : 0.994, 1],
     });
 
     return (
@@ -47,6 +48,8 @@ export function DesktopActivityOverlayMotionFrame(props: Readonly<{
 
 const styles = StyleSheet.create({
     frame: {
-        alignSelf: 'center',
+        flex: 1,
+        alignSelf: 'stretch',
+        width: '100%',
     },
 });

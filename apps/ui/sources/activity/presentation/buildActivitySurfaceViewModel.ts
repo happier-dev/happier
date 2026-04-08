@@ -4,8 +4,12 @@ import { getSessionName, getSessionStatus, getSessionSubtitle } from '@/utils/se
 import type { SessionActivityAttention } from '@/activity/attention/activityAttentionTypes';
 import { normalizeActivityPreviewText } from '@/activity/attention/buildActivityPreviewText';
 import type { ActivitySurfacePolicy } from '@/activity/attention/resolveActivitySurfacePolicy';
+import {
+    ACTIVITY_SURFACE_TARGETS,
+    createActivitySurfaceSessionRoute,
+    createActivitySurfaceSessionTarget,
+} from '@/activity/actions/activitySurfaceTargets';
 import type { ActivitySurfaceSessionViewModel } from '@/activity/presentation/activitySurfaceViewModels';
-import { ACTIVITY_SURFACE_TARGETS, createActivitySurfaceSessionRoute } from '@/activity/actions/activitySurfaceTargets';
 
 function resolveViewModelTitle(params: Readonly<{
     candidate: SessionActivityAttention;
@@ -71,7 +75,7 @@ export function resolvePrimaryActivitySurfaceTarget(
         return ACTIVITY_SURFACE_TARGETS.openInbox;
     }
 
-    return `${ACTIVITY_SURFACE_TARGETS.openSessionPrefix}${sessionId}`;
+    return createActivitySurfaceSessionTarget(sessionId);
 }
 
 export function buildActivitySurfaceViewModel(params: Readonly<{
@@ -110,8 +114,8 @@ export function buildActivitySurfaceViewModel(params: Readonly<{
         }),
         attentionState: params.candidate.attentionState,
         route: createActivitySurfaceSessionRoute(params.candidate.sessionId),
-        target: `${ACTIVITY_SURFACE_TARGETS.openSessionPrefix}${params.candidate.sessionId}`,
-        defaultTarget: `${ACTIVITY_SURFACE_TARGETS.openSessionPrefix}${params.candidate.sessionId}`,
+        target: createActivitySurfaceSessionTarget(params.candidate.sessionId),
+        defaultTarget: createActivitySurfaceSessionTarget(params.candidate.sessionId),
         updatedAt: params.candidate.session.updatedAt,
         isPrimary: params.isPrimary,
     };

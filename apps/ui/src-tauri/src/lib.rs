@@ -16,6 +16,9 @@ mod activity_overlay;
 #[cfg(desktop)]
 mod web_runtime_config;
 
+#[cfg(desktop)]
+mod desktop_boot_credentials;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default()
@@ -33,6 +36,11 @@ pub fn run() {
     #[cfg(debug_assertions)]
     {
         builder = builder.plugin(tauri_plugin_mcp_bridge::init());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.plugin(tauri_nspanel::init());
     }
 
     #[cfg(desktop)]
@@ -55,6 +63,7 @@ pub fn run() {
                 system_tasks::system_tasks_open_log_path,
                 system_tasks::respond_system_task_prompt,
                 window_sizing::desktop_set_window_mode,
+                desktop_boot_credentials::desktop_read_stack_boot_credentials,
                 activity_overlay::desktop_activity_overlay_sync,
                 activity_overlay::desktop_activity_overlay_get_window_state,
                 activity_overlay::desktop_activity_overlay_set_expanded,
