@@ -17,6 +17,7 @@ import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
 import { waitForDaemonRunningWithinBudget } from '@/daemon/waitForDaemonRunningWithinBudget';
 import { readDaemonStatusSnapshot } from '@/daemon/statusSnapshot';
 import { restartDaemonAndWait } from '@/daemon/restartDaemonAndWait';
+import { handleServiceRepairCliCommand } from './serviceRepair/handleServiceRepairCliCommand';
 
 import type { CommandContext } from '@/cli/commandRegistry';
 import { cmd, errorFrame, kv, neutral, ok, sectionTitle, warn } from '@happier-dev/cli-common/output';
@@ -26,6 +27,13 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
   const daemonSubcommand = args[1];
 
   if (daemonSubcommand === 'service') {
+    if (args[2] === 'repair') {
+      await handleServiceRepairCliCommand({
+        argv: args.slice(2),
+        commandPath: 'happier daemon service',
+      });
+      return;
+    }
     await runDaemonServiceCliCommand({ argv: args.slice(2) });
     return;
   }
@@ -264,13 +272,14 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     `  ${cmd('happier daemon status')}                Show daemon status`,
     `  ${cmd('happier daemon status --all')}          Show daemon status for all configured servers`,
     `  ${cmd('happier daemon list')}                  List active sessions`,
-    `  ${cmd('happier daemon install')}               Install daemon as a user service (macOS/Linux)`,
-    `  ${cmd('happier daemon uninstall')}             Uninstall daemon user service (macOS/Linux)`,
-    `  ${cmd('happier daemon service')}               Manage daemon as a user service`,
-    `  ${cmd('happier daemon service list')}          List detected Happier service definitions`,
+    `  ${cmd('happier daemon install')}               Legacy alias for ${cmd('happier service install')}`,
+    `  ${cmd('happier daemon uninstall')}             Legacy alias for ${cmd('happier service uninstall')}`,
+    `  ${cmd('happier daemon service')}               Legacy alias for ${cmd('happier service')}`,
+    `  ${cmd('happier daemon service list')}          Legacy alias for ${cmd('happier service list')}`,
     '',
     '  Prefix with --server/--server-url to target a specific server profile for this invocation.',
-    `  Example: ${cmd('happier --server company daemon service install')}`,
+    `  Canonical service command: ${cmd('happier service install')}`,
+    `  Example: ${cmd('happier --server company service install')}`,
     '',
     `  If you want to kill all happier related processes run ${cmd('happier doctor clean')}`,
     '',

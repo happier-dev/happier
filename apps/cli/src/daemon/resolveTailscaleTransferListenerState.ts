@@ -1,4 +1,5 @@
 import {
+  runTailscaleServeDisable,
   runTailscaleServeStatus,
   runTailscaleStatusJson,
   tailscaleServeHttpsUrlForOwnedConfigFromStatus,
@@ -10,6 +11,7 @@ import type { DaemonTransferListenerState } from '@/api/types';
 type ResolveTailscaleTransferListenerStateDeps = Readonly<{
   runTailscaleStatusJson?: (params?: Readonly<{ env?: NodeJS.ProcessEnv }>) => Promise<TailscaleStatusSnapshot>;
   runTailscaleServeStatus?: (params?: Readonly<{ env?: NodeJS.ProcessEnv }>) => Promise<string>;
+  runTailscaleServeDisable?: (params: Readonly<{ env?: NodeJS.ProcessEnv; servePath?: string; httpsPort?: number }>) => Promise<void>;
 }>;
 
 function buildLoopbackTransferUrl(transferPort: number): string | null {
@@ -82,6 +84,24 @@ export async function resolveTailscaleTransferListenerState(params: Readonly<{
       httpsPort: params.httpsPort,
     }),
   );
+
+  if (!params.enabled && configured) {
+    try {
+      await (params.runTailscaleServeDisable ?? runTailscaleServeDisable)({
+        ...(params.env ? { env: params.env } : {}),
+        servePath: params.servePath,
+        httpsPort: params.httpsPort,
+      });
+      return {
+        enabled: false,
+        configured: false,
+        active: false,
+        available: true,
+      };
+    } catch {
+      // Best-effort enforcement only; fail open to reporting the configured state.
+    }
+  }
 
   return {
     enabled: params.enabled,

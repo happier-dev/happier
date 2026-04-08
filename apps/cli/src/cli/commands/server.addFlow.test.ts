@@ -302,7 +302,7 @@ describe('happier server add guided flow', () => {
 
       expect(spawnHappyCLIMock).toHaveBeenCalledTimes(1);
       expect(spawnHappyCLIMock).toHaveBeenCalledWith(
-        ['--server', 'Company', 'daemon', 'service', 'install'],
+        ['--server', 'Company', 'service', 'install'],
         expect.objectContaining({ stdio: 'inherit' }),
       );
     } finally {

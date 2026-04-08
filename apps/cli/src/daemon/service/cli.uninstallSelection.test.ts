@@ -356,7 +356,7 @@ describe('runDaemonServiceCliCommand uninstall selection', () => {
 
     const { runDaemonServiceCliCommand } = await import('./cli.js');
     await expect(runDaemonServiceCliCommand({ argv: ['uninstall', '--instance', 'cloud', '--json'] })).rejects.toThrow(
-      'Multiple verified daemon services matched the requested uninstall target. Re-run with --all or add more specific filters.',
+      'Multiple verified background services matched the requested uninstall target. Re-run with --all or add more specific filters.',
     );
   });
 });

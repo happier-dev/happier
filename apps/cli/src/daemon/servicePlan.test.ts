@@ -110,6 +110,30 @@ describe('daemon service install plan', () => {
     expect(systemctlArgsText).toContain('--user daemon-reload');
   });
 
+  it('plans a default-following systemd user unit without pinning server or release-channel env', () => {
+    const plan = planDaemonServiceInstall({
+      platform: 'linux',
+      mode: 'user',
+      targetMode: 'default-following',
+      instanceId: 'cloud',
+      userHomeDir: '/home/test',
+      happierHomeDir: '/home/test/.happier',
+      serverUrl: 'https://api.happier.dev',
+      webappUrl: 'https://app.happier.dev',
+      publicServerUrl: 'https://api.happier.dev',
+      nodePath: '/usr/bin/happier',
+      entryPath: '',
+    });
+
+    expect(plan.files).toHaveLength(1);
+    expect(plan.files[0]?.path).toBe('/home/test/.config/systemd/user/happier-daemon.default.service');
+    expect(plan.files[0]?.content).toContain('ExecStart=/usr/bin/happier daemon start-sync');
+    expect(plan.files[0]?.content).toContain('Environment=HAPPIER_DAEMON_SERVICE_TARGET_MODE=default-following');
+    expect(plan.files[0]?.content).not.toContain('Environment=HAPPIER_ACTIVE_SERVER_ID=');
+    expect(plan.files[0]?.content).not.toContain('Environment=HAPPIER_SERVER_URL=');
+    expect(plan.files[0]?.content).not.toContain('Environment=HAPPIER_PUBLIC_RELEASE_CHANNEL=');
+  });
+
   it('plans channel-scoped unit names for dev (linux)', () => {
     const plan = planDaemonServiceInstall({
       platform: 'linux',

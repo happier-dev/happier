@@ -97,11 +97,14 @@ describe('renderDoctorHappierRuntimeInventory', () => {
               backend: 'launchd',
               label: 'com.happier.cli.daemon.preview.cloud',
               verification: 'verified',
+              targetMode: 'default-following',
               ring: 'preview',
               instanceId: 'cloud',
               scope: 'user',
               definitionPath: '/Users/tester/Library/LaunchAgents/com.happier.cli.daemon.preview.cloud.plist',
               executablePath: '/opt/happier/cli-preview/current/happier',
+              serverUrl: 'https://relay.preview.example.test',
+              publicServerUrl: 'https://relay.preview.example.test',
               installed: true,
               running: true,
             },
@@ -120,6 +123,21 @@ describe('renderDoctorHappierRuntimeInventory', () => {
               installed: true,
               running: false,
             },
+            {
+              id: 'self-host-service:happier-server-preview',
+              serviceType: 'self-host-service',
+              platform: 'darwin',
+              backend: 'launchd',
+              label: 'happier-server-preview',
+              verification: 'verified',
+              ring: 'preview',
+              instanceId: null,
+              scope: 'user',
+              definitionPath: '/Users/tester/Library/LaunchAgents/happier-server-preview.plist',
+              executablePath: '/opt/happier-server/bin/happier-server',
+              installed: true,
+              running: true,
+            },
           ],
         },
       },
@@ -128,7 +146,7 @@ describe('renderDoctorHappierRuntimeInventory', () => {
           code: 'MULTIPLE_HAPPIER_INSTALLATIONS_ON_PATH',
           severity: 'warning',
           message: 'Multiple Happier CLI installations were detected on PATH.',
-          repairCommands: ['happier doctor --json', 'happier daemon service install --replace-existing=ring --yes'],
+          repairCommands: ['happier doctor --json', 'happier service install --replace-existing=ring --yes'],
         },
       ],
     };
@@ -145,9 +163,13 @@ describe('renderDoctorHappierRuntimeInventory', () => {
     expect(rendered).toContain('/usr/local/bin/happier');
     expect(rendered).toContain('Detected services');
     expect(rendered).toContain('com.happier.cli.daemon.preview.cloud');
+    expect(rendered).toContain('default-following');
+    expect(rendered).toContain('https://relay.preview.example.test');
     expect(rendered).toContain('dev.happier.stack.dev-built');
+    expect(rendered).toContain('Self-host service');
+    expect(rendered).toContain('happier-server-preview');
     expect(rendered).toContain('Warnings');
     expect(rendered).toContain('MULTIPLE_HAPPIER_INSTALLATIONS_ON_PATH');
-    expect(rendered).toContain('happier daemon service install --replace-existing=ring --yes');
+    expect(rendered).toContain('happier service install --replace-existing=ring --yes');
   });
 });

@@ -74,10 +74,14 @@ const COMMAND_SURFACE_MANIFEST: readonly CliCommandSurfaceEntry[] = [
     allowTmux: false,
   },
   {
-    command: 'daemon',
-    rootHelpLabel: 'happier daemon',
-    rootHelpDescription: 'Manage background service that allows',
+    command: 'service',
+    rootHelpLabel: 'happier service',
+    rootHelpDescription: 'Manage the background service that allows',
     rootHelpDetail: 'to spawn new sessions away from your computer',
+    allowTmux: false,
+  },
+  {
+    command: 'daemon',
     allowTmux: false,
   },
   {

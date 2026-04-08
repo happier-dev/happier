@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 
 import packageJson from '../../../package.json';
@@ -8,9 +8,21 @@ import type { CommandContext } from '@/cli/commandRegistry';
 import {
   FIRST_PARTY_COMPONENT_IDS,
   installVersionedPayload,
+  readDefaultManagedReleaseChannel,
+  resolveDesiredShimTargets,
   resolveFirstPartyComponentPublicReleaseVariant,
+  resolveInstalledFirstPartyComponentPaths,
+  syncInstalledFirstPartyShims,
+  writeDefaultManagedReleaseChannel,
 } from '@happier-dev/cli-common/firstPartyRuntime';
 import type { FirstPartyComponentId } from '@happier-dev/cli-common/firstPartyRuntime';
+import {
+  deriveManagedReleaseChannelInventory,
+  discoverHappierServices,
+  discoverHappierInstallations,
+  type HappierInstallationInventory,
+  type ManagedReleaseChannelInventory,
+} from '@happier-dev/cli-common/happierRuntime';
 import {
   compareVersions,
   readNpmDistTagVersion,
@@ -30,6 +42,12 @@ import {
   resolveCliBinaryAssetBundleFromReleaseAssets,
   updateInstalledCliPayloadFromReleaseAssets,
 } from '@/cli/runtime/update/binarySelfUpdate';
+import { isInteractiveTerminal, promptInput, runCliAction } from './server/commandUtilities';
+import {
+  hasInstalledDefaultFollowingDaemonService,
+  runDefaultFollowingBackgroundServiceRestartFollowUp,
+} from './backgroundServiceFollowUp';
+import { maybeRunVersionGatedRuntimeMigration } from './self/maybeRunVersionGatedRuntimeMigration';
 
 type SelfChannel = PublicReleaseRingId;
 
@@ -40,6 +58,10 @@ function usage(): string {
     `${chalk.bold('Usage:')}`,
     `  happier self check [--preview|--dev|--channel=<preview|dev>] [--quiet]`,
     `  happier self update [--preview|--dev|--channel=<preview|dev>] [--to <versionOrTag>]`,
+    `  happier self release-channel status [--json]`,
+    `  happier self release-channel list [--json]`,
+    `  happier self release-channel use <stable|preview|dev>`,
+    `  happier self migrate [--yes] [--json]`,
     `  happier self-update [--check] [--preview|--dev|--channel=<preview|dev>] [--to <versionOrTag>]`,
     '',
     `${chalk.bold('Channels:')}`,
@@ -329,6 +351,12 @@ async function cmdUpdate(argv: string[]): Promise<void> {
         : []),
   ]);
   console.log(chalk.green(`✓ Updated happier to ${result.updatedTo}`));
+  await maybeRunVersionGatedRuntimeMigration({
+    fromVersion: result.previousVersionId,
+    toVersion: result.updatedTo,
+    argv: ['repair'],
+    commandPath: 'happier self migrate',
+  });
 }
 
 function resolveInternalInstallPayloadArgValue(argv: string[], flagName: string): string {
@@ -360,12 +388,203 @@ async function cmdInternalInstallPayload(argv: string[]): Promise<void> {
     throw new Error('--version is required');
   }
 
-  await installVersionedPayload({
+  const promotion = await installVersionedPayload({
     componentId,
     channel,
     payloadRoot,
     processEnv: process.env,
     versionId,
+  });
+
+  if (componentId === 'happier-cli') {
+    await maybeRunVersionGatedRuntimeMigration({
+      fromVersion: promotion.previousVersionId,
+      toVersion: promotion.currentVersionId,
+      argv: ['repair'],
+      commandPath: 'happier self migrate',
+    });
+  }
+}
+
+function resolveReleaseChannelArg(argv: string[]): PublicReleaseRingId {
+  const candidate = normalizePublicReleaseRingId(argv[0] ?? '');
+  if (!candidate) {
+    throw new Error('Expected release channel: stable|preview|dev');
+  }
+  return candidate;
+}
+
+async function readManagedReleaseChannelStatus(): Promise<Readonly<{
+  inventory: HappierInstallationInventory;
+  managed: ManagedReleaseChannelInventory;
+  happierShimMatchesDefaultReleaseChannel: boolean;
+}>> {
+  const inventory = await discoverHappierInstallations({ processEnv: process.env });
+  const managed = await deriveManagedReleaseChannelInventory({
+    inventory,
+    processEnv: process.env,
+  });
+  const defaultEntry = managed.managedReleaseChannels.find((entry) => entry.isDefault) ?? null;
+  const happierShimMatchesDefaultReleaseChannel = await (async () => {
+    if (!defaultEntry) return false;
+    const desiredTargets = await resolveDesiredShimTargets({
+      componentId: 'happier-cli',
+      channel: defaultEntry.releaseChannel,
+      processEnv: process.env,
+    });
+    const defaultShimTarget = desiredTargets.find((target) => target.shimPath === resolveInstalledFirstPartyComponentPaths({
+      componentId: 'happier-cli',
+      channel: 'stable',
+      processEnv: process.env,
+    }).shimPaths[0]);
+    if (!defaultShimTarget) {
+      return false;
+    }
+    if (!existsSync(defaultShimTarget.shimPath) || !existsSync(defaultShimTarget.binaryPath)) {
+      return false;
+    }
+    try {
+      return realpathSync(defaultShimTarget.shimPath) === realpathSync(defaultShimTarget.binaryPath);
+    } catch {
+      return false;
+    }
+  })();
+  return {
+    inventory,
+    managed,
+    happierShimMatchesDefaultReleaseChannel,
+  };
+}
+
+function normalizeReleaseChannelLabel(releaseChannel: PublicReleaseRingId): 'stable' | 'preview' | 'dev' {
+  return releaseChannel === 'publicdev' ? 'dev' : releaseChannel;
+}
+
+async function cmdReleaseChannelStatus(argv: string[]): Promise<void> {
+  const json = argv.includes('--json');
+  const status = await readManagedReleaseChannelStatus();
+  const data = {
+    defaultReleaseChannel: normalizeReleaseChannelLabel(status.managed.defaultReleaseChannel),
+    happierShimMatchesDefaultReleaseChannel: status.happierShimMatchesDefaultReleaseChannel,
+    managedReleaseChannels: status.managed.managedReleaseChannels.map((entry) => ({
+      ...entry,
+      releaseChannel: normalizeReleaseChannelLabel(entry.releaseChannel),
+    })),
+    activeInvocation: status.inventory.activeInvocation,
+  };
+
+  if (json) {
+    console.log(JSON.stringify(data));
+    return;
+  }
+
+  console.log(`Default release channel: ${data.defaultReleaseChannel}`);
+  console.log(`happier shim aligned: ${status.happierShimMatchesDefaultReleaseChannel ? 'yes' : 'no'}`);
+}
+
+async function cmdReleaseChannelList(argv: string[]): Promise<void> {
+  const json = argv.includes('--json');
+  const status = await readManagedReleaseChannelStatus();
+  const managedInstallationIds = new Set(status.managed.managedReleaseChannels.map((entry) => entry.installationId));
+  const otherInstallations = status.inventory.installations.filter((installation) => !managedInstallationIds.has(installation.id));
+
+  const data = {
+    defaultReleaseChannel: normalizeReleaseChannelLabel(status.managed.defaultReleaseChannel),
+    managedReleaseChannels: status.managed.managedReleaseChannels.map((entry) => ({
+      ...entry,
+      releaseChannel: normalizeReleaseChannelLabel(entry.releaseChannel),
+    })),
+    otherInstallations,
+  };
+
+  if (json) {
+    console.log(JSON.stringify(data));
+    return;
+  }
+
+  console.log('Managed release channels');
+  for (const entry of data.managedReleaseChannels) {
+    const markers = [
+      entry.isDefault ? 'default' : null,
+      entry.onPath ? 'on PATH' : null,
+    ].filter(Boolean).join(', ');
+    console.log(`- ${entry.label}${markers ? ` (${markers})` : ''}`);
+    if (entry.version) {
+      console.log(`  version: ${entry.version}`);
+    }
+    console.log(`  path: ${entry.installationPath}`);
+  }
+
+  if (otherInstallations.length > 0) {
+    console.log('Other Happier installs');
+    for (const installation of otherInstallations) {
+      const source = installation.source === 'npmGlobal'
+        ? 'npm global'
+        : installation.source === 'fromSource'
+          ? 'from source'
+          : installation.source === 'pathBinary'
+            ? 'PATH binary'
+            : installation.source;
+      console.log(`- ${source}`);
+      console.log(`  path: ${installation.path}`);
+    }
+  }
+}
+
+async function cmdReleaseChannelUse(argv: string[]): Promise<void> {
+  const releaseChannel = resolveReleaseChannelArg(argv);
+  const installPaths = resolveInstalledFirstPartyComponentPaths({
+    componentId: 'happier-cli',
+    channel: releaseChannel,
+    processEnv: process.env,
+  });
+  if (!existsSync(installPaths.binaryPath)) {
+    const label = releaseChannel === 'publicdev' ? 'dev' : releaseChannel;
+    throw new Error(`Cannot set default release channel to ${label}: managed CLI install is missing`);
+  }
+
+  await writeDefaultManagedReleaseChannel({
+    processEnv: process.env,
+    releaseChannel,
+  });
+  await syncInstalledFirstPartyShims({
+    componentId: 'happier-cli',
+    channel: releaseChannel,
+    processEnv: process.env,
+  });
+
+  console.log(`Default release channel set to ${releaseChannel === 'publicdev' ? 'dev' : releaseChannel}.`);
+
+  const platform = process.platform === 'darwin' || process.platform === 'linux' || process.platform === 'win32'
+    ? process.platform
+    : null;
+  if (!platform) {
+    return;
+  }
+
+  const serviceInventory = await discoverHappierServices({
+    processEnv: process.env,
+    platform,
+  });
+  if (!hasInstalledDefaultFollowingDaemonService(serviceInventory.services)) {
+    return;
+  }
+
+  await runDefaultFollowingBackgroundServiceRestartFollowUp({
+    interactive: isInteractiveTerminal(),
+    promptInput,
+    runCliAction,
+    subject: `${normalizeReleaseChannelLabel(releaseChannel)} release-channel`,
+    log: console.log,
+  });
+}
+
+async function cmdMigrate(argv: string[]): Promise<void> {
+  const forwardedArgv = ['repair', ...argv];
+  const { handleServiceRepairCliCommand } = await import('./serviceRepair/handleServiceRepairCliCommand');
+  await handleServiceRepairCliCommand({
+    argv: forwardedArgv,
+    commandPath: 'happier self migrate',
   });
 }
 
@@ -375,19 +594,49 @@ export async function handleSelfCliCommand(context: CommandContext): Promise<voi
     const sub = argv[0] ?? 'help';
     if (sub === 'help' || sub === '--help' || sub === '-h') {
       console.log(usage());
+      process.exitCode = 0;
       return;
     }
     if (sub === 'check') {
       await cmdCheck(argv.slice(1));
+      process.exitCode = 0;
       return;
     }
     if (sub === 'update') {
       await cmdUpdate(argv.slice(1));
+      process.exitCode = 0;
       return;
     }
     if (sub === '__install-payload') {
       await cmdInternalInstallPayload(argv.slice(1));
+      process.exitCode = 0;
       return;
+    }
+    if (sub === 'migrate') {
+      await cmdMigrate(argv.slice(1));
+      process.exitCode = 0;
+      return;
+    }
+    if (sub === 'release-channel') {
+      const releaseChannelSubcommand = argv[1] ?? 'status';
+      if (releaseChannelSubcommand === 'status') {
+        await cmdReleaseChannelStatus(argv.slice(2));
+        process.exitCode = 0;
+        return;
+      }
+      if (releaseChannelSubcommand === 'list') {
+        await cmdReleaseChannelList(argv.slice(2));
+        process.exitCode = 0;
+        return;
+      }
+      if (releaseChannelSubcommand === 'use') {
+        await cmdReleaseChannelUse(argv.slice(2));
+        process.exitCode = 0;
+        return;
+      }
+      console.error(chalk.red('Error:'), `Unknown self release-channel subcommand: ${releaseChannelSubcommand}`);
+      console.log(usage());
+      process.exit(1);
     }
     console.error(chalk.red('Error:'), `Unknown self subcommand: ${sub}`);
     console.log(usage());

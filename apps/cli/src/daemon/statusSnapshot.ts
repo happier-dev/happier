@@ -78,6 +78,10 @@ export async function readDaemonStatusSnapshot(): Promise<DaemonStatusSnapshot> 
       running: daemonRunning,
       pid,
       httpPort: typeof daemonState?.httpPort === 'number' ? daemonState.httpPort : null,
+      startedWithCliVersion: typeof daemonState?.startedWithCliVersion === 'string'
+        ? daemonState.startedWithCliVersion
+        : undefined,
+      startedWithPublicReleaseChannel: daemonState?.startedWithPublicReleaseChannel ?? null,
     },
     service: {
       installed: serviceSnapshot.installed,

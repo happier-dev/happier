@@ -22,6 +22,7 @@ import { handleSessionCliCommand } from './commands/session/index';
 import { handleServerCliCommand } from './commands/server';
 import { handleSelfCliCommand } from './commands/self';
 import { handleSelfUpdateCliCommand } from './commands/selfUpdate';
+import { handleServiceCliCommand } from './commands/service';
 import { handleToolsCliCommand } from './commands/tools';
 import { handleUninstallCliCommand } from './commands/uninstall';
 import { handleConfiguredAcpCatalogCliCommand } from '@/agent/acp/catalog/configured/handleConfiguredAcpCatalogCliCommand';
@@ -70,6 +71,7 @@ export const commandRegistry: Readonly<Record<string, CommandHandler>> = {
   providers: handleProvidersCliCommand,
   relay: handleRelayCliCommand,
   resume: handleResumeCliCommand,
+  service: handleServiceCliCommand,
   session: handleSessionCliCommand,
   server: handleServerCliCommand,
   self: handleSelfCliCommand,

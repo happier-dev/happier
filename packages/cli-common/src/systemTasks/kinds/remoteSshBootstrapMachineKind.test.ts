@@ -46,6 +46,8 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
       if (args[0] === 'auth' && args[1] === 'status') return 'auth.status' as const;
       if (args[0] === 'auth' && args[1] === 'request') return 'auth.request' as const;
       if (args[0] === 'auth' && args[1] === 'wait') return 'auth.wait' as const;
+      if (args[0] === 'service' && args[1] === 'install') return 'daemon.service.install' as const;
+      if (args[0] === 'service' && args[1] === 'start') return 'daemon.service.start' as const;
       if (args[0] === 'daemon' && args[1] === 'service' && args[2] === 'install') return 'daemon.service.install' as const;
       if (args[0] === 'daemon' && args[1] === 'service' && args[2] === 'start') return 'daemon.service.start' as const;
       if (args[0] === 'relay' && args[1] === 'runtime' && args[2] === 'install') return 'relay.runtime.install' as const;
@@ -641,6 +643,7 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
       },
     });
     expect(invocations).toEqual([
+      'daemon.service.list',
       'server.configure',
       'installRemoteCli',
       'server.configure',
@@ -892,6 +895,247 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
         machineId: 'machine-already',
       },
     });
+  });
+
+  it('prompts before replacing conflicting remote background services and removes them when approved', async () => {
+    const invocations: string[] = [];
+    const kind = createRemoteSshBootstrapMachineTaskKind({
+      resolveHostTrust: async () => ({ status: 'trusted' }),
+      installRemoteCli: async () => undefined,
+      approveLocalAuthRequest: async () => undefined,
+      runRemoteCommand: async ({ label, data }) => {
+        invocations.push(label);
+        if (label === 'auth.status') {
+          return { ok: true, data: { authenticated: false } };
+        }
+        if (label === 'server.configure') {
+          return { ok: true, data: { configured: true } };
+        }
+        if (label === 'auth.request') {
+          return {
+            ok: true,
+            data: {
+              publicKey: 'pub-key',
+              claimSecret: 'secret-value',
+              stateFile: '/tmp/claim-state.json',
+              supportsV2: true,
+              webappUrl: 'https://relay.example.test',
+            },
+          };
+        }
+        if (label === 'auth.wait') {
+          expect(data).toEqual({ publicKey: 'pub-key' });
+          return { ok: true, data: { paired: true, machineId: 'remote-machine' } };
+        }
+        if (label === 'daemon.service.list') {
+          return {
+            ok: true,
+            data: {
+              services: [
+                {
+                  id: 'service-preview',
+                  serviceType: 'daemon',
+                  label: 'happier-daemon.preview',
+                  ring: 'preview',
+                  targetMode: 'pinned',
+                  installed: true,
+                  running: true,
+                },
+              ],
+            },
+          };
+        }
+        if (label === 'daemon.service.uninstallAll') {
+          return { ok: true, data: { removed: 1 } };
+        }
+        if (label === 'daemon.service.install') {
+          return { ok: true, data: { installed: true } };
+        }
+        if (label === 'daemon.service.start') {
+          return { ok: true, data: { started: true } };
+        }
+        throw new Error(`Unexpected remote command: ${label}`);
+      },
+    });
+
+    const runner = createSystemTasksRunner({
+      kinds: {
+        'remote.ssh.bootstrapMachine.v1': kind,
+      },
+    });
+
+    await runner.start({
+      taskId: 'ssh-task-conflict',
+      kind: 'remote.ssh.bootstrapMachine.v1',
+      params: {
+        ssh: {
+          target: 'dev@example.test',
+          auth: 'agent',
+        },
+        relay: {
+          relayUrl: 'https://relay.example.test',
+        },
+        channel: 'dev',
+        serviceMode: 'user',
+        promptResolution: {
+          authApproval: {
+            publicKey: 'pub-key',
+          },
+        },
+      },
+    });
+
+    const promptPoll = await waitForPendingPrompt(runner, { taskId: 'ssh-task-conflict', cursor: 0 });
+    expect(promptPoll.pendingPrompt).toEqual({
+      kind: 'daemon.replaceRemoteBackgroundServices',
+      data: {
+        targetServerUrl: 'https://relay.example.test',
+        targetReleaseChannel: 'dev',
+        services: [
+          {
+            label: 'happier-daemon.preview',
+            releaseChannel: 'preview',
+            targetMode: 'pinned',
+            running: true,
+          },
+        ],
+      },
+    });
+
+    await runner.respond({
+      taskId: 'ssh-task-conflict',
+      answer: { replaceExistingServices: true },
+    });
+
+    const finalPoll = await waitForResult(runner, { taskId: 'ssh-task-conflict', cursor: promptPoll.nextCursor });
+    expect(finalPoll.result).toEqual({
+      protocolVersion: 1,
+      taskId: 'ssh-task-conflict',
+      ok: true,
+      data: {
+        publicKey: 'pub-key',
+        machineId: 'remote-machine',
+      },
+    });
+    expect(invocations).toEqual([
+      'daemon.service.list',
+      'daemon.service.uninstallAll',
+      'server.configure',
+      'auth.status',
+      'auth.request',
+      'auth.wait',
+      'daemon.service.install',
+      'daemon.service.start',
+    ]);
+  });
+
+  it('keeps existing remote background services when replacement is declined', async () => {
+    const invocations: string[] = [];
+    const kind = createRemoteSshBootstrapMachineTaskKind({
+      resolveHostTrust: async () => ({ status: 'trusted' }),
+      installRemoteCli: async () => undefined,
+      approveLocalAuthRequest: async () => undefined,
+      runRemoteCommand: async ({ label, data }) => {
+        invocations.push(label);
+        if (label === 'auth.status') {
+          return { ok: true, data: { authenticated: false } };
+        }
+        if (label === 'server.configure') {
+          return { ok: true, data: { configured: true } };
+        }
+        if (label === 'auth.request') {
+          return {
+            ok: true,
+            data: {
+              publicKey: 'pub-key',
+              claimSecret: 'secret-value',
+              stateFile: '/tmp/claim-state.json',
+              supportsV2: true,
+              webappUrl: 'https://relay.example.test',
+            },
+          };
+        }
+        if (label === 'auth.wait') {
+          expect(data).toEqual({ publicKey: 'pub-key' });
+          return { ok: true, data: { paired: true, machineId: 'remote-machine' } };
+        }
+        if (label === 'daemon.service.list') {
+          return {
+            ok: true,
+            data: {
+              services: [
+                {
+                  id: 'service-preview',
+                  serviceType: 'daemon',
+                  label: 'happier-daemon.preview',
+                  ring: 'preview',
+                  targetMode: 'pinned',
+                  installed: true,
+                  running: true,
+                },
+              ],
+            },
+          };
+        }
+        if (label === 'daemon.service.uninstallAll' || label === 'daemon.service.install' || label === 'daemon.service.start') {
+          throw new Error(`Did not expect ${label} when replacement is declined`);
+        }
+        throw new Error(`Unexpected remote command: ${label}`);
+      },
+    });
+
+    const runner = createSystemTasksRunner({
+      kinds: {
+        'remote.ssh.bootstrapMachine.v1': kind,
+      },
+    });
+
+    await runner.start({
+      taskId: 'ssh-task-conflict-decline',
+      kind: 'remote.ssh.bootstrapMachine.v1',
+      params: {
+        ssh: {
+          target: 'dev@example.test',
+          auth: 'agent',
+        },
+        relay: {
+          relayUrl: 'https://relay.example.test',
+        },
+        channel: 'dev',
+        serviceMode: 'user',
+        promptResolution: {
+          authApproval: {
+            publicKey: 'pub-key',
+          },
+        },
+      },
+    });
+
+    const promptPoll = await waitForPendingPrompt(runner, { taskId: 'ssh-task-conflict-decline', cursor: 0 });
+    expect(promptPoll.pendingPrompt?.kind).toBe('daemon.replaceRemoteBackgroundServices');
+
+    await runner.respond({
+      taskId: 'ssh-task-conflict-decline',
+      answer: { replaceExistingServices: false },
+    });
+
+    const finalPoll = await waitForResult(runner, { taskId: 'ssh-task-conflict-decline', cursor: promptPoll.nextCursor });
+    expect(finalPoll.result).toEqual({
+      protocolVersion: 1,
+      taskId: 'ssh-task-conflict-decline',
+      ok: true,
+      data: {
+        publicKey: 'pub-key',
+        machineId: 'remote-machine',
+      },
+    });
+    expect(invocations).toEqual([
+      'daemon.service.list',
+      'server.configure',
+      'auth.status',
+      'auth.request',
+      'auth.wait',
+    ]);
   });
 
   it('continues waiting for pairing even when local approval cannot be submitted because the operator is not authenticated', async () => {
@@ -1175,6 +1419,7 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
     ]);
     expect(invocations).toEqual([
       { label: 'relay.runtime.install', relayUrl: 'http://127.0.0.1:3005' },
+      { label: 'daemon.service.list', relayUrl: 'http://127.0.0.1:3005', localServerUrl: 'http://10.0.0.5:3005' },
       { label: 'server.configure', relayUrl: 'http://127.0.0.1:3005', localServerUrl: 'http://10.0.0.5:3005' },
       { label: 'auth.status', relayUrl: 'http://127.0.0.1:3005', localServerUrl: 'http://10.0.0.5:3005' },
       { label: 'auth.request', relayUrl: 'http://127.0.0.1:3005', localServerUrl: 'http://10.0.0.5:3005' },
@@ -1367,6 +1612,7 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
 
     expect(invocations).toEqual([
       { label: 'relay.runtime.install', relayUrl: 'https://relay.example.test' },
+      { label: 'daemon.service.list', relayUrl: 'https://relay.example.test' },
       { label: 'server.configure', relayUrl: 'https://relay.example.test' },
       { label: 'server.configure', relayUrl: 'https://relay.example.test' },
       { label: 'auth.status', relayUrl: 'https://relay.example.test' },
@@ -1550,6 +1796,7 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
 
     expect(invocations).toEqual([
       { label: 'relay.runtime.install', relayUrl: 'https://public.example.test' },
+      { label: 'daemon.service.list', relayUrl: 'https://public.example.test' },
       { label: 'server.configure', relayUrl: 'https://public.example.test' },
       { label: 'server.configure', relayUrl: 'https://public.example.test' },
       { label: 'auth.status', relayUrl: 'https://public.example.test' },
@@ -1651,6 +1898,7 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
     });
     expect(invocations).toEqual([
       'acceptHostTrust',
+      'daemon.service.list',
       'server.configure',
       'auth.status',
       'auth.request',

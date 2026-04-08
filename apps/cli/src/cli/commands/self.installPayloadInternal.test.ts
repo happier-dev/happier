@@ -2,9 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const { installVersionedPayloadMock } = vi.hoisted(() => ({
   installVersionedPayloadMock: vi.fn(async () => ({
-    currentVersionId: '1.2.3',
-    previousVersionId: null,
+    currentVersionId: '1.2.3' as string,
+    previousVersionId: null as string | null,
   })),
+}));
+const { maybeRunVersionGatedRuntimeMigrationMock } = vi.hoisted(() => ({
+  maybeRunVersionGatedRuntimeMigrationMock: vi.fn<(params: unknown) => Promise<boolean>>(async () => false),
 }));
 
 vi.mock('@happier-dev/cli-common/firstPartyRuntime', async (importOriginal) => {
@@ -15,10 +18,15 @@ vi.mock('@happier-dev/cli-common/firstPartyRuntime', async (importOriginal) => {
   };
 });
 
+vi.mock('./self/maybeRunVersionGatedRuntimeMigration', () => ({
+  maybeRunVersionGatedRuntimeMigration: (params: unknown) => maybeRunVersionGatedRuntimeMigrationMock(params),
+}));
+
 describe('happier self __install-payload', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.resetModules();
+    maybeRunVersionGatedRuntimeMigrationMock.mockReset();
   });
 
   it('promotes an extracted first-party payload through the shared runtime installer', async () => {
@@ -61,6 +69,32 @@ describe('happier self __install-payload', () => {
         payloadRoot: '/tmp/payload',
         processEnv: process.env,
         versionId: '1.2.3-dev.4',
+      });
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('triggers the version-gated runtime migration hook after promoting the managed CLI payload across the 0.2.3 boundary', async () => {
+    installVersionedPayloadMock.mockResolvedValueOnce({
+      currentVersionId: '0.2.3',
+      previousVersionId: '0.2.2',
+    });
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      const { handleSelfCliCommand } = await import('./self');
+      await handleSelfCliCommand({
+        args: ['self', '__install-payload', '--component', 'happier-cli', '--payload-root', '/tmp/payload', '--version', '0.2.3'],
+        rawArgv: ['happier', 'self', '__install-payload', '--component', 'happier-cli', '--payload-root', '/tmp/payload', '--version', '0.2.3'],
+        terminalRuntime: null,
+      });
+
+      expect(maybeRunVersionGatedRuntimeMigrationMock).toHaveBeenCalledWith({
+        fromVersion: '0.2.2',
+        toVersion: '0.2.3',
+        argv: ['repair'],
+        commandPath: 'happier self migrate',
       });
     } finally {
       logSpy.mockRestore();

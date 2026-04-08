@@ -5,7 +5,10 @@ import { SystemTaskExecutionError } from '../runSystemTask.js';
 import { redactSensitiveSystemTaskJsonValue, type InteractiveSystemTaskKind } from '../interactiveTaskKinds.js';
 import { runSetupMachineRecipe, type SetupMachineRecipeExecutor } from '../recipes/setupMachineRecipe.js';
 import { materializeSshIdentityPrivateKeyToTempFile } from '../ssh/materializeSshIdentityPrivateKeyToTempFile.js';
-import { createSetupMachineRecipeExecutorFromRemoteCommandRunner } from '../executors/remoteSetupMachineRecipeExecutor.js';
+import {
+  createRemoteSetupMachineRecipeHappierExecutor,
+  createSetupMachineRecipeExecutorFromRemoteCommandRunner,
+} from '../executors/remoteSetupMachineRecipeExecutor.js';
 import {
   parseSystemTaskSshConfig,
   type RelayRuntimeTaskParams,
@@ -15,6 +18,13 @@ import {
 type RemoteCommandResult = Readonly<{
   ok: boolean;
   data: Record<string, unknown>;
+}>;
+
+type RemoteBootstrapExistingDaemonServiceSummary = Readonly<{
+  label: string;
+  releaseChannel: 'stable' | 'preview' | 'dev' | null;
+  targetMode: 'default-following' | 'pinned' | null;
+  running: boolean;
 }>;
 
 type CanonicalRemoteHostTrustPromptKind = 'ssh.trustHost' | 'ssh.replaceHostKey';
@@ -92,6 +102,53 @@ function shouldIgnoreLocalApprovalError(error: unknown): boolean {
   return /not authenticated/i.test(message);
 }
 
+function summarizeDiscoveredRemoteDaemonServices(data: Record<string, unknown>): RemoteBootstrapExistingDaemonServiceSummary[] {
+  const rawServices = Array.isArray(data.services) ? data.services : [];
+  return rawServices.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return [];
+    }
+    const record = entry as Record<string, unknown>;
+    if (record.serviceType !== 'daemon') {
+      return [];
+    }
+    const label = typeof record.label === 'string' ? record.label.trim() : '';
+    if (!label) {
+      return [];
+    }
+    const releaseChannel =
+      record.ring === 'stable' || record.ring === 'preview' || record.ring === 'dev'
+        ? record.ring
+        : null;
+    const targetMode =
+      record.targetMode === 'default-following' || record.targetMode === 'pinned'
+        ? record.targetMode
+        : null;
+    return [{
+      label,
+      releaseChannel,
+      targetMode,
+      running: record.running === true,
+    }];
+  });
+}
+
+function shouldPromptForRemoteDaemonServiceReplacement(
+  params: Readonly<{
+    services: readonly RemoteBootstrapExistingDaemonServiceSummary[];
+    targetReleaseChannel: 'stable' | 'preview' | 'dev';
+  }>,
+): boolean {
+  if (params.services.length === 0) {
+    return false;
+  }
+  if (params.services.length > 1) {
+    return true;
+  }
+  const [existing] = params.services;
+  return existing?.releaseChannel !== params.targetReleaseChannel;
+}
+
 export interface RemoteBootstrapMachineParams {
   ssh: SystemTaskSshConnectionConfig;
   identityPrivateKey?: string;
@@ -160,7 +217,9 @@ export type RemoteSshBootstrapMachineDeps = Readonly<{
       | 'server.configure'
       | 'auth.request'
       | 'auth.wait'
+      | 'daemon.service.list'
       | 'daemon.service.install'
+      | 'daemon.service.uninstallAll'
       | 'daemon.service.start'
       | 'relay.runtime.install';
     parsed: RemoteBootstrapMachineParams;
@@ -329,6 +388,15 @@ export function createRemoteSshBootstrapMachineTaskKind(
         localServerUrl: relayRuntimeLocalServerUrl ?? null,
       } as const;
 
+      const remoteHappierExecutor = createRemoteSetupMachineRecipeHappierExecutor({
+        parsed: parsedRemote,
+        auth,
+        knownHostsMode,
+        ...(relayRuntimeLocalServerUrl ? { localServerUrl: relayRuntimeLocalServerUrl } : {}),
+        runRemoteCommand: deps.runRemoteCommand,
+        ...(deps.createHappierJsonExecutor ? { createHappierJsonExecutor: deps.createHappierJsonExecutor } : {}),
+      });
+
       const recipeExecutor: SetupMachineRecipeExecutor = createSetupMachineRecipeExecutorFromRemoteCommandRunner({
         parsed: parsedRemote,
         auth,
@@ -340,12 +408,57 @@ export function createRemoteSshBootstrapMachineTaskKind(
         ...(deps.createHappierJsonExecutor ? { createHappierJsonExecutor: deps.createHappierJsonExecutor } : {}),
       });
 
+      let shouldManageService = (parsedRemote.serviceMode ?? 'user') !== 'none';
+      if (shouldManageService) {
+        let discoveredServices: RemoteBootstrapExistingDaemonServiceSummary[] | null = null;
+        try {
+          discoveredServices = summarizeDiscoveredRemoteDaemonServices(
+            requireOk(
+              await remoteHappierExecutor.runHappierJson({ args: ['service', 'list', '--json'] }),
+              'daemon.service.list',
+            ),
+          );
+        } catch {
+          discoveredServices = null;
+        }
+        if (discoveredServices) {
+          if (shouldPromptForRemoteDaemonServiceReplacement({
+            services: discoveredServices,
+            targetReleaseChannel: parsedRemote.channel ?? 'stable',
+          })) {
+            const answer = await ctx.prompt({
+              kind: 'daemon.replaceRemoteBackgroundServices',
+              stepId: 'daemon.service.preflight',
+              message: 'Remote machine already has Happier background services. Replace them with the selected release channel?',
+              data: {
+                targetServerUrl: relayProfile.serverUrl,
+                targetReleaseChannel: parsedRemote.channel ?? 'stable',
+                services: discoveredServices,
+              },
+            }) as { replaceExistingServices?: boolean };
+            if (answer.replaceExistingServices === true) {
+              requireOk(
+                await remoteHappierExecutor.runHappierJson({ args: ['service', 'uninstall', '--all', '--yes', '--json'] }),
+                'daemon.service.uninstallAll',
+              );
+            } else {
+              shouldManageService = false;
+              ctx.emit({
+                type: 'progress',
+                stepId: 'daemon.service.preflight',
+                message: 'Keeping existing remote background services unchanged',
+              });
+            }
+          }
+        }
+      }
+
       const recipeResult = await runSetupMachineRecipe({
         relayProfile,
         executor: recipeExecutor,
         steps: {
-          installService: (parsedRemote.serviceMode ?? 'user') !== 'none',
-          startService: (parsedRemote.serviceMode ?? 'user') !== 'none',
+          installService: shouldManageService,
+          startService: shouldManageService,
           verifyService: false,
         },
         stepIds: {

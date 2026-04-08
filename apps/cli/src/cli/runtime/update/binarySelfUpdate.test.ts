@@ -177,6 +177,7 @@ describe('binarySelfUpdate', () => {
       });
 
       expect(result.updatedTo).toBe(version);
+      expect(result.previousVersionId).toBeNull();
       expect(readFileSync(join(happyHomeDir, 'cli', 'current', 'happier'), 'utf8')).toBe('new-binary\n');
       expect(readFileSync(join(happyHomeDir, 'cli', 'current', 'package-dist', 'index.mjs'), 'utf8')).toContain('ok');
       expect(existsSync(join(happyHomeDir, 'cli', 'versions', version))).toBe(true);

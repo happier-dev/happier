@@ -237,6 +237,14 @@ export function resolveExplicitOrInstalledLocalFirstPartyCommand(params: Readonl
     }
   }
 
+  const repoLocalPath = resolveRepoLocalFirstPartyCommandPath({
+    componentId: params.componentId,
+    processEnv: params.processEnv,
+  });
+  if (repoLocalPath) {
+    return repoLocalPath;
+  }
+
   try {
     const paths = resolveInstalledFirstPartyComponentPaths({
       componentId: params.componentId,
@@ -248,14 +256,6 @@ export function resolveExplicitOrInstalledLocalFirstPartyCommand(params: Readonl
     }
   } catch {
     // ignore and continue to managed install acquisition
-  }
-
-  const repoLocalPath = resolveRepoLocalFirstPartyCommandPath({
-    componentId: params.componentId,
-    processEnv: params.processEnv,
-  });
-  if (repoLocalPath) {
-    return repoLocalPath;
   }
 
   return null;

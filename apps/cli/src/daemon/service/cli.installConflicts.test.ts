@@ -83,7 +83,7 @@ describe('runDaemonServiceCliCommand install conflict preflight', () => {
         try {
             const { runDaemonServiceCliCommand } = await import('./cli.js');
             installDaemonServiceMock.mockRejectedValueOnce(Object.assign(
-                new Error('Competing daemon services detected: happier-daemon.company. Re-run with --yes or --replace-existing=ring|all.'),
+                new Error('Competing background services detected: happier-daemon.company. Re-run with --yes or --replace-existing=ring|all.'),
                 {
                     code: 'daemon_service_conflict',
                     conflicts: [
@@ -97,6 +97,9 @@ describe('runDaemonServiceCliCommand install conflict preflight', () => {
                 ok: false,
                 error: 'daemon_service_conflict',
                 message: expect.stringContaining('--yes'),
+            }));
+            expect(resolveDaemonServiceInstallRuntimeTargetMock).toHaveBeenCalledWith(expect.objectContaining({
+                targetMode: 'default-following',
             }));
             expect(installDaemonServiceMock).toHaveBeenCalledTimes(1);
             expect(installDaemonServiceMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -227,6 +230,28 @@ describe('runDaemonServiceCliCommand install conflict preflight', () => {
             expect(installDaemonServiceMock).toHaveBeenCalledTimes(1);
             expect(installDaemonServiceMock).toHaveBeenCalledWith(expect.objectContaining({
                 strategy: 'replace-all',
+            }));
+        } finally {
+            output.restore();
+        }
+    });
+
+    it('passes a pinned target mode to runtime resolution when an explicit release-channel is requested', async () => {
+        envScope.patch({
+            HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux',
+            HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: '/home/tester',
+            HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: '/home/tester/.happier',
+        });
+        discoverHappierServicesMock.mockResolvedValue({ services: [] });
+
+        const output = captureStdoutJsonOutput<{ ok: boolean }>();
+        try {
+            const { runDaemonServiceCliCommand } = await import('./cli.js');
+            await runDaemonServiceCliCommand({ argv: ['install', '--ring', 'preview', '--yes', '--json'] });
+
+            expect(output.json().ok).toBe(true);
+            expect(resolveDaemonServiceInstallRuntimeTargetMock).toHaveBeenCalledWith(expect.objectContaining({
+                targetMode: 'pinned',
             }));
         } finally {
             output.restore();

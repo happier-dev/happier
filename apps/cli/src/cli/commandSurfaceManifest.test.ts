@@ -17,7 +17,7 @@ describe('CLI command-surface manifest', () => {
       'providers',
       'notify',
       'install',
-      'daemon',
+      'service',
       'doctor',
       'uninstall',
     ]);
@@ -31,6 +31,7 @@ describe('CLI command-surface manifest', () => {
   it('keeps tmux disallow decisions aligned with the command manifest', () => {
     expect(isTmuxAllowedCommand('codex')).toBe(true);
     expect(isTmuxAllowedCommand('resume')).toBe(true);
+    expect(isTmuxAllowedCommand('service')).toBe(false);
     expect(isTmuxAllowedCommand('daemon')).toBe(false);
     expect(isTmuxAllowedCommand('session')).toBe(false);
     expect(isTmuxAllowedCommand('install')).toBe(false);

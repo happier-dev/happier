@@ -816,6 +816,62 @@ describe('handleMachineCommand', () => {
     expect(errorSpy.mock.calls.flat().join('\n')).toContain('Non-interactive mode requires --yes');
   });
 
+  it('answers remote background service replacement prompts interactively', async () => {
+    const respond = vi.fn(async () => undefined);
+    await handleMachineCommand(
+      ['setup', '--ssh', 'dev@example.test'],
+      {
+        applyServerSelectionFromArgs: async (args) => args,
+        createRunner: () => ({
+          start: vi.fn(async () => ({ taskId: 'task-service-replace' })),
+          poll: vi.fn()
+            .mockResolvedValueOnce({
+              events: [],
+              nextCursor: 0,
+              result: null,
+              pendingPrompt: {
+                kind: 'daemon.replaceRemoteBackgroundServices',
+                data: {
+                  targetServerUrl: 'https://relay.example.test',
+                  targetReleaseChannel: 'preview',
+                  services: [
+                    { label: 'happier-daemon.stable', releaseChannel: 'stable', targetMode: 'pinned', running: true },
+                  ],
+                },
+              },
+            })
+            .mockResolvedValueOnce({
+              events: [],
+              nextCursor: 1,
+              result: {
+                protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                taskId: 'task-service-replace',
+                ok: true,
+                data: { machineId: 'machine-1' },
+              },
+              pendingPrompt: null,
+            }),
+          respond,
+        }),
+        readRelaySelection: () => ({
+          relayUrl: 'https://relay.example.test',
+          webappUrl: 'https://app.example.test',
+        }),
+        promptInput: async () => 'y',
+        promptSecret: async () => {
+          throw new Error('promptSecret should not be used');
+        },
+        isInteractiveTerminal: () => true,
+        sleep: async () => undefined,
+      },
+    );
+
+    expect(respond).toHaveBeenCalledWith({
+      taskId: 'task-service-replace',
+      answer: { replaceExistingServices: true },
+    });
+  });
+
   it('rejects unknown setup flags instead of ignoring them', async () => {
     await handleMachineCommand(
       ['setup', '--ssh', 'dev@example.test', '--bogus', '--json'],

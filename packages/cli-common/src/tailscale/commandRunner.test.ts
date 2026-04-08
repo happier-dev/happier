@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   extractTailscaleServeApprovalUrl,
   resolveTailscaleBin,
+  runTailscaleFunnelEnable,
   runTailscaleLogin,
   runTailscaleServeEnable,
   sanitizeTailscaleEnv,
@@ -280,6 +281,55 @@ describe('runTailscaleServeEnable', () => {
     );
 
     expect(result.httpsUrl).toBeNull();
+  });
+});
+
+describe('runTailscaleFunnelEnable', () => {
+  it('returns the https URL for the requested upstream instead of the first status entry', async () => {
+    const runner = vi.fn<TailscaleCommandRunner>()
+      .mockResolvedValueOnce({
+        command: '/bin/tailscale',
+        args: ['funnel', '--bg', 'http://127.0.0.1:46001'],
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        command: '/bin/tailscale',
+        args: ['funnel', 'status'],
+        exitCode: 0,
+        stdout: [
+          'https://other.tailnet.ts.net',
+          '|-- / proxy http://127.0.0.1:8080',
+          '',
+          'https://machine.tailnet.ts.net',
+          '|-- / proxy http://127.0.0.1:46001',
+        ].join('\n'),
+        stderr: '',
+      });
+
+    const result = await runTailscaleFunnelEnable(
+      {
+        env: {},
+        upstreamUrl: 'http://127.0.0.1:46001',
+      },
+      {
+        resolveTailscaleBin: vi.fn(async () => '/bin/tailscale'),
+        runCommand: runner,
+      },
+    );
+
+    expect(result).toEqual({
+      approvalUrl: null,
+      httpsUrl: 'https://machine.tailnet.ts.net',
+      rawStatus: [
+        'https://other.tailnet.ts.net',
+        '|-- / proxy http://127.0.0.1:8080',
+        '',
+        'https://machine.tailnet.ts.net',
+        '|-- / proxy http://127.0.0.1:46001',
+      ].join('\n'),
+    });
   });
 });
 

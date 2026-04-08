@@ -4,7 +4,7 @@ import { configuration } from '@/configuration';
 
 import { applyDaemonServiceInstallPlan, applyDaemonServiceUninstallPlan } from './apply';
 import { planDaemonServiceInstall, planDaemonServiceUninstall } from './plan';
-import type { DaemonServiceMode } from './plan';
+import type { DaemonServiceMode, DaemonServiceTargetMode } from './plan';
 import { resolveDaemonServiceInstallRuntimeTarget } from './resolveDaemonServiceInstallRuntimeTarget';
 import {
   discoverHappierServices,
@@ -37,6 +37,7 @@ export async function installDaemonService(options: Readonly<{
   mode?: DaemonServiceMode;
   systemUser?: string;
   channel?: PublicReleaseRingId;
+  targetMode?: DaemonServiceTargetMode;
   instanceId?: string;
   strategy?: DaemonServiceInstallStrategy;
   serverUrl?: string;
@@ -56,6 +57,7 @@ export async function installDaemonService(options: Readonly<{
   const userHomeDir = options.userHomeDir ?? homedir();
   const happierHomeDir = options.happierHomeDir ?? configuration.happyHomeDir;
   const instanceId = options.instanceId ?? configuration.activeServerId;
+  const targetMode: DaemonServiceTargetMode = options.targetMode ?? 'pinned';
   // Daemon should prefer the local API URL when available (e.g. canonical HTTPS URL + local loopback HTTP).
   // We express this using env override semantics: HAPPIER_PUBLIC_SERVER_URL (canonical) + HAPPIER_SERVER_URL (API).
   const serverUrl = options.serverUrl ?? configuration.apiServerUrl;
@@ -67,6 +69,8 @@ export async function installDaemonService(options: Readonly<{
     currentExecPath: process.execPath,
     explicitNodePath,
     explicitEntryPath,
+    targetMode,
+    processEnv: process.env,
   });
   const strategy: DaemonServiceInstallStrategy = options.strategy
     ?? resolveDaemonServiceInstallerStrategyFromEnv(process.env);
@@ -78,11 +82,14 @@ export async function installDaemonService(options: Readonly<{
   const target: DaemonServiceInstallTarget = {
     platform,
     backend: resolveDaemonServiceBackend(platform, options.mode),
-    ring: getReleaseRingCatalogEntry(
-      normalizePublicReleaseRingId(options.channel ?? process.env.HAPPIER_DAEMON_SERVICE_CHANNEL ?? 'stable') || 'stable',
-    ).publicLabel,
-    instanceId,
-    serverUrl,
+    targetMode,
+    ring: targetMode === 'default-following'
+      ? null
+      : getReleaseRingCatalogEntry(
+          normalizePublicReleaseRingId(options.channel ?? process.env.HAPPIER_DAEMON_SERVICE_CHANNEL ?? 'stable') || 'stable',
+        ).publicLabel,
+    instanceId: targetMode === 'default-following' ? null : instanceId,
+    serverUrl: targetMode === 'default-following' ? null : serverUrl,
   };
   const conflictPlan = resolveDaemonServiceInstallConflictPlan({
     target,
@@ -93,7 +100,7 @@ export async function installDaemonService(options: Readonly<{
   if (!conflictPlan.exactTargetExists && strategy === 'require-explicit' && conflictPlan.competingServices.length > 0) {
     const serviceList = conflictPlan.competingServices.map((service) => service.label).join(', ');
     throw createDaemonServiceConflictError(
-      `Competing daemon services detected: ${serviceList}. Re-run with --yes or --replace-existing=ring|all.`,
+      `Competing background services detected: ${serviceList}. Re-run with --yes or --replace-existing=ring|all.`,
       conflictPlan.competingServices,
     );
   }
@@ -107,6 +114,7 @@ export async function installDaemonService(options: Readonly<{
         happierHomeDir,
         mode: resolveDaemonServiceModeFromBackend(service.backend),
         channel: service.ring ? resolvePublicReleaseRingIdForLabel(service.ring) : undefined,
+        targetMode: service.targetMode ?? 'pinned',
         instanceId: service.instanceId ?? undefined,
         runCommands: options.runCommands,
       });
@@ -118,6 +126,7 @@ export async function installDaemonService(options: Readonly<{
     mode: options.mode,
     systemUser: options.systemUser,
     channel: options.channel,
+    targetMode,
     instanceId,
     uid,
     userHomeDir,
@@ -163,6 +172,7 @@ export async function uninstallDaemonService(options: Readonly<{
   happierHomeDir?: string;
   mode?: DaemonServiceMode;
   channel?: PublicReleaseRingId;
+  targetMode?: DaemonServiceTargetMode;
   instanceId?: string;
   runCommands?: boolean;
 }> = {}): Promise<void> {
@@ -176,11 +186,13 @@ export async function uninstallDaemonService(options: Readonly<{
   const userHomeDir = options.userHomeDir ?? homedir();
   const happierHomeDir = options.happierHomeDir ?? configuration.happyHomeDir;
   const instanceId = options.instanceId ?? configuration.activeServerId;
+  const targetMode: DaemonServiceTargetMode = options.targetMode ?? 'pinned';
 
   const plan = planDaemonServiceUninstall({
     platform,
     mode: options.mode,
     channel: options.channel,
+    targetMode,
     instanceId,
     uid,
     userHomeDir,

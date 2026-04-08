@@ -37,7 +37,7 @@ describe('happier daemon install/uninstall', () => {
 
         const parsed = output.json();
         expect(parsed.ok).toBe(true);
-        expect(parsed.plan?.files?.[0]?.path).toContain('happier-daemon.cloud.service');
+        expect(parsed.plan?.files?.[0]?.path).toContain('happier-daemon.default.service');
       } finally {
         output.restore();
         envScope.restore();
@@ -75,7 +75,7 @@ describe('happier daemon install/uninstall', () => {
 
         const parsed = output.json();
         expect(parsed.ok).toBe(true);
-        expect(parsed.plan?.filesToRemove?.some((p) => p.includes('happier-daemon.cloud.service'))).toBe(true);
+        expect(parsed.plan?.filesToRemove?.some((p) => p.includes('happier-daemon.default.service'))).toBe(true);
       } finally {
         output.restore();
         envScope.restore();

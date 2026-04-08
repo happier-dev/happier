@@ -9,7 +9,9 @@ export type RemoteBootstrapCommandLabel =
   | 'auth.status'
   | 'auth.request'
   | 'auth.wait'
+  | 'daemon.service.list'
   | 'daemon.service.install'
+  | 'daemon.service.uninstallAll'
   | 'daemon.service.start';
 
 function deriveWebappUrl(serverUrl: string, explicitWebappUrl?: string): string {
@@ -113,19 +115,25 @@ export function buildRemoteBootstrapCommand(params: Readonly<{
     const publicKey = safeBashSingleQuote(String(params.data?.publicKey ?? '').trim());
     return `${happier} auth wait --public-key ${publicKey} --json --persist ${authRelaySelectionArgs}`;
   }
+  if (params.label === 'daemon.service.list') {
+    return `${happier} service list --json`;
+  }
   if (params.label === 'daemon.service.install') {
     const daemonServiceEnv = buildDaemonServiceEnv(params);
     if (params.daemonServiceMode === 'system') {
-      return `env ${daemonServiceEnv} sudo -E ${happier} daemon service install --mode=system --system-user "$(id -un)" --json`;
+      return `env ${daemonServiceEnv} sudo -E ${happier} service install --mode=system --system-user "$(id -un)" --json`;
     }
-    return `${daemonServiceEnv} ${happier} daemon service install --mode=user --json`;
+    return `${daemonServiceEnv} ${happier} service install --mode=user --json`;
+  }
+  if (params.label === 'daemon.service.uninstallAll') {
+    return `${happier} service uninstall --all --yes --json`;
   }
   if (params.label === 'daemon.service.start') {
     const daemonServiceEnv = buildDaemonServiceEnv(params);
     if (params.daemonServiceMode === 'system') {
-      return `env ${daemonServiceEnv} sudo -E ${happier} daemon service start --mode=system --json`;
+      return `env ${daemonServiceEnv} sudo -E ${happier} service start --mode=system --json`;
     }
-    return `${daemonServiceEnv} ${happier} daemon service start --mode=user --json`;
+    return `${daemonServiceEnv} ${happier} service start --mode=user --json`;
   }
   throw new Error(`Unsupported remote bootstrap command: ${params.label satisfies never}`);
 }

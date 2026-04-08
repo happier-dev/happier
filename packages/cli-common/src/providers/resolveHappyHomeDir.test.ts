@@ -4,6 +4,25 @@ import { join, resolve as resolvePath } from 'node:path';
 
 import { resolveHappyHomeDirFromEnvironment } from './resolveHappyHomeDir.js';
 
+function resolveOriginalPlatformDescriptor(): PropertyDescriptor {
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+  if (!descriptor) {
+    throw new Error('process.platform descriptor is unavailable');
+  }
+  return descriptor;
+}
+
+const originalPlatformDescriptor: PropertyDescriptor = resolveOriginalPlatformDescriptor();
+
+function withPlatform(platform: NodeJS.Platform, fn: () => void): void {
+  Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: platform });
+  try {
+    fn();
+  } finally {
+    Object.defineProperty(process, 'platform', originalPlatformDescriptor);
+  }
+}
+
 describe('resolveHappyHomeDirFromEnvironment', () => {
   it('returns an absolute override path unchanged', () => {
     expect(resolveHappyHomeDirFromEnvironment({ HAPPIER_HOME_DIR: '/tmp/happier-home' })).toBe('/tmp/happier-home');
@@ -20,6 +39,15 @@ describe('resolveHappyHomeDirFromEnvironment', () => {
 
   it('resolves relative override paths to absolute paths', () => {
     expect(resolveHappyHomeDirFromEnvironment({ HAPPIER_HOME_DIR: 'relative-home' })).toBe(resolvePath('relative-home'));
+  });
+
+  it('preserves Windows-shaped absolute overrides on Windows', () => {
+    withPlatform('win32', () => {
+      expect(resolveHappyHomeDirFromEnvironment({
+        HAPPIER_HOME_DIR: 'C:\\Users\\tester\\.happier-custom',
+        USERPROFILE: 'C:\\Users\\tester',
+      })).toBe('C:\\Users\\tester\\.happier-custom');
+    });
   });
 
   it('falls back to HAPPIER_STACK_CLI_HOME_DIR when HAPPIER_HOME_DIR is missing', () => {

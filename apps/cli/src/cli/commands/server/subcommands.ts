@@ -20,6 +20,10 @@ import {
   promptInput,
   runCliAction,
 } from './commandUtilities';
+import {
+  hasInstalledDefaultFollowingDaemonService,
+  runDefaultFollowingBackgroundServiceServerChangeFollowUp,
+} from '../backgroundServiceFollowUp';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { tailscaleServeHttpsUrlForInternalServerUrl } from '@/integrations/tailscale/tailscaleServe';
 import { fetchServerAdvertisedUrls } from '@/server/serverCapabilities';
@@ -29,6 +33,7 @@ import {
   isLoopbackHttpServerUrl,
 } from '@/server/serverUrlClassification';
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
+import { discoverHappierServices } from '@happier-dev/cli-common/happierRuntime';
 import {
   bullets,
   cmd,
@@ -38,6 +43,7 @@ import {
   ok,
   sectionTitle,
 } from '@happier-dev/cli-common/output';
+import { readCredentials } from '@/persistence';
 
 export async function runServerSubcommand(subcommand: string, args: string[]): Promise<boolean> {
   switch (subcommand) {
@@ -342,12 +348,12 @@ async function cmdAdd(args: string[]): Promise<void> {
     console.log(sectionTitle('Next steps (optional)'));
     console.log(bullets([
       `Start daemon: ${cmd(`${prefix} daemon start`)}`,
-      `Install background service: ${cmd(`${prefix} daemon service install`)}`,
+      `Install background service: ${cmd(`${prefix} service install`)}`,
     ]));
   }
 
   if (installService) {
-    await runCliAction(['--server', created.id, 'daemon', 'service', 'install']);
+    await runCliAction(['--server', created.id, 'service', 'install']);
   }
   if (startDaemon && !installService) {
     await runCliAction(['--server', created.id, 'daemon', 'start']);
@@ -366,6 +372,11 @@ async function cmdUse(args: string[]): Promise<void> {
   }
   console.log(ok(`Active server: ${active.name} (${active.id})`));
   console.log(`  ${active.serverUrl}`);
+
+  await runServerSelectionBackgroundServiceFollowUp({
+    interactive: isInteractiveTerminal(),
+    targetServerUrl: active.serverUrl,
+  });
 }
 
 async function cmdRemove(args: string[]): Promise<void> {
@@ -488,4 +499,34 @@ async function cmdSet(args: string[]): Promise<void> {
   }
   console.log(ok(`Active server: ${created.name} (${created.id})`));
   console.log(`  ${created.serverUrl}`);
+
+  await runServerSelectionBackgroundServiceFollowUp({
+    interactive: isInteractiveTerminal(),
+    targetServerUrl: created.serverUrl,
+  });
+}
+
+async function runServerSelectionBackgroundServiceFollowUp(params: Readonly<{
+  interactive: boolean;
+  targetServerUrl: string;
+}>): Promise<void> {
+  const serviceInventory = await discoverHappierServices({
+    processEnv: process.env,
+    platform: process.platform === 'darwin' || process.platform === 'linux' || process.platform === 'win32'
+      ? process.platform
+      : undefined,
+  });
+  if (!hasInstalledDefaultFollowingDaemonService(serviceInventory.services)) {
+    return;
+  }
+
+  const credentials = await readCredentials().catch(() => null);
+  await runDefaultFollowingBackgroundServiceServerChangeFollowUp({
+    interactive: params.interactive,
+    promptInput,
+    runCliAction,
+    targetServerUrl: params.targetServerUrl,
+    hasCredentials: credentials != null,
+    log: console.log,
+  });
 }

@@ -6,6 +6,7 @@ import { delimiter, join } from 'node:path';
 import { resolveWindowsCommandOnPath } from '../process/index.js';
 import {
   extractTailscaleServeHttpsUrl,
+  tailscaleServeHttpsUrlForInternalServerUrlFromStatus,
   tailscaleServeHttpsUrlForOwnedConfigFromStatus,
 } from './serveStatus.js';
 import { parseTailscaleStatusJson, type TailscaleStatusSnapshot } from './statusSnapshot.js';
@@ -462,7 +463,7 @@ export async function runTailscaleFunnelEnable(
 
   return {
     approvalUrl: null,
-    httpsUrl: extractTailscaleServeHttpsUrl(status),
+    httpsUrl: tailscaleServeHttpsUrlForInternalServerUrlFromStatus(status, upstreamUrl),
     rawStatus: status,
   };
 }

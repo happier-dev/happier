@@ -171,6 +171,7 @@ describe('runDaemonServiceCliCommand', () => {
     vi.spyOn(processWithGetuid, 'getuid').mockReturnValue(0);
     const installOutput = captureStdoutJsonOutput<{
       ok: boolean;
+      targetMode?: string;
       plan: { files: Array<{ path: string; content: string }> };
     }>();
     try {
@@ -180,10 +181,13 @@ describe('runDaemonServiceCliCommand', () => {
 
       const installPayload = installOutput.json();
       expect(installPayload.ok).toBe(true);
-      expect(installPayload.plan.files[0]?.path).toBe('/etc/systemd/system/happier-daemon.company.service');
+      expect(installPayload.targetMode).toBeUndefined();
+      expect(installPayload.plan.files[0]?.path).toBe('/etc/systemd/system/happier-daemon.default.service');
       expect(installPayload.plan.files[0]?.content).toContain('User=happier');
       expect(installPayload.plan.files[0]?.content).toContain('WorkingDirectory=/home/happier');
       expect(installPayload.plan.files[0]?.content).toContain('Environment=HAPPIER_HOME_DIR=/home/happier/.happier');
+      expect(installPayload.plan.files[0]?.content).toContain('Environment=HAPPIER_DAEMON_SERVICE_TARGET_MODE=default-following');
+      expect(installPayload.plan.files[0]?.content).not.toContain('Environment=HAPPIER_ACTIVE_SERVER_ID=');
       expect(installPayload.plan.files[0]?.content).toContain('Environment=PATH=');
       expect(installPayload.plan.files[0]?.content).toContain('/home/happier/.local/bin');
       expect(installPayload.plan.files[0]?.content).toContain('/home/happier/bin');
@@ -195,6 +199,7 @@ describe('runDaemonServiceCliCommand', () => {
 
     const pathsOutput = captureStdoutJsonOutput<{
       ok: boolean;
+      targetMode?: string;
       paths: { stdoutPath?: string; stderrPath?: string };
     }>();
     try {
@@ -202,8 +207,9 @@ describe('runDaemonServiceCliCommand', () => {
 
       const pathsPayload = pathsOutput.json();
       expect(pathsPayload.ok).toBe(true);
-      expect(pathsPayload.paths.stdoutPath).toBe('/home/happier/.happier/logs/daemon-service.company.out.log');
-      expect(pathsPayload.paths.stderrPath).toBe('/home/happier/.happier/logs/daemon-service.company.err.log');
+      expect(pathsPayload.targetMode).toBe('default-following');
+      expect(pathsPayload.paths.stdoutPath).toBe('/home/happier/.happier/logs/daemon-service.default.out.log');
+      expect(pathsPayload.paths.stderrPath).toBe('/home/happier/.happier/logs/daemon-service.default.err.log');
     } finally {
       pathsOutput.restore();
     }
@@ -251,7 +257,7 @@ describe('runDaemonServiceCliCommand', () => {
     }>();
     try {
       await runDaemonServiceCliCommand({
-        argv: ['install', '--dry-run', '--json', '--mode', 'system', '--system-user', 'happier'],
+        argv: ['install', '--dry-run', '--json', '--mode', 'system', '--system-user', 'happier', '--ring', 'dev', '--instance', 'company'],
       });
 
       const installPayload = installOutput.json();
@@ -307,7 +313,7 @@ describe('runDaemonServiceCliCommand', () => {
       const payload = output.json();
       expect(payload.ok).toBe(false);
       expect(payload.error).toBe('not_installed');
-      expect(payload.message).toContain('Daemon service is not installed');
+      expect(payload.message).toContain('Background service is not installed');
     } finally {
       output.restore();
     }

@@ -321,6 +321,33 @@ function formatPromptMessage(prompt: Readonly<{ kind: string; data: SystemTaskJs
     ].filter(Boolean).join('\n');
   }
 
+  if (prompt.kind === 'daemon.replaceRemoteBackgroundServices') {
+    const targetServerUrl = typeof prompt.data.targetServerUrl === 'string' ? prompt.data.targetServerUrl.trim() : '';
+    const targetReleaseChannel = typeof prompt.data.targetReleaseChannel === 'string' ? prompt.data.targetReleaseChannel.trim() : '';
+    const services = Array.isArray(prompt.data.services) ? prompt.data.services : [];
+    const formattedServices = services.flatMap((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        return [];
+      }
+      const record = entry as Record<string, unknown>;
+      const label = typeof record.label === 'string' ? record.label.trim() : '';
+      if (!label) {
+        return [];
+      }
+      const releaseChannel = typeof record.releaseChannel === 'string' ? record.releaseChannel.trim() : '';
+      const targetMode = typeof record.targetMode === 'string' ? record.targetMode.trim() : '';
+      const running = record.running === true ? 'running' : 'stopped';
+      return [`- ${label}${releaseChannel ? ` (${releaseChannel}` : ''}${targetMode ? `${releaseChannel ? ', ' : ' ('}${targetMode}` : ''}${releaseChannel || targetMode ? ')' : ''} — ${running}`];
+    });
+    return [
+      fallbackMessage || 'Replace existing remote background services?',
+      targetServerUrl ? `Target server: ${targetServerUrl}` : '',
+      targetReleaseChannel ? `Target release channel: ${targetReleaseChannel}` : '',
+      formattedServices.length > 0 ? 'Existing services:' : '',
+      ...formattedServices,
+    ].filter(Boolean).join('\n');
+  }
+
   return fallbackMessage || `Task requires input: ${prompt.kind}`;
 }
 
@@ -347,6 +374,9 @@ async function resolvePromptAnswer(params: Readonly<{
     if (params.prompt.kind === 'auth.approveRemoteProvisioning') {
       return { approved: true };
     }
+    if (params.prompt.kind === 'daemon.replaceRemoteBackgroundServices') {
+      return { replaceExistingServices: true };
+    }
     return {};
   }
 
@@ -361,6 +391,10 @@ async function resolvePromptAnswer(params: Readonly<{
   if (params.prompt.kind === 'auth.approveRemoteProvisioning') {
     const answer = await params.promptInput(`${params.message}\nApprove pairing? [Y/n]: `);
     return { approved: !/^n(?:o)?$/i.test(answer.trim()) };
+  }
+  if (params.prompt.kind === 'daemon.replaceRemoteBackgroundServices') {
+    const answer = await params.promptInput(`${params.message}\nReplace existing background services? [Y/n]: `);
+    return { replaceExistingServices: !/^n(?:o)?$/i.test(answer.trim()) };
   }
   await params.promptInput(`${params.message}\nPress Enter to continue...`);
   return {};

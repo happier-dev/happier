@@ -1,12 +1,8 @@
-import { uninstallDaemonService } from '@/daemon/service/installer';
 import { restartDaemonAndWait } from '@/daemon/restartDaemonAndWait';
-import { resolvePublicReleaseRingIdForLabel } from '@happier-dev/release-runtime/releaseRings';
+import { installDaemonService } from '@/daemon/service/installer';
+import { uninstallDiscoveredHappierService } from '@/daemon/service/uninstallDiscoveredHappierService';
 
 import type { HappierRuntimeRepairPlan, HappierRuntimeRepairResult } from './types';
-
-function resolveModeFromScope(scope: 'user' | 'system'): 'user' | 'system' {
-  return scope === 'system' ? 'system' : 'user';
-}
 
 export async function applyHappierRuntimeRepairPlan(plan: HappierRuntimeRepairPlan): Promise<HappierRuntimeRepairResult> {
   const executedActions: HappierRuntimeRepairResult['executedActions'] = [];
@@ -21,12 +17,23 @@ export async function applyHappierRuntimeRepairPlan(plan: HappierRuntimeRepairPl
       continue;
     }
 
+    if (action.kind === 'install-default-following-service') {
+      await installDaemonService({
+        mode: action.mode,
+        runCommands: true,
+        targetMode: 'default-following',
+      });
+      executedActions.push({ kind: action.kind });
+      continue;
+    }
+
     for (const service of action.services) {
-      await uninstallDaemonService({
+      await uninstallDiscoveredHappierService({
         platform: service.platform,
-        mode: resolveModeFromScope(service.scope),
-        channel: service.ring ? resolvePublicReleaseRingIdForLabel(service.ring) : undefined,
-        instanceId: service.instanceId ?? undefined,
+        backend: service.backend,
+        scope: service.scope,
+        label: service.label,
+        definitionPath: service.definitionPath,
         runCommands: true,
       });
     }

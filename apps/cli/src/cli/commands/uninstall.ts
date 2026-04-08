@@ -82,7 +82,7 @@ function resolveUnsupportedInstallSource(source: string | null | undefined): Uns
 function resolveManualUninstallCommandForSource(source: UnsupportedInstallSource): string {
   return source === 'npmGlobal'
     ? 'npm uninstall -g @happier-dev/cli'
-    : 'Remove the binary or checkout manually, then run `happier daemon service list --json` to inspect leftover services.';
+    : 'Remove the binary or checkout manually, then run `happier service list --json` to inspect leftover services.';
 }
 
 function resolveMatchingDaemonServices(services: readonly HappierService[], installationRoots: readonly string[]): HappierService[] {

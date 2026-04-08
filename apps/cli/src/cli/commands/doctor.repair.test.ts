@@ -1,93 +1,50 @@
-import { describe, expect, it, vi } from 'vitest';
-
-import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const {
   runDoctorCommandMock,
-  buildDoctorSnapshotMock,
-  buildHappierRuntimeRepairPlanMock,
-  applyHappierRuntimeRepairPlanMock,
+  handleServiceRepairCliCommandMock,
 } = vi.hoisted(() => ({
   runDoctorCommandMock: vi.fn(async () => {}),
-  buildDoctorSnapshotMock: vi.fn(async () => ({
-    capturedAt: '2026-02-23T00:00:00.000Z',
-    server: {
-      activeServerId: 'cloud',
-      serverUrl: 'https://api.happier.dev',
-      publicServerUrl: 'https://api.happier.dev',
-      webappUrl: 'https://app.happier.dev',
-    },
-    settings: {
-      activeServerId: 'cloud',
-      servers: [],
-      knownAccountIds: [],
-    },
-  })),
-  buildHappierRuntimeRepairPlanMock: vi.fn(() => ({
-    actions: [{ kind: 'restart-daemon', command: 'happier daemon restart' }],
-    manualWarnings: [],
-  })),
-  applyHappierRuntimeRepairPlanMock: vi.fn(async () => ({
-    executedActions: [{ kind: 'restart-daemon' }],
-  })),
+  handleServiceRepairCliCommandMock: vi.fn(async () => undefined),
 }));
 
 vi.mock('@/ui/doctor', () => ({
   runDoctorCommand: runDoctorCommandMock,
 }));
 
-vi.mock('@/ui/doctorSnapshot', () => ({
-  buildDoctorSnapshot: () => buildDoctorSnapshotMock(),
-}));
-
-vi.mock('@/diagnostics/happierRuntimeRepair', () => ({
-  buildHappierRuntimeRepairPlan: buildHappierRuntimeRepairPlanMock,
-  applyHappierRuntimeRepairPlan: applyHappierRuntimeRepairPlanMock,
+vi.mock('./serviceRepair/handleServiceRepairCliCommand', () => ({
+  handleServiceRepairCliCommand: handleServiceRepairCliCommandMock,
 }));
 
 import { handleDoctorCliCommand } from './doctor';
 
 describe('happier doctor repair', () => {
-  it('prints a dry-run repair plan by default', async () => {
-    const output = captureConsoleJsonOutput<{ ok: boolean; executed: boolean; actions: Array<{ kind: string }> }>();
-    try {
-      await handleDoctorCliCommand({
-        args: ['doctor', 'repair', '--json'],
-        rawArgv: ['node', 'happier', 'doctor', 'repair', '--json'],
-        terminalRuntime: null,
-      });
-
-      expect(buildDoctorSnapshotMock).toHaveBeenCalled();
-      expect(buildHappierRuntimeRepairPlanMock).toHaveBeenCalled();
-      expect(applyHappierRuntimeRepairPlanMock).not.toHaveBeenCalled();
-      expect(output.json()).toEqual(expect.objectContaining({
-        ok: true,
-        executed: false,
-        actions: [expect.objectContaining({ kind: 'restart-daemon' })],
-      }));
-    } finally {
-      output.restore();
-    }
+  afterEach(() => {
+    runDoctorCommandMock.mockReset();
+    handleServiceRepairCliCommandMock.mockReset();
   });
 
-  it('executes the repair plan when --yes is provided', async () => {
-    const output = captureConsoleJsonOutput<{ ok: boolean; executed: boolean; executedActions: Array<{ kind: string }> }>();
-    try {
-      await handleDoctorCliCommand({
-        args: ['doctor', 'repair', '--yes', '--json'],
-        rawArgv: ['node', 'happier', 'doctor', 'repair', '--yes', '--json'],
-        terminalRuntime: null,
-      });
+  it('delegates doctor repair to the canonical service repair flow', async () => {
+    await handleDoctorCliCommand({
+      args: ['doctor', 'repair', '--json'],
+      rawArgv: ['node', 'happier', 'doctor', 'repair', '--json'],
+      terminalRuntime: null,
+    });
 
-      expect(applyHappierRuntimeRepairPlanMock).toHaveBeenCalled();
-      expect(runDoctorCommandMock).not.toHaveBeenCalled();
-      expect(output.json()).toEqual(expect.objectContaining({
-        ok: true,
-        executed: true,
-        executedActions: [expect.objectContaining({ kind: 'restart-daemon' })],
-      }));
-    } finally {
-      output.restore();
-    }
+    expect(handleServiceRepairCliCommandMock).toHaveBeenCalledWith({
+      argv: ['repair', '--json'],
+      commandPath: 'happier doctor',
+    });
+  });
+
+  it('keeps non-repair doctor invocations on the doctor command path', async () => {
+    await handleDoctorCliCommand({
+      args: ['doctor'],
+      rawArgv: ['node', 'happier', 'doctor'],
+      terminalRuntime: null,
+    });
+
+    expect(runDoctorCommandMock).toHaveBeenCalled();
+    expect(handleServiceRepairCliCommandMock).not.toHaveBeenCalled();
   });
 });

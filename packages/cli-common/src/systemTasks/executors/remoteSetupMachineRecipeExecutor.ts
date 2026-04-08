@@ -36,19 +36,7 @@ export function createSetupMachineRecipeExecutorFromRemoteCommandRunner(params: 
   runRemoteCommand: RemoteSshBootstrapMachineDeps['runRemoteCommand'];
   createHappierJsonExecutor?: RemoteSshBootstrapMachineDeps['createHappierJsonExecutor'];
 }>): SetupMachineRecipeExecutor {
-  const remoteExecutor = params.createHappierJsonExecutor?.({
-    parsed: params.parsed,
-    auth: params.auth,
-    knownHostsMode: params.knownHostsMode,
-    ...(params.localServerUrl ? { localServerUrl: params.localServerUrl } : {}),
-  }) ?? createRemoteSshBootstrapHappierJsonExecutor({
-    parsed: params.parsed,
-    auth: params.auth,
-    knownHostsMode: params.knownHostsMode,
-    ...(params.localServerUrl ? { localServerUrl: params.localServerUrl } : {}),
-    runRemoteCommand: params.runRemoteCommand,
-  });
-
+  const remoteExecutor = createRemoteSetupMachineRecipeHappierExecutor(params);
   const shouldManageService = params.serviceMode !== 'none';
 
   return {
@@ -107,7 +95,7 @@ export function createSetupMachineRecipeExecutorFromRemoteCommandRunner(params: 
       ? undefined
       : async () => {
           requireOk(
-            await remoteExecutor.runHappierJson({ args: ['daemon', 'service', 'install', '--json'] }),
+            await remoteExecutor.runHappierJson({ args: ['service', 'install', '--json'] }),
             'daemon.service.install',
           );
         },
@@ -116,9 +104,31 @@ export function createSetupMachineRecipeExecutorFromRemoteCommandRunner(params: 
       ? undefined
       : async () => {
           requireOk(
-            await remoteExecutor.runHappierJson({ args: ['daemon', 'service', 'start', '--json'] }),
+            await remoteExecutor.runHappierJson({ args: ['service', 'start', '--json'] }),
             'daemon.service.start',
           );
         },
   };
+}
+
+export function createRemoteSetupMachineRecipeHappierExecutor(params: Readonly<{
+  parsed: RemoteBootstrapMachineParams;
+  auth: RemoteSshAuth;
+  knownHostsMode: 'app' | 'system';
+  localServerUrl?: string;
+  runRemoteCommand: RemoteSshBootstrapMachineDeps['runRemoteCommand'];
+  createHappierJsonExecutor?: RemoteSshBootstrapMachineDeps['createHappierJsonExecutor'];
+}>): RemoteSshBootstrapHappierJsonExecutor {
+  return params.createHappierJsonExecutor?.({
+    parsed: params.parsed,
+    auth: params.auth,
+    knownHostsMode: params.knownHostsMode,
+    ...(params.localServerUrl ? { localServerUrl: params.localServerUrl } : {}),
+  }) ?? createRemoteSshBootstrapHappierJsonExecutor({
+    parsed: params.parsed,
+    auth: params.auth,
+    knownHostsMode: params.knownHostsMode,
+    ...(params.localServerUrl ? { localServerUrl: params.localServerUrl } : {}),
+    runRemoteCommand: params.runRemoteCommand,
+  });
 }

@@ -6,8 +6,12 @@ function createSnapshot(params: Readonly<{
   services?: Array<{
     id: string;
     label: string;
+    targetMode?: 'pinned' | 'default-following';
     ring?: 'stable' | 'preview' | 'dev' | null;
     instanceId?: string | null;
+    serverUrl?: string | null;
+    running?: boolean;
+    executablePath?: string | null;
   }>;
 }> = {}) {
   return {
@@ -53,11 +57,14 @@ function createSnapshot(params: Readonly<{
           scope: 'user',
           verification: 'verified',
           installed: true,
-          running: true,
+          running: service.running ?? true,
+          targetMode: service.targetMode ?? 'pinned',
           ring: service.ring ?? 'stable',
           instanceId: service.instanceId ?? null,
           definitionPath: `/Users/test/Library/LaunchAgents/${service.label}.plist`,
-          executablePath: `/tmp/${service.label}`,
+          executablePath: service.executablePath ?? `/tmp/${service.label}`,
+          serverUrl: service.serverUrl ?? null,
+          publicServerUrl: service.serverUrl ?? null,
         })),
       },
     },
@@ -81,7 +88,7 @@ describe('buildHappierRuntimeRepairPlan', () => {
     expect(plan.actions).toEqual([
       expect.objectContaining({
         kind: 'uninstall-daemon-services',
-        command: 'happier daemon service uninstall --ring stable --instance custom --yes',
+        command: 'happier service uninstall --ring stable --instance custom --yes',
       }),
     ]);
   });
@@ -107,7 +114,97 @@ describe('buildHappierRuntimeRepairPlan', () => {
     expect(plan.actions).toEqual([
       expect.objectContaining({
         kind: 'uninstall-daemon-services',
-        command: 'happier doctor repair --yes',
+        command: 'happier service repair --yes',
+      }),
+    ]);
+  });
+
+  it('falls back to service repair for a default-following orphan service', () => {
+    const plan = buildHappierRuntimeRepairPlan(createSnapshot({
+      services: [
+        {
+          id: 'launchd:com.happier.cli.daemon.default',
+          label: 'com.happier.cli.daemon.default',
+          targetMode: 'default-following',
+          ring: null,
+          instanceId: null,
+        },
+      ],
+    }) as never);
+
+    expect(plan.actions).toEqual([
+      expect.objectContaining({
+        kind: 'uninstall-daemon-services',
+        command: 'happier service repair --yes',
+      }),
+    ]);
+  });
+
+  it('keeps one default-following service and removes duplicate verified defaults', () => {
+    const plan = buildHappierRuntimeRepairPlan(createSnapshot({
+      services: [
+        {
+          id: 'launchd:com.happier.cli.daemon.default.primary',
+          label: 'com.happier.cli.daemon.default.primary',
+          targetMode: 'default-following',
+          ring: null,
+          instanceId: null,
+          running: true,
+          executablePath: '/Users/test/.happier/cli/current/happier',
+        },
+        {
+          id: 'launchd:com.happier.cli.daemon.default.secondary',
+          label: 'com.happier.cli.daemon.default.secondary',
+          targetMode: 'default-following',
+          ring: null,
+          instanceId: null,
+          running: false,
+          executablePath: '/Users/test/.happier/cli/current/happier',
+        },
+      ],
+    }) as never);
+
+    expect(plan.actions).toEqual([
+      expect.objectContaining({
+        kind: 'uninstall-daemon-services',
+        services: [
+          expect.objectContaining({
+            id: 'launchd:com.happier.cli.daemon.default.secondary',
+            targetMode: 'default-following',
+          }),
+        ],
+      }),
+    ]);
+  });
+
+  it('migrates a single pinned service for the active server to a default-following service', () => {
+    const plan = buildHappierRuntimeRepairPlan(createSnapshot({
+      services: [
+        {
+          id: 'launchd:com.happier.cli.daemon.cloud',
+          label: 'com.happier.cli.daemon.cloud',
+          targetMode: 'pinned',
+          ring: 'stable',
+          instanceId: 'cloud',
+          serverUrl: 'https://api.happier.dev',
+        },
+      ],
+    }) as never);
+
+    expect(plan.actions).toEqual([
+      expect.objectContaining({
+        kind: 'install-default-following-service',
+        command: 'happier service install --yes',
+        targetServerUrl: 'https://api.happier.dev',
+      }),
+      expect.objectContaining({
+        kind: 'uninstall-daemon-services',
+        services: [
+          expect.objectContaining({
+            id: 'launchd:com.happier.cli.daemon.cloud',
+            targetMode: 'pinned',
+          }),
+        ],
       }),
     ]);
   });

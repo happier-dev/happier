@@ -103,7 +103,7 @@ export async function updateInstalledCliPayloadFromReleaseAssets(params: Readonl
   minisignPubkeyFile?: string;
   preferVersion: string | null;
   channel?: PublicReleaseRingId;
-}>): Promise<Readonly<{ updatedTo: string; installRoot: string }>> {
+}>): Promise<Readonly<{ updatedTo: string; installRoot: string; previousVersionId: string | null }>> {
   const bundle = resolveCliBinaryAssetBundleFromReleaseAssets({
     assets: params.assets,
     os: params.os,
@@ -131,7 +131,7 @@ export async function updateInstalledCliPayloadFromReleaseAssets(params: Readonl
       extractDir,
     });
 
-    await installVersionedPayload({
+    const promotion = await installVersionedPayload({
       componentId: 'happier-cli',
       versionId: bundle.version,
       payloadRoot,
@@ -146,6 +146,7 @@ export async function updateInstalledCliPayloadFromReleaseAssets(params: Readonl
         channel: params.channel,
         processEnv,
       }).installRoot,
+      previousVersionId: promotion.previousVersionId,
     };
   } finally {
     await rm(scratchRoot, { recursive: true, force: true });

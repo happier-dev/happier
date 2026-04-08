@@ -1,20 +1,46 @@
 import { homedir, tmpdir } from 'node:os';
-import { isAbsolute, join, resolve as resolvePath } from 'node:path';
+
+import {
+  isAbsolutePathForPathShape,
+  joinPathForPathShape,
+  resolvePathForPathShape,
+} from '../path/pathShape.js';
+
+function resolveConfiguredHomeOverride(rawOverride: string, processEnv: NodeJS.ProcessEnv): string {
+  const override = rawOverride.trim();
+  if (!override) return '';
+
+  const envHome =
+    process.platform === 'win32'
+      ? (processEnv.USERPROFILE || processEnv.HOME)
+      : processEnv.HOME;
+  const normalizedHome = typeof envHome === 'string' ? envHome.trim() : '';
+  const expandedOverride =
+    override === '~'
+      ? (normalizedHome || homedir())
+      : override.startsWith('~/') || override.startsWith('~\\')
+        ? joinPathForPathShape(normalizedHome || homedir(), override.slice(2))
+        : override;
+  return isAbsolutePathForPathShape(expandedOverride) ? expandedOverride : resolvePathForPathShape(expandedOverride);
+}
 
 export function resolveHappyHomeDirFromEnvironment(processEnv: NodeJS.ProcessEnv = process.env): string {
   const override = typeof processEnv.HAPPIER_HOME_DIR === 'string' ? processEnv.HAPPIER_HOME_DIR.trim() : '';
   if (override) {
-    return isAbsolute(override) ? override : resolvePath(override);
+    return resolveConfiguredHomeOverride(override, processEnv);
   }
 
   const stackOverride = typeof processEnv.HAPPIER_STACK_CLI_HOME_DIR === 'string'
     ? processEnv.HAPPIER_STACK_CLI_HOME_DIR.trim()
     : '';
   if (stackOverride) {
-    return isAbsolute(stackOverride) ? stackOverride : resolvePath(stackOverride);
+    return resolveConfiguredHomeOverride(stackOverride, processEnv);
   }
 
-  const envHome = (processEnv.HOME ?? processEnv.USERPROFILE ?? '').trim();
+  const envHome =
+    process.platform === 'win32'
+      ? ((processEnv.USERPROFILE ?? processEnv.HOME ?? '').trim())
+      : ((processEnv.HOME ?? processEnv.USERPROFILE ?? '').trim());
   let baseHome = envHome;
   if (!baseHome) {
     try {
@@ -28,5 +54,5 @@ export function resolveHappyHomeDirFromEnvironment(processEnv: NodeJS.ProcessEnv
     baseHome = tmpdir();
   }
 
-  return join(baseHome, '.happier');
+  return joinPathForPathShape(baseHome, '.happier');
 }

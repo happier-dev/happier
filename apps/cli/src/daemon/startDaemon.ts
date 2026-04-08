@@ -116,6 +116,7 @@ import {
   normalizeDaemonInitialPrompt,
 } from '@/agent/runtime/daemonInitialPrompt';
 import { parseBooleanEnv, type BackendTargetRefV1 } from '@happier-dev/protocol';
+import { getReleaseRingCatalogEntry } from '@happier-dev/release-runtime/releaseRings';
 import type { CatalogAgentId } from '@/backends/types';
 import { writeTerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 
@@ -1452,6 +1453,7 @@ export async function startDaemon(): Promise<void> {
       httpPort: controlPort,
       startedAt: Date.now(),
       startedWithCliVersion: packageJson.version,
+      startedWithPublicReleaseChannel: getReleaseRingCatalogEntry(configuration.publicReleaseRing).publicLabel,
       machineId,
       daemonLogPath: logger.logFilePath,
       controlToken,

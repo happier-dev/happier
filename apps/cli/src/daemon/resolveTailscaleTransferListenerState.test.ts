@@ -154,11 +154,14 @@ describe('resolveTailscaleTransferListenerState', () => {
   });
 
   it('preserves availability when transfer-specific tailscale serve is disabled by runtime config', async () => {
+    const runTailscaleServeDisable = vi.fn(async () => undefined);
+
     const state = await resolveTailscaleTransferListenerState({
       enabled: false,
       transferPort: 46001,
       servePath: '/__happier/transfer',
       httpsPort: 443,
+      env: process.env,
       runTailscaleStatusJson: vi.fn(async () => ({
         backendState: 'Running',
         authUrl: null,
@@ -168,6 +171,45 @@ describe('resolveTailscaleTransferListenerState', () => {
         loggedIn: true,
       })),
       runTailscaleServeStatus: vi.fn(async () => 'https://machine.tailnet.ts.net\n|-- /__happier/transfer proxy http://127.0.0.1:46001'),
+      runTailscaleServeDisable,
+    });
+
+    expect(state).toEqual({
+      enabled: false,
+      configured: false,
+      active: false,
+      available: true,
+    });
+
+    expect(runTailscaleServeDisable).toHaveBeenCalledTimes(1);
+    expect(runTailscaleServeDisable).toHaveBeenCalledWith({
+      env: process.env,
+      servePath: '/__happier/transfer',
+      httpsPort: 443,
+    });
+  });
+
+  it('fails open to reporting the configured state when disabling transfer-specific tailscale serve fails', async () => {
+    const runTailscaleServeDisable = vi.fn(async () => {
+      throw new Error('permission denied');
+    });
+
+    const state = await resolveTailscaleTransferListenerState({
+      enabled: false,
+      transferPort: 46001,
+      servePath: '/__happier/transfer',
+      httpsPort: 443,
+      env: process.env,
+      runTailscaleStatusJson: vi.fn(async () => ({
+        backendState: 'Running',
+        authUrl: null,
+        dnsName: 'machine.tailnet.ts.net',
+        tailnetName: 'tailnet.ts.net',
+        tailscaleIps: ['100.64.0.1'],
+        loggedIn: true,
+      })),
+      runTailscaleServeStatus: vi.fn(async () => 'https://machine.tailnet.ts.net\n|-- /__happier/transfer proxy http://127.0.0.1:46001'),
+      runTailscaleServeDisable,
     });
 
     expect(state).toEqual({
@@ -176,5 +218,6 @@ describe('resolveTailscaleTransferListenerState', () => {
       active: false,
       available: true,
     });
+    expect(runTailscaleServeDisable).toHaveBeenCalledTimes(1);
   });
 });

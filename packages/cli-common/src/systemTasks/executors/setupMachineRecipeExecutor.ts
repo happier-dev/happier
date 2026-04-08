@@ -174,11 +174,11 @@ export function createSetupMachineRecipeExecutorFromHappierJsonExecutor(params: 
     },
 
     async installDaemonService() {
-      await params.executor.runHappierJson(['daemon', 'service', 'install', '--json']);
+      await params.executor.runHappierJson(['service', 'install', '--json']);
     },
 
     async startDaemonService() {
-      await params.executor.runHappierJson(['daemon', 'service', 'start', '--json']);
+      await params.executor.runHappierJson(['service', 'start', '--json']);
     },
 
     waitForReadyDaemon,

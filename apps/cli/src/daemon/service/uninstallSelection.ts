@@ -62,5 +62,5 @@ export function resolveDaemonServiceUninstallSelection(params: Readonly<{
     return matches;
   }
 
-  throw new Error('Multiple verified daemon services matched the requested uninstall target. Re-run with --all or add more specific filters.');
+  throw new Error('Multiple verified background services matched the requested uninstall target. Re-run with --all or add more specific filters.');
 }

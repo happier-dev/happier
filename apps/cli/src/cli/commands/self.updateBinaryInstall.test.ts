@@ -4,6 +4,7 @@ const {
   fetchGitHubReleaseByTagMock,
   resolveCliBinaryAssetBundleFromReleaseAssetsMock,
   updateInstalledCliPayloadFromReleaseAssetsMock,
+  maybeRunVersionGatedRuntimeMigrationMock,
 } = vi.hoisted(() => ({
   fetchGitHubReleaseByTagMock: vi.fn(async () => ({ assets: [{ name: 'archive', browser_download_url: 'https://example.test/archive.tgz' }] })),
   resolveCliBinaryAssetBundleFromReleaseAssetsMock: vi.fn(() => ({
@@ -15,7 +16,9 @@ const {
   updateInstalledCliPayloadFromReleaseAssetsMock: vi.fn(async () => ({
     updatedTo: '9.9.10-preview.3',
     installRoot: '/tmp/happier/cli',
+    previousVersionId: '0.2.2',
   })),
+  maybeRunVersionGatedRuntimeMigrationMock: vi.fn<(params: unknown) => Promise<boolean>>(async () => false),
 }));
 
 vi.mock('@happier-dev/release-runtime/github', () => ({
@@ -31,10 +34,15 @@ vi.mock('@/cli/runtime/update/binarySelfUpdate', async (importOriginal) => {
   };
 });
 
+vi.mock('./self/maybeRunVersionGatedRuntimeMigration', () => ({
+  maybeRunVersionGatedRuntimeMigration: (params: unknown) => maybeRunVersionGatedRuntimeMigrationMock(params),
+}));
+
 describe('happier self update for binary installs', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.resetModules();
+    maybeRunVersionGatedRuntimeMigrationMock.mockReset();
   });
 
   it('uses the full-payload updater instead of replacing only the executable bytes', async () => {
@@ -56,6 +64,12 @@ describe('happier self update for binary installs', () => {
       expect(updateInstalledCliPayloadFromReleaseAssetsMock).toHaveBeenCalledWith(expect.objectContaining({
         channel: 'stable',
       }));
+      expect(maybeRunVersionGatedRuntimeMigrationMock).toHaveBeenCalledWith({
+        fromVersion: '0.2.2',
+        toVersion: '9.9.10-preview.3',
+        argv: ['repair'],
+        commandPath: 'happier self migrate',
+      });
     } finally {
       process.argv = originalArgv;
       logSpy.mockRestore();
@@ -80,6 +94,7 @@ describe('happier self update for binary installs', () => {
       expect(updateInstalledCliPayloadFromReleaseAssetsMock).toHaveBeenCalledWith(expect.objectContaining({
         channel: 'publicdev',
       }));
+      expect(maybeRunVersionGatedRuntimeMigrationMock).toHaveBeenCalled();
     } finally {
       process.argv = originalArgv;
       logSpy.mockRestore();

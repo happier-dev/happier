@@ -64,5 +64,10 @@ export {
   type SetupMachineRecipeSteps,
   type SetupMachineRelayProfile,
 } from './recipes/setupMachineRecipe.js';
+export {
+  buildBackgroundServiceSetupGuidance,
+  type BackgroundServiceSetupGuidance,
+  type BackgroundServiceSetupGuidanceService,
+} from './setupServiceGuidance/buildBackgroundServiceSetupGuidance.js';
 
 export * from './kinds/index.js';

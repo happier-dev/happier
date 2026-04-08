@@ -55,7 +55,7 @@ describe('daemon service installer conflict semantics', () => {
             entryPath: '/opt/happier/dist/index.mjs',
             serverUrl: 'https://cloud.example.test',
             runCommands: false,
-        })).rejects.toThrow(/competing daemon services/i);
+        })).rejects.toThrow(/competing background services/i);
     });
 
     it('allows installing alongside existing services when --yes/add is selected', async () => {

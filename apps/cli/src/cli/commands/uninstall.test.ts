@@ -223,7 +223,7 @@ describe('happier uninstall', () => {
         error: 'unsupported_install_source',
         source: 'fromSource',
         manualCommands: [
-          'Remove the binary or checkout manually, then run `happier daemon service list --json` to inspect leftover services.',
+          'Remove the binary or checkout manually, then run `happier service list --json` to inspect leftover services.',
         ],
       }));
       expect(uninstallManagedFirstPartyComponentMock).not.toHaveBeenCalled();
