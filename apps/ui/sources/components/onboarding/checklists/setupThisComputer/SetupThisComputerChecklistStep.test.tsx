@@ -34,12 +34,20 @@ const preflightMock = vi.hoisted(() => ({
 
 const taskHookMock = vi.hoisted(() => ({
     value: {
+        activeTaskId: null as string | null,
         activeTaskSnapshot: null as any,
         cancel: vi.fn(),
+        runner: {
+            respond: vi.fn(async () => undefined),
+        },
         start: vi.fn(async () => 'task-1'),
         startError: null as string | null,
         isStarting: false,
     },
+}));
+
+const modalSpies = vi.hoisted(() => ({
+    confirm: vi.fn(async () => true),
 }));
 
 vi.mock('react-native', async () => {
@@ -88,6 +96,20 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key: string) => key });
 });
 
+vi.mock('@/modal', () => ({
+    Modal: {
+        show: vi.fn(() => 'modal-id'),
+        hide: vi.fn(),
+        update: vi.fn(),
+        hideAll: vi.fn(),
+        alert: vi.fn(),
+        alertAsync: vi.fn(async () => undefined),
+        prompt: vi.fn(async () => null),
+        confirm: modalSpies.confirm,
+    },
+    ModalProvider: ({ children }: { children?: React.ReactNode }) => React.createElement('ModalProvider', null, children ?? null),
+}));
+
 vi.mock('./useThisComputerSetupPreflight', () => ({
     useThisComputerSetupPreflight: () => preflightMock.value,
 }));
@@ -98,6 +120,13 @@ vi.mock('@/components/systemTasks/useThisComputerSetupTask', () => ({
 }));
 
 afterEach(() => {
+    taskHookMock.value.activeTaskId = null;
+    taskHookMock.value.activeTaskSnapshot = null;
+    taskHookMock.value.cancel.mockReset();
+    taskHookMock.value.runner.respond.mockReset();
+    taskHookMock.value.start.mockReset();
+    modalSpies.confirm.mockReset();
+    modalSpies.confirm.mockResolvedValue(true);
     standardCleanup();
 });
 
@@ -269,4 +298,5 @@ describe('SetupThisComputerChecklistStep', () => {
 
         await expect(renderScreen(<Wrapper />)).resolves.toBeTruthy();
     });
+
 });

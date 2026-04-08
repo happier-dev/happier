@@ -260,13 +260,17 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
             return selectedRelayUrl;
         }
 
+        const activeRelayUrl = activeServerSnapshot.serverUrl ? String(activeServerSnapshot.serverUrl).trim() : '';
+        if (activeRelayUrl) {
+            return activeRelayUrl;
+        }
+
         const configuredRelayUrl = String(readConfiguredServerUrlEnv() ?? '').trim();
         if (configuredRelayUrl) {
             return configuredRelayUrl;
         }
 
-        const activeRelayUrl = activeServerSnapshot.serverUrl ? String(activeServerSnapshot.serverUrl).trim() : '';
-        return activeRelayUrl;
+        return '';
     }, [
         activeServerSnapshot.serverUrl,
         state.context.relaySelection.relayProfileId,

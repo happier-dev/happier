@@ -8,7 +8,7 @@ import {
     WizardGuidedHandoffDivider,
     WizardGuidedHandoffDownloadCta,
     WizardGuidedHandoffTerminal,
-} from '@/components/onboarding';
+} from '../../ui/WizardGuidedHandoff';
 
 export type WebDesktopBackgroundServiceHandoffContentProps = Readonly<{
     testID: string;

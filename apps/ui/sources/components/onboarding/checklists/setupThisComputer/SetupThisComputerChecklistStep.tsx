@@ -12,6 +12,8 @@ import {
     type PlanChecklistItem,
     usePlanChecklistController,
 } from '@/components/systemTasks/planChecklist';
+import { readLatestSystemTaskPrompt } from '@/components/systemTasks/prompts/readLatestSystemTaskPrompt';
+import { useThisComputerSetupPromptModals } from '@/components/systemTasks/thisComputerSetup/useThisComputerSetupPromptModals';
 import { resolveThisComputerSetupFollowUp, useThisComputerSetupTask } from '@/components/systemTasks/useThisComputerSetupTask';
 import { buildLocalMachineSetupSystemTaskSpec } from '@/components/systemTasks/buildLocalMachineSetupSystemTaskSpec';
 import type { SystemTaskRunState } from '@/components/systemTasks/types';
@@ -60,8 +62,10 @@ export const SetupThisComputerChecklistStep = React.memo(function SetupThisCompu
     const styles = stylesheet;
     const preflight = useThisComputerSetupPreflight();
     const {
+        activeTaskId,
         activeTaskSnapshot,
         cancel,
+        runner,
         start,
         startError,
         isStarting,
@@ -75,6 +79,13 @@ export const SetupThisComputerChecklistStep = React.memo(function SetupThisCompu
                 : null;
             props.onSucceeded?.(typeof machineId === 'string' && machineId.trim().length > 0 ? machineId.trim() : null);
         },
+    });
+    const prompt = React.useMemo(() => readLatestSystemTaskPrompt(activeTaskSnapshot), [activeTaskSnapshot]);
+    useThisComputerSetupPromptModals({
+        runner,
+        taskId: activeTaskId,
+        snapshot: activeTaskSnapshot,
+        prompt,
     });
     const liveChecklistItems = React.useMemo(() => buildThisComputerChecklistItems(preflight), [preflight]);
     const [checklistItems, setChecklistItems] = React.useState<readonly PlanChecklistItem[]>(liveChecklistItems);

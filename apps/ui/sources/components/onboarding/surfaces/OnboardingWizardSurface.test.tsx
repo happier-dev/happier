@@ -3,12 +3,23 @@ import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
-import { installReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 import type { PendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent.shared';
 import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
 
 import { WizardModalShell } from '../ui/WizardModalShell';
 import { WizardChoiceRow } from '../ui/WizardChoiceRow';
+
+const reactNativeMockState = vi.hoisted(() => ({
+    os: 'web' as 'web' | 'ios' | 'android',
+}));
+
+const configuredServerUrlEnvMockState = vi.hoisted(() => ({
+    value: null as string | null,
+}));
+
+const runtimeActiveMockState = vi.hoisted(() => ({
+    value: true,
+}));
 
 const relayAccessWizardMockState = vi.hoisted(() => ({
     providerId: 'lan' as 'lan' | 'cloudflareNamed' | 'tailscaleServe' | 'tailscaleFunnel',
@@ -224,7 +235,9 @@ vi.mock('react-native', async (importOriginal) => {
         ...actual,
         Platform: {
             ...actual.Platform,
-            OS: 'web',
+            get OS() {
+                return reactNativeMockState.os;
+            },
         },
         AppState: {
             ...actual.AppState,
@@ -241,6 +254,9 @@ vi.mock('react-native-unistyles', async () => {
 });
 
 vi.mock('expo-router', () => expoRouterMock.module);
+vi.mock('@/sync/domains/server/readConfiguredServerUrlEnv', () => ({
+    readConfiguredServerUrlEnv: () => configuredServerUrlEnvMockState.value,
+}));
 vi.mock('@/sync/domains/pending/pendingSetupIntent', () => ({
     setPendingSetupIntent: (value: PendingSetupIntent) => setPendingSetupIntentMock(value),
     getPendingSetupIntent: () => getPendingSetupIntentMock(),
@@ -251,6 +267,9 @@ vi.mock('@/utils/platform/tauri', () => ({
 }));
 vi.mock('@/utils/platform/platform', () => ({
     isRunningOnMac: () => false,
+}));
+vi.mock('@/utils/runtime/isRuntimeActive', () => ({
+    isRuntimeActive: () => runtimeActiveMockState.value,
 }));
 vi.mock('@/utils/platform/qrScannerSupport', () => ({
     isWebQrScannerSupported: () => webQrScannerSupportedMock.value,
@@ -495,6 +514,9 @@ describe('OnboardingWizardSurface', () => {
         webQrScannerSupportedMock.value = false;
         webMobileLikeQrScannerHostMock.value = false;
         webMobileLikeQrScannerHostMock.lastArgs = null;
+        reactNativeMockState.os = 'web';
+        configuredServerUrlEnvMockState.value = null;
+        runtimeActiveMockState.value = true;
         activeServerSnapshotMock.serverId = 'relay-profile';
         activeServerSnapshotMock.serverUrl = '';
         activeServerSnapshotMock.activeLocalRelayUrl = null;
@@ -1080,6 +1102,45 @@ describe('OnboardingWizardSurface', () => {
         }));
         expect(onCreateAccount).toHaveBeenCalledTimes(1);
         expect(callTrace).toEqual(['switch', 'create']);
+    });
+
+    it('keeps welcome auth actions pinned to the explicit active relay instead of the configured default relay', async () => {
+        configuredServerUrlEnvMockState.value = 'http://127.0.0.1:3009';
+
+        activeServerSnapshotMock.serverId = 'relay-override';
+        activeServerSnapshotMock.serverUrl = 'https://relay-override.example.test';
+        activeServerSnapshotMock.activeLocalRelayUrl = null;
+
+        const onCreateAccount = vi.fn(async () => undefined);
+
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount,
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        const relayLine = screen.findByTestId('onboarding-wizard-relay-hint-line')!;
+        expect(String(relayLine.props.children)).toContain('relay-override.example.test');
+        expect(String(relayLine.props.children)).not.toContain('127.0.0.1:3009');
+
+        await act(async () => {
+            const authEntry = screen.findByType('AuthEntryView' as never) as unknown as ReactTestInstance;
+            await (authEntry.props as any).onCreateAccount?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(upsertActivateAndSwitchServerMock).not.toHaveBeenCalledWith(expect.objectContaining({
+            serverUrl: 'http://127.0.0.1:3009',
+        }));
+        expect(onCreateAccount).toHaveBeenCalledTimes(1);
     });
 
     it('keeps the welcome relay footer visible even when the wizard relay selection has no URL (falls back to active relay)', async () => {
@@ -1909,8 +1970,8 @@ describe('OnboardingWizardSurface', () => {
     });
 
     it('treats native as a handoff flow: enables "On your computer" and routes to the handoff step', async () => {
+        reactNativeMockState.os = 'ios';
         vi.resetModules();
-        vi.doMock('react-native', installReactNativeWebMock({ Platform: { OS: 'ios' } }));
 
         activeServerSnapshotMock.serverUrl = 'https://api.happier.dev';
         activeServerSnapshotMock.activeLocalRelayUrl = null;
@@ -1949,8 +2010,8 @@ describe('OnboardingWizardSurface', () => {
     });
 
     it('returns web users to auth after saving a relay url from the web "On this computer" handoff', async () => {
+        reactNativeMockState.os = 'web';
         vi.resetModules();
-        vi.doMock('react-native', installReactNativeWebMock({ Platform: { OS: 'web' } }));
 
         activeServerSnapshotMock.serverUrl = 'https://api.happier.dev';
         activeServerSnapshotMock.activeLocalRelayUrl = null;
@@ -3243,7 +3304,7 @@ describe('OnboardingWizardSurface', () => {
 
     it('shows web tailscale install guidance when a typed tailscale relay is unreachable', async () => {
         vi.resetModules();
-        vi.doMock('react-native', installReactNativeWebMock({ Platform: { OS: 'web' } }));
+        reactNativeMockState.os = 'web';
 
         const previousFetchImpl = runtimeFetchMock.getMockImplementation();
         runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -3304,7 +3365,7 @@ describe('OnboardingWizardSurface', () => {
 
     it('shows native tailscale install guidance when a typed tailscale relay is unreachable', async () => {
         vi.resetModules();
-        vi.doMock('react-native', installReactNativeWebMock({ Platform: { OS: 'ios' } }));
+        reactNativeMockState.os = 'ios';
 
         const previousFetchImpl = runtimeFetchMock.getMockImplementation();
         runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -3368,10 +3429,8 @@ describe('OnboardingWizardSurface', () => {
         const previousLocation = globalWithLocation.location;
         try {
             vi.resetModules();
-            vi.doMock('react-native', installReactNativeWebMock({ Platform: { OS: 'web' } }));
-            vi.doMock('@/utils/runtime/isRuntimeActive', () => ({
-                isRuntimeActive: () => true,
-            }));
+            reactNativeMockState.os = 'web';
+            runtimeActiveMockState.value = true;
             try {
                 Object.defineProperty(globalThis, 'location', { value: { protocol: 'https:' }, configurable: true });
             } catch {

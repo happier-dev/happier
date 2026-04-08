@@ -30,6 +30,18 @@ export type RemoteSshBootstrapPrompt =
         kind: 'auth.approveRemoteProvisioning';
         message: string;
         publicKey: string | null;
+    }>
+    | Readonly<{
+        kind: 'daemon.replaceRemoteBackgroundServices';
+        message: string;
+        targetServerUrl: string | null;
+        targetReleaseChannel: string | null;
+        services: ReadonlyArray<Readonly<{
+            label: string;
+            releaseChannel: string | null;
+            targetMode: string | null;
+            running: boolean;
+        }>>;
     }>;
 
 export type RemoteSshBootstrapFormState = Readonly<{
@@ -80,6 +92,37 @@ function resolveRemotePrompt(snapshot: SystemTaskRunState | null): RemoteSshBoot
             kind,
             message: prompt.message,
             publicKey: typeof record.publicKey === 'string' ? record.publicKey.trim() : null,
+        };
+    }
+
+    if (kind === 'daemon.replaceRemoteBackgroundServices') {
+        const servicesRaw = Array.isArray(record.services) ? record.services : [];
+        const services = servicesRaw.flatMap((entry) => {
+            if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+                return [];
+            }
+            const serviceRecord = entry as Record<string, unknown>;
+            const label = typeof serviceRecord.label === 'string' ? serviceRecord.label.trim() : '';
+            if (!label) {
+                return [];
+            }
+            return [{
+                label,
+                releaseChannel: typeof serviceRecord.releaseChannel === 'string'
+                    ? serviceRecord.releaseChannel.trim()
+                    : null,
+                targetMode: typeof serviceRecord.targetMode === 'string'
+                    ? serviceRecord.targetMode.trim()
+                    : null,
+                running: serviceRecord.running === true,
+            }];
+        });
+        return {
+            kind,
+            message: prompt.message,
+            targetServerUrl: typeof record.targetServerUrl === 'string' ? record.targetServerUrl.trim() : null,
+            targetReleaseChannel: typeof record.targetReleaseChannel === 'string' ? record.targetReleaseChannel.trim() : null,
+            services,
         };
     }
 
@@ -164,6 +207,14 @@ export function useRemoteSshBootstrapTask(options: Readonly<{
         if (prompt.kind === 'ssh.password') {
             throw new Error('SSH password prompts must be answered via answerPasswordPrompt().');
         }
+        if (prompt.kind === 'daemon.replaceRemoteBackgroundServices') {
+            if (!activeTaskId) {
+                throw new Error('No remote background service prompt task is active.');
+            }
+            latestFormStateRef.current = params;
+            await runner.respond(activeTaskId, { replaceExistingServices: true });
+            return activeTaskId;
+        }
 
         latestFormStateRef.current = params;
 
@@ -215,6 +266,16 @@ export function useRemoteSshBootstrapTask(options: Readonly<{
         void runner.cancel(activeTaskId);
     }, [activeTaskId, runner]);
 
+    const declinePrompt = React.useCallback(async () => {
+        if (!prompt || prompt.kind !== 'daemon.replaceRemoteBackgroundServices') {
+            throw new Error('No remote background service replacement prompt is waiting for a response.');
+        }
+        if (!activeTaskId) {
+            throw new Error('No remote background service replacement task is active.');
+        }
+        await runner.respond(activeTaskId, { replaceExistingServices: false });
+    }, [activeTaskId, prompt, runner]);
+
     const dismissPrompt = React.useCallback(() => {
         setActiveTaskId(null);
     }, []);
@@ -252,6 +313,7 @@ export function useRemoteSshBootstrapTask(options: Readonly<{
     return {
         activeTaskSnapshot,
         cancel,
+        declinePrompt,
         completedMachineId,
         continueAfterPrompt,
         dismissPrompt,
