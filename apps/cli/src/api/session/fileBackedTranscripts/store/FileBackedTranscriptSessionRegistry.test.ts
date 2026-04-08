@@ -13,8 +13,15 @@ class TestStore implements FileBackedTranscriptSessionStore {
     public warmCount = 0;
     public disposeCount = 0;
 
+    constructor(private readonly options?: Readonly<{
+        onWarmStart?: () => void;
+        warmPromise?: Promise<void>;
+    }>) {}
+
     async warm(): Promise<void> {
         this.warmCount += 1;
+        this.options?.onWarmStart?.();
+        await this.options?.warmPromise;
     }
 
     async dispose(): Promise<void> {
@@ -171,6 +178,68 @@ describe('FileBackedTranscriptSessionRegistry', () => {
 
         await registry.disposeAll();
 
+        expect(store.disposeCount).toBe(1);
+        expect(registry.get(buildSessionStoreCacheKey(key))).toBeNull();
+    });
+
+    it('does not create duplicate stores when the first acquire races concurrently for the same key', async () => {
+        let resolveCreate!: (store: TestStore) => void;
+        const createStorePromise = new Promise<TestStore>((resolve) => {
+            resolveCreate = resolve;
+        });
+        const createStore = vi.fn(async () => await createStorePromise);
+        const registry = new FileBackedTranscriptSessionRegistry({
+            detachedGraceMs: 100,
+            coldIdleMs: 200,
+            createStore,
+        });
+
+        const firstAcquire = registry.acquire(buildKey());
+        const secondAcquire = registry.acquire(buildKey());
+
+        expect(createStore).toHaveBeenCalledTimes(1);
+
+        const sharedStore = new TestStore();
+        resolveCreate(sharedStore);
+
+        const [firstLease, secondLease] = await Promise.all([firstAcquire, secondAcquire]);
+
+        expect(firstLease.store).toBe(sharedStore);
+        expect(secondLease.store).toBe(sharedStore);
+        expect(sharedStore.warmCount).toBe(1);
+
+        await firstLease.release();
+        await secondLease.release();
+    });
+
+    it('rejects a pending acquire and disposes the store when disposeAll runs before warm completes', async () => {
+        let resolveWarm!: () => void;
+        let markWarmStarted!: () => void;
+        const warmPromise = new Promise<void>((resolve) => {
+            resolveWarm = resolve;
+        });
+        const warmStarted = new Promise<void>((resolve) => {
+            markWarmStarted = resolve;
+        });
+        const store = new TestStore({
+            onWarmStart: markWarmStarted,
+            warmPromise,
+        });
+        const key = buildKey();
+        const registry = new FileBackedTranscriptSessionRegistry({
+            detachedGraceMs: 100,
+            coldIdleMs: 200,
+            createStore: async () => store,
+        });
+
+        const acquirePromise = registry.acquire(key);
+        await warmStarted;
+
+        const disposeAllPromise = registry.disposeAll();
+        resolveWarm();
+
+        await disposeAllPromise;
+        await expect(acquirePromise).rejects.toThrow(/disposed/i);
         expect(store.disposeCount).toBe(1);
         expect(registry.get(buildSessionStoreCacheKey(key))).toBeNull();
     });

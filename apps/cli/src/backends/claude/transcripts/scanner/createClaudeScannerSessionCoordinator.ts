@@ -78,5 +78,11 @@ export function createClaudeScannerSessionCoordinator(params: Readonly<{
                 shouldWarmSession: true,
             };
         },
+        shutdown(): void {
+            currentSessionId = null;
+            pendingSessions.clear();
+            finishedSessions.clear();
+            suppressInitialReplaySessions.clear();
+        },
     };
 }

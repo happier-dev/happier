@@ -141,10 +141,6 @@ export async function createManagedDirectSessionFollowLease(params: Readonly<{
         }).catch(() => undefined);
     });
 
-    if (params.reason === 'background_follow') {
-        await releaseProviderLease();
-    }
-
     return {
         release: async () => {
             released = true;

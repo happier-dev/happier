@@ -3,12 +3,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
+import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
+import type { FileBackedTranscriptSessionStore } from '@/api/session/fileBackedTranscripts/store';
 import {
   createCodexAppServerProcessEnv,
   writeFakeCodexAppServerThreadListScript,
 } from '@/backends/codex/appServer/testkit/fakeCodexAppServer';
-import { readAfterCodexTranscript } from './readAfterCodexTranscript';
+import type { CodexRolloutSessionStoreReadAfterResult } from '../rollout/sessionStore/codexRolloutSessionStoreTypes';
+import { withCodexRolloutSessionStore } from '../rollout/sessionStore/codexRolloutSessionStoreRegistry';
 
 function sessionMetaLine(payload: Record<string, unknown>): string {
   return `${JSON.stringify({ type: 'session_meta', payload })}\n`;
@@ -16,6 +19,38 @@ function sessionMetaLine(payload: Record<string, unknown>): string {
 
 function responseItemLine(params: { timestamp: string; payload: Record<string, unknown> }): string {
   return `${JSON.stringify({ type: 'response_item', timestamp: params.timestamp, payload: params.payload })}\n`;
+}
+
+async function readAfterCodexTranscript(params: Readonly<{
+  source: { kind: 'codexHome'; home: 'user' };
+  activeServerDir: string;
+  env: NodeJS.ProcessEnv;
+  remoteSessionId: string;
+  cursor: string;
+  maxBytes: number;
+  maxItems: number;
+}>): Promise<CodexRolloutSessionStoreReadAfterResult> {
+  return withCodexRolloutSessionStore(
+    {
+      activeServerDir: params.activeServerDir,
+      env: params.env,
+      key: {
+        providerId: 'codex',
+        source: params.source,
+        remoteSessionId: params.remoteSessionId,
+      },
+    },
+    async (store): Promise<CodexRolloutSessionStoreReadAfterResult> =>
+      (store as FileBackedTranscriptSessionStore<
+        DirectTranscriptRawMessageV1,
+        unknown,
+        string | null
+      >).readAfter({
+        cursor: params.cursor,
+        maxBytes: params.maxBytes,
+        maxItems: params.maxItems,
+      }),
+  );
 }
 
 describe('readAfterCodexTranscript', () => {

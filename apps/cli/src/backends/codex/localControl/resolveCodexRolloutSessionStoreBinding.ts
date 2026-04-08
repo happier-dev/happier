@@ -3,6 +3,7 @@ import { join, relative, resolve } from 'node:path';
 import type { DirectSessionsSource } from '@happier-dev/protocol';
 
 import { inferCodexDirectSessionsSourceFromHome } from '../directSessions/resolveCodexHomeEntriesForDirectSessionsSource';
+import { parseCodexRolloutSessionIdFromFilename } from '../rollout/discovery/parseCodexRolloutSessionIdFromFilename';
 
 type CodexRolloutSessionStoreBinding = Readonly<{
     activeServerDir: string;
@@ -42,7 +43,7 @@ export function resolveCodexRolloutSessionStoreBinding(params: Readonly<{
     const sessionMetaId = typeof params.sessionMetaId === 'string' && params.sessionMetaId.trim().length > 0
         ? params.sessionMetaId.trim()
         : null;
-    const matchesSessionIdentity = candidateFilePath.includes(remoteSessionId)
+    const matchesSessionIdentity = parseCodexRolloutSessionIdFromFilename(candidateFilePath) === remoteSessionId
         || sessionMetaId === remoteSessionId;
     if (!matchesSessionIdentity) {
         return undefined;

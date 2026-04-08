@@ -1,5 +1,6 @@
 import { realpathSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 import type { DirectSessionsProviderId, DirectSessionsSource } from '@happier-dev/protocol';
 
@@ -39,6 +40,14 @@ function isSafeConnectedServiceId(raw: unknown): raw is string {
   return /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(value);
 }
 
+function resolveConfiguredCodexHome(env: NodeJS.ProcessEnv): string {
+  const configuredHome =
+    typeof env.CODEX_HOME === 'string' && env.CODEX_HOME.trim().length > 0
+      ? env.CODEX_HOME
+      : join(homedir(), '.codex');
+  return canonicalizePath(configuredHome);
+}
+
 export function validateDirectMachineSource(params: Readonly<{
   providerId: DirectSessionsProviderId;
   source: DirectSessionsSource;
@@ -51,6 +60,23 @@ export function validateDirectMachineSource(params: Readonly<{
       if (source.kind !== 'codexHome') return err('provider/source mismatch');
       if (source.home === 'connectedService' && !isSafeConnectedServiceId(source.connectedServiceId)) {
         return err('invalid connectedServiceId');
+      }
+      if (source.home === 'user') {
+        const requestedHomePath =
+          typeof source.homePath === 'string' && source.homePath.trim().length > 0
+            ? canonicalizePath(source.homePath)
+            : null;
+        const configuredHomePath = resolveConfiguredCodexHome(env);
+        if (requestedHomePath && requestedHomePath !== configuredHomePath) {
+          return err('source homePath override is not allowed');
+        }
+        return {
+          ok: true,
+          source: {
+            ...source,
+            homePath: configuredHomePath,
+          },
+        };
       }
       return { ok: true, source };
     }

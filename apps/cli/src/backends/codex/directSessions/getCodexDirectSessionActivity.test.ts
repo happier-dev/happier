@@ -4,7 +4,8 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { getCodexDirectSessionActivity } from './getCodexDirectSessionActivity';
+import type { FileBackedTranscriptSessionStore } from '@/api/session/fileBackedTranscripts/store';
+import { withCodexRolloutSessionStore } from '../rollout/sessionStore/codexRolloutSessionStoreRegistry';
 
 const tempDirs = new Set<string>();
 
@@ -15,6 +16,10 @@ function rememberTempDir(path: string): string {
 
 function sessionMetaLine(payload: Record<string, unknown>): string {
     return `${JSON.stringify({ type: 'session_meta', payload })}\n`;
+}
+
+function assertNotNull<T>(value: T, message: string): asserts value is NonNullable<T> {
+    expect(value, message).not.toBeNull();
 }
 
 afterEach(async () => {
@@ -39,22 +44,40 @@ describe('getCodexDirectSessionActivity', () => {
             'utf8',
         );
 
-        const first = await getCodexDirectSessionActivity({
-            source: { kind: 'codexHome', home: 'user' },
+        const first = await withCodexRolloutSessionStore({
             activeServerDir: join(root, 'servers', 'cloud'),
-            remoteSessionId: sessionId,
             env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
-        });
+            key: {
+                providerId: 'codex',
+                source: { kind: 'codexHome', home: 'user' },
+                remoteSessionId: sessionId,
+            },
+        }, async (store): Promise<Readonly<{ lastActivityAtMs: number | null }> | null> =>
+            (store as FileBackedTranscriptSessionStore<
+                unknown,
+                Readonly<{ lastActivityAtMs: number | null }>,
+                string | null
+            >).getActivity());
 
         await rm(filePath);
 
-        const second = await getCodexDirectSessionActivity({
-            source: { kind: 'codexHome', home: 'user' },
+        const second = await withCodexRolloutSessionStore({
             activeServerDir: join(root, 'servers', 'cloud'),
-            remoteSessionId: sessionId,
             env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
-        });
+            key: {
+                providerId: 'codex',
+                source: { kind: 'codexHome', home: 'user' },
+                remoteSessionId: sessionId,
+            },
+        }, async (store): Promise<Readonly<{ lastActivityAtMs: number | null }> | null> =>
+            (store as FileBackedTranscriptSessionStore<
+                unknown,
+                Readonly<{ lastActivityAtMs: number | null }>,
+                string | null
+            >).getActivity());
 
+        assertNotNull(first, 'expected cached activity from initial rollout file');
+        assertNotNull(second, 'expected cached activity after rollout file removal');
         expect(first.lastActivityAtMs).toBeTypeOf('number');
         expect(second.lastActivityAtMs).toBe(first.lastActivityAtMs);
     });

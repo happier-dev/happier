@@ -7,7 +7,7 @@ import { deriveDirectSessionActivityFromTimestamp } from '@/api/directSessions/a
 import { mapWithConcurrency } from '@/api/directSessions/discovery/mapWithConcurrency';
 
 import { withClaudeJsonlSessionStore } from '../transcripts/sessionStore';
-import { resolveClaudeConfigDirForDirectSessions } from './resolveClaudeConfigDir';
+import { resolveClaudeConfigDir } from './resolveClaudeConfigDir';
 
 type IndexCursorV1 = Readonly<{ v: 1; kind: 'index'; offset: number }>;
 
@@ -43,7 +43,7 @@ export async function listClaudeSessionCandidates(params: Readonly<{
   searchTerm?: string;
 }>): Promise<Readonly<{ candidates: DirectSessionCandidateV1[]; nextCursor: string | null }>> {
   const env = params.env ?? process.env;
-  const configDir = resolveClaudeConfigDirForDirectSessions({ source: params.source, env });
+  const configDir = resolveClaudeConfigDir({ source: params.source, env });
   const projectsDir = join(configDir, 'projects');
   const discoveryConcurrency = resolveClaudeSessionDiscoveryConcurrency(env);
 

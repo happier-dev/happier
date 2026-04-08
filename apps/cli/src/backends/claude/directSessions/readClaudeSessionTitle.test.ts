@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { readClaudeSessionTitle } from './readClaudeSessionTitle';
+import { readClaudeJsonlSessionTitle } from '../transcripts/sessionStore/operations/readClaudeJsonlSessionTitle';
 
 function jsonlLine(value: unknown): string {
   return `${JSON.stringify(value)}\n`;
@@ -49,7 +49,7 @@ describe('readClaudeSessionTitle', () => {
 
     await writeFile(filePath, lines.join(''), 'utf8');
 
-    await expect(readClaudeSessionTitle(filePath)).resolves.toBe(meaningfulTask);
+    await expect(readClaudeJsonlSessionTitle(filePath)).resolves.toBe(meaningfulTask);
   });
 
   it('falls back to queued prompt content when the transcript never materializes a user message record', async () => {
@@ -78,6 +78,6 @@ describe('readClaudeSessionTitle', () => {
       'utf8',
     );
 
-    await expect(readClaudeSessionTitle(filePath)).resolves.toBe(queuedPrompt);
+    await expect(readClaudeJsonlSessionTitle(filePath)).resolves.toBe(queuedPrompt);
   });
 });

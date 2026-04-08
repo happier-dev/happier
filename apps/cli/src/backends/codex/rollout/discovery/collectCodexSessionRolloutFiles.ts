@@ -1,6 +1,7 @@
 import { readdir, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { readCodexSessionMetaFromRollout } from './rolloutDiscovery';
+import { parseCodexRolloutSessionIdFromFilename } from './parseCodexRolloutSessionIdFromFilename';
 
 export type CodexRolloutFile = Readonly<{ filePath: string; fileRelPath: string; sortMs: number; mtimeMs: number }>;
 
@@ -110,8 +111,7 @@ async function resolveMatchingRolloutFile(params: Readonly<{
   filePath: string;
   remoteSessionId: string;
 }>): Promise<CodexRolloutFile | null> {
-  const name = params.filePath.split(/[/\\\\]/).pop() ?? '';
-  const matchesByName = name.includes(params.remoteSessionId);
+  const matchesByName = parseCodexRolloutSessionIdFromFilename(params.filePath) === params.remoteSessionId;
   if (!matchesByName) {
     const sessionMeta = await readCodexSessionMetaFromRollout(params.filePath);
     if (sessionMeta?.id !== params.remoteSessionId) {

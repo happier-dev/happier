@@ -4,8 +4,8 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { pageClaudeTranscript } from './pageClaudeTranscript';
-import { readAfterClaudeTranscript } from './readAfterClaudeTranscript';
+import { pageClaudeJsonlSessionTranscript } from '../transcripts/sessionStore/operations/pageClaudeJsonlSessionTranscript';
+import { readAfterClaudeJsonlSessionTranscript } from '../transcripts/sessionStore/operations/readAfterClaudeJsonlSessionTranscript';
 
 function jsonlLine(value: unknown): string {
   return `${JSON.stringify(value)}\n`;
@@ -31,11 +31,10 @@ describe('pageClaudeTranscript', () => {
       'utf8',
     );
 
-    const first = await pageClaudeTranscript({
+    const first = await pageClaudeJsonlSessionTranscript({
       source: { kind: 'claudeConfig', configDir, projectId: 'proj-a' },
       env: {} as NodeJS.ProcessEnv,
       remoteSessionId: 'sess-1',
-      direction: 'older',
       maxBytes: 1024 * 1024,
       maxItems: 2,
     });
@@ -49,11 +48,10 @@ describe('pageClaudeTranscript', () => {
     expect(first.tailCursor).toBeTruthy();
     expect(first.hasMore).toBe(true);
 
-    const second = await pageClaudeTranscript({
+    const second = await pageClaudeJsonlSessionTranscript({
       source: { kind: 'claudeConfig', configDir, projectId: 'proj-a' },
       env: {} as NodeJS.ProcessEnv,
       remoteSessionId: 'sess-1',
-      direction: 'older',
       cursor: first.nextCursor ?? undefined,
       maxBytes: 1024 * 1024,
       maxItems: 10,
@@ -78,7 +76,7 @@ describe('pageClaudeTranscript', () => {
       'utf8',
     );
 
-    const followed = await readAfterClaudeTranscript({
+    const followed = await readAfterClaudeJsonlSessionTranscript({
       source: { kind: 'claudeConfig', configDir, projectId: 'proj-a' },
       env: {} as NodeJS.ProcessEnv,
       remoteSessionId: 'sess-1',

@@ -31,7 +31,6 @@ class ClaudeProjectedJsonlSessionStore<TItem, TActivity, TPageParams, TReadAfter
     private lifecycleState: FileBackedTranscriptSessionStoreLifecycleState = 'warm_detached';
     private titlePromise: Promise<string | null> | null = null;
     private workingDirectoryPromise: Promise<string | null> | null = null;
-    private activityPromise: Promise<TActivity | null> | null = null;
     private tailCursor: string | null = null;
     private readonly subscriptionListeners = new Set<FileBackedTranscriptSubscriptionListener<TItem>>();
     private subscriptionFollower: JsonlFollower | null = null;
@@ -132,15 +131,11 @@ class ClaudeProjectedJsonlSessionStore<TItem, TActivity, TPageParams, TReadAfter
     }
 
     async getActivity(): Promise<TActivity | null> {
-        if (this.activityPromise) return this.activityPromise;
-        this.activityPromise = (async () => {
-            const activity = await readClaudeJsonlSessionActivity({
-                source: this.key.source,
-                remoteSessionId: this.key.remoteSessionId,
-            });
-            return this.mapActivity(activity);
-        })();
-        return this.activityPromise;
+        const activity = await readClaudeJsonlSessionActivity({
+            source: this.key.source,
+            remoteSessionId: this.key.remoteSessionId,
+        });
+        return this.mapActivity(activity);
     }
 
     async getPreview(): Promise<string | null> {

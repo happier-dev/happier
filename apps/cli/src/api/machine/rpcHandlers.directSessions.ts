@@ -27,6 +27,7 @@ import {
 import { readCredentials } from '@/persistence';
 import { listSessionMarkers } from '@/daemon/sessionRegistry';
 import { getDirectSessionProviderOps } from '@/backends/catalog';
+import { logger } from '@/ui/logger';
 
 import { importDirectSessionTranscript } from '@/api/directSessions/import/importDirectSessionTranscript';
 import { createManagedDirectSessionFollowLease } from '@/api/directSessions/backgroundFollow/createManagedDirectSessionFollowLease';
@@ -50,6 +51,46 @@ function err(
   error?: string,
 ): { ok: false; errorCode: DirectSessionsErrorCode; error: string } {
   return { ok: false, errorCode, error: typeof error === 'string' && error.trim() ? error : errorCode };
+}
+
+function stripErrorMessageFromStack(stack: string | undefined): string | undefined {
+  if (typeof stack !== 'string' || stack.trim().length === 0) return undefined;
+  const lines = stack.split('\n');
+  if (lines.length === 0) return stack;
+  const first = lines[0] ?? '';
+  const colon = first.indexOf(':');
+  lines[0] = colon >= 0 ? first.slice(0, colon) : first;
+  return lines.join('\n');
+}
+
+function logDirectSessionsInternalError(context: string, error: unknown): void {
+  if (process.env.DEBUG) {
+    if (error instanceof Error) {
+      logger.debug('[directSessions][internal_error]', {
+        context,
+        name: error.name,
+        stack: stripErrorMessageFromStack(error.stack),
+      });
+      return;
+    }
+    logger.debug('[directSessions][internal_error]', { context, errorType: typeof error, error });
+    return;
+  }
+
+  if (error instanceof Error) {
+    logger.debug('[directSessions][internal_error]', { context, name: error.name });
+    return;
+  }
+  logger.debug('[directSessions][internal_error]', { context, errorType: typeof error });
+}
+
+function internalErrorResponse(
+  context: string,
+  error: unknown,
+  safeError: string,
+): { ok: false; errorCode: DirectSessionsErrorCode; error: string } {
+  logDirectSessionsInternalError(context, error);
+  return err('internal_error', safeError);
 }
 
 function resolveDefaultMaxBytes(): number {
@@ -173,11 +214,10 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
         expiresAtMs: attached.expiresAtMs,
         renewed: attached.renewed,
       } satisfies DirectSessionAttachResponse;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      return err('internal_error', message) satisfies DirectSessionAttachResponse;
-    }
-  });
+	    } catch (error) {
+	      return internalErrorResponse('direct_session_attach', error, 'direct_session_attach_failed') satisfies DirectSessionAttachResponse;
+	    }
+	  });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_DETACH, async (raw: unknown) => {
     const parsed = DirectSessionDetachRequestSchema.safeParse(raw);
@@ -204,13 +244,62 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
       return err('invalid_request', validatedSource.error) satisfies DirectSessionFollowPolicySetResponse;
     }
 
+    let providerOps: Awaited<ReturnType<typeof getDirectSessionProviderOps>>;
+    try {
+      providerOps = await getDirectSessionProviderOps(parsed.data.providerId);
+    } catch (error) {
+      return internalErrorResponse(
+        'direct_session_follow_policy_set.provider_ops',
+        error,
+        'follow_policy_set_failed',
+      ) satisfies DirectSessionFollowPolicySetResponse;
+    }
+
+    if (parsed.data.enabled && !providerOps.acquireFollowLease) {
+      return err('provider_unavailable', 'background_follow_not_supported') satisfies DirectSessionFollowPolicySetResponse;
+    }
+
     const credentials = await readCredentials().catch(() => null);
     if (!credentials) {
       return err('provider_unavailable', 'not_authenticated') satisfies DirectSessionFollowPolicySetResponse;
     }
 
     try {
-      const providerOps = await getDirectSessionProviderOps(parsed.data.providerId);
+      const rawSession = await fetchSessionById({
+        token: credentials.token,
+        sessionId: parsed.data.sessionId,
+      }).catch(() => null);
+      const updatedAtMs = Date.now();
+      const persistFollowPolicy = async (): Promise<DirectSessionFollowPolicySetResponse | null> => {
+        if (!rawSession) {
+          return null;
+        }
+        try {
+          await updateSessionMetadataWithDirectSessionFollowPolicy({
+            token: credentials.token,
+            credentials,
+            sessionId: parsed.data.sessionId,
+            rawSession,
+            policy: parsed.data.enabled ? 'background_follow' : 'attached_only',
+            updatedAtMs,
+          });
+          return null;
+        } catch (error) {
+          return internalErrorResponse(
+            'direct_session_follow_policy_set.persist',
+            error,
+            'follow_policy_persist_failed',
+          ) satisfies DirectSessionFollowPolicySetResponse;
+        }
+      };
+
+      if (!parsed.data.enabled) {
+        const persistError = await persistFollowPolicy();
+        if (persistError) {
+          return persistError;
+        }
+      }
+
       const backgroundFollow = await followLeaseManager.setBackgroundFollowEnabled({
         sessionId: parsed.data.sessionId,
         enabled: parsed.data.enabled,
@@ -231,20 +320,15 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
           : undefined,
       });
 
-      const rawSession = await fetchSessionById({
-        token: credentials.token,
-        sessionId: parsed.data.sessionId,
-      }).catch(() => null);
-      const updatedAtMs = Date.now();
-      if (rawSession) {
-        await updateSessionMetadataWithDirectSessionFollowPolicy({
-          token: credentials.token,
-          credentials,
-          sessionId: parsed.data.sessionId,
-          rawSession,
-          policy: parsed.data.enabled ? 'background_follow' : 'attached_only',
-          updatedAtMs,
-        }).catch(() => undefined);
+      if (parsed.data.enabled) {
+        const persistError = await persistFollowPolicy();
+        if (persistError) {
+          await followLeaseManager.setBackgroundFollowEnabled({
+            sessionId: parsed.data.sessionId,
+            enabled: false,
+          }).catch(() => {});
+          return persistError;
+        }
       }
 
       return {
@@ -253,11 +337,14 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
         leaseActive: followLeaseManager.hasBackgroundFollowLease(parsed.data.sessionId) || followLeaseManager.countActiveLeases(parsed.data.sessionId) > 0,
         updatedAtMs,
       } satisfies DirectSessionFollowPolicySetResponse;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      return err('internal_error', message) satisfies DirectSessionFollowPolicySetResponse;
-    }
-  });
+	    } catch (error) {
+	      return internalErrorResponse(
+	        'direct_session_follow_policy_set',
+	        error,
+	        'follow_policy_set_failed',
+	      ) satisfies DirectSessionFollowPolicySetResponse;
+	    }
+	  });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST, async (raw: unknown) => {
     const parsed = DirectSessionsCandidatesListRequestSchema.safeParse(raw);
@@ -277,11 +364,14 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
     try {
       const res = await (await getDirectSessionProviderOps(providerId)).listCandidates({ source, cursor, limit, searchTerm });
       return { ok: true, candidates: res.candidates, nextCursor: res.nextCursor } satisfies DirectSessionsCandidatesListResponse;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      return err('internal_error', message) satisfies DirectSessionsCandidatesListResponse;
-    }
-  });
+	    } catch (error) {
+	      return internalErrorResponse(
+	        'direct_sessions_candidates_list',
+	        error,
+	        'direct_sessions_candidates_list_failed',
+	      ) satisfies DirectSessionsCandidatesListResponse;
+	    }
+	  });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE, async (raw: unknown) => {
     const parsed = DirectSessionLinkEnsureRequestSchema.safeParse(raw);
@@ -314,11 +404,14 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
         source: validatedSource.source,
       });
       return { ok: true, sessionId: res.sessionId, created: res.created } satisfies DirectSessionLinkEnsureResponse;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      return err('internal_error', message) satisfies DirectSessionLinkEnsureResponse;
-    }
-  });
+	    } catch (error) {
+	      return internalErrorResponse(
+	        'direct_session_link_ensure',
+	        error,
+	        'direct_session_link_ensure_failed',
+	      ) satisfies DirectSessionLinkEnsureResponse;
+	    }
+	  });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET, async (raw: unknown) => {
     const parsed = DirectSessionStatusGetRequestSchema.safeParse(raw);
@@ -453,11 +546,14 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
         hasMore: res.hasMore,
         truncated: res.truncated,
       } satisfies DirectTranscriptPageResponse;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      return err('internal_error', message) satisfies DirectTranscriptPageResponse;
-    }
-  });
+	    } catch (error) {
+	      return internalErrorResponse(
+	        'direct_session_transcript_page',
+	        error,
+	        'direct_session_transcript_page_failed',
+	      ) satisfies DirectTranscriptPageResponse;
+	    }
+	  });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER, async (raw: unknown) => {
     const parsed = DirectTranscriptReadAfterRequestSchema.safeParse(raw);
@@ -485,11 +581,14 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
         maxItems,
       });
       return { ok: true, items: res.items, nextCursor: res.nextCursor, truncated: res.truncated } satisfies DirectTranscriptReadAfterResponse;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      return err('internal_error', message) satisfies DirectTranscriptReadAfterResponse;
-    }
-  });
+	    } catch (error) {
+	      return internalErrorResponse(
+	        'direct_session_transcript_read_after',
+	        error,
+	        'direct_session_transcript_read_after_failed',
+	      ) satisfies DirectTranscriptReadAfterResponse;
+	    }
+	  });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER, async (raw: unknown) => {
     const parsed = DirectSessionTakeoverRequestSchema.safeParse(raw);
@@ -634,10 +733,13 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
         credentials,
         sessionId: parsed.data.sessionId,
       });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'direct_session_import_failed';
-      return err('internal_error', message) satisfies DirectSessionTakeoverPersistResponse;
-    }
+	    } catch (error) {
+	      return internalErrorResponse(
+	        'direct_session_takeover_persist.import_transcript',
+	        error,
+	        'direct_session_import_failed',
+	      ) satisfies DirectSessionTakeoverPersistResponse;
+	    }
 
     const persistedSpawnOptions: SpawnSessionOptions = {
       ...directSpawnOptions,

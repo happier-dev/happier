@@ -979,4 +979,28 @@ describe('sessionScanner', () => {
       { sessionId, filePath: join(projectDir, `${sessionId}.jsonl`) },
     ])
   })
+
+  it('does not replay current-session messages again during cleanup', async () => {
+    scanner = await createSessionScanner({
+      sessionId: null,
+      workingDirectory: testDir,
+      onMessage: (msg) => collectedMessages.push(msg)
+    })
+
+    const sessionId = 'cleanup-session'
+    const sessionFile = join(projectDir, `${sessionId}.jsonl`)
+    await writeFile(
+      sessionFile,
+      JSON.stringify({ type: 'user', uuid: 'u-cleanup', message: { content: 'cleanup once' } }) + '\n',
+    )
+
+    scanner.onNewSession(sessionId)
+    await waitFor(() => collectedMessages.length === 1)
+
+    await scanner.cleanup()
+    scanner = null
+
+    expect(collectedMessages).toHaveLength(1)
+    expect(collectedMessages[0]?.type).toBe('user')
+  })
 })

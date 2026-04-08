@@ -1,7 +1,7 @@
 import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
-import type { CodexRolloutAction } from '../rollout/projection/mapCodexRolloutEventToActions';
-import { projectCodexRolloutActions } from '../rollout/projectCodexRolloutActions';
+import type { CodexRolloutAction } from './projection/mapCodexRolloutEventToActions';
+import { projectCodexRolloutActions } from './projectCodexRolloutActions';
 
 function shouldFilterHarnessBlob(text: string): boolean {
   const t = text.trim();

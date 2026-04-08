@@ -62,6 +62,7 @@ describe('createFileBackedTranscriptSessionStore', () => {
         await expect(store.pageOlder()).resolves.toMatchObject({ items: ['older'], nextCursor: 'older-next' });
         await expect(store.readAfter()).resolves.toMatchObject({ items: ['newer'], nextCursor: 'after-next' });
         const unsubscribe = store.subscribe();
+        await new Promise((resolve) => setTimeout(resolve, 0));
         unsubscribe();
         await store.dispose();
 
@@ -76,5 +77,102 @@ describe('createFileBackedTranscriptSessionStore', () => {
         expect(adapter.readAfter).toHaveBeenCalledTimes(1);
         expect(adapter.subscribe).toHaveBeenCalledTimes(1);
         expect(adapter.dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('retries context resolution after a transient resolve failure', async () => {
+        const resolveSession = vi
+            .fn()
+            .mockRejectedValueOnce(new Error('transient resolve failure'))
+            .mockResolvedValue({
+                key: {
+                    providerId: 'codex' as const,
+                    source: { kind: 'codexHome' as const, home: 'user' as const },
+                    remoteSessionId: 'session-1',
+                },
+                value: { sessionRoot: '/tmp/session-1' },
+            });
+        const adapter: FileBackedTranscriptSessionAdapter<string, { running: boolean }, string | null, { sessionRoot: string }, never> = {
+            resolveSession,
+            discoverStreams: vi.fn(async () => ([{
+                streamId: 'primary',
+                filePath: '/tmp/session-1/rollout.jsonl',
+            }])),
+            probeMetadata: vi.fn(async () => ({
+                title: 'Recovered title',
+            })),
+            pageOlder: vi.fn(async () => ({ items: [], nextCursor: null, hasMore: false, tailCursor: null, truncated: false })),
+            readAfter: vi.fn(async () => ({ items: [], nextCursor: null, truncated: false })),
+        };
+
+        const store = createFileBackedTranscriptSessionStore({
+            key: {
+                providerId: 'codex',
+                source: { kind: 'codexHome', home: 'user' },
+                remoteSessionId: 'session-1',
+            },
+            adapter,
+        });
+
+        await expect(store.getTitle()).rejects.toThrow('transient resolve failure');
+        await expect(store.getTitle()).resolves.toBe('Recovered title');
+        expect(resolveSession).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not leak a late subscription when unsubscribe happens before context resolution completes', async () => {
+        let resolveSession!: (value: {
+            key: {
+                providerId: 'codex';
+                source: { kind: 'codexHome'; home: 'user' };
+                remoteSessionId: 'session-1';
+            };
+            value: { sessionRoot: string };
+        }) => void;
+        const resolveSessionPromise = new Promise<{
+            key: {
+                providerId: 'codex';
+                source: { kind: 'codexHome'; home: 'user' };
+                remoteSessionId: 'session-1';
+            };
+            value: { sessionRoot: string };
+        }>((resolve) => {
+            resolveSession = resolve;
+        });
+        const unsubscribeSpy = vi.fn();
+        const adapter: FileBackedTranscriptSessionAdapter<string, { running: boolean }, string | null, { sessionRoot: string }, never> = {
+            resolveSession: vi.fn(async () => await resolveSessionPromise),
+            discoverStreams: vi.fn(async () => ([{
+                streamId: 'primary',
+                filePath: '/tmp/session-1/rollout.jsonl',
+            }])),
+            pageOlder: vi.fn(async () => ({ items: [], nextCursor: null, hasMore: false, tailCursor: null, truncated: false })),
+            readAfter: vi.fn(async () => ({ items: [], nextCursor: null, truncated: false })),
+            subscribe: vi.fn(() => unsubscribeSpy),
+        };
+
+        const store = createFileBackedTranscriptSessionStore({
+            key: {
+                providerId: 'codex',
+                source: { kind: 'codexHome', home: 'user' },
+                remoteSessionId: 'session-1',
+            },
+            adapter,
+        });
+
+        const unsubscribe = store.subscribe(() => {});
+        unsubscribe();
+
+        resolveSession({
+            key: {
+                providerId: 'codex',
+                source: { kind: 'codexHome', home: 'user' },
+                remoteSessionId: 'session-1',
+            },
+            value: { sessionRoot: '/tmp/session-1' },
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(adapter.subscribe).not.toHaveBeenCalled();
+        expect(unsubscribeSpy).not.toHaveBeenCalled();
     });
 });

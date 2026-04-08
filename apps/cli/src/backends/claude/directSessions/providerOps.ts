@@ -1,5 +1,5 @@
 import { listClaudeSessionCandidates } from './listClaudeSessionCandidates';
-import { resolveClaudeConfigDirForDirectSessions } from './resolveClaudeConfigDir';
+import { resolveClaudeConfigDir } from './resolveClaudeConfigDir';
 
 import {
   mergeDirectSessionEnvironmentVariables,
@@ -88,7 +88,7 @@ export const claudeDirectSessionProviderOps: DirectSessionProviderOps = {
     };
   },
   resolveTakeoverSpawnOptions: async ({ linked, sessionId }) => {
-    const configDir = resolveClaudeConfigDirForDirectSessions({ source: linked.source, env: process.env });
+    const configDir = resolveClaudeConfigDir({ source: linked.source, env: process.env });
     return withClaudeJsonlSessionStore({
       key: {
         providerId: 'claude',

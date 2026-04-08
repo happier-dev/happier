@@ -98,4 +98,25 @@ describe('collectCodexSessionRolloutFiles', () => {
       'sessions/rollout-test.jsonl',
     ]);
   });
+
+  it('does not match rollout filenames that only contain the remote session id as a substring', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-rollout-substring-'));
+    const sessionsDir = join(codexHome, 'sessions');
+    await mkdir(sessionsDir, { recursive: true });
+    await writeFile(
+      join(sessionsDir, 'rollout-2026-02-14T08-28-05-abc123.jsonl'),
+      `${JSON.stringify({
+        type: 'session_meta',
+        payload: {
+          id: 'abc123',
+          timestamp: '2026-02-14T08:28:05.000Z',
+        },
+      })}\n`,
+      'utf8',
+    );
+
+    const files = await collectCodexSessionRolloutFiles({ codexHome, remoteSessionId: 'abc' });
+
+    expect(files).toEqual([]);
+  });
 });

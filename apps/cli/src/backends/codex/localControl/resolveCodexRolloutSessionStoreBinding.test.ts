@@ -56,4 +56,16 @@ describe('resolveCodexRolloutSessionStoreBinding', () => {
 
         expect(binding).toBeUndefined();
     });
+
+    it('does not bind canonical rollout files when the filename only contains the remote session id as a substring', () => {
+        const binding = resolveCodexRolloutSessionStoreBinding({
+            activeServerDir: '/tmp/happier-active-server',
+            candidateFilePath: '/tmp/codex-home/sessions/2026/04/05/rollout-2026-04-05T10-00-00-abc123.jsonl',
+            codexHome: '/tmp/codex-home',
+            remoteSessionId: 'abc',
+            sessionMetaId: null,
+        });
+
+        expect(binding).toBeUndefined();
+    });
 });

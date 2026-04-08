@@ -71,6 +71,7 @@ export async function createSessionScanner(opts: {
     });
 
     let invalidate: (() => void) | null = null;
+    let shuttingDown = false;
 
     const subagentCollector = new ClaudeRemoteSubagentFileCollector({
         emitImported: (body) => {
@@ -110,6 +111,9 @@ export async function createSessionScanner(opts: {
 
     // Main sync function
     const sync = new InvalidateSync(async () => {
+        if (shuttingDown) {
+            return;
+        }
         // logger.debug(`[SESSION_SCANNER] Syncing...`);
 
         // Collect session ids - include ALL sessions that have watchers
@@ -119,8 +123,14 @@ export async function createSessionScanner(opts: {
 
         // Process sessions
         for (let session of sessions) {
+            if (shuttingDown) {
+                return;
+            }
             const sessionFilePath = sessionPathResolver.getSessionFilePath(session);
             await mainTranscriptStoreLifecycle.sync(session, sessionFilePath);
+            if (shuttingDown) {
+                return;
+            }
             const sessionRead = await mainTranscriptStoreLifecycle.readNext(session, sessionFilePath);
             if (!sessionRead.initialized) {
                 continue;
@@ -143,6 +153,9 @@ export async function createSessionScanner(opts: {
                     skipped++;
                     continue;
                 }
+                if (shuttingDown) {
+                    return;
+                }
                 try {
                     messageRouter.emitSessionMessage(file, shouldEmitMessages || session !== currentSessionId);
                     sent++; // count only emitted messages
@@ -155,11 +168,17 @@ export async function createSessionScanner(opts: {
             }
         }
 
+        if (shuttingDown) {
+            return;
+        }
         await subagentCollector.syncAll();
         await teamInboxCollector.syncAll();
 
         sessionCoordinator.markSessionsSynced(sessions);
 
+        if (shuttingDown) {
+            return;
+        }
         fileObservationRuntime.syncWatchers({
             sessionIds: sessions,
             hasStoreLease: (sessionId) => mainTranscriptStoreLifecycle.hasStoreLease(sessionId),
@@ -175,16 +194,21 @@ export async function createSessionScanner(opts: {
     // Public interface
     return {
         cleanup: async () => {
+            shuttingDown = true;
             clearInterval(intervalId);
+            sessionCoordinator.shutdown();
+            fileObservationRuntime.cleanup();
             await mainTranscriptStoreLifecycle.cleanup();
             messageRouter.reset();
             subagentCollector.cleanup();
             teamInboxCollector.cleanup();
-            fileObservationRuntime.cleanup();
             await sync.invalidateAndAwait();
             sync.stop();
         },
         onNewSession: (arg: string | SessionScannerSessionInfo) => {
+            if (shuttingDown) {
+                return;
+            }
             const sessionId = typeof arg === 'string' ? arg : arg.sessionId;
             const transcriptPathRaw = typeof arg === 'string' ? null : arg.transcriptPath;
             const transcriptPath = typeof transcriptPathRaw === 'string' && transcriptPathRaw.trim() ? transcriptPathRaw : null;

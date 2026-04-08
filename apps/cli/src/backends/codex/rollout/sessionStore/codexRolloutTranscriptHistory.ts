@@ -3,6 +3,7 @@ import { stat } from 'node:fs/promises';
 import type { DirectSessionsSource, DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
 import { readJsonlFileForward } from '@/api/session/fileBackedTranscripts/jsonl/readJsonlForward';
+import { readJsonlFileForwardLines } from '@/api/session/fileBackedTranscripts/jsonl/readJsonlForwardLines';
 
 import {
     decodeCodexDirectForwardCursor,
@@ -12,10 +13,10 @@ import {
 import {
     mapCodexDirectSessionAppServerPreviewToMessage,
     resolveCodexDirectSessionAppServerMetadata,
-} from '../../directSessions/resolveCodexDirectSessionAppServerMetadata';
-import { readCodexSessionTitleFromRollout } from '../../directSessions/readCodexSessionTitleFromRollout';
+} from '../resolveCodexDirectSessionAppServerMetadata';
+import { readCodexSessionTitleFromRollout } from '../readCodexSessionTitleFromRollout';
 import { resolveCodexHomeEntriesForDirectSessionsSource } from '../../directSessions/resolveCodexHomeEntriesForDirectSessionsSource';
-import { mapCodexRolloutLineToDirectMessages } from '../../directSessions/mapCodexRolloutLineToDirectMessages';
+import { mapCodexRolloutLineToDirectMessages } from '../mapCodexRolloutLineToDirectMessages';
 import { createCodexRolloutSemanticTracker } from '../createCodexRolloutSemanticTracker';
 import { collectCodexSessionRolloutFiles, type CodexRolloutFile } from '../discovery/collectCodexSessionRolloutFiles';
 import { mapCodexRolloutEventToActions } from '../projection/mapCodexRolloutEventToActions';
@@ -339,7 +340,7 @@ async function readCodexStreamRecords(params: Readonly<{
     let sessionMetaTimestampMs: number | null = null;
 
     while (true) {
-        const page = await readJsonlFileForward({
+        const page = await readJsonlFileForwardLines({
             filePath: params.stream.filePath,
             offsetBytes: nextOffsetBytes,
             maxBytes: 1024 * 1024,
@@ -357,6 +358,16 @@ async function readCodexStreamRecords(params: Readonly<{
         }
 
         for (const line of page.items) {
+            if (line.value === null) {
+                records.push(buildInvalidJsonRecord({
+                    stream: params.stream,
+                    lineStartOffsetBytes: line.startOffsetBytes,
+                    lineEndOffsetBytes: line.endOffsetBytes,
+                    rawLine: line.rawLine,
+                }));
+                continue;
+            }
+
             const sessionMeta = parseSessionMeta(line.value);
             if (sessionMeta?.cwd) {
                 sessionMetaCwd = sessionMeta.cwd;
@@ -774,15 +785,24 @@ export async function resolveCodexRolloutDirectTranscriptSnapshot(params: Readon
         rolloutHome: bestEntry.codexHome,
     });
     const title = await resolveSnapshotTitle(streamStates);
+    const workingDirectoryFromRollout = resolveSnapshotWorkingDirectory(streamStates);
+    const appServerMetadata = workingDirectoryFromRollout
+        ? null
+        : await resolveCodexDirectSessionAppServerMetadata({
+            source: params.source,
+            activeServerDir: params.activeServerDir,
+            remoteSessionId: params.remoteSessionId,
+            env,
+        });
     return {
         remoteSessionId: params.remoteSessionId,
         mergedRecords,
         rolloutHome: bestEntry.codexHome,
         rolloutSource: bestEntry.source,
         rolloutSignature,
-        appServerMetadata: null,
+        appServerMetadata,
         title,
-        workingDirectory: resolveSnapshotWorkingDirectory(streamStates),
+        workingDirectory: workingDirectoryFromRollout ?? appServerMetadata?.workingDirectory ?? null,
         lastActivityAtMs: resolveSnapshotActivity(streamStates),
         createdAtMs: resolveSnapshotCreatedAtMs(streamStates),
         primaryRolloutFilePath: resolvePrimaryRolloutFilePath(streamStates),

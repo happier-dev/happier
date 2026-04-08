@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { readCodexSessionTitleFromRollout } from './readCodexSessionTitleFromRollout';
+import { readCodexSessionTitleFromRollout } from '../rollout/readCodexSessionTitleFromRollout';
 
 function sessionMetaLine(payload: Record<string, unknown>): string {
   return `${JSON.stringify({ type: 'session_meta', payload })}\n`;

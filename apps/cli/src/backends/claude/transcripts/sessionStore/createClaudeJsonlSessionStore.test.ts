@@ -203,4 +203,46 @@ describe('createClaudeJsonlSessionStore', () => {
 
         expect(store.getTailCursor()).toBe(initialTailCursor);
     });
+
+    it('refreshes activity across repeated calls after the transcript file changes', async () => {
+        const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'happier-claude-store-activity-')));
+        const configDir = join(root, '.claude');
+        const projectDir = join(configDir, 'projects', 'proj-activity');
+        await mkdir(projectDir, { recursive: true });
+
+        const filePath = join(projectDir, 'session-activity.jsonl');
+        await writeFile(
+            filePath,
+            jsonlLine({
+                type: 'assistant',
+                uuid: 'assistant-1',
+                message: { content: 'initial message' },
+            }),
+            'utf8',
+        );
+
+        const store = createClaudeJsonlSessionStore({
+            providerId: 'claude',
+            source: { kind: 'claudeConfig', configDir, projectId: 'proj-activity' },
+            remoteSessionId: 'session-activity',
+        });
+
+        const firstActivity = await store.getActivity();
+        expect(firstActivity?.lastActivityAtMs).toBeTypeOf('number');
+
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        await appendFile(
+            filePath,
+            jsonlLine({
+                type: 'assistant',
+                uuid: 'assistant-2',
+                message: { content: 'follow-up message' },
+            }),
+            'utf8',
+        );
+
+        const secondActivity = await store.getActivity();
+        expect(secondActivity?.lastActivityAtMs).toBeTypeOf('number');
+        expect(secondActivity?.lastActivityAtMs).toBeGreaterThan(firstActivity?.lastActivityAtMs ?? -1);
+    });
 });

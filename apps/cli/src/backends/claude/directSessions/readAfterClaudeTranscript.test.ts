@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { readAfterClaudeTranscript } from './readAfterClaudeTranscript';
+import { readAfterClaudeJsonlSessionTranscript } from '../transcripts/sessionStore/operations/readAfterClaudeJsonlSessionTranscript';
 
 function jsonlLine(value: unknown): string {
   return `${JSON.stringify(value)}\n`;
@@ -19,7 +19,7 @@ describe('readAfterClaudeTranscript', () => {
 
     await writeFile(sessionFile, jsonlLine({ type: 'user', uuid: 'u1', message: { content: 'hello' } }), 'utf8');
 
-    const tail = await readAfterClaudeTranscript({
+    const tail = await readAfterClaudeJsonlSessionTranscript({
       source: { kind: 'claudeConfig', configDir, projectId: 'proj-a' },
       env: {} as NodeJS.ProcessEnv,
       remoteSessionId: 'sess-1',
@@ -35,7 +35,7 @@ describe('readAfterClaudeTranscript', () => {
     const fullLine = JSON.stringify({ type: 'assistant', uuid: 'a2', message: { model: 'm', content: [{ type: 'text', text: 'ok' }] } });
     await appendFile(sessionFile, fullLine.slice(0, -1), 'utf8'); // partial JSON, no newline
 
-    const afterPartial = await readAfterClaudeTranscript({
+    const afterPartial = await readAfterClaudeJsonlSessionTranscript({
       source: { kind: 'claudeConfig', configDir, projectId: 'proj-a' },
       env: {} as NodeJS.ProcessEnv,
       remoteSessionId: 'sess-1',
@@ -50,7 +50,7 @@ describe('readAfterClaudeTranscript', () => {
 
     await appendFile(sessionFile, `${fullLine.slice(-1)}\n`, 'utf8');
 
-    const afterFull = await readAfterClaudeTranscript({
+    const afterFull = await readAfterClaudeJsonlSessionTranscript({
       source: { kind: 'claudeConfig', configDir, projectId: 'proj-a' },
       env: {} as NodeJS.ProcessEnv,
       remoteSessionId: 'sess-1',
@@ -73,7 +73,7 @@ describe('readAfterClaudeTranscript', () => {
     await mkdir(join(configDir, 'projects', 'proj-a'), { recursive: true });
     await writeFile(sessionFile, jsonlLine({ type: 'user', uuid: 'u1', message: { content: 'hello' } }), 'utf8');
 
-    const res = await readAfterClaudeTranscript({
+    const res = await readAfterClaudeJsonlSessionTranscript({
       source: { kind: 'claudeConfig', configDir, projectId: 'proj-a' },
       env: {} as NodeJS.ProcessEnv,
       remoteSessionId: 'sess-1',

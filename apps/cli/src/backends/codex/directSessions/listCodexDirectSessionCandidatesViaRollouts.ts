@@ -6,6 +6,7 @@ import type { DirectSessionCandidateV1 } from '@happier-dev/protocol';
 import { deriveDirectSessionActivityFromTimestamp } from '@/api/directSessions/activity/deriveDirectSessionActivityFromTimestamp';
 
 import { readCodexSessionMetaFromRollout } from '../rollout/discovery/rolloutDiscovery';
+import { parseCodexRolloutSessionIdFromFilename } from '../rollout/discovery/parseCodexRolloutSessionIdFromFilename';
 import { withCodexRolloutSessionStore } from '../rollout/sessionStore/codexRolloutSessionStoreRegistry';
 import type { CodexDirectSessionHomeEntry } from './resolveCodexHomeEntriesForDirectSessionsSource';
 import { resolveCodexHomeEntriesForDirectSessionsSource } from './resolveCodexHomeEntriesForDirectSessionsSource';
@@ -53,12 +54,6 @@ async function collectRolloutFiles(params: Readonly<{ rootDir: string; maxDepth:
 
   await walk(params.rootDir, 0);
   return out;
-}
-
-function parseResumeIdFromRolloutFilename(filePath: string): string | null {
-  const name = basename(filePath);
-  const match = /^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(.+)\.jsonl$/i.exec(name);
-  return match ? match[1] : null;
 }
 
 function parseRolloutTimestampMs(filePath: string): number {
@@ -133,7 +128,7 @@ async function buildRolloutCandidate(params: Readonly<{
 }
 
 async function resolveRolloutCandidateSessionId(filePath: string): Promise<string | null> {
-  const fromFilename = parseResumeIdFromRolloutFilename(filePath);
+  const fromFilename = parseCodexRolloutSessionIdFromFilename(filePath);
   if (fromFilename) {
     return fromFilename;
   }

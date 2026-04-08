@@ -137,7 +137,7 @@ describe('createManagedDirectSessionFollowLease', () => {
         expect(fetchSessionByIdMock).not.toHaveBeenCalled();
     });
 
-    it('releases the provider hot lease immediately for background_follow subscriptions and keeps cleanup idempotent', async () => {
+    it('keeps the provider follow lease active for background_follow subscriptions and keeps cleanup idempotent', async () => {
         const release = vi.fn(async () => {});
         const unsubscribe = vi.fn(() => {});
 
@@ -152,12 +152,72 @@ describe('createManagedDirectSessionFollowLease', () => {
         });
 
         expect(lease).not.toBeNull();
-        expect(release).toHaveBeenCalledTimes(1);
+        expect(release).not.toHaveBeenCalled();
 
         await lease?.release();
 
         expect(unsubscribe).toHaveBeenCalledTimes(1);
         expect(release).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps detached background-follow transcript updates flowing even when provider release would stop delivery', async () => {
+        let listener: TranscriptUpdateListener | null = null;
+        let closed = false;
+
+        const lease = await createManagedDirectSessionFollowLease({
+            sessionId: 'sess-managed-follow',
+            reason: 'background_follow',
+            acquireProviderFollowLease: async () => ({
+                release: async () => {
+                    closed = true;
+                },
+                subscribeToTranscriptUpdates: (nextListener) => {
+                    listener = nextListener;
+                    return () => {
+                        listener = null;
+                    };
+                },
+            }),
+            shouldProcessBackgroundFollowEffects: () => true,
+        });
+
+        expect(lease).not.toBeNull();
+        expect(listener).not.toBeNull();
+
+        if (!listener) {
+            throw new Error('expected transcript update listener');
+        }
+
+        const emitDetachedUpdate = async () => {
+            if (closed || !listener) return;
+            await listener({
+                items: [{
+                    id: 'msg-background-detached-1',
+                    createdAtMs: 10,
+                    raw: {},
+                    role: 'assistant',
+                    content: {
+                        type: 'provider',
+                        data: {
+                            message: {
+                                content: [{ type: 'text', text: 'detached delta' }],
+                            },
+                        },
+                    },
+                }],
+                nextCursor: 'cursor-detached-1',
+                truncated: false,
+            });
+        };
+
+        await emitDetachedUpdate();
+
+        expect(updateSessionMetadataWithObservedDirectSessionProgressMock).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 'sess-managed-follow',
+            observedProgress: expect.objectContaining({
+                token: '10:msg-background-detached-1',
+            }),
+        }));
     });
 
     it('suppresses detached metadata and ready notifications for background_follow updates when active-view suppression is enabled', async () => {
@@ -215,6 +275,6 @@ describe('createManagedDirectSessionFollowLease', () => {
         expect(dispatchActivityNotificationAsyncMock).not.toHaveBeenCalled();
         expect(readCredentialsMock).not.toHaveBeenCalled();
         expect(fetchSessionByIdMock).not.toHaveBeenCalled();
-        expect(release).toHaveBeenCalledTimes(1);
+        expect(release).not.toHaveBeenCalled();
     });
 });

@@ -23,6 +23,8 @@ function clearTimer(timer: ReturnType<typeof setTimeout> | null): void {
 
 export class FileBackedTranscriptSessionRegistry<TStore extends FileBackedTranscriptSessionStore = FileBackedTranscriptSessionStore> {
     private readonly entries = new Map<string, RegistryEntry<TStore>>();
+    private readonly pendingEntries = new Map<string, Promise<RegistryEntry<TStore>>>();
+    private disposed = false;
 
     constructor(private readonly options: Readonly<{
         detachedGraceMs: number;
@@ -39,22 +41,9 @@ export class FileBackedTranscriptSessionRegistry<TStore extends FileBackedTransc
     }
 
     async acquire(key: FileBackedTranscriptSessionStoreKey): Promise<FileBackedTranscriptSessionLease<TStore>> {
+        this.assertNotDisposed();
         const cacheKey = buildSessionStoreCacheKey(key);
-        let entry = this.entries.get(cacheKey) ?? null;
-
-        if (!entry) {
-            const store = await this.options.createStore(key);
-            await store.warm();
-            entry = {
-                key,
-                store,
-                leaseCount: 0,
-                detachTimer: null,
-                coldTimer: null,
-                disposed: false,
-            };
-            this.entries.set(cacheKey, entry);
-        }
+        const entry = await this.getOrCreateEntry(cacheKey, key);
 
         const wasDetached = entry.leaseCount === 0;
         clearTimer(entry.detachTimer);
@@ -79,16 +68,58 @@ export class FileBackedTranscriptSessionRegistry<TStore extends FileBackedTransc
         };
     }
 
+    private async getOrCreateEntry(cacheKey: string, key: FileBackedTranscriptSessionStoreKey): Promise<RegistryEntry<TStore>> {
+        this.assertNotDisposed();
+        const existing = this.entries.get(cacheKey) ?? null;
+        if (existing) return existing;
+
+        const pending = this.pendingEntries.get(cacheKey);
+        if (pending) {
+            return pending;
+        }
+
+        const createPromise = (async () => {
+            const store = await this.options.createStore(key);
+            await store.warm();
+            if (this.disposed) {
+                await store.dispose();
+                throw new Error('Cannot acquire a store from a disposed registry.');
+            }
+            const entry: RegistryEntry<TStore> = {
+                key,
+                store,
+                leaseCount: 0,
+                detachTimer: null,
+                coldTimer: null,
+                disposed: false,
+            };
+            this.entries.set(cacheKey, entry);
+            return entry;
+        })().finally(() => {
+            if (this.pendingEntries.get(cacheKey) === createPromise) {
+                this.pendingEntries.delete(cacheKey);
+            }
+        });
+
+        this.pendingEntries.set(cacheKey, createPromise);
+        return createPromise;
+    }
+
     async disposeAll(): Promise<void> {
+        this.disposed = true;
         const entries = Array.from(this.entries.entries());
+        const pendingEntries = Array.from(this.pendingEntries.values());
         this.entries.clear();
-        await Promise.all(entries.map(async ([, entry]) => {
-            if (entry.disposed) return;
-            entry.disposed = true;
-            clearTimer(entry.detachTimer);
-            clearTimer(entry.coldTimer);
-            await entry.store.dispose();
-        }));
+        await Promise.all([
+            Promise.all(entries.map(async ([, entry]) => {
+                if (entry.disposed) return;
+                entry.disposed = true;
+                clearTimer(entry.detachTimer);
+                clearTimer(entry.coldTimer);
+                await entry.store.dispose();
+            })),
+            Promise.allSettled(pendingEntries),
+        ]);
     }
 
     private async release(cacheKey: string, entry: RegistryEntry<TStore>): Promise<void> {
@@ -121,6 +152,12 @@ export class FileBackedTranscriptSessionRegistry<TStore extends FileBackedTransc
         await entry.store.setLifecycleState('cold_idle');
         if (this.entries.get(cacheKey) === entry) {
             this.entries.delete(cacheKey);
+        }
+    }
+
+    private assertNotDisposed(): void {
+        if (this.disposed) {
+            throw new Error('Cannot acquire a store from a disposed registry.');
         }
     }
 }

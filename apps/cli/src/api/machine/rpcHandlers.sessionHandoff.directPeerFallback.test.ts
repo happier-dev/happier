@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { MachineTransferReceiveEnvelope, SessionHandoffResumePlan, TransferEndpointCandidate } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
+import type { MachineTransferChannel } from '../../machines/transfer/serverRoutedTransport';
 import { createEncryptedTransferChunkEnvelope } from '../../machines/transfer/transferChunkEncryption';
 import { disposeTransferPayloadSource } from '../../machines/transfer/transferPayloadSource';
 import { registerMachineSessionHandoffRpcHandlers } from './rpcHandlers.sessionHandoff';
@@ -667,6 +668,158 @@ function requireFileTransferPayloadSourcePath(
         });
 
         expect(requestPayloadFile).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not reuse a cached direct-peer failure across handoffs when the machine transfer channel has no server id', async () => {
+        const registered = new Map<string, (params: unknown) => Promise<any>>();
+        const providerBundlePayload = Buffer.from(JSON.stringify({
+            providerId: 'claude',
+            remoteSessionId: 'claude_session_target',
+            transcriptBase64: 'e30K',
+        }), 'utf8');
+        let requestCount = 0;
+        const requestPayloadFile = vi.fn(async ({ destinationPath }: Readonly<{ destinationPath: string }>) => {
+            requestCount += 1;
+            if (requestCount === 1) {
+                throw new Error('direct peer unavailable');
+            }
+            await writeFile(destinationPath, providerBundlePayload);
+            return { destinationPath };
+        });
+        const rpcHandlerManager = {
+            registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+                registered.set(method, handler);
+            },
+        } as any;
+
+        registerMachineSessionHandoffRpcHandlers({
+            rpcHandlerManager,
+            machineTransferChannel: {
+                onEnvelope: () => () => {},
+                sendEnvelope: vi.fn(),
+            },
+            loadSessionMetadata: async () => ({
+                machineId: 'machine_source',
+                path: '/repo',
+                flavor: 'claude',
+                claudeSessionId: 'claude_session_1',
+            }),
+            exportSessionBundle: async () => ({
+                providerBundle: {
+                    providerId: 'claude',
+                    remoteSessionId: 'claude_session_target',
+                    transcriptBase64: 'e30K',
+                },
+                targetPath: '/repo-target',
+            }),
+            importSessionBundle: async () => ({
+                remoteSessionId: 'claude_session_target',
+                directSource: {
+                    kind: 'claudeConfig',
+                    configDir: null,
+                    projectId: null,
+                },
+                resume: buildClaudeResumePlan({
+                    directory: '/repo-target',
+                    resume: 'claude_session_target',
+                    transcriptStorage: 'persisted',
+                }),
+            }),
+            directPeerTransfer: {
+                publishTransfer: vi.fn(() => []),
+                requestPayloadFile,
+                clearPublishedTransfer: vi.fn(),
+            },
+        });
+
+        const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+        const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+        expect(prepare).toBeDefined();
+        expect(resultGet).toBeDefined();
+
+        const endpointCandidate = buildDirectPeerEndpointCandidate({
+            transferId: 'handoff_direct_peer_unknown_server',
+            expiresAt: Date.now() + 30_000,
+        });
+
+        const firstPrepareResult = await prepare!({
+            handoffId: 'handoff_direct_peer_unknown_server_a',
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            negotiatedTransportStrategy: 'direct_peer',
+            allowServerRoutedFallback: false,
+            sourceSessionStorageMode: 'persisted',
+            targetPath: '/repo',
+            endpointCandidates: [endpointCandidate],
+            handoffMetadataV2: {
+                providerBundleTransferPublication: {
+                    transferId: 'session-handoff:handoff_direct_peer_unknown_server_a:provider-bundle-file',
+                    sizeBytes: providerBundlePayload.byteLength,
+                    manifestHash: computeManifestHash(providerBundlePayload),
+                    endpointCandidates: [endpointCandidate],
+                },
+            },
+        });
+
+        expect(firstPrepareResult).toMatchObject({
+            handoffId: 'handoff_direct_peer_unknown_server_a',
+            status: expect.objectContaining({
+                status: 'pending',
+                transportStrategy: 'direct_peer',
+            }),
+        });
+
+        await vi.waitFor(async () => {
+            await expect(resultGet!({
+                handoffId: 'handoff_direct_peer_unknown_server_a',
+            })).resolves.toEqual({
+                ok: false,
+                errorCode: 'awaiting_recovery',
+                error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
+            });
+        });
+
+        const secondPrepareResult = await prepare!({
+            handoffId: 'handoff_direct_peer_unknown_server_b',
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            negotiatedTransportStrategy: 'direct_peer',
+            allowServerRoutedFallback: false,
+            sourceSessionStorageMode: 'persisted',
+            targetPath: '/repo',
+            endpointCandidates: [endpointCandidate],
+            handoffMetadataV2: {
+                providerBundleTransferPublication: {
+                    transferId: 'session-handoff:handoff_direct_peer_unknown_server_b:provider-bundle-file',
+                    sizeBytes: providerBundlePayload.byteLength,
+                    manifestHash: computeManifestHash(providerBundlePayload),
+                    endpointCandidates: [endpointCandidate],
+                },
+            },
+        });
+
+        expect(secondPrepareResult).toMatchObject({
+            handoffId: 'handoff_direct_peer_unknown_server_b',
+            status: expect.objectContaining({
+                status: 'pending',
+                transportStrategy: 'direct_peer',
+            }),
+        });
+
+        await vi.waitFor(async () => {
+            expect(requestCount).toBe(2);
+        });
+        await vi.waitFor(async () => {
+            await expect(resultGet!({
+                handoffId: 'handoff_direct_peer_unknown_server_b',
+            })).resolves.toMatchObject({
+                handoffId: 'handoff_direct_peer_unknown_server_b',
+                status: expect.objectContaining({
+                    status: 'ready_for_cutover',
+                    transportStrategy: 'direct_peer',
+                }),
+            });
+        });
     });
 
     it('retries a cached-unavailable direct-peer route after a fresh prepare-target request for the same machine pair', async () => {
@@ -1571,5 +1724,149 @@ function requireFileTransferPayloadSourcePath(
     } finally {
       await dispose();
     }
+  });
+
+  it('does not reuse direct-peer route-unavailable cache state across different server ids', async () => {
+    const registered = new Map<string, (params: unknown) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+    const machineTransferChannel = {
+      serverId: 'server_a',
+      onEnvelope: () => () => {},
+      sendEnvelope: vi.fn(),
+    } as MachineTransferChannel & { serverId: string };
+    const providerBundlePayload = Buffer.from(JSON.stringify({
+      providerId: 'claude',
+      remoteSessionId: 'claude_session_source',
+      transcriptBase64: 'e30K',
+    }), 'utf8');
+    const requestPayloadFile = vi.fn(async ({ destinationPath }: Readonly<{ destinationPath: string }>) => {
+      if (machineTransferChannel.serverId === 'server_a') {
+        throw new Error('direct peer unavailable on server_a');
+      }
+      await writeFile(destinationPath, providerBundlePayload);
+      return { destinationPath };
+    });
+
+    registerMachineSessionHandoffRpcHandlers({
+      rpcHandlerManager,
+      machineTransferChannel,
+      importSessionBundle: vi.fn(async () => ({
+        remoteSessionId: 'claude_session_target',
+        directSource: {
+          kind: 'claudeConfig',
+          configDir: null,
+          projectId: null,
+        },
+        resume: buildClaudeResumePlan({
+          directory: '/repo-target',
+          resume: 'claude_session_target',
+          transcriptStorage: 'persisted',
+        }),
+      })),
+      directPeerTransfer: {
+        publishTransfer: vi.fn(() => []),
+        requestPayloadFile,
+        clearPublishedTransfer: vi.fn(),
+      },
+    });
+
+    const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+    const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+    expect(prepare).toBeDefined();
+    expect(resultGet).toBeDefined();
+
+    const providerBundleTransferId = 'session-handoff:handoff_direct_peer_server_scoped_cache:provider-bundle-file';
+    const endpointCandidate = buildDirectPeerEndpointCandidate({
+      transferId: 'handoff_direct_peer_server_scoped_cache',
+      expiresAt: Date.now() + 30_000,
+    });
+
+    const firstPrepare = await prepare!({
+      handoffId: 'handoff_direct_peer_server_scoped_cache_server_a',
+      sourceMachineId: 'machine_source',
+      targetMachineId: 'machine_target',
+      negotiatedTransportStrategy: 'direct_peer',
+      allowServerRoutedFallback: false,
+      sourceSessionStorageMode: 'persisted',
+      targetPath: '/repo',
+      endpointCandidates: [endpointCandidate],
+      handoffMetadataV2: {
+        providerBundleTransferPublication: {
+          transferId: providerBundleTransferId,
+          sizeBytes: providerBundlePayload.byteLength,
+          manifestHash: computeManifestHash(providerBundlePayload),
+          endpointCandidates: [endpointCandidate],
+        },
+      },
+    });
+
+    expect(firstPrepare).toMatchObject({
+      handoffId: 'handoff_direct_peer_server_scoped_cache_server_a',
+      status: expect.objectContaining({
+        status: 'pending',
+        transportStrategy: 'direct_peer',
+      }),
+    });
+
+    await vi.waitFor(async () => {
+      await expect(resultGet!({
+        handoffId: 'handoff_direct_peer_server_scoped_cache_server_a',
+      })).resolves.toEqual({
+        ok: false,
+        errorCode: 'awaiting_recovery',
+        error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
+      });
+    });
+
+    machineTransferChannel.serverId = 'server_b';
+
+    const secondPrepare = await prepare!({
+      handoffId: 'handoff_direct_peer_server_scoped_cache_server_b',
+      sourceMachineId: 'machine_source',
+      targetMachineId: 'machine_target',
+      negotiatedTransportStrategy: 'direct_peer',
+      allowServerRoutedFallback: false,
+      sourceSessionStorageMode: 'persisted',
+      targetPath: '/repo',
+      endpointCandidates: [endpointCandidate],
+      handoffMetadataV2: {
+        providerBundleTransferPublication: {
+          transferId: providerBundleTransferId,
+          sizeBytes: providerBundlePayload.byteLength,
+          manifestHash: computeManifestHash(providerBundlePayload),
+          endpointCandidates: [endpointCandidate],
+        },
+      },
+    });
+
+    let ready = secondPrepare;
+    if (!('status' in ready) || ready.status.status !== 'ready_for_cutover') {
+      await vi.waitFor(async () => {
+        const next = await resultGet!({
+          handoffId: 'handoff_direct_peer_server_scoped_cache_server_b',
+        });
+        expect(next).toMatchObject({
+          handoffId: 'handoff_direct_peer_server_scoped_cache_server_b',
+          status: expect.objectContaining({
+            status: 'ready_for_cutover',
+          }),
+        });
+        ready = next;
+      });
+    }
+
+    expect(ready).toMatchObject({
+      handoffId: 'handoff_direct_peer_server_scoped_cache_server_b',
+      status: expect.objectContaining({
+        status: 'ready_for_cutover',
+        transportStrategy: 'direct_peer',
+      }),
+      remoteSessionId: 'claude_session_target',
+    });
+    expect(requestPayloadFile).toHaveBeenCalledTimes(2);
   });
 });

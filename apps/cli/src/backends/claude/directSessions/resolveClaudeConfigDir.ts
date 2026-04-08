@@ -30,5 +30,3 @@ export function resolveClaudeConfigDir(params: Readonly<{ source: DirectSessions
   const resolved = fromSource || resolveConfiguredClaudeConfigDir({ env: params.env });
   return expandHomeDirForDirectSessions(resolved) || join(homedir(), '.claude');
 }
-
-export const resolveClaudeConfigDirForDirectSessions = resolveClaudeConfigDir;

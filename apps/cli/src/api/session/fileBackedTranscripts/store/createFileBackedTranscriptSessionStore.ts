@@ -22,7 +22,7 @@ export function createFileBackedTranscriptSessionStore<
 
     const resolveContext = async (): Promise<FileBackedTranscriptSessionContext<TResolved, TStream>> => {
         if (!resolvedContextPromise) {
-            resolvedContextPromise = (async () => {
+            const nextPromise = (async () => {
                 const resolvedSession = await params.adapter.resolveSession(params.key);
                 const streams = await params.adapter.discoverStreams({
                     key: params.key,
@@ -35,6 +35,13 @@ export function createFileBackedTranscriptSessionStore<
                 };
                 return resolvedContext;
             })();
+            resolvedContextPromise = nextPromise;
+            nextPromise.catch(() => {
+                if (resolvedContextPromise === nextPromise) {
+                    resolvedContextPromise = null;
+                    resolvedContext = null;
+                }
+            });
         }
         return resolvedContextPromise;
     };
@@ -75,10 +82,22 @@ export function createFileBackedTranscriptSessionStore<
         },
         subscribe: (listener?: FileBackedTranscriptSubscriptionListener<TItem>) => {
             let unsubscribe: (() => void) | null = null;
-            void resolveContext().then((context) => {
-                unsubscribe = params.adapter.subscribe?.(context, listener) ?? null;
-            });
+            let unsubscribed = false;
+            void resolveContext()
+                .then((context) => {
+                    if (unsubscribed) {
+                        return;
+                    }
+                    unsubscribe = params.adapter.subscribe?.(context, listener) ?? null;
+                    if (unsubscribed) {
+                        const lateUnsubscribe = unsubscribe;
+                        unsubscribe = null;
+                        lateUnsubscribe?.();
+                    }
+                })
+                .catch(() => undefined);
             return () => {
+                unsubscribed = true;
                 unsubscribe?.();
             };
         },

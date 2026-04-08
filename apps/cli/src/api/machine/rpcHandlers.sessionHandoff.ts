@@ -1025,16 +1025,40 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     Math.max(250, Math.floor(prepareTargetJobLeaseTtlMs / 4)),
   );
   const { rpcHandlerManager } = params;
-  const transferRouteCache = createMachineTransferRouteCache({
-    serverId: configuration.activeServerId,
-  });
+  const transferRouteCachesByServerId = new Map<string, ReturnType<typeof createMachineTransferRouteCache>>();
+  const getTransferRouteCache = (
+    machineTransferChannel: Parameters<typeof registerMachineSessionHandoffRpcHandlers>[0]['machineTransferChannel'],
+  ): ReturnType<typeof createMachineTransferRouteCache> => {
+    const rawServerId = typeof machineTransferChannel?.serverId === 'string'
+      ? machineTransferChannel.serverId.trim()
+      : '';
+    if (rawServerId.length === 0) {
+      // Some mixed-version or bridge-state channels do not expose a stable server id yet.
+      // In that case, avoid poisoning the active-server cache with a guess and keep the cache
+      // isolated to this handler invocation instead.
+      return createMachineTransferRouteCache({
+        serverId: `unknown:${process.pid}:${randomUUID()}`,
+      });
+    }
+    const serverId = rawServerId;
+    const existingCache = transferRouteCachesByServerId.get(serverId);
+    if (existingCache) {
+      return existingCache;
+    }
+    const createdCache = createMachineTransferRouteCache({ serverId });
+    transferRouteCachesByServerId.set(serverId, createdCache);
+    return createdCache;
+  };
+  getTransferRouteCache(params.machineTransferChannel);
   const invalidateDirectPeerRouteCacheForHandoffMachines = (machineIds: readonly (string | undefined)[]): void => {
     for (const machineId of machineIds) {
       const normalizedMachineId = typeof machineId === 'string' ? machineId.trim() : '';
       if (!normalizedMachineId) {
         continue;
       }
-      transferRouteCache.invalidateDirectPeerRoutesForMachine(normalizedMachineId);
+      for (const transferRouteCache of transferRouteCachesByServerId.values()) {
+        transferRouteCache.invalidateDirectPeerRoutesForMachine(normalizedMachineId);
+      }
     }
   };
   const workspaceReplicationAdapter = createSessionHandoffWorkspaceReplicationAdapter();
@@ -2461,7 +2485,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
               handoffMetadataV2: requestResolvedHandoffMetadataV2,
               machineTransferChannel: params.machineTransferChannel,
               directPeerTransfer: params.directPeerTransfer,
-              transferRouteCache,
+              transferRouteCache: getTransferRouteCache(params.machineTransferChannel),
               invalidateDirectPeerRouteCacheForHandoffMachines,
             });
           if (!resolvedProviderBundle) {

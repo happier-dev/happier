@@ -104,6 +104,95 @@ describe('createCodexRolloutSessionStore', () => {
         await expect(store.getWorkingDirectory()).resolves.toBe('/repo/from-app-server');
     });
 
+    it('falls back to app-server metadata for working directory when rollout files lack a usable cwd', async () => {
+        const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'happier-codex-rollout-store-app-server-cwd-fallback-')));
+        const codexHome = join(root, 'codex-home');
+        const sessionsDir = join(codexHome, 'sessions');
+        await mkdir(sessionsDir, { recursive: true });
+
+        const sessionId = 'rollout_without_cwd';
+        const filePath = join(sessionsDir, `rollout-2026-01-02T00-00-00-${sessionId}.jsonl`);
+        await writeFile(
+            filePath,
+            sessionMetaLine({ id: sessionId, timestamp: '2026-01-02T00:00:00.000Z' })
+            + responseItemLine({
+                timestamp: '2026-01-02T00:00:01.000Z',
+                payload: { type: 'message', role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
+            }),
+            'utf8',
+        );
+
+        const fakeAppServer = await writeFakeCodexAppServerThreadListScript({
+            dir: root,
+            initializeName: 'fake',
+            nonArchivedThreads: [{
+                id: sessionId,
+                name: 'Store app server cwd fallback',
+                updatedAt: 1736000100,
+                cwd: '/repo/from-app-server-fallback',
+            }],
+        });
+
+        const store = createCodexRolloutSessionStore({
+            key: {
+                providerId: 'codex',
+                source: { kind: 'codexHome', home: 'user' },
+                remoteSessionId: sessionId,
+            },
+            activeServerDir: join(root, 'servers', 'cloud'),
+            env: createCodexAppServerProcessEnv(fakeAppServer, { CODEX_HOME: codexHome }),
+        });
+
+        await expect(store.getWorkingDirectory()).resolves.toBe('/repo/from-app-server-fallback');
+    });
+
+    it('preserves malformed rollout lines as opaque invalid_json transcript items', async () => {
+        const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'happier-codex-rollout-store-invalid-json-')));
+        const codexHome = join(root, 'codex-home');
+        const sessionsDir = join(codexHome, 'sessions');
+        await mkdir(sessionsDir, { recursive: true });
+
+        const sessionId = 'invalid-json-history-session';
+        const filePath = join(sessionsDir, `rollout-2026-01-02T00-00-00-${sessionId}.jsonl`);
+        await writeFile(
+            filePath,
+            sessionMetaLine({ id: sessionId, timestamp: '2026-01-02T00:00:00.000Z', cwd: '/repo/invalid-json' })
+            + '{"type":"response_item","timestamp":"2026-01-02T00:00:01.000Z","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"before"}]}}\n'
+            + '{"type":"response_item","timestamp":"2026-01-02T00:00:02.000Z","payload":\n'
+            + responseItemLine({
+                timestamp: '2026-01-02T00:00:03.000Z',
+                payload: { type: 'message', role: 'assistant', content: [{ type: 'text', text: 'after' }] },
+            }),
+            'utf8',
+        );
+
+        const store = createCodexRolloutSessionStore({
+            key: {
+                providerId: 'codex',
+                source: { kind: 'codexHome', home: 'user' },
+                remoteSessionId: sessionId,
+            },
+            activeServerDir: join(root, 'servers', 'cloud'),
+            env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+        });
+
+        const page = await store.pageOlder({ direction: 'older', maxBytes: 1024 * 1024, maxItems: 10 });
+        const opaqueInvalidJson = page.items.find((item) =>
+            (item.raw as { content?: { data?: { reason?: string; original?: string } } })?.content?.data?.reason === 'invalid_json',
+        );
+
+        expect(opaqueInvalidJson).toEqual(expect.objectContaining({
+            raw: expect.objectContaining({
+                content: expect.objectContaining({
+                    data: expect.objectContaining({
+                        reason: 'invalid_json',
+                        original: '{"type":"response_item","timestamp":"2026-01-02T00:00:02.000Z","payload":',
+                    }),
+                }),
+            }),
+        }));
+    });
+
     it('subscribes to appended rollout items via the merged read-after path', async () => {
         const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'happier-codex-rollout-subscribe-')));
         const codexHome = join(root, 'codex-home');
@@ -623,6 +712,49 @@ describe('createCodexRolloutSessionStore', () => {
         expect(page.items).toHaveLength(1);
         expect(JSON.stringify(page.items[0] ?? null)).toContain('hello from flat uuid store');
         expect(page.tailCursor).toBeTruthy();
+    });
+
+    it('refreshes activity across repeated calls after the rollout file changes', async () => {
+        const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'happier-codex-rollout-activity-refresh-')));
+        const codexHome = join(root, 'codex-home');
+        const sessionsDir = join(codexHome, 'sessions');
+        await mkdir(sessionsDir, { recursive: true });
+
+        const sessionId = 'activity-refresh-session';
+        const filePath = join(sessionsDir, `rollout-2026-01-02T00-00-00-${sessionId}.jsonl`);
+        await writeFile(
+            filePath,
+            sessionMetaLine({ id: sessionId, timestamp: '2026-01-02T00:00:00.000Z', cwd: '/repo/activity-refresh' }),
+            'utf8',
+        );
+        await utimes(filePath, new Date('2026-01-02T00:00:01.000Z'), new Date('2026-01-02T00:00:01.000Z'));
+
+        const store = createCodexRolloutSessionStore({
+            key: {
+                providerId: 'codex',
+                source: { kind: 'codexHome', home: 'user' },
+                remoteSessionId: sessionId,
+            },
+            activeServerDir: join(root, 'servers', 'cloud'),
+            env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+        });
+
+        const firstActivity = await store.getActivity();
+        expect(firstActivity?.lastActivityAtMs).toBe(Date.parse('2026-01-02T00:00:01.000Z'));
+
+        await appendFile(
+            filePath,
+            responseItemLine({
+                timestamp: '2026-01-02T00:00:02.000Z',
+                payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'later activity' }] },
+            }),
+            'utf8',
+        );
+        await utimes(filePath, new Date('2026-01-02T00:00:03.000Z'), new Date('2026-01-02T00:00:03.000Z'));
+
+        const secondActivity = await store.getActivity();
+        expect(secondActivity?.lastActivityAtMs).toBe(Date.parse('2026-01-02T00:00:03.000Z'));
+        expect(secondActivity?.lastActivityAtMs).toBeGreaterThan(firstActivity?.lastActivityAtMs ?? -1);
     });
 
     it('delivers a flat-rollout assistant item whose response_item line omits the top-level timestamp', async () => {

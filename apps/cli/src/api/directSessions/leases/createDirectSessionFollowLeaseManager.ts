@@ -68,6 +68,7 @@ export function createDirectSessionFollowLeaseManager(params?: DirectSessionFoll
             void (async () => {
                 viewerLeaseRegistry.detach({ sessionId, leaseId });
                 await releaseFollowLease(leaseId, sessionId);
+                await handleNoActiveViewerLeases(sessionId);
             })();
         }, delayMs);
     };
@@ -92,6 +93,20 @@ export function createDirectSessionFollowLeaseManager(params?: DirectSessionFoll
             expiryTimer: null,
         });
         return true;
+    };
+
+    const handleNoActiveViewerLeases = async (sessionId: string): Promise<void> => {
+        if (viewerLeaseRegistry.countActiveLeases(sessionId) > 0) {
+            return;
+        }
+        if (backgroundFollowEnabledBySessionId.get(sessionId) === true) {
+            const acquireFollowLease = backgroundFollowAcquireBySessionId.get(sessionId) ?? null;
+            if (acquireFollowLease) {
+                await acquireDetachedBackgroundFollowLease(sessionId, acquireFollowLease).catch(() => false);
+            }
+            return;
+        }
+        await releaseBackgroundFollowLease(sessionId);
     };
 
     return {
@@ -141,17 +156,7 @@ export function createDirectSessionFollowLeaseManager(params?: DirectSessionFoll
             const detached = viewerLeaseRegistry.detach(input);
             if (detached.detached) {
                 await releaseFollowLease(input.leaseId, input.sessionId);
-
-                if (viewerLeaseRegistry.countActiveLeases(input.sessionId) === 0) {
-                    if (backgroundFollowEnabledBySessionId.get(input.sessionId) === true) {
-                        const acquireFollowLease = backgroundFollowAcquireBySessionId.get(input.sessionId) ?? null;
-                        if (acquireFollowLease) {
-                            await acquireDetachedBackgroundFollowLease(input.sessionId, acquireFollowLease).catch(() => false);
-                        }
-                    } else {
-                        await releaseBackgroundFollowLease(input.sessionId);
-                    }
-                }
+                await handleNoActiveViewerLeases(input.sessionId);
             }
             return detached;
         },
@@ -165,7 +170,9 @@ export function createDirectSessionFollowLeaseManager(params?: DirectSessionFoll
 
             if (!input.enabled) {
                 backgroundFollowAcquireBySessionId.delete(input.sessionId);
-                await releaseBackgroundFollowLease(input.sessionId);
+                if (viewerLeaseRegistry.countActiveLeases(input.sessionId) === 0) {
+                    await releaseBackgroundFollowLease(input.sessionId);
+                }
                 return { enabled: false, leaseAcquired: false } as const;
             }
 
