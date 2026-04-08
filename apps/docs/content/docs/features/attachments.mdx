@@ -43,6 +43,8 @@ Before you send the message, Happier keeps attachments as **drafts** in the comp
 
 In the **new-session flow**, those draft attachments are kept while you move around the same in-app flow, such as opening picker screens and returning to the composer.
 
+That also includes the newer in-place browser surfaces used by session start, such as folder browsing and Resume ID browsing.
+
 That includes path-sensitive setup flows such as choosing a different machine or directory before the session is created.
 
 They are still treated as **temporary unsent draft state**, not durable stored content. A full page reload or app restart can still clear unsent attachments.
@@ -83,6 +85,7 @@ The preview modal is designed for quick confirmation before send:
 - the image takes the full modal body
 - the filename stays in the header
 - if multiple images are attached, you can move between them from the same modal
+- opening the preview keeps you inside the current session or new-session flow instead of sending you to a separate screen
 
 On **web**, the previous/next controls appear when you hover the image.
 

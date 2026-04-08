@@ -31,17 +31,26 @@ You can enter a Resume ID in the **new-session** flow:
 3. Open the input controls and find **Resume ID**
 4. Paste the provider session id, or use **Browse** when available
 
+For the broader session-start flow, see [Start a new session](./start-a-session).
+
 ## Browse existing sessions to fill the Resume ID
 
 For some providers, Happier can browse the provider’s existing sessions and let you pick one to fill the Resume ID field.
 
 When it is available, you will see a **browse icon** next to the Resume ID input.
 
+The browse experience is designed to stay in the same session-start flow:
+
+- the browser opens as a dedicated in-place picker surface
+- it does not mean the current new-session setup was canceled
+- choosing an entry fills the Resume ID field and returns you to session start
+
 Important behavior:
 
 - The browse picker is shown only when the selected backend supports session browsing.
 - The browse list is scoped to the provider and machine you already selected in the new-session screen.
 - For Codex, the browse list is also scoped to the effective Codex home for the auth choice you selected (see below).
+- On smaller screens, the same picker uses a larger touch-friendly modal layout instead of a tiny anchored popover.
 
 When you pick a session, Happier fills the Resume ID field and closes the Resume ID control.
 
@@ -72,4 +81,3 @@ If the browse list is empty:
 
 - confirm the selected machine is online and reachable, and
 - confirm you are browsing the correct provider/auth context (for Codex, the correct home/profile).
-

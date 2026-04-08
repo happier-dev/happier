@@ -259,6 +259,8 @@ The number is the current MCP count for that session context.
 
 Select the chip to open the MCP picker.
 
+For the broader session-start flow, see [Start a new session](./start-a-session).
+
 From there you can:
 
 - see which Happier-managed servers are selected by default
@@ -271,6 +273,13 @@ Important limits:
 - provider-native detected entries are shown as **read-only context**
 - the built-in Happier tool surface is always present
 - changes in the picker affect the session you are about to start; they do not rewrite your saved account defaults
+
+Presentation adapts to the device:
+
+- on desktop and larger screens, the picker stays close to the composer
+- on phones and mobile web, the picker expands into a wider, easier-to-scan selection surface
+
+This keeps the MCP override flow usable without leaving the current new-session screen.
 
 ## What happens when you change MCP settings
 

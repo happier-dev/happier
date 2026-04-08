@@ -21,6 +21,7 @@ This runs:
 - `yarn workspace @happier-dev/transfers test`
 - `yarn workspace @happier-dev/agents test`
 - `yarn workspace @happier-dev/cli-common test`
+- `yarn workspace @happier-dev/support test`
 - `yarn workspace @happier-dev/connection-supervisor test`
 - `yarn workspace @happier-dev/app test`
 - `yarn workspace @happier-dev/cli test:unit`
@@ -101,7 +102,22 @@ Notes:
 - If you suspect stale Metro transforms, you can opt into clearing the Expo/Metro cache with `HAPPIER_E2E_EXPO_CLEAR=1` (default is off because `--clear` can occasionally crash Metro).
 - Manual QA tip: if concurrent code changes cause the UI to keep reloading, you can disable Expo web Fast Refresh/HMR **per browser tab** by opening the UI with `?happier_hmr=0` (re-enable with `?happier_hmr=1`). This is web-only + dev-only.
 
-### 4c) Native E2E (Maestro) (iOS/Android)
+### 4c) Native desktop E2E (Tauri MCP)
+
+Native desktop end-to-end validation for Tauri-specific surfaces using the package-owned MCP harness in `apps/ui/scripts/qa/**`.
+
+**Root command:**
+```bash
+yarn test:e2e:desktop:native
+```
+
+Notes:
+- This lane is a first-class root command, but it remains **local/manual by default** rather than a default GitHub-hosted PR check.
+- The root lane delegates to the package-owned owner in `apps/ui`, so the harness logic stays canonical in one place.
+- Use this lane for real desktop-only contracts such as overlay windows, native Tauri bridge flows, and deterministic MCP-backed capture.
+- The current implementation owner is `yarn --cwd apps/ui test:native-e2e:activity-surfaces`.
+
+### 4d) Native E2E (Maestro) (iOS/Android)
 
 Native end-to-end tests using **Maestro**. These are intended to cover mobile-specific regressions (touch/keyboard/back/gesture/popup rendering).
 
@@ -122,7 +138,7 @@ Notes:
 - Artifacts are written under `packages/tests/.project/logs/e2e/mobile-maestro/`.
 - Override Maestro binary (if needed): `HAPPIER_E2E_MAESTRO_BIN=/path/to/maestro`.
 
-### 4d) WSREPL Lima matrix (macOS/Linux hosts)
+### 4e) WSREPL Lima matrix (macOS/Linux hosts)
 
 The Lima host↔guest WSREPL matrix is exposed as an opt-in tests-owned lane.
 
@@ -239,6 +255,7 @@ yarn test:db-contract:docker
 ### UI (`apps/ui`, workspace `@happier-dev/app`)
 - Unit: `yarn --cwd apps/ui test:unit`
 - Integration: `yarn --cwd apps/ui test:integration`
+- Native desktop E2E owner: `yarn --cwd apps/ui test:native-e2e:activity-surfaces`
 
 ### CLI (`apps/cli`)
 - Unit: `yarn --cwd apps/cli test:unit`
