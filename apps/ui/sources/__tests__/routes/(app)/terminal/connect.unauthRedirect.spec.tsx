@@ -79,6 +79,6 @@ describe('TerminalConnectScreen unauthenticated redirect', () => {
             scope: 'device',
             refreshAuth: undefined,
         });
-        expect(replaceMock).toHaveBeenCalledWith('/');
+        expect(replaceMock).toHaveBeenCalledWith('/?server=https%3A%2F%2Fcompany.example.test');
     });
 });

@@ -67,6 +67,7 @@ function flattenStyle(style: any): any {
 export const StyleSheet = { create: (styles: any) => styles, flatten: flattenStyle, hairlineWidth: 1 } as const;
 // Many components spread this object into style definitions.
 (StyleSheet as any).absoluteFillObject = {};
+export const NativeModules = {} as const;
 export const TurboModuleRegistry = {
     get: (_name: string) => ({}),
     getEnforcing: (_name: string) => ({}),

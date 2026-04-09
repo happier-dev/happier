@@ -11,6 +11,7 @@ const loadAsyncMock = vi.fn();
 const syncRestoreMock = vi.fn(async () => {});
 const hideAsyncMock = vi.fn(async () => {});
 let mockedPlatformOS: string = 'web';
+let mockedPathname = '/';
 let mockedConfigVariant: string = '';
 const sentryInitMock = vi.fn();
 const sentryMobileReplayIntegrationMock = vi.fn(() => ({ name: 'mobileReplayIntegration' }));
@@ -108,6 +109,7 @@ installRouteRootCommonModuleMocks({
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         const expoRouterMock = createExpoRouterMock({
+            pathname: () => mockedPathname,
             router: { push: routerPushMock, back: vi.fn() },
         });
         return expoRouterMock.module;
@@ -188,8 +190,8 @@ vi.mock('@/encryption/libsodium.lib', () => ({
 vi.mock('posthog-react-native', () => {
     const React = require('react');
     return {
-        PostHogProvider: ({ children }: { children: React.ReactNode }) =>
-            React.createElement('PostHogProvider', { testID: 'posthog-provider' }, children),
+        PostHogProvider: ({ children, ...props }: { children: React.ReactNode } & Record<string, unknown>) =>
+            React.createElement('PostHogProvider', { testID: 'posthog-provider', ...props }, children),
     };
 });
 
@@ -239,9 +241,12 @@ vi.mock('@/components/ui/layout/StatusBarProvider', () => ({
     StatusBarProvider: () => null,
 }));
 
-vi.mock('@/components/ui/feedback/DesktopUpdateBanner', () => ({
-    DesktopUpdateBanner: () => null,
-}));
+vi.mock('@/components/ui/feedback/DesktopUpdateBanner', () => {
+    const React = require('react');
+    return {
+        DesktopUpdateBanner: () => React.createElement('DesktopUpdateBanner'),
+    };
+});
 
 vi.mock('@/utils/system/remoteLogger', () => ({
     monkeyPatchConsoleForRemoteLoggingForFasterAiAutoDebuggingOnlyInLocalBuilds: vi.fn(),
@@ -260,6 +265,7 @@ describe('app/_layout init resilience', () => {
         // Ensure no test leaks fake timers into subsequent tests.
         vi.useRealTimers();
         mockedPlatformOS = 'web';
+        mockedPathname = '/';
         mockedConfigVariant = '';
         // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
         delete (globalThis as any).__HAPPIER_SENTRY_INIT__;
@@ -407,6 +413,15 @@ describe('app/_layout init resilience', () => {
         expect(screen.findByTestId('app-crash-recovery-boundary')).toBeTruthy();
     });
 
+    it('bypasses the desktop shell for terminal-connect routes', async () => {
+        mockedPathname = '/terminal/connect';
+        const screen = await renderSettledRootLayout();
+
+        expect(screen.findAllByType('SidebarNavigator' as any)).toHaveLength(0);
+        expect(screen.findAllByType('DesktopUpdateBanner' as any)).toHaveLength(0);
+        expect(screen.findAllByType('FaviconPermissionIndicator' as any)).toHaveLength(0);
+    });
+
     it('mounts the settings analytics runtime inside PostHogProvider when tracking is enabled', async () => {
         mockedPlatformOS = 'ios';
         trackingState.client = {
@@ -415,8 +430,13 @@ describe('app/_layout init resilience', () => {
             capture: vi.fn(),
         };
         const screen = await renderSettledRootLayout();
+        const provider = screen.findByTestId('posthog-provider');
 
-        expect(screen.findByTestId('posthog-provider')).toBeTruthy();
+        expect(provider).toBeTruthy();
+        if (provider == null) {
+            throw new Error('expected PostHogProvider to be present');
+        }
+        expect(provider.props.autocapture).toEqual({ captureScreens: false });
         expect(screen.findByTestId('settings-analytics-runtime')).toBeTruthy();
     });
 

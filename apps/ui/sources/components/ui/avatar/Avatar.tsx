@@ -1,10 +1,10 @@
 import * as React from "react";
 import { View } from "react-native";
-import { Image } from "expo-image";
 import { AvatarSkia } from "./AvatarSkia";
 import { AvatarGradient } from "./AvatarGradient";
 import { AvatarBrutalist } from "./AvatarBrutalist";
 import { AgentIcon } from '@/agents/registry/AgentIcon';
+import { SafeExpoImage } from '@/components/ui/media/SafeExpoImage';
 import { useSetting } from '@/sync/domains/state/storage';
 import { StyleSheet } from 'react-native-unistyles';
 import { shadowLevelStyle } from '@/shadowElevation';
@@ -69,7 +69,7 @@ export const Avatar = React.memo((props: AvatarProps) => {
     // Render custom image if provided
     if (imageUrl) {
         const imageElement = (
-            <Image
+            <SafeExpoImage
                 source={{ uri: imageUrl, thumbhash: thumbhash || undefined }}
                 placeholder={thumbhash ? { thumbhash: thumbhash } : undefined}
                 contentFit="cover"

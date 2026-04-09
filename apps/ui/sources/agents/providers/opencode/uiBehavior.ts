@@ -80,6 +80,7 @@ export const OPENCODE_UI_BEHAVIOR_OVERRIDE: AgentUiBehavior = {
         },
     },
     directSessions: {
+        supportsBackgroundFollow: false,
         browse: {
             order: 30,
             getSourceOptions: () => resolveOpenCodeBrowseSourceOptions(),

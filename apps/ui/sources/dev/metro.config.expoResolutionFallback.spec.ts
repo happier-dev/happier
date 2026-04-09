@@ -45,6 +45,25 @@ describe('apps/ui/metro.config.js (Expo resolution fallbacks)', () => {
         expect(fs.existsSync(expectedStubPath)).toBe(true);
     });
 
+    it('stubs the missing React Native devtools settings manager on web', () => {
+        const config = requireFreshMetroConfig();
+
+        const expectedStubPath = path.resolve(__dirname, '../platform/stubs/reactNativeDevToolsSettingsManagerWebStub.ts');
+        const originModulePath = path.resolve(
+            __dirname,
+            '../../node_modules/react-native/Libraries/Core/setUpReactDevTools.js',
+        );
+
+        const result = config.resolver.resolveRequest(
+            { originModulePath, resolveRequest: () => ({ type: 'empty' }) },
+            '../../src/private/devsupport/rndevtools/ReactDevToolsSettingsManager',
+            'web',
+        );
+
+        expect(result).toEqual({ type: 'sourceFile', filePath: expectedStubPath });
+        expect(fs.existsSync(expectedStubPath)).toBe(true);
+    });
+
     it('falls back to resolving hoisted Expo modules from the monorepo root node_modules', () => {
         const config = requireFreshMetroConfig();
 
@@ -87,10 +106,18 @@ describe('apps/ui/metro.config.js (Expo resolution fallbacks)', () => {
 
         const config = requireFreshMetroConfig();
 
-        const originModulePath = path.resolve(
-            __dirname,
-            '../../../../packages/cli-common/dist/relayAccess/registry.js',
+        const sandboxDir = fs.mkdtempSync(path.join(tmpdir(), 'happier-metro-explicit-js-'));
+        const originModulePath = path.resolve(sandboxDir, 'relayAccess', 'registry.js');
+        const targetModulePath = path.resolve(
+            sandboxDir,
+            'relayAccess',
+            'providers',
+            'localOnly',
+            'index.js',
         );
+        fs.mkdirSync(path.dirname(targetModulePath), { recursive: true });
+        fs.writeFileSync(originModulePath, 'export {};\n', 'utf8');
+        fs.writeFileSync(targetModulePath, 'export {};\n', 'utf8');
         const result = config.resolver.resolveRequest(
             { originModulePath },
             './providers/localOnly/index.js',
@@ -99,7 +126,31 @@ describe('apps/ui/metro.config.js (Expo resolution fallbacks)', () => {
 
         expect(result).toEqual({
             type: 'sourceFile',
-            filePath: path.resolve(path.dirname(originModulePath), './providers/localOnly/index.js'),
+            filePath: targetModulePath,
+        });
+
+        fs.rmSync(sandboxDir, { recursive: true, force: true });
+    });
+
+    it('resolves internal workspace packages through root node_modules symlink paths when Metro workspace root is disabled', () => {
+        process.env.CI = '1';
+        process.env.EXPO_NO_METRO_WORKSPACE_ROOT = '1';
+        process.env.HAPPIER_UI_METRO_NARROW_WATCH_FOLDERS = '1';
+        delete process.env.HAPPIER_STACK_STACK;
+        delete process.env.HAPPIER_STACK_TUI;
+
+        const config = requireFreshMetroConfig();
+
+        const protocolResult = config.resolver.resolveRequest({}, '@happier-dev/protocol', 'web');
+        expect(protocolResult).toEqual({
+            type: 'sourceFile',
+            filePath: path.resolve(__dirname, '../../../../node_modules/@happier-dev/protocol/dist/index.js'),
+        });
+
+        const socketRpcResult = config.resolver.resolveRequest({}, '@happier-dev/protocol/socketRpc', 'web');
+        expect(socketRpcResult).toEqual({
+            type: 'sourceFile',
+            filePath: path.resolve(__dirname, '../../../../node_modules/@happier-dev/protocol/dist/socketRpc.js'),
         });
     });
 

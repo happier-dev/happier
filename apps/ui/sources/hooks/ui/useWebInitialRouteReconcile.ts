@@ -13,6 +13,20 @@ function normalizeWebPathname(raw: string): string {
   return path;
 }
 
+function isStrictWebPathExtension(params: Readonly<{
+  browserPathname: string;
+  currentPathname: string;
+}>): boolean {
+  if (!params.browserPathname.startsWith(params.currentPathname)) return false;
+  if (params.browserPathname.length <= params.currentPathname.length) return false;
+
+  if (params.currentPathname === '/') {
+    return params.browserPathname.startsWith('/');
+  }
+
+  return params.browserPathname.charAt(params.currentPathname.length) === '/';
+}
+
 /**
  * Expo Router can occasionally hydrate the initial route to a less-specific match on web refresh
  * (e.g. `/session/:id` instead of `/session/:id/info`). When that happens, the UI shows the
@@ -61,9 +75,7 @@ export function useWebInitialRouteReconcile(params: Readonly<{ routerPathname: s
       }
 
       // Only reconcile when the browser path is a strict extension of the current router path.
-      if (!browserPathname.startsWith(currentPathname)) return;
-      if (browserPathname.length <= currentPathname.length) return;
-      if (browserPathname.charAt(currentPathname.length) !== '/') return;
+      if (!isStrictWebPathExtension({ browserPathname, currentPathname })) return;
 
       router.replace(expectedHref as any);
     };

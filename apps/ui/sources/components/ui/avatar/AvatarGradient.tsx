@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Image } from "expo-image";
+import { SafeExpoImage } from '@/components/ui/media/SafeExpoImage';
 
 // Copy hashCode function for consistency with Avatar.tsx
 function hashCode(str: string): number {
@@ -132,7 +132,7 @@ export const AvatarGradient = React.memo((props: AvatarGradientProps) => {
     const gradientImage = gradientImages[imageIndex];
     
     return (
-        <Image
+        <SafeExpoImage
             source={gradientImage}
             style={{
                 width: size,

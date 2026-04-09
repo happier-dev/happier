@@ -24,6 +24,7 @@ if (cacheBust) {
 //
 // In CI/e2e and stack builds, prefer Metro's Node filesystem crawler (slower but deterministic).
 const isStackRun = Boolean((process.env.HAPPIER_STACK_STACK ?? '').toString().trim());
+const monorepoRoot = path.resolve(__dirname, "../../");
 
 function parseEnvBool(raw) {
   const v = String(raw ?? '').trim().toLowerCase();
@@ -52,17 +53,10 @@ function safeReadJson(filePath) {
   }
 }
 
-function addInternalWorkspaceWatchFolders() {
-  if (!(process.env.CI || isStackRun)) return;
-
-  const monorepoRoot = path.resolve(__dirname, "../../");
+function resolveInternalWorkspaceWatchFolders() {
   const uiPkgPath = path.resolve(__dirname, "package.json");
   const uiPkg = safeReadJson(uiPkgPath);
-  if (!uiPkg) return;
-
-  if (!Array.isArray(config.watchFolders)) {
-    config.watchFolders = [];
-  }
+  if (!uiPkg) return [];
 
   const depSources = [uiPkg.dependencies, uiPkg.optionalDependencies, uiPkg.devDependencies];
   const internal = new Set();
@@ -74,11 +68,23 @@ function addInternalWorkspaceWatchFolders() {
     }
   }
 
-  for (const name of internal) {
-    const id = String(name).split("/")[1] || "";
-    if (!id) continue;
-    const pkgDir = path.resolve(monorepoRoot, "packages", id);
-    if (!fs.existsSync(pkgDir)) continue;
+  return [...internal]
+    .map((name) => String(name).split("/")[1] || "")
+    .filter((id) => id.length > 0)
+    .map((id) => path.resolve(monorepoRoot, "packages", id))
+    .filter((pkgDir) => fs.existsSync(pkgDir));
+}
+
+const internalWorkspaceWatchFolders = resolveInternalWorkspaceWatchFolders();
+
+function addInternalWorkspaceWatchFolders() {
+  if (!(process.env.CI || isStackRun)) return;
+
+  if (!Array.isArray(config.watchFolders)) {
+    config.watchFolders = [];
+  }
+
+  for (const pkgDir of internalWorkspaceWatchFolders) {
     if (!config.watchFolders.includes(pkgDir)) {
       config.watchFolders.push(pkgDir);
     }
@@ -105,16 +111,22 @@ config.transformer.getTransformOptions = async () => ({
 const testRouteBlockList = /[\\/]sources[\\/]app[\\/].*\.(test|spec)\.[jt]sx?$/;
 const projectArtifactsBlockList = /[\\/]\.project[\\/]/;
 const nextBuildArtifactsBlockList = /[\\/]\.next[\\/]/;
+const hstackWebArtifactExportBlockList = /[\\/]\.expo[\\/]hstack[\\/]web-artifact-export[\\/]/;
 // Avoid scanning duplicate workspace-local `node_modules/**` trees (typically symlink-heavy) when Metro falls back
 // to the native `find` crawler (no Watchman). We still keep the monorepo root `node_modules` and `apps/ui/node_modules`.
 const workspaceNodeModulesBlockList =
   /[\\/]apps[\\/](?!ui[\\/])[^\\/]+[\\/]node_modules[\\/]|[\\/]packages[\\/][^\\/]+[\\/]node_modules[\\/]/;
+// Also skip nested dependency-private `node_modules/**` trees under watched app/root `node_modules/**`.
+// Metro resolves dependencies through the top-level search paths; crawling nested package-local copies adds a lot of
+// redundant work and frequently hits transient ENOENTs in hoisted/symlinked dependency layouts.
+const nestedDependencyNodeModulesBlockList =
+  /[\\/]node_modules[\\/](?:@[^\\/]+[\\/])?[^\\/]+[\\/]node_modules[\\/]/;
 const existingBlockList = config.resolver.blockList;
   config.resolver.blockList = Array.isArray(existingBlockList)
-  ? [...existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, workspaceNodeModulesBlockList]
+  ? [...existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, hstackWebArtifactExportBlockList, workspaceNodeModulesBlockList, nestedDependencyNodeModulesBlockList]
   : existingBlockList
-    ? [existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, workspaceNodeModulesBlockList]
-    : [testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, workspaceNodeModulesBlockList];
+    ? [existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, hstackWebArtifactExportBlockList, workspaceNodeModulesBlockList, nestedDependencyNodeModulesBlockList]
+    : [testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, hstackWebArtifactExportBlockList, workspaceNodeModulesBlockList, nestedDependencyNodeModulesBlockList];
 
 addInternalWorkspaceWatchFolders();
 
@@ -165,11 +177,41 @@ const watchedHoistedNodeModuleRoots = shouldWatchHoistedNodeModuleChildren
       path.resolve(rootNodeModules, "expo-modules-core"),
       path.resolve(rootNodeModules, "expo-system-ui"),
       ...resolveHoistedExpoPackageWatchFolders(rootNodeModules),
-    ]
+    ].filter((folder) => fs.existsSync(folder))
   : [];
 for (const folder of watchedHoistedNodeModuleRoots) {
   if (!config.watchFolders.includes(folder)) {
     config.watchFolders.push(folder);
+  }
+}
+
+const shouldNarrowWatchFolders = parseEnvBool(process.env.HAPPIER_UI_METRO_NARROW_WATCH_FOLDERS) === true;
+const shouldRestoreMinimalNodeModulesPaths =
+  shouldNarrowWatchFolders && parseEnvBool(process.env.EXPO_NO_METRO_WORKSPACE_ROOT) === true;
+if (shouldRestoreMinimalNodeModulesPaths) {
+  const existingNodeModulesPaths = Array.isArray(config.resolver.nodeModulesPaths)
+    ? config.resolver.nodeModulesPaths
+    : [];
+  // In narrowed CI/stack web runs, keep React and other peer singletons pinned to the app/root
+  // node_modules search paths. Otherwise Metro can walk into nested package-local node_modules
+  // (for example `@react-navigation/native/node_modules/react`) and produce invalid-hook-call
+  // failures from duplicate React copies in the web bundle.
+  config.resolver.disableHierarchicalLookup = true;
+  config.resolver.nodeModulesPaths = [
+    appNodeModules,
+    rootNodeModules,
+    ...existingNodeModulesPaths,
+  ].filter((folder, index, all) => fs.existsSync(folder) && all.indexOf(folder) === index);
+}
+if (shouldNarrowWatchFolders) {
+  const allowedWatchFolders = new Set([
+    ...(shouldRestoreMinimalNodeModulesPaths && fs.existsSync(rootNodeModules) ? [rootNodeModules] : []),
+    ...internalWorkspaceWatchFolders,
+    ...watchedHoistedNodeModuleRoots,
+  ]);
+  config.watchFolders = config.watchFolders.filter((folder) => allowedWatchFolders.has(folder));
+  if (shouldRestoreMinimalNodeModulesPaths && fs.existsSync(rootNodeModules) && !config.watchFolders.includes(rootNodeModules)) {
+    config.watchFolders.unshift(rootNodeModules);
   }
 }
 
@@ -190,8 +232,8 @@ const kokoroJsStub = path.resolve(__dirname, "sources/platform/stubs/kokoroJsStu
 const transformersStub = path.resolve(__dirname, "sources/platform/stubs/huggingfaceTransformersStub.ts");
 const fontFaceObserverWebShim = path.resolve(__dirname, "sources/platform/shims/fontFaceObserverWebShim.ts");
 const reactNativeWebShim = path.resolve(__dirname, "sources/platform/shims/reactNativeWebShim.ts");
-const reactNavigationNativeWebShim = path.resolve(__dirname, "sources/platform/shims/reactNavigationNativeWebShim.ts");
 const expoSystemUiWebStub = path.resolve(__dirname, "sources/platform/stubs/expoSystemUiWebStub.ts");
+const reactNativeDevToolsSettingsManagerWebStub = path.resolve(__dirname, "sources/platform/stubs/reactNativeDevToolsSettingsManagerWebStub.ts");
 const expoAsyncRequireSetupShim = path.resolve(__dirname, "sources/dev/webHmrOptOut/expoAsyncRequireSetupShim.ts");
 const expoMessageSocketShim = path.resolve(__dirname, "sources/dev/webHmrOptOut/expoMessageSocketShim.ts");
 const workspaceEntryPoint = path.resolve(__dirname, "index.ts");
@@ -241,6 +283,44 @@ function resolveExplicitRelativeImportFromOrigin({ originModulePath, moduleName,
   return candidate;
 }
 
+function resolvePackageExportTarget(entry) {
+  if (typeof entry === "string" && entry.length > 0) return entry;
+  if (!entry || typeof entry !== "object") return null;
+  const candidate =
+    entry.default ??
+    entry.import ??
+    entry.require ??
+    null;
+  return typeof candidate === "string" && candidate.length > 0 ? candidate : null;
+}
+
+function resolveInternalWorkspacePackageViaRootNodeModules(moduleName, blockList) {
+  if (!shouldRestoreMinimalNodeModulesPaths) return null;
+  if (typeof moduleName !== "string" || !moduleName.startsWith("@happier-dev/")) return null;
+
+  const parts = moduleName.split("/");
+  if (parts.length < 2) return null;
+  const packageName = parts.length >= 2 ? `${parts[0]}/${parts[1]}` : moduleName;
+  const subpath = parts.length > 2 ? parts.slice(2).join("/") : "";
+  const packageRoot = path.resolve(rootNodeModules, packageName);
+  const packageJsonPath = path.resolve(packageRoot, "package.json");
+  if (!fs.existsSync(packageJsonPath)) return null;
+
+  const packageJson = safeReadJson(packageJsonPath);
+  if (!packageJson || typeof packageJson !== "object") return null;
+  const exportKey = subpath.length > 0 ? `./${subpath}` : ".";
+  const exportTarget = resolvePackageExportTarget(
+    packageJson.exports?.[exportKey] ??
+    (subpath.length === 0 ? packageJson.main : null),
+  );
+  if (!exportTarget) return null;
+
+  const candidate = path.resolve(packageRoot, exportTarget);
+  if (isFileBlockedByMetro(blockList, candidate)) return null;
+  if (!fs.existsSync(candidate)) return null;
+  return candidate;
+}
+
 const defaultResolveRequest = config.resolver.resolveRequest;
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   // Fix event-target-shim/index import - exports define "." not "./index"
@@ -263,6 +343,14 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     if (explicit) {
       return { type: "sourceFile", filePath: explicit };
     }
+  }
+
+  const internalWorkspacePackagePath = resolveInternalWorkspacePackageViaRootNodeModules(
+    resolvedModuleName,
+    config.resolver.blockList,
+  );
+  if (internalWorkspacePackagePath) {
+    return { type: "sourceFile", filePath: internalWorkspacePackagePath };
   }
 
   // Per-tab web QA opt-out: allow disabling Fast Refresh/HMR on specific browser tabs (via sessionStorage),
@@ -303,14 +391,6 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     return { type: "sourceFile", filePath: reactNativeWebShim };
   }
 
-  // `@react-navigation/elements` (via `@react-navigation/native-stack`) expects `NavigationProvider`
-  // to be exported from `@react-navigation/native`. Our pinned navigation version doesn't export it,
-  // which can crash routes that show a header on web. Use a shim that re-exports the real module and
-  // provides a small `NavigationProvider` polyfill.
-  if (platform === "web" && resolvedModuleName === "@react-navigation/native") {
-    return { type: "sourceFile", filePath: reactNavigationNativeWebShim };
-  }
-
   if (
     platform === "web" &&
     (resolvedModuleName === "@huggingface/transformers" ||
@@ -328,6 +408,14 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   // `expo-system-ui` is native-focused; the web bundle does not need to depend on it.
   if (platform === "web" && resolvedModuleName === "expo-system-ui") {
     return { type: "sourceFile", filePath: expoSystemUiWebStub };
+  }
+
+  if (
+    platform === "web" &&
+    resolvedModuleName === "../../src/private/devsupport/rndevtools/ReactDevToolsSettingsManager" &&
+    /[\\/]node_modules[\\/]react-native[\\/]Libraries[\\/]Core[\\/]setUpReactDevTools\.js$/u.test(String(context?.originModulePath ?? ""))
+  ) {
+    return { type: "sourceFile", filePath: reactNativeDevToolsSettingsManagerWebStub };
   }
 
   if (resolvedModuleName === "kokoro-js" || resolvedModuleName.startsWith("kokoro-js/")) {

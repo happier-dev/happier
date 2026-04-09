@@ -85,6 +85,7 @@ export type AgentUiBehavior = Readonly<{
         getRelevantInstallableDepKeys?: (ctx: NewSessionRelevantInstallableDepsContext) => readonly string[];
     }>;
     directSessions?: Readonly<{
+        supportsBackgroundFollow?: boolean;
         browse?: Readonly<{
             order?: number;
             getSourceOptions?: (ctx: {

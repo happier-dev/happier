@@ -72,6 +72,9 @@ This repo ships a **dev-only** Tauri MCP bridge so you can drive the running des
 ```bash
 # Starts the Tauri app and the MCP server together for manual QA.
 yarn tauri:qa
+
+# Canonical one-shot native desktop activity-surfaces QA lane.
+yarn test:native-e2e:activity-surfaces
 ```
 
 **Sanity check the driver port (optional):**
@@ -87,7 +90,7 @@ npx -y install-mcp @hypothesi/tauri-mcp-server --client codex
 ```
 
 **Minimal desktop QA checklist structure (recommended):**
-- Setup: start `yarn tauri:qa`, confirm `yarn tauri:mcp:session:start` connects.
+- Setup: start `yarn tauri:qa` for a long-lived manual session, or run `yarn test:native-e2e:activity-surfaces` for the one-shot deterministic overlay capture. Confirm `yarn tauri:mcp:session:start` connects when debugging the bridge directly.
 - Onboarding: create account, terminal-connect/pairing, session list visible.
 - Local setup flows (desktop-only): file pickers, SSH identity selection, daemon/service controls.
 - Error states: bridge disconnected, daemon not running, daemon unauthenticated, relay drift detected + repair task progress.

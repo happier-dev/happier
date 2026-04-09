@@ -1,17 +1,36 @@
-export function isTauriDesktop(): boolean {
+function readTauriInvoke(): unknown {
   const internals =
     (globalThis as any).__TAURI_INTERNALS__ ??
     (typeof window !== 'undefined' ? (window as any).__TAURI_INTERNALS__ : undefined);
-  return Boolean(internals && typeof (internals as any).invoke === 'function');
+  if (typeof internals?.invoke === 'function') {
+    return internals.invoke;
+  }
+
+  const tauriApi =
+    (globalThis as any).__TAURI__ ??
+    (typeof window !== 'undefined' ? (window as any).__TAURI__ : undefined);
+  return tauriApi?.core?.invoke;
+}
+
+export function isTauriDesktop(): boolean {
+  if (typeof readTauriInvoke() === 'function') {
+    return true;
+  }
+
+  // In some desktop boot phases the global invoke bridge is not yet ready, but the WebView is
+  // already identifiable as a Tauri host. This keeps desktop-only UI (settings/overlay) stable
+  // during early navigation and native-e2e capture.
+  const userAgent =
+    typeof navigator !== 'undefined' && typeof navigator.userAgent === 'string'
+      ? navigator.userAgent
+      : '';
+  return userAgent.toLowerCase().includes('tauri');
 }
 
 export async function invokeTauri<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  const internals =
-    (globalThis as any).__TAURI_INTERNALS__ ??
-    (typeof window !== 'undefined' ? (window as any).__TAURI_INTERNALS__ : undefined);
-  const invokeFromInternals = internals?.invoke;
-  if (typeof invokeFromInternals === 'function') {
-    return invokeFromInternals(command, args) as T;
+  const invoke = readTauriInvoke();
+  if (typeof invoke === 'function') {
+    return invoke(command, args) as T;
   }
 
   const mod = await import('@tauri-apps/api/core');

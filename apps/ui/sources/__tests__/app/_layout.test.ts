@@ -143,14 +143,12 @@ vi.mock('@/activity/badges/ActivityBadgeRuntime', () => ({
     ActivityBadgeRuntime: () => null,
 }));
 
-vi.mock('@/activity/notifications/runtime/ActivityLocalNotificationRuntime', () => ({
-    ActivityLocalNotificationRuntime: () => null,
+vi.mock('@/activity/adapters/ios/runtime/ActivitySurfacesRuntime', () => ({
+    ActivitySurfacesRuntime: () => React.createElement('ActivitySurfacesRuntime'),
 }));
 
-const ActivitySurfacesRuntime = vi.hoisted(() => vi.fn(() => null));
-
-vi.mock('@/activity/adapters/ios/runtime/ActivitySurfacesRuntime', () => ({
-    ActivitySurfacesRuntime,
+vi.mock('@/activity/notifications/runtime/ActivityLocalNotificationRuntime', () => ({
+    ActivityLocalNotificationRuntime: () => null,
 }));
 
 vi.mock('react-native', async () => {
@@ -245,7 +243,6 @@ afterEach(() => {
     vi.resetModules();
     router.replace.mockReset();
     router.push.mockReset();
-    ActivitySurfacesRuntime.mockClear();
     lastNotificationResponse = null;
     platformState.os = 'web';
     isAuthenticated = true;
@@ -273,7 +270,6 @@ describe('RootLayout hooks order', () => {
                     tree!.update(React.createElement(RootLayout));
                 });
             }).not.toThrow();
-            expect(ActivitySurfacesRuntime).toHaveBeenCalled();
         } finally {
             if (tree) {
                 act(() => {
@@ -353,7 +349,7 @@ describe('RootLayout restore navigation', () => {
 });
 
 describe('RootLayout settings routes', () => {
-    it('registers the settings navigator and keeps the settings index route nested', async () => {
+    it('registers only the settings navigator in the parent stack and keeps nested settings children out of it', async () => {
         stubFeatureFetch();
 
         const { default: RootLayout } = await import('@/app/(app)/_layout');
@@ -366,6 +362,20 @@ describe('RootLayout settings routes', () => {
 
         expect(names).toContain('settings');
         expect(names).not.toContain('settings/index');
-        expect(names).toContain('settings/account');
+        expect(names).not.toContain('settings/account');
+        expect(names).not.toContain('settings/machines');
+        expect(names).not.toContain('settings/report-issue');
+        expect(names).not.toContain('settings/session/permissions');
+    }, 60_000);
+});
+
+describe('RootLayout activity surfaces', () => {
+    it('mounts the iOS activity surfaces runtime in the main app shell', async () => {
+        stubFeatureFetch();
+
+        const { default: RootLayout } = await import('@/app/(app)/_layout');
+        const screen = await renderScreen(React.createElement(RootLayout));
+
+        expect(screen.findAllByType('ActivitySurfacesRuntime')).toHaveLength(1);
     }, 60_000);
 });

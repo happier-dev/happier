@@ -1,3 +1,4 @@
+import 'react';
 import { afterAll, afterEach, beforeEach, vi } from 'vitest';
 
 import { installVitestRnShim } from './vitestRnShim';
@@ -572,6 +573,10 @@ vi.mock('expo-constants', () => ({
 // source entrypoints that Vitest cannot transform safely under Node.
 vi.mock('expo-modules-core', async () => await import('./expoModulesCoreStub'));
 
+// Some Expo modules import native-bridge helpers from `expo` directly (e.g. `expo-widgets`).
+// Stub `expo` so those packages can load in Vitest/node without executing native side effects.
+vi.mock('expo', async () => await import('./expoStub'));
+
 // `expo-updates` is native-oriented and pulls in platform-specific modules that Node/Vitest can't parse.
 vi.mock('expo-updates', () => ({
     checkForUpdateAsync: async () => ({ isAvailable: false }),
@@ -653,7 +658,7 @@ vi.mock('react-native-unistyles', () => {
             shadowPopoverArrowBoxShadow: '0 0 0 rgba(0, 0, 0, 0)',
             overlay: {
                 scrim: 'rgba(0, 0, 0, 0.45)',
-                scrimStrong: 'rgba(0, 0, 0, 0.6)',
+                scrimStrong: '#050505',
                 scrimWizard: 'rgba(0, 0, 0, 0.03)',
                 text: '#FFFFFF',
                 textSecondary: 'rgba(255, 255, 255, 0.9)',
@@ -717,13 +722,26 @@ vi.mock('react-native-unistyles', () => {
         },
     };
 
+    const rt = {
+        themeName: 'light',
+        colorScheme: 'light',
+        breakpoint: 'lg',
+        insets: { top: 0, right: 0, bottom: 0, left: 0, ime: 0 },
+        screen: { width: 1200, height: 800 },
+        orientation: 'portrait',
+        fontScale: 1,
+        pixelRatio: 2,
+        rtl: false,
+        statusBar: { height: 0 },
+    } as const;
+
     return {
         StyleSheet: {
-            create: (styles: any) => (typeof styles === 'function' ? styles(theme) : styles),
+            create: (styles: any) => (typeof styles === 'function' ? styles(theme, rt) : styles),
             configure: () => {},
             absoluteFillObject: {},
         },
-        useUnistyles: () => ({ theme }),
+        useUnistyles: () => ({ theme, rt }),
         UnistylesRuntime: {
             setRootViewBackgroundColor: () => {},
             setAdaptiveThemes: () => {},

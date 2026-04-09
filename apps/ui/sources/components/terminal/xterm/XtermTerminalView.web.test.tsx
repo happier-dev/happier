@@ -15,11 +15,19 @@ const openSpy = vi.fn();
 const attachCustomKeyEventHandlerSpy = vi.fn();
 const onDataSpy = vi.fn();
 const disposeSpy = vi.fn();
+let renderServiceRendererValue: unknown = {};
 
 class MockTerminal {
     cols = 80;
     rows = 24;
     options: Record<string, unknown> = {};
+    _core = {
+        _renderService: {
+            _renderer: {
+                value: renderServiceRendererValue,
+            },
+        },
+    };
 
     loadAddon = loadAddonSpy;
     open = openSpy;
@@ -73,6 +81,7 @@ vi.mock('react-native-unistyles', async () => {
 describe('XtermTerminalView.web', () => {
     let container: HTMLDivElement;
     let root: ReturnType<typeof createRoot>;
+    let originalGetBoundingClientRect: typeof HTMLElement.prototype.getBoundingClientRect;
 
     beforeEach(() => {
         fitSpy.mockReset();
@@ -82,6 +91,19 @@ describe('XtermTerminalView.web', () => {
         attachCustomKeyEventHandlerSpy.mockReset();
         onDataSpy.mockReset();
         disposeSpy.mockReset();
+        renderServiceRendererValue = {};
+        originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+        HTMLElement.prototype.getBoundingClientRect = vi.fn(() => ({
+            x: 0,
+            y: 0,
+            top: 0,
+            left: 0,
+            bottom: 320,
+            right: 480,
+            width: 480,
+            height: 320,
+            toJSON: () => ({}),
+        })) as typeof HTMLElement.prototype.getBoundingClientRect;
         container = document.createElement('div');
         document.body.appendChild(container);
         root = createRoot(container);
@@ -91,6 +113,7 @@ describe('XtermTerminalView.web', () => {
         await act(async () => {
             root.unmount();
         });
+        HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
         container.remove();
     });
 
@@ -125,5 +148,31 @@ describe('XtermTerminalView.web', () => {
         });
 
         expect(focusSpy.mock.calls.length).toBe(initialFocusCalls + 1);
+    });
+
+    it('skips fit while the xterm renderer is unavailable', async () => {
+        renderServiceRendererValue = undefined;
+
+        const { XtermTerminalView } = await import('./XtermTerminalView.web');
+
+        await act(async () => {
+            root.render(
+                <XtermTerminalView
+                    testID="terminal"
+                    fontSize={14}
+                    onInput={() => {}}
+                    onResize={() => {}}
+                    onReady={() => {}}
+                />,
+            );
+        });
+
+        await act(async () => {
+            await new Promise((resolve) => {
+                setTimeout(resolve, 40);
+            });
+        });
+
+        expect(fitSpy).not.toHaveBeenCalled();
     });
 });

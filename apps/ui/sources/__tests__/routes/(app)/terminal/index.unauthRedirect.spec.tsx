@@ -68,7 +68,7 @@ describe('TerminalScreen unauthenticated redirect', () => {
             publicKeyB64Url: 'abc123',
             serverUrl: 'https://example.test',
         });
-        expect(replaceMock).toHaveBeenCalledWith('/');
+        expect(replaceMock).toHaveBeenCalledWith('/?server=https%3A%2F%2Fexample.test');
     });
 
     it('ignores loopback server overrides and keeps the active server when redirecting', async () => {
@@ -84,6 +84,6 @@ describe('TerminalScreen unauthenticated redirect', () => {
             publicKeyB64Url: 'abc123',
             serverUrl: 'https://api.happier.dev',
         });
-        expect(replaceMock).toHaveBeenCalledWith('/');
+        expect(replaceMock).toHaveBeenCalledWith('/?server=https%3A%2F%2Fapi.happier.dev');
     });
 });

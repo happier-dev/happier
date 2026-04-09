@@ -1,20 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { View, Platform } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, View } from 'react-native';
 import { Text } from '@/components/ui/text/Text';
 import { useRouter } from 'expo-router';
 import { Typography } from '@/constants/Typography';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { useConnectTerminal } from '@/hooks/session/useConnectTerminal';
-import { Ionicons } from '@expo/vector-icons';
-import { ItemList } from '@/components/ui/lists/ItemList';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { Item } from '@/components/ui/lists/Item';
 import { t } from '@/text';
 import { useAuth } from '@/auth/context/AuthContext';
 import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
 import { normalizeServerUrl, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
 import { clearPendingTerminalConnect, getPendingTerminalConnect, setPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
-import { buildTerminalConnectDeepLink, parseTerminalConnectUrl } from '@/utils/path/terminalConnectUrl';
+import {
+    buildTerminalConnectAuthRedirectHref,
+    buildTerminalConnectDeepLink,
+    parseTerminalConnectUrl,
+} from '@/utils/path/terminalConnectUrl';
 import { consumeTerminalConnectWebBootstrapHash } from '@/utils/path/terminalConnectWebBootstrap';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
@@ -38,6 +37,28 @@ export default function TerminalConnectScreen() {
             router.replace('/');
         }
     });
+
+    const primaryButtonStyle = React.useMemo(() => ({
+        alignItems: 'center' as const,
+        backgroundColor: theme.colors.button.primary.background,
+        borderRadius: 14,
+        minHeight: 52,
+        justifyContent: 'center' as const,
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+    }), [theme.colors.button.primary.background]);
+
+    const secondaryButtonStyle = React.useMemo(() => ({
+        alignItems: 'center' as const,
+        backgroundColor: theme.colors.surface,
+        borderColor: theme.colors.textSecondary,
+        borderRadius: 14,
+        borderWidth: 1,
+        minHeight: 52,
+        justifyContent: 'center' as const,
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+    }), [theme.colors.surface, theme.colors.textSecondary]);
 
     // Extract key from hash on web platform
     useEffect(() => {
@@ -102,7 +123,7 @@ export default function TerminalConnectScreen() {
                     // ignore; auth entry route can still proceed and recover later
                 }
             }
-            router.replace('/');
+            router.replace(buildTerminalConnectAuthRedirectHref({ serverUrl: desiredServerUrl }));
         })(), { tag: 'TerminalConnectScreen.redirectToAuth' });
     }, [auth.isAuthenticated, auth.refreshFromActiveServer, hashProcessed, publicKey, router, serverUrlFromHash]);
 
@@ -124,209 +145,174 @@ export default function TerminalConnectScreen() {
     // Show placeholder for mobile platforms
     if (Platform.OS !== 'web') {
         return (
-            <ItemList>
-                <ItemGroup>
-                    <View style={{ 
-                        alignItems: 'center',
-                        paddingVertical: 32,
-                        paddingHorizontal: 16
+            <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 24, paddingVertical: 32 }}>
+                <View style={{ alignItems: 'center', gap: 12 }}>
+                    <Text style={{
+                        ...Typography.default('semiBold'),
+                        fontSize: 18,
+                        textAlign: 'center',
                     }}>
-                        <Ionicons 
-                            name="laptop-outline" 
-                            size={64} 
-                            color={theme.colors.textSecondary}
-                            style={{ marginBottom: 16 }} 
-                        />
-                        <Text style={{ 
-                            ...Typography.default('semiBold'), 
-                            fontSize: 18, 
-                            textAlign: 'center',
-                            marginBottom: 12 
-                        }}>
-                            {t('terminal.webBrowserRequired')}
-                        </Text>
-                        <Text style={{ 
-                            ...Typography.default(), 
-                            fontSize: 14, 
-                            color: theme.colors.textSecondary,
-                            textAlign: 'center',
-                            lineHeight: 20 
-                        }}>
-                            {t('terminal.webBrowserRequiredDescription')}
-                        </Text>
-                    </View>
-                </ItemGroup>
-            </ItemList>
+                        {t('terminal.webBrowserRequired')}
+                    </Text>
+                    <Text style={{
+                        ...Typography.default(),
+                        color: theme.colors.textSecondary,
+                        fontSize: 14,
+                        lineHeight: 20,
+                        textAlign: 'center',
+                    }}>
+                        {t('terminal.webBrowserRequiredDescription')}
+                    </Text>
+                </View>
+            </View>
         );
     }
 
     // Show loading state while processing hash
     if (!hashProcessed) {
         return (
-            <ItemList>
-                <ItemGroup>
-                    <View style={{ 
-                        alignItems: 'center',
-                        paddingVertical: 32,
-                        paddingHorizontal: 16
-                    }}>
-                        <Text style={{ ...Typography.default(), color: theme.colors.textSecondary }}>
-                            {t('terminal.processingConnection')}
-                        </Text>
-                    </View>
-                </ItemGroup>
-            </ItemList>
+            <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 24, paddingVertical: 32 }}>
+                <View style={{ alignItems: 'center', gap: 12 }}>
+                    <ActivityIndicator color={theme.colors.button.primary.background} />
+                    <Text style={{ ...Typography.default(), color: theme.colors.textSecondary }}>
+                        {t('terminal.processingConnection')}
+                    </Text>
+                </View>
+            </View>
         );
     }
 
     if (!auth.isAuthenticated && publicKey) {
         return (
-            <ItemList>
-                <ItemGroup>
-                    <View style={{ 
-                        alignItems: 'center',
-                        paddingVertical: 32,
-                        paddingHorizontal: 16
-                    }}>
-                        <Text style={{ ...Typography.default(), color: theme.colors.textSecondary, textAlign: 'center', lineHeight: 20 }}>
-                            {t('modals.pleaseSignInFirst')}
-                        </Text>
-                    </View>
-                </ItemGroup>
-            </ItemList>
+            <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 24, paddingVertical: 32 }}>
+                <Text style={{ ...Typography.default(), color: theme.colors.textSecondary, textAlign: 'center', lineHeight: 20 }}>
+                    {t('modals.pleaseSignInFirst')}
+                </Text>
+            </View>
         );
     }
 
     // Show error if no key found
     if (!publicKey) {
         return (
-            <ItemList>
-                <ItemGroup>
-                    <View style={{ 
-                        alignItems: 'center',
-                        paddingVertical: 32,
-                        paddingHorizontal: 16
+            <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 24, paddingVertical: 32 }}>
+                <View style={{ alignItems: 'center', gap: 8 }}>
+                    <Text style={{
+                        ...Typography.default('semiBold'),
+                        color: theme.colors.textDestructive,
+                        fontSize: 16,
+                        textAlign: 'center',
                     }}>
-                        <Ionicons 
-                            name="warning-outline" 
-                            size={48} 
-                            color={theme.colors.warningCritical}
-                            style={{ marginBottom: 16 }} 
-                        />
-                        <Text style={{ 
-                            ...Typography.default('semiBold'), 
-                            fontSize: 16, 
-                            color: theme.colors.textDestructive,
-                            textAlign: 'center',
-                            marginBottom: 8 
-                        }}>
-                            {t('terminal.invalidConnectionLink')}
-                        </Text>
-                        <Text style={{ 
-                            ...Typography.default(), 
-                            fontSize: 14, 
-                            color: theme.colors.textSecondary,
-                            textAlign: 'center',
-                            lineHeight: 20 
-                        }}>
-                            {t('terminal.invalidConnectionLinkDescription')}
-                        </Text>
-                    </View>
-                </ItemGroup>
-            </ItemList>
+                        {t('terminal.invalidConnectionLink')}
+                    </Text>
+                    <Text style={{
+                        ...Typography.default(),
+                        color: theme.colors.textSecondary,
+                        fontSize: 14,
+                        lineHeight: 20,
+                        textAlign: 'center',
+                    }}>
+                        {t('terminal.invalidConnectionLinkDescription')}
+                    </Text>
+                </View>
+            </View>
         );
     }
 
     // Show confirmation screen for valid connection
     return (
-        <ItemList>
-            {/* Connection Request Header */}
-            <ItemGroup>
-                <View style={{ 
-                    alignItems: 'center',
-                    paddingVertical: 24,
-                    paddingHorizontal: 16
-                }}>
-                    <Ionicons 
-                        name="terminal-outline" 
-                        size={48} 
-                        color={theme.colors.accent.blue}
-                        style={{ marginBottom: 16 }} 
-                    />
-                    <Text style={{ 
-                        ...Typography.default('semiBold'), 
-                        fontSize: 20, 
+        <View style={{ flex: 1, paddingHorizontal: 24, paddingVertical: 32 }}>
+            <View style={{ gap: 24 }}>
+                <View style={{ alignItems: 'center', gap: 12 }}>
+                    <Text style={{
+                        ...Typography.default('semiBold'),
+                        fontSize: 20,
                         textAlign: 'center',
-                        marginBottom: 12
                     }}>
                         {t('terminal.connectTerminal')}
                     </Text>
-                    <Text style={{ 
-                        ...Typography.default(), 
-                        fontSize: 14, 
+                    <Text style={{
+                        ...Typography.default(),
                         color: theme.colors.textSecondary,
+                        fontSize: 14,
+                        lineHeight: 20,
                         textAlign: 'center',
-                        lineHeight: 20 
                     }}>
                         {t('terminal.terminalRequestDescription')}
                     </Text>
                 </View>
-            </ItemGroup>
 
-            {/* Connection Details */}
-            <ItemGroup title={t('terminal.connectionDetails')}>
-                <Item
-                    title={t('terminal.publicKey')}
-                    detail={`${publicKey.substring(0, 12)}...`}
-                    icon={<Ionicons name="key-outline" size={29} color={theme.colors.accent.blue} />}
-                    showChevron={false}
-                />
-                <Item
-                    title={t('terminal.encryption')}
-                    detail={t('terminal.endToEndEncrypted')}
-                    icon={<Ionicons name="lock-closed-outline" size={29} color={theme.colors.success} />}
-                    showChevron={false}
-                />
-            </ItemGroup>
-
-            {/* Action Buttons */}
-            <ItemGroup>
-                <View style={{ 
-                    paddingHorizontal: 16,
-                    paddingVertical: 16,
-                    gap: 12 
-                }}>
-                    <RoundButton
-                        testID="terminal-connect-approve"
-                        title={isLoading ? t('terminal.connecting') : t('terminal.acceptConnection')}
-                        onPress={handleConnect}
-                        size="large"
-                        disabled={isLoading}
-                        loading={isLoading}
-                    />
-                    <RoundButton
-                        testID="terminal-connect-reject"
-                        title={t('terminal.reject')}
-                        onPress={handleReject}
-                        size="large"
-                        display="inverted"
-                        disabled={isLoading}
-                    />
+                <View style={{ gap: 8 }}>
+                    <Text style={{ ...Typography.default('semiBold'), fontSize: 14 }}>
+                        {t('terminal.connectionDetails')}
+                    </Text>
+                    <Text style={{ ...Typography.default(), color: theme.colors.textSecondary, fontSize: 14 }}>
+                        {t('terminal.publicKey')}: {publicKey.substring(0, 12)}...
+                    </Text>
+                    <Text style={{ ...Typography.default(), color: theme.colors.textSecondary, fontSize: 14 }}>
+                        {t('terminal.encryption')}: {t('terminal.endToEndEncrypted')}
+                    </Text>
                 </View>
-            </ItemGroup>
 
-            {/* Security Notice */}
-            <ItemGroup 
-                title={t('terminal.security')}
-                footer={t('terminal.securityFooter')}
-            >
-                <Item
-                    title={t('terminal.clientSideProcessing')}
-                    subtitle={t('terminal.linkProcessedLocally')}
-                    icon={<Ionicons name="shield-checkmark-outline" size={29} color={theme.colors.success} />}
-                    showChevron={false}
-                />
-            </ItemGroup>
-        </ItemList>
+                <View style={{ gap: 12 }}>
+                    <Pressable
+                        accessibilityRole="button"
+                        disabled={isLoading}
+                        onPress={handleConnect}
+                        style={({ pressed }) => [
+                            primaryButtonStyle,
+                            { opacity: isLoading ? 0.6 : pressed ? 0.85 : 1 },
+                        ]}
+                        testID="terminal-connect-approve"
+                    >
+                        <View style={{ alignItems: 'center', flexDirection: 'row', gap: 10, justifyContent: 'center' }}>
+                            {isLoading ? <ActivityIndicator color={theme.colors.button.primary.tint} /> : null}
+                            <Text style={{
+                                ...Typography.default('semiBold'),
+                                color: theme.colors.button.primary.tint,
+                                fontSize: 16,
+                                textAlign: 'center',
+                            }}>
+                                {isLoading ? t('terminal.connecting') : t('terminal.acceptConnection')}
+                            </Text>
+                        </View>
+                    </Pressable>
+                    <Pressable
+                        accessibilityRole="button"
+                        disabled={isLoading}
+                        onPress={handleReject}
+                        style={({ pressed }) => [
+                            secondaryButtonStyle,
+                            { opacity: isLoading ? 0.6 : pressed ? 0.85 : 1 },
+                        ]}
+                        testID="terminal-connect-reject"
+                    >
+                        <Text style={{
+                            ...Typography.default('semiBold'),
+                            color: theme.colors.text,
+                            fontSize: 16,
+                            textAlign: 'center',
+                        }}>
+                            {t('terminal.reject')}
+                        </Text>
+                    </Pressable>
+                </View>
+
+                <View style={{ gap: 8 }}>
+                    <Text style={{ ...Typography.default('semiBold'), fontSize: 14 }}>
+                        {t('terminal.security')}
+                    </Text>
+                    <Text style={{ ...Typography.default(), color: theme.colors.textSecondary, fontSize: 14, lineHeight: 20 }}>
+                        {t('terminal.clientSideProcessing')}
+                    </Text>
+                    <Text style={{ ...Typography.default(), color: theme.colors.textSecondary, fontSize: 14, lineHeight: 20 }}>
+                        {t('terminal.linkProcessedLocally')}
+                    </Text>
+                    <Text style={{ ...Typography.default(), color: theme.colors.textSecondary, fontSize: 12, lineHeight: 18 }}>
+                        {t('terminal.securityFooter')}
+                    </Text>
+                </View>
+            </View>
+        </View>
     );
 }

@@ -70,10 +70,7 @@ describe('TerminalConnectScreen hash parsing', () => {
         const screen = await renderScreen(<Screen />);
         await act(async () => {});
 
-        const renderedItems = screen.findAllByType('Item' as any);
-        const publicKeyItem = renderedItems.find((item) => item.props?.title === 'terminal.publicKey');
-        expect(publicKeyItem).toBeTruthy();
-        expect(publicKeyItem?.props?.detail).toBe('abcdefghijkl...');
+        expect(screen.findByTestId('terminal-connect-approve')).toBeTruthy();
         expect(globalWindow.window?.history.replaceState).toHaveBeenCalled();
     });
 
@@ -116,10 +113,7 @@ describe('TerminalConnectScreen hash parsing', () => {
         const screen = await renderScreen(<Screen />);
         await act(async () => {});
 
-        const renderedItems = screen.findAllByType('Item' as any);
-        const publicKeyItem = renderedItems.find((item) => item.props?.title === 'terminal.publicKey');
-        expect(publicKeyItem).toBeTruthy();
-        expect(publicKeyItem?.props?.detail).toBe('abcdefghijkl...');
+        expect(screen.findByTestId('terminal-connect-approve')).toBeTruthy();
     });
 
     it('parses key from the query string when hash is empty', async () => {
@@ -138,10 +132,7 @@ describe('TerminalConnectScreen hash parsing', () => {
         const screen = await renderScreen(<Screen />);
         await act(async () => {});
 
-        const renderedItems = screen.findAllByType('Item' as any);
-        const publicKeyItem = renderedItems.find((item) => item.props?.title === 'terminal.publicKey');
-        expect(publicKeyItem).toBeTruthy();
-        expect(publicKeyItem?.props?.detail).toBe('abcdefghijkl...');
+        expect(screen.findByTestId('terminal-connect-approve')).toBeTruthy();
     });
 
     it('parses key from bootstrapped sessionStorage when the hash was stripped before router init', async () => {
@@ -170,10 +161,7 @@ describe('TerminalConnectScreen hash parsing', () => {
         const screen = await renderScreen(<Screen />);
         await act(async () => {});
 
-        const renderedItems = screen.findAllByType('Item' as any);
-        const publicKeyItem = renderedItems.find((item) => item.props?.title === 'terminal.publicKey');
-        expect(publicKeyItem).toBeTruthy();
-        expect(publicKeyItem?.props?.detail).toBe('abcdefghijkl...');
+        expect(screen.findByTestId('terminal-connect-approve')).toBeTruthy();
         expect(storage.has(TERMINAL_CONNECT_WEB_BOOTSTRAP_STORAGE_KEY)).toBe(false);
     });
 });

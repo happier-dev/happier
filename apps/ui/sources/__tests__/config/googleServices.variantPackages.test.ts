@@ -13,7 +13,7 @@ function readGoogleServicesJson(): any {
 }
 
 describe('google-services.json', () => {
-    it('keeps Firebase Android clients aligned with production, internal, public dev, and preview package ids', () => {
+    it('keeps Firebase Android clients aligned with production, internal, public dev, dev clients, and preview package ids', () => {
         const config = readGoogleServicesJson();
         const packageNames = new Set(
             (config?.client ?? [])
@@ -23,8 +23,10 @@ describe('google-services.json', () => {
 
         expect(packageNames.has('dev.happier.app')).toBe(true);
         expect(packageNames.has('dev.happier.app.internaldev')).toBe(true);
+        expect(packageNames.has('dev.happier.app.internaldev.devclient')).toBe(true);
         expect(packageNames.has('dev.happier.app.internalpreview')).toBe(true);
         expect(packageNames.has('dev.happier.app.publicdev')).toBe(true);
+        expect(packageNames.has('dev.happier.app.publicdev.devclient')).toBe(true);
         expect(packageNames.has('dev.happier.app.preview')).toBe(true);
     });
 });

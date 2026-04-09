@@ -57,6 +57,7 @@ function withCleanEnv<T>(fn: () => T): T {
         'EXPO_APP_OWNER',
         'EXPO_APP_SLUG',
         'HAPPIER_EXPO_RUNTIME_VERSION',
+        'HAPPIER_EXPO_RUNTIME_VERSION_POLICY',
         'EXPO_APP_LOCAL_CONFIG_PATH',
         'EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV',
         'EXPO_PUBLIC_IOS_BACKGROUND_AUDIO',
@@ -212,25 +213,49 @@ describe('app.config.js', () => {
         expect(envValue).toBe('production');
     });
 
-    it('uses Expo fingerprint runtime policy by default for internal/non-store lanes', () => {
+    it('uses the configured native runtime train for internaldev OTA updates', () => {
         const exp = withCleanEnv(() => getPublicConfig());
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const pkg = require('../../../package.json');
+        expect(exp.runtimeVersion).toBe(pkg.happierExpoRuntimeVersion);
+    });
+
+    it('uses the configured native runtime train for internalpreview OTA updates', () => {
+        const exp = withCleanEnv(() => {
+            process.env.APP_ENV = 'internalpreview';
+            return getPublicConfig();
+        });
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const pkg = require('../../../package.json');
+        expect(exp.runtimeVersion).toBe(pkg.happierExpoRuntimeVersion);
+    });
+
+    it('keeps Expo fingerprint runtime policy for the publicdev lane', () => {
+        const exp = withCleanEnv(() => {
+            process.env.APP_ENV = 'publicdev';
+            return getPublicConfig();
+        });
         expect(exp.runtimeVersion).toEqual({ policy: 'fingerprint' });
     });
 
-    it('uses Expo appVersion runtime policy for preview lane OTA updates', () => {
+    it('uses the configured native runtime train for preview lane OTA updates', () => {
         const exp = withCleanEnv(() => {
             process.env.APP_ENV = 'preview';
             return getPublicConfig();
         });
-        expect(exp.runtimeVersion).toEqual({ policy: 'appVersion' });
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const pkg = require('../../../package.json');
+        expect(exp.runtimeVersion).toBe(pkg.happierExpoRuntimeVersion);
     });
 
-    it('uses Expo appVersion runtime policy for production lane OTA updates', () => {
+    it('uses the configured native runtime train for production lane OTA updates', () => {
         const exp = withCleanEnv(() => {
             process.env.APP_ENV = 'production';
             return getPublicConfig();
         });
-        expect(exp.runtimeVersion).toEqual({ policy: 'appVersion' });
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const pkg = require('../../../package.json');
+        expect(exp.runtimeVersion).toBe(pkg.happierExpoRuntimeVersion);
     });
 
     it('allows forcing an explicit Expo runtime version for maintenance OTA trains', () => {

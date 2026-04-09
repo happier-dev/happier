@@ -14,6 +14,7 @@ export const CLAUDE_UI_BEHAVIOR_OVERRIDE: AgentUiBehavior = {
         supportsDetectedConfigScan: true,
     },
     directSessions: {
+        supportsBackgroundFollow: true,
         browse: {
             order: 20,
             getSourceOptions: () => resolveClaudeBrowseSourceOptions(),

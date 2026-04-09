@@ -1,6 +1,6 @@
 import * as React from "react";
 import { View } from "react-native";
-import { Image } from "expo-image";
+import { SafeExpoImage } from '@/components/ui/media/SafeExpoImage';
 
 interface AvatarBrutalistProps {
     id: string;
@@ -487,7 +487,7 @@ export const AvatarBrutalist = React.memo((props: AvatarBrutalistProps) => {
                 alignItems: 'center'
             }}
         >
-            <Image
+            <SafeExpoImage
                 source={imageSource}
                 style={{
                     width: dimension * 0.8,

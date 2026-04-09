@@ -2,7 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createExpoRouterMock, createModalModuleMock, flushHookEffects, renderScreen, type RenderScreenResult } from '@/dev/testkit';
+import { createExpoRouterMock, createModalModuleMock, flushHookEffects, renderScreen, standardCleanup, type RenderScreenResult } from '@/dev/testkit';
 import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUtils';
 import type { PendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent.shared';
 import type { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
@@ -79,10 +79,14 @@ vi.mock('@/components/account/auth/useAuthEntryOptions', () => ({
 }));
 
 const getServerFeaturesSnapshotMock = vi.hoisted(() => vi.fn<typeof getServerFeaturesSnapshot>());
-vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
-    getServerFeaturesSnapshot: (params?: Parameters<typeof getServerFeaturesSnapshot>[0]) =>
-        getServerFeaturesSnapshotMock(params),
-}));
+vi.mock('@/sync/api/capabilities/serverFeaturesClient', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/api/capabilities/serverFeaturesClient')>();
+    return {
+        ...actual,
+        getServerFeaturesSnapshot: (params?: Parameters<typeof getServerFeaturesSnapshot>[0]) =>
+            getServerFeaturesSnapshotMock(params),
+    };
+});
 
 vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
     getPendingTerminalConnect: () => null,
@@ -111,6 +115,10 @@ const platformState = vi.hoisted(() => ({
 const tauriDesktopState = vi.hoisted(() => ({
     value: false,
 }));
+const serverRuntimeState = vi.hoisted(() => ({
+    serverUrl: 'http://api.example.test',
+    listeners: new Set<(snapshot: { serverId: string; serverUrl: string; generation: number }) => void>(),
+}));
 const invokeTauriSpy = vi.hoisted(() => vi.fn<(command: string, args?: Record<string, unknown>) => Promise<unknown>>(async () => undefined));
 vi.mock('@/utils/platform/tauri', () => ({
     isTauriDesktop: () => tauriDesktopState.value,
@@ -127,6 +135,11 @@ vi.mock('react-native', async () => {
             select: (options: Record<string, unknown>) => options?.[platformState.os] ?? options?.default,
         },
     });
+});
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
 });
 
 vi.mock('react-native-safe-area-context', () => ({
@@ -186,9 +199,14 @@ vi.mock('@/sync/domains/server/serverRuntime', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/sync/domains/server/serverRuntime')>();
     return {
         ...actual,
-        getActiveServerSnapshot: () => ({ serverUrl: 'http://api.example.test' }),
+        getActiveServerSnapshot: () => ({ serverId: 'server-a', serverUrl: serverRuntimeState.serverUrl, generation: 1 }),
         isActiveServerSelectionExplicit: () => false,
-        subscribeActiveServer: () => () => {},
+        subscribeActiveServer: (listener: (snapshot: { serverId: string; serverUrl: string; generation: number }) => void) => {
+            serverRuntimeState.listeners.add(listener);
+            return () => {
+                serverRuntimeState.listeners.delete(listener);
+            };
+        },
     };
 });
 
@@ -356,12 +374,18 @@ function mockGithubAuthFeatures(action: 'provision' | 'login', mode: 'keyed' | '
     });
 }
 
-afterEach(() => {
+afterEach(async () => {
+    await Promise.allSettled(fireAndForgetPromises.splice(0));
+    standardCleanup();
     vi.clearAllMocks();
     platformState.os = 'web';
     tauriDesktopState.value = false;
+    serverRuntimeState.serverUrl = 'http://api.example.test';
+    serverRuntimeState.listeners.clear();
     getPendingSetupIntentMock.mockReturnValue(null);
     setPendingSetupIntentMock.mockReset();
+    delete (globalThis as any).window;
+    delete (globalThis as any).document;
 });
 
 describe('Home external auth start', () => {
@@ -406,6 +430,44 @@ describe('Home external auth start', () => {
 
         expect(setPendingSetupIntentMock).not.toHaveBeenCalled();
         expect(expoRouterMock.spies.replace).not.toHaveBeenCalledWith('/setup');
+    });
+
+    it('holds the unauthenticated wizard until a cross-server override settles, then resumes auth actions on the target relay', async () => {
+        (globalThis as any).document = {};
+        (globalThis as any).window = {
+            location: {
+                href: 'https://app.example.test/?server=https%3A%2F%2Fstack.example.test',
+                pathname: '/',
+                search: '?server=https%3A%2F%2Fstack.example.test',
+                hash: '',
+            },
+            history: { replaceState: vi.fn() },
+        };
+
+        serverRuntimeState.serverUrl = 'http://api.example.test';
+
+        const Home = await loadHome();
+        mockGithubAuthFeatures('provision', 'keyed');
+        getPendingSetupIntentMock.mockReturnValue(null);
+
+        const screen = await renderScreen(<Home />);
+        await flushHookEffects({ cycles: 1, turns: 2 });
+        await advanceWizardToAuth(screen);
+
+        expect(screen.findAllByTestId('welcome-restore')).toHaveLength(0);
+        expect(screen.findAllByTestId('welcome-create-account')).toHaveLength(0);
+
+        await act(async () => {
+            serverRuntimeState.serverUrl = 'https://stack.example.test';
+            for (const listener of serverRuntimeState.listeners) {
+                listener({ serverId: 'server-b', serverUrl: serverRuntimeState.serverUrl, generation: 2 });
+            }
+        });
+        await flushHookEffects({ cycles: 1, turns: 2 });
+        await advanceWizardToAuth(screen);
+
+        expect(screen.findAllByTestId('welcome-restore')).toHaveLength(1);
+        expect(screen.findAllByTestId('welcome-create-account').length).toBeGreaterThan(0);
     });
 
     it('lets users skip directly to auth from the wizard header', async () => {

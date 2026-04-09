@@ -29,6 +29,21 @@ const DEFAULT_FONT_FAMILY =
 
 const OUTPUT_PREVIEW_MAX_CHARS = 4096;
 
+type TerminalWithInternalRenderer = Terminal & Readonly<{
+    _core?: Readonly<{
+        _renderService?: Readonly<{
+            _renderer?: Readonly<{
+                value?: unknown;
+            }>;
+        }>;
+    }>;
+}>;
+
+function isXtermRendererReady(term: Terminal | null): boolean {
+    const renderer = (term as TerminalWithInternalRenderer | null)?._core?._renderService?._renderer?.value;
+    return renderer != null;
+}
+
 export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerminalViewProps>(function XtermTerminalView(
     props,
     ref,
@@ -164,9 +179,15 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
         if (!fitAddon || !term || !container) {
             return;
         }
+        if (!term.element || !term.element.isConnected) {
+            return;
+        }
 
         const rect = container.getBoundingClientRect();
         if (rect.width < 24 || rect.height < 24) {
+            return;
+        }
+        if (!isXtermRendererReady(term)) {
             return;
         }
 

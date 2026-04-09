@@ -106,6 +106,7 @@ export const CODEX_UI_BEHAVIOR_OVERRIDE: AgentUiBehavior = {
         getRelevantInstallableDepKeys: getCodexNewSessionRelevantInstallableDepKeys,
     },
     directSessions: {
+        supportsBackgroundFollow: true,
         browse: {
             order: 10,
             getSourceOptions: ({ profile, settings }) => resolveCodexBrowseSourceOptions({ profile, settings }),

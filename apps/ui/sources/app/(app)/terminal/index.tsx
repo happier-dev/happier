@@ -14,7 +14,7 @@ import { t } from '@/text';
 import { useAuth } from '@/auth/context/AuthContext';
 import { getServerUrl } from '@/sync/domains/server/serverConfig';
 import { clearPendingTerminalConnect, setPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
-import { buildTerminalConnectDeepLink } from '@/utils/path/terminalConnectUrl';
+import { buildTerminalConnectAuthRedirectHref, buildTerminalConnectDeepLink } from '@/utils/path/terminalConnectUrl';
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
 import { resolveEffectiveServerUrlOverride } from '@/sync/domains/server/url/serverUrlOverridePolicy';
 
@@ -66,7 +66,9 @@ export default function TerminalScreen() {
             publicKeyB64Url: publicKey,
             serverUrl: effectiveTarget || currentServerUrl || getServerUrl(),
         });
-        router.replace('/');
+        router.replace(buildTerminalConnectAuthRedirectHref({
+            serverUrl: effectiveTarget || currentServerUrl || getServerUrl(),
+        }));
     }, [auth.isAuthenticated, publicKey, router, serverUrl]);
 
     const handleConnect = async () => {

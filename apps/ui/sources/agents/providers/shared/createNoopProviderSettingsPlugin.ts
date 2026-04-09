@@ -1,5 +1,5 @@
 import type { AgentId } from '@/agents/catalog/catalog';
-import * as React from 'react';
+import type React from 'react';
 
 import type { ProviderSettingsPlugin, TranslatableText } from './providerSettingsPlugin';
 
@@ -9,16 +9,13 @@ export function createNoopProviderSettingsPlugin<TProviderId extends AgentId>(pa
     icon: Readonly<{ ionName: string; color: string }>;
     ExtraSectionsComponent?: React.ComponentType<Readonly<{ providerId: TProviderId }>>;
 }>): ProviderSettingsPlugin {
-    const ExtraSectionsComponent = params.ExtraSectionsComponent
-        ? ((_: Readonly<{ providerId: AgentId }>) =>
-            React.createElement(params.ExtraSectionsComponent!, { providerId: params.providerId }))
-        : undefined;
-
     return {
         providerId: params.providerId,
         title: params.title,
         icon: params.icon,
-        ExtraSectionsComponent,
+        // Pass through provider-owned extra sections without importing React at module init time.
+        // The provider settings screen already renders this with the correct providerId.
+        ExtraSectionsComponent: params.ExtraSectionsComponent as unknown as ProviderSettingsPlugin['ExtraSectionsComponent'],
         settings: {},
         uiSections: [],
         buildOutgoingMessageMetaExtras: () => ({}),

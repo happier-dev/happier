@@ -246,6 +246,12 @@ export function BaseModal({
     if (isWeb) {
         if (!modalPresence.present) return null;
 
+        const resolvedWebPortalTarget: ModalPortalTarget = (() => {
+            if (webPortalTarget) return webPortalTarget;
+            if (typeof document === 'undefined') return null;
+            return document.body ?? null;
+        })();
+
         const { Branch: DismissableLayerBranch } = radixDismissableLayer!;
 
         const overlayStyle: React.CSSProperties = {
@@ -391,11 +397,11 @@ export function BaseModal({
             </>
         );
 
-        if (webPortalTarget) {
+        if (resolvedWebPortalTarget) {
             try {
                 const ReactDOM = requireReactDOM();
                 if (ReactDOM?.createPortal) {
-                    return ReactDOM.createPortal(webModalNode, webPortalTarget);
+                    return ReactDOM.createPortal(webModalNode, resolvedWebPortalTarget);
                 }
             } catch {
                 // Fall back to inline rendering if the portal target is unusable in the current runtime.
