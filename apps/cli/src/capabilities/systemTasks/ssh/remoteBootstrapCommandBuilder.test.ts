@@ -45,7 +45,30 @@ describe('buildRemoteBootstrapCommand', () => {
 
     expect(command).toContain("HAPPIER_DAEMON_SERVICE_SERVER_URL='https://relay.example.test'");
     expect(command).toContain("HAPPIER_DAEMON_SERVICE_WEBAPP_URL='https://app.example.test'");
-    expect(command).toContain('daemon service install --mode=user --json');
+    expect(command).toContain('service install --mode=user --json');
+  });
+
+  it('supports remote background service inventory and full replacement commands', () => {
+    expect(buildRemoteBootstrapCommand({
+      label: 'daemon.service.list',
+      serverUrl: 'https://relay.example.test',
+    })).toContain('service list --json');
+
+    expect(buildRemoteBootstrapCommand({
+      label: 'daemon.service.uninstallAll',
+      serverUrl: 'https://relay.example.test',
+    })).toContain('service uninstall --all --yes --json');
+  });
+
+  it('uses the canonical background-service surface for restart lifecycle commands', () => {
+    const command = buildRemoteBootstrapCommand({
+      label: 'daemon.service.restart',
+      serverUrl: 'https://relay.example.test',
+      daemonServiceMode: 'user',
+    });
+
+    expect(command).toContain('service restart --mode=user --json');
+    expect(command).not.toContain('daemon service restart');
   });
 
   it('supports localServerUrl so remote API calls + daemon service prefer a locally hosted relay runtime while preserving the public URL', () => {

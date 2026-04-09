@@ -12,7 +12,9 @@ export type RemoteBootstrapCommandLabel =
   | 'daemon.service.list'
   | 'daemon.service.install'
   | 'daemon.service.uninstallAll'
-  | 'daemon.service.start';
+  | 'daemon.service.start'
+  | 'daemon.service.stop'
+  | 'daemon.service.restart';
 
 function deriveWebappUrl(serverUrl: string, explicitWebappUrl?: string): string {
   if (typeof explicitWebappUrl === 'string' && explicitWebappUrl.trim()) {
@@ -134,6 +136,18 @@ export function buildRemoteBootstrapCommand(params: Readonly<{
       return `env ${daemonServiceEnv} sudo -E ${happier} service start --mode=system --json`;
     }
     return `${daemonServiceEnv} ${happier} service start --mode=user --json`;
+  }
+  if (params.label === 'daemon.service.stop') {
+    if (params.daemonServiceMode === 'system') {
+      return `sudo -E ${happier} service stop --mode=system --json`;
+    }
+    return `${happier} service stop --mode=user --json`;
+  }
+  if (params.label === 'daemon.service.restart') {
+    if (params.daemonServiceMode === 'system') {
+      return `sudo -E ${happier} service restart --mode=system --json`;
+    }
+    return `${happier} service restart --mode=user --json`;
   }
   throw new Error(`Unsupported remote bootstrap command: ${params.label satisfies never}`);
 }

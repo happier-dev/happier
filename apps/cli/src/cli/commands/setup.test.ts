@@ -109,6 +109,16 @@ describe('happier setup', () => {
         {
           applyServerSelectionFromArgs,
           readCredentialsFn: async () => null,
+          readBackgroundServiceSetupGuidanceFn: async () => ({
+            targetReleaseChannel: 'stable',
+            targetServerUrl: 'https://relay.example.test',
+            currentDefaultReleaseChannel: 'stable',
+            managedReleaseChannels: [],
+            exactDefaultServiceExists: false,
+            conflictingServices: [],
+            shouldOfferDefaultReleaseChannelSwitch: false,
+            shouldPromptForServiceReplacement: false,
+          }),
           isInteractiveTerminalFn: () => false,
           promptInputFn: async () => {
             throw new Error('prompt should not be used');
@@ -408,6 +418,94 @@ describe('happier setup', () => {
       expect(calls).toEqual([
         ['providers', 'setup', '--yes'],
       ]);
+    });
+  });
+
+  it('does not switch the default release-channel when setup is later cancelled by keeping conflicting services', async () => {
+    await withTempDir('happier-setup-guided-decline-after-switch-', async (homeDir) => {
+      envScope.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_SERVER_URL: 'https://relay.example.test', HAPPIER_ACTIVE_SERVER_ID: undefined });
+      vi.resetModules();
+      const { handleSetupCommand } = await importHandleSetupCommand();
+
+      const calls: string[][] = [];
+      const writeDefaultManagedReleaseChannelFn: typeof import('@happier-dev/cli-common/firstPartyRuntime').writeDefaultManagedReleaseChannel = vi.fn(async () => ({
+        releaseChannel: 'preview' as const,
+        statePath: `${homeDir}/default-cli-release-channel.json`,
+      }));
+      const syncInstalledFirstPartyShimsFn = vi.fn(async (): Promise<SyncInstalledFirstPartyShimsResult> => ({
+        shimPaths: [`${homeDir}/bin/happier`],
+      }));
+      const promptInputFn = vi.fn<(prompt: string) => Promise<string>>()
+        .mockResolvedValueOnce('y')
+        .mockResolvedValueOnce('n');
+
+      await handleSetupCommand(
+        ['--relay-url', 'https://relay.example.test', '--yes'],
+        {
+          applyServerSelectionFromArgs: async (args) => args,
+          readCredentialsFn: async () => ({ encryption: { type: 'legacy', secret: new Uint8Array([1]) }, token: 't' } as any),
+          readSettingsFn: async () => ({ machineId: 'mid_123' } as any),
+          isInteractiveTerminalFn: () => true,
+          promptInputFn,
+          readBackgroundServiceSetupGuidanceFn: async () => ({
+            targetReleaseChannel: 'preview',
+            targetServerUrl: 'https://relay.example.test',
+            currentDefaultReleaseChannel: 'stable',
+            managedReleaseChannels: [
+              {
+                releaseChannel: 'stable',
+                label: 'stable',
+                version: '1.0.0',
+                installationId: 'stable-install',
+                installationPath: '/managed/stable',
+                invokerName: 'happier',
+                isDefault: true,
+                onPath: true,
+              },
+              {
+                releaseChannel: 'preview',
+                label: 'preview',
+                version: '2.0.0',
+                installationId: 'preview-install',
+                installationPath: '/managed/preview',
+                invokerName: 'hprev',
+                isDefault: false,
+                onPath: true,
+              },
+            ],
+            exactDefaultServiceExists: false,
+            conflictingServices: [
+              {
+                label: 'com.happier.cli.daemon.stable.default',
+                releaseChannel: 'stable',
+                targetMode: 'pinned',
+                running: true,
+                serverUrl: 'https://relay.example.test',
+              },
+            ],
+            shouldOfferDefaultReleaseChannelSwitch: true,
+            shouldPromptForServiceReplacement: true,
+          }),
+          writeDefaultManagedReleaseChannelFn,
+          syncInstalledFirstPartyShimsFn,
+          runHappyCliStepFn: async (argv) => {
+            calls.push([...argv]);
+            return 0;
+          },
+        },
+      );
+
+      expect(promptInputFn).toHaveBeenNthCalledWith(
+        1,
+        'Make preview the default release-channel before installing the default background service targeting https://relay.example.test? [Y/n] ',
+      );
+      expect(promptInputFn).toHaveBeenNthCalledWith(
+        2,
+        'This computer already has conflicting Happier background services. Replace them before installing the default background service targeting https://relay.example.test? [Y/n] ',
+      );
+      expect(writeDefaultManagedReleaseChannelFn).not.toHaveBeenCalled();
+      expect(syncInstalledFirstPartyShimsFn).not.toHaveBeenCalled();
+      expect(calls).toEqual([]);
     });
   });
 

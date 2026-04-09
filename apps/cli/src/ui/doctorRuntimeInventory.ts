@@ -76,7 +76,7 @@ function formatInstallationLine(
 function formatServiceLine(service: HappierDoctorService): string {
     const serviceTypeLabel =
     service.serviceType === 'daemon'
-      ? 'Daemon service'
+      ? 'Background service'
       : service.serviceType === 'stack-service'
         ? 'Stack service'
         : service.serviceType === 'self-host-service'

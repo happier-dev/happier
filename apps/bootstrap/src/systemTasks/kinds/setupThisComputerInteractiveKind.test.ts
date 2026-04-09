@@ -273,6 +273,103 @@ describe('createSetupThisComputerInteractiveTaskKind', () => {
     });
   });
 
+  it('does not switch the default release channel when setup is later cancelled by keeping conflicting services', async () => {
+    const invocations: string[] = [];
+    const kind = createSetupThisComputerInteractiveTaskKind({
+      readActiveRelayProfile: async () => ({
+        serverUrl: 'https://relay.example.test',
+        webappUrl: 'https://app.example.test',
+        localServerUrl: null,
+      }),
+      createRecipeExecutor: () => createRecipeExecutor(invocations),
+      readBackgroundServiceSetupGuidance: async () => ({
+        targetReleaseChannel: 'preview',
+        targetServerUrl: 'https://relay.example.test',
+        currentDefaultReleaseChannel: 'stable',
+        managedReleaseChannels: [
+          {
+            releaseChannel: 'stable',
+            label: 'stable',
+            version: '1.0.0',
+            installationId: 'stable',
+            installationPath: '/managed/stable',
+            invokerName: 'happier',
+            isDefault: true,
+            onPath: true,
+          },
+          {
+            releaseChannel: 'preview',
+            label: 'preview',
+            version: '2.0.0',
+            installationId: 'preview',
+            installationPath: '/managed/preview',
+            invokerName: 'hprev',
+            isDefault: false,
+            onPath: true,
+          },
+        ],
+        conflictingServices: [
+          {
+            label: 'com.happier.cli.daemon.stable.default',
+            releaseChannel: 'stable',
+            targetMode: 'pinned',
+            running: true,
+            serverUrl: 'https://relay.example.test',
+          },
+        ],
+        exactDefaultServiceExists: true,
+        shouldOfferDefaultReleaseChannelSwitch: true,
+        shouldPromptForServiceReplacement: true,
+      }),
+      switchDefaultReleaseChannel: async (releaseChannel) => {
+        invocations.push(`switchDefaultReleaseChannel:${releaseChannel}`);
+      },
+      uninstallExistingDaemonServices: async () => {
+        invocations.push('uninstallExistingDaemonServices');
+      },
+    });
+
+    const runner = createSystemTasksRunner({
+      kinds: {
+        'setup.thisComputer.v1': kind,
+      },
+    });
+
+    await runner.start({
+      taskId: 'setup-task-decline-after-switch',
+      kind: 'setup.thisComputer.v1',
+      params: {
+        surface: 'desktop.ui',
+        target: 'thisComputer',
+        channel: 'preview',
+      },
+    });
+
+    const releaseChannelPrompt = await waitForPendingPrompt(runner, { taskId: 'setup-task-decline-after-switch', cursor: 0 });
+    await runner.respond({
+      taskId: 'setup-task-decline-after-switch',
+      answer: { switchDefaultReleaseChannel: true },
+    });
+
+    const replacePrompt = await waitForPendingPrompt(runner, { taskId: 'setup-task-decline-after-switch', cursor: releaseChannelPrompt.nextCursor });
+    await runner.respond({
+      taskId: 'setup-task-decline-after-switch',
+      answer: { replaceExistingServices: false },
+    });
+
+    const finalPoll = await waitForResult(runner, { taskId: 'setup-task-decline-after-switch', cursor: replacePrompt.nextCursor });
+    expect(finalPoll.result).toEqual({
+      protocolVersion: 1,
+      taskId: 'setup-task-decline-after-switch',
+      ok: false,
+      error: {
+        code: 'background_service_conflict_declined',
+        message: 'Setup was cancelled because existing background services were kept.',
+      },
+    });
+    expect(invocations).toEqual([]);
+  });
+
   it('fails with a release-channel specific error when the user keeps the current default release channel', async () => {
     const kind = createSetupThisComputerInteractiveTaskKind({
       readActiveRelayProfile: async () => ({

@@ -111,9 +111,9 @@ export async function runRemoteDaemonServiceCommandDefault(params: Readonly<{
     knownHostsMode: knownHosts.mode === 'app' ? 'app' : 'system',
     knownHostsPath: knownHosts.mode === 'app' ? knownHosts.path : undefined,
     auth,
-    remoteCommand: `${happier} daemon service ${action} --mode=${mode} --json`,
+    remoteCommand: `${happier} service ${action} --mode=${mode} --json`,
     connectTimeoutSec: 10,
-    errorPrefix: `Remote daemon service command failed for ${ssh.target}`,
+    errorPrefix: `Remote background service command failed for ${ssh.target}`,
   });
 }
 
