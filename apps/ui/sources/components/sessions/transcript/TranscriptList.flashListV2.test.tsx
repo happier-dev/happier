@@ -13,6 +13,7 @@ import {
 let capturedFlashListProps: any = null;
 let renderedFlatListCount = 0;
 let transcriptListImplementationSetting: 'flash_v2' | 'flatlist_legacy' = 'flash_v2';
+let platformOs: 'web' | 'ios' = 'web';
 
 vi.mock('@shopify/flash-list', () => ({
     FlashList: (props: any) => {
@@ -52,8 +53,10 @@ installTranscriptCommonModuleMocks({
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
             Platform: {
-                OS: 'web',
-                select: (values: any) => values?.web ?? values?.default,
+                get OS() {
+                    return platformOs;
+                },
+                select: (values: any) => values?.[platformOs] ?? values?.default,
             },
             View: (props: any) => React.createElement('View', props, props.children),
             ActivityIndicator: () => React.createElement('ActivityIndicator'),
@@ -94,6 +97,7 @@ describe('TranscriptList (FlashList v2)', () => {
         capturedFlashListProps = null;
         renderedFlatListCount = 0;
         transcriptListImplementationSetting = 'flash_v2';
+        platformOs = 'web';
     });
 
     it('renders FlashList with startRenderingFromBottom enabled when selected', async () => {
@@ -108,5 +112,18 @@ describe('TranscriptList (FlashList v2)', () => {
         expect(renderedFlatListCount).toBe(0);
         expect(capturedFlashListProps).not.toBeNull();
         expect(capturedFlashListProps.maintainVisibleContentPosition?.startRenderingFromBottom).toBe(true);
+    });
+
+    it('keeps drag scrolling from dismissing the keyboard on iOS', async () => {
+        platformOs = 'ios';
+        const { TranscriptList } = await import('./TranscriptList');
+        await renderScreen(<TranscriptList
+                    sessionId="s1"
+                    metadata={null}
+                    messages={[{ kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'hi' } as any]}
+                    interaction={{ canSendMessages: true, canApprovePermissions: true }}
+                />);
+
+        expect(capturedFlashListProps.keyboardDismissMode).toBe('none');
     });
 });

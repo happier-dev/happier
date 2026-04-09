@@ -1857,7 +1857,7 @@ const ChatListInternal = React.memo((props: {
                 }}
                 scrollEventThrottle={16}
                 keyboardShouldPersistTaps="handled"
-                keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'none'}
+          keyboardDismissMode="none"
                 renderItem={renderItem}
                 onEndReachedThreshold={0.2}
                 onEndReached={() => {
@@ -2003,7 +2003,7 @@ const ChatListInternal = React.memo((props: {
                         }}
                       scrollEventThrottle={16}
                       keyboardShouldPersistTaps="handled"
-                      keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'none'}
+                      keyboardDismissMode="none"
                       renderItem={renderItem}
                       onStartReachedThreshold={0.2}
                       onStartReached={() => {

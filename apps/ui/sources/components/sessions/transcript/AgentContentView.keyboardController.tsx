@@ -4,6 +4,7 @@ import { View } from 'react-native';
 import { useKeyboardHandler, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
+import { useKeyboardDismissOnTap } from './useKeyboardDismissOnTap';
 
 interface AgentContentViewProps {
     input?: React.ReactNode | null;
@@ -16,6 +17,7 @@ export const AgentContentView: React.FC<AgentContentViewProps> = React.memo(({ i
     const keyboard = useReanimatedKeyboardAnimation();
     const headerHeight = useHeaderHeight();
     const animatedPadding = useSharedValue(0);
+    const keyboardDismissOnTapHandlers = useKeyboardDismissOnTap();
 
     useKeyboardHandler(
         {
@@ -47,7 +49,10 @@ export const AgentContentView: React.FC<AgentContentViewProps> = React.memo(({ i
 
     return (
         <View style={{ flexBasis: 0, flexGrow: 1 }}>
-            <View style={{ flexBasis: 0, flexGrow: 1 }}>
+            <View
+                style={{ flexBasis: 0, flexGrow: 1 }}
+                {...keyboardDismissOnTapHandlers}
+            >
                 {content ? (
                     <Animated.View
                         pointerEvents="box-none"

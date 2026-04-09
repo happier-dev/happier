@@ -10,13 +10,16 @@ import { installNewSessionComponentsCommonModuleMocks } from './newSessionCompon
 const mockEnv = vi.hoisted(() => ({
     platform: 'ios' as 'ios' | 'android',
 }));
+const useKeyboardHandlerMock = vi.fn();
 
 installNewSessionComponentsCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
             Platform: {
-                OS: mockEnv.platform,
+                get OS() {
+                    return mockEnv.platform;
+                },
                 select: (value: any) => value[mockEnv.platform] ?? value.native ?? value.default,
             },
             View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -38,7 +41,29 @@ installNewSessionComponentsCommonModuleMocks({
 vi.mock('react-native-keyboard-controller', () => ({
     KeyboardAvoidingView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement('KeyboardAvoidingView', props, props.children),
+    useKeyboardHandler: (...args: any[]) => useKeyboardHandlerMock(...args),
+    useReanimatedKeyboardAnimation: () => ({
+        height: { value: 240 },
+        progress: { value: 1 },
+    }),
 }));
+
+vi.mock('react-native-safe-area-context', () => ({
+    useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+    initialWindowMetrics: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
+}));
+
+vi.mock('react-native-reanimated', async () => {
+    const React = await import('react');
+    return {
+        __esModule: true,
+        default: {
+            View: (props: any) => React.createElement('AnimatedView', props, props.children),
+        },
+        useAnimatedStyle: (fn: any) => fn(),
+        useSharedValue: (initial: any) => ({ value: initial }),
+    };
+});
 
 vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
     useKeyboardHeight: () => 0,
@@ -121,6 +146,7 @@ vi.mock('color', () => ({
 afterEach(() => {
     standardCleanup();
     mockEnv.platform = 'ios';
+    useKeyboardHandlerMock.mockReset();
 });
 
 function buildSimplePanel() {
@@ -259,8 +285,8 @@ function buildWizard() {
 }
 
 describe('new-session native keyboard avoiding', () => {
-    it.each(['ios', 'android'] as const)('uses automatic offset for the simple panel on %s', async (platform) => {
-        mockEnv.platform = platform;
+    it('uses automatic offset for the simple panel on iOS', async () => {
+        mockEnv.platform = 'ios';
         const screen = await renderScreen(await buildSimplePanel());
 
         const keyboardAvoidingView = screen.tree.root.findByType('KeyboardAvoidingView' as any);
@@ -269,13 +295,31 @@ describe('new-session native keyboard avoiding', () => {
         expect(keyboardAvoidingView.props.keyboardVerticalOffset).toBe(16);
     });
 
-    it.each(['ios', 'android'] as const)('uses automatic offset for the wizard on %s', async (platform) => {
-        mockEnv.platform = platform;
+    it('uses the native keyboard-shift host for the simple panel on Android', async () => {
+        mockEnv.platform = 'android';
+        const screen = await renderScreen(await buildSimplePanel());
+
+        expect(screen.tree.root.findAllByType('KeyboardAvoidingView' as any)).toHaveLength(0);
+        expect(screen.tree.root.findAllByType('AnimatedView' as any).length).toBeGreaterThan(0);
+        expect(useKeyboardHandlerMock).toHaveBeenCalled();
+    });
+
+    it('uses automatic offset for the wizard on iOS', async () => {
+        mockEnv.platform = 'ios';
         const screen = await renderScreen(await buildWizard());
 
         const keyboardAvoidingView = screen.tree.root.findByType('KeyboardAvoidingView' as any);
         expect(keyboardAvoidingView.props.automaticOffset).toBe(true);
         expect(keyboardAvoidingView.props.behavior).toBe('translate-with-padding');
         expect(keyboardAvoidingView.props.keyboardVerticalOffset).toBe(16);
+    });
+
+    it('uses the native keyboard-shift host for the wizard on Android', async () => {
+        mockEnv.platform = 'android';
+        const screen = await renderScreen(await buildWizard());
+
+        expect(screen.tree.root.findAllByType('KeyboardAvoidingView' as any)).toHaveLength(0);
+        expect(screen.tree.root.findAllByType('AnimatedView' as any).length).toBeGreaterThan(0);
+        expect(useKeyboardHandlerMock).toHaveBeenCalled();
     });
 });

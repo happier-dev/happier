@@ -438,10 +438,12 @@ describe('NewSessionSimplePanel', () => {
         );
 
         const allViews = screen.findAllByType('View');
+        const allPressables = screen.findAllByType('Pressable');
 
         expect(screen.findAllByType('KeyboardAvoidingView')).toHaveLength(0);
         expect(allViews.some((view) => flattenStyle(view.props.style).justifyContent === 'flex-end')).toBe(true);
-        expect(allViews.some((view) => view.props.style?.marginTop === 'auto')).toBe(true);
+        expect(allViews.some((view) => view.props.style?.marginTop === 'auto')).toBe(false);
+        expect(allPressables.some((pressable) => flattenStyle(pressable.props.style).flex === 1)).toBe(true);
         expect(allViews.some((view) => flattenStyle(view.props.style).paddingBottom === 56)).toBe(true);
     });
 

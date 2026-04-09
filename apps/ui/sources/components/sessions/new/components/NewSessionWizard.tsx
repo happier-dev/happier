@@ -1,7 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { Platform, ScrollView, View, useWindowDimensions, type View as RNView } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { LinearGradient } from 'expo-linear-gradient';
 import Color from 'color';
 import { Typography } from '@/constants/Typography';
@@ -39,6 +38,8 @@ import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
 import { useNewSessionAttachmentsController } from '@/components/sessions/new/attachments/useNewSessionAttachmentsController';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
+import { NewSessionComposerKeyboardHost } from './NewSessionComposerKeyboardHost';
+import { NewSessionKeyboardContainer } from './NewSessionKeyboardContainer';
 
 
 export interface NewSessionWizardLayoutProps {
@@ -347,7 +348,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         },
     ];
     const content = (
-        <>
+        <NewSessionKeyboardContainer style={shellStyle}>
             <View
                 ref={props.popoverBoundaryRef}
                 style={{
@@ -703,136 +704,125 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                 </ScrollView>
 
                 {/* AgentInput - Sticky at bottom */}
-                <View style={{
-                    paddingTop: 12,
-                    paddingBottom: newSessionBottomPadding + webKeyboardInset,
-                    position: 'relative',
-                    overflow: 'visible',
-                    ...Platform.select({
-                        web: { boxShadow: '0 -10px 30px rgba(0,0,0,0.08)' } as any,
-                        ios: {
-                            shadowColor: theme.colors.shadow.color,
-                            shadowOffset: { width: 0, height: -4 },
-                            shadowOpacity: 0.08,
-                            shadowRadius: 14,
-                        },
-                        android: { borderTopWidth: 1, borderTopColor: theme.colors.divider },
-                        default: {},
-                    }),
-                }}>
-                    {/* Always-on top divider gradient (wizard only).
-                        Matches web: boxShadow 0 -10px 30px rgba(0,0,0,0.08) and fades into true transparency above. */}
-                    {Platform.OS !== 'web' ? (
-                        <LinearGradient
-                            pointerEvents="none"
-                            colors={[
-                                (() => {
-                                    try {
-                                        return Color(theme.colors.shadow.color).alpha(0.08).rgb().string();
-                                    } catch {
-                                        return 'rgba(0,0,0,0.08)';
+                <NewSessionComposerKeyboardHost>
+                    <View style={{
+                        paddingTop: 12,
+                        paddingBottom: newSessionBottomPadding + webKeyboardInset,
+                        position: 'relative',
+                        overflow: 'visible',
+                        ...Platform.select({
+                            web: { boxShadow: '0 -10px 30px rgba(0,0,0,0.08)' } as any,
+                            ios: {
+                                shadowColor: theme.colors.shadow.color,
+                                shadowOffset: { width: 0, height: -4 },
+                                shadowOpacity: 0.08,
+                                shadowRadius: 14,
+                            },
+                            android: { borderTopWidth: 1, borderTopColor: theme.colors.divider },
+                            default: {},
+                        }),
+                    }}>
+                        {/* Always-on top divider gradient (wizard only).
+                            Matches web: boxShadow 0 -10px 30px rgba(0,0,0,0.08) and fades into true transparency above. */}
+                        {Platform.OS !== 'web' ? (
+                            <LinearGradient
+                                pointerEvents="none"
+                                colors={[
+                                    (() => {
+                                        try {
+                                            return Color(theme.colors.shadow.color).alpha(0.08).rgb().string();
+                                        } catch {
+                                            return 'rgba(0,0,0,0.08)';
+                                        }
+                                    })(),
+                                    'transparent',
+                                ]}
+                                start={{ x: 0.5, y: 1 }}
+                                end={{ x: 0.5, y: 0 }}
+                                style={{
+                                    position: 'absolute',
+                                    top: -30,
+                                    left: -1000,
+                                    right: -1000,
+                                    height: 30,
+                                    zIndex: 10,
+                                }}
+                            />
+                        ) : null}
+                        <View style={{ paddingHorizontal: newSessionSidePadding, width: '100%', alignSelf: 'stretch' }}>
+                              <View style={{ maxWidth: layout.maxWidth, width: '100%', alignSelf: 'center' }}>
+                                  <AgentInput
+                                      value={sessionPrompt}
+                                      onChangeText={setSessionPrompt}
+                                      onSend={handleSend}
+                                      isSendDisabled={!canCreate}
+                                      isSending={isCreating}
+                                      submitAccessibilityLabel={props.footer.submitAccessibilityLabel}
+                                      placeholder={t('session.inputPlaceholder')}
+                                      autocompletePrefixes={emptyAutocompletePrefixes}
+                                      autocompleteSuggestions={emptyAutocompleteSuggestions}
+                                          extraActionChips={extraActionChips}
+                                          attachments={agentInputAttachments}
+                                          onAttachmentsAdded={attachmentsUploadsEnabled ? addWebFiles : undefined}
+                                          hasSendableAttachments={hasSendableAttachments}
+                                      inputMaxHeight={inputMaxHeight}
+                                      agentType={agentType}
+                                      agentLabel={props.agent.agentLabel}
+                                      onAgentClick={props.agent.agentPickerOptions ? undefined : handleAgentInputAgentClick}
+                                      agentPickerOptions={props.agent.agentPickerOptions}
+                                      agentPickerSelectedOptionId={props.agent.agentPickerSelectedOptionId}
+                                      onAgentPickerSelect={props.agent.onAgentPickerSelect}
+                                      agentPickerProbe={props.agent.agentPickerProbe}
+                                      permissionMode={permissionMode}
+                                      onPermissionModeChange={handlePermissionModeChange}
+                                      onPermissionClick={handleAgentInputPermissionClick}
+                                    modelMode={modelMode}
+                                    onModelModeChange={setModelMode}
+                                    modelOptionsOverride={modelOptions}
+                                    modelOptionsOverrideProbe={modelOptionsProbe}
+                                    acpSessionModeOptionsOverride={props.agent.acpSessionModeOptions}
+                                    acpSessionModeSelectedIdOverride={props.agent.acpSessionModeId ?? null}
+                                    acpSessionModeOptionsOverrideProbe={props.agent.acpSessionModeProbe}
+                                    onAcpSessionModeChange={
+                                        (props.agent.acpSessionModeOptions?.length ?? 0) > 0 && props.agent.setAcpSessionModeId
+                                            ? (modeId) => props.agent.setAcpSessionModeId?.(modeId === 'default' ? null : modeId)
+                                            : undefined
                                     }
-                                })(),
-                                'transparent',
-                            ]}
-                            start={{ x: 0.5, y: 1 }}
-                            end={{ x: 0.5, y: 0 }}
-                            style={{
-                                position: 'absolute',
-                                top: -30,
-                                left: -1000,
-                                right: -1000,
-                                height: 30,
-                                zIndex: 10,
-                            }}
-                        />
-                    ) : null}
-                    <View style={{ paddingHorizontal: newSessionSidePadding, width: '100%', alignSelf: 'stretch' }}>
-                          <View style={{ maxWidth: layout.maxWidth, width: '100%', alignSelf: 'center' }}>
-                              <AgentInput
-                                  value={sessionPrompt}
-                                  onChangeText={setSessionPrompt}
-                                  onSend={handleSend}
-                                  isSendDisabled={!canCreate}
-                                  isSending={isCreating}
-                                  submitAccessibilityLabel={props.footer.submitAccessibilityLabel}
-                                  placeholder={t('session.inputPlaceholder')}
-                                  autocompletePrefixes={emptyAutocompletePrefixes}
-                                  autocompleteSuggestions={emptyAutocompleteSuggestions}
-                                      extraActionChips={extraActionChips}
-                                      attachments={agentInputAttachments}
-                                      onAttachmentsAdded={attachmentsUploadsEnabled ? addWebFiles : undefined}
-                                      hasSendableAttachments={hasSendableAttachments}
-                                  inputMaxHeight={inputMaxHeight}
-                                  agentType={agentType}
-                                  agentLabel={props.agent.agentLabel}
-                                  onAgentClick={props.agent.agentPickerOptions ? undefined : handleAgentInputAgentClick}
-                                  agentPickerOptions={props.agent.agentPickerOptions}
-                                  agentPickerSelectedOptionId={props.agent.agentPickerSelectedOptionId}
-                                  onAgentPickerSelect={props.agent.onAgentPickerSelect}
-                                  agentPickerProbe={props.agent.agentPickerProbe}
-                                  permissionMode={permissionMode}
-                                  onPermissionModeChange={handlePermissionModeChange}
-                                  onPermissionClick={handleAgentInputPermissionClick}
-                                modelMode={modelMode}
-                                onModelModeChange={setModelMode}
-                                modelOptionsOverride={modelOptions}
-                                modelOptionsOverrideProbe={modelOptionsProbe}
-                                acpSessionModeOptionsOverride={props.agent.acpSessionModeOptions}
-                                acpSessionModeSelectedIdOverride={props.agent.acpSessionModeId ?? null}
-                                acpSessionModeOptionsOverrideProbe={props.agent.acpSessionModeProbe}
-                                onAcpSessionModeChange={
-                                    (props.agent.acpSessionModeOptions?.length ?? 0) > 0 && props.agent.setAcpSessionModeId
-                                        ? (modeId) => props.agent.setAcpSessionModeId?.(modeId === 'default' ? null : modeId)
-                                        : undefined
-                                }
-                                acpConfigOptionsOverride={props.agent.acpConfigOptions}
-                                acpConfigOptionsOverrideProbe={props.agent.acpConfigOptionsProbe}
-                                acpConfigOptionOverridesOverride={props.agent.acpConfigOptionOverrides ?? null}
-                                onAcpConfigOptionChange={props.agent.setAcpConfigOptionOverride}
-                                connectionStatus={connectionStatus}
-                                machineName={selectedMachine?.metadata?.displayName || selectedMachine?.metadata?.host}
-                                machinePopover={props.footer.machinePopover}
-                                onMachineClick={props.footer.machinePopover ? undefined : handleAgentInputMachineClick}
-                                currentPath={selectedPath}
-                                pathPopover={props.footer.pathPopover}
-                                onPathClick={props.footer.pathPopover ? undefined : handleAgentInputPathClick}
-                                resumeSessionId={resumeSessionId}
-                                onResumeClick={undefined}
-                                resumePopover={props.footer.resumePopover}
-                                resumeIsChecking={resumeIsChecking}
-                                  contentPaddingHorizontal={0}
-                                  {...(useProfiles ? {
-                                      profileId: selectedProfileId,
-                                      profilePopover,
-                                      envVarsCount: undefined,
-                                      envVarsPopover: undefined,
-                                      onEnvVarsClick: undefined,
-                                  } : {})}
-                              />
-                              {attachmentsUploadsEnabled ? (
-                                  <AttachmentFilePicker ref={filePickerRef} onAttachmentsPicked={addPickedAttachments} multiple />
-                              ) : null}
+                                    acpConfigOptionsOverride={props.agent.acpConfigOptions}
+                                    acpConfigOptionsOverrideProbe={props.agent.acpConfigOptionsProbe}
+                                    acpConfigOptionOverridesOverride={props.agent.acpConfigOptionOverrides ?? null}
+                                    onAcpConfigOptionChange={props.agent.setAcpConfigOptionOverride}
+                                    connectionStatus={connectionStatus}
+                                    machineName={selectedMachine?.metadata?.displayName || selectedMachine?.metadata?.host}
+                                    machinePopover={props.footer.machinePopover}
+                                    onMachineClick={props.footer.machinePopover ? undefined : handleAgentInputMachineClick}
+                                    currentPath={selectedPath}
+                                    pathPopover={props.footer.pathPopover}
+                                    onPathClick={props.footer.pathPopover ? undefined : handleAgentInputPathClick}
+                                    resumeSessionId={resumeSessionId}
+                                    onResumeClick={undefined}
+                                    resumePopover={props.footer.resumePopover}
+                                    resumeIsChecking={resumeIsChecking}
+                                      contentPaddingHorizontal={0}
+                                      {...(useProfiles ? {
+                                          profileId: selectedProfileId,
+                                          profilePopover,
+                                          envVarsCount: undefined,
+                                          envVarsPopover: undefined,
+                                          onEnvVarsClick: undefined,
+                                      } : {})}
+                                  />
+                                  {attachmentsUploadsEnabled ? (
+                                      <AttachmentFilePicker ref={filePickerRef} onAttachmentsPicked={addPickedAttachments} multiple />
+                                  ) : null}
+                              </View>
                           </View>
-                      </View>
-                </View>
+                    </View>
+                </NewSessionComposerKeyboardHost>
                 </PopoverBoundaryProvider>
             </View>
-        </>
+        </NewSessionKeyboardContainer>
     );
 
-    if (Platform.OS === 'web') {
-        return <View style={shellStyle}>{content}</View>;
-    }
-
-    return (
-        <KeyboardAvoidingView
-            behavior="translate-with-padding"
-            automaticOffset
-            keyboardVerticalOffset={16}
-            style={shellStyle}
-        >
-            {content}
-        </KeyboardAvoidingView>
-    );
+    return content;
 });

@@ -416,6 +416,19 @@ describe('ChatList (FlashList v2)', () => {
         expect(screen.getCapturedFlashListProps().maintainVisibleContentPosition).toBeUndefined();
     });
 
+    it('keeps drag scrolling from dismissing the keyboard on iOS', async () => {
+        platformOs = 'ios';
+        sessionMessagesState = {
+            isLoaded: true,
+            messages: [{ kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'hi' }],
+        };
+
+        const { ChatList } = await import('./ChatList');
+        const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
+
+        expect(screen.getCapturedFlashListProps().keyboardDismissMode).toBe('none');
+    });
+
     it('loads older messages when scrolled near the top (without requiring onStartReached)', async () => {
         sessionState = { ...sessionState, seq: 25 };
         sessionMessagesState = {
