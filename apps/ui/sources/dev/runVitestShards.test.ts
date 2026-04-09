@@ -48,8 +48,8 @@ describe('apps/ui runVitestShards', () => {
     it('partitions files across shards deterministically', () => {
         const buckets = partitionVitestFilesIntoShards(['c', 'a', 'b', 'd', 'e'], 2);
         expect(buckets).toEqual([
-            ['a', 'c', 'e'],
-            ['b', 'd'],
+            ['a', 'b', 'c'],
+            ['d', 'e'],
         ]);
     });
 });

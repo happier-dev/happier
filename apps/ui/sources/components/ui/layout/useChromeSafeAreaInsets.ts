@@ -3,6 +3,8 @@ import { Platform } from 'react-native';
 import * as safeAreaContext from 'react-native-safe-area-context';
 import type { EdgeInsets } from 'react-native-safe-area-context';
 
+import { isDesktopActivityOverlayWindowContext } from '@/activity/adapters/desktop/runtime/isDesktopActivityOverlayWindowContext';
+
 type Edge = 'top' | 'bottom' | 'left' | 'right';
 
 const CSS_SAFE_AREA_VAR_PREFIX = '--happier-safe-area-';
@@ -39,13 +41,14 @@ export function readWebSafeAreaInsetsFromCss(getComputedStyleFn: ((elt: Element)
     // so `getComputedStyle(probe).paddingTop` returns a resolved px value on iOS Safari.
     const probe = document.createElement('div');
     try {
-        (probe as any).style.position = 'absolute';
-        (probe as any).style.visibility = 'hidden';
-        (probe as any).style.pointerEvents = 'none';
-        (probe as any).style.paddingTop = `var(${CSS_SAFE_AREA_VAR_PREFIX}top)`;
-        (probe as any).style.paddingBottom = `var(${CSS_SAFE_AREA_VAR_PREFIX}bottom)`;
-        (probe as any).style.paddingLeft = `var(${CSS_SAFE_AREA_VAR_PREFIX}left)`;
-        (probe as any).style.paddingRight = `var(${CSS_SAFE_AREA_VAR_PREFIX}right)`;
+        const probeStyle = probe.style;
+        probeStyle.position = 'absolute';
+        probeStyle.visibility = 'hidden';
+        probeStyle.pointerEvents = 'none';
+        probeStyle.paddingTop = `var(${CSS_SAFE_AREA_VAR_PREFIX}top)`;
+        probeStyle.paddingBottom = `var(${CSS_SAFE_AREA_VAR_PREFIX}bottom)`;
+        probeStyle.paddingLeft = `var(${CSS_SAFE_AREA_VAR_PREFIX}left)`;
+        probeStyle.paddingRight = `var(${CSS_SAFE_AREA_VAR_PREFIX}right)`;
 
         body.appendChild(probe);
         const styles = getComputedStyleFn(probe);
@@ -76,20 +79,25 @@ export function mergeSafeAreaInsets(primary: EdgeInsets, fallback: EdgeInsets): 
 }
 
 export function useChromeSafeAreaInsets(): EdgeInsets {
+    const isDesktopOverlayWindow = isDesktopActivityOverlayWindowContext();
     const insets = safeAreaContext.useSafeAreaInsets();
     const nativeFallback = React.useMemo<EdgeInsets>(() => {
         if (Platform.OS === 'web') {
             return { top: 0, bottom: 0, left: 0, right: 0 };
         }
+        const moduleShape = safeAreaContext as unknown as {
+            initialWindowMetrics?: unknown;
+            default?: { initialWindowMetrics?: unknown };
+        };
         const initialWindowMetrics = (() => {
             try {
-                const direct = (safeAreaContext as any).initialWindowMetrics;
+                const direct = moduleShape.initialWindowMetrics;
                 if (direct != null) return direct;
             } catch {
                 // ignore
             }
             try {
-                const fallback = (safeAreaContext as any)?.default?.initialWindowMetrics;
+                const fallback = moduleShape.default?.initialWindowMetrics;
                 if (fallback != null) return fallback;
             } catch {
                 // ignore
@@ -108,11 +116,13 @@ export function useChromeSafeAreaInsets(): EdgeInsets {
         };
     }, []);
     const [webFallback, setWebFallback] = React.useState<EdgeInsets>(() => (
-        Platform.OS === 'web' ? readWebSafeAreaInsetsFromCss() : { top: 0, bottom: 0, left: 0, right: 0 }
+        Platform.OS === 'web' && !isDesktopOverlayWindow
+            ? readWebSafeAreaInsetsFromCss()
+            : { top: 0, bottom: 0, left: 0, right: 0 }
     ));
 
     React.useEffect(() => {
-        if (Platform.OS !== 'web') return;
+        if (Platform.OS !== 'web' || isDesktopOverlayWindow) return;
         const update = () => setWebFallback(readWebSafeAreaInsetsFromCss());
         update();
         if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
@@ -124,7 +134,11 @@ export function useChromeSafeAreaInsets(): EdgeInsets {
             };
         }
         return undefined;
-    }, []);
+    }, [isDesktopOverlayWindow]);
+
+    if (isDesktopOverlayWindow) {
+        return { top: 0, bottom: 0, left: 0, right: 0 };
+    }
 
     if (Platform.OS !== 'web') {
         return mergeSafeAreaInsets(insets, nativeFallback);

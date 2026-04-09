@@ -154,4 +154,28 @@ describe('useChromeSafeAreaInsets helpers', () => {
 
         expect(hook.getCurrent()).toEqual({ top: 0, bottom: 0, left: 0, right: 0 });
     });
+
+    it('returns zero insets for the dedicated desktop activity overlay window', async () => {
+        vi.resetModules();
+
+        vi.doMock('react-native', async () => {
+            const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+            return createReactNativeWebMock({
+                Platform: { OS: 'web' },
+            });
+        });
+
+        vi.doMock('react-native-safe-area-context', () => ({
+            useSafeAreaInsets: () => ({ top: 14, bottom: 10, left: 24, right: 24 }),
+        }));
+
+        vi.doMock('@/activity/adapters/desktop/runtime/isDesktopActivityOverlayWindowContext', () => ({
+            isDesktopActivityOverlayWindowContext: () => true,
+        }));
+
+        const { useChromeSafeAreaInsets } = await import('./useChromeSafeAreaInsets');
+        const hook = await renderHook(() => useChromeSafeAreaInsets());
+
+        expect(hook.getCurrent()).toEqual({ top: 0, bottom: 0, left: 0, right: 0 });
+    });
 });

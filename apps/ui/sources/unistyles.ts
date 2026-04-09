@@ -53,7 +53,20 @@ StyleSheet.configure({
     themes: appThemes,
 });
 
+function isDesktopActivityOverlayWindow(): boolean {
+    if (typeof window === 'undefined' || typeof window.location?.pathname !== 'string') {
+        return false;
+    }
+
+    return window.location.pathname.replace(/\/+$/u, '') === '/desktop/activity-overlay';
+}
+
 const setRootBackgroundColor = () => {
+    if (isDesktopActivityOverlayWindow()) {
+        UnistylesRuntime.setRootViewBackgroundColor('transparent');
+        return;
+    }
+
     if (themePreference === 'adaptive') {
         const systemTheme = Appearance.getColorScheme();
         const color = systemTheme === 'dark'

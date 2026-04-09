@@ -95,4 +95,25 @@ describe('SelectableMenuResults', () => {
         expect(item.props.density).toBe('compact');
         expect(item.props.subtitle).toBe('Selected subtitle');
     });
+
+    it('left aligns category titles with slim dropdown rows', async () => {
+        const { SelectableMenuResults } = await import('./SelectableMenuResults');
+
+        const screen = await renderScreen(<SelectableMenuResults
+                    categories={[
+                        { id: 'c1', title: 'Sort by', items: [{ id: 'a', title: 'Alpha' }] },
+                    ]}
+                    selectedIndex={0}
+                    onSelectionChange={() => {}}
+                    onPressItem={() => {}}
+                    rowVariant="slim"
+                />);
+
+        const categoryTitle = screen.findByType('Text');
+        expect(categoryTitle.props.style).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                paddingHorizontal: 16,
+            }),
+        ]));
+    });
 });

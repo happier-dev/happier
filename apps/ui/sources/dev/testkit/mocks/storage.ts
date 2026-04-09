@@ -2,6 +2,8 @@ import { vi } from 'vitest';
 
 import type { StorageState } from '@/sync/store/types';
 import type { Settings } from '@/sync/domains/settings/settings';
+import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
+import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import type { StoreApi, UseBoundStore } from 'zustand';
 
 import { mergeModuleMock, type MergeModuleMockOptions } from './_shared';
@@ -29,13 +31,30 @@ export function createStorageModuleStub<TOverrides extends object>(overrides: TO
     // (via `useMemo`/`useEffect`) don't thrash in unit tests unless a caller opts in to custom data.
     const allMachines = [] as ReturnType<StorageModule['useAllMachines']>;
     const allSessions = [] as ReturnType<StorageModule['useAllSessions']>;
+    const sessionListRenderablesById = {} as ReturnType<StorageModule['useSessionListRenderablesById']>;
+    const sessionListRowStateByServerId = {} as ReturnType<StorageModule['useSessionListRowStateByServerId']>;
+    const sessionListIndexByServerId = {} as ReturnType<StorageModule['useSessionListIndexByServerId']>;
     const useSetting = createUseSettingMock();
     const useSettingMutable = createUseSettingMutableMock(useSetting);
+    const useLocalSetting = createUseLocalSettingMock();
+    const useLocalSettingMutable = createUseLocalSettingMutableMock(useLocalSetting);
+    const updateWorkspaceScmSnapshot = () => undefined;
+    const updateWorkspaceScmSnapshotError = () => undefined;
+    const updateWorkspaceScmStatus = () => undefined;
+    const pruneWorkspaceScmTouchedPaths = () => undefined;
+    const pruneWorkspaceScmCommitSelectionPaths = () => undefined;
+    const pruneWorkspaceScmCommitSelectionPatches = () => undefined;
     const store = createStorageStoreMock({
         sessions: {},
         machines: {},
         getProjectForSession: () => null,
         applySessionListRenderablePatches: () => undefined,
+        updateWorkspaceScmSnapshot,
+        updateWorkspaceScmSnapshotError,
+        updateWorkspaceScmStatus,
+        pruneWorkspaceScmTouchedPaths,
+        pruneWorkspaceScmCommitSelectionPaths,
+        pruneWorkspaceScmCommitSelectionPatches,
         clearSessionReviewCommentDrafts: () => undefined,
         upsertWorkspaceReviewCommentDraft: () => undefined,
         deleteWorkspaceReviewCommentDraft: () => undefined,
@@ -47,14 +66,26 @@ export function createStorageModuleStub<TOverrides extends object>(overrides: TO
         useSettings: () => ({} as Settings),
         useSetting,
         useSettingMutable,
+        useLocalSetting,
+        useLocalSettingMutable,
+        useSessionMessages: () => ({ messages: [], isLoaded: true } as const),
+        useSessionMessagesVersion: () => 0,
         useAllMachines: () => allMachines,
         useAllSessions: () => allSessions,
         useMachine: (machineId: string) => store.getState().machines[machineId] ?? null,
+        useSession: () => null,
+        useSessionListRenderable: () => null,
+        useSessionListRenderableWithServerScope: () => null,
+        useSessionListRenderablesById: () => sessionListRenderablesById,
+        useSessionListRowStateByServerId: () => sessionListRowStateByServerId,
+        useSessionListIndexByServerId: () => sessionListIndexByServerId,
         useArtifacts: () => [],
         useWorkspaceReviewCommentsDrafts: () => [],
         useMachineListByServerId: () => ({}),
         useMachineListStatusByServerId: () => ({}),
         useServerScopedMachine: () => null,
+        useWorkspaceScmSnapshot: () => null,
+        useWorkspaceScmSnapshotError: () => null,
         useSocketStatus: () => ({
             status: 'connected',
             lastConnectedAt: null,
@@ -100,6 +131,31 @@ export function createUseSettingMutableMock(
     useSetting: StorageModule['useSetting'],
 ): StorageModule['useSettingMutable'] {
     return ((key: keyof Settings) => [useSetting(key), vi.fn()]) as StorageModule['useSettingMutable'];
+}
+
+export type CreateUseLocalSettingMockOptions = Readonly<{
+    values?: Partial<LocalSettings>;
+    fallback?: (key: keyof LocalSettings) => LocalSettings[keyof LocalSettings];
+}>;
+
+export function createUseLocalSettingMock(
+    options: CreateUseLocalSettingMockOptions = {},
+): StorageModule['useLocalSetting'] {
+    const values = options.values ?? {};
+    const fallback = options.fallback;
+
+    return ((key: keyof LocalSettings) => {
+        if (Object.prototype.hasOwnProperty.call(values, key)) {
+            return values[key];
+        }
+        return fallback?.(key) ?? localSettingsDefaults[key];
+    }) as StorageModule['useLocalSetting'];
+}
+
+export function createUseLocalSettingMutableMock(
+    useLocalSetting: StorageModule['useLocalSetting'],
+): StorageModule['useLocalSettingMutable'] {
+    return ((key: keyof LocalSettings) => [useLocalSetting(key), vi.fn()]) as StorageModule['useLocalSettingMutable'];
 }
 
 export function installPartialStorageModuleMock(overrides: object) {

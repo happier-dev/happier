@@ -1,5 +1,5 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
 
@@ -7,6 +7,10 @@ import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 const mockEnv = vi.hoisted(() => ({
     iconsRenderAsText: false,
+}));
+
+const popoverCapture = vi.hoisted(() => ({
+    lastProps: null as Record<string, any> | null,
 }));
 
 vi.mock('@/components/ui/overlays/FloatingOverlay', () => {
@@ -22,6 +26,7 @@ vi.mock('@/components/ui/popover', () => {
         usePopoverBoundaryRef: () => null,
         PopoverScope: (props: any) => React.createElement(React.Fragment, null, props.children),
         Popover: (props: any) => {
+            popoverCapture.lastProps = props;
             if (!props.open) return null;
             return React.createElement(
                 'Popover',
@@ -82,6 +87,10 @@ vi.mock('@/text', async () => {
 });
 
 describe('ItemRowActions', () => {
+    beforeEach(() => {
+        popoverCapture.lastProps = null;
+    });
+
     it('invokes overflow actions even when InteractionManager does not run callbacks', async () => {
         const { ItemRowActions } = await import('./ItemRowActions');
 
@@ -162,6 +171,46 @@ describe('ItemRowActions', () => {
         const customTrigger = screen.findByTestId('custom-trigger-open');
         expect(customTrigger?.props?.open).toBe(true);
         expect(screen.findAllByTestId('edit').length).toBeGreaterThan(0);
+    });
+
+    it('passes custom overflow placement, portal alignment, and anchor overlay through to the popover', async () => {
+        const { ItemRowActions } = await import('./ItemRowActions');
+
+        const screen = await renderScreen(React.createElement(ItemRowActions as any, {
+            title: 'Profile',
+            layoutWidthPx: 320,
+            compactThreshold: 400,
+            overflowTriggerTestID: 'custom-trigger',
+            actions: [
+                { id: 'edit', title: 'Edit profile', icon: 'create-outline', onPress: vi.fn() },
+            ],
+            renderOverflowTrigger: ({ open, toggle, testID }: any) => React.createElement(
+                'Pressable',
+                {
+                    testID,
+                    accessibilityState: { expanded: open },
+                    onPress: toggle,
+                },
+                React.createElement('CustomTrigger'),
+            ),
+            overflowPlacement: 'bottom',
+            overflowPortal: {
+                anchorAlign: 'center',
+            },
+            renderOverflowAnchorOverlay: () => React.createElement('AnchorOverlay', { testID: 'custom-anchor-overlay' }),
+        }));
+
+        await screen.pressByTestIdAsync('custom-trigger');
+
+        expect(popoverCapture.lastProps?.placement).toBe('bottom');
+        expect(popoverCapture.lastProps?.portal).toEqual(expect.objectContaining({
+            anchorAlign: 'center',
+        }));
+        expect((popoverCapture.lastProps?.backdrop as Record<string, any> | undefined)?.anchorOverlay).toMatchObject({
+            props: expect.objectContaining({
+                testID: 'custom-anchor-overlay',
+            }),
+        });
     });
 
     it('does not emit raw text nodes under Pressable when row action icons render as text on web', async () => {

@@ -1,7 +1,6 @@
 import * as React from 'react';
 import {
     Platform,
-    StyleSheet,
     Text as RNText,
     TextInput as RNTextInput,
     type TextInputProps as RNTextInputProps,
@@ -21,6 +20,24 @@ function isIosWeb(): boolean {
     if (typeof navigator === 'undefined') return false;
     const ua = typeof navigator.userAgent === 'string' ? navigator.userAgent : '';
     return /iphone|ipad|ipod/i.test(ua);
+}
+
+function resolveFontSizeFromStyle(style: unknown): number | null {
+    if (!style) return null;
+    if (Array.isArray(style)) {
+        for (let i = style.length - 1; i >= 0; i -= 1) {
+            const resolved = resolveFontSizeFromStyle(style[i]);
+            if (typeof resolved === 'number') {
+                return resolved;
+            }
+        }
+        return null;
+    }
+    if (typeof style === 'object') {
+        const maybeStyle = style as { fontSize?: unknown };
+        return typeof maybeStyle.fontSize === 'number' ? maybeStyle.fontSize : null;
+    }
+    return null;
 }
 
 export function TextSelectabilityScope(props: Readonly<{ selectable: boolean; children: React.ReactNode }>) {
@@ -108,8 +125,8 @@ export const TextInput = React.memo(
                 out.push({ outlineStyle: 'none' });
             }
             if (isIosWeb()) {
-                const resolvedFontSize = Number(StyleSheet.flatten(out as any)?.fontSize ?? 0);
-                if (resolvedFontSize > 0 && resolvedFontSize < 16) {
+                const resolvedFontSize = resolveFontSizeFromStyle(out);
+                if (typeof resolvedFontSize === 'number' && resolvedFontSize > 0 && resolvedFontSize < 16) {
                     out.push({ fontSize: 16 });
                 }
             }

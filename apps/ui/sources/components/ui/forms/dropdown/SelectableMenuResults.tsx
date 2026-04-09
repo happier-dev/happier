@@ -38,7 +38,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.default(),
     },
     categoryTitle: {
-        paddingHorizontal: 32,
+        paddingHorizontal: 16,
         paddingTop: 16,
         paddingBottom: 8,
         fontSize: 12,

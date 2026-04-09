@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { StyleSheet as RNStyleSheet, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
+import { View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 import { Text } from '@/components/ui/text/Text';
 import { normalizeRepoPathParts } from '@/utils/path/normalizeRepoPathParts';
 
@@ -27,8 +27,8 @@ export const InlineRepoPathLabel = React.memo(function InlineRepoPathLabel(props
     }, [props.fileName, props.filePath, props.fullPath]);
 
     const dirLabel = dir ? `${dir}${PATH_SEPARATOR}` : null;
-    const containerStyle = React.useMemo(() => {
-        return RNStyleSheet.flatten([
+    const containerStyle = React.useMemo<StyleProp<ViewStyle>>(() => {
+        return [
             {
                 flex: 1,
                 minWidth: 0,
@@ -36,26 +36,26 @@ export const InlineRepoPathLabel = React.memo(function InlineRepoPathLabel(props
                 alignItems: 'baseline' as const,
             } satisfies ViewStyle,
             props.style,
-        ]);
+        ];
     }, [props.style]);
-    const pathStyle = React.useMemo(() => {
-        return RNStyleSheet.flatten([
+    const pathStyle = React.useMemo<StyleProp<TextStyle>>(() => {
+        return [
             {
                 flex: 1,
                 minWidth: 0,
                 textAlign: 'right' as const,
             },
             props.pathTextStyle,
-        ]);
+        ];
     }, [props.pathTextStyle]);
-    const nameStyle = React.useMemo(() => {
-        return RNStyleSheet.flatten([
+    const nameStyle = React.useMemo<StyleProp<TextStyle>>(() => {
+        return [
             {
                 flexShrink: 0,
             },
             props.nameMaxWidth != null ? { maxWidth: props.nameMaxWidth } : null,
             props.nameTextStyle,
-        ]);
+        ];
     }, [props.nameMaxWidth, props.nameTextStyle]);
 
     return (

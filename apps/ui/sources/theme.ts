@@ -36,6 +36,8 @@ const sharedSpacing = {
     },
 } as const;
 
+const premiumOverlaySurface = '#050505';
+
 export const lightTheme = {
     dark: false,
     colors: {
@@ -70,7 +72,7 @@ export const lightTheme = {
         overlay: {
             scrimSoft: 'rgba(0, 0, 0, 0.18)',
             scrim: 'rgba(0, 0, 0, 0.45)',
-            scrimStrong: 'rgba(0, 0, 0, 0.6)',
+            scrimStrong: premiumOverlaySurface,
             // Used by the onboarding/setup wizard shell; light-theme uses a bright scrim so the blur reads as “frosted glass”.
             scrimWizard: 'rgba(255, 255, 255, 0.52)',
             text: '#FFFFFF',
@@ -302,7 +304,7 @@ export const darkTheme = {
         overlay: {
             scrimSoft: 'rgba(0, 0, 0, 0.45)',
             scrim: 'rgba(0, 0, 0, 0.45)',
-            scrimStrong: 'rgba(0, 0, 0, 0.6)',
+            scrimStrong: premiumOverlaySurface,
             // Used by the onboarding/setup wizard shell; slightly subtler than the regular scrim.
             scrimWizard: 'rgba(0, 0, 0, 0.16)',
             text: '#FFFFFF',

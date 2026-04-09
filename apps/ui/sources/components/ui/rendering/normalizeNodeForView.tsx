@@ -1,5 +1,6 @@
 import * as React from 'react';
 
+import { isRenderableElementType } from '@/components/ui/icons/isRenderableElementType';
 import { Text } from '@/components/ui/text/Text';
 
 function wrapPrimitiveForView(value: string | number) {
@@ -32,6 +33,9 @@ export function normalizeNodeForView(node: React.ReactNode): React.ReactNode {
     if (Array.isArray(node)) return node.map((child) => normalizeNodeForView(child));
     if (React.isValidElement(node) && node.type === React.Fragment) {
         return <>{normalizeChildrenForView((node as any).props?.children)}</>;
+    }
+    if (React.isValidElement(node) && !isRenderableElementType(node.type)) {
+        return null;
     }
     if (React.isValidElement(node) && isTextLikeIconElement(node)) {
         return (

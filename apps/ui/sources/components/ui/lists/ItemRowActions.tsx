@@ -3,7 +3,7 @@ import { View, Pressable, useWindowDimensions, type GestureResponderEvent, Inter
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { type ItemAction } from '@/components/ui/lists/itemActions';
-import { Popover } from '@/components/ui/popover';
+import { Popover, type PopoverPlacement, type PopoverPortalOptions } from '@/components/ui/popover';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { resolveWebBlurTintColor } from '@/components/ui/overlays/resolveWebBlurTintColor';
 import { ActionListSection, type ActionListItem } from '@/components/ui/lists/ActionListSection';
@@ -29,6 +29,7 @@ export interface ItemRowActionsProps {
         accessibilityLabel: string;
         accessibilityHint: string;
     }>) => React.ReactNode;
+    renderOverflowAnchorOverlay?: () => React.ReactNode;
     compactThreshold?: number;
     compactActionIds?: string[];
     /**
@@ -42,6 +43,8 @@ export interface ItemRowActionsProps {
      * - 'beforePinned': between inline actions and pinned actions
      */
     overflowPosition?: 'end' | 'beforePinned';
+    overflowPlacement?: PopoverPlacement;
+    overflowPortal?: Partial<PopoverPortalOptions>;
     iconSize?: number;
     gap?: number;
     onActionPressIn?: () => void;
@@ -138,6 +141,26 @@ export function ItemRowActions(props: ItemRowActionsProps) {
 
     const iconSize = props.iconSize ?? 20;
     const gap = props.gap ?? 16;
+    const overflowPlacement = props.overflowPlacement ?? 'left';
+    const overflowPortal = React.useMemo<PopoverPortalOptions>(() => ({
+        web: true,
+        native: true,
+        matchAnchorWidth: false,
+        anchorAlignVertical: 'center',
+        ...props.overflowPortal,
+    }), [props.overflowPortal]);
+    const overflowAnchorOverlay = React.useMemo(() => {
+        if (props.renderOverflowAnchorOverlay) {
+            return props.renderOverflowAnchorOverlay();
+        }
+        return normalizeNodeForView(
+            <Ionicons
+                name="ellipsis-horizontal"
+                size={iconSize + 2}
+                color={theme.colors.button.secondary.tint}
+            />,
+        );
+    }, [iconSize, props, theme.colors.button.secondary.tint]);
 
     const renderInlineAction = React.useCallback((action: ItemAction) => {
         const color = action.color ?? (action.destructive ? theme.colors.deleteAction : theme.colors.button.secondary.tint);
@@ -219,30 +242,18 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                     <Popover
                         open={showOverflow}
                         anchorRef={overflowAnchorRef}
-                        placement="left"
+                        placement={overflowPlacement}
                         gap={10}
                         maxHeightCap={280}
                         maxWidthCap={260}
                         edgePadding={{ vertical: 8, horizontal: 8 }}
-                        portal={{
-                            web: true,
-                            native: true,
-                            // Menus are typically content-sized; allow the overlay to be wider than the trigger.
-                            matchAnchorWidth: false,
-                            anchorAlignVertical: 'center',
-                        }}
+                        portal={overflowPortal}
                         boundaryRef={props.popoverBoundaryRef}
                         onRequestClose={() => setShowOverflow(false)}
                         backdrop={{
                             effect: 'blur',
                             blurOnWeb: Platform.OS === 'web' ? { px: 3, tintColor: blurTintOnWeb } : undefined,
-                            anchorOverlay: () => normalizeNodeForView(
-                                <Ionicons
-                                    name="ellipsis-horizontal"
-                                    size={iconSize + 2}
-                                    color={theme.colors.button.secondary.tint}
-                                />,
-                            ),
+                            anchorOverlay: overflowAnchorOverlay,
                             closeOnPan: true,
                         }}
                     >
@@ -264,7 +275,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                 ) : null}
             </View>
         );
-    }, [iconSize, overflowActionItems, props, showOverflow, theme.colors.button.secondary.tint]);
+    }, [blurTintOnWeb, overflowActionItems, overflowAnchorOverlay, overflowPlacement, overflowPortal, props, showOverflow]);
 
     return (
         <View style={[styles.container, { gap }]}>

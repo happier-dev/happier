@@ -27,6 +27,27 @@ export async function createUnistylesMock(overrides?: TestUnistylesOverrides) {
                 typeof input === 'function'
                     ? (input as (theme: unknown, runtime: unknown) => unknown)(theme, rt)
                     : input,
+            flatten: (value: unknown) => {
+                const flattenStyle = (style: unknown): Record<string, unknown> => {
+                    if (!style) return {};
+                    if (Array.isArray(style)) {
+                        const out: Record<string, unknown> = {};
+                        for (const entry of style) {
+                            Object.assign(out, flattenStyle(entry));
+                        }
+                        return out;
+                    }
+                    if (typeof style === 'object') {
+                        return style as Record<string, unknown>;
+                    }
+                    return {};
+                };
+
+                if (Array.isArray(value) || (value && typeof value === 'object')) {
+                    return flattenStyle(value);
+                }
+                return value as any;
+            },
             configure: () => {},
             absoluteFillObject: {},
         },

@@ -27,6 +27,7 @@ export type ExpoRouterMockOptions = Readonly<{
         back: () => unknown;
         replace: (value: unknown) => unknown;
         setParams: (value: ExpoRouterParams) => unknown;
+        canGoBack: () => boolean;
     }>;
     stackOptionsCapture?: StackOptionsCapture;
 }>;
@@ -37,6 +38,7 @@ type ExpoRouterMockRouter = {
     back: () => unknown;
     replace: (value: unknown) => unknown;
     setParams: (value: ExpoRouterParams) => unknown;
+    canGoBack?: () => boolean;
 };
 
 type RouterMethod<TArgs extends unknown[], TResult> = (...args: TArgs) => TResult;

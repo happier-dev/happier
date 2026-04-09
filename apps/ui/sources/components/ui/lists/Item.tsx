@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View, Pressable, StyleProp, ViewStyle, TextStyle, Platform, ActivityIndicator, type AccessibilityRole } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { Typography } from '@/constants/Typography';
 import * as Clipboard from 'expo-clipboard';
 import { Modal } from '@/modal';
@@ -12,6 +11,7 @@ import { getItemGroupRowCornerRadii } from '@/components/ui/lists/itemGroupRowCo
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
 import { useResolvedItemDensity } from '@/components/ui/lists/useResolvedItemDensity';
+import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import {
     ITEM_CHEVRON_SIZE,
     ITEM_ICON_BOX_SIZE,
@@ -421,7 +421,7 @@ export const Item = React.memo<ItemProps>((props) => {
     const chevronAccessory = React.useMemo(() => {
         if (!showAccessory) return null;
         return normalizeNodeForView(
-            <Ionicons
+            <SafeIonicons
                 name="chevron-forward"
                 size={chevronSize}
                 color={theme.colors.groupped.chevron}
@@ -631,12 +631,18 @@ export const Item = React.memo<ItemProps>((props) => {
 
     const interactiveAccessibilityRole = isWeb ? undefined : (accessibilityRole ?? 'button');
     const interactiveTabIndex = isWeb && !disabled && !loading ? 0 : undefined;
+    const webDisabledProps = isWeb && (disabled || loading)
+        ? ({
+            'data-disabled': 'true',
+        } as const)
+        : null;
 
     if (isInteractive) {
         return (
             <Pressable
                 testID={testID}
                 {...webTestIdProps}
+                {...webDisabledProps}
                 onPress={handlePress}
                 onLongPress={handleLongPress}
                 // @ts-expect-error - react-native types do not model web-only double click props; RN Web supports onDoubleClick.

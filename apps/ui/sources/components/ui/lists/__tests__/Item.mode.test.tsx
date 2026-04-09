@@ -97,13 +97,17 @@ describe('Item mode prop', () => {
 
     it('reduces opacity when disabled (not mode="info")', async () => {
         const { Item } = await import('../Item');
-        const screen = await renderScreen(<Item title="Disabled" testID="item-disabled-opacity" disabled={true} />);
+        const screen = await renderScreen(<Item title="Disabled" testID="item-disabled-opacity" disabled={true} onPress={() => {}} />);
         const root = findHostNodeByTestID(screen, 'item-disabled-opacity');
         if (!root) {
             throw new Error('Expected disabled item host node to render');
         }
-        const flattened = flattenTestStyle(root.props.style);
+        const styleFn = root.props.style;
+        expect(typeof styleFn).toBe('function');
+        const resolved = styleFn({ pressed: false });
+        const flattened = flattenTestStyle(resolved);
         expect(flattened.opacity).toBe(0.5);
+        expect(root.props['data-disabled']).toBe('true');
     });
 
     it('renders a Pressable when mode="interactive" with onPress', async () => {

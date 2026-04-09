@@ -65,6 +65,24 @@ export function FilesystemBrowserToolbarChrome(props: FilesystemBrowserToolbarCh
         () => buildOverflowItems(hiddenActions),
         [buildOverflowItems, hiddenActions],
     );
+    const renderOverflowTriggerButton = React.useCallback((props: Readonly<{
+        testID?: string;
+        includeDefaultTestID?: boolean;
+        accessibilityLabel?: string;
+        accessibilityHint?: string;
+        accessibilityState?: Readonly<{ expanded?: boolean }>;
+        onPress?: () => void;
+    }>) => (
+        <FileBrowserToolbarIconButton
+            testID={props.testID ?? (props.includeDefaultTestID === false ? undefined : overflowTriggerTestID)}
+            accessibilityLabel={props.accessibilityLabel ?? t('common.moreActions')}
+            accessibilityHint={props.accessibilityHint}
+            accessibilityState={props.accessibilityState}
+            onPress={props.onPress}
+        >
+            <Ionicons name="ellipsis-horizontal" size={18} color={theme.colors.textSecondary} />
+        </FileBrowserToolbarIconButton>
+    ), [overflowTriggerTestID, theme.colors.textSecondary]);
 
     return (
         <FileBrowserToolbar
@@ -86,17 +104,16 @@ export function FilesystemBrowserToolbarChrome(props: FilesystemBrowserToolbarCh
                     overflowTriggerTestID={overflowTriggerTestID}
                     compactThreshold={Number.POSITIVE_INFINITY}
                     compactActionIds={[]}
-                    renderOverflowTrigger={({ open, toggle, testID, accessibilityLabel, accessibilityHint }) => (
-                        <FileBrowserToolbarIconButton
-                            testID={testID ?? overflowTriggerTestID}
-                            accessibilityLabel={accessibilityLabel ?? t('common.moreActions')}
-                            accessibilityHint={accessibilityHint}
-                            accessibilityState={{ expanded: open }}
-                            onPress={toggle}
-                        >
-                            <Ionicons name="ellipsis-horizontal" size={18} color={theme.colors.textSecondary} />
-                        </FileBrowserToolbarIconButton>
-                    )}
+                    renderOverflowAnchorOverlay={() => renderOverflowTriggerButton({ includeDefaultTestID: false })}
+                    renderOverflowTrigger={({ open, toggle, testID, accessibilityLabel, accessibilityHint }) =>
+                        renderOverflowTriggerButton({
+                            testID: testID ?? overflowTriggerTestID,
+                            accessibilityLabel: accessibilityLabel ?? t('common.moreActions'),
+                            accessibilityHint,
+                            accessibilityState: { expanded: open },
+                            onPress: toggle,
+                        })
+                    }
                 />
             ) : null}
         </FileBrowserToolbar>

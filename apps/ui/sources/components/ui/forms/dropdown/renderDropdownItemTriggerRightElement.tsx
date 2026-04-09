@@ -1,14 +1,15 @@
 import * as React from 'react';
 import { View } from 'react-native';
 
-import { Ionicons } from '@expo/vector-icons';
+import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 
 import {
     ITEM_CHEVRON_SIZE,
     ITEM_TITLE_TEXT_METRICS,
 } from '@/components/ui/lists/itemDensityMetrics';
-import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
+
+const Ionicons = SafeIonicons;
 
 export function renderDropdownItemTriggerRightElement(params: Readonly<{
     detail: string | null;
@@ -18,12 +19,12 @@ export function renderDropdownItemTriggerRightElement(params: Readonly<{
     detailDensity?: 'comfortable' | 'cozy' | 'compact' | 'tight';
 }>) {
     const resolvedDensity = params.detailDensity ?? 'comfortable';
-    const chevron = normalizeNodeForView(
+    const chevron = (
         <Ionicons
             name={params.open ? 'chevron-up' : 'chevron-down'}
             size={ITEM_CHEVRON_SIZE[resolvedDensity]}
             color={params.chevronColor}
-        />,
+        />
     );
     const detailTextStyle = ITEM_TITLE_TEXT_METRICS[resolvedDensity];
 
