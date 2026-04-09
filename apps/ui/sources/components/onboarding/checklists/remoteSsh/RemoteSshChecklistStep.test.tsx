@@ -895,4 +895,77 @@ describe('RemoteSshChecklistStep', () => {
         });
         expect(runnerHarness.cancelSpy).toHaveBeenCalledTimes(0);
     });
+
+    it('answers remote background service replacement prompts through wizard chrome actions', async () => {
+        const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
+        const runnerHarness = createRunner({
+            snapshot: {
+                status: 'running',
+                currentStepId: 'daemon.service.preflight',
+                latestMessage: 'Existing background services detected',
+                awaitingInput: true,
+                events: [
+                    {
+                        type: 'prompt',
+                        stepId: 'daemon.service.preflight',
+                        message: 'Remote machine already has Happier background services. Replace them with the selected release channel?',
+                        data: {
+                            kind: 'daemon.replaceRemoteBackgroundServices',
+                            targetServerUrl: 'https://relay.example.test',
+                            targetReleaseChannel: 'preview',
+                            services: [
+                                { label: 'happier-daemon.stable', releaseChannel: 'stable', targetMode: 'pinned', running: true },
+                            ],
+                        },
+                    },
+                ],
+                result: null,
+            } as any,
+        });
+
+        let primary: { label?: string; onPress: (() => void) | (() => Promise<void>); disabled: boolean } | null = null;
+        let skip: { label?: React.ReactNode; hidden?: boolean; disabled?: boolean; onPress?: () => void } | null = null;
+        const screen = await renderScreen(React.createElement(RemoteSshChecklistStep, {
+            testID: 'remote-ssh-step',
+            mode: 'remoteMachine',
+            relayUrl: 'https://relay.example.test',
+            runner: runnerHarness.runner,
+            initialDraft: {
+                username: 'dev',
+                host: 'example.test',
+            },
+            onWizardPrimaryChange: (state) => {
+                primary = state as any;
+            },
+            onWizardSkipChange: (state) => {
+                skip = state as any;
+            },
+        }));
+
+        const requirePrimary = () => {
+            if (!primary) throw new Error('Expected wizard primary override');
+            return primary;
+        };
+        const requireSkip = () => {
+            if (!skip) throw new Error('Expected wizard skip override');
+            return skip;
+        };
+
+        await act(async () => {
+            await (requirePrimary().onPress as any)?.();
+        });
+        await flushHookEffects({ cycles: 3, turns: 3 });
+        await act(async () => {
+            await (requirePrimary().onPress as any)?.();
+        });
+
+        expect(screen.findByTestId('remote-ssh-step-prompt-password')).toBeTruthy();
+        expect(requireSkip().label).toBe('Skip');
+
+        await act(async () => {
+            await (requirePrimary().onPress as any)?.();
+        });
+
+        expect(runnerHarness.respondSpy).toHaveBeenCalledWith(expect.any(String), { replaceExistingServices: true });
+    });
 });

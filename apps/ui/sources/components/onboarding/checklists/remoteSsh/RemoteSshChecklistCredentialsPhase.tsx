@@ -7,9 +7,9 @@ import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import type { SshCredentialsDraft } from '@/components/ssh/SshCredentialsFields';
 import { SshCredentialsFields } from '@/components/ssh/SshCredentialsFields';
-import { WizardChoiceRow } from '@/components/onboarding';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { SelectableRow } from '@/components/ui/lists/SelectableRow';
+import { WizardChoiceRow } from '../../ui/WizardChoiceRow';
 
 import type { RemoteSshChecklistCopy } from './copy';
 import { remoteSshChecklistStyles } from './styles';

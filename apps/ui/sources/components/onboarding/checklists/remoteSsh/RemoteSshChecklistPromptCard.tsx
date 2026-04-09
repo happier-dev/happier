@@ -5,6 +5,7 @@ import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { MachineSetupTextField } from '@/components/ui/forms/MachineSetupTextField';
 import type { RemoteSshBootstrapPrompt } from '@/components/systemTasks/remoteSshBootstrap/useRemoteSshBootstrapTask';
+import { buildBackgroundServiceReplacementPromptBody } from '@/components/systemTasks/prompts/backgroundServiceReplacementPromptPresentation';
 
 import { remoteSshChecklistStyles } from './styles';
 
@@ -46,6 +47,13 @@ export const RemoteSshChecklistPromptCard = React.memo(function RemoteSshCheckli
             <Text style={styles.promptBody}>
                 {props.prompt.kind === 'auth.approveRemoteProvisioning'
                     ? props.prompt.publicKey ?? ''
+                    : props.prompt.kind === 'daemon.replaceRemoteBackgroundServices'
+                        ? buildBackgroundServiceReplacementPromptBody({
+                            targetServerUrl: props.prompt.targetServerUrl,
+                            targetReleaseChannel: props.prompt.targetReleaseChannel,
+                            services: props.prompt.services,
+                            format: 'detailed',
+                        }) ?? ''
                     : [
                         props.prompt.host,
                         props.prompt.keyType,

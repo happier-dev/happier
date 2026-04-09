@@ -6,7 +6,7 @@ import { t } from '@/text';
 import {
     readMachineDaemonTransferState,
     type MachineDaemonTransferListenerClassState,
-} from '@/sync/domains/transfers/runtime/transferSubstrate/machineDaemonTransferState';
+} from '@/sync/domains/transfers/runtime/transferRuntime/availability/machineDaemonTransferState';
 
 function resolveListenerStateLabel(state: MachineDaemonTransferListenerClassState): string {
     if (!state.enabled) {

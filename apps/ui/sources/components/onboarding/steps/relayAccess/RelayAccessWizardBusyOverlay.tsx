@@ -1,12 +1,12 @@
 import * as React from 'react';
-import { Platform, StyleSheet, View } from 'react-native';
-import { StyleSheet as UnistylesStyleSheet, useUnistyles } from 'react-native-unistyles';
+import { Platform, View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { SystemTaskProgressCard } from '@/components/systemTasks';
 import type { SystemTaskRunState } from '@/components/systemTasks/types';
 import { createBackdropNativeStyle, createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
 
-const stylesheet = UnistylesStyleSheet.create({
+const stylesheet = StyleSheet.create({
     overlay: {
         ...StyleSheet.absoluteFillObject,
         position: 'absolute',

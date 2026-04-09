@@ -34,6 +34,9 @@ vi.mock('@/text', async () => {
             if (key === 'machine.runtimeSummary' && params) {
                 return `summary:${String(params.cliVersion ?? '')}:${String(params.daemonVersion ?? '')}:${String(params.daemonRing ?? '')}:${String(params.installationCount ?? '')}:${String(params.serviceCount ?? '')}:${String(params.warningCount ?? '')}`;
             }
+            if (key === 'machine.backgroundServiceModes.defaultFollowing') return 'default background service';
+            if (key === 'machine.backgroundServiceModes.legacyPinned') return 'legacy pinned background service';
+            if (key === 'machine.backgroundServiceModes.generic') return 'background service';
             return key;
         },
     });
@@ -130,11 +133,14 @@ describe('MachineDoctorRuntimeInventorySection', () => {
                             backend: 'launchd',
                             label: 'com.happier.cli.daemon.preview.cloud',
                             verification: 'verified',
+                            targetMode: 'default-following',
                             ring: 'preview',
                             instanceId: 'cloud',
                             scope: 'user',
                             definitionPath: '/Users/tester/Library/LaunchAgents/com.happier.cli.daemon.preview.cloud.plist',
                             executablePath: '/opt/happier/cli-preview/current/happier',
+                            serverUrl: 'https://relay.preview.example.test',
+                            publicServerUrl: 'https://relay.preview.example.test',
                             installed: true,
                             running: true,
                         },
@@ -180,6 +186,8 @@ describe('MachineDoctorRuntimeInventorySection', () => {
         expect(text).toContain('machine.cliVersion');
         expect(text).toContain('/opt/happier/bin/happier');
         expect(text).toContain('com.happier.cli.daemon.preview.cloud');
+        expect(text).toContain('default background service');
+        expect(text).toContain('https://relay.preview.example.test');
         expect(text).toContain('dev.happier.stack.dev-built');
         expect(text).toContain('MULTIPLE_HAPPIER_INSTALLATIONS_ON_PATH');
     });

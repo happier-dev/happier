@@ -138,4 +138,28 @@ describe('buildThisComputerChecklistItems', () => {
         expect(items.find((item) => item.id === 'setup.thisComputer.checkAuth')?.satisfied).toBe(false);
         expect(items.find((item) => item.id === 'setup.thisComputer.checkAuth')?.badge).toBe('Mismatch');
     });
+
+    it('uses descriptive background-service mismatch details instead of telling the user to switch the UI server', () => {
+        const items = buildThisComputerChecklistItems({
+            activeRelayUrl: 'https://relay-ui.example.test',
+            serviceInstalled: true,
+            daemonRunning: true,
+            machineId: 'machine_1',
+            needsAuth: false,
+            daemonServerUrl: 'https://relay-daemon.example.test',
+            daemonComparableKey: 'https://relay-daemon.example.test',
+            daemonAccountId: 'acct_1',
+            daemonMachineRegistered: true,
+            uiAccountId: 'acct_1',
+            serverMismatch: true,
+            accountMismatch: false,
+            pairingRequired: false,
+            relayDriftBanner: null,
+        });
+
+        expect(items.find((item) => item.id === 'setup.thisComputer.configureRelay')?.details).toContain('relay-ui.example.test');
+        expect(items.find((item) => item.id === 'setup.thisComputer.configureRelay')?.details).toContain('relay-daemon.example.test');
+        expect(items.find((item) => item.id === 'setup.thisComputer.configureRelay')?.details)
+            .not.toContain('Switch the app to the same Relay');
+    });
 });

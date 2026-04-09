@@ -10,6 +10,11 @@ vi.mock('react-native', async () => {
     return createReactNativeWebMock();
 });
 
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+
 vi.mock('./WizardCardLayout', () => ({
     WizardCardLayout: ({ children, testID, showScrim, scrollable }: { children: React.ReactNode; testID?: string; showScrim?: boolean; scrollable?: boolean }) =>
         React.createElement('WizardCardLayout', { testID, showScrim, scrollable }, children),
@@ -54,10 +59,10 @@ describe('WizardModalShell', () => {
         const footerHint = React.createElement(
             'View',
             { testID: 'wizard-shell-relay-hint' },
-            React.createElement(
-                Text,
-                { testID: 'wizard-shell-relay-hint-line' },
-                'Active relay: https://relay.example.test/this/is/a/very/long/url/that/should/not/wrap'
+                React.createElement(
+                    Text,
+                    { testID: 'wizard-shell-relay-hint-line' },
+                'Active server: https://relay.example.test/this/is/a/very/long/url/that/should/not/wrap'
             )
         );
 

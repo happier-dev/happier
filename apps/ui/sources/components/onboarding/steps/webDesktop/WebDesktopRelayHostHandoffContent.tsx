@@ -7,7 +7,7 @@ import {
     WizardGuidedHandoffDownloadCta,
     WizardGuidedHandoffNote,
     WizardGuidedHandoffTerminal,
-} from '@/components/onboarding';
+} from '../../ui/WizardGuidedHandoff';
 
 export type WebDesktopRelayHostHandoffContentProps = Readonly<{
     testID: string;

@@ -149,7 +149,7 @@ function resolveDetails(id: ThisComputerChecklistItemId, preflight: ThisComputer
                 return preflight.relayDriftBanner.description;
             }
             if (preflight.serverMismatch) {
-                return t('diagnosis.findings.serverMismatch.steps.switchUiServer');
+                return resolveServerMismatchSubtitle(preflight);
             }
             return resolveServerMismatchSubtitle(preflight);
         case 'setup.thisComputer.auth.request':

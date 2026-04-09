@@ -267,6 +267,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         cancel,
         completedMachineId,
         continueAfterPrompt,
+        declinePrompt,
         dismissPrompt,
         isStarting,
         prompt,
@@ -591,15 +592,27 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         if (prompt) {
             props.onWizardSkipChange?.({
                 hidden: false,
-                label: t('common.cancel'),
+                label: prompt.kind === 'daemon.replaceRemoteBackgroundServices'
+                    ? t('common.skip')
+                    : t('common.cancel'),
                 disabled: isStarting,
-                onPress: () => dismissPrompt(),
+                onPress: () => {
+                    if (prompt.kind === 'daemon.replaceRemoteBackgroundServices') {
+                        void declinePrompt().catch((error) => {
+                            setStartErrorMessage(error instanceof Error ? error.message : t('setupOnboarding.remoteSshChecklist.continueFailed'));
+                        });
+                        return;
+                    }
+                    dismissPrompt();
+                },
             });
 
             const primaryLabel = prompt.kind === 'ssh.password'
                 ? t('common.continue')
                 : prompt.kind === 'auth.approveRemoteProvisioning'
                     ? t('settings.machineSetupRemotePromptApproveAction')
+                    : prompt.kind === 'daemon.replaceRemoteBackgroundServices'
+                        ? t('common.continue')
                     : prompt.kind === 'ssh.replaceHostKey'
                         ? t('settings.machineSetupRemotePromptReplaceAction')
                         : t('settings.machineSetupRemotePromptTrustAction');
@@ -636,6 +649,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         activeTaskSnapshot?.result,
         checklist.canContinue,
         checklist.retry,
+        declinePrompt,
         dismissPrompt,
         draft,
         handleContinueAfterPrompt,

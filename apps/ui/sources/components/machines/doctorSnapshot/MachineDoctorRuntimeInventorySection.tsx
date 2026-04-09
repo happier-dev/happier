@@ -7,6 +7,7 @@ import type {
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
+import { describeBackgroundServiceTargetMode } from '@/components/systemTasks/prompts/backgroundServiceReplacementPromptPresentation';
 
 import type { MachineDoctorSnapshotState } from './useMachineDoctorSnapshot';
 
@@ -95,7 +96,9 @@ function resolveServiceSubtitle(service: HappierDoctorService): string {
     const parts = [
         service.backend,
         service.scope,
+        service.targetMode ? describeBackgroundServiceTargetMode(service.targetMode) : null,
         service.ring ?? null,
+        service.publicServerUrl ?? service.serverUrl ?? null,
         normalizePath(service.executablePath),
     ].filter((part) => part && part !== t('status.unknown'));
 

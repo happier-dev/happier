@@ -5,7 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
-import { WizardChoiceRow } from '@/components/onboarding';
+import { WizardChoiceRow } from '../ui/WizardChoiceRow';
 
 export type RelaySwitchDecision = 'keep' | 'switch';
 
