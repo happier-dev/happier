@@ -382,6 +382,7 @@ export async function handleSetupCommand(args: string[], deps: SetupCommandDeps 
     }
 
     const daemonSetupPreflightSteps: string[][] = [];
+    let shouldRunDaemonInstallStep = !skipDaemon;
     if (!skipDaemon) {
         const guidance = await readBackgroundServiceSetupGuidanceFn({
             targetReleaseChannel: configuration.publicReleaseRing,
@@ -425,9 +426,12 @@ export async function handleSetupCommand(args: string[], deps: SetupCommandDeps 
             console.log(out.render());
             return;
         }
+
+        shouldRunDaemonInstallStep = !guidance.exactDefaultServiceExists || guidanceResult.replacedExistingServices;
     }
 
-    for (const step of [...daemonSetupPreflightSteps.map((argv) => ({ argv })), ...plan.steps]) {
+    const setupSteps = plan.steps.filter((step) => step.id !== 'daemon_install' || shouldRunDaemonInstallStep);
+    for (const step of [...daemonSetupPreflightSteps.map((argv) => ({ argv })), ...setupSteps]) {
         const exitCode = await runHappyCliStepFn(step.argv);
         if (exitCode !== 0) {
             const display = 'display' in step ? step.display : `happier ${step.argv.join(' ')}`;

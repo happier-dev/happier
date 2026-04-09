@@ -18,33 +18,40 @@ export async function applyBackgroundServiceSetupGuidance(params: Readonly<{
   switchDefaultReleaseChannel: () => Promise<void>;
   replaceExistingServices: () => Promise<void>;
 }>): Promise<BackgroundServiceSetupGuidanceFlowResult> {
-  let switchedDefaultReleaseChannel = false;
-  let replacedExistingServices = false;
+  const shouldSwitchDefaultReleaseChannel = params.guidance.shouldOfferDefaultReleaseChannelSwitch
+    ? await params.promptSwitchDefaultReleaseChannel()
+    : false;
 
-  if (params.guidance.shouldOfferDefaultReleaseChannelSwitch) {
-    const shouldSwitch = await params.promptSwitchDefaultReleaseChannel();
-    if (!shouldSwitch) {
-      return {
-        cancelled: true,
-        cancellationReason: 'declined_release_channel_switch',
-        switchedDefaultReleaseChannel: false,
-        replacedExistingServices: false,
-      };
-    }
+  if (params.guidance.shouldOfferDefaultReleaseChannelSwitch && !shouldSwitchDefaultReleaseChannel) {
+    return {
+      cancelled: true,
+      cancellationReason: 'declined_release_channel_switch',
+      switchedDefaultReleaseChannel: false,
+      replacedExistingServices: false,
+    };
+  }
+
+  const shouldReplaceExistingServices = params.guidance.shouldPromptForServiceReplacement
+    ? await params.promptReplaceExistingServices()
+    : false;
+
+  if (params.guidance.shouldPromptForServiceReplacement && !shouldReplaceExistingServices) {
+    return {
+      cancelled: true,
+      cancellationReason: 'declined_service_replacement',
+      switchedDefaultReleaseChannel: false,
+      replacedExistingServices: false,
+    };
+  }
+
+  let switchedDefaultReleaseChannel = false;
+  if (shouldSwitchDefaultReleaseChannel) {
     await params.switchDefaultReleaseChannel();
     switchedDefaultReleaseChannel = true;
   }
 
-  if (params.guidance.shouldPromptForServiceReplacement) {
-    const shouldReplace = await params.promptReplaceExistingServices();
-    if (!shouldReplace) {
-      return {
-        cancelled: true,
-        cancellationReason: 'declined_service_replacement',
-        switchedDefaultReleaseChannel,
-        replacedExistingServices: false,
-      };
-    }
+  let replacedExistingServices = false;
+  if (shouldReplaceExistingServices) {
     await params.replaceExistingServices();
     replacedExistingServices = true;
   }
