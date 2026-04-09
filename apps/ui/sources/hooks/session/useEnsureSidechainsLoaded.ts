@@ -1,5 +1,6 @@
 import * as React from 'react';
 
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { sync } from '@/sync/sync';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -31,6 +32,7 @@ export function useEnsureSidechainsLoaded(params: Readonly<{
     sidechainIds: readonly (string | null | undefined)[];
 }>): void {
     const { enabled, sessionId, sidechainIds } = params;
+    const normalizedSessionId = React.useMemo(() => normalizeSessionId(sessionId), [sessionId]);
     const requestedKeysRef = React.useRef<Set<string>>(new Set());
     const retryTimeoutsRef = React.useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
     const retryCountsRef = React.useRef<Map<string, number>>(new Map());
@@ -73,7 +75,6 @@ export function useEnsureSidechainsLoaded(params: Readonly<{
     React.useEffect(() => {
         if (!enabled) return;
 
-        const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
         if (!normalizedSessionId) return;
 
         for (const rawSidechainId of sidechainIds) {
@@ -101,5 +102,5 @@ export function useEnsureSidechainsLoaded(params: Readonly<{
 
             fireAndForget(request, { tag: 'useEnsureSidechainsLoaded' });
         }
-    }, [enabled, resetRetryState, retryTick, scheduleRetry, sessionId, sidechainIds]);
+    }, [enabled, normalizedSessionId, resetRetryState, retryTick, scheduleRetry, sidechainIds]);
 }

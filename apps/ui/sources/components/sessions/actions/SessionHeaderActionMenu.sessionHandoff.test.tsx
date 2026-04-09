@@ -13,6 +13,9 @@ import {
 const runSessionHandoffPickerFlowMock = vi.hoisted(() => vi.fn());
 const createDefaultActionExecutorMock = vi.hoisted(() => vi.fn());
 const resolveSessionTargetServerIdMock = vi.hoisted(() => vi.fn());
+const preferredServerIdState = vi.hoisted(() => ({
+  current: 'server_a' as string | null,
+}));
 const fireAndForgetMock = vi.hoisted(() => vi.fn());
 const createSessionActionDraftMock = vi.hoisted(() => vi.fn());
 const buildActionDraftInputMock = vi.hoisted(() => vi.fn());
@@ -50,13 +53,57 @@ const voiceSessionSnapshotState = vi.hoisted(() => ({
 const actionsSettingsState = vi.hoisted(() => ({
   current: { v: 1, actions: {} } as any,
 }));
+const allMachinesState = vi.hoisted(() => ({
+  current: [] as any[],
+}));
+const allSessionsState = vi.hoisted(() => ({
+  current: [] as any[],
+}));
+const reachableMachineTargetState = vi.hoisted(() => ({
+  current: null as { machineId: string; basePath: string } | null,
+}));
 const storageState = vi.hoisted(() => ({
   current: {
     settings: { voice: null as any } as any,
     sessions: {} as Record<string, any>,
+    machines: {} as Record<string, any>,
+    machineListByServerId: {} as Record<string, any>,
     createSessionActionDraft: createSessionActionDraftMock,
   },
 }));
+
+function buildConfiguredInactiveDaemonTransferState() {
+  return {
+    transfer: {
+      supported: {
+        import: true,
+        export: true,
+      },
+      listenerClasses: {
+        loopback_http: {
+          enabled: true,
+          configured: true,
+          active: false,
+        },
+        lan_http: {
+          enabled: false,
+          configured: false,
+          active: false,
+        },
+        tailscale_serve_https: {
+          enabled: false,
+          configured: false,
+          active: false,
+          available: false,
+        },
+      },
+      lifecycle: {
+        mode: 'lazy_idle_shutdown',
+        version: 1,
+      },
+    },
+  };
+}
 
 installSessionActionsCommonModuleMocks({
   reactNative: async () => {
@@ -86,12 +133,16 @@ installSessionActionsCommonModuleMocks({
         subscribe: () => () => {},
       },
       useSettings: () => storageState.current.settings,
+      useSession: (sessionId: string) => storageState.current.sessions[sessionId] ?? null,
       useSetting: (key: string) => {
         if (key === 'actionsSettingsV1') return actionsSettingsState.current;
         if (key === 'sessionReplayEnabled') return true;
         if (key === 'voice') return voiceSettingState.current;
         return null;
       },
+      useAllMachines: () => allMachinesState.current,
+      useAllSessions: () => allSessionsState.current,
+      useProjectForSession: () => null,
     });
   },
   unistyles: async () => {
@@ -176,6 +227,10 @@ vi.mock('@/components/sessions/model/resolveSessionTargetServerId', () => ({
   resolveSessionTargetServerId: (...args: unknown[]) => resolveSessionTargetServerIdMock(...args),
 }));
 
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession', () => ({
+  usePreferredServerIdForSession: () => preferredServerIdState.current,
+}));
+
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
   resolvePreferredServerIdForSessionId: () => {
     throw new Error('legacy direct resolver should not be used in SessionHeaderActionMenu');
@@ -200,6 +255,10 @@ vi.mock('@/sync/domains/sessionHandoff/runSessionHandoffPickerFlow', () => ({
 
 vi.mock('@/sync/ops/sessionMachineTarget', () => ({
   readMachineTargetForSession: (...args: unknown[]) => readMachineTargetForSessionMock(...args),
+}));
+
+vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
+  useSessionReachableMachineTarget: () => reachableMachineTargetState.current,
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
@@ -246,6 +305,8 @@ describe('SessionHeaderActionMenu handoff', () => {
     runSessionHandoffPickerFlowMock.mockReset();
     createDefaultActionExecutorMock.mockReset();
     resolveSessionTargetServerIdMock.mockReset();
+    resolveSessionTargetServerIdMock.mockImplementation((_sessionId: string, fallbackServerId?: string | null) => fallbackServerId ?? null);
+    preferredServerIdState.current = 'server_a';
     fireAndForgetMock.mockReset();
     createSessionActionDraftMock.mockReset();
     buildActionDraftInputMock.mockReset();
@@ -263,13 +324,14 @@ describe('SessionHeaderActionMenu handoff', () => {
       execute: vi.fn(),
     });
     buildActionDraftInputMock.mockReturnValue({ draft: true });
-    resolveSessionTargetServerIdMock.mockReturnValue('server_a');
+    preferredServerIdState.current = 'server_a';
     runSessionHandoffPickerFlowMock.mockResolvedValue({ ok: true, handoffId: 'handoff_1' });
     resolveSessionActionDefaultBackendMock.mockReturnValue({
       backendTarget: { kind: 'agent', agentId: 'claude' },
       defaultBackendId: 'claude',
     });
     voiceSettingState.current = null;
+    reachableMachineTargetState.current = null;
     storageState.current = {
       settings: {
         voice: null,
@@ -277,8 +339,12 @@ describe('SessionHeaderActionMenu handoff', () => {
         featureToggles: { 'execution.runs': true },
       },
       sessions: {},
+      machines: {},
+      machineListByServerId: {},
       createSessionActionDraft: createSessionActionDraftMock,
     };
+    allMachinesState.current = [];
+    allSessionsState.current = [];
     voiceSessionSnapshotState.current = {
       adapterId: null,
       sessionId: null,
@@ -296,10 +362,11 @@ describe('SessionHeaderActionMenu handoff', () => {
   });
 
   it('prefers the reachable source machine id for handoff gating and flow context when session metadata is stale', async () => {
-    readMachineTargetForSessionMock.mockReturnValue({
+    reachableMachineTargetState.current = {
       machineId: 'machine_rebound',
       basePath: '/workspace/repo',
-    });
+    };
+    readMachineTargetForSessionMock.mockReturnValue(null);
     const { recordCachedMachineRpcDirectRouteViable } = await import('@/sync/domains/transfers/runtime/transferRouteCache');
     recordCachedMachineRpcDirectRouteViable({
       serverId: 'server_a',
@@ -370,9 +437,9 @@ describe('SessionHeaderActionMenu handoff', () => {
     expect(trigger.props.accessibilityLabel).toBe('session.actionMenu.openA11y');
   });
 
-  it('threads the session server id into the default action executor server lookup', async () => {
+  it('threads the preferred session server id into the default action executor server lookup', async () => {
+    preferredServerIdState.current = 'server-explicit';
     resolveSessionTargetServerIdMock.mockImplementation((_sessionId: string, fallbackServerId?: string | null) => fallbackServerId ?? null);
-
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
     const screen = await renderScreen(<SessionHeaderActionMenu
@@ -388,11 +455,31 @@ describe('SessionHeaderActionMenu handoff', () => {
         />);
 
     expect(screen.findByType('DropdownMenu' as any)).toBeTruthy();
+    expect(resolveSessionTargetServerIdMock).toHaveBeenCalledWith('sess_1', 'server-explicit');
     expect(createDefaultActionExecutorMock).toHaveBeenCalledTimes(1);
     const executorConfig = createDefaultActionExecutorMock.mock.calls[0]?.[0] as {
       resolveServerIdForSessionId: (sessionId: string) => string | null;
     };
     expect(executorConfig.resolveServerIdForSessionId('sess_1')).toBe('server-explicit');
+
+    preferredServerIdState.current = 'server-updated';
+    await screen.update(<SessionHeaderActionMenu
+          sessionId="sess_1"
+          session={{
+            id: 'sess_1',
+            serverId: 'server-explicit',
+            metadata: {
+              machineId: 'machine_source',
+              flavor: 'claude',
+            },
+          } as any}
+        />);
+
+    expect(createDefaultActionExecutorMock).toHaveBeenCalledTimes(2);
+    const updatedExecutorConfig = createDefaultActionExecutorMock.mock.calls.at(-1)?.[0] as {
+      resolveServerIdForSessionId: (sessionId: string) => string | null;
+    };
+    expect(updatedExecutorConfig.resolveServerIdForSessionId('sess_1')).toBe('server-updated');
   });
 
   it('fails closed (does not surface session.handoff) when machine transfer is disabled on the selected server', async () => {
@@ -580,7 +667,7 @@ describe('SessionHeaderActionMenu handoff', () => {
   });
 
   it('reacts when machine-rpc direct-peer viability becomes available after mount', async () => {
-    resolveSessionTargetServerIdMock.mockReturnValue('server_reactive_header');
+    preferredServerIdState.current = 'server_reactive_header';
 
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
@@ -662,7 +749,50 @@ describe('SessionHeaderActionMenu handoff', () => {
   });
 
   it('surfaces session.handoff when source reachability is proven through server-scoped rpc even without a cached direct route', async () => {
-    resolveSessionTargetServerIdMock.mockReturnValue('server_scoped_only');
+    preferredServerIdState.current = 'server_scoped_only';
+    readMachineTargetForSessionMock.mockReturnValue({
+      machineId: 'machine_scoped',
+      basePath: '/workspace/repo',
+    });
+    machineRpcWithServerScopeMock.mockResolvedValue({ ok: true });
+    storageState.current = {
+      ...storageState.current,
+      machineListByServerId: {
+        server_scoped_only: [{
+          id: 'machine_scoped',
+          daemonState: buildConfiguredInactiveDaemonTransferState(),
+        }],
+      },
+    };
+
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+          sessionId="sess_1"
+          session={{
+            id: 'sess_1',
+            metadata: {
+              machineId: 'machine_source',
+              flavor: 'claude',
+            },
+          } as any}
+        />);
+
+    await flushHookEffects({ cycles: 2 });
+
+    const dropdown = screen.findByType('DropdownMenu' as any);
+    expect(dropdown.props.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'session.handoff',
+        }),
+      ]),
+    );
+    expect(dropdown.props.items.find((item: any) => item?.id === 'session.handoff')?.disabled).not.toBe(true);
+  });
+
+  it('surfaces session.handoff when the preferred session server id is resolved for the current session', async () => {
+    preferredServerIdState.current = 'server_preferred_header';
     readMachineTargetForSessionMock.mockReturnValue({
       machineId: 'machine_scoped',
       basePath: '/workspace/repo',
@@ -688,9 +818,9 @@ describe('SessionHeaderActionMenu handoff', () => {
     expect(dropdown.props.items.some((item: any) => item?.id === 'session.handoff')).toBe(true);
   });
 
-  it('surfaces session.handoff when the local session cache misses but the preferred server resolver falls back to the active server', async () => {
-    resolveSessionTargetServerIdMock.mockReturnValue(null);
-    resolveSessionTargetServerIdMock.mockReturnValue('server_preferred_header');
+  it('falls back to the canonical session target server resolver when the preferred server hook is empty', async () => {
+    preferredServerIdState.current = null;
+    resolveSessionTargetServerIdMock.mockReturnValue('server_canonical_header');
     readMachineTargetForSessionMock.mockReturnValue({
       machineId: 'machine_scoped',
       basePath: '/workspace/repo',
@@ -712,8 +842,107 @@ describe('SessionHeaderActionMenu handoff', () => {
 
     await flushHookEffects({ cycles: 2 });
 
+    expect(resolveSessionTargetServerIdMock).toHaveBeenCalledWith('sess_1', null);
     const dropdown = screen.findByType('DropdownMenu' as any);
     expect(dropdown.props.items.some((item: any) => item?.id === 'session.handoff')).toBe(true);
+  });
+
+  it('recomputes session.handoff availability when a reachable machine target appears after the initial render', async () => {
+    storageState.current = {
+      ...storageState.current,
+      sessions: {
+        sess_1: {
+          id: 'sess_1',
+          seq: 0,
+          encryptionMode: 'plain',
+          presence: 'offline',
+          active: true,
+          accessLevel: 'edit',
+          metadata: {
+            flavor: 'claude',
+            claudeSessionId: 'claude_session_1',
+            path: '/workspace/repo',
+            homeDir: '/workspace',
+          },
+        } as any,
+      },
+      machines: {},
+    };
+    allSessionsState.current = Object.values(storageState.current.sessions);
+    allMachinesState.current = [];
+    reachableMachineTargetState.current = null;
+    preferredServerIdState.current = 'server_a';
+
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+          sessionId="sess_1"
+          session={storageState.current.sessions.sess_1 as any}
+        />);
+
+    let dropdown = screen.findByType('DropdownMenu' as any);
+    expect(dropdown.props.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'session.handoff',
+          disabled: true,
+        }),
+      ]),
+    );
+
+    storageState.current = {
+      ...storageState.current,
+      sessions: {
+        ...storageState.current.sessions,
+        sess_2: {
+          id: 'sess_2',
+          seq: 1,
+          encryptionMode: 'plain',
+          presence: 'offline',
+          active: true,
+          accessLevel: 'edit',
+          metadata: {
+            flavor: 'claude',
+            machineId: 'machine_rebound',
+            path: '/workspace/repo',
+            homeDir: '/workspace',
+          },
+        } as any,
+      },
+      machines: {
+        machine_rebound: {
+          id: 'machine_rebound',
+          active: true,
+          activeAt: 1,
+          metadata: { host: 'lima-vm' },
+        },
+      },
+    };
+    allSessionsState.current = Object.values(storageState.current.sessions);
+    allMachinesState.current = Object.values(storageState.current.machines);
+    readMachineTargetForSessionMock.mockReturnValue(null);
+    reachableMachineTargetState.current = {
+      machineId: 'machine_rebound',
+      basePath: '/workspace/repo',
+    };
+    const { recordCachedMachineRpcDirectRouteViable } = await import('@/sync/domains/transfers/runtime/transferRouteCache');
+    recordCachedMachineRpcDirectRouteViable({
+      serverId: 'server_a',
+      remoteMachineId: 'machine_rebound',
+    });
+
+    await screen.update(<SessionHeaderActionMenu
+          sessionId="sess_1"
+          session={storageState.current.sessions.sess_1 as any}
+        />);
+    await flushHookEffects({ cycles: 10 });
+
+    dropdown = screen.findByType('DropdownMenu' as any);
+    expect(dropdown.props.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'session.handoff' }),
+      ]),
+    );
   });
 
   it('seeds configured ACP backend targets into non-handoff action drafts', async () => {
@@ -1028,6 +1257,46 @@ describe('SessionHeaderActionMenu handoff', () => {
       policy: 'attached_only',
       updatedAtMs: 2,
     });
+  });
+
+  it('does not surface background follow for direct-session providers without follow support', async () => {
+    storageState.current.sessions = {
+      s1: {
+        id: 's1',
+        seq: 0,
+        encryptionMode: 'plain',
+        presence: 'offline',
+        active: true,
+        accessLevel: 'edit',
+        canApprovePermissions: false,
+        metadata: {
+          machineId: 'machine-1',
+          host: 'happy-host',
+          flavor: 'opencode',
+          version: '0.0.0',
+          path: '/tmp',
+          homeDir: '/tmp',
+          directSessionV1: {
+            v: 1,
+            providerId: 'opencode',
+            machineId: 'machine-1',
+            remoteSessionId: 'vendor-session-1',
+            source: { kind: 'opencodeServer', directory: '/tmp' },
+            followPolicyV1: { v: 1, policy: 'attached_only' },
+          },
+        },
+      } as any,
+    };
+
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+          sessionId="s1"
+          session={storageState.current.sessions.s1 as any}
+        />);
+
+    const dropdown = screen.findByType('DropdownMenu' as any);
+    expect(dropdown.props.items.find((item: { id: string }) => item.id === 'session.directSession.backgroundFollow')).toBeUndefined();
   });
 
   it('drops execution-run menu items after execution runs are disabled in settings', async () => {

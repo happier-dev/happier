@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, useWindowDimensions, InteractionManager } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useAllMachines, storage, useSetting, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
+import { useAllMachines, useMachineListByServerId, storage, useSetting, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { useRouter, useLocalSearchParams, useNavigation, usePathname } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
@@ -326,7 +326,20 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     }, [profiles]);
 
     const profileMap = useProfileMap(allProfiles);
-    const machines = useAllMachines();
+    const activeMachines = useAllMachines();
+    const machineListByServerId = useMachineListByServerId();
+    const machines = React.useMemo(() => {
+        const resolvedTargetServerId = String(targetServerId ?? '').trim();
+        const resolvedActiveServerId = String(activeServerSnapshot.serverId ?? '').trim();
+        if (!resolvedTargetServerId || resolvedTargetServerId === resolvedActiveServerId) {
+            return activeMachines;
+        }
+        if (!Object.prototype.hasOwnProperty.call(machineListByServerId, resolvedTargetServerId)) {
+            return activeMachines;
+        }
+        const remoteMachines = machineListByServerId[resolvedTargetServerId];
+        return Array.isArray(remoteMachines) ? remoteMachines : [];
+    }, [activeMachines, activeServerSnapshot.serverId, machineListByServerId, targetServerId]);
     const hasExplicitSeededProfileSelection = React.useMemo(() => {
         if (!useProfiles) {
             return false;
@@ -834,7 +847,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const machinePopoverGroups = useServerScopedMachineOptions({
         allowedServerIds: machinePopoverServerIds,
         activeServerId: activeServerSnapshot.serverId,
-        activeMachines: machines,
+        activeMachines,
         refreshToken: activeServerSnapshot.generation,
     });
 

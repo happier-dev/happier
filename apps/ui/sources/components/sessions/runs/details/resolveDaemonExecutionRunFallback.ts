@@ -3,9 +3,10 @@ import type { Message } from '@/sync/domains/messages/messageTypes';
 
 import { machineExecutionRunsList } from '@/sync/ops/machineExecutionRuns';
 import { storage } from '@/sync/domains/state/storage';
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
+import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { readDisplayMachineIdForSession } from '@/sync/ops/sessionMachineTarget';
 import { t } from '@/text';
-import { resolveSessionTargetServerId } from '@/components/sessions/model/resolveSessionTargetServerId';
 
 export type ExecutionRunTranscriptFallback = Readonly<{
     run: ExecutionRunPublicState;
@@ -73,13 +74,18 @@ export async function resolveDaemonExecutionRunFallback(params: Readonly<{
     runId: string;
     transcriptFallback?: ExecutionRunTranscriptFallback | null;
 }>): Promise<ExecutionRunDaemonFallback | null> {
-    const session = storage.getState().sessions?.[params.sessionId];
+    const normalizedSessionId = normalizeSessionId(params.sessionId);
+    const session = storage.getState().sessions?.[normalizedSessionId];
     const machineId = readDisplayMachineIdForSession({
-        sessionId: params.sessionId,
+        sessionId: normalizedSessionId,
         metadata: session?.metadata ?? null,
     }) || null;
     if (!machineId) return null;
-    const serverId = resolveSessionTargetServerId(params.sessionId, session?.serverId);
+    const serverId = (
+        resolvePreferredServerIdForSessionId(normalizedSessionId)
+        ?? session?.serverId
+        ?? ''
+    ).trim() || null;
 
     const listed = await machineExecutionRunsList(machineId, { ...(serverId ? { serverId } : {}) });
     if (!listed || listed.ok !== true) return null;

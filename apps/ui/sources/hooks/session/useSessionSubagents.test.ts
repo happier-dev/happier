@@ -18,23 +18,27 @@ const directSessionRuntimeState = {
     status: null as null | { runnerActive?: boolean },
     refreshNow: vi.fn(async () => null),
 };
+const useSessionRunningExecutionRunsSpy = vi.fn<(...args: any[]) => any>(() => []);
+const useDirectSessionRuntimeSpy = vi.fn<(...args: any[]) => any>(() => directSessionRuntimeState);
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => true,
 }));
 
 vi.mock('@/hooks/session/useSessionRunningExecutionRuns', () => ({
-    useSessionRunningExecutionRuns: () => [],
+    useSessionRunningExecutionRuns: (...args: any[]) => useSessionRunningExecutionRunsSpy(...args),
 }));
 
 vi.mock('@/components/sessions/model/useDirectSessionRuntime', () => ({
-    useDirectSessionRuntime: () => directSessionRuntimeState,
+    useDirectSessionRuntime: (...args: any[]) => useDirectSessionRuntimeSpy(...args),
 }));
 
 beforeEach(() => {
     getStorage().setState(initialStorageState, true);
     directSessionRuntimeState.directSessionLink = null;
     directSessionRuntimeState.status = null;
+    useSessionRunningExecutionRunsSpy.mockClear();
+    useDirectSessionRuntimeSpy.mockClear();
 });
 
 describe('useSessionSubagents', () => {
@@ -106,5 +110,67 @@ describe('useSessionSubagents', () => {
             participantTargets: [],
             sidechainIds: ['toolu_run_1'],
         });
+    });
+
+    it('normalizes session ids before delegating to subagent child hooks', async () => {
+        const seen = await renderHookAndCollectValues(() =>
+            useSessionSubagents({
+                sessionId: '  session-1  ',
+                session: {
+                    id: 'session-1',
+                    metadata: null,
+                } as any,
+                messages: [],
+            }),
+        );
+
+        expect(useSessionRunningExecutionRunsSpy).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 'session-1',
+            enabled: expect.any(Boolean),
+        }));
+        expect(useDirectSessionRuntimeSpy).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 'session-1',
+            metadata: null,
+        }));
+        expect(seen.at(-1)).toEqual({
+            subagents: [],
+            participantTargets: [],
+            sidechainIds: [],
+        });
+    });
+
+    it('does not enable an internal direct-session runtime when one is already provided', async () => {
+        const providedRuntime = {
+            directSessionLink: {
+                v: 1,
+                providerId: 'claude',
+                machineId: 'machine-1',
+                remoteSessionId: 'remote-session-1',
+                source: 'provider',
+            },
+            status: { runnerActive: true },
+            refreshNow: vi.fn(async () => null),
+            sessionServerId: 'server-1',
+        };
+
+        await renderHookAndCollectValues(() =>
+            useSessionSubagents({
+                sessionId: 'session-1',
+                session: {
+                    id: 'session-1',
+                    metadata: {
+                        flavor: 'claude',
+                        directSessionV1: providedRuntime.directSessionLink,
+                    },
+                } as any,
+                messages: [],
+                directSessionRuntime: providedRuntime as any,
+            }),
+        );
+
+        expect(useDirectSessionRuntimeSpy).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 'session-1',
+            enabled: false,
+        }));
     });
 });

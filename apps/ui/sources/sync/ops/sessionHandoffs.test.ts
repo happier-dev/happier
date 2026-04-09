@@ -30,7 +30,7 @@ vi.mock('./sessionMachineTarget', () => ({
         ),
 }));
 
-vi.mock('../api/capabilities/serverFeaturesClient', () => ({
+vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
     getServerFeaturesSnapshot: getServerFeaturesSnapshotMock,
 }));
 
@@ -187,6 +187,72 @@ describe('sessionHandoffs ops', () => {
         const call = machineRpcWithServerScopeMock.mock.calls[0]?.[0] as any;
         expect(call.timeoutMs).toBe(90_000);
     }, 60_000);
+
+    it('normalizes legacy start responses that only expose workspaceReplicationSourceRootPath in handoffMetadataV2', async () => {
+        const { normalizeSessionHandoffStartResponse } = await import('./sessionHandoffs');
+
+        expect(
+            normalizeSessionHandoffStartResponse({
+                handoffId: 'handoff_legacy_start',
+                status: {
+                    handoffId: 'handoff_legacy_start',
+                    status: 'pending',
+                    phase: 'preparing',
+                    recoveryActions: [],
+                },
+                endpointCandidates: [],
+                handoffMetadataV2: {
+                    workspaceReplicationSourceRootPath: '/repo',
+                },
+            }),
+        ).toEqual({
+            handoffId: 'handoff_legacy_start',
+            status: {
+                handoffId: 'handoff_legacy_start',
+                status: 'pending',
+                phase: 'preparing',
+                recoveryActions: [],
+            },
+            endpointCandidates: [],
+            targetPath: '/repo',
+            handoffMetadataV2: {
+                workspaceReplicationSourceRootPath: '/repo',
+            },
+        });
+    });
+
+    it('drops legacy source-start workspace replication job ids while preserving the canonical payload', async () => {
+        const { normalizeSessionHandoffStartResponse } = await import('./sessionHandoffs');
+
+        expect(
+            normalizeSessionHandoffStartResponse({
+                handoffId: 'handoff_workspace_job',
+                status: {
+                    handoffId: 'handoff_workspace_job',
+                    status: 'pending',
+                    phase: 'preparing',
+                    transportStrategy: 'transfer_snapshot',
+                    workspaceReplicationJobId: 'workspace-replication-job-1',
+                    recoveryActions: [],
+                },
+                endpointCandidates: [],
+                targetPath: '/repo',
+                workspaceReplicationJobId: 'workspace-replication-job-1',
+            }),
+        ).toEqual({
+            handoffId: 'handoff_workspace_job',
+            status: {
+                handoffId: 'handoff_workspace_job',
+                status: 'pending',
+                phase: 'preparing',
+                transportStrategy: 'transfer_snapshot',
+                workspaceReplicationJobId: 'workspace-replication-job-1',
+                recoveryActions: [],
+            },
+            endpointCandidates: [],
+            targetPath: '/repo',
+        });
+    });
 
     it('maps macOS /Users/<user> paths into the target machine homeDir when preparing a Linux target', async () => {
         getServerFeaturesSnapshotMock.mockResolvedValueOnce({
@@ -1113,6 +1179,37 @@ describe('sessionHandoffs ops', () => {
             ok: false,
             errorCode: 'DAEMON_RPC_UNAVAILABLE',
             errorMessage: expect.stringContaining('Daemon RPC is not available'),
+        });
+    });
+
+    it('surfaces unsupported source handoff envelopes with response-key diagnostics', async () => {
+        machineRpcWithServerScopeMock.mockResolvedValue({
+            handoffId: 'handoff_unsupported_source_start',
+            status: {
+                handoffId: 'handoff_unsupported_source_start',
+                status: 'pending',
+                phase: 'preparing',
+                recoveryActions: [],
+            },
+        });
+
+        const { startSessionHandoff } = await import('./sessionHandoffs');
+        const result = await startSessionHandoff({
+            sessionId: 'sess_1',
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            sessionStorageMode: 'persisted',
+            preferredTransportStrategies: ['direct_peer'],
+            sourceStartRetry: {
+                timeoutMs: 0,
+                intervalMs: 0,
+            },
+        });
+
+        expect(result).toEqual({
+            ok: false,
+            errorCode: 'UNEXPECTED',
+            errorMessage: expect.stringContaining('keys=[handoffId,status]'),
         });
     });
 
@@ -3897,6 +3994,121 @@ describe('sessionHandoffs ops', () => {
         }
     });
 
+    it('accepts legacy target prepare ack metadata and still polls for the final resume payload', async () => {
+        process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_MACHINE_RPC_POLL_TIMEOUT_MS = '10000';
+        machineRpcWithServerScopeMock
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_retry_prepare_async_legacy_fields',
+                status: {
+                    handoffId: 'handoff_retry_prepare_async_legacy_fields',
+                    jobId: 'job_prepare_legacy_fields',
+                    status: 'pending',
+                    phase: 'staging_target',
+                    transportStrategy: 'direct_peer',
+                    recoveryActions: [],
+                },
+                targetPath: '/repo',
+                endpointCandidates: [
+                    {
+                        kind: 'http',
+                        url: 'http://127.0.0.1:46001/machine-transfers/direct/handoff_retry_prepare_async_legacy_fields?token=test-token',
+                        expiresAt: Date.now() + 30_000,
+                    },
+                ],
+            })
+            .mockResolvedValueOnce({
+                ok: false,
+                errorCode: 'not_found',
+            })
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_retry_prepare_async_legacy_fields',
+                status: {
+                    handoffId: 'handoff_retry_prepare_async_legacy_fields',
+                    jobId: 'job_prepare_legacy_fields',
+                    status: 'pending',
+                    phase: 'staging_target',
+                    transportStrategy: 'direct_peer',
+                    recoveryActions: [],
+                },
+            })
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_retry_prepare_async_legacy_fields',
+                status: {
+                    handoffId: 'handoff_retry_prepare_async_legacy_fields',
+                    jobId: 'job_prepare_legacy_fields',
+                    status: 'ready_for_cutover',
+                    phase: 'staging_target',
+                    transportStrategy: 'direct_peer',
+                    recoveryActions: [],
+                },
+                remoteSessionId: 'claude_session_retry_prepare_async_legacy_fields',
+                directSource: {
+                    kind: 'claudeConfig',
+                    configDir: null,
+                    projectId: null,
+                },
+                resume: {
+                    directory: '/repo',
+                    agent: 'claude',
+                    resume: 'claude_session_retry_prepare_async_legacy_fields',
+                    transcriptStorage: 'persisted',
+                    approvedNewDirectoryCreation: true,
+                },
+            });
+
+        let nowMs = 0;
+        try {
+            const { prepareTargetSessionHandoffWithRetry } = await import('./sessionHandoffs');
+            const result = await prepareTargetSessionHandoffWithRetry({
+                handoffId: 'handoff_retry_prepare_async_legacy_fields',
+                sourceMachineId: 'machine_source',
+                targetMachineId: 'machine_target',
+                targetPath: '/repo',
+                negotiatedTransportStrategy: 'direct_peer',
+                sourceSessionStorageMode: 'persisted',
+                allowServerRoutedFallback: true,
+                handoffMetadataV2: {},
+            }, {
+                timeoutMs: 10,
+                intervalMs: 1,
+                now: () => nowMs,
+                sleep: async (delayMs) => {
+                    nowMs += delayMs;
+                },
+            });
+
+            expect(result).toEqual({
+                ok: true,
+                response: {
+                    handoffId: 'handoff_retry_prepare_async_legacy_fields',
+                    status: {
+                        handoffId: 'handoff_retry_prepare_async_legacy_fields',
+                        jobId: 'job_prepare_legacy_fields',
+                        status: 'ready_for_cutover',
+                        phase: 'staging_target',
+                        transportStrategy: 'direct_peer',
+                        recoveryActions: [],
+                    },
+                    remoteSessionId: 'claude_session_retry_prepare_async_legacy_fields',
+                    directSource: {
+                        kind: 'claudeConfig',
+                        configDir: null,
+                        projectId: null,
+                    },
+                    resume: {
+                        directory: '/repo',
+                        agent: 'claude',
+                        resume: 'claude_session_retry_prepare_async_legacy_fields',
+                        transcriptStorage: 'persisted',
+                        approvedNewDirectoryCreation: true,
+                    },
+                },
+            });
+        } finally {
+            delete process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_MACHINE_RPC_POLL_TIMEOUT_MS;
+        }
+    });
+
     it('treats socket.io ack timeouts as transient while polling target prepare status', async () => {
         process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_MACHINE_RPC_POLL_TIMEOUT_MS = '10000';
         machineRpcWithServerScopeMock
@@ -4660,6 +4872,104 @@ describe('sessionHandoffs ops', () => {
             ok: false,
             errorCode: 'UNEXPECTED',
             errorMessage: 'Target handoff import failed',
+        });
+    });
+
+    it('accepts target prepare responses that carry the workspace replication job id', async () => {
+        machineRpcWithServerScopeMock
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_prepare_workspace_job',
+                status: {
+                    handoffId: 'handoff_prepare_workspace_job',
+                    jobId: 'job_prepare_workspace_job',
+                    status: 'ready_for_cutover',
+                    phase: 'staging_target',
+                    transportStrategy: 'server_routed_stream',
+                    recoveryActions: [],
+                },
+                remoteSessionId: 'claude_session_prepare_workspace_job',
+                directSource: {
+                    kind: 'claudeConfig',
+                    configDir: null,
+                    projectId: null,
+                },
+                resume: {
+                    directory: '/repo',
+                    agent: 'claude',
+                    resume: 'claude_session_prepare_workspace_job',
+                    transcriptStorage: 'persisted',
+                    approvedNewDirectoryCreation: true,
+                },
+                workspaceReplicationJobId: 'workspace-replication-job-1',
+            })
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_prepare_workspace_job',
+                status: {
+                    handoffId: 'handoff_prepare_workspace_job',
+                    jobId: 'job_prepare_workspace_job',
+                    status: 'ready_for_cutover',
+                    phase: 'staging_target',
+                    transportStrategy: 'server_routed_stream',
+                    recoveryActions: [],
+                },
+                remoteSessionId: 'claude_session_prepare_workspace_job',
+                directSource: {
+                    kind: 'claudeConfig',
+                    configDir: null,
+                    projectId: null,
+                },
+                resume: {
+                    directory: '/repo',
+                    agent: 'claude',
+                    resume: 'claude_session_prepare_workspace_job',
+                    transcriptStorage: 'persisted',
+                    approvedNewDirectoryCreation: true,
+                },
+                workspaceReplicationJobId: 'workspace-replication-job-1',
+            });
+
+        const { prepareTargetSessionHandoffWithRetry } = await import('./sessionHandoffs');
+        const result = await prepareTargetSessionHandoffWithRetry({
+            handoffId: 'handoff_prepare_workspace_job',
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            targetPath: '/repo',
+            negotiatedTransportStrategy: 'server_routed_stream',
+            sourceSessionStorageMode: 'persisted',
+            allowServerRoutedFallback: true,
+            handoffMetadataV2: {},
+        }, {
+            timeoutMs: 10,
+            intervalMs: 1,
+        });
+
+        expect(result).toEqual({
+            ok: true,
+            response: {
+                handoffId: 'handoff_prepare_workspace_job',
+                status: {
+                    handoffId: 'handoff_prepare_workspace_job',
+                    jobId: 'job_prepare_workspace_job',
+                    status: 'ready_for_cutover',
+                    phase: 'staging_target',
+                    transportStrategy: 'server_routed_stream',
+                    recoveryActions: [],
+                },
+                remoteSessionId: 'claude_session_prepare_workspace_job',
+                directSource: {
+                    kind: 'claudeConfig',
+                    configDir: null,
+                    projectId: null,
+                },
+                resume: {
+                    directory: '/repo',
+                    agent: 'claude',
+                    resume: 'claude_session_prepare_workspace_job',
+                    transcriptStorage: 'persisted',
+                    approvedNewDirectoryCreation: true,
+                },
+                workspaceReplicationJobId: 'workspace-replication-job-1',
+            },
         });
     });
 

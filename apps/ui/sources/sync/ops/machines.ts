@@ -2,7 +2,7 @@
  * Machine operations for remote procedure calls
  */
 
-import type { SpawnSessionResult } from '@happier-dev/protocol';
+import type { BugReportMachineDiagnosticsSnapshot, SpawnSessionResult } from '@happier-dev/protocol';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES, RPC_METHODS, isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpc';
 
@@ -216,25 +216,7 @@ export type MachinePreviewEnvResult =
     | { supported: true; response: PreviewEnvResponse }
     | { supported: false };
 
-export type BugReportCollectDiagnosticsResult = {
-    daemonState: {
-        pid: number;
-        httpPort: number;
-        startedAt: number;
-        startedWithCliVersion: string;
-        hasControlToken: boolean;
-        daemonLogPath: string | null;
-    } | null;
-    daemonLogs: Array<{ file: string; path: string; modifiedAt: string }>;
-    runtime: { cwd: string; platform: string; nodeVersion: string };
-    stackContext?: {
-        stackName: string | null;
-        stackEnvPath: string | null;
-        runtimeStatePath: string | null;
-        runtimeState: string | null;
-        logCandidates: string[];
-    } | null;
-};
+export type BugReportCollectDiagnosticsResult = BugReportMachineDiagnosticsSnapshot;
 
 export type BugReportLogTailResult =
     | { ok: true; path: string; tail: string }
@@ -340,15 +322,16 @@ export async function machinePreviewEnv(
 
 export async function machineCollectBugReportDiagnostics(
     machineId: string,
-    options?: { timeoutMs?: number },
+    options?: { timeoutMs?: number; serverId?: string | null },
 ): Promise<BugReportCollectDiagnosticsResult | null> {
     try {
-        return await apiSocket.machineRPC<BugReportCollectDiagnosticsResult, {}>(
+        return await machineRpcWithServerScope<BugReportCollectDiagnosticsResult, {}>({
             machineId,
-            RPC_METHODS.BUGREPORT_COLLECT_DIAGNOSTICS,
-            {},
-            options,
-        );
+            method: RPC_METHODS.BUGREPORT_COLLECT_DIAGNOSTICS,
+            payload: {},
+            serverId: options?.serverId ?? null,
+            timeoutMs: options?.timeoutMs,
+        });
     } catch {
         return null;
     }

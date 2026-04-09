@@ -83,4 +83,26 @@ describe('machines ops server-scoped routing', () => {
             method: 'bash',
         }));
     });
+
+    it('routes bug-report diagnostics through server-scoped rpc with the requested server id', async () => {
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({
+            doctorSnapshot: { capturedAt: '2026-04-07T10:11:12.000Z' },
+        });
+        const { machineCollectBugReportDiagnostics } = await import('./machines');
+
+        const result = await machineCollectBugReportDiagnostics('machine-4', {
+            serverId: 'server-e',
+            timeoutMs: 2500,
+        });
+
+        expect(result).toEqual({
+            doctorSnapshot: { capturedAt: '2026-04-07T10:11:12.000Z' },
+        });
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-4',
+            serverId: 'server-e',
+            timeoutMs: 2500,
+            method: 'bugreport.collectDiagnostics',
+        }));
+    });
 });

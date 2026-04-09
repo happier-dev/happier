@@ -242,4 +242,51 @@ describe('getForkedTranscriptSnapshotCached', () => {
     expect(snapshot!.combinedMessagesById['shared']?.kind).toBe('user-text');
     expect((snapshot!.combinedMessagesById['shared'] as any).text).toBe('shared-parent');
   });
+
+  it('evicts the oldest cached snapshot when many child sessions are resolved', () => {
+    const sessions: Record<string, Session> = {
+      root: sessionRow('root', { path: '/tmp', host: 'h' }),
+    };
+    const sessionMessages: Record<string, SessionMessages> = {
+      root: sessionMessagesRow({ idsOldestFirst: [], messagesById: {}, messagesVersion: 1, isLoaded: true }),
+    };
+
+    for (let index = 0; index < 65; index += 1) {
+      const childSessionId = `child_${index}`;
+      sessions[childSessionId] = {
+        ...sessionRow(childSessionId, {
+          path: '/tmp',
+          host: 'h',
+          forkV1: {
+            v: 1,
+            parentSessionId: 'root',
+            parentCutoffSeqInclusive: 0,
+            createdAtMs: index + 1,
+            strategy: 'replay',
+          },
+        } as any),
+        seq: 1,
+      };
+      sessionMessages[childSessionId] = sessionMessagesRow({
+        idsOldestFirst: [childSessionId],
+        messagesById: {
+          [childSessionId]: userMessage(childSessionId, 1, childSessionId),
+        },
+        messagesVersion: 1,
+        isLoaded: true,
+      });
+    }
+
+    const state = createState({ sessions, sessionMessages });
+    const firstSnapshot = getForkedTranscriptSnapshotCached(state, 'child_0');
+    expect(firstSnapshot).not.toBeNull();
+
+    for (let index = 1; index < 65; index += 1) {
+      expect(getForkedTranscriptSnapshotCached(state, `child_${index}`)).not.toBeNull();
+    }
+
+    const evictedSnapshot = getForkedTranscriptSnapshotCached(state, 'child_0');
+    expect(evictedSnapshot).not.toBeNull();
+    expect(evictedSnapshot).not.toBe(firstSnapshot);
+  });
 });

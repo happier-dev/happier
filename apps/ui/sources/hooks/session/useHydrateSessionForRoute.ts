@@ -1,7 +1,24 @@
 import * as React from 'react';
 
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
+import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+
+function hasAuthoritativeHydratedSessionForRoute(sessionId: string): boolean {
+    const session = storage.getState().sessions[sessionId] ?? null;
+    if (!session || session.metadata == null || session.agentState == null) {
+        return false;
+    }
+    if (session.encryptionMode === 'plain') {
+        return true;
+    }
+    try {
+        return Boolean(sync.encryption?.getSessionEncryption?.(sessionId));
+    } catch {
+        return false;
+    }
+}
 
 /**
  * Best-effort hydration for deep links / hard refreshes.
@@ -15,17 +32,26 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
  * (server switch in flight, temporary RPC failure, stale encryption state, etc.).
  */
 export function useHydrateSessionForRoute(sessionId: string, tag: string): boolean {
-    const normalizedSessionId = String(sessionId ?? '').trim();
-    const [ready, setReady] = React.useState(false);
+    const normalizedSessionId = normalizeSessionId(sessionId);
+    const [ready, setReady] = React.useState(() => {
+        if (!normalizedSessionId) {
+            return true;
+        }
+        return hasAuthoritativeHydratedSessionForRoute(normalizedSessionId);
+    });
 
     React.useEffect(() => {
         let canceled = false;
         let retryTimeoutId: ReturnType<typeof setTimeout> | null = null;
         let attemptCount = 0;
 
-        setReady(false);
         if (!normalizedSessionId) {
             setReady(true);
+            return;
+        }
+        const alreadyHydrated = hasAuthoritativeHydratedSessionForRoute(normalizedSessionId);
+        setReady(alreadyHydrated);
+        if (alreadyHydrated) {
             return;
         }
 

@@ -4,14 +4,14 @@ import { DEFAULT_AGENT_ID, resolveAgentIdFromFlavor } from '@/agents/catalog/cat
 import { useResumeCapabilityOptions } from '@/agents/hooks/useResumeCapabilityOptions';
 import { canResumeSessionWithOptions } from '@/agents/runtime/resumeCapabilities';
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
-import { resolveSessionTargetServerId } from '@/components/sessions/model/resolveSessionTargetServerId';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useExecutionRunsBackendsForSession } from '@/hooks/server/useExecutionRunsBackendsForSession';
 import { useSessionExecutionRunsSupported } from '@/hooks/server/useSessionExecutionRunsSupported';
-import { useDirectSessionRuntime } from '@/components/sessions/model/useDirectSessionRuntime';
+import { useSessionDirectSessionRuntime } from '@/components/sessions/model/useSessionDirectSessionRuntime';
 import { canLaunchExecutionRunsForSession } from '@/sync/domains/executionRuns/canLaunchExecutionRunsForSession';
 import type { ExecutionRunBackendCapabilityMap } from '@/sync/domains/executionRuns/resolveExecutionRunAvailableBackends';
 import { resolveSessionMachineId } from '@/sync/domains/session/directSessions/resolveSessionMachineId';
+import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { useSettings } from '@/sync/domains/state/storage';
 
@@ -29,14 +29,11 @@ export function useSessionExecutionRunLaunchability(
 ): UseSessionExecutionRunLaunchabilityResult {
     const settings = useSettings();
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
-    const sessionTargetServerId = React.useMemo(
-        () => resolveSessionTargetServerId(sessionId, session?.serverId),
-        [session?.serverId, sessionId],
-    );
+    const sessionTargetServerId = usePreferredServerIdForSession(sessionId, session?.serverId);
     const executionRunsSupported = useSessionExecutionRunsSupported(sessionId, sessionTargetServerId);
     const executionRunsBackends = useExecutionRunsBackendsForSession(sessionId, sessionTargetServerId);
     const { machineReachable } = useSessionMachineReachability(sessionId);
-    const directSessionRuntime = useDirectSessionRuntime({
+    const directSessionRuntime = useSessionDirectSessionRuntime({
         sessionId,
         metadata: session?.metadata,
     });

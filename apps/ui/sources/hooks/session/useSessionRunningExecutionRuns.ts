@@ -1,6 +1,7 @@
 import * as React from 'react';
 import type { ExecutionRunPublicState } from '@happier-dev/protocol';
 
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { sessionExecutionRunList, type SessionExecutionRunListResult } from '@/sync/ops/sessionExecutionRuns';
 import { subscribeExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';
 
@@ -33,6 +34,7 @@ export function useSessionRunningExecutionRuns(params: Readonly<{
     refreshKey?: unknown;
 }>): readonly ExecutionRunPublicState[] {
     const [runningRuns, setRunningRuns] = React.useState<readonly ExecutionRunPublicState[]>([]);
+    const normalizedSessionId = React.useMemo(() => normalizeSessionId(params.sessionId), [params.sessionId]);
     const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const generationRef = React.useRef(0);
     const inFlightRef = React.useRef(false);
@@ -49,7 +51,6 @@ export function useSessionRunningExecutionRuns(params: Readonly<{
 
     const pollOnce = React.useCallback(async (gen: number): Promise<void> => {
         if (!params.enabled) return;
-        const normalizedSessionId = typeof params.sessionId === 'string' ? params.sessionId.trim() : '';
         if (!normalizedSessionId) return;
         if (generationRef.current !== gen) return;
         if (inFlightRef.current) return;
@@ -115,7 +116,7 @@ export function useSessionRunningExecutionRuns(params: Readonly<{
                 void pollOnce(gen);
             }
         }
-    }, [clearTimer, params.enabled, params.sessionId]);
+    }, [clearTimer, normalizedSessionId, params.enabled]);
 
     React.useEffect(() => {
         generationRef.current += 1;
@@ -129,7 +130,6 @@ export function useSessionRunningExecutionRuns(params: Readonly<{
         pendingEmptyConfirmRef.current = false;
         idleErrorRetriesRef.current = 0;
 
-        const normalizedSessionId = typeof params.sessionId === 'string' ? params.sessionId.trim() : '';
         if (!params.enabled || !normalizedSessionId) {
             return () => {};
         }
@@ -141,10 +141,9 @@ export function useSessionRunningExecutionRuns(params: Readonly<{
             clearTimer();
             pendingRepollRef.current = false;
         };
-    }, [clearTimer, params.enabled, params.sessionId, pollOnce]);
+    }, [clearTimer, normalizedSessionId, params.enabled, pollOnce]);
 
     React.useEffect(() => {
-        const normalizedSessionId = typeof params.sessionId === 'string' ? params.sessionId.trim() : '';
         if (!normalizedSessionId) return;
         return subscribeExecutionRunActivity(normalizedSessionId, () => {
             if (!params.enabled) return;
@@ -156,10 +155,9 @@ export function useSessionRunningExecutionRuns(params: Readonly<{
             }
             void pollOnce(generationRef.current);
         });
-    }, [clearTimer, params.enabled, params.sessionId, pollOnce]);
+    }, [clearTimer, normalizedSessionId, params.enabled, pollOnce]);
 
     React.useEffect(() => {
-        const normalizedSessionId = typeof params.sessionId === 'string' ? params.sessionId.trim() : '';
         if (!params.enabled || !normalizedSessionId) return;
         if (inFlightRef.current) return;
         if (timerRef.current) return;
@@ -167,7 +165,7 @@ export function useSessionRunningExecutionRuns(params: Readonly<{
         clearTimer();
         pendingEmptyConfirmRef.current = false;
         void pollOnce(generationRef.current);
-    }, [clearTimer, params.enabled, params.refreshKey, params.sessionId, pollOnce]);
+    }, [clearTimer, normalizedSessionId, params.enabled, params.refreshKey, pollOnce]);
 
     return runningRuns;
 }

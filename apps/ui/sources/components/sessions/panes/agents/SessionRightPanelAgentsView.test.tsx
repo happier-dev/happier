@@ -116,6 +116,7 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
 }));
 
 vi.mock('@/sync/store/hooks', () => ({
+    useSessionServerId: () => 'server-1',
     useSessionMessages: () => ({ messages: [] }),
     useSessionMessagesReducerState: () => ({
         sidechains: new Map([

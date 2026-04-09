@@ -13,7 +13,7 @@ const listDaemonPromptRegistryAdaptersMock = vi.hoisted(() => vi.fn());
 const listDaemonPromptRegistrySourcesMock = vi.hoisted(() => vi.fn());
 const scanDaemonPromptRegistrySourceMock = vi.hoisted(() => vi.fn());
 
-vi.mock('@/sync/domains/transfers/runtime/transferSubstrate', () => ({
+vi.mock('@/sync/domains/transfers/runtime/transferRuntime', () => ({
     downloadDaemonPromptRegistryItem: (...args: unknown[]) => downloadDaemonPromptRegistryItemMock(...args),
     installDaemonPromptRegistryItem: (...args: unknown[]) => installDaemonPromptRegistryItemMock(...args),
     listDaemonPromptRegistryAdapters: (...args: unknown[]) => listDaemonPromptRegistryAdaptersMock(...args),

@@ -2,15 +2,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useHydrateSessionForRoute } from './useHydrateSessionForRoute';
 import { createDeferred, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storage';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const ensureSessionVisibleForMessageRouteSpy = vi.hoisted(() => vi.fn<(sessionId: string) => Promise<boolean>>());
+const getSessionEncryptionSpy = vi.hoisted(() => vi.fn<(sessionId: string) => unknown>());
 
 vi.mock('@/sync/sync', () => ({
   sync: {
     ensureSessionVisibleForMessageRoute: (sessionId: string) => ensureSessionVisibleForMessageRouteSpy(sessionId),
+    encryption: {
+      getSessionEncryption: (sessionId: string) => getSessionEncryptionSpy(sessionId),
+    },
   },
 }));
 
@@ -21,11 +26,16 @@ vi.mock('@/utils/system/fireAndForget', () => ({
 }));
 
 describe('useHydrateSessionForRoute', () => {
+  let previousStorageState: ReturnType<typeof storage.getState>;
+
   beforeEach(() => {
+    previousStorageState = storage.getState();
     ensureSessionVisibleForMessageRouteSpy.mockReset();
+    getSessionEncryptionSpy.mockReset();
   });
 
   afterEach(() => {
+    storage.setState(previousStorageState, true);
     standardCleanup();
   });
 
@@ -85,5 +95,26 @@ describe('useHydrateSessionForRoute', () => {
     await new Promise((resolve) => setTimeout(resolve, 2_200));
 
     expect(ensureSessionVisibleForMessageRouteSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('is ready immediately and skips hydration when the session is already authoritatively hydrated', async () => {
+    storage.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        'session-1': {
+          id: 'session-1',
+          metadata: { path: '/tmp/demo' },
+          agentState: { controlledByUser: true },
+          encryptionMode: 'e2ee',
+        } as any,
+      },
+    }));
+    getSessionEncryptionSpy.mockReturnValue({ decryptMetadata: vi.fn() });
+
+    const hook = await renderHook(() => useHydrateSessionForRoute('session-1', 'route.hydrate'));
+
+    expect(hook.getCurrent()).toBe(true);
+    expect(ensureSessionVisibleForMessageRouteSpy).not.toHaveBeenCalled();
   });
 });

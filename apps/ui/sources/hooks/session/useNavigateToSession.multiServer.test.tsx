@@ -11,6 +11,9 @@ const routerNavigateSpy = vi.fn();
 const setActiveServerAndSwitchSpy = vi.fn(async () => false);
 const refreshFromActiveServerSpy = vi.fn(async () => {});
 const resolveSessionTargetServerIdSpy = vi.fn<(sessionId: string, fallbackServerId?: string | null) => string | null>();
+const preferredServerIdState = vi.hoisted(() => ({
+    current: 'preferred-server' as string | null,
+}));
 
 installSessionHooksCommonModuleMocks({
     router: async () => {
@@ -37,9 +40,7 @@ vi.mock('@/components/sessions/model/resolveSessionTargetServerId', () => ({
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
-    resolvePreferredServerIdForSessionId: () => {
-        throw new Error('legacy preferred-server resolver should not be used in useNavigateToSession');
-    },
+    resolvePreferredServerIdForSessionId: () => preferredServerIdState.current,
 }));
 
 describe('useNavigateToSession (multi-server)', () => {
@@ -119,7 +120,10 @@ describe('useNavigateToSession (multi-server)', () => {
         routerNavigateSpy.mockClear();
         setActiveServerAndSwitchSpy.mockClear();
         resolveSessionTargetServerIdSpy.mockClear();
-        resolveSessionTargetServerIdSpy.mockReturnValue('preferred-server');
+        preferredServerIdState.current = 'preferred-server';
+        resolveSessionTargetServerIdSpy.mockImplementation(() => {
+            throw new Error('legacy wrapper should not be used in useNavigateToSession');
+        });
 
         const { useNavigateToSession } = await import('./useNavigateToSession');
 
@@ -135,7 +139,7 @@ describe('useNavigateToSession (multi-server)', () => {
             await navigateToSession!('sess_789');
         });
 
-        expect(resolveSessionTargetServerIdSpy).toHaveBeenCalledWith('sess_789', undefined);
+        expect(resolveSessionTargetServerIdSpy).not.toHaveBeenCalled();
         expect(setActiveServerAndSwitchSpy).toHaveBeenCalledWith({
             serverId: 'preferred-server',
             scope: 'device',
@@ -144,11 +148,61 @@ describe('useNavigateToSession (multi-server)', () => {
         expect(routerNavigateSpy).toHaveBeenCalledWith('/session/sess_789', expect.any(Object));
     });
 
-    it('prefers an explicit row serverId over the canonical preferred server id', async () => {
+    it('recomputes the preferred server id after rerender before navigating', async () => {
         routerNavigateSpy.mockClear();
         setActiveServerAndSwitchSpy.mockClear();
         resolveSessionTargetServerIdSpy.mockClear();
-        resolveSessionTargetServerIdSpy.mockReturnValue('preferred-server');
+        preferredServerIdState.current = 'preferred-server';
+        resolveSessionTargetServerIdSpy.mockImplementation(() => {
+            throw new Error('legacy wrapper should not be used in useNavigateToSession');
+        });
+
+        const { useNavigateToSession } = await import('./useNavigateToSession');
+
+        let navigateToSession: ReturnType<typeof useNavigateToSession> | null = null;
+        function Probe() {
+            navigateToSession = useNavigateToSession();
+            return null;
+        }
+
+        const screen = await renderScreen(React.createElement(Probe));
+
+        await act(async () => {
+            await navigateToSession!('sess_999');
+        });
+
+        expect(resolveSessionTargetServerIdSpy).not.toHaveBeenCalled();
+        expect(setActiveServerAndSwitchSpy).toHaveBeenCalledWith({
+            serverId: 'preferred-server',
+            scope: 'device',
+            refreshAuth: expect.any(Function),
+        });
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/sess_999', expect.any(Object));
+
+        preferredServerIdState.current = 'preferred-updated';
+        await act(async () => {
+            await screen.update(React.createElement(Probe));
+        });
+        await act(async () => {
+            await navigateToSession!('sess_999');
+        });
+
+        expect(setActiveServerAndSwitchSpy).toHaveBeenLastCalledWith({
+            serverId: 'preferred-updated',
+            scope: 'device',
+            refreshAuth: expect.any(Function),
+        });
+        expect(routerNavigateSpy).toHaveBeenLastCalledWith('/session/sess_999', expect.any(Object));
+    });
+
+    it('normalizes whitespace around the session id before resolving and navigating', async () => {
+        routerNavigateSpy.mockClear();
+        setActiveServerAndSwitchSpy.mockClear();
+        resolveSessionTargetServerIdSpy.mockClear();
+        preferredServerIdState.current = 'preferred-server';
+        resolveSessionTargetServerIdSpy.mockImplementation(() => {
+            throw new Error('legacy wrapper should not be used in useNavigateToSession');
+        });
 
         const { useNavigateToSession } = await import('./useNavigateToSession');
 
@@ -161,15 +215,10 @@ describe('useNavigateToSession (multi-server)', () => {
         await renderScreen(React.createElement(Probe));
 
         await act(async () => {
-            await navigateToSession!('sess_999', { serverId: 'explicit-server' });
+            await navigateToSession!('  sess_whitespace  ');
         });
 
         expect(resolveSessionTargetServerIdSpy).not.toHaveBeenCalled();
-        expect(setActiveServerAndSwitchSpy).toHaveBeenCalledWith({
-            serverId: 'explicit-server',
-            scope: 'device',
-            refreshAuth: expect.any(Function),
-        });
-        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/sess_999', expect.any(Object));
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/sess_whitespace', expect.any(Object));
     });
 });

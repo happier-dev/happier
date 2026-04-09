@@ -24,7 +24,7 @@ const getRunSpy = vi.fn<(sessionId: string, request: { runId: string }) => Promi
 
 const executionRunInfoCardSpy = vi.fn();
 const messageDetailsSpy = vi.fn();
-const resolveSessionTargetServerIdSpy = vi.fn<(sessionId: string, fallbackServerId?: string | null) => string | null>();
+const resolvePreferredServerIdForSessionIdSpy = vi.fn<(sessionId: string) => string | undefined>();
 const sessionMessagesState = vi.hoisted(() => ({
     isLoaded: true,
     messages: [
@@ -120,8 +120,8 @@ vi.mock('@/sync/ops/machineExecutionRuns', () => ({
     machineExecutionRunsList: vi.fn(async () => ({ ok: true, runs: [] })),
 }));
 
-vi.mock('@/components/sessions/model/resolveSessionTargetServerId', () => ({
-    resolveSessionTargetServerId: (...args: unknown[]) => resolveSessionTargetServerIdSpy(args[0] as string, args[1] as string | null | undefined),
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
+    resolvePreferredServerIdForSessionId: (...args: unknown[]) => resolvePreferredServerIdForSessionIdSpy(args[0] as string),
 }));
 
 vi.mock('@/components/sessions/runs/details/SessionExecutionRunInfoCard', () => ({
@@ -184,7 +184,7 @@ describe('SessionExecutionRunDetailsView', () => {
         getRunSpy.mockImplementation(async () => createExecutionRunGetResponse());
         executionRunInfoCardSpy.mockClear();
         messageDetailsSpy.mockClear();
-        resolveSessionTargetServerIdSpy.mockReset();
+        resolvePreferredServerIdForSessionIdSpy.mockReset();
         sessionMessagesState.isLoaded = true;
         sessionMessagesState.messages = [
             {
@@ -475,7 +475,7 @@ describe('SessionExecutionRunDetailsView', () => {
             error: 'RPC method not available',
             errorCode: 'RPC_METHOD_NOT_AVAILABLE',
         });
-        resolveSessionTargetServerIdSpy.mockReturnValue('server_canonical');
+        resolvePreferredServerIdForSessionIdSpy.mockReturnValue('server_canonical');
         const machineExecutionRuns = await import('@/sync/ops/machineExecutionRuns');
         vi.mocked(machineExecutionRuns.machineExecutionRunsList).mockResolvedValueOnce({
             ok: true,
@@ -521,7 +521,7 @@ describe('SessionExecutionRunDetailsView', () => {
         }));
         expect(messageDetailsSpy.mock.calls.at(-1)?.[0]).not.toHaveProperty('presentation');
         expect(screen.findByTestId('session-run-details-send-input')).toBeNull();
-        expect(resolveSessionTargetServerIdSpy).toHaveBeenCalledWith('s1', undefined);
+        expect(resolvePreferredServerIdForSessionIdSpy).toHaveBeenCalledWith('s1');
         expect(vi.mocked(machineExecutionRuns.machineExecutionRunsList)).toHaveBeenCalledWith('m1', { serverId: 'server_canonical' });
     });
 

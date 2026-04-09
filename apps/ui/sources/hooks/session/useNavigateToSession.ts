@@ -1,8 +1,9 @@
 import * as React from 'react';
 import { useRouter } from 'expo-router';
 
-import { resolveSessionTargetServerId } from '@/components/sessions/model/resolveSessionTargetServerId';
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
+import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { useAuth } from '@/auth/context/AuthContext';
 
 export function useNavigateToSession() {
@@ -11,7 +12,8 @@ export function useNavigateToSession() {
 
     return React.useCallback(async (sessionId: string, opts?: Readonly<{ serverId?: string }>) => {
         const explicitServerId = String(opts?.serverId ?? '').trim();
-        const targetServerId = explicitServerId || String(resolveSessionTargetServerId(sessionId) ?? '').trim();
+        const normalizedSessionId = normalizeSessionId(sessionId);
+        const targetServerId = explicitServerId || String(resolvePreferredServerIdForSessionId(normalizedSessionId) ?? '').trim();
         if (targetServerId) {
             void setActiveServerAndSwitch({
                 serverId: targetServerId,
@@ -22,7 +24,7 @@ export function useNavigateToSession() {
             });
         }
 
-        router.navigate(`/session/${sessionId}`, {
+        router.navigate(`/session/${normalizedSessionId}`, {
             dangerouslySingular(name, params) {
                 return 'session';
             },

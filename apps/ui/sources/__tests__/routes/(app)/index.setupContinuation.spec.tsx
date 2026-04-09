@@ -15,12 +15,17 @@ vi.mock('@/components/onboarding', () => ({
 vi.mock('@/components/onboarding/PreAuthOnboardingWizardEntry', () => ({
     PreAuthOnboardingWizardEntry: () => null,
 }));
-vi.mock('@/components/onboarding/surfaces/SetupWizardSurface', () => ({
-    SetupWizardSurface: (props: any) => React.createElement('SetupWizardSurface', props),
-}));
 vi.mock('@/modal/components/BaseModal', () => ({
     BaseModal: (props: any) => React.createElement('BaseModal', props, props.children),
 }));
+
+function installStubbedSetupWizardSurface() {
+    vi.doMock('@/components/onboarding/surfaces/SetupWizardSurface', () => ({
+        SetupWizardSurface: (props: any) => React.createElement('SetupWizardSurface', props),
+    }));
+}
+
+installStubbedSetupWizardSurface();
 
 const applyLocalSettingsSpy = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/store/settingsWriters', () => ({
@@ -104,6 +109,8 @@ vi.mock('@/sync/domains/pending/pendingSetupIntent', () => ({
 
 describe('/ (welcome) setup continuation', () => {
     beforeEach(() => {
+        vi.resetModules();
+        installStubbedSetupWizardSurface();
         isAuthenticated = true;
         tauriDesktopState.value = true;
         connectionHealthState.value = 0;
@@ -160,6 +167,23 @@ describe('/ (welcome) setup continuation', () => {
 
         expect(expoRouterMock.spies.replace).not.toHaveBeenCalledWith('/setup');
         expect(screen.findAllByType('SetupWizardSurface' as never)).toHaveLength(1);
+    });
+
+    it('renders the real web setup wizard overlay on / without crashing', async () => {
+        tauriDesktopState.value = false;
+        vi.doMock('@/components/onboarding/surfaces/SetupWizardSurface', async () => {
+            return await vi.importActual<typeof import('@/components/onboarding/surfaces/SetupWizardSurface')>(
+                '@/components/onboarding/surfaces/SetupWizardSurface',
+            );
+        });
+
+        const Screen = (await import('@/app/(app)/index')).default;
+        const screen = await renderScreen(React.createElement(Screen));
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        expect(expoRouterMock.spies.replace).not.toHaveBeenCalledWith('/setup');
+        expect(screen.findByTestId('setupWizard.surface')).toBeTruthy();
+        expect(screen.findByTestId('setupWizard-web-machine-setup-handoff-terminal')).toBeTruthy();
     });
 
     it('mounts the authenticated home shell on web when no post-auth setup wizard is needed', async () => {

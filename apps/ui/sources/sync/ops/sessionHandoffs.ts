@@ -21,7 +21,7 @@ import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { buildCodexBackendTransportFields } from '../domains/session/codexBackendTransport';
 
-import { getServerFeaturesSnapshot } from '../api/capabilities/serverFeaturesClient';
+import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { sync } from '../sync';
 import { storage } from '../domains/state/storage';
 import { machineRpcWithServerScope } from '../runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
@@ -196,6 +196,62 @@ function unsupportedError(errorMessage: string): HandoffErrorResult {
     };
 }
 
+function describeUnsupportedResponseKeys(raw: unknown): string {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        return `type=${Array.isArray(raw) ? 'array' : typeof raw}`;
+    }
+
+    const rawKeys = Object.keys(raw as Record<string, unknown>).sort();
+    const status = (raw as { status?: unknown }).status;
+    const statusKeys =
+        status && typeof status === 'object' && !Array.isArray(status)
+            ? Object.keys(status as Record<string, unknown>).sort()
+            : [];
+
+    return [
+        `keys=[${rawKeys.join(',')}]`,
+        statusKeys.length ? `statusKeys=[${statusKeys.join(',')}]` : null,
+    ].filter((part): part is string => part !== null).join(' ');
+}
+
+export function normalizeSessionHandoffStartResponse(raw: unknown): unknown {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        return raw;
+    }
+
+    const response = raw as Record<string, unknown>;
+    const normalizedResponse: Record<string, unknown> = { ...response };
+    let didNormalize = false;
+
+    const targetPath = typeof response.targetPath === 'string' ? response.targetPath.trim() : '';
+    if (!targetPath) {
+        const handoffMetadataV2 = response.handoffMetadataV2;
+        if (!handoffMetadataV2 || typeof handoffMetadataV2 !== 'object' || Array.isArray(handoffMetadataV2)) {
+            return raw;
+        }
+
+        const workspaceReplicationSourceRootPath = (handoffMetadataV2 as { workspaceReplicationSourceRootPath?: unknown }).workspaceReplicationSourceRootPath;
+        if (typeof workspaceReplicationSourceRootPath !== 'string') {
+            return raw;
+        }
+
+        const normalizedTargetPath = workspaceReplicationSourceRootPath.trim();
+        if (!normalizedTargetPath) {
+            return raw;
+        }
+
+        normalizedResponse.targetPath = normalizedTargetPath;
+        didNormalize = true;
+    }
+
+    if ('workspaceReplicationJobId' in normalizedResponse) {
+        delete normalizedResponse.workspaceReplicationJobId;
+        didNormalize = true;
+    }
+
+    return didNormalize ? normalizedResponse : raw;
+}
+
 function applyOptimisticSessionHandoffBinding(params: Readonly<{
     sessionId: string;
     metadata: MetadataRecord;
@@ -236,6 +292,44 @@ function isAgentRuntimeDescriptorV1(value: unknown): value is AgentRuntimeDescri
         && typeof (value as { provider?: unknown }).provider === 'object'
         && !Array.isArray((value as { provider?: unknown }).provider),
     );
+}
+
+function normalizePrepareTargetResponseCandidate(raw: unknown): Record<string, unknown> | null {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        return null;
+    }
+
+    const candidate: Record<string, unknown> = {};
+    const handoffId = (raw as { handoffId?: unknown }).handoffId;
+    if (typeof handoffId === 'string') {
+        candidate.handoffId = handoffId;
+    }
+    const status = (raw as { status?: unknown }).status;
+    if (status !== undefined) {
+        candidate.status = status;
+    }
+    const remoteSessionId = (raw as { remoteSessionId?: unknown }).remoteSessionId;
+    if (typeof remoteSessionId === 'string') {
+        candidate.remoteSessionId = remoteSessionId;
+    }
+    const directSource = (raw as { directSource?: unknown }).directSource;
+    if (directSource !== undefined) {
+        candidate.directSource = directSource;
+    }
+    const agentRuntimeDescriptorV1 = (raw as { agentRuntimeDescriptorV1?: unknown }).agentRuntimeDescriptorV1;
+    if (agentRuntimeDescriptorV1 !== undefined) {
+        candidate.agentRuntimeDescriptorV1 = agentRuntimeDescriptorV1;
+    }
+    const resume = (raw as { resume?: unknown }).resume;
+    if (resume !== undefined) {
+        candidate.resume = resume;
+    }
+    const workspaceReplicationJobId = (raw as { workspaceReplicationJobId?: unknown }).workspaceReplicationJobId;
+    if (typeof workspaceReplicationJobId === 'string') {
+        candidate.workspaceReplicationJobId = workspaceReplicationJobId;
+    }
+
+    return candidate;
 }
 
 function readRawSessionHandoffError(raw: unknown): Readonly<{
@@ -347,9 +441,11 @@ async function startSessionHandoffOnSourceWithMachineRpcTimeout(
             };
         }
 
-        const parsed = SessionHandoffStartResponseSchema.safeParse(raw);
+        const parsed = SessionHandoffStartResponseSchema.safeParse(normalizeSessionHandoffStartResponse(raw));
         if (!parsed.success) {
-            return unsupportedError('Unsupported session handoff response from daemon');
+            return unsupportedError(
+                `Unsupported session handoff response from daemon (${describeUnsupportedResponseKeys(raw)})`,
+            );
         }
 
         return {
@@ -473,9 +569,11 @@ async function prepareTargetSessionHandoffWithMachineRpcTimeout(
                 errorMessage: errorResult.errorMessage,
             };
         }
-        const parsed = SessionHandoffPrepareTargetResponseSchema.safeParse(raw);
+        const parsed = SessionHandoffPrepareTargetResponseSchema.safeParse(normalizePrepareTargetResponseCandidate(raw));
         if (!parsed.success) {
-            return unsupportedError('Unsupported target handoff prepare response from daemon');
+            return unsupportedError(
+                `Unsupported target handoff prepare response from daemon (${describeUnsupportedResponseKeys(raw)})`,
+            );
         }
         return { ok: true, response: parsed.data };
     } catch (error) {
@@ -579,7 +677,9 @@ async function pollPreparedTargetSessionHandoffResult(params: Readonly<{
                     params.onStatus?.(parsedResult.data.status);
                     return { ok: true, response: parsedResult.data };
                 }
-                return unsupportedError('Unsupported target handoff prepare result response from daemon');
+                return unsupportedError(
+                    `Unsupported target handoff prepare result response from daemon (${describeUnsupportedResponseKeys(rawResult)})`,
+                );
             }
             if (resultError.errorCode !== 'not_found') {
                 return {
@@ -621,7 +721,9 @@ async function pollPreparedTargetSessionHandoffResult(params: Readonly<{
             }
             const parsedStatus = SessionHandoffStatusSchema.safeParse((rawStatus as { status?: unknown }).status);
             if (!parsedStatus.success) {
-                return unsupportedError('Unsupported target handoff status response from daemon');
+                return unsupportedError(
+                    `Unsupported target handoff status response from daemon (${describeUnsupportedResponseKeys(rawStatus)})`,
+                );
             }
             params.onStatus?.(parsedStatus.data);
             noteProgress(parsedStatus.data);
@@ -1056,12 +1158,12 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
             sourceMachineId: started.sourceMachineId,
             targetMachineId: options.targetMachineId,
             handoffId: started.response.handoffId,
-            reason: resumeResult.errorCode,
+            reason: String(resumeResult.errorCode),
             serverId: options.serverId,
         });
         return {
             ok: false,
-            errorCode: resumeResult.errorCode,
+            errorCode: String(resumeResult.errorCode),
             errorMessage: resumeResult.errorMessage,
             ...(sourceRecovery ? { recovery: sourceRecovery } : {}),
         };
@@ -1070,6 +1172,11 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
     const targetSessionStorageMode = options.targetSessionStorageMode ?? options.sessionStorageMode;
     const completedAtMs = Date.now();
     const sourceMetadataForHandoffPatch = (storage.getState().sessions?.[options.sessionId]?.metadata ?? options.sourceMetadata) as MetadataRecord;
+    const transportStrategy: SessionHandoffTransportStrategy =
+        prepared.response.status.transportStrategy === 'direct_peer'
+        || prepared.response.status.transportStrategy === 'server_routed_stream'
+            ? prepared.response.status.transportStrategy
+            : transport.negotiatedTransportStrategy;
     const buildNextMetadata = (metadata: MetadataRecord) => buildSessionHandoffMetadataPatch({
         metadata,
         sourceMetadataForHandoff: sourceMetadataForHandoffPatch,
@@ -1079,7 +1186,7 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         sessionStorageBefore: options.sessionStorageMode,
         sessionStorageAfter: targetSessionStorageMode,
         targetPath: preparedResponse.resume.directory,
-        transportStrategy: prepared.response.status.transportStrategy ?? transport.negotiatedTransportStrategy,
+        transportStrategy,
         completedAtMs,
         targetRemoteSessionId: preparedResponse.remoteSessionId,
         targetDirectSource: preparedResponse.directSource as unknown as Record<string, unknown>,

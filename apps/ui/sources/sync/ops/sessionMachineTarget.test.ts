@@ -143,38 +143,36 @@ describe('sessionMachineTarget', () => {
         });
     });
 
-    it('uses cached visible session metadata when the raw session is not hydrated', async () => {
+    it('uses visible lookup session metadata when the raw session is not hydrated', async () => {
         const { readMachineTargetForSession } = await import('./sessionMachineTarget');
         getStateSpy.mockReturnValue({
             sessions: {},
-            sessionListViewData: [
-                {
-                    type: 'session',
-                    session: {
-                        id: 's1',
-                        active: false,
-                        seq: 0,
-                        createdAt: 0,
-                        activeAt: 0,
-                        updatedAt: 42,
-                        metadataVersion: 0,
-                        agentStateVersion: 0,
-                        thinking: false,
-                        thinkingAt: 0,
-                        presence: 'offline',
-                        metadata: {
-                            machineId: 'm-cached',
-                            path: '/workspace/rebound',
-                            host: 'cached.local',
-                        },
+            sessionListRenderables: {
+                s1: {
+                    id: 's1',
+                    updatedAt: 42,
+                    metadata: {
+                        machineId: 'm-lookup',
+                        path: '/workspace/rebound',
+                        host: 'lookup.local',
                     },
                 },
-            ],
+            },
+            sessionListIndexByServerId: {
+                'server-a': [
+                    {
+                        type: 'session',
+                        sessionId: 's1',
+                        serverId: 'server-a',
+                        serverName: 'Server A',
+                    },
+                ],
+            },
             getProjectForSession: () => null,
         });
 
         expect(readMachineTargetForSession('s1')).toEqual({
-            machineId: 'm-cached',
+            machineId: 'm-lookup',
             basePath: '/workspace/rebound',
         });
     });

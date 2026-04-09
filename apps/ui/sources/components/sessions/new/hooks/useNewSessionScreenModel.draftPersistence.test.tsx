@@ -317,6 +317,15 @@ const targetServerState = vi.hoisted(() => ({
     targetServerId: null as string | null,
     targetServerName: null as string | null,
 }));
+const activeMachinesState = vi.hoisted(() => ({
+    value: [
+        { id: 'machine-1', metadata: { displayName: 'Machine One', host: 'one', homeDir: '/home/one' } },
+        { id: 'machine-2', metadata: { displayName: 'Machine Two', host: 'two', homeDir: '/home/two' } },
+    ] as Array<{ id: string; metadata: Record<string, unknown> }>,
+}));
+const machineListByServerIdState = vi.hoisted(() => ({
+    value: {} as Record<string, Array<{ id: string; metadata: Record<string, unknown> }> | null>,
+}));
 const interactionQueueState = vi.hoisted(() => ({
     callbacks: [] as Array<() => void>,
 }));
@@ -331,6 +340,7 @@ function getMockStorageState() {
         createSessionActionDraft: createSessionActionDraftMock,
         workspaceLocations: workspaceGraphState.workspaceLocations,
         workspaceCheckouts: workspaceGraphState.workspaceCheckouts,
+        machineListByServerId: machineListByServerIdState.value,
     };
 }
 
@@ -338,6 +348,10 @@ function notifyMockStorageSubscribers() {
     for (const listener of Array.from(storageSubscriptionState.listeners)) {
         listener();
     }
+}
+
+function materializeStorageMachine(input: { id: string; metadata: Record<string, unknown> }) {
+    return createMachineFixture({ id: input.id, metadata: input.metadata as any });
 }
 
 const settingsState = {
@@ -487,11 +501,13 @@ function installNewSessionScreenModelStorageMock() {
     vi.doMock('@/sync/domains/state/storage', async (importOriginal) => {
         const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
         return createPartialStorageModuleMock(importOriginal, {
-            useAllMachines: () => ([
-                createMachineFixture({ id: 'machine-1', metadata: { displayName: 'Machine One', host: 'one', homeDir: '/home/one' } as any }),
-                createMachineFixture({ id: 'machine-2', metadata: { displayName: 'Machine Two', host: 'two', homeDir: '/home/two' } as any }),
-            ]),
-            useMachineListByServerId: () => ({}),
+            useAllMachines: () => activeMachinesState.value.map(materializeStorageMachine),
+            useMachineListByServerId: () => Object.fromEntries(
+                Object.entries(machineListByServerIdState.value).map(([serverId, machines]) => [
+                    serverId,
+                    Array.isArray(machines) ? machines.map(materializeStorageMachine) : machines,
+                ]),
+            ),
             useMachineListStatusByServerId: () => ({}),
             storage: Object.assign((selector: (state: ReturnType<typeof getMockStorageState>) => unknown) => React.useSyncExternalStore(
                 (listener: () => void) => {
@@ -873,6 +889,11 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         targetServerState.allowedTargetServerIds = [];
         targetServerState.targetServerId = null;
         targetServerState.targetServerName = null;
+        activeMachinesState.value = [
+            { id: 'machine-1', metadata: { displayName: 'Machine One', host: 'one', homeDir: '/home/one' } },
+            { id: 'machine-2', metadata: { displayName: 'Machine Two', host: 'two', homeDir: '/home/two' } },
+        ];
+        machineListByServerIdState.value = {};
         delete (persistedDraft as any).backendTarget;
         delete (persistedDraft as any).codexBackendMode;
         persistedDraft.agentType = 'claude';
@@ -2808,6 +2829,37 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             'create_git_worktree',
             '__existing_worktree__',
         ]);
+    });
+
+    it('hydrates machine and path from the selected non-active target server cache', async () => {
+        targetServerState.allowedTargetServerIds = ['server-a', 'server-b'];
+        targetServerState.targetServerId = 'server-b';
+        targetServerState.targetServerName = 'Server B';
+        activeMachinesState.value = [
+            { id: 'machine-1', metadata: { displayName: 'Machine One', host: 'one', homeDir: '/home/one' } },
+        ];
+        machineListByServerIdState.value = {
+            'server-b': [
+                {
+                    id: 'machine-remote',
+                    metadata: { displayName: 'Remote Builder', host: 'remote-builder', homeDir: '/srv/remote' },
+                },
+            ],
+        };
+        persistedDraft.selectedMachineId = 'machine-remote';
+        persistedDraft.selectedPath = '/srv/remote/project';
+        persistedDraft.selectedWorkspaceId = null as any;
+        persistedDraft.selectedWorkspaceLocationId = null as any;
+        persistedDraft.selectedWorkspaceCheckoutId = null as any;
+        persistedDraft.checkoutCreationDraft = null;
+
+        let model: any = null;
+        await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
+        });
+
+        expect(model?.simpleProps?.machineName).toBe('Remote Builder');
+        expect(model?.simpleProps?.selectedPath).toBe('/srv/remote/project');
     });
 
 });

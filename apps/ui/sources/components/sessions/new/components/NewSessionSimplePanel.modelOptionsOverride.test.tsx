@@ -42,6 +42,7 @@ installNewSessionComponentsCommonModuleMocks({
                 agentInputChipDensity: 'labels',
                 sessionPermissionModeApplyTiming: 'immediate',
             }),
+            useWorkspaceReviewCommentsDrafts: () => [],
         });
     },
 });

@@ -38,7 +38,15 @@ describe('createAttachmentActionChip', () => {
                 onPickImage,
             } as any);
 
-            expect(chip.collapsedContentPopover).toBeTruthy();
+            expect(chip.collapsedContentPopover).toBeFalsy();
+            expect(chip.collapsedOptionsPopover).toMatchObject({
+                presentation: 'simple',
+                title: '',
+                options: [
+                    { id: 'add-image', label: 'common.addImage' },
+                    { id: 'add-file', label: 'common.addFile' },
+                ],
+            });
 
             const toggleCollapsedPopover = vi.fn();
             const screen = await renderScreen(
@@ -60,25 +68,11 @@ describe('createAttachmentActionChip', () => {
             await screen.pressByTestIdAsync('agent-input-attachments-chip');
             expect(toggleCollapsedPopover).toHaveBeenCalledWith('attachments-add');
 
-            const requestClose = vi.fn();
-            const renderContent = chip.collapsedContentPopover!.renderContent;
-            if (typeof renderContent !== 'function') {
-                throw new Error('Expected collapsedContentPopover.renderContent to be a function');
-            }
-            const contentScreen = await renderScreen(
-                <React.Fragment>
-                    {renderContent({ requestClose, maxHeight: 420 }) as React.ReactNode}
-                </React.Fragment>,
-            );
+            chip.collapsedOptionsPopover?.onSelect?.('add-image');
+            expect(onPickImage).toHaveBeenCalledTimes(1);
 
-            await contentScreen.pressByTestIdAsync('attachments-action-add-image');
-            expect(onPickImage).toHaveBeenCalled();
-            expect(requestClose).toHaveBeenCalled();
-
-            requestClose.mockClear();
-            await contentScreen.pressByTestIdAsync('attachments-action-add-file');
-            expect(onPickFile).toHaveBeenCalled();
-            expect(requestClose).toHaveBeenCalled();
+            chip.collapsedOptionsPopover?.onSelect?.('add-file');
+            expect(onPickFile).toHaveBeenCalledTimes(1);
         } finally {
             (Platform as any).OS = originalOs;
         }

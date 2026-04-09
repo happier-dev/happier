@@ -10,8 +10,13 @@ import { deriveSessionSubagentSidechainIds } from '@/sync/domains/session/subage
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { useDirectSessionRuntime, type UseDirectSessionRuntimeResult } from '@/components/sessions/model/useDirectSessionRuntime';
+import type { UseDirectSessionRuntimeResult } from '@/components/sessions/model/useDirectSessionRuntime';
+import { useSessionDirectSessionRuntime } from '@/components/sessions/model/useSessionDirectSessionRuntime';
 import { useSessionRunningExecutionRuns } from './useSessionRunningExecutionRuns';
+
+function normalizeSessionId(sessionId: string): string {
+    return String(sessionId ?? '').trim();
+}
 
 export function useSessionSubagents(params: Readonly<{
     sessionId: string;
@@ -24,6 +29,7 @@ export function useSessionSubagents(params: Readonly<{
     sidechainIds: readonly string[];
 }> {
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
+    const normalizedSessionId = React.useMemo(() => normalizeSessionId(params.sessionId), [params.sessionId]);
 
     const executionRunPollingEnabled = React.useMemo(() => {
         return shouldEnableExecutionRunPolling({
@@ -37,13 +43,14 @@ export function useSessionSubagents(params: Readonly<{
     }, [params.messages]);
 
     const runningExecutionRuns = useSessionRunningExecutionRuns({
-        sessionId: params.sessionId,
+        sessionId: normalizedSessionId,
         enabled: executionRunPollingEnabled,
         refreshKey: executionRunPollingRefreshKey,
     });
-    const internalDirectSessionRuntime = useDirectSessionRuntime({
-        sessionId: params.sessionId,
+    const internalDirectSessionRuntime = useSessionDirectSessionRuntime({
+        sessionId: normalizedSessionId,
         metadata: params.session?.metadata,
+        enabled: params.directSessionRuntime == null,
     });
     const directSessionRuntime = params.directSessionRuntime ?? internalDirectSessionRuntime;
 

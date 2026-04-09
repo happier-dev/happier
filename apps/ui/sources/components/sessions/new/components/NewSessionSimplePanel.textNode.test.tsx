@@ -66,6 +66,7 @@ installNewSessionComponentsCommonModuleMocks({
                 agentInputChipDensity: 'labels',
                 sessionPermissionModeApplyTiming: 'immediate',
             }),
+            useWorkspaceReviewCommentsDrafts: () => [],
             useSessionMessages: () => ({ messages: [], isLoaded: true }),
             useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
             useSessionMessagesById: () => ({}),

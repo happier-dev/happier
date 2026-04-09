@@ -13,7 +13,7 @@ const downloadDaemonPromptAssetMock = vi.hoisted(() => vi.fn());
 const listDaemonPromptAssetTypesMock = vi.hoisted(() => vi.fn());
 const uploadDaemonPromptAssetMock = vi.hoisted(() => vi.fn());
 
-vi.mock('@/sync/domains/transfers/runtime/transferSubstrate', () => ({
+vi.mock('@/sync/domains/transfers/runtime/transferRuntime', () => ({
     deleteDaemonPromptAsset: (...args: unknown[]) => deleteDaemonPromptAssetMock(...args),
     discoverDaemonPromptAssets: (...args: unknown[]) => discoverDaemonPromptAssetsMock(...args),
     downloadDaemonPromptAsset: (...args: unknown[]) => downloadDaemonPromptAssetMock(...args),

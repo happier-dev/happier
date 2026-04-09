@@ -1,6 +1,6 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import { deriveAccountMachineKeyFromRecoverySecret, openTerminalProvisioningV2Payload } from '@happier-dev/protocol';
 import { renderScreen } from '@/dev/testkit';
@@ -16,13 +16,36 @@ const modalAlertAsyncSpy = vi.fn(async (...args: unknown[]) => {
     modalAlertSpy(...args);
 });
 const modalConfirmSpy = vi.fn(async () => true);
-const upsertActivateAndSwitchServerSpy = vi.fn(async (_params: { serverUrl: string; source: string; scope: string }) => true);
+const upsertActivateAndSwitchServerSpy = vi.fn(async (_params: {
+    serverUrl: string;
+    source: string;
+    scope: string;
+    refreshAuth?: (() => Promise<void>) | null;
+}) => true);
 const authApproveSpy = vi.fn();
+const refreshFromActiveServerSpy = vi.fn(async () => {});
 
 let authCredentials: any = null;
+let storedCredentials: any = undefined;
 let contentPrivateKey = new Uint8Array([7, 7, 7]);
 let contentPublicKey = new Uint8Array([9, 9, 9]);
 let activeServerUrl = 'https://api.happier.dev';
+
+afterEach(() => {
+    authCredentials = null;
+    storedCredentials = undefined;
+    contentPrivateKey = new Uint8Array([7, 7, 7]);
+    contentPublicKey = new Uint8Array([9, 9, 9]);
+    activeServerUrl = 'https://api.happier.dev';
+    routerReplaceSpy.mockClear();
+    setPendingTerminalConnectSpy.mockClear();
+    modalAlertSpy.mockClear();
+    modalAlertAsyncSpy.mockClear();
+    modalConfirmSpy.mockClear();
+    upsertActivateAndSwitchServerSpy.mockReset();
+    authApproveSpy.mockReset();
+    refreshFromActiveServerSpy.mockReset();
+});
 
 installSessionHooksCommonModuleMocks({
     reactNative: async () => {
@@ -70,12 +93,12 @@ vi.mock('expo-camera', () => ({
 }));
 
 vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ credentials: authCredentials, refreshFromActiveServer: vi.fn(async () => {}) }),
+    useAuth: () => ({ credentials: authCredentials, refreshFromActiveServer: refreshFromActiveServerSpy }),
 }));
 
 vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: {
-        getCredentials: vi.fn(async () => authCredentials),
+        getCredentials: vi.fn(async () => (storedCredentials === undefined ? authCredentials : storedCredentials)),
     },
     isLegacyAuthCredentials: (creds: { secret?: string } | null) => typeof creds?.secret === 'string' && creds.secret.length > 0,
 }));
@@ -193,7 +216,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
         expect(modalAlertSpy).toHaveBeenCalledWith('terminal.connectTerminal', 'modals.pleaseSignInFirst', [
             { text: 'common.continue' },
         ]);
-        expect(routerReplaceSpy).toHaveBeenCalledWith('/');
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/?server=https%3A%2F%2Fapi.happier.dev');
     });
 
     it('auto-switches server without confirmation prompt before redirecting unauthenticated users', async () => {
@@ -202,7 +225,9 @@ describe('useConnectTerminal unauthenticated flow', () => {
         modalAlertSpy.mockClear();
         modalConfirmSpy.mockClear();
         upsertActivateAndSwitchServerSpy.mockClear();
-        activeServerUrl = 'https://api.happier.dev';
+        refreshFromActiveServerSpy.mockClear();
+        activeServerUrl = 'http://127.0.0.1:52753';
+        storedCredentials = null;
 
         const { useConnectTerminal } = await import('./useConnectTerminal');
 
@@ -229,7 +254,57 @@ describe('useConnectTerminal unauthenticated flow', () => {
                 scope: 'device',
             }),
         );
-        expect(routerReplaceSpy).toHaveBeenCalledWith('/');
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/?server=https%3A%2F%2Fstack.example.test');
+    });
+
+    it('refreshes auth state when switching to another server before redirecting terminal connect to sign-in', async () => {
+        routerReplaceSpy.mockClear();
+        setPendingTerminalConnectSpy.mockClear();
+        modalAlertSpy.mockClear();
+        upsertActivateAndSwitchServerSpy.mockClear();
+        refreshFromActiveServerSpy.mockClear();
+        authApproveSpy.mockClear();
+
+        activeServerUrl = 'https://api.happier.dev';
+        authCredentials = createDataKeyCredentials({ token: 'relay-token', machineKeyByte: 7 });
+        storedCredentials = null;
+        upsertActivateAndSwitchServerSpy.mockImplementationOnce(async (params) => {
+            await params.refreshAuth?.();
+            return true;
+        });
+
+        const { useConnectTerminal } = await import('./useConnectTerminal');
+
+        let hookApi: ReturnType<typeof useConnectTerminal> | null = null;
+        function Probe() {
+            hookApi = useConnectTerminal();
+            return null;
+        }
+
+        await renderScreen(React.createElement(Probe));
+
+        const terminalSecretKey = new Uint8Array(32).fill(5);
+        const terminalPublicKey = tweetnacl.box.keyPair.fromSecretKey(terminalSecretKey).publicKey;
+
+        let result = true;
+        await act(async () => {
+            result = await hookApi!.processAuthUrl(
+                buildTerminalConnectUrl({ terminalPublicKey, serverUrl: 'https://stack.example.test' }),
+            );
+        });
+
+        expect(result).toBe(false);
+        expect(upsertActivateAndSwitchServerSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                serverUrl: 'https://stack.example.test',
+                source: 'url',
+                scope: 'device',
+                refreshAuth: refreshFromActiveServerSpy,
+            }),
+        );
+        expect(refreshFromActiveServerSpy).toHaveBeenCalledTimes(1);
+        expect(authApproveSpy).not.toHaveBeenCalled();
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/?server=https%3A%2F%2Fstack.example.test');
     });
 
     it('does not switch servers when the link server URL is loopback-equivalent to the active server URL', async () => {
@@ -297,7 +372,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
             publicKeyB64Url: 'abc123',
             serverUrl: 'https://lan.example.test:53288',
         });
-        expect(routerReplaceSpy).toHaveBeenCalledWith('/');
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/?server=https%3A%2F%2Flan.example.test%3A53288');
     });
 
     it('uses the content private key in the v2 response bundle for dataKey credentials', async () => {

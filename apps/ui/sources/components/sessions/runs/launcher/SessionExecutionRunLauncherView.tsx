@@ -25,7 +25,6 @@ import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolve
 import { resumeSession } from '@/sync/ops/sessions';
 import { t } from '@/text';
 import { resolveActionInputValidationError } from '@/sync/domains/actions/resolveActionInputValidationError';
-import { resolveSessionTargetServerId } from '@/components/sessions/model/resolveSessionTargetServerId';
 import { resolveExecutionRunLauncherContainerStyle } from './resolveExecutionRunLauncherContainerStyle';
 import { resolveExecutionRunLauncherBackendChoices } from './resolveExecutionRunLauncherBackendChoices';
 import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
@@ -313,7 +312,7 @@ export const SessionExecutionRunLauncherView = React.memo((props: Readonly<{
 
     const actionExecutor = React.useMemo(
         () => createDefaultActionExecutor({
-            resolveServerIdForSessionId: (sessionId) => resolveSessionTargetServerId(sessionId, sessionServerId) ?? null,
+            resolveServerIdForSessionId: () => sessionServerId,
         }),
         [sessionServerId],
     );

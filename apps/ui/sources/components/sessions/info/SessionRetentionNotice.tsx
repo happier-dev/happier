@@ -5,7 +5,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useServerRetentionPolicy } from '@/hooks/server/useServerRetentionPolicy';
 import { formatSessionRetentionSummary } from '@/sync/domains/server/retention/formatServerRetentionPolicy';
 import { storage } from '@/sync/domains/state/storage';
-import { resolveSessionListCachedSessionServerId } from '@/sync/domains/session/listing/sessionListCacheState';
+import { resolveSessionListLookupSessionServerId } from '@/sync/domains/session/listing/sessionListLookupState';
 import { t } from '@/text';
 
 type SessionRetentionNoticeProps = Readonly<{
@@ -13,10 +13,7 @@ type SessionRetentionNoticeProps = Readonly<{
 }>;
 
 export function SessionRetentionNotice(props: SessionRetentionNoticeProps) {
-    const serverId = React.useMemo(
-        () => resolveSessionListCachedSessionServerId(storage.getState(), props.sessionId),
-        [props.sessionId],
-    );
+    const serverId = resolveSessionListLookupSessionServerId(storage.getState(), props.sessionId);
     const policy = useServerRetentionPolicy(serverId);
 
     if (!serverId || !policy || !policy.enabled || policy.sessions.mode === 'keep_forever') {

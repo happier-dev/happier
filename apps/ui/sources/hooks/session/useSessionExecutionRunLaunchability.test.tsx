@@ -11,6 +11,12 @@ const resolveSessionTargetServerIdSpy = vi.hoisted(() =>
 const useExecutionRunsBackendsForSessionSpy = vi.hoisted(() =>
     vi.fn((..._args: unknown[]) => ({ claude: { available: true, intents: ['review'] } })),
 );
+const useSessionExecutionRunsSupportedSpy = vi.hoisted(() =>
+    vi.fn((_sessionId: string, _serverId?: string | null) => true),
+);
+const preferredServerIdState = vi.hoisted(() => ({
+    value: 'server-canonical' as string | null,
+}));
 
 const sessionState = vi.hoisted(() => ({
     value: {
@@ -37,24 +43,28 @@ vi.mock('@/hooks/server/useSessionMachineReachability', () => ({
 }));
 
 vi.mock('@/hooks/server/useExecutionRunsBackendsForSession', () => ({
-    useExecutionRunsBackendsForSession: (...args: unknown[]) => useExecutionRunsBackendsForSessionSpy(...args),
+    useExecutionRunsBackendsForSession: (sessionId: string, serverId?: string | null) =>
+        useExecutionRunsBackendsForSessionSpy(sessionId, serverId),
 }));
 
 vi.mock('@/hooks/server/useSessionExecutionRunsSupported', () => ({
-    useSessionExecutionRunsSupported: () => true,
+    useSessionExecutionRunsSupported: (sessionId: string, serverId?: string | null) =>
+        useSessionExecutionRunsSupportedSpy(sessionId, serverId),
 }));
 
 vi.mock('@/agents/hooks/useResumeCapabilityOptions', () => ({
     useResumeCapabilityOptions: () => ({ resumeCapabilityOptions: [] }),
 }));
 
-vi.mock('@/components/sessions/model/resolveSessionTargetServerId', () => ({
-    resolveSessionTargetServerId: (...args: unknown[]) =>
-        resolveSessionTargetServerIdSpy(args[0] as string, args[1] as string | null | undefined),
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession', () => ({
+    usePreferredServerIdForSession: (sessionId: string, fallbackServerId?: string | null) => {
+        resolveSessionTargetServerIdSpy(sessionId, fallbackServerId);
+        return preferredServerIdState.value ?? fallbackServerId ?? null;
+    },
 }));
 
-vi.mock('@/components/sessions/model/useDirectSessionRuntime', () => ({
-    useDirectSessionRuntime: () => ({
+vi.mock('@/components/sessions/model/useSessionDirectSessionRuntime', () => ({
+    useSessionDirectSessionRuntime: () => ({
         directSessionLink: null,
         status: { runnerActive: true },
     }),
@@ -73,6 +83,8 @@ describe('useSessionExecutionRunLaunchability', () => {
         standardCleanup();
         resolveSessionTargetServerIdSpy.mockReset();
         useExecutionRunsBackendsForSessionSpy.mockReset();
+        useSessionExecutionRunsSupportedSpy.mockReset();
+        preferredServerIdState.value = 'server-canonical';
         sessionState.value = {
             id: 'session-1',
             active: true,
@@ -92,6 +104,35 @@ describe('useSessionExecutionRunLaunchability', () => {
             executionRunsSupported: true,
             executionRunsBackends: { claude: { available: true, intents: ['review'] } },
         });
+
+        await hook.unmount();
+    });
+
+    it('refreshes backend lookup when the preferred session server changes', async () => {
+        const { useSessionExecutionRunLaunchability } = await import('./useSessionExecutionRunLaunchability');
+        const hook = await renderHook((session: typeof sessionState.value) => useSessionExecutionRunLaunchability('session-1', session), {
+            initialProps: sessionState.value,
+        });
+
+        expect(useExecutionRunsBackendsForSessionSpy).toHaveBeenLastCalledWith('session-1', 'server-canonical');
+
+        preferredServerIdState.value = 'server-updated';
+        await hook.rerender(sessionState.value);
+
+        expect(useExecutionRunsBackendsForSessionSpy).toHaveBeenLastCalledWith('session-1', 'server-updated');
+
+        await hook.unmount();
+    });
+
+    it('falls back to the direct session server id while the preferred server lookup is unresolved', async () => {
+        preferredServerIdState.value = null;
+
+        const { useSessionExecutionRunLaunchability } = await import('./useSessionExecutionRunLaunchability');
+        const hook = await renderHook(() => useSessionExecutionRunLaunchability('session-1', sessionState.value));
+
+        expect(useSessionExecutionRunsSupportedSpy).toHaveBeenCalledWith('session-1', 'server-explicit');
+        expect(useExecutionRunsBackendsForSessionSpy).toHaveBeenCalledWith('session-1', 'server-explicit');
+        expect(hook.getCurrent().sessionServerId).toBe('server-explicit');
 
         await hook.unmount();
     });

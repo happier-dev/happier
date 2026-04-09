@@ -209,10 +209,10 @@ describe('useDraft', () => {
     harness.unmount();
   });
 
-  it('hydrates the composer when the current session draft changes externally while focused', async () => {
-    sessionsById = {
-      s1: { draft: null, metadata: {} },
-    };
+    it('hydrates the composer when the current session draft changes externally while focused', async () => {
+        sessionsById = {
+            s1: { draft: null, metadata: {} },
+        };
 
     const harness = await renderHarness({ initialSessionId: 's1' });
     expect(harness.getCurrent().value).toBe('');
@@ -227,14 +227,26 @@ describe('useDraft', () => {
     });
     await flushHookEffects({ cycles: 1, turns: 1 });
 
-    expect(harness.getCurrent().value).toBe('rollback restored prompt');
-    harness.unmount();
-  });
+        expect(harness.getCurrent().value).toBe('rollback restored prompt');
+        harness.unmount();
+    });
 
-  it('replaces the composer when an external draft update arrives and there are no unsaved local edits', async () => {
-    sessionsById = {
-      s1: { draft: 'draft-1', metadata: {} },
-    };
+    it('normalizes session ids before reading and clearing drafts', async () => {
+        const harness = await renderHarness({ initialSessionId: '  s1  ' });
+        expect(harness.getCurrent().value).toBe('draft-1');
+
+        await act(async () => {
+            harness.getCurrent().clearDraft();
+        });
+
+        expect(updateSessionDraftSpy).toHaveBeenCalledWith('s1', null);
+        harness.unmount();
+    });
+
+    it('replaces the composer when an external draft update arrives and there are no unsaved local edits', async () => {
+        sessionsById = {
+            s1: { draft: 'draft-1', metadata: {} },
+        };
 
     const harness = await renderHarness({ initialSessionId: 's1' });
     expect(harness.getCurrent().value).toBe('draft-1');

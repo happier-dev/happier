@@ -10,6 +10,11 @@ interface UseDraftOptions {
     autoSaveInterval?: number; // in milliseconds, default 2000
 }
 
+function normalizeSessionId(sessionId: string | null | undefined): string | null {
+    const normalizedSessionId = String(sessionId ?? '').trim();
+    return normalizedSessionId.length > 0 ? normalizedSessionId : null;
+}
+
 export function useDraft(
     sessionId: string | null | undefined,
     value: string,
@@ -23,7 +28,8 @@ export function useDraft(
     const latestValue = useRef<string>(value);
     const autosaveSkip = useRef<Readonly<{ sessionId: string; value: string }> | null>(null);
     const isFocused = useIsFocused();
-    const session = sessionId ? storage.getState().sessions[sessionId] : null;
+    const resolvedSessionId = normalizeSessionId(sessionId);
+    const session = resolvedSessionId ? storage.getState().sessions[resolvedSessionId] : null;
     const storedDraft = typeof session?.draft === 'string' ? session.draft : null;
     const forkInitialPrompt = readForkInitialPromptV1(session?.metadata as any);
     const forkInitialPromptText = forkInitialPrompt?.text ?? null;
@@ -39,28 +45,28 @@ export function useDraft(
 
     // Save draft to storage
     const saveDraft = useCallback((draft: string) => {
-        if (!sessionId) return;
-        saveDraftForSession(sessionId, draft);
-    }, [saveDraftForSession, sessionId]);
+        if (!resolvedSessionId) return;
+        saveDraftForSession(resolvedSessionId, draft);
+    }, [resolvedSessionId, saveDraftForSession]);
 
     const clearForkInitialPrompt = useCallback((tag: string) => {
-        if (!sessionId || !forkInitialPromptText) return;
+        if (!resolvedSessionId || !forkInitialPromptText) return;
         fireAndForget(
-            sync.patchSessionMetadataWithRetry(sessionId, (metadata) =>
+            sync.patchSessionMetadataWithRetry(resolvedSessionId, (metadata) =>
                 clearForkInitialPromptV1({ metadata: metadata as any }) as any,
             ),
             { tag },
         );
-    }, [forkInitialPromptText, sessionId]);
+    }, [forkInitialPromptText, resolvedSessionId]);
 
     // Load draft on mount and when focused. When switching sessions, always sync the composer
     // to the target session (draft or empty) to avoid leaking the previous session's text.
     useEffect(() => {
-        if (!sessionId) return;
+        if (!resolvedSessionId) return;
 
         const previousSessionId = lastSessionId.current;
-        lastSessionId.current = sessionId;
-        const didSessionChange = previousSessionId !== null && previousSessionId !== sessionId;
+        lastSessionId.current = resolvedSessionId;
+        const didSessionChange = previousSessionId !== null && previousSessionId !== resolvedSessionId;
 
         const currentValue = latestValue.current;
 
@@ -68,7 +74,7 @@ export function useDraft(
             if (previousSessionId && currentValue !== lastSavedValue.current) {
                 saveDraftForSession(previousSessionId, currentValue);
             }
-            autosaveSkip.current = { sessionId, value: currentValue };
+            autosaveSkip.current = { sessionId: resolvedSessionId, value: currentValue };
             if (storedDraft && storedDraft.trim()) {
                 onChange(storedDraft);
                 lastSavedValue.current = storedDraft;
@@ -112,11 +118,11 @@ export function useDraft(
             // Ensure lastSavedValue is empty if there's no draft
             lastSavedValue.current = '';
         }
-    }, [clearForkInitialPrompt, forkInitialPromptText, isFocused, onChange, saveDraft, saveDraftForSession, sessionId, storedDraft]);
+    }, [clearForkInitialPrompt, forkInitialPromptText, isFocused, onChange, resolvedSessionId, saveDraft, saveDraftForSession, storedDraft]);
 
     // Auto-save with smart debouncing
     useEffect(() => {
-        if (!sessionId) return;
+        if (!resolvedSessionId) return;
 
         // Clear any existing timeout
         if (saveTimeoutRef.current) {
@@ -125,7 +131,7 @@ export function useDraft(
 
         // Only save if value has changed
         const skip = autosaveSkip.current;
-        if (skip && skip.sessionId === sessionId && skip.value === value) {
+        if (skip && skip.sessionId === resolvedSessionId && skip.value === value) {
             autosaveSkip.current = null;
             return;
         }
@@ -153,11 +159,11 @@ export function useDraft(
                 clearTimeout(saveTimeoutRef.current);
             }
         };
-    }, [value, sessionId, autoSaveInterval, saveDraft]);
+    }, [autoSaveInterval, resolvedSessionId, saveDraft, value]);
 
     // Save on app state change (background/inactive)
     useEffect(() => {
-        if (!sessionId) return;
+        if (!resolvedSessionId) return;
 
         const handleAppStateChange = (nextAppState: AppStateStatus) => {
             if (nextAppState === 'background' || nextAppState === 'inactive') {
@@ -172,7 +178,7 @@ export function useDraft(
         return () => {
             subscription.remove();
         };
-    }, [sessionId, value, saveDraft]);
+    }, [resolvedSessionId, saveDraft, value]);
 
     // Save on unmount only; session changes are handled explicitly above so they do not race with clearDraft().
     useEffect(() => {
@@ -187,17 +193,17 @@ export function useDraft(
 
     // Clear draft (used after message is sent)
     const clearDraft = useCallback(() => {
-        if (!sessionId) return;
+        if (!resolvedSessionId) return;
 
         if (saveTimeoutRef.current) {
             clearTimeout(saveTimeoutRef.current);
             saveTimeoutRef.current = null;
         }
 
-        storage.getState().updateSessionDraft(sessionId, null);
+        storage.getState().updateSessionDraft(resolvedSessionId, null);
         latestValue.current = '';
         lastSavedValue.current = '';
-    }, [sessionId]);
+    }, [resolvedSessionId]);
 
     return {
         clearDraft

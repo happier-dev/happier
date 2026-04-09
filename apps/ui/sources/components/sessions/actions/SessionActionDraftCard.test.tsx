@@ -14,7 +14,8 @@ import {
 type ExecuteResult = { ok: true; result: unknown } | { ok: false; error: string };
 const executeSpy = vi.fn<() => Promise<ExecuteResult>>(async () => ({ ok: true, result: {} }));
 const createDefaultActionExecutorMock = vi.hoisted(() => vi.fn((..._args: unknown[]) => ({ execute: executeSpy })));
-const useExecutionRunsBackendsForSessionMock = vi.hoisted(() => vi.fn((..._args: unknown[]) => null));
+const useExecutionRunsBackendsForSessionMock = vi.hoisted(() => vi.fn<(sessionId: string, serverId: string | null | undefined) => unknown>(() => null));
+const useSessionServerIdMock = vi.hoisted(() => vi.fn<(sessionId: string) => string | null>(() => 'server-explicit'));
 const updateSessionActionDraftInput = vi.fn();
 const setSessionActionDraftStatus = vi.fn();
 const deleteSessionActionDraft = vi.fn();
@@ -91,6 +92,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
 
 vi.mock('@/sync/store/hooks', () => ({
   useLocalSetting: () => 1,
+  useSessionServerId: (sessionId: string) => useSessionServerIdMock(sessionId),
 }));
 
 vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({
@@ -98,7 +100,7 @@ vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({
 }));
 
 vi.mock('@/hooks/server/useExecutionRunsBackendsForSession', () => ({
-  useExecutionRunsBackendsForSession: (...args: unknown[]) => useExecutionRunsBackendsForSessionMock(...args),
+  useExecutionRunsBackendsForSession: (sessionId: string, serverId: string | null | undefined) => useExecutionRunsBackendsForSessionMock(sessionId, serverId),
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
@@ -116,6 +118,8 @@ describe('SessionActionDraftCard', () => {
     executeSpy.mockClear();
     createDefaultActionExecutorMock.mockClear();
     useExecutionRunsBackendsForSessionMock.mockClear();
+    useSessionServerIdMock.mockReset();
+    useSessionServerIdMock.mockImplementation(() => 'server-explicit');
     updateSessionActionDraftInput.mockClear();
     setSessionActionDraftStatus.mockClear();
     deleteSessionActionDraft.mockClear();
@@ -141,6 +145,35 @@ describe('SessionActionDraftCard', () => {
       resolveServerIdForSessionId: (sessionId: string) => string | null;
     };
     expect(executorConfig.resolveServerIdForSessionId('s1')).toBe('server-explicit');
+  });
+
+  it('reacts to preferred session server changes for review backend lookup and execution routing', async () => {
+    const { SessionActionDraftCard } = await import('./SessionActionDraftCard');
+
+    const draft = {
+      id: 'd1',
+      sessionId: 's1',
+      actionId: 'review.start',
+      createdAt: 1,
+      status: 'editing',
+      input: { engineIds: ['coderabbit'], instructions: 'Review this repository.', changeType: 'all', base: { kind: 'none' } },
+    } as const;
+
+    const screen = await renderScreen(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
+
+    expect(useExecutionRunsBackendsForSessionMock).toHaveBeenCalledWith('s1', 'server-explicit');
+    expect(createDefaultActionExecutorMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      useSessionServerIdMock.mockImplementation(() => 'server-reactive');
+      screen.tree.update(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
+    });
+
+    expect(useExecutionRunsBackendsForSessionMock).toHaveBeenCalledWith('s1', 'server-reactive');
+    const executorConfig = createDefaultActionExecutorMock.mock.calls.at(-1)?.[0] as {
+      resolveServerIdForSessionId: (sessionId: string) => string | null;
+    };
+    expect(executorConfig.resolveServerIdForSessionId('s1')).toBe('server-reactive');
   });
 
   it('submits a valid subagents.plan.start draft via the default action executor', async () => {

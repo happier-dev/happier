@@ -20,8 +20,9 @@ type UsePublishBranchActionResult = Readonly<{
 }>;
 
 function resolveCanPublish(input: UsePublishBranchActionInput): boolean {
+    const sessionId = typeof input.sessionId === 'string' ? input.sessionId.trim() : '';
     return Boolean(
-        input.sessionId
+        sessionId
         && input.writeEnabled === true
         && input.disabled !== true
         && input.snapshot?.capabilities?.writeRemotePublish === true
@@ -34,25 +35,26 @@ function resolveCanPublish(input: UsePublishBranchActionInput): boolean {
 
 // Shared publish-branch action so all SCM surfaces use the same capability gate, mutation flow, and error handling.
 export function usePublishBranchAction(input: UsePublishBranchActionInput): UsePublishBranchActionResult {
-    const canPublish = resolveCanPublish(input);
+    const sessionId = React.useMemo(() => (typeof input.sessionId === 'string' ? input.sessionId.trim() : ''), [input.sessionId]);
+    const canPublish = resolveCanPublish({ ...input, sessionId });
     const [publishBusy, setPublishBusy] = React.useState(false);
 
     const publishBranch = React.useCallback(async (): Promise<boolean> => {
-        if (!input.sessionId || !canPublish || publishBusy) return false;
+        if (!sessionId || !canPublish || publishBusy) return false;
 
         setPublishBusy(true);
         try {
-            const response = await sessionScmRemotePublish(input.sessionId, {});
+            const response = await sessionScmRemotePublish(sessionId, {});
             if (!response.success) {
                 Modal.alert(t('common.error'), response.error || t('files.branchMenu.publish.failed'));
                 return false;
             }
-            await scmStatusSync.invalidateFromMutationAndAwait(input.sessionId);
+            await scmStatusSync.invalidateFromMutationAndAwait(sessionId);
             return true;
         } finally {
             setPublishBusy(false);
         }
-    }, [canPublish, input.sessionId, publishBusy]);
+    }, [canPublish, publishBusy, sessionId]);
 
     return React.useMemo(() => ({
         canPublish,

@@ -20,7 +20,7 @@ export async function prefetchSessionPaneModules(): Promise<void> {
 }
 
 export function useRegisterSessionPaneDriver(sessionId: string): string {
-    const scopeId = React.useMemo(() => `session:${sessionId}`, [sessionId]);
+    const scopeId = `session:${sessionId}`;
     const paneCtx = useOptionalAppPaneContext();
     const registerDriver = paneCtx?.registerDriver ?? null;
     const canRegister = Boolean(registerDriver);

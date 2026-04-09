@@ -10,6 +10,8 @@ const ENV_KEYS = [
     'EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_POST_COMMIT_BINDING_STABILIZATION_INTERVAL_MS',
     'EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_POST_COMMIT_BINDING_STABLE_POLLS',
     'EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_SOURCE_REACHABILITY_PROBE_TIMEOUT_MS',
+    'EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_SOURCE_REACHABILITY_RETRY_DELAY_MS',
+    'EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_SOURCE_REACHABILITY_RETRY_WINDOW_MS',
 ] as const;
 
 describe('resolveSessionHandoffRuntimeConfig', () => {
@@ -43,6 +45,8 @@ describe('resolveSessionHandoffRuntimeConfig', () => {
             postCommitBindingStabilizationIntervalMs: 250,
             postCommitBindingStablePolls: 2,
             sourceReachabilityProbeTimeoutMs: 2_500,
+            sourceReachabilityRetryDelayMs: 1_000,
+            sourceReachabilityRetryWindowMs: 15_000,
         });
     });
 
@@ -54,6 +58,8 @@ describe('resolveSessionHandoffRuntimeConfig', () => {
         process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_POST_COMMIT_BINDING_STABILIZATION_INTERVAL_MS = '9000';
         process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_POST_COMMIT_BINDING_STABLE_POLLS = '0';
         process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_SOURCE_REACHABILITY_PROBE_TIMEOUT_MS = '100';
+        process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_SOURCE_REACHABILITY_RETRY_DELAY_MS = '25';
+        process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_SOURCE_REACHABILITY_RETRY_WINDOW_MS = '999999';
 
         expect(resolveSessionHandoffRuntimeConfig()).toEqual({
             machineRpcTimeoutMs: 300_000,
@@ -63,6 +69,8 @@ describe('resolveSessionHandoffRuntimeConfig', () => {
             postCommitBindingStabilizationIntervalMs: 5_000,
             postCommitBindingStablePolls: 1,
             sourceReachabilityProbeTimeoutMs: 250,
+            sourceReachabilityRetryDelayMs: 250,
+            sourceReachabilityRetryWindowMs: 60_000,
         });
     });
 });

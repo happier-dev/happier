@@ -5,6 +5,7 @@ import type { Message } from '@/sync/domains/messages/messageTypes';
 import { readStoredSessionMessagesFromStateLike } from '@/sync/domains/messages/readStoredSessionMessages';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { useSessionMessagesById, useSessionTranscriptIds } from '@/sync/domains/state/storage';
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 
 import type { AgentInputHistoryScope, UserMessageHistoryNavigator } from './userMessageHistory';
 import {
@@ -68,8 +69,10 @@ export function useUserMessageHistory(opts: {
     sessionId: string | null;
     maxEntries?: number;
 }): UserMessageHistoryNavigator {
+    const normalizedSessionIdRaw = normalizeSessionId(opts.sessionId);
+    const normalizedSessionId = normalizedSessionIdRaw.length > 0 ? normalizedSessionIdRaw : null;
     // Safe: for null sessionId, subscribe to a non-existent key and get empty arrays.
-    const sessionIdForHook = opts.sessionId ?? '__none__';
+    const sessionIdForHook = normalizedSessionId ?? '__none__';
     const { ids: sessionMessageIds } = useSessionTranscriptIds(sessionIdForHook);
     const sessionMessagesById = useSessionMessagesById(sessionIdForHook);
     const allSessionMessages = useAllSessionMessages(opts.scope === 'global');
@@ -94,18 +97,18 @@ export function useUserMessageHistory(opts: {
 
         return collectUserMessageHistoryEntries({
             scope: opts.scope,
-            sessionId: opts.sessionId,
+            sessionId: normalizedSessionId,
             messagesBySessionId,
             maxEntries: opts.maxEntries,
         });
-    }, [opts.scope, opts.sessionId, opts.maxEntries, sessionIdForHook, sessionUserMessages, allSessionMessages]);
+    }, [opts.scope, normalizedSessionId, opts.maxEntries, sessionIdForHook, sessionUserMessages, allSessionMessages]);
 
     const navigator = React.useMemo(() => createUserMessageHistoryNavigator(entries), [entries]);
 
     React.useEffect(() => {
         // If the user switches sessions or scope, drop any in-progress history browsing state.
         navigator.reset();
-    }, [navigator, opts.sessionId, opts.scope]);
+    }, [navigator, normalizedSessionId, opts.scope]);
 
     return navigator;
 }

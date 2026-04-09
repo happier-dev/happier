@@ -35,12 +35,6 @@ export function SessionPaneLazyLoader<TProps extends object>(input: SessionPaneL
         };
     }, [input.load, retryNonce]);
 
-    const onRetry = React.useCallback(() => {
-        setImpl(null);
-        setError(null);
-        setRetryNonce((value) => value + 1);
-    }, []);
-
     if (error) {
         return (
             <View
@@ -54,7 +48,11 @@ export function SessionPaneLazyLoader<TProps extends object>(input: SessionPaneL
                     {t('errors.tryAgain')}
                 </Text>
                 <Pressable
-                    onPress={onRetry}
+                    onPress={() => {
+                        setImpl(null);
+                        setError(null);
+                        setRetryNonce((value) => value + 1);
+                    }}
                     accessibilityRole="button"
                     style={{
                         paddingHorizontal: 12,

@@ -5,7 +5,6 @@ import { Pressable, View, Platform } from 'react-native';
 import type { AgentInputExtraActionChip, AgentInputExtraActionChipRenderContext } from '@/components/sessions/agentInput/agentInputContracts';
 import { Text } from '@/components/ui/text/Text';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
-import { ActionListSection } from '@/components/ui/lists/ActionListSection';
 import { t } from '@/text';
 import { blurActiveElementOnWeb } from '@/utils/platform/deferOnWeb';
 
@@ -46,38 +45,27 @@ export function createAttachmentActionChip(params: Readonly<{
         controlId: 'attachments',
         labelPolicy: 'auto-hide',
         ...(showChooser ? {
-            collapsedContentPopover: {
-                title: t('common.attach'),
+            collapsedOptionsPopover: {
+                presentation: 'simple',
+                title: '',
                 label: t('common.attach'),
                 icon: (tint: string) =>
                     normalizeNodeForView(<Ionicons name="attach-outline" size={16} color={tint} />),
-                renderContent: ({ requestClose }) => (
-                    <ActionListSection
-                        actions={[
-                            {
-                                id: 'add-image',
-                                testID: 'attachments-action-add-image',
-                                label: t('common.addImage'),
-                                onPress: () => {
-                                    requestClose();
-                                    params.onPickImage();
-                                },
-                            },
-                            {
-                                id: 'add-file',
-                                testID: 'attachments-action-add-file',
-                                label: t('common.addFile'),
-                                onPress: () => {
-                                    requestClose();
-                                    params.onPickFile();
-                                },
-                            },
-                        ]}
-                    />
-                ),
+                options: [
+                    { id: 'add-image', label: t('common.addImage') },
+                    { id: 'add-file', label: t('common.addFile') },
+                ],
+                onSelect: (selectedId) => {
+                    if (selectedId === 'add-image') {
+                        params.onPickImage();
+                        return;
+                    }
+                    if (selectedId === 'add-file') {
+                        params.onPickFile();
+                    }
+                },
                 maxWidthCap: 360,
                 maxHeightCap: 260,
-                scrollEnabled: false,
             },
         } : {
             collapsedAction: ({ tint, dismiss, blurInput }) => ({

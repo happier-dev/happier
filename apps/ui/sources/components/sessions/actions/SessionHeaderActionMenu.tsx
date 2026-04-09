@@ -7,6 +7,8 @@ import { useRouter } from 'expo-router';
 
 import { storage, useSetting, useSettings } from '@/sync/domains/state/storage';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
+import { AGENTS_UI_BEHAVIOR } from '@/agents/registry/registryUiBehavior';
+import { resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
@@ -15,7 +17,6 @@ import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Modal } from '@/modal';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
-import { resolveSessionTargetServerId } from '@/components/sessions/model/resolveSessionTargetServerId';
 import { canForkConversation } from '@/sync/domains/sessionFork/forkUiSupport';
 import { executeSessionForkAction } from '@/sync/domains/sessionFork/executeSessionForkAction';
 import { runSessionHandoffPickerFlow } from '@/sync/domains/sessionHandoff/runSessionHandoffPickerFlow';
@@ -26,12 +27,13 @@ import {
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
 import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
+import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
+import { resolveSessionTargetServerId } from '@/components/sessions/model/resolveSessionTargetServerId';
 import { getVoiceAgentSessionTeleportAvailability } from '@/voice/agent/getVoiceAgentSessionTeleportAvailability';
 import { teleportVoiceAgentToSessionRoot } from '@/voice/agent/teleportVoiceAgentToSessionRoot';
 import { useHasGlobalVoiceAgentConversation } from '@/voice/agent/useHasGlobalVoiceAgentConversation';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
-import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { machineDirectSessionFollowPolicySet } from '@/sync/ops/machineDirectSessions';
 import { useSessionHandoffSourceReachability } from '@/sync/domains/sessionHandoff/useSessionHandoffSourceReachability';
 import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
@@ -40,6 +42,7 @@ import {
   updateMetadataWithDirectSessionFollowPolicy,
 } from '@/sync/domains/session/directSessions/directSessionFollowMetadata';
 import { sync } from '@/sync/sync';
+import { useSessionReachableMachineTarget } from '@/components/sessions/model/useSessionMachineReachability';
 
 function resolveSessionHandoffMenuSubtitle(handoffAvailability: ReturnType<typeof resolveSessionHandoffUiAvailability>, fallbackSubtitle: string | undefined): string | undefined {
   if (handoffAvailability.available) {
@@ -81,14 +84,12 @@ export function SessionHeaderActionMenu(props: Readonly<{
   const voice = useSetting('voice');
   const hasGlobalVoiceAgentConversation = useHasGlobalVoiceAgentConversation();
   const sessionHandoffEnabled = useFeatureEnabled('sessions.handoff');
+  const preferredSessionServerId = usePreferredServerIdForSession(props.sessionId, props.session.serverId ?? null);
   const sessionServerId = React.useMemo(
-    () => resolveSessionTargetServerId(props.sessionId, props.session.serverId),
-    [props.session.serverId, props.sessionId],
+    () => resolveSessionTargetServerId(props.sessionId, preferredSessionServerId ?? props.session.serverId ?? null),
+    [preferredSessionServerId, props.session.serverId, props.sessionId],
   );
-  const reachableMachineId = React.useMemo(
-    () => readMachineTargetForSession(props.sessionId)?.machineId ?? null,
-    [props.sessionId, props.session.updatedAt, props.session.metadata],
-  );
+  const reachableMachineId = useSessionReachableMachineTarget(props.sessionId)?.machineId ?? null;
   const sourceMachineId = React.useMemo(
     () => resolveSessionHandoffSourceMachineId({
       reachableMachineId,
@@ -104,6 +105,7 @@ export function SessionHeaderActionMenu(props: Readonly<{
   const handoffAvailability = resolveSessionHandoffUiAvailability({
     sessionId: props.sessionId,
     serverId: sessionServerId,
+    reachableMachineId,
     session: props.session,
     sessionHandoffFeatureEnabled: sessionHandoffEnabled,
     serverSnapshot,
@@ -112,12 +114,12 @@ export function SessionHeaderActionMenu(props: Readonly<{
   const [open, setOpen] = React.useState(false);
   const executor = React.useMemo(
     () => createDefaultActionExecutor({
-      resolveServerIdForSessionId: (sessionId) => resolveSessionTargetServerId(sessionId, props.session.serverId) ?? null,
+      resolveServerIdForSessionId: () => sessionServerId,
       openSession: (childSessionId: string) => {
         router.push((`/session/${childSessionId}`) as any);
       },
     }),
-    [router, props.session.serverId],
+    [router, sessionServerId],
   );
   const teleportAvailability = React.useMemo(
     () => getVoiceAgentSessionTeleportAvailability({ voice, sessionId: props.sessionId }),
@@ -126,6 +128,18 @@ export function SessionHeaderActionMenu(props: Readonly<{
   const showTeleportAction = teleportAvailability.ok && hasGlobalVoiceAgentConversation;
   const directSessionLink = readDirectSessionLink(props.session.metadata);
   const directSessionFollowPolicy = readDirectSessionFollowPolicy(props.session.metadata);
+  const directSessionAgentId = React.useMemo(
+    () => resolveAgentIdFromFlavor(
+      typeof (props.session.metadata as Record<string, unknown> | null | undefined)?.flavor === 'string'
+        ? String((props.session.metadata as Record<string, unknown>).flavor)
+        : directSessionLink?.providerId ?? null,
+    ),
+    [props.session.metadata, directSessionLink?.providerId],
+  );
+  const supportsDirectSessionBackgroundFollow =
+    directSessionAgentId != null
+      ? AGENTS_UI_BEHAVIOR[directSessionAgentId]?.directSessions?.supportsBackgroundFollow === true
+      : false;
   const actions = React.useMemo(() => {
     const actionItems: DropdownMenuItem[] = listActionSpecs()
       .filter((spec) => spec.surfaces.ui_button === true)
@@ -145,7 +159,7 @@ export function SessionHeaderActionMenu(props: Readonly<{
 
     const out: DropdownMenuItem[] = [];
 
-    if (directSessionLink) {
+    if (directSessionLink && supportsDirectSessionBackgroundFollow) {
       out.push({
         id: 'session.directSession.backgroundFollow',
         title: t('session.actionMenu.backgroundFollow'),
@@ -176,6 +190,7 @@ export function SessionHeaderActionMenu(props: Readonly<{
     handoffAvailability,
     directSessionLink,
     directSessionFollowPolicy,
+    supportsDirectSessionBackgroundFollow,
   ]);
 
   if (actions.length === 0) return null;

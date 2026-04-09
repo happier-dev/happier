@@ -1,4 +1,5 @@
 import React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
@@ -11,6 +12,28 @@ const createDefaultActionExecutorSpy = vi.fn((..._args: unknown[]) => ({
     execute: vi.fn(),
 }));
 const useMachineCapabilitiesCacheSpy = vi.fn((..._args: unknown[]) => ({ state: { status: 'idle' } }));
+const launchabilityState = vi.hoisted(() => {
+    let sessionServerId = 'server-launcher';
+    const listeners = new Set<(nextValue: string) => void>();
+
+    return {
+        get sessionServerId() {
+            return sessionServerId;
+        },
+        set sessionServerId(nextValue: string) {
+            sessionServerId = nextValue;
+            for (const listener of listeners) {
+                listener(nextValue);
+            }
+        },
+        subscribe(listener: (nextValue: string) => void) {
+            listeners.add(listener);
+            return () => {
+                listeners.delete(listener);
+            };
+        },
+    };
+});
 const resolveSessionTargetServerIdSpy = vi.fn((_sessionId: string, fallbackServerId?: string | null) => fallbackServerId ?? null);
 const routerPushSpy = vi.fn();
 const mockSession = {
@@ -76,13 +99,17 @@ vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
 }));
 
 vi.mock('@/hooks/session/useSessionExecutionRunLaunchability', () => ({
-    useSessionExecutionRunLaunchability: () => ({
-        canLaunchExecutionRuns: true,
-        canShowExecutionRunLauncher: true,
-        executionRunsBackends: {},
-        executionRunsSupported: true,
-        sessionServerId: 'server-launcher',
-    }),
+    useSessionExecutionRunLaunchability: () => {
+        const [sessionServerId, setSessionServerId] = React.useState(launchabilityState.sessionServerId);
+        React.useEffect(() => launchabilityState.subscribe(setSessionServerId), []);
+        return {
+            canLaunchExecutionRuns: true,
+            canShowExecutionRunLauncher: true,
+            executionRunsBackends: {},
+            executionRunsSupported: true,
+            sessionServerId,
+        };
+    },
 }));
 
 vi.mock('@/sync/domains/state/storage', () => ({
@@ -167,6 +194,7 @@ describe('SessionExecutionRunLauncherView', () => {
         createDefaultActionExecutorSpy.mockClear();
         useMachineCapabilitiesCacheSpy.mockClear();
         resolveSessionTargetServerIdSpy.mockClear();
+        launchabilityState.sessionServerId = 'server-launcher';
     });
 
     afterEach(() => {
@@ -186,6 +214,39 @@ describe('SessionExecutionRunLauncherView', () => {
         expect(cacheRequest).toMatchObject({
             serverId: 'server-launcher',
         });
+        expect(resolveSessionTargetServerIdSpy).not.toHaveBeenCalled();
+        const executorConfig = createDefaultActionExecutorSpy.mock.calls.at(-1)?.[0] as {
+            resolveServerIdForSessionId: (sessionId: string) => string | null;
+        };
+        expect(executorConfig.resolveServerIdForSessionId('session-launcher')).toBe('server-launcher');
+    });
+
+    it('re-resolves the launcher session server when the launchability hook changes', async () => {
+        const { SessionExecutionRunLauncherView } = await import('./SessionExecutionRunLauncherView');
+        const screen = await renderScreen(React.createElement(SessionExecutionRunLauncherView, {
+            sessionId: 'session-launcher',
+            presentation: 'panel',
+        }));
+
+        await act(async () => {
+            launchabilityState.sessionServerId = 'server-reactive';
+            screen.tree.update(React.createElement(SessionExecutionRunLauncherView, {
+                sessionId: 'session-launcher',
+                presentation: 'panel',
+            }));
+        });
+
+        const cacheRequest = (useMachineCapabilitiesCacheSpy.mock.calls as Array<[{
+            serverId?: string;
+        }]>).at(-1)?.[0];
+        expect(cacheRequest).toMatchObject({
+            serverId: 'server-reactive',
+        });
+        const executorConfig = createDefaultActionExecutorSpy.mock.calls.at(-1)?.[0] as {
+            resolveServerIdForSessionId: (sessionId: string) => string | null;
+        };
+        expect(executorConfig.resolveServerIdForSessionId('session-launcher')).toBe('server-reactive');
+        await screen.unmount();
     });
 
 });

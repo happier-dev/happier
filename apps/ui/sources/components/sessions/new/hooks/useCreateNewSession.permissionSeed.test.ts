@@ -20,6 +20,10 @@ import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScree
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const routerSearchParamsState = vi.hoisted(() => ({
+    value: {} as Record<string, string | string[] | undefined>,
+}));
+
 type SpawnPayloadCapture = {
     serverId?: string;
     permissionMode?: string;
@@ -160,6 +164,20 @@ async function setupUseCreateNewSessionHarness() {
             createTextModuleMock({
                 translate: (key: string) => key,
             }),
+        router: async () => {
+            const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+            return createExpoRouterMock({
+                router: {
+                    push: vi.fn(),
+                    replace: vi.fn(),
+                    back: vi.fn(),
+                    setParams: vi.fn(),
+                },
+                params: () => routerSearchParamsState.value,
+                navigation: {},
+                pathname: '/new',
+            }).module;
+        },
     });
     vi.doMock('@/modal', () => ({
         Modal: {
@@ -334,6 +352,9 @@ async function setupUseCreateNewSessionHarness() {
     const { useCreateNewSession } = await import('./useCreateNewSession');
     return {
         useCreateNewSession,
+        setLocalSearchParams(nextParams: Record<string, string | string[] | undefined>) {
+            routerSearchParamsState.value = { ...nextParams };
+        },
         captured,
         buildSpawnEnvironmentVariablesCapture,
         automationCaptured,
@@ -364,6 +385,7 @@ async function setupUseCreateNewSessionHarness() {
 describe('useCreateNewSession permission seeding', () => {
     beforeEach(() => {
         vi.resetModules();
+        routerSearchParamsState.value = {};
     });
 
     afterEach(() => {
@@ -1027,6 +1049,7 @@ describe('useCreateNewSession permission seeding', () => {
     it('clears and disables the /new draft before opening a hydrated created session when post-spawn follow-up fails', async () => {
         const {
             useCreateNewSession,
+            setLocalSearchParams,
             modalAlertSpy,
             clearNewSessionDraftSpy,
             ensureSessionVisibleForMessageRouteSpy,
@@ -1036,6 +1059,7 @@ describe('useCreateNewSession permission seeding', () => {
             updateSessionDraftSpy,
             saveSessionDraftsSpy,
         } = await setupUseCreateNewSessionHarness();
+        setLocalSearchParams({ server: 'http://localhost:3014' });
 
         machineSpawnNewSessionSpy.mockResolvedValueOnce({ type: 'success', sessionId: 'sess_target' });
         followUpSpawnedSessionWithServerScopeSpy.mockRejectedValueOnce(new Error('follow-up failed'));
@@ -1100,7 +1124,10 @@ describe('useCreateNewSession permission seeding', () => {
         expect(updateSessionDraftSpy).toHaveBeenCalledWith('sess_target', 'Ship the scoped follow-up fix');
         expect(disableDraftPersistence).toHaveBeenCalledTimes(1);
         expect(clearNewSessionDraftSpy).toHaveBeenCalledTimes(1);
-        expect(routerReplace).toHaveBeenCalledWith('/session/sess_target', expect.anything());
+        expect(routerReplace).toHaveBeenCalledWith({
+            pathname: '/session/sess_target',
+            params: { server: 'http://localhost:3014' },
+        }, expect.anything());
     });
 
     it('creates an automation instead of spawning immediately when automation mode is enabled', async () => {

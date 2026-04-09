@@ -1,10 +1,11 @@
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 
 export function resolveSessionSubagentFullRoute(params: Readonly<{
     sessionId: string;
     subagent: SessionSubagent;
 }>): string | null {
-    const normalizedSessionId = params.sessionId.trim();
+    const normalizedSessionId = normalizeSessionId(params.sessionId);
     if (!normalizedSessionId) return null;
 
     const routeId = params.subagent.transcript.toolMessageRouteId?.trim();

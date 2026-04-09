@@ -232,7 +232,7 @@ function buildSteps(model: SessionGettingStartedGuidanceViewModel): SessionGetti
                 id: 'daemon_install',
                 title: t('sessionGettingStarted.steps.daemonInstall.title'),
                 description: t('sessionGettingStarted.steps.daemonInstall.description'),
-                command: `${invoker} daemon install`,
+                command: `${invoker} service install`,
                 copyLabel: t('sessionGettingStarted.steps.daemonInstall.copyLabel'),
             });
             steps.push({
@@ -250,7 +250,7 @@ function buildSteps(model: SessionGettingStartedGuidanceViewModel): SessionGetti
                     id: 'daemon_install',
                     title: t('sessionGettingStarted.steps.daemonInstall.title'),
                     description: t('sessionGettingStarted.steps.startDaemonInstall.description'),
-                    command: `${invoker} daemon install`,
+                    command: `${invoker} service install`,
                     copyLabel: t('sessionGettingStarted.steps.daemonInstall.copyLabel'),
                 },
                 {

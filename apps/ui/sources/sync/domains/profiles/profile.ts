@@ -40,11 +40,15 @@ export function profileParse(profile: unknown): Profile {
 // Utility functions
 //
 
+function normalizeLinkedProviders(profile: Pick<Profile, 'linkedProviders'>): readonly Profile['linkedProviders'][number][] {
+    return Array.isArray(profile.linkedProviders) ? profile.linkedProviders : [];
+}
+
 function getPrimaryLinkedProvider(profile: Profile) {
-    for (const provider of profile.linkedProviders) {
+    for (const provider of normalizeLinkedProviders(profile)) {
         if (provider.displayName || provider.login || provider.avatarUrl) return provider;
     }
-    return profile.linkedProviders[0] ?? null;
+    return normalizeLinkedProviders(profile)[0] ?? null;
 }
 
 export function getDisplayName(profile: Profile): string | null {
@@ -72,7 +76,7 @@ export function getBio(_profile: Profile): string | null {
 
 export function getLinkedProvider(profile: Profile, providerId: string) {
     const normalized = providerId.toString().trim().toLowerCase();
-    return profile.linkedProviders.find((p) => p.id.toString().trim().toLowerCase() === normalized) ?? null;
+    return normalizeLinkedProviders(profile).find((p) => p.id.toString().trim().toLowerCase() === normalized) ?? null;
 }
 
 export function hasLinkedProvider(profile: Profile, providerId: string): boolean {

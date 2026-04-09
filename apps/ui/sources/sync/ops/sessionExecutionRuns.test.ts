@@ -14,6 +14,7 @@ vi.mock('../api/session/apiSocket', () => ({
 }));
 
 vi.mock('./sessionMachineTarget', () => ({
+    INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR: 'Session RPC unavailable for inactive session',
     canUseSessionRpc: (...args: Parameters<typeof canUseSessionRpcMock>) => canUseSessionRpcMock(...args),
 }));
 

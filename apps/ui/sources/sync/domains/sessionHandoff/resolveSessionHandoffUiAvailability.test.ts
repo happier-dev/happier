@@ -182,6 +182,32 @@ describe('resolveSessionHandoffUiAvailability', () => {
         });
     });
 
+    it('uses an explicitly reachable machine target even when the session cache reader is stale', () => {
+        state.reachableMachineId = 'stale-machine';
+        state.storageState.machineListByServerId = {
+            'server-explicit': [{
+                id: 'machine_source',
+                daemonState: buildActiveDaemonTransferState(),
+            }],
+        };
+        state.storageState.machines = {};
+
+        expect(resolveSessionHandoffUiAvailability({
+            sessionId: 'session-1',
+            serverId: 'server-explicit',
+            session: HANDOFF_ELIGIBLE_SESSION,
+            sessionHandoffFeatureEnabled: true,
+            serverSnapshot: buildReadyServerSnapshot({
+                directPeerEnabled: true,
+                serverRoutedEnabled: true,
+            }),
+            reachableMachineId: 'machine_source' as any,
+        } as any)).toEqual({
+            available: true,
+            reason: 'available',
+        });
+    });
+
     it('allows handoff when daemon state proves the source machine transfer listener is active even if runtime reachability is still unknown', () => {
         expect(resolveSessionHandoffUiAvailability({
             sessionId: 'session-1',
@@ -226,7 +252,7 @@ describe('resolveSessionHandoffUiAvailability', () => {
         });
     });
 
-    it('fails closed when stale runtime reachability disagrees with daemon state and the source transfer listener is configured but inactive', () => {
+    it('allows handoff when live runtime reachability is proven even if the source transfer listener is currently configured but inactive', () => {
         expect(resolveSessionHandoffUiAvailability({
             sessionId: 'session-1',
             session: HANDOFF_ELIGIBLE_SESSION,
@@ -238,8 +264,8 @@ describe('resolveSessionHandoffUiAvailability', () => {
             runtimeAvailability: 'reachable',
             machineDaemonState: buildConfiguredInactiveDaemonTransferState(),
         })).toEqual({
-            available: false,
-            reason: 'runtime_direct_peer_unavailable',
+            available: true,
+            reason: 'available',
         });
     });
 

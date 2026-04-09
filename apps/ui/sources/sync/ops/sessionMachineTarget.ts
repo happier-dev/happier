@@ -5,11 +5,12 @@ import {
   resolveSessionMachineRpcTarget,
   type SessionMachineTargetPeer,
 } from '@/sync/domains/session/resolveSessionReachableMachineId';
-import { findSessionListViewDataSession } from '@/sync/domains/session/listing/sessionListViewDataAccess';
-import type { SessionListCacheStateLike } from '@/sync/domains/session/listing/sessionListCacheState';
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
+import type { SessionListLookupStateLike } from '@/sync/domains/session/listing/sessionListLookupState';
+import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
 import { storage } from '@/sync/domains/state/storage';
 
-type MachineTargetLikeState = SessionListCacheStateLike & Readonly<{
+type MachineTargetLikeState = SessionListLookupStateLike & Readonly<{
   sessions?: Record<string, {
     active?: boolean;
     updatedAt?: number;
@@ -51,12 +52,16 @@ export function resolveMachineTargetForSessionFromState(
   state: SessionMachineTargetState,
   sessionId: string,
 ): { machineId: string; basePath: string } | null {
-  const session = state.sessions?.[sessionId];
-  const metadata = findSessionListViewDataSession(state?.sessionListViewData, sessionId)?.session?.metadata ?? session?.metadata ?? null;
+  const resolvedSessionId = normalizeSessionId(sessionId);
+  const session = state.sessions?.[resolvedSessionId];
+  const metadata = resolveSessionListPreferredSessionMetadataFromState(state, resolvedSessionId);
   const getProjectForSession = typeof state.getProjectForSession === 'function' ? state.getProjectForSession : null;
-  const project = getProjectForSession?.(sessionId) ?? null;
+  const project = getProjectForSession?.(resolvedSessionId) ?? null;
   const sessionMachineId = normalizeNonEmptyString(metadata?.machineId);
-  const sessionHostHint = normalizeNonEmptyString(metadata?.host);
+  const sessionHostHint = (
+    normalizeNonEmptyString(session?.metadata?.host)
+    ?? normalizeNonEmptyString(state.sessionListRenderables?.[resolvedSessionId]?.metadata?.host)
+  );
   const sessionPath = normalizeNonEmptyString(metadata?.path);
   const sessionHomeDir = normalizeNonEmptyString(metadata?.homeDir);
   const projectMachineId = project?.key?.machineId ?? null;
@@ -70,7 +75,7 @@ export function resolveMachineTargetForSessionFromState(
   const machineResolutionContext = buildMachineResolutionContextFromRecord(state.machines ?? {});
 
   const directTarget = resolveSessionMachineRpcTarget({
-    sessionId,
+    sessionId: resolvedSessionId,
     sessionMachineId,
     sessionHostHint,
     sessionPath,
@@ -87,11 +92,11 @@ export function resolveMachineTargetForSessionFromState(
 
   const peerSessions: SessionMachineTargetPeer[] = [];
   for (const candidateSessionId in state.sessions ?? {}) {
-    if (candidateSessionId === sessionId) {
+    if (candidateSessionId === resolvedSessionId) {
       continue;
     }
     const candidateSession = state.sessions?.[candidateSessionId];
-    const candidateMetadata = findSessionListViewDataSession(state?.sessionListViewData, candidateSessionId)?.session?.metadata ?? candidateSession?.metadata ?? null;
+    const candidateMetadata = resolveSessionListPreferredSessionMetadataFromState(state, candidateSessionId);
     const candidateHomeDir = normalizeNonEmptyString(candidateMetadata?.homeDir);
     const candidateComparableMetadataPath = normalizeSessionPathForComparison(
       normalizeNonEmptyString(candidateMetadata?.path),
@@ -116,7 +121,10 @@ export function resolveMachineTargetForSessionFromState(
         ? (candidateSession as { updatedAt: number }).updatedAt
         : 0,
       machineId: normalizeNonEmptyString(candidateMetadata?.machineId),
-      hostHint: normalizeNonEmptyString(candidateMetadata?.host),
+      hostHint: (
+        normalizeNonEmptyString(candidateSession?.metadata?.host)
+        ?? normalizeNonEmptyString(state.sessionListRenderables?.[candidateSessionId]?.metadata?.host)
+      ),
       projectMachineId: candidateProject?.key?.machineId ?? null,
     });
   }
@@ -134,7 +142,7 @@ export function resolveMachineTargetForSessionFromState(
   }
 
   return resolveSessionMachineRpcTarget({
-    sessionId,
+    sessionId: resolvedSessionId,
     sessionMachineId: null,
     sessionHostHint,
     sessionPath,

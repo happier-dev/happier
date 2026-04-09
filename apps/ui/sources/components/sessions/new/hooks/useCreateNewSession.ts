@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useLocalSearchParams } from 'expo-router';
 
 import { t } from '@/text';
 import { Modal } from '@/modal';
@@ -75,6 +76,12 @@ function buildRecoveryDataIdFromError(error: unknown): string | null {
     });
 }
 
+function readSingleSearchParam(value: string | string[] | undefined): string | null {
+    const candidate = Array.isArray(value) ? value[0] : value;
+    const normalized = typeof candidate === 'string' ? candidate.trim() : '';
+    return normalized.length > 0 ? normalized : null;
+}
+
 export type CreatedSessionFollowUpContext = Readonly<{
     sessionId: string;
     effectiveSpawnServerId: string | null;
@@ -142,6 +149,8 @@ export function useCreateNewSession(params: Readonly<{
 }> {
     const mountedRef = useMountedRef();
     const applySettings = useApplySettings();
+    const localSearchParams = useLocalSearchParams<{ server?: string | string[] }>();
+    const currentServerOverride = readSingleSearchParam(localSearchParams.server);
     const latestParamsRef = React.useRef(params);
     // Keep the latest params available synchronously so event handlers can't observe
     // a stale snapshot in the window between rerender and effect flush.
@@ -603,9 +612,20 @@ export function useCreateNewSession(params: Readonly<{
                 }
 
                 const recoveryDataId = postSpawnFollowUpError ? buildRecoveryDataIdFromError(postSpawnFollowUpError) : null;
-                const sessionRoute = recoveryDataId
-                    ? `/session/${result.sessionId}?recoveryDataId=${encodeURIComponent(recoveryDataId)}`
-                    : `/session/${result.sessionId}`;
+                const sessionPathname = `/session/${result.sessionId}`;
+                const sessionRoute = currentServerOverride
+                    ? {
+                        pathname: sessionPathname,
+                        params: {
+                            server: currentServerOverride,
+                            ...(recoveryDataId ? { recoveryDataId } : {}),
+                        },
+                    }
+                    : (
+                        recoveryDataId
+                            ? `${sessionPathname}?recoveryDataId=${encodeURIComponent(recoveryDataId)}`
+                            : sessionPathname
+                    );
 
                 current.router.replace(sessionRoute, {
                     dangerouslySingular() {
@@ -702,7 +722,7 @@ export function useCreateNewSession(params: Readonly<{
             Modal.alert(t('common.error'), errorMessage);
             latestParamsRef.current.setIsCreating(false);
         }
-    }, [applySettings, mountedRef]);
+    }, [applySettings, currentServerOverride, mountedRef]);
 
     return { handleCreateSession };
 }

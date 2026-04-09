@@ -3,7 +3,7 @@ import type { SessionHandoffTransportStrategy } from '@happier-dev/protocol';
 import { storage } from '@/sync/domains/state/storage';
 import {
     resolveMachineDaemonTransferDirectPeerDiagnostics,
-} from '@/sync/domains/transfers/runtime/transferSubstrate/machineDaemonTransferState';
+} from '@/sync/domains/transfers/runtime/transferRuntime/availability/machineDaemonTransferState';
 import { resolveMachineTransferAvailability } from '@/sync/domains/transfers/runtime/resolveTransferAvailability';
 import { readCachedMachineRpcDirectRoute } from '@/sync/domains/transfers/runtime/transferRouteCache';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
@@ -44,18 +44,19 @@ function normalizeNonEmptyString(value: unknown): string | null {
 function readSourceMachineDaemonState(input: Readonly<{
     sessionId?: string | null;
     serverId?: string | null;
+    reachableMachineId?: string | null;
     session: SessionLike | null | undefined;
 }>): unknown | null {
     const sessionId = normalizeNonEmptyString(input.sessionId);
     const serverId = normalizeNonEmptyString(input.serverId);
+    const reachableMachineId = normalizeNonEmptyString(input.reachableMachineId);
     const sessionMetadata = input.session?.metadata ?? null;
     if (!sessionId || !sessionMetadata) {
         return null;
     }
 
-    const reachableMachineId = readMachineTargetForSession(sessionId)?.machineId ?? null;
     const sourceMachineId = resolveSessionHandoffSourceMachineId({
-        reachableMachineId,
+        reachableMachineId: reachableMachineId ?? readMachineTargetForSession(sessionId)?.machineId ?? null,
         sessionMetadata,
     });
     if (!sourceMachineId) {
@@ -79,6 +80,7 @@ function readSourceMachineDaemonState(input: Readonly<{
 function resolveSessionHandoffDaemonDirectPeerAvailability(input: Readonly<{
     sessionId?: string | null;
     serverId?: string | null;
+    reachableMachineId?: string | null;
     session: SessionLike | null | undefined;
     machineDaemonState?: unknown | null;
 }>): SessionHandoffRuntimeAvailability {
@@ -90,8 +92,13 @@ function resolveSessionHandoffDaemonDirectPeerAvailability(input: Readonly<{
     if (diagnostics.state === 'active') {
         return 'reachable';
     }
-    if (diagnostics.state === 'configured_inactive' || diagnostics.state === 'unconfigured') {
+    if (diagnostics.state === 'unconfigured') {
         return 'unavailable';
+    }
+    if (diagnostics.state === 'configured_inactive') {
+        // The transfer listener is configured but lazily started. Require a live runtime proof
+        // before surfacing handoff, but do not fail closed purely on coarse idle state.
+        return 'unknown';
     }
     return 'unknown';
 }
@@ -99,6 +106,7 @@ function resolveSessionHandoffDaemonDirectPeerAvailability(input: Readonly<{
 export function resolveSessionHandoffRuntimeDirectPeerAvailability(input: Readonly<{
     serverId?: string | null;
     sourceMachineId?: string | null;
+    reachableMachineId?: string | null;
 }>): SessionHandoffRuntimeAvailability {
     const serverId = normalizeNonEmptyString(input.serverId);
     const sourceMachineId = normalizeNonEmptyString(input.sourceMachineId);
@@ -119,6 +127,7 @@ export function resolveSessionHandoffRuntimeDirectPeerAvailability(input: Readon
 export function resolveSessionHandoffUiAvailability(input: Readonly<{
     sessionId?: string | null;
     serverId?: string | null;
+    reachableMachineId?: string | null;
     session: SessionLike | null | undefined;
     sessionHandoffFeatureEnabled: boolean;
     serverSnapshot: unknown;
@@ -153,6 +162,7 @@ export function resolveSessionHandoffUiAvailability(input: Readonly<{
     const daemonRuntimeAvailability = resolveSessionHandoffDaemonDirectPeerAvailability({
         sessionId: input.sessionId,
         serverId: input.serverId,
+        reachableMachineId: input.reachableMachineId,
         session: input.session,
         machineDaemonState: input.machineDaemonState,
     });

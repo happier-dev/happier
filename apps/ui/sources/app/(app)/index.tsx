@@ -15,6 +15,9 @@ import { useLocalDaemonControl } from '@/components/settings/machines/localContr
 import { useRelayDriftBanner } from '@/components/settings/server/useRelayDriftBanner';
 import { useApplyLocalSettings } from '@/sync/store/settingsWriters';
 import { isAuthenticatedRootDeepLinkRedirectAllowed } from '@/auth/routing/authenticatedRootDeepLinkRedirectAllowed';
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
+import { shouldHoldUnauthenticatedShellForWebServerOverride } from '@/sync/domains/server/url/shouldHoldUnauthenticatedShellForWebServerOverride';
 
 const stylesheet = StyleSheet.create({
     root: {
@@ -25,11 +28,15 @@ const stylesheet = StyleSheet.create({
 
 export default function Home() {
     const auth = useAuth();
+    const activeServerSnapshot = useActiveServerSnapshot();
     React.useEffect(() => {
         if (!isTauriDesktop()) return;
         void invokeTauri('desktop_set_window_mode', { mode: auth.isAuthenticated ? 'main' : 'preAuth' });
     }, [auth.isAuthenticated]);
     if (!auth.isAuthenticated) {
+        if (shouldHoldUnauthenticatedShellForWebServerOverride(auth.isAuthenticated, activeServerSnapshot.serverUrl)) {
+            return null;
+        }
         return <PreAuthOnboardingWizardEntry enableFirstLaunchSetupRedirect />;
     }
     return (
@@ -98,7 +105,7 @@ function Authenticated() {
     }, [shouldAutoOpenSetupWizard]);
 
     React.useEffect(() => {
-        const sid = String(sessionId ?? '').trim();
+        const sid = normalizeSessionId(sessionId);
         if (!sid) return;
         if (!isAuthenticatedRootDeepLinkRedirectAllowed()) return;
 
@@ -114,7 +121,7 @@ function Authenticated() {
     }, [jumpChildId, messageId, router, sessionId]);
 
     React.useEffect(() => {
-        const sid = String(sessionId ?? '').trim();
+        const sid = normalizeSessionId(sessionId);
         if (sid) return;
         if (!isAuthenticatedRootDeepLinkRedirectAllowed()) return;
 

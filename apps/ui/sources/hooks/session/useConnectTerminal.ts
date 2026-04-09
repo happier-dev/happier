@@ -12,7 +12,7 @@ import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
 import { isSameServerUrl, normalizeServerUrl, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
 import { resolveEffectiveServerUrlOverride } from '@/sync/domains/server/url/serverUrlOverridePolicy';
 import { clearPendingTerminalConnect, setPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
-import { parseTerminalConnectUrl } from '@/utils/path/terminalConnectUrl';
+import { buildTerminalConnectAuthRedirectHref, parseTerminalConnectUrl } from '@/utils/path/terminalConnectUrl';
 import { storage } from '@/sync/domains/state/storageStore';
 import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
 
@@ -82,7 +82,9 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
                 await Modal.alertAsync(t('terminal.connectTerminal'), t('modals.pleaseSignInFirst'), [
                     { text: t('common.continue') },
                 ]);
-                router.replace('/');
+                router.replace(buildTerminalConnectAuthRedirectHref({
+                    serverUrl: effectiveParsedServerUrl || currentServerUrl || getActiveServerUrl(),
+                }));
                 return false;
             }
 

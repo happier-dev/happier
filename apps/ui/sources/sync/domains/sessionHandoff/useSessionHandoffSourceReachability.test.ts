@@ -16,12 +16,14 @@ vi.mock('./probeSessionHandoffSourceReachability', () => ({
 
 describe('useSessionHandoffSourceReachability', () => {
     beforeEach(() => {
+        vi.useFakeTimers();
         probeSessionHandoffSourceReachabilityMock.mockReset();
         probeSessionHandoffSourceReachabilityMock.mockImplementation(async () => await new Promise<never>(() => undefined));
         invalidateCachedTransferRoutesForServer({ serverId: 'server-a' });
     });
 
     afterEach(() => {
+        vi.useRealTimers();
         standardCleanup();
         invalidateCachedTransferRoutesForServer({ serverId: 'server-a' });
     });
@@ -65,6 +67,38 @@ describe('useSessionHandoffSourceReachability', () => {
 
         expect(hook.getCurrent()).toBe('unavailable');
         expect(probeSessionHandoffSourceReachabilityMock).not.toHaveBeenCalled();
+
+        await hook.unmount();
+    });
+
+    it('keeps retrying after repeated transient unavailable probes and promotes to reachable when a later probe succeeds within the retry window', async () => {
+        probeSessionHandoffSourceReachabilityMock
+            .mockResolvedValueOnce('unavailable')
+            .mockResolvedValueOnce('unavailable')
+            .mockResolvedValueOnce('reachable');
+
+        const { useSessionHandoffSourceReachability } = await import('./useSessionHandoffSourceReachability');
+
+        const hook = await renderHook(() => useSessionHandoffSourceReachability({
+            serverId: 'server-a',
+            sourceMachineId: 'machine-a',
+        }));
+
+        expect(hook.getCurrent()).toBe('unavailable');
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(1_000);
+        });
+
+        expect(probeSessionHandoffSourceReachabilityMock).toHaveBeenCalledTimes(2);
+        expect(hook.getCurrent()).toBe('unavailable');
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(1_000);
+        });
+
+        expect(probeSessionHandoffSourceReachabilityMock).toHaveBeenCalledTimes(3);
+        expect(hook.getCurrent()).toBe('reachable');
 
         await hook.unmount();
     });

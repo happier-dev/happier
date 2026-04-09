@@ -59,6 +59,7 @@ describe('localSettingsParse', () => {
         expect(parsed.desktopOverlayAutoHideDelayMs).toBe(6_000);
         expect(parsed.desktopOverlayExpandedBehavior).toBe('click');
         expect(parsed.desktopOverlayInteractiveCollapsed).toBe(true);
+        expect(parsed.desktopOverlayPresentationMode).toBe('automatic');
         expect(parsed.desktopOverlayEnableDragReposition).toBe(false);
         expect(parsed.desktopOverlayLockPosition).toBe(true);
         expect(parsed.desktopOverlayPlacementMode).toBe('anchored');
@@ -159,6 +160,7 @@ describe('localSettingsParse', () => {
             desktopOverlayAutoHideDelayMs: 30_000,
             desktopOverlayExpandedBehavior: 'click',
             desktopOverlayInteractiveCollapsed: false,
+            desktopOverlayPresentationMode: 'notch_integrated',
             desktopOverlayEnableDragReposition: true,
             desktopOverlayLockPosition: false,
             desktopOverlayPlacementMode: 'custom',
@@ -210,6 +212,7 @@ describe('localSettingsParse', () => {
         expect(parsed.desktopOverlayAutoHideDelayMs).toBe(30_000);
         expect(parsed.desktopOverlayExpandedBehavior).toBe('click');
         expect(parsed.desktopOverlayInteractiveCollapsed).toBe(false);
+        expect(parsed.desktopOverlayPresentationMode).toBe('notch_integrated');
         expect(parsed.desktopOverlayEnableDragReposition).toBe(true);
         expect(parsed.desktopOverlayLockPosition).toBe(false);
         expect(parsed.desktopOverlayPlacementMode).toBe('custom');

@@ -47,4 +47,41 @@ describe('useUserMessageHistory', () => {
       storage.setState(previousState);
     }
   });
+
+  it('normalizes session ids before reading per-session history', async () => {
+    const previousState = storage.getState();
+    try {
+      const messagesById = {
+        u1: { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'first' } as any,
+        u2: { kind: 'user-text', id: 'u2', localId: null, createdAt: 2, text: 'second' } as any,
+      };
+
+      storage.setState((state) => ({
+        ...state,
+        sessionMessages: {
+          ...state.sessionMessages,
+          s1: {
+            messageIdsOldestFirst: ['u1', 'u2'],
+            messagesById,
+            messagesMap: messagesById,
+            reducerState: {} as any,
+            latestThinkingMessageId: null,
+            latestThinkingMessageActivityAtMs: null,
+            messagesVersion: 1,
+            isLoaded: true,
+          },
+        },
+      }));
+
+      const hook = await renderHook(() =>
+        useUserMessageHistory({ scope: 'perSession', sessionId: '  s1  ', maxEntries: 20 }),
+      );
+
+      expect(hook.getCurrent().moveUp('draft')).toBe('second');
+
+      await hook.unmount();
+    } finally {
+      storage.setState(previousState);
+    }
+  });
 });

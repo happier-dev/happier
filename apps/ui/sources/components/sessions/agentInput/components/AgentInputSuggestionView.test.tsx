@@ -41,6 +41,17 @@ vi.mock('@/constants/Typography', () => ({
     },
 }));
 
+function flattenStyle(style: any): Record<string, any> {
+    if (!style) return {};
+    if (Array.isArray(style)) {
+        return style.reduce((acc, entry) => Object.assign(acc, flattenStyle(entry)), {} as Record<string, any>);
+    }
+    if (typeof style === 'object') {
+        return style as Record<string, any>;
+    }
+    return {};
+}
+
 describe('FileMentionSuggestion', () => {
     it('right-aligns the directory segment against the file name and truncates it from the head', async () => {
         const { FileMentionSuggestion } = await import('./AgentInputSuggestionView');
@@ -55,6 +66,6 @@ describe('FileMentionSuggestion', () => {
 
         const pathText = tree!.findAllByType('Text' as any).find((node) => node.props.children === 'apps/cli/src/api/directSessions/filePaging/')!;
         expect(pathText.props.ellipsizeMode).toBe('head');
-        expect(pathText.props.style.textAlign).toBe('right');
+        expect(flattenStyle(pathText.props.style).textAlign).toBe('right');
     });
 });

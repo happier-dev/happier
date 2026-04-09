@@ -15,7 +15,7 @@ import {
     downloadDaemonPromptAsset,
     listDaemonPromptAssetTypes,
     uploadDaemonPromptAsset,
-} from '@/sync/domains/transfers/runtime/transferSubstrate';
+} from '@/sync/domains/transfers/runtime/transferRuntime';
 
 type MachinePromptAssetsOpts = Readonly<{
     serverId?: string | null;
