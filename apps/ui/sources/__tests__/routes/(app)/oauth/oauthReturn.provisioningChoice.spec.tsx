@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act } from 'react-test-renderer';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 import {
   clearPendingExternalAuthMock,
@@ -18,6 +18,7 @@ vi.mock('@shopify/react-native-skia', () => ({}));
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  resetRuntimeFetch();
   resetOAuthHarness();
 });
 
@@ -28,13 +29,10 @@ describe('oauth/[provider] return (provisioning choice)', () => {
 
   async function renderOAuthReturnScreen() {
     const { default: Screen } = await import('@/app/(app)/oauth/[provider]');
-    let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
-    await act(async () => {
-      screen = await renderScreen(<Screen />);
-    });
+    const screen = await renderScreen(<Screen />);
     await flushOAuthEffects();
-    expect(screen!.findByTestId('oauth-return-wizard')).toBeTruthy();
-    return screen!;
+    expect(screen.findByTestId('oauth-return-wizard')).toBeTruthy();
+    return screen;
   }
 
   it('shows the encryption choice on optional servers and finalizes plaintext (keyless) when chosen', async () => {
@@ -51,7 +49,6 @@ describe('oauth/[provider] return (provisioning choice)', () => {
     });
     setPendingExternalAuthState({ provider: 'github', proof: 'proof_3' });
 
-    const originalFetch = globalThis.fetch;
     const fetchMock = vi.fn(async (url: any, init?: any) => {
       const rawUrl = String(url);
       if (isReachabilityProbeUrl(rawUrl)) {
@@ -69,7 +66,7 @@ describe('oauth/[provider] return (provisioning choice)', () => {
       }
       return new Response(JSON.stringify({ error: 'unexpected' }), { status: 500 });
     });
-    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+    setRuntimeFetch(fetchMock as unknown as typeof fetch);
 
     const screen = await renderOAuthReturnScreen();
     try {
@@ -79,21 +76,23 @@ describe('oauth/[provider] return (provisioning choice)', () => {
 
       const choice = screen.findByTestId('oauth-provisioning-choice-plain');
       expect(choice).toBeTruthy();
+      if (!choice) {
+        throw new Error('Expected oauth-provisioning-choice-plain to be rendered');
+      }
+      expect(typeof choice.props.onPress).toBe('function');
 
       await pressTestInstanceAsync(choice, 'oauth-provisioning-choice-plain');
-      await flushOAuthEffects(2);
-
-      expect(fetchMock.mock.calls.some(([calledUrl]) => String(calledUrl).includes('/v1/auth/external/github/finalize-keyless'))).toBe(true);
-      expect(clearPendingExternalAuthMock).toHaveBeenCalled();
-      expect(loginWithCredentialsSpy).toHaveBeenCalled();
-      expect(replaceSpy).toHaveBeenCalledWith('/');
-    } finally {
-      await act(async () => {
-        screen.tree.unmount();
+      await vi.waitFor(() => {
+        expect(screen.findAllByTestId('oauth-provisioning-choice-plain')).toHaveLength(0);
+        expect(fetchMock.mock.calls.some(([calledUrl]) => String(calledUrl).includes('/v1/auth/external/github/finalize-keyless'))).toBe(true);
+        expect(clearPendingExternalAuthMock).toHaveBeenCalled();
+        expect(loginWithCredentialsSpy).toHaveBeenCalled();
+        expect(replaceSpy).toHaveBeenCalledWith('/');
       });
+    } finally {
+      await screen.unmount();
     }
 
-    vi.stubGlobal('fetch', originalFetch);
   });
 
   it('auto-finalizes plaintext (keyless) when provisioningModes only allows plain', async () => {
@@ -111,7 +110,6 @@ describe('oauth/[provider] return (provisioning choice)', () => {
     });
     setPendingExternalAuthState({ provider: 'github', proof: 'proof_4' });
 
-    const originalFetch = globalThis.fetch;
     const fetchMock = vi.fn(async (url: any, init?: any) => {
       const rawUrl = String(url);
       if (isReachabilityProbeUrl(rawUrl)) {
@@ -129,7 +127,7 @@ describe('oauth/[provider] return (provisioning choice)', () => {
       }
       return new Response(JSON.stringify({ error: 'unexpected' }), { status: 500 });
     });
-    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+    setRuntimeFetch(fetchMock as unknown as typeof fetch);
 
     const screen = await renderOAuthReturnScreen();
     try {
@@ -142,11 +140,8 @@ describe('oauth/[provider] return (provisioning choice)', () => {
 
       expect(screen.findAllByTestId('oauth-provisioning-choice-plain')).toHaveLength(0);
     } finally {
-      await act(async () => {
-        screen.tree.unmount();
-      });
+      await screen.unmount();
     }
 
-    vi.stubGlobal('fetch', originalFetch);
   });
 });

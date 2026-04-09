@@ -88,7 +88,7 @@ async function getServerHashScopeForServerUrl(serverUrl: string): Promise<string
 }
 
 function makeScopedKey(baseKey: string, scopeToken: string): string {
-    const scope = Platform.OS === 'web' ? null : readStorageScopeFromEnv();
+    const scope = readStorageScopeFromEnv();
     return scopedStorageId(`${baseKey}__srv_${scopeToken}`, scope);
 }
 

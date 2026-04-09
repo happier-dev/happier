@@ -1,6 +1,8 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { AuthCredentials } from '@/auth/flows/qrWait';
+import type { QRAuthKeyPair } from '@/auth/flows/qrStart';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -27,8 +29,18 @@ vi.mock('expo-router', () => ({
     useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
 }));
 
+const restoreQrViewState = vi.hoisted(() => ({
+    loginSpy: vi.fn(async () => {}),
+    authQRWaitSpy: vi.fn<(keypair: QRAuthKeyPair, onProgress?: (dots: number) => void, shouldCancel?: () => boolean) => Promise<AuthCredentials | null>>(async (
+        _keypair,
+        _onProgress,
+        _shouldCancel,
+    ) => await new Promise(() => {})),
+    trackAccountRestoredSpy: vi.fn(),
+}));
+
 vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ login: vi.fn(async () => {}) }),
+    useAuth: () => ({ login: restoreQrViewState.loginSpy }),
 }));
 
 vi.mock('@/auth/flows/qrStart', () => ({
@@ -37,7 +49,7 @@ vi.mock('@/auth/flows/qrStart', () => ({
 }));
 
 vi.mock('@/auth/flows/qrWait', () => ({
-    authQRWait: vi.fn(() => new Promise(() => {})),
+    authQRWait: restoreQrViewState.authQRWaitSpy,
 }));
 
 vi.mock('@/auth/pairing/accountConnectUrl', () => ({
@@ -106,6 +118,10 @@ vi.mock('@/utils/platform/qrScannerSupport', () => ({
     canUseCurrentDeviceQrScanner: () => true,
 }));
 
+vi.mock('@/track', () => ({
+    trackAccountRestored: restoreQrViewState.trackAccountRestoredSpy,
+}));
+
 afterEach(() => {
     vi.clearAllMocks();
 });
@@ -130,6 +146,32 @@ describe('RestoreQrView (embedded navigation)', () => {
             });
 
             expect(onOpenScanQr).toHaveBeenCalledTimes(1);
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+        }
+    });
+
+    it('tracks a successful QR-based account restore before leaving the screen', async () => {
+        vi.resetModules();
+        restoreQrViewState.authQRWaitSpy.mockResolvedValueOnce({
+            token: 'tok_qr',
+            secret: new Uint8Array(32).fill(7),
+        });
+        const onBack = vi.fn();
+        const { RestoreQrView } = await import('./RestoreQrView');
+
+        let tree!: renderer.ReactTestRenderer;
+        try {
+            await act(async () => {
+                tree = renderer.create(<RestoreQrView embedded onBack={onBack} />);
+            });
+            await act(async () => {});
+
+            expect(restoreQrViewState.loginSpy).toHaveBeenCalledWith('tok_qr', 'encoded');
+            expect(restoreQrViewState.trackAccountRestoredSpy).toHaveBeenCalledTimes(1);
+            expect(onBack).toHaveBeenCalledTimes(1);
         } finally {
             act(() => {
                 tree?.unmount();

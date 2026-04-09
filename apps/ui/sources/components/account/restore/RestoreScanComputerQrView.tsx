@@ -22,6 +22,7 @@ import { Text } from '@/components/ui/text/Text';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Typography } from '@/constants/Typography';
 import { QrCodeScannerView } from '@/components/qr/QrCodeScannerView';
+import { trackAccountRestored } from '@/track';
 
 const stylesheet = StyleSheet.create((theme) => ({
     scrollView: {
@@ -237,6 +238,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                 if (credentials && !isCancelledRef.current) {
                     const secretString = encodeBase64(credentials.secret, 'base64url');
                     await auth.login(credentials.token, secretString);
+                    trackAccountRestored();
                     if (!isCancelledRef.current) {
                         router.replace('/');
                     }

@@ -72,6 +72,14 @@ export function buildTerminalConnectWebHref(params: Readonly<{
     return `${TERMINAL_CONNECT_WEB_PATH}${hash}`;
 }
 
+export function buildTerminalConnectAuthRedirectHref(params: Readonly<{
+    serverUrl: string | null | undefined;
+}>): string {
+    const safeServerUrl = normalizeServerUrl(params.serverUrl ?? '');
+    if (!safeServerUrl) return '/';
+    return `/?server=${encodeURIComponent(safeServerUrl)}`;
+}
+
 export function parseTerminalConnectUrl(url: string): ParsedTerminalConnectUrl | null {
     const raw = String(url ?? '');
     let parsed: URL | null = null;

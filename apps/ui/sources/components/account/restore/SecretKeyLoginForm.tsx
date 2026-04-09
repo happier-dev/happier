@@ -14,6 +14,7 @@ import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text, TextInput } from '@/components/ui/text/Text';
+import { trackAccountRestored } from '@/track';
 
 export type SecretKeyLoginFormProps = Readonly<{
     embedded?: boolean;
@@ -100,6 +101,7 @@ export const SecretKeyLoginForm = React.memo(function SecretKeyLoginForm(props: 
             }
 
             await auth.login(token, normalizedKey);
+            trackAccountRestored();
             handleSuccess();
         } catch {
             Modal.alert(t('common.error'), t('connect.invalidSecretKey'));

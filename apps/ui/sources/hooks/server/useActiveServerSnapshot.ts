@@ -6,11 +6,13 @@ export function useActiveServerSnapshot(): ActiveServerSnapshot {
     const [snapshot, setSnapshot] = React.useState(() => getActiveServerSnapshot());
 
     React.useEffect(() => {
-        return subscribeActiveServer((next) => {
+        const unsubscribe = subscribeActiveServer((next) => {
             // Defensive copy: some runtime paths update the underlying snapshot object in-place.
             // React state updates are referential, so ensure subscribers re-render when fields change.
             setSnapshot({ ...next });
         });
+        setSnapshot({ ...getActiveServerSnapshot() });
+        return unsubscribe;
     }, []);
 
     return snapshot;

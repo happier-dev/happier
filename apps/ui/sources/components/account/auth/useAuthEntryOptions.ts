@@ -135,7 +135,11 @@ export function useAuthEntryOptions(): AuthEntryOptions {
 
     // NOTE: getActiveServerSnapshot() is not reactive on its own; ensure we re-check when the active server changes
     // by tracking a comparable key derived from the current snapshot.
-    React.useEffect(() => subscribeActiveServer(setActiveServerSnapshot), []);
+    React.useEffect(() => {
+        const unsubscribe = subscribeActiveServer(setActiveServerSnapshot);
+        setActiveServerSnapshot(getActiveServerSnapshot());
+        return unsubscribe;
+    }, []);
 
     const serverUrlForCopy = React.useMemo(() => {
         const raw = activeServerSnapshot?.serverUrl ? String(activeServerSnapshot.serverUrl).trim() : '';

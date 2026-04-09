@@ -6,6 +6,7 @@ installTokenStorageWebPlatformMocks();
 
 describe('TokenStorage (web) server-scoped credentials', () => {
     let restoreLocalStorage: (() => void) | null = null;
+    const previousStorageScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
 
     beforeEach(() => {
         vi.resetModules();
@@ -16,6 +17,8 @@ describe('TokenStorage (web) server-scoped credentials', () => {
         vi.restoreAllMocks();
         restoreLocalStorage?.();
         restoreLocalStorage = null;
+        if (previousStorageScope === undefined) delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
+        else process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = previousStorageScope;
         try {
             const { setServerUrl } = await import('@/sync/domains/server/serverConfig');
             setServerUrl(null);
@@ -41,6 +44,28 @@ describe('TokenStorage (web) server-scoped credentials', () => {
         await expect(TokenStorage.getCredentials()).resolves.toEqual({ token: 'token-a', secret: 'secret-a' });
 
         setServerUrl('https://server-b.example.test');
+        await expect(TokenStorage.getCredentials()).resolves.toEqual({ token: 'token-b', secret: 'secret-b' });
+    });
+
+    it('keeps credentials separate across web storage scopes for the same server URL', async () => {
+        restoreLocalStorage = installLocalStorageMock().restore;
+
+        const { setServerUrl } = await import('@/sync/domains/server/serverConfig');
+        const { TokenStorage } = await import('./tokenStorage');
+
+        setServerUrl('https://server-a.example.test');
+
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = 'scope-a';
+        await expect(TokenStorage.setCredentials({ token: 'token-a', secret: 'secret-a' })).resolves.toBe(true);
+
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = 'scope-b';
+        await expect(TokenStorage.getCredentials()).resolves.toBeNull();
+        await expect(TokenStorage.setCredentials({ token: 'token-b', secret: 'secret-b' })).resolves.toBe(true);
+
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = 'scope-a';
+        await expect(TokenStorage.getCredentials()).resolves.toEqual({ token: 'token-a', secret: 'secret-a' });
+
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = 'scope-b';
         await expect(TokenStorage.getCredentials()).resolves.toEqual({ token: 'token-b', secret: 'secret-b' });
     });
 

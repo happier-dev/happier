@@ -19,6 +19,7 @@ import { getAuthProvider } from '@/auth/providers/registry';
 import type { RestoreRedirectReason, RestoreRedirectNotice } from '@/auth/providers/types';
 import { Text } from '@/components/ui/text/Text';
 import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
+import { trackAccountRestored } from '@/track';
 
 const stylesheet = StyleSheet.create((theme) => ({
     scrollView: {
@@ -198,6 +199,7 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                 if (credentials && !isCancelledRef.current) {
                     const secretString = encodeBase64(credentials.secret, 'base64url');
                     await auth.login(credentials.token, secretString);
+                    trackAccountRestored();
                     if (!isCancelledRef.current) {
                         handleBack();
                     }

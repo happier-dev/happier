@@ -11,17 +11,21 @@ import type {
     ResolvedActiveServerSelection,
 } from '@/sync/domains/server/selection/serverSelectionTypes';
 import { useActiveServerSnapshot } from './useActiveServerSnapshot';
+import { useServerProfilesGeneration } from './useServerProfilesGeneration';
 
 export function useResolvedActiveServerSelection(): ResolvedActiveServerSelection {
     const groups = useSetting('serverSelectionGroups');
     const activeKind = useSetting('serverSelectionActiveTargetKind');
     const activeId = useSetting('serverSelectionActiveTargetId');
     const activeServer = useActiveServerSnapshot();
+    const serverProfilesGeneration = useServerProfilesGeneration();
 
     const availableServerIds = React.useMemo(
         () => listServerProfiles().map((profile) => profile.id),
-        // server profile mutations bump the active server generation, so this is "good enough" reactivity.
-        [activeServer.generation],
+        // Server-profile writes can land without changing the active-server snapshot.
+        // Subscribe to the profile generation as well so derived selection refreshes when
+        // the available server set hydrates after an initially empty pass.
+        [activeServer.generation, serverProfilesGeneration],
     );
 
     return React.useMemo(
@@ -44,10 +48,11 @@ export function useEffectiveServerSelection(): EffectiveServerSelection {
     const activeKind = useSetting('serverSelectionActiveTargetKind');
     const activeId = useSetting('serverSelectionActiveTargetId');
     const activeServer = useActiveServerSnapshot();
+    const serverProfilesGeneration = useServerProfilesGeneration();
 
     const availableServerIds = React.useMemo(
         () => listServerProfiles().map((profile) => profile.id),
-        [activeServer.generation],
+        [activeServer.generation, serverProfilesGeneration],
     );
 
     return React.useMemo(

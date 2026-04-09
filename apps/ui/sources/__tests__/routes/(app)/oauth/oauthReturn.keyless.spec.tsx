@@ -8,13 +8,16 @@ import {
     resetOAuthHarness,
     runWithOAuthScreen,
     setPendingExternalAuthState,
+    trackAccountRestoredSpy,
 } from '@/auth/providers/github/test/oauthReturnHarness';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('@shopify/react-native-skia', () => ({}));
 
 afterEach(() => {
+    resetRuntimeFetch();
     vi.unstubAllGlobals();
     resetOAuthHarness();
 });
@@ -33,7 +36,6 @@ describe('oauth/[provider] return (keyless)', () => {
         });
         setPendingExternalAuthState({ provider: 'github', proof: 'proof_1' });
 
-        const originalFetch = globalThis.fetch;
         const fetchMock = vi.fn(async (url: any, init?: any) => {
             if (typeof url === 'string' && url.endsWith('/health')) {
                 return new Response(JSON.stringify({ ok: true }), {
@@ -53,7 +55,7 @@ describe('oauth/[provider] return (keyless)', () => {
             }
             return new Response(JSON.stringify({ error: 'unexpected' }), { status: 500 });
         });
-        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+        setRuntimeFetch(fetchMock as unknown as typeof fetch);
 
         await runWithOAuthScreen(async () => {
             await flushOAuthEffects();
@@ -68,10 +70,9 @@ describe('oauth/[provider] return (keyless)', () => {
                     }),
                 }),
             );
+            expect(trackAccountRestoredSpy).toHaveBeenCalledTimes(1);
             expect(replaceSpy).toHaveBeenCalledWith('/');
         });
-
-        vi.stubGlobal('fetch', originalFetch);
     });
 
     it('redirects to /restore for an e2ee account (without attempting keyless finalize)', async () => {
@@ -87,9 +88,8 @@ describe('oauth/[provider] return (keyless)', () => {
         });
         setPendingExternalAuthState({ provider: 'github', proof: 'proof_2' });
 
-        const originalFetch = globalThis.fetch;
         const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: 'unexpected' }), { status: 500 }));
-        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+        setRuntimeFetch(fetchMock as unknown as typeof fetch);
 
         await runWithOAuthScreen(async () => {
             await flushOAuthEffects();
@@ -98,7 +98,5 @@ describe('oauth/[provider] return (keyless)', () => {
             expect(loginWithCredentialsSpy).not.toHaveBeenCalled();
             expect(replaceSpy).toHaveBeenCalledWith('/restore');
         });
-
-        vi.stubGlobal('fetch', originalFetch);
     });
 });

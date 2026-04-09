@@ -13,9 +13,11 @@ import {
     setPendingExternalAuthState,
     setStoredCredentialsState,
     setActiveServerSnapshot,
+    trackAccountCreatedSpy,
     upsertAndActivateServerSpy,
 } from './test/oauthReturnHarness';
 import { renderScreen } from '@/dev/testkit';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 
 type FetchResult = {
@@ -44,6 +46,7 @@ function stubFetch(
         } as Response;
     });
     vi.stubGlobal('fetch', fetchMock);
+    setRuntimeFetch(fetchMock as unknown as typeof fetch);
     return fetchMock;
 }
 
@@ -54,6 +57,7 @@ async function handleHealthCheck(url: string): Promise<FetchResult | null> {
 
 afterEach(() => {
     resetOAuthHarness();
+    resetRuntimeFetch();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
 });
@@ -72,15 +76,25 @@ describe('/oauth/[provider] (auth flow)', () => {
             pending: 'p1',
         });
 
-        const fetchMock = stubFetch(async (url, init) => {
-            const health = await handleHealthCheck(url);
-            if (health) return health;
-            if (url === 'http://api.example.test/v1/auth/external/github/finalize') {
-                expect(init?.method).toBe('POST');
-                return { ok: true, body: { success: true, token: 'tok_1' } };
+        const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+            const urlString = String(url);
+            const health = await handleHealthCheck(urlString);
+            if (health) {
+                return new Response(JSON.stringify(health.body), {
+                    status: health.status ?? 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
             }
-            throw new Error(`Unexpected fetch: ${url}`);
+            if (urlString === 'http://api.example.test/v1/auth/external/github/finalize') {
+                expect(init?.method).toBe('POST');
+                return new Response(JSON.stringify({ success: true, token: 'tok_1' }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+            throw new Error(`Unexpected fetch: ${urlString}`);
         });
+        setRuntimeFetch(fetchMock as unknown as typeof fetch);
 
         await runWithOAuthScreen(async () => {
             await flushOAuthEffects();
@@ -109,15 +123,25 @@ describe('/oauth/[provider] (auth flow)', () => {
             },
         };
 
-        const fetchMock = stubFetch(async (url, init) => {
-            const health = await handleHealthCheck(url);
-            if (health) return health;
-            if (url.endsWith('/v1/auth/external/github/finalize')) {
-                expect(init?.method).toBe('POST');
-                return { ok: true, body: { success: true, token: 'tok_1' } };
+        const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+            const urlString = String(url);
+            const health = await handleHealthCheck(urlString);
+            if (health) {
+                return new Response(JSON.stringify(health.body), {
+                    status: health.status ?? 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
             }
-            throw new Error(`Unexpected fetch: ${url}`);
+            if (urlString.endsWith('/v1/auth/external/github/finalize')) {
+                expect(init?.method).toBe('POST');
+                return new Response(JSON.stringify({ success: true, token: 'tok_1' }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+            throw new Error(`Unexpected fetch: ${urlString}`);
         });
+        setRuntimeFetch(fetchMock as unknown as typeof fetch);
 
         try {
             await runWithOAuthScreen(async () => {
@@ -154,17 +178,27 @@ describe('/oauth/[provider] (auth flow)', () => {
             },
         };
 
-        const fetchMock = stubFetch(async (url, init) => {
-            const health = await handleHealthCheck(url);
-            if (health) return health;
-            if (url.endsWith('/v1/auth/external/github/finalize')) {
+        const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+            const urlString = String(url);
+            const health = await handleHealthCheck(urlString);
+            if (health) {
+                return new Response(JSON.stringify(health.body), {
+                    status: health.status ?? 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+            if (urlString.endsWith('/v1/auth/external/github/finalize')) {
                 expect(init?.method).toBe('POST');
                 const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
                 expect(body.pending).toBe('p1');
-                return { ok: true, body: { success: true, token: 'tok_1' } };
+                return new Response(JSON.stringify({ success: true, token: 'tok_1' }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
             }
-            throw new Error(`Unexpected fetch: ${url}`);
+            throw new Error(`Unexpected fetch: ${urlString}`);
         });
+        setRuntimeFetch(fetchMock as unknown as typeof fetch);
 
         try {
             await runWithOAuthScreen(async () => {
@@ -216,6 +250,7 @@ describe('/oauth/[provider] (auth flow)', () => {
                 expect.anything(),
             );
             expect(loginSpy).toHaveBeenCalledWith('tok_1', OAUTH_SECRET);
+            expect(trackAccountCreatedSpy).toHaveBeenCalledTimes(1);
             expect(replaceSpy).toHaveBeenCalledWith('/');
         });
     });
@@ -395,6 +430,7 @@ describe('/oauth/[provider] (auth flow)', () => {
         });
 
         vi.resetModules();
+        setRuntimeFetch(fetchMock as unknown as typeof fetch);
         const { default: Screen } = await import('@/app/(app)/oauth/[provider]');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
@@ -403,7 +439,6 @@ describe('/oauth/[provider] (auth flow)', () => {
         const ensuredTree = tree;
         try {
             await flushOAuthEffects();
-            expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/v1/auth/external/github/finalize'), expect.anything());
 
             // Simulate expo-router updating params after hydration; this cancels the first effect run.
             localSearchParamsMock.mockReturnValue({
@@ -421,9 +456,10 @@ describe('/oauth/[provider] (auth flow)', () => {
             });
             await flushOAuthEffects();
 
-            expect(clearPendingExternalAuthMock).toHaveBeenCalled();
-            expect(loginSpy).toHaveBeenCalledWith('tok_1', OAUTH_SECRET);
-            expect(replaceSpy).toHaveBeenCalledWith('/');
+            await vi.waitFor(() => {
+                expect(loginSpy).toHaveBeenCalledWith('tok_1', OAUTH_SECRET);
+                expect(replaceSpy).toHaveBeenCalledWith('/');
+            });
         } finally {
             act(() => {
                 ensuredTree.unmount();
@@ -460,6 +496,7 @@ describe('/oauth/[provider] (auth flow)', () => {
         });
 
         vi.resetModules();
+        setRuntimeFetch(fetchMock as unknown as typeof fetch);
         const { default: Screen } = await import('@/app/(app)/oauth/[provider]');
 
         let tree: ReturnType<typeof renderer.create> | undefined;

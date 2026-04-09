@@ -9,12 +9,14 @@ import {
     resetOAuthHarness,
     runWithOAuthScreen,
 } from '@/auth/providers/github/test/oauthReturnHarness';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('@shopify/react-native-skia', () => ({}));
 
 afterEach(() => {
+    resetRuntimeFetch();
     vi.unstubAllGlobals();
     resetOAuthHarness();
 });
@@ -29,14 +31,13 @@ describe('oauth/[provider] return', () => {
             flow: 'auth',
             pending: 'p1',
         });
-        const originalFetch = globalThis.fetch;
         const fetchMock = vi.fn(async () =>
             new Response(JSON.stringify({ error: 'provider-already-linked' }), {
                 status: 409,
                 headers: { 'Content-Type': 'application/json' },
             }),
         );
-        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+        setRuntimeFetch(fetchMock as unknown as typeof fetch);
 
         await runWithOAuthScreen(async () => {
             await flushOAuthEffects();
@@ -44,6 +45,5 @@ describe('oauth/[provider] return', () => {
             expect(replaceSpy).toHaveBeenCalledWith('/restore?provider=github&reason=provider_already_linked');
             expect(loginSpy).not.toHaveBeenCalled();
         });
-        vi.stubGlobal('fetch', originalFetch);
     });
 });

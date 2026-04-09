@@ -9,6 +9,8 @@ export const localSearchParamsMock = vi.fn();
 export const loginSpy = vi.fn(async () => {});
 export const loginWithCredentialsSpy = vi.fn(async () => {});
 export const upsertAndActivateServerSpy = vi.fn();
+export const trackAccountCreatedSpy = vi.fn();
+export const trackAccountRestoredSpy = vi.fn();
 const hoistedModal = vi.hoisted(() => ({
     alert: vi.fn(async () => {}),
     prompt: vi.fn<(title: string, message: string, opts: Record<string, unknown>) => Promise<string | null>>(async () => null),
@@ -86,7 +88,17 @@ vi.mock('@/auth/context/AuthContext', () => ({
     }),
 }));
 
+vi.mock('@/track', () => ({
+    trackAccountCreated: trackAccountCreatedSpy,
+    trackAccountRestored: trackAccountRestoredSpy,
+}));
+
 vi.mock('@/modal', () => ({ Modal: modal }));
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => activeServerSnapshotState,
@@ -168,6 +180,8 @@ export function resetOAuthHarness() {
     loginSpy.mockReset();
     loginWithCredentialsSpy.mockReset();
     upsertAndActivateServerSpy.mockReset();
+    trackAccountCreatedSpy.mockReset();
+    trackAccountRestoredSpy.mockReset();
     if (typeof modal.alert.mockReset === 'function') {
         modal.alert.mockReset();
     } else {

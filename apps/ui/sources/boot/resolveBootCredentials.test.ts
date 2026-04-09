@@ -2,12 +2,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getCredentialsMock = vi.hoisted(() => vi.fn());
 const getCredentialsForServerUrlMock = vi.hoisted(() => vi.fn());
+const setCredentialsMock = vi.hoisted(() => vi.fn());
+const isTauriDesktopMock = vi.hoisted(() => vi.fn(() => false));
+const invokeTauriMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: {
         getCredentials: (...args: unknown[]) => getCredentialsMock(...args),
         getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsForServerUrlMock(...args),
+        setCredentials: (...args: unknown[]) => setCredentialsMock(...args),
     },
+}));
+
+vi.mock('@/utils/platform/tauri', () => ({
+    isTauriDesktop: () => isTauriDesktopMock(),
+    invokeTauri: (...args: unknown[]) => invokeTauriMock(...args),
 }));
 
 function createStorageMock() {
@@ -41,8 +50,14 @@ function stubWebRuntime(href: string): void {
 
 describe('resolveBootCredentials', () => {
     beforeEach(() => {
+        vi.resetModules();
         getCredentialsMock.mockReset();
         getCredentialsForServerUrlMock.mockReset();
+        setCredentialsMock.mockReset();
+        setCredentialsMock.mockResolvedValue(true);
+        isTauriDesktopMock.mockReset();
+        isTauriDesktopMock.mockReturnValue(false);
+        invokeTauriMock.mockReset();
     });
 
     afterEach(() => {
@@ -54,24 +69,269 @@ describe('resolveBootCredentials', () => {
         stubWebRuntime('http://happier.example.test/?server=http%3A%2F%2Flocalhost%3A24731');
 
         const { setServerUrl, getServerUrl } = await import('@/sync/domains/server/serverConfig');
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
         setServerUrl('https://other.example.test');
 
         getCredentialsForServerUrlMock.mockResolvedValue({ token: 'stack-token', secret: 'stack-secret' });
 
         const { resolveBootCredentials } = await import('./resolveBootCredentials');
         await expect(resolveBootCredentials('web')).resolves.toEqual({ token: 'stack-token', secret: 'stack-secret' });
-        expect(getCredentialsForServerUrlMock).toHaveBeenCalledWith('http://localhost:24731');
+        expect(getCredentialsForServerUrlMock).toHaveBeenCalledWith('http://localhost:24731', {
+            serverId: getActiveServerSnapshot().serverId,
+        });
         expect(getCredentialsMock).not.toHaveBeenCalled();
         expect(getServerUrl()).toBe('http://localhost:24731');
     });
 
-    it('falls back to default credentials when no web server override exists', async () => {
+    it('falls back to default credentials when no terminal-connect boot override exists for the current route', async () => {
         stubWebRuntime('http://happier.example.test/');
+        (globalThis as any).sessionStorage.setItem(
+            'happier:terminalConnect:webBootstrapHash:v1',
+            '#key=abc123&server=http%3A%2F%2Flocalhost%3A24731',
+        );
         getCredentialsMock.mockResolvedValue({ token: 'default-token', secret: 'default-secret' });
+
+        const { setServerUrl, getServerUrl } = await import('@/sync/domains/server/serverConfig');
+        setServerUrl('https://other.example.test');
 
         const { resolveBootCredentials } = await import('./resolveBootCredentials');
         await expect(resolveBootCredentials('web')).resolves.toEqual({ token: 'default-token', secret: 'default-secret' });
         expect(getCredentialsMock).toHaveBeenCalledTimes(1);
+        expect(getCredentialsForServerUrlMock).not.toHaveBeenCalled();
+        expect(getServerUrl()).toBe('https://other.example.test');
+        expect((globalThis as any).sessionStorage.getItem('happier:terminalConnect:webBootstrapHash:v1')).toBeNull();
+    });
+
+    it('falls back to stack-owned desktop boot credentials when a stack Tauri app has no persisted UI credentials yet', async () => {
+        stubWebRuntime('http://localhost:8081/');
+        (globalThis as any).window.__HAPPIER_WEB_RUNTIME_CONFIG__ = {
+            serverUrl: 'http://127.0.0.1:3009',
+            serverContext: 'stack',
+        };
+        isTauriDesktopMock.mockReturnValue(true);
+        getCredentialsForServerUrlMock.mockResolvedValue(null);
+        invokeTauriMock.mockResolvedValue({
+            token: 'stack-token',
+            encryption: {
+                publicKey: 'public-key',
+                machineKey: 'machine-key',
+            },
+        });
+
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        const { resolveBootCredentials } = await import('./resolveBootCredentials');
+        await expect(resolveBootCredentials('web')).resolves.toEqual({
+            token: 'stack-token',
+            encryption: {
+                publicKey: 'public-key',
+                machineKey: 'machine-key',
+            },
+        });
+        expect(getCredentialsForServerUrlMock).toHaveBeenCalledWith('http://127.0.0.1:3009', {
+            serverId: getActiveServerSnapshot().serverId,
+        });
+        expect(getCredentialsMock).not.toHaveBeenCalled();
+        expect(invokeTauriMock).toHaveBeenCalledWith('desktop_read_stack_boot_credentials');
+        expect(setCredentialsMock).toHaveBeenCalledWith({
+            token: 'stack-token',
+            encryption: {
+                publicKey: 'public-key',
+                machineKey: 'machine-key',
+            },
+        });
+    });
+
+    it('activates the stack runtime server before persisting desktop boot credentials without an explicit override', async () => {
+        stubWebRuntime('http://localhost:8081/');
+        (globalThis as any).window.__HAPPIER_WEB_RUNTIME_CONFIG__ = {
+            serverUrl: 'http://127.0.0.1:3009',
+            serverContext: 'stack',
+        };
+        isTauriDesktopMock.mockReturnValue(true);
+        getCredentialsMock.mockResolvedValue(null);
+        invokeTauriMock.mockResolvedValue({
+            token: 'stack-token',
+            encryption: {
+                publicKey: 'public-key',
+                machineKey: 'machine-key',
+            },
+        });
+
+        const { setServerUrl, getServerUrl } = await import('@/sync/domains/server/serverConfig');
+        setServerUrl('https://other.example.test');
+
+        const { resolveBootCredentials } = await import('./resolveBootCredentials');
+        await expect(resolveBootCredentials('web')).resolves.toEqual({
+            token: 'stack-token',
+            encryption: {
+                publicKey: 'public-key',
+                machineKey: 'machine-key',
+            },
+        });
+        expect(getServerUrl()).toBe('http://127.0.0.1:3009');
+        expect(setCredentialsMock).toHaveBeenCalledWith({
+            token: 'stack-token',
+            encryption: {
+                publicKey: 'public-key',
+                machineKey: 'machine-key',
+            },
+        });
+    });
+
+    it('prefers stack-runtime scoped credentials over unrelated active-server credentials in stack Tauri mode', async () => {
+        stubWebRuntime('http://localhost:8081/');
+        (globalThis as any).window.__HAPPIER_WEB_RUNTIME_CONFIG__ = {
+            serverUrl: 'http://127.0.0.1:3009',
+            serverContext: 'stack',
+        };
+        isTauriDesktopMock.mockReturnValue(true);
+        getCredentialsMock.mockResolvedValue({ token: 'other-token', secret: 'other-secret' });
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: 'stack-token', secret: 'stack-secret' });
+
+        const { setServerUrl, getServerUrl } = await import('@/sync/domains/server/serverConfig');
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        setServerUrl('https://other.example.test');
+
+        const { resolveBootCredentials } = await import('./resolveBootCredentials');
+        await expect(resolveBootCredentials('web')).resolves.toEqual({ token: 'stack-token', secret: 'stack-secret' });
+        expect(getServerUrl()).toBe('http://127.0.0.1:3009');
+        expect(getCredentialsForServerUrlMock).toHaveBeenCalledWith('http://127.0.0.1:3009', {
+            serverId: getActiveServerSnapshot().serverId,
+        });
+        expect(getCredentialsMock).not.toHaveBeenCalled();
+    });
+
+    it('falls back to stack-owned desktop boot credentials when the active stack server is selected but no server-scoped UI credentials exist yet', async () => {
+        stubWebRuntime('http://localhost:8081/?server=http%3A%2F%2F127.0.0.1%3A3009');
+        (globalThis as any).window.__HAPPIER_WEB_RUNTIME_CONFIG__ = {
+            serverUrl: 'http://127.0.0.1:3009',
+            serverContext: 'stack',
+        };
+        isTauriDesktopMock.mockReturnValue(true);
+        getCredentialsForServerUrlMock.mockResolvedValue(null);
+        invokeTauriMock.mockResolvedValue({
+            token: 'stack-token',
+            encryption: {
+                publicKey: 'public-key',
+                machineKey: 'machine-key',
+            },
+        });
+
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        const { resolveBootCredentials } = await import('./resolveBootCredentials');
+        await expect(resolveBootCredentials('web')).resolves.toEqual({
+            token: 'stack-token',
+            encryption: {
+                publicKey: 'public-key',
+                machineKey: 'machine-key',
+            },
+        });
+        expect(getCredentialsForServerUrlMock).toHaveBeenCalledWith('http://127.0.0.1:3009', {
+            serverId: getActiveServerSnapshot().serverId,
+        });
+        expect(invokeTauriMock).toHaveBeenCalledWith('desktop_read_stack_boot_credentials');
+        expect(setCredentialsMock).toHaveBeenCalledWith({
+            token: 'stack-token',
+            encryption: {
+                publicKey: 'public-key',
+                machineKey: 'machine-key',
+            },
+        });
+    });
+
+    it('does not reuse stack desktop boot credentials for a different boot server URL', async () => {
+        stubWebRuntime('http://localhost:8081/?server=http%3A%2F%2F127.0.0.1%3A3010');
+        (globalThis as any).window.__HAPPIER_WEB_RUNTIME_CONFIG__ = {
+            serverUrl: 'http://127.0.0.1:3009',
+            serverContext: 'stack',
+        };
+        isTauriDesktopMock.mockReturnValue(true);
+        getCredentialsForServerUrlMock.mockResolvedValue(null);
+        invokeTauriMock.mockResolvedValue({
+            token: 'stack-token',
+            encryption: {
+                publicKey: 'public-key',
+                machineKey: 'machine-key',
+            },
+        });
+
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        const { resolveBootCredentials } = await import('./resolveBootCredentials');
+        await expect(resolveBootCredentials('web')).resolves.toBeNull();
+        expect(getCredentialsForServerUrlMock).toHaveBeenCalledWith('http://127.0.0.1:3010', {
+            serverId: getActiveServerSnapshot().serverId,
+        });
+        expect(invokeTauriMock).not.toHaveBeenCalled();
+        expect(setCredentialsMock).not.toHaveBeenCalled();
+    });
+
+    it('prefers server-scoped credentials when booting from a terminal-connect hash stored in sessionStorage', async () => {
+        stubWebRuntime('http://happier.example.test/terminal/connect');
+        (globalThis as any).sessionStorage.setItem(
+            'happier:terminalConnect:webBootstrapHash:v1',
+            '#key=abc123&server=http%3A%2F%2Flocalhost%3A24731',
+        );
+
+        const { setServerUrl, getServerUrl } = await import('@/sync/domains/server/serverConfig');
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        setServerUrl('https://other.example.test');
+
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: 'hash-token', secret: 'hash-secret' });
+
+        const { resolveBootCredentials } = await import('./resolveBootCredentials');
+        await expect(resolveBootCredentials('web')).resolves.toEqual({ token: 'hash-token', secret: 'hash-secret' });
+        expect(getCredentialsForServerUrlMock).toHaveBeenCalledWith('http://localhost:24731', {
+            serverId: getActiveServerSnapshot().serverId,
+        });
+        expect(getCredentialsMock).not.toHaveBeenCalled();
+        expect(getServerUrl()).toBe('http://localhost:24731');
+    });
+
+    it('preserves the explicit active server id when equivalent server profiles already exist for the boot URL', async () => {
+        const storageScope = `resolve_boot_${Date.now()}`;
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = storageScope;
+        stubWebRuntime('http://happier.example.test/?server=http%3A%2F%2F127.0.0.1%3A3009');
+
+        const { scopedStorageId } = await import('@/utils/system/storageScope');
+        globalThis.localStorage.setItem(
+            `${scopedStorageId('server-profiles', storageScope)}:server-state-v1`,
+            JSON.stringify({
+                activeServerIdIsExplicit: true,
+                activeServerId: 'manual-id',
+                servers: {
+                    'stack-id': {
+                        id: 'stack-id',
+                        name: 'Stack Seeded',
+                        serverUrl: 'http://localhost:3009',
+                        createdAt: 100,
+                        updatedAt: 200,
+                        lastUsedAt: 0,
+                        source: 'stack-env',
+                    },
+                    'manual-id': {
+                        id: 'manual-id',
+                        name: 'Manual Active',
+                        serverUrl: 'http://127.0.0.1:3009',
+                        createdAt: 150,
+                        updatedAt: 250,
+                        lastUsedAt: 999,
+                        source: 'manual',
+                    },
+                },
+            }),
+        );
+
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: 'stack-token', secret: 'stack-secret' });
+
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        expect(getActiveServerSnapshot().serverId).toBe('manual-id');
+
+        const { resolveBootCredentials } = await import('./resolveBootCredentials');
+        await expect(resolveBootCredentials('web')).resolves.toEqual({ token: 'stack-token', secret: 'stack-secret' });
+        expect(getCredentialsForServerUrlMock).toHaveBeenCalledWith('http://127.0.0.1:3009', {
+            serverId: 'manual-id',
+        });
+        expect(getActiveServerSnapshot().serverId).toBe('manual-id');
     });
 
 });

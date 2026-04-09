@@ -1,10 +1,10 @@
 import React from 'react';
 import { Linking } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
+import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { Switch } from '@/components/ui/forms/Switch';
 import type { Profile } from '@/sync/domains/profiles/profile';
 import { getLinkedProvider } from '@/sync/domains/profiles/profile';
@@ -144,7 +144,7 @@ function ProviderIdentityItem(props: Readonly<{
                 cachePolicy="memory-disk"
             />
         ) : (
-            <Ionicons name={iconName as any} size={29} color={iconColor} />
+            <SafeIonicons name={iconName as any} size={29} color={iconColor} />
         );
 
     if (!identity) {

@@ -161,4 +161,40 @@ describe('useAuthEntryOptions', () => {
         expect(options.showAuthActions).toBe(false);
         expect(getServerFeaturesSnapshotMock).toHaveBeenCalledTimes(2);
     });
+
+    it('syncs to the latest active server on mount when the server changed before the subscription effect attached', async () => {
+        let currentSnapshot = { serverUrl: 'http://api.example.test' };
+        getActiveServerSnapshotMock.mockImplementation(() => currentSnapshot);
+        subscribeActiveServerMock.mockImplementationOnce((_listener: (snapshot: { serverUrl: string }) => void) => {
+            currentSnapshot = { serverUrl: 'http://api.override.test' };
+            return () => {};
+        });
+        getServerFeaturesSnapshotMock.mockResolvedValue({
+            status: 'ready',
+            features: {
+                capabilities: {
+                    auth: {
+                        methods: [
+                            {
+                                id: 'key_challenge',
+                                actions: [
+                                    { id: 'login', enabled: true, mode: 'keyed' },
+                                    { id: 'provision', enabled: true, mode: 'keyed' },
+                                ],
+                            },
+                        ],
+                        signup: { methods: [] },
+                        login: { methods: [], requiredProviders: [] },
+                        ui: { autoRedirect: { enabled: false, providerId: null } },
+                    },
+                },
+            },
+        });
+
+        const { useAuthEntryOptions } = await import('./useAuthEntryOptions');
+        const hook = await renderHook(() => useAuthEntryOptions());
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(hook.getCurrent().serverUrlForCopy).toBe('http://api.override.test');
+    });
 });

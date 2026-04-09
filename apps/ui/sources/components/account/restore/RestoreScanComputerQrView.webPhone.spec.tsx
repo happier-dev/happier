@@ -1,6 +1,17 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import type { AuthCredentials } from '@/auth/flows/qrWait';
+import type { QRAuthKeyPair } from '@/auth/flows/qrStart';
+import type { PairingRequestResult } from '@/sync/api/account/apiPairingAuth';
+
+type PairingRequestParams = {
+    pairId: string;
+    secret: string;
+    publicKey: string;
+    deviceLabel?: string;
+};
 import {
     installRestoreScanComputerQrViewCommonModuleMocks,
     resetRestoreScanComputerQrViewCommonModuleMockState,
@@ -10,6 +21,20 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
+
+const restoreScanSuccessState = vi.hoisted(() => ({
+    loginSpy: vi.fn(async () => {}),
+    trackAccountRestoredSpy: vi.fn(),
+    pairingRequestSpy: vi.fn<(params: PairingRequestParams) => Promise<PairingRequestResult>>(async (_params) => ({
+        ok: false,
+        reason: 'not_found',
+        status: 404,
+    })),
+    authQRWaitSpy: vi.fn<(keypair: QRAuthKeyPair, onProgress?: (dots: number) => void, shouldCancel?: () => boolean) => Promise<AuthCredentials | null>>(async (_keypair) => null),
+    parsePairingDeepLinkSpy: vi.fn<(url: string) => { pairId: string; secret: string; serverUrl: string | null } | null>(
+        (_url) => null,
+    ),
+}));
 
 installRestoreScanComputerQrViewCommonModuleMocks({
     reactNative: async () => {
@@ -35,7 +60,7 @@ vi.mock('@/utils/platform/platform', () => ({
 }));
 
 vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ login: vi.fn(async () => {}), refreshFromActiveServer: vi.fn(async () => {}) }),
+    useAuth: () => ({ login: restoreScanSuccessState.loginSpy, refreshFromActiveServer: vi.fn(async () => {}) }),
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
@@ -43,7 +68,7 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
 }));
 
 vi.mock('@/sync/api/account/apiPairingAuth', () => ({
-    pairingRequest: vi.fn(async () => ({ ok: false, reason: 'not_found', status: 404 })),
+    pairingRequest: (params: PairingRequestParams) => restoreScanSuccessState.pairingRequestSpy(params),
 }));
 
 vi.mock('@/auth/flows/qrStart', () => ({
@@ -52,7 +77,7 @@ vi.mock('@/auth/flows/qrStart', () => ({
 }));
 
 vi.mock('@/auth/flows/qrWait', () => ({
-    authQRWait: vi.fn(async () => null),
+    authQRWait: restoreScanSuccessState.authQRWaitSpy,
 }));
 
 vi.mock('@/encryption/base64', () => ({
@@ -66,7 +91,7 @@ vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
 
 vi.mock('@/auth/pairing/pairingUrl', () => ({
     buildPairingDeepLink: () => 'happier:///pair?v=1&pairId=p&secret=s',
-    parsePairingDeepLink: () => null,
+    parsePairingDeepLink: (url: string) => restoreScanSuccessState.parsePairingDeepLinkSpy(url),
 }));
 
 let lastScannerProps: any = null;
@@ -75,6 +100,10 @@ vi.mock('@/components/qr/QrCodeScannerView', () => ({
         lastScannerProps = props;
         return React.createElement('div', { 'data-testid': 'QrCodeScannerView' }, props.footer ?? null);
     },
+}));
+
+vi.mock('@/track', () => ({
+    trackAccountRestored: restoreScanSuccessState.trackAccountRestoredSpy,
 }));
 
 describe('RestoreScanComputerQrView (web phone)', () => {
@@ -91,5 +120,36 @@ describe('RestoreScanComputerQrView (web phone)', () => {
         expect(screen.findByTestId('restore-open-manual')).toBeTruthy();
         expect(screen.findByTestId('restore-show-qr-instead')).toBeTruthy();
         expect(lastScannerProps?.testIDPrefix).toBe('restore-scan');
+    });
+
+    it('tracks account restoration after a successful computer-QR restore flow', async () => {
+        vi.resetModules();
+        resetRestoreScanComputerQrViewCommonModuleMockState();
+        lastScannerProps = null;
+        restoreScanSuccessState.loginSpy.mockReset();
+        restoreScanSuccessState.trackAccountRestoredSpy.mockReset();
+        restoreScanSuccessState.pairingRequestSpy.mockResolvedValueOnce({
+            ok: true,
+            data: { state: 'requested', confirmCode: '1234' },
+        });
+        restoreScanSuccessState.authQRWaitSpy.mockResolvedValueOnce({
+            token: 'tok_pair',
+            secret: new Uint8Array(32).fill(4),
+        });
+        restoreScanSuccessState.parsePairingDeepLinkSpy.mockReturnValueOnce({
+            pairId: 'p',
+            secret: 's',
+            serverUrl: null,
+        });
+
+        const { RestoreScanComputerQrView } = await import('./RestoreScanComputerQrView');
+
+        await renderScreen(<RestoreScanComputerQrView />);
+        await act(async () => {
+            await lastScannerProps.onScan('happier:///pair?v=1&pairId=p&secret=s');
+        });
+
+        expect(restoreScanSuccessState.loginSpy).toHaveBeenCalledWith('tok_pair', 'x');
+        expect(restoreScanSuccessState.trackAccountRestoredSpy).toHaveBeenCalledTimes(1);
     });
 });

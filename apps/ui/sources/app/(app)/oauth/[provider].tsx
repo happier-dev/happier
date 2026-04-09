@@ -19,6 +19,7 @@ import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { buildDataKeyCredentialsForToken } from '@/auth/flows/buildDataKeyCredentialsForToken';
 import { getRandomBytes } from '@/platform/cryptoRandom';
+import { trackAccountCreated, trackAccountRestored } from '@/track';
 
 import { WizardModalShell } from '@/components/onboarding';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
@@ -72,6 +73,21 @@ function mapFinalizeErrorToMessage(code: string): string {
         default:
             return t('errors.tokenExchangeFailed');
     }
+}
+
+function trackSuccessfulOAuthAuth(params: {
+    secret: string | null;
+    intent: 'signup' | 'reset' | null;
+}) {
+    if (params.intent === 'reset') {
+        trackAccountRestored();
+        return;
+    }
+    if (params.intent === 'signup' || params.secret) {
+        trackAccountCreated();
+        return;
+    }
+    trackAccountRestored();
 }
 
 function tryResolveProviderIdFromWebPathname(): string | null {
@@ -173,10 +189,10 @@ export default function OAuthProviderReturn() {
         const ctx = pendingAuthContextRef.current;
         if (!ctx) {
             router.replace('/');
-            return;
+            return Promise.resolve();
         }
 
-        fireAndForget((async () => {
+        const promise = (async () => {
             setBusy(true);
             try {
                 if (params.mode === 'plain' && !ctx.proof) {
@@ -262,6 +278,10 @@ export default function OAuthProviderReturn() {
                     } else {
                         await auth.login(json.token, secret!);
                     }
+                    trackSuccessfulOAuthAuth({
+                        secret,
+                        intent: ctx.intent,
+                    });
                     router.replace(ctx.returnTo);
                     return;
                 }
@@ -299,7 +319,9 @@ export default function OAuthProviderReturn() {
             } finally {
                 setBusy(false);
             }
-        })(), { tag: 'OAuthProviderReturn.finalizeAuth' });
+        })();
+        fireAndForget(promise, { tag: 'OAuthProviderReturn.finalizeAuth' });
+        return promise;
     }, [auth, router]);
 
     const submitUsername = React.useCallback(() => {
@@ -376,11 +398,11 @@ export default function OAuthProviderReturn() {
         const ctx = pendingAuthContextRef.current;
         if (!ctx) {
             router.replace('/');
-            return;
+            return Promise.resolve();
         }
         pendingAuthContextRef.current = { ...ctx, chosenMode: mode };
         setProvisioningChoiceOpen(false);
-        finalizeAuth({ mode });
+        return finalizeAuth({ mode });
     }, [finalizeAuth, router]);
 
     React.useEffect(() => {

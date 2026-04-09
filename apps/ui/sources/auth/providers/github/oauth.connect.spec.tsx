@@ -1,6 +1,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { t } from '@/text';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import {
     clearPendingExternalConnectMock,
     flushOAuthEffects,
@@ -61,6 +62,7 @@ function stubFetch(
         } as Response;
     });
     vi.stubGlobal('fetch', fetchMock);
+    setRuntimeFetch(fetchMock as unknown as typeof fetch);
     return fetchMock;
 }
 
@@ -82,6 +84,7 @@ vi.mock('@/sync/runtime/connectivity/serverReachabilitySupervisorPool', async (i
 
 afterEach(() => {
     resetOAuthHarness();
+    resetRuntimeFetch();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
 });
