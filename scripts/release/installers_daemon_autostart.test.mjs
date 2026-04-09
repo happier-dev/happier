@@ -15,7 +15,7 @@ async function sha256(path) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-test('install.sh installs and enables daemon service by default (best-effort)', async () => {
+async function runInstallerScenario(envOverrides = {}) {
   const root = await mkdtemp(join(tmpdir(), 'happier-installer-daemon-'));
   const binDir = join(root, 'bin');
   const installDir = join(root, 'install');
@@ -103,6 +103,10 @@ if [[ "$1" = "self" && "$2" = "__install-payload" ]]; then
   copy_tree "$payload_root" "$install_root/current"
   cp "$install_root/current/happier" "$HAPPIER_HOME_DIR/bin/happier"
   chmod +x "$HAPPIER_HOME_DIR/bin/happier"
+  exit 0
+fi
+if [[ "$1" = "service" && "$2" = "install" ]]; then
+  echo "service install ${version} channel=\${HAPPIER_DAEMON_SERVICE_CHANNEL:-unset} public=\${HAPPIER_PUBLIC_RELEASE_CHANNEL:-unset} strategy=\${HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY:-unset}" >> "${logPath}"
   exit 0
 fi
 if [[ "$1" = "daemon" && "$2" = "service" && "$3" = "install" ]]; then
@@ -230,6 +234,7 @@ printf '%s' '${releaseJson}'
     HAPPIER_GITHUB_TOKEN: '',
     GITHUB_TOKEN: '',
     HAPPIER_TEST_LOG: logPath,
+    ...envOverrides,
   };
 
   const res = spawnSync('bash', [installerPath], { env, encoding: 'utf8' });
@@ -238,7 +243,6 @@ printf '%s' '${releaseJson}'
   assert.equal(res.status, 0, `installer failed:\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`);
 
   const log = await readFile(logPath, 'utf8').catch(() => '');
-  assert.match(log, /daemon service install 1\.2\.4 channel=stable public=stable strategy=replace-ring/);
 
   const versionRes = spawnSync(join(outBinDir, 'happier'), ['--version'], { env, encoding: 'utf8' });
   assert.equal(versionRes.status, 0, `installed binary failed: ${String(versionRes.stderr ?? '')}`);
@@ -246,5 +250,28 @@ printf '%s' '${releaseJson}'
   assert.equal(await readFile(join(installDir, 'cli', 'current', 'package-dist', 'index.mjs'), 'utf8'), 'export default "1.2.4";\n');
   assert.match(await readFile(join(installDir, 'cli', 'current', 'happier'), 'utf8'), /1\.2\.4/);
 
-  await rm(root, { recursive: true, force: true });
+  return {
+    log,
+    cleanup: async () => {
+      await rm(root, { recursive: true, force: true });
+    },
+  };
+}
+
+test('install.sh skips daemon service installation by default in noninteractive mode', async () => {
+  const scenario = await runInstallerScenario();
+  try {
+    assert.equal(scenario.log.trim(), '');
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
+test('install.sh installs and enables daemon service when explicitly opted in (best-effort)', async () => {
+  const scenario = await runInstallerScenario({ HAPPIER_WITH_DAEMON: '1' });
+  try {
+    assert.match(scenario.log, /service install 1\.2\.4 channel=stable public=stable strategy=replace-ring/);
+  } finally {
+    await scenario.cleanup();
+  }
 });

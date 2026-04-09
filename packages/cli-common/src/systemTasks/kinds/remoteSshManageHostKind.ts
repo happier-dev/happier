@@ -181,7 +181,7 @@ export function createRemoteSshManageHostTaskKind(
         ctx.emit({
           type: 'progress',
           stepId: `daemon.service.${daemonAction}`,
-          message: 'Managing daemon service',
+          message: 'Managing background service',
         });
         await deps.runDaemonServiceCommand({
           ssh: parsed.ssh,

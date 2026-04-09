@@ -39,6 +39,7 @@ const CANONICAL_LANE_PARITY: readonly ParityDefinition[] = Object.freeze([
       'yarn workspace @happier-dev/transfers test',
       'yarn workspace @happier-dev/agents test',
       'yarn workspace @happier-dev/cli-common test',
+      'yarn workspace @happier-dev/support test',
       'yarn workspace @happier-dev/connection-supervisor test',
       'yarn workspace @happier-dev/bootstrap test',
       'yarn workspace @happier-dev/app test:unit',
@@ -94,6 +95,14 @@ const CANONICAL_LANE_PARITY: readonly ParityDefinition[] = Object.freeze([
     workflowCommands: ['yarn -s test:e2e:ui', 'yarn test:e2e:ui'],
     workflowMode: 'any',
     triggerMode: 'optional',
+  },
+  {
+    id: 'test:e2e:desktop:native',
+    rootScriptName: 'test:e2e:desktop:native',
+    docsCommands: ['yarn test:e2e:desktop:native'],
+    workflowCommands: [],
+    workflowMode: 'any',
+    triggerMode: 'local-only',
   },
   {
     id: 'test:e2e:ui:wsrepl:lima',

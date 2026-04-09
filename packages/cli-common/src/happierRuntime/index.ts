@@ -10,6 +10,7 @@ export type {
 } from './daemonInstallConflict.js';
 export { buildHappierRuntimeWarnings } from './warnings/buildHappierRuntimeWarnings.js';
 export { deriveManagedReleaseChannelInventory } from './deriveManagedReleaseChannelInventory.js';
+export { describeBackgroundServiceTargetMode } from './describeBackgroundServiceTargetMode.js';
 export type {
   ManagedReleaseChannelInventory,
   ManagedReleaseChannelInventoryEntry,
@@ -19,6 +20,13 @@ export {
   normalizeHappierRuntimePath,
 } from './runtimePathMatching.js';
 export { resolveHappierServiceRuntimeTarget } from './resolveServiceRuntimeTarget.js';
+export {
+  resolveApplicableHappierRuntimeMigrations,
+  hasApplicableHappierRuntimeMigrations,
+} from './migrations/resolveApplicableHappierRuntimeMigrations.js';
+export type {
+  HappierRuntimeMigrationEntry,
+} from './migrations/catalog.js';
 export type {
   HappierActiveInvocation,
   HappierInstallation,

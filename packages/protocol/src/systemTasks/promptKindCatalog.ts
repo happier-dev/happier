@@ -16,6 +16,9 @@ export const SYSTEM_TASK_PROMPT_KINDS_V1 = [
   'ssh.replaceHostKey',
   'ssh.password',
   'auth.approveRemoteProvisioning',
+  'releaseChannel.switchDefaultForSetup',
+  'daemon.replaceLocalBackgroundServices',
+  'daemon.replaceRemoteBackgroundServices',
 ] as const;
 
 export const SystemTaskPromptKindSchema = z.enum(SYSTEM_TASK_PROMPT_KINDS_V1);

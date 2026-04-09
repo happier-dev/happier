@@ -112,7 +112,7 @@ export function createSetupRepairThisComputerTaskKind(
       const webappUrl = String(parsed.activeWebappUrl ?? relayProfile.webappUrl ?? '').trim() || relayUrl;
       const activeLocalRelayUrl = String(parsed.activeLocalRelayUrl ?? relayProfile.activeLocalRelayUrl ?? '').trim() || null;
       if (!relayUrl) {
-        throw new SystemTaskExecutionError('invalid_params', 'Missing active Relay profile.');
+        throw new SystemTaskExecutionError('invalid_params', 'Missing active server profile.');
       }
 
       ctx.emit({
@@ -127,7 +127,7 @@ export function createSetupRepairThisComputerTaskKind(
         },
       });
 
-      ctx.emit({ type: 'progress', stepId: 'setup.repairThisComputer.configureRelay', message: 'Configuring relay' });
+      ctx.emit({ type: 'progress', stepId: 'setup.repairThisComputer.configureRelay', message: 'Configuring server connection' });
       await deps.configureRelay({ relayUrl, webappUrl, activeLocalRelayUrl });
 
       const authStatus = await deps.readAuthStatus();
@@ -223,7 +223,7 @@ export function createSetupRepairThisComputerTaskKind(
               throw new SystemTaskExecutionError('approval_declined', 'Pairing request was not approved.');
             }
           },
-        daemonReadinessErrorMessage: 'Daemon service did not reach a ready state for the selected Relay.',
+        daemonReadinessErrorMessage: 'Background service did not reach a ready state for the selected server.',
       });
 
       const daemonMachineId = typeof recipeResult.daemonStatus?.machineId === 'string' && recipeResult.daemonStatus.machineId.trim()
@@ -232,7 +232,7 @@ export function createSetupRepairThisComputerTaskKind(
       if (!daemonMachineId) {
         throw new SystemTaskExecutionError(
           'daemon_service_not_ready',
-          'Daemon service did not reach a ready state for the selected Relay.',
+          'Background service did not reach a ready state for the selected server.',
         );
       }
 

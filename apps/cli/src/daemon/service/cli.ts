@@ -7,7 +7,7 @@ import { configuration } from '@/configuration';
 import { readDaemonState } from '@/persistence';
 import { isBun } from '@/utils/runtime';
 import { resolveJavaScriptRuntimeExecutable } from '@/runtime/js/resolveJavaScriptRuntimeExecutable';
-import { discoverHappierServices } from '@happier-dev/cli-common/happierRuntime';
+import { describeBackgroundServiceTargetMode, discoverHappierServices } from '@happier-dev/cli-common/happierRuntime';
 import { kv, neutral, ok, sectionTitle, warn } from '@happier-dev/cli-common/output';
 
 import { installDaemonService, uninstallDaemonService } from './installer';
@@ -298,7 +298,7 @@ export function resolveDaemonServiceCliRuntimeFromEnv(options: Readonly<{
     resolveSupportedPlatform(processEnv.HAPPIER_DAEMON_SERVICE_PLATFORM ?? '') ??
     resolvePlatformFromProcess();
   if (!platform) {
-    throw new Error('Daemon service is currently only supported on macOS, Linux, and Windows');
+    throw new Error('Background service management is currently only supported on macOS, Linux, and Windows');
   }
 
   const uidEnvRaw = (processEnv.HAPPIER_DAEMON_SERVICE_UID ?? '').trim();
@@ -524,7 +524,7 @@ export async function runDaemonServiceCliCommand(
       process.stdout.write(`${statusText}\n`);
       process.stdout.write(`  ${kv('Installed:', service.installed ? 'yes' : 'no')}\n`);
       process.stdout.write(`  ${kv('Running:', service.running ? 'yes' : 'no')}\n`);
-      process.stdout.write(`  ${kv('Target:', service.targetMode ?? 'pinned')}\n`);
+      process.stdout.write(`  ${kv('Target:', describeBackgroundServiceTargetMode(service.targetMode))}\n`);
       process.stdout.write(`  ${kv('Type:', service.serviceType)}\n`);
       process.stdout.write(`  ${kv('Backend:', service.backend)}\n`);
       process.stdout.write(`  ${kv('Definition:', service.definitionPath)}\n`);
@@ -558,7 +558,7 @@ export async function runDaemonServiceCliCommand(
           ? `Scheduled Task: ${paths.taskName}\nWrapper: ${paths.wrapperPath}\n`
           : `systemd unit: ${paths.unitPath}\nUnit name: ${paths.unitName}\n`,
     );
-    process.stdout.write(`target: ${runtime.targetMode}\n`);
+    process.stdout.write(`target: ${describeBackgroundServiceTargetMode(runtime.targetMode)}\n`);
     process.stdout.write(`stdout: ${paths.stdoutPath}\nstderr: ${paths.stderrPath}\n`);
     return;
   }
@@ -657,7 +657,7 @@ export async function runDaemonServiceCliCommand(
       printJson({ ok: true, platform: installRuntime.platform });
       return;
     }
-    process.stdout.write('Daemon service installed.\n');
+    process.stdout.write('Background service installed.\n');
     return;
   }
 
@@ -702,7 +702,7 @@ export async function runDaemonServiceCliCommand(
           instanceId: runtime.instanceId,
         }];
     if (hasExplicitSelection && selectedServices.length === 0) {
-      const message = 'No verified daemon services matched the requested uninstall target.';
+      const message = 'No verified background services matched the requested uninstall target.';
       if (flags.json) {
         printJson({ ok: false, error: 'service_not_found', message, platform: runtime.platform });
         return;
@@ -775,7 +775,7 @@ export async function runDaemonServiceCliCommand(
       });
       return;
     }
-    process.stdout.write('Daemon service uninstalled.\n');
+    process.stdout.write('Background service uninstalled.\n');
     return;
   }
 
@@ -820,7 +820,7 @@ export async function runDaemonServiceCliCommand(
       printJson({ ok: true, platform: runtime.platform });
       return;
     }
-    process.stdout.write(`Daemon service ${action} requested.\n`);
+    process.stdout.write(`Background service ${action} requested.\n`);
     return;
   }
 
@@ -870,7 +870,7 @@ export async function runDaemonServiceCliCommand(
     }
 
     process.stdout.write(installed ? 'Service: installed\n' : 'Service: not installed\n');
-    process.stdout.write(`Target: ${runtime.targetMode}\n`);
+    process.stdout.write(`Target: ${describeBackgroundServiceTargetMode(runtime.targetMode)}\n`);
     process.stdout.write(pidAlive ? `Daemon: running (pid ${pid})\n` : 'Daemon: not running\n');
     if (systemStatus.out) process.stdout.write(`\n${systemStatus.out}\n`);
     return;

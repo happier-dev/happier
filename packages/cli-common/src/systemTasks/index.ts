@@ -65,9 +65,21 @@ export {
   type SetupMachineRelayProfile,
 } from './recipes/setupMachineRecipe.js';
 export {
+  applyBackgroundServiceSetupGuidance,
+  type BackgroundServiceSetupGuidanceCancellationReason,
+  type BackgroundServiceSetupGuidanceFlowResult,
+} from './setupServiceGuidance/applyBackgroundServiceSetupGuidance.js';
+export {
   buildBackgroundServiceSetupGuidance,
   type BackgroundServiceSetupGuidance,
   type BackgroundServiceSetupGuidanceService,
 } from './setupServiceGuidance/buildBackgroundServiceSetupGuidance.js';
+export {
+  readBackgroundServiceSetupGuidance,
+} from './setupServiceGuidance/readBackgroundServiceSetupGuidance.js';
+export {
+  formatBackgroundServiceReleaseChannelSwitchPrompt,
+  formatBackgroundServiceReplacementPrompt,
+} from './setupServiceGuidance/formatBackgroundServiceSetupPrompts.js';
 
 export * from './kinds/index.js';

@@ -118,7 +118,7 @@ export function createSetupMachineRecipeExecutorFromHappierJsonExecutor(params: 
         }
         throw new SystemTaskExecutionError(
           errorCode || 'auth_status_unavailable',
-          'Could not determine authentication status for the selected Relay.',
+          'Could not determine authentication status for the selected server.',
         );
       }
 

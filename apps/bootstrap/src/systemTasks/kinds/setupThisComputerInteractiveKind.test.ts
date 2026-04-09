@@ -272,4 +272,71 @@ describe('createSetupThisComputerInteractiveTaskKind', () => {
       },
     });
   });
+
+  it('fails with a release-channel specific error when the user keeps the current default release channel', async () => {
+    const kind = createSetupThisComputerInteractiveTaskKind({
+      readActiveRelayProfile: async () => ({
+        serverUrl: 'https://relay.example.test',
+        webappUrl: 'https://app.example.test',
+        localServerUrl: null,
+      }),
+      createRecipeExecutor: () => createRecipeExecutor([]),
+      readBackgroundServiceSetupGuidance: async () => ({
+        targetReleaseChannel: 'preview',
+        targetServerUrl: 'https://relay.example.test',
+        currentDefaultReleaseChannel: 'stable',
+        managedReleaseChannels: [
+          {
+            releaseChannel: 'stable',
+            label: 'stable',
+            version: '1.0.0',
+            installationId: 'stable',
+            installationPath: '/managed/stable',
+            invokerName: 'happier',
+            isDefault: true,
+            onPath: true,
+          },
+        ],
+        conflictingServices: [],
+        exactDefaultServiceExists: false,
+        shouldOfferDefaultReleaseChannelSwitch: true,
+        shouldPromptForServiceReplacement: false,
+      }),
+      switchDefaultReleaseChannel: async () => undefined,
+      uninstallExistingDaemonServices: async () => undefined,
+    });
+
+    const runner = createSystemTasksRunner({
+      kinds: {
+        'setup.thisComputer.v1': kind,
+      },
+    });
+
+    await runner.start({
+      taskId: 'setup-task-release-channel-decline',
+      kind: 'setup.thisComputer.v1',
+      params: {
+        surface: 'desktop.ui',
+        target: 'thisComputer',
+        channel: 'preview',
+      },
+    });
+
+    const promptPoll = await waitForPendingPrompt(runner, { taskId: 'setup-task-release-channel-decline', cursor: 0 });
+    await runner.respond({
+      taskId: 'setup-task-release-channel-decline',
+      answer: { switchDefaultReleaseChannel: false },
+    });
+
+    const finalPoll = await waitForResult(runner, { taskId: 'setup-task-release-channel-decline', cursor: promptPoll.nextCursor });
+    expect(finalPoll.result).toEqual({
+      protocolVersion: 1,
+      taskId: 'setup-task-release-channel-decline',
+      ok: false,
+      error: {
+        code: 'background_service_release_channel_switch_declined',
+        message: 'Setup was cancelled because the default release channel was kept unchanged.',
+      },
+    });
+  });
 });

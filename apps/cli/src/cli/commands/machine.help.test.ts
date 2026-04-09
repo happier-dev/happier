@@ -21,6 +21,7 @@ describe('happier machine --help', () => {
       const output = logSpy.mock.calls.flat().join('\n');
       expect(output).toContain('happier machine');
       expect(output).toContain('happier machine setup');
+      expect(output).toContain('specific server profile');
     } finally {
       logSpy.mockRestore();
     }

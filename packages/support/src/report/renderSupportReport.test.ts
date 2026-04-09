@@ -32,7 +32,8 @@ const report: SupportReport = {
         path: '/Library/LaunchDaemons/com.happier.cli.daemon.plist',
         executablePath: '/opt/happier/cli/current/happier',
         linkedInstallationPath: '/opt/happier/cli/current',
-        serverUrl: 'https://relay.example.test',
+        serverUrl: 'http://127.0.0.1:24512',
+        publicServerUrl: 'https://relay.example.test',
       },
       {
         id: 'stack-runtime-service',
@@ -44,7 +45,8 @@ const report: SupportReport = {
         executablePath: '/Users/tester/.happier/stacks/main/cli/tools/js-runtime/current/bin/happier-js-runtime',
         linkedRuntimeTargetLabel: 'Stack runtime (main)',
         linkedRuntimeTargetPath: '/Users/tester/.happier/stacks/main/cli',
-        serverUrl: 'https://stack.example.test',
+        serverUrl: 'http://127.0.0.1:34567',
+        publicServerUrl: 'https://stack.example.test',
       },
         ],
         runtimeTargets: [
@@ -89,13 +91,13 @@ describe('renderSupportReport', () => {
     expect(output).toContain('[Services]');
     expect(output).toContain('[Services]\n\nDaemon (running)');
     expect(output).toContain('Daemon (running)');
-    expect(output).toContain('Mode=default-following');
+    expect(output).toContain('Mode=default background service');
     expect(output).toContain('Definition=/Library/LaunchDaemons/com.happier.cli.daemon.plist');
     expect(output).toContain('Executable=/opt/happier/cli/current/happier');
     expect(output).toContain('Installation=/opt/happier/cli/current');
     expect(output).toContain('Server=https://relay.example.test');
     expect(output).toContain('Daemon service: com.happier.cli.daemon.stack_main_id_default (installed)');
-    expect(output).toContain('Mode=pinned');
+    expect(output).toContain('Mode=legacy pinned background service');
     expect(output).toContain('Runtime=Stack runtime (main)');
     expect(output).toContain('Target=/Users/tester/.happier/stacks/main/cli');
     expect(output).toContain('[Additional Runtimes]');

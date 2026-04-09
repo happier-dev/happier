@@ -52,7 +52,7 @@ export async function readActiveRelayProfile(): Promise<ActiveRelayProfile> {
   if (!serverUrl || !webappUrl) {
     throw new systemTasks.SystemTaskExecutionError(
       'relay_configuration_unavailable',
-      'Could not resolve the currently selected Relay configuration.',
+      'Could not resolve the currently selected server configuration.',
     );
   }
 
@@ -91,7 +91,7 @@ export async function readAuthStatus(): Promise<AuthStatusSnapshot> {
     }
     throw new systemTasks.SystemTaskExecutionError(
       errorCode || 'auth_status_unavailable',
-      'Could not determine authentication status for the selected Relay.',
+      'Could not determine authentication status for the selected server.',
     );
   }
 
@@ -149,7 +149,7 @@ export async function pairLocalMachineIfNeeded(authStatus: AuthStatusSnapshot): 
   if (!authStatus.authenticated) {
     throw new systemTasks.SystemTaskExecutionError(
       'not_authenticated',
-      'Authenticate this computer with the selected Relay before continuing.',
+      'Authenticate this computer with the selected server before continuing.',
     );
   }
   if (authStatus.machineId) {

@@ -13,6 +13,7 @@ import { configuration } from '@/configuration'
 import { resolveDaemonStateBasenameForRing } from '@/cli/runtime/publicReleaseChannel';
 import { sanitizeServerIdForFilesystem } from '@/server/serverId';
 import { isLocalishServerUrl } from '@/server/serverUrlClassification';
+import type { PublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
 import * as z from 'zod';
 import { decodeBase64, encodeBase64 } from '@/api/encryption';
 import { logger } from '@/ui/logger';
@@ -242,6 +243,7 @@ export interface DaemonLocallyPersistedState {
   httpPort: number;
   startedAt: number;
   startedWithCliVersion: string;
+  startedWithPublicReleaseChannel?: PublicReleaseRingLabel;
   machineId?: string;
   lastHeartbeatAt?: number;
   daemonLogPath?: string;
@@ -253,6 +255,7 @@ const DaemonLocallyPersistedStateSchemaV2 = z.object({
   httpPort: z.number().int().positive(),
   startedAt: z.number().int().nonnegative(),
   startedWithCliVersion: z.string(),
+  startedWithPublicReleaseChannel: z.enum(['stable', 'preview', 'dev']).optional(),
   machineId: z.string().min(1).optional(),
   lastHeartbeatAt: z.number().int().nonnegative().optional(),
   daemonLogPath: z.string().optional(),
@@ -293,6 +296,7 @@ function normalizeDaemonState(
     httpPort: value.httpPort,
     startedAt,
     startedWithCliVersion: value.startedWithCliVersion,
+    startedWithPublicReleaseChannel: undefined,
     machineId: undefined,
     lastHeartbeatAt,
     daemonLogPath: value.daemonLogPath,

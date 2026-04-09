@@ -3,6 +3,7 @@ import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { cmd, createOutputBuilder, errorFrame, ok, warn } from '@happier-dev/cli-common/output';
 import { buildSshTarget, parseSshTarget } from '@happier-dev/cli-common/systemTasks';
+import { describeBackgroundServiceTargetMode } from '@happier-dev/cli-common/happierRuntime';
 import { resolvePublicReleaseRingIdFromCliArgs } from '@/cli/runtime/publicReleaseChannel';
 import { getLiveSystemTasksRunnerAdapter } from '@/capabilities/systemTasks/liveSystemTasksRunner';
 import { configuration } from '@/configuration';
@@ -10,11 +11,14 @@ import { applyServerSelectionFromArgs } from '@/server/serverSelection';
 import { isInteractiveTerminal, promptInput } from '@/terminal/prompts/promptInput';
 import { promptSecret } from '@/terminal/prompts/promptSecret';
 import { resolvePublicReleaseRingLabelForId } from '@happier-dev/release-runtime/releaseRings';
-import type {
-  SystemTaskEvent,
-  SystemTaskJsonObject,
-  SystemTaskResult,
-  SystemTaskSpec,
+import {
+  parseApproveRemoteProvisioningPromptData,
+  parseReplaceRemoteBackgroundServicesPromptData,
+  parseSshTrustPromptData,
+  type SystemTaskEvent,
+  type SystemTaskJsonObject,
+  type SystemTaskResult,
+  type SystemTaskSpec,
 } from '@happier-dev/protocol';
 
 import { showMachineHelp } from './machine/help';
@@ -300,49 +304,37 @@ function buildMachineSetupSpec(params: Readonly<{
 
 function formatPromptMessage(prompt: Readonly<{ kind: string; data: SystemTaskJsonObject }>, fallbackMessage = ''): string {
   if (prompt.kind === 'ssh.trustHost' || prompt.kind === 'ssh.replaceHostKey') {
-    const host = typeof prompt.data.host === 'string' ? prompt.data.host : '';
-    const keyType = typeof prompt.data.keyType === 'string' ? prompt.data.keyType : '';
-    const fingerprint = typeof prompt.data.fingerprint === 'string' ? prompt.data.fingerprint : '';
-    const existingFingerprint = typeof prompt.data.existingFingerprint === 'string' ? prompt.data.existingFingerprint : '';
+    const parsed = parseSshTrustPromptData(prompt.kind, prompt.data);
     return [
       fallbackMessage || 'Trust remote SSH host key?',
-      host ? `Host: ${host}` : '',
-      keyType ? `Key type: ${keyType}` : '',
-      fingerprint ? `Fingerprint: ${fingerprint}` : '',
-      existingFingerprint ? `Existing fingerprint: ${existingFingerprint}` : '',
+      parsed?.host ? `Host: ${parsed.host}` : '',
+      parsed?.keyType ? `Key type: ${parsed.keyType}` : '',
+      parsed?.fingerprint ? `Fingerprint: ${parsed.fingerprint}` : '',
+      parsed?.existingFingerprint ? `Existing fingerprint: ${parsed.existingFingerprint}` : '',
     ].filter(Boolean).join('\n');
   }
 
   if (prompt.kind === 'auth.approveRemoteProvisioning') {
-    const publicKey = typeof prompt.data.publicKey === 'string' ? prompt.data.publicKey : '';
+    const parsed = parseApproveRemoteProvisioningPromptData(prompt.data);
     return [
       fallbackMessage || 'Approve remote machine pairing?',
-      publicKey ? `Public key: ${publicKey}` : '',
+      parsed.publicKey ? `Public key: ${parsed.publicKey}` : '',
     ].filter(Boolean).join('\n');
   }
 
   if (prompt.kind === 'daemon.replaceRemoteBackgroundServices') {
-    const targetServerUrl = typeof prompt.data.targetServerUrl === 'string' ? prompt.data.targetServerUrl.trim() : '';
-    const targetReleaseChannel = typeof prompt.data.targetReleaseChannel === 'string' ? prompt.data.targetReleaseChannel.trim() : '';
-    const services = Array.isArray(prompt.data.services) ? prompt.data.services : [];
-    const formattedServices = services.flatMap((entry) => {
-      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-        return [];
-      }
-      const record = entry as Record<string, unknown>;
-      const label = typeof record.label === 'string' ? record.label.trim() : '';
-      if (!label) {
-        return [];
-      }
-      const releaseChannel = typeof record.releaseChannel === 'string' ? record.releaseChannel.trim() : '';
-      const targetMode = typeof record.targetMode === 'string' ? record.targetMode.trim() : '';
-      const running = record.running === true ? 'running' : 'stopped';
-      return [`- ${label}${releaseChannel ? ` (${releaseChannel}` : ''}${targetMode ? `${releaseChannel ? ', ' : ' ('}${targetMode}` : ''}${releaseChannel || targetMode ? ')' : ''} — ${running}`];
+    const parsed = parseReplaceRemoteBackgroundServicesPromptData(prompt.data);
+    const formattedServices = parsed.services.map((service) => {
+      const details = [
+        service.releaseChannel,
+        describeBackgroundServiceTargetMode(service.targetMode),
+      ].filter(Boolean).join(', ');
+      return `- ${service.label}${details ? ` (${details})` : ''} — ${service.running ? 'running' : 'stopped'}`;
     });
     return [
       fallbackMessage || 'Replace existing remote background services?',
-      targetServerUrl ? `Target server: ${targetServerUrl}` : '',
-      targetReleaseChannel ? `Target release channel: ${targetReleaseChannel}` : '',
+      parsed.targetServerUrl ? `Target server: ${parsed.targetServerUrl}` : '',
+      parsed.targetReleaseChannel ? `Target release channel: ${parsed.targetReleaseChannel}` : '',
       formattedServices.length > 0 ? 'Existing services:' : '',
       ...formattedServices,
     ].filter(Boolean).join('\n');

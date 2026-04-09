@@ -163,7 +163,7 @@ describe('renderDoctorHappierRuntimeInventory', () => {
     expect(rendered).toContain('/usr/local/bin/happier');
     expect(rendered).toContain('Detected services');
     expect(rendered).toContain('com.happier.cli.daemon.preview.cloud');
-    expect(rendered).toContain('default-following');
+    expect(rendered).toContain('default background service');
     expect(rendered).toContain('https://relay.preview.example.test');
     expect(rendered).toContain('dev.happier.stack.dev-built');
     expect(rendered).toContain('Self-host service');

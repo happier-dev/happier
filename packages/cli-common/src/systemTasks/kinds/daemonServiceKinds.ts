@@ -33,13 +33,13 @@ function assertDaemonReady(status: DaemonServiceStatusSnapshot): void {
   if (!status.serviceInstalled) {
     throw new SystemTaskExecutionError(
       'daemon_service_not_installed',
-      'Daemon service is not installed on this computer yet.',
+      'Background service is not installed on this computer yet.',
     );
   }
   if (status.needsAuth) {
     throw new SystemTaskExecutionError(
       'not_authenticated',
-      'Authenticate this computer with the selected Relay before continuing.',
+      'Authenticate this computer with the selected server before continuing.',
     );
   }
 }
@@ -48,7 +48,7 @@ function assertDaemonInstalled(status: DaemonServiceStatusSnapshot): void {
   if (!status.serviceInstalled) {
     throw new SystemTaskExecutionError(
       'daemon_service_not_installed',
-      'Daemon service is not installed on this computer yet.',
+      'Background service is not installed on this computer yet.',
     );
   }
 }
@@ -133,7 +133,7 @@ export function createDaemonServiceStartTaskKind(deps: DaemonServiceKindDeps): I
       ctx.emit({
         type: 'progress',
         stepId: 'task.step.prepare',
-        message: 'Inspect daemon service',
+        message: 'Inspect background service',
       });
 
       const currentStatus = await deps.readStatus(parsed);
@@ -142,7 +142,7 @@ export function createDaemonServiceStartTaskKind(deps: DaemonServiceKindDeps): I
       ctx.emit({
         type: 'progress',
         stepId: 'task.step.installRuntime',
-        message: 'Start daemon service',
+        message: 'Start background service',
       });
 
       await deps.startService(parsed);
@@ -154,14 +154,14 @@ export function createDaemonServiceStartTaskKind(deps: DaemonServiceKindDeps): I
       if (!readyStatus.serviceInstalled || !readyStatus.daemonRunning || readyStatus.needsAuth) {
         throw new SystemTaskExecutionError(
           'daemon_service_not_ready',
-          'Daemon service did not reach a ready state.',
+          'Background service did not reach a ready state.',
         );
       }
 
       ctx.emit({
         type: 'progress',
         stepId: 'task.step.finish',
-        message: 'Daemon service started',
+        message: 'Background service started',
       });
 
       return readyStatus;
@@ -177,7 +177,7 @@ export function createDaemonServiceStopTaskKind(deps: DaemonServiceKindDeps): In
       ctx.emit({
         type: 'progress',
         stepId: 'task.step.prepare',
-        message: 'Inspect daemon service',
+        message: 'Inspect background service',
       });
 
       const currentStatus = await deps.readStatus(parsed);
@@ -186,7 +186,7 @@ export function createDaemonServiceStopTaskKind(deps: DaemonServiceKindDeps): In
       ctx.emit({
         type: 'progress',
         stepId: 'task.step.stop',
-        message: 'Stop daemon service',
+        message: 'Stop background service',
       });
 
       await deps.stopService(parsed);
@@ -195,14 +195,14 @@ export function createDaemonServiceStopTaskKind(deps: DaemonServiceKindDeps): In
       if (stoppedStatus.daemonRunning) {
         throw new SystemTaskExecutionError(
           'daemon_service_not_stopped',
-          'Daemon service did not stop cleanly.',
+          'Background service did not stop cleanly.',
         );
       }
 
       ctx.emit({
         type: 'progress',
         stepId: 'task.step.finish',
-        message: 'Daemon service stopped',
+        message: 'Background service stopped',
       });
 
       return stoppedStatus;
@@ -218,7 +218,7 @@ export function createDaemonServiceRestartTaskKind(deps: DaemonServiceKindDeps):
       ctx.emit({
         type: 'progress',
         stepId: 'task.step.prepare',
-        message: 'Inspect daemon service',
+        message: 'Inspect background service',
       });
 
       const currentStatus = await deps.readStatus(parsed);
@@ -227,7 +227,7 @@ export function createDaemonServiceRestartTaskKind(deps: DaemonServiceKindDeps):
       ctx.emit({
         type: 'progress',
         stepId: 'task.step.restart',
-        message: 'Restart daemon service',
+        message: 'Restart background service',
       });
 
       await deps.restartService(parsed);
@@ -239,14 +239,14 @@ export function createDaemonServiceRestartTaskKind(deps: DaemonServiceKindDeps):
       if (!readyStatus.serviceInstalled || !readyStatus.daemonRunning || readyStatus.needsAuth) {
         throw new SystemTaskExecutionError(
           'daemon_service_not_ready',
-          'Daemon service did not reach a ready state.',
+          'Background service did not reach a ready state.',
         );
       }
 
       ctx.emit({
         type: 'progress',
         stepId: 'task.step.finish',
-        message: 'Daemon service restarted',
+        message: 'Background service restarted',
       });
 
       return readyStatus;

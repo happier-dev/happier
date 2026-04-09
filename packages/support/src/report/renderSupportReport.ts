@@ -1,4 +1,5 @@
 import { output as cliOutput } from '@happier-dev/cli-common';
+import { describeBackgroundServiceTargetMode } from '@happier-dev/cli-common/happierRuntime';
 
 import type {
   SupportInstallationEntry,
@@ -26,9 +27,9 @@ function buildInstallationRows(entry: SupportInstallationEntry): cliOutput.Defin
 
 function buildServiceRows(entry: SupportServiceEntry): cliOutput.DefinitionListRow[] {
   return [
-    entry.targetMode ? { label: 'Mode', value: entry.targetMode } : null,
+    entry.targetMode ? { label: 'Mode', value: describeBackgroundServiceTargetMode(entry.targetMode) } : null,
     entry.ring ? { label: 'Ring', value: entry.ring } : null,
-    entry.serverUrl ? { label: 'Server', value: entry.serverUrl } : null,
+    (entry.publicServerUrl ?? entry.serverUrl) ? { label: 'Server', value: entry.publicServerUrl ?? entry.serverUrl ?? '' } : null,
     entry.path ? { label: 'Definition', value: entry.path } : null,
     entry.executablePath ? { label: 'Executable', value: entry.executablePath } : null,
     entry.linkedInstallationPath

@@ -329,7 +329,7 @@ describe('createHsetupSystemTaskRegistry', () => {
         ok: false,
         error: {
           code: 'prompt_required',
-          message: 'Make dev the default release-channel before installing the background service for https://relay.example.test?',
+          message: 'Make dev the default release-channel before installing the default background service targeting https://relay.example.test?',
         },
       });
       expect(fakeCli.readInvocations()).toEqual([
@@ -551,7 +551,7 @@ describe('createHsetupSystemTaskRegistry', () => {
       expect.objectContaining({
         type: 'prompt',
         stepId: 'setup.thisComputer.preflight.releaseChannel',
-        message: 'Make preview the default release-channel before installing the background service for https://relay.example.test?',
+        message: 'Make preview the default release-channel before installing the default background service targeting https://relay.example.test?',
         data: {
           kind: 'releaseChannel.switchDefaultForSetup',
           targetReleaseChannel: 'preview',
@@ -567,7 +567,7 @@ describe('createHsetupSystemTaskRegistry', () => {
       ok: false,
       error: {
         code: 'prompt_required',
-        message: 'Make preview the default release-channel before installing the background service for https://relay.example.test?',
+        message: 'Make preview the default release-channel before installing the default background service targeting https://relay.example.test?',
       },
     });
   });
@@ -946,7 +946,7 @@ describe('createHsetupSystemTaskRegistry', () => {
         ok: false,
         error: {
           code: 'daemon_service_not_ready',
-          message: 'Daemon service did not reach a ready state for the selected Relay.',
+          message: 'Background service did not reach a ready state for the selected server.',
         },
       });
       expect(fakeCli.readInvocations()).toContainEqual(['daemon', 'status', '--json']);

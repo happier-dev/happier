@@ -249,7 +249,7 @@ exit 0
   assert.equal(res.status, 0, `restart failed:\n${String(res.stdout ?? '')}\n${String(res.stderr ?? '')}`);
 
   const trace = await readFile(tracePath, 'utf8').catch(() => '');
-  assert.match(trace, /daemon service restart/i);
+  assert.match(trace, /service restart/i);
 
   await rm(root, { recursive: true, force: true });
 });

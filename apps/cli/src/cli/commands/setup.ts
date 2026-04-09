@@ -20,11 +20,14 @@ import {
 } from '@happier-dev/cli-common/firstPartyRuntime';
 import { resolvePublicReleaseRingIdForLabel } from '@happier-dev/release-runtime/releaseRings';
 
-import {
-    readSetupBackgroundServiceGuidance,
-    type BackgroundServiceSetupGuidance,
-} from './setupBackgroundServiceGuidance';
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+import {
+    applyBackgroundServiceSetupGuidance,
+    readBackgroundServiceSetupGuidance,
+    type BackgroundServiceSetupGuidance,
+    formatBackgroundServiceReleaseChannelSwitchPrompt,
+    formatBackgroundServiceReplacementPrompt,
+} from '@happier-dev/cli-common/systemTasks';
 
 function buildSetupHelpPage(): HelpPageOptions {
     return {
@@ -51,7 +54,7 @@ function buildSetupHelpPage(): HelpPageOptions {
             },
         ],
         notes: [
-            'Sets up this computer for a Relay (relay selection → auth → background service → providers).',
+            'Sets up this computer for a server (server selection → auth → background service → providers).',
             'In non-interactive environments, pass --yes.',
         ],
     };
@@ -168,7 +171,7 @@ type SetupCommandDeps = Readonly<{
     promptInputFn?: typeof promptInput;
     runHappyCliStepFn?: typeof runHappyCliStep;
     applyServerSelectionFromArgs?: typeof applyServerSelectionFromArgs;
-    readBackgroundServiceSetupGuidanceFn?: typeof readSetupBackgroundServiceGuidance;
+    readBackgroundServiceSetupGuidanceFn?: typeof readBackgroundServiceSetupGuidance;
     writeDefaultManagedReleaseChannelFn?: typeof writeDefaultManagedReleaseChannel;
     syncInstalledFirstPartyShimsFn?: typeof syncInstalledFirstPartyShims;
 }>;
@@ -277,7 +280,7 @@ export async function handleSetupCommand(args: string[], deps: SetupCommandDeps 
     const promptInputFn = deps.promptInputFn ?? promptInput;
     const runHappyCliStepFn = deps.runHappyCliStepFn ?? runHappyCliStep;
     const applyServerSelectionFromArgsFn = deps.applyServerSelectionFromArgs ?? applyServerSelectionFromArgs;
-    const readBackgroundServiceSetupGuidanceFn = deps.readBackgroundServiceSetupGuidanceFn ?? readSetupBackgroundServiceGuidance;
+    const readBackgroundServiceSetupGuidanceFn = deps.readBackgroundServiceSetupGuidanceFn ?? readBackgroundServiceSetupGuidance;
     const writeDefaultManagedReleaseChannelFn = deps.writeDefaultManagedReleaseChannelFn ?? writeDefaultManagedReleaseChannel;
     const syncInstalledFirstPartyShimsFn = deps.syncInstalledFirstPartyShimsFn ?? syncInstalledFirstPartyShims;
 
@@ -357,7 +360,7 @@ export async function handleSetupCommand(args: string[], deps: SetupCommandDeps 
         }
         const out = createOutputBuilder();
         out.section('Setup plan', (section) => {
-            section.definitionList([{ label: 'Relay', value: plan.relayUrl }], { indent: '  ' });
+            section.definitionList([{ label: 'Server', value: plan.relayUrl }], { indent: '  ' });
             section.blank();
             section.numbered(plan.steps.map((step) => step.display));
         });
@@ -389,41 +392,38 @@ export async function handleSetupCommand(args: string[], deps: SetupCommandDeps 
             throw new Error('Background service setup requires interactive guidance. Re-run in an interactive terminal or pass --skip-daemon.');
         }
 
-        if (guidance.shouldOfferDefaultReleaseChannelSwitch) {
-            const targetReleaseChannelId: PublicReleaseRingId = resolvePublicReleaseRingIdForLabel(guidance.targetReleaseChannel);
-            const shouldSwitch = await promptForSetupReleaseChannelSwitch({
+        const guidanceResult = await applyBackgroundServiceSetupGuidance({
+            guidance,
+            promptSwitchDefaultReleaseChannel: async () => await promptForSetupReleaseChannelSwitch({
                 promptInputFn,
                 guidance,
-            });
-            if (!shouldSwitch) {
-                const out = createOutputBuilder();
-                out.line('Aborted.');
-                console.log(out.render());
-                return;
-            }
-            await writeDefaultManagedReleaseChannelFn({
-                processEnv: process.env,
-                releaseChannel: targetReleaseChannelId,
-            });
-            await syncInstalledFirstPartyShimsFn({
-                componentId: 'happier-cli',
-                channel: targetReleaseChannelId,
-                processEnv: process.env,
-            });
-        }
+            }),
+            promptReplaceExistingServices: async () => await promptForSetupServiceReplacement({
+                promptInputFn,
+                guidance,
+            }),
+            switchDefaultReleaseChannel: async () => {
+                const targetReleaseChannelId: PublicReleaseRingId = resolvePublicReleaseRingIdForLabel(guidance.targetReleaseChannel);
+                await writeDefaultManagedReleaseChannelFn({
+                    processEnv: process.env,
+                    releaseChannel: targetReleaseChannelId,
+                });
+                await syncInstalledFirstPartyShimsFn({
+                    componentId: 'happier-cli',
+                    channel: targetReleaseChannelId,
+                    processEnv: process.env,
+                });
+            },
+            replaceExistingServices: async () => {
+                daemonSetupPreflightSteps.push(['service', 'uninstall', '--all', '--yes']);
+            },
+        });
 
-        if (guidance.shouldPromptForServiceReplacement) {
-            const shouldReplace = await promptForSetupServiceReplacement({
-                promptInputFn,
-                guidance,
-            });
-            if (!shouldReplace) {
-                const out = createOutputBuilder();
-                out.line('Aborted.');
-                console.log(out.render());
-                return;
-            }
-            daemonSetupPreflightSteps.push(['service', 'uninstall', '--all', '--yes']);
+        if (guidanceResult.cancelled) {
+            const out = createOutputBuilder();
+            out.line('Aborted.');
+            console.log(out.render());
+            return;
         }
     }
 
@@ -451,7 +451,7 @@ async function promptForSetupReleaseChannelSwitch(params: Readonly<{
     guidance: BackgroundServiceSetupGuidance;
 }>): Promise<boolean> {
     const answer = (await params.promptInputFn(
-        `Make ${params.guidance.targetReleaseChannel} the default release-channel before installing the background service for ${params.guidance.targetServerUrl ?? 'the current Relay'}? [Y/n] `,
+        `${formatBackgroundServiceReleaseChannelSwitchPrompt(params.guidance)} [Y/n] `,
     )).trim().toLowerCase();
     return !answer.startsWith('n');
 }
@@ -461,7 +461,7 @@ async function promptForSetupServiceReplacement(params: Readonly<{
     guidance: BackgroundServiceSetupGuidance;
 }>): Promise<boolean> {
     const answer = (await params.promptInputFn(
-        `This computer already has conflicting Happier background services for ${params.guidance.targetServerUrl ?? 'the current Relay'}. Replace them before continuing? [Y/n] `,
+        `${formatBackgroundServiceReplacementPrompt(params.guidance)} [Y/n] `,
     )).trim().toLowerCase();
     return !answer.startsWith('n');
 }

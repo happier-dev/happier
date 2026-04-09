@@ -1,11 +1,10 @@
 import {
-  discoverHappierInstallations,
-  discoverHappierServices,
-  deriveManagedReleaseChannelInventory,
-} from '@happier-dev/cli-common/happierRuntime';
-import {
-  buildBackgroundServiceSetupGuidance,
+  applyBackgroundServiceSetupGuidance,
+  type BackgroundServiceSetupGuidanceCancellationReason,
   createLocalHappierJsonExecutor,
+  formatBackgroundServiceReleaseChannelSwitchPrompt,
+  formatBackgroundServiceReplacementPrompt,
+  readBackgroundServiceSetupGuidance,
   createSetupMachineRecipeExecutorFromHappierJsonExecutor,
   runSetupMachineRecipe,
   SystemTaskExecutionError,
@@ -29,6 +28,21 @@ type SetupThisComputerRelayProfile = Readonly<{
   webappUrl: string;
   localServerUrl: string | null;
 }>;
+
+function createBackgroundServiceSetupCancellationError(
+  cancellationReason: BackgroundServiceSetupGuidanceCancellationReason | null,
+): SystemTaskExecutionError {
+  if (cancellationReason === 'declined_release_channel_switch') {
+    return new SystemTaskExecutionError(
+      'background_service_release_channel_switch_declined',
+      'Setup was cancelled because the default release channel was kept unchanged.',
+    );
+  }
+  return new SystemTaskExecutionError(
+    'background_service_conflict_declined',
+    'Setup was cancelled because existing background services were kept.',
+  );
+}
 
 export type SetupThisComputerInteractiveParams = Readonly<{
   surface?: string;
@@ -62,7 +76,7 @@ export function createSetupThisComputerInteractiveTaskKind(
       ctx.emit({
         type: 'progress',
         stepId: 'setup.thisComputer.resolveRelay',
-        message: 'Resolving Relay configuration',
+        message: 'Resolving server configuration',
       });
       const relayProfile = await deps.readActiveRelayProfile({ releaseRing });
       const recipeExecutor = deps.createRecipeExecutor({ releaseRing });
@@ -80,44 +94,45 @@ export function createSetupThisComputerInteractiveTaskKind(
           targetServerUrl: relayProfile.serverUrl,
         });
 
-        if (guidance.shouldOfferDefaultReleaseChannelSwitch) {
-          const answer = await ctx.prompt({
-            kind: 'releaseChannel.switchDefaultForSetup',
-            stepId: 'setup.thisComputer.preflight.releaseChannel',
-            message: `Make ${guidance.targetReleaseChannel} the default release-channel before installing the background service for ${guidance.targetServerUrl ?? 'the current Relay'}?`,
-            data: {
-              targetReleaseChannel: guidance.targetReleaseChannel,
-              currentDefaultReleaseChannel: guidance.currentDefaultReleaseChannel,
-              targetServerUrl: guidance.targetServerUrl,
-              managedReleaseChannels: guidance.managedReleaseChannels,
-            },
-          }) as { switchDefaultReleaseChannel?: boolean };
-
-          if (answer.switchDefaultReleaseChannel === true) {
+        const guidanceResult = await applyBackgroundServiceSetupGuidance({
+          guidance,
+          promptSwitchDefaultReleaseChannel: async () => {
+            const answer = await ctx.prompt({
+              kind: 'releaseChannel.switchDefaultForSetup',
+              stepId: 'setup.thisComputer.preflight.releaseChannel',
+              message: formatBackgroundServiceReleaseChannelSwitchPrompt(guidance),
+              data: {
+                targetReleaseChannel: guidance.targetReleaseChannel,
+                currentDefaultReleaseChannel: guidance.currentDefaultReleaseChannel,
+                targetServerUrl: guidance.targetServerUrl,
+                managedReleaseChannels: guidance.managedReleaseChannels,
+              },
+            }) as { switchDefaultReleaseChannel?: boolean };
+            return answer.switchDefaultReleaseChannel === true;
+          },
+          promptReplaceExistingServices: async () => {
+            const answer = await ctx.prompt({
+              kind: 'daemon.replaceLocalBackgroundServices',
+              stepId: 'setup.thisComputer.preflight.serviceConflict',
+              message: formatBackgroundServiceReplacementPrompt(guidance),
+              data: {
+                targetServerUrl: guidance.targetServerUrl,
+                targetReleaseChannel: guidance.targetReleaseChannel,
+                services: guidance.conflictingServices,
+              },
+            }) as { replaceExistingServices?: boolean };
+            return answer.replaceExistingServices === true;
+          },
+          switchDefaultReleaseChannel: async () => {
             await deps.switchDefaultReleaseChannel(targetReleaseChannel);
-          }
-        }
-
-        if (guidance.shouldPromptForServiceReplacement) {
-          const answer = await ctx.prompt({
-            kind: 'daemon.replaceLocalBackgroundServices',
-            stepId: 'setup.thisComputer.preflight.serviceConflict',
-            message: `This computer already has conflicting Happier background services for ${guidance.targetServerUrl ?? 'the current Relay'}. Replace them before continuing?`,
-            data: {
-              targetServerUrl: guidance.targetServerUrl,
-              targetReleaseChannel: guidance.targetReleaseChannel,
-              services: guidance.conflictingServices,
-            },
-          }) as { replaceExistingServices?: boolean };
-
-          if (answer.replaceExistingServices === true) {
+          },
+          replaceExistingServices: async () => {
             await deps.uninstallExistingDaemonServices();
-          } else {
-            throw new SystemTaskExecutionError(
-              'background_service_conflict_declined',
-              'Setup was cancelled because existing background services were kept.',
-            );
-          }
+          },
+        });
+
+        if (guidanceResult.cancelled) {
+          throw createBackgroundServiceSetupCancellationError(guidanceResult.cancellationReason);
         }
       }
 
@@ -158,14 +173,14 @@ export function createSetupThisComputerInteractiveTaskKind(
             },
           });
         },
-        daemonReadinessErrorMessage: 'Daemon service did not reach a ready state for the selected Relay.',
+        daemonReadinessErrorMessage: 'Background service did not reach a ready state for the selected server.',
       });
 
       const machineId = recipeResult.machineId;
       if (!machineId) {
         throw new SystemTaskExecutionError(
           'machine_id_unavailable',
-          'Authenticated Relay session did not expose a machineId for this computer.',
+          'Authenticated server session did not expose a machineId for this computer.',
         );
       }
 
@@ -221,12 +236,6 @@ function parseSetupThisComputerInteractiveParams(params: unknown): SetupThisComp
   return parsed;
 }
 
-function resolveCurrentPlatform(): 'darwin' | 'linux' | 'win32' {
-  return process.platform === 'darwin' || process.platform === 'linux' || process.platform === 'win32'
-    ? process.platform
-    : 'darwin';
-}
-
 function createSetupThisComputerInteractiveDeps(
   overrides: Partial<SetupThisComputerInteractiveDeps>,
 ): SetupThisComputerInteractiveDeps {
@@ -249,7 +258,7 @@ function createSetupThisComputerInteractiveDeps(
       if (!serverUrl || !webappUrl) {
         throw new SystemTaskExecutionError(
           'relay_configuration_unavailable',
-          'Could not resolve the currently selected Relay configuration.',
+          'Could not resolve the currently selected server configuration.',
         );
       }
 
@@ -258,28 +267,11 @@ function createSetupThisComputerInteractiveDeps(
     createRecipeExecutor: ({ releaseRing }) => createSetupMachineRecipeExecutorFromHappierJsonExecutor({
       executor: createLocalHappierJsonExecutor({ releaseRing }),
     }),
-    readBackgroundServiceSetupGuidance: async ({ targetReleaseChannel, targetServerUrl }) => {
-      const installations = await discoverHappierInstallations({
-        processEnv: process.env,
-        invokedPath: process.execPath,
-      });
-      const managedReleaseChannels = await deriveManagedReleaseChannelInventory({
-        inventory: installations,
-        processEnv: process.env,
-      });
-      const services = await discoverHappierServices({
-        processEnv: process.env,
-        platform: resolveCurrentPlatform(),
-      });
-      return buildBackgroundServiceSetupGuidance({
-        targetReleaseChannel,
-        targetServerUrl,
-        managedReleaseChannelInventory: managedReleaseChannels,
-        services: services.services,
-        platform: resolveCurrentPlatform(),
-        mode: 'user',
-      });
-    },
+    readBackgroundServiceSetupGuidance: async ({ targetReleaseChannel, targetServerUrl }) => readBackgroundServiceSetupGuidance({
+      targetReleaseChannel,
+      targetServerUrl,
+      mode: 'user',
+    }),
     switchDefaultReleaseChannel: async (releaseChannel) => {
       await writeDefaultManagedReleaseChannel({
         processEnv: process.env,

@@ -15,6 +15,24 @@ export {
 } from './spec.js';
 
 export {
+  parseApproveRemoteProvisioningPromptData,
+  parseReleaseChannelSwitchForSetupPromptData,
+  parseReplaceLocalBackgroundServicesPromptData,
+  parseReplaceRemoteBackgroundServicesPromptData,
+  parseSshPasswordPromptData,
+  parseSshTrustPromptData,
+  type ApproveRemoteProvisioningPromptData,
+  type BackgroundServicePromptEntry,
+  type BackgroundServicePromptEntryWithServer,
+  type ManagedReleaseChannelPromptEntry,
+  type ReleaseChannelSwitchForSetupPromptData,
+  type ReplaceLocalBackgroundServicesPromptData,
+  type ReplaceRemoteBackgroundServicesPromptData,
+  type SshPasswordPromptData,
+  type SshTrustPromptData,
+} from './promptPayloadContracts.js';
+
+export {
   SYSTEM_TASK_PROMPT_KINDS_V1,
   SystemTaskPromptKindSchema,
   type SystemTaskPromptKind,

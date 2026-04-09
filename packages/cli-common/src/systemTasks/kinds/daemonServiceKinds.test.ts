@@ -15,12 +15,12 @@ async function waitForResult(
   params: Readonly<{ taskId: string; cursor: number }>,
 ) {
   let latest = await runner.poll(params);
-  for (let attempt = 0; attempt < 50; attempt += 1) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
     latest = await runner.poll(params);
     if (latest.result) {
       return latest;
     }
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 5));
   }
   throw new Error(`Expected final result for ${params.taskId}: ${JSON.stringify(latest)}`);
 }
@@ -135,5 +135,225 @@ describe('daemonServiceKinds', () => {
   it('exports start/restart kinds', () => {
     expect(typeof createDaemonServiceStartTaskKind).toBe('function');
     expect(typeof createDaemonServiceRestartTaskKind).toBe('function');
+  });
+
+  it('reports background-service naming when the local service is missing', async () => {
+    const kind = createDaemonServiceStartTaskKind({
+      readStatus: async () => ({
+        serviceInstalled: false,
+        daemonRunning: false,
+        needsAuth: false,
+        machineId: null,
+        daemonServerUrl: null,
+        daemonComparableKey: null,
+        daemonAccountId: null,
+        daemonMachineRegistered: null,
+      }),
+      startService: async () => {
+        throw new Error('startService should not be called');
+      },
+      stopService: async () => {
+        throw new Error('stopService should not be called');
+      },
+      restartService: async () => {
+        throw new Error('restartService should not be called');
+      },
+    });
+
+    const runner = createSystemTasksRunner({
+      kinds: {
+        'daemon.service.start.v1': kind,
+      },
+    });
+
+    await runner.start({
+      taskId: 'daemon-start',
+      kind: 'daemon.service.start.v1',
+      params: {
+        target: { kind: 'local' },
+        surface: 'test',
+        mode: 'user',
+      },
+    });
+
+    const finalPoll = await waitForResult(runner, { taskId: 'daemon-start', cursor: 0 });
+    expect(finalPoll.result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'daemon_service_not_installed',
+        message: 'Background service is not installed on this computer yet.',
+      },
+    });
+  });
+
+  it('reports selected-server guidance when the local service still needs authentication', async () => {
+    const kind = createDaemonServiceStartTaskKind({
+      readStatus: async () => ({
+        serviceInstalled: true,
+        daemonRunning: false,
+        needsAuth: true,
+        machineId: null,
+        daemonServerUrl: 'https://relay.example.test',
+        daemonComparableKey: 'https://relay.example.test',
+        daemonAccountId: null,
+        daemonMachineRegistered: false,
+      }),
+      startService: async () => {
+        throw new Error('startService should not be called');
+      },
+      stopService: async () => {
+        throw new Error('stopService should not be called');
+      },
+      restartService: async () => {
+        throw new Error('restartService should not be called');
+      },
+    });
+
+    const runner = createSystemTasksRunner({
+      kinds: {
+        'daemon.service.start.v1': kind,
+      },
+    });
+
+    await runner.start({
+      taskId: 'daemon-auth',
+      kind: 'daemon.service.start.v1',
+      params: {
+        target: { kind: 'local' },
+        surface: 'test',
+        mode: 'user',
+      },
+    });
+
+    const finalPoll = await waitForResult(runner, { taskId: 'daemon-auth', cursor: 0 });
+    expect(finalPoll.result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'not_authenticated',
+        message: 'Authenticate this computer with the selected server before continuing.',
+      },
+    });
+  });
+
+  it('reports background-service naming when start does not reach ready state', async () => {
+    let statusReads = 0;
+    const kind = createDaemonServiceStartTaskKind({
+      readStatus: async () => {
+        statusReads += 1;
+        return {
+          serviceInstalled: true,
+          daemonRunning: false,
+          needsAuth: false,
+          machineId: 'machine-1',
+          daemonServerUrl: 'https://relay.example.test',
+          daemonComparableKey: 'https://relay.example.test',
+          daemonAccountId: 'acct_123',
+          daemonMachineRegistered: true,
+        };
+      },
+      startService: async () => undefined,
+      stopService: async () => {
+        throw new Error('stopService should not be called');
+      },
+      restartService: async () => {
+        throw new Error('restartService should not be called');
+      },
+    });
+
+    const previousTimeout = process.env.HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_TIMEOUT_MS;
+    const previousPoll = process.env.HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_POLL_MS;
+    process.env.HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_TIMEOUT_MS = '100';
+    process.env.HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_POLL_MS = '50';
+
+    try {
+      const runner = createSystemTasksRunner({
+        kinds: {
+          'daemon.service.start.v1': kind,
+        },
+      });
+
+      await runner.start({
+        taskId: 'daemon-not-ready',
+        kind: 'daemon.service.start.v1',
+        params: {
+          target: { kind: 'local' },
+          surface: 'test',
+          mode: 'user',
+        },
+      });
+
+      const finalPoll = await waitForResult(runner, { taskId: 'daemon-not-ready', cursor: 0 });
+      expect(statusReads).toBeGreaterThan(1);
+      expect(finalPoll.result).toMatchObject({
+        ok: false,
+        error: {
+          code: 'daemon_service_not_ready',
+          message: 'Background service did not reach a ready state.',
+        },
+      });
+    } finally {
+      if (previousTimeout === undefined) {
+        delete process.env.HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_TIMEOUT_MS;
+      } else {
+        process.env.HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_TIMEOUT_MS = previousTimeout;
+      }
+      if (previousPoll === undefined) {
+        delete process.env.HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_POLL_MS;
+      } else {
+        process.env.HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_POLL_MS = previousPoll;
+      }
+    }
+  });
+
+  it('reports background-service naming when stop does not complete cleanly', async () => {
+    let statusReads = 0;
+    const kind = createDaemonServiceStopTaskKind({
+      readStatus: async () => {
+        statusReads += 1;
+        return {
+          serviceInstalled: true,
+          daemonRunning: true,
+          needsAuth: false,
+          machineId: 'machine-1',
+          daemonServerUrl: 'https://relay.example.test',
+          daemonComparableKey: 'https://relay.example.test',
+          daemonAccountId: 'acct_123',
+          daemonMachineRegistered: true,
+        };
+      },
+      startService: async () => {
+        throw new Error('startService should not be called');
+      },
+      stopService: async () => undefined,
+      restartService: async () => {
+        throw new Error('restartService should not be called');
+      },
+    });
+
+    const runner = createSystemTasksRunner({
+      kinds: {
+        'daemon.service.stop.v1': kind,
+      },
+    });
+
+    await runner.start({
+      taskId: 'daemon-not-stopped',
+      kind: 'daemon.service.stop.v1',
+      params: {
+        target: { kind: 'local' },
+        surface: 'test',
+        mode: 'user',
+      },
+    });
+
+    const finalPoll = await waitForResult(runner, { taskId: 'daemon-not-stopped', cursor: 0 });
+    expect(statusReads).toBeGreaterThan(1);
+    expect(finalPoll.result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'daemon_service_not_stopped',
+        message: 'Background service did not stop cleanly.',
+      },
+    });
   });
 });

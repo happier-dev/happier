@@ -818,6 +818,7 @@ describe('handleMachineCommand', () => {
 
   it('answers remote background service replacement prompts interactively', async () => {
     const respond = vi.fn(async () => undefined);
+    let promptMessage = '';
     await handleMachineCommand(
       ['setup', '--ssh', 'dev@example.test'],
       {
@@ -857,7 +858,10 @@ describe('handleMachineCommand', () => {
           relayUrl: 'https://relay.example.test',
           webappUrl: 'https://app.example.test',
         }),
-        promptInput: async () => 'y',
+        promptInput: async (value) => {
+          promptMessage = value;
+          return 'y';
+        },
         promptSecret: async () => {
           throw new Error('promptSecret should not be used');
         },
@@ -870,6 +874,8 @@ describe('handleMachineCommand', () => {
       taskId: 'task-service-replace',
       answer: { replaceExistingServices: true },
     });
+    expect(promptMessage).toContain('legacy pinned background service');
+    expect(promptMessage).not.toContain('(stable, pinned)');
   });
 
   it('rejects unknown setup flags instead of ignoring them', async () => {

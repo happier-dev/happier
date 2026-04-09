@@ -1,12 +1,18 @@
 param(
   [string] $Channel = $(if ($env:HAPPIER_CHANNEL) { $env:HAPPIER_CHANNEL } else { "stable" }),
   [switch] $SetupRelay,
+  [switch] $WithDaemon,
+  [switch] $WithoutDaemon,
   [string] $Run = $(if ($env:HAPPIER_INSTALLER_RUN_ACTION) { $env:HAPPIER_INSTALLER_RUN_ACTION } else { "" }),
   [Parameter(ValueFromRemainingArguments = $true)]
   [string[]] $RunArgs = @()
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($WithDaemon.IsPresent -and $WithoutDaemon.IsPresent) {
+  throw "Specify either -WithDaemon or -WithoutDaemon, not both."
+}
 
 if ($env:HAPPIER_INSTALLER_SETUP_RELAY -and $env:HAPPIER_INSTALLER_SETUP_RELAY -ne "0") {
   $SetupRelay = $true
@@ -46,7 +52,23 @@ if ($env:HAPPIER_BIN_DIR) {
     Write-Warning "Ignoring HAPPIER_BIN_DIR on Windows; the managed install bin directory is the canonical PATH target."
   }
 }
-$WithDaemon = if ($env:HAPPIER_WITH_DAEMON) { $env:HAPPIER_WITH_DAEMON } else { "1" }
+$Noninteractive = if ($env:HAPPIER_NONINTERACTIVE) { $env:HAPPIER_NONINTERACTIVE } else { "0" }
+$WithDaemonExplicit = $false
+if ($WithDaemon.IsPresent) {
+  $WithDaemonPreference = "1"
+  $WithDaemonExplicit = $true
+}
+elseif ($WithoutDaemon.IsPresent) {
+  $WithDaemonPreference = "0"
+  $WithDaemonExplicit = $true
+}
+elseif ($env:HAPPIER_WITH_DAEMON) {
+  $WithDaemonPreference = $env:HAPPIER_WITH_DAEMON
+  $WithDaemonExplicit = $true
+}
+else {
+  $WithDaemonPreference = "0"
+}
 $DefaultMinisignPubKey = @"
 untrusted comment: minisign public key 91AE28177BF6E43C
 RWQ85PZ7FyiukYbL3qv/bKnwgbT68wLVzotapeMFIb8n+c7pBQ7U8W2t
@@ -89,6 +111,150 @@ function Resolve-InstalledCliInvoker {
   return $null
 }
 
+function ConvertTo-InstallerBoolean {
+  param (
+    [Parameter(Mandatory = $true)] [string] $Raw
+  )
+
+  $value = $Raw.Trim().ToLowerInvariant()
+  switch ($value) {
+    "1" { return "1" }
+    "true" { return "1" }
+    "yes" { return "1" }
+    "on" { return "1" }
+    "0" { return "0" }
+    "false" { return "0" }
+    "no" { return "0" }
+    "off" { return "0" }
+    "" { return "0" }
+    default { throw "Invalid HAPPIER_WITH_DAEMON value '$Raw'. Expected 0/1, true/false, yes/no, or on/off." }
+  }
+}
+
+function Get-DefaultBackgroundServiceChoice {
+  if ($Noninteractive -eq "1") {
+    return "0"
+  }
+  if ($Channel -eq "stable") {
+    return "1"
+  }
+  return "0"
+}
+
+function Test-InteractiveInstallerPromptAvailable {
+  if ($Noninteractive -eq "1") {
+    return $false
+  }
+  try {
+    return [Environment]::UserInteractive -and -not [Console]::IsInputRedirected
+  }
+  catch {
+    return $false
+  }
+}
+
+function Read-BackgroundServicePromptChoice {
+  param (
+    [Parameter(Mandatory = $true)] [string] $DefaultChoice
+  )
+
+  if (-not (Test-InteractiveInstallerPromptAvailable)) {
+    return $DefaultChoice
+  }
+
+  $channelLabel = if ($Channel -eq "publicdev") { "dev" } else { $Channel }
+  $defaultHint = "y/N"
+  $recommendedNote = "recommended: no"
+  if ($DefaultChoice -eq "1") {
+    $defaultHint = "Y/n"
+    $recommendedNote = "recommended: yes"
+  }
+
+  while ($true) {
+    $answer = Read-Host "Install background service for automatic startup on the $channelLabel release-channel? [$defaultHint] ($recommendedNote)"
+    $normalized = ([string]$answer).Trim().ToLowerInvariant()
+    switch ($normalized) {
+      "" { return $DefaultChoice }
+      "y" { return "1" }
+      "yes" { return "1" }
+      "n" { return "0" }
+      "no" { return "0" }
+      default { Write-Warning "Please answer yes or no." }
+    }
+  }
+}
+
+function Resolve-WithDaemonPreference {
+  if ($WithDaemonExplicit) {
+    return ConvertTo-InstallerBoolean -Raw ([string]$WithDaemonPreference)
+  }
+
+  $defaultChoice = Get-DefaultBackgroundServiceChoice
+  if ($Noninteractive -eq "1") {
+    return $defaultChoice
+  }
+  return Read-BackgroundServicePromptChoice -DefaultChoice $defaultChoice
+}
+
+function Invoke-InstallerCommandWithDaemonServiceContext {
+  param (
+    [Parameter(Mandatory = $true)] [string] $CliPath,
+    [Parameter(Mandatory = $true)] [string[]] $CommandArgs,
+    [Parameter(Mandatory = $true)] [string] $HomeDir
+  )
+
+  $previousHomeDir = $env:HAPPIER_HOME_DIR
+  $previousNoninteractive = $env:HAPPIER_NONINTERACTIVE
+  $previousPublicReleaseChannel = $env:HAPPIER_PUBLIC_RELEASE_CHANNEL
+  $previousDaemonServiceChannel = $env:HAPPIER_DAEMON_SERVICE_CHANNEL
+  $previousInstallerDaemonServiceStrategy = $env:HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY
+  try {
+    $channelLabel = if ($Channel -eq "publicdev") { "dev" } else { $Channel }
+    $env:HAPPIER_HOME_DIR = $HomeDir
+    if ($null -eq $previousNoninteractive) {
+      Remove-Item Env:HAPPIER_NONINTERACTIVE -ErrorAction SilentlyContinue
+    }
+    else {
+      $env:HAPPIER_NONINTERACTIVE = $previousNoninteractive
+    }
+    $env:HAPPIER_PUBLIC_RELEASE_CHANNEL = $channelLabel
+    $env:HAPPIER_DAEMON_SERVICE_CHANNEL = $channelLabel
+    & $CliPath @CommandArgs
+  }
+  finally {
+    if ($null -eq $previousHomeDir) {
+      Remove-Item Env:HAPPIER_HOME_DIR -ErrorAction SilentlyContinue
+    }
+    else {
+      $env:HAPPIER_HOME_DIR = $previousHomeDir
+    }
+    if ($null -eq $previousNoninteractive) {
+      Remove-Item Env:HAPPIER_NONINTERACTIVE -ErrorAction SilentlyContinue
+    }
+    else {
+      $env:HAPPIER_NONINTERACTIVE = $previousNoninteractive
+    }
+    if ($null -eq $previousPublicReleaseChannel) {
+      Remove-Item Env:HAPPIER_PUBLIC_RELEASE_CHANNEL -ErrorAction SilentlyContinue
+    }
+    else {
+      $env:HAPPIER_PUBLIC_RELEASE_CHANNEL = $previousPublicReleaseChannel
+    }
+    if ($null -eq $previousDaemonServiceChannel) {
+      Remove-Item Env:HAPPIER_DAEMON_SERVICE_CHANNEL -ErrorAction SilentlyContinue
+    }
+    else {
+      $env:HAPPIER_DAEMON_SERVICE_CHANNEL = $previousDaemonServiceChannel
+    }
+    if ($null -eq $previousInstallerDaemonServiceStrategy) {
+      Remove-Item Env:HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY -ErrorAction SilentlyContinue
+    }
+    else {
+      $env:HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY = $previousInstallerDaemonServiceStrategy
+    }
+  }
+}
+
 function Invoke-PostInstallAction {
   param (
     [Parameter(Mandatory = $true)] [string] $CliPath
@@ -123,53 +289,38 @@ function Invoke-PostInstallAction {
       $argsToPass = @("auth", "login") + $RunArgs
       $requiredSubcommand = "auth"
     }
+    "service-install" {
+      $argsToPass = @("service", "install") + $RunArgs
+      $requiredSubcommand = "service"
+    }
     "daemon-install" {
-      $argsToPass = @("daemon", "install") + $RunArgs
-      $requiredSubcommand = "daemon"
+      $argsToPass = @("service", "install") + $RunArgs
+      $requiredSubcommand = "service"
     }
     "providers-setup" {
       $argsToPass = @("providers", "setup") + $RunArgs
       $requiredSubcommand = "providers"
     }
     default {
-      throw "Unknown -Run action '$Run'. Expected one of: setup-relay, setup, auth-login, daemon-install, providers-setup."
+      throw "Unknown -Run action '$Run'. Expected one of: setup-relay, setup, auth-login, service-install, providers-setup."
     }
   }
 
-  $previousHappyHomeDir = $env:HAPPIER_HOME_DIR
-  $previousNoninteractive = $env:HAPPIER_NONINTERACTIVE
-  $env:HAPPIER_HOME_DIR = $InstallDir
-  try {
-    if ($requiredSubcommand) {
-      $invokerName = (Split-Path -Leaf $CliPath)
-      if ([string]::IsNullOrWhiteSpace($invokerName)) { $invokerName = "happier" }
+  if ($requiredSubcommand) {
+    $invokerName = (Split-Path -Leaf $CliPath)
+    if ([string]::IsNullOrWhiteSpace($invokerName)) { $invokerName = "happier" }
+    $helpOutput = ""
+    try {
+      $helpOutput = (& $CliPath --help 2>$null | Out-String)
+    } catch {
       $helpOutput = ""
-      try {
-        $helpOutput = (& $CliPath --help 2>$null | Out-String)
-      } catch {
-        $helpOutput = ""
-      }
-      $pattern = "(?m)^\\s*($([Regex]::Escape($invokerName))|happier)\\s+$([Regex]::Escape($requiredSubcommand))\\b"
-      if (-not ($helpOutput -match $pattern)) {
-        throw "Installed Happier CLI does not support the '$requiredSubcommand' command surface required for -Run $runValue. Update your Happier CLI (or switch installer channel) and try again."
-      }
     }
-    & $CliPath @argsToPass
-  }
-  finally {
-    if ($null -eq $previousHappyHomeDir) {
-      Remove-Item Env:HAPPIER_HOME_DIR -ErrorAction SilentlyContinue
-    }
-    else {
-      $env:HAPPIER_HOME_DIR = $previousHappyHomeDir
-    }
-    if ($null -eq $previousNoninteractive) {
-      Remove-Item Env:HAPPIER_NONINTERACTIVE -ErrorAction SilentlyContinue
-    }
-    else {
-      $env:HAPPIER_NONINTERACTIVE = $previousNoninteractive
+    $pattern = "(?m)^\\s*($([Regex]::Escape($invokerName))|happier)\\s+$([Regex]::Escape($requiredSubcommand))\\b"
+    if (-not ($helpOutput -match $pattern)) {
+      throw "Installed Happier CLI does not support the '$requiredSubcommand' command surface required for -Run $runValue. Update your Happier CLI (or switch installer channel) and try again."
     }
   }
+  Invoke-InstallerCommandWithDaemonServiceContext -CliPath $CliPath -CommandArgs $argsToPass -HomeDir $InstallDir
 }
 
 if (($SetupRelay -or $Run) -and ($existing = Resolve-InstalledCliInvoker)) {
@@ -185,12 +336,61 @@ function Get-AssetByPattern {
   return $Release.assets | Where-Object { $_.name -match $Pattern } | Select-Object -First 1
 }
 
+function Resolve-MinisignExecutablePath {
+  param (
+    [string[]] $AdditionalPathEntries = @()
+  )
+
+  $command = Get-Command minisign -ErrorAction SilentlyContinue
+  if ($command) {
+    return $command.Source
+  }
+
+  foreach ($pathEntry in $AdditionalPathEntries) {
+    $trimmedEntry = [string]$pathEntry
+    if (-not $trimmedEntry) {
+      continue
+    }
+
+    $candidate = Join-Path $trimmedEntry.Trim() "minisign.exe"
+    if (Test-Path $candidate) {
+      return $candidate
+    }
+  }
+
+  return $null
+}
+
+function Invoke-NativeCommandCapturingOutput {
+  param (
+    [Parameter(Mandatory = $true)] [scriptblock] $Command
+  )
+
+  $previousErrorActionPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = "Continue"
+    $output = & $Command 2>&1 | Out-String
+    $exitCode = $LASTEXITCODE
+    if ($null -eq $exitCode) {
+      $exitCode = 1
+    }
+    return @{
+      Output = if ($null -eq $output) { "" } else { $output }
+      ExitCode = $exitCode
+    }
+  }
+  finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+}
+
 function Ensure-Minisign {
   param (
     [Parameter(Mandatory = $true)] [string] $TempRoot
   )
-  if (Get-Command minisign -ErrorAction SilentlyContinue) {
-    return "minisign"
+  $existingMinisign = Resolve-MinisignExecutablePath
+  if ($existingMinisign) {
+    return $existingMinisign
   }
 
   # Self-contained fallback: download a known minisign release asset.
@@ -211,6 +411,40 @@ function Ensure-Minisign {
   if (-not $exe) {
     throw "Failed to locate minisign.exe in bootstrap archive."
   }
+
+  try {
+    & $exe.FullName --version *> $null
+  }
+  catch {
+    Write-Warning "Downloaded minisign binary is not compatible with this system. Attempting install via winget..."
+    try {
+      $wingetInstallResult = Invoke-NativeCommandCapturingOutput {
+        winget install --id jedisct1.minisign --accept-source-agreements --accept-package-agreements
+      }
+      if ($wingetInstallResult.ExitCode -ne 0) {
+        if ($wingetInstallResult.Output) {
+          Write-Warning $wingetInstallResult.Output.Trim()
+        }
+        throw "winget install failed."
+      }
+      $pathEntries = @()
+      $userPath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User)
+      if ($userPath) {
+        $pathEntries += $userPath -split ';'
+      }
+      $machinePath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::Machine)
+      if ($machinePath) {
+        $pathEntries += $machinePath -split ';'
+      }
+      $wingetMinisign = Resolve-MinisignExecutablePath -AdditionalPathEntries $pathEntries
+      if ($wingetMinisign) {
+        return $wingetMinisign
+      }
+    }
+    catch {}
+    throw "minisign is not available and could not be installed automatically. Please install minisign manually (for example, 'winget install jedisct1.minisign') and retry."
+  }
+
   return $exe.FullName
 }
 
@@ -285,8 +519,13 @@ try {
 
   $minisign = Ensure-Minisign -TempRoot $tmpDir.FullName
   Resolve-MinisignPublicKey -TargetPath $pubKeyPath
-  & $minisign -Vm $checksumsPath -x $signaturePath -p $pubKeyPath *> $null
-  if ($LASTEXITCODE -ne 0) {
+  $minisignVerifyResult = Invoke-NativeCommandCapturingOutput {
+    & $minisign -Vm $checksumsPath -x $signaturePath -p $pubKeyPath
+  }
+  if ($minisignVerifyResult.ExitCode -ne 0) {
+    if ($minisignVerifyResult.Output) {
+      Write-Warning $minisignVerifyResult.Output.Trim()
+    }
     throw "Signature verification failed."
   }
   Write-Host "Signature verified."
@@ -310,25 +549,34 @@ try {
   New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
 
   $previousHappyHomeDir = $env:HAPPIER_HOME_DIR
-  $env:HAPPIER_HOME_DIR = $InstallDir
-  $promotionOutput = & $binary self __install-payload --component happier-cli --payload-root $payloadRoot --version $version --channel $Channel 2>&1 | Out-String
-  if ($LASTEXITCODE -ne 0) {
-    if ($promotionOutput -match 'Unknown self subcommand:\s+__install-payload') {
-      Write-Warning "Falling back to legacy binary install because the extracted CLI does not support payload promotion."
+  try {
+    $env:HAPPIER_HOME_DIR = $InstallDir
+    $promotionResult = Invoke-NativeCommandCapturingOutput {
+      & $binary self __install-payload --component happier-cli --payload-root $payloadRoot --version $version --channel $Channel
+    }
+  }
+  finally {
+    if ($null -eq $previousHappyHomeDir) {
+      Remove-Item Env:HAPPIER_HOME_DIR -ErrorAction SilentlyContinue
+    }
+    else {
+      $env:HAPPIER_HOME_DIR = $previousHappyHomeDir
+    }
+  }
+  if ($promotionResult.ExitCode -ne 0) {
+    if ($promotionResult.Output -match 'Unknown self subcommand:\s+__install-payload') {
+      Write-Warning "Payload promotion failed, falling back to direct binary copy."
+      if ($promotionResult.Output) {
+        Write-Warning $promotionResult.Output.Trim()
+      }
       Copy-Item -Path $binary -Destination $target -Force
     }
     else {
-      if ($promotionOutput) {
-        Write-Error $promotionOutput.Trim()
+      if ($promotionResult.Output) {
+        Write-Warning $promotionResult.Output.Trim()
       }
-      throw "Failed to promote extracted Happier payload."
+      throw "Payload promotion failed."
     }
-  }
-  if ($null -eq $previousHappyHomeDir) {
-    Remove-Item Env:HAPPIER_HOME_DIR -ErrorAction SilentlyContinue
-  }
-  else {
-    $env:HAPPIER_HOME_DIR = $previousHappyHomeDir
   }
   if ($LegacyBinDir -ne $BinDir) {
     Remove-Item -Path (Join-Path $LegacyBinDir "happier.exe") -Force -ErrorAction SilentlyContinue
@@ -357,12 +605,13 @@ try {
   Write-Host "Happier CLI installed at $invoker"
   & $invoker --version
 
-  if ($WithDaemon -ne "0") {
-    Write-Host "Installing daemon service (user-mode)..."
+  $resolvedWithDaemon = Resolve-WithDaemonPreference
+  if ($resolvedWithDaemon -ne "0") {
+    Write-Host "Installing background service (user-mode)..."
     try {
-      & $invoker daemon service install *> $null
+      Invoke-InstallerCommandWithDaemonServiceContext -CliPath $invoker -CommandArgs @("service", "install") -HomeDir $InstallDir *> $null
     } catch {
-      Write-Warning "daemon service install failed. You can retry manually: `"$invoker daemon service install`""
+      Write-Warning "background service install failed. You can retry manually: `"$invoker service install`""
     }
   }
 

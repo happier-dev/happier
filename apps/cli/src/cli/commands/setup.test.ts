@@ -66,6 +66,8 @@ describe('happier setup', () => {
       expect(text).toContain('happier setup plan');
       expect(text).toContain('Examples:');
       expect(text).toContain('Notes:');
+      expect(text).toContain('Sets up this computer for a server');
+      expect(text).not.toContain('Sets up this computer for a Relay');
       expect(text).not.toContain('Description:');
     });
   });
@@ -79,7 +81,7 @@ describe('happier setup', () => {
       const text = stripAnsi(output.logs.join('\n'));
       expect(output.logs[0]?.startsWith('\n')).toBe(false);
       expect(text).toContain('Setup plan');
-      expect(text).toContain('Relay:');
+      expect(text).toContain('Server:');
       expect(text).toContain('https://relay.example.test');
       expect(text).toContain('1. happier auth login');
     });
@@ -335,11 +337,11 @@ describe('happier setup', () => {
 
       expect(promptInputFn).toHaveBeenNthCalledWith(
         1,
-        'Make preview the default release-channel before installing the background service for https://relay.example.test? [Y/n] ',
+        'Make preview the default release-channel before installing the default background service targeting https://relay.example.test? [Y/n] ',
       );
       expect(promptInputFn).toHaveBeenNthCalledWith(
         2,
-        'This computer already has conflicting Happier background services for https://relay.example.test. Replace them before continuing? [Y/n] ',
+        'This computer already has conflicting Happier background services. Replace them before installing the default background service targeting https://relay.example.test? [Y/n] ',
       );
       expect(writeDefaultManagedReleaseChannelFn).toHaveBeenCalledWith({
         processEnv: process.env,
@@ -353,6 +355,57 @@ describe('happier setup', () => {
       expect(calls).toEqual([
         ['service', 'uninstall', '--all', '--yes'],
         ['service', 'install'],
+        ['providers', 'setup', '--yes'],
+      ]);
+    });
+  });
+
+  it('reuses an exact default background service instead of reinstalling it during setup', async () => {
+    await withTempDir('happier-setup-reuse-default-background-service-', async (homeDir) => {
+      envScope.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_SERVER_URL: 'https://relay.example.test', HAPPIER_ACTIVE_SERVER_ID: undefined });
+      vi.resetModules();
+      const { handleSetupCommand } = await importHandleSetupCommand();
+
+      const calls: string[][] = [];
+      await handleSetupCommand(
+        ['--relay-url', 'https://relay.example.test', '--yes'],
+        {
+          applyServerSelectionFromArgs: async (args) => args,
+          readCredentialsFn: async () => ({ encryption: { type: 'legacy', secret: new Uint8Array([1]) }, token: 't' } as any),
+          readSettingsFn: async () => ({ machineId: 'mid_123' } as any),
+          isInteractiveTerminalFn: () => false,
+          promptInputFn: async () => {
+            throw new Error('prompt should not be used');
+          },
+          readBackgroundServiceSetupGuidanceFn: async () => ({
+            targetReleaseChannel: 'stable',
+            targetServerUrl: 'https://relay.example.test',
+            currentDefaultReleaseChannel: 'stable',
+            managedReleaseChannels: [
+              {
+                releaseChannel: 'stable',
+                label: 'stable',
+                version: '1.0.0',
+                installationId: 'stable-install',
+                installationPath: '/managed/stable',
+                invokerName: 'happier',
+                isDefault: true,
+                onPath: true,
+              },
+            ],
+            exactDefaultServiceExists: true,
+            conflictingServices: [],
+            shouldOfferDefaultReleaseChannelSwitch: false,
+            shouldPromptForServiceReplacement: false,
+          }),
+          runHappyCliStepFn: async (argv) => {
+            calls.push([...argv]);
+            return 0;
+          },
+        },
+      );
+
+      expect(calls).toEqual([
         ['providers', 'setup', '--yes'],
       ]);
     });

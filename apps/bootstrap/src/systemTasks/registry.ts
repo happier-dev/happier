@@ -404,7 +404,7 @@ function createRelayDriftRepairDeps(override?: Partial<RelayDriftRepairDeps>): R
       if (!authStatus.authenticated) {
         throw new systemTasks.SystemTaskExecutionError(
           'not_authenticated',
-          'Authenticate this computer with the selected Relay before continuing.',
+          'Authenticate this computer with the selected server before continuing.',
         );
       }
 
@@ -420,7 +420,7 @@ function createRelayDriftRepairDeps(override?: Partial<RelayDriftRepairDeps>): R
       if (!daemonStatus.serviceInstalled || !daemonStatus.daemonRunning || daemonStatus.needsAuth) {
         throw new systemTasks.SystemTaskExecutionError(
           'daemon_service_not_ready',
-          'Daemon service did not reach a ready state for the selected Relay.',
+          'Background service did not reach a ready state for the selected server.',
         );
       }
 

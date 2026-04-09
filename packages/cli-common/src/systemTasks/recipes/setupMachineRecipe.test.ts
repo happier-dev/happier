@@ -176,10 +176,10 @@ describe('runSetupMachineRecipe', () => {
       },
       signal: new AbortController().signal,
       emit() {},
-      daemonReadinessErrorMessage: 'Daemon service did not reach a ready state for the selected Relay.',
+      daemonReadinessErrorMessage: 'Background service did not reach a ready state for the selected server.',
     })).rejects.toEqual(expect.objectContaining({
       code: 'daemon_service_not_ready',
-      message: 'Daemon service did not reach a ready state for the selected Relay.',
+      message: 'Background service did not reach a ready state for the selected server.',
     }));
   });
 

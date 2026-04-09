@@ -1,25 +1,31 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { collectWorkflowScriptParityReport } from './workflowScriptParity.ts';
+
+const ROOT_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../..');
 
 function createPackageJsonText(): string {
   return JSON.stringify(
     {
       scripts: {
         test: 'yarn -s test:unit',
-        'test:unit': 'yarn workspace @happier-dev/protocol test && yarn workspace @happier-dev/transfers test && yarn workspace @happier-dev/agents test && yarn workspace @happier-dev/cli-common test && yarn workspace @happier-dev/connection-supervisor test && yarn workspace @happier-dev/bootstrap test && yarn workspace @happier-dev/app test && yarn workspace @happier-dev/cli test:unit && yarn --cwd apps/server test:unit && yarn --cwd packages/relay-server test && yarn --cwd apps/stack test:unit',
+        'test:unit': 'yarn workspace @happier-dev/protocol test && yarn workspace @happier-dev/transfers test && yarn workspace @happier-dev/agents test && yarn workspace @happier-dev/cli-common test && yarn workspace @happier-dev/support test && yarn workspace @happier-dev/connection-supervisor test && yarn workspace @happier-dev/bootstrap test && yarn workspace @happier-dev/app test && yarn workspace @happier-dev/cli test:unit && yarn --cwd apps/server test:unit && yarn --cwd packages/relay-server test && yarn --cwd apps/stack test:unit',
         'test:integration': 'yarn workspace @happier-dev/app test:integration && yarn workspace @happier-dev/cli test:integration && yarn --cwd apps/server test:integration && yarn --cwd apps/stack test:integration',
         'test:e2e:core:fast': 'yarn workspace @happier-dev/tests test:core:fast',
         'test:e2e:core:slow': 'yarn workspace @happier-dev/tests test:core:slow',
         'test:e2e:ui': 'yarn workspace @happier-dev/tests test:ui:e2e',
+        'test:e2e:desktop:native': 'yarn workspace @happier-dev/app test:native-e2e:activity-surfaces',
         'test:e2e:ui:wsrepl:lima': 'yarn workspace @happier-dev/tests test:ui:e2e:wsrepl:lima',
         'test:e2e:ui:wsrepl:lima:self': 'yarn workspace @happier-dev/tests test:ui:e2e:wsrepl:lima:self',
         'test:e2e:mobile': 'yarn workspace @happier-dev/tests test:mobile:e2e:android',
         'test:providers': 'yarn workspace @happier-dev/tests test:providers',
         'test:stress': 'yarn workspace @happier-dev/tests test:stress',
         'test:db-contract:docker': 'yarn -s test:db-contract:postgres:docker && yarn -s test:db-contract:mysql:docker',
-        'test:wiring:self': 'node --import tsx --test scripts/testing/lib/*.test.ts scripts/testing/*.test.ts',
+        'test:wiring:self': 'node --experimental-strip-types --test scripts/testing/lib/*.test.ts scripts/testing/validateTestWiring.test.ts',
         'test:wiring': 'node --import tsx ./scripts/testing/validateTestWiring.ts',
         'test:policy:self': 'node --import tsx --test scripts/testing/lib/*.test.ts scripts/testing/*.test.ts scripts/testing/migrations/lib/*.test.ts',
         'test:policy': 'node --import tsx ./scripts/testing/validateTestPolicy.ts',
@@ -41,6 +47,7 @@ jobs:
       - run: yarn workspace @happier-dev/transfers test
       - run: yarn workspace @happier-dev/agents test
       - run: yarn workspace @happier-dev/cli-common test
+      - run: yarn workspace @happier-dev/support test
       - run: yarn workspace @happier-dev/connection-supervisor test
       - run: yarn workspace @happier-dev/bootstrap test
       - run: yarn workspace @happier-dev/app test:unit
@@ -72,6 +79,7 @@ yarn test:integration
 yarn test:e2e:core:fast
 yarn test:e2e:core:slow
 yarn test:e2e:ui
+yarn test:e2e:desktop:native
 yarn test:e2e:ui:wsrepl:lima
 yarn test:e2e:ui:wsrepl:lima:self
 yarn test:e2e:mobile
@@ -155,4 +163,32 @@ test('tracks optional workflow coverage for the WSREPL Lima UI lane', () => {
 
   const messages = report.issues.map((issue) => issue.message).join('\n');
   assert.doesNotMatch(messages, /test:e2e:ui:wsrepl:lima/);
+});
+
+test('requires the native desktop e2e root script and docs even though workflow coverage stays local-only', () => {
+  const packageJson = JSON.parse(createPackageJsonText());
+  delete packageJson.scripts['test:e2e:desktop:native'];
+
+  const report = collectWorkflowScriptParityReport({
+    packageJsonText: JSON.stringify(packageJson, null, 2),
+    workflowText: createWorkflowText(),
+    docsText: createDocsText().replace('yarn test:e2e:desktop:native\n', ''),
+    configTexts: createFeatureGatingConfigTexts(),
+  });
+
+  const messages = report.issues.map((issue) => issue.message).join('\n');
+  assert.match(messages, /Missing root script test:e2e:desktop:native/);
+  assert.match(messages, /Docs are missing command yarn test:e2e:desktop:native/);
+  assert.doesNotMatch(messages, /Workflow coverage is missing for test:e2e:desktop:native/);
+});
+
+test('wires packages/support into the default root validation lanes', () => {
+  const packageJson = JSON.parse(readFileSync(join(ROOT_DIR, 'package.json'), 'utf8')) as {
+    scripts?: Record<string, string | undefined>;
+  };
+  const workflowText = readFileSync(join(ROOT_DIR, '.github/workflows/tests.yml'), 'utf8');
+
+  assert.match(packageJson.scripts?.['test:unit'] ?? '', /yarn workspace @happier-dev\/support test/);
+  assert.match(packageJson.scripts?.['typecheck:inner'] ?? '', /yarn workspace @happier-dev\/support typecheck/);
+  assert.match(workflowText, /yarn workspace @happier-dev\/support test/);
 });

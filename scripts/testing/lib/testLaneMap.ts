@@ -3,6 +3,7 @@ import { FEATURE_IDS } from './protocolFeatureIds.ts';
 export type LaneId =
   | 'test'
   | 'test:integration'
+  | 'test:e2e:desktop:native'
   | 'cli:test:slow'
   | 'website:test'
   | 'release-runtime:test'
@@ -30,6 +31,13 @@ export interface TestLaneDefinition {
 export const TEST_LANE_DEFINITIONS: readonly TestLaneDefinition[] = Object.freeze([
   { id: 'test', category: 'unit', rootScriptName: 'test', rootCommand: 'yarn test', packageLocalOnly: false },
   { id: 'test:integration', category: 'integration', rootScriptName: 'test:integration', rootCommand: 'yarn test:integration', packageLocalOnly: false },
+  {
+    id: 'test:e2e:desktop:native',
+    category: 'e2e',
+    rootScriptName: 'test:e2e:desktop:native',
+    rootCommand: 'yarn test:e2e:desktop:native',
+    packageLocalOnly: false,
+  },
   { id: 'cli:test:slow', category: 'integration', rootScriptName: null, rootCommand: null, packageLocalOnly: true },
   { id: 'website:test', category: 'website', rootScriptName: null, rootCommand: null, packageLocalOnly: true },
   { id: 'release-runtime:test', category: 'unit', rootScriptName: null, rootCommand: null, packageLocalOnly: true },
@@ -95,6 +103,7 @@ const ROOT_UNIT_PACKAGE_PREFIXES = [
   'packages/transfers/',
   'packages/agents/',
   'packages/cli-common/',
+  'packages/support/',
   'packages/connection-supervisor/',
   'packages/relay-server/',
 ];
@@ -119,6 +128,7 @@ export function classifyTestFile(relativePath: string): LaneId | null {
   }
 
   if (relativePath.startsWith('apps/ui/')) {
+    if (/^apps\/ui\/scripts\/qa\/.+\.native-e2e\.test\.[cm]?[jt]s$/.test(relativePath)) return 'test:e2e:desktop:native';
     if (UI_INTEGRATION_RE.test(relativePath)) return 'test:integration';
     return UNIT_TEST_RE.test(relativePath) ? 'test' : null;
   }

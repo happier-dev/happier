@@ -17,12 +17,6 @@ describe('runCleanupSupportCommand', () => {
                     preferredCliCommand: 'hprev',
                     warnings: [
                         {
-                            code: 'ORPHAN_DAEMON_SERVICE',
-                            title: 'Orphan daemon',
-                            severity: 'warning',
-                            details: ['happier doctor repair --yes', 'happier daemon service list --json'],
-                        },
-                        {
                             code: 'DAEMON_STARTED_WITH_DIFFERENT_CLI',
                             title: 'Version mismatch',
                             severity: 'warning',
@@ -37,8 +31,7 @@ describe('runCleanupSupportCommand', () => {
             ok: true,
             executed: false,
             actions: [
-                { command: 'hprev service repair --yes', reason: 'ORPHAN_DAEMON_SERVICE' },
-                { command: 'hprev daemon restart', reason: 'DAEMON_STARTED_WITH_DIFFERENT_CLI' },
+                { command: 'hprev service repair --yes', reason: 'DAEMON_STARTED_WITH_DIFFERENT_CLI' },
             ],
         });
     });

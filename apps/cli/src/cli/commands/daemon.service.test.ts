@@ -151,6 +151,40 @@ describe('happier daemon service', () => {
     });
   });
 
+  it('humanizes plain-text service paths target labels', async () => {
+    const envScope = createEnvKeyScope([
+      'HAPPIER_DAEMON_SERVICE_PLATFORM',
+      'HAPPIER_DAEMON_SERVICE_USER_HOME_DIR',
+      'HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR',
+      'HAPPIER_DAEMON_SERVICE_INSTANCE_ID',
+      'HAPPIER_DAEMON_SERVICE_TARGET_MODE',
+    ]);
+
+    await withTempDir('happier-daemon-service-plain-target-', async (tmp) => {
+      envScope.patch({
+        HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux',
+        HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: tmp,
+        HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: join(tmp, '.happier'),
+        HAPPIER_DAEMON_SERVICE_INSTANCE_ID: 'cloud',
+        HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
+      });
+
+      const stdout = captureStdout();
+      try {
+        await commandRegistry.service({
+          args: ['service', 'paths'],
+          rawArgv: [],
+          terminalRuntime: null,
+        });
+
+        expect(stdout.text()).toContain('target: default background service');
+      } finally {
+        stdout.restore();
+        envScope.restore();
+      }
+    });
+  });
+
   it('prints an install plan in --dry-run --json without writing files', async () => {
     const envScope = createEnvKeyScope([
       'HAPPIER_DAEMON_SERVICE_PLATFORM',

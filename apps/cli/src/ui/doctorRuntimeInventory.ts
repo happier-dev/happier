@@ -5,6 +5,7 @@ import {
   sectionTitle,
   warn,
 } from '@happier-dev/cli-common/output';
+import { describeBackgroundServiceTargetMode } from '@happier-dev/cli-common/happierRuntime';
 
 import type { DoctorSnapshot } from './doctorSnapshot';
 
@@ -85,7 +86,7 @@ function formatServiceLine(service: HappierDoctorService): string {
     serviceTypeLabel,
     service.label,
     service.backend,
-    service.targetMode ?? null,
+    service.targetMode ? describeBackgroundServiceTargetMode(service.targetMode) : null,
     service.ring ?? null,
     service.instanceId ?? null,
     service.publicServerUrl ?? service.serverUrl ?? null,

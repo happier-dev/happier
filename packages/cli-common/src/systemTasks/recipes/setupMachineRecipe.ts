@@ -87,7 +87,7 @@ export async function runSetupMachineRecipe(params: Readonly<{
   };
 
   if (steps.configureRelay !== false) {
-    emitProgress(stepIds.configureRelay, 'Configuring relay');
+    emitProgress(stepIds.configureRelay, 'Configuring server connection');
     await params.executor.configureRelay(params.relayProfile);
   }
 
@@ -175,7 +175,7 @@ export async function runSetupMachineRecipe(params: Readonly<{
     if (!daemonStatus.serviceInstalled || !daemonStatus.daemonRunning || daemonStatus.needsAuth) {
       throw new SystemTaskExecutionError(
         'daemon_service_not_ready',
-        params.daemonReadinessErrorMessage ?? 'Daemon service did not reach a ready state.',
+        params.daemonReadinessErrorMessage ?? 'Background service did not reach a ready state.',
       );
     }
   }
