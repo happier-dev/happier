@@ -73,25 +73,28 @@ export function normalizeSessionListRenderableMetadataComparison(
     snapshot: SessionListRenderableMetadataComparisonSnapshot,
     previous?: SessionListRenderableMetadata | null,
 ): SessionListRenderableMetadataComparison {
+    const normalizedSnapshot = {
+        ...snapshot,
+    };
     const nextDirectSessionV1 = readDirectSessionRenderableMetadata(
-        snapshot.directSessionV1,
+        normalizedSnapshot.directSessionV1,
         previous?.directSessionV1 ?? null,
     );
 
-    if (previous && isSessionListRenderableMetadataComparisonSnapshotEqual(snapshot, previous, nextDirectSessionV1)) {
+    if (previous && isSessionListRenderableMetadataComparisonSnapshotEqual(normalizedSnapshot, previous, nextDirectSessionV1)) {
         return previous as SessionListRenderableMetadataComparison;
     }
 
     const next: SessionListRenderableMetadataComparison = {
-        name: snapshot.name,
-        summaryText: snapshot.summaryText,
-        path: snapshot.path,
-        homeDir: snapshot.homeDir,
-        host: snapshot.host,
-        machineId: snapshot.machineId,
-        flavor: snapshot.flavor,
+        name: normalizedSnapshot.name,
+        summaryText: normalizedSnapshot.summaryText,
+        path: normalizedSnapshot.path,
+        homeDir: normalizedSnapshot.homeDir,
+        host: normalizedSnapshot.host,
+        machineId: normalizedSnapshot.machineId,
+        flavor: normalizedSnapshot.flavor,
         directSessionV1: nextDirectSessionV1,
-        hiddenSystemSession: snapshot.hiddenSystemSession,
+        hiddenSystemSession: normalizedSnapshot.hiddenSystemSession,
     };
 
     return previous && areSessionListRenderableMetadataComparisonsEqual(previous, next)

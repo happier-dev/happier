@@ -10,6 +10,7 @@ import {
 } from '@/components/sessions/runs/details/SessionExecutionRunDetailsView';
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { t } from '@/text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 
@@ -23,10 +24,10 @@ export default function SessionRunDetailsScreen() {
     const { theme } = useUnistyles();
     const router = useRouter();
     const navigation = useNavigation();
-    const params = useLocalSearchParams();
-    const sessionId = normalizeParam((params as Record<string, unknown>)?.id);
-    const runId = normalizeParam((params as Record<string, unknown>)?.runId);
-    const hydrateReady = useHydrateSessionForRoute(sessionId ?? '', 'SessionRunDetailsScreen.hydrate');
+    const params = useLocalSearchParams<{ id?: string | string[]; runId?: string | string[] }>();
+    const sessionId = normalizeSessionId(params.id);
+    const runId = normalizeParam(params.runId);
+    const hydrateReady = useHydrateSessionForRoute(sessionId, 'SessionRunDetailsScreen.hydrate');
     const detailsRef = React.useRef<SessionExecutionRunDetailsViewHandle | null>(null);
     const headerTint = theme.colors.header?.tint ?? theme.colors.text;
     const parentSessionHref = sessionId ? `/session/${encodeURIComponent(sessionId)}` : '/session';

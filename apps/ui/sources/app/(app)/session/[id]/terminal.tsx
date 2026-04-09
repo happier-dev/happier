@@ -9,6 +9,7 @@ import { SessionRightPanel } from '@/components/sessions/panes/SessionRightPanel
 import { buildActiveDetailsRouteParams } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { useLocalSetting } from '@/sync/domains/state/storage';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -18,9 +19,9 @@ export default function TerminalScreenRoute() {
     const navigation = useNavigation();
     const isFocused = useIsFocused();
     const { id: sessionIdParam } = useLocalSearchParams<{ id: string }>();
-    const sessionId = String(sessionIdParam ?? '').trim();
+    const sessionId = normalizeSessionId(sessionIdParam);
     const sessionHydrated = useHydrateSessionForRoute(sessionId, 'SessionTerminalRoute.ensureSessionVisible');
-    const scopeId = React.useMemo(() => `session:${sessionId}`, [sessionId]);
+    const scopeId = `session:${sessionId}`;
     const pane = useAppPaneScope(scopeId);
     const openRight = pane.openRight;
     const closeRight = pane.closeRight;

@@ -126,6 +126,7 @@ vi.mock('@/components/sessions/model/inactiveSessionUi', () => ({
 }));
 vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true, machineRpcTargetAvailable: true }),
+    useSessionReachableMachineTarget: () => null,
 }));
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
@@ -190,14 +191,14 @@ installSessionShellCommonModuleMocks({
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
             storage: {
-                getState: () => ({
-                    sessions: { s1: sessionState.current },
-                    settings: {},
-                    sessionListViewDataByServerId: {},
-                }),
-            },
-            useSession: () => sessionState.current,
-            useAutomations: () => [],
+	                getState: () => ({
+	                    sessions: { s1: sessionState.current },
+	                    settings: {},
+	                    concurrentSessionListCacheByServerId: {},
+	                }),
+	            },
+	            useSession: () => sessionState.current,
+	            useAutomations: () => [],
             useIsDataReady: () => true,
             useRealtimeStatus: () => ({ current: { status: 'connected' } as any }),
             useSessionMessages: () => ({ messages: [], isLoaded: true }),

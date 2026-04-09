@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
-import type { SessionListViewItem } from '@/sync/domains/session/listing/sessionListViewData';
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 
 const summaryState = vi.hoisted(() => ({
     selection: {
@@ -12,33 +13,46 @@ const summaryState = vi.hoisted(() => ({
         explicit: false,
         activeTarget: { kind: 'server', id: 'srv-a', serverId: 'srv-a' },
     } as any,
-    activeData: null as SessionListViewItem[] | null,
+    activeIndex: null as SessionListIndexItem[] | null,
     byServerId: {
         'srv-a': [
             {
                 type: 'session',
-                session: {
-                    id: 'session-1',
-                    seq: 0,
-                    createdAt: 0,
-                    updatedAt: 0,
-                    active: false,
-                    activeAt: 0,
-                    metadata: {
-                        path: '',
-                        directSessionV1: { v: 1 },
-                    },
-                    metadataVersion: 0,
-                    agentStateVersion: 0,
-                    thinking: false,
-                    thinkingAt: 0,
-                    presence: 0,
-                },
+                sessionId: 'session-1',
+                storageKind: 'direct',
                 serverId: 'srv-a',
                 serverName: 'Server A',
             },
-        ] as SessionListViewItem[],
+        ] as SessionListIndexItem[],
     },
+    rowsByServerId: {
+        'srv-a': {
+            'session-1': {
+                id: 'session-1',
+                seq: 0,
+                createdAt: 0,
+                updatedAt: 0,
+                active: false,
+                activeAt: 0,
+                archivedAt: null,
+                pendingVersion: undefined,
+                pendingCount: undefined,
+                metadataVersion: 0,
+                agentStateVersion: 0,
+                metadata: { path: '', directSessionV1: { v: 1 } },
+                thinking: false,
+                thinkingAt: 0,
+                presence: 0,
+                owner: undefined,
+                accessLevel: undefined,
+                canApprovePermissions: undefined,
+                hasPendingPermissionRequests: undefined,
+                hasPendingUserActionRequests: undefined,
+                hasUnreadMessages: false,
+                keepVisibleWhenInactive: false,
+            } satisfies SessionListRenderableSession,
+        },
+    } as Record<string, Record<string, SessionListRenderableSession>>,
 }));
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
@@ -46,8 +60,8 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     return createStorageModuleMock({
         importOriginal,
         overrides: {
-            useSessionListViewData: () => summaryState.activeData,
-            useServerScopedSessionListCache: () => summaryState.byServerId,
+            useSessionListIndexByServerId: () => summaryState.byServerId,
+            useSessionListRowStateByServerId: () => summaryState.rowsByServerId,
         },
     });
 });
@@ -67,32 +81,22 @@ describe('useVisibleSessionListSummaryState', () => {
             explicit: false,
             activeTarget: { kind: 'server', id: 'srv-a', serverId: 'srv-a' },
         };
-        summaryState.activeData = null;
+        summaryState.activeIndex = null;
         summaryState.byServerId = {
             'srv-a': [
                 {
                     type: 'session',
-                    session: {
-                        id: 'session-1',
-                        seq: 0,
-                        createdAt: 0,
-                        updatedAt: 0,
-                        active: false,
-                        activeAt: 0,
-                        metadata: {
-                            path: '',
-                            directSessionV1: { v: 1 },
-                        },
-                        metadataVersion: 0,
-                        agentStateVersion: 0,
-                        thinking: false,
-                        thinkingAt: 0,
-                        presence: 0,
-                    },
+                    sessionId: 'session-1',
+                    storageKind: 'direct',
                     serverId: 'srv-a',
                     serverName: 'Server A',
                 },
             ],
+        };
+        summaryState.rowsByServerId = {
+            'srv-a': {
+                'session-1': summaryState.rowsByServerId['srv-a']['session-1'],
+            },
         };
     });
 

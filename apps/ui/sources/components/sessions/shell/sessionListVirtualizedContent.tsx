@@ -5,32 +5,31 @@ import { FlashList } from '@/components/ui/lists/flashListCompat/FlashListCompat
 import { Text } from '@/components/ui/text/Text';
 import { Ionicons } from '@expo/vector-icons';
 import { t } from '@/text';
-import type { SessionListViewItem } from '@/sync/domains/state/storage';
 import { layout } from '@/components/ui/layout/layout';
 
 import { sessionListStyles } from './sessionListStyles';
 import { SessionsListHeader } from './sessionListChrome';
 
-function getSessionListItemKey(item: SessionListViewItem, index: number): string {
-    if (item.type === 'header') {
-        const groupKey = String(item.groupKey ?? '').trim();
-        const headerKind = String(item.headerKind ?? '').trim();
-        const serverId = String(item.serverId ?? '').trim();
-        if (groupKey) return `header:${groupKey}`;
-        if (headerKind === 'server' && (serverId || item.title)) return `server:${serverId || item.title}`;
-        return `header:${headerKind}:${serverId}:${item.title}:${index}`;
+function getSessionListNodeType(nodeId: string): string {
+    if (typeof nodeId === 'string' && nodeId.startsWith('session:')) {
+        return 'session';
     }
-
-    const serverId = String(item.serverId ?? '').trim();
-    const sessionId = String(item.session?.id ?? '').trim();
-    if (serverId && sessionId) return `session:${serverId}:${sessionId}`;
-    return `session:${index}`;
-}
-
-function getSessionListItemType(item: SessionListViewItem): string {
-    if (item.type === 'session') return 'session';
-    const headerKind = String(item.headerKind ?? '').trim();
-    return headerKind ? `header:${headerKind}` : 'header';
+    if (typeof nodeId === 'string' && nodeId.startsWith('header:')) {
+        const parts = nodeId.split(':');
+        const explicit = parts[1] ?? '';
+        if (explicit && explicit !== 'server') {
+            return `header:${explicit}`;
+        }
+        if (explicit === 'server' && parts.length <= 3) {
+            return 'header:server';
+        }
+        if (nodeId.includes(':project:')) return 'header:project';
+        if (nodeId.includes(':day:') || nodeId.includes(':date:')) return 'header:date';
+        if (nodeId.includes(':pinned')) return 'header:pinned';
+        if (nodeId.endsWith(':active') || nodeId.includes(':active:')) return 'header:active';
+        if (nodeId.endsWith(':inactive') || nodeId.includes(':inactive:')) return 'header:inactive';
+    }
+    return 'header';
 }
 
 const SessionsListArchivedFooter = React.memo(function SessionsListArchivedFooter(props: Readonly<{
@@ -56,10 +55,10 @@ const SessionsListArchivedFooter = React.memo(function SessionsListArchivedFoote
 });
 
 export const SessionListVirtualizedContent = React.memo(function SessionListVirtualizedContent(props: Readonly<{
-    listItems: ReadonlyArray<SessionListViewItem>;
+    nodeIds: ReadonlyArray<string>;
     rowHeight: number;
     safeAreaBottom: number;
-    renderItem: (params: { item: SessionListViewItem; index: number }) => React.ReactElement | null;
+    renderItem: (params: { item: string; index: number }) => React.ReactElement | null;
     onStopScrollEventPropagationOnWeb: (event: any) => void;
     onPressArchivedSessions: () => void;
 }>) {
@@ -72,9 +71,9 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
                     onWheel: props.onStopScrollEventPropagationOnWeb,
                     onTouchMove: props.onStopScrollEventPropagationOnWeb,
                 } as any)}
-                data={props.listItems as any}
+                data={props.nodeIds as any}
                 renderItem={props.renderItem as any}
-                keyExtractor={getSessionListItemKey as any}
+                keyExtractor={(item: string) => item}
                 contentContainerStyle={contentContainerStyle}
                 ListHeaderComponent={SessionsListHeader as any}
                 ListFooterComponent={<SessionsListArchivedFooter onPress={props.onPressArchivedSessions} /> as any}
@@ -84,11 +83,11 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
 
     return (
         <FlashList
-            data={props.listItems as any}
+            data={props.nodeIds as any}
             renderItem={props.renderItem as any}
-            keyExtractor={getSessionListItemKey as any}
+            keyExtractor={(item: string) => item}
             estimatedItemSize={props.rowHeight}
-            getItemType={getSessionListItemType as any}
+            getItemType={getSessionListNodeType as any}
             contentContainerStyle={contentContainerStyle as any}
             ListHeaderComponent={SessionsListHeader as any}
             ListFooterComponent={<SessionsListArchivedFooter onPress={props.onPressArchivedSessions} /> as any}

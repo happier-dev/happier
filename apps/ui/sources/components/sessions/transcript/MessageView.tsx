@@ -36,7 +36,6 @@ import { forkSession } from '@/sync/ops';
 import { canForkFromMessage } from '@/sync/domains/sessionFork/forkUiSupport';
 import { resolveForkFromMessageSemantics } from '@/sync/domains/sessionFork/forkFromMessageSemantics';
 import { writeForkInitialPromptV1 } from '@/sync/domains/sessionFork/forkInitialPromptV1';
-import { resolveSessionTargetServerId } from '@/components/sessions/model/resolveSessionTargetServerId';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { getImageMimeTypeFromPath } from '@/scm/utils/filePresentation';
@@ -49,6 +48,8 @@ import { ContextMenu, type ContextMenuItem } from '@/components/ui/forms/dropdow
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { useStreamingTextSmoothing } from '@/components/sessions/transcript/streaming/useStreamingTextSmoothing';
 import { readStreamSegmentMetaV1 } from '@/sync/reducer/helpers/streamSegmentMeta';
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
+import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 
 function shouldHideVoiceAgentTurnMessage(message: Message): boolean {
     if (message.kind !== 'user-text' && message.kind !== 'agent-text') return false;
@@ -57,6 +58,13 @@ function shouldHideVoiceAgentTurnMessage(message: Message): boolean {
     if (envelope?.kind !== 'voice_agent_turn.v1') return false;
     const normalizedText = normalizeVoiceAgentTurnTranscriptText(message.text);
     return normalizedText == null || normalizedText.trim().length === 0;
+}
+
+function resolveMessageServerId(sessionId: string, fallbackServerId?: string | null): string | null {
+  const normalizedSessionId = normalizeSessionId(sessionId);
+  const resolvedServerId = resolvePreferredServerIdForSessionId(normalizedSessionId) ?? fallbackServerId ?? '';
+  const normalizedServerId = String(resolvedServerId).trim();
+  return normalizedServerId || null;
 }
 
 export const MessageView = (props: {
@@ -297,7 +305,7 @@ function UserTextBlock(props: {
 
   const executor = React.useMemo(
     () => createDefaultActionExecutor({
-      resolveServerIdForSessionId: (sessionId) => resolveSessionTargetServerId(sessionId, session?.serverId) ?? null,
+      resolveServerIdForSessionId: (sessionId) => resolveMessageServerId(sessionId, session?.serverId),
     }),
     [session?.serverId],
   );
@@ -350,7 +358,7 @@ function UserTextBlock(props: {
               : undefined;
           const result = await forkSession({
             machineId: reachableMachineTarget?.machineId ?? session?.metadata?.machineId,
-            serverId: resolveSessionTargetServerId(props.sessionId, session?.serverId) ?? undefined,
+            serverId: resolveMessageServerId(props.sessionId, session?.serverId) ?? undefined,
             parentSessionId: props.sessionId,
             forkPoint: { type: 'seq', upToSeqInclusive },
             ...(typeof sessionReplayMaxSeedChars === 'number' ? { replayMaxSeedChars: sessionReplayMaxSeedChars } : {}),
@@ -740,7 +748,7 @@ function AgentTextBlock(props: {
   }, [props.message, seq]);
   const executor = React.useMemo(
     () => createDefaultActionExecutor({
-      resolveServerIdForSessionId: (sessionId) => resolveSessionTargetServerId(sessionId, session?.serverId) ?? null,
+      resolveServerIdForSessionId: (sessionId) => resolveMessageServerId(sessionId, session?.serverId),
     }),
     [session?.serverId],
   );
@@ -793,7 +801,7 @@ function AgentTextBlock(props: {
               : undefined;
           const result = await forkSession({
             machineId: reachableMachineTarget?.machineId ?? session?.metadata?.machineId,
-            serverId: resolveSessionTargetServerId(props.sessionId, session?.serverId) ?? undefined,
+            serverId: resolveMessageServerId(props.sessionId, session?.serverId) ?? undefined,
             parentSessionId: props.sessionId,
             forkPoint: { type: 'seq', upToSeqInclusive },
             ...(typeof sessionReplayMaxSeedChars === 'number' ? { replayMaxSeedChars: sessionReplayMaxSeedChars } : {}),
@@ -1105,7 +1113,7 @@ function ForkMessageButton(props: {
           : undefined;
       const result = await forkSession({
         machineId: reachableMachineTarget?.machineId ?? session?.metadata?.machineId,
-        serverId: resolveSessionTargetServerId(props.sessionId, session?.serverId) ?? undefined,
+        serverId: resolveMessageServerId(props.sessionId, session?.serverId) ?? undefined,
         parentSessionId: props.sessionId,
         forkPoint: { type: 'seq', upToSeqInclusive: props.upToSeqInclusive },
         ...(typeof sessionReplayMaxSeedChars === 'number' ? { replayMaxSeedChars: sessionReplayMaxSeedChars } : {}),

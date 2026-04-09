@@ -3,9 +3,14 @@ import { Ionicons } from '@expo/vector-icons';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { DependabotIcon } from '@/components/ui/icons/DependabotIcon';
 import { getPreferredLanguage, t } from '@/text';
+import { LruMap } from '@/utils/cache/lruMap';
+
+import { readSessionListShellCacheMaxEntriesFromEnv } from '../sessionListShellCacheConfig';
 
 const EMPTY_SESSION_VIEW_HEADER_ACTION_ITEMS: readonly DropdownMenuItem[] = Object.freeze([]);
-const SESSION_VIEW_HEADER_ACTION_ITEMS_CACHE = new Map<string, readonly DropdownMenuItem[]>();
+const SESSION_VIEW_HEADER_ACTION_ITEMS_CACHE = new LruMap<string, readonly DropdownMenuItem[]>({
+    maxEntries: readSessionListShellCacheMaxEntriesFromEnv(),
+});
 
 function buildCacheKey(input: Readonly<{
     shouldShowSubagentsButton: boolean;

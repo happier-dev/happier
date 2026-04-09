@@ -239,11 +239,11 @@ installSessionShellCommonModuleMocks({
                         featureToggles: {},
                         codexBackendMode: 'acp',
                     },
-                    sessionListViewDataByServerId: {},
-                }),
-            } as any,
-            useSession: () => session,
-            useIsDataReady: () => true,
+	                    concurrentSessionListCacheByServerId: {},
+	                }),
+	            } as any,
+	            useSession: () => session,
+	            useIsDataReady: () => true,
             useRealtimeStatus: () => 'connected',
             useSessionMessages: () => ({ messages: [], isLoaded: true }),
             useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
@@ -312,6 +312,7 @@ vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => (
 }));
 vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true, machineRpcTargetAvailable: true }),
+    useSessionReachableMachineTarget: () => ({ machineId: 'm-target', basePath: '/tmp/target' }),
 }));
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({ serverId: 'server-1' }),

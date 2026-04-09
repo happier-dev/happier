@@ -133,6 +133,132 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         sync.disconnectServer();
     });
 
+    it('clears server-scoped session-list row/index caches on disconnect', async () => {
+        const { upsertAndActivateServer, getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        upsertAndActivateServer({ serverUrl: 'https://server-a.example.test', scope: 'tab' });
+        const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+        expect(activeServerId).toBeTruthy();
+
+        storage.getState().applySessions([createSession({ sessionId: 's_cached_1' })]);
+        expect(storage.getState().sessionListRowStateByServerId?.[activeServerId]).toBeDefined();
+        expect(storage.getState().sessionListIndexByServerId?.[activeServerId]).toBeDefined();
+
+        const { sync } = await import('./sync');
+        sync.disconnectServer();
+
+        expect(storage.getState().sessionListRowStateByServerId?.[activeServerId]).toBeUndefined();
+        expect(storage.getState().sessionListIndexByServerId?.[activeServerId]).toBeUndefined();
+    });
+
+    it('keeps the current transcript visible while pinned catch-up refreshes in the background', async () => {
+        const sessionId = 'pinned_tail_reset_session';
+        storage.getState().applySessions([{ ...createSession({ sessionId }), seq: 100 }]);
+        storage.getState().resetSessionMessages(sessionId);
+
+        const transcriptMessagesById = {
+            'm-old': { id: 'm-old', kind: 'user-text', localId: null, createdAt: 1, text: 'cached' } as any,
+        };
+        storage.setState((state) => ({
+            ...state,
+            sessionMessages: {
+                ...state.sessionMessages,
+                [sessionId]: {
+                    ...(state.sessionMessages[sessionId] as any),
+                    messageIdsOldestFirst: ['m-old'],
+                    messagesById: transcriptMessagesById,
+                    messagesMap: transcriptMessagesById,
+                    latestThinkingMessageId: null,
+                    latestThinkingMessageActivityAtMs: null,
+                    messagesVersion: 1,
+                    isLoaded: true,
+                },
+            },
+        }));
+
+        const resetSessionMessagesSpy = vi.fn(storage.getState().resetSessionMessages);
+        storage.setState((state) => ({
+            ...state,
+            resetSessionMessages: resetSessionMessagesSpy,
+        }));
+
+        const { sync } = await import('./sync');
+        (sync as any).credentials = { token: 't' };
+        (sync as any).isForeground = true;
+        (sync as any).pauseController = { isPaused: () => false };
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).sessionMaterializedMaxSeqById = { [sessionId]: 1 };
+        (sync as any).syncTuning = {
+            ...(sync as any).syncTuning,
+            messageLargeGapSeq: 1,
+            messageMaxIncrementalPagesOnResume: 1,
+            messageForceSnapshotOfflineMs: 30 * 60 * 1000,
+        };
+        (sync as any).encryption = {
+            getSessionEncryption: () => ({
+                decryptMessages: async (messages: Array<{ id: string; localId?: string | null; createdAt: number; seq?: number | null }>) =>
+                    messages.map((message) => ({
+                        id: message.id,
+                        localId: message.localId ?? null,
+                        createdAt: message.createdAt,
+                        seq: message.seq ?? null,
+                        content: {
+                            role: 'agent',
+                            content: {
+                                type: 'output',
+                                data: {
+                                    type: 'user',
+                                    uuid: 'uuid_fresh_1',
+                                    parentUuid: null,
+                                    isSidechain: false,
+                                    message: { role: 'user', content: 'fresh' },
+                                },
+                            },
+                            meta: { source: 'cli' },
+                        },
+                    })),
+            }),
+        };
+
+        let resolveRequest!: (response: Response) => void;
+        const requestPromise = new Promise<Response>((resolve) => {
+            resolveRequest = resolve;
+        });
+        requestMock.mockReturnValueOnce(requestPromise);
+
+        const fetchPromise = (sync as any).fetchMessages(sessionId);
+
+        expect(resetSessionMessagesSpy).not.toHaveBeenCalled();
+        expect(storage.getState().sessionMessages[sessionId]?.messageIdsOldestFirst).toEqual(['m-old']);
+
+        resolveRequest(
+            new Response(
+                JSON.stringify({
+                    messages: [
+                        {
+                            id: 'm-new',
+                            seq: 125,
+                            localId: null,
+                            content: { t: 'encrypted', c: 'cipher' },
+                            createdAt: 2,
+                            updatedAt: 2,
+                        },
+                    ],
+                    hasMore: false,
+                    nextBeforeSeq: null,
+                    nextAfterSeq: null,
+                }),
+                { status: 200, headers: { 'Content-Type': 'application/json' } },
+            ),
+        );
+
+        await fetchPromise;
+
+        expect(resetSessionMessagesSpy).not.toHaveBeenCalled();
+        expect(storage.getState().sessionMessages[sessionId]?.messageIdsOldestFirst).toHaveLength(2);
+        expect(storage.getState().sessionMessages[sessionId]?.messageIdsOldestFirst?.[0]).toBe('m-old');
+    });
+
     it('hydrates e2ee session encryption on deep link before sessions snapshot fetch', async () => {
         const sessionId = 'deep_link_session';
         storage.getState().applySessions([createSession({ sessionId })]);
@@ -450,37 +576,20 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             },
         ]);
         storage.getState().resetSessionMessages(sessionId);
-        storage.setState({
-            sessionListViewDataByServerId: {
-                [ownerServer.id]: [
-                    {
-                        type: 'session',
-                        session: {
-                            id: sessionId,
-                            seq: 0,
-                            createdAt: 1,
-                            updatedAt: 2,
-                            active: true,
-                            activeAt: 2,
-                            metadataVersion: 0,
-                            agentStateVersion: 1,
-                            metadata: {
-                                path: '',
-                                homeDir: null,
-                                host: null,
-                                machineId: null,
-                                flavor: null,
-                                directSessionV1: null,
-                            },
-                            thinking: false,
-                            thinkingAt: 0,
-                            presence: 'online',
-                            optimisticThinkingAt: null,
-                        },
+        const { buildSessionListRenderableFromSession } = await import('@/sync/domains/session/listing/sessionListRenderable');
+        const renderable = buildSessionListRenderableFromSession(storage.getState().sessions[sessionId] as Session);
+        storage.setState((state) => ({
+            ...state,
+            concurrentSessionListCacheByServerId: {
+                ...state.concurrentSessionListCacheByServerId,
+                [ownerServer.id]: {
+                    serverName: String(ownerServer.name ?? ownerServer.id).trim() || ownerServer.id,
+                    sessions: {
+                        [sessionId]: renderable,
                     },
-                ],
+                },
             },
-        });
+        }));
 
         const { sync } = await import('./sync');
 

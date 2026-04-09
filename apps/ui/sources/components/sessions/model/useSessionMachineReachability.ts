@@ -1,22 +1,20 @@
 import * as React from 'react';
 
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { useAllMachines, useAllSessions, useProjectForSession, useSession } from '@/sync/domains/state/storage';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { resolveSessionMachineReachability } from '@/components/sessions/model/resolveSessionMachineReachability';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 
-export function useSessionMachineReachability(sessionId: string): Readonly<{
-    machineReachable: boolean;
-    machineOnline: boolean;
-    machineRpcTargetAvailable: boolean;
-}> {
-    const session = useSession(sessionId);
-    const project = useProjectForSession(sessionId);
+export function useSessionReachableMachineTarget(sessionId: string): { machineId: string; basePath: string } | null {
+    const resolvedSessionId = normalizeSessionId(sessionId);
+    const session = useSession(resolvedSessionId);
+    const project = useProjectForSession(resolvedSessionId);
     const allMachines = useAllMachines();
     const allSessions = useAllSessions();
 
-    const machineTarget = React.useMemo(
-        () => readMachineTargetForSession(sessionId),
+    return React.useMemo(
+        () => readMachineTargetForSession(resolvedSessionId),
         [
             allMachines,
             allSessions,
@@ -26,9 +24,18 @@ export function useSessionMachineReachability(sessionId: string): Readonly<{
             session?.metadata?.host,
             session?.metadata?.machineId,
             session?.metadata?.path,
-            sessionId,
+            resolvedSessionId,
         ],
     );
+}
+
+export function useSessionMachineReachability(sessionId: string): Readonly<{
+    machineReachable: boolean;
+    machineOnline: boolean;
+    machineRpcTargetAvailable: boolean;
+}> {
+    const allMachines = useAllMachines();
+    const machineTarget = useSessionReachableMachineTarget(sessionId);
     const resolvedMachineId = machineTarget?.machineId ?? null;
 
     const resolvedMachine = React.useMemo(

@@ -2,9 +2,13 @@ import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMe
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import { getPreferredLanguage, t } from '@/text';
+import { LruMap } from '@/utils/cache/lruMap';
 
-const EMPTY_PROJECT_GROUP_HEADER_MENU_ITEMS: ReadonlyArray<DropdownMenuItem> = [];
-const PROJECT_GROUP_HEADER_MENU_ITEMS_CACHE = new Map<string, ReadonlyArray<DropdownMenuItem>>();
+import { readSessionListShellCacheMaxEntriesFromEnv } from './sessionListShellCacheConfig';
+
+const PROJECT_GROUP_HEADER_MENU_ITEMS_CACHE = new LruMap<string, ReadonlyArray<DropdownMenuItem>>({
+    maxEntries: readSessionListShellCacheMaxEntriesFromEnv(),
+});
 
 export function resolveProjectGroupHeaderMenuItems(input: Readonly<{
     menuEnabled: boolean;
@@ -12,10 +16,6 @@ export function resolveProjectGroupHeaderMenuItems(input: Readonly<{
     hasCustomLabel: boolean;
     actionIconColor: string;
 }>): ReadonlyArray<DropdownMenuItem> {
-    if (!input.menuEnabled) {
-        return EMPTY_PROJECT_GROUP_HEADER_MENU_ITEMS;
-    }
-
     const cacheKey = [
         getPreferredLanguage(),
         input.canOpenProject ? '1' : '0',

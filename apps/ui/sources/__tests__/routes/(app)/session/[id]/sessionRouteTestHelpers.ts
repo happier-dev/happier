@@ -97,12 +97,7 @@ export function installSessionRouteCommonModuleMocks(
             return await activeOptions.storageModule(importOriginal as SessionRouteImportOriginal);
         }
 
-        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                storage: { getState: () => ({}) } as any,
-            },
-        });
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({});
     });
 }

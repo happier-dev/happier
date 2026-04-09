@@ -15,17 +15,26 @@ export function deriveSessionListMeaningfulActivityAt(params: Readonly<{
     latestThinkingActivityAt: number | null | undefined;
     latestPendingMessageCreatedAt: number | null | undefined;
 }>): number | null {
-    const meaningfulCandidates = [
-        params.latestCommittedMessageCreatedAt,
-        params.latestThinkingActivityAt,
-        params.latestPendingMessageCreatedAt,
-        params.sessionCreatedAt,
-    ];
-
     let latest: number | null = null;
-    for (const candidate of meaningfulCandidates) {
-        if (typeof candidate !== 'number' || !Number.isFinite(candidate) || candidate <= 0) continue;
-        latest = latest == null ? candidate : Math.max(latest, candidate);
+
+    const committed = params.latestCommittedMessageCreatedAt;
+    if (typeof committed === 'number' && Number.isFinite(committed) && committed > 0) {
+        latest = committed;
+    }
+
+    const thinking = params.latestThinkingActivityAt;
+    if (typeof thinking === 'number' && Number.isFinite(thinking) && thinking > 0) {
+        latest = latest == null ? thinking : Math.max(latest, thinking);
+    }
+
+    const pending = params.latestPendingMessageCreatedAt;
+    if (typeof pending === 'number' && Number.isFinite(pending) && pending > 0) {
+        latest = latest == null ? pending : Math.max(latest, pending);
+    }
+
+    const sessionCreatedAt = params.sessionCreatedAt;
+    if (typeof sessionCreatedAt === 'number' && Number.isFinite(sessionCreatedAt) && sessionCreatedAt > 0) {
+        latest = latest == null ? sessionCreatedAt : Math.max(latest, sessionCreatedAt);
     }
 
     return latest;

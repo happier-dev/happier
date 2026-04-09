@@ -15,7 +15,7 @@ import { HappyError } from '@/utils/errors/errors';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { sessionArchiveWithServerScope, sessionRename, sessionStopWithServerScope } from '@/sync/ops';
-import { useHasUnreadMessages, useSessionListMeaningfulActivityAt, useSessionListRenderable, useSetting } from '@/sync/domains/state/storage';
+import { useHasUnreadMessages, useSessionListMeaningfulActivityAt, useSessionListRenderableWithServerScope, useSetting } from '@/sync/domains/state/storage';
 import type { SessionListSecondaryLineMode } from '@/sync/domains/session/listing/deriveSessionListActivity';
 import { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
@@ -437,7 +437,7 @@ export const SessionItem = React.memo(
         const styles = stylesheet;
         const { theme } = useUnistyles();
         const sessionId = String(session?.id ?? '').trim();
-        const sessionFromStore = useSessionListRenderable(sessionId);
+        const sessionFromStore = useSessionListRenderableWithServerScope(serverId ?? null, sessionId);
         const resolvedSession = sessionFromStore ?? session;
         const sessionStatus = useSessionStatus(resolvedSession);
         const sessionNameResolved = getSessionName(resolvedSession);
@@ -988,7 +988,8 @@ export const SessionItem = React.memo(
                                             ),
                                             icon: <Ionicons name="add" size={16} color={rowActionIconColor} />,
                                         })}
-                                        placement="left"
+                                        placement="bottom"
+                                        popoverAnchorAlign="end"
                                         variant="slim"
                                         search={true}
                                         searchPlaceholder={t('sessionTags.searchOrAddPlaceholder')}
@@ -1055,7 +1056,8 @@ export const SessionItem = React.memo(
                                     onOpenChange={setMoreMenuOpen}
                                     items={moreMenuItems}
                                     onSelect={handleMoreMenuSelect}
-                                    placement="left"
+                                    placement="bottom"
+                                    popoverAnchorAlign="end"
                                     variant="slim"
                                     matchTriggerWidth={false}
                                     maxWidthCap={220}

@@ -124,6 +124,7 @@ vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => (
 }));
 vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true }),
+    useSessionReachableMachineTarget: () => null,
 }));
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
@@ -270,7 +271,7 @@ installSessionShellCommonModuleMocks({
     storage: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
-            storage: { getState: () => ({ sessions: { s1: sessionState.session }, settings: {}, sessionListViewDataByServerId: {} }) },
+            storage: { getState: () => ({ sessions: { s1: sessionState.session }, settings: {}, concurrentSessionListCacheByServerId: {} }) },
             useSession: () => sessionState.session,
             useIsDataReady: () => true,
             useRealtimeStatus: () => ({ status: 'connected' }),

@@ -8,6 +8,7 @@ import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionI
 import { SessionRightPanel } from '@/components/sessions/panes/SessionRightPanel';
 import { buildActiveDetailsRouteParams } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 
 export default function FilesScreenRoute() {
@@ -15,9 +16,9 @@ export default function FilesScreenRoute() {
     const navigation = useNavigation();
     const isFocused = useIsFocused();
     const { id: sessionIdParam } = useLocalSearchParams<{ id: string }>();
-    const sessionId = String(sessionIdParam ?? '').trim();
+    const sessionId = normalizeSessionId(sessionIdParam);
     const sessionHydrated = useHydrateSessionForRoute(sessionId, 'SessionFilesRoute.ensureSessionVisible');
-    const scopeId = React.useMemo(() => `session:${sessionId}`, [sessionId]);
+    const scopeId = `session:${sessionId}`;
     const pane = useAppPaneScope(scopeId);
     const openRight = pane.openRight;
     const closeRight = pane.closeRight;

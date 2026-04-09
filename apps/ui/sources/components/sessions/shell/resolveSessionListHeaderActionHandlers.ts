@@ -1,4 +1,7 @@
 import type { SessionListHeaderViewState } from './resolveSessionListHeaderViewState';
+import { LruMap } from '@/utils/cache/lruMap';
+
+import { readSessionListShellCacheMaxEntriesFromEnv } from './sessionListShellCacheConfig';
 
 export type SessionListHeaderActionHandlers = Readonly<{
     onOpenProject: () => void;
@@ -9,8 +12,11 @@ export type SessionListHeaderActionHandlers = Readonly<{
 
 type SessionListHeaderToggleCollapseHandler = (collapseKey: string, ...args: readonly unknown[]) => void;
 
-const SESSION_LIST_HEADER_ACTION_HANDLERS_CACHE = new Map<string, SessionListHeaderActionHandlers>();
+const SESSION_LIST_HEADER_ACTION_HANDLERS_CACHE = new LruMap<string, SessionListHeaderActionHandlers>({
+    maxEntries: readSessionListShellCacheMaxEntriesFromEnv(),
+});
 const FUNCTION_ID_BY_REFERENCE = new WeakMap<Function, number>();
+const noop = () => {};
 
 let nextFunctionId = 1;
 
@@ -108,18 +114,19 @@ export function resolveSessionListHeaderActionHandlers(input: Readonly<{
         return cached;
     }
 
+    const onToggleCollapse = () => {
+        input.onToggleCollapse(headerViewState.collapseKey);
+    };
+
     const next = headerViewState.kind === 'project'
         ? {
             onOpenProject: () => {
-                if (headerViewState.kind !== 'project' || !headerViewState.workspaceRefId) {
+                if (!headerViewState.workspaceRefId) {
                     return;
                 }
                 input.onOpenProject(headerViewState.workspaceRefId);
             },
             onRename: () => {
-                if (headerViewState.kind !== 'project') {
-                    return;
-                }
                 input.onRenameWorkspace({
                     legacyWorkspaceKey: headerViewState.legacyWorkspaceKey,
                     scopeHint: headerViewState.scopeHint,
@@ -127,25 +134,18 @@ export function resolveSessionListHeaderActionHandlers(input: Readonly<{
                 });
             },
             onReset: () => {
-                if (headerViewState.kind !== 'project') {
-                    return;
-                }
                 input.onResetWorkspaceName({
                     legacyWorkspaceKey: headerViewState.legacyWorkspaceKey,
                     scopeHint: headerViewState.scopeHint,
                 });
             },
-            onToggleCollapse: () => {
-                input.onToggleCollapse(headerViewState.collapseKey);
-            },
+            onToggleCollapse,
         }
         : {
-            onOpenProject: () => {},
-            onRename: () => {},
-            onReset: () => {},
-            onToggleCollapse: () => {
-                input.onToggleCollapse(headerViewState.collapseKey);
-            },
+            onOpenProject: noop,
+            onRename: noop,
+            onReset: noop,
+            onToggleCollapse,
         };
 
     const cachedActions = next as SessionListHeaderActionHandlers;

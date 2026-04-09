@@ -83,7 +83,9 @@ installSessionRouteCommonModuleMocks({
         storage: {
           getState: () => ({
             sessions: {},
-            sessionListViewDataByServerId: {},
+            concurrentSessionListCacheByServerId: {},
+            sessionListIndexByServerId: {},
+            sessionListRowStateByServerId: {},
           }),
         } as any,
         useSession: () => mockSession,
@@ -97,6 +99,7 @@ installSessionRouteCommonModuleMocks({
 
 vi.mock('@/sync/store/hooks', () => ({
   useSessionMessages: () => ({ messages: mockCommittedMessages, isLoaded: mockMessagesLoaded }),
+  useSessionServerId: () => null,
 }));
 
 vi.mock('@/sync/sync', () => ({

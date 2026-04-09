@@ -2,9 +2,9 @@ import * as React from 'react';
 
 import { useVisibleSessionListSourceState } from './useVisibleSessionListSourceState';
 import {
-    resolveVisibleSessionListSummary,
+    resolveVisibleSessionListIndexSummary,
     type VisibleSessionListSummary,
-} from '@/sync/domains/session/listing/sessionListPresentation';
+} from '@/sync/domains/session/listing/sessionListIndexPresentation';
 import type { SessionListStorageFilter } from '@/sync/domains/session/sessionStorageKind';
 
 export type VisibleSessionListSummaryState = Readonly<{
@@ -13,16 +13,16 @@ export type VisibleSessionListSummaryState = Readonly<{
 }>;
 
 export function useVisibleSessionListSummaryState(storageFilter: SessionListStorageFilter = 'all'): VisibleSessionListSummaryState {
-    const { selection, activeData, byServerId } = useVisibleSessionListSourceState();
+    const { selection, activeIndex, byServerId } = useVisibleSessionListSourceState();
 
-    const summary = React.useMemo(() => resolveVisibleSessionListSummary({
+    const summary = React.useMemo(() => resolveVisibleSessionListIndexSummary({
         enabled: selection.enabled,
         activeServerId: selection.activeServerId,
-        activeData,
+        activeIndex,
         byServerId,
         selectedServerIds: selection.allowedServerIds,
     }, storageFilter), [
-        activeData,
+        activeIndex,
         byServerId,
         selection.activeServerId,
         selection.allowedServerIds,

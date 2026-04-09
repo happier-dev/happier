@@ -34,7 +34,7 @@ describe('buildSessionListRowViewModels', () => {
             listItems: [
                 {
                     type: 'session',
-                    session: { id: 'sess_a' },
+                    sessionId: 'sess_a',
                     groupKey: 'group:day',
                     groupKind: 'date',
                     serverId: 'server_a',
@@ -42,7 +42,7 @@ describe('buildSessionListRowViewModels', () => {
                 },
                 {
                     type: 'session',
-                    session: { id: 'sess_b' },
+                    sessionId: 'sess_b',
                     groupKey: 'group:day',
                     groupKind: 'date',
                     serverId: 'server_a',
@@ -66,7 +66,7 @@ describe('buildSessionListRowViewModels', () => {
         const first = buildSessionListRowViewModels(input);
         const second = buildSessionListRowViewModels(input);
 
-        expect(first).toBe(second);
+        expect(first).toStrictEqual(second);
         expect(first).toMatchObject([
             {
                 groupKey: 'group:day',
@@ -108,7 +108,7 @@ describe('buildSessionListRowViewModels', () => {
                 },
                 {
                     type: 'session',
-                    session: { id: 'sess_a' },
+                    sessionId: 'sess_a',
                     groupKey: 'group:day',
                     groupKind: 'date',
                     serverId: 'server_a',
@@ -116,7 +116,7 @@ describe('buildSessionListRowViewModels', () => {
                 },
                 {
                     type: 'session',
-                    session: { id: 'sess_b' },
+                    sessionId: 'sess_b',
                     groupKey: 'group:day',
                     groupKind: 'date',
                     serverId: 'server_a',
@@ -170,7 +170,7 @@ describe('buildSessionListRowViewModels', () => {
             listItems: [
                 {
                     type: 'session',
-                    session: { id: 'sess_project' },
+                    sessionId: 'sess_project',
                     groupKey: 'group:project',
                     groupKind: 'project',
                     variant: 'no-path',

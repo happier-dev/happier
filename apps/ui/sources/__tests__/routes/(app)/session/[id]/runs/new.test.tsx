@@ -65,6 +65,62 @@ const sessionServerIdStore = {
         };
     },
 };
+function buildSessionServerLookupState() {
+    const sessionServerId = sessionServerIdStore.getSnapshot();
+    if (!sessionServerId) {
+        return {
+            concurrentSessionListCacheByServerId: {},
+            sessions: {},
+        };
+    }
+
+    return {
+        concurrentSessionListCacheByServerId: {
+            [sessionServerId]: {
+                serverName: sessionServerId,
+                sessions: {
+                    'session-1': {
+                        id: 'session-1',
+                        serverId: sessionServerId,
+                    },
+                },
+            },
+        },
+        sessions: {
+            'session-1': {
+                id: 'session-1',
+                serverId: sessionServerId,
+            },
+        },
+    };
+}
+
+function createSessionServerLookupStorageHook() {
+    let cachedKey: string | null = null;
+    let cachedSnapshot: any = null;
+    const getSnapshot = () => {
+        const key = sessionServerIdStore.getSnapshot();
+        if (cachedSnapshot && key === cachedKey) {
+            return cachedSnapshot;
+        }
+        cachedKey = key;
+        cachedSnapshot = buildSessionServerLookupState() as any;
+        return cachedSnapshot;
+    };
+    const subscribe = (listener: () => void) => sessionServerIdStore.subscribe(listener);
+
+    const hook = ((selector?: (state: any) => unknown) => {
+        const snapshot = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+        return typeof selector === 'function' ? selector(snapshot) : snapshot;
+    }) as any;
+
+    hook.getState = getSnapshot;
+    hook.getInitialState = getSnapshot;
+    hook.subscribe = subscribe;
+    hook.setState = () => undefined;
+    hook.destroy = () => undefined;
+    return hook;
+}
 let executionRunsBackendsMock: Record<string, { available?: boolean; intents?: string[] }> | null = {
     claude: { available: true, intents: ['review', 'plan', 'delegate', 'voice_agent'] },
     codex: { available: true, intents: ['review', 'plan', 'delegate', 'voice_agent'] },
@@ -190,7 +246,7 @@ installSessionRouteCommonModuleMocks({
             importOriginal,
             useSession: () => sessionMock,
             useSettings: () => settingsMock,
-            storage: { getState: () => ({ sessionListViewDataByServerId: {} }) },
+            storage: createSessionServerLookupStorageHook(),
         });
     },
 });

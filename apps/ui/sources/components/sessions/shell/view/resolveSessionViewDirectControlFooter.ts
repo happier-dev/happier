@@ -29,7 +29,14 @@ function normalizeDirectControlActivity(value: string | null | undefined): Direc
     return 'unknown';
 }
 
-function buildFooterEntry(input: Input): DirectControlFooterState {
+export function resolveSessionViewDirectControlFooter(input: Input): SessionViewDirectControlFooter | null {
+    if (input.isHiddenSystemSessionSession) {
+        return null;
+    }
+    if (!input.directSessionLink) {
+        return null;
+    }
+
     const status = input.directSessionRuntime.status;
     return {
         machineOnline: status?.machineOnline ?? true,
@@ -45,15 +52,4 @@ function buildFooterEntry(input: Input): DirectControlFooterState {
             ? () => { void input.directSessionTakeover.requestTakeover('persisted'); }
             : undefined,
     };
-}
-
-export function resolveSessionViewDirectControlFooter(input: Input): SessionViewDirectControlFooter | null {
-    if (input.isHiddenSystemSessionSession) {
-        return null;
-    }
-    if (!input.directSessionLink) {
-        return null;
-    }
-
-    return buildFooterEntry(input);
 }

@@ -148,4 +148,127 @@ describe('ChatList (auto-follow while pinned)', () => {
 
     expect(scrollToOffsetSpy).toHaveBeenCalled();
   });
+
+  it('pins to bottom when a pending message appears while pinned before commit', async () => {
+    const { ChatList } = await chatListModulePromise;
+    (globalThis as any).requestAnimationFrame = (cb: any) => {
+      cb(0);
+      return 1;
+    };
+    (globalThis as any).cancelAnimationFrame = () => {};
+
+    legacyChatListHarnessState.sessionMessagesState = {
+      isLoaded: true,
+      messages: [
+        { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'u1' },
+        { kind: 'agent-text', id: 'a1', localId: null, createdAt: 2, text: 'a1' },
+      ],
+    };
+    legacyChatListHarnessState.sessionPendingState = {
+      messages: [],
+      discarded: [],
+      isLoaded: true,
+    };
+
+    const screen = await renderLegacyChatList();
+
+    scrollToOffsetSpy.mockClear();
+
+    legacyChatListHarnessState.sessionPendingState = {
+      messages: [
+        {
+          id: 'p1',
+          localId: 'local-p1',
+          createdAt: 3,
+          updatedAt: 3,
+          text: 'pending reply',
+          rawRecord: {},
+        },
+      ],
+      discarded: [],
+      isLoaded: true,
+    };
+
+    await act(async () => {
+      await screen.update(<ChatList session={{ ...legacyChatListHarnessState.sessionState }} />);
+    });
+
+    expect(scrollToOffsetSpy).toHaveBeenCalled();
+  });
+
+  it('pins to bottom when a committed message extends the newest turn while pinned', async () => {
+    const { ChatList } = await chatListModulePromise;
+    (globalThis as any).requestAnimationFrame = (cb: any) => {
+      cb(0);
+      return 1;
+    };
+    (globalThis as any).cancelAnimationFrame = () => {};
+
+    legacyChatListHarnessState.settingValues.transcriptGroupingMode = 'turns';
+    legacyChatListHarnessState.settingValues.transcriptGroupToolCalls = false;
+    legacyChatListHarnessState.settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
+    legacyChatListHarnessState.sessionMessagesState = {
+      isLoaded: true,
+      messages: [
+        { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'u1' },
+      ],
+    };
+
+    const screen = await renderLegacyChatList();
+
+    scrollToOffsetSpy.mockClear();
+
+    legacyChatListHarnessState.sessionMessagesState = {
+      isLoaded: true,
+      messages: [
+        { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'u1' },
+        { kind: 'agent-text', id: 'a1', localId: null, createdAt: 2, text: 'a1' },
+      ],
+    };
+
+    await act(async () => {
+      await screen.update(<ChatList session={{ ...legacyChatListHarnessState.sessionState }} />);
+    });
+
+    expect(scrollToOffsetSpy).toHaveBeenCalled();
+  });
+
+  it('pins to bottom when multiple committed messages extend the same newest turn while pinned', async () => {
+    const { ChatList } = await chatListModulePromise;
+    (globalThis as any).requestAnimationFrame = (cb: any) => {
+      cb(0);
+      return 1;
+    };
+    (globalThis as any).cancelAnimationFrame = () => {};
+
+    legacyChatListHarnessState.settingValues.transcriptGroupingMode = 'turns';
+    legacyChatListHarnessState.settingValues.transcriptGroupToolCalls = false;
+    legacyChatListHarnessState.settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
+    legacyChatListHarnessState.sessionMessagesState = {
+      isLoaded: true,
+      messages: [
+        { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'u1' },
+        { kind: 'agent-text', id: 'a1', localId: null, createdAt: 2, text: 'a1' },
+      ],
+    };
+
+    const screen = await renderLegacyChatList();
+
+    scrollToOffsetSpy.mockClear();
+
+    legacyChatListHarnessState.sessionMessagesState = {
+      isLoaded: true,
+      messages: [
+        { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'u1' },
+        { kind: 'agent-text', id: 'a1', localId: null, createdAt: 2, text: 'a1' },
+        { kind: 'agent-text', id: 'a2', localId: null, createdAt: 3, text: 'a2' },
+      ],
+    };
+
+    await act(async () => {
+      await screen.update(<ChatList session={{ ...legacyChatListHarnessState.sessionState }} />);
+    });
+
+    expect(scrollToOffsetSpy).toHaveBeenCalled();
+  });
 });

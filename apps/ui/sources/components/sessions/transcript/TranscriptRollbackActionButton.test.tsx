@@ -1,3 +1,5 @@
+import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
@@ -16,6 +18,28 @@ const createDefaultActionExecutorSpy = vi.fn((_: Readonly<{
 }> | undefined) => ({
     execute: (actionId: unknown, input: unknown, ctx: unknown) => executeSpy(actionId, input, ctx),
 }));
+const preferredSessionServerIdState = vi.hoisted(() => {
+    let value = 'server-explicit';
+    const listeners = new Set<(nextValue: string) => void>();
+
+    return {
+        get value() {
+            return value;
+        },
+        set value(nextValue: string) {
+            value = nextValue;
+            for (const listener of listeners) {
+                listener(nextValue);
+            }
+        },
+        subscribe(listener: (nextValue: string) => void) {
+            listeners.add(listener);
+            return () => {
+                listeners.delete(listener);
+            };
+        },
+    };
+});
 const resolveSessionTargetServerIdSpy = vi.fn<(sessionId: string) => string | null>();
 
 installTranscriptCommonModuleMocks({
@@ -46,6 +70,14 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdFo
     resolvePreferredServerIdForSessionId: () => null,
 }));
 
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession', () => ({
+    usePreferredServerIdForSession: () => {
+        const [sessionServerId, setSessionServerId] = React.useState(preferredSessionServerIdState.value);
+        React.useEffect(() => preferredSessionServerIdState.subscribe(setSessionServerId), []);
+        return sessionServerId;
+    },
+}));
+
 vi.mock('@/components/sessions/model/resolveSessionTargetServerId', () => ({
     resolveSessionTargetServerId: (sessionId: string, fallbackServerId?: string | null) =>
         resolveSessionTargetServerIdSpy(sessionId) ?? fallbackServerId ?? null,
@@ -61,6 +93,7 @@ describe('TranscriptRollbackActionButton', () => {
         updateSessionDraftSpy.mockReset();
         createDefaultActionExecutorSpy.mockClear();
         resolveSessionTargetServerIdSpy.mockReset();
+        preferredSessionServerIdState.value = 'server-explicit';
         getTranscriptModalMockRef().current?.spies.alert?.mockReset();
     });
 
@@ -96,6 +129,33 @@ describe('TranscriptRollbackActionButton', () => {
         expect(createDefaultActionExecutorSpy.mock.calls[0]?.[0]?.resolveServerIdForSessionId?.('s1')).toBe('server-explicit');
         await screen.unmount();
     }, 120000);
+
+    it('re-resolves the session server when the preferred server changes', async () => {
+        executeSpy.mockResolvedValueOnce({ ok: true, result: { ok: true } });
+
+        const { TranscriptRollbackActionButton } = await import('./TranscriptRollbackActionButton');
+        const screen = await renderScreen(
+            <TranscriptRollbackActionButton
+                sessionId="session-1"
+                testID="rollback-action"
+            />,
+        );
+
+        expect(createDefaultActionExecutorSpy.mock.calls[0]?.[0]?.resolveServerIdForSessionId?.('s1')).toBe('server-explicit');
+
+        preferredSessionServerIdState.value = 'server-reactive';
+        await act(async () => {
+            screen.tree.update(
+                <TranscriptRollbackActionButton
+                    sessionId="session-1"
+                    testID="rollback-action"
+                />,
+            );
+        });
+
+        expect(createDefaultActionExecutorSpy.mock.calls.at(-1)?.[0]?.resolveServerIdForSessionId?.('s1')).toBe('server-reactive');
+        await screen.unmount();
+    });
 
     it('alerts when the underlying rollback RPC result is not ok', async () => {
         executeSpy.mockResolvedValueOnce({ ok: true, result: { ok: false, errorMessage: 'nope' } });

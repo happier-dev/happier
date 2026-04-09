@@ -14,6 +14,12 @@ let mockSessionId = 'session-1';
 let mockSession: any = null;
 let isDataReady = true;
 let sessionHydrated = true;
+const allSessionsState = vi.hoisted(() => ({
+    current: [] as any[],
+}));
+const allMachinesState = vi.hoisted(() => ({
+    current: [] as any[],
+}));
 const routerPushSpy = vi.fn();
 const routerBackSpy = vi.fn();
 const safeRouterBackSpy = vi.fn();
@@ -123,11 +129,20 @@ installSessionRouteCommonModuleMocks({
             overrides: {
                 storage: {
                     getState: () => ({
+                        sessions: { [mockSessionId]: mockSession },
+                        machines: {},
+                        settings: {},
+                        concurrentSessionListCacheByServerId: {},
+                        sessionListIndexByServerId: {},
+                        sessionListRowStateByServerId: {},
                         applySessionListRenderablePatches: applySessionListRenderablePatchesSpy,
                     }),
                 } as any,
                 useSession: (sessionId: string) => useSessionSpy(sessionId),
                 useIsDataReady: () => isDataReady,
+                useAllSessions: () => allSessionsState.current,
+                useAllMachines: () => allMachinesState.current,
+                useProjectForSession: () => null,
                 useLocalSetting: <K extends keyof LocalSettings>(name: K): LocalSettings[K] => {
                     if (name === 'devModeEnabled') {
                         return false as LocalSettings[K];
@@ -205,8 +220,8 @@ vi.mock('@/hooks/server/useSessionExecutionRunsSupported', () => ({
         useSessionExecutionRunsSupportedSpy(sessionId, sessionServerId),
 }));
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({ createDefaultActionExecutor: (config: CreateDefaultActionExecutorConfig) => createDefaultActionExecutorSpy(config) }));
-vi.mock('@/components/sessions/model/resolveSessionTargetServerId', () => ({
-    resolveSessionTargetServerId: (sessionId: string, fallbackServerId?: string | null) => resolveSessionTargetServerIdSpy(sessionId, fallbackServerId),
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
+    resolvePreferredServerIdForSessionId: (sessionId: string) => resolveSessionTargetServerIdSpy(sessionId),
 }));
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: (...args: unknown[]) => machineRpcWithServerScopeSpy(...args),
@@ -286,6 +301,8 @@ describe('/session/[id]/info', () => {
         pinnedSessionKeysV1 = null;
         resolvedServerId = 'server-1';
         sessionHandoffFeatureEnabled = false;
+        allSessionsState.current = [];
+        allMachinesState.current = [];
         serverFeaturesSnapshot = {
             status: 'ready',
             features: {
@@ -377,8 +394,8 @@ describe('/session/[id]/info', () => {
         await renderInfoScreen();
 
         const executorConfig = (createDefaultActionExecutorSpy.mock.calls as Array<[CreateDefaultActionExecutorConfig]>).at(-1)?.[0];
-        executorConfig?.resolveServerIdForSessionId?.('child-session');
-        expect(resolveSessionTargetServerIdSpy).toHaveBeenCalledWith('child-session', 'server-session-info');
+        const resolved = await executorConfig?.resolveServerIdForSessionId?.('child-session');
+        expect(resolved).toBe('server-session-info');
         expect(useSessionExecutionRunsSupportedSpy).toHaveBeenCalledWith('session-1', 'server-session-info');
     });
 
@@ -427,7 +444,6 @@ describe('/session/[id]/info', () => {
         const screen = await renderInfoScreen();
         const handoffItems = screen.findAllByType('Item' as any).filter((node: any) => node.props?.title === 'Hand off session');
         expect(handoffItems).toHaveLength(0);
-        expect(resolveSessionTargetServerIdSpy).toHaveBeenCalledWith('session-1', undefined);
     });
 
     it('fails closed and hides the handoff quick action when the selected server only exposes direct-peer handoff transport', async () => {
@@ -460,6 +476,7 @@ describe('/session/[id]/info', () => {
         };
         mockSession = {
             id: 'session-1234567890abcdef',
+            serverId: 'server_reactive_info',
             active: false,
             accessLevel: null,
             createdAt: Date.now(),
@@ -821,6 +838,7 @@ describe('/session/[id]/info', () => {
         resolvedServerId = 'server-1';
         mockSession = {
             id: 'session-1',
+            serverId: 'server-1',
             active: true,
             accessLevel: null,
             createdAt: Date.now(),

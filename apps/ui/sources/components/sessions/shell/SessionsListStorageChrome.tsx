@@ -26,9 +26,6 @@ export const SessionsListStorageChrome = React.memo((props: SessionsListStorageC
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const showDirectBrowseAction = props.directSessionsEnabled && props.storageKind === 'direct';
-    const handleOpenDirectBrowse = React.useCallback(() => {
-        router.push('/direct/browse');
-    }, [router]);
 
     return (
         <>
@@ -45,7 +42,9 @@ export const SessionsListStorageChrome = React.memo((props: SessionsListStorageC
                         title={t('directSessions.browseOpenExisting')}
                         subtitle={t('directSessions.browseActionSubtitle')}
                         icon={<Ionicons name="folder-open-outline" size={22} color={theme.colors.textSecondary} />}
-                        onPress={handleOpenDirectBrowse}
+                        onPress={() => {
+                            router.push('/direct/browse');
+                        }}
                     />
                 </ItemGroup>
             ) : null}

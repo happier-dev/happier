@@ -96,7 +96,7 @@ vi.mock('@/activity/notifications/runtime/activityLocalNotificationBus', async (
 import { storage } from './domains/state/storage';
 import { setActiveServerId, upsertServerProfile } from './domains/server/serverProfiles';
 import type { Machine, Session } from './domains/state/storageTypes';
-import type { SessionListViewItem } from './domains/session/listing/sessionListViewData';
+import type { SessionListRenderableSession } from './domains/session/listing/sessionListRenderable';
 
 const initialStorageState = storage.getState();
 
@@ -210,12 +210,45 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         const activeServer = upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
         const sideServer = upsertServerProfile({ serverUrl: 'https://side.example', name: 'Side' });
         setActiveServerId(activeServer.id, { scope: 'device' });
+        const now = Date.now();
+        const activeSession = {
+            id: 'active-session',
+            seq: 0,
+            createdAt: now,
+            updatedAt: now,
+            active: true,
+            activeAt: now,
+            metadataVersion: 0,
+            agentStateVersion: 0,
+            metadata: null,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } satisfies SessionListRenderableSession;
+        const sideSession = {
+            ...activeSession,
+            id: 'side-session',
+        } satisfies SessionListRenderableSession;
 
         storage.setState((state) => ({
             ...state,
-            sessionListViewDataByServerId: {
-                [activeServer.id]: [{ type: 'session', session: { id: 'active-session' } } as SessionListViewItem],
-                [sideServer.id]: [{ type: 'session', session: { id: 'side-session' } } as SessionListViewItem],
+            concurrentSessionListCacheByServerId: {
+                [activeServer.id]: {
+                    serverName: 'Active',
+                    sessions: { [activeSession.id]: activeSession },
+                },
+                [sideServer.id]: {
+                    serverName: 'Side',
+                    sessions: { [sideSession.id]: sideSession },
+                },
+            },
+            sessionListRowStateByServerId: {
+                [activeServer.id]: { [activeSession.id]: activeSession },
+                [sideServer.id]: { [sideSession.id]: sideSession },
+            },
+            sessionListIndexByServerId: {
+                [activeServer.id]: [{ type: 'session', sessionId: activeSession.id, serverId: activeServer.id }],
+                [sideServer.id]: [{ type: 'session', sessionId: sideSession.id, serverId: sideServer.id }],
             },
         }));
 
@@ -223,8 +256,17 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
 
         (sync as any).resetServerScopedRuntimeState();
 
-        expect(storage.getState().sessionListViewDataByServerId).toEqual({
-            [sideServer.id]: [{ type: 'session', session: { id: 'side-session' } }],
+        expect(storage.getState().concurrentSessionListCacheByServerId).toEqual({
+            [sideServer.id]: {
+                serverName: 'Side',
+                sessions: { [sideSession.id]: sideSession },
+            },
+        });
+        expect(storage.getState().sessionListRowStateByServerId).toEqual({
+            [sideServer.id]: { [sideSession.id]: sideSession },
+        });
+        expect(storage.getState().sessionListIndexByServerId).toEqual({
+            [sideServer.id]: [{ type: 'session', sessionId: sideSession.id, serverId: sideServer.id }],
         });
     });
 
@@ -1008,6 +1050,11 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             observedProgressToken: '1:direct-msg-1',
             observedAtMs: 1,
         });
+        const initialIndexItems = Object.values(storage.getState().sessionListIndexByServerId ?? {})
+            .flatMap(items => (Array.isArray(items) ? items : []));
+        expect(initialIndexItems.some(
+            item => item.type === 'session' && item.sessionId === sessionId && (item.storageKind ?? 'persisted') === 'direct',
+        )).toBe(true);
 
         await (sync as any).handleEphemeralUpdate({
             type: 'direct-session-transcript-delta',
@@ -1028,6 +1075,11 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             observedProgressToken: '2:direct-msg-2',
             observedAtMs: 2,
         });
+        const nextIndexItems = Object.values(storage.getState().sessionListIndexByServerId ?? {})
+            .flatMap(items => (Array.isArray(items) ? items : []));
+        expect(nextIndexItems.some(
+            item => item.type === 'session' && item.sessionId === sessionId && (item.storageKind ?? 'persisted') === 'direct',
+        )).toBe(true);
         expect(emitSessionMetadataUpdateWithServerScopeMock).not.toHaveBeenCalled();
 
         const sessionMessages = storage.getState().sessionMessages[sessionId];
@@ -1099,5 +1151,136 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             sessionId,
             expect.any(Array),
         );
+    });
+
+    it('refetches direct-session transcript state when a push delta is truncated', async () => {
+        const sessionId = 'direct_session_truncated_delta';
+        storage.getState().applySessions([createDirectSession(sessionId)]);
+        machineDirectSessionTranscriptPageMock
+            .mockResolvedValueOnce({
+                ok: true,
+                items: [
+                    {
+                        id: 'direct-msg-1',
+                        createdAtMs: 1,
+                        raw: { role: 'user', content: { type: 'text', text: 'hello direct' } },
+                    },
+                ],
+                nextCursor: null,
+                tailCursor: 'tail-cursor-1',
+                hasMore: false,
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                items: [
+                    {
+                        id: 'direct-msg-1',
+                        createdAtMs: 1,
+                        raw: { role: 'user', content: { type: 'text', text: 'hello direct' } },
+                    },
+                    {
+                        id: 'direct-msg-2',
+                        createdAtMs: 2,
+                        raw: { role: 'user', content: { type: 'text', text: 'reloaded direct' } },
+                    },
+                ],
+                nextCursor: null,
+                tailCursor: 'tail-cursor-2',
+                hasMore: false,
+            });
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = {
+            getSessionEncryption: () => null,
+        };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+
+        await (sync as any).fetchMessages(sessionId);
+        await (sync as any).handleEphemeralUpdate({
+            type: 'direct-session-transcript-delta',
+            sessionId,
+            items: [
+                {
+                    id: 'direct-msg-2',
+                    createdAtMs: 2,
+                    raw: { role: 'user', content: { type: 'text', text: 'partial direct' } },
+                },
+            ],
+            nextCursor: 'tail-cursor-2',
+            truncated: true,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(machineDirectSessionTranscriptPageMock).toHaveBeenCalledTimes(2);
+        expect(machineDirectSessionTranscriptPageMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+            machineId: 'machine-1',
+            remoteSessionId: 'vendor-session-1',
+            direction: 'older',
+        }), expect.anything());
+
+        const sessionMessages = storage.getState().sessionMessages[sessionId];
+        const orderedTexts = (sessionMessages?.messageIdsOldestFirst ?? [])
+            .map((id) => sessionMessages?.messagesById[id])
+            .filter((message): message is NonNullable<typeof message> => Boolean(message))
+            .filter((message) => message.kind === 'user-text')
+            .map((message) => message.text);
+        expect(orderedTexts).toEqual(['hello direct', 'reloaded direct']);
+    });
+
+    it('applies transcript-stream-segment ephemerals without crashing when session encryption is available through sync.handleEphemeralUpdate', async () => {
+        const sessionId = 'direct_session_ephemeral_segment';
+        storage.getState().applySessions([createSession(sessionId)]);
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = {
+            sessionEncryptions: new Map([
+                [sessionId, { decryptMessage: vi.fn(async () => null) }],
+            ]),
+            getSessionEncryption(sessionId: string) {
+                return this.sessionEncryptions.get(sessionId) ?? null;
+            },
+        };
+
+        expect(() => (sync as any).handleEphemeralUpdate({
+            type: 'transcript-stream-segment',
+            sessionId,
+            message: {
+                localId: 'segment-1',
+                content: {
+                    t: 'plain',
+                    v: {
+                        role: 'agent',
+                        content: {
+                            type: 'acp',
+                            provider: 'codex',
+                            data: { type: 'message', message: 'Hello there' },
+                        },
+                        meta: {
+                            happierStreamSegmentV1: {
+                                v: 1,
+                                segmentKind: 'assistant',
+                                segmentLocalId: 'segment-1',
+                                segmentState: 'streaming',
+                                startedAtMs: 1_000,
+                                updatedAtMs: 1_025,
+                            },
+                        },
+                    },
+                },
+                createdAt: 1_000,
+                updatedAt: 1_025,
+            },
+        })).not.toThrow();
+
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const sessionMessages = storage.getState().sessionMessages[sessionId];
+        expect(sessionMessages?.messageIdsOldestFirst).toHaveLength(1);
+        const appliedMessageId = sessionMessages?.messageIdsOldestFirst[0];
+        expect(appliedMessageId).toBeTruthy();
+        expect(sessionMessages?.messagesById[appliedMessageId as string]).toMatchObject({
+            localId: 'segment-1',
+        });
     });
 });

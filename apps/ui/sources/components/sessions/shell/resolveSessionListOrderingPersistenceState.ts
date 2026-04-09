@@ -1,13 +1,19 @@
-const EMPTY_PINNED_SESSION_KEYS: string[] = [];
-const EMPTY_SESSION_LIST_GROUP_ORDER_MAP: Record<string, string[]> = {};
-const EMPTY_PINNED_KEY_SET: ReadonlySet<string> = new Set();
-const SESSION_LIST_ORDERING_PERSISTENCE_STATE_CACHE = new Map<string, SessionListOrderingPersistenceState>();
+import { LruMap } from '@/utils/cache/lruMap';
+import { readSessionListShellCacheMaxEntriesFromEnv } from './sessionListShellCacheConfig';
 
 export type SessionListOrderingPersistenceState = Readonly<{
     pinnedKeyList: string[];
     pinnedKeySet: ReadonlySet<string>;
     currentGroupOrderMap: Record<string, string[]>;
 }>;
+
+const EMPTY_PINNED_SESSION_KEYS: string[] = [];
+const EMPTY_SESSION_LIST_GROUP_ORDER_MAP: Record<string, string[]> = {};
+const EMPTY_PINNED_KEY_SET: ReadonlySet<string> = new Set();
+
+const SESSION_LIST_ORDERING_PERSISTENCE_STATE_CACHE = new LruMap<string, SessionListOrderingPersistenceState>({
+    maxEntries: readSessionListShellCacheMaxEntriesFromEnv(),
+});
 
 export function resolveSessionListOrderingPersistenceState(input: Readonly<{
     pinnedSessionKeysV1: string[] | null | undefined;

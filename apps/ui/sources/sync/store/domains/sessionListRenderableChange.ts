@@ -8,7 +8,7 @@ import {
 
 export type SessionListRenderableChangeImpact = Readonly<{
     didWarmCacheRelevantRenderableChange: boolean;
-    needsSessionListViewDataRebuild: boolean;
+    needsSessionListIndexRebuild: boolean;
     needsProjectManagerUpdate: boolean;
     needsReachablePeerReevaluation: boolean;
 }>;
@@ -19,7 +19,7 @@ export function resolveSessionListRenderableChangeImpact(
 ): SessionListRenderableChangeImpact {
     return {
         didWarmCacheRelevantRenderableChange: didSessionListRenderableWarmCacheFieldsChange(previousRenderable, nextRenderable),
-        needsSessionListViewDataRebuild: didSessionListRenderableStructuralFieldsChange(previousRenderable, nextRenderable),
+        needsSessionListIndexRebuild: didSessionListRenderableStructuralFieldsChange(previousRenderable, nextRenderable),
         needsProjectManagerUpdate: didSessionListRenderableProjectGroupingFieldsChange(previousRenderable, nextRenderable),
         needsReachablePeerReevaluation: didSessionListRenderableReachabilityPeerFieldsChange(previousRenderable, nextRenderable),
     };

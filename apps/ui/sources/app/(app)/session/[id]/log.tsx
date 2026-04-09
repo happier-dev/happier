@@ -12,6 +12,7 @@ import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionI
 import { Typography } from '@/constants/Typography';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { Modal } from '@/modal';
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { useIsDataReady, useSession } from '@/sync/domains/state/storage';
 import { machineReadSessionLogTail } from '@/sync/ops';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
@@ -24,8 +25,8 @@ const LOG_TAIL_MAX_BYTES = 200_000;
 
 export default function SessionLogScreen() {
     const { theme } = useUnistyles();
-    const { id } = useLocalSearchParams<{ id: string }>();
-    const sessionId = String(id ?? '').trim();
+    const { id } = useLocalSearchParams<{ id?: string | string[] }>();
+    const sessionId = normalizeSessionId(id);
     const sessionHydrated = useHydrateSessionForRoute(sessionId, 'SessionLogRoute.ensureSessionVisible');
     const session = useSession(sessionId);
     const isDataReady = useIsDataReady();

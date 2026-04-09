@@ -1,12 +1,12 @@
 import * as React from 'react';
 import { useSharedValue } from 'react-native-reanimated';
 
-import type { SessionListViewItem } from '@/sync/domains/state/storage';
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import { SESSION_LIST_GROUP_ORDER_MAX_KEYS_PER_GROUP } from '@/sync/domains/session/listing/sessionListOrderingStateV1';
 import { setTagsForSession } from './sessionTagUtils';
 
 export function useSessionListRowInteractions(input: Readonly<{
-    listItems: ReadonlyArray<SessionListViewItem> | null;
+    listItems: ReadonlyArray<SessionListIndexItem> | null;
     currentGroupOrderMap: Readonly<Record<string, string[]>>;
     canReorderSessions: boolean;
     setSessionListGroupOrderV1: (value: Record<string, string[]>) => void;
@@ -34,9 +34,9 @@ export function useSessionListRowInteractions(input: Readonly<{
             return;
         }
         if (positionDelta !== 0) {
-            const items = (listItemsRef.current ?? []) as Array<SessionListViewItem>;
+            const items = (listItemsRef.current ?? []) as Array<SessionListIndexItem>;
             const groupSessions = items.filter(
-                (item): item is Extract<SessionListViewItem, { type: 'session' }> =>
+                (item): item is Extract<SessionListIndexItem, { type: 'session' }> =>
                     item.type === 'session' && String(item.groupKey ?? '').trim() === groupKey,
             );
             const currentMap = groupOrderRef.current;
@@ -45,8 +45,8 @@ export function useSessionListRowInteractions(input: Readonly<{
                 ? existingOrder
                 : groupSessions.map((sessionItem) => (
                     typeof sessionItem.serverId === 'string'
-                        ? `${sessionItem.serverId}:${sessionItem.session.id}`
-                        : sessionItem.session.id
+                        ? `${sessionItem.serverId}:${sessionItem.sessionId}`
+                        : sessionItem.sessionId
                 ));
             const currentIndex = orderedKeys.indexOf(sessionKey);
             if (currentIndex >= 0) {

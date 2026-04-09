@@ -17,7 +17,7 @@ import { useSessionListRowInteractions } from './useSessionListRowInteractions';
 import { useSessionListWorkspaceHeaderActions } from './useSessionListWorkspaceHeaderActions';
 import { useSessionListWorkspaceLabelMigration } from './useSessionListWorkspaceLabelMigration';
 import { useVisibleSessionListPaneState } from '@/hooks/session/useVisibleSessionListPaneState';
-import type { SessionListViewItem } from '@/sync/domains/state/storage';
+import { buildSessionListIndexNodeId, type SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import { normalizeSessionListShellState } from './normalizeSessionListShellState';
 
 export function useSessionListViewState(storageKind: SessionListStorageFilter) {
@@ -115,7 +115,7 @@ export function useSessionListViewState(storageKind: SessionListStorageFilter) {
     });
 
     const collapsedKeys = normalizedShellState.collapsedGroupKeys;
-    const renderHeaderItem = React.useCallback((item: Extract<SessionListViewItem, { type: 'header' }>) => (
+    const renderHeaderItem = React.useCallback((item: Extract<SessionListIndexItem, { type: 'header' }>) => (
         <SessionListHeaderItem
             item={item}
             collapsedKeys={collapsedKeys}
@@ -136,7 +136,7 @@ export function useSessionListViewState(storageKind: SessionListStorageFilter) {
         renderModels.hasMultipleMachines,
     ]);
 
-    const renderSessionItem = React.useCallback((item: Extract<SessionListViewItem, { type: 'session' }>, index: number) => (
+    const renderSessionItem = React.useCallback((item: Extract<SessionListIndexItem, { type: 'session' }>, index: number) => (
         <SessionListSessionItem
             item={item}
             rowViewModel={renderModels.rowViewModels[index]}
@@ -179,13 +179,27 @@ export function useSessionListViewState(storageKind: SessionListStorageFilter) {
         shellFlags.canReorderSessions,
     ]);
 
-    const renderVirtualizedItem = React.useCallback((params: { item: SessionListViewItem; index: number }) => {
-        if (params.item.type === 'header') return renderHeaderItem(params.item);
-        return renderSessionItem(params.item, params.index);
-    }, [renderHeaderItem, renderSessionItem]);
+    const nodeIds = React.useMemo(() => (
+        renderModels.listItems.map((item) => buildSessionListIndexNodeId(item))
+    ), [renderModels.listItems]);
+
+    const nodeById = React.useMemo(() => {
+        const map = new Map<string, SessionListIndexItem>();
+        for (let index = 0; index < renderModels.listItems.length; index += 1) {
+            map.set(nodeIds[index], renderModels.listItems[index]);
+        }
+        return map;
+    }, [nodeIds, renderModels.listItems]);
+
+    const renderVirtualizedItem = React.useCallback((params: { item: string; index: number }) => {
+        const item = nodeById.get(params.item) ?? renderModels.listItems[params.index] ?? null;
+        if (!item) return null;
+        if (item.type === 'header') return renderHeaderItem(item);
+        return renderSessionItem(item, params.index);
+    }, [nodeById, renderHeaderItem, renderModels.listItems, renderSessionItem]);
 
     return {
-        listItems: renderModels.listItems,
+        nodeIds,
         rowHeight: densityViewState.rowHeight,
         renderVirtualizedItem,
         onPressArchivedSessions: handleOpenArchivedSessions,

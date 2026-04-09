@@ -8,8 +8,10 @@ import { parseSessionPaneUrlState } from '@/components/sessions/panes/url/sessio
 import { getTempData } from '@/utils/sessions/tempDataStore';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
+import { storage } from '@/sync/domains/state/storageStore';
 
-export default React.memo(() => {
+export default function SessionRouteIndex() {
     const params = useLocalSearchParams<{
         id?: string | string[];
         jumpSeq?: string | string[];
@@ -21,12 +23,7 @@ export default React.memo(() => {
         recoveryDataId?: string | string[];
     }>();
     const { id: sessionIdParam, jumpSeq: jumpSeqParam, recoveryDataId: recoveryDataIdParam } = params;
-    const sessionId =
-        (typeof sessionIdParam === 'string'
-            ? sessionIdParam
-            : Array.isArray(sessionIdParam)
-                ? (sessionIdParam[0] ?? '')
-                : '').trim();
+    const sessionId = normalizeSessionId(sessionIdParam);
     const jumpSeqRaw = typeof jumpSeqParam === 'string'
         ? jumpSeqParam
         : Array.isArray(jumpSeqParam)
@@ -62,12 +59,13 @@ export default React.memo(() => {
         sessionId,
         `SessionRoute.ensureSessionVisible gen=${activeServerGeneration}`,
     );
+    const sessionCached = Boolean(storage.getState().sessions[sessionId] ?? null);
 
     if (!sessionId) {
         return <SessionInvalidLinkFallback />;
     }
 
-    if (!sessionHydrated) {
+    if (!sessionHydrated && !sessionCached) {
         return (
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
                 <ActivityIndicator size="small" />
@@ -83,4 +81,4 @@ export default React.memo(() => {
             initialAttachmentDrafts={recoverableAttachmentDrafts}
         />
     );
-});
+}

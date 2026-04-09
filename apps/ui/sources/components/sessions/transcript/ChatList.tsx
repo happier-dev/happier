@@ -7,6 +7,7 @@ import {
     useSessionActionDrafts,
     useSessionLatestThinkingMessageId,
     useSessionLatestThinkingMessageActivityAtMs,
+    useSessionMessages,
     useSessionMessagesById,
     useSessionPendingMessages,
     useSessionTranscriptIds,
@@ -86,6 +87,39 @@ type ChatTranscriptListItem =
         turn: TranscriptTurn;
     };
 
+function resolvePendingQueueActivityKey(item: Extract<ChatListItem, { kind: 'pending-queue' }>): string {
+    const tail = item.pendingMessages[item.pendingMessages.length - 1] ?? item.discardedMessages[item.discardedMessages.length - 1] ?? null;
+    const tailIdentity =
+        tail == null
+            ? 'none'
+            : [
+                tail.id,
+                tail.localId,
+                Number.isFinite(tail.updatedAt) ? String(Math.trunc(tail.updatedAt)) : null,
+                Number.isFinite(tail.createdAt) ? String(Math.trunc(tail.createdAt)) : null,
+            ].find((value) => typeof value === 'string' && value.length > 0) ?? 'tail';
+
+    return `pending-queue:${item.pendingMessages.length}:${item.discardedMessages.length}:${tailIdentity}`;
+}
+
+function resolveLatestVisibleTailActivityKey(items: readonly ChatTranscriptListItem[]): string | null {
+    const latestItem = items[items.length - 1] ?? null;
+    if (!latestItem) return null;
+
+    switch (latestItem.kind) {
+        case 'pending-queue':
+            return resolvePendingQueueActivityKey(latestItem);
+        case 'message':
+        case 'tool-calls-group':
+        case 'fork-divider':
+        case 'action-draft':
+        case 'turn':
+            return latestItem.id;
+        default:
+            return null;
+    }
+}
+
 export type ChatListBottomNotice = {
     title: string;
     body: string;
@@ -105,6 +139,7 @@ export const ChatList = React.memo((props: {
     const fork = useForkedTranscriptSnapshot(props.session.id);
     const { ids: childMessageIdsOldestFirst, isLoaded } = useSessionTranscriptIds(props.session.id);
     const childMessagesById = useSessionMessagesById(props.session.id);
+    const { messages: swrCommittedMessages } = useSessionMessages(props.session.id);
     const { messages: pendingMessages, discarded: discardedPendingMessages } = useSessionPendingMessages(props.session.id);
     const actionDrafts = useSessionActionDrafts(props.session.id);
 
@@ -114,6 +149,22 @@ export const ChatList = React.memo((props: {
     const toolViewTimelineChromeMode = useSetting('toolViewTimelineChromeMode');
 
     const forkedTranscriptEnabled = fork != null;
+
+    const swrFallbackEnabled = !forkedTranscriptEnabled
+        && childMessageIdsOldestFirst.length === 0
+        && swrCommittedMessages.length > 0;
+    const swrFallbackMessageIdsOldestFirst = React.useMemo(() => {
+        if (!swrFallbackEnabled) return childMessageIdsOldestFirst;
+        return swrCommittedMessages.map((message) => message.id);
+    }, [childMessageIdsOldestFirst, swrCommittedMessages, swrFallbackEnabled]);
+    const swrFallbackMessagesById = React.useMemo(() => {
+        if (!swrFallbackEnabled) return childMessagesById;
+        const out: Record<string, Message> = {};
+        for (const message of swrCommittedMessages) {
+            out[message.id] = message;
+        }
+        return out;
+    }, [childMessagesById, swrCommittedMessages, swrFallbackEnabled]);
 
     const forkContextNeedsPrefetch = React.useMemo(() => {
         if (!fork) return false;
@@ -135,14 +186,14 @@ export const ChatList = React.memo((props: {
         if (forkedTranscriptEnabled) {
             return fork!.combinedMessageIdsOldestFirst as any as string[];
         }
-        return childMessageIdsOldestFirst;
-    }, [childMessageIdsOldestFirst, fork, forkedTranscriptEnabled]);
+        return swrFallbackMessageIdsOldestFirst;
+    }, [fork, forkedTranscriptEnabled, swrFallbackMessageIdsOldestFirst]);
     const messagesById = React.useMemo(() => {
         if (forkedTranscriptEnabled) {
             return fork!.combinedMessagesById as any;
         }
-        return childMessagesById;
-    }, [childMessagesById, fork, forkedTranscriptEnabled]);
+        return swrFallbackMessagesById;
+    }, [fork, forkedTranscriptEnabled, swrFallbackMessagesById]);
 
     const groupingMode = forkedTranscriptEnabled ? 'linear' : (transcriptGroupingMode === 'turns' ? 'turns' : 'linear');
     const groupToolCalls =
@@ -213,6 +264,9 @@ export const ChatList = React.memo((props: {
 
     const latestCommittedActivityKey =
         messageIdsOldestFirst.length > 0 ? messageIdsOldestFirst[messageIdsOldestFirst.length - 1]! : null;
+    const latestVisibleTailActivityKey = React.useMemo(() => {
+        return resolveLatestVisibleTailActivityKey(groupedItems);
+    }, [groupedItems]);
     const rollbackRanges = React.useMemo(
         () => readSessionRollbackRangesV1((props.session.metadata as Record<string, unknown> | null | undefined) ?? null),
         [props.session.metadata],
@@ -277,7 +331,7 @@ export const ChatList = React.memo((props: {
             items={groupedItems}
             messagesById={messagesById}
             committedMessagesCount={messageIdsOldestFirst.length}
-            latestCommittedActivityKey={latestCommittedActivityKey}
+            latestVisibleTailActivityKey={latestVisibleTailActivityKey}
             activeThinkingMessageId={activeThinkingMessageId}
             rollbackRanges={rollbackRanges}
             rollbackActionsByMessageId={rollbackActionsByMessageId}
@@ -394,7 +448,7 @@ const ChatListInternal = React.memo((props: {
     items: ChatTranscriptListItem[],
     messagesById: Readonly<Record<string, Message>>,
     committedMessagesCount: number,
-    latestCommittedActivityKey: string | null,
+    latestVisibleTailActivityKey: string | null,
     activeThinkingMessageId: string | null,
     rollbackRanges: readonly SessionRollbackRangeV1[],
     rollbackActionsByMessageId: Readonly<Record<string, TranscriptRollbackAction>>,
@@ -435,7 +489,27 @@ const ChatListInternal = React.memo((props: {
       const lastUserScrollIntentAtMsRef = React.useRef(0);
       const lastAutoRepinAtMsRef = React.useRef(0);
       const lastPinOffsetForIntentRef = React.useRef<number | null>(null);
+    const scheduledPinRef = React.useRef<{ kind: 'raf' | 'timeout'; id: any } | null>(null);
     const initialWebPinStabilizingRef = React.useRef(false);
+
+    const cancelScheduledPinToBottom = React.useCallback(() => {
+        const scheduled = scheduledPinRef.current;
+        if (!scheduled) return;
+        scheduledPinRef.current = null;
+        if (scheduled.kind === 'raf') {
+            const caf = (globalThis as any)?.cancelAnimationFrame as undefined | ((id: any) => void);
+            if (typeof caf === 'function') {
+                caf(scheduled.id);
+            }
+            return;
+        }
+        clearTimeout(scheduled.id);
+    }, []);
+
+    const deferAutoPinAfterLocalTranscriptInteraction = React.useCallback(() => {
+        lastUserScrollIntentAtMsRef.current = Date.now();
+        cancelScheduledPinToBottom();
+    }, [cancelScheduledPinToBottom]);
 
     const transcriptMotionPreset = useSetting('transcriptMotionPreset');
     const transcriptMotionFreshnessMs = useSetting('transcriptMotionFreshnessMs');
@@ -551,7 +625,7 @@ const ChatListInternal = React.memo((props: {
             () => new Map<string, boolean>(),
         );
 
-      const setToolCallsGroupExpanded = React.useCallback((params: { toolCallsGroupId: string; toolMessageIds: readonly string[]; expanded: boolean }) => {
+      const applyToolCallsGroupExpanded = React.useCallback((params: { toolCallsGroupId: string; toolMessageIds: readonly string[]; expanded: boolean }) => {
           setExpandedToolCallsAnchorMessageIds((prev) => {
               const next = new Set(prev);
               if (params.expanded) {
@@ -573,7 +647,7 @@ const ChatListInternal = React.memo((props: {
             return thinkingExpandedByMessageId.get(messageId) ?? thinkingDefaultExpanded;
         }, [thinkingDefaultExpanded, thinkingExpandedByMessageId]);
 
-        const setThinkingExpanded = React.useCallback((messageId: string, expanded: boolean) => {
+        const applyThinkingExpanded = React.useCallback((messageId: string, expanded: boolean) => {
             setThinkingExpandedByMessageId((prev) => {
                 const prevValue = prev.get(messageId);
                 if (prevValue === expanded) return prev;
@@ -586,6 +660,15 @@ const ChatListInternal = React.memo((props: {
                 return next;
             });
         }, [thinkingDefaultExpanded]);
+        const setToolCallsGroupExpanded = React.useCallback((params: { toolCallsGroupId: string; toolMessageIds: readonly string[]; expanded: boolean }) => {
+            deferAutoPinAfterLocalTranscriptInteraction();
+            applyToolCallsGroupExpanded(params);
+        }, [applyToolCallsGroupExpanded, deferAutoPinAfterLocalTranscriptInteraction]);
+        const setThinkingExpanded = React.useCallback((messageId: string, expanded: boolean) => {
+            if (resolveThinkingExpanded(messageId) === expanded) return;
+            deferAutoPinAfterLocalTranscriptInteraction();
+            applyThinkingExpanded(messageId, expanded);
+        }, [applyThinkingExpanded, deferAutoPinAfterLocalTranscriptInteraction, resolveThinkingExpanded]);
 
     React.useEffect(() => {
         props.onViewportChange?.({ isPinned: isPinnedRef.current, offsetY: 0 });
@@ -621,6 +704,7 @@ const ChatListInternal = React.memo((props: {
             }
         }
         setExpandedToolCallsAnchorMessageIds(new Set());
+        setThinkingExpandedByMessageId(new Map());
     }, [props.sessionId]);
 
     const pinEnabled = transcriptScrollPinEnabled !== false;
@@ -1212,7 +1296,6 @@ const ChatListInternal = React.memo((props: {
         return Date.now() - lastUserScrollIntentAtMsRef.current >= 250;
     }, [autoFollowWhenPinned, pinEnabled, props.jumpToSeq]);
 
-    const scheduledPinRef = React.useRef<{ kind: 'raf' | 'timeout'; id: any } | null>(null);
     const schedulePinToBottom = React.useCallback(() => {
         if (listImplementation !== 'flash_v2') return;
         if (!shouldAutoPinToBottomNow()) return;
@@ -1243,19 +1326,9 @@ const ChatListInternal = React.memo((props: {
 
     React.useEffect(() => {
         return () => {
-            const scheduled = scheduledPinRef.current;
-            if (!scheduled) return;
-            scheduledPinRef.current = null;
-            if (scheduled.kind === 'raf') {
-                const caf = (globalThis as any)?.cancelAnimationFrame as undefined | ((id: any) => void);
-                if (typeof caf === 'function') {
-                    caf(scheduled.id);
-                }
-            } else {
-                clearTimeout(scheduled.id);
-            }
+            cancelScheduledPinToBottom();
         };
-    }, []);
+    }, [cancelScheduledPinToBottom]);
 
     React.useLayoutEffect(() => {
         // When pinned, proactively keep the list at the visual bottom as new activity arrives.
@@ -1268,10 +1341,10 @@ const ChatListInternal = React.memo((props: {
             reduceTranscriptScrollPinState({ ...prev, isPinned: isPinnedRef.current }, {
                 type: 'newActivity',
                 enabled: pinEnabled,
-                activityKey: props.latestCommittedActivityKey,
+                activityKey: props.latestVisibleTailActivityKey,
             })
         );
-    }, [autoFollowWhenPinned, pinEnabled, pinToBottom, props.jumpToSeq, props.latestCommittedActivityKey]);
+    }, [autoFollowWhenPinned, pinEnabled, pinToBottom, props.jumpToSeq, props.latestVisibleTailActivityKey]);
 
     React.useEffect(() => {
         if (!props.isLoaded) return;
@@ -1454,7 +1527,7 @@ const ChatListInternal = React.memo((props: {
                 const toolMessageIds = it.toolMessageIds;
                 if (toolMessageIds.length <= previewCount) return false;
                 if (toolMessageIds.some((id) => expandedToolCallsAnchorMessageIds.has(id))) return false;
-                setToolCallsGroupExpanded({ toolCallsGroupId: it.id, toolMessageIds, expanded: true });
+                applyToolCallsGroupExpanded({ toolCallsGroupId: it.id, toolMessageIds, expanded: true });
                 return true;
             }
             if (it.kind === 'turn') {
@@ -1466,7 +1539,7 @@ const ChatListInternal = React.memo((props: {
                     const toolMessageIds = c.toolMessageIds;
                     if (toolMessageIds.length <= previewCount) continue;
                     if (toolMessageIds.some((id) => expandedToolCallsAnchorMessageIds.has(id))) continue;
-                    setToolCallsGroupExpanded({ toolCallsGroupId: c.id, toolMessageIds, expanded: true });
+                    applyToolCallsGroupExpanded({ toolCallsGroupId: c.id, toolMessageIds, expanded: true });
                     return true;
                 }
             }
@@ -1483,7 +1556,7 @@ const ChatListInternal = React.memo((props: {
             if (visitItem(items[i])) return true;
         }
         return false;
-    }, [expandedToolCallsAnchorMessageIds, listImplementation, resolveToolCallsCollapsedPreviewCount, setToolCallsGroupExpanded]);
+    }, [applyToolCallsGroupExpanded, expandedToolCallsAnchorMessageIds, listImplementation, resolveToolCallsCollapsedPreviewCount]);
 
     React.useEffect(() => {
         // Intentionally runs after every render until the transcript becomes scrollable or we succeed.

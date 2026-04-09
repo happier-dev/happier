@@ -118,4 +118,35 @@ describe('ChatList (jump-to-bottom)', () => {
 
     await screen.unmount();
   });
+
+  it('shows a jump-to-bottom button when an existing newest turn grows while unpinned', async () => {
+    legacyChatListHarnessState.settingValues.transcriptGroupingMode = 'turns';
+    legacyChatListHarnessState.sessionMessagesState = {
+      isLoaded: true,
+      messages: [
+        { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'u1' },
+      ],
+    };
+
+    const screen = await renderLegacyChatList();
+    requireCapturedFlatListProps();
+
+    await triggerLegacyChatListScroll(200);
+
+    legacyChatListHarnessState.sessionMessagesState = {
+      isLoaded: true,
+      messages: [
+        { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'u1' },
+        { kind: 'agent-text', id: 'a1', localId: null, createdAt: 2, text: 'a1' },
+      ],
+    };
+
+    const { ChatList } = await import('./ChatList');
+    await screen.update(<ChatList session={{ ...legacyChatListHarnessState.sessionState }} />);
+
+    const jumpButtons = screen.findAllByTestId('transcript-jump-to-bottom');
+    expect(jumpButtons.length).toBeGreaterThan(0);
+
+    await screen.unmount();
+  });
 });

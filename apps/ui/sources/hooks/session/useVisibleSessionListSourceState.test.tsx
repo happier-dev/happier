@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
-import type { SessionListViewItem } from '@/sync/domains/session/listing/sessionListViewData';
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 
 const sourceState = vi.hoisted(() => ({
     selection: {
@@ -12,51 +12,19 @@ const sourceState = vi.hoisted(() => ({
         explicit: false,
         activeTarget: { kind: 'server', id: 'srv-a', serverId: 'srv-a' },
     } as any,
-    activeData: [
+    activeIndex: [
         {
             type: 'session',
-            session: {
-                id: 'active-1',
-                seq: 0,
-                createdAt: 0,
-                updatedAt: 0,
-                active: false,
-                activeAt: 0,
-                metadata: {
-                    path: '',
-                    directSessionV1: { v: 1 },
-                },
-                metadataVersion: 0,
-                agentStateVersion: 0,
-                thinking: false,
-                thinkingAt: 0,
-                presence: 0,
-            },
+            sessionId: 'active-1',
             serverId: 'srv-a',
             serverName: 'Server A',
         },
-    ] as SessionListViewItem[],
+    ] as SessionListIndexItem[],
     byServerId: {
         'srv-a': [
             {
                 type: 'session',
-                session: {
-                    id: 'active-1',
-                    seq: 0,
-                    createdAt: 0,
-                    updatedAt: 0,
-                    active: false,
-                    activeAt: 0,
-                    metadata: {
-                        path: '',
-                        directSessionV1: { v: 1 },
-                    },
-                    metadataVersion: 0,
-                    agentStateVersion: 0,
-                    thinking: false,
-                    thinkingAt: 0,
-                    presence: 0,
-                },
+                sessionId: 'active-1',
                 serverId: 'srv-a',
                 serverName: 'Server A',
             },
@@ -64,28 +32,12 @@ const sourceState = vi.hoisted(() => ({
         'srv-b': [
             {
                 type: 'session',
-                session: {
-                    id: 'cached-1',
-                    seq: 0,
-                    createdAt: 0,
-                    updatedAt: 0,
-                    active: false,
-                    activeAt: 0,
-                    metadata: {
-                        path: '',
-                        directSessionV1: { v: 1 },
-                    },
-                    metadataVersion: 0,
-                    agentStateVersion: 0,
-                    thinking: false,
-                    thinkingAt: 0,
-                    presence: 0,
-                },
+                sessionId: 'cached-1',
                 serverId: 'srv-b',
                 serverName: 'Server B',
             },
-        ] as SessionListViewItem[],
-    } as Record<string, SessionListViewItem[]>,
+        ] as SessionListIndexItem[],
+    } as Record<string, SessionListIndexItem[]>,
 }));
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
@@ -93,8 +45,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     return createStorageModuleMock({
         importOriginal,
         overrides: {
-            useSessionListViewData: () => sourceState.activeData,
-            useServerScopedSessionListCache: () => sourceState.byServerId,
+            useSessionListIndexByServerId: () => sourceState.byServerId,
         },
     });
 });
@@ -114,80 +65,32 @@ describe('useVisibleSessionListSourceState', () => {
             explicit: false,
             activeTarget: { kind: 'server', id: 'srv-a', serverId: 'srv-a' },
         };
-        sourceState.activeData = [
+        sourceState.activeIndex = [
             {
                 type: 'session',
-                session: {
-                    id: 'active-1',
-                    seq: 0,
-                    createdAt: 0,
-                    updatedAt: 0,
-                    active: false,
-                    activeAt: 0,
-                    metadata: {
-                        path: '',
-                        directSessionV1: { v: 1 },
-                    },
-                    metadataVersion: 0,
-                    agentStateVersion: 0,
-                    thinking: false,
-                    thinkingAt: 0,
-                    presence: 0,
-                },
+                sessionId: 'active-1',
                 serverId: 'srv-a',
                 serverName: 'Server A',
             },
-        ] as SessionListViewItem[];
+        ] as SessionListIndexItem[];
         sourceState.byServerId = {
             'srv-a': [
                 {
                     type: 'session',
-                    session: {
-                        id: 'active-1',
-                        seq: 0,
-                        createdAt: 0,
-                        updatedAt: 0,
-                        active: false,
-                        activeAt: 0,
-                        metadata: {
-                            path: '',
-                            directSessionV1: { v: 1 },
-                        },
-                        metadataVersion: 0,
-                        agentStateVersion: 0,
-                        thinking: false,
-                        thinkingAt: 0,
-                        presence: 0,
-                    },
+                    sessionId: 'active-1',
                     serverId: 'srv-a',
                     serverName: 'Server A',
                 },
-            ] as SessionListViewItem[],
+            ] as SessionListIndexItem[],
             'srv-b': [
                 {
                     type: 'session',
-                    session: {
-                        id: 'cached-1',
-                        seq: 0,
-                        createdAt: 0,
-                        updatedAt: 0,
-                        active: false,
-                        activeAt: 0,
-                        metadata: {
-                            path: '',
-                            directSessionV1: { v: 1 },
-                        },
-                        metadataVersion: 0,
-                        agentStateVersion: 0,
-                        thinking: false,
-                        thinkingAt: 0,
-                        presence: 0,
-                    },
+                    sessionId: 'cached-1',
                     serverId: 'srv-b',
                     serverName: 'Server B',
                 },
-            ] as SessionListViewItem[],
-        } as Record<string, SessionListViewItem[]>;
+            ] as SessionListIndexItem[],
+        } as Record<string, SessionListIndexItem[]>;
     });
 
     it('returns the canonical selection together with the resolved visible source', async () => {
@@ -202,6 +105,6 @@ describe('useVisibleSessionListSourceState', () => {
                 expect.objectContaining({ serverId: 'srv-b' }),
             ]),
         }));
-        expect(hook.getCurrent()?.source?.map((item) => item.type === 'session' ? item.session.id : item.type)).toEqual(['active-1', 'cached-1']);
+        expect(hook.getCurrent()?.source?.map((item) => item.type === 'session' ? item.sessionId : item.type)).toEqual(['active-1', 'cached-1']);
     });
 });

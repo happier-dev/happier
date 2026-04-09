@@ -508,6 +508,270 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         expect(applySessions).not.toHaveBeenCalled();
     });
 
+    it('preserves direct-session classification in placeholder rows while a stale direct session rehydrates', async () => {
+        const requestSpy = vi.fn(async () =>
+            jsonResponse({
+                sessions: [
+                    buildSessionRow({
+                        id: 's_direct',
+                        dataEncryptionKey: 'k-direct',
+                        metadata: 'meta-direct',
+                        metadataVersion: 3,
+                    }),
+                ],
+                nextCursor: null,
+                hasNext: false,
+            }),
+        );
+
+        const { encryption, decryptMetadata, decryptAgentState } = createEncryptionHarness();
+        decryptMetadata.mockImplementation(async () => new Promise<never>(() => {}));
+        decryptAgentState.mockImplementation(async () => new Promise<never>(() => {}));
+        const applySessions = vi.fn();
+        const applySessionListRenderables = vi.fn();
+
+        const fetchPromise = fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' },
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applySessions,
+            applySessionListRenderables,
+            cachedSessionListEntries: {
+                s_direct: {
+                    sessionId: 's_direct',
+                    metadataVersion: 2,
+                    agentStateVersion: 0,
+                    updatedAt: 3,
+                    createdAt: 1,
+                    active: true,
+                    activeAt: 3,
+                    archivedAt: null,
+                    pendingCount: 0,
+                    pendingVersion: 0,
+                    accessLevel: undefined,
+                    canApprovePermissions: undefined,
+                    name: 'Direct session',
+                    summaryText: 'Cached direct summary',
+                    path: '/tmp/direct',
+                    homeDir: '/tmp',
+                    host: 'host',
+                    machineId: 'm1',
+                    flavor: 'claude',
+                    directSessionV1: {
+                        v: 1,
+                        providerId: 'claude',
+                    },
+                    hiddenSystemSession: false,
+                    hasPendingPermissionRequests: false,
+                    hasPendingUserActionRequests: false,
+                },
+            },
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        const raceResult = await Promise.race([
+            fetchPromise.then(() => 'resolved'),
+            new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 25)),
+        ]);
+
+        expect(raceResult).toBe('resolved');
+        expect(applySessionListRenderables).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: 's_direct',
+                metadataVersion: 3,
+                metadata: expect.objectContaining({
+                    directSessionV1: expect.objectContaining({
+                        v: 1,
+                        providerId: 'claude',
+                    }),
+                }),
+            }),
+        ], { replace: true });
+        expect(applySessions).not.toHaveBeenCalled();
+    });
+
+    it('preserves direct-session classification from cached rows when hydrated metadata omits directSessionV1', async () => {
+        const requestSpy = vi.fn(async () =>
+            jsonResponse({
+                sessions: [
+                    buildSessionRow({
+                        id: 's_direct',
+                        encryptionMode: 'plain',
+                        metadataVersion: 3,
+                        metadata: JSON.stringify({
+                            path: '/tmp/direct',
+                            host: 'host',
+                            directSessionAttentionV1: {
+                                v: 1,
+                                observedProgressToken: '20:msg-2',
+                                viewedProgressToken: '10:msg-1',
+                                observedAtMs: 20,
+                                viewedAtMs: 10,
+                            },
+                        }),
+                    }),
+                ],
+                nextCursor: null,
+                hasNext: false,
+            }),
+        );
+
+        const { encryption } = createEncryptionHarness();
+        const applySessions = vi.fn();
+
+        await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' },
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applySessions,
+            cachedSessionListEntries: {
+                s_direct: {
+                    sessionId: 's_direct',
+                    metadataVersion: 2,
+                    agentStateVersion: 0,
+                    updatedAt: 3,
+                    createdAt: 1,
+                    active: true,
+                    activeAt: 3,
+                    archivedAt: null,
+                    pendingCount: 0,
+                    pendingVersion: 0,
+                    accessLevel: undefined,
+                    canApprovePermissions: undefined,
+                    name: 'Direct session',
+                    summaryText: 'Cached direct summary',
+                    path: '/tmp/direct',
+                    homeDir: '/tmp',
+                    host: 'host',
+                    machineId: 'm1',
+                    flavor: 'claude',
+                    directSessionV1: {
+                        v: 1,
+                        providerId: 'claude',
+                    },
+                    hiddenSystemSession: false,
+                    hasPendingPermissionRequests: false,
+                    hasPendingUserActionRequests: false,
+                },
+            },
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        expect(applySessions).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: 's_direct',
+                metadataVersion: 3,
+                metadata: expect.objectContaining({
+                    path: '/tmp/direct',
+                    host: 'host',
+                    machineId: 'm1',
+                    directSessionV1: expect.objectContaining({
+                        v: 1,
+                        providerId: 'claude',
+                    }),
+                    directSessionAttentionV1: expect.objectContaining({
+                        v: 1,
+                        observedProgressToken: '20:msg-2',
+                    }),
+                }),
+            }),
+        ]);
+    });
+
+    it('preserves direct-session classification from cached rows when hydrated metadata sets directSessionV1 to null', async () => {
+        const requestSpy = vi.fn(async () =>
+            jsonResponse({
+                sessions: [
+                    buildSessionRow({
+                        id: 's_direct',
+                        encryptionMode: 'plain',
+                        metadataVersion: 3,
+                        metadata: JSON.stringify({
+                            path: '/tmp/direct',
+                            host: 'host',
+                            directSessionV1: null,
+                            directSessionAttentionV1: {
+                                v: 1,
+                                observedProgressToken: '20:msg-2',
+                                viewedProgressToken: '10:msg-1',
+                                observedAtMs: 20,
+                                viewedAtMs: 10,
+                            },
+                        }),
+                    }),
+                ],
+                nextCursor: null,
+                hasNext: false,
+            }),
+        );
+
+        const { encryption } = createEncryptionHarness();
+        const applySessions = vi.fn();
+
+        await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' },
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applySessions,
+            cachedSessionListEntries: {
+                s_direct: {
+                    sessionId: 's_direct',
+                    metadataVersion: 2,
+                    agentStateVersion: 0,
+                    updatedAt: 3,
+                    createdAt: 1,
+                    active: true,
+                    activeAt: 3,
+                    archivedAt: null,
+                    pendingCount: 0,
+                    pendingVersion: 0,
+                    accessLevel: undefined,
+                    canApprovePermissions: undefined,
+                    name: 'Direct session',
+                    summaryText: 'Cached direct summary',
+                    path: '/tmp/direct',
+                    homeDir: '/tmp',
+                    host: 'host',
+                    machineId: 'm1',
+                    flavor: 'claude',
+                    directSessionV1: {
+                        v: 1,
+                        providerId: 'claude',
+                    },
+                    hiddenSystemSession: false,
+                    hasPendingPermissionRequests: false,
+                    hasPendingUserActionRequests: false,
+                },
+            },
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        expect(applySessions).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: 's_direct',
+                metadataVersion: 3,
+                metadata: expect.objectContaining({
+                    path: '/tmp/direct',
+                    host: 'host',
+                    directSessionV1: expect.objectContaining({
+                        v: 1,
+                        providerId: 'claude',
+                    }),
+                    directSessionAttentionV1: expect.objectContaining({
+                        v: 1,
+                        observedProgressToken: '20:msg-2',
+                    }),
+                }),
+            }),
+        ]);
+    });
+
     it('skips background hydration when the caller scope is no longer active', async () => {
         const requestSpy = vi.fn(async () =>
             jsonResponse({

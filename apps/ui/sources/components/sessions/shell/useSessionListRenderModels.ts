@@ -1,8 +1,9 @@
 import * as React from 'react';
 
-import type { SessionListViewItem } from '@/sync/domains/state/storage';
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
+import { useSessionListRowStateByServerId } from '@/sync/domains/state/storage';
 
 import { filterCollapsedSessionListItems } from './filterCollapsedSessionListItems';
 import { buildSessionListProjectHeaderViewModels, type SessionListProjectHeaderViewModel } from './sessionListProjectHeaderViewModels';
@@ -19,8 +20,10 @@ type SessionReachableDisplay = Readonly<{
     pathSubtitle: string;
 }>;
 
+const EMPTY_PINNED_KEY_SET: ReadonlySet<string> = new Set();
+
 const EMPTY_SESSION_LIST_RENDER_MODELS = {
-    listItems: [] as Array<SessionListViewItem>,
+    listItems: [] as Array<SessionListIndexItem>,
     reachableSessionDisplayById: new Map<string, SessionReachableDisplay>(),
     hasMultipleMachines: false,
     projectHeaderViewModelState: {
@@ -29,7 +32,7 @@ const EMPTY_SESSION_LIST_RENDER_MODELS = {
     },
     rowViewModels: [] as ReadonlyArray<SessionListRowViewModel | null>,
 } satisfies Readonly<{
-    listItems: ReadonlyArray<SessionListViewItem>;
+    listItems: ReadonlyArray<SessionListIndexItem>;
     reachableSessionDisplayById: ReadonlyMap<string, SessionReachableDisplay>;
     hasMultipleMachines: boolean;
     projectHeaderViewModelState: SessionListProjectHeaderViewModelState;
@@ -48,45 +51,74 @@ export function useSessionListRenderModels(input: Readonly<{
     showServerBadge: boolean;
     showPinnedServerBadge: boolean;
 }>) {
-    const normalizedShellState = normalizeSessionListShellState({
-        collapsedGroupKeys: input.collapsedGroupKeys,
-        sessionTags: input.sessionTags,
-        workspaceLabels: input.workspaceLabels,
-        workspaceRefs: input.workspaceRefs,
-    });
+    const sessionRowStateByServerId = useSessionListRowStateByServerId();
+    const pinnedKeySet = React.useMemo(() => (
+        input.pinnedKeySet.size === 0 ? EMPTY_PINNED_KEY_SET : input.pinnedKeySet
+    ), [input.pinnedKeySet]);
+    const normalizedShellState = React.useMemo(() => {
+        return normalizeSessionListShellState({
+            collapsedGroupKeys: input.collapsedGroupKeys,
+            sessionTags: input.sessionTags,
+            workspaceLabels: input.workspaceLabels,
+            workspaceRefs: input.workspaceRefs,
+        });
+    }, [input.collapsedGroupKeys, input.sessionTags, input.workspaceLabels, input.workspaceRefs]);
 
     const machinesById = React.useMemo(() => {
         return new Map(input.allMachines.map((machine) => [machine.id, machine] as const));
     }, [input.allMachines]);
 
     const visibleListItems = React.useMemo(() => {
-        const items = input.paneState.visibleSessionListViewData;
+        const items = input.paneState.visibleSessionListIndex;
         if (!items || items.length === 0) return items;
         return filterCollapsedSessionListItems(items, input.collapsedGroupKeys);
-    }, [input.collapsedGroupKeys, input.paneState.visibleSessionListViewData]);
-    const listItems = (visibleListItems ?? []) as Array<SessionListViewItem>;
+    }, [input.collapsedGroupKeys, input.paneState.visibleSessionListIndex]);
+    const listItems = (visibleListItems ?? []) as Array<SessionListIndexItem>;
 
-    const sessionReachabilitySummary = buildSessionListReachabilitySummary({
-        listItems,
-        machinesById,
-    });
+    const sessionReachabilitySummary = React.useMemo(() => {
+        return buildSessionListReachabilitySummary({
+            listItems,
+            machinesById,
+            resolveSessionRenderable: (item) => {
+                const serverId = typeof item.serverId === 'string' ? item.serverId.trim() : '';
+                const sessionId = String(item.sessionId ?? '').trim();
+                if (!serverId || !sessionId) return null;
+                const scoped = sessionRowStateByServerId?.[serverId];
+                if (!scoped || typeof scoped !== 'object') return null;
+                return scoped[sessionId] ?? null;
+            },
+        });
+    }, [listItems, machinesById, sessionRowStateByServerId]);
 
-    const projectHeaderViewModelState = buildSessionListProjectHeaderViewModels({
-        listItems,
-        workspaceLabels: normalizedShellState.workspaceLabels,
-        workspaceRefs: normalizedShellState.workspaceRefs,
-    });
+    const projectHeaderViewModelState = React.useMemo(() => {
+        return buildSessionListProjectHeaderViewModels({
+            listItems,
+            workspaceLabels: normalizedShellState.workspaceLabels,
+            workspaceRefs: normalizedShellState.workspaceRefs,
+        });
+    }, [listItems, normalizedShellState.workspaceLabels, normalizedShellState.workspaceRefs]);
 
-    const rowViewModels = buildSessionListRowViewModels({
+    const rowViewModels = React.useMemo(() => {
+        return buildSessionListRowViewModels({
+            listItems,
+            reachableSessionDisplayById: sessionReachabilitySummary.displayById,
+            hasMultipleMachines: sessionReachabilitySummary.hasMultipleMachines,
+            pinnedSessionKeys: pinnedKeySet,
+            sessionTags: normalizedShellState.sessionTags,
+            selectedSessionId: input.selectedSessionId,
+            showServerBadge: input.showServerBadge,
+            showPinnedServerBadge: input.showPinnedServerBadge,
+        });
+    }, [
+        pinnedKeySet,
+        input.selectedSessionId,
+        input.showPinnedServerBadge,
+        input.showServerBadge,
         listItems,
-        reachableSessionDisplayById: sessionReachabilitySummary.displayById,
-        hasMultipleMachines: sessionReachabilitySummary.hasMultipleMachines,
-        pinnedSessionKeys: input.pinnedKeySet,
-        sessionTags: normalizedShellState.sessionTags,
-        selectedSessionId: input.selectedSessionId,
-        showServerBadge: input.showServerBadge,
-        showPinnedServerBadge: input.showPinnedServerBadge,
-    });
+        normalizedShellState.sessionTags,
+        sessionReachabilitySummary.displayById,
+        sessionReachabilitySummary.hasMultipleMachines,
+    ]);
 
     return React.useMemo(() => {
         if (listItems.length === 0) {

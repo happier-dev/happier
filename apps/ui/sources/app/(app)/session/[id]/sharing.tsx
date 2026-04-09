@@ -35,6 +35,7 @@ import { buildCreateSessionShareRequest } from '@/sync/domains/social/sharingReq
 import { Text } from '@/components/ui/text/Text';
 import { mergePublicShareWithCachedToken } from '@/sync/domains/social/mergePublicShareWithCachedToken';
 import { createPublicShareWithClientToken } from '@/sync/domains/social/createPublicShareWithClientToken';
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 
 
 function SharingManagementContent({ sessionId }: { sessionId: string }) {
@@ -368,7 +369,8 @@ export default memo(() => {
     const { theme } = useUnistyles();
     const { id } = useLocalSearchParams<{ id: string }>();
     const isDataReady = useIsDataReady();
-    const sessionHydrated = useHydrateSessionForRoute(String(id ?? '').trim(), 'SessionSharingRoute.ensureSessionVisible');
+    const sessionId = normalizeSessionId(id);
+    const sessionHydrated = useHydrateSessionForRoute(sessionId, 'SessionSharingRoute.ensureSessionVisible');
     const headerTitle = t('session.sharing.title');
     const screenOptions = React.useMemo(() => ({ headerTitle }), [headerTitle]);
 
@@ -393,7 +395,7 @@ export default memo(() => {
             <Stack.Screen
                 options={screenOptions}
             />
-            <SharingManagementContent sessionId={id} />
+            <SharingManagementContent sessionId={sessionId} />
         </>
     );
 });

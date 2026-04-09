@@ -7,6 +7,7 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import { reportNewAgentRequestsFromSessionTransition } from '@/voice/context/reportNewAgentRequestsFromSessionTransition';
 import { runTasksWithLimit } from '@/sync/runtime/orchestration/runTasksWithLimit';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { preserveSessionRuntimeLocalMetadata } from '@/sync/domains/session/preserveSessionRuntimeLocalMetadata';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { SessionListCacheEntryV1 } from '@/sync/domains/state/warmCachePersistence';
 
@@ -33,7 +34,6 @@ function buildRenderableFromRowAndCache(
     row: SessionListRow,
     cachedEntry: SessionListCacheEntryV1 | undefined,
 ): SessionListRenderableSession {
-    const metadataMatches = cachedEntry?.metadataVersion === row.metadataVersion;
     const agentStateMatches = cachedEntry?.agentStateVersion === row.agentStateVersion;
 
     const hasPendingPermissionRequests =
@@ -48,6 +48,19 @@ function buildRenderableFromRowAndCache(
             : agentStateMatches
                 ? cachedEntry?.hasPendingUserActionRequests === true
                 : undefined;
+    const cachedRenderableMetadata = cachedEntry
+        ? {
+            name: cachedEntry.name,
+            summaryText: cachedEntry.summaryText ?? null,
+            path: cachedEntry.path,
+            homeDir: cachedEntry.homeDir ?? null,
+            host: cachedEntry.host ?? null,
+            machineId: cachedEntry.machineId ?? null,
+            flavor: cachedEntry.flavor ?? null,
+            directSessionV1: cachedEntry.directSessionV1 ?? null,
+            hiddenSystemSession: cachedEntry.hiddenSystemSession === true,
+        }
+        : null;
 
     return {
         id: row.id,
@@ -61,19 +74,7 @@ function buildRenderableFromRowAndCache(
         pendingVersion: row.pendingVersion,
         metadataVersion: row.metadataVersion,
         agentStateVersion: row.agentStateVersion,
-        metadata: metadataMatches && cachedEntry
-            ? {
-                name: cachedEntry.name,
-                summaryText: cachedEntry.summaryText ?? null,
-                path: cachedEntry.path,
-                homeDir: cachedEntry.homeDir ?? null,
-                host: cachedEntry.host ?? null,
-                machineId: cachedEntry.machineId ?? null,
-                flavor: cachedEntry.flavor ?? null,
-                directSessionV1: cachedEntry.directSessionV1 ?? null,
-                hiddenSystemSession: cachedEntry.hiddenSystemSession === true,
-            }
-            : null,
+        metadata: cachedRenderableMetadata,
         thinking: false,
         thinkingAt: 0,
         presence: row.active ? 'online' : row.activeAt,
@@ -124,6 +125,7 @@ async function decryptSessionRow(
     row: SessionListRow,
     encryption: SessionListEncryption,
     serverId?: string | null,
+    cachedEntry?: SessionListCacheEntryV1,
 ): Promise<(Omit<Session, 'presence'> & { presence?: 'online' | number }) | null> {
     const encryptionMode: 'e2ee' | 'plain' = row.encryptionMode === 'plain' ? 'plain' : 'e2ee';
     const sessionEncryption = encryption.getSessionEncryption(row.id);
@@ -137,6 +139,19 @@ async function decryptSessionRow(
             encryptionMode === 'plain'
                 ? parsePlainSessionMetadata(row.metadata)
                 : await sessionEncryption!.decryptMetadata(row.metadataVersion, row.metadata);
+        const mergedMetadata = preserveSessionRuntimeLocalMetadata(
+            cachedEntry
+                ? {
+                    path: cachedEntry.path,
+                    homeDir: cachedEntry.homeDir ?? undefined,
+                    host: cachedEntry.host ?? undefined,
+                    machineId: cachedEntry.machineId ?? undefined,
+                    flavor: cachedEntry.flavor ?? undefined,
+                    directSessionV1: cachedEntry.directSessionV1 ?? undefined,
+                }
+                : null,
+            metadata,
+        );
 
         const agentState =
             encryptionMode === 'plain'
@@ -149,7 +164,7 @@ async function decryptSessionRow(
             encryptionMode,
             thinking: false,
             thinkingAt: 0,
-            metadata,
+            metadata: mergedMetadata,
             agentState,
             accessLevel: normalizeAccessLevel(row.share?.accessLevel),
             canApprovePermissions: row.share?.canApprovePermissions ?? undefined,
@@ -308,7 +323,12 @@ export async function fetchAndApplySessions(params: {
             void runTasksWithLimit(
                 rowsNeedingHydration.map((row) => async () => {
                     if (!shouldContinue()) return null;
-                    const decryptedSession = await decryptSessionRow(row, encryption, params.serverId);
+                    const decryptedSession = await decryptSessionRow(
+                        row,
+                        encryption,
+                        params.serverId,
+                        cachedSessionListEntries[row.id],
+                    );
                     if (!shouldContinue()) return null;
                     if (!decryptedSession) return null;
                     applyHydratedSessions({
@@ -335,7 +355,12 @@ export async function fetchAndApplySessions(params: {
     }
 
     const decryptedResults = await runTasksWithLimit(
-        sessions.map((row) => async () => decryptSessionRow(row, encryption, params.serverId)),
+        sessions.map((row) => async () => decryptSessionRow(
+            row,
+            encryption,
+            params.serverId,
+            cachedSessionListEntries[row.id],
+        )),
         concurrencyLimit,
     );
     const decryptedSessions = decryptedResults.filter((session): session is NonNullable<typeof session> => Boolean(session));

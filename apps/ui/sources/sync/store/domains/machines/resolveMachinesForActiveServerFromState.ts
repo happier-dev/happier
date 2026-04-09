@@ -1,5 +1,29 @@
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { normalizeNonEmptyString } from '@/utils/strings/normalizeNonEmptyString';
+
+export function resolveMachineForActiveServerFromState(state: any, machineId: string): Machine | null {
+    const normalizedMachineId = normalizeNonEmptyString(machineId);
+    if (!normalizedMachineId) return null;
+
+    const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+    const activeServerMachines = activeServerId ? state?.machineListByServerId?.[activeServerId] : null;
+    if (Array.isArray(activeServerMachines)) {
+        const activeServerMachine = activeServerMachines.find(
+            (machine): machine is Machine =>
+                Boolean(
+                    machine
+                    && typeof machine === 'object'
+                    && normalizeNonEmptyString(machine.id) === normalizedMachineId
+                    && isVisibleMachine(machine),
+                ),
+        );
+        if (activeServerMachine) return activeServerMachine;
+    }
+
+    const machine = state?.machines?.[normalizedMachineId] ?? null;
+    return machine && typeof machine === 'object' && typeof machine.id === 'string' && isVisibleMachine(machine) ? machine : null;
+}
 
 function isVisibleMachine(machine: Machine): boolean {
     const revokedAt = machine.revokedAt;
@@ -23,14 +47,4 @@ export function resolveVisibleMachinesForActiveServerFromState(state: any): Mach
         .filter((machine): machine is Machine => Boolean(machine && typeof machine === 'object' && typeof machine.id === 'string'))
         .filter(isVisibleMachine)
         .sort(sortVisibleMachines);
-}
-
-export function resolveMachineForActiveServerFromState(state: any, machineIdRaw: unknown): Machine | null {
-    const machineId = typeof machineIdRaw === 'string' ? machineIdRaw.trim() : '';
-    if (!machineId) return null;
-    const directMachine = state?.machines?.[machineId];
-    if (directMachine && typeof directMachine === 'object' && typeof directMachine.id === 'string') {
-        return directMachine as Machine;
-    }
-    return resolveVisibleMachinesForActiveServerFromState(state).find((machine) => machine.id === machineId) ?? null;
 }

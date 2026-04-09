@@ -11,6 +11,7 @@ import {
 } from '@/dev/testkit';
 import { createCapturingFlatListMock } from '@/dev/testkit/mocks/flashList';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+import { buildSessionListIndexFromViewData } from '@/sync/domains/sessionList/sessionListIndex';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -52,7 +53,23 @@ const sessionB = {
     id: 'sess_b',
 } as any;
 
+const sessionLive1 = {
+    ...sessionA,
+    id: 'sess_live_1',
+    active: true,
+    presence: 'online',
+} as any;
+
 const projectGroupKey = 'server:server_a:active:project:proj_a';
+
+function findSessionFromVisibleViewData(sessionId: string): any | null {
+    for (const item of mockVisibleSessionListViewData) {
+        if (!item || item.type !== 'session') continue;
+        const session = (item as any).session;
+        if (session?.id === sessionId) return session;
+    }
+    return null;
+}
 
 installSessionShellCommonModuleMocks({
     reactNative: async () => {
@@ -115,6 +132,24 @@ installSessionShellCommonModuleMocks({
                     if (key === 'sessionTagsV1') return [sessionTagsV1, setSessionTagsV1];
                     return [null, vi.fn()];
                 },
+                useSessionListRenderableWithServerScope: (_serverId: any, sessionId: string) => {
+                    return findSessionFromVisibleViewData(sessionId)
+                        ?? (sessionId === 'sess_a' ? (sessionA as any) : null)
+                        ?? (sessionId === 'sess_b' ? (sessionB as any) : null)
+                        ?? (sessionId === 'sess_live_1' ? (sessionLive1 as any) : null);
+                },
+                useSessionListRowStateByServerId: () => ({
+                    server_a: {
+                        sess_a: sessionA,
+                        sess_b: sessionB,
+                        sess_live_1: sessionLive1,
+                        ...(Object.fromEntries(
+                            mockVisibleSessionListViewData
+                                .filter((item: any) => item?.type === 'session')
+                                .map((item: any) => [item.session.id, item.session]),
+                        )),
+                    },
+                }) as any,
             },
         });
     },
@@ -239,7 +274,7 @@ vi.mock('@/hooks/session/useVisibleSessionListPaneState', () => ({
             sessionsReady: true,
             sessionCount: mockVisibleSessionListViewData.filter((item) => item.type === 'session').length,
         },
-        visibleSessionListViewData: mockVisibleSessionListViewData,
+        visibleSessionListIndex: buildSessionListIndexFromViewData(mockVisibleSessionListViewData),
         showLoading: false,
         showEmptyState: false,
     }),

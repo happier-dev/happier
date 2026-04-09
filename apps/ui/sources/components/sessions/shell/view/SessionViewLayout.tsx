@@ -29,7 +29,7 @@ export function SessionViewLayout(props: SessionViewLayoutProps) {
 
     return (
         <>
-            {props.shouldShowCliWarning && !(props.isLandscape && props.deviceType === 'phone') && (
+            {props.shouldShowCliWarning && !showBackButton && (
                 <Pressable
                     onPress={props.onDismissCliWarning}
                     style={{

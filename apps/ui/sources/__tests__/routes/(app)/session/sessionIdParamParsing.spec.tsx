@@ -116,12 +116,13 @@ describe('session/[id] param parsing', () => {
         expect(ensureSessionVisibleSpy).toHaveBeenCalledWith('session-123');
     });
 
-    it('still renders SessionView while hydration is pending so deleted-session UI can recover', async () => {
+    it('shows the loading indicator while hydration is pending so deep-link hydration can finish before mounting SessionView', async () => {
         vi.resetModules();
         hydrateReady = false;
         searchParams = { id: 'session-123' };
-        const { sessionView } = await renderSessionScreen();
-        expect(sessionView.props.id).toBe('session-123');
+        const screen = await renderSessionScreenTree();
+        expect(screen.findAllByType('SessionView' as any)).toHaveLength(0);
+        expect(screen.findAllByType('ActivityIndicator' as any)).toHaveLength(1);
     });
 
     it('renders an invalid-link fallback when session id is missing', async () => {

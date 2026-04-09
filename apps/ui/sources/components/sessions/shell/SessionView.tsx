@@ -12,7 +12,6 @@ import { SessionHeaderActionMenu } from '@/components/sessions/actions/SessionHe
 import { SessionHeaderSubagentsButton } from '@/components/sessions/actions/SessionHeaderSubagentsButton';
 import { SessionHeaderTerminalButton } from '@/components/sessions/actions/SessionHeaderTerminalButton';
 import { ChatList } from '@/components/sessions/transcript/ChatList';
-import { Deferred } from '@/components/ui/forms/Deferred';
 import { EmptyMessages } from '@/components/ui/empty/EmptyMessages';
 import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
 import { useDraft } from '@/hooks/session/useDraft';
@@ -21,7 +20,7 @@ import { useSessionExecutionRunsSupported } from '@/hooks/server/useSessionExecu
 import { Modal } from '@/modal';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { continueSessionWithReplay, sessionAbort, resumeSession } from '@/sync/ops';
-import { storage, useAutomations, useIsDataReady, useLocalSetting, useRealtimeStatus, useSessionMessages, useSessionPendingMessages, useSessionTranscriptIds, useSessionUsage, useSetting, useSettings, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
+import { storage, useAutomations, useIsDataReady, useLocalSetting, useRealtimeStatus, useSessionMessages, useSessionPendingMessages, useSessionUsage, useSetting, useSettings, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
 import { resolveWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 import { canResumeSessionWithOptions } from '@/agents/runtime/resumeCapabilities';
 import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor, buildResumeSessionExtrasFromUiState } from '@/agents/catalog/catalog';
@@ -51,7 +50,6 @@ import type { ModelMode, PermissionMode } from '@/sync/domains/permissions/permi
 import { getPendingQueueWakeResumeOptions } from '@/sync/domains/pending/pendingQueueWake';
 import { getPermissionModeOverrideForSpawn } from '@/sync/domains/permissions/permissionModeOverride';
 import { getModelOverrideForSpawn } from '@/sync/domains/models/modelOverride';
-import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { useSessionRecipientState } from '@/components/sessions/agentInput/routing/useSessionRecipientState';
 import {
     resolveParticipantRoutedSend,
@@ -94,7 +92,8 @@ import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { executeSessionComposerResolution } from '@/sync/domains/input/slashCommands/executeSessionComposerResolution';
 import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
-import { resolveSessionTargetServerId } from '@/components/sessions/model/resolveSessionTargetServerId';
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
+import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { useAttachmentsUploadConfig } from '@/components/sessions/attachments/useAttachmentsUploadConfig';
 import { useAttachmentDraftManager } from '@/components/sessions/attachments/useAttachmentDraftManager';
 import { formatAttachmentsBlock, uploadAttachmentDraftsToSession } from '@/components/sessions/attachments/uploadAttachmentDraftsToSession';
@@ -111,6 +110,7 @@ import { SessionResumeProvider } from '@/components/sessions/model/SessionResume
 import { useSessionResumeRequestListener } from '@/components/sessions/model/sessionResumeRequests';
 import { useDirectSessionTakeover } from '@/components/sessions/model/useDirectSessionTakeover';
 import { useDirectSessionRuntime } from '@/components/sessions/model/useDirectSessionRuntime';
+import { SessionDirectSessionRuntimeProvider } from '@/components/sessions/model/useSessionDirectSessionRuntime';
 import { useAuth } from '@/auth/context/AuthContext';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
@@ -125,6 +125,8 @@ import { resolveSessionViewHeaderProps } from './view/resolveSessionViewHeaderPr
 import { resolveSessionViewDirectControlFooter } from './view/resolveSessionViewDirectControlFooter';
 import { resolveSessionViewRuntimeDisplayState } from './view/resolveSessionViewRuntimeDisplayState';
 import { resolveSessionViewMicButtonState } from './view/resolveSessionViewMicButtonState';
+import { isSessionRoutePathActive } from './view/isSessionRoutePathActive';
+import { useSessionReachableMachineTarget } from '../model/useSessionMachineReachability';
 
 
 export const SessionView = React.memo((props: {
@@ -133,7 +135,7 @@ export const SessionView = React.memo((props: {
     paneUrlState?: SessionPaneUrlState | null;
     initialAttachmentDrafts?: readonly AttachmentDraft[] | null;
 }) => {
-    const sessionId = props.id;
+    const sessionId = normalizeSessionId(props.id);
     const router = useRouter();
     const pathname = usePathname();
     const debugRouterEnabled = process.env.EXPO_PUBLIC_DEBUG === '1';
@@ -162,6 +164,7 @@ export const SessionView = React.memo((props: {
     const voiceSnap = useVoiceSessionSnapshot();
     const hasAuthCredentials = Boolean(auth.credentials);
     const isFocused = useSessionScreenIsFocused();
+    const isActiveSessionRoute = isSessionRoutePathActive(pathname, sessionId);
     const sessionEncryptionMode: 'e2ee' | 'plain' = (session?.encryptionMode ?? 'e2ee');
     const isEncryptedSessionLocked = Boolean(session && sessionEncryptionMode === 'e2ee' && !hasAuthCredentials);
     const showTopHeader = !(isLandscape && deviceType === 'phone' && Platform.OS !== 'web');
@@ -184,10 +187,11 @@ export const SessionView = React.memo((props: {
         sessionPendingVersion: session?.pendingVersion ?? null,
     });
     const { messages: pendingMessages } = useSessionPendingMessages(sessionId);
-    const { messages: committedMessages } = useSessionMessages(sessionId);
+    const { messages: committedMessages, isLoaded: committedMessagesLoaded } = useSessionMessages(sessionId);
     const directSessionRuntime = useDirectSessionRuntime({
         sessionId,
         metadata: session?.metadata ?? null,
+        enabled: isFocused && isActiveSessionRoute,
     });
     const { subagents, participantTargets, sidechainIds: participantSidechainIds } = useSessionSubagents({
         sessionId,
@@ -240,6 +244,7 @@ export const SessionView = React.memo((props: {
     });
 
     return (
+        <SessionDirectSessionRuntimeProvider value={directSessionRuntime}>
         <SessionScreenTestIdsProvider enabled={isFocused}>
             {debugRouterEnabled && Platform.OS === 'web' ? (
                 <View
@@ -306,6 +311,7 @@ export const SessionView = React.memo((props: {
                            isEncryptedSessionLocked={isEncryptedSessionLocked}
                            executionRunsEnabled={executionRunsEnabled}
                            committedMessages={committedMessages}
+                           committedMessagesLoaded={committedMessagesLoaded}
                            jumpToSeq={props.jumpToSeq ?? null}
                            participantTargets={participantTargets}
                            paneUrlState={props.paneUrlState ?? null}
@@ -317,12 +323,14 @@ export const SessionView = React.memo((props: {
                   )}
             </View>
         </SessionScreenTestIdsProvider>
+        </SessionDirectSessionRuntimeProvider>
     );
 });
 
 
 function SessionViewLoaded({
     committedMessages,
+    committedMessagesLoaded,
     sessionId,
     session,
     pane,
@@ -339,6 +347,7 @@ function SessionViewLoaded({
     directSessionRuntime,
 }: {
     committedMessages: readonly Message[];
+    committedMessagesLoaded: boolean;
     sessionId: string;
     session: Session;
     pane: ReturnType<typeof useSessionViewBootstrap>['pane'];
@@ -368,18 +377,15 @@ function SessionViewLoaded({
     const multiPaneEnabled = useLocalSetting('uiMultiPanePanelsEnabled') !== false;
     const [message, setMessage] = React.useState('');
     const realtimeStatus = useRealtimeStatus();
-    const { ids: committedMessageIds, isLoaded } = useSessionTranscriptIds(sessionId);
+    const committedMessagesCount = committedMessages.length;
+    const isLoaded = committedMessagesLoaded;
     const acknowledgedCliVersions = useLocalSetting('acknowledgedCliVersions');
-    const isForkedSessionV1 = (() => {
-        const fork = (session.metadata as any)?.forkV1;
-        if (!fork || typeof fork !== 'object') return false;
-        if ((fork as any).v !== 1) return false;
-        const parentSessionId = (fork as any).parentSessionId;
-        return typeof parentSessionId === 'string' && parentSessionId.trim().length > 0;
-    })();
-    const reachableMachineTarget = React.useMemo(() => {
-        return readMachineTargetForSession(sessionId);
-    }, [sessionId, session.updatedAt, session.metadata]);
+    const forkV1 = session.metadata?.forkV1;
+    const isForkedSessionV1 =
+        forkV1?.v === 1 &&
+        typeof forkV1.parentSessionId === 'string' &&
+        forkV1.parentSessionId.trim().length > 0;
+    const reachableMachineTarget = useSessionReachableMachineTarget(sessionId);
 
     // Check if CLI version is outdated and not already acknowledged
     const cliVersion = session.metadata?.version;
@@ -462,8 +468,15 @@ function SessionViewLoaded({
         };
     }, [scmSessionAutoRefreshIntervalMs, sessionId]);
 
+    const resolveSessionServerId = React.useCallback((targetSessionId: string) => {
+        const normalizedTargetSessionId = normalizeSessionId(targetSessionId);
+        const resolvedServerId = resolvePreferredServerIdForSessionId(normalizedTargetSessionId) ?? session?.serverId ?? '';
+        const normalizedServerId = String(resolvedServerId).trim();
+        return normalizedServerId || null;
+    }, [session?.serverId]);
+
     const actionExecutor = createDefaultActionExecutor({
-        resolveServerIdForSessionId: (targetSessionId) => resolveSessionTargetServerId(targetSessionId, session?.serverId) ?? null,
+        resolveServerIdForSessionId: resolveSessionServerId,
         openSession: (sid) => {
             router.push((`/session/${sid}`) as any);
         },
@@ -829,41 +842,56 @@ function SessionViewLoaded({
         isHiddenSystemSessionSession,
     });
 
+    const shouldForceRenderTranscriptFooter =
+        isForkedSessionV1 || ((session.seq ?? 0) > 0 && committedMessagesCount === 0);
     const shouldRenderChatTimeline = !isEncryptedSessionLocked
         && shouldRenderChatTimelineForSession({
-            committedMessagesCount: committedMessageIds.length,
+            committedMessagesCount,
             pendingMessagesCount: pendingMessages.length,
             controlledByUser: isLocallyAttached,
             showLocalControlFooter: localControlState?.canAttach === true,
             // Some sessions can have a non-zero committed transcript seq but end up with 0 visible
             // main-timeline messages (e.g. newest page is sidechain-only). In that case, we must
             // still render the transcript so it can page backwards to find visible messages.
-            forceRenderFooter: isForkedSessionV1 || (isLoaded === true && (session.seq ?? 0) > 0 && committedMessageIds.length === 0),
+            forceRenderFooter: shouldForceRenderTranscriptFooter,
         });
+    const shouldRenderChatTimelineImmediately = shouldRenderChatTimeline
+        && (
+            isLoaded === true
+            || committedMessagesCount > 0
+            || pendingMessages.length > 0
+            || shouldForceRenderTranscriptFooter
+        );
+
+    const shouldShowDeferredTranscriptPlaceholder =
+        shouldRenderChatTimeline && !shouldRenderChatTimelineImmediately;
 
       let content = (
           <>
-              <Deferred>
-                  {shouldRenderChatTimeline && (
-                      <ChatList
-                          session={session}
-                          bottomNotice={bottomNotice}
-                          controlledByUserOverride={isLocallyAttached}
-                          controlSwitchTo={controlSwitchTo}
-                          onRequestSwitchToRemote={isHiddenSystemSessionSession ? undefined : handleRequestSwitchToRemote}
-                          onRequestSwitchToLocal={
-                              isHiddenSystemSessionSession || localControlState?.canAttach !== true
-                                  ? undefined
-                                  : handleRequestSwitchToLocal
-                          }
-                          directControlFooter={directControlFooter}
-                          jumpToSeq={jumpToSeq}
-                          onViewportChange={(state) => {
-                              sync.onSessionViewportChange(sessionId, state);
-                          }}
-                      />
-                  )}
-              </Deferred>
+              {shouldRenderChatTimeline && shouldRenderChatTimelineImmediately ? (
+                  <ChatList
+                      session={session}
+                      bottomNotice={bottomNotice}
+                      controlledByUserOverride={isLocallyAttached}
+                      controlSwitchTo={controlSwitchTo}
+                      onRequestSwitchToRemote={isHiddenSystemSessionSession ? undefined : handleRequestSwitchToRemote}
+                      onRequestSwitchToLocal={
+                          isHiddenSystemSessionSession || localControlState?.canAttach !== true
+                              ? undefined
+                              : handleRequestSwitchToLocal
+                      }
+                      directControlFooter={directControlFooter}
+                      jumpToSeq={jumpToSeq}
+                      onViewportChange={(state) => {
+                          sync.onSessionViewportChange(sessionId, state);
+                      }}
+                  />
+              ) : null}
+              {shouldShowDeferredTranscriptPlaceholder ? (
+                  <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                      <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                  </View>
+              ) : null}
           </>
       );
     const placeholder = !shouldRenderChatTimeline ? (

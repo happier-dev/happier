@@ -14,6 +14,8 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 (globalThis as any).__DEV__ = false;
 
 const machineDirectSessionStatusGetSpy = vi.hoisted(() => vi.fn());
+const machineDirectSessionAttachSpy = vi.hoisted(() => vi.fn(async () => ({ ok: true, leaseId: 'lease-1', expiresAtMs: Date.now() + 60_000 })));
+const machineDirectSessionDetachSpy = vi.hoisted(() => vi.fn(async () => ({ ok: true, detached: true })));
 const machineDirectSessionTakeoverSpy = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
 const machineDirectSessionTakeoverPersistSpy = vi.hoisted(() => vi.fn(async () => ({ ok: true, converted: true })));
 const createDefaultActionExecutorMock = vi.hoisted(() => vi.fn());
@@ -28,6 +30,10 @@ const voiceSurfacePropsSpy = vi.hoisted(() => vi.fn());
 const showDirectSessionTakeoverDialogSpy = vi.hoisted(() =>
   vi.fn<() => Promise<{ action: 'direct' | 'persisted' | null; forceStop: boolean }>>(async () => ({ action: null, forceStop: false })),
 );
+const preferredServerIdState = vi.hoisted(() => ({
+  current: 'server-canonical' as string | null,
+}));
+const resolvePreferredServerIdForSessionIdSpy = vi.hoisted(() => vi.fn((sessionId: string) => preferredServerIdState.current));
 const sendVoiceSessionComposerTextSpy = vi.hoisted(() =>
   vi.fn<
     (params: unknown) => Promise<
@@ -42,6 +48,8 @@ const settingsState = vi.hoisted(() => ({ current: {} as any }));
 const settingByKeyState = vi.hoisted(() => ({ current: {} as Record<string, unknown> }));
 const participantTargetsState = vi.hoisted(() => ({ current: [] as any[] }));
 const reviewCommentDraftsState = vi.hoisted(() => ({ current: [] as any[] }));
+const focusState = vi.hoisted(() => ({ current: true }));
+const pathnameState = vi.hoisted(() => ({ current: '/session/s1' }));
 const storageState = vi.hoisted(() => ({
   sessions: {
     s1: {
@@ -71,7 +79,7 @@ const storageState = vi.hoisted(() => ({
     } as any,
   },
   settings: {} as Record<string, unknown>,
-  sessionListViewDataByServerId: {} as Record<string, unknown>,
+  concurrentSessionListCacheByServerId: {} as Record<string, unknown>,
 }));
 const recipientStateState = vi.hoisted(() => ({
   current: {
@@ -147,7 +155,9 @@ installSessionShellCommonModuleMocks({
   },
   router: async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock().module;
+    return createExpoRouterMock({
+      pathname: () => pathnameState.current,
+    }).module;
   },
   text: async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -207,7 +217,7 @@ installSessionShellCommonModuleMocks({
 
 vi.mock('@react-navigation/native', () => ({
   useFocusEffect: () => {},
-  useIsFocused: () => true,
+  useIsFocused: () => focusState.current,
 }));
 
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -294,9 +304,15 @@ vi.mock('@/components/sessions/model/inactiveSessionUi', () => ({
 vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => ({
   resolveSessionMachineReachability: () => true,
 }));
-vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
-  useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true, machineRpcTargetAvailable: true }),
-}));
+vi.mock('@/components/sessions/model/useSessionMachineReachability', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/sessions/model/useSessionMachineReachability')>();
+
+  return {
+    ...actual,
+    useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true, machineRpcTargetAvailable: true }),
+    useSessionReachableMachineTarget: () => null,
+  };
+});
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
   subscribeActiveServer: (listener: (active: any) => void) => {
@@ -340,6 +356,8 @@ vi.mock('@/sync/ops', async (importOriginal) => {
 });
 vi.mock('@/sync/ops/machineDirectSessions', () => ({
   machineDirectSessionStatusGet: machineDirectSessionStatusGetSpy,
+  machineDirectSessionAttach: machineDirectSessionAttachSpy,
+  machineDirectSessionDetach: machineDirectSessionDetachSpy,
   machineDirectSessionTakeover: machineDirectSessionTakeoverSpy,
   machineDirectSessionTakeoverPersist: machineDirectSessionTakeoverPersistSpy,
 }));
@@ -362,12 +380,15 @@ vi.mock('@/components/sessions/agentInput/routing/useSessionRecipientState', () 
   useSessionRecipientState: () => recipientStateState.current,
 }));
 vi.mock('@/components/sessions/model/resolveSessionTargetServerId', () => ({
-  resolveSessionTargetServerId: () => 'server-canonical',
+  resolveSessionTargetServerId: () => {
+    throw new Error('legacy session target resolver should not be used in SessionView');
+  },
 }));
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
-  resolvePreferredServerIdForSessionId: () => {
-    throw new Error('legacy direct resolver should not be used in SessionView');
-  },
+  resolvePreferredServerIdForSessionId: (sessionId: string) => resolvePreferredServerIdForSessionIdSpy(sessionId),
+}));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession', () => ({
+  usePreferredServerIdForSession: () => preferredServerIdState.current,
 }));
 vi.mock('@/hooks/session/useSessionSubagents', () => ({
   useSessionSubagents: () => ({ subagents: [], participantTargets: participantTargetsState.current, sidechainIds: [] }),
@@ -424,13 +445,18 @@ describe('SessionView (direct sessions)', () => {
     machineDirectSessionTakeoverSpy.mockReset();
     machineDirectSessionTakeoverPersistSpy.mockReset();
     machineDirectSessionStatusGetSpy.mockReset();
+    machineDirectSessionAttachSpy.mockClear();
+    machineDirectSessionDetachSpy.mockClear();
     showDirectSessionTakeoverDialogSpy.mockReset();
     sendVoiceSessionComposerTextSpy.mockReset();
     sendVoiceSessionComposerTextSpy.mockResolvedValue({ ok: false, reason: 'not_voice_session' });
     resolveVoiceSessionComposerRoutingSpy.mockReset();
     resolveVoiceSessionComposerRoutingSpy.mockReturnValue(null);
+    resolvePreferredServerIdForSessionIdSpy.mockReset();
     participantTargetsState.current = [];
     reviewCommentDraftsState.current = [];
+    focusState.current = true;
+    pathnameState.current = '/session/s1';
     storageState.sessions.s1 = {
       id: 's1',
       seq: 1,
@@ -457,7 +483,7 @@ describe('SessionView (direct sessions)', () => {
       agentState: {},
     };
     storageState.settings = settingsState.current;
-    storageState.sessionListViewDataByServerId = {};
+    storageState.concurrentSessionListCacheByServerId = {};
     recipientStateState.current = {
       recipient: null,
       setManualRecipient: vi.fn(),
@@ -518,6 +544,40 @@ describe('SessionView (direct sessions)', () => {
 
   });
 
+  it('does not attach a direct-session lease while the session screen is unfocused', async () => {
+    focusState.current = false;
+
+    await renderSessionView();
+
+    expect(machineDirectSessionAttachSpy).not.toHaveBeenCalled();
+    expect(machineDirectSessionStatusGetSpy).not.toHaveBeenCalled();
+  });
+
+  it('detaches the direct-session lease when the session screen loses focus after mounting', async () => {
+    const { SessionView } = await import('./SessionView');
+    const screen = await renderSessionView();
+    await settleDirectSessionView();
+
+    expect(machineDirectSessionAttachSpy).toHaveBeenCalledTimes(1);
+    machineDirectSessionDetachSpy.mockClear();
+
+    focusState.current = false;
+    act(() => {
+      screen.tree.update(
+        <AppPaneProvider>
+          <SessionView key="blurred" id="s1" />
+        </AppPaneProvider>,
+      );
+    });
+    await settleDirectSessionView();
+
+    expect(machineDirectSessionDetachSpy).toHaveBeenCalledWith({
+      machineId: 'machine-1',
+      sessionId: 's1',
+      leaseId: 'lease-1',
+    }, { serverId: 'server-canonical' });
+  });
+
   it('builds the default action executor from the canonical session target helper', async () => {
     await renderSessionView();
 
@@ -526,7 +586,9 @@ describe('SessionView (direct sessions)', () => {
         resolveServerIdForSessionId: expect.any(Function),
       }),
     );
-    expect(createDefaultActionExecutorMock.mock.calls[0]?.[0]?.resolveServerIdForSessionId?.('s1')).toBe('server-canonical');
+    const resolveServerIdForSessionId = createDefaultActionExecutorMock.mock.calls[0]?.[0]?.resolveServerIdForSessionId;
+    expect(resolveServerIdForSessionId?.('s1')).toBe('server-canonical');
+    expect(resolvePreferredServerIdForSessionIdSpy).toHaveBeenCalledWith('s1');
   });
 
   it('passes pending user action requests to AgentInput', async () => {

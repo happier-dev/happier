@@ -8,6 +8,7 @@ import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionI
 import { SessionDetailsPanel } from '@/components/sessions/panes/SessionDetailsPanel';
 import { applySessionPaneUrlState, parseSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 
 export default function SessionDetailsScreenRoute() {
@@ -16,14 +17,12 @@ export default function SessionDetailsScreenRoute() {
     const isFocused = useIsFocused();
     const params = useLocalSearchParams<{ id: string; details?: string; path?: string; sha?: string }>();
     const { id: sessionIdParam } = params;
-    const sessionId = String(sessionIdParam ?? '').trim();
+    const sessionId = normalizeSessionId(sessionIdParam);
     const sessionHydrated = useHydrateSessionForRoute(sessionId, 'SessionDetailsRoute.ensureSessionVisible');
-    const scopeId = React.useMemo(() => `session:${sessionId}`, [sessionId]);
+    const scopeId = `session:${sessionId}`;
     const pane = useAppPaneScope(scopeId);
-    const routeDetailsState = React.useMemo(() => {
-        const parsed = parseSessionPaneUrlState(params as Record<string, unknown>);
-        return parsed?.details ? { details: parsed.details } : null;
-    }, [params]);
+    const parsedRouteDetailsState = parseSessionPaneUrlState(params as Record<string, unknown>);
+    const routeDetailsState = parsedRouteDetailsState?.details ? { details: parsedRouteDetailsState.details } : null;
 
     const detailsTabs = pane.scopeState?.details?.tabs ?? [];
     const hasDetails = detailsTabs.length > 0;

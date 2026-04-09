@@ -1,13 +1,14 @@
 import { Platform } from 'react-native';
 import type { SharedValue } from 'react-native-reanimated';
 
-import type { SessionListViewItem } from '@/sync/domains/state/storage';
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import { useSessionListRenderableWithServerScope } from '@/sync/domains/state/storage';
 
 import type { SessionListRowViewModel } from './sessionListRowViewModels';
 import { SessionListRow } from './sessionListRow';
 
 type SessionListSessionItemProps = Readonly<{
-    item: Extract<SessionListViewItem, { type: 'session' }>;
+    item: Extract<SessionListIndexItem, { type: 'session' }>;
     rowViewModel: SessionListRowViewModel | null | undefined;
     rowHeight: number;
     canReorderSessions: boolean;
@@ -35,6 +36,11 @@ export function SessionListSessionItem(props: SessionListSessionItemProps) {
         return null;
     }
 
+    const session = useSessionListRenderableWithServerScope(props.item.serverId ?? null, props.item.sessionId);
+    if (!session) {
+        return null;
+    }
+
     const sessionKey = rowViewModel.sessionKey;
     const isNative = Platform.OS === 'ios' || Platform.OS === 'android';
     const nativeContextMenuOpen = isNative && sessionKey != null && props.nativeContextMenuSessionKey === sessionKey;
@@ -56,7 +62,7 @@ export function SessionListSessionItem(props: SessionListSessionItemProps) {
             totalItemCount={props.totalItemCount}
             dropIndicatorIdx={props.dropIndicatorIdx}
             dropIndicatorEdge={props.dropIndicatorEdge}
-            session={props.item.session}
+            session={session}
             subtitleOverride={rowViewModel.subtitleOverride}
             serverId={props.item.serverId}
             serverName={props.item.serverName}

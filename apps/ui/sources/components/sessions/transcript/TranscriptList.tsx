@@ -83,6 +83,10 @@ export const TranscriptList = React.memo((props: {
         });
     }, [thinkingDefaultExpanded]);
 
+    React.useEffect(() => {
+        setThinkingExpandedByMessageId(new Map());
+    }, [props.sessionId]);
+
     const keyExtractor = React.useCallback((item: Message) => item.id, []);
     const getItemType = React.useCallback((item: Message): string => item.kind, []);
     const renderItem = React.useCallback(({ item }: { item: Message }) => {

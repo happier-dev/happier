@@ -1,36 +1,23 @@
 import { describe, expect, it } from 'vitest';
 
-import type { SessionListViewItem } from '@/sync/domains/session/listing/sessionListViewData';
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 
 import { filterCollapsedSessionListItems } from './filterCollapsedSessionListItems';
 
-function makeSession(id: string, groupKey: string): SessionListViewItem {
+function makeSession(id: string, groupKey: string): SessionListIndexItem {
     return {
         type: 'session',
         serverId: 'server-a',
         serverName: 'Server A',
         groupKey,
         groupKind: 'date',
-        session: {
-            id,
-            seq: 0,
-            createdAt: 0,
-            updatedAt: 0,
-            active: false,
-            activeAt: 0,
-            metadata: null,
-            metadataVersion: 0,
-            agentStateVersion: 0,
-            thinking: false,
-            thinkingAt: 0,
-            presence: 0,
-        },
+        sessionId: id,
     };
 }
 
 describe('filterCollapsedSessionListItems', () => {
     it('returns the original array when there are no collapsed groups to apply', () => {
-        const items: SessionListViewItem[] = [
+        const items: SessionListIndexItem[] = [
             { type: 'header', title: 'Inactive', headerKind: 'inactive', groupKey: 'inactive:server-a', serverId: 'server-a', serverName: 'Server A' },
             makeSession('visible-session', 'server:server-a:day:2026-02-18'),
         ];
@@ -41,7 +28,7 @@ describe('filterCollapsedSessionListItems', () => {
     });
 
     it('returns the original array when collapsed groups do not match any rendered rows', () => {
-        const items: SessionListViewItem[] = [
+        const items: SessionListIndexItem[] = [
             { type: 'header', title: 'Inactive', headerKind: 'inactive', groupKey: 'inactive:server-a', serverId: 'server-a', serverName: 'Server A' },
             makeSession('visible-session', 'server:server-a:day:2026-02-18'),
         ];
@@ -57,7 +44,7 @@ describe('filterCollapsedSessionListItems', () => {
         const inactiveSectionKey = 'inactive:server-a';
         const inactiveGroupKey = 'server:server-a:day:2026-02-18';
 
-        const items: SessionListViewItem[] = [
+        const items: SessionListIndexItem[] = [
             { type: 'header', title: 'Active', headerKind: 'active', groupKey: activeSectionKey, serverId: 'server-a', serverName: 'Server A' },
             { type: 'header', title: 'Today', headerKind: 'date', groupKey: activeGroupKey, serverId: 'server-a', serverName: 'Server A' },
             makeSession('hidden-session', activeGroupKey),
@@ -68,7 +55,7 @@ describe('filterCollapsedSessionListItems', () => {
 
         const result = filterCollapsedSessionListItems(items, { [activeSectionKey]: true });
 
-        expect(result.map((item) => item.type === 'session' ? item.session.id : item.title)).toEqual([
+        expect(result.map((item) => item.type === 'session' ? item.sessionId : item.title)).toEqual([
             'Active',
             'Inactive',
             'Tomorrow',
@@ -80,7 +67,7 @@ describe('filterCollapsedSessionListItems', () => {
         const collapsedGroupKey = 'server:server-a:day:2026-02-17';
         const openGroupKey = 'server:server-a:day:2026-02-18';
 
-        const items: SessionListViewItem[] = [
+        const items: SessionListIndexItem[] = [
             { type: 'header', title: 'Inactive', headerKind: 'inactive', groupKey: 'inactive:server-a', serverId: 'server-a', serverName: 'Server A' },
             { type: 'header', title: 'Today', headerKind: 'date', groupKey: collapsedGroupKey, serverId: 'server-a', serverName: 'Server A' },
             makeSession('hidden-session', collapsedGroupKey),
@@ -90,7 +77,7 @@ describe('filterCollapsedSessionListItems', () => {
 
         const result = filterCollapsedSessionListItems(items, { [collapsedGroupKey]: true });
 
-        expect(result.map((item) => item.type === 'session' ? item.session.id : item.title)).toEqual([
+        expect(result.map((item) => item.type === 'session' ? item.sessionId : item.title)).toEqual([
             'Inactive',
             'Today',
             'Tomorrow',

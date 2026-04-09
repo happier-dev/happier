@@ -2,30 +2,33 @@ import type { SessionListViewItem } from './sessionListViewData';
 import { normalizeTrimmedStringArrayWithSharedEmpty } from './normalizeTrimmedStringArrayWithSharedEmpty';
 import { normalizeTrimmedString } from './normalizeTrimmedString';
 import { normalizeSessionListKeyParts } from './sessionListKeyNormalization';
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 
 export const PINNED_GROUP_KEY_V1 = 'pinned-v1';
 
 export const SESSION_LIST_GROUP_ORDER_MAX_KEYS_PER_GROUP = 100;
 
 const EMPTY_SESSION_LIST_GROUP_ORDER_V1: Record<string, string[]> = {};
+const SORTED_SESSION_LIST_VIEW_ITEMS_BY_SOURCE = new WeakMap<
+    ReadonlyArray<SessionListViewItem>,
+    Map<SessionListOrderingModeV1, SessionListViewItem[]>
+>();
+const SESSION_LIST_GROUP_ORDER_V1_CACHE = new WeakMap<
+    ReadonlyArray<SessionListViewItem>,
+    WeakMap<
+        ReadonlyArray<string>,
+        WeakMap<Readonly<Record<string, ReadonlyArray<string> | undefined>>, Record<string, string[]>>
+    >
+>();
+const SESSION_LIST_GROUP_ORDER_V1_INDEX_CACHE = new WeakMap<
+    ReadonlyArray<SessionListIndexItem>,
+    WeakMap<
+        ReadonlyArray<string>,
+        WeakMap<Readonly<Record<string, ReadonlyArray<string> | undefined>>, Record<string, string[]>>
+    >
+>();
 
 export type SessionListOrderingModeV1 = 'custom' | 'created' | 'updated';
-
-function dedupePreserveOrder(keys: ReadonlyArray<string>): string[] {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const key of keys) {
-        if (seen.has(key)) continue;
-        seen.add(key);
-        out.push(key);
-    }
-    return out;
-}
-
-function capKeys(keys: ReadonlyArray<string>, max: number): string[] {
-    if (keys.length <= max) return keys as string[];
-    return keys.slice(0, max);
-}
 
 function hasAnyOwnEntries(
     record: Readonly<Record<string, ReadonlyArray<string> | undefined>> | null | undefined,
@@ -37,26 +40,6 @@ function hasAnyOwnEntries(
         }
     }
     return false;
-}
-
-function normalizeSessionListGroupOrderKeys(
-    keysRaw: ReadonlyArray<string> | undefined,
-): string[] {
-    const normalized = normalizeTrimmedStringArrayWithSharedEmpty(Array.isArray(keysRaw) ? keysRaw : []);
-    if (normalized.length < 2) {
-        return normalized as string[];
-    }
-
-    const deduped = dedupePreserveOrder(normalized);
-    if (deduped.length !== normalized.length) {
-        return deduped;
-    }
-    for (let index = 0; index < deduped.length; index += 1) {
-        if (deduped[index] !== normalized[index]) {
-            return deduped;
-        }
-    }
-    return normalized as string[];
 }
 
 function compareSessionItemsByOrderingMode(
@@ -118,6 +101,12 @@ export function sortSessionListViewItemsByOrderingMode(
         return source as SessionListViewItem[];
     }
 
+    const cachedByMode = SORTED_SESSION_LIST_VIEW_ITEMS_BY_SOURCE.get(source);
+    const cachedSorted = cachedByMode?.get(orderingMode);
+    if (cachedSorted) {
+        return cachedSorted;
+    }
+
     if (isSessionListViewItemsAlreadyOrderedByOrderingMode(source, orderingMode)) {
         return source as SessionListViewItem[];
     }
@@ -167,7 +156,17 @@ export function sortSessionListViewItemsByOrderingMode(
         indicesByGroupKey.set(groupKey, index + 1);
     }
 
-    return didChange ? out : (source as SessionListViewItem[]);
+    if (!didChange) {
+        return source as SessionListViewItem[];
+    }
+
+    if (!cachedByMode) {
+        SORTED_SESSION_LIST_VIEW_ITEMS_BY_SOURCE.set(source, new Map([[orderingMode, out]]));
+    } else {
+        cachedByMode.set(orderingMode, out);
+    }
+
+    return out;
 }
 
 function buildSessionKeySetByGroupKey(source: ReadonlyArray<SessionListViewItem>): Map<string, Set<string>> {
@@ -188,39 +187,110 @@ function buildSessionKeySetByGroupKey(source: ReadonlyArray<SessionListViewItem>
     return map;
 }
 
-type SessionListGroupOrderSourceIndex = Readonly<{
-    sessionsByGroupKey: Map<string, Set<string>>;
-}>;
+function buildSessionKeySetByGroupKeyFromIndex(source: ReadonlyArray<SessionListIndexItem>): Map<string, Set<string>> {
+    const map = new Map<string, Set<string>>();
+    for (const item of source) {
+        if (item.type !== 'session') continue;
+        const groupKey = normalizeTrimmedString(item.groupKey);
+        if (!groupKey) continue;
+        const sessionKey = normalizeSessionListKeyParts(item.serverId, item.sessionId).sessionKey;
+        if (!sessionKey) continue;
+        const bucket = map.get(groupKey);
+        if (!bucket) {
+            map.set(groupKey, new Set([sessionKey]));
+        } else {
+            bucket.add(sessionKey);
+        }
+    }
+    return map;
+}
 
-function buildSessionListGroupOrderSourceIndex(
-    source: ReadonlyArray<SessionListViewItem>,
-): SessionListGroupOrderSourceIndex {
-    return {
-        sessionsByGroupKey: buildSessionKeySetByGroupKey(source),
-    };
+function readCachedSessionListGroupOrderV1ForSource(params: Readonly<{
+    source: ReadonlyArray<SessionListViewItem>;
+    pinnedSessionKeysV1: ReadonlyArray<string>;
+    sessionListGroupOrderV1: Readonly<Record<string, ReadonlyArray<string> | undefined>>;
+}>): Record<string, string[]> | null {
+    const byPinned = SESSION_LIST_GROUP_ORDER_V1_CACHE.get(params.source);
+    const byGroupOrder = byPinned?.get(params.pinnedSessionKeysV1);
+    return byGroupOrder?.get(params.sessionListGroupOrderV1) ?? null;
+}
+
+function readCachedSessionListGroupOrderV1ForIndexSource(params: Readonly<{
+    source: ReadonlyArray<SessionListIndexItem>;
+    pinnedSessionKeysV1: ReadonlyArray<string>;
+    sessionListGroupOrderV1: Readonly<Record<string, ReadonlyArray<string> | undefined>>;
+}>): Record<string, string[]> | null {
+    const byPinned = SESSION_LIST_GROUP_ORDER_V1_INDEX_CACHE.get(params.source);
+    const byGroupOrder = byPinned?.get(params.pinnedSessionKeysV1);
+    return byGroupOrder?.get(params.sessionListGroupOrderV1) ?? null;
+}
+
+function cacheSessionListGroupOrderV1ForSource(params: Readonly<{
+    source: ReadonlyArray<SessionListViewItem>;
+    pinnedSessionKeysV1: ReadonlyArray<string>;
+    sessionListGroupOrderV1: Readonly<Record<string, ReadonlyArray<string> | undefined>>;
+}>, normalized: Record<string, string[]>): Record<string, string[]> {
+    let byPinned = SESSION_LIST_GROUP_ORDER_V1_CACHE.get(params.source);
+    if (!byPinned) {
+        byPinned = new WeakMap();
+        SESSION_LIST_GROUP_ORDER_V1_CACHE.set(params.source, byPinned);
+    }
+
+    let byGroupOrder = byPinned.get(params.pinnedSessionKeysV1);
+    if (!byGroupOrder) {
+        byGroupOrder = new WeakMap();
+        byPinned.set(params.pinnedSessionKeysV1, byGroupOrder);
+    }
+
+    byGroupOrder.set(params.sessionListGroupOrderV1, normalized);
+    return normalized;
+}
+
+function cacheSessionListGroupOrderV1ForIndexSource(params: Readonly<{
+    source: ReadonlyArray<SessionListIndexItem>;
+    pinnedSessionKeysV1: ReadonlyArray<string>;
+    sessionListGroupOrderV1: Readonly<Record<string, ReadonlyArray<string> | undefined>>;
+}>, normalized: Record<string, string[]>): Record<string, string[]> {
+    let byPinned = SESSION_LIST_GROUP_ORDER_V1_INDEX_CACHE.get(params.source);
+    if (!byPinned) {
+        byPinned = new WeakMap();
+        SESSION_LIST_GROUP_ORDER_V1_INDEX_CACHE.set(params.source, byPinned);
+    }
+
+    let byGroupOrder = byPinned.get(params.pinnedSessionKeysV1);
+    if (!byGroupOrder) {
+        byGroupOrder = new WeakMap();
+        byPinned.set(params.pinnedSessionKeysV1, byGroupOrder);
+    }
+
+    byGroupOrder.set(params.sessionListGroupOrderV1, normalized);
+    return normalized;
 }
 
 function isSessionListGroupOrderV1AlreadyNormalizedForSource(params: Readonly<{
     source: ReadonlyArray<SessionListViewItem>;
     pinnedSessionKeysV1: ReadonlyArray<string>;
     sessionListGroupOrderV1: Readonly<Record<string, ReadonlyArray<string> | undefined>>;
-}>, sourceIndex?: SessionListGroupOrderSourceIndex): boolean {
+}>, sessionsByGroupKey?: Map<string, Set<string>>): boolean {
     const pinnedSet = new Set(normalizeTrimmedStringArrayWithSharedEmpty(params.pinnedSessionKeysV1));
-    const sessionsByGroupKey = sourceIndex?.sessionsByGroupKey ?? buildSessionKeySetByGroupKey(params.source);
+    const sourceSessionKeys = sessionsByGroupKey ?? buildSessionKeySetByGroupKey(params.source);
 
     for (const [groupKeyRaw, keysRaw] of Object.entries(params.sessionListGroupOrderV1 ?? {})) {
         const groupKey = normalizeTrimmedString(groupKeyRaw);
         if (!groupKey) return false;
         if (!Array.isArray(keysRaw)) return false;
 
-        const normalizedKeys = normalizeSessionListGroupOrderKeys(keysRaw);
+        const normalizedKeys = normalizeTrimmedStringArrayWithSharedEmpty(keysRaw);
 
         if (normalizedKeys.length !== keysRaw.length) return false;
         for (let i = 0; i < normalizedKeys.length; i++) {
             if (normalizedKeys[i] !== keysRaw[i]) return false;
         }
 
-        const capped = capKeys(normalizedKeys, SESSION_LIST_GROUP_ORDER_MAX_KEYS_PER_GROUP);
+        const capped =
+            normalizedKeys.length <= SESSION_LIST_GROUP_ORDER_MAX_KEYS_PER_GROUP
+                ? normalizedKeys as string[]
+                : normalizedKeys.slice(0, SESSION_LIST_GROUP_ORDER_MAX_KEYS_PER_GROUP);
         if (capped.length !== normalizedKeys.length) return false;
 
         if (groupKey === PINNED_GROUP_KEY_V1) {
@@ -230,7 +300,51 @@ function isSessionListGroupOrderV1AlreadyNormalizedForSource(params: Readonly<{
             continue;
         }
 
-        const allowedKeys = sessionsByGroupKey.get(groupKey);
+        const allowedKeys = sourceSessionKeys.get(groupKey);
+        if (!allowedKeys) continue;
+
+        for (const key of capped) {
+            if (!allowedKeys.has(key)) return false;
+        }
+    }
+
+    return true;
+}
+
+function isSessionListGroupOrderV1AlreadyNormalizedForIndexSource(params: Readonly<{
+    source: ReadonlyArray<SessionListIndexItem>;
+    pinnedSessionKeysV1: ReadonlyArray<string>;
+    sessionListGroupOrderV1: Readonly<Record<string, ReadonlyArray<string> | undefined>>;
+}>, sessionsByGroupKey?: Map<string, Set<string>>): boolean {
+    const pinnedSet = new Set(normalizeTrimmedStringArrayWithSharedEmpty(params.pinnedSessionKeysV1));
+    const sourceSessionKeys = sessionsByGroupKey ?? buildSessionKeySetByGroupKeyFromIndex(params.source);
+
+    for (const [groupKeyRaw, keysRaw] of Object.entries(params.sessionListGroupOrderV1 ?? {})) {
+        const groupKey = normalizeTrimmedString(groupKeyRaw);
+        if (!groupKey) return false;
+        if (!Array.isArray(keysRaw)) return false;
+
+        const normalizedKeys = normalizeTrimmedStringArrayWithSharedEmpty(keysRaw);
+
+        if (normalizedKeys.length !== keysRaw.length) return false;
+        for (let i = 0; i < normalizedKeys.length; i++) {
+            if (normalizedKeys[i] !== keysRaw[i]) return false;
+        }
+
+        const capped =
+            normalizedKeys.length <= SESSION_LIST_GROUP_ORDER_MAX_KEYS_PER_GROUP
+                ? normalizedKeys as string[]
+                : normalizedKeys.slice(0, SESSION_LIST_GROUP_ORDER_MAX_KEYS_PER_GROUP);
+        if (capped.length !== normalizedKeys.length) return false;
+
+        if (groupKey === PINNED_GROUP_KEY_V1) {
+            for (const key of capped) {
+                if (!pinnedSet.has(key)) return false;
+            }
+            continue;
+        }
+
+        const allowedKeys = sourceSessionKeys.get(groupKey);
         if (!allowedKeys) continue;
 
         for (const key of capped) {
@@ -246,32 +360,42 @@ export function normalizeSessionListGroupOrderV1ForSource(params: Readonly<{
     pinnedSessionKeysV1: ReadonlyArray<string>;
     sessionListGroupOrderV1: Readonly<Record<string, ReadonlyArray<string> | undefined>>;
 }>): Record<string, string[]> {
+    const cached = readCachedSessionListGroupOrderV1ForSource(params);
+    if (cached) {
+        return cached;
+    }
+
     if (
         normalizeTrimmedStringArrayWithSharedEmpty(params.pinnedSessionKeysV1).length === 0
         && !hasAnyOwnEntries(params.sessionListGroupOrderV1)
     ) {
-        return EMPTY_SESSION_LIST_GROUP_ORDER_V1;
+        return cacheSessionListGroupOrderV1ForSource(params, EMPTY_SESSION_LIST_GROUP_ORDER_V1);
     }
 
-    const sourceIndex = buildSessionListGroupOrderSourceIndex(params.source);
+    const sourceSessionKeys = buildSessionKeySetByGroupKey(params.source);
 
-    if (isSessionListGroupOrderV1AlreadyNormalizedForSource(params, sourceIndex)) {
-        return !hasAnyOwnEntries(params.sessionListGroupOrderV1)
-            ? EMPTY_SESSION_LIST_GROUP_ORDER_V1
-            : params.sessionListGroupOrderV1 as Record<string, string[]>;
+    if (isSessionListGroupOrderV1AlreadyNormalizedForSource(params, sourceSessionKeys)) {
+        return cacheSessionListGroupOrderV1ForSource(
+            params,
+            !hasAnyOwnEntries(params.sessionListGroupOrderV1)
+                ? EMPTY_SESSION_LIST_GROUP_ORDER_V1
+                : params.sessionListGroupOrderV1 as Record<string, string[]>,
+        );
     }
 
     const pinnedSet = new Set(normalizeTrimmedStringArrayWithSharedEmpty(params.pinnedSessionKeysV1));
-    const sessionsByGroupKey = sourceIndex.sessionsByGroupKey;
     const out: Record<string, string[]> = {};
 
     for (const [groupKeyRaw, keysRaw] of Object.entries(params.sessionListGroupOrderV1 ?? {})) {
         const groupKey = normalizeTrimmedString(groupKeyRaw);
         if (!groupKey) continue;
 
-        const normalizedKeys = normalizeSessionListGroupOrderKeys(Array.isArray(keysRaw) ? keysRaw : []);
+        const normalizedKeys = normalizeTrimmedStringArrayWithSharedEmpty(keysRaw);
 
-        const capped = capKeys(normalizedKeys, SESSION_LIST_GROUP_ORDER_MAX_KEYS_PER_GROUP);
+        const capped =
+            normalizedKeys.length <= SESSION_LIST_GROUP_ORDER_MAX_KEYS_PER_GROUP
+                ? normalizedKeys as string[]
+                : normalizedKeys.slice(0, SESSION_LIST_GROUP_ORDER_MAX_KEYS_PER_GROUP);
 
         if (groupKey === PINNED_GROUP_KEY_V1) {
             const filtered = capped.filter((k) => pinnedSet.has(k));
@@ -281,7 +405,7 @@ export function normalizeSessionListGroupOrderV1ForSource(params: Readonly<{
             continue;
         }
 
-        const allowedKeys = sessionsByGroupKey.get(groupKey);
+        const allowedKeys = sourceSessionKeys.get(groupKey);
         if (!allowedKeys) {
             if (capped.length > 0) {
                 out[groupKey] = capped;
@@ -297,7 +421,62 @@ export function normalizeSessionListGroupOrderV1ForSource(params: Readonly<{
         }
     }
 
-    return Object.keys(out).length === 0 ? EMPTY_SESSION_LIST_GROUP_ORDER_V1 : out;
+    return cacheSessionListGroupOrderV1ForSource(
+        params,
+        Object.keys(out).length === 0 ? EMPTY_SESSION_LIST_GROUP_ORDER_V1 : out,
+    );
+}
+
+export function normalizeSessionListGroupOrderV1ForIndexSource(params: Readonly<{
+    source: ReadonlyArray<SessionListIndexItem>;
+    pinnedSessionKeysV1: ReadonlyArray<string>;
+    sessionListGroupOrderV1: Readonly<Record<string, ReadonlyArray<string> | undefined>>;
+}>): Record<string, string[]> {
+    if (!hasAnyOwnEntries(params.sessionListGroupOrderV1)) {
+        return EMPTY_SESSION_LIST_GROUP_ORDER_V1;
+    }
+
+    const cached = readCachedSessionListGroupOrderV1ForIndexSource(params);
+    if (cached) {
+        return cached;
+    }
+
+    if (isSessionListGroupOrderV1AlreadyNormalizedForIndexSource(params)) {
+        return cacheSessionListGroupOrderV1ForIndexSource(params, params.sessionListGroupOrderV1 as Record<string, string[]>);
+    }
+
+    const pinnedSet = new Set(normalizeTrimmedStringArrayWithSharedEmpty(params.pinnedSessionKeysV1));
+    const sessionsByGroupKey = buildSessionKeySetByGroupKeyFromIndex(params.source);
+
+    const normalized: Record<string, string[]> = {};
+    for (const [groupKeyRaw, keysRaw] of Object.entries(params.sessionListGroupOrderV1 ?? {})) {
+        const groupKey = normalizeTrimmedString(groupKeyRaw);
+        if (!groupKey) continue;
+        if (!Array.isArray(keysRaw)) continue;
+
+        const normalizedKeys = normalizeTrimmedStringArrayWithSharedEmpty(keysRaw);
+        const capped =
+            normalizedKeys.length <= SESSION_LIST_GROUP_ORDER_MAX_KEYS_PER_GROUP
+                ? normalizedKeys as string[]
+                : normalizedKeys.slice(0, SESSION_LIST_GROUP_ORDER_MAX_KEYS_PER_GROUP);
+
+        if (groupKey === PINNED_GROUP_KEY_V1) {
+            const filtered = capped.filter((key) => pinnedSet.has(key));
+            if (filtered.length > 0) {
+                normalized[groupKey] = filtered;
+            }
+            continue;
+        }
+
+        const allowedKeys = sessionsByGroupKey.get(groupKey);
+        if (!allowedKeys) continue;
+        const filtered = capped.filter((key) => allowedKeys.has(key));
+        if (filtered.length > 0) {
+            normalized[groupKey] = filtered;
+        }
+    }
+
+    return cacheSessionListGroupOrderV1ForIndexSource(params, normalized);
 }
 
 export function areSessionListGroupOrderMapsEqual(

@@ -10,6 +10,10 @@ function applyLocalSettingsFromStore(delta: Partial<LocalSettings>, source: Sett
   getStorage().getState().applyLocalSettings(delta, { source });
 }
 
+export function applyLocalSettingsFromDesktopMcpBridge(delta: Partial<LocalSettings>): void {
+  applyLocalSettingsFromStore(delta, 'ui');
+}
+
 export function useApplySettings(): (delta: Partial<Settings>) => void {
   return React.useCallback((delta: Partial<Settings>) => {
     getSyncSingleton().applySettings(delta, { source: 'ui' satisfies SettingsAnalyticsSource });

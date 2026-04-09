@@ -7,6 +7,7 @@ describe('buildSessionListReachabilitySummary', () => {
         const first = buildSessionListReachabilitySummary({
             listItems: [],
             machinesById: new Map(),
+            resolveSessionRenderable: () => null,
         });
         const second = buildSessionListReachabilitySummary({
             listItems: [
@@ -18,6 +19,7 @@ describe('buildSessionListReachabilitySummary', () => {
                 },
             ] as any,
             machinesById: new Map(),
+            resolveSessionRenderable: () => null,
         });
 
         expect(first).toBe(second);
@@ -27,37 +29,40 @@ describe('buildSessionListReachabilitySummary', () => {
     });
 
     it('reuses the same non-empty summary for identical inputs', () => {
+        const sessionRenderablesById = {
+            'sess-a': {
+                metadata: {
+                    machineId: 'machine-a',
+                    host: 'machine-a.local',
+                    path: '/repo-a',
+                    homeDir: '/home/user',
+                },
+            },
+            'sess-b': {
+                metadata: {
+                    machineId: 'machine-b',
+                    host: 'machine-b.local',
+                    path: '/repo-b',
+                    homeDir: '/home/user',
+                },
+            },
+        } as any;
         const input = {
             listItems: [
                 {
                     type: 'session',
-                    session: {
-                        id: 'sess-a',
-                        metadata: {
-                            machineId: 'machine-a',
-                            host: 'machine-a.local',
-                            path: '/repo-a',
-                            homeDir: '/home/user',
-                        },
-                    },
+                    sessionId: 'sess-a',
                 },
                 {
                     type: 'session',
-                    session: {
-                        id: 'sess-b',
-                        metadata: {
-                            machineId: 'machine-b',
-                            host: 'machine-b.local',
-                            path: '/repo-b',
-                            homeDir: '/home/user',
-                        },
-                    },
+                    sessionId: 'sess-b',
                 },
             ] as any,
             machinesById: new Map([
                 ['machine-a', { id: 'machine-a', metadata: { host: 'machine-a.local' } }],
                 ['machine-b', { id: 'machine-b', metadata: { host: 'machine-b.local' } }],
             ]),
+            resolveSessionRenderable: (item: any) => sessionRenderablesById[item.sessionId] ?? null,
         } as const;
 
         const first = buildSessionListReachabilitySummary(input);
@@ -73,20 +78,23 @@ describe('buildSessionListReachabilitySummary', () => {
     });
 
     it('preserves path subtitles even when no machine metadata is available', () => {
+        const sessionRenderablesById = {
+            'sess-path-only': {
+                metadata: {
+                    path: '/repo-only',
+                    homeDir: '/home/user',
+                },
+            },
+        } as any;
         const summary = buildSessionListReachabilitySummary({
             listItems: [
                 {
                     type: 'session',
-                    session: {
-                        id: 'sess-path-only',
-                        metadata: {
-                            path: '/repo-only',
-                            homeDir: '/home/user',
-                        },
-                    },
+                    sessionId: 'sess-path-only',
                 },
             ] as any,
             machinesById: new Map(),
+            resolveSessionRenderable: (item: any) => sessionRenderablesById[item.sessionId] ?? null,
         });
 
         expect(summary.displayById.get('sess-path-only')).toEqual({

@@ -6,13 +6,23 @@ import { fetchAndApplySessions } from '@/sync/engine/sessions/sessionSnapshot';
 import { getEffectiveServerSelectionFromRawSettings } from '@/sync/domains/server/selection/serverSelectionResolution';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
-import { buildSessionListViewData, type SessionListViewItem } from '@/sync/domains/session/listing/sessionListViewData';
 import { storage } from '@/sync/domains/state/storageStore';
-import { clearServerSessionListCache, setServerSessionListCache } from '@/sync/store/sessionListCache';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
 import { invalidateCachedTransferRoutesForServer } from '@/sync/domains/transfers/runtime/transferRouteCache';
+import type { ConcurrentSessionListCacheEntry } from '@/sync/domains/session/listing/concurrentSessionListCache';
+import { buildMachineDisplayRenderableFromMachine } from '@/sync/domains/machines/machineDisplayRenderable';
+import {
+    areSessionListRenderablesEqual,
+    buildSessionListRenderableFromSession,
+    type SessionListRenderableSession,
+} from '@/sync/domains/session/listing/sessionListRenderable';
+import { shouldRebuildSessionListIndexForRowStateChange } from '@/sync/domains/session/listing/sessionListIndexRebuildImpact';
+import {
+    buildMachineDisplaysByIdFromMachineList,
+    buildSessionListIndexWithServerScope,
+} from '@/sync/store/sessionListIndex/buildSessionListIndexWithServerScope';
 import {
     type ManagedConnectionState,
     type ManagedConnectionTransport,
@@ -153,19 +163,141 @@ async function getOrCreateEncryption(entry: ManagedConcurrentServer): Promise<En
     return entry.encryption;
 }
 
-function updateConcurrentSessionListCache(serverId: string, sessionListViewData: SessionListViewItem[] | null): void {
+function areConcurrentSessionListCacheSessionsEqual(
+    previous: Readonly<Record<string, SessionListRenderableSession>> | null | undefined,
+    next: Readonly<Record<string, SessionListRenderableSession>> | null | undefined,
+): boolean {
+    if (previous === next) return true;
+    if (!previous || !next) return previous === next;
+
+    const previousIds = Object.keys(previous);
+    const nextIds = Object.keys(next);
+    if (previousIds.length !== nextIds.length) return false;
+
+    for (const sessionId of previousIds) {
+        const previousSession = previous[sessionId];
+        const nextSession = next[sessionId];
+        if (!nextSession) return false;
+        if (!areSessionListRenderablesEqual(previousSession, nextSession)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function compactSessionListRowsForViewData(
+    input: Readonly<Record<string, SessionListRenderableSession | null | undefined>>,
+): Record<string, SessionListRenderableSession> {
+    const out: Record<string, SessionListRenderableSession> = {};
+    for (const sessionId in input) {
+        const row = input[sessionId];
+        if (row) {
+            out[sessionId] = row;
+        }
+    }
+    return out;
+}
+
+function updateConcurrentSessionListCache(params: Readonly<{
+    serverId: string;
+    entry: ConcurrentSessionListCacheEntry | null;
+}>): void {
     storage.setState((state) => {
-        const nextSessionListViewDataByServerId = setServerSessionListCache(
-            state.sessionListViewDataByServerId,
-            serverId,
-            sessionListViewData,
-        );
-        if (nextSessionListViewDataByServerId === state.sessionListViewDataByServerId) {
+        const serverId = normalizeServerId(params.serverId);
+        if (!serverId) {
             return state;
         }
+
+        const previous = state.concurrentSessionListCacheByServerId?.[serverId];
+        const next = params.entry;
+
+        if (previous === next) {
+            return state;
+        }
+
+        if (previous && next) {
+            const previousName = String(previous.serverName ?? '').trim() || null;
+            const nextName = String(next.serverName ?? '').trim() || null;
+            if (
+                previousName === nextName
+                && areConcurrentSessionListCacheSessionsEqual(previous.sessions, next.sessions)
+            ) {
+                return state;
+            }
+        }
+
+        const nextRowStateByServerId = (() => {
+            const previousRowStateByServerId = state.sessionListRowStateByServerId ?? {};
+            const nextRows = next?.sessions ?? null;
+            if (!nextRows) {
+                if (!(serverId in previousRowStateByServerId)) {
+                    return previousRowStateByServerId;
+                }
+                const { [serverId]: _, ...rest } = previousRowStateByServerId;
+                return rest;
+            }
+
+            return previousRowStateByServerId[serverId] === nextRows
+                ? previousRowStateByServerId
+                : {
+                    ...previousRowStateByServerId,
+                    [serverId]: nextRows,
+                };
+        })();
+
+        const nextIndexByServerId = (() => {
+            const previousIndexByServerId = state.sessionListIndexByServerId ?? {};
+            const nextRows = next?.sessions ?? null;
+            if (!nextRows) {
+                if (!(serverId in previousIndexByServerId)) {
+                    return previousIndexByServerId;
+                }
+                const { [serverId]: _, ...rest } = previousIndexByServerId;
+                return rest;
+            }
+
+            const previousRows = previous?.sessions ?? null;
+            const previousName = String(previous?.serverName ?? '').trim() || null;
+            const nextName = String(next?.serverName ?? '').trim() || null;
+            const shouldRebuildIndex =
+                previousIndexByServerId[serverId] == null
+                || previousName !== nextName
+                || shouldRebuildSessionListIndexForRowStateChange(previousRows, nextRows);
+
+            if (!shouldRebuildIndex) {
+                return previousIndexByServerId;
+            }
+
+            const index = buildSessionListIndexWithServerScope({
+                sessions: nextRows,
+                machines: buildMachineDisplaysByIdFromMachineList(state.machineListByServerId?.[serverId]),
+                groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
+                activeGroupingV1: state.settings.sessionListActiveGroupingV1,
+                inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
+                serverScope: {
+                    serverId,
+                    serverName: nextName ?? undefined,
+                },
+                previousIndex: previousIndexByServerId[serverId] ?? null,
+            });
+
+            return previousIndexByServerId[serverId] === index
+                ? previousIndexByServerId
+                : {
+                    ...previousIndexByServerId,
+                    [serverId]: index,
+                };
+        })();
+
         return {
             ...state,
-            sessionListViewDataByServerId: nextSessionListViewDataByServerId,
+            concurrentSessionListCacheByServerId: {
+                ...state.concurrentSessionListCacheByServerId,
+                [serverId]: next,
+            },
+            sessionListRowStateByServerId: nextRowStateByServerId,
+            sessionListIndexByServerId: nextIndexByServerId,
         };
     });
 }
@@ -212,8 +344,13 @@ function updateConcurrentMachineListCache(input: {
     authoritative?: boolean;
 }): void {
     storage.setState((state) => {
+        const serverId = normalizeServerId(input.serverId);
+        if (!serverId) {
+            return state;
+        }
+
         const nextMachineListByServerId = (() => {
-            const previous = state.machineListByServerId?.[input.serverId];
+            const previous = state.machineListByServerId?.[serverId];
             let nextMachines = input.machines;
 
             if (Array.isArray(input.machines) && !input.authoritative) {
@@ -244,20 +381,54 @@ function updateConcurrentMachineListCache(input: {
 
             return {
                 ...state.machineListByServerId,
-                [input.serverId]: nextMachines,
+                [serverId]: nextMachines,
             };
         })();
 
-        const nextMachineListStatusByServerId = state.machineListStatusByServerId?.[input.serverId] === input.status
+        const nextMachineListStatusByServerId = state.machineListStatusByServerId?.[serverId] === input.status
             ? state.machineListStatusByServerId
             : {
                 ...state.machineListStatusByServerId,
-                [input.serverId]: input.status,
+                [serverId]: input.status,
             };
+
+        const nextIndexByServerId = (() => {
+            if (nextMachineListByServerId === state.machineListByServerId) {
+                return state.sessionListIndexByServerId;
+            }
+
+            const rows = state.sessionListRowStateByServerId?.[serverId] ?? null;
+            if (!rows || typeof rows !== 'object') {
+                return state.sessionListIndexByServerId;
+            }
+
+            const serverName = state.concurrentSessionListCacheByServerId?.[serverId]?.serverName ?? undefined;
+            const previousIndexByServerId = state.sessionListIndexByServerId ?? {};
+            const index = buildSessionListIndexWithServerScope({
+                sessions: compactSessionListRowsForViewData(rows),
+                machines: buildMachineDisplaysByIdFromMachineList(nextMachineListByServerId?.[serverId]),
+                groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
+                activeGroupingV1: state.settings.sessionListActiveGroupingV1,
+                inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
+                serverScope: {
+                    serverId,
+                    serverName,
+                },
+                previousIndex: previousIndexByServerId[serverId] ?? null,
+            });
+            if (previousIndexByServerId[serverId] === index) {
+                return previousIndexByServerId;
+            }
+            return {
+                ...previousIndexByServerId,
+                [serverId]: index,
+            };
+        })();
 
         if (
             nextMachineListByServerId === state.machineListByServerId
             && nextMachineListStatusByServerId === state.machineListStatusByServerId
+            && nextIndexByServerId === state.sessionListIndexByServerId
         ) {
             return state;
         }
@@ -266,25 +437,53 @@ function updateConcurrentMachineListCache(input: {
             ...state,
             machineListByServerId: nextMachineListByServerId,
             machineListStatusByServerId: nextMachineListStatusByServerId,
+            sessionListIndexByServerId: nextIndexByServerId,
         };
     });
 }
 
 function clearConcurrentSessionListCache(serverIdRaw: string): void {
-    const serverId = String(serverIdRaw ?? '').trim();
+    const serverId = normalizeServerId(serverIdRaw);
     if (!serverId) return;
     storage.setState((state) => {
-        const next = clearServerSessionListCache(state.sessionListViewDataByServerId, serverId);
-        if (next === state.sessionListViewDataByServerId) return state;
+        const current = state.concurrentSessionListCacheByServerId ?? {};
+        if (!(serverId in current)) {
+            return state;
+        }
+
+        const next = { ...current };
+        delete next[serverId];
+
+        const activeServerId = normalizeServerId(getActiveServerSnapshot().serverId);
+        const shouldPruneCanonicalState = serverId !== activeServerId;
+
+        const nextRowStateByServerId = shouldPruneCanonicalState && state.sessionListRowStateByServerId && (serverId in state.sessionListRowStateByServerId)
+            ? (() => {
+                const next = { ...state.sessionListRowStateByServerId };
+                delete (next as any)[serverId];
+                return next;
+            })()
+            : state.sessionListRowStateByServerId;
+
+        const nextIndexByServerId = shouldPruneCanonicalState && state.sessionListIndexByServerId && (serverId in state.sessionListIndexByServerId)
+            ? (() => {
+                const next = { ...state.sessionListIndexByServerId };
+                delete (next as any)[serverId];
+                return next;
+            })()
+            : state.sessionListIndexByServerId;
+
         return {
             ...state,
-            sessionListViewDataByServerId: next,
+            concurrentSessionListCacheByServerId: next,
+            sessionListRowStateByServerId: nextRowStateByServerId,
+            sessionListIndexByServerId: nextIndexByServerId,
         };
     });
 }
 
 function clearConcurrentMachineListCache(serverIdRaw: string): void {
-    const serverId = String(serverIdRaw ?? '').trim();
+    const serverId = normalizeServerId(serverIdRaw);
     if (!serverId) return;
     storage.setState((state) => {
         if (!(serverId in state.machineListByServerId) && !(serverId in state.machineListStatusByServerId)) {
@@ -337,34 +536,22 @@ async function refreshServerSnapshot(entry: ManagedConcurrentServer): Promise<vo
         },
     });
 
-    const sessionsById: Record<string, Session> = {};
-    for (const session of sessions) {
-        sessionsById[session.id] = session;
-    }
-
-    const machinesById: Record<string, Machine> = {};
-    for (const machine of machines) {
-        machinesById[machine.id] = machine;
-    }
-
     // Guard against late async writes: a refresh can finish after this server is removed.
     if (managedServers.get(entry.id) !== entry) {
         return;
     }
 
-    const sessionListViewData = buildSessionListViewData(
-        sessionsById,
-        machinesById,
-        {
-            groupInactiveSessionsByProject: Boolean(storage.getState().settings.groupInactiveSessionsByProject),
-            activeGroupingV1: storage.getState().settings.sessionListActiveGroupingV1,
-            inactiveGroupingV1: storage.getState().settings.sessionListInactiveGroupingV1,
-            serverScope: {
-                serverId: entry.id,
-                serverName: entry.serverName,
-            },
-        },
-    );
+    const previousCacheEntry = storage.getState().concurrentSessionListCacheByServerId?.[entry.id] ?? null;
+    const previousSessions = previousCacheEntry && typeof previousCacheEntry === 'object'
+        ? previousCacheEntry.sessions
+        : null;
+    const nextSessions: Record<string, SessionListRenderableSession> = {};
+    for (const session of sessions) {
+        nextSessions[session.id] = buildSessionListRenderableFromSession(
+            session,
+            previousSessions && typeof previousSessions === 'object' ? previousSessions[session.id] : undefined,
+        );
+    }
 
     updateConcurrentMachineListCache({
         serverId: entry.id,
@@ -372,7 +559,13 @@ async function refreshServerSnapshot(entry: ManagedConcurrentServer): Promise<vo
         status: 'idle',
         authoritative: true,
     });
-    updateConcurrentSessionListCache(entry.id, sessionListViewData);
+    updateConcurrentSessionListCache({
+        serverId: entry.id,
+        entry: {
+            serverName: String(entry.serverName ?? '').trim() || null,
+            sessions: nextSessions,
+        },
+    });
 }
 
 function isManagedServerActive(entry: ManagedConcurrentServer): boolean {
@@ -466,7 +659,7 @@ function createManagedServer(target: ConcurrentTarget, credentials: AuthCredenti
         entry.reachabilityState = state;
 
         if (state.phase === 'auth_failed') {
-            updateConcurrentSessionListCache(entry.id, null);
+            updateConcurrentSessionListCache({ serverId: entry.id, entry: null });
             updateConcurrentMachineListCache({
                 serverId: entry.id,
                 machines: null,
@@ -559,7 +752,7 @@ async function reconcileConcurrentServers(): Promise<void> {
         const credentials = await TokenStorage.getCredentialsForServerUrl(target.serverUrl, { serverId: target.id });
         if (!credentials) {
             stopManagedServer(target.id);
-            updateConcurrentSessionListCache(target.id, null);
+            updateConcurrentSessionListCache({ serverId: target.id, entry: null });
             updateConcurrentMachineListCache({
                 serverId: target.id,
                 machines: null,

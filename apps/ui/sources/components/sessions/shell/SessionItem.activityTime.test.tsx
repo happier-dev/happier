@@ -8,7 +8,7 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 
 const useProfileSpy = vi.hoisted(() => vi.fn(() => ({ id: 'u1' })));
 const useSessionSpy = vi.hoisted(() => vi.fn(() => null));
-const useSessionListRenderableSpy = vi.hoisted(() => vi.fn(() => null));
+const useSessionListRenderableWithServerScopeSpy = vi.hoisted(() => vi.fn(() => null));
 let hasUnreadMessagesValue = false;
 
 vi.mock('react-native-reanimated', () => ({}));
@@ -61,7 +61,7 @@ installSessionShellCommonModuleMocks({
             useHasUnreadMessages: () => hasUnreadMessagesValue,
             useProfile: useProfileSpy,
             useSession: useSessionSpy,
-            useSessionListRenderable: useSessionListRenderableSpy,
+            useSessionListRenderableWithServerScope: useSessionListRenderableWithServerScopeSpy,
             useSessionListMeaningfulActivityAt: () => 60_000,
         });
     },
@@ -169,7 +169,7 @@ describe('SessionItem activity time', () => {
         };
         useProfileSpy.mockClear();
         useSessionSpy.mockClear();
-        useSessionListRenderableSpy.mockClear();
+        useSessionListRenderableWithServerScopeSpy.mockClear();
     });
 
     afterEach(() => {
@@ -331,7 +331,7 @@ describe('SessionItem activity time', () => {
             />,
         );
 
-        expect(useSessionListRenderableSpy).toHaveBeenCalledWith('sess_row_state');
+        expect(useSessionListRenderableWithServerScopeSpy).toHaveBeenCalledWith('server_a', 'sess_row_state');
         expect(useSessionSpy).not.toHaveBeenCalled();
         expect(useProfileSpy).not.toHaveBeenCalled();
     });

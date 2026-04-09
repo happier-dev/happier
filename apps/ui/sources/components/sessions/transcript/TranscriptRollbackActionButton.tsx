@@ -5,8 +5,8 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { Modal } from '@/modal';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
-import { storage, useSession } from '@/sync/domains/state/storage';
-import { resolveSessionTargetServerId } from '@/components/sessions/model/resolveSessionTargetServerId';
+import { storage } from '@/sync/domains/state/storage';
+import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { t } from '@/text';
 import type { SessionRollbackTarget } from '@happier-dev/protocol';
 
@@ -21,13 +21,13 @@ export const TranscriptRollbackActionButton = React.memo((props: {
     pressedStyle?: any;
 }) => {
     const { theme } = useUnistyles();
-    const session = useSession(props.sessionId);
+    const sessionServerId = usePreferredServerIdForSession(props.sessionId);
     const [isRollingBack, setIsRollingBack] = React.useState(false);
     const executor = React.useMemo(
         () => createDefaultActionExecutor({
-            resolveServerIdForSessionId: (sessionId) => resolveSessionTargetServerId(sessionId, session?.serverId),
+            resolveServerIdForSessionId: () => sessionServerId,
         }),
-        [session?.serverId],
+        [sessionServerId],
     );
     const hitSlop = Platform.OS === 'web' ? undefined : 15;
 

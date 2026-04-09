@@ -12,6 +12,7 @@ import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import {
     createSessionMessageDetailsStyles,
     SessionMessageDetailsView,
@@ -57,7 +58,7 @@ function normalizeRouteParam(value: unknown): string {
 
 export default React.memo(function SessionMessageRoute() {
     const params = useLocalSearchParams<MessageRouteParams>();
-    const sessionId = normalizeRouteParam(params.id);
+    const sessionId = normalizeSessionId(params.id);
     const messageId = normalizeRouteParam(params.messageId);
     const jumpChildId = normalizeRouteParam(params.jumpChildId) || null;
 

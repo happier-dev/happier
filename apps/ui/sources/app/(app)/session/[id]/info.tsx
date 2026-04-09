@@ -42,16 +42,15 @@ import { resolveSessionHandoffSourceMachineId } from '@/sync/domains/sessionHand
 import {
     resolveSessionHandoffUiAvailability,
 } from '@/sync/domains/sessionHandoff/resolveSessionHandoffUiAvailability';
-import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { getActionSpec } from '@happier-dev/protocol';
 import { SessionRetentionNotice } from '@/components/sessions/info/SessionRetentionNotice';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
-import {
-    useSessionHandoffSourceReachability,
-    type SessionHandoffRuntimeAvailability,
-} from '@/sync/domains/sessionHandoff/useSessionHandoffSourceReachability';
+import { useSessionHandoffSourceReachability, type SessionHandoffRuntimeAvailability } from '@/sync/domains/sessionHandoff/useSessionHandoffSourceReachability';
+import { useSessionReachableMachineTarget } from '@/components/sessions/model/useSessionMachineReachability';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
-import { resolveSessionTargetServerId } from '@/components/sessions/model/resolveSessionTargetServerId';
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
+import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
+import { resolveSessionListPreferredServerIdFromState } from '@/sync/domains/session/listing/sessionListLookupState';
 
 
 // Animated status dot component
@@ -126,7 +125,12 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     const core = getAgentCore(agentId);
     const executor = React.useMemo(
         () => createDefaultActionExecutor({
-            resolveServerIdForSessionId: (childSessionId) => resolveSessionTargetServerId(childSessionId, sessionServerId) ?? null,
+            resolveServerIdForSessionId: (childSessionId) => {
+                const normalizedChildSessionId = normalizeSessionId(childSessionId);
+                const resolvedServerId = resolvePreferredServerIdForSessionId(normalizedChildSessionId) ?? sessionServerId ?? '';
+                const normalizedServerId = String(resolvedServerId).trim();
+                return normalizedServerId || null;
+            },
             openSession: (childSessionId) => {
                 router.push((`/session/${childSessionId}`) as any);
             },
@@ -153,9 +157,12 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
             { surface: 'ui_button', placement: 'session_info' } as any,
         );
     }, [actionsSettingsV1]);
+    const reachableMachineTarget = useSessionReachableMachineTarget(session.id);
+    const reachableMachineId = reachableMachineTarget?.machineId ?? null;
     const handoffAvailability = resolveSessionHandoffUiAvailability({
         sessionId: session.id,
         serverId: sessionServerId,
+        reachableMachineId,
         session,
         sessionHandoffFeatureEnabled: sessionHandoffEnabled,
         serverSnapshot,
@@ -191,10 +198,6 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     const tmuxFallbackReason = React.useMemo(() => {
         return getTmuxFallbackReason(session.metadata?.terminal);
     }, [session.metadata?.terminal]);
-    const reachableMachineTarget = React.useMemo(() => {
-        return readMachineTargetForSession(session.id);
-    }, [session.id, session.updatedAt, session.metadata]);
-    const reachableMachineId = reachableMachineTarget?.machineId ?? null;
     const sessionLogPath = React.useMemo(() => {
         const value = typeof (session.metadata as any)?.sessionLogPath === 'string'
             ? (session.metadata as any).sessionLogPath.trim()
@@ -832,18 +835,23 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
 export default () => {
     const { theme } = useUnistyles();
     const { id } = useLocalSearchParams<{ id: string }>();
-    const sessionId = String(id ?? '').trim();
+    const sessionId = normalizeSessionId(id);
     const sessionHydrated = useHydrateSessionForRoute(sessionId, 'SessionInfoRoute.ensureSessionVisible');
     const session = useSession(sessionId);
     const isDataReady = useIsDataReady();
-    const sessionServerId = React.useMemo(
-        () => resolveSessionTargetServerId(sessionId, session?.serverId) ?? null,
-        [session?.serverId, sessionId],
-    );
-    const reachableMachineIdForHandoff = React.useMemo(
-        () => (session ? readMachineTargetForSession(session.id)?.machineId ?? null : null),
-        [session?.id, session?.updatedAt, session?.metadata],
-    );
+    const sessionServerId = React.useMemo(() => {
+        const directFallback = String(session?.serverId ?? '').trim() || null;
+        const listPreferredServerId = resolveSessionListPreferredServerIdFromState(
+            storage.getState(),
+            sessionId,
+            directFallback,
+        );
+        const canonicalServerId = resolvePreferredServerIdForSessionId(sessionId);
+        const resolvedServerId = canonicalServerId ?? listPreferredServerId ?? directFallback;
+        const normalizedServerId = String(resolvedServerId ?? directFallback ?? '').trim();
+        return normalizedServerId || null;
+    }, [session?.serverId, sessionId]);
+    const reachableMachineIdForHandoff = useSessionReachableMachineTarget(sessionId)?.machineId ?? null;
     const sourceMachineIdForHandoff = React.useMemo(
         () => resolveSessionHandoffSourceMachineId({
             reachableMachineId: reachableMachineIdForHandoff,

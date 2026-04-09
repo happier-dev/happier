@@ -50,8 +50,12 @@ vi.mock('@/voice/context/voiceHooks', () => ({
     },
 }));
 
-vi.mock('@/track', () => ({
+const trackMocks = vi.hoisted(() => ({
     initializeTracking: vi.fn(),
+}));
+
+vi.mock('@/track', () => ({
+    initializeTracking: trackMocks.initializeTracking,
     tracking: null,
     trackPaywallPresented: vi.fn(),
     trackPaywallPurchased: vi.fn(),
@@ -105,6 +109,7 @@ describe('sync.create initial awaits', () => {
         vi.useFakeTimers();
         kvStore.clear();
         appStateAddListener.mockClear();
+        trackMocks.initializeTracking.mockReset();
         installLocalStorage();
     });
 
@@ -139,5 +144,37 @@ describe('sync.create initial awaits', () => {
         expect(resolved).toBe(true);
 
         await promise;
+    });
+
+    it('rebinds the tracking identity when switching to a different authenticated account', async () => {
+        vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+
+        upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
+
+        const secretA = new Uint8Array(32).fill(7);
+        const secretB = new Uint8Array(32).fill(8);
+        const encryptionA = await Encryption.create(secretA);
+        const encryptionB = await Encryption.create(secretB);
+        const { sync } = await import('./sync');
+
+        const credentialsA: AuthCredentials = {
+            token: buildTokenWithSub('server-a'),
+            secret: encodeBase64(secretA, 'base64url'),
+        };
+        const credentialsB: AuthCredentials = {
+            token: buildTokenWithSub('server-b'),
+            secret: encodeBase64(secretB, 'base64url'),
+        };
+
+        await TokenStorage.setCredentials(credentialsA);
+
+        const createPromise = sync.create(credentialsA, encryptionA);
+        await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 2_500 });
+        await createPromise;
+
+        await sync.switchServer(credentialsB);
+
+        expect(trackMocks.initializeTracking).toHaveBeenNthCalledWith(1, encryptionA.anonID);
+        expect(trackMocks.initializeTracking).toHaveBeenNthCalledWith(2, encryptionB.anonID);
     });
 });

@@ -251,6 +251,14 @@ export const ChainTranscriptList = React.memo(function ChainTranscriptList(props
         });
     }, []);
 
+    React.useEffect(() => {
+        // Reset per-session state so derived caches and expansion maps cannot leak across sessions.
+        linearItemsCacheRef.current = null;
+        turnsCacheRef.current = null;
+        setExpandedToolCallsAnchorMessageIds(new Set());
+        setThinkingExpandedByMessageId(new Map());
+    }, [props.sessionId]);
+
     const listRef = React.useRef<FlashListRef<ChainTranscriptListItem> | null>(null);
     const itemsRef = React.useRef<ChainTranscriptListItem[]>(items);
     const loadOlderRef = React.useRef(props.loadOlder);

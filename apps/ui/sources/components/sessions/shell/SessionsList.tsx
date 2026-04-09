@@ -21,7 +21,7 @@ export function SessionsListView(props: Readonly<{
         <View style={styles.container}>
             <View style={styles.contentContainer}>
                 <SessionListVirtualizedContent
-                    listItems={viewState.listItems}
+                    nodeIds={viewState.nodeIds}
                     rowHeight={viewState.rowHeight}
                     safeAreaBottom={safeArea.bottom}
                     renderItem={viewState.renderVirtualizedItem}

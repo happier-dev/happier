@@ -1,19 +1,21 @@
 import * as React from 'react';
 
 import { useSetting, useSettingMutable } from '@/sync/domains/state/storage';
-import { computeVisibleSessionListViewData } from '@/sync/domains/session/listing/computeVisibleSessionListViewData';
-import { areSessionListGroupOrderMapsEqual, normalizeSessionListGroupOrderV1ForSource } from '@/sync/domains/session/listing/sessionListOrderingStateV1';
-import { filterSessionListViewDataByStorageKind } from '@/sync/domains/session/listing/filterSessionListViewDataByStorageKind';
+import { useSessionListRowStateByServerId } from '@/sync/domains/state/storage';
+import { computeVisibleSessionListIndex } from '@/sync/domains/session/listing/computeVisibleSessionListIndex';
+import { areSessionListGroupOrderMapsEqual, normalizeSessionListGroupOrderV1ForIndexSource } from '@/sync/domains/session/listing/sessionListOrderingStateV1';
+import { filterSessionListIndexByStorageKind } from '@/sync/domains/session/listing/filterSessionListIndexByStorageKind';
 import type { SessionListStorageFilter } from '@/sync/domains/session/sessionStorageKind';
-import type { SessionListViewItem } from '@/sync/domains/session/listing/sessionListViewData';
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import { useVisibleSessionListSourceState } from './useVisibleSessionListSourceState';
 
 export type VisibleSessionListViewState = Readonly<{
-    visibleSessionListViewData: SessionListViewItem[] | null;
+    visibleSessionListIndex: SessionListIndexItem[] | null;
 }>;
 
 export function useVisibleSessionListViewState(storageFilter: SessionListStorageFilter = 'all'): VisibleSessionListViewState {
     const { selection, source } = useVisibleSessionListSourceState();
+    const sessionRowStateByServerId = useSessionListRowStateByServerId();
     const hideInactiveSessions = useSetting('hideInactiveSessions');
     const pinnedSessionKeysV1 = useSetting('pinnedSessionKeysV1');
     const sessionListOrderingModeV1 = useSetting('sessionListOrderingModeV1') as
@@ -25,7 +27,7 @@ export function useVisibleSessionListViewState(storageFilter: SessionListStorage
     const normalizedGroupOrder = React.useMemo(() => {
         if (!source) return sessionListGroupOrderV1;
         if (sessionListOrderingModeV1 !== 'custom') return sessionListGroupOrderV1;
-        return normalizeSessionListGroupOrderV1ForSource({
+        return normalizeSessionListGroupOrderV1ForIndexSource({
             source,
             pinnedSessionKeysV1,
             sessionListGroupOrderV1,
@@ -41,10 +43,24 @@ export function useVisibleSessionListViewState(storageFilter: SessionListStorage
         setSessionListGroupOrderV1(normalizedGroupOrder);
     }, [normalizedGroupOrder, sessionListGroupOrderV1, sessionListOrderingModeV1, setSessionListGroupOrderV1, source]);
 
-    const visibleSessionListViewData = React.useMemo(() => {
+    const visibleSessionListIndex = React.useMemo(() => {
         if (!source) return source;
-        const visible = computeVisibleSessionListViewData({
+        const resolveSessionRow = (serverId: string | null | undefined, sessionId: string) => {
+            const normalizedServerId = typeof serverId === 'string' ? serverId.trim() : '';
+            const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+            if (!normalizedServerId || !normalizedSessionId) {
+                return null;
+            }
+            const scoped = sessionRowStateByServerId?.[normalizedServerId];
+            if (!scoped || typeof scoped !== 'object') {
+                return null;
+            }
+            return scoped[normalizedSessionId] ?? null;
+        };
+
+        const visible = computeVisibleSessionListIndex({
             source,
+            resolveSessionRow,
             hideInactiveSessions,
             pinnedSessionKeysV1,
             sessionListGroupOrderV1: sessionListOrderingModeV1 === 'custom' ? normalizedGroupOrder : sessionListGroupOrderV1,
@@ -56,7 +72,7 @@ export function useVisibleSessionListViewState(storageFilter: SessionListStorage
             },
         });
         if (!visible || storageFilter === 'all') return visible;
-        return filterSessionListViewDataByStorageKind(visible, storageFilter);
+        return filterSessionListIndexByStorageKind(visible, storageFilter);
     }, [
         hideInactiveSessions,
         selection.allowedServerIds,
@@ -65,12 +81,13 @@ export function useVisibleSessionListViewState(storageFilter: SessionListStorage
         normalizedGroupOrder,
         selection.presentation,
         sessionListGroupOrderV1,
+        sessionRowStateByServerId,
         source,
         storageFilter,
         sessionListOrderingModeV1,
     ]);
 
     return React.useMemo(() => ({
-        visibleSessionListViewData,
-    }), [visibleSessionListViewData]);
+        visibleSessionListIndex,
+    }), [visibleSessionListIndex]);
 }

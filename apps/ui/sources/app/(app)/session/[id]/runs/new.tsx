@@ -8,23 +8,18 @@ import { Text } from '@/components/ui/text/Text';
 import { SessionExecutionRunLauncherView } from '@/components/sessions/runs/launcher/SessionExecutionRunLauncherView';
 import { resolveExecutionRunLauncherIntent } from '@/components/sessions/runs/launcher/executionRunLauncherModel';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { t } from '@/text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
-
-function normalizeSessionId(value: unknown): string | null {
-    if (typeof value === 'string' && value.trim().length > 0) return value.trim();
-    if (Array.isArray(value) && typeof value[0] === 'string' && value[0].trim().length > 0) return value[0].trim();
-    return null;
-}
 
 export default function SessionNewRunScreen() {
     const { theme } = useUnistyles();
     const router = useRouter();
     const navigation = useNavigation();
-    const params = useLocalSearchParams();
-    const sessionId = normalizeSessionId((params as any)?.id);
-    const hydrateReady = useHydrateSessionForRoute(sessionId ?? '', 'SessionNewRunScreen.hydrate');
-    const rawIntent = (params as any)?.intent;
+    const params = useLocalSearchParams<{ id?: string | string[]; intent?: string | string[] }>();
+    const sessionId = normalizeSessionId(params.id);
+    const hydrateReady = useHydrateSessionForRoute(sessionId, 'SessionNewRunScreen.hydrate');
+    const rawIntent = params.intent;
     const hasIntentParam = rawIntent !== undefined;
     const initialIntent = resolveExecutionRunLauncherIntent(rawIntent);
     const launcherIntent = initialIntent ?? 'review';

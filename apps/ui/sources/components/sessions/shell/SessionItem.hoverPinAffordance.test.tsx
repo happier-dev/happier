@@ -248,4 +248,42 @@ describe('SessionItem pin hover affordance (web)', () => {
 
         await screen.unmount();
     });
+
+    it('anchors the row action dropdowns below the trigger on web', async () => {
+        const screen = await renderSessionItem({
+            session: {
+                ...createSession('sess_4'),
+                active: true,
+                presence: 'online',
+            },
+            serverId: 'server_a',
+            pinned: false,
+            onTogglePinned: vi.fn(),
+            tagsEnabled: true,
+            tags: ['alpha'],
+            allKnownTags: ['alpha', 'beta'],
+            onSetTags: vi.fn(),
+            selected: false,
+            isFirst: true,
+            isLast: true,
+            isSingle: true,
+            variant: 'default',
+            compact: false,
+        });
+
+        const row = findSessionRow(screen, 'sess_4');
+        await act(async () => {
+            triggerHoverEnter(row);
+        });
+
+        const tagDropdown = screen.findAllByType('DropdownMenu' as any).find((dropdown: any) => dropdown.props.search === true);
+        const moreDropdown = screen.findAllByType('DropdownMenu' as any).find((dropdown: any) => dropdown.props.search !== true);
+
+        expect(tagDropdown?.props.placement).toBe('bottom');
+        expect(tagDropdown?.props.popoverAnchorAlign).toBe('end');
+        expect(moreDropdown?.props.placement).toBe('bottom');
+        expect(moreDropdown?.props.popoverAnchorAlign).toBe('end');
+
+        await screen.unmount();
+    });
 });

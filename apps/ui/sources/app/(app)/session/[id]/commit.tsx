@@ -8,6 +8,7 @@ import { shouldRedirectDetailsRouteToPanes } from '@/components/ui/panels/should
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { serializeSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 
 function decodeSha(value: string): string {
     try {
@@ -20,7 +21,7 @@ function decodeSha(value: string): string {
 export default function CommitScreen() {
     const router = useRouter();
     const { id: sessionIdParam } = useLocalSearchParams<{ id: string }>();
-    const sessionId = sessionIdParam || '';
+    const sessionId = normalizeSessionId(sessionIdParam);
     const { sha: shaParam } = useLocalSearchParams<{ sha: string }>();
     // Commit refs cannot contain whitespace; accept accidental "oneline" strings by taking the first token.
     const shaRaw = decodeSha(shaParam || '').trim();

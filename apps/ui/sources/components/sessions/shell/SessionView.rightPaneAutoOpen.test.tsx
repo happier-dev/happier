@@ -6,6 +6,7 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
@@ -110,12 +111,12 @@ installSessionShellCommonModuleMocks({
             agentState: {},
         };
 
-        return {
+        return createStorageModuleStub({
             storage: {
                 getState: () => ({
                     sessions: { s1: session },
                     settings: {},
-                    sessionListViewDataByServerId: {},
+                    concurrentSessionListCacheByServerId: {},
                 }),
             } as any,
             useSession: () => session,
@@ -160,7 +161,7 @@ installSessionShellCommonModuleMocks({
             useMachine: () => null,
             useServerScopedMachine: () => null,
             useWorkspaceReviewCommentsDrafts: () => [],
-        };
+        });
     },
 });
 
@@ -256,6 +257,7 @@ vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => (
 }));
 vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true }),
+    useSessionReachableMachineTarget: () => null,
 }));
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({ serverId: 'server-1' }),

@@ -63,6 +63,29 @@ describe('sessionListOrderingStateV1', () => {
         }
     });
 
+    it('reuses the same reordered array for repeated sorting of the same source and mode', () => {
+        const firstSession = makeSessionItem({ serverId: 's1', sessionId: 'a', groupKey: 'g' });
+        const secondSession = makeSessionItem({ serverId: 's1', sessionId: 'b', groupKey: 'g' });
+        const source: SessionListViewItem[] = [
+            { type: 'header', title: 'Today', headerKind: 'date', groupKey: 'g', serverId: 's1' },
+            firstSession,
+            secondSession,
+        ];
+        (firstSession.session as any).updatedAt = 10;
+        (secondSession.session as any).updatedAt = 20;
+
+        const first = sortSessionListViewItemsByOrderingMode(source, 'updated');
+        const second = sortSessionListViewItemsByOrderingMode(source, 'updated');
+
+        expect(first).toBe(second);
+        expect(first).not.toBe(source);
+        expect(first.map((item) => (item.type === 'session' ? item.session.id : item.type))).toEqual([
+            'header',
+            'b',
+            'a',
+        ]);
+    });
+
     it('removes missing session keys from group order when the group is present in the source', () => {
         const g = 'server:s1:day:2026-02-17';
         const source: SessionListViewItem[] = [
@@ -119,6 +142,33 @@ describe('sessionListOrderingStateV1', () => {
         expect(normalized).not.toBe(groupOrder);
         expect(normalized[g]).toBe(normalizedKeys);
         expect(normalized).toEqual({ [g]: normalizedKeys });
+    });
+
+    it('reuses the same normalized group order object for repeated normalization of the same source and inputs', () => {
+        const g = 'server:s1:day:2026-02-17';
+        const source: SessionListViewItem[] = [
+            { type: 'header', title: 'Today', headerKind: 'date', groupKey: g, serverId: 's1' },
+            makeSessionItem({ serverId: 's1', sessionId: 'a', groupKey: g }),
+            makeSessionItem({ serverId: 's1', sessionId: 'b', groupKey: g }),
+        ];
+        const pinnedSessionKeysV1: string[] = [];
+        const groupOrder = {
+            [g]: [' s1:b ', 's1:a', 's1:missing'],
+        };
+
+        const first = normalizeSessionListGroupOrderV1ForSource({
+            source,
+            pinnedSessionKeysV1,
+            sessionListGroupOrderV1: groupOrder,
+        });
+        const second = normalizeSessionListGroupOrderV1ForSource({
+            source,
+            pinnedSessionKeysV1,
+            sessionListGroupOrderV1: groupOrder,
+        });
+
+        expect(first).toBe(second);
+        expect(first).toEqual({ [g]: ['s1:b', 's1:a'] });
     });
 
     it('reuses a shared empty map when normalization removes all group order entries', () => {

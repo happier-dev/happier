@@ -1,7 +1,11 @@
-import type { SessionListViewItem } from '@/sync/domains/state/storage';
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { formatPathRelativeToHome } from '@/utils/sessions/sessionUtils';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
+import { LruMap } from '@/utils/cache/lruMap';
+
+import { readSessionListShellCacheMaxEntriesFromEnv } from './sessionListShellCacheConfig';
 
 type ReachableSessionDisplay = Readonly<{
     machineId: string | null;
@@ -18,11 +22,14 @@ const EMPTY_SESSION_LIST_REACHABILITY_SUMMARY: SessionListReachabilitySummary = 
     displayById: new Map<string, ReachableSessionDisplay>(),
     hasMultipleMachines: false,
 };
-const SESSION_LIST_REACHABILITY_SUMMARY_CACHE = new Map<string, SessionListReachabilitySummary>();
+const SESSION_LIST_REACHABILITY_SUMMARY_CACHE = new LruMap<string, SessionListReachabilitySummary>({
+    maxEntries: readSessionListShellCacheMaxEntriesFromEnv(),
+});
 
 export function buildSessionListReachabilitySummary(input: Readonly<{
-    listItems: ReadonlyArray<SessionListViewItem>;
+    listItems: ReadonlyArray<SessionListIndexItem>;
     machinesById: ReadonlyMap<string, unknown>;
+    resolveSessionRenderable: (item: Extract<SessionListIndexItem, { type: 'session' }>) => SessionListRenderableSession | null;
 }>): SessionListReachabilitySummary {
     const sessionDisplayRows: Array<Readonly<{
         sessionId: string;
@@ -36,19 +43,25 @@ export function buildSessionListReachabilitySummary(input: Readonly<{
             continue;
         }
 
-        const target = readMachineTargetForSession(item.session.id);
-        const machineId = target?.machineId ?? (String(item.session?.metadata?.machineId ?? '').trim() || null);
+        const sessionId = String(item.sessionId ?? '').trim();
+        if (!sessionId) continue;
+
+        const renderable = input.resolveSessionRenderable(item);
+        const metadata = renderable?.metadata ?? null;
+
+        const target = readMachineTargetForSession(sessionId);
+        const machineId = target?.machineId ?? (String(metadata?.machineId ?? '').trim() || null);
         const machineLabel = machineId
             ? getMachineDisplayName(input.machinesById.get(machineId) as Parameters<typeof getMachineDisplayName>[0])
-                ?? String(item.session?.metadata?.host ?? '').trim()
-            : String(item.session?.metadata?.host ?? '').trim();
-        const basePath = target?.basePath ?? item.session?.metadata?.path ?? null;
+                ?? String(metadata?.host ?? '').trim()
+            : String(metadata?.host ?? '').trim();
+        const basePath = target?.basePath ?? metadata?.path ?? null;
         const pathSubtitle = basePath
-            ? formatPathRelativeToHome(basePath, item.session?.metadata?.homeDir ?? undefined)
+            ? formatPathRelativeToHome(basePath, metadata?.homeDir ?? undefined)
             : '';
 
         sessionDisplayRows.push({
-            sessionId: item.session.id,
+            sessionId,
             machineId,
             machineLabel,
             pathSubtitle,
@@ -56,7 +69,6 @@ export function buildSessionListReachabilitySummary(input: Readonly<{
     }
 
     if (sessionDisplayRows.length === 0) {
-        SESSION_LIST_REACHABILITY_SUMMARY_CACHE.set(JSON.stringify(['__empty__']), EMPTY_SESSION_LIST_REACHABILITY_SUMMARY);
         return EMPTY_SESSION_LIST_REACHABILITY_SUMMARY;
     }
 

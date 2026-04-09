@@ -64,7 +64,6 @@ import { RevenueCat } from './domains/purchases';
 import { trackPaywallPresented, trackPaywallPurchased, trackPaywallCancelled, trackPaywallRestored, trackPaywallError } from '@/track';
 import { getActiveServerSnapshot } from './domains/server/serverRuntime';
 import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
-import { clearServerSessionListCache } from './store/sessionListCache';
 import { config } from '@/config';
 import { log } from '@/log';
 import { scmStatusSync } from '@/scm/scmStatusSync';
@@ -75,7 +74,7 @@ import { notifyActivityReady } from '@/activity/notifications/runtime/activityLo
 import { Message } from './domains/messages/messageTypes';
 import { EncryptionCache } from './encryption/encryptionCache';
 import { nowServerMs } from './runtime/time';
-import { listSessionListCachedActiveSessionIds } from './domains/session/listing/sessionListCacheState';
+import { listSessionListLookupActiveSessionIds } from './domains/session/listing/sessionListLookupState';
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { computeNextReadStateV1 } from './domains/state/readStateV1';
 import { updateSessionMetadataWithRetry as updateSessionMetadataWithRetryRpc, type UpdateMetadataAck } from './domains/session/metadata/updateSessionMetadataWithRetry';
@@ -563,6 +562,7 @@ class Sync {
         this.encryption = encryption;
         this.anonID = encryption.anonID;
         this.serverID = parseToken(credentials.token);
+        initializeTracking(this.anonID);
         setWarmCacheAccountScope(this.serverID);
         this.changesCursor = loadChangesCursor(this.getChangesCursorScope());
         this.changesCursorDirty = false;
@@ -596,6 +596,7 @@ class Sync {
         this.encryption = encryption;
         this.anonID = encryption.anonID;
         this.serverID = parseToken(credentials.token);
+        initializeTracking(this.anonID);
         setWarmCacheAccountScope(this.serverID);
         this.changesCursor = loadChangesCursor(this.getChangesCursorScope());
         this.changesCursorDirty = false;
@@ -677,11 +678,30 @@ class Sync {
             profile: { ...profileDefaults },
             sessions: {},
             sessionListRenderables: {},
-            sessionListViewData: null,
-            sessionListViewDataByServerId: clearServerSessionListCache(
-                state.sessionListViewDataByServerId,
-                getActiveServerSnapshot().serverId,
-            ),
+            concurrentSessionListCacheByServerId: (() => {
+                const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+                if (!activeServerId) return state.concurrentSessionListCacheByServerId;
+                if (!(activeServerId in state.concurrentSessionListCacheByServerId)) return state.concurrentSessionListCacheByServerId;
+                const next = { ...state.concurrentSessionListCacheByServerId };
+                delete next[activeServerId];
+                return next;
+            })(),
+            sessionListRowStateByServerId: (() => {
+                const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+                const previous = state.sessionListRowStateByServerId ?? {};
+                if (!activeServerId) return previous;
+                if (!(activeServerId in previous)) return previous;
+                const { [activeServerId]: _, ...rest } = previous;
+                return rest;
+            })(),
+            sessionListIndexByServerId: (() => {
+                const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+                const previous = state.sessionListIndexByServerId ?? {};
+                if (!activeServerId) return previous;
+                if (!(activeServerId in previous)) return previous;
+                const { [activeServerId]: _, ...rest } = previous;
+                return rest;
+            })(),
             machineListByServerId: (() => {
                 const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
                 if (!activeServerId) return state.machineListByServerId;
@@ -830,11 +850,14 @@ class Sync {
                         }
                     })()
                 );
+            const preferredServerId = resolvePreferredServerIdForSessionId(normalized);
+            const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+            const prefersActiveServer = !preferredServerId || preferredServerId === activeServerId;
 
             // Fast-path when we already know the session exists on this server and the stored record is
             // already authoritatively hydrated (deep links can occur before the sessions snapshot bootstraps).
             const existingSession = storage.getState().sessions[normalized];
-            if (!forceRefresh && this.isSessionKnownOnActiveServer(normalized) && existingSession) {
+            if (!forceRefresh && prefersActiveServer && this.isSessionKnownOnActiveServer(normalized) && existingSession) {
                 const encryptionMode: 'e2ee' | 'plain' = existingSession.encryptionMode === 'plain' ? 'plain' : 'e2ee';
                 const hasEncryption = Boolean(this.encryption.getSessionEncryption(normalized));
                 const hasAuthoritativeSessionRouteState = hasAuthoritativeSessionRouteData(existingSession);
@@ -873,7 +896,7 @@ class Sync {
                     }
                     const result = await fetchSessionByIdWithServerScope({
                         sessionId: normalized,
-                        serverId: resolvePreferredServerIdForSessionId(normalized),
+                        serverId: preferredServerId,
                         activeCredentials: credentials,
                         activeEncryption: this.encryption,
                         sessionDataKeys: this.sessionDataKeys,
@@ -1931,7 +1954,7 @@ class Sync {
             return prioritizedByViewport;
         }
 
-        const eagerListIds = listSessionListCachedActiveSessionIds(storage.getState(), eagerListCount);
+        const eagerListIds = listSessionListLookupActiveSessionIds(storage.getState(), eagerListCount);
 
         return Array.from(new Set([...prioritizedByViewport, ...eagerListIds]));
     }
@@ -2778,7 +2801,13 @@ class Sync {
                       log,
                   });
               },
-              resetTranscriptState: () => this.resetSessionTranscriptState(sessionId),
+              resetTranscriptState: () => {
+                  // Keep the current transcript rows visible while the fresh snapshot is loading.
+                  // The snapshot fetch refreshes the content in place, so only the paging state needs
+                  // to be cleared here.
+                  this.deleteSessionMessagesPaginationStateForSession(sessionId);
+                  this.deferredForwardLoadingSessions.delete(sessionId);
+              },
               markLoaded: () => storage.getState().applyMessagesLoaded(sessionId),
               setDeferredForwardLoading: (deferred) => {
                   if (deferred) {
@@ -2875,10 +2904,10 @@ class Sync {
 
           this.directSessionOlderCursorBySessionId.set(sessionId, page.nextCursor ?? null);
           this.directSessionHasMoreOlderBySessionId.set(sessionId, page.hasMore === true);
-          storage.getState().applyMessagesLoaded(sessionId);
           await this.applyDirectSessionTranscriptItems(sessionId, page.items, {
               nextCursor: typeof page.tailCursor === 'string' ? page.tailCursor : null,
           });
+          storage.getState().applyMessagesLoaded(sessionId);
 
           if (typeof page.tailCursor === 'string' && page.tailCursor.trim().length > 0) {
               return;
@@ -3533,6 +3562,9 @@ class Sync {
     }
 
     private handleEphemeralUpdate = (update: unknown) => {
+        const getSessionEncryption = this.encryption
+            ? this.encryption.getSessionEncryption.bind(this.encryption)
+            : (() => null);
         fireAndForget(handleEphemeralSocketUpdate({
             update,
             addActivityUpdate: (ephemeralUpdate) => {
@@ -3541,21 +3573,57 @@ class Sync {
             addMachineActivityUpdate: (machineUpdate) => {
                 this.machineActivityAccumulator.addUpdate(machineUpdate);
             },
-            getSessionEncryption: this.encryption.getSessionEncryption,
+            getSessionEncryption,
             getSession: (sessionId) => storage.getState().sessions[sessionId],
             applyMessages: (sessionId, messages) => this.applyMessages(sessionId, messages, { notifyVoice: false }),
-            updateDirectSessionTranscript: (ephemeralUpdate) => this.applyDirectSessionTranscriptItems(
-                ephemeralUpdate.sessionId,
-                ephemeralUpdate.items,
-                {
-                    ...(typeof ephemeralUpdate.nextCursor === 'string' || ephemeralUpdate.nextCursor === null
-                        ? { nextCursor: ephemeralUpdate.nextCursor }
-                        : typeof ephemeralUpdate.tailCursor === 'string' || ephemeralUpdate.tailCursor === null
-                            ? { nextCursor: ephemeralUpdate.tailCursor }
-                            : {}),
-                },
-            ),
+            updateDirectSessionTranscript: (ephemeralUpdate) => this.handleDirectSessionTranscriptEphemeralUpdate(ephemeralUpdate),
         }), { tag: 'Sync.handleEphemeralUpdate' });
+    }
+
+    private resolveDirectSessionTranscriptDeltaCursor(ephemeralUpdate: Readonly<{
+        nextCursor?: string | null;
+        tailCursor?: string | null;
+    }>): string | null | undefined {
+        if (typeof ephemeralUpdate.nextCursor === 'string' || ephemeralUpdate.nextCursor === null) {
+            return ephemeralUpdate.nextCursor;
+        }
+        if (typeof ephemeralUpdate.tailCursor === 'string' || ephemeralUpdate.tailCursor === null) {
+            return ephemeralUpdate.tailCursor;
+        }
+        return undefined;
+    }
+
+    private async handleDirectSessionTranscriptEphemeralUpdate(ephemeralUpdate: Readonly<{
+        sessionId: string;
+        items: ReadonlyArray<DirectTranscriptRawMessageV1>;
+        nextCursor?: string | null;
+        tailCursor?: string | null;
+        truncated?: boolean;
+    }>): Promise<void> {
+        const session = storage.getState().sessions[ephemeralUpdate.sessionId] ?? null;
+        const directSessionLink = readDirectSessionLink(session?.metadata);
+        if (!directSessionLink) {
+            return;
+        }
+
+        if (ephemeralUpdate.truncated === true) {
+            this.directSessionOlderCursorBySessionId.delete(ephemeralUpdate.sessionId);
+            this.directSessionHasMoreOlderBySessionId.delete(ephemeralUpdate.sessionId);
+            this.directSessionTailCursorBySessionId.delete(ephemeralUpdate.sessionId);
+            await this.fetchDirectSessionMessages(ephemeralUpdate.sessionId, directSessionLink);
+            return;
+        }
+
+        await this.applyDirectSessionTranscriptItems(
+            ephemeralUpdate.sessionId,
+            ephemeralUpdate.items,
+            {
+                ...(Object.prototype.hasOwnProperty.call(ephemeralUpdate, 'nextCursor')
+                    || Object.prototype.hasOwnProperty.call(ephemeralUpdate, 'tailCursor')
+                    ? { nextCursor: this.resolveDirectSessionTranscriptDeltaCursor(ephemeralUpdate) }
+                    : {}),
+            },
+        );
     }
 
     //
@@ -3760,9 +3828,6 @@ async function syncInit(credentials: AuthCredentials, restore: boolean) {
 
     // Initialize sync engine
     const encryption = await createEncryptionFromAuthCredentials(credentials);
-
-    // Initialize tracking
-    initializeTracking(encryption.anonID);
 
     // Initialize socket connection
     apiSocket.initialize({ endpoint: getActiveServerSnapshot().serverUrl, token: credentials.token }, encryption);

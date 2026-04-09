@@ -20,8 +20,7 @@ import type { AgentTextMessage, Message } from '../domains/messages/messageTypes
 import type { Settings } from '../domains/settings/settings';
 import { settingsDefaults } from '../domains/settings/settings';
 import type { SessionListRenderableSession } from '../domains/session/listing/sessionListRenderable';
-import type { SessionListViewItem } from '../domains/session/listing/sessionListViewData';
-import type { ServerScopedSessionListCache } from '../domains/session/listing/serverScopedSessionListCache';
+import type { SessionListIndexItem } from '../domains/sessionList/sessionListIndex';
 import { deriveSessionListMeaningfulActivityAt } from '../domains/session/listing/deriveSessionListActivity';
 import type { ReviewCommentDraft } from '../domains/input/reviewComments/reviewCommentTypes';
 import type { SessionActionDraft } from '../domains/sessionActions/sessionActionDraftTypes';
@@ -29,13 +28,18 @@ import { buildSessionMessageRouteId, resolveSessionMessageRouteId } from '../dom
 import { useApplyLocalSettings, useApplySettings } from './settingsWriters';
 import { buildWorkspaceCacheKey, type WorkspaceScopeBase } from '../domains/workspaces/workspaceScope';
 import { deriveSessionAttentionFlags } from '../domains/session/attention/sessionAttention';
+import { normalizeSessionId } from '../domains/session/normalizeSessionId';
+import { buildMachineDisplayRenderableFromMachine } from '../domains/machines/machineDisplayRenderable';
+import { normalizeTrimmedString } from '../domains/session/listing/normalizeTrimmedString';
 
 import { getStorage } from '../domains/state/storageStore';
 import type { KnownEntitlements } from '../domains/state/storageStore';
 import type { ForkedTranscriptSnapshot } from '../domains/sessionFork/forkedTranscriptSnapshot';
 import { getForkedTranscriptSnapshotCached } from '../domains/sessionFork/forkedTranscriptSnapshot';
-import { resolveSessionListCachedSessionServerIdFromState } from '../domains/session/listing/sessionListCacheState';
+import { resolveSessionListLookupSessionServerScopeFromState } from '../domains/session/listing/sessionListLookupState';
 import { resolveVisibleMachinesForActiveServerFromState } from './domains/machines/resolveMachinesForActiveServerFromState';
+import { getActiveServerSnapshot, subscribeActiveServer } from '../domains/server/serverRuntime';
+import type { SessionsDomainSlice } from './types';
 
 export function useSessions() {
   const snapshot = getStorage()(
@@ -59,12 +63,63 @@ export function useSessionListRenderable(id: string): SessionListRenderableSessi
   return getStorage()(useShallow((state) => state.sessionListRenderables[id] ?? null));
 }
 
+export function useSessionListRenderableWithServerScope(
+  serverId: string | null | undefined,
+  sessionId: string,
+): SessionListRenderableSession | null {
+  const normalizedSessionId = normalizeSessionId(sessionId);
+  const normalizedServerId = normalizeTrimmedString(serverId);
+  const [activeServerId, setActiveServerId] = React.useState(() => normalizeTrimmedString(getActiveServerSnapshot().serverId));
+
+  React.useEffect(() => {
+    setActiveServerId(normalizeTrimmedString(getActiveServerSnapshot().serverId));
+    return subscribeActiveServer((snapshot) => {
+      setActiveServerId(normalizeTrimmedString(snapshot.serverId));
+    });
+  }, []);
+
+  return getStorage()(useShallow((state) => {
+    if (!normalizedSessionId) {
+      return null;
+    }
+
+    if (normalizedServerId) {
+      const scoped = state.sessionListRowStateByServerId?.[normalizedServerId];
+      if (scoped && typeof scoped === 'object') {
+        return scoped[normalizedSessionId] ?? null;
+      }
+
+      if (activeServerId && activeServerId === normalizedServerId) {
+        return state.sessionListRenderables[normalizedSessionId] ?? null;
+      }
+
+      return null;
+    }
+
+    return state.sessionListRenderables[normalizedSessionId] ?? null;
+  }));
+}
+
+export function useSessionListRenderablesById(): Record<string, SessionListRenderableSession> {
+  return getStorage()(useShallow((state) => state.sessionListRenderables));
+}
+
+export function useSessionListRowStateByServerId(): SessionsDomainSlice['sessionListRowStateByServerId'] {
+  return getStorage()(useShallow((state) => state.sessionListRowStateByServerId));
+}
+
+export function useSessionListIndexByServerId(): Readonly<Record<string, ReadonlyArray<SessionListIndexItem> | null | undefined>> {
+  return getStorage()(useShallow((state) => state.sessionListIndexByServerId ?? {}));
+}
+
 export function useSessionServerId(sessionId: string): string | null {
-  return getStorage()((state) => resolveSessionListCachedSessionServerIdFromState({
+  const normalizedSessionId = normalizeSessionId(sessionId);
+  return getStorage()((state) => resolveSessionListLookupSessionServerScopeFromState({
     sessions: state.sessions as Record<string, { serverId?: unknown } | null>,
-    sessionListViewData: state.sessionListViewData,
-    sessionListViewDataByServerId: state.sessionListViewDataByServerId,
-  }, sessionId));
+    sessionListIndexByServerId: state.sessionListIndexByServerId,
+    sessionListRenderables: state.sessionListRenderables,
+    concurrentSessionListCacheByServerId: state.concurrentSessionListCacheByServerId,
+  }, normalizedSessionId)?.serverId ?? null);
 }
 
 const emptyArray: unknown[] = [];
@@ -72,9 +127,24 @@ const emptyRecord: Record<string, any> = {};
 const emptyReviewCommentDrafts: ReviewCommentDraft[] = [];
 const emptyActionDrafts: SessionActionDraft[] = [];
 
+type SessionMessagesArrayCacheEntry = Readonly<{
+  idsRef: readonly string[];
+  messagesByIdRef: Record<string, Message>;
+  messagesVersion: number;
+  messages: readonly Message[];
+}>;
+
+const SESSION_MESSAGES_ARRAY_CACHE_MAX = 16;
+const sessionMessagesArrayCache = new Map<string, SessionMessagesArrayCacheEntry>();
+
+function sortValuesByUpdatedAtDescending<T extends { updatedAt: number }>(values: Record<string, T>): T[] {
+  return Object.values(values).sort((left, right) => right.updatedAt - left.updatedAt);
+}
+
 export function useSessionMessages(
   sessionId: string
 ): { messages: Message[]; isLoaded: boolean } {
+  const normalizedSessionId = normalizeSessionId(sessionId);
   // IMPORTANT:
   // Do not derive new arrays inside the Zustand selector. React 18 can call getSnapshot twice, and if the
   // selector allocates new references for unchanged store state it can trigger:
@@ -82,27 +152,71 @@ export function useSessionMessages(
   // - "Maximum update depth exceeded"
   //
   // Subscribe to stable primitives instead (ids + version), then derive via useMemo.
-  const { ids, isLoaded } = useSessionTranscriptIds(sessionId);
-  const messagesById = useSessionMessagesById(sessionId);
-  const version = useSessionMessagesVersion(sessionId, true);
+  const { ids, isLoaded } = useSessionTranscriptIds(normalizedSessionId);
+  const messagesById = useSessionMessagesById(normalizedSessionId);
+  const version = useSessionMessagesVersion(normalizedSessionId, true);
 
   const messages = React.useMemo(() => {
-    if (!Array.isArray(ids) || ids.length === 0) return emptyArray as any as Message[];
+    if (!Array.isArray(ids) || ids.length === 0) {
+      // Minimal stale-while-revalidate behavior:
+      // If a session transcript is temporarily reset (ids cleared + isLoaded=false) while a refresh is in flight,
+      // keep showing the last derived messages array so switching sessions feels instant.
+      const cached = sessionMessagesArrayCache.get(normalizedSessionId);
+      if (cached && !isLoaded) {
+        sessionMessagesArrayCache.delete(normalizedSessionId);
+        sessionMessagesArrayCache.set(normalizedSessionId, cached);
+        return cached.messages as Message[];
+      }
+
+      if (cached && isLoaded) {
+        sessionMessagesArrayCache.delete(normalizedSessionId);
+      }
+
+      return emptyArray as any as Message[];
+    }
+
+    const cached = sessionMessagesArrayCache.get(normalizedSessionId);
+    if (
+      cached &&
+      cached.messagesVersion === version &&
+      cached.idsRef === ids &&
+      cached.messagesByIdRef === messagesById
+    ) {
+      sessionMessagesArrayCache.delete(normalizedSessionId);
+      sessionMessagesArrayCache.set(normalizedSessionId, cached);
+      return cached.messages as Message[];
+    }
+
     const out: Message[] = [];
     for (const id of ids) {
       const m = messagesById[id];
       if (m) out.push(m);
     }
+
+    sessionMessagesArrayCache.delete(normalizedSessionId);
+    sessionMessagesArrayCache.set(normalizedSessionId, {
+      idsRef: ids,
+      messagesByIdRef: messagesById,
+      messagesVersion: version,
+      messages: out,
+    });
+    while (sessionMessagesArrayCache.size > SESSION_MESSAGES_ARRAY_CACHE_MAX) {
+      const oldestKey = sessionMessagesArrayCache.keys().next().value;
+      if (typeof oldestKey !== 'string') break;
+      sessionMessagesArrayCache.delete(oldestKey);
+    }
+
     return out;
-  }, [ids, messagesById, version]);
+  }, [ids, isLoaded, messagesById, normalizedSessionId, version]);
 
   return React.useMemo(() => ({ messages, isLoaded }), [isLoaded, messages]);
 }
 
 export function useSessionTranscriptIds(sessionId: string): { ids: string[]; isLoaded: boolean } {
+  const normalizedSessionId = normalizeSessionId(sessionId);
   const snapshot = getStorage()(
     useShallow((state) => {
-      const session = state.sessionMessages[sessionId];
+      const session = state.sessionMessages[normalizedSessionId];
       return {
         committedIds: session?.messageIdsOldestFirst ?? (emptyArray as any as string[]),
         messagesVersion: session?.messagesVersion ?? 0,
@@ -117,15 +231,17 @@ export function useSessionTranscriptIds(sessionId: string): { ids: string[]; isL
 }
 
 export function useForkedTranscriptSnapshot(sessionId: string): ForkedTranscriptSnapshot | null {
+  const normalizedSessionId = normalizeSessionId(sessionId);
   return getStorage()(
-    useShallow((state) => getForkedTranscriptSnapshotCached(state, sessionId))
+    useShallow((state) => getForkedTranscriptSnapshotCached(state, normalizedSessionId))
   );
 }
 
 export function useSessionMessagesById(sessionId: string): Record<string, Message> {
+  const normalizedSessionId = normalizeSessionId(sessionId);
   const snapshot = getStorage()(
     useShallow((state) => {
-      const session = state.sessionMessages[sessionId];
+      const session = state.sessionMessages[normalizedSessionId];
       return {
         committedIds: session?.messageIdsOldestFirst ?? (emptyArray as any as string[]),
         committedMessagesById: session?.messagesById ?? (emptyRecord as Record<string, Message>),
@@ -137,19 +253,21 @@ export function useSessionMessagesById(sessionId: string): Record<string, Messag
 }
 
 export function useSessionMessagesVersion(sessionId: string, enabled: boolean = true): number {
+  const normalizedSessionId = normalizeSessionId(sessionId);
   return getStorage()(
     useShallow((state) => {
       if (!enabled) return 0;
-      const session = state.sessionMessages[sessionId];
+      const session = state.sessionMessages[normalizedSessionId];
       return session?.messagesVersion ?? 0;
     })
   );
 }
 
 export function useSessionMessagesReducerState(sessionId: string) {
+  const normalizedSessionId = normalizeSessionId(sessionId);
   const snapshot = getStorage()(
     useShallow((state) => {
-      const session = state.sessionMessages[sessionId];
+      const session = state.sessionMessages[normalizedSessionId];
       return {
         reducerState: session?.reducerState ?? null,
         reducerVersion: (session as any)?.reducerVersion ?? 0,
@@ -161,41 +279,48 @@ export function useSessionMessagesReducerState(sessionId: string) {
 }
 
 export function useSessionLatestThinkingMessageId(sessionId: string): string | null {
+  const normalizedSessionId = normalizeSessionId(sessionId);
   return getStorage()(
     useShallow((state) => {
-      const session = state.sessionMessages[sessionId];
+      const session = state.sessionMessages[normalizedSessionId];
       return session?.latestThinkingMessageId ?? null;
     })
   );
 }
 
 export function useSessionLatestThinkingMessageActivityAtMs(sessionId: string): number | null {
+  const normalizedSessionId = normalizeSessionId(sessionId);
   return getStorage()(
     useShallow((state) => {
-      const session = state.sessionMessages[sessionId];
+      const session = state.sessionMessages[normalizedSessionId];
       return session?.latestThinkingMessageActivityAtMs ?? null;
     })
   );
 }
 
 export function useHasUnreadMessages(sessionId: string): boolean {
+  const normalizedSessionId = normalizeSessionId(sessionId);
   return getStorage()((state) => {
-    const session = state.sessions[sessionId];
-    if (!session) return false;
-    return deriveSessionAttentionFlags(session, {
-      showPendingPermissionRequests: false,
-      showPendingUserActionRequests: false,
-      showQueuedUserInput: false,
-    }).hasUnread;
+    const session = state.sessions[normalizedSessionId];
+    if (session) {
+      return deriveSessionAttentionFlags(session, {
+        showPendingPermissionRequests: false,
+        showPendingUserActionRequests: false,
+        showQueuedUserInput: false,
+      }).hasUnread;
+    }
+
+    return state.sessionListRenderables[normalizedSessionId]?.hasUnreadMessages === true;
   });
 }
 
 export function useSessionPendingMessages(
   sessionId: string
 ): { messages: PendingMessage[]; discarded: DiscardedPendingMessage[]; isLoaded: boolean } {
+  const normalizedSessionId = normalizeSessionId(sessionId);
   return getStorage()(
     useShallow((state) => {
-      const pending = state.sessionPending[sessionId];
+      const pending = state.sessionPending[normalizedSessionId];
       return {
         messages: pending?.messages ?? emptyArray,
         discarded: pending?.discarded ?? emptyArray,
@@ -206,11 +331,12 @@ export function useSessionPendingMessages(
 }
 
 export function useSessionListMeaningfulActivityAt(sessionId: string): number | null {
+  const normalizedSessionId = normalizeSessionId(sessionId);
   return getStorage()(
     useShallow((state) => {
-      const session = state.sessions[sessionId];
-      const transcript = state.sessionMessages[sessionId];
-      const pending = state.sessionPending[sessionId];
+      const session = state.sessions[normalizedSessionId];
+      const transcript = state.sessionMessages[normalizedSessionId];
+      const pending = state.sessionPending[normalizedSessionId];
 
       const latestCommittedMessageId =
         transcript?.messageIdsOldestFirst?.length
@@ -463,21 +589,11 @@ export function useServerScopedMachine(serverId: string | null | undefined, mach
   }));
 }
 
-export function useSessionListViewData(): SessionListViewItem[] | null {
-  return getStorage()(
-    useShallow((state) => state.sessionListViewData)
-  );
-}
-
-export function useServerScopedSessionListCache(): ServerScopedSessionListCache {
-  return getStorage()(useShallow((state) => state.sessionListViewDataByServerId));
-}
-
 export function useAllSessions(): Session[] {
   return getStorage()(
     useShallow((state) => {
       if (!state.isDataReady) return [];
-      return Object.values(state.sessions).sort((a, b) => b.updatedAt - a.updatedAt);
+      return sortValuesByUpdatedAtDescending(state.sessions);
     })
   );
 }
@@ -486,7 +602,7 @@ export function useAllSessionListRenderables(): SessionListRenderableSession[] {
   return getStorage()(
     useShallow((state) => {
       if (!state.isDataReady) return [];
-      return Object.values(state.sessionListRenderables).sort((a, b) => b.updatedAt - a.updatedAt);
+      return sortValuesByUpdatedAtDescending(state.sessionListRenderables);
     })
   );
 }
@@ -649,9 +765,7 @@ export function useArtifacts(): DecryptedArtifact[] {
     useShallow((state) => {
       if (!state.isDataReady) return [];
       // Filter out draft artifacts from the main list
-      return Object.values(state.artifacts)
-        .filter((artifact) => !artifact.draft)
-        .sort((a, b) => b.updatedAt - a.updatedAt);
+      return sortValuesByUpdatedAtDescending(state.artifacts).filter((artifact) => !artifact.draft);
     })
   );
 }
@@ -661,7 +775,7 @@ export function useAllArtifacts(): DecryptedArtifact[] {
     useShallow((state) => {
       if (!state.isDataReady) return [];
       // Return all artifacts including drafts
-      return Object.values(state.artifacts).sort((a, b) => b.updatedAt - a.updatedAt);
+      return sortValuesByUpdatedAtDescending(state.artifacts);
     })
   );
 }
@@ -670,7 +784,7 @@ export function useAutomations(): Automation[] {
   return getStorage()(
     useShallow((state) => {
       if (!state.isDataReady) return [];
-      return Object.values(state.automations).sort((a, b) => b.updatedAt - a.updatedAt);
+      return sortValuesByUpdatedAtDescending(state.automations);
     })
   );
 }
@@ -690,9 +804,7 @@ export function useDraftArtifacts(): DecryptedArtifact[] {
     useShallow((state) => {
       if (!state.isDataReady) return [];
       // Return only draft artifacts
-      return Object.values(state.artifacts)
-        .filter((artifact) => artifact.draft === true)
-        .sort((a, b) => b.updatedAt - a.updatedAt);
+      return sortValuesByUpdatedAtDescending(state.artifacts).filter((artifact) => artifact.draft === true);
     })
   );
 }

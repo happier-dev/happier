@@ -7,7 +7,9 @@ import {
     standardCleanup,
 } from '@/dev/testkit';
 import { createDeferred } from '@/dev/testkit';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
+import { storage } from '@/sync/domains/state/storageStore';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -121,5 +123,26 @@ describe('/session/[id] hydration (active server generation)', () => {
 
         expect(screen.findAllByType('SessionView')).toHaveLength(0);
         expect(screen.findAllByType('ActivityIndicator')).toHaveLength(1);
+    });
+
+    it('mounts the session view immediately when the session is already cached locally', async () => {
+        const previousState = storage.getState();
+        try {
+            storage.setState((state) => ({
+                ...state,
+                sessions: {
+                    ...state.sessions,
+                    'session-1': createSessionFixture({ id: 'session-1' }),
+                },
+            }));
+            hydrationReadyState.current = false;
+
+            const screen = await renderScreen(<SessionRouteScreen />);
+
+            expect(screen.findAllByType('SessionView')).toHaveLength(1);
+            expect(screen.findAllByType('ActivityIndicator')).toHaveLength(0);
+        } finally {
+            storage.setState(previousState);
+        }
     });
 });

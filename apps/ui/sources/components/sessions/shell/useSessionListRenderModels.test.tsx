@@ -13,7 +13,7 @@ describe('useSessionListRenderModels', () => {
                 sessionsReady: true,
                 sessionCount: 0,
             },
-            visibleSessionListViewData: [],
+            visibleSessionListIndex: [],
             showLoading: false,
             showEmptyState: true,
         };
@@ -59,29 +59,10 @@ describe('useSessionListRenderModels', () => {
                 sessionsReady: true,
                 sessionCount: 1,
             },
-            visibleSessionListViewData: [
+            visibleSessionListIndex: [
                 {
                     type: 'session',
-                    session: {
-                        id: 'session-1',
-                        seq: 1,
-                        createdAt: 1,
-                        updatedAt: 1,
-                        active: true,
-                        activeAt: 1,
-                        metadata: {
-                            machineId: 'machine-a',
-                            path: '/repo',
-                            homeDir: '/Users/test',
-                            host: 'machine-a.local',
-                        },
-                        metadataVersion: 1,
-                        agentState: null,
-                        agentStateVersion: 1,
-                        thinking: false,
-                        thinkingAt: 0,
-                        presence: 'offline',
-                    },
+                    sessionId: 'session-1',
                 },
             ] as any[],
             showLoading: false,

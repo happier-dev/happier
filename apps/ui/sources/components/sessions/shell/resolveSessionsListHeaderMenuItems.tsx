@@ -2,9 +2,13 @@ import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import { getPreferredLanguage, t } from '@/text';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { LruMap } from '@/utils/cache/lruMap';
 
-const EMPTY_SESSIONS_LIST_HEADER_MENU_ITEMS: ReadonlyArray<DropdownMenuItem> = [];
-const SESSIONS_LIST_HEADER_MENU_ITEMS_CACHE = new Map<string, ReadonlyArray<DropdownMenuItem>>();
+import { readSessionListShellCacheMaxEntriesFromEnv } from './sessionListShellCacheConfig';
+
+const SESSIONS_LIST_HEADER_MENU_ITEMS_CACHE = new LruMap<string, ReadonlyArray<DropdownMenuItem>>({
+    maxEntries: readSessionListShellCacheMaxEntriesFromEnv(),
+});
 
 export function resolveSessionsListHeaderMenuItems(input: Readonly<{
     orderingMode: string;
@@ -92,10 +96,6 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
                 : undefined,
         },
     ];
-
-    if (next.length === 0) {
-        return EMPTY_SESSIONS_LIST_HEADER_MENU_ITEMS;
-    }
 
     SESSIONS_LIST_HEADER_MENU_ITEMS_CACHE.set(cacheKey, next);
     return next;

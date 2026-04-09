@@ -223,6 +223,8 @@ describe('concurrent session cache socket routing', () => {
             settings: {
                 ...state.settings,
                 ...settingsDefaults,
+                sessionListActiveGroupingV1: 'project',
+                sessionListInactiveGroupingV1: 'project',
                 serverSelectionGroups: [
                     {
                         id: 'group-main',
@@ -384,14 +386,178 @@ describe('concurrent session cache socket routing', () => {
         await flushConcurrentCacheStartup();
 
         const beforeState = storage.getState();
-        const before = storage.getState().sessionListViewDataByServerId['server-b'];
+        const before = storage.getState().concurrentSessionListCacheByServerId['server-b'];
+        expect(before?.sessions?.['session-b']).toBeDefined();
+        expect(storage.getState().sessionListRowStateByServerId?.['server-b']).toBe(before?.sessions);
+        expect(Array.isArray(storage.getState().sessionListIndexByServerId?.['server-b'])).toBe(true);
+        expect(storage.getState().sessionListIndexByServerId?.['server-b']).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    type: 'header',
+                    headerKind: 'project',
+                    machine: expect.objectContaining({
+                        metadata: expect.objectContaining({
+                            host: 'b-host',
+                        }),
+                    }),
+                }),
+            ]),
+        );
         expect(sessionRefreshCount).toBeGreaterThan(0);
 
         await flushConcurrentCachePeriodicRefresh();
 
         expect(storage.getState()).toBe(beforeState);
-        const after = storage.getState().sessionListViewDataByServerId['server-b'];
+        const after = storage.getState().concurrentSessionListCacheByServerId['server-b'];
         expect(after).toBe(before);
+
+        stopConcurrentSessionCacheSync();
+    });
+
+    it('keeps sessionListIndexByServerId stable when only non-structural fields change', async () => {
+        process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT = '1';
+        mockReachabilityOnline();
+
+        const fakeSocket = createSocketStub();
+        ioSpy.mockReturnValue(fakeSocket);
+        getCredentialsForServerUrlSpy.mockImplementation(async (serverUrl: string) => {
+            if (serverUrl === 'https://stack-b.example.test') {
+                return { token: 'token-b', secret: 'secret-b' };
+            }
+            return null;
+        });
+        listServerProfilesSpy.mockReturnValue([
+            { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
+            { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
+        ]);
+        getActiveServerSnapshotSpy.mockReturnValue({
+            serverId: 'server-a',
+            serverUrl: 'https://stack-a.example.test',
+            kind: 'stack',
+            generation: 1,
+        });
+
+        let sessionRefreshCount = 0;
+        vi.doMock('socket.io-client', () => ({
+            io: (...args: unknown[]) => ioSpy(...args),
+        }));
+        vi.doMock('@/auth/storage/tokenStorage', () => ({
+            TokenStorage: {
+                getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsForServerUrlSpy(...args),
+            },
+            isLegacyAuthCredentials: (credentials: any) => Boolean(credentials && typeof credentials === 'object' && typeof credentials.secret === 'string'),
+        }));
+        vi.doMock('@/sync/domains/server/serverProfiles', () => ({
+            listServerProfiles: () => listServerProfilesSpy(),
+        }));
+        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
+            getActiveServerSnapshot: () => getActiveServerSnapshotSpy(),
+            subscribeActiveServer: () => () => {},
+        }));
+        vi.doMock('@/sync/encryption/encryption', () => ({
+            Encryption: {
+                create: async () => ({}) as unknown,
+            },
+        }));
+        vi.doMock('@/encryption/base64', () => ({
+            decodeBase64: () => new Uint8Array(32),
+        }));
+
+        vi.doMock('@/sync/engine/sessions/sessionSnapshot', () => ({
+            fetchAndApplySessions: async ({
+                credentials,
+                applySessions,
+            }: {
+                credentials: { token: string };
+                applySessions: (sessions: unknown[]) => void;
+            }) => {
+                sessionRefreshCount += 1;
+                if (credentials.token !== 'token-b') {
+                    applySessions([]);
+                    return;
+                }
+                const updatedAt = sessionRefreshCount === 1 ? 2000 : 3000;
+                applySessions([{
+                    id: 'session-b',
+                    seq: 1,
+                    createdAt: 1000,
+                    updatedAt,
+                    active: true,
+                    activeAt: 2000,
+                    metadata: { machineId: 'machine-b', path: '/workspace/b', host: 'b-host' },
+                    metadataVersion: 1,
+                    agentState: null,
+                    agentStateVersion: 0,
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 'online',
+                }]);
+            },
+        }));
+        vi.doMock('@/sync/engine/machines/syncMachines', () => ({
+            fetchAndApplyMachines: async ({
+                credentials,
+                applyMachines,
+            }: {
+                credentials: { token: string };
+                applyMachines: (machines: unknown[]) => void;
+            }) => {
+                if (credentials.token !== 'token-b') {
+                    applyMachines([]);
+                    return;
+                }
+                applyMachines([{
+                    id: 'machine-b',
+                    seq: 1,
+                    createdAt: 1000,
+                    updatedAt: 2000,
+                    active: true,
+                    activeAt: 2000,
+                    metadata: { host: 'b-host', path: '/workspace/b' },
+                    metadataVersion: 1,
+                    daemonState: null,
+                    daemonStateVersion: 0,
+                }]);
+            },
+        }));
+
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+        storage.setState((state) => ({
+            ...state,
+            settings: {
+                ...state.settings,
+                ...settingsDefaults,
+                serverSelectionGroups: [
+                    {
+                        id: 'group-main',
+                        name: 'Main',
+                        serverIds: ['server-a', 'server-b'],
+                        presentation: 'grouped',
+                    },
+                ],
+                serverSelectionActiveTargetKind: 'group',
+                serverSelectionActiveTargetId: 'group-main',
+            },
+        }));
+
+        const { startConcurrentSessionCacheSync, stopConcurrentSessionCacheSync } = await import('./concurrentSessionCache');
+        startConcurrentSessionCacheSync();
+        await flushConcurrentCacheStartup();
+
+        const beforeIndex = storage.getState().sessionListIndexByServerId?.['server-b'] ?? null;
+        const beforeRows = storage.getState().sessionListRowStateByServerId?.['server-b'] ?? null;
+        expect(Array.isArray(beforeIndex)).toBe(true);
+        expect(beforeRows && typeof beforeRows === 'object').toBe(true);
+
+        await flushConcurrentCachePeriodicRefresh();
+
+        const afterIndex = storage.getState().sessionListIndexByServerId?.['server-b'] ?? null;
+        const afterRows = storage.getState().sessionListRowStateByServerId?.['server-b'] ?? null;
+        expect(afterIndex).toBe(beforeIndex);
+        expect(afterRows).not.toBe(beforeRows);
+        expect(storage.getState().sessionListRowStateByServerId?.['server-b']?.['session-b']?.updatedAt).toBe(3000);
+        expect(sessionRefreshCount).toBeGreaterThanOrEqual(2);
 
         stopConcurrentSessionCacheSync();
     });
@@ -667,16 +833,9 @@ describe('concurrent session cache socket routing', () => {
         startConcurrentSessionCacheSync();
         await flushConcurrentCacheStartup(3);
 
-        const cacheByServer = storage.getState().sessionListViewDataByServerId;
-        const serverBItems = cacheByServer['server-b'] ?? [];
-        const serverCItems = cacheByServer['server-c'] ?? [];
-
-        const serverBSessionIds = serverBItems
-            .filter((item: any) => item?.type === 'session' && item?.section === 'active')
-            .map((item: any) => item.session.id);
-        const serverCSessionIds = serverCItems
-            .filter((item: any) => item?.type === 'session' && item?.section === 'active')
-            .map((item: any) => item.session.id);
+        const cacheByServer = storage.getState().concurrentSessionListCacheByServerId;
+        const serverBSessionIds = Object.keys(cacheByServer['server-b']?.sessions ?? {});
+        const serverCSessionIds = Object.keys(cacheByServer['server-c']?.sessions ?? {});
 
         expect(serverBSessionIds).toContain('session-b');
         expect(serverBSessionIds).not.toContain('session-c');
@@ -869,13 +1028,9 @@ describe('concurrent session cache socket routing', () => {
         expect(getCredentialsForServerUrlSpy).toHaveBeenCalledWith(sharedServerUrl, { serverId: 'server-b' });
         expect(getCredentialsForServerUrlSpy).toHaveBeenCalledWith(sharedServerUrl, { serverId: 'server-c' });
 
-        const cacheByServer = storage.getState().sessionListViewDataByServerId;
-        const serverBSessionIds = (cacheByServer['server-b'] ?? [])
-            .filter((item: any) => item?.type === 'session' && item?.section === 'active')
-            .map((item: any) => item.session.id);
-        const serverCSessionIds = (cacheByServer['server-c'] ?? [])
-            .filter((item: any) => item?.type === 'session' && item?.section === 'active')
-            .map((item: any) => item.session.id);
+        const cacheByServer = storage.getState().concurrentSessionListCacheByServerId;
+        const serverBSessionIds = Object.keys(cacheByServer['server-b']?.sessions ?? {});
+        const serverCSessionIds = Object.keys(cacheByServer['server-c']?.sessions ?? {});
 
         expect(serverBSessionIds).toContain('session-b');
         expect(serverBSessionIds).not.toContain('session-c');
@@ -979,7 +1134,7 @@ describe('concurrent session cache socket routing', () => {
         startConcurrentSessionCacheSync();
         await flushConcurrentCacheStartup(3);
 
-        expect(Object.keys(storage.getState().sessionListViewDataByServerId)).toEqual(
+        expect(Object.keys(storage.getState().concurrentSessionListCacheByServerId)).toEqual(
             expect.arrayContaining(['server-b', 'server-c']),
         );
 
@@ -1000,7 +1155,7 @@ describe('concurrent session cache socket routing', () => {
 
         await flushConcurrentCacheStartup();
 
-        expect(storage.getState().sessionListViewDataByServerId['server-c']).toBeUndefined();
+        expect(storage.getState().concurrentSessionListCacheByServerId['server-c']).toBeUndefined();
         expect((storage.getState() as any).machineListByServerId?.['server-c']).toBeUndefined();
 
         stopConcurrentSessionCacheSync();

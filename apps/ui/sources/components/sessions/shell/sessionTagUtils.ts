@@ -1,6 +1,13 @@
+import { LruMap } from '@/utils/cache/lruMap';
+
+import { readSessionListShellCacheMaxEntriesFromEnv } from './sessionListShellCacheConfig';
+
 const EMPTY_SESSION_TAGS: string[] = [];
 const EMPTY_SESSION_TAGS_BY_KEY: Record<string, string[]> = {};
-const ALL_KNOWN_TAGS_CACHE = new Map<string, string[]>();
+
+const ALL_KNOWN_TAGS_CACHE = new LruMap<string, string[]>({
+    maxEntries: readSessionListShellCacheMaxEntriesFromEnv(),
+});
 
 export type SessionItemTagCollections = Readonly<{
     activeTags: ReadonlyArray<string>;

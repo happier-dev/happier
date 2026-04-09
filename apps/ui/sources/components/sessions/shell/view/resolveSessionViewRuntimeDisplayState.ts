@@ -3,6 +3,8 @@ import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveT
 import { getInactiveSessionUiState } from '@/components/sessions/model/inactiveSessionUi';
 import { getSessionLocalControlState } from '@/sync/domains/session/control/sessionLocalControl';
 import { getPreferredLanguage, t } from '@/text';
+import { LruMap } from '@/utils/cache/lruMap';
+import { readSessionListShellCacheMaxEntriesFromEnv } from '../sessionListShellCacheConfig';
 
 export type SessionViewRuntimeDisplayState = Readonly<{
     localControlState: ReturnType<typeof getSessionLocalControlState>;
@@ -24,7 +26,9 @@ type Input = Readonly<{
     machineName: string;
 }>;
 
-const SESSION_VIEW_RUNTIME_DISPLAY_STATE_CACHE = new Map<string, SessionViewRuntimeDisplayState>();
+const SESSION_VIEW_RUNTIME_DISPLAY_STATE_CACHE = new LruMap<string, SessionViewRuntimeDisplayState>({
+    maxEntries: readSessionListShellCacheMaxEntriesFromEnv(),
+});
 
 function buildCacheKey(input: Input): string {
     return JSON.stringify([

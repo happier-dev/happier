@@ -1,30 +1,35 @@
 import * as React from 'react';
 
 import { useSessionListSelectionState } from './useSessionListSelectionState';
-import { useServerScopedSessionListCache, useSessionListViewData } from '@/sync/domains/state/storage';
-import { resolveSessionListSourceData } from '@/sync/domains/session/listing/sessionListPresentation';
-import type { SessionListViewItem } from '@/sync/domains/session/listing/sessionListViewData';
+import { useSessionListIndexByServerId } from '@/sync/domains/state/storage';
+import { resolveSessionListSourceIndex } from '@/sync/domains/session/listing/sessionListIndexPresentation';
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 
 export type VisibleSessionListSourceState = Readonly<{
     selection: ReturnType<typeof useSessionListSelectionState>;
-    activeData: ReadonlyArray<SessionListViewItem> | null;
-    byServerId: Readonly<Record<string, ReadonlyArray<SessionListViewItem> | null | undefined>>;
-    source: ReadonlyArray<SessionListViewItem> | null;
+    activeIndex: ReadonlyArray<SessionListIndexItem> | null;
+    byServerId: Readonly<Record<string, ReadonlyArray<SessionListIndexItem> | null | undefined>>;
+    source: ReadonlyArray<SessionListIndexItem> | null;
 }>;
 
 export function useVisibleSessionListSourceState(): VisibleSessionListSourceState {
     const selection = useSessionListSelectionState();
-    const activeData = useSessionListViewData();
-    const byServerId = useServerScopedSessionListCache();
+    const byServerId = useSessionListIndexByServerId();
+    const activeIndex = React.useMemo(() => {
+        const activeServerId = String(selection.activeServerId ?? '').trim();
+        if (!activeServerId) return null;
+        const index = byServerId[activeServerId] ?? null;
+        return Array.isArray(index) ? index : null;
+    }, [byServerId, selection.activeServerId]);
 
-    const source = React.useMemo(() => resolveSessionListSourceData({
+    const source = React.useMemo(() => resolveSessionListSourceIndex({
         enabled: selection.enabled,
         activeServerId: selection.activeServerId,
-        activeData,
+        activeIndex,
         byServerId,
         selectedServerIds: selection.allowedServerIds,
     }), [
-        activeData,
+        activeIndex,
         byServerId,
         selection.activeServerId,
         selection.allowedServerIds,
@@ -33,11 +38,11 @@ export function useVisibleSessionListSourceState(): VisibleSessionListSourceStat
 
     return React.useMemo(() => ({
         selection,
-        activeData,
+        activeIndex,
         byServerId,
         source,
     }), [
-        activeData,
+        activeIndex,
         byServerId,
         selection,
         source,

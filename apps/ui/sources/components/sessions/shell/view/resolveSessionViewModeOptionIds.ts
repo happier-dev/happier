@@ -1,5 +1,11 @@
+import { LruMap } from '@/utils/cache/lruMap';
+
+import { readSessionListShellCacheMaxEntriesFromEnv } from '../sessionListShellCacheConfig';
+
 const EMPTY_SESSION_MODE_OPTION_IDS: readonly string[] = Object.freeze([]);
-const SESSION_VIEW_MODE_OPTION_IDS_CACHE = new Map<string, readonly string[]>();
+const SESSION_VIEW_MODE_OPTION_IDS_CACHE = new LruMap<string, readonly string[]>({
+    maxEntries: readSessionListShellCacheMaxEntriesFromEnv(),
+});
 
 type SessionViewModeOptionLike = Readonly<{
     id?: unknown;

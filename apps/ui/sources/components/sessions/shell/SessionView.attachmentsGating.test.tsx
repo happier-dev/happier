@@ -118,11 +118,11 @@ installSessionShellCommonModuleMocks({
     }).module,
   storage: async () =>
     createStorageModuleStub({
-      storage: { getState: () => ({ sessions: { s1: sessionState.session }, settings: {}, sessionListViewDataByServerId: {} }) },
-      useSession: () => sessionState.session,
-      useIsDataReady: () => true,
-      useRealtimeStatus: () => ({ status: 'connected' }),
-      useSessionMessages: () => ({ messages: [], isLoaded: true }),
+	      storage: { getState: () => ({ sessions: { s1: sessionState.session }, settings: {}, concurrentSessionListCacheByServerId: {} }) },
+	      useSession: () => sessionState.session,
+	      useIsDataReady: () => true,
+	      useRealtimeStatus: () => ({ status: 'connected' }),
+	      useSessionMessages: () => ({ messages: [], isLoaded: true }),
       useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
       useLocalSetting: (key: string) => {
         if (key === 'uiMultiPanePanelsEnabled') return false;
@@ -226,9 +226,15 @@ vi.mock('@/components/sessions/model/inactiveSessionUi', () => ({
 vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => ({
   resolveSessionMachineReachability: () => true,
 }));
-vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
-  useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true }),
-}));
+vi.mock('@/components/sessions/model/useSessionMachineReachability', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/sessions/model/useSessionMachineReachability')>();
+
+  return {
+    ...actual,
+    useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true }),
+    useSessionReachableMachineTarget: () => null,
+  };
+});
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({ serverId: 'server-1' }),

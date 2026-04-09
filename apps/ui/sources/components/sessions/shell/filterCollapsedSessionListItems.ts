@@ -1,26 +1,26 @@
-import type { SessionListViewItem } from '@/sync/domains/session/listing/sessionListViewData';
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 
 const sectionKinds = new Set(['active', 'inactive', 'pinned']);
 
 export function filterCollapsedSessionListItems(
-    items: ReadonlyArray<SessionListViewItem>,
+    items: ReadonlyArray<SessionListIndexItem>,
     collapsedGroupKeysV1: Readonly<Record<string, boolean> | null | undefined>,
-): SessionListViewItem[] {
+): SessionListIndexItem[] {
     if (items.length === 0) {
-        return items as SessionListViewItem[];
+        return items as SessionListIndexItem[];
     }
 
     const keys = collapsedGroupKeysV1 ?? {};
     if (Object.keys(keys).length === 0) {
-        return items as SessionListViewItem[];
+        return items as SessionListIndexItem[];
     }
 
-    let result: SessionListViewItem[] | undefined;
+    let result: SessionListIndexItem[] | undefined;
     let skipUntilNextSection = false;
 
-    const ensureResult = (index: number): SessionListViewItem[] => {
+    const ensureResult = (index: number): SessionListIndexItem[] => {
         if (result !== undefined) return result;
-        result = items.slice(0, index) as SessionListViewItem[];
+        result = items.slice(0, index) as SessionListIndexItem[];
         return result;
     };
 
@@ -63,5 +63,5 @@ export function filterCollapsedSessionListItems(
         if (result !== undefined) result.push(item);
     }
 
-    return result ?? (items as SessionListViewItem[]);
+    return result ?? (items as SessionListIndexItem[]);
 }

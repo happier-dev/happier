@@ -13,9 +13,9 @@ import type { PermissionMode } from '../domains/permissions/permissionTypes';
 import type { Profile } from '../domains/profiles/profile';
 import type { Purchases } from '../domains/purchases/purchases';
 import type { Settings } from '../domains/settings/settings';
-import type { SessionListViewItem } from '../domains/session/listing/sessionListViewData';
 import type { SessionListRenderableSession } from '../domains/session/listing/sessionListRenderable';
-import type { ServerScopedSessionListCache } from '../domains/session/listing/serverScopedSessionListCache';
+import type { ConcurrentSessionListCacheByServerId } from '../domains/session/listing/concurrentSessionListCache';
+import type { SessionListIndexItem } from '../domains/sessionList/sessionListIndex';
 import type { MachineDisplayRenderable } from '../domains/machines/machineDisplayRenderable';
 import type { CustomerInfo } from '../domains/purchases/types';
 import type { SessionMessages } from './domains/messages';
@@ -57,8 +57,9 @@ export interface ProfileDomainSlice {
 export interface SessionsDomainSlice {
     sessions: Record<string, Session>;
     sessionListRenderables: Record<string, SessionListRenderableSession>;
-    sessionListViewData: SessionListViewItem[] | null;
-    sessionListViewDataByServerId: ServerScopedSessionListCache;
+    sessionListRowStateByServerId: Readonly<Record<string, Readonly<Record<string, SessionListRenderableSession>>>>;
+    sessionListIndexByServerId: Readonly<Record<string, SessionListIndexItem[] | null | undefined>>;
+    concurrentSessionListCacheByServerId: ConcurrentSessionListCacheByServerId;
     sessionScmStatus: Record<string, ScmStatus | null>;
     sessionLastViewed: Record<string, number>;
     sessionRepositoryTreeExpandedPathsBySessionId: Record<string, string[]>;

@@ -104,7 +104,7 @@ installSessionShellCommonModuleMocks({
                 getState: () => ({
                     sessions: { s1: session },
                     settings: {},
-                    sessionListViewDataByServerId: {},
+	                    concurrentSessionListCacheByServerId: {},
                 }),
             } as any,
             useSession: () => session,
@@ -202,9 +202,15 @@ vi.mock('@/components/sessions/model/inactiveSessionUi', () => ({
 vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => ({
     resolveSessionMachineReachability: () => true,
 }));
-vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
-    useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true }),
-}));
+vi.mock('@/components/sessions/model/useSessionMachineReachability', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/components/sessions/model/useSessionMachineReachability')>();
+
+    return {
+        ...actual,
+        useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true }),
+        useSessionReachableMachineTarget: () => null,
+    };
+});
 vi.mock('@/hooks/session/files/useWarmRepositoryDirectoryCacheOnSessionOpen', () => ({
     useWarmRepositoryDirectoryCacheOnSessionOpen: () => {},
 }));
@@ -305,8 +311,18 @@ describe('SessionView info navigation', () => {
         routerNavigateSpy.mockReset();
         routerBackSpy.mockClear();
         chatHeaderPropsSpy.mockReset();
+        const activeElementBlurSpy = vi.fn();
         Object.defineProperty(globalThis, 'location', {
             value: { href: 'http://localhost/session/s1', pathname: '/session/s1' },
+            writable: true,
+            configurable: true,
+        });
+        Object.defineProperty(globalThis, 'document', {
+            value: {
+                activeElement: {
+                    blur: activeElementBlurSpy,
+                },
+            },
             writable: true,
             configurable: true,
         });
@@ -334,6 +350,7 @@ describe('SessionView info navigation', () => {
         expect(routerNavigateSpy).toHaveBeenCalledWith('/session/s1/info', expect.objectContaining({
             dangerouslySingular: expect.any(Function),
         }));
+        expect((globalThis as any).document.activeElement.blur).toHaveBeenCalledTimes(1);
 
         const singular = routerNavigateSpy.mock.calls[0]?.[1]?.dangerouslySingular;
         expect(typeof singular).toBe('function');

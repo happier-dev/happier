@@ -50,7 +50,7 @@ describe('resolveSessionListRenderableChangeImpact', () => {
 
         expect(resolveSessionListRenderableChangeImpact(previous, previous)).toEqual({
             didWarmCacheRelevantRenderableChange: false,
-            needsSessionListViewDataRebuild: false,
+            needsSessionListIndexRebuild: false,
             needsProjectManagerUpdate: false,
             needsReachablePeerReevaluation: false,
         });
@@ -79,7 +79,7 @@ describe('resolveSessionListRenderableChangeImpact', () => {
 
         expect(resolveSessionListRenderableChangeImpact(previous, next)).toEqual({
             didWarmCacheRelevantRenderableChange: true,
-            needsSessionListViewDataRebuild: false,
+            needsSessionListIndexRebuild: false,
             needsProjectManagerUpdate: false,
             needsReachablePeerReevaluation: false,
         });
@@ -103,7 +103,7 @@ describe('resolveSessionListRenderableChangeImpact', () => {
 
         expect(resolveSessionListRenderableChangeImpact(undefined, next)).toEqual({
             didWarmCacheRelevantRenderableChange: true,
-            needsSessionListViewDataRebuild: true,
+            needsSessionListIndexRebuild: true,
             needsProjectManagerUpdate: true,
             needsReachablePeerReevaluation: true,
         });

@@ -2,14 +2,19 @@ import type { CustomerInfo } from '../../domains/purchases/types';
 import type { MachineDisplayRenderable } from '../../domains/machines/machineDisplayRenderable';
 import type { SessionListRenderableSession } from '../../domains/session/listing/sessionListRenderable';
 import type { Machine, Session } from '../../domains/state/storageTypes';
-import type { SessionListViewItem } from '../../domains/session/listing/sessionListViewData';
-import type { ServerScopedSessionListCache } from '../../domains/session/listing/serverScopedSessionListCache';
+import type { SessionListIndexItem } from '../../domains/sessionList/sessionListIndex';
 import { applyLocalSettings, type LocalSettings } from '../../domains/settings/localSettings';
 import { customerInfoToPurchases, type Purchases } from '../../domains/purchases/purchases';
 import { applySettings, settingsParse, type Settings } from '../../domains/settings/settings';
 import { loadLocalSettings, loadPurchases, loadSettings, saveLocalSettings, savePurchases, saveSettings } from '../../domains/state/persistence';
-import { resolveActiveServerSessionListState } from '../resolveActiveServerSessionListState';
-import { resolveSessionListViewDataSettingsImpact } from './settingsSessionListViewDataImpact';
+import { getActiveServerSnapshot } from '../../domains/server/serverRuntime';
+import type { ConcurrentSessionListCacheByServerId } from '../../domains/session/listing/concurrentSessionListCache';
+import {
+    buildActiveServerSessionListIndex,
+    buildMachineDisplaysByIdFromMachineList,
+    buildSessionListIndexWithServerScope,
+} from '../sessionListIndex/buildSessionListIndexWithServerScope';
+import { resolveSessionListIndexSettingsImpact } from './settingsSessionListIndexImpact';
 import { emitLocalSettingChangedEvents } from '@/track/settingsAnalytics/emitSettingChangedEvent';
 import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
 import { setPreferredLanguageFromSettings } from '@/text/i18n';
@@ -41,11 +46,68 @@ type SettingsDomainDependencies = Readonly<{
     sessions: Record<string, Session>;
     machines: Record<string, Machine>;
     machineDisplayById: Record<string, MachineDisplayRenderable>;
+    machineListByServerId: Record<string, Machine[] | null>;
     sessionListRenderables: Record<string, SessionListRenderableSession>;
-    sessionListViewData: SessionListViewItem[] | null;
-    sessionListViewDataByServerId: ServerScopedSessionListCache;
+    sessionListIndexByServerId: Readonly<Record<string, SessionListIndexItem[] | null | undefined>>;
+    concurrentSessionListCacheByServerId: ConcurrentSessionListCacheByServerId;
     getProjectForSession?: (sessionId: string) => { key?: { machineId?: string | null; rootPath?: string | null } | null } | null;
 }>;
+
+type SettingsDomainState = SettingsDomain & SettingsDomainDependencies;
+
+function rebuildSessionListIndexesForSettingsChange(
+    state: SettingsDomainState,
+    nextSettings: Settings,
+): Readonly<Record<string, SessionListIndexItem[] | null | undefined>> {
+    const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+    let nextSessionListIndexByServerId = state.sessionListIndexByServerId ?? {};
+
+    if (activeServerId) {
+        const previousActiveIndex = nextSessionListIndexByServerId[activeServerId] ?? null;
+        const nextActiveIndex = buildActiveServerSessionListIndex({
+            sessions: state.sessionListRenderables,
+            sessionRecords: state.sessions,
+            machines: state.machineDisplayById,
+            machineRecords: state.machines,
+            groupInactiveSessionsByProject: nextSettings.groupInactiveSessionsByProject === true,
+            activeGroupingV1: nextSettings.sessionListActiveGroupingV1,
+            inactiveGroupingV1: nextSettings.sessionListInactiveGroupingV1,
+            getProjectForSession: state.getProjectForSession,
+            previousIndex: previousActiveIndex,
+        });
+        if (nextSessionListIndexByServerId[activeServerId] !== nextActiveIndex) {
+            nextSessionListIndexByServerId = { ...nextSessionListIndexByServerId, [activeServerId]: nextActiveIndex };
+        }
+    }
+
+    const concurrent = state.concurrentSessionListCacheByServerId ?? {};
+    let didUpdateConcurrent = false;
+    const concurrentUpdates: Record<string, SessionListIndexItem[] | null> = {};
+    for (const serverId in concurrent) {
+        const entry = concurrent[serverId];
+        if (!entry || typeof entry !== 'object') continue;
+        if (!entry.sessions || typeof entry.sessions !== 'object') continue;
+        concurrentUpdates[serverId] = buildSessionListIndexWithServerScope({
+            sessions: entry.sessions,
+            machines: buildMachineDisplaysByIdFromMachineList(state.machineListByServerId?.[serverId]),
+            groupInactiveSessionsByProject: nextSettings.groupInactiveSessionsByProject === true,
+            activeGroupingV1: nextSettings.sessionListActiveGroupingV1,
+            inactiveGroupingV1: nextSettings.sessionListInactiveGroupingV1,
+            serverScope: {
+                serverId,
+                serverName: entry.serverName ?? undefined,
+            },
+            previousIndex: nextSessionListIndexByServerId[serverId] ?? null,
+        });
+        didUpdateConcurrent = true;
+    }
+
+    if (!didUpdateConcurrent) {
+        return nextSessionListIndexByServerId;
+    }
+
+    return { ...nextSessionListIndexByServerId, ...concurrentUpdates };
+}
 
 export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDependencies>({
     set,
@@ -68,30 +130,19 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
             set((state) => {
                 const newSettings = applySettings(state.settings, delta);
                 saveSettings(newSettings, state.settingsVersion ?? 0);
-                const shouldRebuildSessionListViewData = resolveSessionListViewDataSettingsImpact(
+                const shouldRebuildSessionListIndex = resolveSessionListIndexSettingsImpact(
                     state.settings,
                     newSettings,
-                ).shouldRebuildSessionListViewData;
+                );
 
-                if (shouldRebuildSessionListViewData) {
-                    const rebuiltListState = resolveActiveServerSessionListState({
-                        state: {
-                            ...state,
-                            settings: newSettings,
-                        },
-                        shouldRebuild: true,
-                    });
-                    safeSetPreferredLanguageFromSettings(newSettings.preferredLanguage);
-                    return {
-                        ...state,
-                        settings: newSettings,
-                        sessionListViewData: rebuiltListState.sessionListViewData,
-                    };
-                }
                 safeSetPreferredLanguageFromSettings(newSettings.preferredLanguage);
+                const nextSessionListIndexByServerId = shouldRebuildSessionListIndex
+                    ? rebuildSessionListIndexesForSettingsChange(state, newSettings)
+                    : (state.sessionListIndexByServerId ?? {});
                 return {
                     ...state,
                     settings: newSettings,
+                    sessionListIndexByServerId: nextSessionListIndexByServerId,
                 };
             }),
         applySettings: (nextSettings, nextVersion) =>
@@ -99,24 +150,18 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
                 if (state.settingsVersion == null || state.settingsVersion < nextVersion) {
                     saveSettings(nextSettings, nextVersion);
                     safeSetPreferredLanguageFromSettings(nextSettings.preferredLanguage);
-                    const shouldRebuildSessionListViewData = resolveSessionListViewDataSettingsImpact(
+                    const shouldRebuildSessionListIndex = resolveSessionListIndexSettingsImpact(
                         state.settings,
                         nextSettings,
-                    ).shouldRebuildSessionListViewData;
-
-                    const rebuiltListState = resolveActiveServerSessionListState({
-                        state: {
-                            ...state,
-                            settings: nextSettings,
-                        },
-                        shouldRebuild: shouldRebuildSessionListViewData,
-                    });
-
+                    );
+                    const nextSessionListIndexByServerId = shouldRebuildSessionListIndex
+                        ? rebuildSessionListIndexesForSettingsChange(state, nextSettings)
+                        : (state.sessionListIndexByServerId ?? {});
                     return {
                         ...state,
                         settings: nextSettings,
                         settingsVersion: nextVersion,
-                        sessionListViewData: rebuiltListState.sessionListViewData,
+                        sessionListIndexByServerId: nextSessionListIndexByServerId,
                     };
                 }
                 return state;
@@ -125,24 +170,18 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
             set((state) => {
                 saveSettings(nextSettings, nextVersion);
                 safeSetPreferredLanguageFromSettings(nextSettings.preferredLanguage);
-                const shouldRebuildSessionListViewData = resolveSessionListViewDataSettingsImpact(
+                const shouldRebuildSessionListIndex = resolveSessionListIndexSettingsImpact(
                     state.settings,
                     nextSettings,
-                ).shouldRebuildSessionListViewData;
-
-                const rebuiltListState = resolveActiveServerSessionListState({
-                    state: {
-                        ...state,
-                        settings: nextSettings,
-                    },
-                    shouldRebuild: shouldRebuildSessionListViewData,
-                });
-
+                );
+                const nextSessionListIndexByServerId = shouldRebuildSessionListIndex
+                    ? rebuildSessionListIndexesForSettingsChange(state, nextSettings)
+                    : (state.sessionListIndexByServerId ?? {});
                 return {
                     ...state,
                     settings: nextSettings,
                     settingsVersion: nextVersion,
-                    sessionListViewData: rebuiltListState.sessionListViewData,
+                    sessionListIndexByServerId: nextSessionListIndexByServerId,
                 };
             }),
         applyLocalSettings: (delta, options) =>

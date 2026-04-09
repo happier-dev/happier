@@ -1,3 +1,7 @@
+import { LruMap } from '@/utils/cache/lruMap';
+
+import { readSessionListShellCacheMaxEntriesFromEnv } from '../sessionListShellCacheConfig';
+
 export type SessionRowInteractionPolicyParams = Readonly<{
     platformOs: string;
     isActiveSession: boolean;
@@ -17,7 +21,9 @@ export type SessionRowInteractionPolicy = Readonly<{
     suppressNextPressOnNativeContextMenuOpen: boolean;
 }>;
 
-const SESSION_ROW_INTERACTION_POLICY_CACHE = new Map<string, SessionRowInteractionPolicy>();
+const SESSION_ROW_INTERACTION_POLICY_CACHE = new LruMap<string, SessionRowInteractionPolicy>({
+    maxEntries: readSessionListShellCacheMaxEntriesFromEnv(),
+});
 
 export function resolveSessionRowInteractionPolicy(
     params: SessionRowInteractionPolicyParams,

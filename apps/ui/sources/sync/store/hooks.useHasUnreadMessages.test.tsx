@@ -64,4 +64,50 @@ describe('useHasUnreadMessages', () => {
             storage.setState(previousState);
         }
     });
+
+    it('falls back to cache-only renderables when the full session record is absent', async () => {
+        const previousState = storage.getState();
+        try {
+            storage.setState((state) => ({
+                ...state,
+                sessions: {},
+                sessionListRenderables: {
+                    ...state.sessionListRenderables,
+                    'direct-session-cache-only': {
+                        id: 'direct-session-cache-only',
+                        seq: 0,
+                        createdAt: 1,
+                        updatedAt: 2,
+                        active: false,
+                        activeAt: 2,
+                        archivedAt: null,
+                        metadataVersion: 1,
+                        agentStateVersion: 0,
+                        metadata: {
+                            path: '/tmp/direct',
+                            host: 'localhost',
+                            directSessionV1: {
+                                v: 1,
+                                providerId: 'claude',
+                            },
+                        },
+                        thinking: false,
+                        thinkingAt: 0,
+                        presence: 'online',
+                        hasUnreadMessages: true,
+                    } as any,
+                },
+            }));
+
+            const hook = await renderHook(() => useHasUnreadMessages('direct-session-cache-only'), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+
+            expect(hook.getCurrent()).toBe(true);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
 });

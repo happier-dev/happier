@@ -3,21 +3,22 @@ import type { DirectSessionStatusGetResponse } from '@happier-dev/protocol';
 import { AppState, Platform } from 'react-native';
 
 import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
-import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import {
     machineDirectSessionAttach,
     machineDirectSessionDetach,
     machineDirectSessionStatusGet,
 } from '@/sync/ops/machineDirectSessions';
 import { isRuntimeActive } from '@/utils/runtime/isRuntimeActive';
-import { resolveSessionTargetServerId } from './resolveSessionTargetServerId';
+import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 
 export type DirectSessionRuntimeStatus = Extract<DirectSessionStatusGetResponse, { ok: true }>;
 
 type UseDirectSessionRuntimeParams = Readonly<{
     sessionId: string;
     metadata: Metadata | null | undefined;
+    enabled?: boolean;
 }>;
 
 export type UseDirectSessionRuntimeResult = Readonly<{
@@ -27,10 +28,12 @@ export type UseDirectSessionRuntimeResult = Readonly<{
     refreshNow: () => Promise<DirectSessionRuntimeStatus | null>;
 }>;
 
-function normalizeServerId(value: unknown): string | undefined {
-    const serverId = String(value ?? '').trim();
-    return serverId || undefined;
-}
+type DirectSessionTarget = Readonly<{
+    machineId: string;
+    providerId: NonNullable<ReturnType<typeof readDirectSessionLink>>['providerId'];
+    remoteSessionId: string;
+    source: NonNullable<ReturnType<typeof readDirectSessionLink>>['source'];
+}>;
 
 function readActivePollMsFromEnv(): number {
     const raw = Number.parseInt(String(process.env.EXPO_PUBLIC_HAPPIER_DIRECT_SESSIONS_TAIL_POLL_MS_ACTIVE ?? ''), 10);
@@ -64,6 +67,12 @@ function readAttachRenewLeadMsFromEnv(): number {
     return Math.max(500, Math.min(60_000, configured));
 }
 
+function readAttachRetryMsFromEnv(): number {
+    const raw = Number.parseInt(String(process.env.EXPO_PUBLIC_HAPPIER_DIRECT_SESSIONS_ATTACH_RETRY_MS ?? ''), 10);
+    const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 5_000;
+    return Math.max(1_000, Math.min(60_000, configured));
+}
+
 function useRuntimeActive(): boolean {
     const [runtimeActive, setRuntimeActive] = React.useState(() => isRuntimeActive());
 
@@ -93,27 +102,39 @@ function useRuntimeActive(): boolean {
 }
 
 export function useDirectSessionRuntime(params: UseDirectSessionRuntimeParams): UseDirectSessionRuntimeResult {
+    const runtimeEnabled = params.enabled !== false;
+    const normalizedSessionId = React.useMemo(() => normalizeSessionId(params.sessionId), [params.sessionId]);
     const directSessionLink = React.useMemo(
         () => readDirectSessionLink(params.metadata),
         [params.metadata],
     );
-    const [activeServerSnapshot, setActiveServerSnapshot] = React.useState(() => getActiveServerSnapshot());
+    const directSessionTargetKey = React.useMemo(() => {
+        if (!directSessionLink) return null;
+        return JSON.stringify([
+            directSessionLink.machineId,
+            directSessionLink.providerId,
+            directSessionLink.remoteSessionId,
+            directSessionLink.source,
+        ]);
+    }, [directSessionLink]);
+    const directSessionTarget = React.useMemo<DirectSessionTarget | null>(() => {
+        if (!directSessionLink) return null;
+        return {
+            machineId: directSessionLink.machineId,
+            providerId: directSessionLink.providerId,
+            remoteSessionId: directSessionLink.remoteSessionId,
+            source: directSessionLink.source,
+        };
+    }, [directSessionTargetKey]);
     const [status, setStatus] = React.useState<DirectSessionRuntimeStatus | null>(null);
     const statusRef = React.useRef<DirectSessionRuntimeStatus | null>(null);
     const inFlightRefreshRef = React.useRef<Promise<DirectSessionRuntimeStatus | null> | null>(null);
     const currentLeaseIdRef = React.useRef<string | null>(null);
     const generationRef = React.useRef(0);
     const previousServerIdRef = React.useRef<string | null | undefined>(undefined);
+    const previousRuntimeScopeRef = React.useRef<string | null>(null);
     const runtimeActive = useRuntimeActive();
-    const activeServerId = normalizeServerId(activeServerSnapshot.serverId);
-    const sessionServerId = React.useMemo(
-        () => resolveSessionTargetServerId(params.sessionId, activeServerId),
-        [activeServerId, params.sessionId],
-    );
-
-    React.useEffect(() => {
-        return subscribeActiveServer(setActiveServerSnapshot);
-    }, []);
+    const sessionServerId = usePreferredServerIdForSession(normalizedSessionId);
 
     React.useEffect(() => {
         statusRef.current = status;
@@ -134,8 +155,37 @@ export function useDirectSessionRuntime(params: UseDirectSessionRuntimeParams): 
         previousServerIdRef.current = sessionServerId;
     }, [sessionServerId]);
 
+    React.useEffect(() => {
+        const nextRuntimeScope = runtimeEnabled && directSessionTargetKey
+            ? `${normalizedSessionId}:${directSessionTargetKey}`
+            : null;
+
+        if (previousRuntimeScopeRef.current === nextRuntimeScope) {
+            return;
+        }
+
+        if (previousRuntimeScopeRef.current !== null) {
+            inFlightRefreshRef.current = null;
+            generationRef.current += 1;
+            if (statusRef.current !== null) {
+                statusRef.current = null;
+                setStatus(null);
+            }
+        }
+
+        previousRuntimeScopeRef.current = nextRuntimeScope;
+    }, [directSessionTargetKey, normalizedSessionId, runtimeEnabled]);
+
     const refreshNow = React.useCallback(async (): Promise<DirectSessionRuntimeStatus | null> => {
-        if (!directSessionLink) {
+        if (!runtimeEnabled) {
+            if (statusRef.current !== null) {
+                statusRef.current = null;
+                setStatus(null);
+            }
+            return null;
+        }
+
+        if (!directSessionTarget) {
             if (statusRef.current !== null) {
                 statusRef.current = null;
                 setStatus(null);
@@ -150,14 +200,13 @@ export function useDirectSessionRuntime(params: UseDirectSessionRuntimeParams): 
         const currentGeneration = generationRef.current;
         let refreshPromise: Promise<DirectSessionRuntimeStatus | null> | null = null;
         refreshPromise = (async () => {
-            const targetServerId = resolveSessionTargetServerId(params.sessionId, activeServerId);
             const statusResult = await machineDirectSessionStatusGet({
-                machineId: directSessionLink.machineId,
-                sessionId: params.sessionId,
-                providerId: directSessionLink.providerId,
-                remoteSessionId: directSessionLink.remoteSessionId,
-                source: directSessionLink.source,
-            }, { serverId: targetServerId })
+                machineId: directSessionTarget.machineId,
+                sessionId: normalizedSessionId,
+                providerId: directSessionTarget.providerId,
+                remoteSessionId: directSessionTarget.remoteSessionId,
+                source: directSessionTarget.source,
+            }, { serverId: sessionServerId ?? undefined })
                 .then((response) => ({ ok: true as const, response }))
                 .catch((error: unknown) => ({ ok: false as const, error }));
             if (!statusResult.ok) {
@@ -183,10 +232,10 @@ export function useDirectSessionRuntime(params: UseDirectSessionRuntimeParams): 
 
         inFlightRefreshRef.current = refreshPromise;
         return refreshPromise;
-    }, [activeServerId, directSessionLink, params.sessionId]);
+    }, [directSessionTarget, normalizedSessionId, runtimeEnabled, sessionServerId]);
 
     React.useEffect(() => {
-        if (!directSessionLink) {
+        if (!directSessionTarget || !runtimeEnabled) {
             if (statusRef.current !== null) {
                 statusRef.current = null;
                 setStatus(null);
@@ -221,10 +270,10 @@ export function useDirectSessionRuntime(params: UseDirectSessionRuntimeParams): 
                 clearTimeout(timeoutId);
             }
         };
-    }, [directSessionLink, refreshNow, runtimeActive]);
+    }, [directSessionTarget, refreshNow, runtimeActive, runtimeEnabled]);
 
     React.useEffect(() => {
-        if (!directSessionLink || !runtimeActive) {
+        if (!directSessionTarget || !runtimeActive || !runtimeEnabled) {
             currentLeaseIdRef.current = null;
             return;
         }
@@ -247,24 +296,37 @@ export function useDirectSessionRuntime(params: UseDirectSessionRuntimeParams): 
             }, delayMs);
         };
 
+        const scheduleRetry = () => {
+            const delayMs = readAttachRetryMsFromEnv();
+            renewTimeoutId = setTimeout(() => {
+                void ensureLease();
+            }, delayMs);
+        };
+
         const ensureLease = async () => {
             try {
                 const response = await machineDirectSessionAttach({
-                    machineId: directSessionLink.machineId,
-                    sessionId: params.sessionId,
-                    providerId: directSessionLink.providerId,
-                    remoteSessionId: directSessionLink.remoteSessionId,
-                    source: directSessionLink.source,
+                    machineId: directSessionTarget.machineId,
+                    sessionId: normalizedSessionId,
+                    providerId: directSessionTarget.providerId,
+                    remoteSessionId: directSessionTarget.remoteSessionId,
+                    source: directSessionTarget.source,
                     ...(currentLeaseIdRef.current ? { leaseId: currentLeaseIdRef.current } : {}),
                     ttlMs: readAttachLeaseTtlMsFromEnv(),
                 }, { serverId: sessionServerId ?? undefined });
-                if (cancelled || !response.ok) return;
+                if (cancelled) return;
+                if (!response.ok) {
+                    clearRenewTimeout();
+                    scheduleRetry();
+                    return;
+                }
                 currentLeaseIdRef.current = response.leaseId;
                 clearRenewTimeout();
                 scheduleRenew(response.expiresAtMs);
             } catch {
                 if (cancelled) return;
                 clearRenewTimeout();
+                scheduleRetry();
             }
         };
 
@@ -277,12 +339,12 @@ export function useDirectSessionRuntime(params: UseDirectSessionRuntimeParams): 
             currentLeaseIdRef.current = null;
             if (!leaseId) return;
             void machineDirectSessionDetach({
-                machineId: directSessionLink.machineId,
-                sessionId: params.sessionId,
+                machineId: directSessionTarget.machineId,
+                sessionId: normalizedSessionId,
                 leaseId,
             }, { serverId: sessionServerId ?? undefined }).catch(() => {});
         };
-    }, [directSessionLink, params.sessionId, runtimeActive, sessionServerId]);
+    }, [directSessionTarget, normalizedSessionId, runtimeActive, runtimeEnabled, sessionServerId]);
 
     return {
         directSessionLink,

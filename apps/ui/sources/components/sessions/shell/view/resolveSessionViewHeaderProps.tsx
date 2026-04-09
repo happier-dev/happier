@@ -11,9 +11,11 @@ import { t } from '@/text';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
 import { formatPathRelativeToHome, getSessionAvatarId, getSessionName } from '@/utils/sessions/sessionUtils';
+import { LruMap } from '@/utils/cache/lruMap';
 
 import { resolveSessionViewBadges } from './resolveSessionViewBadges';
 import { resolveSessionViewHeaderActionItems } from './resolveSessionViewHeaderActionItems';
+import { readSessionListShellCacheMaxEntriesFromEnv } from '../sessionListShellCacheConfig';
 
 export type SessionViewHeaderProps = Readonly<{
     title: string;
@@ -72,7 +74,9 @@ const DELETED_HEADER_PROPS: SessionViewHeaderProps = {
     flavor: null,
 };
 
-const SESSION_VIEW_HEADER_PROPS_CACHE = new Map<string, SessionViewHeaderProps>();
+const SESSION_VIEW_HEADER_PROPS_CACHE = new LruMap<string, SessionViewHeaderProps>({
+    maxEntries: readSessionListShellCacheMaxEntriesFromEnv(),
+});
 
 function buildSessionViewHeaderPropsCacheKey(input: Readonly<{
     sessionId: string;
@@ -195,11 +199,11 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         title,
         subtitle,
         avatarId,
-        onAvatarPress: () => input.router.navigate((`/session/${input.sessionId}/info`) as any, {
+        onAvatarPress: () => input.navigateWithBlurOnWeb(() => input.router.navigate((`/session/${input.sessionId}/info`) as any, {
             dangerouslySingular() {
                 return 'session-info';
             },
-        } as any),
+        } as any)),
         rightElement: (
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <SessionHeaderActionMenu

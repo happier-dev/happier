@@ -1,3 +1,7 @@
+import { LruMap } from '@/utils/cache/lruMap';
+
+import { readSessionListShellCacheMaxEntriesFromEnv } from '../sessionListShellCacheConfig';
+
 type Input = Readonly<{
     voiceProviderId: string;
     voiceStatus: string;
@@ -9,16 +13,14 @@ export type SessionViewMicButtonState = Readonly<{
     isMicActive: boolean;
 }>;
 
-type CachedMicButtonStateEntry = {
-    state: SessionViewMicButtonState;
-};
-
 const EMPTY_SESSION_VIEW_MIC_BUTTON_STATE: SessionViewMicButtonState = Object.freeze({
     onMicPress: undefined,
     isMicActive: false,
 });
 
-const SESSION_VIEW_MIC_BUTTON_STATE_CACHE = new Map<string, CachedMicButtonStateEntry>();
+const SESSION_VIEW_MIC_BUTTON_STATE_CACHE = new LruMap<string, SessionViewMicButtonState>({
+    maxEntries: readSessionListShellCacheMaxEntriesFromEnv(),
+});
 
 function buildCacheKey(input: Input): string {
     return JSON.stringify([
@@ -35,16 +37,14 @@ export function resolveSessionViewMicButtonState(input: Input): SessionViewMicBu
     const cacheKey = buildCacheKey(input);
     const cached = SESSION_VIEW_MIC_BUTTON_STATE_CACHE.get(cacheKey);
     if (cached) {
-        (cached.state as { onMicPress: (() => void) | undefined }).onMicPress = input.onMicPress;
-        return cached.state;
+        (cached as { onMicPress: (() => void) | undefined }).onMicPress = input.onMicPress;
+        return cached;
     }
 
-    const entry: CachedMicButtonStateEntry = {
-        state: {
-            onMicPress: input.onMicPress,
-            isMicActive: input.voiceStatus !== 'disconnected',
-        },
+    const state: SessionViewMicButtonState = {
+        onMicPress: input.onMicPress,
+        isMicActive: input.voiceStatus !== 'disconnected',
     };
-    SESSION_VIEW_MIC_BUTTON_STATE_CACHE.set(cacheKey, entry);
-    return entry.state;
+    SESSION_VIEW_MIC_BUTTON_STATE_CACHE.set(cacheKey, state);
+    return state;
 }

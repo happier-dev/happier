@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
@@ -41,6 +42,10 @@ const themeColors = vi.hoisted(() => ({
 
 let authCredentials: any = { token: 't', secret: 's' };
 let sessionState: any = null;
+let committedMessagesState: any[] = [];
+let committedMessagesLoadedState = true;
+let transcriptIdsState: string[] = [];
+let transcriptIdsLoadedState = true;
 
 vi.mock('react-native-reanimated', () => ({}));
 vi.mock('expo-linear-gradient', () => ({
@@ -105,23 +110,23 @@ installSessionShellCommonModuleMocks({
             importOriginal,
             overrides: {
                 storage: {
-                    getState: () => ({
-                        sessions: sessionState ? { s1: sessionState } : {},
-                        settings: {
-                            sessionMessageSendMode: 'direct',
-                            sessionBusySteerSendPolicy: 'steerImmediately',
-                        },
-                        sessionListViewDataByServerId: {},
-                    }),
-                } as any,
-                useSession: () => sessionState,
-                __setSessionForTest: (next: any) => {
+	                    getState: () => ({
+	                        sessions: sessionState ? { s1: sessionState } : {},
+	                        settings: {
+	                            sessionMessageSendMode: 'direct',
+	                            sessionBusySteerSendPolicy: 'steerImmediately',
+	                        },
+	                        concurrentSessionListCacheByServerId: {},
+	                    }),
+	                } as any,
+	                useSession: () => sessionState,
+	                __setSessionForTest: (next: any) => {
                     sessionState = next;
                 },
                 useIsDataReady: () => true,
                 useRealtimeStatus: () => realtimeStatusValue.current,
-                useSessionMessages: () => ({ messages: [], isLoaded: true }),
-                useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+                useSessionMessages: () => ({ messages: committedMessagesState, isLoaded: committedMessagesLoadedState }),
+                useSessionTranscriptIds: () => ({ ids: transcriptIdsState, isLoaded: transcriptIdsLoadedState }),
                 useSessionPendingMessages: () => ({ messages: [] }),
                 useSessionReviewCommentsDrafts: () => [],
                 useSessionUsage: () => null,
@@ -184,9 +189,6 @@ vi.mock('@/components/sessions/transcript/ChatList', () => ({
 vi.mock('@/components/ui/empty/EmptyMessages', () => ({
     EmptyMessages: () => React.createElement('EmptyMessages'),
 }));
-vi.mock('@/components/ui/forms/Deferred', () => ({
-    Deferred: (props: any) => React.createElement(React.Fragment, null, props.children),
-}));
 vi.mock('@/components/sessions/actions/SessionHeaderActionMenu', () => ({
     SessionHeaderActionMenu: () => null,
 }));
@@ -217,6 +219,7 @@ vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => (
 }));
 vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true }),
+    useSessionReachableMachineTarget: () => null,
 }));
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
@@ -360,6 +363,10 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
             metadata: { machineId: 'm1', flavor: 'codex', version: '0.0.0', path: '/tmp', homeDir: '/tmp' },
             agentState: {},
         };
+        committedMessagesState = [];
+        committedMessagesLoadedState = true;
+        transcriptIdsState = [];
+        transcriptIdsLoadedState = true;
         shouldRenderChatTimelineForSessionMock.mockClear();
         onSessionVisibleSpy.mockClear();
     });
@@ -382,6 +389,79 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         );
 
         await screen.unmount();
+    });
+
+    it('renders ChatList immediately for an already-loaded seq-only transcript', async () => {
+        const screen = await renderSessionView();
+
+        expect(screen.findAllByType('ChatList')).toHaveLength(1);
+
+        await screen.unmount();
+    });
+
+    it('renders ChatList immediately for an unhydrated seq-only transcript that still has transcript scope', async () => {
+        committedMessagesLoadedState = false;
+        transcriptIdsLoadedState = false;
+
+        const screen = await renderSessionView();
+
+        expect(shouldRenderChatTimelineForSessionMock).toHaveBeenCalledWith(
+            expect.objectContaining({
+                committedMessagesCount: 0,
+                pendingMessagesCount: 0,
+                forceRenderFooter: true,
+            }),
+        );
+        expect(screen.findAllByType('ChatList')).toHaveLength(1);
+
+        await screen.unmount();
+    });
+
+    it('renders ChatList immediately from cached committed messages even before transcript ids settle', async () => {
+        sessionState.seq = 1;
+        committedMessagesState = [{
+            id: 'm-1',
+            kind: 'agent-text',
+            role: 'agent',
+            createdAt: 1,
+            content: [],
+        }];
+        committedMessagesLoadedState = true;
+        transcriptIdsState = [];
+        transcriptIdsLoadedState = false;
+
+        const screen = await renderSessionView();
+
+        expect(screen.findAllByType('ChatList')).toHaveLength(1);
+
+        await screen.unmount();
+    });
+
+    it('keeps ChatList deferred while transcript data is still loading without cached transcript state', async () => {
+        vi.useFakeTimers();
+        try {
+            sessionState.seq = 0;
+            committedMessagesState = [];
+            committedMessagesLoadedState = false;
+            transcriptIdsState = [];
+            transcriptIdsLoadedState = false;
+
+            const screen = await renderSessionView();
+
+            expect(screen.findAllByType('ChatList')).toHaveLength(0);
+            expect(screen.findAllByType('ActivityIndicator')).toHaveLength(1);
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(20);
+            });
+
+            expect(screen.findAllByType('ChatList')).toHaveLength(0);
+            expect(screen.findAllByType('ActivityIndicator')).toHaveLength(1);
+
+            await screen.unmount();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('forces transcript render for forked sessions even when child has no messages', async () => {

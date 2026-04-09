@@ -4,12 +4,12 @@ import {
     type MachineDisplayRenderable,
 } from '../../domains/machines/machineDisplayRenderable';
 import type { Settings } from '../../domains/settings/settings';
-import type { SessionListViewItem } from '../../domains/session/listing/sessionListViewData';
 import type { SessionListRenderableSession } from '../../domains/session/listing/sessionListRenderable';
-import type { ServerScopedSessionListCache } from '../../domains/session/listing/serverScopedSessionListCache';
-import { resolveMachineSessionListViewDataImpact } from './machineSessionListViewDataImpact';
+import { usesProjectGroupingInSessionList } from '../../domains/session/listing/resolveSessionListGroupingModes';
+import type { SessionListIndexItem } from '../../domains/sessionList/sessionListIndex';
+import { resolveMachineSessionListIndexImpact } from './machineSessionListIndexImpact';
 import { normalizeNonEmptyString } from '@/utils/strings/normalizeNonEmptyString';
-import { resolveActiveServerSessionListState } from '../resolveActiveServerSessionListState';
+import { buildActiveServerSessionListIndex } from '../sessionListIndex/buildSessionListIndexWithServerScope';
 import { getActiveServerSnapshot } from '../../domains/server/serverRuntime';
 import { projectManager } from '../../runtime/orchestration/projectManager';
 import { invalidateCachedTransferRoutesForMachine } from '../../domains/transfers/runtime/transferRouteCache';
@@ -22,7 +22,7 @@ import { buildMachineDisplayCacheEntriesFromRenderables } from '../../domains/st
 
 import type { StoreGet, StoreSet } from './_shared';
 
-export { resolveMachineSessionListViewDataImpact } from './machineSessionListViewDataImpact';
+export { resolveMachineSessionListIndexImpact } from './machineSessionListIndexImpact';
 
 export type MachinesDomain = {
     machines: Record<string, Machine>;
@@ -39,20 +39,8 @@ type MachinesDomainDependencies = Readonly<{
     getProjectForSession?: (sessionId: string) => { key?: { machineId?: string | null; rootPath?: string | null } | null } | null;
     profile: { id: string };
     settings: Settings;
-    sessionListViewData: SessionListViewItem[] | null;
-    sessionListViewDataByServerId: ServerScopedSessionListCache;
+    sessionListIndexByServerId: Readonly<Record<string, SessionListIndexItem[] | null | undefined>>;
 }>;
-
-function resolveGroupingForSection(
-    section: 'active' | 'inactive',
-    settings: Settings,
-): 'project' | 'date' {
-    if (section === 'active') {
-        return settings.sessionListActiveGroupingV1 ?? 'project';
-    }
-    if (settings.sessionListInactiveGroupingV1) return settings.sessionListInactiveGroupingV1;
-    return settings.groupInactiveSessionsByProject ? 'project' : 'date';
-}
 
 function saveWarmMachineCacheForState(
     state: MachinesDomain & MachinesDomainDependencies,
@@ -147,35 +135,44 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     });
                 }
 
-                let needsSessionListViewDataRebuild = state.sessionListViewData === null;
+                const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+                const previousIndexByServerId = state.sessionListIndexByServerId ?? {};
+                const previousActiveIndex = activeServerId ? (previousIndexByServerId[activeServerId] ?? null) : null;
+                let needsSessionListIndexRebuild = Boolean(activeServerId) && previousActiveIndex == null;
                 let needsProjectManagerUpdate = false;
 
-                if (!needsSessionListViewDataRebuild) {
-                    const activeGrouping = resolveGroupingForSection('active', state.settings);
-                    const inactiveGrouping = resolveGroupingForSection('inactive', state.settings);
-                    const usesProjectGrouping = activeGrouping === 'project' || inactiveGrouping === 'project';
-                    const machineImpact = resolveMachineSessionListViewDataImpact({
+                if (!needsSessionListIndexRebuild) {
+                    const machineImpact = resolveMachineSessionListIndexImpact({
                         sessions: Object.values(state.sessionListRenderables ?? {}),
                         previousMachineDisplays: state.machineDisplayById ?? {},
                         nextMachineDisplays: mergedMachineDisplays,
-                        usesProjectGrouping,
+                        usesProjectGrouping: usesProjectGroupingInSessionList({
+                            groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
+                            activeGroupingV1: state.settings.sessionListActiveGroupingV1,
+                            inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
+                        }),
                     });
-                    if (machineImpact.needsSessionListViewDataRebuild) {
-                        needsSessionListViewDataRebuild = true;
+                    if (machineImpact.needsSessionListIndexRebuild) {
+                        needsSessionListIndexRebuild = true;
                     }
                     if (machineImpact.needsProjectManagerUpdate) {
                         needsProjectManagerUpdate = true;
                     }
                 }
 
-                const rebuiltListState = resolveActiveServerSessionListState({
-                    state: {
-                        ...state,
-                        machines: mergedMachines,
-                        machineDisplayById: mergedMachineDisplays,
-                    },
-                    shouldRebuild: needsSessionListViewDataRebuild,
-                });
+                const nextSessionListIndex = needsSessionListIndexRebuild && activeServerId
+                    ? buildActiveServerSessionListIndex({
+                        sessions: state.sessionListRenderables,
+                        sessionRecords: state.sessions,
+                        machines: mergedMachineDisplays,
+                        machineRecords: mergedMachines,
+                        groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
+                        activeGroupingV1: state.settings.sessionListActiveGroupingV1,
+                        inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
+                        getProjectForSession: state.getProjectForSession,
+                        previousIndex: previousActiveIndex,
+                    })
+                    : previousActiveIndex;
 
                 if (needsProjectManagerUpdate) {
                     const machineMetadataMap = new Map<string, any>();
@@ -187,7 +184,6 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     projectManager.updateSessions(Object.values(state.sessions), machineMetadataMap);
                 }
 
-                const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
                 for (const machineId of machinesWithAdvancedDaemonState) {
                     const serverIds = resolveServerIdsForMachineTransferRouteInvalidation(state, machineId, activeServerId);
                     for (const serverId of serverIds) {
@@ -204,11 +200,16 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                         { replace },
                     )
                     : null;
+                const nextSessionListIndexByServerId = activeServerId
+                    ? (previousIndexByServerId[activeServerId] === nextSessionListIndex
+                        ? previousIndexByServerId
+                        : { ...previousIndexByServerId, [activeServerId]: nextSessionListIndex })
+                    : previousIndexByServerId;
                 const nextState = {
                     ...state,
                     machines: mergedMachines,
                     machineDisplayById: mergedMachineDisplays,
-                    sessionListViewData: rebuiltListState.sessionListViewData,
+                    sessionListIndexByServerId: nextSessionListIndexByServerId,
                     machineListByServerId: activeServerId
                         ? { ...state.machineListByServerId, [activeServerId]: nextActiveServerMachines }
                         : state.machineListByServerId,
@@ -223,17 +224,31 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
             set((state) => {
                 const nextMachineDisplays = Object.fromEntries(machines.map((machine) => [machine.id, machine]));
                 const previousEntries = buildMachineDisplayCacheEntriesFromRenderables(state.machineDisplayById ?? {});
-                const rebuiltListState = resolveActiveServerSessionListState({
-                    state: {
-                        ...state,
-                        machineDisplayById: nextMachineDisplays,
-                    },
-                    shouldRebuild: true,
-                });
+                const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+                const previousIndexByServerId = state.sessionListIndexByServerId ?? {};
+                const previousActiveIndex = activeServerId ? (previousIndexByServerId[activeServerId] ?? null) : null;
+                const nextSessionListIndex = activeServerId
+                    ? buildActiveServerSessionListIndex({
+                        sessions: state.sessionListRenderables,
+                        sessionRecords: state.sessions,
+                        machines: nextMachineDisplays,
+                        machineRecords: state.machines,
+                        groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
+                        activeGroupingV1: state.settings.sessionListActiveGroupingV1,
+                        inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
+                        getProjectForSession: state.getProjectForSession,
+                        previousIndex: previousActiveIndex,
+                    })
+                    : previousActiveIndex;
+                const nextSessionListIndexByServerId = activeServerId
+                    ? (previousIndexByServerId[activeServerId] === nextSessionListIndex
+                        ? previousIndexByServerId
+                        : { ...previousIndexByServerId, [activeServerId]: nextSessionListIndex })
+                    : previousIndexByServerId;
                 const nextState = {
                     ...state,
                     machineDisplayById: nextMachineDisplays,
-                    sessionListViewData: rebuiltListState.sessionListViewData,
+                    sessionListIndexByServerId: nextSessionListIndexByServerId,
                 };
                 saveWarmMachineCacheForState(nextState as MachinesDomain & MachinesDomainDependencies, previousEntries);
                 return nextState;

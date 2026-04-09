@@ -1,7 +1,9 @@
 import { normalizeNonEmptyString } from '@/utils/strings/normalizeNonEmptyString';
 import { normalizeTrimmedString } from './normalizeTrimmedString';
 
-function normalizePathForProjectGrouping(path: string): string {
+import { LruMap } from '@/utils/cache/lruMap';
+
+function normalizeProjectGroupingPath(path: string): string {
     const withForwardSlashes = path.replace(/\\/g, '/');
     const leadingUncSlashes = withForwardSlashes.match(/^\/{2,}/)?.[0].length ?? 0;
     const uncPrefix = leadingUncSlashes >= 2 ? '//' : '';
@@ -17,7 +19,7 @@ export function normalizeSessionPathForProjectGrouping(pathInput: unknown, homeD
     if (!path) return '';
 
     const homeDirRaw = normalizeNonEmptyString(homeDirInput);
-    const homeDir = homeDirRaw ? normalizePathForProjectGrouping(homeDirRaw) : null;
+    const homeDir = homeDirRaw ? normalizeProjectGroupingPath(homeDirRaw) : null;
     let expanded = path;
     if (homeDir && path.startsWith('~')) {
         if (path === '~') {
@@ -27,7 +29,7 @@ export function normalizeSessionPathForProjectGrouping(pathInput: unknown, homeD
         }
     }
 
-    return normalizePathForProjectGrouping(expanded);
+    return normalizeProjectGroupingPath(expanded);
 }
 
 export type SessionProjectGroupingKeyParts = Readonly<{
@@ -42,22 +44,29 @@ export type SessionProjectGroupingKeyPartsWithMachineMetadata = SessionProjectGr
     displayPath: string | null;
 }>;
 
-const SESSION_PROJECT_GROUPING_KEY_PARTS_CACHE = new Map<string, SessionProjectGroupingKeyParts>();
-const SESSION_PROJECT_GROUPING_KEY_PARTS_WITH_MACHINE_METADATA_CACHE = new Map<string, SessionProjectGroupingKeyPartsWithMachineMetadata>();
-
-function buildSessionProjectGroupingKeyPartsCacheKey(parts: SessionProjectGroupingKeyParts): string {
-    return [
-        parts.machineGroupId,
-        parts.host ?? '',
-        parts.machineId ?? '',
-        parts.homeDir ?? '',
-        parts.pathKey,
-    ].join('\u0000');
+function readMaxSessionProjectGroupingKeyPartsCacheEntriesFromEnv(): number {
+    const raw = String(process.env.EXPO_PUBLIC_HAPPIER_SESSION_LIST_PROJECT_GROUPING_CACHE_MAX ?? '').trim();
+    if (!raw) return 4096;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed)) return 4096;
+    return Math.max(1, Math.min(100_000, parsed));
 }
 
-function buildSessionProjectGroupingKeyPartsWithMachineMetadataCacheKey(
-    parts: SessionProjectGroupingKeyPartsWithMachineMetadata,
-): string {
+const SESSION_PROJECT_GROUPING_KEY_PARTS_CACHE = new LruMap<string, SessionProjectGroupingKeyParts>({
+    maxEntries: readMaxSessionProjectGroupingKeyPartsCacheEntriesFromEnv(),
+});
+const SESSION_PROJECT_GROUPING_KEY_PARTS_WITH_MACHINE_METADATA_CACHE = new LruMap<string, SessionProjectGroupingKeyPartsWithMachineMetadata>({
+    maxEntries: readMaxSessionProjectGroupingKeyPartsCacheEntriesFromEnv(),
+});
+
+function buildSessionProjectGroupingKeyPartsCacheKey(parts: Readonly<{
+    machineGroupId: string;
+    host: string | null;
+    machineId: string | null;
+    homeDir: string | null;
+    pathKey: string;
+    displayPath?: string | null;
+}>): string {
     return [
         parts.machineGroupId,
         parts.host ?? '',
@@ -77,7 +86,7 @@ export function resolveSessionProjectGroupingKeyParts(metadata: Readonly<{
     const host = normalizeNonEmptyString(metadata?.host);
     const machineId = normalizeNonEmptyString(metadata?.machineId);
     const homeDirRaw = normalizeNonEmptyString(metadata?.homeDir);
-    const homeDir = homeDirRaw ? normalizePathForProjectGrouping(homeDirRaw) : null;
+    const homeDir = homeDirRaw ? normalizeProjectGroupingPath(homeDirRaw) : null;
     const pathKey = normalizeSessionPathForProjectGrouping(metadata?.path, homeDir);
     const machineGroupId = host ? `host:${host}` : machineId ? `id:${machineId}` : 'unknown';
 
@@ -113,7 +122,7 @@ export function resolveSessionProjectGroupingKeyPartsWithMachineMetadata(
     const parts = resolveSessionProjectGroupingKeyParts(metadata);
     const host = normalizeTrimmedString(machineMetadata?.host) || parts.host;
     const homeDirRaw = normalizeTrimmedString(machineMetadata?.homeDir);
-    const homeDir = homeDirRaw ? normalizePathForProjectGrouping(homeDirRaw) : parts.homeDir;
+    const homeDir = homeDirRaw ? normalizeProjectGroupingPath(homeDirRaw) : parts.homeDir;
     const displayPath = normalizeTrimmedString(displayPathInput ?? metadata?.path) || null;
     const pathKey = normalizeSessionPathForProjectGrouping(displayPathInput ?? metadata?.path, homeDir);
     const machineGroupId = host ? `host:${host}` : parts.machineId ? `id:${parts.machineId}` : 'unknown';
@@ -126,7 +135,7 @@ export function resolveSessionProjectGroupingKeyPartsWithMachineMetadata(
         pathKey,
         displayPath,
     };
-    const cacheKey = buildSessionProjectGroupingKeyPartsWithMachineMetadataCacheKey(normalizedParts);
+    const cacheKey = buildSessionProjectGroupingKeyPartsCacheKey(normalizedParts);
     const cached = SESSION_PROJECT_GROUPING_KEY_PARTS_WITH_MACHINE_METADATA_CACHE.get(cacheKey);
     if (cached) {
         return cached;

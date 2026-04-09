@@ -8,12 +8,13 @@ import { normalizeSessionListServerScope } from './normalizeSessionListServerSco
 import {
     sortSessionListRenderableSessionsNewestFirstIfNeeded,
 } from './sessionListRenderableSorting';
+import { resolveSessionListGroupingModes } from './resolveSessionListGroupingModes';
 import { t } from '@/text';
 import {
-    resolveDisplayMachineIdForSessionFromState,
-    resolveDisplayPathForSessionFromState,
+    resolveMachineTargetForSessionFromState,
     type SessionMachineTargetState,
 } from '@/sync/ops/sessionMachineTarget';
+import { normalizeTrimmedString } from './normalizeTrimmedString';
 
 export type SessionListViewItem =
     | {
@@ -62,21 +63,6 @@ type ServerScopeMeta = Readonly<{
 
 const EMPTY_SESSION_LIST_VIEW_DATA: SessionListViewItem[] = [];
 
-function isSessionActive(session: { active: boolean }): boolean {
-    return session.active;
-}
-
-function resolveGroupingForSection(
-    section: 'active' | 'inactive',
-    options: BuildSessionListViewDataOptions,
-): 'project' | 'date' {
-    if (section === 'active') {
-        return options.activeGroupingV1 ?? 'project';
-    }
-    if (options.inactiveGroupingV1) return options.inactiveGroupingV1;
-    return options.groupInactiveSessionsByProject ? 'project' : 'date';
-}
-
 function makeUnknownMachine(id: string): MachineDisplayRenderable {
     return {
         id,
@@ -87,23 +73,6 @@ function makeUnknownMachine(id: string): MachineDisplayRenderable {
         metadata: null,
         metadataVersion: 0,
     };
-}
-
-function formatYyyyMmDdLocal(value: Date): string {
-    const year = value.getFullYear();
-    const month = String(value.getMonth() + 1).padStart(2, '0');
-    const day = String(value.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-}
-
-function hashFNV1a32Hex(input: string): string {
-    // FNV-1a 32-bit. Used to avoid persisting raw local paths in synced keys.
-    let hash = 0x811c9dc5;
-    for (let i = 0; i < input.length; i++) {
-        hash ^= input.charCodeAt(i);
-        hash = (hash * 0x01000193) >>> 0;
-    }
-    return hash.toString(16).padStart(8, '0');
 }
 
 type ProjectGroup = {
@@ -120,6 +89,29 @@ type SessionListHeaderItem = Extract<SessionListViewItem, { type: 'header' }>;
 
 type SessionListGroupSessionKind = NonNullable<Extract<SessionListViewItem, { type: 'session' }>['groupKind']>;
 
+type SessionTargetDisplay = Readonly<{
+    machineId: string;
+    path: string | null;
+}>;
+
+function resolveSessionTargetDisplayFromState(params: Readonly<{
+    state: SessionMachineTargetState;
+    sessionId: string;
+    metadata: Readonly<{
+        machineId?: string | null;
+        path?: string | null;
+    }> | null;
+}>): SessionTargetDisplay {
+    const reachableTarget = resolveMachineTargetForSessionFromState(params.state, params.sessionId);
+    return {
+        machineId:
+            reachableTarget?.machineId
+            ?? normalizeTrimmedString(params.metadata?.machineId)
+            ?? '',
+        path: reachableTarget?.basePath ?? params.metadata?.path ?? null,
+    };
+}
+
 function groupSessionsByProject(params: Readonly<{
     sessions: ReadonlyArray<SessionListRenderableSession>;
     machines: Record<string, MachineDisplayRenderable>;
@@ -129,22 +121,15 @@ function groupSessionsByProject(params: Readonly<{
     const sessionTargetState = params.sessionTargetState;
 
     for (const session of params.sessions) {
-        const displayMachineId =
-            sessionTargetState
-                ? resolveDisplayMachineIdForSessionFromState({
-                      state: sessionTargetState,
-                      sessionId: session.id,
-                      metadata: session.metadata ?? null,
-                  })
-                : session.metadata?.machineId ?? '';
-        const displayPath =
-            sessionTargetState
-                ? resolveDisplayPathForSessionFromState({
-                      state: sessionTargetState,
-                      sessionId: session.id,
-                      metadata: session.metadata ?? null,
-                  })
-                : session.metadata?.path ?? null;
+        const sessionTargetDisplay = sessionTargetState
+            ? resolveSessionTargetDisplayFromState({
+                  state: sessionTargetState,
+                  sessionId: session.id,
+                  metadata: session.metadata ?? null,
+              })
+            : null;
+        const displayMachineId = sessionTargetDisplay?.machineId ?? session.metadata?.machineId ?? '';
+        const displayPath = sessionTargetDisplay?.path ?? session.metadata?.path ?? null;
         const machine = displayMachineId ? params.machines[displayMachineId] : undefined;
         const groupingParts = resolveSessionProjectGroupingKeyPartsWithMachineMetadata(
             session.metadata ?? null,
@@ -157,15 +142,11 @@ function groupSessionsByProject(params: Readonly<{
 
         const existing = groups.get(key);
         if (!existing) {
-            const displayMachine = (() => {
-                if (groupingParts.host) {
-                    return resolveBestMachineDisplayRenderableForHost(params.machines, groupingParts.host) ?? makeUnknownMachine(groupingParts.host);
-                }
-                if (displayMachineId) {
-                    return params.machines[displayMachineId] ?? makeUnknownMachine(displayMachineId);
-                }
-                return makeUnknownMachine('unknown');
-            })();
+            const displayMachine = groupingParts.host
+                ? resolveBestMachineDisplayRenderableForHost(params.machines, groupingParts.host) ?? makeUnknownMachine(groupingParts.host)
+                : displayMachineId
+                    ? params.machines[displayMachineId] ?? makeUnknownMachine(displayMachineId)
+                    : makeUnknownMachine('unknown');
             groups.set(key, {
                 key,
                 displayPath: groupingParts.pathKey ? formatPathRelativeToHome(groupingParts.pathKey, groupingParts.homeDir ?? undefined) : '',
@@ -212,9 +193,14 @@ function pushProjectGroupsToList(params: Readonly<{
 }>): void {
     for (const group of params.groups) {
         const hasGroupHeader = Boolean(group.displayPath);
-        const wsHash = hashFNV1a32Hex(group.key);
-        const groupKey = `server:${params.serverKey}:${params.section}:project:${wsHash}`;
-        const workspaceKey = `wl_${wsHash}`;
+        let wsHash = 0x811c9dc5;
+        for (let index = 0; index < group.key.length; index += 1) {
+            wsHash ^= group.key.charCodeAt(index);
+            wsHash = (wsHash * 0x01000193) >>> 0;
+        }
+        const wsHashHex = wsHash.toString(16).padStart(8, '0');
+        const groupKey = `server:${params.serverKey}:${params.section}:project:${wsHashHex}`;
+        const workspaceKey = `wl_${wsHashHex}`;
 
         const variant: 'default' | 'no-path' = hasGroupHeader ? 'no-path' : 'default';
         pushSessionGroupEntriesToList({
@@ -241,94 +227,6 @@ function pushProjectGroupsToList(params: Readonly<{
             serverScopeMeta: params.serverScopeMeta,
         });
     }
-}
-
-function pushDateGroupsToList(params: Readonly<{
-    listData: SessionListViewItem[];
-    sessions: ReadonlyArray<SessionListRenderableSession>;
-    section: 'active' | 'inactive';
-    serverKey: string;
-    serverScopeMeta: ServerScopeMeta;
-}>): void {
-    if (params.sessions.length === 0) return;
-
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
-
-    let currentDateGroup: SessionListRenderableSession[] = [];
-    let currentDateString: string | null = null;
-
-    const flush = () => {
-        if (currentDateGroup.length === 0 || !currentDateString) return;
-
-        const groupDate = new Date(currentDateString);
-        const sessionDateOnly = new Date(groupDate.getFullYear(), groupDate.getMonth(), groupDate.getDate());
-
-        let headerTitle: string;
-        if (sessionDateOnly.getTime() === today.getTime()) {
-            headerTitle = t('sessionHistory.today');
-        } else if (sessionDateOnly.getTime() === yesterday.getTime()) {
-            headerTitle = t('sessionHistory.yesterday');
-        } else {
-            const diffTime = today.getTime() - sessionDateOnly.getTime();
-            const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-            headerTitle = t('sessionHistory.daysAgo', { count: diffDays });
-        }
-
-        const groupKey = `server:${params.serverKey}:${params.section}:day:${formatYyyyMmDdLocal(sessionDateOnly)}`;
-        pushSessionGroupEntriesToList({
-            listData: params.listData,
-            section: params.section,
-            groupKind: 'date',
-            header: {
-                title: headerTitle,
-                headerKind: 'date',
-                groupKey,
-            },
-            sessions: currentDateGroup,
-            serverScopeMeta: params.serverScopeMeta,
-        });
-    };
-
-    for (const session of params.sessions) {
-        const sessionDate = new Date(session.createdAt);
-        const dateString = sessionDate.toDateString();
-
-        if (currentDateString !== dateString) {
-            flush();
-            currentDateString = dateString;
-            currentDateGroup = [session];
-        } else {
-            currentDateGroup.push(session);
-        }
-    }
-
-    flush();
-}
-
-function pushSharedGroupToList(params: Readonly<{
-    listData: SessionListViewItem[];
-    sessions: ReadonlyArray<SessionListRenderableSession>;
-    section: 'active' | 'inactive';
-    serverKey: string;
-    serverScopeMeta: ServerScopeMeta;
-}>): void {
-    if (params.sessions.length === 0) return;
-
-    const groupKey = `server:${params.serverKey}:${params.section}:shared`;
-    pushSessionGroupEntriesToList({
-        listData: params.listData,
-        section: params.section,
-        groupKind: 'shared',
-        header: {
-            title: t('friends.sharedSessions'),
-            headerKind: 'shared',
-            groupKey,
-        },
-        sessions: params.sessions,
-        serverScopeMeta: params.serverScopeMeta,
-    });
 }
 
 function pushSessionGroupEntriesToList(params: Readonly<{
@@ -376,18 +274,26 @@ function pushSessionSectionToList(params: Readonly<{
 
     params.listData.push({
         type: 'header',
-        title: params.section === 'active' ? 'Active' : 'Inactive',
+        title: params.section === 'active' ? t('common.active') : t('common.inactive'),
         headerKind: params.section,
+        groupKey: `${params.section}:${params.serverScopeMeta.serverId ?? 'local'}`,
         ...params.serverScopeMeta,
     });
 
-    pushSharedGroupToList({
-        listData: params.listData,
-        sessions: params.sharedSessions,
-        section: params.section,
-        serverKey: params.serverKey,
-        serverScopeMeta: params.serverScopeMeta,
-    });
+    if (params.sharedSessions.length > 0) {
+        pushSessionGroupEntriesToList({
+            listData: params.listData,
+            section: params.section,
+            groupKind: 'shared',
+            header: {
+                title: t('friends.sharedSessions'),
+                headerKind: 'shared',
+                groupKey: `server:${params.serverKey}:${params.section}:shared`,
+            },
+            sessions: params.sharedSessions,
+            serverScopeMeta: params.serverScopeMeta,
+        });
+    }
 
     if (params.grouping === 'project') {
         pushProjectGroupsToList({
@@ -404,31 +310,70 @@ function pushSessionSectionToList(params: Readonly<{
         return;
     }
 
-    pushDateGroupsToList({
-        listData: params.listData,
-        sessions: params.ownedSessions,
-        section: params.section,
-        serverKey: params.serverKey,
-        serverScopeMeta: params.serverScopeMeta,
-    });
+    if (params.ownedSessions.length === 0) {
+        return;
+    }
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
+
+    let currentDateGroup: SessionListRenderableSession[] = [];
+    let currentDateString: string | null = null;
+
+    const flush = () => {
+        if (currentDateGroup.length === 0 || !currentDateString) return;
+
+        const groupDate = new Date(currentDateString);
+        const sessionDateOnly = new Date(groupDate.getFullYear(), groupDate.getMonth(), groupDate.getDate());
+
+        let headerTitle: string;
+        if (sessionDateOnly.getTime() === today.getTime()) {
+            headerTitle = t('sessionHistory.today');
+        } else if (sessionDateOnly.getTime() === yesterday.getTime()) {
+            headerTitle = t('sessionHistory.yesterday');
+        } else {
+            const diffTime = today.getTime() - sessionDateOnly.getTime();
+            const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+            headerTitle = t('sessionHistory.daysAgo', { count: diffDays });
+        }
+
+        const groupKey = `server:${params.serverKey}:${params.section}:day:${sessionDateOnly.getFullYear()}-${String(sessionDateOnly.getMonth() + 1).padStart(2, '0')}-${String(sessionDateOnly.getDate()).padStart(2, '0')}`;
+        pushSessionGroupEntriesToList({
+            listData: params.listData,
+            section: params.section,
+            groupKind: 'date',
+            header: {
+                title: headerTitle,
+                headerKind: 'date',
+                groupKey,
+            },
+            sessions: currentDateGroup,
+            serverScopeMeta: params.serverScopeMeta,
+        });
+    };
+
+    for (const session of params.ownedSessions) {
+        const sessionDate = new Date(session.createdAt);
+        const dateString = sessionDate.toDateString();
+
+        if (currentDateString !== dateString) {
+            flush();
+            currentDateString = dateString;
+            currentDateGroup = [session];
+        } else {
+            currentDateGroup.push(session);
+        }
+    }
+
+    flush();
 }
 
 export function buildSessionListViewData(
-    sessions: Record<string, SessionListRenderableSession>,
-    machines: Record<string, MachineDisplayRenderable>,
+    sessions: Readonly<Record<string, SessionListRenderableSession>>,
+    machines: Readonly<Record<string, MachineDisplayRenderable>>,
     options: BuildSessionListViewDataOptions
 ): SessionListViewItem[] {
-    let hasOwnSession = false;
-    for (const sessionIdRaw in sessions) {
-        if (Object.prototype.hasOwnProperty.call(sessions, sessionIdRaw)) {
-            hasOwnSession = true;
-            break;
-        }
-    }
-    if (!hasOwnSession) {
-        return EMPTY_SESSION_LIST_VIEW_DATA;
-    }
-
     const normalizedServerScope = options.serverScope
         ? normalizeSessionListServerScope(options.serverScope.serverId, options.serverScope.serverName)
         : null;
@@ -457,14 +402,14 @@ export function buildSessionListViewData(
         visibleSessionCount += 1;
         const isSharedSession = typeof session.owner === 'string' && session.owner.trim().length > 0;
         if (isSharedSession) {
-            if (isSessionActive(session)) {
+            if (session.active) {
                 activeSharedSessions ??= [];
                 activeSharedSessions.push(session);
             } else {
                 inactiveSharedSessions ??= [];
                 inactiveSharedSessions.push(session);
             }
-        } else if (isSessionActive(session)) {
+        } else if (session.active) {
             activeOwnedSessions ??= [];
             activeOwnedSessions.push(session);
         } else {
@@ -490,13 +435,18 @@ export function buildSessionListViewData(
     const listData: SessionListViewItem[] = [];
 
     const serverKey = normalizeSessionListKeyParts(normalizedServerScope?.serverId).serverKey;
+    const groupingModes = resolveSessionListGroupingModes({
+        groupInactiveSessionsByProject: options.groupInactiveSessionsByProject,
+        activeGroupingV1: options.activeGroupingV1,
+        inactiveGroupingV1: options.inactiveGroupingV1,
+    });
 
     pushSessionSectionToList({
         listData,
         ownedSessions: activeOwnedSessions,
         sharedSessions: activeSharedSessions,
         section: 'active',
-        grouping: resolveGroupingForSection('active', options),
+        grouping: groupingModes.activeGrouping,
         machines,
         serverKey,
         serverScopeMeta,
@@ -508,7 +458,7 @@ export function buildSessionListViewData(
         ownedSessions: inactiveOwnedSessions,
         sharedSessions: inactiveSharedSessions,
         section: 'inactive',
-        grouping: resolveGroupingForSection('inactive', options),
+        grouping: groupingModes.inactiveGrouping,
         machines,
         serverKey,
         serverScopeMeta,

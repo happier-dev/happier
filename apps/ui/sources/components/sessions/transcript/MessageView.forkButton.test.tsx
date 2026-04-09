@@ -14,6 +14,7 @@ const ensureSessionVisibleSpy = vi.fn();
 const updateSessionDraftSpy = vi.fn();
 const patchSessionMetadataWithRetrySpy = vi.fn();
 const modalAlertSpy = vi.fn();
+const resolvePreferredServerIdForSessionIdSpy = vi.fn<(sessionId: string) => string | undefined>();
 const resolveSessionTargetServerIdSpy = vi.fn<(sessionId: string) => string | null>();
 const createDefaultActionExecutorSpy = vi.fn();
 
@@ -236,6 +237,10 @@ vi.mock('@/components/sessions/model/resolveSessionTargetServerId', () => ({
     resolveSessionTargetServerIdSpy(sessionId) ?? fallbackServerId ?? null,
 }));
 
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
+  resolvePreferredServerIdForSessionId: (sessionId: string) => resolvePreferredServerIdForSessionIdSpy(sessionId),
+}));
+
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
   createDefaultActionExecutor: (options: any) => {
     createDefaultActionExecutorSpy(options);
@@ -246,9 +251,7 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
-  resolvePreferredServerIdForSessionId: () => {
-    throw new Error('legacy direct resolver should not be used in MessageView');
-  },
+  resolvePreferredServerIdForSessionId: (sessionId: string) => resolvePreferredServerIdForSessionIdSpy(sessionId),
 }));
 
 describe('MessageView (fork button)', () => {
@@ -259,6 +262,8 @@ describe('MessageView (fork button)', () => {
     updateSessionDraftSpy.mockReset();
     patchSessionMetadataWithRetrySpy.mockReset();
     modalAlertSpy.mockReset();
+    resolvePreferredServerIdForSessionIdSpy.mockReset();
+    resolvePreferredServerIdForSessionIdSpy.mockReturnValue('server-a');
     resolveSessionTargetServerIdSpy.mockReset();
     resolveSessionTargetServerIdSpy.mockReturnValue('server-a');
     createDefaultActionExecutorSpy.mockReset();
@@ -479,6 +484,7 @@ describe('MessageView (fork button)', () => {
   });
 
   it('threads the explicit session server id into the default action executor when preferred resolution is unavailable', async () => {
+    resolvePreferredServerIdForSessionIdSpy.mockReturnValue(undefined);
     resolveSessionTargetServerIdSpy.mockReturnValue(null);
     const { MessageView } = await import('./MessageView');
 
@@ -489,5 +495,7 @@ describe('MessageView (fork button)', () => {
     expect(createDefaultActionExecutorSpy).toHaveBeenCalled();
     const executorOptions = createDefaultActionExecutorSpy.mock.calls[0]?.[0];
     expect(executorOptions?.resolveServerIdForSessionId?.('s1')).toBe('server-explicit');
+    expect(resolvePreferredServerIdForSessionIdSpy).toHaveBeenCalledWith('s1');
+    expect(resolveSessionTargetServerIdSpy).not.toHaveBeenCalled();
   });
 });

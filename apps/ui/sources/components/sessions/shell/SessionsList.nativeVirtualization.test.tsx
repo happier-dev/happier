@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { SESSION_LIST_ROW_HEIGHT_DEFAULT } from './sessionListRowHeights';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+import { buildSessionListIndexFromViewData } from '@/sync/domains/sessionList/sessionListIndex';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -305,6 +306,17 @@ installSessionShellCommonModuleMocks({
                     if (key === 'sessionListGroupOrderV1') return [{}, vi.fn()];
                     return [null, vi.fn()];
                 },
+                useSessionListRenderableWithServerScope: (_serverId: any, sessionId: string) => {
+                    if (sessionId === 'sess_a') return sessionA as any;
+                    if (sessionId === 'sess_b') return sessionB as any;
+                    return null;
+                },
+                useSessionListRowStateByServerId: () => ({
+                    server_a: {
+                        sess_a: sessionA,
+                        sess_b: sessionB,
+                    },
+                }) as any,
                 storage: createStorageStoreMock(storageState),
             },
         });
@@ -377,7 +389,7 @@ vi.mock('@/hooks/session/useVisibleSessionListPaneState', () => ({
             sessionsReady: true,
             sessionCount: mockVisibleSessionListViewData.filter((item) => item.type === 'session').length,
         },
-        visibleSessionListViewData: mockVisibleSessionListViewData,
+        visibleSessionListIndex: buildSessionListIndexFromViewData(mockVisibleSessionListViewData),
         showLoading: false,
         showEmptyState: false,
     }),
@@ -481,6 +493,16 @@ describe('SessionsList (native virtualization)', () => {
         readMachineTargetForSessionMock.mockReset();
         readMachineTargetForSessionMock.mockImplementation(() => null);
         resetVisibleSessionListViewData();
+        storageState.sessionListRenderables = {
+            sess_a: sessionA,
+            sess_b: sessionB,
+        };
+        storageState.sessionListRowStateByServerId = {
+            server_a: {
+                sess_a: sessionA,
+                sess_b: sessionB,
+            },
+        };
     });
 
     afterEach(() => {
@@ -559,9 +581,10 @@ describe('SessionsList (native virtualization)', () => {
         await renderSessionsList();
 
         const getItemType = flashListCompatState.current?.props?.getItemType;
-        expect(getItemType?.(mockVisibleSessionListViewData[0], 0)).toBe('header:active');
-        expect(getItemType?.(mockVisibleSessionListViewData[1], 1)).toBe('header:project');
-        expect(getItemType?.(mockVisibleSessionListViewData[2], 2)).toBe('session');
+        const data = flashListCompatState.current?.props?.data as any[] | null | undefined;
+        expect(getItemType?.(data?.[0], 0)).toBe('header:active');
+        expect(getItemType?.(data?.[1], 1)).toBe('header:project');
+        expect(getItemType?.(data?.[2], 2)).toBe('session');
     });
 
     it('passes path secondary-line mode for date-grouped rows', async () => {

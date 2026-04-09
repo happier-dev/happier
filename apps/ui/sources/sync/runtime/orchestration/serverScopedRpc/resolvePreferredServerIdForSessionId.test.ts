@@ -55,24 +55,20 @@ describe('resolvePreferredServerIdForSessionId', () => {
             sessions: {
                 'session-1': session,
             },
-            sessionListViewData: [
-                {
-                    type: 'session',
-                    serverId: 'active-server',
-                    serverName: 'Active',
-                    session: createRenderableSession('session-1', 'active-server'),
-                },
-            ],
-            sessionListViewDataByServerId: {
-                'owner-server': [
+            sessionListRenderables: {
+                'session-1': createRenderableSession('session-1', 'active-server'),
+            },
+            sessionListIndexByServerId: {
+                'active-server': [
                     {
                         type: 'session',
-                        serverId: 'owner-server',
-                        serverName: 'Owner',
-                        session: createRenderableSession('session-1', 'owner-server'),
+                        sessionId: 'session-1',
+                        serverId: 'active-server',
+                        serverName: 'Active',
                     },
                 ],
             },
+            concurrentSessionListCacheByServerId: {},
         }), true);
 
         const { resolvePreferredServerIdForSessionId } = await import('./resolvePreferredServerIdForSessionId');
@@ -84,19 +80,73 @@ describe('resolvePreferredServerIdForSessionId', () => {
         storage.setState((state) => ({
             ...state,
             sessions: {},
-            sessionListViewData: [
-                {
-                    type: 'session',
-                    serverId: 'active-server',
-                    serverName: 'Active',
-                    session: createRenderableSession('session-1', 'active-server'),
-                },
-            ],
-            sessionListViewDataByServerId: {},
+            sessionListRenderables: {
+                'session-1': createRenderableSession('session-1', 'active-server'),
+            },
+            sessionListIndexByServerId: {
+                'active-server': [
+                    {
+                        type: 'session',
+                        sessionId: 'session-1',
+                        serverId: 'active-server',
+                        serverName: 'Active',
+                    },
+                ],
+            },
+            concurrentSessionListCacheByServerId: {},
         }), true);
 
         const { resolvePreferredServerIdForSessionId } = await import('./resolvePreferredServerIdForSessionId');
 
         expect(resolvePreferredServerIdForSessionId('session-1')).toBe('active-server');
+    });
+
+    it('prefers the cached owner server when the stored session scope still mirrors the active server', async () => {
+        storage.setState((state) => ({
+            ...state,
+            sessions: {
+                'session-1': createSession('session-1', 'active-server'),
+            },
+            sessionListRenderables: {
+                'session-1': createRenderableSession('session-1', 'active-server'),
+            },
+            sessionListIndexByServerId: {
+                'active-server': [
+                    {
+                        type: 'session',
+                        sessionId: 'session-1',
+                        serverId: 'active-server',
+                        serverName: 'Active',
+                    },
+                ],
+            },
+            concurrentSessionListCacheByServerId: {
+                'owner-server': {
+                    serverName: 'Owner',
+                    sessions: {
+                        'session-1': createRenderableSession('session-1', 'owner-server'),
+                    },
+                },
+            },
+        }), true);
+
+        const { resolvePreferredServerIdForSessionId } = await import('./resolvePreferredServerIdForSessionId');
+
+        expect(resolvePreferredServerIdForSessionId('session-1')).toBe('owner-server');
+    });
+
+    it('returns undefined when the session cannot be resolved to any cached server', async () => {
+        storage.setState((state) => ({
+            ...state,
+            sessions: {},
+            sessionListIndexByServerId: {
+                'active-server': [],
+            },
+            concurrentSessionListCacheByServerId: {},
+        }), true);
+
+        const { resolvePreferredServerIdForSessionId } = await import('./resolvePreferredServerIdForSessionId');
+
+        expect(resolvePreferredServerIdForSessionId('session-1')).toBeUndefined();
     });
 });

@@ -1,6 +1,5 @@
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 
-const emptyChips: readonly AgentInputExtraActionChip[] = Object.freeze([]);
 const combinedChipsCache = new WeakMap<ReadonlyArray<AgentInputExtraActionChip>, WeakMap<ReadonlyArray<AgentInputExtraActionChip>, ReadonlyArray<AgentInputExtraActionChip>>>();
 
 function getCachedCombinedChips(
@@ -38,8 +37,5 @@ export function combineSessionViewExtraActionChips(
     }
 
     const chips = [...left, ...right];
-    if (chips.length === 0) {
-        return emptyChips;
-    }
     return setCachedCombinedChips(left, right, chips);
 }

@@ -82,6 +82,10 @@ vi.mock('@/components/sessions/sharing', () => ({
     SessionShareDialog: () => null,
 }));
 
+vi.mock('expo-crypto', () => ({
+    getRandomBytes: () => new Uint8Array(12),
+}));
+
 describe('Session Sharing Screen permissions', () => {
     it('waits for session hydration before rendering sharing content', async () => {
         sessionHydrated = false;

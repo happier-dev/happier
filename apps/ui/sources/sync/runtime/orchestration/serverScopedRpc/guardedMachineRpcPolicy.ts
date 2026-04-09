@@ -4,7 +4,8 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
 
 const GUARDED_MACHINE_RPC_METHOD_PREFIXES = [
-    'daemon.bulkTransfer.',
+    // Canonical transfer chunk/init/finalize control-plane methods must follow transfer policy.
+    'daemon.transfer.',
 ] as const;
 
 const GUARDED_MACHINE_RPC_METHODS = new Set<string>([

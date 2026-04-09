@@ -10,6 +10,7 @@ import { sessionExecutionRunList } from '@/sync/ops/sessionExecutionRuns';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { useSessionExecutionRunLaunchability } from '@/hooks/session/useSessionExecutionRunLaunchability';
 import type { ExecutionRunBackendCapabilityMap } from '@/sync/domains/executionRuns/resolveExecutionRunAvailableBackends';
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { t } from '@/text';
 import { ExecutionRunList } from '@/components/sessions/runs/ExecutionRunList';
 import { resolveExecutionRunLauncherIntents } from '@/components/sessions/runs/launcher/executionRunLauncherModel';
@@ -24,12 +25,6 @@ type LoadState =
   | { status: 'error'; error: string }
   | { status: 'loaded'; runs: readonly ExecutionRunPublicState[] };
 
-function normalizeSessionId(value: unknown): string | null {
-  if (typeof value === 'string' && value.trim().length > 0) return value.trim();
-  if (Array.isArray(value) && typeof value[0] === 'string' && value[0].trim().length > 0) return value[0].trim();
-  return null;
-}
-
 function readExecutionRunsErrorMessage(result: Readonly<{ error?: string; errorCode?: string }> | null | undefined): string {
   const message = getErrorMessage({
     message: typeof result?.error === 'string' ? result.error : undefined,
@@ -40,13 +35,13 @@ function readExecutionRunsErrorMessage(result: Readonly<{ error?: string; errorC
 
 export default function SessionRunsScreen() {
   const { theme } = useUnistyles();
-  const params = useLocalSearchParams();
-  const sessionId = normalizeSessionId((params as any)?.id);
+  const params = useLocalSearchParams<{ id?: string | string[] }>();
+  const sessionId = normalizeSessionId(params.id);
   const headerTitle = t('runs.title');
   const screenOptions = React.useMemo(() => {
     return { headerShown: true, headerTitle };
   }, [headerTitle]);
-  const hydrateReady = useHydrateSessionForRoute(sessionId ?? '', 'SessionRunsScreen.hydrate');
+  const hydrateReady = useHydrateSessionForRoute(sessionId, 'SessionRunsScreen.hydrate');
   if (!hydrateReady) {
     return (
       <View testID="session-runs-screen" style={{ flex: 1, backgroundColor: theme.colors.groupped?.background ?? theme.colors.surface }}>

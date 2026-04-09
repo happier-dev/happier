@@ -127,6 +127,8 @@ describe('ProjectGroupHeader menu items', () => {
 
         const secondMenuProps = dropdownMenuSpy.mock.calls.at(-1)?.[0] as any;
         expect(secondMenuProps?.items).toBe(firstMenuProps?.items);
+        expect(secondMenuProps?.placement).toBe('bottom');
+        expect(secondMenuProps?.popoverAnchorAlign).toBe('end');
         expect(secondMenuProps?.items).toEqual(expect.arrayContaining([
             expect.objectContaining({ id: 'openProject' }),
             expect.objectContaining({ id: 'rename' }),
@@ -180,5 +182,22 @@ describe('ProjectGroupHeader menu items', () => {
         });
 
         expect(latestMenuProps?.triggerParams?.toggle).toHaveBeenCalledTimes(1);
+    });
+
+    it('anchors the ordering menu below the trigger', async () => {
+        const { CollapsibleSectionHeader } = await import('./sessionListChrome');
+
+        await renderScreen(
+            <CollapsibleSectionHeader
+                title="Today"
+                collapsed={false}
+                onPress={vi.fn()}
+                showOrderingMenu={true}
+            />,
+        );
+
+        const latestMenuProps = dropdownMenuSpy.mock.calls.at(-1)?.[0] as any;
+        expect(latestMenuProps?.placement).toBe('bottom');
+        expect(latestMenuProps?.popoverAnchorAlign).toBe('end');
     });
 });

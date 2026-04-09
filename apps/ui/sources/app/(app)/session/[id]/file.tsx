@@ -11,11 +11,12 @@ import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneSco
 import { serializeSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 
 export default function FileScreen() {
     const router = useRouter();
     const params = useLocalSearchParams<{ id: string; path: string }>();
-    const sessionId = params.id || '';
+    const sessionId = normalizeSessionId(params.id);
     const decodedFilePath = decodeSessionFilePathParam(params.path as string);
     const filePath = isSafeWorkspaceRelativePath(decodedFilePath) ? decodedFilePath.trim() : '';
     const isUnsafeFilePath = Boolean(decodedFilePath) && !filePath;

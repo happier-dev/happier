@@ -22,4 +22,14 @@ describe('normalizeTrimmedStringArrayWithSharedEmpty', () => {
 
         expect(normalized).toEqual(['server-a', 'server-b', 'server-c']);
     });
+
+    it('reuses the same normalized array for repeated normalization of the same source array', () => {
+        const values = [' server-a ', 'server-b', 'server-a', '', 'server-c'];
+
+        const first = normalizeTrimmedStringArrayWithSharedEmpty(values);
+        const second = normalizeTrimmedStringArrayWithSharedEmpty(values);
+
+        expect(first).toBe(second);
+        expect(first).toEqual(['server-a', 'server-b', 'server-c']);
+    });
 });

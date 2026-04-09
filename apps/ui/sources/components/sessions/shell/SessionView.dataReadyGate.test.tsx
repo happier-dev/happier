@@ -47,7 +47,6 @@ const themeColors = {
     status: { error: '#f00' },
     shadow: { color: '#000', opacity: 0.2 },
 } as const;
-
 installSessionShellCommonModuleMocks({
     reactNative: async () =>
         createReactNativeWebMock({
@@ -99,14 +98,14 @@ installSessionShellCommonModuleMocks({
 
         return createStorageModuleStub({
             storage: {
-                getState: () => ({
-                    sessions: { s1: session },
-                    settings: {},
-                    sessionListViewDataByServerId: {},
-                }),
-            } as any,
-            useSession: () => session,
-            useIsDataReady: () => false,
+	                getState: () => ({
+	                    sessions: { s1: session },
+	                    settings: {},
+	                    concurrentSessionListCacheByServerId: {},
+	                }),
+	            } as any,
+	            useSession: () => session,
+	            useIsDataReady: () => false,
             useRealtimeStatus: () => 'connected',
             useSessionMessages: () => ({ messages: [], isLoaded: true }),
             useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
@@ -190,6 +189,7 @@ vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => (
 }));
 vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true }),
+    useSessionReachableMachineTarget: () => null,
 }));
 vi.mock('@/components/appShell/panes/useRegisterSessionPaneDriver', () => ({
     useRegisterSessionPaneDriver: () => 'session:s1',
@@ -251,4 +251,5 @@ describe('SessionView (data ready gating)', () => {
         expect(screen.findAllByTestId('session-composer-input')).toHaveLength(1);
         expect(screen.findAllByTestId('session-header-action-menu-trigger')).toHaveLength(1);
     });
+
 });

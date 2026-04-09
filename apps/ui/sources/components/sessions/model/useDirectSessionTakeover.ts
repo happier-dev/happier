@@ -4,6 +4,7 @@ import { showDirectSessionTakeoverDialog } from '@/components/sessions/directSes
 import { Modal } from '@/modal';
 import type { UseDirectSessionRuntimeResult } from '@/components/sessions/model/useDirectSessionRuntime';
 import { machineDirectSessionTakeover, machineDirectSessionTakeoverPersist } from '@/sync/ops/machineDirectSessions';
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
 
@@ -23,6 +24,7 @@ type UseDirectSessionTakeoverResult = Readonly<{
 
 export function useDirectSessionTakeover(params: UseDirectSessionTakeoverParams): UseDirectSessionTakeoverResult {
     const [takeoverInFlight, setTakeoverInFlight] = React.useState<DirectTakeoverMode | null>(null);
+    const normalizedSessionId = React.useMemo(() => normalizeSessionId(params.sessionId), [params.sessionId]);
 
     const readLatestStatus = React.useCallback(async () => {
         return await params.directSessionRuntime.refreshNow();
@@ -71,7 +73,7 @@ export function useDirectSessionTakeover(params: UseDirectSessionTakeoverParams)
         try {
             const request = {
                 machineId: directSessionLink.machineId,
-                sessionId: params.sessionId,
+                sessionId: normalizedSessionId,
                 ...(forceStop ? { forceStop: true } : {}),
             };
             const serverId = params.directSessionRuntime.sessionServerId;
@@ -86,7 +88,7 @@ export function useDirectSessionTakeover(params: UseDirectSessionTakeoverParams)
 
             await Promise.all([
                 params.directSessionRuntime.refreshNow(),
-                sync.refreshSessionMessages(params.sessionId),
+                sync.refreshSessionMessages(normalizedSessionId),
                 mode === 'persisted' ? sync.refreshSessions() : Promise.resolve(),
             ]);
 
@@ -97,7 +99,7 @@ export function useDirectSessionTakeover(params: UseDirectSessionTakeoverParams)
         } finally {
             setTakeoverInFlight(null);
         }
-    }, [params, readLatestStatus]);
+    }, [normalizedSessionId, params.directSessionRuntime, params.hasWriteAccess, readLatestStatus]);
 
     const ensureReadyForSend = React.useCallback(async (): Promise<boolean> => {
         const directSessionLink = params.directSessionRuntime.directSessionLink;

@@ -1,8 +1,9 @@
-import type { SessionListViewItem } from '@/sync/domains/state/storage';
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import { LruMap } from '@/utils/cache/lruMap';
 
 import type { SessionListProjectHeaderViewModel } from './sessionListProjectHeaderViewModels';
+import { readSessionListShellCacheMaxEntriesFromEnv } from './sessionListShellCacheConfig';
 
-type ProjectHeaderItem = Extract<SessionListViewItem, { type: 'header' }> & { headerKind: 'project' };
 type WorkspaceScopeHint = Readonly<{ serverId: string; machineId: string; rootPath: string }>;
 
 export type SessionListHeaderViewState =
@@ -23,11 +24,15 @@ export type SessionListHeaderViewState =
         title: string;
     }>;
 
-const PROJECT_HEADER_VIEW_STATE_CACHE = new Map<string, SessionListHeaderViewState>();
-const SECTION_HEADER_VIEW_STATE_CACHE = new Map<string, SessionListHeaderViewState>();
+const PROJECT_HEADER_VIEW_STATE_CACHE = new LruMap<string, SessionListHeaderViewState>({
+    maxEntries: readSessionListShellCacheMaxEntriesFromEnv(),
+});
+const SECTION_HEADER_VIEW_STATE_CACHE = new LruMap<string, SessionListHeaderViewState>({
+    maxEntries: readSessionListShellCacheMaxEntriesFromEnv(),
+});
 
 export function resolveSessionListHeaderViewState(input: Readonly<{
-    item: Extract<SessionListViewItem, { type: 'header' }>;
+    item: Extract<SessionListIndexItem, { type: 'header' }>;
     collapsedKeys: Readonly<Record<string, boolean>>;
     projectHeaderViewModelByGroupKey: ReadonlyMap<string, SessionListProjectHeaderViewModel>;
     translateServerHeader: (server: string) => string;

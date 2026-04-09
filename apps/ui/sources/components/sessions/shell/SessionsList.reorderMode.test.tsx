@@ -2,6 +2,7 @@ import React, { act } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPartialStorageModuleMock, renderScreen } from '@/dev/testkit';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+import { buildSessionListIndexFromViewData } from '@/sync/domains/sessionList/sessionListIndex';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -88,6 +89,18 @@ installSessionShellCommonModuleMocks({
     },
     storage: async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
         useAllMachines: () => [],
+        useProfile: () => ({ id: 'u1' } as any),
+        useSessionListRowStateByServerId: () => ({
+            server_a: {
+                sess_a: sessionA,
+                sess_b: sessionB,
+            },
+        }) as any,
+        useSessionListRenderableWithServerScope: (_serverId: any, sessionId: string) => {
+            if (sessionId === 'sess_a') return sessionA;
+            if (sessionId === 'sess_b') return sessionB;
+            return null;
+        },
         useSetting: (key: string) => {
             if (key === 'compactSessionView') return false;
             if (key === 'compactSessionViewMinimal') return false;
@@ -177,6 +190,7 @@ const mockVisibleSessionListViewData: any[] = [
     { type: 'header', title: 'Inactive', headerKind: 'inactive', groupKey: inactiveGroupKey, serverId: 'server_a', serverName: 'Server A' },
     { type: 'session', session: sessionB, groupKey: inactiveGroupKey, groupKind: 'date', serverId: 'server_a', serverName: 'Server A' },
 ];
+const mockVisibleSessionListIndex = buildSessionListIndexFromViewData(mockVisibleSessionListViewData);
 
 vi.mock('@/hooks/session/useVisibleSessionListPaneState', () => ({
     useVisibleSessionListPaneState: () => ({
@@ -184,7 +198,7 @@ vi.mock('@/hooks/session/useVisibleSessionListPaneState', () => ({
             sessionsReady: true,
             sessionCount: mockVisibleSessionListViewData.filter((item) => item.type === 'session').length,
         },
-        visibleSessionListViewData: mockVisibleSessionListViewData,
+        visibleSessionListIndex: mockVisibleSessionListIndex,
         showLoading: false,
         showEmptyState: false,
     }),

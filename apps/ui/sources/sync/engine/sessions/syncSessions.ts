@@ -3,11 +3,13 @@ import { normalizeRawMessage } from '@/sync/typesRaw';
 import { computeNextSessionSeqFromUpdate } from '@/sync/domains/session/sequence/realtimeSessionSeq';
 import type { Metadata, Session } from '@/sync/domains/state/storageTypes';
 import { computeNextReadStateV1 } from '@/sync/domains/state/readStateV1';
+import { preserveSessionRuntimeLocalMetadata } from '@/sync/domains/session/preserveSessionRuntimeLocalMetadata';
 import {
-    buildSessionListRenderableMetadata,
+    deriveSessionListRenderableHasUnreadMessagesFromMetadataPatch,
     derivePendingRequestFlagsFromAgentState,
     type SessionListRenderableSession,
 } from '@/sync/domains/session/listing/sessionListRenderable';
+import { buildSessionListRenderableMetadataComparison } from '@/sync/domains/session/listing/sessionListRenderableMetadataComparison';
 import type { ApiMessage, ApiSessionMessagesResponse } from '@/sync/api/types/apiTypes';
 import { ApiSessionMessagesResponseSchema } from '@/sync/api/types/apiTypes';
 import { storage } from '@/sync/domains/state/storage';
@@ -98,6 +100,7 @@ export async function buildUpdatedSessionFromSocketUpdate(params: {
             ? parsePlainSessionMetadata(updateBody.metadata.value)
             : await sessionEncryption!.decryptMetadata(updateBody.metadata.version, updateBody.metadata.value)
         : session.metadata;
+    const mergedMetadata = preserveSessionRuntimeLocalMetadata(session.metadata, metadata);
 
     const nextSession: Session = {
         ...session,
@@ -116,7 +119,7 @@ export async function buildUpdatedSessionFromSocketUpdate(params: {
             typeof updateBody.pendingUserActionRequestCount === 'number'
                 ? updateBody.pendingUserActionRequestCount
                 : session.pendingUserActionRequestCount,
-        metadata,
+        metadata: mergedMetadata,
         metadataVersion: updateBody.metadata ? updateBody.metadata.version : session.metadataVersion,
         updatedAt: updateCreatedAt,
         seq: computeNextSessionSeqFromUpdate({
@@ -169,20 +172,38 @@ export async function buildUpdatedSessionListRenderablePatchFromSocketUpdate(par
                     hasPendingPermissionRequests: renderable.hasPendingPermissionRequests === true,
                     hasPendingUserActionRequests: renderable.hasPendingUserActionRequests === true,
                 };
+    const nextSessionSeq = computeNextSessionSeqFromUpdate({
+        currentSessionSeq: renderable.seq ?? 0,
+        updateType: 'update-session',
+        containerSeq: updateSeq,
+        messageSeq: undefined,
+    });
+    const mergedRenderableMetadata = parsedMetadata === undefined
+        ? renderable.metadata
+        : buildSessionListRenderableMetadataComparison(
+            preserveSessionRuntimeLocalMetadata(renderable.metadata, parsedMetadata),
+            renderable.metadata,
+        );
 
     return {
-        seq: computeNextSessionSeqFromUpdate({
-            currentSessionSeq: renderable.seq ?? 0,
-            updateType: 'update-session',
-            containerSeq: updateSeq,
-            messageSeq: undefined,
-        }),
+        seq: nextSessionSeq,
         updatedAt: updateCreatedAt,
         metadataVersion: updateBody.metadata ? updateBody.metadata.version : renderable.metadataVersion,
         agentStateVersion: updateBody.agentState ? updateBody.agentState.version : renderable.agentStateVersion,
-        metadata: parsedMetadata === undefined ? renderable.metadata : buildSessionListRenderableMetadata(parsedMetadata),
+        metadata: mergedRenderableMetadata,
         hasPendingPermissionRequests: pendingFlags.hasPendingPermissionRequests,
         hasPendingUserActionRequests: pendingFlags.hasPendingUserActionRequests,
+        hasUnreadMessages: deriveSessionListRenderableHasUnreadMessagesFromMetadataPatch({
+            metadata: parsedMetadata === undefined
+                ? renderable.metadata
+                : preserveSessionRuntimeLocalMetadata(renderable.metadata, parsedMetadata),
+            nextSessionSeq,
+            nextLastViewedSessionSeq:
+                typeof updateBody.lastViewedSessionSeq === 'number'
+                    ? updateBody.lastViewedSessionSeq
+                    : undefined,
+            previousHasUnreadMessages: renderable.hasUnreadMessages,
+        }),
     };
 }
 

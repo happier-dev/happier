@@ -1,8 +1,11 @@
-import type { SessionListViewItem } from '@/sync/domains/state/storage';
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import { resolveWorkspaceDisplayLabel } from '@/sync/domains/workspaces/workspaceLabel';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { tryBuildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
+import { LruMap } from '@/utils/cache/lruMap';
+
+import { readSessionListShellCacheMaxEntriesFromEnv } from './sessionListShellCacheConfig';
 
 export type SessionListProjectHeaderViewModel = Readonly<{
     collapseKey: string;
@@ -23,14 +26,16 @@ const EMPTY_SESSION_LIST_PROJECT_HEADER_VIEW_MODEL_STATE: SessionListProjectHead
     scopeHintByLegacyWorkspaceKey: new Map<string, WorkspaceScopeBase>(),
 };
 
-const SESSION_LIST_PROJECT_HEADER_VIEW_MODEL_STATE_CACHE = new Map<string, SessionListProjectHeaderViewModelState>();
+const SESSION_LIST_PROJECT_HEADER_VIEW_MODEL_STATE_CACHE = new LruMap<string, SessionListProjectHeaderViewModelState>({
+    maxEntries: readSessionListShellCacheMaxEntriesFromEnv(),
+});
 
 function appendCachePart(parts: string[], value: string): void {
     parts.push(value);
 }
 
 function buildSessionListProjectHeaderViewModelStateCacheKey(input: Readonly<{
-    listItems: ReadonlyArray<SessionListViewItem>;
+    listItems: ReadonlyArray<SessionListIndexItem>;
     workspaceLabels: Readonly<Record<string, string> | null | undefined>;
     workspaceRefs: ReadonlyArray<WorkspaceRefV1>;
 }>): string {
@@ -73,7 +78,7 @@ function buildSessionListProjectHeaderViewModelStateCacheKey(input: Readonly<{
 }
 
 export function buildSessionListProjectHeaderViewModels(input: Readonly<{
-    listItems: ReadonlyArray<SessionListViewItem>;
+    listItems: ReadonlyArray<SessionListIndexItem>;
     workspaceLabels: Readonly<Record<string, string> | null | undefined>;
     workspaceRefs: ReadonlyArray<WorkspaceRefV1>;
 }>): SessionListProjectHeaderViewModelState {
