@@ -87,7 +87,8 @@ happier connect gemini
 - `happier auth` – Manage authentication
 - `happier connect` – Store AI vendor API keys in Happier cloud
 - `happier notify` – Send a push notification to your devices
-- `happier daemon` – Manage background service
+- `happier service` – Manage background services
+- `happier daemon` – Legacy alias for background service commands
 - `happier doctor` – System diagnostics & troubleshooting
 
 ### Connect Subcommands
