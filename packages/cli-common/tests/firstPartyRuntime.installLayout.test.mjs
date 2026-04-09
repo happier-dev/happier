@@ -6,6 +6,20 @@ import {
   resolveInstalledFirstPartyComponentPaths,
 } from '../dist/firstPartyRuntime/index.js';
 
+const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+
+function withPlatform(platform, fn) {
+  Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: platform });
+  const result = fn();
+  if (result && typeof result.finally === 'function') {
+    return result.finally(() => {
+      Object.defineProperty(process, 'platform', originalPlatformDescriptor);
+    });
+  }
+  Object.defineProperty(process, 'platform', originalPlatformDescriptor);
+  return result;
+}
+
 test('cli and daemon resolve to the same install root and current payload paths', () => {
   const env = {
     HOME: '/Users/tester',
@@ -95,4 +109,28 @@ test('publicdev install layout resolves a side-by-side cli root and shim', () =>
   assert.equal(daemonPaths.binaryPath, '/Users/tester/.happier-custom/cli-dev/current/happier');
   assert.equal(daemonPaths.nodeEntrypointPath, '/Users/tester/.happier-custom/cli-dev/current/package-dist/index.mjs');
   assert.equal(daemonPaths.shimPaths[0], '/Users/tester/.happier-custom/bin/hdev');
+});
+
+test('installed component paths use .exe suffixes for Windows binaries and shims', () => {
+  withPlatform('win32', () => {
+    const env = {
+      HOME: 'C:\\Users\\tester',
+      HAPPIER_HOME_DIR: 'C:\\Users\\tester\\.happier-custom',
+    };
+
+    const stablePaths = resolveInstalledFirstPartyComponentPaths({
+      componentId: 'happier-cli',
+      processEnv: env,
+    });
+    const previewPaths = resolveInstalledFirstPartyComponentPaths({
+      componentId: 'happier-cli',
+      processEnv: env,
+      releaseRing: 'preview',
+    });
+
+    assert.equal(stablePaths.binaryPath, 'C:\\Users\\tester\\.happier-custom\\cli\\current\\happier.exe');
+    assert.equal(stablePaths.shimPaths[0], 'C:\\Users\\tester\\.happier-custom\\bin\\happier.exe');
+    assert.equal(previewPaths.binaryPath, 'C:\\Users\\tester\\.happier-custom\\cli-preview\\current\\happier.exe');
+    assert.equal(previewPaths.shimPaths[0], 'C:\\Users\\tester\\.happier-custom\\bin\\hprev.exe');
+  });
 });
