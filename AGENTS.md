@@ -138,6 +138,15 @@ If implementation exists before the test:
 - Prefer small focused files and coherent subfolders; extract mixed-responsibility or oversized files when that improves clarity, reuse, and long-term maintainability.
 - Before handoff, review your change like a merge reviewer: look for stale logic, duplicate paths, ownership drift, missing cleanup, missing edge-case handling, and leftover compatibility layers.
 
+### State Continuity, Derived Data, And Refresh Behavior (Required)
+- Do not conflate `loading` with `empty`. If the UI already has valid data for the current scope, keep rendering that last-known-good data while refresh is in flight.
+- Prefer stale-while-revalidate behavior for user-visible lists, transcripts, detail panels, and cached snapshots. Background refresh should update existing UI, not temporarily blank it.
+- Do not clear arrays/maps/records to placeholder empty values during refresh unless the data is truly invalid for the current scope.
+- Preserve referential stability for semantically unchanged rows, items, maps, and arrays. Avoid replacing whole collections when only non-structural fields change.
+- Rebuild expensive derived state only on structural changes. For non-structural updates, patch the minimal affected state and preserve previous derived outputs when their meaning has not changed.
+- Keep canonical normalized state/indexes/caches as the only source of truth. View-model arrays and presentation-specific derived data must remain derived-only and must not silently become a parallel write path.
+- When a canonical lookup/index/cache already exists, extend it instead of introducing a second helper cache, lookup state, or compatibility layer that models the same concept differently.
+
 ### Repo Testing Guardrails (Mandatory)
 - Before behavior-changing edits, do a test impact inventory: identify the affected lanes, the existing tests that cover the contract, and any shared/package-local harnesses that the change can invalidate.
 - If you change a runtime contract, routing contract, transport shape, feature gate behavior, or provider capability, update the affected tests in the same change. Do not defer the test updates to a later cleanup pass.
@@ -501,6 +510,14 @@ Applies to `apps/ui/sources`.
 - `sync/store/*`: state domains/selectors/normalization and persistence-facing state shape.
 - `sync/store/*` may depend on `sync/domains/*`, but domain modules must not depend on `sync/store/*`.
 - `sync/ops/*`: orchestration-facing operation entrypoints (spawn/session/machine actions) that compose domain + runtime helpers.
+
+#### Session Runtime And List Architecture (Required)
+- For the session list/runtime domain, canonical ownership lives in normalized store/index state (`sessionListRenderables`, `sessionListIndexByServerId`, `concurrentSessionListCacheByServerId`) plus the canonical lookup layer. Do not reintroduce `sessionListViewData` or other presentation arrays as primary state.
+- Session-targeted routing, lookups, refreshes, and mutations must resolve through the correct scoped owner (session server / explicit target server / machine scope), not by assuming the current global active server is the right owner.
+- New session-list index builders, reachable-target projections, and index rebuild helpers must live under `apps/ui/sources/sync/store/sessionListIndex/**` or `apps/ui/sources/sync/domains/session/listing/**`. Do not add new near-root `sync/store/build*.ts` files for this domain.
+- When changing session list behavior, prefer patching canonical row/index state and preserving previous references for unchanged rows instead of rebuilding entire renderable maps or indexes.
+- Transcript/session switching must preserve cached transcript data during refresh and update in the background. Do not introduce blank-first loading transitions for already-hydrated sessions.
+- Concurrent/non-active server session caches must stay isolated by `serverId`. Do not merge or key them by URL-only or by active-server globals.
 
 #### Naming and File Markers
 - One concept per file; avoid mixed-responsibility modules.
