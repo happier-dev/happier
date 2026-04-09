@@ -899,6 +899,8 @@ export const zhHans: TranslationStructure = {
     open: "打开",
     name: "名称",
     blocked: "已阻止",
+    active: "活跃",
+    inactive: "非活跃",
     running: "运行中…",
     authenticate: "认证",
     save: "保存",
@@ -1953,7 +1955,7 @@ export const zhHans: TranslationStructure = {
 	  systemStatus: {
 	    sections: {
 	      appHealth: "应用与同步状态",
-	      currentServer: "当前 Relay",
+	      currentServer: "当前服务器",
       identity: "已登录身份",
       configuredServers: "已配置 Relay",
       machinesActiveServer: "机器（当前 Relay）",
@@ -1968,7 +1970,7 @@ export const zhHans: TranslationStructure = {
       lastSync: "最近同步",
     },
     server: {
-      activeServer: "当前 Relay",
+      activeServer: "当前服务器",
     },
     identity: {
       accountId: "账号 ID",
@@ -2024,7 +2026,7 @@ export const zhHans: TranslationStructure = {
       findings: "发现的问题",
     },
     overview: {
-      activeServer: "当前 Relay",
+      activeServer: "当前服务器",
       account: "账号",
       onlineMachines: "在线机器（当前服务器）",
       cachedAttribution: ({ count }: { count: number }) => `可用缓存 doctor snapshot：${count} 个`,
@@ -2074,8 +2076,8 @@ export const zhHans: TranslationStructure = {
         subtitle: ({ ui, machine }: { ui: string; machine: string }) => `UI：${ui} • 守护进程：${machine}`,
         steps: {
           chooseAccount: "确认你希望使用的服务器/账号。",
-          switchUiServer: "将 UI 与守护进程切换到同一服务器（或反之）。",
-          restartDaemon: "让守护进程指向正确服务器后重启，并重试。",
+          switchUiServer: "让 UI 保持指向你要使用的服务器，然后重新连接后台服务，使其跟随该服务器。",
+          restartDaemon: "把后台服务重新配置到正确服务器后再重启，然后重试。",
         },
       },
       serverMismatchPasted: {
@@ -2607,8 +2609,15 @@ export const zhHans: TranslationStructure = {
       collapsedClickActionOpenSessionsTitle: 'Open sessions list',
       placementTitle: 'Placement',
       placementFooter: 'Choose where the overlay sits on the screen.',
-      placementModeTitle: 'Placement mode',
-      placementModeSubtitle: 'Switch between anchored and custom placement',
+      presentationModeTitle: 'Presentation mode',
+            presentationModeSubtitle: 'Choose whether the overlay follows the display notch or floats freely',
+            presentationAutomaticTitle: 'Automatic',
+            presentationNotchIntegratedTitle: 'Notch-integrated',
+            presentationFloatingOverlayTitle: 'Floating overlay',
+            hostModeFallbackTitle: 'Host mode: Floating overlay',
+            hostModeFallbackSubtitle: 'Notch-integrated mode is unavailable on this display, so the overlay falls back to a floating overlay.',
+            placementModeTitle: 'Placement mode',
+            placementModeSubtitle: 'Switch between anchored and custom placement',
       placementAnchoredTitle: 'Anchored',
       placementCustomTitle: 'Custom',
       anchorPresetTitle: 'Anchor preset',
@@ -7115,9 +7124,9 @@ settingsSession: {
 			          preAuthTitle: '你的中继在哪里？',
 	          preAuthBody: '你的中继会在手机和电脑之间转发消息。选择中继运行的位置，之后也可以更改。',
           preAuthContinueHint: '继续后，Happier 会带你返回所选中继的登录流程，然后回到这里完成设置。',
-	    currentRelayTitle: '当前中继',
-	    selectedRelayFooterLabel: '当前中继',
-	    selectedRelayFooterLine: ({ relay }: { relay: string }) => `当前中继：${relay}`,
+	    currentRelayTitle: '当前服务器',
+	    selectedRelayFooterLabel: '当前服务器',
+	    selectedRelayFooterLine: ({ relay }: { relay: string }) => `当前服务器：${relay}`,
 	    currentRelayDescription: ({ relayUrl }: { relayUrl: string }) => `当前中继：${relayUrl}`,
 	    accountWillLiveOnRelay: ({ relayUrl }: { relayUrl: string }) => `你的账户将位于 ${relayUrl}。`,
 	    savedRelaysTitle: '已保存的中继',
@@ -7238,6 +7247,19 @@ settingsSession: {
       stopped: "已停止",
       likelyAlive: "可能正在运行",
     },
+    backgroundServiceModes: {
+      generic: "background service",
+      defaultFollowing: "default background service",
+      legacyPinned: "legacy pinned background service",
+    },
+    backgroundServicePrompt: {
+        targetServer: '目标服务器',
+        targetReleaseChannel: '目标发布通道',
+        existingServices: '现有服务：',
+        running: '运行中',
+    },
+    repairBackgroundServiceAction: "Repair background service",
+    repairBackgroundServiceProgressTitle: "Repairing background service",
     stopDaemon: "停止守护进程",
     stopDaemonConfirmTitle: "停止守护进程？",
     stopDaemonConfirmBody:
@@ -7263,6 +7285,19 @@ settingsSession: {
       startedAt: "启动时间",
       cliVersion: "CLI 版本",
     daemonStateVersion: "守护进程状态版本",
+    runtimeInventory: 'Happier 运行时清单',
+    runtimeInventoryOverview: '概览',
+    runtimeInventoryInstallations: '安装项',
+    runtimeInventoryServices: '服务',
+    runtimeInventoryWarnings: '警告',
+    runtimeSummary: ({ cliVersion, daemonVersion, daemonRing, installationCount, serviceCount, warningCount }: {
+        cliVersion: string;
+        daemonVersion: string;
+        daemonRing: string;
+        installationCount: number;
+        serviceCount: number;
+        warningCount: number;
+    }) => `CLI ${cliVersion} • daemon ${daemonVersion} (${daemonRing}) • ${installationCount} installations • ${serviceCount} services • ${warningCount} warnings`,
     transferExposure: {
       title: "传输暴露",
       status: "传输暴露",

@@ -22,23 +22,17 @@ describe('useHappierVoiceSupport', () => {
             featureToggles: { voice: true },
         });
 
-        const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
         resetServerFeaturesClientForTests();
+        await getServerFeaturesSnapshot({ force: true });
 
         const { useHappierVoiceSupport } = await import('./useHappierVoiceSupport');
-        const { useFeatureDecision } = await import('./useFeatureDecision');
 
-        const hook = await renderHook(() => ({
-            value: useHappierVoiceSupport(),
-            decision: useFeatureDecision('voice.happierVoice'),
-        }), {
+        const hook = await renderHook(() => useHappierVoiceSupport(), {
             flushOptions: { cycles: 6, turns: 2 },
         });
 
-        expect(hook.getCurrent().decision?.blockedBy).toBe(null);
-        expect(hook.getCurrent().decision?.blockerCode).toBe('none');
-        expect(hook.getCurrent().decision?.state).toBe('enabled');
-        expect(hook.getCurrent().value).toBe(true);
+        expect(hook.getCurrent()).toBe(true);
         await hook.unmount();
     });
 

@@ -11,7 +11,19 @@ const mocks = vi.hoisted(() => ({
     },
 }));
 
-vi.mock('@/sync/domains/state/persistence', () => ({
+const storageStoreStub = {
+    storage: {
+        getState: () => ({}),
+        setState: () => {},
+        subscribe: () => () => {},
+    },
+    getStorage: () => ({}),
+};
+
+vi.mock('../../domains/state/storageStore', () => storageStoreStub);
+vi.mock('@/sync/domains/state/storageStore', () => storageStoreStub);
+
+vi.mock('../../domains/state/persistence', () => ({
     loadSettings: () => ({
         settings: {
             analyticsOptOut: false,
@@ -64,22 +76,9 @@ vi.mock('@/sync/domains/state/persistence', () => ({
     saveChangesCursor: vi.fn(),
 }));
 
-vi.mock('@/sync/domains/settings/settings', async (importOriginal) => {
-    const actual = await importOriginal<any>();
-    return {
-        ...actual,
-        applySettings: (settings: Record<string, unknown>, delta: Record<string, unknown>) => ({
-            ...settings,
-            ...delta,
-        }),
-    };
-});
-
 vi.mock('@/track', () => ({
     tracking: mocks.tracking,
 }));
-
-import { createSettingsDomain } from './settings';
 
 describe('createSettingsDomain local settings analytics', () => {
     beforeEach(() => {
@@ -89,7 +88,8 @@ describe('createSettingsDomain local settings analytics', () => {
         mocks.tracking.capture.mockReset();
     });
 
-    it('captures tracked local setting changes from the centralized local settings write path', () => {
+    it('captures tracked local setting changes from the centralized local settings write path', async () => {
+        const { createSettingsDomain } = await import('./settings');
         type TestState = ReturnType<typeof createState>;
 
         function createState() {
@@ -98,8 +98,11 @@ describe('createSettingsDomain local settings analytics', () => {
                 machines: {},
                 machineDisplayById: {},
                 sessionListRenderables: {},
-                sessionListViewData: null,
-                sessionListViewDataByServerId: {},
+                sessionListRowStateByServerId: {},
+                sessionListIndexByServerId: {},
+                concurrentSessionListCacheByServerId: {},
+                machineListByServerId: {},
+                machineListStatusByServerId: {},
             };
         }
 
@@ -162,7 +165,8 @@ describe('createSettingsDomain local settings analytics', () => {
         expect(mocks.tracking.capture).toHaveBeenCalledTimes(3);
     });
 
-    it('normalizes legacy iOS activity-surface keys onto canonical local settings before analytics emission', () => {
+    it('normalizes legacy iOS activity-surface keys onto canonical local settings before analytics emission', async () => {
+        const { createSettingsDomain } = await import('./settings');
         type TestState = ReturnType<typeof createState>;
 
         function createState() {
@@ -171,8 +175,11 @@ describe('createSettingsDomain local settings analytics', () => {
                 machines: {},
                 machineDisplayById: {},
                 sessionListRenderables: {},
-                sessionListViewData: null,
-                sessionListViewDataByServerId: {},
+                sessionListRowStateByServerId: {},
+                sessionListIndexByServerId: {},
+                concurrentSessionListCacheByServerId: {},
+                machineListByServerId: {},
+                machineListStatusByServerId: {},
             };
         }
 

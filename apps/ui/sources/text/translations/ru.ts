@@ -944,6 +944,8 @@ export const ru: TranslationStructure = {
     open: "Открыть",
     name: "Имя",
     blocked: "Заблокировано",
+    active: "Активные",
+    inactive: "Неактивные",
     done: "Готово",
     running: "Выполняется…",
     reorder: "Упорядочить",
@@ -2005,7 +2007,7 @@ export const ru: TranslationStructure = {
 		  systemStatus: {
 		    sections: {
 		      appHealth: "Состояние приложения и синхронизации",
-		      currentServer: "Текущий Relay",
+		      currentServer: "Текущий сервер",
       identity: "Вход в аккаунт",
       configuredServers: "Настроенные Relay",
       machinesActiveServer: "Машины (активный Relay)",
@@ -2020,7 +2022,7 @@ export const ru: TranslationStructure = {
       lastSync: "Последняя синхронизация",
     },
     server: {
-      activeServer: "Активный Relay",
+      activeServer: "Активный сервер",
     },
     identity: {
       accountId: "ID аккаунта",
@@ -2076,7 +2078,7 @@ export const ru: TranslationStructure = {
       findings: "Результаты",
     },
     overview: {
-      activeServer: "Активный Relay",
+      activeServer: "Активный сервер",
       account: "Аккаунт",
       onlineMachines: "Машины в сети (активный сервер)",
       cachedAttribution: ({ count }: { count: number }) => `Доступно doctor snapshot в кэше: ${count}`,
@@ -2126,8 +2128,8 @@ export const ru: TranslationStructure = {
         subtitle: ({ ui, machine }: { ui: string; machine: string }) => `UI: ${ui} • Демон: ${machine}`,
         steps: {
           chooseAccount: "Определитесь, какой сервер/аккаунт использовать.",
-          switchUiServer: "Сделайте так, чтобы UI и демон использовали один и тот же сервер.",
-          restartDaemon: "Перезапустите демон с правильным сервером и попробуйте снова.",
+          switchUiServer: "Оставьте UI подключённым к серверу, который хотите использовать, а затем переподключите фоновую службу, чтобы она следовала этому серверу.",
+          restartDaemon: "Перезапустите фоновую службу после её перенастройки на правильный сервер и попробуйте снова.",
         },
       },
       serverMismatchPasted: {
@@ -2683,8 +2685,15 @@ export const ru: TranslationStructure = {
       collapsedClickActionOpenSessionsTitle: 'Open sessions list',
       placementTitle: 'Placement',
       placementFooter: 'Choose where the overlay sits on the screen.',
-      placementModeTitle: 'Placement mode',
-      placementModeSubtitle: 'Switch between anchored and custom placement',
+      presentationModeTitle: 'Presentation mode',
+            presentationModeSubtitle: 'Choose whether the overlay follows the display notch or floats freely',
+            presentationAutomaticTitle: 'Automatic',
+            presentationNotchIntegratedTitle: 'Notch-integrated',
+            presentationFloatingOverlayTitle: 'Floating overlay',
+            hostModeFallbackTitle: 'Host mode: Floating overlay',
+            hostModeFallbackSubtitle: 'Notch-integrated mode is unavailable on this display, so the overlay falls back to a floating overlay.',
+            placementModeTitle: 'Placement mode',
+            placementModeSubtitle: 'Switch between anchored and custom placement',
       placementAnchoredTitle: 'Anchored',
       placementCustomTitle: 'Custom',
       anchorPresetTitle: 'Anchor preset',
@@ -7370,9 +7379,9 @@ settingsSession: {
 			    preAuthTitle: "Где находится ваш relay?",
 	    preAuthBody: "Ваш relay пересылает сообщения между телефоном и компьютерами. Выберите, где он будет работать — это можно изменить позже.",
     preAuthContinueHint: "После продолжения Happier вернёт вас на экран входа для выбранного Relay, а затем вернётся сюда, чтобы завершить настройку.",
-	    currentRelayTitle: "Текущий Relay",
-	    selectedRelayFooterLabel: "Текущий Relay",
-	    selectedRelayFooterLine: ({ relay }: { relay: string }) => `Активный Relay: ${relay}`,
+	    currentRelayTitle: "Текущий сервер",
+	    selectedRelayFooterLabel: "Текущий сервер",
+	    selectedRelayFooterLine: ({ relay }: { relay: string }) => `Активный сервер: ${relay}`,
 	    currentRelayDescription: ({ relayUrl }: { relayUrl: string }) => `Текущий Relay: ${relayUrl}`,
 	    accountWillLiveOnRelay: ({ relayUrl }: { relayUrl: string }) => `Ваш аккаунт будет на ${relayUrl}.`,
 	    savedRelaysTitle: "Сохранённые Relay",
@@ -7498,6 +7507,19 @@ settingsSession: {
       stopped: "Остановлен",
       likelyAlive: "Вероятно, работает",
     },
+    backgroundServiceModes: {
+      generic: "background service",
+      defaultFollowing: "default background service",
+      legacyPinned: "legacy pinned background service",
+    },
+    backgroundServicePrompt: {
+        targetServer: 'Целевой сервер',
+        targetReleaseChannel: 'Целевой канал релиза',
+        existingServices: 'Существующие службы:',
+        running: 'запущена',
+    },
+    repairBackgroundServiceAction: "Repair background service",
+    repairBackgroundServiceProgressTitle: "Repairing background service",
     stopDaemon: "Остановить daemon",
     stopDaemonConfirmTitle: "Остановить демон?",
     stopDaemonConfirmBody:
@@ -7524,6 +7546,19 @@ settingsSession: {
       startedAt: "Запущен в",
       cliVersion: "Версия CLI",
     daemonStateVersion: "Версия состояния daemon",
+    runtimeInventory: 'Инвентарь рантайма Happier',
+    runtimeInventoryOverview: 'Обзор',
+    runtimeInventoryInstallations: 'Установки',
+    runtimeInventoryServices: 'Сервисы',
+    runtimeInventoryWarnings: 'Предупреждения',
+    runtimeSummary: ({ cliVersion, daemonVersion, daemonRing, installationCount, serviceCount, warningCount }: {
+        cliVersion: string;
+        daemonVersion: string;
+        daemonRing: string;
+        installationCount: number;
+        serviceCount: number;
+        warningCount: number;
+    }) => `CLI ${cliVersion} • daemon ${daemonVersion} (${daemonRing}) • ${installationCount} installations • ${serviceCount} services • ${warningCount} warnings`,
     transferExposure: {
       title: "Публикация передачи",
       status: "Публикация передачи",

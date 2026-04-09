@@ -627,10 +627,14 @@ function getStableActiveServerSnapshot(next: ActiveServerSnapshot): ActiveServer
     return next;
 }
 
-function emitActiveServerChanged(previous: ActiveServerSnapshot | null): void {
+function emitActiveServerChanged(
+    previous: ActiveServerSnapshot | null,
+    options: Readonly<{ force?: boolean }> = {},
+): void {
     const next = getActiveServerSnapshot();
     if (
-        previous
+        !options.force
+        && previous
         && previous.serverId === next.serverId
         && previous.serverUrl === next.serverUrl
         && (previous.activeShareableServerUrl ?? null) === (next.activeShareableServerUrl ?? null)
@@ -720,7 +724,7 @@ export function upsertServerProfile(
         },
     });
     emitServerProfilesChanged();
-    emitActiveServerChanged(previousSnapshot);
+    emitActiveServerChanged(previousSnapshot, { force: true });
     return profile;
 }
 
@@ -748,7 +752,7 @@ export function setActiveServerId(
         if (opts.scope === 'tab') {
             const previousSnapshot = getActiveServerSnapshot();
             writeTabActiveServerId(null);
-            emitActiveServerChanged(previousSnapshot);
+            emitActiveServerChanged(previousSnapshot, { force: true });
         }
         return;
     }
@@ -756,7 +760,7 @@ export function setActiveServerId(
     const previousSnapshot = getActiveServerSnapshot();
     if (opts.scope === 'tab') {
         writeTabActiveServerId(id);
-        emitActiveServerChanged(previousSnapshot);
+        emitActiveServerChanged(previousSnapshot, { force: true });
         return;
     }
 
@@ -772,7 +776,7 @@ export function setActiveServerId(
         },
     });
     emitServerProfilesChanged();
-    emitActiveServerChanged(previousSnapshot);
+    emitActiveServerChanged(previousSnapshot, { force: true });
 }
 
 export function getResetToDefaultServerId(): string {
@@ -857,7 +861,7 @@ export function removeServerProfile(idRaw: string): void {
         servers: rest,
     });
     emitServerProfilesChanged();
-    emitActiveServerChanged(previousSnapshot);
+    emitActiveServerChanged(previousSnapshot, { force: true });
 }
 
 export function renameServerProfile(idRaw: string, nameRaw: string): void {
@@ -885,7 +889,7 @@ export function renameServerProfile(idRaw: string, nameRaw: string): void {
         },
     });
     emitServerProfilesChanged();
-    emitActiveServerChanged(previousSnapshot);
+    emitActiveServerChanged(previousSnapshot, { force: true });
 }
 
 export function setServerProfileShareableUrl(
@@ -922,5 +926,5 @@ export function setServerProfileShareableUrl(
         },
     });
     emitServerProfilesChanged();
-    emitActiveServerChanged(previousSnapshot);
+    emitActiveServerChanged(previousSnapshot, { force: true });
 }

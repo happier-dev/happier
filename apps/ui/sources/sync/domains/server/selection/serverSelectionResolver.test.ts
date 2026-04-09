@@ -72,6 +72,27 @@ describe('serverSelectionResolver', () => {
         });
     });
 
+    it('preserves the active server when no server profiles are available yet', () => {
+        const resolved = resolveActiveServerSelection({
+            activeServerId: 'server-a',
+            availableServerIds: [],
+            settings: {
+                serverSelectionGroups: null,
+                serverSelectionActiveTargetKind: null,
+                serverSelectionActiveTargetId: null,
+            },
+        });
+
+        expect(resolved).toEqual({
+            activeTarget: { kind: 'server', id: 'server-a', serverId: 'server-a' },
+            activeServerId: 'server-a',
+            allowedServerIds: ['server-a'],
+            enabled: false,
+            presentation: 'grouped',
+            explicit: false,
+        });
+    });
+
     it('disables group selection when runtime flag is off', () => {
         process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT = '0';
         const selection = getEffectiveServerSelection({

@@ -215,6 +215,13 @@ export const ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS = {
         storageScope: 'local',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
     },
+    desktopOverlayPresentationMode: {
+        schema: z.enum(['automatic', 'notch_integrated', 'floating_overlay']),
+        default: 'automatic',
+        description: 'Desktop overlay presentation mode',
+        storageScope: 'local',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
+    },
     desktopOverlayEnableDragReposition: {
         schema: z.boolean(),
         default: false,

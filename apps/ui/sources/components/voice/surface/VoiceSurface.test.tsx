@@ -106,7 +106,7 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 const voiceSettingState: { current: any } = {
     current: { providerId: 'realtime_elevenlabs', ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' } },
 };
-const storageState: { current: any } = { current: { sessions: {}, sessionListViewDataByServerId: {} } };
+const storageState: { current: any } = { current: { sessions: {}, concurrentSessionListCacheByServerId: {} } };
 
 const allSessionsState: { current: any[] } = { current: [] };
 vi.mock('@/sync/store/hooks', () => ({
@@ -129,7 +129,7 @@ vi.mock('@/voice/sessionBinding/voiceSessionBindingRuntime', () => ({
 describe('VoiceSurface', () => {
   beforeEach(() => {
     pathnameState.current = '/';
-    storageState.current = { sessions: {}, sessionListViewDataByServerId: {} };
+    storageState.current = { sessions: {}, concurrentSessionListCacheByServerId: {} };
   });
 
   it('disables daemon local voice start when voice.agent is unavailable on the active server', async () => {
@@ -305,17 +305,17 @@ describe('VoiceSurface', () => {
       privacy: { shareSessionSummary: true, shareFilePaths: true },
     };
     allSessionsState.current = [];
-    storageState.current = {
-      sessions: {
-        s_target: {
-          id: 's_target',
-          metadata: {
-            summaryText: 'Ready and waiting',
-          },
-        },
-      },
-      sessionListViewDataByServerId: {},
-    };
+	    storageState.current = {
+	      sessions: {
+	        s_target: {
+	          id: 's_target',
+	          metadata: {
+	            summaryText: 'Ready and waiting',
+	          },
+	        },
+	      },
+	      concurrentSessionListCacheByServerId: {},
+	    };
     const { useVoiceTargetStore } = await import('@/voice/runtime/voiceTargetStore');
     useVoiceTargetStore.getState().setScope('global');
     useVoiceTargetStore.getState().setPrimaryActionSessionId('s_target');
@@ -337,7 +337,7 @@ describe('VoiceSurface', () => {
     expect(screen.getTextContent()).not.toContain('s_target');
   });
 
-  it('shows the cached visible target label instead of stale raw session metadata in the sidebar', async () => {
+  it('shows the visible lookup target label instead of stale raw session metadata in the sidebar', async () => {
     vi.resetModules();
     featureEnabledState['voice.agent'] = true;
     voiceSettingState.current = {
@@ -362,19 +362,26 @@ describe('VoiceSurface', () => {
           },
         },
       },
-      sessionListViewData: [
-        {
-          type: 'session',
-          session: {
-            id: 's_target',
-            updatedAt: 99,
-            metadata: {
-              summaryText: 'Cached target session summary',
-            },
+      sessionListRenderables: {
+        s_target: {
+          id: 's_target',
+          updatedAt: 99,
+          metadata: {
+            summaryText: 'Lookup target session summary',
           },
         },
-      ],
-      sessionListViewDataByServerId: {},
+      },
+      sessionListIndexByServerId: {
+        'active-server': [
+          {
+            type: 'session',
+            sessionId: 's_target',
+            serverId: 'active-server',
+            serverName: 'Active',
+          },
+        ],
+      },
+      concurrentSessionListCacheByServerId: {},
     };
     const { useVoiceTargetStore } = await import('@/voice/runtime/voiceTargetStore');
     useVoiceTargetStore.getState().setScope('global');
@@ -393,7 +400,7 @@ describe('VoiceSurface', () => {
 
     const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
 
-    expect(screen.getTextContent()).toContain('Cached target session summary');
+    expect(screen.getTextContent()).toContain('Lookup target session summary');
     expect(screen.getTextContent()).not.toContain('Raw target session summary');
   });
 

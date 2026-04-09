@@ -171,7 +171,7 @@ describe('getServerUrl', () => {
         }
     });
 
-    it('canonicalizes custom server URL by stripping query/hash while preserving userinfo', async () => {
+    it('canonicalizes custom server URL by stripping userinfo and query/hash', async () => {
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = '';
         stubWebRuntime('https://stack.example.test');
@@ -179,7 +179,7 @@ describe('getServerUrl', () => {
         const { getServerUrl, setServerUrl } = await importFreshServerConfig();
         try {
             setServerUrl('https://admin:secret@custom.example.test:9443/path/?token=abc#frag');
-            expect(getServerUrl()).toBe('https://admin:secret@custom.example.test:9443/path');
+            expect(getServerUrl()).toBe('https://custom.example.test:9443/path');
         } finally {
             setServerUrl(null);
         }

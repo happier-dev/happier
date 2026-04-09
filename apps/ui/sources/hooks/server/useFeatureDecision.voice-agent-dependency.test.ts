@@ -4,6 +4,7 @@ import { buildServerFeaturesResponse } from './serverFeaturesTestUtils';
 import { renderHookAndCollectValues } from './serverFeatureHookHarness.testHelpers';
 import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { getStorage } from '@/sync/domains/state/storage';
+import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -22,14 +23,15 @@ describe('useFeatureDecision - voice.agent dependency probing', () => {
     it('probes server snapshot for voice.agent when voice dependency is server-represented', async () => {
         // voice.agent is client-represented but depends on voice (server-represented)
         // The hook should probe the server snapshot to resolve the dependency chain
-        const fetchMock = vi.fn<
-            (input: unknown, init?: unknown) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>
-        >(async () => ({
-            ok: true,
-            status: 200,
-            json: async () => buildServerFeaturesResponse({ voiceEnabled: true }),
-        }));
-        vi.stubGlobal('fetch', fetchMock as any);
+        const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+            async () => (
+                new Response(JSON.stringify(buildServerFeaturesResponse({ voiceEnabled: true })), {
+                    status: 200,
+                    headers: { 'content-type': 'application/json' },
+                })
+            ),
+        );
+        setRuntimeFetch(fetchMock as unknown as typeof fetch);
 
         getStorage().getState().applySettingsLocal({
             experiments: true,
@@ -57,12 +59,15 @@ describe('useFeatureDecision - voice.agent dependency probing', () => {
     }, 30_000);
 
     it('fails when voice dependency is disabled on server', async () => {
-        const fetchMock = vi.fn(async () => ({
-            ok: true,
-            status: 200,
-            json: async () => buildServerFeaturesResponse({ voiceEnabled: false }),
-        }));
-        vi.stubGlobal('fetch', fetchMock as any);
+        const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+            async () => (
+                new Response(JSON.stringify(buildServerFeaturesResponse({ voiceEnabled: false })), {
+                    status: 200,
+                    headers: { 'content-type': 'application/json' },
+                })
+            ),
+        );
+        setRuntimeFetch(fetchMock as unknown as typeof fetch);
 
         getStorage().getState().applySettingsLocal({
             experiments: true,

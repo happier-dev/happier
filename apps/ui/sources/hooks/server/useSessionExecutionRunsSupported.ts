@@ -5,17 +5,17 @@ import { useExecutionRunsBackendsForSession } from '@/hooks/server/useExecutionR
 import { useSession, useSessionMessages } from '@/sync/domains/state/storage';
 import { sessionExecutionRunList } from '@/sync/ops/sessionExecutionRuns';
 import { deriveExecutionRunPollingRefreshKey } from '@/sync/domains/session/participants/deriveExecutionRunPollingRefreshKey';
-import { resolveSessionTargetServerId } from '@/components/sessions/model/resolveSessionTargetServerId';
+import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 
 const EMPTY_EXECUTION_RUN_REFRESH_KEY = 'subagent:|started:|stopped:';
 
 export function useSessionExecutionRunsSupported(sessionId: string, sessionServerId?: string | null): boolean {
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const session = useSession(sessionId);
-    const backends = useExecutionRunsBackendsForSession(
-        sessionId,
-        sessionServerId ?? resolveSessionTargetServerId(sessionId, session?.serverId),
-    );
+    const directSessionServerId = sessionServerId ?? session?.serverId;
+    const preferredSessionServerId = usePreferredServerIdForSession(sessionId, directSessionServerId);
+    const resolvedSessionServerId = sessionServerId ?? preferredSessionServerId;
+    const backends = useExecutionRunsBackendsForSession(sessionId, resolvedSessionServerId);
     const { messages } = useSessionMessages(sessionId);
     const [historicalRunsSupported, setHistoricalRunsSupported] = React.useState(false);
 

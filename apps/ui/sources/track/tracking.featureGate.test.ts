@@ -1,11 +1,40 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const posthogConstructorSpy = vi.hoisted(() => vi.fn());
+const posthogConstructorSpy = vi.hoisted(() => vi.fn<(apiKey: string, options?: Record<string, unknown>) => void>());
+const posthogOptInSpy = vi.hoisted(() => vi.fn<() => Promise<void>>(async () => {}));
+const posthogOptOutSpy = vi.hoisted(() => vi.fn<() => Promise<void>>(async () => {}));
+const kvStore = vi.hoisted(() => new Map<string, string>());
+
+vi.mock('react-native-mmkv', () => {
+    class MMKV {
+        getString(key: string) {
+            return kvStore.get(key);
+        }
+
+        set(key: string, value: string) {
+            kvStore.set(key, value);
+        }
+
+        delete(key: string) {
+            kvStore.delete(key);
+        }
+    }
+
+    return { MMKV };
+});
 
 vi.mock('posthog-react-native', () => ({
     default: class PostHogMock {
-        constructor(...args: any[]) {
-            posthogConstructorSpy(...args);
+        constructor(apiKey: string, options?: Record<string, unknown>) {
+            posthogConstructorSpy(apiKey, options);
+        }
+
+        optIn() {
+            return posthogOptInSpy();
+        }
+
+        optOut() {
+            return posthogOptOutSpy();
         }
     },
 }));
@@ -20,6 +49,9 @@ describe('tracking (feature gate)', () => {
     beforeEach(() => {
         vi.resetModules();
         posthogConstructorSpy.mockClear();
+        posthogOptInSpy.mockClear();
+        posthogOptOutSpy.mockClear();
+        kvStore.clear();
         process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = 'app.analytics';
     });
 
@@ -40,10 +72,41 @@ describe('tracking (feature gate)', () => {
 
         await import('./tracking');
         expect(posthogConstructorSpy).toHaveBeenCalledTimes(1);
-        const args = posthogConstructorSpy.mock.calls[0] ?? [];
-        expect(args[0]).toBe('ph_test_key');
-        expect(args[1]).toEqual(expect.objectContaining({
+        const firstCall = posthogConstructorSpy.mock.calls[0];
+        expect(firstCall).toBeDefined();
+        if (!firstCall) {
+            throw new Error('expected PostHog constructor to be called');
+        }
+        const [apiKey, options] = firstCall;
+        expect(apiKey).toBe('ph_test_key');
+        expect(options).toEqual(expect.objectContaining({
             host: 'https://example.posthog.test',
         }));
+        expect(posthogOptInSpy).toHaveBeenCalledTimes(1);
+        expect(posthogOptOutSpy).not.toHaveBeenCalled();
+    });
+
+    it('applies persisted analytics opt-out before sync bootstrap runs', async () => {
+        process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = '';
+        kvStore.set('settings', JSON.stringify({
+            settings: { analyticsOptOut: true },
+            version: 7,
+        }));
+        vi.resetModules();
+
+        const mod = await import('./tracking');
+        expect(mod.tracking).not.toBeNull();
+        expect(posthogConstructorSpy).toHaveBeenCalledTimes(1);
+        const firstCall = posthogConstructorSpy.mock.calls[0];
+        expect(firstCall).toBeDefined();
+        if (!firstCall) {
+            throw new Error('expected PostHog constructor to be called');
+        }
+        const [, options] = firstCall;
+        expect(options).toEqual(expect.objectContaining({
+            defaultOptIn: false,
+        }));
+        expect(posthogOptOutSpy).toHaveBeenCalledTimes(1);
+        expect(posthogOptInSpy).not.toHaveBeenCalled();
     });
 });

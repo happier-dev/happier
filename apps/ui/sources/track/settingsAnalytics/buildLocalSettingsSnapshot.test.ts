@@ -47,6 +47,7 @@ describe('buildLocalSettingsSnapshot', () => {
             desktopOverlayAutoHideDelayMs: 10_000,
             desktopOverlayExpandedBehavior: 'hover',
             desktopOverlayInteractiveCollapsed: false,
+            desktopOverlayPresentationMode: 'notch_integrated',
             desktopOverlayEnableDragReposition: true,
             desktopOverlayLockPosition: false,
             desktopOverlayPlacementMode: 'custom',
@@ -105,6 +106,7 @@ describe('buildLocalSettingsSnapshot', () => {
         expect(snapshot.properties.local_setting__desktopOverlayAutoHideDelayMs).toBe('10s');
         expect(snapshot.properties.local_setting__desktopOverlayExpandedBehavior).toBe('hover');
         expect(snapshot.properties.local_setting__desktopOverlayInteractiveCollapsed).toBe(false);
+        expect(snapshot.properties.local_setting__desktopOverlayPresentationMode).toBe('notch_integrated');
         expect(snapshot.properties.local_setting__desktopOverlayEnableDragReposition).toBe(true);
         expect(snapshot.properties.local_setting__desktopOverlayLockPosition).toBe(false);
         expect(snapshot.properties.local_setting__desktopOverlayPlacementMode).toBe('custom');

@@ -1,6 +1,6 @@
 import type { FeaturesResponse as ServerFeatures } from '@happier-dev/protocol';
 
-import { getCachedServerFeaturesSnapshot, getServerFeaturesSnapshot } from './serverFeaturesClient';
+import { getCachedServerFeaturesSnapshot, getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 
 export async function getReadyServerFeatures(params?: {
     timeoutMs?: number;
@@ -19,4 +19,3 @@ export function getCachedReadyServerFeatures(params?: { serverId?: string }): Se
     const cached = getCachedServerFeaturesSnapshot({ serverId: params?.serverId });
     return cached?.status === 'ready' ? cached.features : null;
 }
-

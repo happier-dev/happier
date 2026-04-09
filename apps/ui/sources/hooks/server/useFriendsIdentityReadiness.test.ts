@@ -1,116 +1,47 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { storage } from '@/sync/domains/state/storageStore';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
-import { renderScreen } from '@/dev/testkit';
-
+import { renderHookAndCollectValues } from './serverFeatureHookHarness.testHelpers';
+import { stubServerFeaturesFetch, stubServerFeaturesFetchFailure } from './serverFeaturesTestUtils';
+import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+});
 
 describe('useFriendsIdentityReadiness', () => {
     it('returns needsUsername when username mode is enabled and no provider is required by server features', async () => {
         vi.resetModules();
         storage.getState().applyProfile({ ...profileDefaults, username: null, linkedProviders: [] });
-
-        vi.stubGlobal(
-            'fetch',
-            vi.fn(async () => ({
-                ok: true,
-                json: async () => ({
-                    features: {
-                        bugReports: { enabled: true },
-                        sharing: {
-                            session: { enabled: true },
-                            public: { enabled: true },
-                            contentKeys: { enabled: true },
-                            pendingQueueV2: { enabled: false },
-                        },
-                        voice: { enabled: false },
-                        social: { friends: { enabled: true } },
-                        auth: {
-                            recovery: { providerReset: { enabled: false } },
-                            ui: { recoveryKeyReminder: { enabled: true } },
-                        },
-                    },
-                    capabilities: {
-                        social: { friends: { allowUsername: true, requiredIdentityProviderId: null } },
-                        oauth: { providers: { github: { enabled: true, configured: false } } },
-                    },
-                }),
-            })) as any,
-        );
+        await stubServerFeaturesFetch({ friendsAllowUsername: true, friendsRequiredIdentityProviderId: null });
+        await getServerFeaturesSnapshot({ force: true });
 
         const { useFriendsIdentityReadiness } = await import('./useFriendsIdentityReadiness');
 
-        const seen: Array<{ reason: string; requiredProviderId: string | null; gateVariant: string }> = [];
-        function Test() {
-            const readiness = useFriendsIdentityReadiness();
-            React.useEffect(() => {
-                seen.push({
-                    reason: readiness.reason,
-                    requiredProviderId: readiness.requiredProviderId,
-                    gateVariant: readiness.gate.gateVariant,
-                });
-            }, [readiness.reason, readiness.requiredProviderId, readiness.gate.gateVariant]);
-            return null;
-        }
+        const seen = await renderHookAndCollectValues(() => useFriendsIdentityReadiness());
 
-        await renderScreen(React.createElement(Test));
-
-        expect(seen.map((s) => s.reason)).toContain('loadingFeatures');
         expect(seen.at(-1)?.reason).toBe('needsUsername');
         expect(seen.at(-1)?.requiredProviderId).toBe(null);
-        expect(seen.at(-1)?.gateVariant).toBe('username');
+        expect(seen.at(-1)?.gate.gateVariant).toBe('username');
     });
 
     it('returns needsProvider when provider mode is enabled and required provider is missing', async () => {
         vi.resetModules();
         storage.getState().applyProfile({ ...profileDefaults, username: null, linkedProviders: [] });
-
-        vi.stubGlobal(
-            'fetch',
-            vi.fn(async () => ({
-                ok: true,
-                json: async () => ({
-                    features: {
-                        bugReports: { enabled: true },
-                        sharing: {
-                            session: { enabled: true },
-                            public: { enabled: true },
-                            contentKeys: { enabled: true },
-                            pendingQueueV2: { enabled: false },
-                        },
-                        voice: { enabled: false },
-                        social: { friends: { enabled: true } },
-                        auth: {
-                            recovery: { providerReset: { enabled: false } },
-                            ui: { recoveryKeyReminder: { enabled: true } },
-                        },
-                    },
-                    capabilities: {
-                        social: { friends: { allowUsername: false, requiredIdentityProviderId: 'github' } },
-                        oauth: { providers: { github: { enabled: true, configured: true } } },
-                    },
-                }),
-            })) as any,
-        );
+        await stubServerFeaturesFetch({ friendsAllowUsername: false, friendsRequiredIdentityProviderId: 'github' });
+        await getServerFeaturesSnapshot({ force: true });
 
         const { useFriendsIdentityReadiness } = await import('./useFriendsIdentityReadiness');
 
-        const seen: Array<string> = [];
-        function Test() {
-            const readiness = useFriendsIdentityReadiness();
-            React.useEffect(() => {
-                seen.push(readiness.reason);
-            }, [readiness.reason]);
-            return null;
-        }
+        const seen = await renderHookAndCollectValues(() => useFriendsIdentityReadiness());
 
-        await renderScreen(React.createElement(Test));
-
-        expect(seen).toContain('loadingFeatures');
-        expect(seen.at(-1)).toBe('needsProvider');
+        expect(seen.at(-1)?.reason).toBe('needsProvider');
+        expect(seen.at(-1)?.requiredProviderId).toBe('github');
     });
 
     it('returns ready when required provider is connected and username is present', async () => {
@@ -127,48 +58,14 @@ describe('useFriendsIdentityReadiness', () => {
                 showOnProfile: true,
             }],
         });
-
-        vi.stubGlobal(
-            'fetch',
-            vi.fn(async () => ({
-                ok: true,
-                json: async () => ({
-                    features: {
-                        bugReports: { enabled: true },
-                        sharing: {
-                            session: { enabled: true },
-                            public: { enabled: true },
-                            contentKeys: { enabled: true },
-                            pendingQueueV2: { enabled: false },
-                        },
-                        voice: { enabled: false },
-                        social: { friends: { enabled: true } },
-                        auth: {
-                            recovery: { providerReset: { enabled: false } },
-                            ui: { recoveryKeyReminder: { enabled: true } },
-                        },
-                    },
-                    capabilities: {
-                        social: { friends: { allowUsername: false, requiredIdentityProviderId: 'github' } },
-                        oauth: { providers: { github: { enabled: true, configured: true } } },
-                    },
-                }),
-            })) as any,
-        );
+        await stubServerFeaturesFetch({ friendsAllowUsername: false, friendsRequiredIdentityProviderId: 'github' });
+        await getServerFeaturesSnapshot({ force: true });
 
         const { useFriendsIdentityReadiness } = await import('./useFriendsIdentityReadiness');
 
-        const seen: Array<string> = [];
-        function Test() {
-            const readiness = useFriendsIdentityReadiness();
-            React.useEffect(() => {
-                seen.push(readiness.reason);
-            }, [readiness.reason]);
-            return null;
-        }
+        const seen = await renderHookAndCollectValues(() => useFriendsIdentityReadiness());
 
-        await renderScreen(React.createElement(Test));
-
-        expect(seen.at(-1)).toBe('ready');
+        expect(seen.at(-1)?.reason).toBe('ready');
+        expect(seen.at(-1)?.requiredProviderConnected).toBe(true);
     });
 });

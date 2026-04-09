@@ -901,6 +901,8 @@ export const ja: TranslationStructure = {
       open: "開く",
       name: "名前",
       blocked: "ブロック",
+      active: "アクティブ",
+      inactive: "非アクティブ",
       done: "完了",
       running: "実行中…",
       reorder: "並べ替え",
@@ -2319,7 +2321,7 @@ localTailscale: {
 	  systemStatus: {
 	    sections: {
 	      appHealth: "アプリ + 同期の状態",
-	      currentServer: "現在の Relay",
+	      currentServer: "現在のサーバー",
       identity: "サインイン情報",
       configuredServers: "設定済み Relay",
       machinesActiveServer: "マシン（アクティブ Relay）",
@@ -2334,7 +2336,7 @@ localTailscale: {
       lastSync: "最終同期",
     },
     server: {
-      activeServer: "アクティブ Relay",
+      activeServer: "アクティブサーバー",
     },
     identity: {
       accountId: "アカウントID",
@@ -2390,7 +2392,7 @@ localTailscale: {
       findings: "検出結果",
     },
     overview: {
-      activeServer: "アクティブ Relay",
+      activeServer: "アクティブサーバー",
       account: "アカウント",
       onlineMachines: "オンラインのマシン（アクティブサーバー）",
       cachedAttribution: ({ count }: { count: number }) => `キャッシュされた doctor スナップショット: ${count} 件`,
@@ -2440,8 +2442,8 @@ localTailscale: {
         subtitle: ({ ui, machine }: { ui: string; machine: string }) => `UI: ${ui} • デーモン: ${machine}`,
         steps: {
           chooseAccount: "使用するサーバー/アカウントを決めてください。",
-          switchUiServer: "UI とデーモンを同じサーバーに揃えてください。",
-          restartDaemon: "正しいサーバーを指定してデーモンを再起動し、再試行してください。",
+          switchUiServer: "使いたいサーバーに UI を向けたまま、そのサーバーに追従するようバックグラウンドサービスを再接続してください。",
+          restartDaemon: "正しいサーバー向けに再設定したあとでバックグラウンドサービスを再起動し、もう一度試してください。",
         },
       },
       serverMismatchPasted: {
@@ -2987,8 +2989,15 @@ localTailscale: {
       collapsedClickActionOpenSessionsTitle: 'Open sessions list',
       placementTitle: 'Placement',
       placementFooter: 'Choose where the overlay sits on the screen.',
-      placementModeTitle: 'Placement mode',
-      placementModeSubtitle: 'Switch between anchored and custom placement',
+      presentationModeTitle: 'Presentation mode',
+            presentationModeSubtitle: 'Choose whether the overlay follows the display notch or floats freely',
+            presentationAutomaticTitle: 'Automatic',
+            presentationNotchIntegratedTitle: 'Notch-integrated',
+            presentationFloatingOverlayTitle: 'Floating overlay',
+            hostModeFallbackTitle: 'Host mode: Floating overlay',
+            hostModeFallbackSubtitle: 'Notch-integrated mode is unavailable on this display, so the overlay falls back to a floating overlay.',
+            placementModeTitle: 'Placement mode',
+            placementModeSubtitle: 'Switch between anchored and custom placement',
       placementAnchoredTitle: 'Anchored',
       placementCustomTitle: 'Custom',
       anchorPresetTitle: 'Anchor preset',
@@ -7702,9 +7711,9 @@ settingsSession: {
 			          preAuthTitle: 'Relay はどこにありますか？',
 	          preAuthBody: 'Relay はスマホとコンピュータの間でメッセージを中継します。Relay をどこで動かすか選んでください。後から変更できます。',
           preAuthContinueHint: '続行すると、選択した Relay でサインインする画面に戻り、その後この画面に戻ってセットアップを完了します。',
-		    currentRelayTitle: '現在の Relay',
-		    selectedRelayFooterLabel: '現在の Relay',
-		    selectedRelayFooterLine: ({ relay }: { relay: string }) => `現在の Relay：${relay}`,
+		    currentRelayTitle: '現在のサーバー',
+		    selectedRelayFooterLabel: '現在のサーバー',
+		    selectedRelayFooterLine: ({ relay }: { relay: string }) => `現在のサーバー：${relay}`,
 		    currentRelayDescription: ({ relayUrl }: { relayUrl: string }) => `現在の Relay：${relayUrl}`,
 		    accountWillLiveOnRelay: ({ relayUrl }: { relayUrl: string }) => `アカウントは ${relayUrl} に保存されます。`,
 		    savedRelaysTitle: '保存済みの Relay',
@@ -7830,6 +7839,19 @@ settingsSession: {
       stopped: "停止",
       likelyAlive: "おそらく稼働中",
     },
+    backgroundServiceModes: {
+      generic: "background service",
+      defaultFollowing: "default background service",
+      legacyPinned: "legacy pinned background service",
+    },
+    backgroundServicePrompt: {
+        targetServer: '対象サーバー',
+        targetReleaseChannel: '対象リリースチャンネル',
+        existingServices: '既存のサービス:',
+        running: '実行中',
+    },
+    repairBackgroundServiceAction: "Repair background service",
+    repairBackgroundServiceProgressTitle: "Repairing background service",
     stopDaemon: "デーモンを停止",
     stopDaemonConfirmTitle: "デーモンを停止しますか？",
     stopDaemonConfirmBody:
@@ -7857,6 +7879,19 @@ settingsSession: {
       startedAt: "開始時刻",
     cliVersion: "CLIバージョン",
     daemonStateVersion: "デーモン状態バージョン",
+    runtimeInventory: 'Happier ランタイム一覧',
+    runtimeInventoryOverview: '概要',
+    runtimeInventoryInstallations: 'インストール',
+    runtimeInventoryServices: 'サービス',
+    runtimeInventoryWarnings: '警告',
+    runtimeSummary: ({ cliVersion, daemonVersion, daemonRing, installationCount, serviceCount, warningCount }: {
+        cliVersion: string;
+        daemonVersion: string;
+        daemonRing: string;
+        installationCount: number;
+        serviceCount: number;
+        warningCount: number;
+    }) => `CLI ${cliVersion} • daemon ${daemonVersion} (${daemonRing}) • ${installationCount} installations • ${serviceCount} services • ${warningCount} warnings`,
     transferExposure: {
       title: "転送公開",
       status: "転送公開",

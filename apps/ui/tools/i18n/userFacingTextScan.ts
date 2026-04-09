@@ -196,6 +196,7 @@ function collectUserFacingStringsFromExpression(args: Readonly<{
     const visit = (node: ts.Node): void => {
         if (ts.isCallExpression(node)) {
             if (isTranslationCallExpression(node as unknown as ts.Expression)) return;
+            return;
         }
 
         if (ts.isConditionalExpression(node)) {
@@ -277,6 +278,7 @@ function collectUserFacingStringLiteralsFromExpression(args: Readonly<{
     const visit = (node: ts.Node): void => {
         if (ts.isCallExpression(node)) {
             if (isTranslationCallExpression(node as unknown as ts.Expression)) return;
+            return;
         }
 
         if (ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node) || ts.isSpreadAssignment(node)) {

@@ -17,7 +17,31 @@ const sessionState = vi.hoisted(() => ({
   preferredServerId: 'server-1' as string | null,
   session: { active: true } as any,
 }));
+const activeServerState = vi.hoisted(() => {
+  const listeners = new Set<(snapshot: { serverId: string; serverUrl: string; generation: number }) => void>();
+
+  return {
+    snapshot: { serverId: 'server-a', serverUrl: 'https://a.example.test', generation: 1 },
+    listeners,
+    setSnapshot(next: { serverId: string; serverUrl: string; generation: number }) {
+      activeServerState.snapshot = next;
+      for (const listener of Array.from(listeners)) {
+        listener(next);
+      }
+    },
+    reset() {
+      activeServerState.snapshot = { serverId: 'server-a', serverUrl: 'https://a.example.test', generation: 1 };
+      listeners.clear();
+    },
+  };
+});
 const listRunsSpy = vi.hoisted(() => vi.fn());
+const usePreferredServerIdForSessionSpy = vi.hoisted(() =>
+  vi.fn((_sessionId: string, fallbackServerId?: string | null) => {
+    const normalizedFallback = typeof fallbackServerId === 'string' ? fallbackServerId.trim() : '';
+    return sessionState.preferredServerId ?? (normalizedFallback || activeServerState.snapshot.serverId);
+  }),
+);
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
   useFeatureEnabled: () => featureState.enabled,
@@ -39,8 +63,19 @@ vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
   sessionExecutionRunList: (...args: unknown[]) => listRunsSpy(...args),
 }));
 
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
-  resolvePreferredServerIdForSessionId: () => sessionState.preferredServerId,
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession', () => ({
+  usePreferredServerIdForSession: (sessionId: string, fallbackServerId?: string | null) =>
+    usePreferredServerIdForSessionSpy(sessionId, fallbackServerId),
+}));
+
+vi.mock('@/sync/domains/server/serverRuntime', () => ({
+  getActiveServerSnapshot: () => activeServerState.snapshot,
+  subscribeActiveServer: (listener: (snapshot: { serverId: string; serverUrl: string; generation: number }) => void) => {
+    activeServerState.listeners.add(listener);
+    return () => {
+      activeServerState.listeners.delete(listener);
+    };
+  },
 }));
 
 async function renderHarness(sessionId = 'session-1', sessionServerId?: string | null): Promise<{
@@ -83,7 +118,9 @@ describe('useSessionExecutionRunsSupported', () => {
     messagesState.messages = [];
     sessionState.preferredServerId = 'server-1';
     sessionState.session = { active: true } as any;
+    activeServerState.reset();
     listRunsSpy.mockReset();
+    usePreferredServerIdForSessionSpy.mockClear();
   });
 
   afterEach(() => {
@@ -168,13 +205,43 @@ describe('useSessionExecutionRunsSupported', () => {
     harness.unmount();
   });
 
-  it('uses the session server id when preferred server resolution is unavailable', async () => {
+  it('passes the loaded direct session server id as the preferred-server fallback', async () => {
     sessionState.preferredServerId = null;
     sessionState.session = { active: true, serverId: 'server-explicit' } as any;
     backendsState.backendsByServerId.set('server-explicit', { backend: true });
 
-    const { useSessionExecutionRunsSupported } = await import('./useSessionExecutionRunsSupported');
     const harness = await renderHarness('session-with-explicit-server');
+
+    expect(usePreferredServerIdForSessionSpy).toHaveBeenCalledWith('session-with-explicit-server', 'server-explicit');
+    expect(harness.getValue()).toBe(true);
+    harness.unmount();
+  });
+
+  it('falls back to the active server when neither the caller nor the loaded session provides a server id', async () => {
+    sessionState.preferredServerId = null;
+    sessionState.session = { active: true } as any;
+    backendsState.backendsByServerId.set('server-a', { backend: true });
+
+    const harness = await renderHarness('session-without-server');
+
+    expect(usePreferredServerIdForSessionSpy).toHaveBeenCalledWith('session-without-server', undefined);
+    expect(harness.getValue()).toBe(true);
+    harness.unmount();
+  });
+
+  it('recomputes the active-server fallback on rerender when no explicit session server is available', async () => {
+    sessionState.preferredServerId = null;
+    sessionState.session = { active: true } as any;
+    backendsState.backendsByServerId.set('server-b', { backend: true });
+
+    const harness = await renderHarness('session-reactive');
+
+    expect(harness.getValue()).toBe(false);
+
+    act(() => {
+      activeServerState.setSnapshot({ serverId: 'server-b', serverUrl: 'https://b.example.test', generation: 2 });
+      harness.rerenderSync('session-reactive');
+    });
 
     expect(harness.getValue()).toBe(true);
     harness.unmount();

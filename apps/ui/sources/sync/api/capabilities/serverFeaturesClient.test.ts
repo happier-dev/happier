@@ -107,11 +107,9 @@ describe('serverFeaturesClient', () => {
         const first = getServerFeaturesSnapshot({ force: true, timeoutMs: 2000 });
         const second = getServerFeaturesSnapshot({ force: true, timeoutMs: 2000 });
 
-        // Reachability supervision performs an async health probe before starting the /v1/features request.
-        for (let attempt = 0; attempt < 10 && featuresFetchMock.mock.calls.length === 0; attempt += 1) {
-            await new Promise<void>((resolve) => setTimeout(resolve, 0));
-        }
-        expect(featuresFetchMock.mock.calls.length).toBe(1);
+        await vi.waitFor(() => {
+            expect(featuresFetchMock.mock.calls.length).toBe(1);
+        });
 
         const resolveFetch: (value: Response) => void =
             resolver ?? (() => { throw new Error('Expected fetch resolver to be assigned'); });

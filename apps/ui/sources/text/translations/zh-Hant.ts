@@ -1010,6 +1010,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
           open: '開啟',
           name: '名稱',
           blocked: '已封鎖',
+          active: '活躍',
+          inactive: '非活躍',
           done: '完成',
           reorder: '重新排序',
           moveUp: '上移',
@@ -1955,7 +1957,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     systemStatus: {
         sections: {
             appHealth: '應用程式與同步狀態',
-            currentServer: '目前 Relay',
+            currentServer: '目前伺服器',
             identity: '已登入身份',
             configuredServers: '已設定 Relay',
             machinesActiveServer: '機器（目前 Relay）',
@@ -1970,7 +1972,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             lastSync: '最近同步',
         },
         server: {
-            activeServer: '目前 Relay',
+            activeServer: '目前伺服器',
         },
         identity: {
             accountId: '帳戶 ID',
@@ -2026,7 +2028,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             findings: '發現的問題',
         },
         overview: {
-            activeServer: '目前 Relay',
+            activeServer: '目前伺服器',
             account: '帳戶',
             onlineMachines: '線上機器（目前伺服器）',
             cachedAttribution: ({ count }: { count: number }) => `可用快取 doctor snapshot：${count} 個`,
@@ -2076,8 +2078,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 subtitle: ({ ui, machine }: { ui: string; machine: string }) => `UI：${ui} • 守護程式：${machine}`,
                 steps: {
                     chooseAccount: '確認你想使用的伺服器/帳戶。',
-                    switchUiServer: '將 UI 與守護程式切換到同一伺服器（或反之）。',
-                    restartDaemon: '讓守護程式指向正確伺服器後重啟，並重試。',
+                    switchUiServer: '讓 UI 保持指向你要使用的伺服器，然後重新連線背景服務，使其跟隨該伺服器。',
+                    restartDaemon: '將背景服務重新設定為正確的伺服器後再重新啟動，然後重試。',
                 },
             },
             serverMismatchPasted: {
@@ -2404,8 +2406,15 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 		          collapsedClickActionOpenSessionsTitle: 'Open sessions list',
 		          placementTitle: 'Placement',
 		          placementFooter: 'Choose where the overlay sits on the screen.',
-		          placementModeTitle: 'Placement mode',
-		          placementModeSubtitle: 'Switch between anchored and custom placement',
+		          presentationModeTitle: 'Presentation mode',
+            presentationModeSubtitle: 'Choose whether the overlay follows the display notch or floats freely',
+            presentationAutomaticTitle: 'Automatic',
+            presentationNotchIntegratedTitle: 'Notch-integrated',
+            presentationFloatingOverlayTitle: 'Floating overlay',
+            hostModeFallbackTitle: 'Host mode: Floating overlay',
+            hostModeFallbackSubtitle: 'Notch-integrated mode is unavailable on this display, so the overlay falls back to a floating overlay.',
+            placementModeTitle: 'Placement mode',
+            placementModeSubtitle: 'Switch between anchored and custom placement',
 		          placementAnchoredTitle: 'Anchored',
 		          placementCustomTitle: 'Custom',
 		          anchorPresetTitle: 'Anchor preset',
@@ -5653,9 +5662,9 @@ settingsSession: {
 			        preAuthTitle: '你的中繼在哪裡？',
 	        preAuthBody: '你的中繼會在手機與電腦之間轉送訊息。選擇中繼的執行位置，之後也可以更改。',
         preAuthContinueHint: '繼續後，Happier 會帶你回到所選中繼的登入流程，然後回到這裡完成設定。',
-		        currentRelayTitle: '目前中繼',
-		        selectedRelayFooterLabel: '目前中繼',
-		        selectedRelayFooterLine: ({ relay }: { relay: string }) => `目前中繼：${relay}`,
+		        currentRelayTitle: '目前伺服器',
+		        selectedRelayFooterLabel: '目前伺服器',
+		        selectedRelayFooterLine: ({ relay }: { relay: string }) => `目前伺服器：${relay}`,
 		        currentRelayDescription: ({ relayUrl }: { relayUrl: string }) => `目前中繼：${relayUrl}`,
 	        accountWillLiveOnRelay: ({ relayUrl }: { relayUrl: string }) => `你的帳號將位於 ${relayUrl}。`,
 	        savedRelaysTitle: '已儲存的中繼',
@@ -5772,12 +5781,38 @@ settingsSession: {
             stopped: '已停止',
             likelyAlive: '可能正在執行',
         },
+        backgroundServiceModes: {
+            generic: 'background service',
+            defaultFollowing: 'default background service',
+            legacyPinned: 'legacy pinned background service',
+        },
+        backgroundServicePrompt: {
+            targetServer: '目標伺服器',
+            targetReleaseChannel: '目標發佈通道',
+            existingServices: '現有服務：',
+            running: '執行中',
+        },
+        repairBackgroundServiceAction: 'Repair background service',
+        repairBackgroundServiceProgressTitle: 'Repairing background service',
         stopDaemon: '停止守護程序',
         lastKnownPid: '最後已知 PID',
         lastKnownHttpPort: '最後已知 HTTP 連接埠',
         startedAt: '啟動時間',
         cliVersion: 'CLI 版本',
         daemonStateVersion: '守護程序狀態版本',
+        runtimeInventory: 'Happier 執行階段清單',
+        runtimeInventoryOverview: '總覽',
+        runtimeInventoryInstallations: '安裝項目',
+        runtimeInventoryServices: '服務',
+        runtimeInventoryWarnings: '警告',
+        runtimeSummary: ({ cliVersion, daemonVersion, daemonRing, installationCount, serviceCount, warningCount }: {
+            cliVersion: string;
+            daemonVersion: string;
+            daemonRing: string;
+            installationCount: number;
+            serviceCount: number;
+            warningCount: number;
+        }) => `CLI ${cliVersion} • daemon ${daemonVersion} (${daemonRing}) • ${installationCount} installations • ${serviceCount} services • ${warningCount} warnings`,
         transferExposure: {
             title: '傳輸暴露',
             status: '傳輸暴露',

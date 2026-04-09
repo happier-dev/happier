@@ -120,6 +120,36 @@ describe('serverProfiles', () => {
         expect(third.serverUrl).toBe('https://next.example.test');
     });
 
+    it('emits an active server refresh when the server profile set changes without changing the selected server', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        stubWebRuntime('https://origin.example.test');
+
+        const profiles = await importFresh();
+        const active = profiles.upsertServerProfile({
+            serverUrl: 'https://active.example.test',
+            name: 'Active',
+        });
+        profiles.setActiveServerId(active.id, { scope: 'device' });
+
+        const first = profiles.getActiveServerSnapshot();
+        const listener = vi.fn();
+        profiles.subscribeActiveServer(listener);
+
+        profiles.upsertServerProfile({
+            serverUrl: 'https://next.example.test',
+            name: 'Next',
+        });
+
+        const second = profiles.getActiveServerSnapshot();
+
+        expect(second.serverId).toBe(first.serverId);
+        expect(second.serverUrl).toBe(first.serverUrl);
+        expect(second.generation).toBeGreaterThan(first.generation);
+        expect(listener).toHaveBeenCalled();
+        expect(listener.mock.calls.at(-1)?.[0].generation).toBe(second.generation);
+    });
+
     it('tracks whether the active server selection is explicit', async () => {
         const scope = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;

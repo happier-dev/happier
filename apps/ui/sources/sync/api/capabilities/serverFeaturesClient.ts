@@ -158,7 +158,11 @@ async function getServerFeaturesSnapshotWithRetry(
                                 method: 'GET',
                                 signal: controller.signal,
                             },
-                            { includeAuth: false },
+                            // Treat `/v1/features` as a lightweight capability probe. It should not block behind
+                            // reachability gating/endpoint supervision (which is timer-driven and can delay
+                            // first-paint feature decisions). The TTL cache already provides the needed
+                            // backoff/de-dupe behavior for repeated probes.
+                            { includeAuth: false, retry: 'none' },
                         );
                 } catch (error) {
                     const timedOut = controller.signal.aborted;

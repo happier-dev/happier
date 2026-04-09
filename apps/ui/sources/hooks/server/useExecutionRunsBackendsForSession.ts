@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { resolveSessionMachineId } from '@/sync/domains/session/directSessions/resolveSessionMachineId';
 import { useSession } from '@/sync/domains/state/storage';
 import { extractExecutionRunsBackendsFromMachineCapabilitiesState } from '@/sync/domains/executionRuns/extractExecutionRunsBackendsFromMachineCapabilities';
@@ -10,7 +11,8 @@ export function useExecutionRunsBackendsForSession(
   sessionId: string,
   serverId?: string | null,
 ): ExecutionRunBackendCapabilityMap {
-  const session = useSession(sessionId);
+  const normalizedSessionId = React.useMemo(() => normalizeSessionId(sessionId), [sessionId]);
+  const session = useSession(normalizedSessionId);
   const machineId = React.useMemo(() => resolveSessionMachineId((session as any)?.metadata), [(session as any)?.metadata]);
 
   const machineCapabilities = useMachineCapabilitiesCache({

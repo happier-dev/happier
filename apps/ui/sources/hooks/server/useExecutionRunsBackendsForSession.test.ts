@@ -10,13 +10,14 @@ const sessionState = vi.hoisted(() => ({
   value: null as any,
 }));
 
+const useSessionSpy = vi.hoisted(() => vi.fn<(sessionId: string) => any>(() => sessionState.value));
 const capabilitiesState = vi.hoisted(() => ({
   lastArgs: null as null | { machineId: string | null; serverId?: string | null; enabled: boolean; request: any },
 }));
 
 installServerHookCommonModuleMocks({
   storage: async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
-    useSession: () => sessionState.value,
+    useSession: (sessionId: string) => useSessionSpy(sessionId),
   }),
 });
 
@@ -61,6 +62,7 @@ describe('useExecutionRunsBackendsForSession', () => {
   beforeEach(() => {
     sessionState.value = null;
     capabilitiesState.lastArgs = null;
+    useSessionSpy.mockClear();
   });
 
   afterEach(() => {
@@ -146,6 +148,31 @@ describe('useExecutionRunsBackendsForSession', () => {
     expect(capabilitiesState.lastArgs).toEqual(expect.objectContaining({
       machineId: 'machine-direct',
       serverId: 'server-canonical',
+      enabled: true,
+    }));
+
+    await hook.unmount();
+  });
+
+  it('normalizes session ids before resolving execution-run backends', async () => {
+    sessionState.value = {
+      id: 'session-1',
+      metadata: {
+        directSessionV1: {
+          v: 1,
+          providerId: 'claude',
+          machineId: 'machine-direct',
+          remoteSessionId: 'remote-session-1',
+          source: { kind: 'claudeConfig', configDir: '/tmp/claude-config' },
+        },
+      },
+    };
+
+    const hook = await renderExecutionRunsBackendsHook('  session-1  ');
+
+    expect(useSessionSpy).toHaveBeenCalledWith('session-1');
+    expect(capabilitiesState.lastArgs).toEqual(expect.objectContaining({
+      machineId: 'machine-direct',
       enabled: true,
     }));
 

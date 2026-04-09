@@ -899,6 +899,8 @@ export const ca: TranslationStructure = {
           open: 'Obre',
           name: 'Nom',
           blocked: 'Bloquejat',
+          active: 'Actiu',
+          inactive: 'Inactiu',
         done: 'Fet',
         running: 'En execució…',
         reorder: 'Reordena',
@@ -1930,7 +1932,7 @@ export const ca: TranslationStructure = {
     systemStatus: {
         sections: {
             appHealth: 'Salut de l\'aplicació i sincronització',
-            currentServer: 'Relay actual',
+            currentServer: 'Servidor actual',
             identity: 'Identitat connectada',
             configuredServers: 'Relays configurats',
             machinesActiveServer: 'Màquines (relay actiu)',
@@ -1945,7 +1947,7 @@ export const ca: TranslationStructure = {
             lastSync: 'Última sincronització',
         },
         server: {
-            activeServer: 'Relay actiu',
+            activeServer: 'Servidor actiu',
         },
         identity: {
             accountId: 'ID del compte',
@@ -2001,7 +2003,7 @@ export const ca: TranslationStructure = {
             findings: 'Resultats',
         },
         overview: {
-            activeServer: 'Relay actiu',
+            activeServer: 'Servidor actiu',
             account: 'Compte',
             onlineMachines: 'Màquines en línia (servidor actiu)',
             cachedAttribution: ({ count }: { count: number }) => `${count} instantània(es) del doctor en memòria cau disponibles`,
@@ -2051,8 +2053,8 @@ export const ca: TranslationStructure = {
                 subtitle: ({ ui, machine }: { ui: string; machine: string }) => `UI: ${ui} • Dimoni: ${machine}`,
                 steps: {
                     chooseAccount: 'Decideix quin servidor/compte vols utilitzar.',
-                    switchUiServer: 'Canvia la UI al mateix servidor que el dimoni (o a l\'inrevés).',
-                    restartDaemon: 'Reinicia el dimoni apuntant al servidor correcte i torna-ho a provar.',
+                    switchUiServer: 'Mantén la UI apuntant al servidor que vols fer servir i torna a connectar el servei en segon pla perquè segueixi aquest servidor.',
+                    restartDaemon: 'Reinicia el servei en segon pla després d’haver-lo reconfigurat per al servidor correcte i torna-ho a provar.',
                 },
             },
             serverMismatchPasted: {
@@ -2562,8 +2564,15 @@ export const ca: TranslationStructure = {
           collapsedClickActionOpenSessionsTitle: 'Open sessions list',
           placementTitle: 'Placement',
           placementFooter: 'Choose where the overlay sits on the screen.',
-          placementModeTitle: 'Placement mode',
-          placementModeSubtitle: 'Switch between anchored and custom placement',
+          presentationModeTitle: 'Presentation mode',
+            presentationModeSubtitle: 'Choose whether the overlay follows the display notch or floats freely',
+            presentationAutomaticTitle: 'Automatic',
+            presentationNotchIntegratedTitle: 'Notch-integrated',
+            presentationFloatingOverlayTitle: 'Floating overlay',
+            hostModeFallbackTitle: 'Host mode: Floating overlay',
+            hostModeFallbackSubtitle: 'Notch-integrated mode is unavailable on this display, so the overlay falls back to a floating overlay.',
+            placementModeTitle: 'Placement mode',
+            placementModeSubtitle: 'Switch between anchored and custom placement',
           placementAnchoredTitle: 'Anchored',
           placementCustomTitle: 'Custom',
           anchorPresetTitle: 'Anchor preset',
@@ -6799,9 +6808,9 @@ settingsSession: {
         preAuthTitle: 'On viu el teu relay?',
         preAuthBody: 'El teu relay enruta missatges entre el teu telèfon i els teus ordinadors. Tria on viu — ho pots canviar més endavant.',
         preAuthContinueHint: 'Quan continuïs, Happier et tornarà a la pantalla d’inici de sessió amb el Relay seleccionat i després et retornarà aquí per acabar la configuració.',
-        currentRelayTitle: 'Relay actual',
-        selectedRelayFooterLabel: 'Relay actual',
-        selectedRelayFooterLine: ({ relay }: { relay: string }) => `Relay actiu: ${relay}`,
+        currentRelayTitle: 'Servidor actual',
+        selectedRelayFooterLabel: 'Servidor actual',
+        selectedRelayFooterLine: ({ relay }: { relay: string }) => `Servidor actiu: ${relay}`,
         currentRelayDescription: ({ relayUrl }: { relayUrl: string }) => `Relay actual: ${relayUrl}`,
 	        accountWillLiveOnRelay: ({ relayUrl }: { relayUrl: string }) => `El teu compte viurà a ${relayUrl}.`,
 	        savedRelaysTitle: 'Relays desats',
@@ -6920,6 +6929,19 @@ settingsSession: {
             stopped: 'Aturat',
             likelyAlive: 'Probablement actiu',
         },
+        backgroundServiceModes: {
+            generic: 'background service',
+            defaultFollowing: 'default background service',
+            legacyPinned: 'legacy pinned background service',
+        },
+        backgroundServicePrompt: {
+            targetServer: 'Servidor de destinació',
+            targetReleaseChannel: 'Canal de llançament de destinació',
+            existingServices: 'Serveis existents:',
+            running: 'en execució',
+        },
+        repairBackgroundServiceAction: 'Repair background service',
+        repairBackgroundServiceProgressTitle: 'Repairing background service',
         stopDaemon: 'Atura el dimoni',
         stopDaemonConfirmTitle: 'Aturar el dimoni?',
         stopDaemonConfirmBody: 'No podràs iniciar sessions noves en aquesta màquina fins que reiniciïs el dimoni a l’ordinador. Les sessions actuals continuaran actives.',
@@ -6941,6 +6963,19 @@ settingsSession: {
           startedAt: 'Iniciat a',
           cliVersion: 'Versió del CLI',
         daemonStateVersion: 'Versió de l\'estat del dimoni',
+        runtimeInventory: 'Inventari del runtime de Happier',
+        runtimeInventoryOverview: 'Resum',
+        runtimeInventoryInstallations: 'Instal·lacions',
+        runtimeInventoryServices: 'Serveis',
+        runtimeInventoryWarnings: 'Avisos',
+        runtimeSummary: ({ cliVersion, daemonVersion, daemonRing, installationCount, serviceCount, warningCount }: {
+            cliVersion: string;
+            daemonVersion: string;
+            daemonRing: string;
+            installationCount: number;
+            serviceCount: number;
+            warningCount: number;
+        }) => `CLI ${cliVersion} • daemon ${daemonVersion} (${daemonRing}) • ${installationCount} installations • ${serviceCount} services • ${warningCount} warnings`,
         transferExposure: {
             title: 'Exposició de transferència',
             status: 'Exposició de transferència',

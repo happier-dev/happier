@@ -72,7 +72,7 @@ function normalizeGroupProfiles(
 
 function resolveFallbackServerId(activeServerIdRaw: string, availableServerIds: string[]): string {
     const activeServerId = normalizeId(activeServerIdRaw);
-    if (activeServerId && availableServerIds.includes(activeServerId)) return activeServerId;
+    if (activeServerId) return activeServerId;
     return availableServerIds[0] ?? '';
 }
 

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { stubServerFeaturesFetch, stubServerFeaturesFetchFailure } from './serverFeaturesTestUtils';
 import { renderHookAndCollectValues } from './serverFeatureHookHarness.testHelpers';
 
@@ -14,6 +15,7 @@ describe('useFriendsAllowUsernameSupport', () => {
     it('returns false when username support is disabled', async () => {
         vi.resetModules();
         await stubServerFeaturesFetch({ friendsAllowUsername: false });
+        await getServerFeaturesSnapshot({ force: true });
 
         const { useFriendsAllowUsernameSupport } = await import('./useFriendsAllowUsernameSupport');
         const seen = await renderHookAndCollectValues(() => useFriendsAllowUsernameSupport());
@@ -24,6 +26,7 @@ describe('useFriendsAllowUsernameSupport', () => {
     it('returns true when username support is enabled', async () => {
         vi.resetModules();
         await stubServerFeaturesFetch({ friendsAllowUsername: true });
+        await getServerFeaturesSnapshot({ force: true });
 
         const { useFriendsAllowUsernameSupport } = await import('./useFriendsAllowUsernameSupport');
         const seen = await renderHookAndCollectValues(() => useFriendsAllowUsernameSupport());
@@ -34,6 +37,7 @@ describe('useFriendsAllowUsernameSupport', () => {
     it('fails closed when the request fails', async () => {
         vi.resetModules();
         await stubServerFeaturesFetchFailure();
+        await getServerFeaturesSnapshot({ force: true });
 
         const { useFriendsAllowUsernameSupport } = await import('./useFriendsAllowUsernameSupport');
         const seen = await renderHookAndCollectValues(() => useFriendsAllowUsernameSupport());

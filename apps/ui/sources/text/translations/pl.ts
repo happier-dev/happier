@@ -940,6 +940,8 @@ export const pl: TranslationStructure = {
       open: "Otwórz",
       name: "Nazwa",
       blocked: "Zablokowane",
+      active: "Aktywne",
+      inactive: "Nieaktywne",
       done: "Gotowe",
       running: "Uruchamianie…",
       reorder: "Zmień kolejność",
@@ -2053,7 +2055,7 @@ export const pl: TranslationStructure = {
 		  systemStatus: {
 		    sections: {
 		      appHealth: "Stan aplikacji i synchronizacji",
-		      currentServer: "Bieżący Relay",
+		      currentServer: "Bieżący serwer",
       identity: "Zalogowana tożsamość",
       configuredServers: "Skonfigurowane Relaye",
       machinesActiveServer: "Maszyny (aktywny Relay)",
@@ -2068,7 +2070,7 @@ export const pl: TranslationStructure = {
       lastSync: "Ostatnia synchronizacja",
     },
     server: {
-      activeServer: "Aktywny Relay",
+      activeServer: "Aktywny serwer",
     },
     identity: {
       accountId: "Id konta",
@@ -2124,7 +2126,7 @@ export const pl: TranslationStructure = {
       findings: "Wyniki",
     },
     overview: {
-      activeServer: "Aktywny Relay",
+      activeServer: "Aktywny serwer",
       account: "Konto",
       onlineMachines: "Maszyny online (aktywny serwer)",
       cachedAttribution: ({ count }: { count: number }) => `Dostępne snapshoty doctor w cache: ${count}`,
@@ -2174,8 +2176,8 @@ export const pl: TranslationStructure = {
         subtitle: ({ ui, machine }: { ui: string; machine: string }) => `UI: ${ui} • Daemon: ${machine}`,
         steps: {
           chooseAccount: "Zdecyduj, którego serwera/konta chcesz używać.",
-          switchUiServer: "Ustaw UI i daemona na ten sam serwer.",
-          restartDaemon: "Zrestartuj daemona dla właściwego serwera i spróbuj ponownie.",
+          switchUiServer: "Pozostaw UI skierowane na serwer, którego chcesz używać, a następnie ponownie połącz usługę działającą w tle, aby podążała za tym serwerem.",
+          restartDaemon: "Uruchom ponownie usługę w tle po jej ponownej konfiguracji dla właściwego serwera i spróbuj ponownie.",
         },
       },
       serverMismatchPasted: {
@@ -2732,8 +2734,15 @@ settingsDesktop: {
       collapsedClickActionOpenSessionsTitle: 'Open sessions list',
       placementTitle: 'Placement',
       placementFooter: 'Choose where the overlay sits on the screen.',
-      placementModeTitle: 'Placement mode',
-      placementModeSubtitle: 'Switch between anchored and custom placement',
+      presentationModeTitle: 'Presentation mode',
+            presentationModeSubtitle: 'Choose whether the overlay follows the display notch or floats freely',
+            presentationAutomaticTitle: 'Automatic',
+            presentationNotchIntegratedTitle: 'Notch-integrated',
+            presentationFloatingOverlayTitle: 'Floating overlay',
+            hostModeFallbackTitle: 'Host mode: Floating overlay',
+            hostModeFallbackSubtitle: 'Notch-integrated mode is unavailable on this display, so the overlay falls back to a floating overlay.',
+            placementModeTitle: 'Placement mode',
+            placementModeSubtitle: 'Switch between anchored and custom placement',
       placementAnchoredTitle: 'Anchored',
       placementCustomTitle: 'Custom',
       anchorPresetTitle: 'Anchor preset',
@@ -7479,9 +7488,9 @@ settingsSession: {
 			          preAuthTitle: 'Gdzie działa Twój relay?',
 	          preAuthBody: 'Twój relay przekazuje wiadomości między telefonem a komputerami. Wybierz, gdzie działa — możesz to później zmienić.',
           preAuthContinueHint: 'Po kontynuowaniu Happier cofnie Cię do logowania na wybranym Relay, a potem wróci tutaj, aby dokończyć konfigurację.',
-	    currentRelayTitle: 'Aktywny Relay',
-	    selectedRelayFooterLabel: 'Aktywny Relay',
-	    selectedRelayFooterLine: ({ relay }: { relay: string }) => `Aktywny Relay: ${relay}`,
+	    currentRelayTitle: 'Bieżący serwer',
+	    selectedRelayFooterLabel: 'Bieżący serwer',
+	    selectedRelayFooterLine: ({ relay }: { relay: string }) => `Aktywny serwer: ${relay}`,
 	    currentRelayDescription: ({ relayUrl }: { relayUrl: string }) => `Aktywny Relay: ${relayUrl}`,
 	    accountWillLiveOnRelay: ({ relayUrl }: { relayUrl: string }) => `Twoje konto będzie na ${relayUrl}.`,
 	    savedRelaysTitle: 'Zapisane Relay',
@@ -7607,6 +7616,19 @@ settingsSession: {
       stopped: "Zatrzymany",
       likelyAlive: "Prawdopodobnie działa",
     },
+    backgroundServiceModes: {
+      generic: "background service",
+      defaultFollowing: "default background service",
+      legacyPinned: "legacy pinned background service",
+    },
+    backgroundServicePrompt: {
+        targetServer: 'Serwer docelowy',
+        targetReleaseChannel: 'Docelowy kanał wydania',
+        existingServices: 'Istniejące usługi:',
+        running: 'uruchomiona',
+    },
+    repairBackgroundServiceAction: "Repair background service",
+    repairBackgroundServiceProgressTitle: "Repairing background service",
     stopDaemon: "Zatrzymaj daemon",
     stopDaemonConfirmTitle: "Zatrzymać daemon?",
     stopDaemonConfirmBody:
@@ -7633,6 +7655,19 @@ settingsSession: {
       startedAt: "Uruchomiony o",
       cliVersion: "Wersja CLI",
     daemonStateVersion: "Wersja stanu daemon",
+    runtimeInventory: 'Inwentarz środowiska wykonawczego Happier',
+    runtimeInventoryOverview: 'Przegląd',
+    runtimeInventoryInstallations: 'Instalacje',
+    runtimeInventoryServices: 'Usługi',
+    runtimeInventoryWarnings: 'Ostrzeżenia',
+    runtimeSummary: ({ cliVersion, daemonVersion, daemonRing, installationCount, serviceCount, warningCount }: {
+        cliVersion: string;
+        daemonVersion: string;
+        daemonRing: string;
+        installationCount: number;
+        serviceCount: number;
+        warningCount: number;
+    }) => `CLI ${cliVersion} • daemon ${daemonVersion} (${daemonRing}) • ${installationCount} installations • ${serviceCount} services • ${warningCount} warnings`,
     transferExposure: {
       title: "Ekspozycja transferu",
       status: "Ekspozycja transferu",

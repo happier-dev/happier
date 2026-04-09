@@ -21,11 +21,13 @@ describe('useFriendsEnabled', () => {
     it('returns false when the server reports friends are disabled', async () => {
         vi.resetModules();
         await stubServerFeaturesFetch({ friendsEnabled: false });
+        const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
         const { getStorage } = await import('@/sync/domains/state/storage');
         getStorage().getState().applySettingsLocal({
             experiments: true,
             featureToggles: { 'social.friends': true },
         });
+        await getServerFeaturesSnapshot({ force: true });
 
         const { useFriendsEnabled } = await import('./useFriendsEnabled');
         const seen = await renderHookAndCollectValues(() => useFriendsEnabled());
@@ -51,11 +53,13 @@ describe('useFriendsEnabled', () => {
     it('returns true when local and server policy are enabled', async () => {
         vi.resetModules();
         await stubServerFeaturesFetch({ friendsEnabled: true });
+        const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
         const { getStorage } = await import('@/sync/domains/state/storage');
         getStorage().getState().applySettingsLocal({
             experiments: true,
             featureToggles: { 'social.friends': true },
         });
+        await getServerFeaturesSnapshot({ force: true });
 
         const { useFriendsEnabled } = await import('./useFriendsEnabled');
         const seen = await renderHookAndCollectValues(() => useFriendsEnabled());
@@ -86,7 +90,7 @@ describe('useFriendsEnabled', () => {
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
 
         const profiles = await import('@/sync/domains/server/serverProfiles');
-        const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
         resetServerFeaturesClientForTests();
 
         const primary = profiles.upsertServerProfile({ serverUrl: 'http://primary.example.test', name: 'Primary' });
@@ -117,6 +121,7 @@ describe('useFriendsEnabled', () => {
             serverSelectionActiveTargetKind: 'group',
             serverSelectionActiveTargetId: 'g1',
         });
+        await getServerFeaturesSnapshot({ serverId: primary.id, force: true });
 
         const { useFriendsEnabled } = await import('./useFriendsEnabled');
         const seen = await renderHookAndCollectValues(() => useFriendsEnabled());

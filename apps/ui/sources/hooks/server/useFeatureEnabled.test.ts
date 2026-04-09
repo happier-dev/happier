@@ -14,9 +14,11 @@ describe('useFeatureEnabled', () => {
 	    it('returns true when a feature is enabled', async () => {
 	        vi.resetModules();
 	        await stubServerFeaturesFetch({ voiceEnabled: true });
+            const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
 
 	        const { getStorage } = await import('@/sync/domains/state/storage');
 	        getStorage().getState().applySettingsLocal({ experiments: true, featureToggles: { voice: true } });
+            await getServerFeaturesSnapshot({ force: true });
 
 	        const { useFeatureEnabled } = await import('./useFeatureEnabled');
 	        const seen = await renderHookAndCollectValues(() => useFeatureEnabled('voice'));
@@ -44,7 +46,7 @@ describe('useFeatureEnabled', () => {
         const seen = await renderHookAndCollectValues(() => useFeatureEnabled('zen.navigation'));
 
         expect(seen.at(-1)).toBe(true);
-        expect(fetchMock).not.toHaveBeenCalled();
+        expect(fetchMock.mock.calls.some((call) => String((call as unknown[])[0] ?? '').endsWith('/v1/features'))).toBe(false);
     });
 
     it('does not probe server features when build policy denies a server-required feature', async () => {
@@ -66,7 +68,7 @@ describe('useFeatureEnabled', () => {
             const seen = await renderHookAndCollectValues(() => useFeatureEnabled('voice'));
 
             expect(seen.at(-1)).toBe(false);
-            expect(fetchMock).not.toHaveBeenCalled();
+            expect(fetchMock.mock.calls.some((call) => String((call as unknown[])[0] ?? '').endsWith('/v1/features'))).toBe(false);
         } finally {
             if (previousDeny === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
             else process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = previousDeny;

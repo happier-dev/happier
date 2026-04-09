@@ -8,7 +8,7 @@ import {
 import {
     resolveRuntimeFeatureDecisionFromSnapshot,
     type ServerFeaturesRuntimeSnapshot,
-} from './featureDecisionRuntime';
+} from '@/sync/domains/features/featureDecisionRuntime';
 import { resolveFeatureDecisionSnapshotStrategy } from './featureDecisionProbeStrategy';
 
 export type RuntimeFeatureDecisionInputs = Readonly<{

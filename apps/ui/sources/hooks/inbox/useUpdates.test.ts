@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { renderHook } from '@/dev/testkit';
 import { renderHookAndCollectValues, flushHookEffects } from '@/hooks/server/serverFeatureHookHarness.testHelpers';
 
 vi.mock('expo-updates', () => ({
@@ -99,11 +100,14 @@ describe('useUpdates (OTA gating)', () => {
         );
 
         const { useUpdates } = await import('./useUpdates');
-        await renderHookAndCollectValues(() => useUpdates());
+        const harness = await renderHook(() => useUpdates());
         await flushMore();
 
         const Updates = await import('expo-updates');
-        expect((Updates as any).checkForUpdateAsync).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => {
+            expect((Updates as any).checkForUpdateAsync).toHaveBeenCalledTimes(1);
+        });
+
+        await harness.unmount();
     });
 });
-
