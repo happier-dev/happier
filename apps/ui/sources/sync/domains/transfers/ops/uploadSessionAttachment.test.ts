@@ -11,7 +11,7 @@ vi.mock('@/sync/domains/features/featureDecisionInputs', () => ({
     isRuntimeFeatureEnabled: (params: unknown) => isRuntimeFeatureEnabledSpy(params),
 }));
 
-vi.mock('@/sync/domains/transfers/runtime/transferSubstrate', async () => {
+vi.mock('@/sync/domains/transfers/runtime/transferRuntime', async () => {
     return {
         uploadDaemonSessionAttachmentFromReader: (params: unknown) => uploadDaemonSessionAttachmentFromReaderSpy(params),
     };

@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { Animated, Easing, Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Ionicons } from '@expo/vector-icons';
 
 import { Text } from '@/components/ui/text/Text';
+import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
@@ -63,7 +63,7 @@ export function RepositoryTreeDropOverlay(props: Readonly<{ visible: boolean; de
     return (
         <Animated.View testID="repository-tree-drop-overlay" pointerEvents="none" style={[styles.overlay, { opacity }]}>
             <View style={styles.content}>
-                <Ionicons name="cloud-upload-outline" size={18} color={theme.colors.textSecondary} />
+                <SafeIonicons name="cloud-upload-outline" size={18} color={theme.colors.textSecondary} />
                 <View style={{ gap: 2 }}>
                     <Text style={styles.text}>{t('files.repositoryTree.dropToUpload')}</Text>
                     {props.destinationLabel ? (

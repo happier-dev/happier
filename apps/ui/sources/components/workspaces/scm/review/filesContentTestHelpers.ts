@@ -9,6 +9,7 @@ type FilesContentStorageModuleFactory = (
 type InstallFilesContentCommonModuleMocksOptions = Readonly<{
     modal?: FilesContentModuleFactory;
     reactNative?: FilesContentModuleFactory;
+    sessionWorkspaceTarget?: FilesContentModuleFactory;
     storage?: FilesContentStorageModuleFactory;
     text?: FilesContentModuleFactory;
     unistyles?: FilesContentModuleFactory;
@@ -32,6 +33,7 @@ export function installFilesContentCommonModuleMocks(
     const activeOptions = {
         modal: options.modal,
         reactNative: options.reactNative,
+        sessionWorkspaceTarget: options.sessionWorkspaceTarget,
         storage: options.storage,
         text: options.text,
         unistyles: options.unistyles,
@@ -73,6 +75,26 @@ export function installFilesContentCommonModuleMocks(
         const modalMock = createModalModuleMock();
         filesContentModuleState.modalMockRef.current = modalMock;
         return modalMock.module;
+    });
+
+    vi.doMock('@/hooks/session/useSessionWorkspaceTarget', async () => {
+        if (activeOptions.sessionWorkspaceTarget) {
+            return await activeOptions.sessionWorkspaceTarget();
+        }
+
+        const stableTarget = {
+            workspaceCacheKey: 'test-workspace-cache-key',
+            machineId: 'test-machine-id',
+            rootPath: '/test/root/path',
+            serverId: 'test-server-id',
+        } as const;
+
+        return {
+            useSessionWorkspaceTarget: (sessionId: string | null) => {
+                if (!sessionId) return null;
+                return stableTarget;
+            },
+        };
     });
 
     vi.doMock('@/sync/domains/state/storage', async (importOriginal) => {

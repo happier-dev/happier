@@ -106,19 +106,7 @@ export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => {
         }
     }, [pane, scopeState?.right.activeTabId, scopeState?.right.isOpen, terminalTabAvailable]);
 
-    const openFileInDetails = React.useCallback((fullPath: string) => {
-        const fileName = fullPath.split('/').pop() ?? fullPath;
-        deferOnWeb(() => {
-            pane.openDetailsTab({
-                key: `file:${fullPath}`,
-                kind: 'file',
-                title: fileName,
-                resource: { kind: 'file', path: fullPath },
-            });
-        });
-    }, [pane]);
-
-    const openFileInDetailsPinned = React.useCallback((fullPath: string) => {
+    const openFileDetailsTab = React.useCallback((fullPath: string, intent?: { intent: 'pinned' }) => {
         const fileName = fullPath.split('/').pop() ?? fullPath;
         deferOnWeb(() => {
             pane.openDetailsTab(
@@ -128,10 +116,18 @@ export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => {
                     title: fileName,
                     resource: { kind: 'file', path: fullPath },
                 },
-                { intent: 'pinned' },
+                intent,
             );
         });
     }, [pane]);
+
+    const openFileInDetails = React.useCallback((fullPath: string) => {
+        openFileDetailsTab(fullPath);
+    }, [openFileDetailsTab]);
+
+    const openFileInDetailsPinned = React.useCallback((fullPath: string) => {
+        openFileDetailsTab(fullPath, { intent: 'pinned' });
+    }, [openFileDetailsTab]);
 
     const rightPanelTabs = React.useMemo((): ReadonlyArray<SegmentedTab<RightTabId>> => {
         const base: SegmentedTab<RightTabId>[] = [

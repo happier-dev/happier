@@ -45,7 +45,7 @@ installSessionDetailsPanelCommonModuleMocks({
             useSessionMessages: () => ({ messages: [], isLoaded: true }),
             useProjectForSession: () => ({ id: 'p1' }),
             useProjectSessions: () => [],
-            storage: { getState: () => ({ sessions: {}, settings: {}, sessionListViewDataByServerId: {} }) },
+            storage: { getState: () => ({ sessions: {}, settings: {}, concurrentSessionListCacheByServerId: {} }) },
         });
     },
     text: async () => {

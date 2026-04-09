@@ -73,6 +73,15 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     }),
 }));
 
+vi.mock('@/hooks/session/useSessionWorkspaceTarget', () => ({
+    useSessionWorkspaceTarget: () => ({
+        workspaceCacheKey: 'server:m1:/repo',
+        machineId: 'm1',
+        rootPath: '/repo',
+        serverId: 'server',
+    }),
+}));
+
 vi.mock('@/sync/domains/input/suggestionFile', () => ({
     fileSearchCache: { clearCache: vi.fn() },
     searchFiles: vi.fn(async () => []),

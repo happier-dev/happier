@@ -404,18 +404,34 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
         collapsedKeysRef.current = collapsedKeys;
     }, [collapsedKeys]);
 
-    const expandPath = React.useCallback((path: string) => {
-        if (!collapsedKeys.has(path)) return;
-        toggleCollapsed(path);
-    }, [collapsedKeys, toggleCollapsed]);
-
     const reportScrollTop = React.useCallback((nextTop: number) => {
         if (!Number.isFinite(nextTop)) return;
         lastScrollTopRef.current = nextTop;
         props.onScrollTopChange?.(nextTop);
     }, [props.onScrollTopChange]);
 
+    const scheduleWebFrame = React.useCallback((cb: FrameRequestCallback) => {
+        if (typeof globalThis.requestAnimationFrame === 'function') {
+            globalThis.requestAnimationFrame(cb);
+            return;
+        }
+        globalThis.setTimeout(() => cb(Date.now()), 0);
+    }, []);
+
     const webScrollRootRef = React.useRef<HTMLElement | null>(null);
+    const resolveWebAnchorRow = React.useCallback((path: string): HTMLElement | null => {
+        if (Platform.OS !== 'web') return null;
+        const win = (globalThis as any).window as Window | undefined;
+        const doc = win?.document as Document | undefined;
+        if (!doc?.querySelector) return null;
+        const safePath = toTestIdSafeValue(path);
+        return (doc.querySelector(`[data-testid="scm-change-row-${safePath}"]`) as HTMLElement | null) ?? null;
+    }, []);
+    const readWebAnchorTop = React.useCallback((path: string): number | null => {
+        const row = resolveWebAnchorRow(path) as any;
+        const top = row?.getBoundingClientRect?.()?.top;
+        return typeof top === 'number' && Number.isFinite(top) ? Number(top) : null;
+    }, [resolveWebAnchorRow]);
     const resolveWebScrollRoot = React.useCallback((): HTMLElement | null => {
         if (Platform.OS !== 'web') return null;
         const rawList: any = listRef.current as any;
@@ -427,7 +443,7 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
         if (!win) return null;
         const doc = win.document as Document | undefined;
         const listHost = (doc?.querySelector?.('[data-testid="scm-review-list"]') as Element | null) ?? null;
-        const rootCandidate: Element | null = listHost ?? (host as Element | null);
+        const rootCandidate: Element | null = (host as Element | null) ?? listHost;
         if (!rootCandidate) return null;
 
         const disableOverflowAnchor = (el: any) => {
@@ -448,23 +464,80 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
             maxDescendants: 1200,
             maxAncestors: 40,
         });
-        if (!resolved) return null;
+        const fallback =
+            host && typeof host.scrollTop === 'number'
+                ? host
+                : listHost && typeof (listHost as any).scrollTop === 'number'
+                    ? listHost
+                    : null;
+        const scrollRoot = (resolved as any) ?? fallback;
+        if (!scrollRoot) return null;
 
-        disableOverflowAnchor(resolved);
-        webScrollRootRef.current = resolved as any;
-        return resolved as any;
+        disableOverflowAnchor(scrollRoot);
+        webScrollRootRef.current = scrollRoot as any;
+        return scrollRoot as any;
     }, []);
+
+    const toggleCollapsedPreservingWebScroll = React.useCallback((path: string) => {
+        if (Platform.OS !== 'web') {
+            toggleCollapsed(path);
+            return;
+        }
+
+        const scrollRoot = webScrollRootRef.current ?? resolveWebScrollRoot();
+        const beforeTop =
+            scrollRoot && typeof (scrollRoot as any).scrollTop === 'number'
+                ? Number((scrollRoot as any).scrollTop)
+                : null;
+        const beforeAnchorTop = readWebAnchorTop(path);
+
+        toggleCollapsed(path);
+
+        if ((beforeTop === null || !Number.isFinite(beforeTop)) && beforeAnchorTop === null) return;
+
+        const restore = (remainingFrames: number) => {
+            const currentRoot = webScrollRootRef.current ?? resolveWebScrollRoot();
+            if (currentRoot && typeof (currentRoot as any).scrollTop === 'number') {
+                let nextTop: number | null = null;
+                const currentTop = Number((currentRoot as any).scrollTop);
+                const currentAnchorTop = beforeAnchorTop === null ? null : readWebAnchorTop(path);
+                if (
+                    beforeAnchorTop !== null
+                    && Number.isFinite(beforeAnchorTop)
+                    && currentAnchorTop !== null
+                    && Number.isFinite(currentAnchorTop)
+                    && Number.isFinite(currentTop)
+                ) {
+                    nextTop = Math.max(0, currentTop + (currentAnchorTop - beforeAnchorTop));
+                } else if (beforeTop !== null && Number.isFinite(beforeTop)) {
+                    nextTop = beforeTop;
+                }
+
+                if (nextTop !== null && Number.isFinite(nextTop)) {
+                    try {
+                        (currentRoot as any).scrollTop = nextTop;
+                    } catch {
+                        // ignore
+                    }
+                    reportScrollTop(nextTop);
+                }
+            }
+
+            if (remainingFrames <= 0) return;
+            scheduleWebFrame(() => restore(remainingFrames - 1));
+        };
+
+        scheduleWebFrame(() => restore(3));
+    }, [readWebAnchorTop, reportScrollTop, resolveWebScrollRoot, scheduleWebFrame, toggleCollapsed]);
+
+    const expandPath = React.useCallback((path: string) => {
+        if (!collapsedKeys.has(path)) return;
+        toggleCollapsedPreservingWebScroll(path);
+    }, [collapsedKeys, toggleCollapsedPreservingWebScroll]);
 
     React.useEffect(() => {
         if (Platform.OS !== 'web') return;
         let cancelled = false;
-        const scheduleFrame = (cb: FrameRequestCallback) => {
-            if (typeof globalThis.requestAnimationFrame === 'function') {
-                globalThis.requestAnimationFrame(cb);
-                return;
-            }
-            globalThis.setTimeout(() => cb(Date.now()), 0);
-        };
 
         let attempts = 0;
         const maxAttempts = 12;
@@ -474,14 +547,14 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
             resolveWebScrollRoot();
             attempts += 1;
             if (attempts >= maxAttempts) return;
-            scheduleFrame(() => step());
+            scheduleWebFrame(() => step());
         };
-        scheduleFrame(() => step());
+        scheduleWebFrame(() => step());
         return () => {
             cancelled = true;
             webScrollRootRef.current = null;
         };
-    }, [resolveWebScrollRoot]);
+    }, [resolveWebScrollRoot, scheduleWebFrame]);
 
     const handleScroll = React.useCallback((event: any) => {
         // Some consumers (scroll-edge fades) assume `event.nativeEvent` exists. FlashList can invoke
@@ -795,7 +868,7 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
                 testID="scm-review-list"
                 files={diffFiles as any}
                 expandedKeys={expandedKeys}
-                onToggleExpanded={toggleCollapsed}
+                onToggleExpanded={toggleCollapsedPreservingWebScroll}
                 canRenderInlineDiffs={true}
                 wrapLines={effectiveWrapLines}
                 showLineNumbers={effectiveShowLineNumbers}

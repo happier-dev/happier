@@ -3,7 +3,7 @@ import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
 const callDaemonWorkspaceWriteFileRpcSpy = vi.fn();
 
-vi.mock('@/sync/domains/transfers/runtime/transferSubstrate', () => ({
+vi.mock('@/sync/domains/transfers/runtime/transferRuntime', () => ({
     callDaemonWorkspaceWriteFileRpc: (...args: unknown[]) => callDaemonWorkspaceWriteFileRpcSpy(...args),
 }));
 

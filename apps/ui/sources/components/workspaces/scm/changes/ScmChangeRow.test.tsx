@@ -22,6 +22,17 @@ installSourceControlChangesCommonModuleMocks({
     },
 });
 
+function flattenStyle(style: any): Record<string, any> {
+    if (!style) return {};
+    if (Array.isArray(style)) {
+        return style.reduce((acc, entry) => Object.assign(acc, flattenStyle(entry)), {} as Record<string, any>);
+    }
+    if (typeof style === 'object') {
+        return style as Record<string, any>;
+    }
+    return {};
+}
+
 describe('ScmChangeRow', () => {
   it('renders change stats and calls onPress', async () => {
     const onPress = vi.fn();
@@ -180,7 +191,7 @@ describe('ScmChangeRow', () => {
 
     const pathText = tree.findAllByType('Text' as any).find((node) => node.props.children === 'apps/cli/src/api/directSessions/filePaging/')!;
     expect(pathText.props.ellipsizeMode).toBe('head');
-    expect(pathText.props.style.textAlign).toBe('right');
+    expect(flattenStyle(pathText.props.style).textAlign).toBe('right');
   });
 
   it('uses surfaceHigh background when highlighted', async () => {

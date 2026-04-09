@@ -11,7 +11,7 @@ const uploadReaderCloseSpy = vi.hoisted(() => vi.fn());
 
 installSessionFilesHookCommonModuleMocks();
 
-vi.mock('@/sync/domains/transfers/runtime/transferSubstrate', () => ({
+vi.mock('@/sync/domains/transfers/runtime/transferRuntime', () => ({
     uploadDaemonWorkspaceFileFromReader: (...args: unknown[]) => uploadDaemonWorkspaceFileFromReaderMock(...args),
     callDaemonWorkspaceStatFileRpc: (...args: unknown[]) => callDaemonWorkspaceStatFileRpcMock(...args),
 }));

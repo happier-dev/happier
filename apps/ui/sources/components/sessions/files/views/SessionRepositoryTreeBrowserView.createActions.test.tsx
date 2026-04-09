@@ -96,6 +96,19 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     }),
 }));
 
+vi.mock('@/hooks/session/useSessionWorkspaceTarget', () => ({
+    useSessionWorkspaceTarget: () => (
+        workspaceTargetAvailable
+            ? {
+                workspaceCacheKey: 'server:m1:/repo',
+                machineId: 'm1',
+                rootPath: '/repo',
+                serverId: 'server',
+            }
+            : null
+    ),
+}));
+
 vi.mock('@/scm/scmStatusSync', () => ({
     scmStatusSync: { invalidateFromUser: () => {} },
 }));
@@ -289,6 +302,7 @@ describe('SessionRepositoryTreeBrowserView (create actions)', () => {
             onOpenFilePinned,
         });
 
+        await act(async () => {});
         expect(mountCount.current).toBe(1);
 
         expect(screen.findAllByTestId('repository-tree-create-file').length).toBeGreaterThan(0);

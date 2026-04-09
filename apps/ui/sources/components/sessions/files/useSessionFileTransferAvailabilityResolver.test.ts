@@ -1,4 +1,6 @@
+import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 
 import { renderHook } from '@/dev/testkit';
 import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
@@ -6,7 +8,6 @@ import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const state = vi.hoisted(() => ({
-    preferredServerId: 'server-1' as string | null,
     session: { active: true } as any,
     machineReachability: { machineRpcTargetAvailable: true } as any,
     machineTarget: { machineId: 'machine-1', basePath: '/repo' } as any,
@@ -41,6 +42,24 @@ const state = vi.hoisted(() => ({
         },
     } as any,
 }));
+const activeServerState = vi.hoisted(() => {
+    const listeners = new Set<() => void>();
+
+    return {
+        serverId: 'server-1' as string | null,
+        listeners,
+        setServerId(next: string | null) {
+            activeServerState.serverId = next;
+            for (const listener of Array.from(listeners)) {
+                listener();
+            }
+        },
+        reset() {
+            activeServerState.serverId = 'server-1';
+            listeners.clear();
+        },
+    };
+});
 
 vi.mock('@/sync/domains/state/storage', () =>
     createStorageModuleStub({
@@ -68,8 +87,20 @@ vi.mock('@/sync/domains/features/featureDecisionRuntime', () => ({
     useServerFeaturesSnapshotForServerId: () => state.serverSnapshot,
 }));
 
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
-    resolvePreferredServerIdForSessionId: () => state.preferredServerId,
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession', () => ({
+    usePreferredServerIdForSession: (sessionId: string) => {
+        void sessionId;
+        return React.useSyncExternalStore(
+            (listener: () => void) => {
+                activeServerState.listeners.add(listener);
+                return () => {
+                    activeServerState.listeners.delete(listener);
+                };
+            },
+            () => state.session?.serverId ?? activeServerState.serverId,
+            () => state.session?.serverId ?? activeServerState.serverId,
+        );
+    },
 }));
 
 describe('useSessionFileTransferAvailabilityResolver', () => {
@@ -317,7 +348,6 @@ describe('useSessionFileTransferAvailabilityResolver', () => {
     });
 
     it('uses the session server id when preferred server resolution is unavailable', async () => {
-        state.preferredServerId = null;
         state.session = { active: true, serverId: 'server-explicit' } as any;
         state.machineReachability = { machineRpcTargetAvailable: true } as any;
         state.machineTarget = { machineId: 'machine-1', basePath: '/repo' } as any;
@@ -379,6 +409,79 @@ describe('useSessionFileTransferAvailabilityResolver', () => {
 
         const { useSessionFileTransferAvailabilityResolver } = await import('./useSessionFileTransferAvailability');
         const hook = await renderHook(() => useSessionFileTransferAvailabilityResolver('s1'));
+
+        expect(hook.getCurrent()(64)).toBe(true);
+    });
+
+    it('reacts to active server changes when the session server id is not hydrated yet', async () => {
+        state.session = { active: true } as any;
+        state.machineReachability = { machineRpcTargetAvailable: true } as any;
+        state.machineTarget = { machineId: 'machine-1', basePath: '/repo' } as any;
+        state.machine = null as any;
+        state.serverScopedMachineServerId = 'server-b';
+        state.serverScopedMachine = {
+            daemonState: {
+                transfer: {
+                    supported: {
+                        import: true,
+                        export: true,
+                    },
+                    listenerClasses: {
+                        loopback_http: {
+                            enabled: true,
+                            configured: true,
+                            active: true,
+                        },
+                        lan_http: {
+                            enabled: false,
+                            configured: false,
+                            active: false,
+                        },
+                        tailscale_serve_https: {
+                            enabled: false,
+                            configured: false,
+                            active: false,
+                            available: false,
+                        },
+                    },
+                    lifecycle: {
+                        mode: 'lazy_idle_shutdown',
+                        version: 1,
+                    },
+                },
+            },
+        } as any;
+        state.cachedMachineRpcDirectRoute = { status: 'unknown' as const } as any;
+        state.serverSnapshot = {
+            status: 'ready' as const,
+            features: {
+                features: {
+                    machines: {
+                        enabled: true,
+                        transfer: {
+                            enabled: true,
+                            directPeer: {
+                                enabled: true,
+                            },
+                            serverRouted: {
+                                enabled: false,
+                            },
+                        },
+                    },
+                },
+                capabilities: {},
+            },
+        } as any;
+        activeServerState.setServerId('server-a');
+
+        const { useSessionFileTransferAvailabilityResolver } = await import('./useSessionFileTransferAvailability');
+        const hook = await renderHook(() => useSessionFileTransferAvailabilityResolver('s1'));
+
+        expect(hook.getCurrent()(64)).toBe(false);
+
+        act(() => {
+            activeServerState.setServerId('server-b');
+        });
 
         expect(hook.getCurrent()(64)).toBe(true);
     });

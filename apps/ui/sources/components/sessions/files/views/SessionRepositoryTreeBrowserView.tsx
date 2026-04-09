@@ -1,9 +1,10 @@
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { Ionicons, Octicons } from '@expo/vector-icons';
+import { Octicons } from '@expo/vector-icons';
 
 import { SearchResultsList } from '@/components/workspaces/files/repositoryTree/SearchResultsList';
+import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { FileBrowserToolbarIconButton } from '@/components/ui/filesystemBrowser/FileBrowserToolbar';
@@ -44,6 +45,8 @@ import { useSessionWorkspaceTarget } from '@/hooks/session/useSessionWorkspaceTa
 import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
 import { workspaceCreateDirectory, workspaceWriteFile } from '@/sync/ops/workspaceFileSystem';
 import { SourceControlUnavailableState } from '@/components/workspaces/scm/states';
+
+const Ionicons = SafeIonicons;
 
 export type SessionRepositoryTreeBrowserViewProps = Readonly<{
     sessionId: string;

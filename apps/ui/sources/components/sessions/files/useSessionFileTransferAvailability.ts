@@ -8,14 +8,14 @@ import {
 import {
     resolveSessionFileTransferAvailability,
     type ResolveSessionFileTransferAvailabilityResult,
-} from '@/sync/domains/transfers/runtime/transferSubstrate';
+} from '@/sync/domains/transfers/runtime/transferRuntime';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
-import { resolveSessionTargetServerId } from '@/components/sessions/model/resolveSessionTargetServerId';
+import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 
 export function useSessionFileTransferAvailabilityState(sessionId: string): ResolveSessionFileTransferAvailabilityResult {
     const session = useSession(sessionId);
     const { machineRpcTargetAvailable } = useSessionMachineReachability(sessionId);
-    const serverId = resolveSessionTargetServerId(sessionId, session?.serverId);
+    const serverId = usePreferredServerIdForSession(sessionId);
     const serverSnapshot = useServerFeaturesSnapshotForServerId(serverId, {
         enabled: Boolean(serverId) && machineRpcTargetAvailable,
     });

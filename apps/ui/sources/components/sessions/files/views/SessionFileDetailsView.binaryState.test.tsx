@@ -45,8 +45,8 @@ vi.mock('@/sync/ops/sessionMachineTarget', () => ({
   readMachineTargetForSession: () => ({ machineId: 'm1', basePath: '/workspace' }),
 }));
 
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
-  resolvePreferredServerIdForSessionId: () => 'srv1',
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession', () => ({
+  usePreferredServerIdForSession: () => 'srv1',
 }));
 
 vi.mock('@expo/vector-icons', () => ({

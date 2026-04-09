@@ -12,6 +12,7 @@ import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 const sessionScmDiffFileSpy: any = vi.fn(async (_sessionId: string, _req: any) => ({ success: true, diff: 'diff', error: null }));
 const flashListScrollToIndexSpy: any = vi.fn();
 const deferOnWebSpy: any = vi.fn((cb: any) => cb());
+const resolveWebScrollableElementMock: any = vi.fn((rootCandidate: any) => rootCandidate);
 
 function areStringSetsEqual(left: ReadonlySet<string>, right: ReadonlySet<string>) {
     if (left.size !== right.size) return false;
@@ -31,12 +32,14 @@ let scmReviewPrefetchAheadCountNativeSetting: number | undefined = undefined;
 let scmReviewPrefetchBehindCountNativeSetting: number | undefined = undefined;
 let scmReviewPrefetchDebounceMsSetting: number | undefined = undefined;
 let scmReviewPrefetchConcurrencySetting: number | undefined = undefined;
+let onToggleCollapsedSideEffect: null | (() => void) = null;
 const flashListScrollableNode = {
     scrollTop: 0,
     style: {
         setProperty: vi.fn(),
     },
 };
+let flashListScrollableNodeOverride: any = null;
 
 function buildUnifiedDiff(path: string) {
     return `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new\n`;
@@ -77,6 +80,7 @@ vi.mock('@/components/ui/code/diff/DiffFilesListView', () => ({
             clearLayoutCacheOnUpdate: vi.fn(),
             scrollToIndex: flashListScrollToIndexSpy,
             scrollToOffset: vi.fn(),
+            getScrollableNode: () => flashListScrollableNodeOverride ?? flashListScrollableNode,
         }));
 
         const data = Array.isArray(props.files) ? props.files : [];
@@ -143,7 +147,7 @@ vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
         React.useImperativeHandle(ref, () => ({
             scrollToIndex: flashListScrollToIndexSpy,
             // Some callers may attempt to read the underlying scroll node on web.
-            getScrollableNode: () => flashListScrollableNode,
+            getScrollableNode: () => flashListScrollableNodeOverride ?? flashListScrollableNode,
         }));
         const data = Array.isArray(props.data) ? props.data : [];
         React.useEffect(() => {
@@ -569,6 +573,7 @@ vi.mock('@/components/workspaces/scm/review/useScmDiffExpandedKeys', () => ({
                 else next.add(key);
                 return next;
             });
+            onToggleCollapsedSideEffect?.();
         }, []);
 
         const initialAutoExpandedKeySet = React.useMemo(() => {
@@ -740,7 +745,7 @@ vi.mock('@/scm/review/useScmReviewViewabilityConfig', () => ({
 }));
 
 vi.mock('@/components/ui/scroll/resolveWebScrollableElement', () => ({
-    resolveWebScrollableElement: (rootCandidate: any) => rootCandidate,
+    resolveWebScrollableElement: (rootCandidate: any) => resolveWebScrollableElementMock(rootCandidate),
 }));
 
 vi.mock('@/components/workspaces/scm/review/scmEntryDelta', () => ({
@@ -890,6 +895,8 @@ describe('ChangedFilesReview', () => {
         flashListScrollToIndexSpy.mockReset();
         deferOnWebSpy.mockReset();
         deferOnWebSpy.mockImplementation((cb: any) => cb());
+        resolveWebScrollableElementMock.mockReset();
+        resolveWebScrollableElementMock.mockImplementation((rootCandidate: any) => rootCandidate);
         wrapLinesInDiffsSetting = true;
         showLineNumbersSetting = true;
         inlineVirtualizationLineThresholdSetting = undefined;
@@ -900,6 +907,10 @@ describe('ChangedFilesReview', () => {
         scmReviewPrefetchAheadCountNativeSetting = undefined;
         scmReviewPrefetchBehindCountNativeSetting = undefined;
         scmReviewPrefetchDebounceMsSetting = undefined;
+        onToggleCollapsedSideEffect = null;
+        flashListScrollableNodeOverride = null;
+        flashListScrollableNode.scrollTop = 0;
+        flashListScrollableNode.style.setProperty.mockClear();
     });
 
     afterEach(() => {
@@ -1181,6 +1192,167 @@ describe('ChangedFilesReview', () => {
         });
         await flushReviewEffects();
         expect(screen.findAllByType('CodeLinesView' as any)).toHaveLength(2);
+    });
+
+    it('restores the web scroll root after collapsing a diff row', async () => {
+        vi.useFakeTimers();
+        sessionScmDiffFileSpy.mockClear();
+        sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
+            success: true,
+            diff: buildUnifiedDiff(req.path),
+            error: null,
+        }));
+        const previousWindow = (globalThis as any).window;
+        (globalThis as any).window = {
+            document: {
+                querySelector: () => null,
+            },
+        };
+
+        try {
+            const screen = await renderChangedFilesReview({
+                allRepositoryChangedFiles: [fileA, fileB],
+            });
+            await flushReviewEffects();
+
+            flashListScrollableNode.scrollTop = 0;
+            onToggleCollapsedSideEffect = () => {
+                flashListScrollableNode.scrollTop = 1500;
+            };
+
+            const [firstRow] = screen.findAllByType('ScmChangeRow' as any);
+            act(() => {
+                pressTestInstance(firstRow);
+            });
+            await act(async () => {
+                vi.runAllTimers();
+            });
+            await flushReviewEffects(3);
+
+            expect(flashListScrollableNode.scrollTop).toBe(0);
+        } finally {
+            (globalThis as any).window = previousWindow;
+        }
+    });
+
+    it('restores the nested web scroll root when FlashList exposes only a host node', async () => {
+        vi.useFakeTimers();
+        sessionScmDiffFileSpy.mockClear();
+        sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
+            success: true,
+            diff: buildUnifiedDiff(req.path),
+            error: null,
+        }));
+
+        const nestedScrollRoot = {
+            scrollTop: 800,
+            style: {
+                setProperty: vi.fn(),
+            },
+        };
+        flashListScrollableNodeOverride = {
+            scrollTop: 0,
+            style: {
+                setProperty: vi.fn(),
+            },
+        };
+        resolveWebScrollableElementMock.mockImplementation(() => nestedScrollRoot);
+        const previousWindow = (globalThis as any).window;
+        (globalThis as any).window = {
+            document: {
+                querySelector: () => null,
+            },
+        };
+
+        try {
+            const screen = await renderChangedFilesReview({
+                allRepositoryChangedFiles: [fileA, fileB],
+            });
+            await flushReviewEffects();
+
+            onToggleCollapsedSideEffect = () => {
+                nestedScrollRoot.scrollTop = 1500;
+            };
+
+            const [firstRow] = screen.findAllByType('ScmChangeRow' as any);
+            act(() => {
+                pressTestInstance(firstRow);
+            });
+            await act(async () => {
+                vi.runAllTimers();
+            });
+            await flushReviewEffects(3);
+
+            expect(nestedScrollRoot.scrollTop).toBe(800);
+        } finally {
+            (globalThis as any).window = previousWindow;
+        }
+    });
+
+    it('preserves the toggled row viewport position when collapse changes content height above it', async () => {
+        vi.useFakeTimers();
+        sessionScmDiffFileSpy.mockClear();
+        sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
+            success: true,
+            diff: buildUnifiedDiff(req.path),
+            error: null,
+        }));
+
+        const nestedScrollRoot = {
+            scrollTop: 800,
+            style: {
+                setProperty: vi.fn(),
+            },
+        };
+        const safePath = toTestIdSafeValue(fileA.fullPath);
+        let anchorDocumentTop = 1100;
+        const anchorElement = {
+            getBoundingClientRect: () => ({
+                top: anchorDocumentTop - nestedScrollRoot.scrollTop,
+            }),
+        };
+        flashListScrollableNodeOverride = {
+            scrollTop: 0,
+            style: {
+                setProperty: vi.fn(),
+            },
+        };
+        resolveWebScrollableElementMock.mockImplementation(() => nestedScrollRoot);
+        const previousWindow = (globalThis as any).window;
+        (globalThis as any).window = {
+            document: {
+                querySelector: (selector: string) => {
+                    if (selector === `[data-testid="scm-change-row-${safePath}"]`) {
+                        return anchorElement;
+                    }
+                    return null;
+                },
+            },
+        };
+
+        try {
+            const screen = await renderChangedFilesReview({
+                allRepositoryChangedFiles: [fileA, fileB],
+            });
+            await flushReviewEffects();
+
+            onToggleCollapsedSideEffect = () => {
+                anchorDocumentTop = 950;
+            };
+
+            const [firstRow] = screen.findAllByType('ScmChangeRow' as any);
+            act(() => {
+                pressTestInstance(firstRow);
+            });
+            await act(async () => {
+                vi.runAllTimers();
+            });
+            await flushReviewEffects(3);
+
+            expect(nestedScrollRoot.scrollTop).toBe(650);
+        } finally {
+            (globalThis as any).window = previousWindow;
+        }
     });
 
     it('uses a localized fallback when diff loading fails without an error string', async () => {

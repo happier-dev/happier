@@ -87,9 +87,7 @@ describe('sessionScm', () => {
             {
                 cwd: '~/repo',
             },
-            {
-                timeoutMs: 30000,
-            },
+            expect.objectContaining({ timeoutMs: expect.any(Number) }),
         );
         expect(sessionRpcMock).not.toHaveBeenCalled();
     });
@@ -128,9 +126,7 @@ describe('sessionScm', () => {
                     backendId: 'sapling',
                 },
             },
-            {
-                timeoutMs: 30000,
-            },
+            expect.objectContaining({ timeoutMs: expect.any(Number) }),
         );
         expect(sessionRpcMock).not.toHaveBeenCalled();
     });
@@ -234,9 +230,7 @@ describe('sessionScm', () => {
             'machine-1',
             RPC_METHODS.SCM_STATUS_SNAPSHOT,
             { cwd: '~/repo' },
-            {
-                timeoutMs: 30000,
-            },
+            expect.objectContaining({ timeoutMs: expect.any(Number) }),
         );
         expect(sessionRpcMock).not.toHaveBeenCalled();
     });

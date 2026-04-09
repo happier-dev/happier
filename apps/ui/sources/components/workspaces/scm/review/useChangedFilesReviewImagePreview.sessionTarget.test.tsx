@@ -4,6 +4,18 @@ import { flushHookEffects, renderHook } from '@/dev/testkit';
 
 const workspaceReadFileSpy = vi.hoisted(() => vi.fn());
 
+const activeServerState = vi.hoisted(() => ({
+    snapshot: { serverId: 'server-1', serverUrl: 'https://server-1.example.test', generation: 1 },
+}));
+
+vi.mock('@/sync/domains/server/serverRuntime', () => ({
+    getActiveServerSnapshot: () => activeServerState.snapshot,
+    subscribeActiveServer: (listener: (snapshot: { serverId: string; serverUrl: string; generation: number }) => void) => {
+        listener(activeServerState.snapshot);
+        return () => undefined;
+    },
+}));
+
 const sessionState = vi.hoisted(() => ({
     current: null as null | {
         active: boolean;
@@ -44,14 +56,14 @@ const allMachinesState = vi.hoisted(() => ({
 }));
 
 const storageSnapshotState = vi.hoisted(() => ({
-    current: {
-        sessions: {} as Record<string, unknown>,
-        machines: {} as Record<string, unknown>,
-        sessionListViewDataByServerId: {} as Record<string, unknown>,
-        getProjectForSession: (_sessionId: string) => null,
-        applySessionListRenderablePatches: () => undefined,
-    },
-}));
+	    current: {
+	        sessions: {} as Record<string, unknown>,
+	        machines: {} as Record<string, unknown>,
+	        concurrentSessionListCacheByServerId: {} as Record<string, unknown>,
+	        getProjectForSession: (_sessionId: string) => null,
+	        applySessionListRenderablePatches: () => undefined,
+	    },
+	}));
 
 vi.mock('@/sync/ops/workspaceFileSystem', () => ({
     workspaceReadFile: (target: unknown, path: string) => workspaceReadFileSpy(target, path),
@@ -121,11 +133,14 @@ function setSessionWorkspaceUnavailable() {
             homeDir: '/Users/test',
         },
     }];
-    storageSnapshotState.current.sessions = {
-        s1: sessionState.current,
-    };
-    storageSnapshotState.current.machines = {
-        m1: allMachinesState.current[0]!,
+    storageSnapshotState.current = {
+        ...storageSnapshotState.current,
+        sessions: {
+            s1: sessionState.current,
+        },
+        machines: {
+            m1: allMachinesState.current[0]!,
+        },
     };
 }
 
@@ -160,11 +175,14 @@ function setSessionWorkspaceAvailable() {
             homeDir: '/Users/test',
         },
     }];
-    storageSnapshotState.current.sessions = {
-        s1: sessionState.current,
-    };
-    storageSnapshotState.current.machines = {
-        m1: allMachinesState.current[0]!,
+    storageSnapshotState.current = {
+        ...storageSnapshotState.current,
+        sessions: {
+            s1: sessionState.current,
+        },
+        machines: {
+            m1: allMachinesState.current[0]!,
+        },
     };
 }
 

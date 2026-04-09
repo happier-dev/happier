@@ -7,7 +7,7 @@ import {
     callDaemonWorkspaceStatFileRpc,
     downloadDaemonWorkspaceFileToDestination,
     uploadDaemonWorkspaceFileFromReader,
-} from '@/sync/domains/transfers/runtime/transferSubstrate';
+} from '@/sync/domains/transfers/runtime/transferRuntime';
 import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';
 import { resolveLocalUploadSourceSizeBytes } from '@/sync/runtime/files/localUploadSourceReader';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';

@@ -110,6 +110,19 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     }),
 }));
 
+vi.mock('@/hooks/session/useSessionWorkspaceTarget', () => ({
+    useSessionWorkspaceTarget: () => (
+        workspaceTargetAvailable
+            ? {
+                workspaceCacheKey: 'server:m1:/repo',
+                machineId: 'm1',
+                rootPath: '/repo',
+                serverId: 'server',
+            }
+            : null
+    ),
+}));
+
 vi.mock('@/components/workspaces/scm/states', () => ({
     SourceControlSessionInactiveState: () =>
         React.createElement('View', { testID: 'source-control-session-inactive-state' }),

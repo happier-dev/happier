@@ -23,7 +23,7 @@ installSessionDetailsPanelCommonModuleMocks({
             useSetting: () => null,
             useProjectForSession: () => (
                 projectPath
-                    ? { key: { machineId: 'm1', path: projectPath } }
+                    ? { key: { machineId: 'm1', rootPath: projectPath } }
                     : null
             ),
             useProjectSessions: () => [],

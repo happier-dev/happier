@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 const callDaemonWorkspaceStatFileRpcMock = vi.hoisted(() => vi.fn());
 
-vi.mock('@/sync/domains/transfers/runtime/transferSubstrate', () => ({
+vi.mock('@/sync/domains/transfers/runtime/transferRuntime', () => ({
     callDaemonWorkspaceStatFileRpc: (...args: unknown[]) => callDaemonWorkspaceStatFileRpcMock(...args),
 }));
 

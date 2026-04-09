@@ -1,6 +1,6 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSessionFixture, renderScreen } from '@/dev/testkit';
 import type { Session, ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import type { Project } from '@/sync/runtime/orchestration/projectManager';
@@ -60,8 +60,22 @@ vi.mock('@/sync/ops/sessionMachineTarget', () => ({
   readMachineTargetForSession: () => ({ machineId: 'm1', basePath: '/workspace' }),
 }));
 
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession', () => ({
+  usePreferredServerIdForSession: () =>
+    React.useSyncExternalStore(
+      (listener: () => void) => {
+        activeServerState.listeners.add(listener);
+        return () => {
+          activeServerState.listeners.delete(listener);
+        };
+      },
+      () => activeServerState.serverId,
+      () => activeServerState.serverId,
+    ),
+}));
+
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
-  resolvePreferredServerIdForSessionId: () => null,
+  resolvePreferredServerIdForSessionId: () => activeServerState.serverId,
 }));
 
 vi.mock('@/utils/code/fileLanguage', () => ({
@@ -103,6 +117,17 @@ vi.mock('@/components/workspaces/files/file/FileScreenState', () => ({
   FileErrorState: (props: any) => React.createElement('FileErrorState', props),
   FileBinaryState: (props: any) => React.createElement('FileBinaryState', props),
 }));
+
+vi.mock('@/components/workspaces/files/details/WorkspaceFileDetailsView', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/workspaces/files/details/WorkspaceFileDetailsView')>();
+  return {
+    ...actual,
+    WorkspaceFileDetailsView: (props: any) => {
+      workspaceFileDetailsViewState.current = props;
+      return React.createElement(actual.WorkspaceFileDetailsView, props);
+    },
+  };
+});
 
 vi.mock('@/hooks/ui/useMountedRef', () => ({
   useMountedRef: () => ({ current: true }),
@@ -193,6 +218,27 @@ const refreshSpy = vi.fn(async (_input: any) => {
     fileWriteSupported: true,
   };
 });
+const activeServerState = vi.hoisted(() => {
+    const listeners = new Set<() => void>();
+
+    return {
+        serverId: 'srv1' as string | null,
+        listeners,
+        setServerId(next: string | null) {
+            activeServerState.serverId = next;
+            for (const listener of Array.from(listeners)) {
+                listener();
+            }
+        },
+        reset() {
+            activeServerState.serverId = 'srv1';
+            listeners.clear();
+        },
+    };
+});
+const workspaceFileDetailsViewState = vi.hoisted(() => ({
+  current: null as any,
+}));
 
 const scmRefreshSession: Session = createSessionFixture({
     id: 's1',
@@ -236,6 +282,12 @@ vi.mock('@/components/workspaces/files/details/workspaceFileDetails/refreshWorks
 let scmSnapshot: ScmWorkingSnapshot | null = null;
 
 describe('SessionFileDetailsView (SCM refresh)', () => {
+  beforeEach(() => {
+    activeServerState.reset();
+    workspaceFileDetailsViewState.current = null;
+    scmRefreshSession.serverId = 'srv-session';
+  });
+
   it('refreshes diff content in-place when SCM entry fingerprint changes', async () => {
     const { SessionFileDetailsView } = await import('./SessionFileDetailsView');
 
@@ -302,5 +354,22 @@ describe('SessionFileDetailsView (SCM refresh)', () => {
 
     // Regression: background refresh should not return to the initial loading skeleton.
     expect(tree.findAllByType('FileLoadingState' as any)).toHaveLength(0);
+  });
+
+  it('reacts to active server changes when the session server id is not hydrated yet', async () => {
+    scmRefreshSession.serverId = undefined as any;
+    const { SessionFileDetailsView } = await import('./SessionFileDetailsView');
+
+    let tree!: renderer.ReactTestRenderer;
+    tree = (await renderScreen(<SessionFileDetailsView sessionId="s1" scopeId="session:s1" filePath="src/a.txt" />)).tree;
+    await act(async () => {});
+
+    expect(workspaceFileDetailsViewState.current.scope.serverId).toBe('srv1');
+
+    await act(async () => {
+      activeServerState.setServerId('srv2');
+    });
+
+    expect(workspaceFileDetailsViewState.current.scope.serverId).toBe('srv2');
   });
 });

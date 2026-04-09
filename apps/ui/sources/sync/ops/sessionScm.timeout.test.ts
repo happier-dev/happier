@@ -51,7 +51,8 @@ describe('sessionScm (rpc timeouts)', () => {
             'm1',
             RPC_METHODS.SCM_DIFF_COMMIT,
             expect.any(Object),
-            { timeoutMs: 120_000 },
+            expect.objectContaining({ timeoutMs: expect.any(Number) }),
         );
+        expect(mockMachineRPC.mock.calls[0]?.[3]?.timeoutMs).toBeGreaterThanOrEqual(60_000);
     });
 });

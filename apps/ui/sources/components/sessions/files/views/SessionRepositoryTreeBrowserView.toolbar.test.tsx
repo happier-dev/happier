@@ -72,9 +72,13 @@ vi.mock('@/hooks/session/files/useWorkspaceFileTransfers', () => ({
     },
 }));
 
-vi.mock('@/components/workspaces/scm/states', () => ({
-    SourceControlSessionInactiveState: () => React.createElement('SourceControlSessionInactiveState'),
-}));
+vi.mock('@/components/workspaces/scm/states', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/components/workspaces/scm/states')>();
+    return {
+        ...actual,
+        SourceControlSessionInactiveState: () => React.createElement('SourceControlSessionInactiveState'),
+    };
+});
 
 vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => ({
     resolveSessionMachineReachability: () => true,
@@ -89,6 +93,15 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
         machineReachable: true,
         machineOnline: true,
         machineRpcTargetAvailable: true,
+    }),
+}));
+
+vi.mock('@/hooks/session/useSessionWorkspaceTarget', () => ({
+    useSessionWorkspaceTarget: () => ({
+        workspaceCacheKey: 'server:m1:/repo',
+        machineId: 'm1',
+        rootPath: '/repo',
+        serverId: 'server',
     }),
 }));
 
@@ -219,6 +232,7 @@ describe('SessionRepositoryTreeBrowserView (toolbar)', () => {
 
         const screen = await renderRepositoryTreeBrowserView();
 
+        await act(async () => {});
         expect(mountCount.current).toBe(1);
 
         const input = screen.findByTestId('repository-tree-search');
@@ -258,6 +272,7 @@ describe('SessionRepositoryTreeBrowserView (toolbar)', () => {
         reloadCount.current = 0;
 
         const screen = await renderRepositoryTreeBrowserView();
+        await act(async () => {});
 
         expect(typeof latestTransferOptions?.onAfterUploadSuccess).toBe('function');
 

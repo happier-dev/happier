@@ -4,9 +4,9 @@ import type { ReviewCommentAnchor, ReviewCommentSource } from '@/sync/domains/in
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { WorkspaceFileDetailsView } from '@/components/workspaces/files/details/WorkspaceFileDetailsView';
 
-import { resolveSessionTargetServerId } from '@/components/sessions/model/resolveSessionTargetServerId';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { useProjectForSession, useSession } from '@/sync/domains/state/storage';
+import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 
 export type SessionFileDeepLinkAnchor = Readonly<{
     source: ReviewCommentSource;
@@ -26,7 +26,7 @@ export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
     const sessionId = props.sessionId;
     const project = useProjectForSession(sessionId);
     const session = useSession(sessionId);
-    const preferredServerId = resolveSessionTargetServerId(sessionId, session?.serverId);
+    const preferredServerId = usePreferredServerIdForSession(sessionId);
     const machineTarget = readMachineTargetForSession(sessionId);
 
     const scope: WorkspaceScopeBase | null = React.useMemo(() => {

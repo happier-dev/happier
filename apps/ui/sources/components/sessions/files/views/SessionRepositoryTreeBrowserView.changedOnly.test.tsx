@@ -81,6 +81,15 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     }),
 }));
 
+vi.mock('@/hooks/session/useSessionWorkspaceTarget', () => ({
+    useSessionWorkspaceTarget: () => ({
+        workspaceCacheKey: 'server:m1:/repo',
+        machineId: 'm1',
+        rootPath: '/repo',
+        serverId: 'server',
+    }),
+}));
+
 vi.mock('@/scm/scmStatusSync', () => ({
     scmStatusSync: { invalidateFromUser: () => {} },
 }));

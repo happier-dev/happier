@@ -18,7 +18,7 @@ installSessionFilesHookCommonModuleMocks({
     }),
 });
 
-vi.mock('@/sync/domains/transfers/runtime/transferSubstrate', () => ({
+vi.mock('@/sync/domains/transfers/runtime/transferRuntime', () => ({
     downloadDaemonWorkspaceFileToDestination: (...args: unknown[]) => downloadDaemonWorkspaceFileToDestinationMock(...args),
 }));
 
