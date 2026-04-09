@@ -2,11 +2,11 @@
 
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 
-const __dirname = fileURLToPath(new URL('.', import.meta.url));
-const repoDir = resolve(join(__dirname, '..'));
+import { resolveRepoRoot } from './playwright-session-handoff-wsrepl-matrix.shared.mjs';
+
+const repoDir = resolveRepoRoot();
 
 function requireOutdir() {
   const outdir = String(process.env.HAPPIER_QA_OUTDIR ?? '').trim();
@@ -79,4 +79,3 @@ await writeJson(fatalPath, {
 });
 
 process.exit(typeof result.code === 'number' ? result.code : 1);
-
