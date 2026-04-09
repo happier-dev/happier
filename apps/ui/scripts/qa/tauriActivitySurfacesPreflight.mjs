@@ -1,6 +1,17 @@
 const settingsSurfaceSelectors = [
-    '[data-testid="settings-desktop-entry"]',
     '[data-testid="settings-desktop-overlay-enabled"]',
+];
+
+const settingsIndexSurfaceSelectors = [
+    '[data-testid="settings-shell.sidebarPane"]',
+    '[data-testid="settings-desktop-entry"]',
+    '[data-testid="settings-add-your-phone-shortcut"]',
+    '[data-testid="settings-mcp-servers-item"]',
+    '[data-testid="settings-system-status-item"]',
+];
+
+const settingsShellActionSelectors = [
+    '[data-testid="tabbar-tab-settings"]',
 ];
 
 const onboardingSurfaceSelectors = [
@@ -12,30 +23,59 @@ const onboardingSurfaceSelectors = [
     '[data-testid="onboarding-wizard-relay-diagram"]',
     '[data-testid="onboarding-wizard-relay:cloud"]',
     '[data-testid="onboarding-wizard-relay:thisComputer"]',
+    '[data-testid="onboarding-wizard-relay:remoteComputer"]',
     '[data-testid="onboarding-wizard-relay:customUrl"]',
     '[data-testid="onboarding-wizard-relay-host-local-checklist-row-startRelayRuntime"]',
     '[data-testid="onboarding-wizard-back"]',
     '[data-testid="onboarding-wizard-welcome-body"]',
 ];
 
+const onboardingRelayBranchSelectors = [
+    '[data-testid="onboarding-wizard-relay:cloud"]',
+    '[data-testid="onboarding-wizard-relay:thisComputer"]',
+    '[data-testid="onboarding-wizard-relay:remoteComputer"]',
+    '[data-testid="onboarding-wizard-relay:customUrl"]',
+];
+
+const onboardingRelaySetupSelectors = [
+    '[data-testid="onboarding-wizard-relay-host-local-checklist-row-installRelayRuntime"]',
+    '[data-testid="onboarding-wizard-relay-host-local-checklist-row-startRelayRuntime"]',
+];
+
+const onboardingRelayPrimarySelector = '[data-testid="onboarding-wizard-primary"]';
+const onboardingRelayDiagramSelector = '[data-testid="onboarding-wizard-relay-diagram"]';
+
 const onboardingActionSelectors = [
     '[data-testid="onboarding-wizard-skip"]',
     '[data-testid="welcome-retry-server"]',
-    '[data-testid="onboarding-wizard-relay:cloud"]',
-    '[data-testid="onboarding-wizard-relay:thisComputer"]',
-    '[data-testid="onboarding-wizard-relay:customUrl"]',
-    '[data-testid="onboarding-wizard-relay-host-local-checklist-row-installRelayRuntime"]',
-    '[data-testid="onboarding-wizard-relay-host-local-checklist-row-startRelayRuntime"]',
+    ...onboardingRelayBranchSelectors,
+    ...onboardingRelaySetupSelectors,
     '[data-testid="onboarding-wizard-back"]',
-    '[data-testid="onboarding-wizard-primary"]',
+    onboardingRelayPrimarySelector,
 ];
 
 const authSurfaceSelectors = [
+    '[data-testid="onboarding-wizard-welcome-auth"]',
     '[data-testid="welcome-create-account"]',
     '[data-testid="welcome-restore"]',
     '[data-testid="welcome-signup-provider"]',
     '[data-testid="welcome-mtls-login"]',
     '[data-testid="welcome-server-loading"]',
+];
+
+const appCrashSurfaceSelectors = [
+    '[data-testid="app-blocking-logo"]',
+    '[data-testid="app-crash-restart"]',
+    '[data-testid="app-crash-report-bug"]',
+    '[data-testid="app-crash-copy-details"]',
+];
+
+const bundleFailureRootTextNeedles = [
+    'web bundling failed',
+    'bundling failed',
+    'unable to resolve',
+    'unable to resolve module',
+    'transformerror',
 ];
 
 const setupWizardSurfaceSelectors = [
@@ -84,15 +124,44 @@ export function selectorToTestId(selector) {
 export function buildActivitySurfacesPreflightPlan() {
     return {
         settingsSelectors: [...settingsSurfaceSelectors],
+        settingsIndexSelectors: [...settingsIndexSurfaceSelectors],
+        settingsShellActionSelectors: [...settingsShellActionSelectors],
         onboardingSelectors: [...onboardingSurfaceSelectors],
         actionSelectors: [...onboardingActionSelectors],
         authSelectors: [...authSurfaceSelectors],
+        appCrashSelectors: [...appCrashSurfaceSelectors],
         setupSelectors: [...setupWizardSurfaceSelectors],
         setupActionSelectors: [...setupWizardActionSelectors],
         settingsPath: '/settings',
+        desktopSettingsPath: '/settings/desktop',
         maxAttempts: 8,
+        desktopSettingsShellMaxAttempts: 2,
+        desktopSettingsShellSelectorPresenceProbeTimeoutMs: 1_500,
+        desktopSettingsShellRootStateProbeTimeoutMs: 1_500,
+        desktopSettingsShellStructureSnapshotProbeTimeoutMs: 2_000,
         settleDelayMs: 600,
         probeSelectorTimeoutMs: 1_200,
+        selectorPresenceProbeTimeoutMs: 4_000,
+        rootStateProbeTimeoutMs: 4_000,
+        structureSnapshotProbeTimeoutMs: 5_000,
+    };
+}
+
+export function analyzeActivitySurfacesPreflightRootText(rootText) {
+    const normalized = String(rootText ?? '').trim().toLowerCase();
+    if (!normalized) {
+        return null;
+    }
+
+    const looksLikeBundleFailure = bundleFailureRootTextNeedles.some((needle) => normalized.includes(needle));
+    if (!looksLikeBundleFailure) {
+        return null;
+    }
+
+    return {
+        kind: 'blocked',
+        blocker: 'bundle-failure',
+        message: 'The app failed to bundle before the desktop settings shell loaded. Fix the Expo/Metro bundle error, then rerun the activity-surfaces QA capture.',
     };
 }
 
@@ -106,6 +175,29 @@ export function classifyActivitySurfacesPreflightSelectors(
 
     if (plan.settingsSelectors.some((selector) => present.has(selector))) {
         return { kind: 'ready' };
+    }
+
+    const settingsIndexSelectors = plan.settingsIndexSelectors ?? settingsIndexSurfaceSelectors;
+
+    if (settingsIndexSelectors.some((selector) => present.has(selector))) {
+        return { kind: 'ready' };
+    }
+
+    const settingsShellActions = plan.settingsShellActionSelectors ?? settingsShellActionSelectors;
+    const settingsShellActionSelector = pickFirstRetryableVisibleSelector(settingsShellActions, present, triedSelectors);
+    if (settingsShellActionSelector) {
+        return {
+            kind: 'action',
+            selector: settingsShellActionSelector,
+        };
+    }
+
+    if ((plan.appCrashSelectors ?? appCrashSurfaceSelectors).some((selector) => present.has(selector))) {
+        return {
+            kind: 'blocked',
+            blocker: 'app-crash',
+            message: 'The main app window is on the crash recovery screen instead of the settings shell. Fix or clear the app crash, then rerun the activity-surfaces QA capture.',
+        };
     }
 
     if (plan.authSelectors.some((selector) => present.has(selector))) {
@@ -132,6 +224,38 @@ export function classifyActivitySurfacesPreflightSelectors(
     }
 
     if (plan.onboardingSelectors.some((selector) => present.has(selector))) {
+        const relayStepVisible = present.has(onboardingRelayDiagramSelector)
+            || onboardingRelayBranchSelectors.some((selector) => present.has(selector))
+            || onboardingRelaySetupSelectors.some((selector) => present.has(selector));
+
+        if (relayStepVisible) {
+            const hasTriedRelayBranch = onboardingRelayBranchSelectors.some((selector) => triedSelectors.has(selector));
+            const relaySetupSelector = pickFirstRetryableVisibleSelector(onboardingRelaySetupSelectors, present, triedSelectors);
+            if (relaySetupSelector) {
+                return {
+                    kind: 'action',
+                    selector: relaySetupSelector,
+                };
+            }
+
+            if (!hasTriedRelayBranch) {
+                const relayBranchSelector = pickFirstRetryableVisibleSelector(onboardingRelayBranchSelectors, present, triedSelectors);
+                if (relayBranchSelector) {
+                    return {
+                        kind: 'action',
+                        selector: relayBranchSelector,
+                    };
+                }
+            }
+
+            if (present.has(onboardingRelayPrimarySelector)) {
+                return {
+                    kind: 'action',
+                    selector: onboardingRelayPrimarySelector,
+                };
+            }
+        }
+
         const selector = pickFirstRetryableVisibleSelector(plan.actionSelectors, present, triedSelectors);
         if (selector) {
             return {
@@ -148,7 +272,7 @@ export function classifyActivitySurfacesPreflightSelectors(
 
     return {
         kind: 'navigate',
-        targetPath: plan.settingsPath,
+        targetPath: plan.desktopSettingsPath ?? plan.settingsPath,
         reason: 'settings-shell-not-visible-yet',
     };
 }
@@ -162,9 +286,12 @@ export function analyzeActivitySurfacesPreflightSurface(
     const presentSelectors = new Set(
         [
             ...plan.settingsSelectors,
+            ...(plan.settingsIndexSelectors ?? settingsIndexSurfaceSelectors),
+            ...(plan.settingsShellActionSelectors ?? settingsShellActionSelectors),
             ...plan.onboardingSelectors,
             ...plan.actionSelectors,
             ...plan.authSelectors,
+            ...(plan.appCrashSelectors ?? appCrashSurfaceSelectors),
             ...plan.setupSelectors,
             ...(plan.setupActionSelectors ?? []),
         ].filter((selector) => structureTextIncludes(text, selectorToTestId(selector))),
@@ -183,6 +310,9 @@ export function resolveActivitySurfacesPreflightSelector(
     const analysis = analyzeActivitySurfacesPreflightSurface(structureText, plan, { triedSelectors });
     if (analysis.kind !== 'action') {
         return null;
+    }
+    if (typeof analysis.selector === 'string' && analysis.selector.trim()) {
+        return analysis.selector;
     }
 
     const text = String(structureText ?? '');

@@ -17,6 +17,7 @@ test('apps/ui package.json exposes shared stack-owned Tauri dev entrypoints', as
   assert.equal(scripts['tauri:qa'], 'yarn -s ensure:workspace:built && node ./scripts/tauriMcpQa.mjs');
   assert.equal(scripts['tauri:mcp:wizard:qa'], 'node ./scripts/qa/tauriOnboardingWizardMcpQa.mjs');
   assert.equal(scripts['tauri:mcp:activity-surfaces:qa'], 'node ./scripts/qa/tauriActivitySurfacesMcpQa.mjs');
+  assert.equal(scripts['test:native-e2e:activity-surfaces'], 'yarn -s ensure:workspace:built && node ./scripts/tauriMcpQa.mjs --activity-surfaces');
   assert.equal(scripts['tauri:mcp:server'], 'npx -y @hypothesi/tauri-mcp-server');
   assert.equal(scripts['tauri:mcp:cli'], 'npx -y -p @hypothesi/tauri-mcp-cli tauri-mcp');
   assert.equal(scripts['tauri:mcp:session:start'], 'npx -y -p @hypothesi/tauri-mcp-cli tauri-mcp driver-session start --port 9225');

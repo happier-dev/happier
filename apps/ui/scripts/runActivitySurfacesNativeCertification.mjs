@@ -4,7 +4,11 @@ import { access } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { runActivitySurfacesCertification } from './runActivitySurfacesCertification.mjs';
+import {
+  ACTIVITY_SURFACES_ROLLOUT_LOCAL_EXCLUDED_CHECKS,
+  formatActivitySurfacesManualQaScopeNote,
+  runActivitySurfacesCertification,
+} from './runActivitySurfacesCertification.mjs';
 
 const scriptPath = fileURLToPath(import.meta.url);
 const scriptsDir = dirname(scriptPath);
@@ -84,11 +88,65 @@ export async function runActivitySurfacesNativeCertification({
     env,
     spawnSyncImpl,
   });
+  runStep(yarnCommand, ['-s', 'test:native-e2e:activity-surfaces'], {
+    cwd,
+    env,
+    spawnSyncImpl,
+  });
+
+  const includedChecks = [
+    'certify:activity-surfaces',
+    'validate:ios:widgets:native-sync',
+  ];
+  const skippedChecks = [];
+
+  if (await pathExistsImpl(join(cwd, 'ios'))) {
+    includedChecks.push(
+      'validate:ios:widgets:generated-project',
+      'validate:ios:widgets:simulator-build-smoke',
+    );
+  } else {
+    skippedChecks.push(
+      'validate:ios:widgets:generated-project',
+      'validate:ios:widgets:simulator-build-smoke',
+    );
+  }
+
+  includedChecks.push(
+    'cargo_check',
+    'cargo_test_activity_overlay',
+    'test:native-e2e:activity-surfaces',
+  );
+
+  return {
+    lane: 'native_tightening',
+    includedChecks,
+    excludedChecks: ACTIVITY_SURFACES_ROLLOUT_LOCAL_EXCLUDED_CHECKS.filter((entry) =>
+      ![
+        'validate:ios:widgets:native-sync',
+        'validate:ios:widgets:generated-project',
+        'validate:ios:widgets:simulator-build-smoke',
+        'cargo_check',
+        'cargo_test_activity_overlay',
+        'test:native-e2e:activity-surfaces',
+      ].includes(entry),
+    ),
+    skippedChecks,
+  };
 }
 
 async function runCli() {
     try {
-        await runActivitySurfacesNativeCertification();
+        const report = await runActivitySurfacesNativeCertification();
+        console.log(
+            [
+                'Activity-surfaces native-tightening certification passed.',
+                formatActivitySurfacesManualQaScopeNote(report),
+                `included=${report.includedChecks.join(',')}`,
+                `excluded=${report.excludedChecks.join(',')}`,
+                `skipped=${report.skippedChecks.join(',') || 'none'}`,
+            ].join(' '),
+        );
     } catch (error) {
         console.error(error instanceof Error ? error.message : String(error));
         process.exitCode = 1;

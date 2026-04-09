@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { runActivitySurfacesVitestSuite } from './runActivitySurfacesVitestSuite.mjs';
@@ -7,6 +7,37 @@ import { runActivitySurfacesVitestSuite } from './runActivitySurfacesVitestSuite
 const scriptPath = fileURLToPath(import.meta.url);
 const scriptsDir = dirname(scriptPath);
 const packageRoot = dirname(scriptsDir);
+
+export const ACTIVITY_SURFACES_VALIDATION_NODE_TEST_FILES = [
+  './scripts/activitySurfacesValidationContract.test.mjs',
+  './scripts/runActivitySurfacesCertification.test.mjs',
+  './scripts/runActivitySurfacesNativeCertification.test.mjs',
+  './scripts/runActivitySurfacesReleaseReadiness.test.mjs',
+  './scripts/validateExpoWidgetsNativeSync.test.mjs',
+  './scripts/validateExpoWidgetsGeneratedProject.test.mjs',
+  './scripts/validateExpoWidgetsSimulatorBuildSmoke.test.mjs',
+];
+
+export const ACTIVITY_SURFACES_ROLLOUT_LOCAL_INCLUDED_CHECKS = [
+  'validation_contract_tests',
+  'typecheck:activity-surfaces',
+  'test:activity-surfaces',
+];
+
+export const ACTIVITY_SURFACES_ROLLOUT_LOCAL_EXCLUDED_CHECKS = [
+  'test:native-e2e:activity-surfaces',
+  'validate:ios:widgets:native-sync',
+  'validate:ios:widgets:generated-project',
+  'validate:ios:widgets:simulator-build-smoke',
+  'cargo_check',
+  'cargo_test_activity_overlay',
+  'apps/ui typecheck',
+  'live_manual_qa',
+];
+
+export function formatActivitySurfacesManualQaScopeNote(report) {
+  return report.excludedChecks.includes('live_manual_qa') ? 'manual_qa=excluded' : 'manual_qa=included';
+}
 
 function runStep(command, args, { cwd = packageRoot, env = process.env, spawnSyncImpl = spawnSync } = {}) {
   const result = spawnSyncImpl(command, args, {
@@ -30,7 +61,7 @@ export function runActivitySurfacesCertification({
   spawnSyncImpl = spawnSync,
   runVitestSuite = runActivitySurfacesVitestSuite,
 } = {}) {
-  runStep(process.execPath, ['--test', './scripts/activitySurfacesValidationContract.test.mjs'], {
+  runStep(process.execPath, ['--test', ...ACTIVITY_SURFACES_VALIDATION_NODE_TEST_FILES], {
     cwd,
     env,
     spawnSyncImpl,
@@ -45,11 +76,25 @@ export function runActivitySurfacesCertification({
     env,
     spawnSyncImpl,
   });
+
+  return {
+    lane: 'rollout_local',
+    includedChecks: [...ACTIVITY_SURFACES_ROLLOUT_LOCAL_INCLUDED_CHECKS],
+    excludedChecks: [...ACTIVITY_SURFACES_ROLLOUT_LOCAL_EXCLUDED_CHECKS],
+  };
 }
 
 function runCli() {
   try {
-    runActivitySurfacesCertification();
+    const report = runActivitySurfacesCertification();
+    console.log(
+      [
+        'Activity-surfaces rollout-local certification passed.',
+        formatActivitySurfacesManualQaScopeNote(report),
+        `included=${report.includedChecks.join(',')}`,
+        `excluded=${report.excludedChecks.join(',')}`,
+      ].join(' '),
+    );
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;

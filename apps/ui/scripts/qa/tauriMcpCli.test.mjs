@@ -24,6 +24,22 @@ test('throwIfTauriMcpCliError throws when stdout contains an error prefix', () =
   );
 });
 
+test('throwIfTauriMcpCliError throws when stdout contains an MCP JSON error envelope', () => {
+  assert.throws(
+    () => throwIfTauriMcpCliError({
+      stdout: JSON.stringify({
+        text: 'Error: Failed to get backend state: Unknown error',
+        markdown: null,
+        structuredContent: null,
+        content: [{ type: 'text', text: 'Error: Failed to get backend state: Unknown error' }],
+        files: [],
+      }),
+      stderr: '',
+    }),
+    /Failed to get backend state: Unknown error/u,
+  );
+});
+
 test('throwIfTauriMcpCliError is a no-op for successful output', () => {
   assert.doesNotThrow(() => throwIfTauriMcpCliError({ stdout: 'Ready', stderr: '' }));
 });

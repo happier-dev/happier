@@ -13,6 +13,7 @@ import {
   resolveWizardQaArtifactRoot,
   runTauriMcpCli,
   runTauriMcpCliJson,
+  throwIfTauriMcpCliError,
   writeTextArtifact,
 } from './tauriMcpCli.mjs';
 import {
@@ -45,10 +46,47 @@ const defaultTrackerPath = join(
 const selectorWaitMs = 8000;
 const cliSelectorWaitTimeoutMs = 20000;
 const cliInteractTimeoutMs = 20000;
+const proofChannelTransientRetryAttempts = 3;
+const proofChannelTransientRetryDelayMs = 250;
+const proofChannelInitialSettleMs = 250;
 
 function readString(value, fallback = '') {
   const text = String(value ?? '').trim();
   return text || fallback;
+}
+
+function isTransientWebviewConnectionError(error) {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return message.includes('Not connected to plugin') || message.includes('reconnection failed');
+}
+
+export function resolveOnboardingWizardMcpCliEnv(env = process.env, appIdentifier = null) {
+  const resolvedEnv = { ...env };
+  const explicitIdentifier = readString(resolvedEnv.HAPPIER_STACK_TAURI_IDENTIFIER);
+  if (explicitIdentifier && !readString(resolvedEnv.HAPPIER_TAURI_MCP_APP_IDENTIFIER)) {
+    resolvedEnv.HAPPIER_TAURI_MCP_APP_IDENTIFIER = explicitIdentifier;
+  }
+  const identifier = String(appIdentifier ?? '').trim();
+  if (identifier) {
+    resolvedEnv.HAPPIER_TAURI_MCP_APP_IDENTIFIER = identifier;
+  }
+  return resolvedEnv;
+}
+
+async function runOnboardingWizardMcpCli(args, { appIdentifier = null, env = process.env, timeoutMs } = {}) {
+  return runTauriMcpCli(args, {
+    cwd: packageRoot,
+    env: resolveOnboardingWizardMcpCliEnv(env, appIdentifier),
+    timeoutMs,
+  });
+}
+
+async function runOnboardingWizardMcpCliJson(args, options = {}) {
+  return runTauriMcpCliJson(args, {
+    cwd: packageRoot,
+    env: resolveOnboardingWizardMcpCliEnv(options.env ?? process.env, options.appIdentifier ?? null),
+    timeoutMs: options.timeoutMs,
+  });
 }
 
 function buildStepPlan() {
@@ -202,28 +240,29 @@ export function buildTauriOnboardingWizardQaPlan({ env = process.env } = {}) {
   };
 }
 
-async function waitForAnySelector(step, { appIdentifier, env }) {
+export async function waitForAnySelector(
+  step,
+  {
+    appIdentifier,
+    env,
+    runCli = runOnboardingWizardMcpCli,
+    wait = delay,
+    attempts = proofChannelTransientRetryAttempts,
+    delayMs = proofChannelTransientRetryDelayMs,
+  } = {},
+) {
   for (const selector of step.selectors) {
-    try {
-      await runTauriMcpCli(
-        [
-          'webview-wait-for',
-          '--type',
-          'selector',
-          '--strategy',
-          'css',
-          '--value',
-          selector,
-          '--timeout',
-          String(selectorWaitMs),
-          '--app-identifier',
-          String(appIdentifier),
-        ],
-        { cwd: packageRoot, env, timeoutMs: cliSelectorWaitTimeoutMs },
-      );
+    // eslint-disable-next-line no-await-in-loop
+    if (await isSelectorPresent(selector, {
+      appIdentifier,
+      env,
+      runCli,
+      wait,
+      attempts,
+      delayMs,
+      timeoutMs: selectorWaitMs,
+    })) {
       return selector;
-    } catch {
-      // try the next selector
     }
   }
   throw new Error(`Unable to find a matching selector for step ${step.id}: ${step.selectors.join(', ')}`);
@@ -260,60 +299,60 @@ async function captureStep(step, { artifactRoot, appIdentifier, env }) {
 }
 
 async function captureSnapshotArtifacts({ screenshotPath, structurePath, a11yPath, label, appIdentifier, env }) {
-  await withRetries(
-    `screenshot:${label}`,
-    () => runTauriMcpCli(
-      [
-        'webview-screenshot',
-        '--format',
-        'png',
-        '--file-path',
+    await withRetries(
+        `screenshot:${label}`,
+        () => runOnboardingWizardMcpCli(
+            [
+                'webview-screenshot',
+                '--format',
+                'png',
+                '--file-path',
+                screenshotPath,
+                '--app-identifier',
+                String(appIdentifier),
+            ],
+            { appIdentifier, env },
+        ),
+        { attempts: 3, delayMs: 350 },
+    );
+
+    const structure = await withRetries(
+        `dom-structure:${label}`,
+        () => runOnboardingWizardMcpCli(
+            [
+                'webview-dom-snapshot',
+                '--type',
+                'structure',
+                '--app-identifier',
+                String(appIdentifier),
+            ],
+            { appIdentifier, env },
+        ),
+        { attempts: 2, delayMs: 250 },
+    );
+    await writeTextArtifact(structurePath, String(structure.stdout ?? ''));
+
+    const accessibility = await withRetries(
+        `dom-accessibility:${label}`,
+        () => runOnboardingWizardMcpCli(
+            [
+                'webview-dom-snapshot',
+                '--type',
+                'accessibility',
+                '--app-identifier',
+                String(appIdentifier),
+            ],
+            { appIdentifier, env },
+        ),
+        { attempts: 2, delayMs: 250 },
+    );
+    await writeTextArtifact(a11yPath, String(accessibility.stdout ?? ''));
+
+    return {
         screenshotPath,
-        '--app-identifier',
-        String(appIdentifier),
-      ],
-      { cwd: packageRoot, env },
-    ),
-    { attempts: 3, delayMs: 350 },
-  );
-
-  const structure = await withRetries(
-    `dom-structure:${label}`,
-    () => runTauriMcpCli(
-      [
-        'webview-dom-snapshot',
-        '--type',
-        'structure',
-        '--app-identifier',
-        String(appIdentifier),
-      ],
-      { cwd: packageRoot, env },
-    ),
-    { attempts: 2, delayMs: 250 },
-  );
-  await writeTextArtifact(structurePath, String(structure.stdout ?? ''));
-
-  const accessibility = await withRetries(
-    `dom-accessibility:${label}`,
-    () => runTauriMcpCli(
-      [
-        'webview-dom-snapshot',
-        '--type',
-        'accessibility',
-        '--app-identifier',
-        String(appIdentifier),
-      ],
-      { cwd: packageRoot, env },
-    ),
-    { attempts: 2, delayMs: 250 },
-  );
-  await writeTextArtifact(a11yPath, String(accessibility.stdout ?? ''));
-
-  return {
-    screenshotPath,
-    structurePath,
-    a11yPath,
-  };
+        structurePath,
+        a11yPath,
+    };
 }
 
 async function captureRelayChoiceArtifacts({ artifactRoot, appIdentifier, env, choiceId }) {
@@ -337,76 +376,217 @@ async function captureOptionalStep(step, { artifactRoot, appIdentifier, env }) {
   return captureStep(step, { artifactRoot, appIdentifier, env });
 }
 
-async function isSelectorPresent(selector, { appIdentifier, env, timeoutMs = 1200 } = {}) {
-  try {
-    await runTauriMcpCli(
-      [
-        'webview-wait-for',
-        '--type',
-        'selector',
-        '--strategy',
-        'css',
-        '--value',
-        String(selector),
-        '--timeout',
-        String(timeoutMs),
-        '--app-identifier',
-        String(appIdentifier),
-      ],
-      { cwd: packageRoot, env, timeoutMs: Math.max(10_000, timeoutMs + 5_000) },
-    );
-    return true;
-  } catch {
-    return false;
+export async function isSelectorPresent(
+  selector,
+  {
+    appIdentifier,
+    env,
+    timeoutMs = 1200,
+    attempts = proofChannelTransientRetryAttempts,
+    delayMs = proofChannelTransientRetryDelayMs,
+    wait = delay,
+    runCli = runOnboardingWizardMcpCli,
+  } = {},
+) {
+  let transientDisconnect = null;
+  const normalizedAttempts = Math.max(1, Number(attempts) || 1);
+  const normalizedDelayMs = Math.max(0, Number(delayMs) || 0);
+
+  for (let attempt = 1; attempt <= normalizedAttempts; attempt += 1) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      await runCli(
+        [
+          'webview-wait-for',
+          '--type',
+          'selector',
+          '--strategy',
+          'css',
+          '--value',
+          String(selector),
+          '--timeout',
+          String(timeoutMs),
+          '--app-identifier',
+          String(appIdentifier),
+        ],
+        { appIdentifier, env, timeoutMs: Math.max(10_000, timeoutMs + 5_000) },
+      );
+      return true;
+    } catch (error) {
+      if (!isTransientWebviewConnectionError(error)) {
+        return false;
+      }
+      transientDisconnect = error;
+      if (attempt < normalizedAttempts) {
+        // eslint-disable-next-line no-await-in-loop
+        await wait(normalizedDelayMs);
+      }
+    }
   }
+
+  return transientDisconnect ? false : false;
+}
+
+export async function resolvePostAuthBootstrapSurface({
+  appIdentifier,
+  env,
+  isSelectorPresent: isSelectorPresentFn = isSelectorPresent,
+  wait = delay,
+  settleDelayMs = proofChannelInitialSettleMs,
+  attempts = 6,
+  delayMs = 1000,
+} = {}) {
+  const setupWizardSurfaceSelector = '[data-testid="setupWizard.surface"]';
+  const onboardingWizardRootSelector = '[data-testid="onboarding-wizard"]';
+
+  const normalizedAttempts = Math.max(1, Number(attempts) || 1);
+  const normalizedDelayMs = Math.max(0, Number(delayMs) || 0);
+  const normalizedSettleDelayMs = Math.max(0, Number(settleDelayMs) || 0);
+
+  if (normalizedSettleDelayMs > 0) {
+    await wait(normalizedSettleDelayMs);
+  }
+
+  for (let attempt = 0; attempt < normalizedAttempts; attempt += 1) {
+    try {
+      if (await isSelectorPresentFn(setupWizardSurfaceSelector, { appIdentifier, env, timeoutMs: selectorWaitMs })) {
+        return {
+          kind: 'setupWizard',
+          selector: setupWizardSurfaceSelector,
+        };
+      }
+    } catch (error) {
+      if (!isTransientWebviewConnectionError(error)) {
+        throw error;
+      }
+    }
+
+    try {
+      if (await isSelectorPresentFn(onboardingWizardRootSelector, { appIdentifier, env, timeoutMs: selectorWaitMs })) {
+        return {
+          kind: 'onboardingWizard',
+          selector: onboardingWizardRootSelector,
+        };
+      }
+    } catch (error) {
+      if (!isTransientWebviewConnectionError(error)) {
+        throw error;
+      }
+    }
+
+    if (attempt + 1 < normalizedAttempts) {
+      await wait(normalizedDelayMs);
+    }
+  }
+
+  return {
+    kind: 'missing',
+    selector: null,
+  };
+}
+
+export async function readBackendStateWithRetries({
+  appIdentifier,
+  env,
+  attempts = 3,
+  delayMs = 750,
+  settleDelayMs = proofChannelInitialSettleMs,
+  runCli = runOnboardingWizardMcpCli,
+  wait = delay,
+} = {}) {
+  const normalizedAttempts = Math.max(1, Number(attempts) || 1);
+  const normalizedDelayMs = Math.max(0, Number(delayMs) || 0);
+  const normalizedSettleDelayMs = Math.max(0, Number(settleDelayMs) || 0);
+  let lastError = null;
+  let sawTransientProofChannelDisconnect = false;
+
+  if (normalizedSettleDelayMs > 0) {
+    await wait(normalizedSettleDelayMs);
+  }
+
+  for (let attempt = 1; attempt <= normalizedAttempts; attempt += 1) {
+    try {
+      const response = await runCli(
+        ['ipc-get-backend-state', '--json', '--app-identifier', String(appIdentifier)],
+        { appIdentifier, env },
+      );
+      throwIfTauriMcpCliError(response);
+      return response;
+    } catch (error) {
+      lastError = error;
+      sawTransientProofChannelDisconnect = sawTransientProofChannelDisconnect || isTransientWebviewConnectionError(error);
+      if (attempt < normalizedAttempts) {
+        await wait(normalizedDelayMs);
+      }
+    }
+  }
+
+  const result = {
+    ok: false,
+    error: lastError instanceof Error ? lastError.message : String(lastError ?? 'backend state unavailable'),
+  };
+  if (sawTransientProofChannelDisconnect) {
+    result.blocker = 'proof_channel_disconnect';
+  }
+  return result;
+}
+
+export function summarizeTauriOnboardingWizardQaProof({ stepArtifacts = {} } = {}) {
+  const steps = Object.keys(stepArtifacts ?? {});
+  const ok = steps.length > 0;
+  return {
+    ok,
+    blocker: ok ? null : 'no_step_artifacts_captured',
+    steps,
+  };
 }
 
 async function clickSelector(selector, { appIdentifier, env } = {}) {
-  const rawSelector = String(selector);
-  const normalizedSelector = rawSelector.replace(
-    /^\[data-testid="([^"]+)"\]$/u,
-    (_match, testId) => `[data-testid='${testId}']`,
-  );
-  await runTauriMcpCli(
-    [
-      'webview-wait-for',
-      '--type',
-      'selector',
-      '--strategy',
-      'css',
-      '--value',
-      normalizedSelector,
-      '--timeout',
-      String(selectorWaitMs),
-      '--app-identifier',
-      String(appIdentifier),
-    ],
-    { cwd: packageRoot, env, timeoutMs: cliSelectorWaitTimeoutMs },
-  );
-  await runTauriMcpCli(
-    [
-      'webview-interact',
-      '--action',
-      'focus',
-      '--selector',
-      normalizedSelector,
-      '--app-identifier',
-      String(appIdentifier),
-    ],
-    { cwd: packageRoot, env, timeoutMs: cliInteractTimeoutMs },
-  ).catch(() => {});
-  await runTauriMcpCli(
-    [
-      'webview-interact',
-      '--action',
-      'click',
-      '--selector',
-      normalizedSelector,
-      '--app-identifier',
-      String(appIdentifier),
-    ],
-    { cwd: packageRoot, env, timeoutMs: cliInteractTimeoutMs },
-  );
+    const rawSelector = String(selector);
+    const normalizedSelector = rawSelector.replace(
+        /^\[data-testid="([^"]+)"\]$/u,
+        (_match, testId) => `[data-testid='${testId}']`,
+    );
+    await runOnboardingWizardMcpCli(
+        [
+            'webview-wait-for',
+            '--type',
+            'selector',
+            '--strategy',
+            'css',
+            '--value',
+            normalizedSelector,
+            '--timeout',
+            String(selectorWaitMs),
+            '--app-identifier',
+            String(appIdentifier),
+        ],
+        { appIdentifier, env, timeoutMs: cliSelectorWaitTimeoutMs },
+    );
+    await runOnboardingWizardMcpCli(
+        [
+            'webview-interact',
+            '--action',
+            'focus',
+            '--selector',
+            normalizedSelector,
+            '--app-identifier',
+            String(appIdentifier),
+        ],
+        { appIdentifier, env, timeoutMs: cliInteractTimeoutMs },
+    ).catch(() => {});
+    await runOnboardingWizardMcpCli(
+        [
+            'webview-interact',
+            '--action',
+            'click',
+            '--selector',
+            normalizedSelector,
+            '--app-identifier',
+            String(appIdentifier),
+        ],
+        { appIdentifier, env, timeoutMs: cliInteractTimeoutMs },
+    );
 }
 
 async function appendWarning(artifactRoot, text) {
@@ -429,7 +609,7 @@ async function navigateWebviewToPath(pathname, { appIdentifier, env }) {
       return { ok: false, error: String(error && error.message ? error.message : error) };
     }
   })()`;
-  await runTauriMcpCli(
+  await runOnboardingWizardMcpCli(
     [
       'webview-execute-js',
       '--script',
@@ -438,7 +618,7 @@ async function navigateWebviewToPath(pathname, { appIdentifier, env }) {
       String(appIdentifier),
       '--json',
     ],
-    { cwd: packageRoot, env },
+    { appIdentifier, env },
   ).catch(() => {});
 }
 
@@ -505,7 +685,7 @@ async function main(argv = process.argv.slice(2)) {
   const candidatePorts = resolveCandidateDriverSessionPorts({ preferredPort: plan.driverSessionPort, env: process.env });
   const targetedDriverSession = await startTargetedDriverSession({
     candidatePorts,
-    runCliJson: (args) => runTauriMcpCliJson(args, { cwd: plan.packageRoot, env: process.env }),
+    runCliJson: (args) => runOnboardingWizardMcpCliJson(args, { env: process.env }),
     appendAttempt: (entry) => appendJsonLineArtifact(driverSessionAttemptsFile, entry),
   });
 
@@ -530,11 +710,22 @@ async function main(argv = process.argv.slice(2)) {
   const resolvedAppIdentifier = resolvedAppTarget.port;
 
   const backendStateFile = join(plan.artifactRoot, '00-backend-state.json');
-  const backendState = await runTauriMcpCli(
-    ['ipc-get-backend-state', '--json', '--app-identifier', String(resolvedAppIdentifier)],
-    { cwd: plan.packageRoot, env: process.env },
+  const backendState = await readBackendStateWithRetries({
+    appIdentifier: resolvedAppIdentifier,
+    env: process.env,
+  });
+  await writeTextArtifact(
+    backendStateFile,
+    backendState && backendState.ok === false
+      ? `${JSON.stringify(backendState, null, 2)}\n`
+      : String(backendState.stdout ?? ''),
   );
-  await writeTextArtifact(backendStateFile, String(backendState.stdout ?? ''));
+  if (backendState && backendState.ok === false) {
+    const backendStateFailureReason = backendState.blocker === 'proof_channel_disconnect'
+      ? `proof-channel disconnect: ${backendState.error}`
+      : backendState.error;
+    await appendWarning(plan.artifactRoot, `- backend state probe failed: ${backendStateFailureReason}`);
+  }
 
   const stepsById = Object.fromEntries(plan.steps.map((step) => [step.id, step]));
   const stepArtifacts = {};
@@ -562,12 +753,13 @@ async function main(argv = process.argv.slice(2)) {
   // screen or a previous route, this gives us a stable starting point.
   await navigateWebviewToPath('/', { appIdentifier: resolvedAppIdentifier, env: process.env });
 
-  const onboardingRootPresent = await isSelectorPresent('[data-testid="onboarding-wizard"]', {
+  const bootstrapSurface = await resolvePostAuthBootstrapSurface({
     appIdentifier: resolvedAppIdentifier,
     env: process.env,
-    timeoutMs: 2500,
   });
-  if (!onboardingRootPresent) {
+  const onboardingRootPresent = bootstrapSurface.kind === 'onboardingWizard';
+  const setupWizardPresent = bootstrapSurface.kind === 'setupWizard';
+  if (!onboardingRootPresent && !setupWizardPresent) {
     await appendWarning(plan.artifactRoot, '- onboarding wizard root not present at /; trying the debug relay selection deep-link and continuing with setup surfaces if needed');
     await navigateToWizardStep('relay_select', { appIdentifier: resolvedAppIdentifier, env: process.env });
   }
@@ -663,7 +855,7 @@ async function main(argv = process.argv.slice(2)) {
     } catch (error) {
       await appendWarning(plan.artifactRoot, `- relay primary click (resume) failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-  } else if (!onboardingRootPresent) {
+  } else if (!onboardingRootPresent && !setupWizardPresent) {
     await navigateToWizardStep('relay_select', { appIdentifier: resolvedAppIdentifier, env: process.env });
   }
 
@@ -738,32 +930,45 @@ async function main(argv = process.argv.slice(2)) {
     notes: ['capture the post-auth setup wizard when the authenticated runtime exposes it'],
   };
 
-  const optionalSetupArtifacts = await captureOptionalStep(optionalSetupStep, {
-    artifactRoot: plan.artifactRoot,
-    appIdentifier: resolvedAppIdentifier,
-    env: process.env,
-  });
+  let optionalSetupArtifacts = null;
+  try {
+    optionalSetupArtifacts = await captureOptionalStep(optionalSetupStep, {
+      artifactRoot: plan.artifactRoot,
+      appIdentifier: resolvedAppIdentifier,
+      env: process.env,
+    });
+  } catch (error) {
+    await appendWarning(plan.artifactRoot, `- setup surface capture failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
 
   // If we're authenticated but currently not on the setup wizard route, try to
   // navigate there once and capture it (best-effort).
-  const optionalSetupArtifactsRetried = optionalSetupArtifacts
-    ? null
-    : (await (async () => {
+  let optionalSetupArtifactsRetried = null;
+  if (!optionalSetupArtifacts) {
+    try {
       await navigateWebviewToPath('/setup/wizard', { appIdentifier: resolvedAppIdentifier, env: process.env });
-      return captureOptionalStep(optionalSetupStep, {
+      optionalSetupArtifactsRetried = await captureOptionalStep(optionalSetupStep, {
         artifactRoot: plan.artifactRoot,
         appIdentifier: resolvedAppIdentifier,
         env: process.env,
       });
-    })());
+    } catch (error) {
+      await appendWarning(plan.artifactRoot, `- setup surface retry capture failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 
   if (optionalSetupArtifacts || optionalSetupArtifactsRetried) {
     stepArtifacts[optionalSetupStep.id] = optionalSetupArtifacts ?? optionalSetupArtifactsRetried;
   }
 
-  const consoleLogs = await runTauriMcpCli(
+  const proofSummary = summarizeTauriOnboardingWizardQaProof({ stepArtifacts });
+  if (!proofSummary.ok) {
+    await appendWarning(plan.artifactRoot, '- no step artifacts were captured during the native proof run; the live stack still is not exposing the expected post-auth surfaces');
+  }
+
+  const consoleLogs = await runOnboardingWizardMcpCli(
     ['read-logs', '--source', 'console', '--json', '--app-identifier', String(resolvedAppIdentifier)],
-    { cwd: plan.packageRoot, env: process.env },
+    { appIdentifier: resolvedAppIdentifier, env: process.env },
   );
   await writeTextArtifact(join(plan.artifactRoot, '99-console-logs.json'), String(consoleLogs.stdout ?? ''));
 
@@ -789,16 +994,21 @@ async function main(argv = process.argv.slice(2)) {
   process.stdout.write(
     JSON.stringify(
       {
-        ok: true,
+        ok: proofSummary.ok,
         artifactRoot: plan.artifactRoot,
         trackerPath: plan.trackerPath,
         appIdentifier: resolvedAppIdentifier,
-        steps: Object.keys(stepArtifacts),
+        blocker: proofSummary.blocker,
+        steps: proofSummary.steps,
       },
       null,
       2,
     ) + '\n',
   );
+
+  if (!proofSummary.ok) {
+    process.exitCode = 1;
+  }
 }
 
 const currentFilePath = fileURLToPath(import.meta.url);

@@ -7,14 +7,62 @@ export function isTauriMcpCliErrorText(text) {
   return trimmed.startsWith('Error:') || trimmed.startsWith('error:');
 }
 
+function extractTauriMcpCliEnvelopeErrorText(value) {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return isTauriMcpCliErrorText(trimmed) ? trimmed : null;
+  }
+
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  if (typeof value.text === 'string') {
+    const textError = extractTauriMcpCliEnvelopeErrorText(value.text);
+    if (textError) {
+      return textError;
+    }
+  }
+
+  if (Array.isArray(value.content)) {
+    for (const entry of value.content) {
+      const contentError = extractTauriMcpCliEnvelopeErrorText(entry?.text);
+      if (contentError) {
+        return contentError;
+      }
+    }
+  }
+
+  return null;
+}
+
+function extractTauriMcpStructuredErrorText(text) {
+  const raw = String(text ?? '').trim();
+  if (!raw) {
+    return null;
+  }
+
+  if (isTauriMcpCliErrorText(raw)) {
+    return raw;
+  }
+
+  try {
+    return extractTauriMcpCliEnvelopeErrorText(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
 export function throwIfTauriMcpCliError({ stdout, stderr } = {}) {
   const out = String(stdout ?? '');
   const err = String(stderr ?? '');
-  if (isTauriMcpCliErrorText(out)) {
-    throw new Error(out.trim());
+  const outError = extractTauriMcpStructuredErrorText(out);
+  if (outError) {
+    throw new Error(outError);
   }
-  if (isTauriMcpCliErrorText(err)) {
-    throw new Error(err.trim());
+  const errError = extractTauriMcpStructuredErrorText(err);
+  if (errError) {
+    throw new Error(errError);
   }
 }
 

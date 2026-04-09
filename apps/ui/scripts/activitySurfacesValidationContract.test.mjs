@@ -30,15 +30,21 @@ test('apps/ui exposes a rollout-local activity-surfaces typecheck and certificat
   );
   assert.equal(
     scripts['certify:activity-surfaces:release'],
-    'yarn -s certify:activity-surfaces && yarn -s typecheck',
+    'node ./scripts/runActivitySurfacesReleaseReadiness.mjs',
+  );
+  assert.equal(
+    scripts['test:native-e2e:activity-surfaces'],
+    'yarn -s ensure:workspace:built && node ./scripts/tauriMcpQa.mjs --activity-surfaces',
   );
 
   const focusedSuitePath = join(packageRoot, 'scripts/runActivitySurfacesVitestSuite.mjs');
   const certificationPath = join(packageRoot, 'scripts/runActivitySurfacesCertification.mjs');
   const nativeCertificationPath = join(packageRoot, 'scripts/runActivitySurfacesNativeCertification.mjs');
+  const releaseReadinessPath = join(packageRoot, 'scripts/runActivitySurfacesReleaseReadiness.mjs');
   await access(focusedSuitePath, fsConstants.F_OK);
   await access(certificationPath, fsConstants.F_OK);
   await access(nativeCertificationPath, fsConstants.F_OK);
+  await access(releaseReadinessPath, fsConstants.F_OK);
 
   const focusedSuiteModule = await import(pathToFileURL(focusedSuitePath).href);
   const focusedVitestFiles = focusedSuiteModule.ACTIVITY_SURFACES_VITEST_FILES;
@@ -47,11 +53,24 @@ test('apps/ui exposes a rollout-local activity-surfaces typecheck and certificat
   assert.equal(focusedVitestFiles.every((entry) => entry.startsWith('sources/')), true);
   assert.equal(focusedVitestFiles.includes('sources/activity/adapters/ios/runtime/ActivitySurfacesRuntime.test.tsx'), true);
   assert.equal(focusedVitestFiles.includes('sources/activity/adapters/ios/liveActivities/buildLiveActivitySnapshots.test.ts'), true);
+  assert.equal(focusedVitestFiles.includes('sources/activity/adapters/ios/liveActivities/HappierFocusLiveActivity.test.tsx'), true);
   assert.equal(focusedVitestFiles.includes('sources/activity/adapters/ios/liveActivities/resolveLiveActivityReconciliationState.test.ts'), true);
+  assert.equal(focusedVitestFiles.includes('sources/activity/adapters/ios/presentation/activitySurfacePresentation.test.tsx'), true);
   assert.equal(focusedVitestFiles.includes('sources/activity/adapters/desktop/runtime/DesktopActivityOverlayRuntime.test.tsx'), true);
+  assert.equal(focusedVitestFiles.includes('sources/activity/adapters/desktop/runtime/resolveDesktopOverlaySelectionSpec.test.ts'), true);
+  assert.equal(focusedVitestFiles.includes('sources/activity/adapters/desktop/ui/DesktopActivityOverlayChrome.test.ts'), true);
+  assert.equal(focusedVitestFiles.includes('sources/activity/adapters/desktop/ui/DesktopActivityOverlayMotionFrame.test.tsx'), true);
+  assert.equal(focusedVitestFiles.includes('sources/activity/adapters/desktop/ui/DesktopActivityOverlayVisualMode.test.ts'), true);
+  assert.equal(focusedVitestFiles.includes('sources/activity/adapters/desktop/ui/DesktopActivityOverlayCollapsed.test.tsx'), true);
+  assert.equal(focusedVitestFiles.includes('sources/activity/adapters/desktop/ui/DesktopActivityOverlayExpanded.previewText.test.tsx'), true);
+  assert.equal(focusedVitestFiles.includes('sources/activity/adapters/desktop/positioning/resolveDesktopOverlayPlacement.test.ts'), false);
+  assert.equal(focusedVitestFiles.includes('sources/activity/adapters/desktop/presentation/buildDesktopActivityOverlaySnapshot.test.ts'), true);
   assert.equal(focusedVitestFiles.includes('sources/activity/presentation/activitySurfaceSnapshot.test.ts'), true);
   assert.equal(focusedVitestFiles.includes('sources/components/settings/desktop/DesktopSettingsSection.test.tsx'), true);
   assert.equal(focusedVitestFiles.includes('sources/components/settings/desktop/DesktopOverlaySettingsSection.test.tsx'), true);
+  assert.equal(focusedVitestFiles.includes('sources/components/settings/desktop/DesktopAppSettingsScreen.test.tsx'), true);
+  assert.equal(focusedVitestFiles.includes('sources/components/settings/desktop/DesktopSettingsEntry.test.tsx'), true);
+  assert.equal(focusedVitestFiles.includes('sources/components/settings/desktop/DesktopSettingsEntry.web.test.tsx'), true);
   assert.equal(focusedVitestFiles.includes('sources/components/settings/notifications/NotificationsSettingsView.test.tsx'), true);
   assert.equal(focusedVitestFiles.includes('sources/sync/domains/settings/localSettings.test.ts'), true);
   assert.equal(focusedVitestFiles.includes('sources/sync/store/domains/settings.analytics.test.ts'), true);
@@ -68,8 +87,8 @@ test('apps/ui exposes a rollout-local activity-surfaces typecheck and certificat
   assert.equal(include.includes('sources/activity/attention/**/*.ts'), true);
   assert.equal(include.includes('sources/activity/selection/**/*.ts'), true);
   assert.equal(include.includes('sources/activity/presentation/**/*.ts'), true);
-  assert.equal(include.includes('sources/activity/widgets/**/*.ts'), true);
-  assert.equal(include.includes('sources/activity/widgets/**/*.tsx'), true);
+  assert.equal(include.includes('sources/activity/adapters/ios/widgets/**/*.ts'), true);
+  assert.equal(include.includes('sources/activity/adapters/ios/widgets/**/*.tsx'), true);
   assert.equal(include.includes('sources/activity/adapters/ios/**/*.ts'), true);
   assert.equal(include.includes('sources/activity/adapters/ios/**/*.tsx'), true);
   assert.equal(include.includes('sources/activity/adapters/desktop/**/*.ts'), true);

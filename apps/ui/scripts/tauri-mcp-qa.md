@@ -7,6 +7,7 @@ The intent is to enable **native desktop QA automation** without affecting produ
 ## Recommendation (what to use)
 
 Use the existing **yarn scripts** (no new dev dependency required):
+- `yarn test:e2e:desktop:native` → canonical repo-level native desktop E2E lane; delegates to the package-owned activity-surfaces capture owner in `apps/ui`
 - `yarn --cwd apps/ui tauri:qa` → **canonical one-shot**: starts the desktop app + MCP server, runs the deterministic onboarding wizard QA capture, then exits.
 - `yarn --cwd apps/ui tauri:mcp:server` → runs only the MCP server (useful if your MCP client spawns it).
 
@@ -122,6 +123,14 @@ If an OS permission or picker dialog appears, complete it once manually and re-r
 To capture the desktop overlay settings surface and the overlay window states in a deterministic order:
 
 ```bash
+yarn test:e2e:desktop:native
+```
+
+That canonical root-owned native desktop E2E lane delegates to `yarn --cwd apps/ui test:native-e2e:activity-surfaces`, which remains the package-owned implementation entrypoint wrapping the Tauri launcher plus the activity-surfaces MCP harness in one command.
+
+If you need to attach to an already-running Tauri QA launcher and invoke only the lower-level harness directly:
+
+```bash
 yarn --cwd apps/ui tauri:mcp:activity-surfaces:qa
 ```
 
@@ -131,9 +140,24 @@ This script:
 - opens a Tauri driver session,
 - navigates to the desktop overlay settings section,
 - toggles the overlay on if it is currently off,
-- captures the overlay settings surface and the overlay window route states,
+- forces notch-integrated and floating-overlay presentation modes in sequence for deterministic premium capture,
+- tolerates the expected floating-host fallback when forced notch presentation runs on a machine without a notch-capable built-in display,
+- validates notch captures against both the computed placement intent and the applied native-frame top-edge contract,
+- captures the five-step premium artifact set:
+  - `01-settings-overlay.*`
+  - `02-overlay-route.*`
+  - `03-overlay-collapsed-notch.*`
+  - `04-overlay-expanded-notch.*`
+  - `05-overlay-floating-fallback.*`
 - writes artifacts under `.project/logs/activity-surfaces-qa/tauri-activity-surfaces-YYYYMMDD-.../`,
 - and appends the evidence paths to `.project/plans/todo/activity-surfaces/happier-activity-surfaces-qa-tracking-2026-04-05.md`.
+
+If you need to avoid the shared default `activity-surfaces-qa` stack while doing final proof or manual QA, export a dedicated stack name before running the native lane:
+
+```bash
+HAPPIER_STACK_STACK=activity-surfaces-premium-lead-qa \
+  yarn --cwd apps/ui test:native-e2e:activity-surfaces
+```
 
 ## Window / crash checks
 

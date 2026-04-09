@@ -24,6 +24,15 @@ export function resolvePreferredStackTauriIdentifier(env = process.env) {
     return `com.happier.stack.${stackName}`;
 }
 
+export function resolveStackNameFromStackOwnedTauriIdentifier(identifier) {
+    const normalizedIdentifier = readString(identifier);
+    const prefix = 'com.happier.stack.';
+    if (!normalizedIdentifier.startsWith(prefix)) {
+        return '';
+    }
+    return normalizedIdentifier.slice(prefix.length).trim();
+}
+
 export function hasStackOwnedTauriRuntime(env = process.env) {
     if (resolvePreferredStackTauriIdentifier(env)) {
         return true;
@@ -125,12 +134,71 @@ function isTimeoutError(error) {
         || /timed out|timeout/i.test(message);
 }
 
+function isStackOwnedTauriIdentifier(identifier) {
+    return readString(identifier).startsWith('com.happier.stack.');
+}
+
+function readDriverSessionResponseText(response) {
+    const directText = readString(response?.text);
+    if (directText) {
+        return directText;
+    }
+
+    const content = Array.isArray(response?.content) ? response.content : [];
+    for (const entry of content) {
+        const entryText = readString(entry?.text);
+        if (entryText) {
+            return entryText;
+        }
+    }
+
+    return '';
+}
+
+function isNoTauriAppFoundStartResponse(response) {
+    return readDriverSessionResponseText(response).toLowerCase().includes('no tauri app found');
+}
+
+function shouldAcceptConnectedDriverSessionTarget(target) {
+    if (!target || typeof target !== 'object') {
+        return false;
+    }
+
+    return isStackOwnedTauriIdentifier(target.identifier);
+}
+
+function resolveDriverSessionAppIdentifier(target) {
+    const identifier = readString(target?.identifier);
+    if (identifier) {
+        return identifier;
+    }
+
+    return normalizePositiveInteger(target?.port);
+}
+
+function resolveExactDriverSessionTargetByAppIdentifier(status, appIdentifier = null) {
+    const requestedIdentifier = readString(appIdentifier);
+    if (requestedIdentifier) {
+        return resolvePreferredDriverSessionTarget(status, {
+            preferredAppIdentifier: requestedIdentifier,
+        });
+    }
+
+    const requestedPort = normalizePositiveInteger(appIdentifier);
+    if (requestedPort != null) {
+        return resolveExactDriverSessionTarget(status, requestedPort);
+    }
+
+    return null;
+}
+
 async function pollDriverSessionStatus(candidatePort, {
     runCliJson,
     attemptTimeoutMs,
     statusPollAttempts = 1,
     statusPollDelayMs = 0,
     preferredAppIdentifier = null,
+    requireStackOwnedIdentifier = false,
     env = process.env,
 }) {
     const totalPollAttempts = Math.max(1, Math.floor(statusPollAttempts));
@@ -155,19 +223,34 @@ async function pollDriverSessionStatus(candidatePort, {
                 preferredAppIdentifier,
             });
             if (matchedTarget) {
+                if (requireStackOwnedIdentifier && !isStackOwnedTauriIdentifier(matchedTarget.identifier)) {
+                    lastConnectedAppIdentifier = resolveDriverSessionAppIdentifier(matchedTarget);
+                    lastConnectedTarget = matchedTarget;
+                    continue;
+                }
                 return {
                     matchedTarget,
                     parsedStatus: lastParsedStatus,
                     statusResponse,
-                    connectedAppIdentifier: matchedTarget.port,
+                    connectedAppIdentifier: resolveDriverSessionAppIdentifier(matchedTarget),
                     connectedTarget: matchedTarget,
                     lastError: null,
                 };
             }
 
             lastConnectedAppIdentifier = resolveConnectedAppIdentifierFromDriverStatus(lastParsedStatus);
-            lastConnectedTarget = resolveExactDriverSessionTarget(lastParsedStatus, lastConnectedAppIdentifier);
-            if (lastConnectedAppIdentifier != null && lastConnectedAppIdentifier !== candidatePort) {
+            lastConnectedTarget = resolveExactDriverSessionTargetByAppIdentifier(lastParsedStatus, lastConnectedAppIdentifier);
+            if (shouldAcceptConnectedDriverSessionTarget(lastConnectedTarget)) {
+                return {
+                    matchedTarget: lastConnectedTarget,
+                    parsedStatus: lastParsedStatus,
+                    statusResponse,
+                    connectedAppIdentifier: lastConnectedAppIdentifier,
+                    connectedTarget: lastConnectedTarget,
+                    lastError: null,
+                };
+            }
+            if (lastConnectedTarget?.port != null && lastConnectedTarget.port !== candidatePort) {
                 return {
                     matchedTarget: null,
                     parsedStatus: lastParsedStatus,
@@ -293,7 +376,7 @@ export function resolveExactDriverSessionTarget(status, preferredPort = null) {
 }
 
 export function resolveConnectedAppIdentifierFromDriverStatus(status) {
-    return resolveExactDriverSessionTarget(status)?.port ?? null;
+    return resolveDriverSessionAppIdentifier(resolveExactDriverSessionTarget(status));
 }
 
 export function resolvePreferredAppIdentifierFromDriverStatus(status, preferredPort = null) {
@@ -302,7 +385,7 @@ export function resolvePreferredAppIdentifierFromDriverStatus(status, preferredP
         return resolveConnectedAppIdentifierFromDriverStatus(status);
     }
 
-    return resolveExactDriverSessionTarget(status, requestedPort)?.port ?? null;
+    return resolveDriverSessionAppIdentifier(resolveExactDriverSessionTarget(status, requestedPort));
 }
 
 export function doesDriverSessionStatusMatchRequestedPort(status, preferredPort = null) {
@@ -321,10 +404,14 @@ export async function startTargetedDriverSession({
     attemptTimeoutMs = 8_000,
     statusPollAttempts = 12,
     statusPollDelayMs = 250,
+    requireStackOwnedIdentifier = false,
     env = process.env,
 }) {
     const explicitPreferredAppIdentifier = readString(env?.HAPPIER_STACK_TAURI_IDENTIFIER);
-    const preferredAppIdentifier = resolvePreferredStackTauriIdentifier(env) || null;
+    const preferredAppIdentifier = explicitPreferredAppIdentifier || null;
+    const softPreferredAppIdentifier = preferredAppIdentifier
+        ? null
+        : resolvePreferredStackTauriIdentifier(env) || null;
     // Resolve stack-owned sessions from the live status first so we do not
     // reattach to a stale repo-dev session on the same driver port.
     const shouldPreferStartFirst = false;
@@ -339,7 +426,7 @@ export async function startTargetedDriverSession({
                 // eslint-disable-next-line no-await-in-loop
                 const started = await runCliJson(
                     ['driver-session', 'start', '--port', String(candidatePort)],
-                    { timeoutMs: attemptTimeoutMs },
+                    { timeoutMs: attemptTimeoutMs, env },
                 ).catch((error) => ({ error }));
                 if (started && 'error' in started) {
                     // eslint-disable-next-line no-await-in-loop
@@ -358,7 +445,9 @@ export async function startTargetedDriverSession({
                     attemptTimeoutMs,
                     statusPollAttempts,
                     statusPollDelayMs,
+                    env,
                     preferredAppIdentifier,
+                    requireStackOwnedIdentifier,
                 });
                 const { parsedStatus, statusResponse, matchedTarget, connectedAppIdentifier, connectedTarget, lastError } = statusResult;
 
@@ -371,20 +460,20 @@ export async function startTargetedDriverSession({
                     await appendAttempt({
                         ok: true,
                         port: candidatePort,
-                        appIdentifier: matchedTarget.port,
+                        appIdentifier: resolveDriverSessionAppIdentifier(matchedTarget),
                         connectedIdentifier: matchedTarget.identifier ?? null,
                     });
                     return {
                         driverSessionPort: usedDriverSessionPort,
                         driverSessionResponse,
                         driverSessionStatusResponse,
-                        resolvedAppIdentifier: resolvedAppTarget.port,
+                        resolvedAppIdentifier: resolveDriverSessionAppIdentifier(resolvedAppTarget),
                         resolvedAppTarget,
                     };
                 }
 
                 const staleAppIdentifier = connectedAppIdentifier ?? resolveConnectedAppIdentifierFromDriverStatus(parsedStatus);
-                const staleTarget = connectedTarget ?? resolveExactDriverSessionTarget(parsedStatus, staleAppIdentifier);
+                const staleTarget = connectedTarget ?? resolveExactDriverSessionTargetByAppIdentifier(parsedStatus, staleAppIdentifier);
                 // eslint-disable-next-line no-await-in-loop
                 const attempt = {
                     ok: false,
@@ -393,7 +482,7 @@ export async function startTargetedDriverSession({
                         ? 'timeout'
                         : lastError
                             ? 'error'
-                            : staleAppIdentifier && staleAppIdentifier !== candidatePort
+                    : staleTarget?.port != null && staleTarget.port !== candidatePort
                                 ? 'connected-different-app'
                                 : 'no-matching-app-identifier',
                     connectedAppIdentifier: staleAppIdentifier ?? null,
@@ -412,7 +501,9 @@ export async function startTargetedDriverSession({
                 attemptTimeoutMs,
                 statusPollAttempts,
                 statusPollDelayMs,
+                env,
                 preferredAppIdentifier,
+                requireStackOwnedIdentifier,
             });
             const { parsedStatus, statusResponse, matchedTarget, connectedAppIdentifier, connectedTarget, lastError } = statusResult;
 
@@ -425,20 +516,20 @@ export async function startTargetedDriverSession({
                 await appendAttempt({
                     ok: true,
                     port: candidatePort,
-                    appIdentifier: matchedTarget.port,
+                    appIdentifier: resolveDriverSessionAppIdentifier(matchedTarget),
                     connectedIdentifier: matchedTarget.identifier ?? null,
                 });
                 return {
                     driverSessionPort: usedDriverSessionPort,
                     driverSessionResponse,
                     driverSessionStatusResponse,
-                    resolvedAppIdentifier: resolvedAppTarget.port,
+                    resolvedAppIdentifier: resolveDriverSessionAppIdentifier(resolvedAppTarget),
                     resolvedAppTarget,
                 };
             }
 
             const staleAppIdentifier = connectedAppIdentifier ?? resolveConnectedAppIdentifierFromDriverStatus(parsedStatus);
-            const staleTarget = connectedTarget ?? resolveExactDriverSessionTarget(parsedStatus, staleAppIdentifier);
+            const staleTarget = connectedTarget ?? resolveExactDriverSessionTargetByAppIdentifier(parsedStatus, staleAppIdentifier);
             // eslint-disable-next-line no-await-in-loop
             const attempt = {
                 ok: false,
@@ -447,7 +538,7 @@ export async function startTargetedDriverSession({
                     ? 'timeout'
                     : lastError
                         ? 'error'
-                        : staleAppIdentifier && staleAppIdentifier !== candidatePort
+                        : staleTarget?.port != null && staleTarget.port !== candidatePort
                             ? 'connected-different-app'
                             : 'no-matching-app-identifier',
                 connectedAppIdentifier: staleAppIdentifier ?? null,
@@ -463,7 +554,7 @@ export async function startTargetedDriverSession({
             // eslint-disable-next-line no-await-in-loop
             const started = await runCliJson(
                 ['driver-session', 'start', '--port', String(candidatePort)],
-                { timeoutMs: attemptTimeoutMs },
+                { timeoutMs: attemptTimeoutMs, env },
             ).catch((error) => ({ error }));
             if (started && 'error' in started) {
                 // eslint-disable-next-line no-await-in-loop
@@ -472,6 +563,17 @@ export async function startTargetedDriverSession({
                     port: candidatePort,
                     reason: isTimeoutError(started.error) ? 'timeout' : 'error',
                     message: started.error instanceof Error ? started.error.message : String(started.error),
+                });
+                continue;
+            }
+            if (isNoTauriAppFoundStartResponse(started)) {
+                // eslint-disable-next-line no-await-in-loop
+                await appendAttempt({
+                    ok: false,
+                    port: candidatePort,
+                    reason: 'no-tauri-app-found',
+                    connectedAppIdentifier: null,
+                    connectedIdentifier: null,
                 });
                 continue;
             }
@@ -495,20 +597,20 @@ export async function startTargetedDriverSession({
                 await appendAttempt({
                     ok: true,
                     port: candidatePort,
-                    appIdentifier: matchedTarget.port,
+                    appIdentifier: resolveDriverSessionAppIdentifier(matchedTarget),
                     connectedIdentifier: matchedTarget.identifier ?? null,
                 });
                 return {
                     driverSessionPort: usedDriverSessionPort,
                     driverSessionResponse,
                     driverSessionStatusResponse,
-                    resolvedAppIdentifier: resolvedAppTarget.port,
+                    resolvedAppIdentifier: resolveDriverSessionAppIdentifier(resolvedAppTarget),
                     resolvedAppTarget,
                 };
             }
 
             const staleAppIdentifier = connectedAppIdentifier ?? resolveConnectedAppIdentifierFromDriverStatus(parsedStatus);
-            const staleTarget = connectedTarget ?? resolveExactDriverSessionTarget(parsedStatus, staleAppIdentifier);
+            const staleTarget = connectedTarget ?? resolveExactDriverSessionTargetByAppIdentifier(parsedStatus, staleAppIdentifier);
             // eslint-disable-next-line no-await-in-loop
             const attempt = {
                 ok: false,
@@ -517,7 +619,7 @@ export async function startTargetedDriverSession({
                     ? 'timeout'
                     : lastError
                         ? 'error'
-                        : staleAppIdentifier && staleAppIdentifier !== candidatePort
+                        : staleTarget?.port != null && staleTarget.port !== candidatePort
                             ? 'connected-different-app'
                             : 'no-matching-app-identifier',
                 connectedAppIdentifier: staleAppIdentifier ?? null,
@@ -532,24 +634,193 @@ export async function startTargetedDriverSession({
         throw new Error(`Unable to resolve a connected Tauri app identifier from driver-session status. Tried ports: ${candidatePorts.join(', ')}`);
     }
 
+    if (softPreferredAppIdentifier) {
+        for (const candidatePort of candidatePorts) {
+            // eslint-disable-next-line no-await-in-loop
+            const statusResult = await pollDriverSessionStatus(candidatePort, {
+                runCliJson,
+                attemptTimeoutMs,
+                statusPollAttempts,
+                statusPollDelayMs,
+                env,
+                preferredAppIdentifier: softPreferredAppIdentifier,
+                requireStackOwnedIdentifier,
+            });
+            const { statusResponse, matchedTarget, connectedTarget } = statusResult;
+            const softMatchedTarget = matchedTarget
+                ?? (isStackOwnedTauriIdentifier(connectedTarget?.identifier) ? connectedTarget : null);
+
+            if (!softMatchedTarget) {
+                continue;
+            }
+
+            usedDriverSessionPort = candidatePort;
+            driverSessionResponse = statusResponse;
+            driverSessionStatusResponse = statusResponse;
+            resolvedAppTarget = softMatchedTarget;
+            // eslint-disable-next-line no-await-in-loop
+            await appendAttempt({
+                ok: true,
+                port: candidatePort,
+                appIdentifier: resolveDriverSessionAppIdentifier(softMatchedTarget),
+                connectedIdentifier: softMatchedTarget.identifier ?? null,
+            });
+            return {
+                driverSessionPort: usedDriverSessionPort,
+                driverSessionResponse,
+                driverSessionStatusResponse,
+                resolvedAppIdentifier: resolveDriverSessionAppIdentifier(resolvedAppTarget),
+                resolvedAppTarget,
+            };
+        }
+
+        for (const candidatePort of candidatePorts) {
+            // eslint-disable-next-line no-await-in-loop
+            const started = await runCliJson(
+                ['driver-session', 'start', '--port', String(candidatePort)],
+                { timeoutMs: attemptTimeoutMs, env },
+            ).catch((error) => ({ error }));
+            if (started && 'error' in started) {
+                continue;
+            }
+            if (isNoTauriAppFoundStartResponse(started)) {
+                // eslint-disable-next-line no-await-in-loop
+                await appendAttempt({
+                    ok: false,
+                    port: candidatePort,
+                    reason: 'no-tauri-app-found',
+                    connectedAppIdentifier: null,
+                    connectedIdentifier: null,
+                });
+                continue;
+            }
+
+            // eslint-disable-next-line no-await-in-loop
+            const statusResult = await pollDriverSessionStatus(candidatePort, {
+                runCliJson,
+                attemptTimeoutMs,
+                statusPollAttempts,
+                statusPollDelayMs,
+                preferredAppIdentifier: softPreferredAppIdentifier,
+                requireStackOwnedIdentifier,
+            });
+            const { statusResponse, matchedTarget, connectedTarget } = statusResult;
+            const softMatchedTarget = matchedTarget
+                ?? (isStackOwnedTauriIdentifier(connectedTarget?.identifier) ? connectedTarget : null);
+
+            if (!softMatchedTarget) {
+                continue;
+            }
+
+            usedDriverSessionPort = candidatePort;
+            driverSessionResponse = started;
+            driverSessionStatusResponse = statusResponse;
+            resolvedAppTarget = softMatchedTarget;
+            // eslint-disable-next-line no-await-in-loop
+            await appendAttempt({
+                ok: true,
+                port: candidatePort,
+                appIdentifier: resolveDriverSessionAppIdentifier(softMatchedTarget),
+                connectedIdentifier: softMatchedTarget.identifier ?? null,
+            });
+            return {
+                driverSessionPort: usedDriverSessionPort,
+                driverSessionResponse,
+                driverSessionStatusResponse,
+                resolvedAppIdentifier: resolveDriverSessionAppIdentifier(resolvedAppTarget),
+                resolvedAppTarget,
+            };
+        }
+    }
+
+    for (const candidatePort of candidatePorts) {
+        // eslint-disable-next-line no-await-in-loop
+        const statusResult = await pollDriverSessionStatus(candidatePort, {
+            runCliJson,
+            attemptTimeoutMs,
+            statusPollAttempts,
+            statusPollDelayMs,
+            env,
+            requireStackOwnedIdentifier,
+        });
+        const { parsedStatus, statusResponse, matchedTarget, connectedAppIdentifier, connectedTarget, lastError } = statusResult;
+
+        if (!matchedTarget) {
+            const staleAppIdentifier = connectedAppIdentifier ?? resolveConnectedAppIdentifierFromDriverStatus(parsedStatus);
+            const staleTarget = connectedTarget ?? resolveExactDriverSessionTargetByAppIdentifier(parsedStatus, staleAppIdentifier);
+            // eslint-disable-next-line no-await-in-loop
+            const attempt = {
+                ok: false,
+                port: candidatePort,
+                reason: lastError && isTimeoutError(lastError)
+                    ? 'timeout'
+                    : lastError
+                        ? 'error'
+                            : staleTarget?.port != null && staleTarget.port !== candidatePort
+                            ? 'connected-different-app'
+                            : 'no-matching-app-identifier',
+                connectedAppIdentifier: staleAppIdentifier ?? null,
+                connectedIdentifier: staleTarget?.identifier ?? null,
+            };
+            if (lastError) {
+                attempt.message = lastError instanceof Error ? lastError.message : String(lastError);
+            }
+            // eslint-disable-next-line no-await-in-loop
+            await appendAttempt(attempt);
+            continue;
+        }
+
+        usedDriverSessionPort = candidatePort;
+        driverSessionResponse = statusResponse;
+        driverSessionStatusResponse = statusResponse;
+        resolvedAppTarget = matchedTarget;
+        // eslint-disable-next-line no-await-in-loop
+        await appendAttempt({
+            ok: true,
+            port: candidatePort,
+            appIdentifier: resolveDriverSessionAppIdentifier(matchedTarget),
+            connectedIdentifier: matchedTarget.identifier ?? null,
+        });
+        return {
+            driverSessionPort: usedDriverSessionPort,
+            driverSessionResponse,
+            driverSessionStatusResponse,
+            resolvedAppIdentifier: resolveDriverSessionAppIdentifier(resolvedAppTarget),
+            resolvedAppTarget,
+        };
+    }
+
     for (const candidatePort of candidatePorts) {
         // eslint-disable-next-line no-await-in-loop
         await runCliJson(
             ['driver-session', 'stop', '--port', String(candidatePort)],
-            { timeoutMs: attemptTimeoutMs },
+            { timeoutMs: attemptTimeoutMs, env },
         ).catch(() => {});
 
         try {
             // eslint-disable-next-line no-await-in-loop
             const started = await runCliJson(
                 ['driver-session', 'start', '--port', String(candidatePort)],
-                { timeoutMs: attemptTimeoutMs },
+                { timeoutMs: attemptTimeoutMs, env },
             );
+            if (isNoTauriAppFoundStartResponse(started)) {
+                // eslint-disable-next-line no-await-in-loop
+                await appendAttempt({
+                    ok: false,
+                    port: candidatePort,
+                    reason: 'no-tauri-app-found',
+                    connectedAppIdentifier: null,
+                    connectedIdentifier: null,
+                });
+                continue;
+            }
             const statusResult = await pollDriverSessionStatus(candidatePort, {
                 runCliJson,
                 attemptTimeoutMs,
                 statusPollAttempts,
                 statusPollDelayMs,
+                env,
+                requireStackOwnedIdentifier,
             });
             const { parsedStatus, statusResponse, matchedTarget, connectedAppIdentifier, connectedTarget, lastError } = statusResult;
 
@@ -562,14 +833,14 @@ export async function startTargetedDriverSession({
                 await appendAttempt({
                     ok: true,
                     port: candidatePort,
-                    appIdentifier: matchedTarget.port,
+                    appIdentifier: resolveDriverSessionAppIdentifier(matchedTarget),
                     connectedIdentifier: matchedTarget.identifier ?? null,
                 });
                 break;
             }
 
             const staleAppIdentifier = connectedAppIdentifier ?? resolveConnectedAppIdentifierFromDriverStatus(parsedStatus);
-            const staleTarget = connectedTarget ?? resolveExactDriverSessionTarget(parsedStatus, staleAppIdentifier);
+            const staleTarget = connectedTarget ?? resolveExactDriverSessionTargetByAppIdentifier(parsedStatus, staleAppIdentifier);
             // eslint-disable-next-line no-await-in-loop
             const attempt = {
                 ok: false,
@@ -578,7 +849,7 @@ export async function startTargetedDriverSession({
                     ? 'timeout'
                     : lastError
                         ? 'error'
-                        : staleAppIdentifier && staleAppIdentifier !== candidatePort
+                            : staleTarget?.port != null && staleTarget.port !== candidatePort
                             ? 'connected-different-app'
                             : 'no-matching-app-identifier',
                 connectedAppIdentifier: staleAppIdentifier ?? null,
@@ -607,7 +878,7 @@ export async function startTargetedDriverSession({
         driverSessionPort: usedDriverSessionPort,
         driverSessionResponse,
         driverSessionStatusResponse,
-        resolvedAppIdentifier: resolvedAppTarget.port,
+        resolvedAppIdentifier: resolveDriverSessionAppIdentifier(resolvedAppTarget),
         resolvedAppTarget,
     };
 }

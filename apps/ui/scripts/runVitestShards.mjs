@@ -48,8 +48,16 @@ export function partitionVitestFilesIntoShards(files, shardCount) {
   const count = Number.isFinite(shardCount) && shardCount > 0 ? Math.floor(shardCount) : 1;
   const buckets = Array.from({ length: count }, () => []);
   const sortedFiles = Array.from(files ?? []).filter(Boolean).sort();
-  for (let index = 0; index < sortedFiles.length; index += 1) {
-    buckets[index % count].push(sortedFiles[index]);
+
+  const total = sortedFiles.length;
+  const baseSize = Math.floor(total / count);
+  const extra = total % count;
+  let cursor = 0;
+  for (let bucketIndex = 0; bucketIndex < count; bucketIndex += 1) {
+    const size = baseSize + (bucketIndex < extra ? 1 : 0);
+    if (size <= 0) continue;
+    buckets[bucketIndex].push(...sortedFiles.slice(cursor, cursor + size));
+    cursor += size;
   }
   return buckets;
 }
