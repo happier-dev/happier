@@ -7,6 +7,8 @@ import type { AgentState, Metadata, Session } from '@/api/types'
 function createSessionStub(overrides: Partial<ApiSessionClient> = {}): ApiSessionClient {
   return {
     ensureMetadataSnapshot: async () => ({} as Metadata),
+    getMetadataSnapshot: () => ({} as Metadata),
+    waitForMetadataUpdate: async () => false,
     ...overrides,
   } as unknown as ApiSessionClient
 }
@@ -140,6 +142,80 @@ describe('initializeBackendRunSession', () => {
     expect(attachSnapshotMissing).toHaveLength(1)
   })
 
+  it('still applies startup metadata update when a handoff attach snapshot is unavailable', async () => {
+    const metadata = {
+      path: '/srv/target-workspace',
+      host: 'target-host',
+      homeDir: '/Users/target',
+      happyHomeDir: '/Users/target/.happier',
+      machineId: 'machine_target',
+    } as unknown as Metadata
+    const state = { controlledByUser: false } as AgentState
+    let localMetadata = {
+      path: '/srv/source-workspace',
+      host: 'source-host',
+      homeDir: '/Users/source',
+      happyHomeDir: '/Users/source/.happier',
+      machineId: 'machine_source',
+    } as unknown as Metadata
+    const session = createSessionStub({
+      ensureMetadataSnapshot: async () => {
+        throw new Error('unavailable')
+      },
+      getMetadataSnapshot: () => localMetadata,
+    })
+
+    const api = {
+      getOrCreateSession: async () => null,
+      sessionSyncClient: () => session,
+    }
+
+    let applyStartupCalls = 0
+    const attachSnapshotErrors: unknown[] = []
+    const attachSnapshotMissing: Array<unknown | null> = []
+
+    await initializeBackendRunSession(
+      {
+        api,
+        sessionTag: 'tag-handoff-attach-snapshot-missing',
+        metadata,
+        state,
+        existingSessionId: 'session-handoff-attach-snapshot-missing',
+        uiLogPrefix: '[Claude]',
+        startupMetadataOverrides: {
+          permissionModeOverride: { mode: 'default', updatedAt: 100 },
+        },
+        attachMetadataIdentityPolicy: 'replace_with_runtime_identity',
+        onAttachMetadataSnapshotError: (error) => {
+          attachSnapshotErrors.push(error)
+        },
+        onAttachMetadataSnapshotMissing: (error) => {
+          attachSnapshotMissing.push(error)
+        },
+      },
+      {
+        createBaseSessionForAttachFn: async () =>
+          createSessionResponse('session-handoff-attach-snapshot-missing', metadata, state),
+        applyStartupMetadataUpdateToSessionFn: async () => {
+          applyStartupCalls += 1
+          localMetadata = {
+            ...localMetadata,
+            ...metadata,
+            lifecycleState: 'running',
+          } as Metadata
+        },
+        primeAgentStateForUiFn: () => {},
+        reportSessionToDaemonIfRunningFn: async () => {},
+        persistTerminalAttachmentInfoIfNeededFn: async () => {},
+        sendTerminalFallbackMessageIfNeededFn: () => {},
+      },
+    )
+
+    expect(applyStartupCalls).toBe(1)
+    expect(attachSnapshotErrors).toHaveLength(1)
+    expect(attachSnapshotMissing).toHaveLength(1)
+  })
+
   it('reports merged authoritative attach metadata to the daemon for existing-session attaches', async () => {
     const metadata = {
       path: '/tmp/local-workspace',
@@ -268,6 +344,87 @@ describe('initializeBackendRunSession', () => {
       machineId: 'machine_target',
       hostPid: 654,
       lifecycleState: 'running',
+    })
+  })
+
+  it('retries handoff attach startup metadata publication when the first update does not adopt runtime identity', async () => {
+    const metadata = {
+      path: '/srv/target-workspace',
+      host: 'target-host',
+      homeDir: '/Users/target',
+      happyHomeDir: '/Users/target/.happier',
+      machineId: 'machine_target',
+      hostPid: 654,
+    } as unknown as Metadata
+    const state = { controlledByUser: false } as AgentState
+    let localMetadata = {
+      path: '/srv/source-workspace',
+      host: 'source-host',
+      homeDir: '/Users/source',
+      happyHomeDir: '/Users/source/.happier',
+      machineId: 'machine_source',
+      hostPid: 321,
+    } as unknown as Metadata
+    const waitForMetadataUpdate = vi.fn(async () => true)
+    const session = createSessionStub({
+      ensureMetadataSnapshot: async () => localMetadata,
+      getMetadataSnapshot: () => localMetadata,
+      waitForMetadataUpdate,
+    })
+
+    const api = {
+      getOrCreateSession: async () => null,
+      sessionSyncClient: () => session,
+    }
+
+    let applyStartupCalls = 0
+
+    await initializeBackendRunSession(
+      {
+        api,
+        sessionTag: 'tag-handoff-attach-retry-runtime-identity',
+        metadata,
+        state,
+        existingSessionId: 'session-handoff-attach-retry-runtime-identity',
+        uiLogPrefix: '[Claude]',
+        startupMetadataOverrides: {
+          permissionModeOverride: { mode: 'default', updatedAt: 100 },
+        },
+        attachMetadataIdentityPolicy: 'replace_with_runtime_identity',
+      },
+      {
+        createBaseSessionForAttachFn: async () =>
+          createSessionResponse('session-handoff-attach-retry-runtime-identity', metadata, state),
+        applyStartupMetadataUpdateToSessionFn: async () => {
+          applyStartupCalls += 1
+          if (applyStartupCalls >= 2) {
+            localMetadata = {
+              ...localMetadata,
+              ...metadata,
+              lifecycleState: 'running',
+              lifecycleStateSince: 100,
+            } as Metadata
+          }
+        },
+        primeAgentStateForUiFn: () => {},
+        reportSessionToDaemonIfRunningFn: async () => {},
+        persistTerminalAttachmentInfoIfNeededFn: async () => {},
+        sendTerminalFallbackMessageIfNeededFn: () => {},
+        nowFn: () => 100,
+      },
+    )
+
+    expect(applyStartupCalls).toBe(2)
+    expect(waitForMetadataUpdate).toHaveBeenCalledTimes(1)
+    expect(localMetadata).toMatchObject({
+      path: '/srv/target-workspace',
+      host: 'target-host',
+      homeDir: '/Users/target',
+      happyHomeDir: '/Users/target/.happier',
+      machineId: 'machine_target',
+      hostPid: 654,
+      lifecycleState: 'running',
+      lifecycleStateSince: 100,
     })
   })
 

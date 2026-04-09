@@ -55,6 +55,9 @@ export interface InitializeBackendRunSessionResult {
 
 type DaemonReportMode = 'await' | 'background'
 
+const HANDOFF_ATTACH_METADATA_PUBLISH_WAIT_MS = 5_000
+const HANDOFF_ATTACH_METADATA_PUBLISH_MAX_ATTEMPTS = 3
+
 type InitializeBackendRunSessionDeps = {
   createBaseSessionForAttachFn?: typeof createBaseSessionForAttach
   setupOfflineReconnectionFn?: typeof setupOfflineReconnection
@@ -69,6 +72,75 @@ type InitializeBackendRunSessionDeps = {
 function normalizeExistingSessionId(existingSessionId: string | undefined): string {
   if (typeof existingSessionId !== 'string') return ''
   return existingSessionId.trim()
+}
+
+function hasPublishedRuntimeIdentityForHandoffAttach(
+  snapshot: Metadata | null,
+  runtimeMetadata: Metadata,
+): boolean {
+  if (!snapshot) return false
+
+  const identityKeys: Array<keyof Metadata> = [
+    'path',
+    'host',
+    'homeDir',
+    'happyHomeDir',
+    'machineId',
+    'hostPid',
+  ]
+  for (const key of identityKeys) {
+    const expectedValue = runtimeMetadata[key]
+    if (expectedValue === undefined || expectedValue === null) continue
+    if (snapshot[key] !== expectedValue) {
+      return false
+    }
+  }
+
+  return snapshot.lifecycleState === 'running'
+}
+
+async function waitForAttachMetadataWakeup(session: Pick<ApiSessionClient, 'waitForMetadataUpdate'>): Promise<void> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => {
+    controller.abort()
+  }, HANDOFF_ATTACH_METADATA_PUBLISH_WAIT_MS)
+  timer.unref?.()
+
+  try {
+    await session.waitForMetadataUpdate(controller.signal)
+  } catch {
+    // Best effort only; a subsequent retry may still succeed if the connection races in.
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function applyAttachStartupMetadataUpdateWithRetry(opts: {
+  session: Pick<ApiSessionClient, 'getMetadataSnapshot' | 'waitForMetadataUpdate'>
+  runtimeMetadata: Metadata
+  attachMetadataIdentityPolicy: SessionAttachMetadataIdentityPolicy | null
+  applyUpdate: () => Promise<void>
+}): Promise<void> {
+  const shouldVerifyRuntimeIdentity =
+    opts.attachMetadataIdentityPolicy === 'replace_with_runtime_identity'
+
+  for (let attempt = 1; attempt <= HANDOFF_ATTACH_METADATA_PUBLISH_MAX_ATTEMPTS; attempt += 1) {
+    await opts.applyUpdate()
+
+    if (!shouldVerifyRuntimeIdentity) {
+      return
+    }
+
+    if (hasPublishedRuntimeIdentityForHandoffAttach(opts.session.getMetadataSnapshot(), opts.runtimeMetadata)) {
+      return
+    }
+
+    if (attempt >= HANDOFF_ATTACH_METADATA_PUBLISH_MAX_ATTEMPTS) {
+      return
+    }
+
+    await waitForAttachMetadataWakeup(opts.session)
+  }
 }
 
 export async function initializeBackendRunSession(
@@ -148,20 +220,51 @@ export async function initializeBackendRunSession(
         attachMetadataIdentityPolicy,
         mode: 'attach',
       })
-      await applyStartupMetadataUpdateToSessionFn({
+      await applyAttachStartupMetadataUpdateWithRetry({
         session,
-        next: opts.metadata,
-        nowMs: startupNowMs,
-        permissionModeOverride: opts.startupMetadataOverrides.permissionModeOverride,
-        acpSessionModeOverride: opts.startupMetadataOverrides.acpSessionModeOverride,
-        modelOverride: opts.startupMetadataOverrides.modelOverride,
-        metadataKeysToUnsetOnAttach: opts.metadataKeysToUnsetOnAttach,
+        runtimeMetadata: daemonReportMetadata,
         attachMetadataIdentityPolicy,
-        mode: 'attach',
+        applyUpdate: async () => {
+          await applyStartupMetadataUpdateToSessionFn({
+            session,
+            next: opts.metadata,
+            nowMs: startupNowMs,
+            permissionModeOverride: opts.startupMetadataOverrides.permissionModeOverride,
+            acpSessionModeOverride: opts.startupMetadataOverrides.acpSessionModeOverride,
+            modelOverride: opts.startupMetadataOverrides.modelOverride,
+            metadataKeysToUnsetOnAttach: opts.metadataKeysToUnsetOnAttach,
+            attachMetadataIdentityPolicy,
+            mode: 'attach',
+          })
+        },
       })
       await opts.onAttachMetadataSnapshotReady?.(snapshot, session)
     } else {
       opts.onAttachMetadataSnapshotMissing?.(snapshotError)
+      if (attachMetadataIdentityPolicy === 'replace_with_runtime_identity') {
+        const startupNowMs = nowFn()
+        await applyAttachStartupMetadataUpdateWithRetry({
+          session,
+          runtimeMetadata: {
+            ...opts.metadata,
+            lifecycleState: 'running',
+          },
+          attachMetadataIdentityPolicy,
+          applyUpdate: async () => {
+            await applyStartupMetadataUpdateToSessionFn({
+              session,
+              next: opts.metadata,
+              nowMs: startupNowMs,
+              permissionModeOverride: opts.startupMetadataOverrides.permissionModeOverride,
+              acpSessionModeOverride: opts.startupMetadataOverrides.acpSessionModeOverride,
+              modelOverride: opts.startupMetadataOverrides.modelOverride,
+              metadataKeysToUnsetOnAttach: opts.metadataKeysToUnsetOnAttach,
+              attachMetadataIdentityPolicy,
+              mode: 'attach',
+            })
+          },
+        })
+      }
     }
 
     primeAgentStateForUiFn(session, opts.uiLogPrefix)
