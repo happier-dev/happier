@@ -1,15 +1,91 @@
 import * as React from 'react';
+import { act } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
-import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
+import { flushHookEffects, renderSettingsView } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
+import type { DesktopActivityOverlayWindowStatePayload } from '@/activity/adapters/desktop/runtime/desktopActivityOverlayBridge';
 
 const applyLocalSettingsMock = vi.fn();
 const resetDesktopActivityOverlayPositionMock = vi.hoisted(() => vi.fn(async () => {}));
+const getDesktopActivityOverlayWindowStateMock = vi.hoisted(
+    () => vi.fn<() => Promise<DesktopActivityOverlayWindowStatePayload | null>>(async () => null),
+);
+const listenDesktopActivityOverlayWindowStateMock = vi.hoisted(
+    () => vi.fn<(handler: (payload: DesktopActivityOverlayWindowStatePayload) => void) => Promise<() => void>>(async () => () => {}),
+);
 const localSettingsState = vi.hoisted(() => ({
     value: {} as Record<string, unknown>,
 }));
+
+function createDesktopOverlayWindowStatePayload(
+    hostMode: 'floating' | 'notch_integrated',
+): DesktopActivityOverlayWindowStatePayload {
+    return {
+        visible: true,
+        expanded: false,
+        model: {
+            visible: true,
+            isExpanded: false,
+            generatedAt: Date.now(),
+            collapsed: {
+                title: 'Session One',
+                statusText: 'Needs attention',
+                defaultTarget: 'open-primary-session',
+                sessionCount: 1,
+            },
+            expanded: {
+                title: 'Active sessions',
+                rows: [],
+            },
+            window: {
+                collapsed: { width: 340, height: 72 },
+                expanded: { width: 420, height: 220 },
+            },
+        },
+        policy: {
+            ...localSettingsDefaults,
+            enabled: true,
+            visibilityMode: 'attention_only',
+            showWhenRunning: true,
+            showWhenAttentionRequired: true,
+            showWhenReady: true,
+            alwaysOnTop: true,
+            autoHideEnabled: true,
+            autoHideDelayMs: 6000,
+            expandedBehavior: 'click',
+            interactiveCollapsed: true,
+            presentationMode: 'automatic',
+            clickAction: 'expand_overlay',
+            density: 'compact',
+            compactStyle: 'pill',
+            showSessionCount: true,
+            showPreviewText: false,
+            placementMode: 'custom',
+            anchor: 'bottom_right',
+            offsetX: 24,
+            offsetY: -18,
+            enableDragReposition: true,
+            lockPosition: false,
+        },
+        window: {
+            collapsed: { width: 340, height: 72 },
+            expanded: { width: 420, height: 220 },
+        },
+        placementDiagnostics: {
+            monitorSource: 'primary',
+            effectiveMonitor: { x: 0, y: 0, width: 1512, height: 982 },
+            anchor: 'bottom_right',
+            placementMode: 'custom',
+            hostMode,
+            displayContext: null,
+            effectiveOffsetX: 24,
+            effectiveOffsetY: -18,
+            computedPosition: { x: 24, y: 24 },
+        },
+    };
+}
 
 installSettingsViewCommonModuleMocks({
     text: async () => {
@@ -30,6 +106,13 @@ vi.mock('@/sync/store/settingsWriters', () => ({
 
 vi.mock('@/activity/adapters/desktop/runtime/desktopActivityOverlayBridge', () => ({
     resetDesktopActivityOverlayPosition: () => resetDesktopActivityOverlayPositionMock(),
+    getDesktopActivityOverlayWindowState: () => getDesktopActivityOverlayWindowStateMock(),
+    listenDesktopActivityOverlayWindowState: (handler: (payload: DesktopActivityOverlayWindowStatePayload) => void) =>
+        listenDesktopActivityOverlayWindowStateMock(handler),
+}));
+
+vi.mock('@/utils/platform/tauri', () => ({
+    isTauriDesktop: () => true,
 }));
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
@@ -40,6 +123,9 @@ describe('DesktopOverlaySettingsSection', () => {
     beforeEach(() => {
         applyLocalSettingsMock.mockReset();
         resetDesktopActivityOverlayPositionMock.mockReset();
+        getDesktopActivityOverlayWindowStateMock.mockReset();
+        listenDesktopActivityOverlayWindowStateMock.mockReset();
+        getDesktopActivityOverlayWindowStateMock.mockResolvedValue(createDesktopOverlayWindowStatePayload('floating'));
         localSettingsState.value = {
             ...localSettingsDefaults,
             desktopOverlayEnabled: true,
@@ -52,6 +138,7 @@ describe('DesktopOverlaySettingsSection', () => {
             desktopOverlayAutoHideDelayMs: 6_000,
             desktopOverlayExpandedBehavior: 'click',
             desktopOverlayInteractiveCollapsed: true,
+            desktopOverlayPresentationMode: 'automatic',
             desktopOverlayEnableDragReposition: false,
             desktopOverlayLockPosition: true,
             desktopOverlayPlacementMode: 'anchored',
@@ -72,7 +159,7 @@ describe('DesktopOverlaySettingsSection', () => {
 
         expect(screen.findGroup('settingsDesktop.overlay.title')).toBeTruthy();
         expect(screen.findRow('settings-desktop-overlay-enabled')).toBeTruthy();
-        expect(screen.findAllByType('DropdownMenu' as any)).toHaveLength(8);
+        expect(screen.findAllByType('DropdownMenu' as any)).toHaveLength(9);
     });
 
     it('writes overlay visibility and placement changes through the dropdown menu controls', async () => {
@@ -100,6 +187,7 @@ describe('DesktopOverlaySettingsSection', () => {
         expect(applyLocalSettingsMock).toHaveBeenCalledWith({
             desktopOverlayAnchor: 'bottom_right',
         });
+        expect(resetDesktopActivityOverlayPositionMock).toHaveBeenCalledTimes(1);
 
         const densityMenu = dropdownMenus.find((menu) => menu.props.itemTrigger?.title === 'settingsDesktop.overlay.densityTitle');
         expect(densityMenu).toBeTruthy();
@@ -113,6 +201,13 @@ describe('DesktopOverlaySettingsSection', () => {
         compactStyleMenu?.props.onSelect?.('panel');
         expect(applyLocalSettingsMock).toHaveBeenCalledWith({
             desktopOverlayCompactStyle: 'panel',
+        });
+
+        const presentationModeMenu = dropdownMenus.find((menu) => menu.props.itemTrigger?.title === 'settingsDesktop.overlay.presentationModeTitle');
+        expect(presentationModeMenu).toBeTruthy();
+        presentationModeMenu?.props.onSelect?.('notch_integrated');
+        expect(applyLocalSettingsMock).toHaveBeenCalledWith({
+            desktopOverlayPresentationMode: 'notch_integrated',
         });
     });
 
@@ -186,6 +281,28 @@ describe('DesktopOverlaySettingsSection', () => {
         expect(screen.findAllByType('DropdownMenu' as any).some((menu) => menu.props.itemTrigger?.title === 'settingsDesktop.overlay.expandedBehaviorTitle')).toBe(false);
     });
 
+    it('resets anchored placement back to anchored defaults', async () => {
+        localSettingsState.value = {
+            ...localSettingsState.value,
+            desktopOverlayPlacementMode: 'anchored',
+            desktopOverlayAnchor: 'top_right',
+            desktopOverlayOffsetX: 24,
+            desktopOverlayOffsetY: -18,
+        };
+        const { DesktopOverlaySettingsSection } = await import('./DesktopOverlaySettingsSection');
+        const screen = await renderSettingsView(<DesktopOverlaySettingsSection />);
+
+        screen.pressRowByTitle('settingsDesktop.overlay.resetPositionTitle');
+
+        expect(applyLocalSettingsMock).toHaveBeenCalledWith({
+            desktopOverlayPlacementMode: 'anchored',
+            desktopOverlayAnchor: 'top_center',
+            desktopOverlayOffsetX: 0,
+            desktopOverlayOffsetY: 0,
+        });
+        expect(resetDesktopActivityOverlayPositionMock).toHaveBeenCalledTimes(1);
+    });
+
     it('resets custom placement back to anchored defaults', async () => {
         localSettingsState.value = {
             ...localSettingsState.value,
@@ -198,6 +315,404 @@ describe('DesktopOverlaySettingsSection', () => {
         const screen = await renderSettingsView(<DesktopOverlaySettingsSection />);
 
         screen.pressRowByTitle('settingsDesktop.overlay.resetPositionTitle');
+
+        expect(applyLocalSettingsMock).toHaveBeenCalledWith({
+            desktopOverlayPlacementMode: 'anchored',
+            desktopOverlayAnchor: 'top_center',
+            desktopOverlayOffsetX: 0,
+            desktopOverlayOffsetY: 0,
+        });
+        expect(resetDesktopActivityOverlayPositionMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('hides anchored preset controls while custom placement mode is active', async () => {
+        localSettingsState.value = {
+            ...localSettingsState.value,
+            desktopOverlayPlacementMode: 'custom',
+            desktopOverlayAnchor: 'bottom_right',
+            desktopOverlayOffsetX: 24,
+            desktopOverlayOffsetY: -18,
+            desktopOverlayEnableDragReposition: true,
+            desktopOverlayLockPosition: false,
+        };
+        const { DesktopOverlaySettingsSection } = await import('./DesktopOverlaySettingsSection');
+        const screen = await renderSettingsView(<DesktopOverlaySettingsSection />);
+
+        expect(screen.findAllByType('DropdownMenu' as any).some((menu) => menu.props.itemTrigger?.title === 'settingsDesktop.overlay.anchorPresetTitle')).toBe(false);
+        expect(screen.findRowByTitle('settingsDesktop.overlay.allowRepositioningTitle')).toBeTruthy();
+        expect(screen.findRowByTitle('settingsDesktop.overlay.lockPositionTitle')).toBeTruthy();
+        expect(screen.findRowByTitle('settingsDesktop.overlay.resetPositionTitle')).toBeTruthy();
+    });
+
+    it('hides floating-only placement controls while notch-integrated mode is selected', async () => {
+        getDesktopActivityOverlayWindowStateMock.mockResolvedValue(createDesktopOverlayWindowStatePayload('notch_integrated'));
+        localSettingsState.value = {
+            ...localSettingsState.value,
+            desktopOverlayPresentationMode: 'notch_integrated',
+            desktopOverlayPlacementMode: 'custom',
+            desktopOverlayAnchor: 'bottom_right',
+            desktopOverlayOffsetX: 24,
+            desktopOverlayOffsetY: -18,
+            desktopOverlayEnableDragReposition: true,
+            desktopOverlayLockPosition: false,
+        };
+        const { DesktopOverlaySettingsSection } = await import('./DesktopOverlaySettingsSection');
+        const screen = await renderSettingsView(<DesktopOverlaySettingsSection />);
+
+        expect(screen.findRowByTitle('settingsDesktop.overlay.placementModeTitle')).toBeNull();
+        expect(screen.findRowByTitle('settingsDesktop.overlay.anchorPresetTitle')).toBeNull();
+        expect(screen.findRowByTitle('settingsDesktop.overlay.allowRepositioningTitle')).toBeNull();
+        expect(screen.findRowByTitle('settingsDesktop.overlay.lockPositionTitle')).toBeNull();
+        expect(screen.findRowByTitle('settingsDesktop.overlay.resetPositionTitle')).toBeNull();
+    });
+
+    it('explains when the runtime falls back to a floating host mode on an unsupported display', async () => {
+        localSettingsState.value = {
+            ...localSettingsState.value,
+            desktopOverlayPresentationMode: 'automatic',
+            desktopOverlayPlacementMode: 'custom',
+            desktopOverlayAnchor: 'bottom_right',
+            desktopOverlayOffsetX: 24,
+            desktopOverlayOffsetY: -18,
+            desktopOverlayEnableDragReposition: true,
+            desktopOverlayLockPosition: false,
+        };
+        getDesktopActivityOverlayWindowStateMock.mockResolvedValue({
+            visible: true,
+            expanded: false,
+            model: {
+                visible: true,
+                isExpanded: false,
+                generatedAt: Date.now(),
+                collapsed: {
+                    title: 'Session One',
+                    statusText: 'Needs attention',
+                    defaultTarget: 'open-primary-session',
+                    sessionCount: 1,
+                },
+                expanded: {
+                    title: 'Active sessions',
+                    rows: [],
+                },
+                window: {
+                    collapsed: { width: 340, height: 72 },
+                    expanded: { width: 420, height: 220 },
+                },
+            },
+            policy: {
+                ...localSettingsDefaults,
+                enabled: true,
+                visibilityMode: 'attention_only',
+                showWhenRunning: true,
+                showWhenAttentionRequired: true,
+                showWhenReady: true,
+                alwaysOnTop: true,
+                autoHideEnabled: true,
+                autoHideDelayMs: 6000,
+                expandedBehavior: 'click',
+                interactiveCollapsed: true,
+                presentationMode: 'automatic',
+                clickAction: 'expand_overlay',
+                density: 'compact',
+                compactStyle: 'pill',
+                showSessionCount: true,
+                showPreviewText: false,
+                placementMode: 'custom',
+                anchor: 'bottom_right',
+                offsetX: 24,
+                offsetY: -18,
+                enableDragReposition: true,
+                lockPosition: false,
+            },
+            window: {
+                collapsed: { width: 340, height: 72 },
+                expanded: { width: 420, height: 220 },
+            },
+            placementDiagnostics: {
+                monitorSource: 'primary',
+                effectiveMonitor: { x: 0, y: 0, width: 1512, height: 982 },
+                anchor: 'bottom_right',
+                placementMode: 'custom',
+                hostMode: 'floating',
+                displayContext: null,
+                effectiveOffsetX: 24,
+                effectiveOffsetY: -18,
+                computedPosition: { x: 24, y: 24 },
+            },
+        });
+
+        const { DesktopOverlaySettingsSection } = await import('./DesktopOverlaySettingsSection');
+        const screen = await renderSettingsView(<DesktopOverlaySettingsSection />);
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(screen.findRowByTitle('settingsDesktop.overlay.hostModeFallbackTitle')).toBeTruthy();
+    });
+
+    it('uses the resolved host mode from the overlay runtime to hide floating placement controls even when presentation mode is floating overlay', async () => {
+        localSettingsState.value = {
+            ...localSettingsState.value,
+            desktopOverlayPresentationMode: 'floating_overlay',
+            desktopOverlayPlacementMode: 'custom',
+            desktopOverlayAnchor: 'bottom_right',
+            desktopOverlayOffsetX: 24,
+            desktopOverlayOffsetY: -18,
+            desktopOverlayEnableDragReposition: true,
+            desktopOverlayLockPosition: false,
+        };
+        getDesktopActivityOverlayWindowStateMock.mockResolvedValue({
+            visible: true,
+            expanded: false,
+            model: {
+                visible: true,
+                isExpanded: false,
+                generatedAt: Date.now(),
+                collapsed: {
+                    title: 'Session One',
+                    statusText: 'Needs attention',
+                    defaultTarget: 'open-primary-session',
+                    sessionCount: 1,
+                },
+                expanded: {
+                    title: 'Active sessions',
+                    rows: [],
+                },
+                window: {
+                    collapsed: { width: 340, height: 72 },
+                    expanded: { width: 420, height: 220 },
+                },
+            },
+            policy: {
+                ...localSettingsDefaults,
+                enabled: true,
+                visibilityMode: 'attention_only',
+                showWhenRunning: true,
+                showWhenAttentionRequired: true,
+                showWhenReady: true,
+                alwaysOnTop: true,
+                autoHideEnabled: true,
+                autoHideDelayMs: 6000,
+                expandedBehavior: 'click',
+                interactiveCollapsed: true,
+                presentationMode: 'floating_overlay',
+                clickAction: 'expand_overlay',
+                density: 'compact',
+                compactStyle: 'pill',
+                showSessionCount: true,
+                showPreviewText: false,
+                placementMode: 'custom',
+                anchor: 'bottom_right',
+                offsetX: 24,
+                offsetY: -18,
+                enableDragReposition: true,
+                lockPosition: false,
+            },
+            window: {
+                collapsed: { width: 340, height: 72 },
+                expanded: { width: 420, height: 220 },
+            },
+            placementDiagnostics: {
+                monitorSource: 'primary',
+                effectiveMonitor: { x: 0, y: 0, width: 1512, height: 982 },
+                anchor: 'bottom_right',
+                placementMode: 'custom',
+                hostMode: 'notch_integrated',
+                displayContext: null,
+                effectiveOffsetX: 24,
+                effectiveOffsetY: -18,
+                computedPosition: { x: 24, y: 24 },
+            },
+        });
+
+        const { DesktopOverlaySettingsSection } = await import('./DesktopOverlaySettingsSection');
+        const screen = await renderSettingsView(<DesktopOverlaySettingsSection />);
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(screen.findRowByTitle('settingsDesktop.overlay.placementModeTitle')).toBeNull();
+        expect(screen.findRowByTitle('settingsDesktop.overlay.anchorPresetTitle')).toBeNull();
+        expect(screen.findRowByTitle('settingsDesktop.overlay.allowRepositioningTitle')).toBeNull();
+        expect(screen.findRowByTitle('settingsDesktop.overlay.lockPositionTitle')).toBeNull();
+        expect(screen.findRowByTitle('settingsDesktop.overlay.resetPositionTitle')).toBeNull();
+    });
+
+    it('updates the fallback notice and placement controls when the runtime host mode changes', async () => {
+        let overlayStateListener: ((payload: DesktopActivityOverlayWindowStatePayload) => void) | null = null;
+        listenDesktopActivityOverlayWindowStateMock.mockImplementation(async (handler) => {
+            overlayStateListener = handler;
+            return () => {
+                overlayStateListener = null;
+            };
+        });
+        localSettingsState.value = {
+            ...localSettingsState.value,
+            desktopOverlayPresentationMode: 'automatic',
+            desktopOverlayPlacementMode: 'custom',
+            desktopOverlayAnchor: 'bottom_right',
+            desktopOverlayOffsetX: 24,
+            desktopOverlayOffsetY: -18,
+            desktopOverlayEnableDragReposition: true,
+            desktopOverlayLockPosition: false,
+        };
+        getDesktopActivityOverlayWindowStateMock.mockResolvedValue({
+            visible: true,
+            expanded: false,
+            model: {
+                visible: true,
+                isExpanded: false,
+                generatedAt: Date.now(),
+                collapsed: {
+                    title: 'Session One',
+                    statusText: 'Needs attention',
+                    defaultTarget: 'open-primary-session',
+                    sessionCount: 1,
+                },
+                expanded: {
+                    title: 'Active sessions',
+                    rows: [],
+                },
+                window: {
+                    collapsed: { width: 340, height: 72 },
+                    expanded: { width: 420, height: 220 },
+                },
+            },
+            policy: {
+                ...localSettingsDefaults,
+                enabled: true,
+                visibilityMode: 'attention_only',
+                showWhenRunning: true,
+                showWhenAttentionRequired: true,
+                showWhenReady: true,
+                alwaysOnTop: true,
+                autoHideEnabled: true,
+                autoHideDelayMs: 6000,
+                expandedBehavior: 'click',
+                interactiveCollapsed: true,
+                presentationMode: 'automatic',
+                clickAction: 'expand_overlay',
+                density: 'compact',
+                compactStyle: 'pill',
+                showSessionCount: true,
+                showPreviewText: false,
+                placementMode: 'custom',
+                anchor: 'bottom_right',
+                offsetX: 24,
+                offsetY: -18,
+                enableDragReposition: true,
+                lockPosition: false,
+            },
+            window: {
+                collapsed: { width: 340, height: 72 },
+                expanded: { width: 420, height: 220 },
+            },
+            placementDiagnostics: {
+                monitorSource: 'primary',
+                effectiveMonitor: { x: 0, y: 0, width: 1512, height: 982 },
+                anchor: 'bottom_right',
+                placementMode: 'custom',
+                hostMode: 'floating',
+                displayContext: null,
+                effectiveOffsetX: 24,
+                effectiveOffsetY: -18,
+                computedPosition: { x: 24, y: 24 },
+            },
+        });
+
+        const { DesktopOverlaySettingsSection } = await import('./DesktopOverlaySettingsSection');
+        const screen = await renderSettingsView(<DesktopOverlaySettingsSection />);
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(screen.findRowByTitle('settingsDesktop.overlay.hostModeFallbackTitle')).toBeTruthy();
+        expect(screen.findRowByTitle('settingsDesktop.overlay.placementModeTitle')).toBeTruthy();
+
+        await act(async () => {
+            overlayStateListener?.({
+                visible: true,
+                expanded: false,
+                model: {
+                    visible: true,
+                    isExpanded: false,
+                    generatedAt: Date.now(),
+                    collapsed: {
+                        title: 'Session One',
+                        statusText: 'Needs attention',
+                        defaultTarget: 'open-primary-session',
+                        sessionCount: 1,
+                    },
+                    expanded: {
+                        title: 'Active sessions',
+                        rows: [],
+                    },
+                    window: {
+                        collapsed: { width: 340, height: 72 },
+                        expanded: { width: 420, height: 220 },
+                    },
+                },
+                policy: {
+                    ...localSettingsDefaults,
+                    enabled: true,
+                    visibilityMode: 'attention_only',
+                    showWhenRunning: true,
+                    showWhenAttentionRequired: true,
+                    showWhenReady: true,
+                    alwaysOnTop: true,
+                    autoHideEnabled: true,
+                    autoHideDelayMs: 6000,
+                    expandedBehavior: 'click',
+                    interactiveCollapsed: true,
+                    presentationMode: 'automatic',
+                    clickAction: 'expand_overlay',
+                    density: 'compact',
+                    compactStyle: 'pill',
+                    showSessionCount: true,
+                    showPreviewText: false,
+                    placementMode: 'custom',
+                    anchor: 'bottom_right',
+                    offsetX: 24,
+                    offsetY: -18,
+                    enableDragReposition: true,
+                    lockPosition: false,
+                },
+                window: {
+                    collapsed: { width: 340, height: 72 },
+                    expanded: { width: 420, height: 220 },
+                },
+                placementDiagnostics: {
+                    monitorSource: 'primary',
+                    effectiveMonitor: { x: 0, y: 0, width: 1512, height: 982 },
+                    anchor: 'bottom_right',
+                    placementMode: 'custom',
+                    hostMode: 'notch_integrated',
+                    displayContext: null,
+                    effectiveOffsetX: 24,
+                    effectiveOffsetY: -18,
+                    computedPosition: { x: 24, y: 24 },
+                },
+            });
+        });
+
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(screen.findRowByTitle('settingsDesktop.overlay.hostModeFallbackTitle')).toBeNull();
+        expect(screen.findRowByTitle('settingsDesktop.overlay.placementModeTitle')).toBeNull();
+    });
+
+    it('clears stale custom placement state when placement mode switches back to anchored', async () => {
+        localSettingsState.value = {
+            ...localSettingsState.value,
+            desktopOverlayPlacementMode: 'custom',
+            desktopOverlayAnchor: 'bottom_right',
+            desktopOverlayOffsetX: 24,
+            desktopOverlayOffsetY: -18,
+            desktopOverlayEnableDragReposition: true,
+            desktopOverlayLockPosition: false,
+        };
+        const { DesktopOverlaySettingsSection } = await import('./DesktopOverlaySettingsSection');
+        const screen = await renderSettingsView(<DesktopOverlaySettingsSection />);
+        const dropdownMenus = screen.findAllByType('DropdownMenu' as any);
+
+        const placementModeMenu = dropdownMenus.find((menu) => menu.props.itemTrigger?.title === 'settingsDesktop.overlay.placementModeTitle');
+        expect(placementModeMenu).toBeTruthy();
+
+        placementModeMenu?.props.onSelect?.('anchored');
 
         expect(applyLocalSettingsMock).toHaveBeenCalledWith({
             desktopOverlayPlacementMode: 'anchored',

@@ -211,7 +211,7 @@ export function useLocalDaemonControl(options: Readonly<{
 
     const activeTaskTitle = React.useMemo(() => {
         if (repairSnapshot && repairSnapshot.result == null) {
-            return t('server.relayDrift.progressTitle');
+            return t('machine.repairBackgroundServiceProgressTitle');
         }
         if (startSnapshot && startSnapshot.result == null) {
             return t('machine.daemon');

@@ -291,7 +291,7 @@ describe('SettingsView', () => {
         expect(shared.routerPushSpy).toHaveBeenCalledWith('/(app)/settings/system-status');
     });
 
-    it('includes a Desktop app entry that routes to /(app)/settings/desktop on Tauri desktop', async () => {
+    it('includes a Desktop app entry that routes to /settings/desktop on Tauri desktop', async () => {
         tauriDesktopState.value = true;
         const { SettingsView } = await import('./SettingsView');
         const screen = await renderSettingsView(React.createElement(SettingsView));
@@ -302,7 +302,7 @@ describe('SettingsView', () => {
             screen.pressRowByTitle('settingsDesktop.title');
         });
 
-        expect(shared.routerPushSpy).toHaveBeenCalledWith('/(app)/settings/desktop');
+        expect(shared.routerPushSpy).toHaveBeenCalledWith('/settings/desktop');
     });
 
     it('hides the Desktop app entry on non-Tauri builds', async () => {

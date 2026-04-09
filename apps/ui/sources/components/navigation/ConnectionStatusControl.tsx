@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, Pressable } from 'react-native';
+import { Platform, View, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 import { t, type TranslationKeyNoParams } from '@/text';
@@ -20,11 +20,14 @@ import { resolveActiveServerSelectionFromRawSettings } from '@/sync/domains/serv
 import { normalizeStoredServerSelectionGroups } from '@/sync/domains/server/selection/serverSelectionMutations';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
 import { useConnectionTargetActions } from '@/components/navigation/connection/useConnectionTargetActions';
-import { ConnectionTargetList } from '@/components/navigation/connection/ConnectionTargetList';
 import { promptSignedOutServerSwitchConfirmation } from '@/components/settings/server/modals/ServerSwitchAuthPrompt';
 import { Text } from '@/components/ui/text/Text';
 import { useConnectionHealth } from '@/components/navigation/connectionStatus/useConnectionHealth';
 import { resolveMachineConnectionSummary } from '@/components/navigation/connectionStatus/resolveMachineConnectionSummary';
+import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { sync } from '@/sync/sync';
+import { resolveSocketErrorClassification } from '@/sync/runtime/connectivity/resolveSocketErrorClassification';
+import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 
 type Variant = 'sidebar' | 'header';
 
@@ -131,6 +134,58 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 12,
         ...Typography.default('semiBold'),
     },
+    statusMeta: {
+        paddingHorizontal: 16,
+        paddingTop: 10,
+        gap: 6,
+    },
+    statusMetaRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        gap: 12,
+        alignItems: 'flex-start',
+    },
+    statusMetaLabel: {
+        fontSize: 12,
+        color: theme.colors.textSecondary,
+        ...Typography.default(),
+    },
+    statusMetaValue: {
+        fontSize: 12,
+        color: theme.colors.text,
+        ...Typography.default(),
+    },
+    popoverActionsRow: {
+        flexDirection: 'row',
+        justifyContent: 'flex-end',
+        gap: 8,
+        paddingHorizontal: 16,
+        paddingTop: 12,
+    },
+    popoverActionButton: {
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 10,
+        backgroundColor: theme.colors.groupped.background,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.colors.divider,
+    },
+    popoverActionButtonText: {
+        fontSize: 12,
+        color: theme.colors.text,
+        ...Typography.default('semiBold'),
+    },
+    popoverSection: {
+        paddingHorizontal: 16,
+        paddingTop: 14,
+        gap: 8,
+    },
+    popoverSectionTitle: {
+        fontSize: 12,
+        color: theme.colors.textSecondary,
+        ...Typography.default('semiBold'),
+        textTransform: 'uppercase',
+    },
 }));
 
 function formatTime(ts: number | null): string {
@@ -162,8 +217,11 @@ function resolveStatusPresentation(
     }
 }
 
-function resolveEndpointStatusKey(endpointStatus: unknown): 'connected' | 'connecting' | 'disconnected' | 'action_required' | 'unknown' {
-    switch (endpointStatus) {
+function resolveRelayStatusKey(params: Readonly<{
+    endpointStatus: unknown;
+    connectionHealthKind: ReturnType<typeof useConnectionHealth>['kind'];
+}>): 'connected' | 'connecting' | 'disconnected' | 'error' | 'action_required' | 'unknown' {
+    switch (params.endpointStatus) {
         case 'online':
             return 'connected';
         case 'connecting':
@@ -173,6 +231,24 @@ function resolveEndpointStatusKey(endpointStatus: unknown): 'connected' | 'conne
         case 'offline':
         case 'shutting_down':
             return 'disconnected';
+        case 'idle':
+            switch (params.connectionHealthKind) {
+                case 'healthy':
+                case 'no_machine':
+                case 'machine_offline':
+                case 'machine_not_ready':
+                    return 'connected';
+                case 'connecting':
+                    return 'connecting';
+                case 'auth_required':
+                    return 'action_required';
+                case 'server_error':
+                    return 'error';
+                case 'server_unreachable':
+                    return 'disconnected';
+                default:
+                    return 'unknown';
+            }
         default:
             return 'unknown';
     }
@@ -249,6 +325,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     const [serverSelectionActiveTargetId, setServerSelectionActiveTargetId] = useSettingMutable('serverSelectionActiveTargetId');
 
     const [open, setOpen] = React.useState(false);
+    const [relayDropdownOpen, setRelayDropdownOpen] = React.useState(false);
     const anchorRef = React.useRef<React.ElementRef<typeof View> | null>(null);
     const [authStatusByServerId, setAuthStatusByServerId] = React.useState<Record<string, 'signedIn' | 'signedOut' | 'unknown'>>({});
 
@@ -414,6 +491,53 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
         iconColor: theme.colors.text,
     });
 
+    const relayDropdownItems = React.useMemo<ReadonlyArray<DropdownMenuItem>>(() => {
+        return targetActions.map((action) => ({
+            id: action.id,
+            title: action.label,
+            subtitle: action.subtitle,
+            icon: action.icon,
+            rightElement: action.right,
+            disabled: action.disabled,
+        }));
+    }, [targetActions]);
+
+    const selectedRelayDropdownId = React.useMemo(() => {
+        return targetActions.find((action) => action.selected)?.id ?? null;
+    }, [targetActions]);
+
+    const targetActionById = React.useMemo(() => {
+        return new Map(targetActions.map((action) => [action.id, action] as const));
+    }, [targetActions]);
+
+    const syncErrorPresentation = React.useMemo(() => {
+        if (!syncError) return null;
+        const classified = resolveSocketErrorClassification(syncError.message);
+        return {
+            ...classified,
+            kind: syncError.kind === 'auth' ? 'auth' : classified.kind,
+            retryable: syncError.retryable ?? classified.retryable,
+        };
+    }, [syncError]);
+
+    const popoverMaxWidthCap = props.variant === 'sidebar' ? 560 : 420;
+    const popoverMinWidth = props.variant === 'sidebar' && Platform.OS === 'web' ? 420 : undefined;
+
+    const handleRestoreAccount = React.useCallback(() => {
+        const result = runGuardedNavigation(() => router.push('/restore'));
+        if (result !== true) {
+            fireAndForget(result, { tag: 'ConnectionStatusControl.nav.restore' });
+        }
+        setRelayDropdownOpen(false);
+        setOpen(false);
+    }, [router]);
+
+    const handleRetry = React.useCallback(() => {
+        sync.retryNow();
+        setRelayDropdownOpen(false);
+        setOpen(false);
+    }, []);
+
     return (
         <>
             {/* Use a View wrapper for the anchor ref (stable, measurable). */}
@@ -458,16 +582,20 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                         matchAnchorWidth: false,
                         anchorAlign: 'center',
                     }}
-                    maxWidthCap={320}
+                    maxWidthCap={popoverMaxWidthCap}
                     maxHeightCap={520}
-                    onRequestClose={() => setOpen(false)}
+                    onRequestClose={() => {
+                        setRelayDropdownOpen(false);
+                        setOpen(false);
+                    }}
                 >
                     {({ maxHeight }) => (
                         <FloatingOverlay
                             maxHeight={Math.max(220, Math.min(maxHeight, 520))}
                             keyboardShouldPersistTaps="always"
                             edgeFades={{ top: true, bottom: true, size: 18 }}
-                                edgeIndicators={true}
+                            edgeIndicators={true}
+                            containerStyle={popoverMinWidth ? { minWidth: popoverMinWidth } : null}
                         >
                             <View style={styles.popoverContent}>
                                 <View style={styles.popoverHeader}>
@@ -477,7 +605,10 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                                 {(() => {
                                     const endpointPresentation = resolveStatusPresentation(
                                         theme,
-                                        resolveEndpointStatusKey((connectionHealth as any).endpointStatus),
+                                        resolveRelayStatusKey({
+                                            endpointStatus: (connectionHealth as any).endpointStatus,
+                                            connectionHealthKind: connectionHealth.kind,
+                                        }),
                                     );
                                     const socketPresentation = resolveStatusPresentation(
                                         theme,
@@ -571,32 +702,73 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                                     );
                                 })()}
 
-                                <View style={{ paddingHorizontal: 16, paddingTop: 10 }}>
-                                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
-                                        <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
+                                <View style={styles.statusMeta}>
+                                    <View style={styles.statusMetaRow}>
+                                        <Text style={styles.statusMetaLabel}>
                                             {t('connectionStatus.labels.lastSync')}
                                         </Text>
-                                        <Text style={{ fontSize: 12, color: theme.colors.text, ...Typography.default() }}>
+                                        <Text style={styles.statusMetaValue}>
                                             {formatTime(lastSyncAt)}
                                         </Text>
                                     </View>
-                                    {syncError ? (
-                                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12, marginTop: 6 }}>
-                                            <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
+                                    {syncErrorPresentation ? (
+                                        <View style={styles.statusMetaRow}>
+                                            <Text style={styles.statusMetaLabel}>
                                                 {t('connectionStatus.labels.lastError')}
                                             </Text>
-                                            <Text style={{ fontSize: 12, color: theme.colors.text, ...Typography.default(), flexShrink: 1, textAlign: 'right' }} numberOfLines={2}>
-                                                {syncError.message}
+                                            <Text style={[styles.statusMetaValue, { flexShrink: 1, textAlign: 'right' }]} numberOfLines={2}>
+                                                {syncErrorPresentation.message}
                                             </Text>
                                         </View>
                                     ) : null}
                                 </View>
 
-                                {serverTargets.length > 0 ? (
-                                    <ConnectionTargetList
-                                        title={t('server.switchToServer')}
-                                        actions={targetActions}
-                                    />
+                                {syncErrorPresentation ? (
+                                    <View style={styles.popoverActionsRow}>
+                                        {syncErrorPresentation.kind === 'auth' ? (
+                                            <Pressable
+                                                onPress={handleRestoreAccount}
+                                                style={styles.popoverActionButton}
+                                                accessibilityRole="button"
+                                            >
+                                                <Text style={styles.popoverActionButtonText}>{t('connect.restoreAccount')}</Text>
+                                            </Pressable>
+                                        ) : syncErrorPresentation.retryable !== false ? (
+                                            <Pressable
+                                                onPress={handleRetry}
+                                                style={styles.popoverActionButton}
+                                                accessibilityRole="button"
+                                            >
+                                                <Text style={styles.popoverActionButtonText}>{t('common.retry')}</Text>
+                                            </Pressable>
+                                        ) : null}
+                                    </View>
+                                ) : null}
+
+                                {relayDropdownItems.length > 0 ? (
+                                    <View style={styles.popoverSection}>
+                                        <Text style={styles.popoverSectionTitle}>{t('server.switchToServer')}</Text>
+                                        <DropdownMenu
+                                            open={relayDropdownOpen}
+                                            onOpenChange={setRelayDropdownOpen}
+                                            items={relayDropdownItems}
+                                            selectedId={selectedRelayDropdownId}
+                                            onSelect={(itemId) => {
+                                                targetActionById.get(itemId)?.onPress();
+                                            }}
+                                            variant="default"
+                                            rowKind="item"
+                                            matchTriggerWidth={true}
+                                            connectToTrigger={true}
+                                            itemTrigger={{
+                                                title: t('systemStatus.server.activeServer'),
+                                                subtitle: toServerUrlDisplay(getServerUrl()),
+                                                showSelectedSubtitle: true,
+                                            }}
+                                            maxWidthCap={480}
+                                            overlayStyle={Platform.OS === 'web' ? { minWidth: 420 } : undefined}
+                                        />
+                                    </View>
                                 ) : null}
                             </View>
                         </FloatingOverlay>

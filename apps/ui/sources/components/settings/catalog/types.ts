@@ -55,6 +55,7 @@ export const SETTINGS_PAGE_IDS = {
     systemStatus: 'systemStatus',
     notifications: 'notifications',
     notificationsPush: 'notificationsPush',
+    desktop: 'desktop',
     diagnosis: 'diagnosis',
     reportIssue: 'reportIssue',
 } as const;
@@ -66,6 +67,7 @@ export type SettingsPageGate = Readonly<{
     featureId?: string;
     requiresProfiles?: boolean;
     requiresDevMode?: boolean;
+    requiresTauriDesktop?: boolean;
 }>;
 
 export type SettingsPageIconFactory = (params: Readonly<{

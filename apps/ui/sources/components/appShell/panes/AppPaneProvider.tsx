@@ -122,7 +122,11 @@ function serializePersistedPaneScopes(
 }
 
 export const AppPaneProvider = React.memo((props: Readonly<{ children: React.ReactNode }>) => {
-    const persistedScopes = normalizePersistedPaneScopes(useLocalSetting('appPaneScopesV1'));
+    const persistedScopesValue = useLocalSetting('appPaneScopesV1');
+    const persistedScopes = useMemo(
+        () => normalizePersistedPaneScopes(persistedScopesValue),
+        [persistedScopesValue],
+    );
     const [, setPersistedScopes] = useLocalSettingMutable('appPaneScopesV1');
     const [state, dispatch] = useReducer(
         appPaneReduce,
@@ -134,6 +138,11 @@ export const AppPaneProvider = React.memo((props: Readonly<{ children: React.Rea
     );
     const driversRef = useRef<Map<PaneScopeId, PaneDriver>>(new Map());
     const [driverRegistryVersion, setDriverRegistryVersion] = useState(0);
+
+    React.useEffect(() => {
+        if (Object.keys(persistedScopes).length === 0) return;
+        dispatch({ type: 'mergePersistedScopes', scopes: persistedScopes });
+    }, [dispatch, persistedScopes]);
 
     React.useEffect(() => {
         setPersistedScopes(serializePersistedPaneScopes(state.scopes));

@@ -44,6 +44,7 @@ export type AppPaneState = Readonly<{
 }>;
 
 export type AppPaneAction =
+    | { type: 'mergePersistedScopes'; scopes: Readonly<Record<string, PaneScopeState>> }
     | { type: 'activateScope'; scopeId: string }
     | { type: 'openRight'; scopeId: string; tabId?: string }
     | { type: 'closeRight'; scopeId: string }
@@ -80,6 +81,74 @@ function createEmptyScopeState(): PaneScopeState {
         details: { isOpen: false, tabs: [], activeTabKey: null, tabState: {} },
         bottom: { isOpen: false, activeTabId: null, tabState: {} },
     };
+}
+
+function isEmptyScopeState(scope: PaneScopeState): boolean {
+    return (
+        scope.right.isOpen === false
+        && scope.right.activeTabId == null
+        && Object.keys(scope.right.tabState).length === 0
+        && scope.details.isOpen === false
+        && scope.details.tabs.length === 0
+        && scope.details.activeTabKey == null
+        && Object.keys(scope.details.tabState).length === 0
+        && scope.bottom.isOpen === false
+        && scope.bottom.activeTabId == null
+        && Object.keys(scope.bottom.tabState).length === 0
+    );
+}
+
+function areTabStateRecordsEqual(
+    left: Readonly<Record<string, unknown>>,
+    right: Readonly<Record<string, unknown>>,
+): boolean {
+    const leftKeys = Object.keys(left);
+    const rightKeys = Object.keys(right);
+    if (leftKeys.length !== rightKeys.length) return false;
+    for (const key of leftKeys) {
+        if (!Object.prototype.hasOwnProperty.call(right, key)) return false;
+        if (!Object.is(left[key], right[key])) return false;
+    }
+    return true;
+}
+
+function areDetailsTabsEqual(
+    left: ReadonlyArray<DetailsTabState>,
+    right: ReadonlyArray<DetailsTabState>,
+): boolean {
+    if (left.length !== right.length) return false;
+    for (let i = 0; i < left.length; i += 1) {
+        const leftTab = left[i];
+        const rightTab = right[i];
+        if (!leftTab || !rightTab) return false;
+        if (
+            leftTab.key !== rightTab.key
+            || leftTab.kind !== rightTab.kind
+            || leftTab.title !== rightTab.title
+            || leftTab.subtitle !== rightTab.subtitle
+            || !Object.is(leftTab.resource, rightTab.resource)
+            || leftTab.isPreview !== rightTab.isPreview
+            || leftTab.isPinned !== rightTab.isPinned
+        ) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function arePaneScopeStatesEqual(left: PaneScopeState, right: PaneScopeState): boolean {
+    return (
+        left.right.isOpen === right.right.isOpen
+        && left.right.activeTabId === right.right.activeTabId
+        && areTabStateRecordsEqual(left.right.tabState, right.right.tabState)
+        && left.details.isOpen === right.details.isOpen
+        && left.details.activeTabKey === right.details.activeTabKey
+        && areDetailsTabsEqual(left.details.tabs, right.details.tabs)
+        && areTabStateRecordsEqual(left.details.tabState, right.details.tabState)
+        && left.bottom.isOpen === right.bottom.isOpen
+        && left.bottom.activeTabId === right.bottom.activeTabId
+        && areTabStateRecordsEqual(left.bottom.tabState, right.bottom.tabState)
+    );
 }
 
 function touchScopeLru(scopeLru: ReadonlyArray<string>, scopeId: string): ReadonlyArray<string> {
@@ -120,6 +189,32 @@ function setDetailsTabs(scope: PaneScopeState, nextTabs: ReadonlyArray<DetailsTa
 
 export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPaneState {
     switch (action.type) {
+        case 'mergePersistedScopes': {
+            const incomingScopes = action.scopes;
+            if (Object.keys(incomingScopes).length === 0) return state;
+
+            let changed = false;
+            const nextScopes: Record<string, PaneScopeState> = { ...state.scopes };
+            const nextLru = [...state.scopeLru];
+
+            for (const [scopeId, persistedScope] of Object.entries(incomingScopes)) {
+                const existingScope = state.scopes[scopeId];
+                if (existingScope && !isEmptyScopeState(existingScope)) continue;
+                if (existingScope && arePaneScopeStatesEqual(existingScope, persistedScope)) continue;
+                nextScopes[scopeId] = persistedScope;
+                if (!nextLru.includes(scopeId)) {
+                    nextLru.push(scopeId);
+                }
+                changed = true;
+            }
+
+            if (!changed) return state;
+            return evictScopesIfNeeded({
+                ...state,
+                scopes: nextScopes,
+                scopeLru: nextLru,
+            });
+        }
         case 'activateScope': {
             const next = {
                 ...state,

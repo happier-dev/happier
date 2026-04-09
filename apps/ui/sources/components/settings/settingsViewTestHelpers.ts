@@ -73,6 +73,21 @@ export function installSettingsViewCommonModuleMocks(
         return createExpoVectorIconsMock();
     });
 
+    vi.mock('@expo/vector-icons/Ionicons', async () => {
+        const activeOptions = settingsViewModuleState.options;
+        const icons = activeOptions.icons
+            ? await activeOptions.icons()
+            : await (async () => {
+                const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
+                return createExpoVectorIconsMock();
+            })();
+        const Ionicons =
+            icons && typeof icons === 'object' && 'Ionicons' in icons
+                ? (icons as { Ionicons?: unknown }).Ionicons
+                : undefined;
+        return { default: Ionicons };
+    });
+
     vi.mock('react-native-unistyles', async () => {
         const activeOptions = settingsViewModuleState.options;
         if (activeOptions.unistyles) {

@@ -37,6 +37,7 @@ export const SETTINGS_ROUTES = {
     servers: '/server',
     systemStatus: '/settings/system-status',
     diagnosis: '/settings/diagnosis',
+    desktop: '/settings/desktop',
     reportIssue: '/settings/report-issue',
     runs: '/runs',
 } as const;

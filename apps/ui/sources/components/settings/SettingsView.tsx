@@ -1,9 +1,8 @@
 import { View, Pressable, Platform, Linking, useWindowDimensions } from 'react-native';
-import { Image } from 'expo-image';
 import * as React from 'react';
+import { SafeExpoImage } from '@/components/ui/media/SafeExpoImage';
 import { Text } from '@/components/ui/text/Text';
 import { useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import Constants from 'expo-constants';
 import { Typography } from "@/constants/Typography";
@@ -41,6 +40,9 @@ import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { DesktopSettingsEntry } from '@/components/settings/desktop/DesktopSettingsEntry';
+import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
+
+const Ionicons = SafeIonicons;
 
 export const SettingsView = React.memo(function SettingsView() {
     const { theme } = useUnistyles();
@@ -226,7 +228,7 @@ export const SettingsView = React.memo(function SettingsView() {
                     ) : (
                         // Logo view: Original logo + version
                         <>
-                            <Image
+                            <SafeExpoImage
                                 source={theme.dark ? require('@/assets/images/logotype-light.png') : require('@/assets/images/logotype-dark.png')}
                                 contentFit="contain"
                                 style={{ width: 300, height: 90 }}

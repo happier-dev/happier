@@ -6,6 +6,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 
 import { createOkFetchResponse, createRootLayoutFeaturesResponse, flushHookEffects, renderScreen } from '@/dev/testkit';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -21,6 +22,8 @@ type LinkedProvider = {
     showOnProfile: boolean;
 };
 
+let friendsIdentityReady = false;
+
 vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -29,6 +32,10 @@ vi.mock('@/auth/context/AuthContext', () => ({
 
 vi.mock('@/auth/routing/authRouting', () => ({
     isPublicRouteForUnauthenticated: () => true,
+}));
+
+vi.mock('@/hooks/server/useFriendsIdentityReadiness', () => ({
+    useFriendsIdentityReadiness: () => ({ isReady: friendsIdentityReady }),
 }));
 
 function createGithubLinkedProvider(): LinkedProvider {
@@ -46,12 +53,13 @@ function stubRootLayoutFeaturesFetch() {
     const payload = createRootLayoutFeaturesResponse();
     const fetchMock: typeof fetch = (() => createOkFetchResponse(payload)) as unknown as typeof fetch;
     vi.stubGlobal('fetch', vi.fn(fetchMock));
+    setRuntimeFetch(fetchMock);
 }
 
 async function renderRootLayout() {
     const { default: RootLayout } = await import('@/app/(app)/_layout');
     const screen = await renderScreen(<RootLayout />);
-    await flushHookEffects({ cycles: 1, turns: 1 });
+    await flushHookEffects({ cycles: 10, turns: 3 });
     return screen;
 }
 
@@ -66,7 +74,16 @@ function getScreenNames(screen: Awaited<ReturnType<typeof renderScreen>>): strin
         .filter((name): name is string => typeof name === 'string');
 }
 
+function getRegisteredScreen(
+    screen: Awaited<ReturnType<typeof renderScreen>>,
+    name: string,
+) {
+    return (screen.findAllByType(Stack.Screen) ?? [])
+        .find((node) => node.props?.name === name);
+}
+
 afterEach(() => {
+    resetRuntimeFetch();
     vi.unstubAllGlobals();
 });
 
@@ -101,6 +118,7 @@ describe('RootLayout', () => {
         it(scenario.name, async () => {
             vi.resetModules();
             stubRootLayoutFeaturesFetch();
+            friendsIdentityReady = scenario.linkedProviders.length > 0 && typeof scenario.username === 'string' && scenario.username.length > 0;
             storage.getState().applyProfile({
                 ...profileDefaults,
                 username: scenario.username,
@@ -149,6 +167,22 @@ describe('RootLayout', () => {
             const screenNames = getScreenNames(tree);
 
             expect(screenNames).toContain('settings');
+        } finally {
+            await tree?.unmount();
+        }
+    });
+
+    it('renders terminal connect without the shell header on web', async () => {
+        vi.resetModules();
+        stubRootLayoutFeaturesFetch();
+
+        const tree = await renderRootLayout();
+        try {
+            const terminalConnect = getRegisteredScreen(tree, 'terminal/connect');
+            expect(terminalConnect).toBeTruthy();
+            expect(terminalConnect?.props?.options).toMatchObject({
+                headerShown: false,
+            });
         } finally {
             await tree?.unmount();
         }

@@ -68,6 +68,7 @@ export function installConnectionStatusCommonModuleMocks(
         return {
             getActiveServerSnapshot: () => null,
             listServerProfiles: () => [],
+            subscribeActiveServer: () => () => {},
         };
     });
 

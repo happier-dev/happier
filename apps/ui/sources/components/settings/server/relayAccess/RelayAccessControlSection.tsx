@@ -1,6 +1,6 @@
 import * as React from 'react';
-import { Platform, StyleSheet, View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
+import { Platform, View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 import { relayAccessProviderIds, type RelayAccessConfig, type RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';

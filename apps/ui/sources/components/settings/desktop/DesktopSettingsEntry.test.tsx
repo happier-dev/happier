@@ -59,7 +59,7 @@ describe('DesktopSettingsEntry', () => {
         expect(screen.findGroup('settingsDesktop.overlay.title')).toBeNull();
 
         row?.props.onPress?.();
-        expect(routerPushMock).toHaveBeenCalledWith('/(app)/settings/desktop');
+        expect(routerPushMock).toHaveBeenCalledWith('/settings/desktop');
     });
 
     it('hides the desktop entry on non-Tauri builds', async () => {

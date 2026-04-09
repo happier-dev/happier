@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
@@ -123,5 +124,24 @@ describe('SettingsShell', () => {
 
         expect(screen.findByTestId('settings-sidebar')).toBeNull();
         expect(screen.findByTestId('child')).toBeTruthy();
+    });
+
+    it('can switch from phone to desktop layout without changing hook order', async () => {
+        windowDimsState.width = 390;
+        windowDimsState.height = 844;
+        const { SettingsShell } = await import('./SettingsShell');
+        const screen = await renderScreen(
+            React.createElement(SettingsShell, null, React.createElement('Child', { testID: 'child' })),
+        );
+
+        windowDimsState.width = 1600;
+        windowDimsState.height = 900;
+
+        await expect(act(async () => {
+            screen.tree.update(
+                React.createElement(SettingsShell, null, React.createElement('Child', { testID: 'child' })),
+            );
+        })).resolves.toBeUndefined();
+        expect(screen.findByTestId('settings-sidebar')).toBeTruthy();
     });
 });

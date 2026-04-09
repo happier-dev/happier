@@ -127,6 +127,8 @@ vi.mock('@/sync/sync', () => ({
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerUrl: () => mockState.activeServerUrl,
     listServerProfiles: () => mockState.serverProfilesValue.map((p) => ({ ...p, name: p.id, createdAt: 0, updatedAt: 0, lastUsedAt: 0 })),
+    getServerProfilesGeneration: () => 0,
+    subscribeServerProfiles: () => () => {},
     getActiveServerSnapshot: () => ({
         serverId: 'server-1',
         serverUrl: mockState.activeServerUrl,

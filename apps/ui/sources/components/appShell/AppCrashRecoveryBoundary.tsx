@@ -20,6 +20,7 @@ type AppCrashRecoveryBoundaryProps = Readonly<{
 type AppCrashRecoveryBoundaryState = {
   error: Error | null;
   copied: boolean;
+  componentStack: string | null;
 };
 
 export type AppBlockingScreenAction = Readonly<{
@@ -43,6 +44,11 @@ function formatErrorDetails(error: Error): string {
   const message = typeof error.message === 'string' ? error.message : String(error);
   const stack = typeof error.stack === 'string' ? error.stack : '';
   return stack ? `${message}\n\n${stack}` : message;
+}
+
+function formatComponentStackDetails(componentStack: string | null): string {
+  const trimmed = componentStack?.trim();
+  return trimmed ? `\n\nComponent stack:\n${trimmed}` : '';
 }
 
 function readOriginForDiagnostics(): string | null {
@@ -178,10 +184,14 @@ export class AppCrashRecoveryBoundary extends React.PureComponent<
   AppCrashRecoveryBoundaryProps,
   AppCrashRecoveryBoundaryState
 > {
-  state: AppCrashRecoveryBoundaryState = { error: null, copied: false };
+  state: AppCrashRecoveryBoundaryState = { error: null, copied: false, componentStack: null };
 
   override componentDidCatch(error: Error, info: React.ErrorInfo): void {
-    this.setState({ error, copied: false });
+    this.setState({
+      error,
+      copied: false,
+      componentStack: info.componentStack?.trim() || null,
+    });
     try {
       this.props.onError?.(error, info);
     } catch {
@@ -192,7 +202,7 @@ export class AppCrashRecoveryBoundary extends React.PureComponent<
   private readonly onCopyDetails = () => {
     const error = this.state.error;
     if (!error) return;
-    const details = formatErrorDetails(error);
+    const details = `${formatErrorDetails(error)}${formatComponentStackDetails(this.state.componentStack)}`;
     void Clipboard.setStringAsync(details)
       .then(() => {
         this.setState({ copied: true });
@@ -207,7 +217,7 @@ export class AppCrashRecoveryBoundary extends React.PureComponent<
     const createdAtMs = Date.now();
     const origin = readOriginForDiagnostics();
     const isSecureContext = readIsSecureContextForDiagnostics();
-    const errorDetails = formatErrorDetails(error);
+    const errorDetails = `${formatErrorDetails(error)}${formatComponentStackDetails(this.state.componentStack)}`;
 
     void (async () => {
       try {
@@ -272,7 +282,7 @@ export class AppCrashRecoveryBoundary extends React.PureComponent<
         title={t('appCrash.title')}
         subtitle={t('appCrash.subtitle')}
         detailsTitle={t('appCrash.detailsTitle')}
-        details={formatErrorDetails(error)}
+        details={`${formatErrorDetails(error)}${formatComponentStackDetails(this.state.componentStack)}`}
         actions={[primaryAction, reportBugAction, secondaryAction]}
       />
     );

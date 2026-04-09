@@ -1,9 +1,11 @@
+import type { SystemTaskJsonObject } from '@happier-dev/protocol';
+
 import type { SystemTaskRunState } from '../types';
 
 export type SystemTaskPromptEnvelope = Readonly<{
     kind: string;
     message: string;
-    data: Record<string, unknown>;
+    data: SystemTaskJsonObject;
 }>;
 
 export function readLatestSystemTaskPrompt(snapshot: SystemTaskRunState | null): SystemTaskPromptEnvelope | null {
@@ -21,7 +23,7 @@ export function readLatestSystemTaskPrompt(snapshot: SystemTaskRunState | null):
         return null;
     }
 
-    const record = dataRaw as Record<string, unknown>;
+    const record = dataRaw as SystemTaskJsonObject;
     const kind = typeof record.kind === 'string' ? record.kind.trim() : '';
     if (!kind) {
         return null;

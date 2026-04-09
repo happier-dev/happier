@@ -374,7 +374,7 @@ describe('SidebarView header automations button', () => {
         const screen = await renderScreen(<SidebarView sidebarWidthPx={600} />);
 
         expect(findTestInstanceByTypeContainingText(screen.tree, 'Text', 'xhr poll error')).toBeUndefined();
-        expect(findTestInstanceByTypeContainingText(screen.tree, 'Text', 'status.error')).toBeTruthy();
+        expect(findTestInstanceByTypeContainingText(screen.tree, 'Text', 'status.error')).toBeUndefined();
     });
 
     it('does not surface raw socket poll errors when they arrive as syncError messages', async () => {
@@ -384,7 +384,16 @@ describe('SidebarView header automations button', () => {
         const screen = await renderScreen(<SidebarView sidebarWidthPx={600} />);
 
         expect(findTestInstanceByTypeContainingText(screen.tree, 'Text', 'xhr poll error')).toBeUndefined();
-        expect(findTestInstanceByTypeContainingText(screen.tree, 'Text', 'Connection error')).toBeTruthy();
+        expect(findTestInstanceByTypeContainingText(screen.tree, 'Text', 'Connection error')).toBeUndefined();
+    });
+
+    it('does not render a separate retry banner below the sidebar header when connection errors occur', async () => {
+        syncErrorState.value = { message: 'xhr poll error', retryable: true, kind: 'unknown', at: Date.now() };
+
+        const { SidebarView } = await import('./SidebarView');
+        const screen = await renderScreen(<SidebarView sidebarWidthPx={600} />);
+
+        expect(findTestInstanceByTypeContainingText(screen.tree, 'Text', 'common.retry')).toBeUndefined();
     });
 
     it('shows the header icons inline when the sidebar is wide enough', async () => {

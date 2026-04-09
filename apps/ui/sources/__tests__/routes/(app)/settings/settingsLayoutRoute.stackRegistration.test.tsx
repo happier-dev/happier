@@ -1,0 +1,130 @@
+import * as React from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Stack } from 'expo-router';
+
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
+
+(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+vi.mock('react-native-reanimated', () => ({}));
+
+vi.mock('@expo/vector-icons', async () => {
+    const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
+    return createExpoVectorIconsMock();
+});
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        View: 'View',
+        Pressable: 'Pressable',
+        Platform: {
+            OS: 'web',
+            select: (options: any) => (options && 'web' in options ? options.web : options?.default),
+        },
+        useWindowDimensions: () => ({
+            width: 1440,
+            height: 900,
+            scale: 2,
+            fontScale: 1,
+        }),
+        Dimensions: {
+            get: () => ({
+                width: 1440,
+                height: 900,
+                scale: 2,
+                fontScale: 1,
+            }),
+        },
+        PanResponder: {
+            create: () => ({ panHandlers: {} }),
+        },
+    });
+});
+
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({
+        pathname: () => '/settings/providers/codex',
+        router: {
+            push: vi.fn(),
+            back: vi.fn(),
+            replace: vi.fn(),
+            setParams: vi.fn(),
+        },
+    }).module;
+});
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
+
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useSetting: ((key: string) => {
+                if (key === 'useProfiles') return false;
+                return null;
+            }) as any,
+            useLocalSetting: ((key: string) => {
+                if (key === 'settingsNavSidebarEnabled') return true;
+                if (key === 'settingsNavSidebarWidthPx') return 240;
+                if (key === 'settingsNavSidebarWidthBasisPx') return 1440;
+                if (key === 'uiFontScale') return 1;
+                if (key === 'devModeEnabled') return false;
+                return null;
+            }) as any,
+            useLocalSettingMutable: ((key: string) => {
+                if (key === 'settingsNavSidebarWidthPx') return [240, vi.fn()];
+                if (key === 'settingsNavSidebarWidthBasisPx') return [1440, vi.fn()];
+                return [null, vi.fn()];
+            }) as any,
+        },
+    });
+});
+
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: () => false,
+}));
+
+vi.mock('@/components/navigation/Header', () => ({
+    createHeader: () => null,
+}));
+
+vi.mock('@/utils/platform/platform', () => ({
+    isRunningOnMac: () => false,
+}));
+
+vi.mock('@/utils/platform/tauri', () => ({
+    isTauriDesktop: () => true,
+}));
+
+afterEach(() => {
+    standardCleanup();
+});
+
+describe('SettingsLayoutRoute stack registration', () => {
+    it('registers provider settings screens explicitly in the settings stack', async () => {
+        const { default: SettingsLayoutRoute } = await import('@/app/(app)/settings/_layout');
+
+        const screen = await renderScreen(<SettingsLayoutRoute />);
+        const screenNames = (screen.findAllByType(Stack.Screen) ?? [])
+            .map((node) => node.props?.name)
+            .filter((name): name is string => typeof name === 'string');
+
+        expect(screenNames).toContain('providers');
+        expect(screenNames).not.toContain('providers/index');
+        expect(screenNames).toContain('providers/[providerId]');
+    });
+});

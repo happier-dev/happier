@@ -262,7 +262,7 @@ describe('ProviderSetupFlow', () => {
         expect(screen.findByTestId('provider-setup-option-customAcp')).toBeNull();
     });
 
-    it('shows a desktop-only notice on browser web instead of provider setup controls', async () => {
+    it('uses the browser web handoff instead of desktop setup controls', async () => {
         tauriDesktopState.value = false;
 
         const { ProviderSetupFlow } = await import('./ProviderSetupFlow');
@@ -270,7 +270,8 @@ describe('ProviderSetupFlow', () => {
             providerIds: ['codex', 'claude'],
         }));
 
-        expect(screen.findByTestId('settings.providers.setup.desktopOnlyNotice')).toBeTruthy();
+        expect(screen.findByTestId('setupWizard.providers.webHandoff')).toBeTruthy();
+        expect(screen.findByTestId('settings.providers.setup.desktopOnlyNotice')).toBeNull();
         expect(screen.findByTestId('provider-setup-start-card')).toBeNull();
         expect(screen.findByTestId('provider-setup-queue-card')).toBeNull();
         expect(screen.findByTestId('provider-setup-option-codex')).toBeNull();

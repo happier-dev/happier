@@ -1,9 +1,9 @@
 import React from 'react';
 import { Platform, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { Redirect, useLocalSearchParams } from 'expo-router';
 import { useUnistyles, StyleSheet } from 'react-native-unistyles';
 
+import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -45,6 +45,8 @@ import { ContextBar } from '@/components/contextBar/ContextBar';
 import { useContextBarSelection } from '@/components/contextBar/useContextBarSelection';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { isTauriDesktop } from '@/utils/platform/tauri';
+
+const Ionicons = SafeIonicons;
 
 function resolveProviderSettingsText(input: TranslatableText | undefined): string | undefined {
     if (input === undefined) return undefined;
@@ -517,15 +519,8 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
         };
     }, []);
 
-    return (
-        <View
-            ref={popoverBoundaryRef}
-            style={{ flex: 1, minHeight: 0 }}
-        >
-            <AppPaneScopeHost
-                scopeId={paneScopeId}
-                main={(
-                    <ItemList style={{ paddingTop: 0 }}>
+    const main = (
+        <ItemList style={{ paddingTop: 0 }}>
                 <ContextBar
                     mode="machine_only"
                     machine={{
@@ -1009,21 +1004,35 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
                         mode="info"
                     />
                 </ItemGroup>
-                    </ItemList>
-                )}
-                bottomPane={
-                    supportsDesktopControls && authTerminalOpen ? (
-                        <ProviderAuthenticationTerminalPane
-                            providerId={providerId}
-                            machineId={providerAuthentication.machineId}
-                            machineHomeDir={providerAuthentication.machineHomeDir}
-                            loginLaunch={providerAuthentication.loginLaunch}
-                            onRequestClose={closeProviderAuthTerminal}
-                            onTerminalExit={handleProviderAuthTerminalExit}
-                        />
-                    ) : null
-                }
-            />
+            </ItemList>
+    );
+
+    return (
+        <View
+            ref={popoverBoundaryRef}
+            style={{ flex: 1, minHeight: 0 }}
+        >
+            {supportsDesktopControls ? (
+                <AppPaneScopeHost
+                    scopeId={paneScopeId}
+                    main={main}
+                    bottomPane={
+                        authTerminalOpen ? (
+                            <ProviderAuthenticationTerminalPane
+                                providerId={providerId}
+                                machineId={providerAuthentication.machineId}
+                                machineHomeDir={providerAuthentication.machineHomeDir}
+                                loginLaunch={providerAuthentication.loginLaunch}
+                                onRequestClose={closeProviderAuthTerminal}
+                                onTerminalExit={handleProviderAuthTerminalExit}
+                            />
+                        ) : null
+                    }
+                />
+            ) : (
+                // Provider settings do not require the multi-pane host in the browser.
+                main
+            )}
         </View>
     );
 });

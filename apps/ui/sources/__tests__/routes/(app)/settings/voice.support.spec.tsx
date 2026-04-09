@@ -210,6 +210,8 @@ afterEach(() => {
 
 describe('VoiceSettingsScreen (server voice unsupported)', () => {
     it('hides Happier Voice option and coerces mode to off', async () => {
+        voiceState.providerId = ' realtime_elevenlabs ';
+
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
         const screen = await renderSettingsView(<VoiceSettingsScreen />);
 
@@ -222,6 +224,17 @@ describe('VoiceSettingsScreen (server voice unsupported)', () => {
 });
 
 describe('VoiceSettingsScreen (voice settings UX)', () => {
+    it('renders local conversation settings when providerId is padded', async () => {
+        voiceState.providerId = ' local_conversation ';
+        voiceState.adapters.local_conversation.conversationMode = 'direct_session';
+
+        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
+        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+
+        expect(screen.findRowByTitle('settingsVoice.local.conversationMode')).toBeTruthy();
+        expect(screen.findRowByTitle('settingsVoice.local.ttsProvider')).toBeTruthy();
+    });
+
     it('shows local TTS settings even in direct-to-session conversation mode', async () => {
         voiceState.providerId = 'local_conversation';
         voiceState.adapters.local_conversation.conversationMode = 'direct_session';

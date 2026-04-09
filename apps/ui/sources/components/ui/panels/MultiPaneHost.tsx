@@ -4,6 +4,8 @@ import { useUnistyles } from 'react-native-unistyles';
 import type { ResolvedPaneLayout } from './paneBreakpoints';
 import { ResizableDockedPane } from './ResizableDockedPane';
 import { ESCAPE_KEY_BLOCKER_PRIORITIES, getMaxEscapeKeyBlockerPriority, isEscapeEventHandled } from './escapeKeyHandling';
+import { usePaneAnimatedPresence } from './motion/usePaneAnimatedPresence';
+import { PaneAnimatedScrimPressable } from './motion/PaneAnimatedScrimPressable';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
@@ -43,7 +45,8 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
     const { theme } = useUnistyles();
     const reduceMotion = useReducedMotionPreference();
     const overlayDurationMs = reduceMotion ? motionTokens.durationMs.instant : motionTokens.durationMs.base;
-    const overlayUseNativeDriver = Platform.OS !== 'web';
+    // Shared pane progress also drives docked width/height interpolation, which requires the JS driver.
+    const overlayUseNativeDriver = false;
     const overlayZIndexBase = 50;
 
     const [rightOverlayClosing, setRightOverlayClosing] = React.useState(false);
@@ -58,60 +61,6 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
         };
     }, []);
 
-    const useAnimatedPresence = (input: {
-        targetOpen: boolean;
-        node: React.ReactNode | null;
-    }) => {
-        const { targetOpen, node } = input;
-        const progress = React.useRef(new Animated.Value(targetOpen ? 1 : 0)).current;
-        const nodeRef = React.useRef<React.ReactNode | null>(node);
-        const [present, setPresent] = React.useState(targetOpen);
-        const timeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-
-        React.useEffect(() => {
-            if (timeoutRef.current) {
-                clearTimeout(timeoutRef.current);
-                timeoutRef.current = null;
-            }
-
-            if (targetOpen) {
-                nodeRef.current = node;
-                setPresent(true);
-                Animated.timing(progress, {
-                    toValue: 1,
-                    duration: overlayDurationMs,
-                    easing: motionTokens.easing.standard,
-                    useNativeDriver: overlayUseNativeDriver,
-                }).start();
-                return;
-            }
-
-            if (!present) return;
-            Animated.timing(progress, {
-                toValue: 0,
-                duration: overlayDurationMs,
-                easing: motionTokens.easing.standard,
-                useNativeDriver: overlayUseNativeDriver,
-            }).start();
-            timeoutRef.current = setTimeout(() => {
-                timeoutRef.current = null;
-                setPresent(false);
-            }, overlayDurationMs);
-        }, [node, overlayDurationMs, overlayUseNativeDriver, present, progress, targetOpen]);
-
-        React.useEffect(() => {
-            return () => {
-                if (timeoutRef.current) clearTimeout(timeoutRef.current);
-            };
-        }, []);
-
-        return {
-            present,
-            node: present ? nodeRef.current : null,
-            progress,
-        };
-    };
-
     // Pane *presence* is the logical open signal. Layout controls whether it's docked/overlay/hidden.
     // This lets us keep a pane mounted (state preserved) even when the layout temporarily hides it
     // (e.g. overlayStack where details overlays and right is hidden).
@@ -123,8 +72,18 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
     const rightTargetOpen =
         rightTargetOpenBase && !(layout.right === 'overlay' && rightOverlayClosing);
 
-    const detailsPresence = useAnimatedPresence({ targetOpen: detailsTargetOpen, node: detailsPane });
-    const rightPresence = useAnimatedPresence({ targetOpen: rightTargetOpen, node: rightPane });
+    const detailsPresence = usePaneAnimatedPresence({
+        targetOpen: detailsTargetOpen,
+        node: detailsPane,
+        durationMs: overlayDurationMs,
+        useNativeDriver: overlayUseNativeDriver,
+    });
+    const rightPresence = usePaneAnimatedPresence({
+        targetOpen: rightTargetOpen,
+        node: rightPane,
+        durationMs: overlayDurationMs,
+        useNativeDriver: overlayUseNativeDriver,
+    });
 
     const requestCloseOverlayDetails = React.useCallback(() => {
         if (detailsOverlayCloseTimeoutRef.current) {
@@ -236,7 +195,7 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
 
             {layout.details === 'overlay' && detailsPresence.present ? (
                 <>
-                    <AnimatedPressable
+                    <PaneAnimatedScrimPressable
                         testID="multi-pane-details-scrim"
                         accessibilityRole="button"
                         onPress={requestCloseOverlayDetails}
@@ -289,7 +248,7 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
             {layout.kind === 'overlayStack' && rightPresence.present && (layout.right === 'overlay' || layout.right === 'hidden') ? (
                 <>
                     {layout.right === 'overlay' ? (
-                        <AnimatedPressable
+                        <PaneAnimatedScrimPressable
                             testID="multi-pane-right-scrim"
                             accessibilityRole="button"
                             onPress={requestCloseOverlayRight}
@@ -350,6 +309,14 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
         layout.details === 'docked' && detailsPresence.present ? (
             <Animated.View
                 style={{
+                    width: detailsPresence.progress.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, detailsDockWidthPx],
+                    }),
+                    overflow: 'hidden',
+                    flexShrink: 0,
+                    alignSelf: 'stretch',
+                    height: '100%',
                     opacity: detailsPresence.progress.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }),
                     transform: [
                         {
@@ -389,6 +356,14 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
         layout.right === 'docked' && rightPresence.present ? (
             <Animated.View
                 style={{
+                    width: rightPresence.progress.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, rightDockWidthPx],
+                    }),
+                    overflow: 'hidden',
+                    flexShrink: 0,
+                    alignSelf: 'stretch',
+                    height: '100%',
                     opacity: rightPresence.progress.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }),
                     transform: [
                         {
@@ -436,23 +411,5 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                 rightDocked ? <React.Fragment key="right">{rightDocked}</React.Fragment> : null,
             ]}
         </View>
-    );
-});
-
-const AnimatedPressable = React.memo((props: Readonly<{
-    testID: string;
-    accessibilityRole: 'button';
-    onPress: () => void;
-    animatedStyle: any;
-}>) => {
-    return (
-        <Animated.View style={props.animatedStyle}>
-            <Pressable
-                testID={props.testID}
-                accessibilityRole={props.accessibilityRole}
-                onPress={props.onPress}
-                style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
-            />
-        </Animated.View>
     );
 });

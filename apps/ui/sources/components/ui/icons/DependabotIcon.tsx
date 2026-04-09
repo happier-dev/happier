@@ -1,11 +1,23 @@
 import * as React from 'react';
-import Svg, { Path } from 'react-native-svg';
+import * as ReactNativeSvg from 'react-native-svg';
+
+import { isRenderableElementType } from './isRenderableElementType';
 
 export const DependabotIcon = React.memo((props: Readonly<{
     size?: number;
     color: string;
 }>) => {
     const size = props.size ?? 16;
+    const Svg = ReactNativeSvg.default ?? ReactNativeSvg.Svg;
+    const Path = ReactNativeSvg.Path;
+
+    if (!isRenderableElementType(Svg)) {
+        return null;
+    }
+
+    if (!isRenderableElementType(Path)) {
+        return null;
+    }
 
     return (
         <Svg width={size} height={size} viewBox="0 0 16 16" fill="none">

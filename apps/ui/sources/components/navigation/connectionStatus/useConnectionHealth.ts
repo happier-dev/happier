@@ -1,8 +1,8 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useActiveSelectionMachineGroups } from '@/components/settings/machines/hooks/useActiveSelectionMachineGroups';
-import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import {
     useAllMachines,
@@ -42,7 +42,7 @@ export function useConnectionHealth() {
     const serverSelectionActiveTargetKind = useSetting('serverSelectionActiveTargetKind');
     const serverSelectionActiveTargetId = useSetting('serverSelectionActiveTargetId');
 
-    const activeServerSnapshot = getActiveServerSnapshot();
+    const activeServerSnapshot = useActiveServerSnapshot();
     const serverProfiles = React.useMemo(() => {
         try {
             return listServerProfiles().slice();

@@ -7,6 +7,8 @@ type RootLayoutRouteStorageModuleFactory = (
 ) => unknown | Promise<unknown>;
 
 type InstallRootLayoutRouteCommonModuleMocksOptions = Readonly<{
+    activityBadgeRuntime?: RootLayoutRouteModuleFactory;
+    desktopActivityOverlayRuntime?: RootLayoutRouteModuleFactory;
     reactNative?: RootLayoutRouteModuleFactory;
     router?: RootLayoutRouteModuleFactory;
     storage?: RootLayoutRouteStorageModuleFactory;
@@ -19,6 +21,8 @@ const rootLayoutRouteModuleState = vi.hoisted(() => ({
         reactNative: undefined as RootLayoutRouteModuleFactory | undefined,
         router: undefined as RootLayoutRouteModuleFactory | undefined,
         storage: undefined as RootLayoutRouteStorageModuleFactory | undefined,
+        activityBadgeRuntime: undefined as RootLayoutRouteModuleFactory | undefined,
+        desktopActivityOverlayRuntime: undefined as RootLayoutRouteModuleFactory | undefined,
         unistyles: undefined as RootLayoutRouteModuleFactory | undefined,
         text: undefined as RootLayoutRouteModuleFactory | undefined,
     },
@@ -31,6 +35,8 @@ export function installRootLayoutRouteCommonModuleMocks(
         reactNative: options.reactNative,
         router: options.router,
         storage: options.storage,
+        activityBadgeRuntime: options.activityBadgeRuntime,
+        desktopActivityOverlayRuntime: options.desktopActivityOverlayRuntime,
         unistyles: options.unistyles,
         text: options.text,
     };
@@ -55,24 +61,33 @@ export function installRootLayoutRouteCommonModuleMocks(
     });
 
     vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            Platform: {
-                                OS: 'ios',
-                                select: <T,>(choices: { ios?: T; default?: T; web?: T }) =>
-                                    choices?.ios ?? choices?.default ?? choices?.web,
-                            },
-                            AppState: {
-                                addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-                            },
-                        }
-    );
-});
+        const activeOptions = rootLayoutRouteModuleState.options;
+        if (activeOptions.reactNative) {
+            return await activeOptions.reactNative();
+        }
 
-    vi.mock('@/activity/badges/ActivityBadgeRuntime', () => ({
-        ActivityBadgeRuntime: () => null,
-    }));
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+                select: <T,>(choices: { ios?: T; default?: T; web?: T }) =>
+                    choices?.ios ?? choices?.default ?? choices?.web,
+            },
+            AppState: {
+                addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+            },
+        });
+    });
+
+    vi.mock('@/activity/badges/ActivityBadgeRuntime', async () => {
+        const activeOptions = rootLayoutRouteModuleState.options;
+        if (activeOptions.activityBadgeRuntime) {
+            return await activeOptions.activityBadgeRuntime();
+        }
+        return {
+            ActivityBadgeRuntime: () => null,
+        };
+    });
 
     vi.mock('@/activity/adapters/ios/runtime/ActivitySurfacesRuntime', () => ({
         ActivitySurfacesRuntime: () => null,
@@ -82,9 +97,15 @@ export function installRootLayoutRouteCommonModuleMocks(
         ActivityLocalNotificationRuntime: () => null,
     }));
 
-    vi.mock('@/activity/adapters/desktop/runtime/DesktopActivityOverlayRuntime', () => ({
-        DesktopActivityOverlayRuntime: () => null,
-    }));
+    vi.mock('@/activity/adapters/desktop/runtime/DesktopActivityOverlayRuntime', async () => {
+        const activeOptions = rootLayoutRouteModuleState.options;
+        if (activeOptions.desktopActivityOverlayRuntime) {
+            return await activeOptions.desktopActivityOverlayRuntime();
+        }
+        return {
+            DesktopActivityOverlayRuntime: () => null,
+        };
+    });
 
     vi.mock('@/desktop/tray/DesktopTrayRuntime', () => ({
         DesktopTrayRuntime: () => null,

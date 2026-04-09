@@ -1,7 +1,15 @@
 import * as React from 'react';
-import type { SystemTaskJsonObject, SystemTaskResult } from '@happier-dev/protocol';
+import {
+    parseApproveRemoteProvisioningPromptData,
+    parseSshPasswordPromptData,
+    parseSshTrustPromptData,
+    type ReplaceRemoteBackgroundServicesPromptData,
+    type SshTrustPromptData,
+    type SystemTaskResult,
+} from '@happier-dev/protocol';
 
 import { getDefaultSystemTaskRunner } from '@/components/systemTasks';
+import { resolveBackgroundServiceReplacementPrompt } from '@/components/systemTasks/prompts/resolveBackgroundServiceSetupPrompt';
 import type { SystemTaskRunState, SystemTaskRunner } from '@/components/systemTasks/types';
 import { useSystemTaskSnapshot } from '@/components/systemTasks/useSystemTaskSnapshot';
 import { readLatestSystemTaskPrompt } from '@/components/systemTasks/prompts/readLatestSystemTaskPrompt';
@@ -13,14 +21,9 @@ import {
 } from './buildRemoteSshBootstrapMachineSystemTaskSpec';
 
 export type RemoteSshBootstrapPrompt =
-    | Readonly<{
-        kind: 'ssh.trustHost' | 'ssh.replaceHostKey';
+    | (Readonly<{
         message: string;
-        host: string;
-        keyType: string | null;
-        fingerprint: string;
-        existingFingerprint: string | null;
-    }>
+    }> & SshTrustPromptData)
     | Readonly<{
         kind: 'ssh.password';
         message: string;
@@ -31,18 +34,10 @@ export type RemoteSshBootstrapPrompt =
         message: string;
         publicKey: string | null;
     }>
-    | Readonly<{
+    | (Readonly<{
         kind: 'daemon.replaceRemoteBackgroundServices';
         message: string;
-        targetServerUrl: string | null;
-        targetReleaseChannel: string | null;
-        services: ReadonlyArray<Readonly<{
-            label: string;
-            releaseChannel: string | null;
-            targetMode: string | null;
-            running: boolean;
-        }>>;
-    }>;
+    }> & ReplaceRemoteBackgroundServicesPromptData);
 
 export type RemoteSshBootstrapFormState = Readonly<{
     sshUsername: string;
@@ -67,23 +62,15 @@ function resolveRemotePrompt(snapshot: SystemTaskRunState | null): RemoteSshBoot
     if (!prompt) {
         return null;
     }
-    const record = prompt.data as SystemTaskJsonObject & { kind?: unknown };
     const kind = prompt.kind;
     if (kind === 'ssh.trustHost' || kind === 'ssh.replaceHostKey') {
-        const host = typeof record.host === 'string' ? record.host.trim() : '';
-        const fingerprint = typeof record.fingerprint === 'string' ? record.fingerprint.trim() : '';
-        if (!host || !fingerprint) {
+        const parsed = parseSshTrustPromptData(kind, prompt.data);
+        if (!parsed) {
             return null;
         }
         return {
-            kind,
             message: prompt.message,
-            host,
-            keyType: typeof record.keyType === 'string' ? record.keyType.trim() : null,
-            fingerprint,
-            existingFingerprint: typeof record.existingFingerprint === 'string'
-                ? record.existingFingerprint.trim()
-                : null,
+            ...parsed,
         };
     }
 
@@ -91,46 +78,22 @@ function resolveRemotePrompt(snapshot: SystemTaskRunState | null): RemoteSshBoot
         return {
             kind,
             message: prompt.message,
-            publicKey: typeof record.publicKey === 'string' ? record.publicKey.trim() : null,
+            ...parseApproveRemoteProvisioningPromptData(prompt.data),
         };
     }
 
     if (kind === 'daemon.replaceRemoteBackgroundServices') {
-        const servicesRaw = Array.isArray(record.services) ? record.services : [];
-        const services = servicesRaw.flatMap((entry) => {
-            if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-                return [];
-            }
-            const serviceRecord = entry as Record<string, unknown>;
-            const label = typeof serviceRecord.label === 'string' ? serviceRecord.label.trim() : '';
-            if (!label) {
-                return [];
-            }
-            return [{
-                label,
-                releaseChannel: typeof serviceRecord.releaseChannel === 'string'
-                    ? serviceRecord.releaseChannel.trim()
-                    : null,
-                targetMode: typeof serviceRecord.targetMode === 'string'
-                    ? serviceRecord.targetMode.trim()
-                    : null,
-                running: serviceRecord.running === true,
-            }];
-        });
-        return {
-            kind,
-            message: prompt.message,
-            targetServerUrl: typeof record.targetServerUrl === 'string' ? record.targetServerUrl.trim() : null,
-            targetReleaseChannel: typeof record.targetReleaseChannel === 'string' ? record.targetReleaseChannel.trim() : null,
-            services,
-        };
+        const parsed = resolveBackgroundServiceReplacementPrompt(prompt);
+        return parsed?.kind === 'daemon.replaceRemoteBackgroundServices'
+            ? parsed
+            : null;
     }
 
     if (kind === 'ssh.password') {
         return {
             kind,
             message: prompt.message,
-            target: typeof record.target === 'string' ? record.target.trim() : '',
+            ...parseSshPasswordPromptData(prompt.data),
         };
     }
 

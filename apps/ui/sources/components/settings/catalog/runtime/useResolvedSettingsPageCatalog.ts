@@ -5,6 +5,7 @@ import Fuse from 'fuse.js';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useLocalSetting, useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
+import { isTauriDesktop } from '@/utils/platform/tauri';
 
 import { SETTINGS_PAGE_CATALOG, flattenSettingsPageCatalog } from '../pageCatalog';
 import type { ResolvedSettingsPageNode, SettingsPageId, SettingsPageNode, SettingsPageSearchResult } from '../types';
@@ -27,6 +28,7 @@ type SettingsPageSearchDoc = Readonly<{
 function resolveGateVisibility(node: SettingsPageNode, ctx: Readonly<{
     useProfiles: boolean;
     devModeEnabled: boolean;
+    tauriDesktop: boolean;
     features: Readonly<Record<string, boolean>>;
 }>): boolean {
     const gate = node.gate;
@@ -34,12 +36,14 @@ function resolveGateVisibility(node: SettingsPageNode, ctx: Readonly<{
     if (gate.featureId && ctx.features[gate.featureId] !== true) return false;
     if (gate.requiresProfiles && !ctx.useProfiles) return false;
     if (gate.requiresDevMode && !ctx.devModeEnabled) return false;
+    if (gate.requiresTauriDesktop && !ctx.tauriDesktop) return false;
     return true;
 }
 
 function resolveTree(nodes: readonly SettingsPageNode[], ctx: Readonly<{
     useProfiles: boolean;
     devModeEnabled: boolean;
+    tauriDesktop: boolean;
     features: Readonly<Record<string, boolean>>;
 }>): ResolvedSettingsPageNode[] {
     const out: ResolvedSettingsPageNode[] = [];
@@ -125,6 +129,7 @@ export function useResolvedSettingsPageCatalog(): ResolvedCatalog {
     const pathname = usePathname();
     const useProfiles = Boolean(useSetting('useProfiles'));
     const devModeEnabled = Boolean(useLocalSetting('devModeEnabled'));
+    const tauriDesktop = isTauriDesktop();
 
     const usageReportingEnabled = useFeatureEnabled('usage.reporting');
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
@@ -167,9 +172,10 @@ export function useResolvedSettingsPageCatalog(): ResolvedCatalog {
         return resolveTree(SETTINGS_PAGE_CATALOG, {
             useProfiles,
             devModeEnabled,
+            tauriDesktop,
             features: featureSnapshot,
         });
-    }, [devModeEnabled, featureSnapshot, useProfiles]);
+    }, [devModeEnabled, featureSnapshot, tauriDesktop, useProfiles]);
 
     const flat = React.useMemo(() => flattenResolvedTree(tree), [tree]);
 

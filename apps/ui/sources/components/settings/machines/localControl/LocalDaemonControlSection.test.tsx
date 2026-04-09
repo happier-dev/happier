@@ -299,6 +299,8 @@ describe('LocalDaemonControlSection', () => {
         const { LocalDaemonControlSection } = await import('./LocalDaemonControlSection');
         const screen = await renderScreen(React.createElement(LocalDaemonControlSection, { runner }));
 
+        expect(screen.findByTestId('settings.localDaemonControl.repair')?.props.title).toBe('machine.repairBackgroundServiceAction');
+
         await screen.pressByTestIdAsync('settings.localDaemonControl.repair');
 
         expect(starts).toContainEqual(expect.objectContaining({

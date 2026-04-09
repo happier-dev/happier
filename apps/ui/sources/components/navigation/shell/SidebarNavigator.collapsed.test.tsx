@@ -13,6 +13,8 @@ import { installNavigationShellCommonModuleMocks } from './navigationShellTestHe
 const hoistedState = vi.hoisted(() => ({
     mockPlatformOS: 'web' as 'web' | 'ios',
     mockWindowDimensions: { width: 1000, height: 800 },
+    mockPathname: '/' as string,
+    mockSegments: ['(app)'] as string[],
 }));
 
 installNavigationShellCommonModuleMocks({
@@ -42,6 +44,13 @@ installNavigationShellCommonModuleMocks({
                 options?.[hoistedState.mockPlatformOS] ?? options?.default ?? options?.ios ?? options?.android,
         },
     }),
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            pathname: () => hoistedState.mockPathname,
+            segments: () => hoistedState.mockSegments,
+        }).module;
+    },
     storage: installPartialStorageModuleMock({
         useLocalSetting: (key: string) => {
             return React.useSyncExternalStore(
@@ -138,22 +147,32 @@ const mockLocalSettingsStore = (() => {
 
 const mockDrawerLifecycle = { mounts: 0, unmounts: 0 };
 
-vi.mock('expo-router/drawer', () => ({
-  Drawer: (props: any) => {
-    React.useEffect(() => {
-      mockDrawerLifecycle.mounts += 1;
-      return () => {
-        mockDrawerLifecycle.unmounts += 1;
-      };
-    }, []);
+vi.mock('expo-router/drawer', () => {
+  const Drawer = Object.assign(
+    (props: any) => {
+      React.useEffect(() => {
+        mockDrawerLifecycle.mounts += 1;
+        return () => {
+          mockDrawerLifecycle.unmounts += 1;
+        };
+      }, []);
 
-    return React.createElement(
-      'Drawer',
-      props,
-      props.drawerContent ? props.drawerContent({}) : null
-    );
-  },
-}));
+      return React.createElement(
+        'Drawer',
+        props,
+        props.drawerContent ? props.drawerContent({}) : null
+      );
+    },
+    {
+      Screen: 'DrawerScreen' as any,
+    },
+  );
+
+  return {
+    default: Drawer,
+    Drawer,
+  };
+});
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -209,6 +228,8 @@ describe('SidebarNavigator (collapsed sidebar)', () => {
     });
     hoistedState.mockPlatformOS = 'web';
     hoistedState.mockWindowDimensions = { width: 1000, height: 800 };
+    hoistedState.mockPathname = '/';
+    hoistedState.mockSegments = ['(app)'];
     mockDrawerLifecycle.mounts = 0;
     mockDrawerLifecycle.unmounts = 0;
   });
@@ -257,6 +278,19 @@ describe('SidebarNavigator (collapsed sidebar)', () => {
 
   it('hides the permanent drawer when min edge is below 600px (e.g. landscape phone)', async () => {
     hoistedState.mockWindowDimensions = { width: 812, height: 375 };
+
+    const { SidebarNavigator } = await import('./SidebarNavigator');
+    let tree!: renderer.ReactTestRenderer;
+
+    tree = (await renderScreen(<SidebarNavigator />)).tree;
+
+    expect(mockDrawerLifecycle.mounts).toBe(0);
+    expect(tree.findAllByType('Drawer' as any)).toHaveLength(0);
+  });
+
+  it('bypasses the desktop drawer shell for terminal-connect routes on web', async () => {
+    hoistedState.mockPathname = '/terminal/connect';
+    hoistedState.mockSegments = ['(app)', 'terminal', 'connect'];
 
     const { SidebarNavigator } = await import('./SidebarNavigator');
     let tree!: renderer.ReactTestRenderer;
@@ -414,5 +448,18 @@ describe('SidebarNavigator (collapsed sidebar)', () => {
     expect(drawerAfter.props.screenOptions.drawerType).toBe('front');
     expect(drawerAfter.props.screenOptions.drawerStyle.width).toBe(0);
     expect(drawerAfter.props.screenOptions.drawerStyle.display).toBe('none');
+  });
+
+  it('bypasses the desktop drawer shell for terminal connect on web', async () => {
+    hoistedState.mockPathname = '/terminal/connect';
+    hoistedState.mockSegments = ['(app)', 'terminal', 'connect'];
+
+    const { SidebarNavigator } = await import('./SidebarNavigator');
+    let tree!: renderer.ReactTestRenderer;
+
+    tree = (await renderScreen(<SidebarNavigator />)).tree;
+
+    expect(mockDrawerLifecycle.mounts).toBe(0);
+    expect(tree.findAllByType('Drawer' as any)).toHaveLength(0);
   });
 });

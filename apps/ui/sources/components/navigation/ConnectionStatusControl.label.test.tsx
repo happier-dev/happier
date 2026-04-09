@@ -113,6 +113,10 @@ vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
     switchConnectionToActiveServer: vi.fn(async () => {}),
 }));
 
+vi.mock('@/sync/sync', () => ({
+    sync: { retryNow: vi.fn() },
+}));
+
 vi.mock('@/sync/domains/server/selection/serverSelectionResolver', () => ({
     listServerSelectionTargets: () => [],
 }));
@@ -126,7 +130,7 @@ vi.mock('@/sync/domains/server/url/serverUrlDisplay', () => ({
 }));
 
 vi.mock('@/components/navigation/connection/useConnectionTargetActions', () => ({
-    useConnectionTargetActions: () => ({}),
+    useConnectionTargetActions: () => [],
 }));
 
 vi.mock('@/components/navigation/connection/ConnectionTargetList', () => ({

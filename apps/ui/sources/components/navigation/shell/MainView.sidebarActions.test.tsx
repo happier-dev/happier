@@ -54,10 +54,6 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/hooks/session/useVisibleSessionListViewData', () => ({
-    useVisibleSessionListViewData: () => sessionListState.data,
-}));
-
 vi.mock('@/utils/platform/responsive', () => ({
     useIsTablet: () => true,
 }));
@@ -146,6 +142,10 @@ vi.mock('@/components/sessions/shell/SessionsListWrapper', () => ({
     SessionsListWrapper: 'SessionsListWrapper',
 }));
 
+vi.mock('@/components/sessions/shell/SessionsListPaneContent', () => ({
+    SessionsListPaneContent: 'SessionsListPaneContent',
+}));
+
 vi.mock('@/components/navigation/Header', () => ({
     Header: 'Header',
 }));
@@ -202,21 +202,21 @@ describe('MainView sidebar actions', () => {
         expect(() => findPressableByLabel(tree!, 'Open automations')).toThrow();
     });
 
-    it('renders the shared sessions empty state in the sidebar instead of the legacy guidance card', async () => {
+    it('renders the sessions list pane content in the sidebar instead of the legacy guidance card', async () => {
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<MainView variant="sidebar" />)).tree;
 
+        expect(() => tree!.findByType('SessionsListPaneContent')).not.toThrow();
         expect(() => tree!.findByType('SessionGettingStartedGuidance')).toThrow();
-        expect(() => tree!.findByType('SessionsListEmptyState')).not.toThrow();
     });
 
-    it('keeps using the shared sessions empty state for reconnect states in the sidebar', async () => {
+    it('keeps using the sessions list pane content for reconnect states in the sidebar', async () => {
         gettingStartedState.kind = 'connect_machine';
 
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<MainView variant="sidebar" />)).tree;
 
-        expect(() => tree!.findByType('SessionsListEmptyState')).not.toThrow();
+        expect(() => tree!.findByType('SessionsListPaneContent')).not.toThrow();
         expect(() => tree!.findByType('SessionGettingStartedGuidance')).toThrow();
     });
 

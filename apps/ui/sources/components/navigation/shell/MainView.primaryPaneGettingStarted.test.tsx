@@ -71,10 +71,6 @@ installNavigationShellCommonModuleMocks({
     },
 });
 
-vi.mock('@/hooks/session/useVisibleSessionListViewData', () => ({
-    useVisibleSessionListViewData: () => sessionListState.data,
-}));
-
 vi.mock('@/utils/platform/responsive', () => ({
     useIsTablet: () => true,
 }));

@@ -18,6 +18,7 @@ import { VoiceUiSection } from '@/voice/settings/panels/VoiceUiSection';
 import { RealtimeElevenLabsSection } from '@/voice/settings/panels/RealtimeElevenLabsSection';
 import { LocalDirectSection } from '@/voice/settings/panels/LocalDirectSection';
 import { LocalConversationSection } from '@/voice/settings/panels/LocalConversationSection';
+import { resolveVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
 
 export default function VoiceSettingsScreen() {
   const { theme } = useUnistyles();
@@ -28,7 +29,7 @@ export default function VoiceSettingsScreen() {
 
   React.useEffect(() => {
     if (happierVoiceSupported !== false) return;
-    if (voice.providerId !== 'realtime_elevenlabs') return;
+    if (resolveVoiceProviderId(voice.providerId) !== 'realtime_elevenlabs') return;
     if (voice.adapters.realtime_elevenlabs.billingMode !== 'happier') return;
     setVoice({ ...voice, providerId: 'off' });
   }, [happierVoiceSupported, setVoice, voice]);

@@ -115,4 +115,22 @@ describe('appPaneReduce', () => {
 
         expect(state.scopes['session:1']?.bottom.tabState.terminal).toEqual({ history: ['echo hello'] });
     });
+
+    it('ignores semantically identical persisted empty scopes when merging after activation', () => {
+        let state = createAppPaneState({ maxScopesInMemory: 3 });
+        state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:1' });
+
+        const merged = appPaneReduce(state, {
+            type: 'mergePersistedScopes',
+            scopes: {
+                'session:1': {
+                    right: { isOpen: false, activeTabId: null, tabState: {} },
+                    details: { isOpen: false, tabs: [], activeTabKey: null, tabState: {} },
+                    bottom: { isOpen: false, activeTabId: null, tabState: {} },
+                },
+            },
+        });
+
+        expect(merged).toBe(state);
+    });
 });

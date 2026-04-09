@@ -6,7 +6,7 @@ import * as Fonts from 'expo-font';
 import { Asset } from 'expo-asset';
 import * as Notifications from 'expo-notifications';
 import { FontAwesome, Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { Stack, usePathname, useRouter } from 'expo-router';
 import {
     PUSH_NOTIFICATION_ACTION_IDS,
     PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS,
@@ -649,8 +649,10 @@ function AppBoot(props: {
     // Init sequence
     //
     const router = useRouter();
+    const pathname = usePathname();
     const [initState, setInitState] = React.useState<{ credentials: AuthCredentials | null } | null>(null);
     const restartBugReportCheckedRef = React.useRef(false);
+    const isTerminalConnectRoute = pathname === '/terminal/connect';
 
     React.useEffect(() => {
         let cancelled = false;
@@ -732,6 +734,19 @@ function AppBoot(props: {
     // Boot
     //
 
+    const appShell = isTerminalConnectRoute ? (
+        <View style={{ flex: 1 }}>
+            <Stack screenOptions={{ headerShown: false }} />
+        </View>
+    ) : (
+        <>
+            <DesktopUpdateBanner />
+            <View style={{ flex: 1 }}>
+                <SidebarNavigator />
+            </View>
+        </>
+    );
+
     let providers = (
         <SafeAreaProvider initialMetrics={initialWindowMetrics}>
             <KeyboardProvider>
@@ -743,10 +758,7 @@ function AppBoot(props: {
                                 <CommandPaletteProvider>
                                     <RealtimeProvider>
                                         <HorizontalSafeAreaWrapper>
-                                            <DesktopUpdateBanner />
-                                            <View style={{ flex: 1 }}>
-                                                <SidebarNavigator />
-                                            </View>
+                                            {appShell}
                                         </HorizontalSafeAreaWrapper>
                                     </RealtimeProvider>
                                 </CommandPaletteProvider>
@@ -759,7 +771,7 @@ function AppBoot(props: {
     );
     if (tracking) {
         providers = (
-            <PostHogProvider client={tracking}>
+            <PostHogProvider client={tracking} autocapture={{ captureScreens: false }}>
                 <SettingsAnalyticsRuntime />
                 {providers}
             </PostHogProvider>
@@ -768,7 +780,7 @@ function AppBoot(props: {
 
     return (
         <>
-            <FaviconPermissionIndicator />
+            {!isTerminalConnectRoute ? <FaviconPermissionIndicator /> : null}
             <AppCrashRecoveryBoundary
                 onRestart={props.onRestart}
                 onError={(error) => {

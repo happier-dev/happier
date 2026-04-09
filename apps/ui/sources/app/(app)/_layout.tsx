@@ -16,10 +16,13 @@ import { normalizeServerUrl, upsertActivateAndSwitchServer } from '@/sync/domain
 import { getPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Text } from '@/components/ui/text/Text';
-import { bootstrapActiveServerFromWebLocation, readWebServerUrlOverrideFromLocation } from '@/sync/domains/server/url/bootstrapActiveServerFromWebLocation';
+import { bootstrapActiveServerFromWebLocation } from '@/sync/domains/server/url/bootstrapActiveServerFromWebLocation';
 import { buildTerminalConnectWebHref } from '@/utils/path/terminalConnectUrl';
 import { useWebInitialRouteReconcile } from '@/hooks/ui/useWebInitialRouteReconcile';
 import { useHappierVoiceSupport } from '@/hooks/server/useHappierVoiceSupport';
+import { shouldHoldAuthenticatedShellForWebServerOverride } from '@/sync/domains/server/url/shouldHoldAuthenticatedShellForWebServerOverride';
+import { consumeLegacySessionDeepLinkFromWebLocation } from '@/sync/domains/server/url/consumeLegacySessionDeepLinkFromWebLocation';
+import { resolveAuthenticatedWebServerUrlOverrideAction } from '@/sync/domains/server/url/resolveAuthenticatedWebServerUrlOverrideAction';
 import {
     createFriendsStackScreenOptions,
     createInboxStackScreenOptions,
@@ -32,32 +35,14 @@ import { isDesktopActivityOverlayWindowContext } from '@/activity/adapters/deskt
 import { DesktopTrayRuntime } from '@/desktop/tray/DesktopTrayRuntime';
 import { DesktopTrayDaemonLifecycleRuntime } from '@/desktop/tray/DesktopTrayDaemonLifecycleRuntime';
 import { useNotificationResponseRouting } from '@/activity/notifications/runtime/useNotificationResponseRouting';
+import { isTauriDesktop } from '@/utils/platform/tauri';
 
 const bootstrappedWebServerOverride = bootstrapActiveServerFromWebLocation({ scope: 'device' });
 
-function readLegacySessionIdFromWebLocation(): Readonly<{ sessionId: string; cleanedRelativeUrl: string }> | null {
-    if (typeof window === 'undefined') return null;
-    if (typeof window.location?.href !== 'string') return null;
-
-    try {
-        const current = new URL(window.location.href);
-        // Legacy deep-link format: `/?id=<sessionId>` (no longer generated, but may be in old links or buggy flows).
-        if (current.pathname !== '/') return null;
-
-        const rawSessionId = (current.searchParams.get('id') ?? '').trim();
-        if (!rawSessionId) return null;
-
-        current.searchParams.delete('id');
-        const search = current.searchParams.toString();
-        const cleanedRelativeUrl = `${current.pathname}${search ? `?${search}` : ''}${current.hash ?? ''}`;
-        return { sessionId: rawSessionId, cleanedRelativeUrl };
-    } catch {
-        return null;
-    }
-}
-
 export default function RootLayout() {
     const auth = useAuth();
+    const isAuthenticated = auth.isAuthenticated;
+    const refreshAuth = auth.refreshFromActiveServer;
     const segments = useSegments();
     const pathname = usePathname();
     const { theme } = useUnistyles();
@@ -66,71 +51,88 @@ export default function RootLayout() {
     const debugRouterEnabled = process.env.EXPO_PUBLIC_DEBUG === '1';
     const happierVoiceSupported = useHappierVoiceSupport();
     const isDesktopOverlayWindow = isDesktopActivityOverlayWindowContext();
+    const isTauriDesktopHost = isTauriDesktop();
+    const isTerminalConnectRoute = pathname === '/terminal/connect';
 
     useWebInitialRouteReconcile({ routerPathname: pathname });
 
+    const [isApplyingWebServerOverride, setIsApplyingWebServerOverride] = React.useState(() =>
+        shouldHoldAuthenticatedShellForWebServerOverride(isAuthenticated),
+    );
     const webServerOverrideHandledRef = React.useRef(false);
     React.useEffect(() => {
+        if (!isAuthenticated) {
+            setIsApplyingWebServerOverride(false);
+            return;
+        }
         if (webServerOverrideHandledRef.current) return;
-        const override = readWebServerUrlOverrideFromLocation();
-        if (!override) return;
+        const overrideAction = resolveAuthenticatedWebServerUrlOverrideAction({
+            isAuthenticated,
+            bootstrappedServerUrl: bootstrappedWebServerOverride?.serverUrl ?? null,
+        });
+        if (overrideAction.kind === 'none') {
+            setIsApplyingWebServerOverride(false);
+            return;
+        }
         webServerOverrideHandledRef.current = true;
 
-        const desired = normalizeServerUrl(override.serverUrl);
-        if (!desired) return;
-
-        const current = normalizeServerUrl(getActiveServerUrl());
-        if (desired === current) {
-            if (bootstrappedWebServerOverride && bootstrappedWebServerOverride.serverUrl === desired) {
-                fireAndForget(auth.refreshFromActiveServer(), { tag: 'RootLayout.webServerOverrideBootstrapped.refreshAuth' });
+        if (overrideAction.kind === 'cleanup_only' || overrideAction.kind === 'refresh_auth') {
+            if (overrideAction.kind === 'refresh_auth') {
+                fireAndForget(refreshAuth(), { tag: 'RootLayout.webServerOverrideBootstrapped.refreshAuth' });
             }
+            setIsApplyingWebServerOverride(false);
             try {
-                window.history.replaceState(null, '', override.cleanedRelativeUrl);
+                window.history.replaceState(null, '', overrideAction.cleanedRelativeUrl);
             } catch {
                 // ignore
             }
             return;
         }
 
+        setIsApplyingWebServerOverride(true);
         fireAndForget((async () => {
             try {
                 await upsertActivateAndSwitchServer({
-                    serverUrl: desired,
+                    serverUrl: overrideAction.serverUrl,
                     source: 'url',
                     scope: 'device',
-                    refreshAuth: auth.refreshFromActiveServer,
+                    refreshAuth,
                 });
             } catch {
                 // keep URL normalization best-effort; server switch can still be repaired elsewhere
+            } finally {
+                setIsApplyingWebServerOverride(false);
             }
         })(), { tag: 'RootLayout.webServerOverride' });
 
         try {
-            window.history.replaceState(null, '', override.cleanedRelativeUrl);
+            window.history.replaceState(null, '', overrideAction.cleanedRelativeUrl);
         } catch {
             // ignore
         }
-    }, [auth]);
+    }, [isAuthenticated, refreshAuth]);
 
     const legacySessionDeepLinkHandledRef = React.useRef(false);
     React.useEffect(() => {
         if (legacySessionDeepLinkHandledRef.current) return;
-        if (!auth.isAuthenticated) return;
-
-        const legacy = readLegacySessionIdFromWebLocation();
-        if (!legacy) return;
+        const didConsume = consumeLegacySessionDeepLinkFromWebLocation({
+            isAuthenticated,
+            replaceRelativeUrl: (nextRelativeUrl) => {
+                try {
+                    window.history.replaceState(null, '', nextRelativeUrl);
+                } catch {
+                    // ignore
+                }
+            },
+            navigateToRoute: (route) => {
+                router.replace(route);
+            },
+        });
+        if (!didConsume) return;
         legacySessionDeepLinkHandledRef.current = true;
+    }, [isAuthenticated]);
 
-        try {
-            window.history.replaceState(null, '', legacy.cleanedRelativeUrl);
-        } catch {
-            // ignore
-        }
-
-        router.replace(`/session/${encodeURIComponent(legacy.sessionId)}`);
-    }, [auth.isAuthenticated]);
-
-    const shouldRedirect = !auth.isAuthenticated && !isPublicRouteForUnauthenticated(segments);
+    const shouldRedirect = !isAuthenticated && !isPublicRouteForUnauthenticated(segments);
     const pendingTerminalHandledRef = React.useRef(false);
     React.useEffect(() => {
         if (!shouldRedirect) return;
@@ -143,7 +145,7 @@ export default function RootLayout() {
     });
 
     React.useEffect(() => {
-        if (!auth.isAuthenticated) {
+        if (!isAuthenticated) {
             pendingTerminalHandledRef.current = false;
             return;
         }
@@ -172,7 +174,7 @@ export default function RootLayout() {
                             serverUrl: pendingTerminalConnect.serverUrl,
                             source: 'url',
                             scope: 'device',
-                            refreshAuth: auth.refreshFromActiveServer,
+                            refreshAuth,
                         });
                     } catch {
                         // keep navigation best-effort; terminal flow can still recover with explicit server param
@@ -188,12 +190,12 @@ export default function RootLayout() {
         }
 
         pendingTerminalHandledRef.current = false;
-    }, [auth.isAuthenticated]);
+    }, [isAuthenticated, refreshAuth, segments]);
 
     // Server capability gating: if the server doesn't support Happier Voice (misconfigured/disabled),
     // default the user's voice mode to off (they can still choose BYO ElevenLabs in settings).
     React.useEffect(() => {
-        if (!auth.isAuthenticated) return;
+        if (!isAuthenticated) return;
         if (happierVoiceSupported !== false) return;
         let cancelled = false;
         fireAndForget((async () => {
@@ -218,10 +220,10 @@ export default function RootLayout() {
         return () => {
             cancelled = true;
         };
-    }, [auth.isAuthenticated, happierVoiceSupported]);
+    }, [happierVoiceSupported, isAuthenticated]);
 
     // Avoid rendering protected screens for a frame during redirect.
-    if (shouldRedirect) {
+    if (shouldRedirect || isApplyingWebServerOverride) {
         return null;
     }
 
@@ -230,14 +232,18 @@ export default function RootLayout() {
 
     return (
         <>
-            {!isDesktopOverlayWindow ? (
+            {!isDesktopOverlayWindow && !isTerminalConnectRoute ? (
                 <>
                     <ActivityBadgeRuntime />
                     <ActivitySurfacesRuntime />
                     <ActivityLocalNotificationRuntime />
-                    <DesktopTrayRuntime />
-                    <DesktopTrayDaemonLifecycleRuntime />
-                    <DesktopActivityOverlayRuntime />
+                    {isTauriDesktopHost ? (
+                        <>
+                            <DesktopTrayRuntime />
+                            <DesktopTrayDaemonLifecycleRuntime />
+                            <DesktopActivityOverlayRuntime />
+                        </>
+                    ) : null}
                 </>
             ) : null}
             {debugRouterEnabled && Platform.OS === 'web' ? (
@@ -299,6 +305,9 @@ export default function RootLayout() {
                 name="desktop/activity-overlay"
                 options={{
                     headerShown: false,
+                    contentStyle: {
+                        backgroundColor: 'transparent',
+                    },
                 }}
             />
             <Stack.Screen
@@ -400,105 +409,9 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
-                name="settings/account"
-                options={{
-                    headerTitle: t('settings.account'),
-                }}
-            />
-            <Stack.Screen
-                name="settings/machines"
-                options={{
-                    headerTitle: t('settings.machines'),
-                }}
-            />
-            <Stack.Screen
-                name="settings/machines/add"
-                options={{
-                    headerTitle: t('settings.addMachine'),
-                }}
-            />
-            <Stack.Screen
-                name="settings/machines/this-computer"
-                options={{
-                    headerTitle: t('settings.machineSetupCurrentMachineTitle'),
-                }}
-            />
-            <Stack.Screen
-                name="settings/add-phone"
-                options={{
-                    headerTitle: t('settings.addYourPhone'),
-                }}
-            />
-            <Stack.Screen
-                name="settings/appearance"
-                options={{
-                    headerTitle: t('settings.appearance'),
-                }}
-            />
-            <Stack.Screen
-                name="settings/features"
-                options={{
-                    headerTitle: t('settings.features'),
-                }}
-            />
-            <Stack.Screen
-                name="settings/source-control"
-                options={{
-                    headerTitle: t('navigation.sourceControl'),
-                }}
-            />
-            <Stack.Screen
-                name="settings/report-issue"
-                options={{
-                    headerTitle: t('settings.reportIssue'),
-                }}
-            />
-            <Stack.Screen
-                name="settings/system-status"
-                options={{
-                    headerTitle: t('settings.systemStatus'),
-                }}
-            />
-            <Stack.Screen
-                name="settings/diagnosis"
-                options={{
-                    headerTitle: t('diagnosis.title'),
-                }}
-            />
-            <Stack.Screen
-                name="settings/profiles"
-                options={{
-                    headerTitle: t('settingsFeatures.profiles'),
-                }}
-            />
-            <Stack.Screen
-                name="settings/sub-agent"
-                options={{
-                    headerTitle: t('subAgentGuidance.settings.groupTitle'),
-                }}
-            />
-            <Stack.Screen
-                name="settings/session/tool-rendering"
-                options={{
-                    headerTitle: t('settingsSession.toolRendering.title'),
-                }}
-            />
-            <Stack.Screen
-                name="settings/session/permissions"
-                options={{
-                    headerTitle: t('settingsSession.permissions.title'),
-                }}
-            />
-            <Stack.Screen
-                name="settings/session/handoff"
-                options={{
-                    headerTitle: t('settingsSession.handoff.title'),
-                }}
-            />
-            <Stack.Screen
                 name="terminal/connect"
                 options={{
-                    headerTitle: t('navigation.connectTerminal'),
+                    headerShown: false,
                 }}
             />
             <Stack.Screen

@@ -2,12 +2,10 @@ import * as React from 'react';
 
 import { getDefaultSystemTaskRunner, useSystemTaskSnapshot } from '@/components/systemTasks';
 import { usePrimaryMachineFromActiveSelection } from '@/components/settings/server/hooks/usePrimaryMachineFromActiveSelection';
-import { readCachedMachineDoctorSnapshot } from '@/components/settings/systemStatus/cache/machineDoctorSnapshotCache';
+import { readCachedMachineDoctorSnapshot } from '@/components/machines/doctorSnapshot/machineDoctorSnapshotCache';
+import { buildLocalDaemonServiceSystemTaskSpec } from '@/components/systemTasks/specs/localControl/buildLocalDaemonServiceSystemTaskSpec';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
-import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
-import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
-import { useAuth } from '@/auth/context/AuthContext';
-import { Modal } from '@/modal';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { t } from '@/text';
 import { classifyRelayDrift, createRelayUrlComparableKeySafe, resolveKnownRelayEquivalentUrl } from '@/sync/domains/server/relayDrift/relayDriftModel';
 import { buildRelayDriftRepairSystemTaskSpec } from '@/sync/domains/server/relayDrift/relayDriftSystemTask';
@@ -64,7 +62,6 @@ function resolveDoctorLocalRelayCandidate(params: Readonly<{
 }
 
 export function useRelayDriftBanner(): RelayDriftBanner | null {
-    const auth = useAuth();
     const primaryMachineId = usePrimaryMachineFromActiveSelection();
     const activeServerSnapshot = getActiveServerSnapshot();
     const runner = React.useMemo(() => getDefaultSystemTaskRunner(), []);
@@ -134,27 +131,28 @@ export function useRelayDriftBanner(): RelayDriftBanner | null {
         runner,
     ]);
 
+    const startLocalBackgroundServiceTask = React.useCallback(async (
+        kind: 'daemon.service.start.v1' | 'daemon.service.restart.v1',
+    ) => {
+        if (isRepairUnavailable || isRepairStarting || (repairTaskSnapshot != null && repairTaskSnapshot.result == null)) {
+            return;
+        }
+
+        setIsRepairStarting(true);
+        try {
+            const taskId = await runner.start(buildLocalDaemonServiceSystemTaskSpec(kind));
+            setRepairTaskId(taskId);
+        } finally {
+            setIsRepairStarting(false);
+        }
+    }, [isRepairStarting, isRepairUnavailable, repairTaskSnapshot, runner]);
+
     const handleCancelRepair = React.useCallback(() => {
         if (!repairTaskId || !repairTaskSnapshot || repairTaskSnapshot.result) {
             return;
         }
         void runner.cancel(repairTaskId);
     }, [repairTaskId, repairTaskSnapshot, runner]);
-
-    const switchToServerUrl = React.useCallback(async (serverUrl: string) => {
-        const normalized = String(serverUrl ?? '').trim();
-        if (!normalized) {
-            return;
-        }
-        try {
-            upsertAndActivateServer({ serverUrl: normalized, source: 'url', scope: 'device' });
-            await switchConnectionToActiveServer();
-            await auth.refreshFromActiveServer();
-        } catch (error) {
-            const message = error instanceof Error ? error.message.trim() : '';
-            Modal.alert(t('common.error'), message || t('server.failedToConnectToServer'));
-        }
-    }, [auth]);
 
     return React.useMemo(() => {
         const daemonSnapshot = cachedDoctorSnapshot?.snapshot.daemonStatus;
@@ -209,6 +207,8 @@ export function useRelayDriftBanner(): RelayDriftBanner | null {
             description,
             actionLabel: classification.status === 'daemon_needs_auth'
                 ? t('common.authenticate')
+                : classification.status === 'daemon_not_running'
+                    ? t('sessionGettingStarted.title.startDaemon')
                 : t('server.relayDrift.repairAction'),
             ...(isRepairUnavailable
                 ? {
@@ -216,13 +216,11 @@ export function useRelayDriftBanner(): RelayDriftBanner | null {
                     actionHint: t('settings.systemTaskBridgeUnavailable'),
                 }
                 : {}),
-            onPress: handleStartRepair,
-            ...(classification.status === 'daemon_url_mismatch' && daemonRelayUrl
-                ? {
-                    secondaryActionLabel: t('server.switchToServer'),
-                    onSecondaryPress: () => switchToServerUrl(daemonRelayUrl),
+            onPress: classification.status === 'daemon_not_running'
+                ? async () => {
+                    await startLocalBackgroundServiceTask('daemon.service.restart.v1');
                 }
-                : {}),
+                : handleStartRepair,
             isRepairStarting,
             repairTaskSnapshot,
             onCancelRepair: handleCancelRepair,
@@ -236,6 +234,6 @@ export function useRelayDriftBanner(): RelayDriftBanner | null {
         isRepairUnavailable,
         isRepairStarting,
         repairTaskSnapshot,
-        switchToServerUrl,
+        startLocalBackgroundServiceTask,
     ]);
 }

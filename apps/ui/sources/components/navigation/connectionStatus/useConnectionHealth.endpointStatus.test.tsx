@@ -40,6 +40,7 @@ installConnectionStatusCommonModuleMocks({
     serverProfiles: () => ({
         getActiveServerSnapshot: () => ({ generation: 1 }),
         listServerProfiles: () => [],
+        subscribeActiveServer: () => () => {},
     }),
     storage: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');

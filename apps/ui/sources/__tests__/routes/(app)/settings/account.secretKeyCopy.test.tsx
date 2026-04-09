@@ -91,4 +91,31 @@ describe('Settings → Account (secret key copy)', () => {
         const expected = formatSecretKeyForBackup('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
         expect(clipboardMocks.setStringAsync).toHaveBeenCalledWith(expected);
     });
+
+    it('reveals the formatted secret key when the backup item is pressed', async () => {
+        storage.getState().applyProfile({ ...profileDefaults, linkedProviders: [], username: null });
+
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            const url = getRequestUrl(input);
+            if (isFeaturesRequest(url)) {
+                return {
+                    ok: true,
+                    json: async () => createAccountFeaturesResponse(),
+                };
+            }
+            throw new Error(`Unexpected fetch: ${url}`);
+        });
+        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+        const { default: AccountScreen } = await import('@/app/(app)/settings/account');
+        const screen = await renderScreen(<AccountScreen />);
+
+        await screen.pressByTestIdAsync('settings-account-secret-key-item');
+
+        expect(screen.findByTestId('settings-account-secret-key-revealed')).toBeTruthy();
+        const secretKeyValue = screen.findByTestId('settings-account-secret-key-value');
+        expect(secretKeyValue).toBeTruthy();
+        expect(secretKeyValue!.props.children)
+            .toBe(formatSecretKeyForBackup('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'));
+    });
 });

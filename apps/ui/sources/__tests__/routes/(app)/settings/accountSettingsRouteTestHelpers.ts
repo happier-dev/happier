@@ -1,11 +1,16 @@
 import { vi } from 'vitest';
 
 type AccountSettingsRouteModuleFactory = () => unknown | Promise<unknown>;
+type AccountSettingsRouteImportOriginal = <T = unknown>() => Promise<T>;
+type AccountSettingsRouteStorageModuleFactory = (
+    importOriginal: AccountSettingsRouteImportOriginal,
+) => unknown | Promise<unknown>;
 
 type InstallAccountSettingsRouteModuleMocksOptions = Readonly<{
     routerModule?: AccountSettingsRouteModuleFactory;
     textModule?: AccountSettingsRouteModuleFactory;
     modalModule?: AccountSettingsRouteModuleFactory;
+    storageModule?: AccountSettingsRouteStorageModuleFactory;
 }>;
 
 const accountSettingsRouteModuleState = vi.hoisted(() => ({
@@ -15,6 +20,7 @@ const accountSettingsRouteModuleState = vi.hoisted(() => ({
         routerModule: undefined as AccountSettingsRouteModuleFactory | undefined,
         textModule: undefined as AccountSettingsRouteModuleFactory | undefined,
         modalModule: undefined as AccountSettingsRouteModuleFactory | undefined,
+        storageModule: undefined as AccountSettingsRouteStorageModuleFactory | undefined,
     },
 }));
 
@@ -33,6 +39,7 @@ export function installAccountSettingsRouteModuleMocks(
         routerModule: options.routerModule,
         textModule: options.textModule,
         modalModule: options.modalModule,
+        storageModule: options.storageModule,
     };
 
     vi.mock('expo-router', async () => {
@@ -61,5 +68,18 @@ export function installAccountSettingsRouteModuleMocks(
         const modalMock = createModalModuleMock();
         accountSettingsRouteModuleState.modalMockRef.current = modalMock;
         return modalMock.module;
+    });
+
+    vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+        if (accountSettingsRouteModuleState.options.storageModule) {
+            return await accountSettingsRouteModuleState.options.storageModule(
+                importOriginal as AccountSettingsRouteImportOriginal,
+            );
+        }
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {},
+        });
     });
 }

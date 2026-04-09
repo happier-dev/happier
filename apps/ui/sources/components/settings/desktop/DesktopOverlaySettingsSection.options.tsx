@@ -1,15 +1,15 @@
 import * as React from 'react';
 
-import { Ionicons } from '@expo/vector-icons';
-
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { t } from '@/text';
 import type { TranslationKey } from '@/text';
 
+import { DesktopSettingsIonicon, type DesktopSettingsIoniconName } from './DesktopSettingsIonicon';
+
 export type ChoiceOption<T extends string | number> = Readonly<{
     value: T;
     titleKey: TranslationKey;
-    icon: string;
+    icon: DesktopSettingsIoniconName;
 }>;
 
 export const VISIBILITY_MODE_OPTIONS: readonly ChoiceOption<'attention_only' | 'active_sessions' | 'always_when_enabled'>[] = [
@@ -27,6 +27,24 @@ export const VISIBILITY_MODE_OPTIONS: readonly ChoiceOption<'attention_only' | '
         value: 'always_when_enabled',
         titleKey: 'settingsDesktop.overlay.visibilityAlwaysWhenEnabledTitle',
         icon: 'sparkles-outline',
+    },
+];
+
+export const PRESENTATION_MODE_OPTIONS: readonly ChoiceOption<'automatic' | 'notch_integrated' | 'floating_overlay'>[] = [
+    {
+        value: 'automatic',
+        titleKey: 'settingsDesktop.overlay.presentationAutomaticTitle',
+        icon: 'sparkles-outline',
+    },
+    {
+        value: 'notch_integrated',
+        titleKey: 'settingsDesktop.overlay.presentationNotchIntegratedTitle',
+        icon: 'remove-circle-outline',
+    },
+    {
+        value: 'floating_overlay',
+        titleKey: 'settingsDesktop.overlay.presentationFloatingOverlayTitle',
+        icon: 'albums-outline',
     },
 ];
 
@@ -106,12 +124,12 @@ export const ANCHOR_OPTIONS: readonly ChoiceOption<'top_center' | 'top_left' | '
     {
         value: 'top_left',
         titleKey: 'settingsDesktop.overlay.anchorTopLeftTitle',
-        icon: 'arrow-up-left-outline',
+        icon: 'arrow-up-left-box-outline',
     },
     {
         value: 'top_right',
         titleKey: 'settingsDesktop.overlay.anchorTopRightTitle',
-        icon: 'arrow-up-right-outline',
+        icon: 'arrow-up-right-box-outline',
     },
     {
         value: 'bottom_center',
@@ -121,12 +139,12 @@ export const ANCHOR_OPTIONS: readonly ChoiceOption<'top_center' | 'top_left' | '
     {
         value: 'bottom_left',
         titleKey: 'settingsDesktop.overlay.anchorBottomLeftTitle',
-        icon: 'arrow-down-left-outline',
+        icon: 'arrow-down-left-box-outline',
     },
     {
         value: 'bottom_right',
         titleKey: 'settingsDesktop.overlay.anchorBottomRightTitle',
-        icon: 'arrow-down-right-outline',
+        icon: 'arrow-down-right-box-outline',
     },
     {
         value: 'left_center',
@@ -173,7 +191,7 @@ export function buildChoiceDropdownItems<T extends string | number>(
     return choices.map((choice) => ({
         id: String(choice.value),
         title: t(choice.titleKey),
-        icon: <Ionicons name={choice.icon as keyof typeof Ionicons.glyphMap} size={29} color={color} />,
+        icon: <DesktopSettingsIonicon name={choice.icon} size={29} color={color} />,
     }));
 }
 

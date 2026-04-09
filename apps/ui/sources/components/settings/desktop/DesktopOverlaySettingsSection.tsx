@@ -1,13 +1,16 @@
 import * as React from 'react';
 
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
-import { resetDesktopActivityOverlayPosition } from '@/activity/adapters/desktop/runtime/desktopActivityOverlayBridge';
+import {
+    getDesktopActivityOverlayWindowState,
+    listenDesktopActivityOverlayWindowState,
+    resetDesktopActivityOverlayPosition,
+} from '@/activity/adapters/desktop/runtime/desktopActivityOverlayBridge';
 import {
     resolveDesktopOverlayPolicy,
     resolveDesktopOverlaySettingsVisibilityState,
@@ -16,6 +19,7 @@ import { useLocalSettings } from '@/sync/domains/state/storage';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { useApplyLocalSettings } from '@/sync/store/settingsWriters';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { isTauriDesktop } from '@/utils/platform/tauri';
 import {
     ANCHOR_OPTIONS,
     AUTO_HIDE_DELAY_OPTIONS,
@@ -24,23 +28,64 @@ import {
     DENSITY_OPTIONS,
     EXPANDED_BEHAVIOR_OPTIONS,
     PLACEMENT_MODE_OPTIONS,
+    PRESENTATION_MODE_OPTIONS,
     VISIBILITY_MODE_OPTIONS,
 } from './DesktopOverlaySettingsSection.options';
 import { DesktopOverlayChoiceDropdownRow } from './DesktopOverlayChoiceDropdownRow';
+import { DesktopSettingsIonicon } from './DesktopSettingsIonicon';
 
 export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlaySettingsSection() {
     const { theme } = useUnistyles();
     const localSettings = useLocalSettings();
     const applyLocalSettings = useApplyLocalSettings();
+    const [resolvedHostMode, setResolvedHostMode] = React.useState<'floating' | 'notch_integrated' | null>(null);
 
     const desktopPolicy = React.useMemo(
         () => resolveDesktopOverlayPolicy((localSettings ?? {}) as Record<string, unknown>),
         [localSettings],
     );
     const settingsVisibility = React.useMemo(
-        () => resolveDesktopOverlaySettingsVisibilityState(desktopPolicy),
-        [desktopPolicy],
+        () => resolveDesktopOverlaySettingsVisibilityState(desktopPolicy, resolvedHostMode),
+        [desktopPolicy, resolvedHostMode],
     );
+
+    React.useEffect(() => {
+        if (!isTauriDesktop()) {
+            return;
+        }
+
+        let cancelled = false;
+        let unlisten: (() => void) | null = null;
+        const applyResolvedHostMode = (state: Awaited<ReturnType<typeof getDesktopActivityOverlayWindowState>>) => {
+            if (cancelled) {
+                return;
+            }
+
+            setResolvedHostMode(state?.placementDiagnostics?.hostMode ?? null);
+        };
+
+        void getDesktopActivityOverlayWindowState()
+            .then((state) => {
+                applyResolvedHostMode(state);
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setResolvedHostMode(null);
+                }
+            });
+        void listenDesktopActivityOverlayWindowState((state) => {
+            applyResolvedHostMode(state);
+        })
+            .then((dispose) => {
+                unlisten = dispose;
+            })
+            .catch(() => {});
+
+        return () => {
+            cancelled = true;
+            unlisten?.();
+        };
+    }, []);
 
     const setLocalSetting = React.useCallback((delta: Partial<LocalSettings>) => {
         applyLocalSettings(delta);
@@ -58,6 +103,23 @@ export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlayS
         });
     }, [setLocalSetting]);
 
+    const handlePlacementModeSelect = React.useCallback((value: 'anchored' | 'custom') => {
+        if (value === 'anchored') {
+            setLocalSetting({
+                desktopOverlayPlacementMode: 'anchored',
+                desktopOverlayAnchor: 'top_center',
+                desktopOverlayOffsetX: 0,
+                desktopOverlayOffsetY: 0,
+            });
+            fireAndForget(resetDesktopActivityOverlayPosition(), {
+                tag: 'DesktopOverlaySettingsSection.selectAnchoredPlacementMode',
+            });
+            return;
+        }
+
+        setLocalSetting({ desktopOverlayPlacementMode: value });
+    }, [setLocalSetting]);
+
     return (
         <>
             <ItemGroup
@@ -68,7 +130,7 @@ export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlayS
                     testID="settings-desktop-overlay-enabled"
                     title={t('settingsDesktop.overlay.enabledTitle')}
                     subtitle={t('settingsDesktop.overlay.enabledSubtitle')}
-                    icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.blue} />}
+                    icon={<DesktopSettingsIonicon name="sparkles-outline" size={29} color={theme.colors.accent.blue} />}
                     rightElement={(
                         <Switch
                             value={desktopPolicy.enabled}
@@ -83,7 +145,7 @@ export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlayS
                             testID="settings-desktop-overlay-visibility-mode"
                             title={t('settingsDesktop.overlay.visibilityModeTitle')}
                             subtitle={t('settingsDesktop.overlay.visibilityModeSubtitle')}
-                            icon={<Ionicons name="eye-outline" size={29} color={theme.colors.textSecondary} />}
+                            icon={<DesktopSettingsIonicon name="eye-outline" size={29} color={theme.colors.textSecondary} />}
                             selectedValue={desktopPolicy.visibilityMode}
                             choices={VISIBILITY_MODE_OPTIONS}
                             onSelect={(value) => setLocalSetting({ desktopOverlayVisibilityMode: value })}
@@ -91,7 +153,7 @@ export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlayS
                         <Item
                             title={t('settingsDesktop.overlay.showWhenRunningTitle')}
                             subtitle={t('settingsDesktop.overlay.showWhenRunningSubtitle')}
-                            icon={<Ionicons name="pulse-outline" size={29} color={theme.colors.textSecondary} />}
+                            icon={<DesktopSettingsIonicon name="pulse-outline" size={29} color={theme.colors.textSecondary} />}
                             rightElement={(
                                 <Switch
                                     value={desktopPolicy.showWhenRunning}
@@ -103,7 +165,7 @@ export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlayS
                         <Item
                             title={t('settingsDesktop.overlay.showWhenAttentionRequiredTitle')}
                             subtitle={t('settingsDesktop.overlay.showWhenAttentionRequiredSubtitle')}
-                            icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.textSecondary} />}
+                            icon={<DesktopSettingsIonicon name="alert-circle-outline" size={29} color={theme.colors.textSecondary} />}
                             rightElement={(
                                 <Switch
                                     value={desktopPolicy.showWhenAttentionRequired}
@@ -115,7 +177,7 @@ export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlayS
                         <Item
                             title={t('settingsDesktop.overlay.showWhenReadyTitle')}
                             subtitle={t('settingsDesktop.overlay.showWhenReadySubtitle')}
-                            icon={<Ionicons name="checkmark-circle-outline" size={29} color={theme.colors.textSecondary} />}
+                            icon={<DesktopSettingsIonicon name="checkmark-circle-outline" size={29} color={theme.colors.textSecondary} />}
                             rightElement={(
                                 <Switch
                                     value={desktopPolicy.showWhenReady}
@@ -127,7 +189,7 @@ export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlayS
                         <Item
                             title={t('settingsDesktop.overlay.alwaysOnTopTitle')}
                             subtitle={t('settingsDesktop.overlay.alwaysOnTopSubtitle')}
-                            icon={<Ionicons name="layers-outline" size={29} color={theme.colors.textSecondary} />}
+                            icon={<DesktopSettingsIonicon name="layers-outline" size={29} color={theme.colors.textSecondary} />}
                             rightElement={(
                                 <Switch
                                     value={desktopPolicy.alwaysOnTop}
@@ -148,7 +210,7 @@ export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlayS
                     <Item
                         title={t('settingsDesktop.overlay.autoHideEnabledTitle')}
                         subtitle={t('settingsDesktop.overlay.autoHideEnabledSubtitle')}
-                        icon={<Ionicons name="timer-outline" size={29} color={theme.colors.textSecondary} />}
+                        icon={<DesktopSettingsIonicon name="timer-outline" size={29} color={theme.colors.textSecondary} />}
                         rightElement={(
                             <Switch
                                 value={desktopPolicy.autoHideEnabled}
@@ -162,7 +224,7 @@ export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlayS
                             testID="settings-desktop-overlay-auto-hide-delay"
                             title={t('settingsDesktop.overlay.autoHideDelayTitle')}
                             subtitle={t('settingsDesktop.overlay.autoHideDelaySubtitle')}
-                            icon={<Ionicons name="time-outline" size={29} color={theme.colors.textSecondary} />}
+                            icon={<DesktopSettingsIonicon name="time-outline" size={29} color={theme.colors.textSecondary} />}
                             selectedValue={desktopPolicy.autoHideDelayMs}
                             choices={AUTO_HIDE_DELAY_OPTIONS}
                             onSelect={(value) => setLocalSetting({ desktopOverlayAutoHideDelayMs: Number(value) })}
@@ -171,7 +233,7 @@ export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlayS
                     <Item
                         title={t('settingsDesktop.overlay.interactiveCollapsedTitle')}
                         subtitle={t('settingsDesktop.overlay.interactiveCollapsedSubtitle')}
-                        icon={<Ionicons name="finger-print-outline" size={29} color={theme.colors.textSecondary} />}
+                        icon={<DesktopSettingsIonicon name="finger-print-outline" size={29} color={theme.colors.textSecondary} />}
                         rightElement={(
                             <Switch
                                 value={desktopPolicy.interactiveCollapsed}
@@ -185,7 +247,7 @@ export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlayS
                             testID="settings-desktop-overlay-collapsed-click-action"
                             title={t('settingsDesktop.overlay.collapsedClickActionTitle')}
                             subtitle={t('settingsDesktop.overlay.collapsedClickActionSubtitle')}
-                            icon={<Ionicons name="return-down-forward-outline" size={29} color={theme.colors.textSecondary} />}
+                            icon={<DesktopSettingsIonicon name="return-down-forward-outline" size={29} color={theme.colors.textSecondary} />}
                             selectedValue={desktopPolicy.clickAction}
                             choices={COLLAPSED_CLICK_ACTION_OPTIONS}
                             onSelect={(value) => setLocalSetting({ desktopOverlayClickAction: value })}
@@ -196,7 +258,7 @@ export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlayS
                             testID="settings-desktop-overlay-expanded-behavior"
                             title={t('settingsDesktop.overlay.expandedBehaviorTitle')}
                             subtitle={t('settingsDesktop.overlay.expandedBehaviorSubtitle')}
-                            icon={<Ionicons name="expand-outline" size={29} color={theme.colors.textSecondary} />}
+                            icon={<DesktopSettingsIonicon name="expand-outline" size={29} color={theme.colors.textSecondary} />}
                             selectedValue={desktopPolicy.expandedBehavior}
                             choices={EXPANDED_BEHAVIOR_OPTIONS}
                             onSelect={(value) => setLocalSetting({ desktopOverlayExpandedBehavior: value })}
@@ -211,56 +273,86 @@ export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlayS
                     footer={t('settingsDesktop.overlay.placementFooter')}
                 >
                     <DesktopOverlayChoiceDropdownRow
-                        testID="settings-desktop-overlay-placement-mode"
-                        title={t('settingsDesktop.overlay.placementModeTitle')}
-                        subtitle={t('settingsDesktop.overlay.placementModeSubtitle')}
-                        icon={<Ionicons name="move-outline" size={29} color={theme.colors.textSecondary} />}
-                        selectedValue={desktopPolicy.placementMode}
-                        choices={PLACEMENT_MODE_OPTIONS}
-                        onSelect={(value) => setLocalSetting({ desktopOverlayPlacementMode: value })}
+                        testID="settings-desktop-overlay-presentation-mode"
+                        title={t('settingsDesktop.overlay.presentationModeTitle')}
+                        subtitle={t('settingsDesktop.overlay.presentationModeSubtitle')}
+                        icon={<DesktopSettingsIonicon name="scan-outline" size={29} color={theme.colors.textSecondary} />}
+                        selectedValue={desktopPolicy.presentationMode}
+                        choices={PRESENTATION_MODE_OPTIONS}
+                        onSelect={(value) => setLocalSetting({ desktopOverlayPresentationMode: value })}
                     />
-                    <DesktopOverlayChoiceDropdownRow
-                        testID="settings-desktop-overlay-anchor-preset"
-                        title={t('settingsDesktop.overlay.anchorPresetTitle')}
-                        subtitle={t('settingsDesktop.overlay.anchorPresetSubtitle')}
-                        icon={<Ionicons name="pin-outline" size={29} color={theme.colors.textSecondary} />}
-                        selectedValue={desktopPolicy.anchor}
-                        choices={ANCHOR_OPTIONS}
-                        onSelect={(value) => setLocalSetting({ desktopOverlayAnchor: value })}
-                    />
-                    {settingsVisibility.showCustomPlacementControls ? (
+                    {settingsVisibility.showHostModeFallbackNotice ? (
+                        <Item
+                            title={t('settingsDesktop.overlay.hostModeFallbackTitle')}
+                            subtitle={t('settingsDesktop.overlay.hostModeFallbackSubtitle')}
+                            subtitleLines={0}
+                            icon={<DesktopSettingsIonicon name="information-circle-outline" size={29} color={theme.colors.textSecondary} />}
+                            mode="info"
+                            showChevron={false}
+                        />
+                    ) : null}
+                    {settingsVisibility.showFloatingPlacementControls ? (
                         <>
-                            <Item
-                                title={t('settingsDesktop.overlay.allowRepositioningTitle')}
-                                subtitle={t('settingsDesktop.overlay.allowRepositioningSubtitle')}
-                                icon={<Ionicons name="hand-left-outline" size={29} color={theme.colors.textSecondary} />}
-                                rightElement={(
-                                    <Switch
-                                        value={desktopPolicy.enableDragReposition}
-                                        onValueChange={(value) => setLocalSetting({ desktopOverlayEnableDragReposition: Boolean(value) })}
-                                    />
-                                )}
-                                showChevron={false}
+                            <DesktopOverlayChoiceDropdownRow
+                                testID="settings-desktop-overlay-placement-mode"
+                                title={t('settingsDesktop.overlay.placementModeTitle')}
+                                subtitle={t('settingsDesktop.overlay.placementModeSubtitle')}
+                                icon={<DesktopSettingsIonicon name="move-outline" size={29} color={theme.colors.textSecondary} />}
+                                selectedValue={desktopPolicy.placementMode}
+                                choices={PLACEMENT_MODE_OPTIONS}
+                                onSelect={handlePlacementModeSelect}
                             />
-                            <Item
-                                title={t('settingsDesktop.overlay.lockPositionTitle')}
-                                subtitle={t('settingsDesktop.overlay.lockPositionSubtitle')}
-                                icon={<Ionicons name="lock-closed-outline" size={29} color={theme.colors.textSecondary} />}
-                                rightElement={(
-                                    <Switch
-                                        value={desktopPolicy.lockPosition}
-                                        onValueChange={(value) => setLocalSetting({ desktopOverlayLockPosition: Boolean(value) })}
-                                    />
-                                )}
-                                showChevron={false}
-                            />
+                            {desktopPolicy.placementMode === 'anchored' ? (
+                                <DesktopOverlayChoiceDropdownRow
+                                    testID="settings-desktop-overlay-anchor-preset"
+                                    title={t('settingsDesktop.overlay.anchorPresetTitle')}
+                                    subtitle={t('settingsDesktop.overlay.anchorPresetSubtitle')}
+                                    icon={<DesktopSettingsIonicon name="pin-outline" size={29} color={theme.colors.textSecondary} />}
+                                    selectedValue={desktopPolicy.anchor}
+                                    choices={ANCHOR_OPTIONS}
+                                    onSelect={(value) => {
+                                        setLocalSetting({ desktopOverlayAnchor: value });
+                                        fireAndForget(resetDesktopActivityOverlayPosition(), {
+                                            tag: 'DesktopOverlaySettingsSection.selectAnchorPreset',
+                                        });
+                                    }}
+                                />
+                            ) : null}
                             <Item
                                 title={t('settingsDesktop.overlay.resetPositionTitle')}
                                 subtitle={t('settingsDesktop.overlay.resetPositionSubtitle')}
-                                icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.textSecondary} />}
+                                icon={<DesktopSettingsIonicon name="refresh-outline" size={29} color={theme.colors.textSecondary} />}
                                 onPress={handleResetPosition}
                                 showChevron={false}
                             />
+                            {settingsVisibility.showCustomPlacementControls ? (
+                                <>
+                                    <Item
+                                        title={t('settingsDesktop.overlay.allowRepositioningTitle')}
+                                        subtitle={t('settingsDesktop.overlay.allowRepositioningSubtitle')}
+                                        icon={<DesktopSettingsIonicon name="hand-left-outline" size={29} color={theme.colors.textSecondary} />}
+                                        rightElement={(
+                                            <Switch
+                                                value={desktopPolicy.enableDragReposition}
+                                                onValueChange={(value) => setLocalSetting({ desktopOverlayEnableDragReposition: Boolean(value) })}
+                                            />
+                                        )}
+                                        showChevron={false}
+                                    />
+                                    <Item
+                                        title={t('settingsDesktop.overlay.lockPositionTitle')}
+                                        subtitle={t('settingsDesktop.overlay.lockPositionSubtitle')}
+                                        icon={<DesktopSettingsIonicon name="lock-closed-outline" size={29} color={theme.colors.textSecondary} />}
+                                        rightElement={(
+                                            <Switch
+                                                value={desktopPolicy.lockPosition}
+                                                onValueChange={(value) => setLocalSetting({ desktopOverlayLockPosition: Boolean(value) })}
+                                            />
+                                        )}
+                                        showChevron={false}
+                                    />
+                                </>
+                            ) : null}
                         </>
                     ) : null}
                 </ItemGroup>
@@ -275,7 +367,7 @@ export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlayS
                         testID="settings-desktop-overlay-density"
                         title={t('settingsDesktop.overlay.densityTitle')}
                         subtitle={t('settingsDesktop.overlay.densitySubtitle')}
-                        icon={<Ionicons name="resize-outline" size={29} color={theme.colors.textSecondary} />}
+                        icon={<DesktopSettingsIonicon name="resize-outline" size={29} color={theme.colors.textSecondary} />}
                         selectedValue={desktopPolicy.density}
                         choices={DENSITY_OPTIONS}
                         onSelect={(value) => setLocalSetting({ desktopOverlayDensity: value })}
@@ -284,7 +376,7 @@ export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlayS
                         testID="settings-desktop-overlay-compact-style"
                         title={t('settingsDesktop.overlay.compactStyleTitle')}
                         subtitle={t('settingsDesktop.overlay.compactStyleSubtitle')}
-                        icon={<Ionicons name="square-outline" size={29} color={theme.colors.textSecondary} />}
+                        icon={<DesktopSettingsIonicon name="square-outline" size={29} color={theme.colors.textSecondary} />}
                         selectedValue={desktopPolicy.compactStyle}
                         choices={COMPACT_STYLE_OPTIONS}
                         onSelect={(value) => setLocalSetting({ desktopOverlayCompactStyle: value })}
@@ -292,7 +384,7 @@ export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlayS
                     <Item
                         title={t('settingsDesktop.overlay.showSessionCountTitle')}
                         subtitle={t('settingsDesktop.overlay.showSessionCountSubtitle')}
-                        icon={<Ionicons name="people-outline" size={29} color={theme.colors.textSecondary} />}
+                        icon={<DesktopSettingsIonicon name="people-outline" size={29} color={theme.colors.textSecondary} />}
                         rightElement={(
                             <Switch
                                 value={desktopPolicy.showSessionCount}
@@ -304,7 +396,7 @@ export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlayS
                     <Item
                         title={t('settingsDesktop.overlay.showPreviewTextTitle')}
                         subtitle={t('settingsDesktop.overlay.showPreviewTextSubtitle')}
-                        icon={<Ionicons name="chatbubble-ellipses-outline" size={29} color={theme.colors.textSecondary} />}
+                        icon={<DesktopSettingsIonicon name="chatbubble-ellipses-outline" size={29} color={theme.colors.textSecondary} />}
                         rightElement={(
                             <Switch
                                 value={desktopPolicy.showPreviewText}

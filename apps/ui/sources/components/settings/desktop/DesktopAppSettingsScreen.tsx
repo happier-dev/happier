@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -12,6 +11,7 @@ import { isTauriDesktop } from '@/utils/platform/tauri';
 
 import { useDesktopAutostart } from './useDesktopAutostart';
 import { DesktopOverlaySettingsSection } from './DesktopOverlaySettingsSection';
+import { DesktopSettingsIonicon } from './DesktopSettingsIonicon';
 
 export const DesktopAppSettingsScreen = React.memo(function DesktopAppSettingsScreen() {
     const { theme } = useUnistyles();
@@ -31,7 +31,7 @@ export const DesktopAppSettingsScreen = React.memo(function DesktopAppSettingsSc
                             testID="settings-desktop-autostart-enabled"
                             title={t('settingsDesktop.startOnLoginTitle')}
                             subtitle={autostart.error ?? t('settingsDesktop.startOnLoginSubtitle')}
-                            icon={<Ionicons name="desktop-outline" size={29} color={theme.colors.accent.blue} />}
+                            icon={<DesktopSettingsIonicon name="desktop-outline" size={29} color={theme.colors.accent.blue} />}
                             rightElement={(
                                 <Switch
                                     value={autostart.enabled}

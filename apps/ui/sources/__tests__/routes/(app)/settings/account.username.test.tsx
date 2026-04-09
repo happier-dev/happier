@@ -8,6 +8,7 @@ import {
 import { storage } from '@/sync/domains/state/storageStore';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { createAccountFeaturesResponse, getRequestUrl, isFeaturesRequest, isUsernameRequest } from './account.testHelpers';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import {
     getAccountSettingsRouteModalMockRef,
     getAccountSettingsRouteRouterMockRef,
@@ -74,6 +75,7 @@ vi.mock('@/components/account/ProviderIdentityItems', () => ({
 
 describe('Settings → Account (username)', () => {
     afterEach(() => {
+        resetRuntimeFetch();
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
         routerMockRef.current?.spies.push.mockReset();
@@ -111,6 +113,7 @@ describe('Settings → Account (username)', () => {
             throw new Error(`Unexpected fetch: ${url}`);
         });
         vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+        setRuntimeFetch(fetchMock as unknown as typeof fetch);
 
         await import('@/modal');
         modalMockRef.current.spies.prompt.mockResolvedValue('alice');

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Pressable, Platform, useWindowDimensions } from 'react-native';
 import { useAuth } from '@/auth/context/AuthContext';
-import { Ionicons } from '@expo/vector-icons';
+import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import * as Clipboard from 'expo-clipboard';
 import { Typography } from '@/constants/Typography';
 import { formatSecretKeyForBackup } from '@/auth/recovery/secretKeyBackup';
@@ -224,7 +224,7 @@ export default React.memo(() => {
                                 testID="settings-account-add-your-phone"
                                 title={t('settings.addYourPhone')}
                                 subtitle={t('settings.addYourPhoneSubtitle')}
-                                icon={<Ionicons name="phone-portrait-outline" size={29} color={theme.colors.accent.blue} />}
+                                icon={<SafeIonicons name="phone-portrait-outline" size={29} color={theme.colors.accent.blue} />}
                                 onPress={() => router.push('/settings/add-phone')}
                                 showChevron={false}
                             />
@@ -234,7 +234,7 @@ export default React.memo(() => {
                                 testID="settings-account-link-new-device"
                                 title={t('settingsAccount.linkNewDevice')}
                                 subtitle={isConnecting ? t('common.scanning') : t('settingsAccount.linkNewDeviceSubtitle')}
-                                icon={<Ionicons name="qr-code-outline" size={29} color={theme.colors.accent.blue} />}
+                                icon={<SafeIonicons name="qr-code-outline" size={29} color={theme.colors.accent.blue} />}
                                 onPress={connectAccount}
                                 disabled={isConnecting}
                                 showChevron={false}
@@ -263,7 +263,7 @@ export default React.memo(() => {
                                 disabled={savingUsername}
                                 loading={savingUsername}
                                 showChevron={false}
-                                icon={<Ionicons name="at-outline" size={29} color={theme.colors.textSecondary} />}
+                                icon={<SafeIonicons name="at-outline" size={29} color={theme.colors.textSecondary} />}
                             />
                         )}
                         <ProviderIdentityItems
@@ -324,7 +324,7 @@ export default React.memo(() => {
                             title={t('settingsAccount.secretKey')}
                             subtitle={showSecret ? t('settingsAccount.tapToHide') : t('settingsAccount.tapToReveal')}
                             icon={
-                                <Ionicons
+                                <SafeIonicons
                                     name={showSecret ? 'eye-off-outline' : 'eye-outline'}
                                     size={29}
                                     color={theme.colors.accent.orange}
@@ -333,7 +333,7 @@ export default React.memo(() => {
                             onPress={handleShowSecret}
                             rightElement={
                                 <Pressable testID="settings-account-secret-key-copy" onPress={handleCopySecret} hitSlop={12}>
-                                    <Ionicons
+                                    <SafeIonicons
                                         name="copy-outline"
                                         size={18}
                                         color={theme.colors.textSecondary}
@@ -367,7 +367,7 @@ export default React.memo(() => {
                                     }}>
                                         {t('settingsAccount.secretKeyLabel')}
                                     </Text>
-                                    <Ionicons
+                                    <SafeIonicons
                                         name={copiedRecently ? "checkmark-circle" : "copy-outline"}
                                         size={18}
                                         color={copiedRecently ? theme.colors.success : theme.colors.textSecondary}
@@ -588,7 +588,7 @@ export default React.memo(() => {
                     <Item
                         title={t('settingsAccount.logout')}
                         subtitle={t('settingsAccount.logoutSubtitle')}
-                        icon={<Ionicons name="log-out-outline" size={29} color={theme.colors.textDestructive} />}
+                        icon={<SafeIonicons name="log-out-outline" size={29} color={theme.colors.textDestructive} />}
                         destructive
                         onPress={handleLogout}
                     />

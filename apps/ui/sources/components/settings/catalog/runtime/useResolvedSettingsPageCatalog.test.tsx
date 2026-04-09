@@ -11,6 +11,7 @@ const featureGateState = vi.hoisted(() => ({
 const settingsState = vi.hoisted(() => ({
     useProfiles: false,
     devModeEnabled: false,
+    tauriDesktop: false,
 }));
 
 vi.mock('react-native', async () => {
@@ -48,6 +49,10 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureGateState.enabled(featureId),
 }));
 
+vi.mock('@/utils/platform/tauri', () => ({
+    isTauriDesktop: () => settingsState.tauriDesktop,
+}));
+
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
@@ -82,6 +87,7 @@ describe('useResolvedSettingsPageCatalog', () => {
         featureGateState.enabled = () => true;
         settingsState.useProfiles = false;
         settingsState.devModeEnabled = false;
+        settingsState.tauriDesktop = false;
     });
 
     it('filters feature-gated pages out of the visible tree', async () => {
@@ -149,5 +155,21 @@ describe('useResolvedSettingsPageCatalog', () => {
         const disabledHook = await renderHook(() => useResolvedSettingsPageCatalog());
         expect(flattenIds(disabledHook.getCurrent().tree)).not.toContain('remoteHosts');
         await disabledHook.unmount();
+    });
+
+    it('includes the Desktop app page only on Tauri desktop builds', async () => {
+        const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
+
+        settingsState.tauriDesktop = true;
+        const desktopHook = await renderHook(() => useResolvedSettingsPageCatalog());
+        expect(flattenIds(desktopHook.getCurrent().tree)).toContain('desktop');
+        expect(desktopHook.getCurrent().search('desktop').some((result: any) => result.id === 'desktop')).toBe(true);
+        await desktopHook.unmount();
+
+        settingsState.tauriDesktop = false;
+        const nonDesktopHook = await renderHook(() => useResolvedSettingsPageCatalog());
+        expect(flattenIds(nonDesktopHook.getCurrent().tree)).not.toContain('desktop');
+        expect(nonDesktopHook.getCurrent().search('desktop').some((result: any) => result.id === 'desktop')).toBe(false);
+        await nonDesktopHook.unmount();
     });
 });

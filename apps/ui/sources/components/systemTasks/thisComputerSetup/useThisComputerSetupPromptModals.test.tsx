@@ -22,7 +22,14 @@ vi.mock('@/modal', async () => {
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit');
-    return createTextModuleMock({ translate: (key: string) => key });
+    return createTextModuleMock({
+        translate: (key: string) => {
+            if (key === 'machine.backgroundServiceModes.defaultFollowing') return 'default background service';
+            if (key === 'machine.backgroundServiceModes.legacyPinned') return 'legacy pinned background service';
+            if (key === 'machine.backgroundServiceModes.generic') return 'background service';
+            return key;
+        },
+    });
 });
 
 function createRunnerStub() {
@@ -71,7 +78,7 @@ describe('useThisComputerSetupPromptModals', () => {
         const snapshot = createSnapshot(taskId);
         const prompt: SystemTaskPromptEnvelope = {
             kind: 'releaseChannel.switchDefaultForSetup',
-            message: 'Make preview the default release-channel before installing the background service for https://relay.example.test?',
+            message: 'Make preview the default release-channel before installing the default background service targeting https://relay.example.test?',
             data: {
                 kind: 'releaseChannel.switchDefaultForSetup',
                 targetReleaseChannel: 'preview',
@@ -125,7 +132,7 @@ describe('useThisComputerSetupPromptModals', () => {
         const snapshot = createSnapshot(taskId);
         const prompt: SystemTaskPromptEnvelope = {
             kind: 'daemon.replaceLocalBackgroundServices',
-            message: 'This computer already has conflicting Happier background services for https://relay.example.test. Replace them before continuing?',
+            message: 'This computer already has conflicting Happier background services. Replace them before installing the default background service targeting https://relay.example.test?',
             data: {
                 kind: 'daemon.replaceLocalBackgroundServices',
                 targetReleaseChannel: 'preview',
@@ -161,6 +168,9 @@ describe('useThisComputerSetupPromptModals', () => {
         ]>;
         expect(confirmCalls[0]?.[0]).toBe(prompt.message);
         expect(confirmCalls[0]?.[1]).toContain('com.happier.cli.daemon.stable.default');
+        expect(confirmCalls[0]?.[1]).toContain('legacy pinned background service');
+        expect(confirmCalls[0]?.[1]).not.toContain('default-following');
+        expect(confirmCalls[0]?.[1]).not.toContain(' • pinned');
         expect(confirmCalls[0]?.[2]).toEqual({
             confirmText: 'common.continue',
             cancelText: 'common.cancel',

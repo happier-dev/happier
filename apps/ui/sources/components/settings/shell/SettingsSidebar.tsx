@@ -2,16 +2,18 @@ import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { TextInput } from '@/components/ui/text/Text';
+import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { t } from '@/text';
 
 import { useResolvedSettingsPageCatalog } from '@/components/settings/catalog/runtime/useResolvedSettingsPageCatalog';
 import type { ResolvedSettingsPageNode } from '@/components/settings/catalog/types';
+
+const Ionicons = SafeIonicons;
 
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
@@ -33,6 +35,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface,
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: theme.colors.divider,
+    },
+    searchIcon: {
+        marginRight: 8,
     },
     searchInput: {
         flex: 1,
@@ -245,10 +250,12 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
     }, [expandedIds, resolved.activePageId, router, theme, toggleExpanded]);
 
     return (
-        <View testID="settings-sidebar" style={styles.root}>
+            <View testID="settings-sidebar" style={styles.root}>
             <View style={styles.searchContainer}>
                 <View style={styles.searchBar}>
-                    <Ionicons name="search-outline" size={14} color={theme.colors.textSecondary} style={{ marginRight: 8 }} />
+                    <View style={styles.searchIcon}>
+                        <Ionicons name="search-outline" size={14} color={theme.colors.textSecondary} />
+                    </View>
                     <TextInput
                         testID="settings-sidebar.searchInput"
                         placeholder={t('settingsSearch.placeholder')}

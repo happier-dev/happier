@@ -182,12 +182,8 @@ describe('Settings → Account (encryption mode toggle)', () => {
             });
 
             const seen = fetchMock.mock.calls.map((call) => [getRequestUrl(call[0]), (call[1]?.method ?? 'GET').toUpperCase()]);
-            expect(seen).toEqual(
-                expect.arrayContaining([
-                    [expect.stringContaining('/v1/account/encryption'), 'GET'],
-                    [expect.stringContaining('/v1/account/encryption/migrate'), 'POST'],
-                ]),
-            );
+            expect(seen).toContainEqual([expect.stringContaining('/v1/account/encryption'), 'GET']);
+            expect(seen).toContainEqual([expect.stringContaining('/v1/account/encryption/migrate'), 'POST']);
         } finally {
             await screen?.unmount();
         }

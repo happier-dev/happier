@@ -1,4 +1,4 @@
-import { useSocketStatus, useFriendRequests, useSetting, useSyncError } from '@/sync/domains/state/storage';
+import { useFriendRequests, useSetting } from '@/sync/domains/state/storage';
 import * as React from 'react';
 import { Platform, View, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -12,7 +12,6 @@ import { t } from '@/text';
 import { useInboxHasContent } from '@/hooks/inbox/useInboxHasContent';
 import { useInboxAvailable } from '@/hooks/inbox/useInboxAvailable';
 import { Ionicons, Octicons } from '@expo/vector-icons';
-import { sync } from '@/sync/sync';
 import { PopoverScope } from '@/components/ui/popover';
 import { ConnectionStatusControl } from '@/components/navigation/ConnectionStatusControl';
 import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
@@ -25,7 +24,6 @@ import { Text } from '@/components/ui/text/Text';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
-import { resolveSocketErrorClassification } from '@/sync/runtime/connectivity/resolveSocketErrorClassification';
 import { SIDEBAR_DOCK_MIN_WIDTH_PX } from './sidebarSizing';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
@@ -154,22 +152,6 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         fontSize: 10,
         ...Typography.default('semiBold'),
     },
-    // Status colors
-    statusConnected: {
-        color: theme.colors.status.connected,
-    },
-    statusConnecting: {
-        color: theme.colors.status.connecting,
-    },
-    statusDisconnected: {
-        color: theme.colors.status.disconnected,
-    },
-    statusError: {
-        color: theme.colors.status.error,
-    },
-    statusDefault: {
-        color: theme.colors.status.default,
-    },
     indicatorDot: {
         position: 'absolute',
         top: 4,
@@ -179,39 +161,6 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         borderRadius: 3,
         backgroundColor: theme.colors.text,
     },
-    banner: {
-        marginHorizontal: 12,
-        marginBottom: 8,
-        marginTop: 6,
-        paddingHorizontal: 12,
-        paddingVertical: 10,
-        borderRadius: 12,
-        backgroundColor: theme.colors.surface,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.divider,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
-    },
-    bannerText: {
-        flex: 1,
-        fontSize: 12,
-        color: theme.colors.textSecondary,
-        ...Typography.default(),
-    },
-    bannerButton: {
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        borderRadius: 10,
-        backgroundColor: theme.colors.groupped.background,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.divider,
-    },
-    bannerButtonText: {
-        fontSize: 12,
-        color: theme.colors.text,
-        ...Typography.default('semiBold'),
-    },
 }));
 
 export const SidebarView = React.memo((props: SidebarViewProps) => {
@@ -220,60 +169,12 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
     const safeArea = useChromeSafeAreaInsets();
     const router = useRouter();
     const headerHeight = useHeaderHeight();
-    const socketStatus = useSocketStatus();
-    const syncError = useSyncError();
     const popoverBoundaryRef = React.useRef<any>(null);
     const friendRequests = useFriendRequests();
     const inboxHasContent = useInboxHasContent();
     const showEnvironmentBadge = useSetting('showEnvironmentBadge');
     const friendsEnabled = useFriendsEnabled();
     const inboxEnabled = useInboxAvailable();
-    // Compute connection status once per render (theme-reactive, no stale memoization)
-    const connectionStatus = (() => {
-        const { status } = socketStatus;
-        switch (status) {
-            case 'connected':
-                return {
-                    color: styles.statusConnected.color,
-                    isPulsing: false,
-                    text: t('status.connected'),
-                    textColor: styles.statusConnected.color
-                };
-            case 'connecting':
-                return {
-                    color: styles.statusConnecting.color,
-                    isPulsing: true,
-                    text: t('status.connecting'),
-                    textColor: styles.statusConnecting.color
-                };
-            case 'disconnected':
-                return {
-                    color: styles.statusDisconnected.color,
-                    isPulsing: false,
-                    text: t('status.disconnected'),
-                    textColor: styles.statusDisconnected.color
-                };
-            case 'error':
-                return {
-                    color: styles.statusError.color,
-                    isPulsing: false,
-                    text: t('status.error'),
-                    textColor: styles.statusError.color
-                };
-            default:
-                return {
-                    color: styles.statusDefault.color,
-                    isPulsing: false,
-                    text: '',
-                    textColor: styles.statusDefault.color
-                };
-        }
-    })();
-
-    const visibleSyncErrorMessage = syncError?.message
-        ? resolveSocketErrorClassification(syncError.message).message
-        : null;
-
     const voiceEnabled = useFeatureEnabled('voice');
     const environmentBadge = resolveVisibleAppEnvironmentBadge({
         showEnvironmentBadge,
@@ -410,6 +311,35 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
         theme.colors.header.tint,
     ]);
 
+    const renderHeaderOverflowVisual = React.useCallback(() => {
+        const shouldShowBadge = friendRequests.length > 0;
+        const shouldShowDot = !shouldShowBadge && inboxHasContent;
+
+        return (
+            <View style={[styles.iconButton, styles.notificationButton]}>
+                <Ionicons name="ellipsis-horizontal" size={14} color={theme.colors.header.tint} />
+                {shouldShowBadge ? (
+                    <View style={styles.badge}>
+                        <Text style={styles.badgeText}>
+                            {friendRequests.length > 99 ? '99+' : friendRequests.length}
+                        </Text>
+                    </View>
+                ) : shouldShowDot ? (
+                    <View style={styles.indicatorDot} />
+                ) : null}
+            </View>
+        );
+    }, [
+        friendRequests.length,
+        inboxHasContent,
+        styles.badge,
+        styles.badgeText,
+        styles.iconButton,
+        styles.indicatorDot,
+        styles.notificationButton,
+        theme.colors.header.tint,
+    ]);
+
     // Title content used in both centered and left-justified modes (DRY)
     const titleContent = (
         <>
@@ -421,25 +351,23 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
                     </View>
                 ) : null}
             </View>
-            {connectionStatus.text ? (
-                <View
-                    style={[
-                        styles.statusControlWrapper,
-                        Platform.OS === 'web' ? ({ pointerEvents: 'auto' } as any) : null,
-                    ]}
-                >
-                    <ConnectionStatusControl
-                        variant="sidebar"
-                        alignSelf="stretch"
-                    />
-                </View>
-            ) : null}
+            <View
+                style={[
+                    styles.statusControlWrapper,
+                    Platform.OS === 'web' ? ({ pointerEvents: 'auto' } as any) : null,
+                ]}
+            >
+                <ConnectionStatusControl
+                    variant="sidebar"
+                    alignSelf="stretch"
+                />
+            </View>
         </>
     );
 
     return (
         <>
-            <View ref={popoverBoundaryRef} style={[styles.container, { paddingTop: safeArea.top }]}>
+            <View testID="sidebar-view" ref={popoverBoundaryRef} style={[styles.container, { paddingTop: safeArea.top }]}>
                 <PopoverScope boundaryRef={popoverBoundaryRef}>
                 <View style={[styles.header, { height: headerHeight }]}>
                     {/* Logo - always first */}
@@ -471,70 +399,30 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
                             compactActionIds={['projects', 'settings', 'newSession']}
                             pinnedActionIds={['projects', 'settings', 'newSession']}
                             overflowPosition="beforePinned"
+                            overflowPlacement="bottom"
+                            overflowPortal={{ anchorAlign: 'center' }}
                             overflowTriggerTestID="sidebar-header-actions-overflow"
                             popoverBoundaryRef={popoverBoundaryRef}
+                            renderOverflowAnchorOverlay={renderHeaderOverflowVisual}
                             gap={4}
-                            renderOverflowTrigger={({ open, toggle, testID, accessibilityLabel, accessibilityHint }) => {
-                                const shouldShowBadge = friendRequests.length > 0;
-                                const shouldShowDot = !shouldShowBadge && inboxHasContent;
-                                return (
-                                    <Pressable
-                                        testID={testID}
-                                        hitSlop={15}
-                                        style={[styles.iconButton, styles.notificationButton, open ? { opacity: 0 } : null]}
-                                        onPress={toggle}
-                                        accessibilityRole="button"
-                                        accessibilityLabel={accessibilityLabel}
-                                        accessibilityHint={accessibilityHint}
-                                        accessibilityState={{ expanded: open }}
-                                    >
-                                        <Ionicons name="ellipsis-horizontal" size={24} color={theme.colors.header.tint} />
-                                        {shouldShowBadge ? (
-                                            <View style={styles.badge}>
-                                                <Text style={styles.badgeText}>
-                                                    {friendRequests.length > 99 ? '99+' : friendRequests.length}
-                                                </Text>
-                                            </View>
-                                        ) : shouldShowDot ? (
-                                            <View style={styles.indicatorDot} />
-                                        ) : null}
-                                    </Pressable>
-                                );
-                            }}
+                            renderOverflowTrigger={({ open, toggle, testID, accessibilityLabel, accessibilityHint }) => (
+                                <Pressable
+                                    testID={testID}
+                                    hitSlop={15}
+                                    style={open ? { opacity: 0 } : undefined}
+                                    onPress={toggle}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={accessibilityLabel}
+                                    accessibilityHint={accessibilityHint}
+                                    accessibilityState={{ expanded: open }}
+                                >
+                                    {renderHeaderOverflowVisual()}
+                                </Pressable>
+                            )}
                         />
                     </View>
 
                 </View>
-                {(syncError || socketStatus.status === 'error' || socketStatus.status === 'disconnected') && (
-                    <View style={styles.banner}>
-                        <Text style={styles.bannerText} numberOfLines={2}>
-                            {visibleSyncErrorMessage
-                                ?? (socketStatus.status === 'disconnected' ? t('status.disconnected') : t('status.error'))}
-                        </Text>
-                        {syncError?.kind === 'auth' ? (
-                            <Pressable
-                                onPress={() => {
-                                    const result = runGuardedNavigation(() => router.push('/restore'));
-                                    if (result !== true) {
-                                        fireAndForget(result, { tag: 'SidebarView.nav.restore' });
-                                    }
-                                }}
-                                style={styles.bannerButton}
-                                accessibilityRole="button"
-                            >
-                                <Text style={styles.bannerButtonText}>{t('connect.restoreAccount')}</Text>
-                            </Pressable>
-                        ) : syncError?.retryable !== false ? (
-                            <Pressable
-                                onPress={() => sync.retryNow()}
-                                style={styles.bannerButton}
-                                accessibilityRole="button"
-                            >
-                                <Text style={styles.bannerButtonText}>{t('common.retry')}</Text>
-                            </Pressable>
-                        ) : null}
-                    </View>
-                )}
                 {voiceEnabled ? <VoiceSurface variant="sidebar" /> : null}
                 <MainView variant="sidebar" />
                 </PopoverScope>

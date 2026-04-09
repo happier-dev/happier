@@ -5,6 +5,7 @@ import { t } from '@/text';
 
 import type { SystemTaskRunState, SystemTaskRunner } from '../types';
 import type { SystemTaskPromptEnvelope } from '../prompts/readLatestSystemTaskPrompt';
+import { buildBackgroundServiceReplacementPromptBody } from '../prompts/backgroundServiceReplacementPromptPresentation';
 
 import { resolveThisComputerSetupPrompt } from './resolveThisComputerSetupPrompt';
 
@@ -25,16 +26,12 @@ function buildPromptBody(prompt: ReturnType<typeof resolveThisComputerSetupPromp
         return lines.length > 0 ? lines.join('\n') : undefined;
     }
 
-    const lines = [
-        prompt.targetServerUrl,
-        prompt.targetReleaseChannel,
-        ...prompt.services.map((service) => {
-            const releaseChannel = service.releaseChannel ? ` • ${service.releaseChannel}` : '';
-            const targetMode = service.targetMode ? ` • ${service.targetMode}` : '';
-            return `${service.label}${releaseChannel}${targetMode}`;
-        }),
-    ].filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0);
-    return lines.length > 0 ? lines.join('\n') : undefined;
+    return buildBackgroundServiceReplacementPromptBody({
+        targetServerUrl: prompt.targetServerUrl,
+        targetReleaseChannel: prompt.targetReleaseChannel,
+        services: prompt.services,
+        format: 'compact',
+    });
 }
 
 export function useThisComputerSetupPromptModals(params: Readonly<{

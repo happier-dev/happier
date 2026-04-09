@@ -5,10 +5,8 @@ import * as Clipboard from 'expo-clipboard';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
-    DoctorSnapshotSchema,
     parseDoctorSnapshotSafe,
     sanitizeBugReportUrl,
-    sanitizeDoctorSnapshotUrls,
     type DoctorSnapshot,
 } from '@happier-dev/protocol';
 
@@ -23,12 +21,11 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { useMachineListByServerId, useProfile } from '@/sync/domains/state/storage';
 import { serverFetch } from '@/sync/http/client';
-import { machineCollectBugReportDiagnostics } from '@/sync/ops/machines';
 import { t } from '@/text';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
-import { readCachedMachineDoctorSnapshot, writeCachedMachineDoctorSnapshot } from '../systemStatus/cache/machineDoctorSnapshotCache';
+import { useMachineDoctorSnapshot } from '@/components/machines/doctorSnapshot/useMachineDoctorSnapshot';
 import { buildDiagnosisReport, type DiagnosisFinding, type DiagnosisReport, type ServerDiagnosticsStatus } from './engine/diagnosisEngine';
 
 type MachineRunStatus =
@@ -36,6 +33,13 @@ type MachineRunStatus =
     | { status: 'loading' }
     | { status: 'ready' }
     | { status: 'error'; detail: string };
+
+function resolveServerDiagnosticsSubtitle(status: ServerDiagnosticsStatus): string | undefined {
+    if (status.state !== 'http_error') {
+        return undefined;
+    }
+    return t('diagnosis.serverProbe.httpError', { status: String(status.httpStatus) });
+}
 
 function normalizeUrl(raw: string): string {
     const sanitized = sanitizeBugReportUrl(raw) ?? raw;
@@ -165,6 +169,7 @@ export const DiagnosisView = React.memo(function DiagnosisView() {
     const router = useRouter();
     const { theme } = useUnistyles();
     const styles = diagnosisStyles;
+    const { fetchMachineDoctorSnapshot, readMachineDoctorSnapshot } = useMachineDoctorSnapshot();
 
     const activeServerSnapshot = getActiveServerSnapshot();
     const activeServerUrl = React.useMemo(
@@ -206,23 +211,17 @@ export const DiagnosisView = React.memo(function DiagnosisView() {
         for (const machine of online) {
             setMachineRunById((prev) => ({ ...prev, [machine.id]: { status: 'loading' } }));
 
-            const diagnostics = await machineCollectBugReportDiagnostics(machine.id, { timeoutMs: 4_000 });
-            const rawDoctorSnapshot = (diagnostics as { doctorSnapshot?: unknown } | null)?.doctorSnapshot;
-            const parsed = DoctorSnapshotSchema.safeParse(rawDoctorSnapshot);
-            if (!parsed.success) {
+            const nextStatus = await fetchMachineDoctorSnapshot({
+                machineId: machine.id,
+                serverId: activeServerSnapshot.serverId,
+                timeoutMs: 4_000,
+            });
+            if (nextStatus.status !== 'ready') {
                 setMachineRunById((prev) => ({ ...prev, [machine.id]: { status: 'error', detail: t('diagnosis.machine.invalidDoctorSnapshot') } }));
                 continue;
             }
 
-            const snapshot = sanitizeDoctorSnapshotUrls(parsed.data);
-            writeCachedMachineDoctorSnapshot({
-                serverId: activeServerSnapshot.serverId,
-                machineId: machine.id,
-                cachedAt: Date.now(),
-                snapshot,
-            });
-
-            collected.push({ machineId: machine.id, serverId: activeServerSnapshot.serverId, snapshot });
+            collected.push({ machineId: machine.id, serverId: activeServerSnapshot.serverId, snapshot: nextStatus.snapshot });
             setMachineRunById((prev) => ({ ...prev, [machine.id]: { status: 'ready' } }));
         }
 
@@ -291,11 +290,11 @@ export const DiagnosisView = React.memo(function DiagnosisView() {
         if (!Array.isArray(list)) return 0;
         let count = 0;
         for (const m of list) {
-            const cached = readCachedMachineDoctorSnapshot({ serverId: activeServerSnapshot.serverId, machineId: m.id });
+            const cached = readMachineDoctorSnapshot({ serverId: activeServerSnapshot.serverId, machineId: m.id });
             if (cached) count += 1;
         }
         return count;
-    }, [activeServerSnapshot.serverId, machineListByServerId]);
+    }, [activeServerSnapshot.serverId, machineListByServerId, readMachineDoctorSnapshot]);
 
     return (
         <ItemList style={{ paddingTop: 0 }} testID="diagnosis-screen">
@@ -419,7 +418,7 @@ export const DiagnosisView = React.memo(function DiagnosisView() {
                     <Item
                         title={t('diagnosis.serverProbe.title')}
                         detail={serverDiagnostics.state}
-                        subtitle={serverDiagnostics.state === 'http_error' ? t('diagnosis.serverProbe.httpError', { status: (serverDiagnostics as any).httpStatus ?? '' }) : undefined}
+                        subtitle={resolveServerDiagnosticsSubtitle(serverDiagnostics)}
                         icon={<Ionicons name="cloud-outline" size={24} color={theme.colors.accent.blue} />}
                     />
                 </ItemGroup>

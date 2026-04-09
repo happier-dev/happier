@@ -1,7 +1,7 @@
 import { useAuth } from '@/auth/context/AuthContext';
 import * as React from 'react';
-import { Stack } from 'expo-router';
-import { Drawer } from 'expo-router/drawer';
+import { Stack, usePathname } from 'expo-router';
+import * as ExpoRouterDrawer from 'expo-router/drawer';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { SidebarView } from './SidebarView';
 import { CollapsedSidebarView } from './CollapsedSidebarView';
@@ -13,11 +13,28 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { resolveSidebarDockMaxWidthPx, SIDEBAR_COLLAPSED_WIDTH_PX, SIDEBAR_DOCK_MIN_WIDTH_PX } from './sidebarSizing';
 import { isDesktopActivityOverlayWindowContext } from '@/activity/adapters/desktop/runtime/isDesktopActivityOverlayWindowContext';
 
+type DrawerNavigatorComponent = typeof ExpoRouterDrawer.Drawer;
+
+function resolveDrawerComponent(module: typeof ExpoRouterDrawer): DrawerNavigatorComponent {
+    const candidateModule = module as Record<string, unknown>;
+    if ('default' in candidateModule && candidateModule.default) {
+        return candidateModule.default as DrawerNavigatorComponent;
+    }
+    if ('Drawer' in candidateModule && candidateModule.Drawer) {
+        return candidateModule.Drawer as DrawerNavigatorComponent;
+    }
+    throw new Error('expo-router/drawer did not expose a usable Drawer component');
+}
+
+const Drawer = resolveDrawerComponent(ExpoRouterDrawer);
+
 export const SidebarNavigator = React.memo(() => {
     const auth = useAuth();
+    const pathname = usePathname();
     const isTablet = useIsTablet();
     const isDesktopOverlayWindow = isDesktopActivityOverlayWindowContext();
     const editorFocusModeEnabled = useLocalSetting('editorFocusModeEnabled');
+    const bypassDesktopDrawerShell = Platform.OS === 'web' && pathname === '/terminal/connect';
     const desktopDrawerEnabled = auth.isAuthenticated && isTablet && !isDesktopOverlayWindow;
     const showPermanentDrawer = desktopDrawerEnabled && !editorFocusModeEnabled;
     const { theme } = useUnistyles();
@@ -173,7 +190,7 @@ export const SidebarNavigator = React.memo(() => {
         [drawerWidth, handleSidebarWidthCommit, handleSidebarWidthDrag, sidebarCollapsed, sidebarMaxWidthPx]
     );
 
-    if (!desktopDrawerEnabled) {
+    if (!desktopDrawerEnabled || bypassDesktopDrawerShell) {
         return <Stack screenOptions={stackNavigationOptions} />;
     }
 

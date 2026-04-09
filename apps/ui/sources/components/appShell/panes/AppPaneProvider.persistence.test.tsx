@@ -134,4 +134,62 @@ describe('AppPaneProvider persistence', () => {
             }),
         }));
     });
+
+    it('hydrates persisted pane scopes that arrive after the initial mount', async () => {
+        const persistedScopes = {
+            'project:wr_1': {
+                right: { isOpen: true, activeTabId: 'git', tabState: {} },
+                details: {
+                    isOpen: true,
+                    tabs: [
+                        {
+                            key: 'file:/repo/src/a.ts',
+                            kind: 'file',
+                            title: 'a.ts',
+                            resource: { kind: 'file', path: '/repo/src/a.ts' },
+                            isPreview: false,
+                            isPinned: true,
+                        },
+                    ],
+                    activeTabKey: 'file:/repo/src/a.ts',
+                    tabState: {
+                        'file:/repo/src/a.ts': { draft: 'draft text' },
+                    },
+                },
+                bottom: { isOpen: false, activeTabId: null, tabState: {} },
+            },
+        };
+
+        const { AppPaneProvider } = await import('./AppPaneProvider');
+        const screen = await renderScreen(
+            <AppPaneProvider>
+                <PaneScopeProbe />
+            </AppPaneProvider>,
+        );
+
+        localSettingsMock.appPaneScopesV1 = persistedScopes;
+
+        await act(async () => {
+            await screen.update(
+                <AppPaneProvider>
+                    <PaneScopeProbe />
+                </AppPaneProvider>,
+            );
+        });
+
+        const probe = screen.tree.findByType('PaneScopeProbe' as never);
+        expect(probe.props.scopeState).toEqual(expect.objectContaining({
+            right: expect.objectContaining({
+                isOpen: true,
+                activeTabId: 'git',
+            }),
+            details: expect.objectContaining({
+                isOpen: true,
+                activeTabKey: 'file:/repo/src/a.ts',
+                tabState: {
+                    'file:/repo/src/a.ts': { draft: 'draft text' },
+                },
+            }),
+        }));
+    });
 });

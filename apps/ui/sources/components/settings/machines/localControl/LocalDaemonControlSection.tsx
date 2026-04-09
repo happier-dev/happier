@@ -98,7 +98,7 @@ export const LocalDaemonControlSection = React.memo(function LocalDaemonControlS
                 />
                 <Item
                     testID="settings.localDaemonControl.repair"
-                    title={t('server.relayDrift.repairAction')}
+                    title={t('machine.repairBackgroundServiceAction')}
                     onPress={() => {
                         void repairBackgroundService();
                     }}

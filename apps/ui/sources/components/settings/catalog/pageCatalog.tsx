@@ -1,8 +1,10 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
+import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 
 import type { SettingsPageNode } from './types';
 import { SETTINGS_ROUTES } from './routes';
+
+const Ionicons = SafeIonicons;
 
 export const SETTINGS_PAGE_CATALOG: readonly SettingsPageNode[] = [
     {
@@ -322,6 +324,15 @@ export const SETTINGS_PAGE_CATALOG: readonly SettingsPageNode[] = [
                                 icon: ({ theme }) => <Ionicons name="paper-plane-outline" size={18} color={theme.colors.textSecondary} />,
                             },
                         ],
+                    },
+                    {
+                        id: 'desktop',
+                        titleKey: 'settingsDesktop.title',
+                        subtitleKey: 'settingsDesktop.footer',
+                        route: SETTINGS_ROUTES.desktop,
+                        keywords: ['desktop', 'tauri', 'overlay', 'window'],
+                        gate: { requiresTauriDesktop: true },
+                        icon: ({ theme }) => <Ionicons name="desktop-outline" size={18} color={theme.colors.textSecondary} />,
                     },
                     {
                         id: 'diagnosis',

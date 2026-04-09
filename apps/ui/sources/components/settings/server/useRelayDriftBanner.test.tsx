@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
 import { renderScreen } from '@/dev/testkit';
 import { buildRelayDriftRepairSystemTaskSpec } from '@/sync/domains/server/relayDrift/relayDriftSystemTask';
+import { buildLocalDaemonServiceSystemTaskSpec } from '@/components/systemTasks/specs/localControl/buildLocalDaemonServiceSystemTaskSpec';
 import { installServerSettingsHooksCommonModuleMocks } from './hooks/serverSettingsHooksTestHelpers';
 import type { RelayDriftBanner } from './relayDriftTypes';
 
@@ -31,6 +32,12 @@ type CachedDoctorSnapshot = Readonly<{
             activeServerId: string | null;
             servers: readonly [];
             knownAccountIds: readonly string[];
+        };
+        daemonStatus?: {
+            service?: {
+                installed?: boolean;
+                running?: boolean;
+            };
         };
     };
 }> | null;
@@ -66,7 +73,7 @@ vi.mock('@/components/settings/server/hooks/usePrimaryMachineFromActiveSelection
     usePrimaryMachineFromActiveSelection: () => 'machine-1',
 }));
 
-vi.mock('@/components/settings/systemStatus/cache/machineDoctorSnapshotCache', () => ({
+vi.mock('@/components/machines/doctorSnapshot/machineDoctorSnapshotCache', () => ({
     readCachedMachineDoctorSnapshot: () => state.cachedDoctorSnapshot,
 }));
 
@@ -546,7 +553,7 @@ describe('useRelayDriftBanner', () => {
         expect(startMock).not.toHaveBeenCalled();
     });
 
-    it('exposes a secondary action for switching to the daemon relay when the daemon is connected to a different relay', async () => {
+    it('keeps the active relay authoritative when the daemon is connected to a different relay', async () => {
         const { useRelayDriftBanner } = await import('./useRelayDriftBanner');
         state.cachedDoctorSnapshot = {
             cachedAt: 1,
@@ -577,18 +584,11 @@ describe('useRelayDriftBanner', () => {
 
         const resolvedBanner = banner as RelayDriftBanner | null;
         expect(resolvedBanner).not.toBeNull();
-        const secondaryActionLabel = (resolvedBanner as unknown as { secondaryActionLabel?: unknown }).secondaryActionLabel;
-        expect(secondaryActionLabel).toBe('server.switchToServer');
-
-        await renderer.act(async () => {
-            await (resolvedBanner as unknown as { onSecondaryPress?: () => void | Promise<void> }).onSecondaryPress?.();
-        });
-
-        expect(upsertAndActivateServerSpy).toHaveBeenCalledWith(expect.objectContaining({
-            serverUrl: 'https://daemon-relay.example.test',
-        }));
-        expect(switchConnectionToActiveServerSpy).toHaveBeenCalled();
-        expect(refreshFromActiveServerSpy).toHaveBeenCalled();
+        expect((resolvedBanner as unknown as { secondaryActionLabel?: unknown }).secondaryActionLabel).toBeUndefined();
+        expect((resolvedBanner as unknown as { onSecondaryPress?: unknown }).onSecondaryPress).toBeUndefined();
+        expect(upsertAndActivateServerSpy).not.toHaveBeenCalled();
+        expect(switchConnectionToActiveServerSpy).not.toHaveBeenCalled();
+        expect(refreshFromActiveServerSpy).not.toHaveBeenCalled();
     });
 
     it('uses an authenticate action label when the relay matches but the daemon still needs auth', async () => {
@@ -623,5 +623,69 @@ describe('useRelayDriftBanner', () => {
         const resolvedBanner = banner as RelayDriftBanner | null;
         expect(resolvedBanner).not.toBeNull();
         expect(resolvedBanner?.actionLabel).toBe('common.authenticate');
+    });
+
+    it('restarts the existing local background service instead of launching full repair when the relay matches but the daemon is not running', async () => {
+        const { useRelayDriftBanner } = await import('./useRelayDriftBanner');
+        const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
+        const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
+
+        const startMock = vi.fn(async (spec: unknown) => {
+            SystemTaskSpecSchema.parse(spec);
+            return 'task_restart';
+        });
+
+        state.runner = createSystemTaskRunner({
+            mode: 'dev',
+            bridge: {
+                start: startMock,
+                async subscribe() {
+                    return () => {};
+                },
+                async cancel() {},
+                async respond() {},
+            },
+        });
+        state.cachedDoctorSnapshot = {
+            cachedAt: 1,
+            snapshot: {
+                capturedAt: '2026-03-29T00:00:00.000Z',
+                server: {
+                    activeServerId: 'server-a',
+                    serverUrl: 'https://relay.example.test',
+                    publicServerUrl: 'https://relay.example.test',
+                    webappUrl: 'https://relay.example.test',
+                },
+                accountId: 'acct_1',
+                settings: {
+                    activeServerId: 'server-a',
+                    servers: [],
+                    knownAccountIds: ['acct_1'],
+                },
+                daemonStatus: {
+                    service: {
+                        installed: true,
+                        running: false,
+                    },
+                },
+            },
+        };
+
+        let banner: RelayDriftBanner | null = null;
+        function Probe() {
+            banner = useRelayDriftBanner();
+            return null;
+        }
+
+        await renderScreen(React.createElement(Probe));
+
+        const resolvedBanner = banner as RelayDriftBanner | null;
+        expect(resolvedBanner).not.toBeNull();
+
+        await renderer.act(async () => {
+            await resolvedBanner?.onPress();
+        });
+
+        expect(startMock).toHaveBeenCalledWith(buildLocalDaemonServiceSystemTaskSpec('daemon.service.restart.v1'));
     });
 });
