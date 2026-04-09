@@ -265,7 +265,28 @@ function shouldUseProjectedPendingRequestCounts(session: Session, transcriptStat
     }
 
     const hasPendingAgentRequests = Object.keys(session.agentState?.requests ?? {}).length > 0;
-    return !hasPendingAgentRequests && transcriptStates.size === 0;
+    if (hasPendingAgentRequests) {
+        return false;
+    }
+
+    let hasPendingTranscriptRequests = false;
+    let newestTerminalTranscriptCreatedAt = 0;
+    for (const state of transcriptStates.values()) {
+        if (state.status === 'pending') {
+            hasPendingTranscriptRequests = true;
+            break;
+        }
+        newestTerminalTranscriptCreatedAt = Math.max(newestTerminalTranscriptCreatedAt, state.createdAt);
+    }
+    if (hasPendingTranscriptRequests) {
+        return false;
+    }
+
+    if (newestTerminalTranscriptCreatedAt === 0) {
+        return true;
+    }
+
+    return session.updatedAt > newestTerminalTranscriptCreatedAt;
 }
 
 export function listPendingSessionRequests(

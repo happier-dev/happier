@@ -123,6 +123,114 @@ describe('buildSessionListRenderableFromSession', () => {
         expect(renderable.hasPendingUserActionRequests).toBe(false);
     });
 
+    it('still prefers projected pending-request counts when the cached transcript only has old terminal history', () => {
+        storageState.sessionMessages = {
+            s1: {
+                messages: [
+                    {
+                        kind: 'tool-call',
+                        id: 'm-tool-old',
+                        localId: null,
+                        createdAt: 50,
+                        children: [],
+                        tool: {
+                            id: 'old_req',
+                            name: 'AskUserQuestion',
+                            state: 'error',
+                            input: { q: 'old?' },
+                            createdAt: 50,
+                            completedAt: 51,
+                            permission: {
+                                id: 'old_req',
+                                status: 'canceled',
+                                kind: 'user_action',
+                            },
+                        },
+                    },
+                ],
+            },
+        };
+
+        const renderable = buildSessionListRenderableFromSession({
+            id: 's1',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1_000,
+            active: true,
+            activeAt: 1,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: {
+                controlledByUser: null,
+                requests: {},
+                completedRequests: null,
+            },
+            agentStateVersion: 3,
+            pendingPermissionRequestCount: 1,
+            pendingUserActionRequestCount: 0,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any);
+
+        expect(renderable.hasPendingPermissionRequests).toBe(true);
+        expect(renderable.hasPendingUserActionRequests).toBe(false);
+    });
+
+    it('does not prefer projected pending-request counts when the transcript has a newer terminal outcome', () => {
+        storageState.sessionMessages = {
+            s1: {
+                messages: [
+                    {
+                        kind: 'tool-call',
+                        id: 'm-tool-terminal',
+                        localId: null,
+                        createdAt: 150,
+                        children: [],
+                        tool: {
+                            id: 'req1',
+                            name: 'AskUserQuestion',
+                            state: 'error',
+                            input: { q: 'continue?' },
+                            createdAt: 150,
+                            completedAt: 151,
+                            permission: {
+                                id: 'req1',
+                                status: 'canceled',
+                                kind: 'user_action',
+                            },
+                        },
+                    },
+                ],
+            },
+        };
+
+        const renderable = buildSessionListRenderableFromSession({
+            id: 's1',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 100,
+            active: true,
+            activeAt: 1,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: {
+                controlledByUser: null,
+                requests: {},
+                completedRequests: null,
+            },
+            agentStateVersion: 3,
+            pendingPermissionRequestCount: 1,
+            pendingUserActionRequestCount: 0,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any);
+
+        expect(renderable.hasPendingPermissionRequests).toBe(false);
+        expect(renderable.hasPendingUserActionRequests).toBe(false);
+    });
+
     it('does not mark pending requests as attention when the session is inactive', () => {
         const renderable = buildSessionListRenderableFromSession({
             id: 's1',
