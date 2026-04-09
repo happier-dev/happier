@@ -25,12 +25,11 @@ vi.mock('react-native', async () => {
 });
 
 vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: {
-    getState: getStateMock,
-  },
-});
+    return {
+        storage: {
+            getState: (...args: unknown[]) => (getStateMock as any)(...args),
+        },
+    };
 });
 
 const fetchSnapshotForSessionMock = vi.hoisted(() => vi.fn());
@@ -223,7 +222,7 @@ describe('ScmStatusSync polling', () => {
           ? {
               key: {
                 machineId: 'machine-a',
-                path: '/repo-from-project',
+                rootPath: '/repo-from-project',
               },
             }
           : null,

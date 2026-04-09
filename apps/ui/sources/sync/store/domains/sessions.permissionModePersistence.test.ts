@@ -110,8 +110,12 @@ vi.mock('../../runtime/orchestration/projectManager', () => ({
     },
 }));
 
-vi.mock('../buildSessionListViewDataWithServerScope', () => ({
-    buildSessionListViewDataWithServerScope: () => [],
+vi.mock('../../domains/session/listing/applyReachableTargetsToSessionListRenderables', () => ({
+    applyReachableTargetsToSessionListRenderables: ({ sessions }: any) => sessions,
+}));
+
+vi.mock('../sessionListIndex/buildSessionListIndexWithServerScope', () => ({
+    buildActiveServerSessionListIndex: () => [],
 }));
 
 vi.mock('../../domains/server/serverRuntime', () => ({
@@ -124,15 +128,19 @@ function createHarness() {
     let state: any = {
         sessions: {},
         sessionListRenderables: {},
-        sessionListViewData: null,
-        sessionListViewDataByServerId: {},
+        sessionListRowStateByServerId: {},
+        sessionListIndexByServerId: {},
+        concurrentSessionListCacheByServerId: {},
         sessionScmStatus: {},
         sessionLastViewed: {},
         sessionRepositoryTreeExpandedPathsBySessionId: {},
+        workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey: {},
         reviewCommentsDraftsBySessionId: {},
+        reviewCommentsDraftsByWorkspaceCacheKey: {},
         actionDraftsBySessionId: {},
         isDataReady: false,
         machines: {},
+        machineDisplayById: {},
         sessionMessages: {},
         settings: { groupInactiveSessionsByProject: false },
     };

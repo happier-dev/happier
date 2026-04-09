@@ -252,4 +252,74 @@ describe('warmCachePersistence', () => {
         expect(firstSessionLoad).toEqual({});
         expect(firstMachineLoad).toEqual({});
     });
+
+    it('reuses loaded warm-cache objects for repeated non-empty loads', () => {
+        store.set(
+            'session-list-warm-cache-v1:server-a:account-a',
+            JSON.stringify({
+                s1: {
+                    sessionId: 's1',
+                    metadataVersion: 2,
+                    agentStateVersion: 3,
+                    updatedAt: 20,
+                    createdAt: 10,
+                    active: true,
+                    activeAt: 20,
+                    archivedAt: null,
+                    pendingCount: 1,
+                    pendingVersion: 4,
+                    accessLevel: 'edit',
+                    canApprovePermissions: true,
+                    name: 'Repo',
+                    summaryText: 'Summary',
+                    path: '/home/u/repo',
+                    homeDir: '/home/u',
+                    host: 'mbp',
+                    machineId: 'm1',
+                    hiddenSystemSession: false,
+                    hasPendingPermissionRequests: false,
+                    hasPendingUserActionRequests: true,
+                },
+            }),
+        );
+        store.set(
+            'machine-display-warm-cache-v1:server-a:account-a',
+            JSON.stringify({
+                m1: {
+                    machineId: 'm1',
+                    metadataVersion: 5,
+                    updatedAt: 22,
+                    active: true,
+                    activeAt: 22,
+                    revokedAt: null,
+                    displayName: 'Work Mac',
+                    host: 'mbp',
+                    homeDir: '/home/u',
+                },
+            }),
+        );
+
+        const firstSessionLoad = loadSessionListWarmCacheEntries('server-a', 'account-a');
+        const secondSessionLoad = loadSessionListWarmCacheEntries('server-a', 'account-a');
+        const firstMachineLoad = loadMachineDisplayWarmCacheEntries('server-a', 'account-a');
+        const secondMachineLoad = loadMachineDisplayWarmCacheEntries('server-a', 'account-a');
+
+        expect(firstSessionLoad).toBe(secondSessionLoad);
+        expect(firstMachineLoad).toBe(secondMachineLoad);
+        expect(firstSessionLoad).toEqual({
+            s1: expect.objectContaining({
+                sessionId: 's1',
+                metadataVersion: 2,
+                agentStateVersion: 3,
+                name: 'Repo',
+            }),
+        });
+        expect(firstMachineLoad).toEqual({
+            m1: expect.objectContaining({
+                machineId: 'm1',
+                metadataVersion: 5,
+                displayName: 'Work Mac',
+            }),
+        });
+    });
 });

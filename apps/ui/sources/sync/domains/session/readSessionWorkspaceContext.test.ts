@@ -35,7 +35,7 @@ describe('readSessionWorkspaceContext', () => {
                 },
             },
             getProjectForSession: (sessionId: string) => sessionId === 's1'
-                ? { key: { machineId: 'machine-a', path: '/repo' } }
+                ? { key: { machineId: 'machine-a', rootPath: '/repo' } }
                 : null,
         } as any, 's1');
 

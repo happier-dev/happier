@@ -47,6 +47,11 @@ export function installScanRouteCommonModuleMocks(
     );
 });
 
+    vi.mock('react-native-unistyles', async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock();
+    });
+
     vi.mock('@/text', async () => {
         const activeOptions = scanRouteModuleState.options;
         if (activeOptions.text) {

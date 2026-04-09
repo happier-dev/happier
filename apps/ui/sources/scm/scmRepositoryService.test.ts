@@ -186,7 +186,7 @@ describe('ScmRepositoryService.fetchSnapshotForSession', () => {
                     ? {
                         key: {
                             machineId: 'machine-a',
-                            path: '/repo-from-project',
+                            rootPath: '/repo-from-project',
                         },
                     }
                     : null,

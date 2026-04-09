@@ -73,12 +73,15 @@ function createHarness(createSessionsDomain: any) {
     let state: any = {
         sessions: {},
         sessionListRenderables: {},
-        sessionListViewData: null,
-        sessionListViewDataByServerId: {},
+        sessionListRowStateByServerId: {},
+        sessionListIndexByServerId: {},
+        concurrentSessionListCacheByServerId: {},
         sessionScmStatus: {},
         sessionLastViewed: {},
         sessionRepositoryTreeExpandedPathsBySessionId: {},
+        workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey: {},
         reviewCommentsDraftsBySessionId: {},
+        reviewCommentsDraftsByWorkspaceCacheKey: {},
         actionDraftsBySessionId: {},
         isDataReady: false,
         machines: {},
@@ -275,6 +278,84 @@ describe('sessions domain: renderable patches', () => {
             hasPendingPermissionRequests: true,
             hasPendingUserActionRequests: false,
         }));
+    });
+
+    it('preserves direct-session classification when a replacement renderable omits directSessionV1', async () => {
+        mockSessionsDomainBoundaries();
+
+        const warmCache = await import('../../domains/state/warmCachePersistence');
+        const { buildSessionListRenderableFromSession } = await import('../../domains/session/listing/sessionListRenderable');
+        const { createSessionsDomain } = await import('./sessions');
+        const { get, domain } = createHarness(createSessionsDomain);
+
+        domain.replaceSessionListRenderables([buildSessionListRenderableFromSession({
+            id: 's1',
+            seq: 0,
+            createdAt: 1,
+            updatedAt: 10,
+            active: false,
+            activeAt: 10,
+            metadata: {
+                name: 'Direct session',
+                machineId: 'm1',
+                path: '/home/u/repo',
+                homeDir: '/home/u',
+                directSessionV1: { v: 1, providerId: 'claude' },
+            },
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 10,
+        } as any)]);
+
+        domain.replaceSessionListRenderables([
+            {
+                id: 's1',
+                seq: 0,
+                createdAt: 1,
+                updatedAt: 20,
+                active: false,
+                activeAt: 20,
+                pendingCount: 0,
+                pendingVersion: 0,
+                metadataVersion: 1,
+                agentStateVersion: 0,
+                metadata: {
+                    name: 'Direct session',
+                    machineId: 'm1',
+                    path: '/home/u/repo',
+                    homeDir: '/home/u',
+                },
+                thinking: false,
+                thinkingAt: 0,
+                presence: 20,
+            } as any,
+        ]);
+
+        expect(get().sessionListRenderables.s1).toEqual(expect.objectContaining({
+            id: 's1',
+            updatedAt: 20,
+            metadata: expect.objectContaining({
+                name: 'Direct session',
+                path: '/home/u/repo',
+                homeDir: '/home/u',
+                machineId: 'm1',
+                directSessionV1: {
+                    v: 1,
+                    providerId: 'claude',
+                },
+            }),
+        }));
+
+        const saveWarmCache = warmCache.saveSessionListWarmCacheEntries as unknown as ReturnType<typeof vi.fn>;
+        const lastCall = saveWarmCache.mock.calls.at(-1);
+        const entries = lastCall?.[2] as Record<string, any>;
+        expect(entries?.s1?.directSessionV1).toEqual({
+            v: 1,
+            providerId: 'claude',
+        });
     });
 
     it('skips no-op renderable patches', async () => {

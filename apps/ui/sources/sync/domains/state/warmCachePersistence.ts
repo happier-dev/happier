@@ -7,7 +7,12 @@ const isWebRuntime = typeof window !== 'undefined' && typeof document !== 'undef
 
 var warmCacheStorage: MMKV | null = null;
 let warmCacheAccountScope: string | null = null;
-const warmCacheSavedValueByKey = new Map<string, Record<string, unknown>>();
+type WarmCacheSavedValue = Readonly<{
+    raw: string;
+    value: Record<string, unknown>;
+}>;
+
+const warmCacheSavedValueByKey = new Map<string, WarmCacheSavedValue>();
 
 function getWarmCacheStorage(): MMKV {
     if (warmCacheStorage) return warmCacheStorage;
@@ -111,18 +116,29 @@ function loadScopedRecord<T>(
     if (!key) return null;
     const storage = getWarmCacheStorage();
     const raw = storage.getString(key);
-    if (!raw) return null;
+    if (!raw) {
+        warmCacheSavedValueByKey.delete(key);
+        return null;
+    }
+
+    const cachedValue = warmCacheSavedValueByKey.get(key);
+    if (cachedValue?.raw === raw) {
+        return cachedValue.value as T;
+    }
 
     try {
         const parsedJson = JSON.parse(raw);
         const parsed = schema.safeParse(parsedJson);
         if (!parsed.success) {
             storage.delete(key);
+            warmCacheSavedValueByKey.delete(key);
             return null;
         }
+        warmCacheSavedValueByKey.set(key, { raw, value: parsed.data as Record<string, unknown> });
         return parsed.data;
     } catch {
         storage.delete(key);
+        warmCacheSavedValueByKey.delete(key);
         return null;
     }
 }
@@ -137,21 +153,22 @@ function saveScopedRecord<T extends Record<string, unknown>>(key: string | null,
         warmCacheSavedValueByKey.delete(key);
         return;
     }
-    if (warmCacheSavedValueByKey.get(key) === value) {
+    const cachedValue = warmCacheSavedValueByKey.get(key);
+    if (cachedValue?.value === value) {
         return;
     }
     const nextRaw = JSON.stringify(value);
     if (storage.getString(key) === nextRaw) {
-        warmCacheSavedValueByKey.set(key, value);
+        warmCacheSavedValueByKey.set(key, { raw: nextRaw, value });
         return;
     }
     storage.set(key, nextRaw);
-    warmCacheSavedValueByKey.set(key, value);
+    warmCacheSavedValueByKey.set(key, { raw: nextRaw, value });
 }
 
 function peekScopedRecord<T extends Record<string, unknown>>(key: string | null): T | null {
     if (!key) return null;
-    return (warmCacheSavedValueByKey.get(key) as T | undefined) ?? null;
+    return (warmCacheSavedValueByKey.get(key)?.value as T | undefined) ?? null;
 }
 
 function normalizeEmptyWarmCacheRecord<T extends Record<string, unknown>>(value: T): T {

@@ -6,7 +6,7 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 type StorageState = {
     sessions?: Record<string, unknown>;
     machines?: Record<string, unknown>;
-    getProjectForSession?: (sessionId: string) => { key?: { machineId?: string; path?: string } } | null;
+    getProjectForSession?: (sessionId: string) => { key?: { machineId?: string; rootPath?: string } } | null;
 };
 
 let storageState: StorageState = {};
@@ -91,7 +91,7 @@ describe('getRecentPathsForMachine', () => {
                     ? {
                         key: {
                             machineId: 'machine-target',
-                            path: '/Users/test/workspace/rebound',
+                            rootPath: '/Users/test/workspace/rebound',
                         },
                     }
                     : null,
@@ -128,7 +128,7 @@ describe('getRecentPathsForMachine', () => {
                     ? {
                         key: {
                             machineId: 'machine-target',
-                            path: '/Volumes/target/workspace/rebound',
+                            rootPath: '/Volumes/target/workspace/rebound',
                         },
                     }
                     : null,
@@ -165,7 +165,7 @@ describe('getRecentPathsForMachine', () => {
                     ? {
                         key: {
                             machineId: 'machine-target',
-                            path: '/Users/test/workspace/live-path',
+                            rootPath: '/Users/test/workspace/live-path',
                         },
                     }
                     : null,

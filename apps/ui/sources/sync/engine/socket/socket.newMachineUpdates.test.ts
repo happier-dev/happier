@@ -329,6 +329,7 @@ describe('socket update handling: transcript-stream-segment ephemerals', () => {
             ],
         );
     });
+
 });
 
 describe('socket update handling: direct-session transcript delta ephemerals', () => {

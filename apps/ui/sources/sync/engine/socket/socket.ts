@@ -473,7 +473,8 @@ export async function handleUpdateContainer(params: {
             return;
         }
 
-        // Update storage using applyMachines which rebuilds sessionListViewData
+        // Update storage via applyMachines, which may rebuild the active-server session list index if
+        // the machine update affects project-group headers (but should stay stable for activity-only changes).
         storage.getState().applyMachines([updatedMachine]);
         if (!encryption.getMachineEncryption(machineId)) {
             invalidateMachines();

@@ -3,6 +3,7 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installMachineDetailsCommonModuleMocks } from './machineDetailsTestHelpers';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -15,6 +16,7 @@ const { refreshMachinesThrottledSpy, switchSpy } = vi.hoisted(() => ({
     refreshMachinesThrottledSpy: vi.fn(async () => {}),
     switchSpy: vi.fn(async () => true),
 }));
+const machineCollectBugReportDiagnosticsMock = vi.hoisted(() => vi.fn(async () => null));
 
 installMachineDetailsCommonModuleMocks({
     router: async () => {
@@ -25,6 +27,54 @@ installMachineDetailsCommonModuleMocks({
         });
         return routerMock.module;
     },
+    storage: async () => createStorageModuleStub({
+        useSessions: () => [],
+        useAllMachines: () => [
+            {
+                id: 'machine-1',
+                active: true,
+                activeAt: Date.now(),
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+                seq: 1,
+                metadata: {
+                    displayName: 'Machine One',
+                    host: 'machine-one.local',
+                    platform: 'darwin',
+                    happyCliVersion: '1.2.3',
+                    happyHomeDir: '/Users/tester/.happier',
+                    homeDir: '/Users/tester',
+                },
+                metadataVersion: 1,
+                daemonState: null,
+                daemonStateVersion: 0,
+                revokedAt: null,
+            },
+        ],
+        useMachine: () => ({
+            id: 'machine-1',
+            active: true,
+            activeAt: Date.now(),
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            seq: 1,
+            metadata: {
+                displayName: 'Machine One',
+                host: 'machine-one.local',
+                platform: 'darwin',
+                happyCliVersion: '1.2.3',
+                happyHomeDir: '/Users/tester/.happier',
+                homeDir: '/Users/tester',
+            },
+            metadataVersion: 1,
+            daemonState: null,
+            daemonStateVersion: 0,
+            revokedAt: null,
+        }),
+        useSetting: () => false,
+        useSettingMutable: () => [null, vi.fn()],
+        useSettings: () => ({}),
+    }),
 });
 
 vi.mock('@/components/ui/lists/Item', () => ({ Item: () => null }));
@@ -103,11 +153,15 @@ vi.mock('@/sync/domains/session/spawn/windowsRemoteSessionLaunchModeOptions', ()
 vi.mock('@/sync/ops/sessionMachineTarget', () => ({
     readMachineTargetForSession: () => null,
 }));
+vi.mock('@/sync/ops/machines', () => ({
+    machineCollectBugReportDiagnostics: machineCollectBugReportDiagnosticsMock,
+}));
 
 describe('MachineDetailScreen (serverId param switching)', () => {
     it('switches active server when serverId param is provided and differs from current active server', async () => {
         switchSpy.mockClear();
         refreshMachinesThrottledSpy.mockClear();
+        machineCollectBugReportDiagnosticsMock.mockClear();
 
         const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
         const unhandledSpy = vi.fn();
@@ -128,6 +182,7 @@ describe('MachineDetailScreen (serverId param switching)', () => {
 
         expect(switchSpy).toHaveBeenCalledWith({ serverId: 'server-b', scope: 'device' });
         expect(refreshMachinesThrottledSpy).toHaveBeenCalled();
+        expect(machineCollectBugReportDiagnosticsMock).not.toHaveBeenCalled();
         expect(unhandledSpy).not.toHaveBeenCalled();
     });
 });

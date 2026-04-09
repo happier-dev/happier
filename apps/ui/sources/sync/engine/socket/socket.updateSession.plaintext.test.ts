@@ -106,6 +106,152 @@ describe('socket update handling: plaintext update-session', () => {
         }
     });
 
+    it('preserves runtime-local direct-session metadata for loaded plaintext sessions when an update omits directSessionV1', async () => {
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+            storage.getState().applySessions([{
+                ...buildSession('s1'),
+                metadata: {
+                    path: '/tmp',
+                    host: 'localhost',
+                    directSessionV1: {
+                        v: 1,
+                        providerId: 'claude',
+                        machineId: 'machine-1',
+                        remoteSessionId: 'remote-1',
+                        source: {
+                            kind: 'claudeConfigDir',
+                            configDir: '/tmp/.claude',
+                        },
+                    },
+                },
+            }]);
+            const params = buildBaseParams();
+            const updateData: ApiUpdateContainer = {
+                id: 'u_plain_session_direct_runtime_local',
+                seq: 10,
+                createdAt: 1234,
+                body: {
+                    t: 'update-session',
+                    id: 's1',
+                    metadata: {
+                        version: 2,
+                        value: JSON.stringify({
+                            path: '/work',
+                            host: 'devbox',
+                            directSessionAttentionV1: {
+                                v: 1,
+                                observedProgressToken: '20:msg-2',
+                                viewedProgressToken: '10:msg-1',
+                                observedAtMs: 20,
+                                viewedAtMs: 10,
+                            },
+                        }),
+                    },
+                },
+            };
+
+            await handleUpdateContainer({
+                ...params,
+                updateData,
+            });
+
+            expect(consoleError).not.toHaveBeenCalled();
+            const applySessionsSpy = params.applySessions as unknown as ReturnType<typeof vi.fn>;
+            expect(applySessionsSpy).toHaveBeenCalledTimes(1);
+            const updatedSession = applySessionsSpy.mock.calls[0]?.[0]?.[0] as Session;
+            expect(updatedSession.metadata).toEqual(expect.objectContaining({
+                path: '/work',
+                host: 'devbox',
+                machineId: 'machine-1',
+                directSessionV1: expect.objectContaining({
+                    v: 1,
+                    providerId: 'claude',
+                    remoteSessionId: 'remote-1',
+                }),
+                directSessionAttentionV1: expect.objectContaining({
+                    v: 1,
+                    observedProgressToken: '20:msg-2',
+                }),
+            }));
+        } finally {
+            consoleError.mockRestore();
+        }
+    });
+
+    it('preserves runtime-local direct-session metadata for loaded plaintext sessions when an update sets directSessionV1 to null', async () => {
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+            storage.getState().applySessions([{
+                ...buildSession('s1'),
+                metadata: {
+                    path: '/tmp',
+                    host: 'localhost',
+                    directSessionV1: {
+                        v: 1,
+                        providerId: 'claude',
+                        machineId: 'machine-1',
+                        remoteSessionId: 'remote-1',
+                        source: {
+                            kind: 'claudeConfigDir',
+                            configDir: '/tmp/.claude',
+                        },
+                    },
+                },
+            }]);
+            const params = buildBaseParams();
+            const updateData: ApiUpdateContainer = {
+                id: 'u_plain_session_direct_runtime_local_null_link',
+                seq: 10,
+                createdAt: 1234,
+                body: {
+                    t: 'update-session',
+                    id: 's1',
+                    metadata: {
+                        version: 2,
+                        value: JSON.stringify({
+                            path: '/work',
+                            host: 'devbox',
+                            directSessionV1: null,
+                            directSessionAttentionV1: {
+                                v: 1,
+                                observedProgressToken: '20:msg-2',
+                                viewedProgressToken: '10:msg-1',
+                                observedAtMs: 20,
+                                viewedAtMs: 10,
+                            },
+                        }),
+                    },
+                },
+            };
+
+            await handleUpdateContainer({
+                ...params,
+                updateData,
+            });
+
+            expect(consoleError).not.toHaveBeenCalled();
+            const applySessionsSpy = params.applySessions as unknown as ReturnType<typeof vi.fn>;
+            expect(applySessionsSpy).toHaveBeenCalledTimes(1);
+            const updatedSession = applySessionsSpy.mock.calls[0]?.[0]?.[0] as Session;
+            expect(updatedSession.metadata).toEqual(expect.objectContaining({
+                path: '/work',
+                host: 'devbox',
+                directSessionV1: expect.objectContaining({
+                    v: 1,
+                    providerId: 'claude',
+                    remoteSessionId: 'remote-1',
+                }),
+                directSessionAttentionV1: expect.objectContaining({
+                    v: 1,
+                    observedProgressToken: '20:msg-2',
+                }),
+            }));
+        } finally {
+            consoleError.mockRestore();
+        }
+    });
+
     it('patches cache-only renderables for plaintext update-session without forcing a sessions refresh', async () => {
         storage.getState().replaceSessionListRenderables([
             {
@@ -122,6 +268,7 @@ describe('socket update handling: plaintext update-session', () => {
                 thinking: false,
                 thinkingAt: 0,
                 presence: 'online',
+                hasUnreadMessages: false,
             },
         ]);
 
@@ -133,7 +280,30 @@ describe('socket update handling: plaintext update-session', () => {
             body: {
                 t: 'update-session',
                 id: 's_cached_only',
-                metadata: { version: 2, value: JSON.stringify({ path: '/work', host: 'devbox' }) },
+                metadata: {
+                    version: 2,
+                    value: JSON.stringify({
+                        path: '/work',
+                        host: 'devbox',
+                        directSessionV1: {
+                            v: 1,
+                            providerId: 'claude',
+                            machineId: 'machine-1',
+                            remoteSessionId: 'remote-1',
+                            source: {
+                                kind: 'claudeConfig',
+                                configDir: '/tmp/.claude',
+                            },
+                        },
+                        directSessionAttentionV1: {
+                            v: 1,
+                            observedProgressToken: '20:msg-2',
+                            viewedProgressToken: '10:msg-1',
+                            observedAtMs: 20,
+                            viewedAtMs: 10,
+                        },
+                    }),
+                },
             },
         };
 
@@ -151,6 +321,7 @@ describe('socket update handling: plaintext update-session', () => {
                     path: '/work',
                     host: 'devbox',
                 }),
+                hasUnreadMessages: true,
             }),
         );
         expect(params.invalidateSessions).not.toHaveBeenCalled();
@@ -177,7 +348,7 @@ describe('socket update handling: plaintext update-session', () => {
                 presence: 'online',
             },
         ]);
-        const initialViewData = storage.getState().sessionListViewData;
+        const initialIndexByServerId = storage.getState().sessionListIndexByServerId;
 
         const params = buildBaseParams();
         const updateData: ApiUpdateContainer = {
@@ -203,8 +374,217 @@ describe('socket update handling: plaintext update-session', () => {
                 pendingVersion: 8,
             }),
         );
-        expect(storage.getState().sessionListViewData).toBe(initialViewData);
+        expect(storage.getState().sessionListIndexByServerId).toBe(initialIndexByServerId);
         expect(params.invalidateSessions).not.toHaveBeenCalled();
         expect((params.applySessions as unknown as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    });
+
+    it('preserves direct-session classification for cache-only renderables when an update omits directSessionV1', async () => {
+        storage.getState().replaceSessionListRenderables([
+            {
+                id: 's_cached_direct',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                active: true,
+                activeAt: 1,
+                archivedAt: null,
+                metadataVersion: 1,
+                agentStateVersion: 0,
+                metadata: {
+                    path: '/tmp',
+                    host: 'localhost',
+                    directSessionV1: {
+                        v: 1,
+                        providerId: 'claude',
+                    },
+                },
+                thinking: false,
+                thinkingAt: 0,
+                presence: 'online',
+                hasUnreadMessages: false,
+            },
+        ]);
+
+        const params = buildBaseParams();
+        const updateData: ApiUpdateContainer = {
+            id: 'u_plain_session_cache_only_direct_runtime_local',
+            seq: 11,
+            createdAt: 1235,
+            body: {
+                t: 'update-session',
+                id: 's_cached_direct',
+                metadata: {
+                    version: 2,
+                    value: JSON.stringify({
+                        path: '/work',
+                        host: 'devbox',
+                        directSessionAttentionV1: {
+                            v: 1,
+                            observedProgressToken: '20:msg-2',
+                            viewedProgressToken: '10:msg-1',
+                            observedAtMs: 20,
+                            viewedAtMs: 10,
+                        },
+                    }),
+                },
+            },
+        };
+
+        await handleUpdateContainer({
+            ...params,
+            updateData,
+        });
+
+        expect((params.fetchSessions as unknown as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+        const renderable = storage.getState().sessionListRenderables.s_cached_direct;
+        expect(renderable?.metadata).toEqual(expect.objectContaining({
+            path: '/work',
+            host: 'devbox',
+            directSessionV1: expect.objectContaining({
+                v: 1,
+                providerId: 'claude',
+            }),
+        }));
+    });
+
+    it('preserves direct-session classification for cache-only renderables when an update sets directSessionV1 to null', async () => {
+        storage.getState().replaceSessionListRenderables([
+            {
+                id: 's_cached_direct',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                active: true,
+                activeAt: 1,
+                archivedAt: null,
+                metadataVersion: 1,
+                agentStateVersion: 0,
+                metadata: {
+                    path: '/tmp',
+                    host: 'localhost',
+                    directSessionV1: {
+                        v: 1,
+                        providerId: 'claude',
+                    },
+                },
+                thinking: false,
+                thinkingAt: 0,
+                presence: 'online',
+                hasUnreadMessages: false,
+            },
+        ]);
+
+        const params = buildBaseParams();
+        const updateData: ApiUpdateContainer = {
+            id: 'u_plain_session_cache_only_direct_runtime_local_null',
+            seq: 12,
+            createdAt: 1236,
+            body: {
+                t: 'update-session',
+                id: 's_cached_direct',
+                metadata: {
+                    version: 2,
+                    value: JSON.stringify({
+                        path: '/work',
+                        host: 'devbox',
+                        directSessionV1: null,
+                        directSessionAttentionV1: {
+                            v: 1,
+                            observedProgressToken: '20:msg-2',
+                            viewedProgressToken: '10:msg-1',
+                            observedAtMs: 20,
+                            viewedAtMs: 10,
+                        },
+                    }),
+                },
+            },
+        };
+
+        await handleUpdateContainer({
+            ...params,
+            updateData,
+        });
+
+        expect((params.fetchSessions as unknown as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+        const renderable = storage.getState().sessionListRenderables.s_cached_direct;
+        expect(renderable?.metadata).toEqual(expect.objectContaining({
+            path: '/work',
+            host: 'devbox',
+            directSessionV1: expect.objectContaining({
+                v: 1,
+                providerId: 'claude',
+            }),
+        }));
+    });
+
+    it('preserves direct-session classification for cache-only renderables when an update sets directSessionV1 to null', async () => {
+        storage.getState().replaceSessionListRenderables([
+            {
+                id: 's_cached_direct',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                active: true,
+                activeAt: 1,
+                archivedAt: null,
+                metadataVersion: 1,
+                agentStateVersion: 0,
+                metadata: {
+                    path: '/tmp',
+                    host: 'localhost',
+                    directSessionV1: {
+                        v: 1,
+                        providerId: 'claude',
+                    },
+                },
+                thinking: false,
+                thinkingAt: 0,
+                presence: 'online',
+                hasUnreadMessages: false,
+            },
+        ]);
+
+        const params = buildBaseParams();
+        const updateData: ApiUpdateContainer = {
+            id: 'u_plain_session_cache_only_direct_runtime_local_null_link',
+            seq: 11,
+            createdAt: 1235,
+            body: {
+                t: 'update-session',
+                id: 's_cached_direct',
+                metadata: {
+                    version: 2,
+                    value: JSON.stringify({
+                        path: '/work',
+                        host: 'devbox',
+                        directSessionV1: null,
+                        directSessionAttentionV1: {
+                            v: 1,
+                            observedProgressToken: '20:msg-2',
+                            viewedProgressToken: '10:msg-1',
+                            observedAtMs: 20,
+                            viewedAtMs: 10,
+                        },
+                    }),
+                },
+            },
+        };
+
+        await handleUpdateContainer({
+            ...params,
+            updateData,
+        });
+
+        expect((params.fetchSessions as unknown as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+        const renderable = storage.getState().sessionListRenderables.s_cached_direct;
+        expect(renderable?.metadata).toEqual(expect.objectContaining({
+            path: '/work',
+            host: 'devbox',
+            directSessionV1: expect.objectContaining({
+                v: 1,
+                providerId: 'claude',
+            }),
+        }));
     });
 });

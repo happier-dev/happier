@@ -6,11 +6,11 @@ const { mockRequest, mockResolveContext, mockRuntimeFetchWithServerReachability,
   mockRuntimeFetchWithServerReachability: vi.fn(),
   mockStorageState: {
     sessions: {},
-    sessionListViewDataByServerId: {},
+    concurrentSessionListCacheByServerId: {},
     applySessions: vi.fn(),
   } as {
     sessions: Record<string, unknown>;
-    sessionListViewDataByServerId: Record<string, unknown>;
+    concurrentSessionListCacheByServerId: Record<string, unknown>;
     applySessions: ReturnType<typeof vi.fn>;
   },
 }));
@@ -59,7 +59,7 @@ describe('sessionArchiveWithServerScope', () => {
     mockResolveContext.mockReset();
     mockRuntimeFetchWithServerReachability.mockReset();
     mockStorageState.sessions = {};
-    mockStorageState.sessionListViewDataByServerId = {};
+    mockStorageState.concurrentSessionListCacheByServerId = {};
     mockStorageState.applySessions.mockReset();
   });
 
@@ -111,13 +111,27 @@ describe('sessionArchiveWithServerScope', () => {
   });
 
   it('defaults a null serverId to the preferred owner server from local cache', async () => {
-    mockStorageState.sessionListViewDataByServerId = {
-      'server-owned': [
-        {
-          type: 'session',
-          session: { id: 'sid-owned' },
+    const now = Date.now();
+    mockStorageState.concurrentSessionListCacheByServerId = {
+      'server-owned': {
+        serverName: 'Owned',
+        sessions: {
+          'sid-owned': {
+            id: 'sid-owned',
+            seq: 0,
+            createdAt: now,
+            updatedAt: now,
+            active: true,
+            activeAt: now,
+            metadataVersion: 0,
+            agentStateVersion: 0,
+            metadata: null,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+          },
         },
-      ],
+      },
     };
     mockResolveContext.mockResolvedValue({
       scope: 'active',

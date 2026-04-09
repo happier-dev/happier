@@ -56,6 +56,24 @@ describe('AppCrashRecoveryBoundary', () => {
     expect(screen.findByTestId('app-crash-copy-details')).toBeTruthy();
   });
 
+  it('includes a component stack section in fallback details when React provides it', async () => {
+    const { AppCrashRecoveryBoundary } = await import('@/components/appShell/AppCrashRecoveryBoundary');
+    const Thrower = () => {
+      throw new Error('boom');
+    };
+    const Wrapper = () => <Thrower />;
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const screen = await renderScreen(<AppCrashRecoveryBoundary onRestart={() => {}}>
+          <Wrapper />
+        </AppCrashRecoveryBoundary>);
+    consoleError.mockRestore();
+
+    expect(screen.getTextContent()).toContain('Component stack');
+    expect(screen.getTextContent()).toContain('Wrapper');
+    expect(screen.getTextContent()).toContain('Thrower');
+  });
+
   it('renders the crash fallback inside a full-height scroll view', async () => {
     const { AppCrashRecoveryBoundary } = await import('@/components/appShell/AppCrashRecoveryBoundary');
     const Thrower = () => {
@@ -72,6 +90,30 @@ describe('AppCrashRecoveryBoundary', () => {
     const scrollView = screen.findByType(ScrollView);
     expect(scrollView.props.style).toEqual(expect.objectContaining({ flex: 1 }));
     expect(scrollView.props.contentContainerStyle).toEqual(expect.objectContaining({ flexGrow: 1 }));
+  });
+
+  it('includes the React component stack in crash details when available', async () => {
+    const { AppCrashRecoveryBoundary } = await import('@/components/appShell/AppCrashRecoveryBoundary');
+    const Wrapper = () => <Thrower />;
+    const Thrower = () => {
+      throw new Error('boom');
+    };
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const screen = await renderScreen(<AppCrashRecoveryBoundary onRestart={() => {}}>
+          <Wrapper />
+        </AppCrashRecoveryBoundary>);
+    consoleError.mockRestore();
+
+    const textContent = screen.findAllByType('Text' as never)
+      .map((node) => {
+        const value = node.props.children;
+        return Array.isArray(value) ? value.join('') : String(value ?? '');
+      })
+      .join('\n');
+
+    expect(textContent).toContain('boom');
+    expect(textContent).toContain('Wrapper');
   });
 
   it('invokes onRestart when the restart button is pressed', async () => {

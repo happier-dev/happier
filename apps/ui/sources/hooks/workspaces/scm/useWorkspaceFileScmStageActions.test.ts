@@ -36,6 +36,7 @@ vi.mock('@/text', async () => {
 });
 
 vi.mock('@/scm/settings/commitStrategy', () => ({
+    SCM_COMMIT_STRATEGIES: ['atomic', 'split'] as const,
     isAtomicCommitStrategy: () => true,
 }));
 

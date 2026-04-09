@@ -48,9 +48,11 @@ function mockSessionsDomainBoundaries() {
     vi.doMock('../../domains/state/warmCacheAdapters', () => ({
         buildSessionListCacheEntriesFromRenderables: vi.fn(() => []),
     }));
-    vi.doMock('../buildSessionListViewDataWithServerScope', () => ({
+    vi.doMock('../../domains/session/listing/applyReachableTargetsToSessionListRenderables', () => ({
         applyReachableTargetsToSessionListRenderables: vi.fn(({ sessions }) => sessions),
-        buildSessionListViewDataWithServerScope: vi.fn(() => []),
+    }));
+    vi.doMock('../sessionListIndex/buildSessionListIndexWithServerScope', () => ({
+        buildActiveServerSessionListIndex: vi.fn(() => []),
     }));
     vi.doMock('../../domains/server/serverRuntime', () => ({
         getActiveServerSnapshot: vi.fn(() => ({ serverId: 'server_1' })),
@@ -74,8 +76,7 @@ function createHarness(createSessionsDomain: any, createReducer: any) {
     let state: any = {
         sessions: {},
         sessionListRenderables: {},
-        sessionListViewData: null,
-        sessionListViewDataByServerId: {},
+        concurrentSessionListCacheByServerId: {},
         sessionScmStatus: {},
         sessionLastViewed: {},
         sessionRepositoryTreeExpandedPathsBySessionId: {},

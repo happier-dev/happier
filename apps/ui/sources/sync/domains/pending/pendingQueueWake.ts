@@ -59,7 +59,7 @@ export function getPendingQueueWakeResumeOptions(opts: {
         sessionId,
         session,
         resumeCapabilityOptions,
-        resumeTargetOverride,
+        resumeTargetOverride: resumeTargetOverride ?? { machineId, directory },
         permissionOverride,
     });
     if (!base) return null;

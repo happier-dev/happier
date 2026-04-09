@@ -5,12 +5,15 @@ import { createSessionsDomain } from './sessions';
 function createHarness() {
     let state: any = {
         sessions: {},
-        sessionListViewData: null,
-        sessionListViewDataByServerId: {},
+        sessionListRenderables: {},
+        sessionListRowStateByServerId: {},
+        sessionListIndexByServerId: {},
+        concurrentSessionListCacheByServerId: {},
         sessionScmStatus: {},
         sessionLastViewed: {},
         isDataReady: false,
         machines: {},
+        machineDisplayById: {},
         sessionMessages: {},
         settings: { groupInactiveSessionsByProject: false },
     };

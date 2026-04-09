@@ -25,8 +25,7 @@ import { clearPersistence, loadSessionDrafts } from '@/sync/domains/state/persis
 function createHarness() {
   let state: any = {
     sessions: {},
-    sessionListViewData: null,
-    sessionListViewDataByServerId: {},
+    concurrentSessionListCacheByServerId: {},
     sessionScmStatus: {},
     sessionLastViewed: {},
         sessionRepositoryTreeExpandedPathsBySessionId: {},

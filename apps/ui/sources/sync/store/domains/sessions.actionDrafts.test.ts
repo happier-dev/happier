@@ -25,15 +25,19 @@ import { clearPersistence } from '@/sync/domains/state/persistence';
 function createHarness() {
     let state: any = {
         sessions: {},
-        sessionListViewData: null,
-        sessionListViewDataByServerId: {},
+        sessionListIndexByServerId: {},
+        sessionListRowStateByServerId: {},
+        concurrentSessionListCacheByServerId: {},
         sessionScmStatus: {},
         sessionLastViewed: {},
         sessionRepositoryTreeExpandedPathsBySessionId: {},
+        workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey: {},
         reviewCommentsDraftsBySessionId: {},
+        reviewCommentsDraftsByWorkspaceCacheKey: {},
         actionDraftsBySessionId: {},
         isDataReady: false,
         machines: {},
+        machineDisplayById: {},
         sessionMessages: {},
         settings: { groupInactiveSessionsByProject: false },
     };

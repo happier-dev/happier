@@ -6,11 +6,11 @@ const { mockRequest, mockResolveContext, mockRuntimeFetch, mockStorageState } = 
   mockRuntimeFetch: vi.fn(),
   mockStorageState: {
     sessions: {},
-    sessionListViewDataByServerId: {},
+    concurrentSessionListCacheByServerId: {},
     applySessions: vi.fn(),
   } as {
     sessions: Record<string, unknown>;
-    sessionListViewDataByServerId: Record<string, unknown>;
+    concurrentSessionListCacheByServerId: Record<string, unknown>;
     applySessions: ReturnType<typeof vi.fn>;
   },
 }));
@@ -53,7 +53,7 @@ describe('sessionDeleteWithServerScope', () => {
     mockResolveContext.mockReset();
     mockRuntimeFetch.mockReset();
     mockStorageState.sessions = {};
-    mockStorageState.sessionListViewDataByServerId = {};
+    mockStorageState.concurrentSessionListCacheByServerId = {};
     mockStorageState.applySessions.mockReset();
   });
 
