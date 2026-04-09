@@ -42,6 +42,7 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
     const workspaceRef = useWorkspaceRefById(props.workspaceRefId);
     const [localActiveRootPath, setLocalActiveRootPath] = React.useState<string | null>(null);
     const controlledActiveRootPath = props.activeRootPath ?? null;
+    const workspaceRootPath = workspaceRef?.rootPath ?? '';
     const persistedActiveRootPath = React.useMemo(() => {
         if (!workspaceRef) return null;
         const value = lastActiveRootPathByWorkspaceRefId?.[workspaceRef.id];
@@ -83,6 +84,92 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
         onSetShowWorktrees: props.onSetShowWorktrees,
         detailsState,
     });
+    const requestedActiveRootPath = controlledActiveRootPath ?? localActiveRootPath ?? persistedActiveRootPath ?? workspaceRootPath;
+    const {
+        requestedRootPath,
+        resolvedRootPath: resolvedActiveRootPath,
+        resolvedWorktreeId: resolvedActiveWorktreeId,
+        didRecoverMissingWorktree,
+        availableWorktrees,
+    } = useResolvedRepoWorktreeSelection({
+        serverId: workspaceRef?.serverId ?? '',
+        machineId: workspaceRef?.machineId ?? '',
+        defaultRootPath: workspaceRootPath,
+        requestedRootPath: requestedActiveRootPath,
+            requestedWorktreeId: workspaceRef != null
+            && controlledActiveRootPath == null
+            && localActiveRootPath == null
+            && typeof lastActiveWorktreeIdByWorkspaceRefId?.[workspaceRef.id] === 'string'
+            && lastActiveWorktreeIdByWorkspaceRefId[workspaceRef.id] !== PROJECT_ROUTE_ROOT_SENTINEL
+                ? lastActiveWorktreeIdByWorkspaceRefId[workspaceRef.id]
+                : null,
+    });
+    const recoveryToastKey = didRecoverMissingWorktree
+        ? `${workspaceRef?.id ?? props.workspaceRefId}:${requestedRootPath}`
+        : null;
+    const handleSelectRootPath = React.useCallback((path: string) => {
+        const trimmedPath = path.trim();
+        if (!trimmedPath || !workspaceRef) return;
+        const nextWorktreeId = trimmedPath === workspaceRef.rootPath
+            ? null
+            : (findVisibleRepoWorktreeByPath(availableWorktrees, trimmedPath)?.id ?? null);
+        if (controlledActiveRootPath == null) {
+            setLocalActiveRootPath(trimmedPath);
+        }
+        setLastActiveRootPathByWorkspaceRefId({
+            ...(lastActiveRootPathByWorkspaceRefId ?? {}),
+            [props.workspaceRefId]: trimmedPath,
+        });
+        setLastActiveWorktreeIdByWorkspaceRefId({
+            ...(lastActiveWorktreeIdByWorkspaceRefId ?? {}),
+            [props.workspaceRefId]: nextWorktreeId ?? PROJECT_ROUTE_ROOT_SENTINEL,
+        });
+        props.onSelectRootPath?.(trimmedPath);
+    }, [
+        availableWorktrees,
+        controlledActiveRootPath,
+        lastActiveRootPathByWorkspaceRefId,
+        lastActiveWorktreeIdByWorkspaceRefId,
+        props.onSelectRootPath,
+        props.workspaceRefId,
+        setLastActiveRootPathByWorkspaceRefId,
+        setLastActiveWorktreeIdByWorkspaceRefId,
+        workspaceRef,
+    ]);
+
+    React.useEffect(() => {
+        if (!workspaceRef) return;
+        if (requestedRootPath === resolvedActiveRootPath) return;
+
+        setLastActiveRootPathByWorkspaceRefId({
+            ...(lastActiveRootPathByWorkspaceRefId ?? {}),
+            [props.workspaceRefId]: resolvedActiveRootPath,
+        });
+        setLastActiveWorktreeIdByWorkspaceRefId({
+            ...(lastActiveWorktreeIdByWorkspaceRefId ?? {}),
+            [props.workspaceRefId]: resolvedActiveWorktreeId ?? PROJECT_ROUTE_ROOT_SENTINEL,
+        });
+
+        if (controlledActiveRootPath == null) {
+            setLocalActiveRootPath(resolvedActiveRootPath);
+        }
+
+        if (controlledActiveRootPath != null) {
+            props.onSelectRootPath?.(resolvedActiveRootPath);
+        }
+    }, [
+        controlledActiveRootPath,
+        lastActiveRootPathByWorkspaceRefId,
+        lastActiveWorktreeIdByWorkspaceRefId,
+        props.onSelectRootPath,
+        props.workspaceRefId,
+        requestedRootPath,
+        resolvedActiveRootPath,
+        resolvedActiveWorktreeId,
+        setLastActiveRootPathByWorkspaceRefId,
+        setLastActiveWorktreeIdByWorkspaceRefId,
+        workspaceRef,
+    ]);
 
     if (!workspaceRef) {
         return (
@@ -120,91 +207,6 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
             </ItemList>
         );
     }
-
-    const requestedActiveRootPath = controlledActiveRootPath ?? localActiveRootPath ?? persistedActiveRootPath ?? workspaceRef.rootPath;
-    const {
-        requestedRootPath,
-        resolvedRootPath: resolvedActiveRootPath,
-        resolvedWorktreeId: resolvedActiveWorktreeId,
-        didRecoverMissingWorktree,
-        availableWorktrees,
-    } = useResolvedRepoWorktreeSelection({
-        serverId: workspaceRef.serverId,
-        machineId: workspaceRef.machineId,
-        defaultRootPath: workspaceRef.rootPath,
-        requestedRootPath: requestedActiveRootPath,
-        requestedWorktreeId: controlledActiveRootPath == null && localActiveRootPath == null && typeof lastActiveWorktreeIdByWorkspaceRefId?.[workspaceRef.id] === 'string'
-            && lastActiveWorktreeIdByWorkspaceRefId[workspaceRef.id] !== PROJECT_ROUTE_ROOT_SENTINEL
-            ? lastActiveWorktreeIdByWorkspaceRefId[workspaceRef.id]
-            : null,
-    });
-    const recoveryToastKey = didRecoverMissingWorktree
-        ? `${workspaceRef.id}:${requestedRootPath}`
-        : null;
-
-    const handleSelectRootPath = React.useCallback((path: string) => {
-        const trimmedPath = path.trim();
-        if (!trimmedPath) return;
-        const nextWorktreeId = trimmedPath === workspaceRef.rootPath
-            ? null
-            : (findVisibleRepoWorktreeByPath(availableWorktrees, trimmedPath)?.id ?? null);
-        if (controlledActiveRootPath == null) {
-            setLocalActiveRootPath(trimmedPath);
-        }
-        setLastActiveRootPathByWorkspaceRefId({
-            ...(lastActiveRootPathByWorkspaceRefId ?? {}),
-            [props.workspaceRefId]: trimmedPath,
-        });
-        setLastActiveWorktreeIdByWorkspaceRefId({
-            ...(lastActiveWorktreeIdByWorkspaceRefId ?? {}),
-            [props.workspaceRefId]: nextWorktreeId ?? PROJECT_ROUTE_ROOT_SENTINEL,
-        });
-        props.onSelectRootPath?.(trimmedPath);
-    }, [
-        availableWorktrees,
-        controlledActiveRootPath,
-        lastActiveRootPathByWorkspaceRefId,
-        lastActiveWorktreeIdByWorkspaceRefId,
-        props.onSelectRootPath,
-        props.workspaceRefId,
-        setLastActiveRootPathByWorkspaceRefId,
-        setLastActiveWorktreeIdByWorkspaceRefId,
-        workspaceRef.rootPath,
-    ]);
-
-    React.useEffect(() => {
-        if (!workspaceRef) return;
-        if (requestedRootPath === resolvedActiveRootPath) return;
-
-        setLastActiveRootPathByWorkspaceRefId({
-            ...(lastActiveRootPathByWorkspaceRefId ?? {}),
-            [props.workspaceRefId]: resolvedActiveRootPath,
-        });
-        setLastActiveWorktreeIdByWorkspaceRefId({
-            ...(lastActiveWorktreeIdByWorkspaceRefId ?? {}),
-            [props.workspaceRefId]: resolvedActiveWorktreeId ?? PROJECT_ROUTE_ROOT_SENTINEL,
-        });
-
-        if (controlledActiveRootPath == null) {
-            setLocalActiveRootPath(resolvedActiveRootPath);
-        }
-
-        if (controlledActiveRootPath != null) {
-            props.onSelectRootPath?.(resolvedActiveRootPath);
-        }
-    }, [
-        controlledActiveRootPath,
-        lastActiveRootPathByWorkspaceRefId,
-        lastActiveWorktreeIdByWorkspaceRefId,
-        props.onSelectRootPath,
-        props.workspaceRefId,
-        requestedRootPath,
-        resolvedActiveRootPath,
-        resolvedActiveWorktreeId,
-        setLastActiveRootPathByWorkspaceRefId,
-        setLastActiveWorktreeIdByWorkspaceRefId,
-        workspaceRef,
-    ]);
 
     return (
         <View style={{ flex: 1 }}>

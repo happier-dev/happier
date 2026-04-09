@@ -58,7 +58,8 @@ const ProjectsListItemMenu = React.memo((props: ProjectsListItemMenuProps) => {
             onOpenChange={setOpen}
             items={props.items}
             onSelect={props.onSelect}
-            placement="left"
+            placement="bottom"
+            popoverAnchorAlign="end"
             variant="slim"
             matchTriggerWidth={false}
             maxWidthCap={240}

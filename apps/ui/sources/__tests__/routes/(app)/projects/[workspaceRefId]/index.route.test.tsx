@@ -72,7 +72,7 @@ vi.mock('@/utils/platform/deferOnWeb', () => ({
 describe('project index route', () => {
     it('redirects phone users to the last-used project sub-route', async () => {
         deviceTypeMock = 'phone';
-        const { default: ProjectIndexRoute } = await import('./index');
+        const { default: ProjectIndexRoute } = await import('@/app/(app)/projects/[workspaceRefId]/index');
 
         const screen = await renderScreen(<ProjectIndexRoute />);
 
@@ -86,7 +86,7 @@ describe('project index route', () => {
         routerMock.spies.replace.mockClear();
         openDetailsTabSpy.mockClear();
 
-        const { default: ProjectIndexRoute } = await import('./index');
+        const { default: ProjectIndexRoute } = await import('@/app/(app)/projects/[workspaceRefId]/index');
         await renderScreen(<ProjectIndexRoute />);
 
         expect(stackOptionsCapture.getResolved()).toEqual(expect.objectContaining({

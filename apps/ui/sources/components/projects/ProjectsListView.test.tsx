@@ -106,6 +106,22 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     });
 });
 
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
+    DropdownMenu: (props: any) => {
+        const triggerParams = {
+            open: Boolean(props.open),
+            toggle: vi.fn(),
+            openMenu: vi.fn(),
+            closeMenu: vi.fn(),
+            selectedItem: null,
+        };
+        const triggerResult = typeof props.trigger === 'function'
+            ? props.trigger(triggerParams)
+            : props.trigger ?? null;
+        return React.createElement('DropdownMenu', props, triggerResult);
+    },
+}));
+
 function createMachine(params: Readonly<{
     id: string;
     host: string;
@@ -259,5 +275,24 @@ describe('ProjectsListView', () => {
         await screen.pressByTestIdAsync('projects-list-item-wr_1');
 
         expect(routerPushSpy).toHaveBeenCalledWith('/projects/wr_1/git?worktreeId=gitwt_feature');
+    });
+
+    it('anchors project row menus below the trigger', async () => {
+        workspaceRefsV1Mock = [{
+            id: 'wr_1',
+            serverId: 'server-1',
+            machineId: 'm1',
+            rootPath: '/repo',
+            label: 'Repo',
+            createdAtMs: 1,
+        }];
+
+        const { ProjectsListView } = await import('./ProjectsListView');
+        const screen = await renderScreen(<ProjectsListView />);
+
+        const dropdowns = screen.findAllByType('DropdownMenu' as any);
+        expect(dropdowns.length).toBeGreaterThan(0);
+        expect(dropdowns[0]?.props.placement).toBe('bottom');
+        expect(dropdowns[0]?.props.popoverAnchorAlign).toBe('end');
     });
 });

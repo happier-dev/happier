@@ -39,7 +39,7 @@ import { useWorkspaceRepositoryTreeWebDropState } from '@/hooks/workspaces/files
 import { useWorkspaceRepositoryTreeRowActions } from '@/hooks/workspaces/files/useWorkspaceRepositoryTreeRowActions';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
-import { readServerEnabledBit } from '@happier-dev/protocol';
+import { resolveTransferAvailability } from '@/sync/domains/transfers/runtime/transferRuntime';
 import { WorkspaceRepositoryTreeList, type WorkspaceRepositoryTreeWebDropTarget } from './WorkspaceRepositoryTreeList';
 
 export type WorkspaceRepositoryTreeBrowserViewProps = Readonly<{
@@ -97,8 +97,14 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
     const serverSnapshot = useServerFeaturesSnapshotForServerId(workspaceScope?.serverId ?? null, {
         enabled: Boolean(workspaceScope?.serverId) && machineRpcTargetAvailable,
     });
-    const transferActionsAvailable = serverSnapshot.status === 'ready'
-        && readServerEnabledBit(serverSnapshot.features, 'machines.transfer') === true
+    const machineTransferEnabled = serverSnapshot.status === 'ready'
+        ? resolveTransferAvailability({
+            serverFeatures: serverSnapshot.features,
+            directPeerRoute: { status: 'unknown' },
+            machineRpcDirectRoute: { status: 'unknown' },
+        }).machineTransferEnabled
+        : false;
+    const transferActionsAvailable = machineTransferEnabled
         && machineRpcTargetAvailable
         && workspaceScope !== null;
 
