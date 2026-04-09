@@ -17,7 +17,7 @@ const SAFE_SERVER_PROTOCOLS = new Set(['http:', 'https:']);
 function isLoopbackHostname(hostname: string): boolean {
   const host = String(hostname ?? '').trim().toLowerCase();
   if (!host) return false;
-  if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || host === '::1') return true;
+  if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || host === '::1' || host === '[::1]') return true;
   if (host.endsWith('.localhost')) return true;
   return false;
 }

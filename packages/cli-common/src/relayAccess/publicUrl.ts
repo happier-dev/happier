@@ -7,8 +7,13 @@ import { getRelayAccessProvider } from './registry.js';
 import type { RelayAccessConfig, RelayAccessStatus } from './types.js';
 
 type RelayAccessConfigEnv = Readonly<Record<string, string | undefined>>;
+type ResolveRelayAccessConfiguredCanonicalPublicServerUrlOptions = Readonly<{
+    upstreamUrl?: string | null;
+    allowTailscaleProviders?: boolean;
+}>;
 
 const defaultRelayAccessConfigEnv: RelayAccessConfigEnv = {};
+const defaultResolveRelayAccessConfiguredCanonicalPublicServerUrlOptions: ResolveRelayAccessConfiguredCanonicalPublicServerUrlOptions = {};
 
 function normalizeHttpUrl(raw: unknown): string | null {
     const value = String(raw ?? '').trim();
@@ -31,10 +36,14 @@ function normalizeHttpUrl(raw: unknown): string | null {
     return parsed.toString().replace(/\/+$/, '');
 }
 
-async function resolveRelayAccessStatusShareUrlWithEnv(config: RelayAccessConfig, env: NodeJS.ProcessEnv): Promise<string | null> {
+async function resolveRelayAccessStatusShareUrlWithEnv(
+    config: RelayAccessConfig,
+    env: NodeJS.ProcessEnv,
+    upstreamUrl: string | null,
+): Promise<string | null> {
     try {
         const provider = getRelayAccessProvider(config.providerId);
-        const status = await provider.status({ config, ctx: { env, upstreamUrl: null } });
+        const status = await provider.status({ config, ctx: { env, upstreamUrl } });
         return resolveRelayAccessStatusShareUrlFromStatus(status);
     } catch {
         return null;
@@ -86,10 +95,18 @@ async function readPersistedRelayAccessConfigFromEnv(
 
 export async function resolveRelayAccessConfiguredCanonicalPublicServerUrl(
     env: RelayAccessConfigEnv = defaultRelayAccessConfigEnv,
+    options: ResolveRelayAccessConfiguredCanonicalPublicServerUrlOptions = defaultResolveRelayAccessConfiguredCanonicalPublicServerUrlOptions,
 ): Promise<string | null> {
     const config = await readPersistedRelayAccessConfigFromEnv(env);
     if (!config) return null;
-    return await resolveRelayAccessStatusShareUrlWithEnv(config, env as NodeJS.ProcessEnv);
+
+    const upstreamUrl = String(options.upstreamUrl ?? '').trim() || null;
+    const allowTailscaleProviders = options.allowTailscaleProviders ?? true;
+    if (config.providerId === 'tailscaleServe' || config.providerId === 'tailscaleFunnel') {
+        if (!allowTailscaleProviders) return null;
+        if (!upstreamUrl) return null;
+    }
+    return await resolveRelayAccessStatusShareUrlWithEnv(config, env as NodeJS.ProcessEnv, upstreamUrl);
 }
 
 export function normalizeRelayAccessCanonicalPublicServerUrl(raw: unknown): string | null {

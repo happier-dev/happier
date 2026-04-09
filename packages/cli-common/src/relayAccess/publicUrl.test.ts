@@ -43,7 +43,7 @@ describe('relayAccess publicUrl', () => {
         }
     });
 
-    it('reads the persisted tailscaleFunnel config and resolves the canonical public url from funnel status', async () => {
+    it('does not treat a persisted tailscaleFunnel config as a canonical public url without an upstream match', async () => {
         const { runTailscaleStatusJson, runTailscaleFunnelStatus } = await import('../tailscale/index.js');
         vi.mocked(runTailscaleStatusJson).mockResolvedValue({
             backendState: 'Running',
@@ -68,6 +68,42 @@ describe('relayAccess publicUrl', () => {
 
             await expect(
             resolveRelayAccessConfiguredCanonicalPublicServerUrl({ HOME: homeDir }),
+            ).resolves.toBeNull();
+            expect(runTailscaleFunnelStatus).toHaveBeenCalledTimes(0);
+            expect(runTailscaleStatusJson).toHaveBeenCalledTimes(0);
+        } finally {
+            await rm(homeDir, { recursive: true, force: true });
+        }
+    });
+
+    it('resolves a persisted tailscaleFunnel canonical public url when the caller provides the matching upstream url', async () => {
+        const { runTailscaleStatusJson, runTailscaleFunnelStatus } = await import('../tailscale/index.js');
+        vi.mocked(runTailscaleStatusJson).mockResolvedValue({
+            backendState: 'Running',
+            authUrl: null,
+            dnsName: 'my-machine.tailnet.ts.net',
+            tailnetName: 'tailnet.ts.net',
+            tailscaleIps: [],
+            loggedIn: true,
+        });
+        vi.mocked(runTailscaleFunnelStatus).mockResolvedValue(
+            'https://relay.example.test\n|-- / proxy http://127.0.0.1:3005',
+        );
+
+        const homeDir = await mkdtemp(join(tmpdir(), 'happier-relay-access-'));
+        try {
+            await mkdir(join(homeDir, '.happier', 'relay', 'access'), { recursive: true });
+            await writeFile(
+                join(homeDir, '.happier', 'relay', 'access', 'local.json'),
+                JSON.stringify({ providerId: 'tailscaleFunnel' }),
+                'utf8',
+            );
+
+            await expect(
+                resolveRelayAccessConfiguredCanonicalPublicServerUrl(
+                    { HOME: homeDir },
+                    { upstreamUrl: 'http://127.0.0.1:3005' },
+                ),
             ).resolves.toBe('https://relay.example.test');
             expect(runTailscaleFunnelStatus).toHaveBeenCalledTimes(1);
             expect(runTailscaleStatusJson).toHaveBeenCalledTimes(1);

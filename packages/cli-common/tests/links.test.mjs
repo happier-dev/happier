@@ -66,6 +66,22 @@ test('buildTerminalConnectLinks keeps loopback server URL for local web auth lin
   );
 });
 
+test('buildTerminalConnectLinks keeps loopback server URL for IPv6 loopback web auth links', () => {
+  const webappUrl = 'http://[::1]:8082';
+  const serverUrl = 'http://127.0.0.1:3010';
+  const publicKeyB64Url = 'abcDEF_123-zzz';
+
+  const out = buildTerminalConnectLinks({ webappUrl, serverUrl, publicKeyB64Url });
+  assert.equal(
+    out.webUrl,
+    'http://[::1]:8082/terminal/connect#key=abcDEF_123-zzz&server=http%3A%2F%2F127.0.0.1%3A3010',
+  );
+  assert.equal(
+    out.mobileUrl,
+    'happier://terminal?key=abcDEF_123-zzz',
+  );
+});
+
 test('buildConfigureServerLinks omits loopback server URL from shareable links', () => {
   const webappUrl = 'https://app.happier.dev';
   const serverUrl = 'http://127.0.0.1:3010';
