@@ -210,4 +210,166 @@ describe('buildHappierRuntimeWarnings', () => {
       expect.objectContaining({ code: 'LEGACY_PINNED_DAEMON_SERVICE' }),
     ]));
   });
+
+  it('only warns about PATH conflicts when the same Happier shim resolves to multiple installs', () => {
+    const installations: HappierInstallationInventory = {
+      activeInvocation: null,
+      installations: [
+        {
+          id: 'managed:stable:/opt/happier/cli/current',
+          source: 'firstPartyManaged',
+          components: ['happier-cli', 'happier-daemon'],
+          ring: 'stable',
+          version: '1.2.3',
+          path: '/opt/happier/cli/current',
+          realPath: '/opt/happier/cli/current',
+          shimName: 'happier',
+          onPath: true,
+          managedRoot: '/opt/happier/cli',
+        },
+        {
+          id: 'managed:publicdev:/opt/happier/cli-dev/current',
+          source: 'firstPartyManaged',
+          components: ['happier-cli', 'happier-daemon'],
+          ring: 'dev',
+          version: '2.0.0-dev.1',
+          path: '/opt/happier/cli-dev/current',
+          realPath: '/opt/happier/cli-dev/current',
+          shimName: 'hdev',
+          onPath: true,
+          managedRoot: '/opt/happier/cli-dev',
+        },
+      ],
+    };
+    const services: HappierServiceInventory = { services: [] };
+
+    expect(buildHappierRuntimeWarnings({ installations, services })).toEqual([]);
+    expect(buildHappierRuntimeWarnings({
+      installations: {
+        ...installations,
+        installations: [
+          ...installations.installations,
+          {
+            id: 'npmGlobal:/opt/homebrew/lib/node_modules/@happier-dev/cli',
+            source: 'npmGlobal',
+            components: ['happier-cli', 'happier-daemon'],
+            ring: 'stable',
+            version: '3.0.0',
+            path: '/opt/homebrew/lib/node_modules/@happier-dev/cli',
+            realPath: '/opt/homebrew/lib/node_modules/@happier-dev/cli',
+            shimName: 'happier',
+            onPath: true,
+            managedRoot: '/opt/homebrew',
+            packageManager: {
+              kind: 'npmGlobal',
+              executablePath: '/opt/homebrew/bin/npm',
+              packageName: '@happier-dev/cli',
+            },
+          },
+        ],
+      },
+      services,
+    })).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'MULTIPLE_HAPPIER_INSTALLATIONS_ON_PATH' }),
+    ]));
+  });
+
+  it('describes service-managed owner drift when the current CLI differs from the running owner', () => {
+    const installations: HappierInstallationInventory = {
+      activeInvocation: {
+        path: '/opt/happier/bin/hprev',
+        realPath: '/opt/happier/bin/hprev',
+        invokerName: 'hprev',
+        ring: 'preview',
+        version: '1.2.3',
+        installationId: 'managed:preview:/opt/happier/cli-preview/current',
+      },
+      installations: [
+        {
+          id: 'managed:preview:/opt/happier/cli-preview/current',
+          source: 'firstPartyManaged',
+          components: ['happier-cli', 'happier-daemon'],
+          ring: 'preview',
+          version: '1.2.3',
+          path: '/opt/happier/cli-preview/current',
+          realPath: '/opt/happier/cli-preview/current',
+          shimName: 'hprev',
+          onPath: true,
+          managedRoot: '/opt/happier/cli-preview',
+        },
+      ],
+    };
+    const services: HappierServiceInventory = { services: [] };
+
+    const warnings = buildHappierRuntimeWarnings({
+      installations,
+      services,
+      daemonStatus: {
+        daemon: {
+          startedWithCliVersion: '1.2.2',
+          startedWithPublicReleaseChannel: 'stable',
+          serviceManaged: true,
+        },
+      },
+    });
+
+    expect(warnings).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'DAEMON_STARTED_WITH_DIFFERENT_CLI',
+        message: expect.stringContaining('background service'),
+        repairCommands: ['happier service repair --yes', 'happier daemon restart'],
+      }),
+    ]));
+  });
+
+  it('treats equivalent loopback aliases as the same pinned relay when building warnings', () => {
+    const installations: HappierInstallationInventory = {
+      activeInvocation: null,
+      installations: [],
+    };
+    const services: HappierServiceInventory = {
+      services: [
+        {
+          id: 'service:stable:stack-local',
+          serviceType: 'daemon',
+          platform: 'linux',
+          backend: 'systemd-user',
+          label: 'happier-daemon.stack-local',
+          verification: 'verified',
+          targetMode: 'pinned',
+          ring: 'stable',
+          instanceId: 'stack-local',
+          scope: 'user',
+          definitionPath: '/tmp/happier-daemon.stack-local.service',
+          executablePath: '/opt/happier/bin/happier',
+          installed: true,
+          running: true,
+          serverUrl: 'http://127.0.0.1:53288',
+          publicServerUrl: 'http://localhost:53288',
+        },
+        {
+          id: 'service:stable:stack-public',
+          serviceType: 'daemon',
+          platform: 'linux',
+          backend: 'systemd-user',
+          label: 'happier-daemon.stack-public',
+          verification: 'verified',
+          targetMode: 'pinned',
+          ring: 'stable',
+          instanceId: 'stack-public',
+          scope: 'user',
+          definitionPath: '/tmp/happier-daemon.stack-public.service',
+          executablePath: '/opt/happier/bin/happier',
+          installed: true,
+          running: false,
+          serverUrl: 'http://happier-stack.localhost:53288',
+          publicServerUrl: 'http://happier-stack.localhost:53288',
+        },
+      ],
+    };
+
+    expect(buildHappierRuntimeWarnings({ installations, services })).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'CONFLICTING_PINNED_DAEMON_SERVICES_FOR_SERVER' }),
+    ]));
+  });
 });

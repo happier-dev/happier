@@ -1,6 +1,6 @@
 {
   "name": "@happier-dev/support",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Happier support collector and bug-report submitter.",
   "repository": "https://github.com/happier-dev/happier.git",
   "author": "Leeroy Brun <leeroy.brun@gmail.com>",

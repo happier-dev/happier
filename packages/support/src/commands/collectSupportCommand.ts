@@ -1,4 +1,4 @@
-import { output as cliOutput } from '@happier-dev/cli-common';
+import * as cliOutput from '@happier-dev/cli-common/output';
 
 import { buildSupportReport } from '../report/buildSupportReport.js';
 import { renderSupportReport } from '../report/renderSupportReport.js';

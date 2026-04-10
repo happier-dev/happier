@@ -1,4 +1,4 @@
-import { output as cliOutput } from '@happier-dev/cli-common';
+import * as cliOutput from '@happier-dev/cli-common/output';
 import { describeBackgroundServiceTargetMode } from '@happier-dev/cli-common/happierRuntime';
 
 import type {
@@ -29,7 +29,7 @@ function buildServiceRows(entry: SupportServiceEntry): cliOutput.DefinitionListR
   return [
     entry.targetMode ? { label: 'Mode', value: describeBackgroundServiceTargetMode(entry.targetMode) } : null,
     entry.ring ? { label: 'Ring', value: entry.ring } : null,
-    (entry.publicServerUrl ?? entry.serverUrl) ? { label: 'Server', value: entry.publicServerUrl ?? entry.serverUrl ?? '' } : null,
+    (entry.publicServerUrl ?? entry.serverUrl) ? { label: 'Relay', value: entry.publicServerUrl ?? entry.serverUrl ?? '' } : null,
     entry.path ? { label: 'Definition', value: entry.path } : null,
     entry.executablePath ? { label: 'Executable', value: entry.executablePath } : null,
     entry.linkedInstallationPath
@@ -51,13 +51,22 @@ function buildRuntimeTargetRows(entry: SupportRuntimeTargetEntry): cliOutput.Def
 
 export function renderSupportReport(report: SupportReport, options: Readonly<{ presentation?: cliOutput.OutputPresentation }> = {}): string {
   const builder = cliOutput.createOutputBuilder({ presentation: options.presentation });
+  let hasRenderedSection = false;
+  const appendSection = (title: string, build: (section: cliOutput.OutputBuilder) => void): void => {
+    if (hasRenderedSection) {
+      builder.blank();
+    }
+    builder.section(title, build);
+    hasRenderedSection = true;
+  };
+
   builder.line(
     options.presentation?.banner
       ? options.presentation.banner('Support diagnostics', { subtitle: `Captured at ${report.capturedAt}` })
       : `Support diagnostics\nCaptured at ${report.capturedAt}`,
   );
   builder.blank();
-  builder.section('Runtime', (section) => {
+  appendSection('Runtime', (section) => {
     section.definitionList([
       { label: 'Binary', value: report.inventory.invokedBinaryPath },
       { label: 'Version', value: report.inventory.invokedVersion ?? 'unknown' },
@@ -65,10 +74,7 @@ export function renderSupportReport(report: SupportReport, options: Readonly<{ p
       { label: 'Platform', value: report.inventory.platform },
     ]);
   });
-  builder.section('Installations', (section) => {
-    if (report.inventory.installations.length > 0) {
-      section.blank();
-    }
+  appendSection('Installations', (section) => {
     for (const [index, entry] of report.inventory.installations.entries()) {
       section.line(renderInstallationTitle(entry));
       section.definitionList(buildInstallationRows(entry), { indent: '  ' });
@@ -77,10 +83,7 @@ export function renderSupportReport(report: SupportReport, options: Readonly<{ p
       }
     }
   });
-  builder.section('Services', (section) => {
-    if (report.inventory.services.length > 0) {
-      section.blank();
-    }
+  appendSection('Services', (section) => {
     for (const [index, entry] of report.inventory.services.entries()) {
       section.line(renderServiceTitle(entry));
       section.definitionList(buildServiceRows(entry), { indent: '  ' });
@@ -89,10 +92,7 @@ export function renderSupportReport(report: SupportReport, options: Readonly<{ p
       }
     }
   });
-  builder.section('Additional Runtimes', (section) => {
-    if (report.inventory.runtimeTargets.length > 0) {
-      section.blank();
-    }
+  appendSection('Additional Runtimes', (section) => {
     for (const [index, entry] of report.inventory.runtimeTargets.entries()) {
       section.line(entry.label);
       section.definitionList(buildRuntimeTargetRows(entry), { indent: '  ' });
@@ -101,11 +101,11 @@ export function renderSupportReport(report: SupportReport, options: Readonly<{ p
       }
     }
   });
-  builder.section('Warnings', (section) => {
+  appendSection('Warnings', (section) => {
     section.bullets(report.inventory.warnings.map((warning) => `${warning.code}: ${warning.title}`));
   });
   if (report.inventory.note?.trim()) {
-    builder.section('Note', (section) => {
+    appendSection('Note', (section) => {
       section.line(report.inventory.note!.trim());
     });
   }

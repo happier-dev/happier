@@ -1,9 +1,14 @@
-import { happierRuntime as cliHappierRuntime } from '@happier-dev/cli-common';
+import * as cliHappierRuntime from '@happier-dev/cli-common/happierRuntime';
+import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 import type { SupportWarning } from '../types.js';
 
 export type SupportMaintenanceContext = Readonly<{
     preferredCliCommand: 'happier' | 'hprev' | 'hdev' | null;
+    currentReleaseChannel: PublicReleaseRingId;
+    installations?: cliHappierRuntime.HappierInstallationInventory;
+    selectedInstallation?: cliHappierRuntime.HappierInstallation | null;
+    services?: readonly cliHappierRuntime.HappierService[];
     warnings: readonly SupportWarning[];
 }>;
 
@@ -23,6 +28,14 @@ function resolvePreferredCliCommand(
         }
     }
     return null;
+}
+
+function resolveCurrentReleaseChannel(
+    preferredCliCommand: SupportMaintenanceContext['preferredCliCommand'],
+): PublicReleaseRingId {
+    if (preferredCliCommand === 'hprev') return 'preview';
+    if (preferredCliCommand === 'hdev') return 'publicdev';
+    return 'stable';
 }
 
 function mapWarning(entry: cliHappierRuntime.HappierRuntimeWarning): SupportWarning {
@@ -46,8 +59,16 @@ export async function collectSupportMaintenanceContext(input: Readonly<{
         platform: platform === 'darwin' || platform === 'linux' || platform === 'win32' ? platform : undefined,
     });
     const warnings = cliHappierRuntime.buildHappierRuntimeWarnings({ installations, services });
+    const preferredCliCommand = resolvePreferredCliCommand(installations);
     return {
-        preferredCliCommand: resolvePreferredCliCommand(installations),
+        preferredCliCommand,
+        currentReleaseChannel: resolveCurrentReleaseChannel(preferredCliCommand),
+        installations,
+        selectedInstallation: cliHappierRuntime.resolvePreferredHappierCliInstallation({
+            inventory: installations,
+            preferredCliCommand,
+        }),
+        services: services.services,
         warnings: warnings.map(mapWarning),
     };
 }

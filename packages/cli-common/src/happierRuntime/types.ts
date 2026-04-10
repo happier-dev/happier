@@ -31,7 +31,13 @@ export type HappierInstallation = Readonly<{
   realPath: string | null;
   shimName: string | null;
   onPath: boolean;
+  pathOrder?: number | null;
   managedRoot: string | null;
+  packageManager?: Readonly<{
+    kind: 'npmGlobal';
+    executablePath: string | null;
+    packageName: string;
+  }> | null;
 }>;
 
 export type HappierActiveInvocation = Readonly<{

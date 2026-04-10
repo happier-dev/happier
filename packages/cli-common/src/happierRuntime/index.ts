@@ -1,4 +1,5 @@
 export { discoverHappierInstallations } from './installations/discoverHappierInstallations.js';
+export { resolvePreferredHappierCliInstallation } from './installations/resolvePreferredHappierCliInstallation.js';
 export { discoverHappierServices } from './services/discoverHappierServices.js';
 export {
   resolveDaemonServiceInstallConflictPlan,
@@ -20,6 +21,26 @@ export {
   normalizeHappierRuntimePath,
 } from './runtimePathMatching.js';
 export { resolveHappierServiceRuntimeTarget } from './resolveServiceRuntimeTarget.js';
+export {
+  buildBackgroundServiceRepairPlan,
+  buildPathInstallationCleanupPlan,
+  buildCliUninstallPlan,
+  applyCliUninstallPlan,
+  cliUninstallPlanRequiresRoot,
+  parseUnsupportedInstallSourceFromInstallationId,
+  resolveManualUninstallCommandForSource,
+  uninstallHappierService,
+} from './maintenance/index.js';
+export type {
+  BackgroundServiceRepairAction,
+  BackgroundServiceRepairMode,
+  BackgroundServiceRepairPlan,
+  PathInstallationCleanupAction,
+  PathInstallationCleanupPlan,
+  CliUninstallPlan,
+  CliUninstallResult,
+  UnsupportedInstallSource,
+} from './maintenance/index.js';
 export {
   resolveApplicableHappierRuntimeMigrations,
   hasApplicableHappierRuntimeMigrations,

@@ -96,6 +96,7 @@ describe('runSupportCli', () => {
     const result = await runSupportCli(['cleanup', '--json'], {
       collectMaintenanceContext: async () => ({
         preferredCliCommand: 'happier',
+        currentReleaseChannel: 'stable',
         warnings: [],
       }),
       stdout: { write: (text) => writes.push(text) },
@@ -111,11 +112,64 @@ describe('runSupportCli', () => {
     expect(writes.join('')).toContain('"actions"');
   });
 
-  it('dispatches uninstall through the delegated uninstall flow', async () => {
+  it('renders human cleanup output when applying without --json', async () => {
+    const writes: string[] = [];
+    const result = await runSupportCli(['cleanup', '--yes'], {
+      collectMaintenanceContext: async () => ({
+        preferredCliCommand: 'happier',
+        currentReleaseChannel: 'stable',
+        warnings: [{
+          code: 'DAEMON_STARTED_WITH_DIFFERENT_CLI',
+          title: 'Version mismatch',
+          severity: 'warning',
+          details: ['happier daemon restart'],
+        }],
+      }),
+      stdout: { write: (text) => writes.push(text) },
+      stderr: { write: () => {} },
+      presentation: {
+        banner: (title, options) => `banner:${title}:${options?.subtitle ?? ''}`,
+        bullets: (items) => items.map((item) => `* ${item}`).join('\n'),
+        checklist: () => '',
+        definitionList: (rows) => rows.map((row) => `${row.label}=${row.value}`).join('\n'),
+        sectionTitle: (title) => `[${title}]`,
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('banner:Support cleanup applied');
+    expect(result.stdout).not.toContain('"executedActions"');
+    expect(writes.join('')).toContain('[Manual follow-up]');
+  });
+
+  it('dispatches uninstall through the direct managed uninstall flow', async () => {
     const writes: string[] = [];
     const result = await runSupportCli(['uninstall', '--json'], {
       collectMaintenanceContext: async () => ({
         preferredCliCommand: 'happier',
+        currentReleaseChannel: 'stable',
+        installations: {
+          activeInvocation: {
+            path: '/Users/tester/.happier/bin/happier',
+            realPath: '/Users/tester/.happier/cli/current/happier',
+            invokerName: 'happier',
+            ring: 'stable',
+            version: '0.2.0',
+            installationId: 'managed:stable:/Users/tester/.happier/cli/current',
+          },
+          installations: [{
+            id: 'managed:stable:/Users/tester/.happier/cli/current',
+            source: 'firstPartyManaged',
+            components: ['happier-cli'],
+            ring: 'stable',
+            version: '0.2.0',
+            path: '/Users/tester/.happier/cli/current',
+            realPath: '/Users/tester/.happier/cli/current',
+            shimName: 'happier',
+            onPath: true,
+            managedRoot: '/Users/tester/.happier/cli',
+          }],
+        },
         warnings: [],
       }),
       stdout: { write: (text) => writes.push(text) },
@@ -126,10 +180,14 @@ describe('runSupportCli', () => {
     expect(JSON.parse(result.stdout)).toEqual({
       ok: true,
       executed: false,
-      actions: [
-        { command: 'happier uninstall --yes', reason: 'current-managed-installation' },
-      ],
+      installation: {
+        id: 'managed:stable:/Users/tester/.happier/cli/current',
+        source: 'firstPartyManaged',
+        ring: 'stable',
+        path: '/Users/tester/.happier/cli/current',
+      },
+      serviceTargets: [],
     });
-    expect(writes.join('')).toContain('"current-managed-installation"');
+    expect(writes.join('')).toContain('"installation"');
   });
 });

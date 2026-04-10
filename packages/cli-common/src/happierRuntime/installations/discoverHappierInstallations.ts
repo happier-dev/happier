@@ -20,6 +20,7 @@ import {
 } from '../../firstPartyRuntime/index.js';
 import { resolveWindowsCommandOnPath } from '../../process/index.js';
 import type { HappierActiveInvocation, HappierInstallation, HappierInstallationInventory, HappierInstallationSource } from '../types.js';
+import { isHappierRuntimePathWithinRoot, normalizeHappierRuntimePath } from '../runtimePathMatching.js';
 
 type DiscoverFs = Readonly<{
   access?: typeof access;
@@ -155,7 +156,9 @@ async function discoverManagedInstallationEntries(params: Readonly<{
         realPath,
         shimName: basename(paths.shimPaths[0] ?? '') || null,
         onPath: false,
+        pathOrder: null,
         managedRoot: installLayout.installRoot,
+        packageManager: null,
       });
     }
   }
@@ -234,7 +237,9 @@ async function discoverSelfHostInstallationEntries(params: Readonly<{
         realPath: await resolveRealPathSafe(installRoot, params.fsApi),
         shimName: hasShim ? 'happier-server' : null,
         onPath: false,
+        pathOrder: null,
         managedRoot: installRoot,
+        packageManager: null,
       });
     }
   }
@@ -349,7 +354,19 @@ async function discoverNpmInstallationEntries(params: Readonly<{
       realPath: await resolveRealPathSafe(packageRoot.packageDir, params.fsApi),
       shimName: null,
       onPath: false,
+      pathOrder: null,
       managedRoot: prefix || null,
+      packageManager: packageRoot.components.includes('happier-cli')
+        ? {
+          kind: 'npmGlobal',
+          executablePath: npmExecutable || null,
+          packageName: '@happier-dev/cli',
+        }
+        : {
+          kind: 'npmGlobal',
+          executablePath: npmExecutable || null,
+          packageName: '@happier-dev/stack',
+        },
     });
   }
   return entries;
@@ -440,6 +457,7 @@ async function discoverPathInstallationEntries(params: Readonly<{
   for (const commandName of commandNames) {
     const commandPaths = resolveCommandPathsOnPath(commandName, params.processEnv);
     for (const commandPath of commandPaths) {
+      const pathOrder = commandPaths.indexOf(commandPath);
       const realPath = await resolveRealPathSafe(commandPath, params.fsApi);
       const classified = classifyPathInstallation({
         commandName,
@@ -452,6 +470,7 @@ async function discoverPathInstallationEntries(params: Readonly<{
           ...classified.managedMatch,
           onPath: true,
           shimName: commandName,
+          pathOrder,
         });
         continue;
       }
@@ -465,11 +484,44 @@ async function discoverPathInstallationEntries(params: Readonly<{
         realPath,
         shimName: commandName,
         onPath: true,
+        pathOrder,
         managedRoot: null,
+        packageManager: null,
       });
     }
   }
   return results;
+}
+
+function installationContainsInvocationPath(entry: HappierInstallation, invocationPath: string): boolean {
+  const normalizedInvocationPath = normalizeHappierRuntimePath(invocationPath);
+  if (!normalizedInvocationPath) {
+    return false;
+  }
+  const roots = [entry.path, entry.realPath]
+    .map(normalizeHappierRuntimePath)
+    .filter((value): value is string => Boolean(value));
+  return roots.some((root) => isHappierRuntimePathWithinRoot(normalizedInvocationPath, root));
+}
+
+function scoreActiveInvocationMatch(entry: HappierInstallation, invocationPath: string): number {
+  const normalizedInvocationPath = normalizeHappierRuntimePath(invocationPath);
+  if (!normalizedInvocationPath) {
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  const normalizedPath = normalizeHappierRuntimePath(entry.path);
+  const normalizedRealPath = normalizeHappierRuntimePath(entry.realPath);
+  const roots = [normalizedPath, normalizedRealPath].filter((value): value is string => Boolean(value));
+  const longestContainingRootLength = roots
+    .filter((root) => isHappierRuntimePathWithinRoot(normalizedInvocationPath, root))
+    .reduce((longest, root) => Math.max(longest, root.length), 0);
+
+  return (
+    (entry.packageManager ? 1_000_000 : 0)
+    + (entry.onPath ? 0 : 100_000)
+    + longestContainingRootLength
+  );
 }
 
 async function buildActiveInvocation(params: Readonly<{
@@ -486,17 +538,30 @@ async function buildActiveInvocation(params: Readonly<{
 
   if (invokedPath) {
     const invokedRealPath = await resolveRealPathSafe(invokedPath, params.fsApi);
-    const directMatch = params.installations.find((entry) => {
+    const directMatches = params.installations.filter((entry) => {
       const candidates = [entry.path, entry.realPath].filter((value): value is string => Boolean(value));
-      return candidates.includes(invokedPath) || (invokedRealPath ? candidates.includes(invokedRealPath) : false);
-    }) ?? null;
+      return candidates.includes(invokedPath)
+        || (invokedRealPath ? candidates.includes(invokedRealPath) : false)
+        || installationContainsInvocationPath(entry, invokedRealPath ?? invokedPath);
+    });
+    const directMatch = directMatches
+      .sort((left, right) => (
+        scoreActiveInvocationMatch(right, invokedRealPath ?? invokedPath)
+        - scoreActiveInvocationMatch(left, invokedRealPath ?? invokedPath)
+      ))[0] ?? null;
 
     if (directMatch) {
+      const invocationRing = directMatch.source === 'npmGlobal' && invokerName
+        ? (() => {
+            const ringId = resolvePublicReleaseRingIdForCliInvokerName(invokerName);
+            return ringId ? getReleaseRingCatalogEntry(ringId).publicLabel : directMatch.ring ?? null;
+          })()
+        : directMatch.ring ?? null;
       return {
         path: invokedPath,
-        realPath: directMatch.realPath ?? invokedRealPath,
+        realPath: invokedRealPath ?? directMatch.realPath ?? null,
         invokerName,
-        ring: directMatch.ring ?? null,
+        ring: invocationRing,
         version: directMatch.version ?? null,
         installationId: directMatch.id ?? null,
       };

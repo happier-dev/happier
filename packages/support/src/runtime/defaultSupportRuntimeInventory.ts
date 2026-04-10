@@ -1,4 +1,4 @@
-import { happierRuntime as cliHappierRuntime } from '@happier-dev/cli-common';
+import * as cliHappierRuntime from '@happier-dev/cli-common/happierRuntime';
 import { readFile, realpath } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 

@@ -5,13 +5,25 @@ import { captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
 const {
   discoverHappierInstallationsMock,
   discoverHappierServicesMock,
-  uninstallManagedFirstPartyComponentMock,
-  uninstallDaemonServiceMock,
+  applyCliUninstallPlanMock,
 } = vi.hoisted(() => ({
   discoverHappierInstallationsMock: vi.fn(),
   discoverHappierServicesMock: vi.fn(),
-  uninstallManagedFirstPartyComponentMock: vi.fn(async () => ({ removedPaths: ['/Users/tester/.happier/cli', '/Users/tester/.happier/bin/happier'] })),
-  uninstallDaemonServiceMock: vi.fn(async () => undefined),
+  applyCliUninstallPlanMock: vi.fn(async ({ plan }) => (
+    plan.kind === 'npm-global-installation'
+      ? {
+          removedPaths: [plan.installation.path],
+          serviceTargets: [],
+          actions: [{
+            command: [plan.command.cmd, ...plan.command.args].join(' '),
+            reason: 'npm-global-installation',
+          }],
+        }
+      : {
+          removedPaths: ['/Users/tester/.happier/cli', '/Users/tester/.happier/bin/happier'],
+          serviceTargets: [],
+        }
+  )),
 }));
 
 vi.mock('@happier-dev/cli-common/happierRuntime', async () => {
@@ -20,20 +32,9 @@ vi.mock('@happier-dev/cli-common/happierRuntime', async () => {
     ...actual,
     discoverHappierInstallations: discoverHappierInstallationsMock,
     discoverHappierServices: discoverHappierServicesMock,
+    applyCliUninstallPlan: applyCliUninstallPlanMock,
   };
 });
-
-vi.mock('@happier-dev/cli-common/firstPartyRuntime', async () => {
-  const actual = await vi.importActual<typeof import('@happier-dev/cli-common/firstPartyRuntime')>('@happier-dev/cli-common/firstPartyRuntime');
-  return {
-    ...actual,
-    uninstallManagedFirstPartyComponent: uninstallManagedFirstPartyComponentMock,
-  };
-});
-
-vi.mock('@/daemon/service/installer', () => ({
-  uninstallDaemonService: uninstallDaemonServiceMock,
-}));
 
 describe('happier uninstall', () => {
   afterEach(() => {
@@ -117,8 +118,7 @@ describe('happier uninstall', () => {
           expect.objectContaining({ id: 'systemd-user:happier-daemon.stable.cloud' }),
         ],
       }));
-      expect(uninstallManagedFirstPartyComponentMock).not.toHaveBeenCalled();
-      expect(uninstallDaemonServiceMock).not.toHaveBeenCalled();
+      expect(applyCliUninstallPlanMock).not.toHaveBeenCalled();
     } finally {
       output.restore();
     }
@@ -179,16 +179,10 @@ describe('happier uninstall', () => {
       });
 
       expect(output.json()).toEqual(expect.objectContaining({ ok: true, executed: true }));
-      expect(uninstallManagedFirstPartyComponentMock).toHaveBeenCalledWith(expect.objectContaining({
-        componentId: 'happier-cli',
-        channel: 'stable',
-      }));
-      expect(uninstallDaemonServiceMock).toHaveBeenCalledWith(expect.objectContaining({
-        platform: 'linux',
-        mode: 'user',
-        channel: 'stable',
-        instanceId: 'cloud',
-        runCommands: true,
+      expect(applyCliUninstallPlanMock).toHaveBeenCalledWith(expect.objectContaining({
+        plan: expect.objectContaining({
+          channel: 'stable',
+        }),
       }));
     } finally {
       output.restore();
@@ -226,9 +220,140 @@ describe('happier uninstall', () => {
           'Remove the binary or checkout manually, then run `happier service list --json` to inspect leftover services.',
         ],
       }));
-      expect(uninstallManagedFirstPartyComponentMock).not.toHaveBeenCalled();
-      expect(uninstallDaemonServiceMock).not.toHaveBeenCalled();
+      expect(applyCliUninstallPlanMock).not.toHaveBeenCalled();
     } finally {
+      output.restore();
+    }
+  });
+
+  it('executes npm-global uninstall directly when the active invocation resolves to a canonical npm install', async () => {
+    discoverHappierInstallationsMock.mockResolvedValue({
+      activeInvocation: {
+        path: '/opt/homebrew/bin/happier',
+        realPath: '/opt/homebrew/lib/node_modules/@happier-dev/cli/bin/happier.mjs',
+        invokerName: 'happier',
+        ring: 'stable',
+        version: '0.1.0-preview.1771774953.99369',
+        installationId: 'npmGlobal:/opt/homebrew/lib/node_modules/@happier-dev/cli',
+      },
+      installations: [
+        {
+          id: 'npmGlobal:/opt/homebrew/lib/node_modules/@happier-dev/cli',
+          source: 'npmGlobal',
+          components: ['happier-cli', 'happier-daemon'],
+          ring: 'stable',
+          version: '0.1.0-preview.1771774953.99369',
+          path: '/opt/homebrew/lib/node_modules/@happier-dev/cli',
+          realPath: '/opt/homebrew/lib/node_modules/@happier-dev/cli',
+          shimName: 'happier',
+          onPath: true,
+          managedRoot: '/opt/homebrew',
+          packageManager: {
+            kind: 'npmGlobal',
+            executablePath: '/opt/homebrew/bin/npm',
+            packageName: '@happier-dev/cli',
+          },
+        },
+      ],
+    });
+    discoverHappierServicesMock.mockResolvedValue({ services: [] });
+
+    const output = captureStdoutJsonOutput<{ ok: boolean; executed: boolean; removedPaths: string[]; actions: Array<{ command: string }> }>();
+    try {
+      const { handleUninstallCliCommand } = await import('./uninstall.js');
+      await handleUninstallCliCommand({
+        args: ['uninstall', '--yes', '--json'],
+        rawArgv: ['node', 'happier', 'uninstall', '--yes', '--json'],
+        terminalRuntime: null,
+      });
+
+      expect(output.json()).toEqual({
+        ok: true,
+        executed: true,
+        removedPaths: ['/opt/homebrew/lib/node_modules/@happier-dev/cli'],
+        actions: [
+          { command: '/opt/homebrew/bin/npm uninstall -g @happier-dev/cli', reason: 'npm-global-installation' },
+        ],
+      });
+      expect(applyCliUninstallPlanMock).toHaveBeenCalledTimes(1);
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('reports a root-required error instead of uninstalling a system-scoped service as a non-root user', async () => {
+    const processWithGetuid = process as NodeJS.Process & { getuid?: () => number };
+    const originalGetuid = processWithGetuid.getuid;
+    if (typeof originalGetuid === 'function') {
+      processWithGetuid.getuid = () => 501;
+    }
+    discoverHappierInstallationsMock.mockResolvedValue({
+      activeInvocation: {
+        path: '/Users/tester/.happier/bin/happier',
+        realPath: '/Users/tester/.happier/cli/current/happier',
+        invokerName: 'happier',
+        ring: 'stable',
+        version: '0.2.0',
+        installationId: 'managed:stable:/Users/tester/.happier/cli/current',
+      },
+      installations: [
+        {
+          id: 'managed:stable:/Users/tester/.happier/cli/current',
+          source: 'firstPartyManaged',
+          components: ['happier-cli', 'happier-daemon'],
+          ring: 'stable',
+          version: '0.2.0',
+          path: '/Users/tester/.happier/cli/current',
+          realPath: '/Users/tester/.happier/cli/current',
+          shimName: 'happier',
+          onPath: true,
+          managedRoot: '/Users/tester/.happier/cli',
+          packageManager: null,
+        },
+      ],
+    });
+    discoverHappierServicesMock.mockResolvedValue({
+      services: [
+        {
+          id: 'systemd-system:happier-daemon.stable.cloud',
+          serviceType: 'daemon',
+          platform: 'linux',
+          backend: 'systemd-system',
+          label: 'happier-daemon.stable.cloud',
+          verification: 'verified',
+          targetMode: 'default-following',
+          ring: 'stable',
+          instanceId: 'cloud',
+          scope: 'system',
+          definitionPath: '/etc/systemd/system/happier-daemon.stable.cloud.service',
+          executablePath: '/Users/tester/.happier/cli/current/happier',
+          installed: true,
+          running: true,
+        },
+      ],
+    });
+
+    const output = captureStdoutJsonOutput<{
+      ok: boolean;
+      error: string;
+      manualCommands: string[];
+    }>();
+    try {
+      const { handleUninstallCliCommand } = await import('./uninstall.js');
+      await handleUninstallCliCommand({
+        args: ['uninstall', '--yes', '--json'],
+        rawArgv: ['node', 'happier', 'uninstall', '--yes', '--json'],
+        terminalRuntime: null,
+      });
+
+      expect(output.json()).toEqual({
+        ok: false,
+        error: 'root_privileges_required',
+        manualCommands: ['sudo happier uninstall --yes'],
+      });
+      expect(applyCliUninstallPlanMock).not.toHaveBeenCalled();
+    } finally {
+      processWithGetuid.getuid = originalGetuid;
       output.restore();
     }
   });

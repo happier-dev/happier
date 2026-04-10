@@ -1,10 +1,13 @@
 import type { HappierInstallationInventory, HappierRuntimeWarning, HappierService, HappierServiceInventory } from '../types.js';
 import { isHappierRuntimePathWithinRoot, normalizeHappierRuntimePath } from '../runtimePathMatching.js';
 import { buildRepairCommandsForHappierRuntimeWarning } from './buildRepairCommandsForHappierRuntimeWarning.js';
+import { createServerUrlComparableKey } from '@happier-dev/protocol';
 
 type DaemonStatusForWarnings = Readonly<{
     daemon: Readonly<{
         startedWithCliVersion?: string | null;
+        startedWithPublicReleaseChannel?: string | null;
+        serviceManaged?: boolean | null;
     }>;
 }>;
 
@@ -13,12 +16,26 @@ function normalizeComparableUrl(value: string | null | undefined): string | null
     if (!trimmed) {
         return null;
     }
-    return trimmed.replace(/\/+$/u, '').toLowerCase();
+    try {
+        return createServerUrlComparableKey(trimmed);
+    } catch {
+        return trimmed.replace(/\/+$/u, '').toLowerCase();
+    }
 }
 
 function buildPathConflictWarnings(installations: HappierInstallationInventory): HappierRuntimeWarning[] {
-    const onPathCliInstallations = installations.installations.filter((entry) => entry.onPath && entry.components.includes('happier-cli'));
-    if (onPathCliInstallations.length <= 1) {
+    const onPathCliInstallations = installations.installations.filter((entry) => (
+        entry.onPath
+        && entry.components.includes('happier-cli')
+        && (entry.shimName === 'happier' || entry.shimName === 'hprev' || entry.shimName === 'hdev')
+    ));
+    const installsByShim = new Map<string, number>();
+    for (const entry of onPathCliInstallations) {
+        const shimName = entry.shimName ?? '';
+        installsByShim.set(shimName, (installsByShim.get(shimName) ?? 0) + 1);
+    }
+    const hasDuplicateShim = [...installsByShim.values()].some((count) => count > 1);
+    if (!hasDuplicateShim) {
         return [];
     }
     return [{
@@ -34,14 +51,21 @@ function buildDaemonVersionWarnings(params: Readonly<{
     daemonStatus?: DaemonStatusForWarnings;
 }>): HappierRuntimeWarning[] {
     const startedVersion = params.daemonStatus?.daemon.startedWithCliVersion?.trim();
+    const startedReleaseChannel = String(params.daemonStatus?.daemon.startedWithPublicReleaseChannel ?? '').trim();
     const activeVersion = params.installations.activeInvocation?.version?.trim();
-    if (!startedVersion || !activeVersion || startedVersion === activeVersion) {
+    const activeReleaseChannel = String(params.installations.activeInvocation?.ring ?? '').trim();
+    const versionMismatch = Boolean(startedVersion && activeVersion && startedVersion !== activeVersion);
+    const releaseChannelMismatch = Boolean(startedReleaseChannel && activeReleaseChannel && startedReleaseChannel !== activeReleaseChannel);
+    if (!versionMismatch && !releaseChannelMismatch) {
         return [];
     }
+    const ownerLabel = params.daemonStatus?.daemon.serviceManaged
+        ? 'The running background service'
+        : 'The running relay owner';
     return [{
         code: 'DAEMON_STARTED_WITH_DIFFERENT_CLI',
         severity: 'warning',
-        message: 'The running daemon was started with a different CLI version than the current invocation.',
+        message: `${ownerLabel} was started with a different CLI version or release channel than the current invocation.`,
         repairCommands: buildRepairCommandsForHappierRuntimeWarning('DAEMON_STARTED_WITH_DIFFERENT_CLI'),
     }];
 }

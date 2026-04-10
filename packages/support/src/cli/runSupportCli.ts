@@ -1,6 +1,6 @@
 import { parseArgs } from 'node:util';
 
-import { output as cliOutput } from '@happier-dev/cli-common';
+import * as cliOutput from '@happier-dev/cli-common/output';
 import type { BugReportFormPayload } from '@happier-dev/protocol';
 import { defaultSupportRuntimeInventory } from '../runtime/defaultSupportRuntimeInventory.js';
 import { runCollectSupportCommand } from '../commands/collectSupportCommand.js';

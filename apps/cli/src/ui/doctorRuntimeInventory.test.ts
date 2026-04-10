@@ -39,6 +39,9 @@ describe('renderDoctorHappierRuntimeInventory', () => {
           httpPort: 3005,
           startedWithCliVersion: '1.2.0',
           startedWithPublicReleaseChannel: 'stable',
+          startupSource: 'background-service',
+          serviceManaged: true,
+          serviceLabel: 'com.happier.cli.daemon.default',
         },
         service: { installed: true, running: true },
         auth: {
@@ -155,6 +158,11 @@ describe('renderDoctorHappierRuntimeInventory', () => {
 
     expect(rendered).toContain('Happier runtime');
     expect(rendered).toContain('Invoked CLI:');
+    expect(rendered).toContain('Current owner:');
+    expect(rendered).toContain('background service');
+    expect(rendered).toContain('com.happier.cli.daemon.default');
+    expect(rendered).toContain('Current CLI differs from the running relay owner.');
+    expect(rendered).toContain('happier service restart');
     expect(rendered).toContain('1.2.3');
     expect(rendered).toContain('preview');
     expect(rendered).toContain('/opt/happier/bin/happier');
@@ -172,5 +180,77 @@ describe('renderDoctorHappierRuntimeInventory', () => {
     expect(rendered).toContain('Warnings');
     expect(rendered).toContain('MULTIPLE_HAPPIER_INSTALLATIONS_ON_PATH');
     expect(rendered).toContain('happier service install --replace-existing=ring --yes');
+  });
+
+  it('keeps legacy relay owner source wording neutral when startup metadata is missing', async () => {
+    const { renderDoctorHappierRuntimeInventory } = await import('./doctorRuntimeInventory');
+
+    const snapshot: DoctorSnapshot = {
+      capturedAt: '2026-04-07T10:11:12.000Z',
+      server: {
+        activeServerId: 'cloud',
+        serverUrl: 'https://api.happier.dev',
+        publicServerUrl: 'https://api.happier.dev',
+        webappUrl: 'https://app.happier.dev',
+      },
+      accountId: 'acct_1',
+      settings: {
+        activeServerId: 'cloud',
+        servers: [],
+        knownAccountIds: ['acct_1'],
+      },
+      daemonStatus: {
+        server: {
+          activeServerId: 'cloud',
+          serverUrl: 'https://api.happier.dev',
+          localServerUrl: 'http://127.0.0.1:3005',
+          publicServerUrl: 'https://api.happier.dev',
+          webappUrl: 'https://app.happier.dev',
+          comparableKey: 'https://api.happier.dev',
+        },
+        daemon: {
+          running: true,
+          pid: 1234,
+          httpPort: 3005,
+          startedWithCliVersion: '1.2.0',
+          startedWithPublicReleaseChannel: 'stable',
+          serviceManaged: null,
+        },
+        service: { installed: true, running: true },
+        auth: {
+          authenticated: true,
+          machineRegistered: true,
+          machineId: 'machine_1',
+          needsAuth: false,
+          accountId: 'acct_1',
+        },
+      },
+      installations: {
+        happier: {
+          activeInvocation: {
+            path: '/opt/happier/bin/happier',
+            realPath: '/opt/happier/bin/happier',
+            invokerName: 'happier',
+            ring: 'preview',
+            version: '1.2.3',
+            installationId: 'managed:preview:/opt/happier/cli-preview/current',
+          },
+          installations: [],
+        },
+      },
+      services: {
+        happier: {
+          services: [],
+        },
+      },
+      warnings: [],
+    };
+
+    const rendered = stripAnsi(renderDoctorHappierRuntimeInventory(snapshot));
+
+    expect(rendered).toContain('Current owner:');
+    expect(rendered).toContain('relay owner');
+    expect(rendered).not.toContain('manual relay runtime');
+    expect(rendered).toContain('happier daemon restart');
   });
 });

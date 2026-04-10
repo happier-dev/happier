@@ -6,6 +6,7 @@ import { mkdtempSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { resolveInstalledFirstPartyComponentPaths } from '../../firstPartyRuntime/index.js';
+import { normalizeHappierRuntimePath } from '../runtimePathMatching.js';
 import { discoverHappierInstallations } from './discoverHappierInstallations.js';
 
 describe('discoverHappierInstallations', () => {
@@ -177,6 +178,62 @@ describe('discoverHappierInstallations', () => {
                     version: '9.9.9',
                     path: cliPackageDir,
                     onPath: false,
+                }),
+            ]));
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it('maps an active npm-global CLI invocation back to the canonical npm package installation entry', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'happier-runtime-installations-npm-active-'));
+        try {
+            const npmPrefix = join(root, 'npm-prefix');
+            const npmRoot = join(npmPrefix, 'lib', 'node_modules');
+            const cliPackageDir = join(npmRoot, '@happier-dev', 'cli');
+            const cliBinEntrypoint = join(cliPackageDir, 'bin', 'happier.mjs');
+            const binDir = join(root, 'bin');
+            const happierShim = join(binDir, 'happier');
+            const processEnv = {
+                HAPPIER_HOME_DIR: join(root, '.happier'),
+                PATH: binDir,
+            } as NodeJS.ProcessEnv;
+
+            await mkdir(join(cliPackageDir, 'bin'), { recursive: true });
+            await mkdir(binDir, { recursive: true });
+            await writeFile(join(cliPackageDir, 'package.json'), JSON.stringify({ version: '9.9.9-preview.1' }), 'utf8');
+            await writeFile(cliBinEntrypoint, '#!/usr/bin/env node\n', 'utf8');
+            await chmod(cliBinEntrypoint, 0o755);
+            await symlink(cliBinEntrypoint, happierShim);
+
+            const inventory = await discoverHappierInstallations({
+                processEnv,
+                invokedPath: happierShim,
+                invokerName: 'happier',
+                fs: {},
+                commands: {
+                    run: ({ cmd, args }) => {
+                        if (cmd !== 'npm') return null;
+                        if (args.join(' ') === 'prefix -g') return npmPrefix;
+                        if (args.join(' ') === 'root -g') return npmRoot;
+                        return null;
+                    },
+                },
+            });
+
+            expect(inventory.activeInvocation).toEqual(expect.objectContaining({
+                path: happierShim,
+                invokerName: 'happier',
+                installationId: `npmGlobal:${cliPackageDir}`,
+            }));
+            expect(normalizeHappierRuntimePath(inventory.activeInvocation?.realPath)).toBe(
+                normalizeHappierRuntimePath(cliBinEntrypoint),
+            );
+            expect(inventory.installations).toEqual(expect.arrayContaining([
+                expect.objectContaining({
+                    id: `npmGlobal:${cliPackageDir}`,
+                    source: 'npmGlobal',
+                    path: cliPackageDir,
                 }),
             ]));
         } finally {
