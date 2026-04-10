@@ -42,6 +42,9 @@ const { readDaemonStatusSnapshotMock } = vi.hoisted(() => ({
       httpPort: 3005,
       startedWithCliVersion: '1.2.3',
       startedWithPublicReleaseChannel: 'preview',
+      startupSource: 'background-service',
+      serviceManaged: true,
+      serviceLabel: 'com.happier.cli.daemon.default',
     },
     service: {
       installed: true,
@@ -93,6 +96,9 @@ describe('buildDoctorSnapshot', () => {
     expect(snapshot.daemonStatus?.server.publicServerUrl).toBe('https://relay.happier.dev');
     expect(snapshot.daemonStatus?.daemon.startedWithCliVersion).toBe('1.2.3');
     expect(snapshot.daemonStatus?.daemon.startedWithPublicReleaseChannel).toBe('preview');
+    expect(snapshot.daemonStatus?.daemon.startupSource).toBe('background-service');
+    expect(snapshot.daemonStatus?.daemon.serviceManaged).toBe(true);
+    expect(snapshot.daemonStatus?.daemon.serviceLabel).toBe('com.happier.cli.daemon.default');
     expect(Array.isArray(snapshot.installations?.happier?.installations)).toBe(true);
     expect(Array.isArray(snapshot.services?.happier?.services)).toBe(true);
     expect(Array.isArray(snapshot.warnings)).toBe(true);

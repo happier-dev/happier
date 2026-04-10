@@ -97,4 +97,49 @@ describe('buildBackgroundServiceSetupGuidance', () => {
             conflictingServices: [],
         }));
     });
+
+    it('treats verified pinned daemon services as conflicting with a default-following setup target', async () => {
+        const services: HappierService[] = [
+            {
+                id: 'launchd:com.happier.cli.daemon.company',
+                serviceType: 'daemon',
+                platform: 'darwin',
+                backend: 'launchd',
+                label: 'com.happier.cli.daemon.company',
+                targetMode: 'pinned',
+                verification: 'verified',
+                ring: 'stable',
+                instanceId: 'company',
+                scope: 'user',
+                definitionPath: '/Users/tester/Library/LaunchAgents/com.happier.cli.daemon.company.plist',
+                executablePath: '/Users/tester/.happier/cli/current/happier',
+                serverUrl: 'https://company.example.test',
+                publicServerUrl: 'https://company.example.test',
+                installed: true,
+                running: true,
+            },
+        ];
+
+        const { buildBackgroundServiceSetupGuidance } = await import('./buildBackgroundServiceSetupGuidance.js');
+        expect(buildBackgroundServiceSetupGuidance({
+            services,
+            managedReleaseChannelInventory: {
+                defaultReleaseChannel: 'stable',
+                managedReleaseChannels: [],
+            },
+            platform: 'darwin',
+            mode: 'user',
+            targetReleaseChannel: 'stable',
+        })).toEqual(expect.objectContaining({
+            exactDefaultServiceExists: false,
+            shouldPromptForServiceReplacement: true,
+            conflictingServices: [
+                expect.objectContaining({
+                    label: 'com.happier.cli.daemon.company',
+                    targetMode: 'pinned',
+                    serverUrl: 'https://company.example.test',
+                }),
+            ],
+        }));
+    });
 });

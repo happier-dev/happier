@@ -7,6 +7,7 @@ const {
     discoverHappierServicesMock,
     installDaemonServiceMock,
     resolveDaemonServiceInstallRuntimeTargetMock,
+    waitForDaemonRunningWithinBudgetMock,
 } = vi.hoisted(() => ({
     discoverHappierServicesMock: vi.fn(),
     installDaemonServiceMock: vi.fn(async () => undefined),
@@ -14,6 +15,7 @@ const {
         nodePath: '/managed/node',
         entryPath: '/opt/happier/package-dist/index.mjs',
     })),
+    waitForDaemonRunningWithinBudgetMock: vi.fn(async () => true),
 }));
 
 vi.mock('@happier-dev/cli-common/happierRuntime', async () => {
@@ -31,6 +33,10 @@ vi.mock('./installer', () => ({
 
 vi.mock('./resolveDaemonServiceInstallRuntimeTarget', () => ({
     resolveDaemonServiceInstallRuntimeTarget: resolveDaemonServiceInstallRuntimeTargetMock,
+}));
+
+vi.mock('@/daemon/waitForDaemonRunningWithinBudget', () => ({
+    waitForDaemonRunningWithinBudget: waitForDaemonRunningWithinBudgetMock,
 }));
 
 describe('runDaemonServiceCliCommand install conflict preflight', () => {

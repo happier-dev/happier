@@ -204,7 +204,7 @@ export function createSetupRepairThisComputerTaskKind(
             ...(event.message ? { message: event.message } : {}),
           });
         },
-        approvePairingRequest: authStatus.authenticated
+        approvePairingRequest: initialRecipeAuthStatus.authenticated && initialRecipeAuthStatus.machineId
           ? undefined
           : async (params) => {
             const answer = await ctx.prompt({
@@ -266,6 +266,6 @@ async function resolveRepairRecipeAuthStatus(params: Readonly<{
 
   return {
     authenticated: true,
-    machineId: resolvedMachineId ?? params.authStatus.machineId ?? '__unknown_machine__',
+    machineId: resolvedMachineId ?? params.authStatus.machineId ?? null,
   };
 }

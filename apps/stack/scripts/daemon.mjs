@@ -1019,6 +1019,10 @@ export function getDaemonEnv({
     stackName,
     cliIdentity,
   });
+  const explicitStartupSource = String(baseEnv?.HAPPIER_DAEMON_STARTUP_SOURCE ?? '').trim();
+  const startupSource =
+    explicitStartupSource ||
+    (String(baseEnv?.HAPPIER_STACK_SERVICE_MODE ?? '').trim() === '1' ? 'background-service' : 'manual');
   // Prefer the canonical server id from the CLI settings when it matches this stack's server URL.
   // This keeps daemon state/locks aligned with the active stack server profile (and avoids leaking
   // the stable-scope id into the daemon's persisted server-scoped directories).
@@ -1034,6 +1038,8 @@ export function getDaemonEnv({
     HAPPIER_SERVER_URL: internalServerUrl,
     HAPPIER_WEBAPP_URL: publicServerUrl,
     HAPPIER_HOME_DIR: cliHomeDir,
+    HAPPIER_DAEMON_STARTUP_SOURCE: startupSource,
+    HAPPIER_DAEMON_SERVICE_LABEL: '',
   };
 }
 

@@ -168,7 +168,7 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
         // Configuration
         console.log(chalk.bold('⚙️  Configuration'));
         console.log(`Happier Home: ${chalk.blue(configuration.happyHomeDir)}`);
-        console.log(`Server URL: ${chalk.blue(configuration.serverUrl)}`);
+        console.log(`Relay URL: ${chalk.blue(configuration.serverUrl)}`);
         console.log(`Logs Dir: ${chalk.blue(configuration.logsDir)}`);
 
         // Environment
@@ -183,8 +183,8 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
         // Connections summary (server/account/server profiles)
         if (snapshot) {
             console.log(chalk.bold('\n🧭 Connections'));
-            console.log(`Resolved Server ID: ${chalk.green(snapshot.server.activeServerId)}`);
-            console.log(`Resolved Server URL: ${chalk.blue(snapshot.server.serverUrl)}`);
+            console.log(`Resolved Relay ID: ${chalk.green(snapshot.server.activeServerId)}`);
+            console.log(`Resolved Relay URL: ${chalk.blue(snapshot.server.serverUrl)}`);
             if (snapshot.accountId) {
                 console.log(`Account: ${chalk.green(snapshot.accountId)}`);
             } else {
@@ -197,7 +197,7 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
             }
 
             if (snapshot.settings.servers.length > 0) {
-                console.log('Configured servers:');
+                console.log('Configured relays:');
                 for (const server of snapshot.settings.servers.slice(0, 12)) {
                     console.log(`  - ${server.name} (${server.id}) → ${server.serverUrl}`);
                 }
@@ -205,7 +205,7 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
                     console.log(`  … and ${snapshot.settings.servers.length - 12} more`);
                 }
             } else {
-                console.log(`Configured servers: ${chalk.gray('(none)')}`);
+                console.log(`Configured relays: ${chalk.gray('(none)')}`);
             }
 
         }

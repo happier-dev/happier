@@ -20,6 +20,43 @@ function formatUnknown(value: string | null | undefined): string {
   return normalized || '(unknown)';
 }
 
+function formatOwnerLabel(snapshot: DoctorSnapshot): string {
+  const daemon = snapshot.daemonStatus?.daemon ?? null;
+  if (!daemon) {
+    return '(none)';
+  }
+  const parts = [
+    daemon.serviceManaged === true
+      ? 'background service'
+      : daemon.serviceManaged === false
+        ? 'manual relay runtime'
+        : 'relay owner',
+    daemon.serviceLabel ?? null,
+    daemon.startedWithPublicReleaseChannel ?? null,
+    daemon.startedWithCliVersion ?? null,
+  ].filter(Boolean);
+  return parts.join(' • ') || '(unknown)';
+}
+
+function hasCurrentInvocationOwnerMismatch(snapshot: DoctorSnapshot): boolean {
+  const activeInvocation = snapshot.installations?.happier?.activeInvocation ?? null;
+  const daemon = snapshot.daemonStatus?.daemon ?? null;
+  if (!activeInvocation || !daemon) {
+    return false;
+  }
+  const versionMismatch = Boolean(
+    activeInvocation.version
+      && daemon.startedWithCliVersion
+      && activeInvocation.version !== daemon.startedWithCliVersion,
+  );
+  const releaseChannelMismatch = Boolean(
+    activeInvocation.ring
+      && daemon.startedWithPublicReleaseChannel
+      && activeInvocation.ring !== daemon.startedWithPublicReleaseChannel,
+  );
+  return versionMismatch || releaseChannelMismatch;
+}
+
 function formatActiveInvocationSummary(snapshot: DoctorSnapshot): string {
   const activeInvocation = snapshot.installations?.happier?.activeInvocation ?? null;
   const daemon = snapshot.daemonStatus?.daemon ?? null;
@@ -43,6 +80,10 @@ function formatActiveInvocationSummary(snapshot: DoctorSnapshot): string {
         formatUnknown(daemon?.startedWithPublicReleaseChannel),
         formatUnknown(snapshot.daemonStatus?.server.localServerUrl ?? snapshot.daemonStatus?.server.serverUrl),
       ].join(' • '),
+    },
+    {
+      label: 'Current owner',
+      value: formatOwnerLabel(snapshot),
     },
     {
       label: 'Detected installations',
@@ -118,6 +159,18 @@ export function renderDoctorHappierRuntimeInventory(snapshot: DoctorSnapshot): s
     sectionTitle('Happier runtime'),
     formatActiveInvocationSummary(snapshot),
   ];
+
+  if (hasCurrentInvocationOwnerMismatch(snapshot)) {
+    const daemon = snapshot.daemonStatus?.daemon ?? null;
+    const restartCommand = daemon?.serviceManaged === true
+      ? 'happier service restart'
+      : 'happier daemon restart';
+    sections.push(warn('Current CLI differs from the running relay owner.'));
+    sections.push([
+      `  Current owner: ${formatOwnerLabel(snapshot)}`,
+      `  Run: ${cmd(restartCommand)}`,
+    ].join('\n'));
+  }
 
   if (installations.length > 0) {
     sections.push(sectionTitle('Detected installations'));

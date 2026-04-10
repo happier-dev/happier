@@ -40,6 +40,7 @@ import {
 } from '@happier-dev/connection-supervisor';
 import { createLoopbackReadinessProbe } from '@/api/connection/createLoopbackReadinessProbe';
 import { createMachineSocketTransport } from '@/api/machine/connection/createMachineSocketTransport';
+import { readMachineOwnerConflictFromSocketError, type MachineOwnerConflictDetails } from '@/api/machine/machineOwnerConflict';
 
 export class ApiMachineClient {
     private socket: Socket<ServerToDaemonEvents, DaemonToServerEvents> | null = null;
@@ -57,6 +58,7 @@ export class ApiMachineClient {
     private additionalAllowedReadDirs: string[] = [];
     private additionalAllowedWriteDirs: string[] = [];
     private readonly fileSystemTransferRelayOwner: TransferRelayV2DownloadSessionOwner;
+    private activeTransportGeneration = 0;
     private currentConnectionState: ManagedConnectionState = {
         phase: 'idle',
         reason: null,
@@ -66,6 +68,14 @@ export class ApiMachineClient {
         lastDisconnectedAt: null,
         lastErrorMessage: null,
     };
+    private readonly ownershipMetadata: Readonly<{
+        runtimeId?: string;
+        cliVersion?: string;
+        publicReleaseChannel?: string;
+        startupSource?: string;
+        serviceManaged?: boolean;
+        serviceLabel?: string;
+    }>;
 
     private teardownActiveSocket(): void {
         if (!this.socket) {
@@ -86,9 +96,13 @@ export class ApiMachineClient {
             && this.currentConnectionState.lastErrorMessage === state.lastErrorMessage;
     }
 
-    private handleTransportSocketDisconnect(socket: Socket<ServerToDaemonEvents, DaemonToServerEvents>): void {
+    private isActiveTransportGeneration(generation: number): boolean {
+        return generation === this.activeTransportGeneration;
+    }
+
+    private handleTransportSocketDisconnect(socket: Socket<ServerToDaemonEvents, DaemonToServerEvents>, generation: number): void {
         logger.debug('[API MACHINE] Disconnected from server');
-        if (this.socket !== socket) {
+        if (!this.isActiveTransportGeneration(generation) || this.socket !== socket) {
             return;
         }
         this.teardownActiveSocket();
@@ -96,8 +110,17 @@ export class ApiMachineClient {
 
     constructor(
         private token: string,
-        private machine: Machine
+        private machine: Machine,
+        ownershipMetadata?: Readonly<{
+            runtimeId?: string;
+            cliVersion?: string;
+            publicReleaseChannel?: string;
+            startupSource?: string;
+            serviceManaged?: boolean;
+            serviceLabel?: string;
+        }>,
     ) {
+        this.ownershipMetadata = ownershipMetadata ?? {};
         // Initialize RPC handler manager
         this.rpcHandlerManager = new RpcHandlerManager({
             scopePrefix: this.machine.id,
@@ -303,25 +326,34 @@ export class ApiMachineClient {
         this.socket.emit('session-end', payload);
     }
 
-    connect(params?: { onConnect?: () => void | Promise<void> }) {
+    connect(params?: {
+        takeover?: boolean;
+        onConnect?: () => void | Promise<void>;
+        onOwnershipConflict?: (conflict: { owner: MachineOwnerConflictDetails }) => void;
+    }) {
         const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
         logger.debug(`[API MACHINE] Connecting to ${serverUrl}`);
+        let takeoverOnNextConnect = params?.takeover === true;
 
         if (!this.connectionSupervisor) {
             this.connectionSupervisor = createManagedConnectionSupervisor({
                 ...DEFAULT_MANAGED_CONNECTION_POLICY,
                 createTransport: () => {
+                    const transportGeneration = this.activeTransportGeneration + 1;
+                    this.activeTransportGeneration = transportGeneration;
                     const { socket, transport } = createMachineSocketTransport({
                         serverUrl,
                         token: this.token,
                         machineId: this.machine.id,
+                        ...this.ownershipMetadata,
+                        takeover: takeoverOnNextConnect,
                         transports: configuration.socketIoTransports,
                         env: process.env,
                     });
                     this.socket = socket;
-                    this.installSocketEventHandlers(socket);
+                    this.installSocketEventHandlers(socket, transportGeneration, params);
                     socket.on('disconnect', () => {
-                        this.handleTransportSocketDisconnect(socket);
+                        this.handleTransportSocketDisconnect(socket, transportGeneration);
                     });
                     return transport;
                 },
@@ -339,6 +371,7 @@ export class ApiMachineClient {
                     logger.debug('[API MACHINE] Connected to server');
                     const isReconnect = this.hasConnectedOnce;
                     this.hasConnectedOnce = true;
+                    takeoverOnNextConnect = false;
 
                     if (this.socket) {
                         this.rpcHandlerManager.onSocketConnect(this.socket);
@@ -385,7 +418,27 @@ export class ApiMachineClient {
         });
     }
 
-    private installSocketEventHandlers(socket: Socket<ServerToDaemonEvents, DaemonToServerEvents>) {
+    private installSocketEventHandlers(
+        socket: Socket<ServerToDaemonEvents, DaemonToServerEvents>,
+        transportGeneration: number,
+        params?: {
+            takeover?: boolean;
+            onConnect?: () => void | Promise<void>;
+            onOwnershipConflict?: (conflict: { owner: MachineOwnerConflictDetails }) => void;
+        },
+    ) {
+        socket.on('connect_error', (error: unknown) => {
+            if (!this.isActiveTransportGeneration(transportGeneration) || socket !== this.socket) {
+                return;
+            }
+            const ownershipConflict = readMachineOwnerConflictFromSocketError(error);
+            if (!ownershipConflict) {
+                return;
+            }
+            void this.connectionSupervisor?.stop().catch(() => {});
+            params?.onOwnershipConflict?.(ownershipConflict);
+        });
+
         socket.on(SOCKET_RPC_EVENTS.REQUEST, async (data: { method: string, params: unknown }, callback: (response: unknown) => void) => {
             logger.debugLargeJson(`[API MACHINE] Received RPC request:`, data);
             callback(await this.rpcHandlerManager.handleRequest(data));

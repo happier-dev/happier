@@ -1,25 +1,7 @@
-import { unlink } from 'node:fs/promises';
-
-import { applyServicePlan, planServiceAction, type ServiceBackend } from '@happier-dev/cli-common/service';
-import type { HappierServiceBackend } from '@happier-dev/cli-common/happierRuntime';
-
-function resolveServiceManagerBackend(params: Readonly<{
-    backend: HappierServiceBackend;
-    scope: 'user' | 'system';
-}>): ServiceBackend {
-    if (params.backend === 'launchd') {
-        return params.scope === 'system' ? 'launchd-system' : 'launchd-user';
-    }
-    if (
-        params.backend === 'systemd-user'
-        || params.backend === 'systemd-system'
-        || params.backend === 'schtasks-user'
-        || params.backend === 'schtasks-system'
-    ) {
-        return params.backend;
-    }
-    throw new Error(`Unsupported Happier service backend for uninstall: ${params.backend}`);
-}
+import {
+    uninstallHappierService,
+    type HappierServiceBackend,
+} from '@happier-dev/cli-common/happierRuntime';
 
 export async function uninstallDiscoveredHappierService(params: Readonly<{
     platform: 'darwin' | 'linux' | 'win32';
@@ -29,22 +11,5 @@ export async function uninstallDiscoveredHappierService(params: Readonly<{
     definitionPath: string;
     runCommands?: boolean;
 }>): Promise<void> {
-    const servicePlan = planServiceAction({
-        backend: resolveServiceManagerBackend({
-            backend: params.backend,
-            scope: params.scope,
-        }),
-        action: 'uninstall',
-        label: params.label,
-        definitionPath: params.definitionPath,
-        persistent: true,
-    });
-
-    await applyServicePlan(servicePlan, { runCommands: params.runCommands });
-
-    try {
-        await unlink(params.definitionPath);
-    } catch {
-        // ignore
-    }
+    await uninstallHappierService(params);
 }

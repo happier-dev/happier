@@ -166,4 +166,84 @@ describe('createSetupRepairThisComputerTaskKind', () => {
       },
     });
   });
+
+  it('still requests pairing when the machine is authenticated but no machine id can be recovered yet', async () => {
+    const invocations: string[] = [];
+    const kind = createSetupRepairThisComputerTaskKind({
+      readActiveRelayProfile: async () => ({
+        serverUrl: 'https://relay.example.test',
+        webappUrl: 'https://app.example.test',
+        activeLocalRelayUrl: null,
+      }),
+      readAuthStatus: async () => ({ authenticated: true, machineId: null }),
+      configureRelay: async () => {
+        invocations.push('configureRelay');
+      },
+      requestAuthPairing: async () => ({ publicKey: 'pub-key-missing-machine' }),
+      waitForAuthPairing: async (publicKey: string) => {
+        invocations.push(`waitForAuthPairing:${publicKey}`);
+        return { machineId: 'machine-2' };
+      },
+      pairLocalMachineIfNeeded: async () => '',
+      installDaemonService: async () => {
+        invocations.push('installDaemonService');
+      },
+      startDaemonService: async () => {
+        invocations.push('startDaemonService');
+      },
+      waitForReadyDaemon: async () => ({
+        serviceInstalled: true,
+        daemonRunning: true,
+        needsAuth: false,
+        machineId: 'machine-2',
+      }),
+    });
+
+    const runner = createSystemTasksRunner({
+      kinds: {
+        'setup.repairThisComputer.v1': kind,
+      },
+    });
+
+    await runner.start({
+      taskId: 'repair-task',
+      kind: 'setup.repairThisComputer.v1',
+      params: {
+        activeRelayUrl: 'https://relay.example.test',
+        activeWebappUrl: 'https://app.example.test',
+        activeLocalRelayUrl: null,
+        surface: 'desktop.ui',
+      },
+    });
+
+    const firstPoll = await waitForPendingPrompt(runner, { taskId: 'repair-task', cursor: 0 });
+    expect(firstPoll.pendingPrompt).toEqual({
+      kind: 'authRequest',
+      data: {
+        kind: 'authRequest',
+        publicKey: 'pub-key-missing-machine',
+        relayUrl: 'https://relay.example.test',
+        webappUrl: 'https://app.example.test',
+      },
+    });
+
+    await runner.respond({
+      taskId: 'repair-task',
+      answer: { approved: true },
+    });
+
+    const finalPoll = await waitForResult(runner, { taskId: 'repair-task', cursor: firstPoll.nextCursor });
+    expect(finalPoll.result).toEqual({
+      protocolVersion: 1,
+      taskId: 'repair-task',
+      ok: true,
+      data: { machineId: 'machine-2' },
+    });
+    expect(invocations).toEqual([
+      'configureRelay',
+      'waitForAuthPairing:pub-key-missing-machine',
+      'installDaemonService',
+      'startDaemonService',
+    ]);
+  });
 });

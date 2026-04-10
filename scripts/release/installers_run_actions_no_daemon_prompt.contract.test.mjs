@@ -13,7 +13,7 @@ test('install.sh resolves the daemon choice only after the already-installed --r
 
   const runFastPathIndex = source.indexOf('if [[ -n "${RUN_ACTION}" ]]; then');
   const invokeInstalledCliIndex = source.indexOf('run_post_install_action "${INSTALLED_CLI_BIN}"');
-  const withDaemonIndex = source.indexOf('WITH_DAEMON="$(resolve_with_daemon_choice)"');
+  const withDaemonIndex = source.indexOf('WITH_DAEMON="$(resolve_with_daemon_choice "${services_json}")"');
 
   assert.notEqual(runFastPathIndex, -1, 'expected --run fast path block');
   assert.notEqual(invokeInstalledCliIndex, -1, 'expected installed CLI fast path');

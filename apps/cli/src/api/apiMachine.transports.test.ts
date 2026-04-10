@@ -121,6 +121,26 @@ describe('ApiMachineClient transports', () => {
     expect(opts.autoConnect).toBe(false);
   });
 
+  it('includes takeover auth when explicitly requested', async () => {
+    const mod = await import('./apiMachine');
+
+    const machine: Machine = {
+      id: 'test-machine',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      metadata: null,
+      metadataVersion: 0,
+      daemonState: null,
+      daemonStateVersion: 0,
+    };
+
+    const client = new mod.ApiMachineClient('fake-token', machine);
+    client.connect({ takeover: true });
+
+    const opts = mockIo.mock.calls.at(-1)?.[1] as any;
+    expect(opts.auth.takeover).toBe(true);
+  });
+
   it('emits and receives machine transfer envelopes over the machine-scoped socket', async () => {
     const machineSocket = createApiSessionSocketStub();
     bindApiSessionSocketMock(mockIo, machineSocket);
@@ -327,4 +347,5 @@ describe('ApiMachineClient transports', () => {
       ]),
     }));
   });
+
 });

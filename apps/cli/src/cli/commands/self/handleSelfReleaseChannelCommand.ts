@@ -1,4 +1,4 @@
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 
 import {
   resolveDesiredShimTargets,
@@ -9,17 +9,21 @@ import {
 import {
   deriveManagedReleaseChannelInventory,
   discoverHappierInstallations,
-  discoverHappierServices,
   type HappierInstallationInventory,
   type ManagedReleaseChannelInventory,
 } from '@happier-dev/cli-common/happierRuntime';
 import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+import {
+  resolveDaemonServiceCliRuntimeFromEnv,
+  resolveDaemonServiceListEntries,
+} from '@/daemon/service/cli';
 
 import {
-  hasInstalledDefaultFollowingDaemonService,
+  resolveInstalledDefaultFollowingDaemonServiceModes,
   runDefaultFollowingBackgroundServiceRestartFollowUp,
-} from '../backgroundServiceFollowUp';
+} from '../backgroundServiceFollowUp.js';
 import { isInteractiveTerminal, promptInput, runCliAction } from '../server/commandUtilities';
+import { areManagedShimAndBinaryAligned } from './areManagedShimAndBinaryAligned.js';
 
 function resolveReleaseChannelArg(argv: readonly string[]): PublicReleaseRingId {
   const candidate = normalizePublicReleaseRingId(argv[0] ?? '');
@@ -58,11 +62,11 @@ async function readManagedReleaseChannelStatus(): Promise<Readonly<{
     if (!existsSync(defaultShimTarget.shimPath) || !existsSync(defaultShimTarget.binaryPath)) {
       return false;
     }
-    try {
-      return realpathSync(defaultShimTarget.shimPath) === realpathSync(defaultShimTarget.binaryPath);
-    } catch {
-      return false;
-    }
+    return areManagedShimAndBinaryAligned({
+      shimPath: defaultShimTarget.shimPath,
+      binaryPath: defaultShimTarget.binaryPath,
+      platform: process.platform,
+    });
   })();
   return {
     inventory,
@@ -177,11 +181,16 @@ async function cmdReleaseChannelUse(argv: readonly string[]): Promise<void> {
     return;
   }
 
-  const serviceInventory = await discoverHappierServices({
-    processEnv: process.env,
-    platform,
-  });
-  if (!hasInstalledDefaultFollowingDaemonService(serviceInventory.services)) {
+  const runtimeModes = platform === 'linux'
+    ? ['user', 'system'] as const
+    : ['user'] as const;
+  const installedDefaultFollowingServiceModes = resolveInstalledDefaultFollowingDaemonServiceModes(
+    (await Promise.all(runtimeModes.map(async (mode) => {
+      const runtime = resolveDaemonServiceCliRuntimeFromEnv({ mode });
+      return await resolveDaemonServiceListEntries(runtime, { mode });
+    }))).flat(),
+  );
+  if (installedDefaultFollowingServiceModes.length === 0) {
     return;
   }
 
@@ -190,6 +199,7 @@ async function cmdReleaseChannelUse(argv: readonly string[]): Promise<void> {
     promptInput,
     runCliAction,
     subject: `${normalizeReleaseChannelLabel(releaseChannel)} release-channel`,
+    modes: installedDefaultFollowingServiceModes,
     log: console.log,
   });
 }

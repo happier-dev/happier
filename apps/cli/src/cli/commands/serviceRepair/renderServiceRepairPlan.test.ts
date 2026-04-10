@@ -2,28 +2,36 @@ import { describe, expect, it } from 'vitest';
 
 import { renderServiceRepairPlan } from './renderServiceRepairPlan';
 
-function stripAnsi(value: string): string {
-    return value.replace(/\u001B\[[0-9;]*m/g, '');
-}
-
 describe('renderServiceRepairPlan', () => {
-    it('surfaces the current default server when migrating a legacy pinned service to default-following mode', () => {
-        const rendered = stripAnsi(renderServiceRepairPlan({
-            commandPath: 'happier service',
-            plan: {
-                actions: [
-                    {
-                        kind: 'install-default-following-service',
-                        command: 'happier service install --yes',
-                        mode: 'user',
-                        targetServerUrl: 'https://relay.example.test',
-                    },
-                ],
-                manualWarnings: [],
+  it('lists remove and install actions for aggregated repair plans', () => {
+    const rendered = renderServiceRepairPlan({
+      commandPath: 'happier service repair',
+      plan: {
+        currentReleaseChannel: 'stable',
+        existingServices: [],
+        actions: [
+          {
+            kind: 'remove-service',
+            service: {
+              label: 'happier-daemon.default',
+              mode: 'system',
+              releaseChannel: 'stable',
+              targetMode: 'default-following',
+              instanceId: 'default',
             },
-        }));
-
-        expect(rendered).toContain('Current default server: https://relay.example.test');
-        expect(rendered).toContain('happier service install --yes');
+          },
+          {
+            kind: 'install-default-following-service',
+            releaseChannel: 'stable',
+            mode: 'user',
+          },
+        ],
+        manualWarnings: [],
+      },
     });
+
+    expect(rendered).toContain('Remove happier-daemon.default (system, stable, default-following)');
+    expect(rendered).toContain('Install one default background service on stable (user)');
+    expect(rendered).toContain('Run happier service repair --yes');
+  });
 });

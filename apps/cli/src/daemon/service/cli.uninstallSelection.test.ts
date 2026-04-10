@@ -1,21 +1,42 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { InstalledDaemonServiceEntry } from './discoverInstalledDaemonServiceEntries';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
 
 const {
-  discoverHappierServicesMock,
+  discoverInstalledDaemonServiceEntriesMock,
   uninstallDaemonServiceMock,
+  readSettingsMock,
 } = vi.hoisted(() => ({
-  discoverHappierServicesMock: vi.fn(),
+  discoverInstalledDaemonServiceEntriesMock: vi.fn<() => Promise<readonly InstalledDaemonServiceEntry[]>>(async () => []),
   uninstallDaemonServiceMock: vi.fn(async () => undefined),
+  readSettingsMock: vi.fn(async () => ({ servers: {} })),
 }));
 
-vi.mock('@happier-dev/cli-common/happierRuntime', async () => {
-  const actual = await vi.importActual<typeof import('@happier-dev/cli-common/happierRuntime')>('@happier-dev/cli-common/happierRuntime');
+function createInstalledEntry(params: Readonly<{
+  serverId: string;
+  label: string;
+  releaseChannel: InstalledDaemonServiceEntry['releaseChannel'];
+  path: string;
+}>): InstalledDaemonServiceEntry {
+  return {
+    serverId: params.serverId,
+    name: params.serverId,
+    installed: true,
+    path: params.path,
+    platform: 'linux',
+    releaseChannel: params.releaseChannel,
+    label: params.label,
+    targetMode: 'pinned',
+  };
+}
+
+vi.mock('./discoverInstalledDaemonServiceEntries', async () => {
+  const actual = await vi.importActual<typeof import('./discoverInstalledDaemonServiceEntries')>('./discoverInstalledDaemonServiceEntries');
   return {
     ...actual,
-    discoverHappierServices: discoverHappierServicesMock,
+    discoverInstalledDaemonServiceEntries: discoverInstalledDaemonServiceEntriesMock,
   };
 });
 
@@ -24,6 +45,14 @@ vi.mock('./installer', async () => {
   return {
     ...actual,
     uninstallDaemonService: uninstallDaemonServiceMock,
+  };
+});
+
+vi.mock('@/persistence', async () => {
+  const actual = await vi.importActual<typeof import('@/persistence')>('@/persistence');
+  return {
+    ...actual,
+    readSettings: readSettingsMock,
   };
 });
 
@@ -52,55 +81,20 @@ describe('runDaemonServiceCliCommand uninstall selection', () => {
       HAPPIER_DAEMON_SERVICE_INSTANCE_ID: 'cloud',
       HAPPIER_DAEMON_SERVICE_CHANNEL: 'stable',
     });
-    discoverHappierServicesMock.mockResolvedValue({
-      services: [
-        {
-          id: 'systemd-user:happier-daemon.stable.cloud',
-          serviceType: 'daemon',
-          platform: 'linux',
-          backend: 'systemd-user',
-          label: 'happier-daemon.stable.cloud',
-          verification: 'verified',
-          ring: 'stable',
-          instanceId: 'cloud',
-          scope: 'user',
-          definitionPath: '/home/tester/.config/systemd/user/happier-daemon.stable.cloud.service',
-          executablePath: '/home/tester/.happier/cli/current/happier',
-          installed: true,
-          running: true,
-        },
-        {
-          id: 'systemd-user:happier-daemon.stable.company',
-          serviceType: 'daemon',
-          platform: 'linux',
-          backend: 'systemd-user',
-          label: 'happier-daemon.stable.company',
-          verification: 'verified',
-          ring: 'stable',
-          instanceId: 'company',
-          scope: 'user',
-          definitionPath: '/home/tester/.config/systemd/user/happier-daemon.stable.company.service',
-          executablePath: '/home/tester/.happier/cli/current/happier',
-          installed: true,
-          running: false,
-        },
-        {
-          id: 'systemd-user:unverified',
-          serviceType: 'daemon',
-          platform: 'linux',
-          backend: 'systemd-user',
-          label: 'happier-daemon.stable.candidate',
-          verification: 'candidate',
-          ring: 'stable',
-          instanceId: 'candidate',
-          scope: 'user',
-          definitionPath: '/home/tester/.config/systemd/user/happier-daemon.stable.candidate.service',
-          executablePath: '/tmp/candidate',
-          installed: true,
-          running: false,
-        },
-      ],
-    });
+    discoverInstalledDaemonServiceEntriesMock.mockResolvedValue([
+      createInstalledEntry({
+        serverId: 'cloud',
+        label: 'happier-daemon.stable.cloud',
+        releaseChannel: 'stable',
+        path: '/home/tester/.config/systemd/user/happier-daemon.stable.cloud.service',
+      }),
+      createInstalledEntry({
+        serverId: 'company',
+        label: 'happier-daemon.stable.company',
+        releaseChannel: 'stable',
+        path: '/home/tester/.config/systemd/user/happier-daemon.stable.company.service',
+      }),
+    ]);
 
     const output = captureStdoutJsonOutput<{ ok: boolean; executed: boolean; selectedServices: Array<{ id: string }> }>();
     try {
@@ -121,7 +115,7 @@ describe('runDaemonServiceCliCommand uninstall selection', () => {
     }
   });
 
-  it('executes selected verified services when --all and --yes are provided', async () => {
+  it('executes selected services when --all and --yes are provided', async () => {
     envScope.patch({
       HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux',
       HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: '/home/tester',
@@ -129,40 +123,20 @@ describe('runDaemonServiceCliCommand uninstall selection', () => {
       HAPPIER_DAEMON_SERVICE_INSTANCE_ID: 'cloud',
       HAPPIER_DAEMON_SERVICE_CHANNEL: 'stable',
     });
-    discoverHappierServicesMock.mockResolvedValue({
-      services: [
-        {
-          id: 'systemd-user:happier-daemon.stable.cloud',
-          serviceType: 'daemon',
-          platform: 'linux',
-          backend: 'systemd-user',
-          label: 'happier-daemon.stable.cloud',
-          verification: 'verified',
-          ring: 'stable',
-          instanceId: 'cloud',
-          scope: 'user',
-          definitionPath: '/home/tester/.config/systemd/user/happier-daemon.stable.cloud.service',
-          executablePath: '/home/tester/.happier/cli/current/happier',
-          installed: true,
-          running: true,
-        },
-        {
-          id: 'systemd-user:happier-daemon.stable.company',
-          serviceType: 'daemon',
-          platform: 'linux',
-          backend: 'systemd-user',
-          label: 'happier-daemon.stable.company',
-          verification: 'verified',
-          ring: 'stable',
-          instanceId: 'company',
-          scope: 'user',
-          definitionPath: '/home/tester/.config/systemd/user/happier-daemon.stable.company.service',
-          executablePath: '/home/tester/.happier/cli/current/happier',
-          installed: true,
-          running: false,
-        },
-      ],
-    });
+    discoverInstalledDaemonServiceEntriesMock.mockResolvedValue([
+      createInstalledEntry({
+        serverId: 'cloud',
+        label: 'happier-daemon.stable.cloud',
+        releaseChannel: 'stable',
+        path: '/home/tester/.config/systemd/user/happier-daemon.stable.cloud.service',
+      }),
+      createInstalledEntry({
+        serverId: 'company',
+        label: 'happier-daemon.stable.company',
+        releaseChannel: 'stable',
+        path: '/home/tester/.config/systemd/user/happier-daemon.stable.company.service',
+      }),
+    ]);
 
     const output = captureStdoutJsonOutput<{ ok: boolean; executed: boolean }>();
     try {
@@ -190,7 +164,7 @@ describe('runDaemonServiceCliCommand uninstall selection', () => {
     }
   });
 
-  it('treats --all without explicit filters as all verified services for the current mode/platform', async () => {
+  it('treats --all without explicit filters as all services for the current mode/platform', async () => {
     envScope.patch({
       HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux',
       HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: '/home/tester',
@@ -198,55 +172,20 @@ describe('runDaemonServiceCliCommand uninstall selection', () => {
       HAPPIER_DAEMON_SERVICE_INSTANCE_ID: 'cloud',
       HAPPIER_DAEMON_SERVICE_CHANNEL: 'stable',
     });
-    discoverHappierServicesMock.mockResolvedValue({
-      services: [
-        {
-          id: 'systemd-user:happier-daemon.stable.cloud',
-          serviceType: 'daemon',
-          platform: 'linux',
-          backend: 'systemd-user',
-          label: 'happier-daemon.stable.cloud',
-          verification: 'verified',
-          ring: 'stable',
-          instanceId: 'cloud',
-          scope: 'user',
-          definitionPath: '/home/tester/.config/systemd/user/happier-daemon.stable.cloud.service',
-          executablePath: '/home/tester/.happier/cli/current/happier',
-          installed: true,
-          running: true,
-        },
-        {
-          id: 'systemd-user:happier-daemon.preview.preview1',
-          serviceType: 'daemon',
-          platform: 'linux',
-          backend: 'systemd-user',
-          label: 'happier-daemon.preview.preview1',
-          verification: 'verified',
-          ring: 'preview',
-          instanceId: 'preview1',
-          scope: 'user',
-          definitionPath: '/home/tester/.config/systemd/user/happier-daemon.preview.preview1.service',
-          executablePath: '/home/tester/.happier/cli-preview/current/happier',
-          installed: true,
-          running: false,
-        },
-        {
-          id: 'systemd-system:happier-daemon.dev.system1',
-          serviceType: 'daemon',
-          platform: 'linux',
-          backend: 'systemd-system',
-          label: 'happier-daemon.dev.system1',
-          verification: 'verified',
-          ring: 'dev',
-          instanceId: 'system1',
-          scope: 'system',
-          definitionPath: '/etc/systemd/system/happier-daemon.dev.system1.service',
-          executablePath: '/home/tester/.happier/cli-dev/current/happier',
-          installed: true,
-          running: false,
-        },
-      ],
-    });
+    discoverInstalledDaemonServiceEntriesMock.mockResolvedValue([
+      createInstalledEntry({
+        serverId: 'cloud',
+        label: 'happier-daemon.stable.cloud',
+        releaseChannel: 'stable',
+        path: '/home/tester/.config/systemd/user/happier-daemon.stable.cloud.service',
+      }),
+      createInstalledEntry({
+        serverId: 'preview1',
+        label: 'happier-daemon.preview.preview1',
+        releaseChannel: 'preview',
+        path: '/home/tester/.config/systemd/user/happier-daemon.preview.preview1.service',
+      }),
+    ]);
 
     const output = captureStdoutJsonOutput<{ ok: boolean; executed: boolean; selectedServices: Array<{ id: string }> }>();
     try {
@@ -267,7 +206,7 @@ describe('runDaemonServiceCliCommand uninstall selection', () => {
     }
   });
 
-  it('treats --all without --yes as a preview even when only one verified service matches', async () => {
+  it('treats --all without --yes as a preview even when only one service matches', async () => {
     envScope.patch({
       HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux',
       HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: '/home/tester',
@@ -275,25 +214,14 @@ describe('runDaemonServiceCliCommand uninstall selection', () => {
       HAPPIER_DAEMON_SERVICE_INSTANCE_ID: 'cloud',
       HAPPIER_DAEMON_SERVICE_CHANNEL: 'stable',
     });
-    discoverHappierServicesMock.mockResolvedValue({
-      services: [
-        {
-          id: 'systemd-user:happier-daemon.preview.preview1',
-          serviceType: 'daemon',
-          platform: 'linux',
-          backend: 'systemd-user',
-          label: 'happier-daemon.preview.preview1',
-          verification: 'verified',
-          ring: 'preview',
-          instanceId: 'preview1',
-          scope: 'user',
-          definitionPath: '/home/tester/.config/systemd/user/happier-daemon.preview.preview1.service',
-          executablePath: '/home/tester/.happier/cli-preview/current/happier',
-          installed: true,
-          running: false,
-        },
-      ],
-    });
+    discoverInstalledDaemonServiceEntriesMock.mockResolvedValue([
+      createInstalledEntry({
+        serverId: 'preview1',
+        label: 'happier-daemon.preview.preview1',
+        releaseChannel: 'preview',
+        path: '/home/tester/.config/systemd/user/happier-daemon.preview.preview1.service',
+      }),
+    ]);
 
     const output = captureStdoutJsonOutput<{ ok: boolean; executed: boolean; selectedServices: Array<{ id: string }> }>();
     try {
@@ -319,44 +247,24 @@ describe('runDaemonServiceCliCommand uninstall selection', () => {
       HAPPIER_DAEMON_SERVICE_INSTANCE_ID: 'cloud',
       HAPPIER_DAEMON_SERVICE_CHANNEL: 'stable',
     });
-    discoverHappierServicesMock.mockResolvedValue({
-      services: [
-        {
-          id: 'systemd-user:happier-daemon.stable.cloud',
-          serviceType: 'daemon',
-          platform: 'linux',
-          backend: 'systemd-user',
-          label: 'happier-daemon.stable.cloud',
-          verification: 'verified',
-          ring: 'stable',
-          instanceId: 'cloud',
-          scope: 'user',
-          definitionPath: '/home/tester/.config/systemd/user/happier-daemon.stable.cloud.service',
-          executablePath: '/home/tester/.happier/cli/current/happier',
-          installed: true,
-          running: true,
-        },
-        {
-          id: 'systemd-user:happier-daemon.preview.cloud',
-          serviceType: 'daemon',
-          platform: 'linux',
-          backend: 'systemd-user',
-          label: 'happier-daemon.preview.cloud',
-          verification: 'verified',
-          ring: 'preview',
-          instanceId: 'cloud',
-          scope: 'user',
-          definitionPath: '/home/tester/.config/systemd/user/happier-daemon.preview.cloud.service',
-          executablePath: '/home/tester/.happier/cli-preview/current/happier',
-          installed: true,
-          running: true,
-        },
-      ],
-    });
+    discoverInstalledDaemonServiceEntriesMock.mockResolvedValue([
+      createInstalledEntry({
+        serverId: 'cloud',
+        label: 'happier-daemon.stable.cloud',
+        releaseChannel: 'stable',
+        path: '/home/tester/.config/systemd/user/happier-daemon.stable.cloud.service',
+      }),
+      createInstalledEntry({
+        serverId: 'cloud',
+        label: 'happier-daemon.preview.cloud',
+        releaseChannel: 'preview',
+        path: '/home/tester/.config/systemd/user/happier-daemon.preview.cloud.service',
+      }),
+    ]);
 
     const { runDaemonServiceCliCommand } = await import('./cli.js');
     await expect(runDaemonServiceCliCommand({ argv: ['uninstall', '--instance', 'cloud', '--json'] })).rejects.toThrow(
-      'Multiple verified background services matched the requested uninstall target. Re-run with --all or add more specific filters.',
+      'Multiple background services matched the requested uninstall target. Re-run with --all or add more specific filters.',
     );
   });
 });

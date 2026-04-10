@@ -6,6 +6,7 @@ import type {
     HappierServiceVerification,
 } from './types.js';
 import type { PublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
+import { createServerUrlComparableKey } from '@happier-dev/protocol';
 
 export type DaemonServiceInstallStrategy = 'require-explicit' | 'add' | 'replace-ring' | 'replace-all';
 
@@ -53,6 +54,16 @@ function normalizeUrl(value: string | null | undefined): string {
     return String(value ?? '').trim().replace(/\/+$/u, '').toLowerCase();
 }
 
+function comparableServerUrl(value: string | null | undefined): string {
+    const trimmed = String(value ?? '').trim();
+    if (!trimmed) return '';
+    try {
+        return createServerUrlComparableKey(trimmed);
+    } catch {
+        return '';
+    }
+}
+
 function resolveTupleKey(service: HappierService): string {
     return [
         service.platform,
@@ -64,6 +75,11 @@ function resolveTupleKey(service: HappierService): string {
 }
 
 function sharesServerUrl(service: HappierService, target: DaemonServiceInstallTarget): boolean {
+    const targetComparableKey = comparableServerUrl(target.serverUrl);
+    const serviceComparableKey = comparableServerUrl(service.serverUrl ?? service.publicServerUrl ?? null);
+    if (targetComparableKey && serviceComparableKey) {
+        return targetComparableKey === serviceComparableKey;
+    }
     const targetUrl = normalizeUrl(target.serverUrl);
     if (!targetUrl) return false;
     const serviceUrl = normalizeUrl(service.serverUrl ?? service.publicServerUrl ?? null);
@@ -75,7 +91,7 @@ function isCompetingService(service: HappierService, target: DaemonServiceInstal
         return false;
     }
     if (target.targetMode === 'default-following') {
-        return (service.targetMode ?? 'pinned') === 'default-following';
+        return service.platform === target.platform && service.backend === target.backend;
     }
     if (service.instanceId && service.instanceId === target.instanceId) {
         return true;

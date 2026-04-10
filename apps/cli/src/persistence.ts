@@ -10,7 +10,12 @@ import { chmodSync, existsSync, mkdirSync, writeFileSync, readFileSync, unlinkSy
 import { constants } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { configuration } from '@/configuration'
-import { resolveDaemonStateBasenameForRing } from '@/cli/runtime/publicReleaseChannel';
+import { resolveDaemonStateCandidatePaths } from '@/daemon/ownership/daemonOwnershipPaths';
+import {
+  DaemonPublicReleaseChannelLabelSchema,
+  DaemonStartupSourceSchema,
+  type DaemonStartupSource,
+} from '@/daemon/ownership/daemonOwnershipMetadata';
 import { sanitizeServerIdForFilesystem } from '@/server/serverId';
 import { isLocalishServerUrl } from '@/server/serverUrlClassification';
 import type { PublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
@@ -34,6 +39,60 @@ function bestEffortChmodSync(path: string, mode: number): void {
     chmodSync(path, mode);
   } catch {
     // best-effort
+  }
+}
+
+async function ensureHappyHomeDirExists(): Promise<void> {
+  if (!existsSync(configuration.happyHomeDir)) {
+    await mkdir(configuration.happyHomeDir, { recursive: true });
+  }
+  await bestEffortChmod(configuration.happyHomeDir, 0o700);
+}
+
+function resolveLegacyDaemonStatePathsForActiveServer(): string[] {
+  return resolveDaemonStateCandidatePaths({
+    serverDir: configuration.activeServerDir,
+    preferredRing: configuration.publicReleaseRing,
+  }).filter((candidatePath) => candidatePath !== configuration.daemonStateFile);
+}
+
+function cleanupLegacyDaemonStateFilesBestEffortSync(): void {
+  for (const legacyPath of resolveLegacyDaemonStatePathsForActiveServer()) {
+    try {
+      if (existsSync(legacyPath)) {
+        unlinkSync(legacyPath);
+      }
+    } catch {
+      // best-effort
+    }
+    try {
+      const tmpPath = `${legacyPath}.tmp`;
+      if (existsSync(tmpPath)) {
+        unlinkSync(tmpPath);
+      }
+    } catch {
+      // best-effort
+    }
+  }
+}
+
+async function cleanupLegacyDaemonStateFilesBestEffort(): Promise<void> {
+  for (const legacyPath of resolveLegacyDaemonStatePathsForActiveServer()) {
+    try {
+      if (existsSync(legacyPath)) {
+        await unlink(legacyPath);
+      }
+    } catch {
+      // best-effort
+    }
+    try {
+      const tmpPath = `${legacyPath}.tmp`;
+      if (existsSync(tmpPath)) {
+        await unlink(tmpPath);
+      }
+    } catch {
+      // best-effort
+    }
   }
 }
 
@@ -244,6 +303,9 @@ export interface DaemonLocallyPersistedState {
   startedAt: number;
   startedWithCliVersion: string;
   startedWithPublicReleaseChannel?: PublicReleaseRingLabel;
+  runtimeId?: string;
+  startupSource?: DaemonStartupSource;
+  serviceLabel?: string;
   machineId?: string;
   lastHeartbeatAt?: number;
   daemonLogPath?: string;
@@ -255,7 +317,10 @@ const DaemonLocallyPersistedStateSchemaV2 = z.object({
   httpPort: z.number().int().positive(),
   startedAt: z.number().int().nonnegative(),
   startedWithCliVersion: z.string(),
-  startedWithPublicReleaseChannel: z.enum(['stable', 'preview', 'dev']).optional(),
+  startedWithPublicReleaseChannel: DaemonPublicReleaseChannelLabelSchema.optional(),
+  runtimeId: z.string().min(1).optional(),
+  startupSource: DaemonStartupSourceSchema.optional(),
+  serviceLabel: z.string().min(1).optional(),
   machineId: z.string().min(1).optional(),
   lastHeartbeatAt: z.number().int().nonnegative().optional(),
   daemonLogPath: z.string().optional(),
@@ -297,6 +362,9 @@ function normalizeDaemonState(
     startedAt,
     startedWithCliVersion: value.startedWithCliVersion,
     startedWithPublicReleaseChannel: undefined,
+    runtimeId: undefined,
+    startupSource: undefined,
+    serviceLabel: undefined,
     machineId: undefined,
     lastHeartbeatAt,
     daemonLogPath: value.daemonLogPath,
@@ -380,9 +448,7 @@ function serializeSettingsForDisk(settings: Settings): Settings {
 }
 
 export async function writeSettings(settings: Settings): Promise<void> {
-  if (!existsSync(configuration.happyHomeDir)) {
-    await mkdir(configuration.happyHomeDir, { recursive: true })
-  }
+  await ensureHappyHomeDirExists();
 
   // Ensure schema version is set before writing
   const settingsWithVersion = serializeSettingsForDisk({
@@ -407,6 +473,8 @@ export async function updateSettings(
   const MAX_LOCK_ATTEMPTS = 50;        // Maximum number of attempts (5 seconds total)
   const STALE_LOCK_TIMEOUT_MS = 10000; // Consider lock stale after 10 seconds
 
+  await ensureHappyHomeDirExists();
+
   const lockFile = configuration.settingsFile + '.lock';
   const tmpFile = configuration.settingsFile + '.tmp';
   let fileHandle;
@@ -419,6 +487,11 @@ export async function updateSettings(
       fileHandle = await open(lockFile, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY);
       break;
     } catch (err: any) {
+      if (err.code === 'ENOENT') {
+        attempts++;
+        await ensureHappyHomeDirExists();
+        continue;
+      }
       if (err.code === 'EEXIST') {
         // Lock file exists, wait and retry
         attempts++;
@@ -449,9 +522,7 @@ export async function updateSettings(
     const updated = await updater(current);
 
     // Ensure directory exists
-    if (!existsSync(configuration.happyHomeDir)) {
-      await mkdir(configuration.happyHomeDir, { recursive: true });
-    }
+    await ensureHappyHomeDirExists();
 
     // Write atomically using rename
     await writeFile(tmpFile, JSON.stringify(serializeSettingsForDisk(updated), null, 2), { mode: 0o600 });
@@ -526,9 +597,7 @@ export async function readCredentials(): Promise<Credentials | null> {
 }
 
 export async function writeCredentialsLegacy(credentials: { secret: Uint8Array, token: string }): Promise<void> {
-  if (!existsSync(configuration.happyHomeDir)) {
-    await mkdir(configuration.happyHomeDir, { recursive: true })
-  }
+  await ensureHappyHomeDirExists();
   await writeFile(configuration.privateKeyFile, JSON.stringify({
     secret: encodeBase64(credentials.secret),
     token: credentials.token
@@ -544,9 +613,7 @@ export async function writeCredentialsLegacy(credentials: { secret: Uint8Array, 
 }
 
 export async function writeCredentialsDataKey(credentials: { publicKey: Uint8Array, machineKey: Uint8Array, token: string }): Promise<void> {
-  if (!existsSync(configuration.happyHomeDir)) {
-    await mkdir(configuration.happyHomeDir, { recursive: true })
-  }
+  await ensureHappyHomeDirExists();
   await writeFile(configuration.privateKeyFile, JSON.stringify({
     encryption: { publicKey: encodeBase64(credentials.publicKey), machineKey: encodeBase64(credentials.machineKey) },
     token: credentials.token
@@ -643,17 +710,21 @@ async function readDaemonStateFallbackFromServersDir(): Promise<DaemonLocallyPer
   try {
     const dirents = await readdir(configuration.serversDir, { withFileTypes: true });
     const candidates: DaemonLocallyPersistedState[] = [];
-    const daemonStateBasename = resolveDaemonStateBasenameForRing(configuration.publicReleaseRing);
     for (const dirent of dirents) {
       if (!dirent.isDirectory()) continue;
-      const candidatePath = join(configuration.serversDir, dirent.name, daemonStateBasename);
-      try {
-        const content = await readFile(candidatePath, 'utf-8');
-        const parsed = DaemonLocallyPersistedStateSchema.safeParse(JSON.parse(content));
-        if (!parsed.success) continue;
-        candidates.push(normalizeDaemonState(parsed.data));
-      } catch {
-        continue;
+      for (const candidatePath of resolveDaemonStateCandidatePaths({
+        serverDir: join(configuration.serversDir, dirent.name),
+        preferredRing: configuration.publicReleaseRing,
+      })) {
+        try {
+          const content = await readFile(candidatePath, 'utf-8');
+          const parsed = DaemonLocallyPersistedStateSchema.safeParse(JSON.parse(content));
+          if (!parsed.success) continue;
+          candidates.push(normalizeDaemonState(parsed.data));
+          break;
+        } catch {
+          continue;
+        }
       }
     }
 
@@ -679,34 +750,53 @@ async function readDaemonStateFallbackFromServersDir(): Promise<DaemonLocallyPer
 }
 
 export async function readDaemonState(): Promise<DaemonLocallyPersistedState | null> {
+  const candidatePaths = resolveDaemonStateCandidatePaths({
+    serverDir: configuration.activeServerDir,
+    preferredRing: configuration.publicReleaseRing,
+  });
   for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      // Note: daemon state is written atomically via rename; retry helps if the reader races with filesystem.
-      const content = await readFile(configuration.daemonStateFile, 'utf-8');
-      const parsed = DaemonLocallyPersistedStateSchema.safeParse(JSON.parse(content));
-      if (!parsed.success) {
-        logger.warn(`[PERSISTENCE] Daemon state file is invalid: ${configuration.daemonStateFile}`, parsed.error);
-        // File is corrupt/unexpected structure; retry won't help.
-        return null;
-      }
-      return normalizeDaemonState(parsed.data);
-    } catch (error) {
-      // A SyntaxError from JSON.parse indicates the file is corrupt; retrying won't fix it.
-      if (error instanceof SyntaxError) {
-        logger.warn(`[PERSISTENCE] Daemon state file is corrupt and could not be parsed: ${configuration.daemonStateFile}`, error);
-        return null;
-      }
-      const err = error as NodeJS.ErrnoException;
-      if (err?.code === 'ENOENT') {
-        if (attempt === 3) return await readDaemonStateFallbackFromServersDir();
+    let sawEnoent = false;
+    for (const candidatePath of candidatePaths) {
+      try {
+        // Note: daemon state is written atomically via rename; retry helps if the reader races with filesystem.
+        const content = await readFile(candidatePath, 'utf-8');
+        const parsed = DaemonLocallyPersistedStateSchema.safeParse(JSON.parse(content));
+        if (!parsed.success) {
+          logger.warn(`[PERSISTENCE] Daemon state file is invalid: ${candidatePath}`, parsed.error);
+          // File is corrupt/unexpected structure; retry won't help.
+          return null;
+        }
+        const normalized = normalizeDaemonState(parsed.data);
+        if (candidatePath !== configuration.daemonStateFile) {
+          try {
+            writeDaemonState(normalized);
+          } catch (promotionError) {
+            logger.warn(`[PERSISTENCE] Failed to promote legacy daemon state into canonical path: ${candidatePath}`, promotionError);
+          }
+        }
+        return normalized;
+      } catch (error) {
+        // A SyntaxError from JSON.parse indicates the file is corrupt; retrying won't fix it.
+        if (error instanceof SyntaxError) {
+          logger.warn(`[PERSISTENCE] Daemon state file is corrupt and could not be parsed: ${candidatePath}`, error);
+          return null;
+        }
+        const err = error as NodeJS.ErrnoException;
+        if (err?.code === 'ENOENT') {
+          sawEnoent = true;
+          continue;
+        }
+        if (attempt === 3) {
+          logger.warn(`[PERSISTENCE] Failed to read daemon state file after 3 attempts: ${candidatePath}`, error);
+          return null;
+        }
         await new Promise((resolve) => setTimeout(resolve, 15));
-        continue;
       }
-      if (attempt === 3) {
-        logger.warn(`[PERSISTENCE] Failed to read daemon state file after 3 attempts: ${configuration.daemonStateFile}`, error);
-        return null;
-      }
+    }
+    if (sawEnoent) {
+      if (attempt === 3) return await readDaemonStateFallbackFromServersDir();
       await new Promise((resolve) => setTimeout(resolve, 15));
+      continue;
     }
   }
   return null;
@@ -740,6 +830,7 @@ export function writeDaemonState(state: DaemonLocallyPersistedState): void {
       }
     }
     bestEffortChmodSync(configuration.daemonStateFile, 0o600)
+    cleanupLegacyDaemonStateFilesBestEffortSync();
   } catch (e) {
     // Best-effort cleanup to avoid leaving behind orphan tmp files on failures like disk full.
     try {
@@ -764,6 +855,7 @@ export async function clearDaemonState(): Promise<void> {
   if (existsSync(tmpPath)) {
     await unlink(tmpPath).catch(() => {});
   }
+  await cleanupLegacyDaemonStateFilesBestEffort();
   // Also clean up lock file if it exists (for stale cleanup)
   if (existsSync(configuration.daemonLockFile)) {
     try {

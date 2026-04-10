@@ -49,5 +49,40 @@ test('getDaemonEnv prefers the matching cli settings server id over the stable s
   });
 
   assert.equal(env.HAPPIER_ACTIVE_SERVER_ID, canonicalServerId);
+  assert.equal(env.HAPPIER_DAEMON_STARTUP_SOURCE, 'manual');
 });
 
+test('getDaemonEnv marks service-mode starts as background-service', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'happy-stack-daemon-env-service-'));
+
+  const env = getDaemonEnv({
+    baseEnv: {
+      HAPPIER_STACK_SERVICE_MODE: '1',
+    },
+    cliHomeDir: dir,
+    internalServerUrl: 'http://127.0.0.1:3009',
+    publicServerUrl: 'http://127.0.0.1:3009',
+    stackName: 'main',
+    cliIdentity: 'default',
+  });
+
+  assert.equal(env.HAPPIER_DAEMON_STARTUP_SOURCE, 'background-service');
+});
+
+test('getDaemonEnv preserves an explicit startup source over service mode', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'happy-stack-daemon-env-explicit-'));
+
+  const env = getDaemonEnv({
+    baseEnv: {
+      HAPPIER_STACK_SERVICE_MODE: '1',
+      HAPPIER_DAEMON_STARTUP_SOURCE: 'self-restart',
+    },
+    cliHomeDir: dir,
+    internalServerUrl: 'http://127.0.0.1:3009',
+    publicServerUrl: 'http://127.0.0.1:3009',
+    stackName: 'main',
+    cliIdentity: 'default',
+  });
+
+  assert.equal(env.HAPPIER_DAEMON_STARTUP_SOURCE, 'self-restart');
+});

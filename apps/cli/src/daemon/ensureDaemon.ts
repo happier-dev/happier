@@ -1,9 +1,16 @@
 import { logger } from '@/ui/logger';
 import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
 import { readStartedByArg } from '@/cli/readStartedByArg';
+import { warn } from '@happier-dev/cli-common/output';
 
-import { isDaemonRunningCurrentlyInstalledHappyVersion } from './controlClient';
-import { spawnDetachedDaemonStartSync } from './runtime/spawnDetachedDaemonStartSync';
+import { isDaemonRunningCurrentlyInstalledHappyVersion } from '@/daemon/controlClient';
+import { evaluateCurrentDaemonOwner } from '@/daemon/ownership/evaluateCurrentDaemonOwner';
+import { renderDaemonOwnerConflict } from '@/daemon/ownership/renderDaemonOwnerConflict';
+import {
+  isDaemonStartupSourceServiceManaged,
+  resolveDaemonStartupSourceFromEnv,
+} from '@/daemon/ownership/daemonOwnershipMetadata';
+import { spawnDetachedDaemonStartSync } from '@/daemon/runtime/spawnDetachedDaemonStartSync';
 
 const DEFAULT_STARTUP_WAIT_TIMEOUT_MS = 5000;
 const DEFAULT_STARTUP_POLL_MS = 250;
@@ -39,6 +46,27 @@ export function applyDaemonAutostartEnvForInvocation(params: Readonly<{ args: st
 }
 
 export async function ensureDaemonRunningForSessionCommand(): Promise<void> {
+  const ownership = await evaluateCurrentDaemonOwner();
+  if (ownership.kind === 'compatible') {
+    return;
+  }
+  if (ownership.kind === 'conflict') {
+    const message = renderDaemonOwnerConflict({
+      intent: 'session-autostart',
+      owner: ownership.owner,
+    });
+    console.log(warn(message.title));
+    for (const line of message.lines) {
+      console.log(`  ${line}`);
+    }
+    return;
+  }
+
+  const startupSource = resolveDaemonStartupSourceFromEnv(process.env);
+  if (isDaemonStartupSourceServiceManaged(startupSource) || startupSource === 'self-restart') {
+    return;
+  }
+
   if (!(await isDaemonRunningCurrentlyInstalledHappyVersion())) {
     logger.debug('Starting Happier background service...');
     const daemonProcess = await spawnDetachedDaemonStartSync();

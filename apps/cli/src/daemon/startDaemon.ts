@@ -119,6 +119,24 @@ import { parseBooleanEnv, type BackendTargetRefV1 } from '@happier-dev/protocol'
 import { getReleaseRingCatalogEntry } from '@happier-dev/release-runtime/releaseRings';
 import type { CatalogAgentId } from '@/backends/types';
 import { writeTerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
+import {
+  isDaemonStartupSourceServiceManaged,
+  resolveDaemonServiceLabelFromEnv,
+  resolveDaemonTakeoverRequestedFromEnv,
+  resolveDaemonStartupSourceFromEnv,
+} from '@/daemon/ownership/daemonOwnershipMetadata';
+import { evaluateCurrentDaemonOwner } from '@/daemon/ownership/evaluateCurrentDaemonOwner';
+import { DaemonOwnershipConflictError } from '@/daemon/ownership/DaemonOwnershipConflictError';
+import {
+  evaluateDaemonStartupServiceConflict,
+  renderDaemonInstalledServiceConflict,
+} from '@/daemon/ownership/daemonServiceInventory';
+import {
+  buildDaemonTakeoverNotice,
+  resolveDaemonTakeoverDecision,
+} from '@/daemon/ownership/resolveDaemonTakeoverDecision';
+import { resolveDaemonOwnershipConflictExitCode } from '@/daemon/ownership/resolveDaemonOwnershipConflictExitCode';
+import { resolveDaemonServiceCliRuntimeFromEnv } from '@/daemon/service/cli';
 
 function resolvePositiveIntEnv(raw: string | undefined, fallback: number, bounds: { min: number; max: number }): number {
   const value = (raw ?? '').trim();
@@ -126,6 +144,11 @@ function resolvePositiveIntEnv(raw: string | undefined, fallback: number, bounds
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(bounds.max, Math.max(bounds.min, parsed));
+}
+
+export function resolveDaemonRuntimeId(processEnv: NodeJS.ProcessEnv = process.env): string {
+  const inheritedRuntimeId = String(processEnv.HAPPIER_DAEMON_RUNTIME_ID ?? '').trim();
+  return inheritedRuntimeId || randomUUID();
 }
 
 function readBuiltInCatalogAgentIdFromBackendTarget(target: BackendTargetRefV1 | undefined): CatalogAgentId | null {
@@ -190,7 +213,7 @@ function mapExistingSessionAttachFailureToSpawnError(reason: import('./sessionEn
   }
 }
 
-export async function startDaemon(): Promise<void> {
+export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}): Promise<void> {
   // We don't have cleanup function at the time of server construction
   // Control flow is:
   // 1. Create promise that will resolve when shutdown is requested
@@ -208,8 +231,59 @@ export async function startDaemon(): Promise<void> {
   const { waitForAuthEnabled, waitForAuthTimeoutMs } = resolveWaitForAuthConfig(process.env);
 
   let daemonLockHandle: Awaited<ReturnType<typeof acquireDaemonLock>> = null;
+  const runtimeId = resolveDaemonRuntimeId(process.env);
+  const startupSource = resolveDaemonStartupSourceFromEnv(process.env);
+  const serviceLabel = resolveDaemonServiceLabelFromEnv(process.env);
+  const takeoverRequested = options.takeover ?? resolveDaemonTakeoverRequestedFromEnv(process.env);
 
   try {
+    const ownership = await evaluateCurrentDaemonOwner();
+    const takeoverDecision = resolveDaemonTakeoverDecision({
+      ownership,
+      takeoverRequested,
+    });
+    if (takeoverDecision.kind === 'conflict') {
+      const error = new DaemonOwnershipConflictError({
+        intent: 'daemon-start',
+        owner: takeoverDecision.owner,
+      });
+      logger.warn('[DAEMON RUN] Relay ownership conflict prevented daemon startup', {
+        title: error.title,
+        lines: error.lines,
+      });
+      throw error;
+    }
+    const startupServiceConflict = await evaluateDaemonStartupServiceConflict({
+      startupSource,
+      runtime: resolveDaemonServiceCliRuntimeFromEnv({ processEnv: process.env }),
+    });
+    if (startupServiceConflict.kind === 'installed-background-service-conflict') {
+      const message = renderDaemonInstalledServiceConflict({
+        action: 'daemon-start-sync',
+        services: startupServiceConflict.services,
+      });
+      logger.warn('[DAEMON RUN] Installed background service prevented manual daemon startup', {
+        title: message.title,
+        lines: message.lines,
+        services: startupServiceConflict.services,
+      });
+      process.stderr.write(`${message.title}\n`);
+      process.stderr.write(`${message.lines.map((line) => `  ${line.trimStart()}`).join('\n')}\n`);
+      process.exit(1);
+    }
+
+    if (takeoverDecision.kind === 'manual-owner-takeover') {
+      const takeoverNotice = buildDaemonTakeoverNotice({ action: 'start-sync' });
+      logger.warn('[DAEMON RUN] Relay takeover requested; replacing the current manual relay runtime', {
+        runtimeId,
+        ownerCliVersion: takeoverDecision.owner.state.startedWithCliVersion,
+        ownerReleaseChannel: takeoverDecision.owner.state.startedWithPublicReleaseChannel,
+        title: takeoverNotice.title,
+        lines: takeoverNotice.lines,
+      });
+      await stopDaemon();
+    }
+
     const credentialsGate = await waitForInitialCredentials({
       isInteractive,
       waitForAuthEnabled,
@@ -1454,6 +1528,9 @@ export async function startDaemon(): Promise<void> {
       startedAt: Date.now(),
       startedWithCliVersion: packageJson.version,
       startedWithPublicReleaseChannel: getReleaseRingCatalogEntry(configuration.publicReleaseRing).publicLabel,
+      runtimeId,
+      startupSource,
+      serviceLabel,
       machineId,
       daemonLogPath: logger.logFilePath,
       controlToken,
@@ -1484,6 +1561,12 @@ export async function startDaemon(): Promise<void> {
           pid: process.pid,
           httpPort: controlPort,
           startedAt: Date.now(),
+          runtimeId,
+          cliVersion: packageJson.version,
+          publicReleaseChannel: getReleaseRingCatalogEntry(configuration.publicReleaseRing).publicLabel,
+          startupSource,
+          serviceManaged: isDaemonStartupSourceServiceManaged(startupSource),
+          serviceLabel,
           transfer: initialTransferState,
       };
       transferRuntimeStatePublisher = createDaemonTransferRuntimeStatePublisher({
@@ -1652,7 +1735,14 @@ export async function startDaemon(): Promise<void> {
             // Create realtime machine session
             const connectedApiMachine = diagnosticSubsystemGates.disableMachineSync
               ? null
-              : api.machineSyncClient(machine);
+              : api.machineSyncClient(machine, {
+                  runtimeId,
+                  cliVersion: packageJson.version,
+                  publicReleaseChannel: getReleaseRingCatalogEntry(configuration.publicReleaseRing).publicLabel,
+                  startupSource,
+                  serviceManaged: isDaemonStartupSourceServiceManaged(startupSource),
+                  ...(serviceLabel ? { serviceLabel } : null),
+                });
             apiMachine = connectedApiMachine;
             apiMachineForSessions = connectedApiMachine;
             if (connectedApiMachine && transferRuntimeStatePublisher) {
@@ -1879,6 +1969,7 @@ export async function startDaemon(): Promise<void> {
 
               let didRefreshMachineMetadata = false;
               connectedApiMachine.connect({
+                takeover: takeoverRequested,
                 onConnect: async () => {
                   if (shutdownInitiated) return;
 
@@ -1922,6 +2013,10 @@ export async function startDaemon(): Promise<void> {
                     didRefreshMachineMetadata = false;
                     logger.warn('[DAEMON RUN] Failed to refresh machine metadata on reconnect', error);
                   });
+                },
+                onOwnershipConflict: (conflict) => {
+                  logger.warn('[DAEMON RUN] Relay ownership conflict prevented machine connection', conflict);
+                  requestShutdown('happier-app', 'machine-owner-conflict');
                 },
               });
             } else {
@@ -2087,6 +2182,9 @@ export async function startDaemon(): Promise<void> {
       }
     } catch {
       // ignore
+    }
+    if (error instanceof DaemonOwnershipConflictError) {
+      process.exit(resolveDaemonOwnershipConflictExitCode(startupSource));
     }
     // IMPORTANT: Do not log raw Axios errors here; they can contain bearer tokens.
     logger.debug('[DAEMON RUN][FATAL] Failed somewhere unexpectedly - exiting with code 1', serializeAxiosErrorForLog(error));

@@ -8,8 +8,8 @@ import { configuration } from '@/configuration';
 import { DaemonLocallyPersistedStateSchema, readSettings } from '@/persistence';
 import { logger } from '@/ui/logger';
 import { resolveDaemonServiceInstallationSnapshotFromEnv } from '@/daemon/service/cli';
-import { resolveDaemonStateBasenameForRing } from '@/cli/runtime/publicReleaseChannel';
 import { resolveMachineIdForServerFromSettings } from '@/daemon/resolveMachineIdForServerFromSettings';
+import { resolveDaemonStateCandidatePaths } from '@/daemon/ownership/daemonOwnershipPaths';
 type NormalizedDaemonState = Readonly<{
   pid: number;
   httpPort: number;
@@ -65,8 +65,42 @@ async function readDaemonStateFromPath(path: string): Promise<NormalizedDaemonSt
   }
 }
 
-function resolveDaemonStatePath(serverId: string): string {
-  return join(configuration.serversDir, serverId, resolveDaemonStateBasenameForRing(configuration.publicReleaseRing));
+async function resolveDaemonStateForServer(serverId: string): Promise<Readonly<{
+  daemonStatePath: string;
+  state: NormalizedDaemonState | null;
+}>> {
+  const candidatePaths = resolveDaemonStateCandidatePaths({
+    serverDir: join(configuration.serversDir, serverId),
+    preferredRing: configuration.publicReleaseRing,
+  });
+  let firstReadableState: Readonly<{ daemonStatePath: string; state: NormalizedDaemonState }> | null = null;
+
+  for (const candidatePath of candidatePaths) {
+    if (!existsSync(candidatePath)) {
+      continue;
+    }
+    const state = await readDaemonStateFromPath(candidatePath);
+    if (!state) {
+      continue;
+    }
+    if (isPidAlive(state.pid)) {
+      return {
+        daemonStatePath: candidatePath,
+        state,
+      };
+    }
+    if (!firstReadableState) {
+      firstReadableState = {
+        daemonStatePath: candidatePath,
+        state,
+      };
+    }
+  }
+
+  return firstReadableState ?? {
+    daemonStatePath: candidatePaths[0]!,
+    state: null,
+  };
 }
 
 export type DaemonStatusEntry = Readonly<{
@@ -145,9 +179,9 @@ function resolveAccountIdFromToken(token: string | null): string | null {
   }
 }
 
-function resolveServiceInstallationForServer(serverId: string, serverUrl: string): Readonly<{ installed: boolean }> {
+async function resolveServiceInstallationForServer(serverId: string, serverUrl: string): Promise<Readonly<{ installed: boolean }>> {
   try {
-    const snapshot = resolveDaemonServiceInstallationSnapshotFromEnv({
+    const snapshot = await resolveDaemonServiceInstallationSnapshotFromEnv({
       processEnv: {
         ...process.env,
         HAPPIER_DAEMON_SERVICE_INSTANCE_ID: serverId,
@@ -181,12 +215,11 @@ export async function listDaemonStatusesForAllKnownServers(): Promise<DaemonStat
     const serverUrl =
       (profile?.serverUrl ?? '').toString().trim() ||
       (serverId === activeServerId ? (configuration.serverUrl ?? '').toString().trim() : '');
-    const daemonStatePath = resolveDaemonStatePath(serverId);
-    const state = await readDaemonStateFromPath(daemonStatePath);
+    const { daemonStatePath, state } = await resolveDaemonStateForServer(serverId);
     const running = state ? isPidAlive(state.pid) : false;
     const staleStateFile = Boolean(state && !running);
     const comparableKey = resolveComparableKey(serverUrl);
-    const serviceInstallation = resolveServiceInstallationForServer(serverId, serverUrl);
+    const serviceInstallation = await resolveServiceInstallationForServer(serverId, serverUrl);
     const token = await readAuthTokenForServerId(serverId);
     const accountId = resolveAccountIdFromToken(token);
     const machineId = resolveMachineIdForServerFromSettings(settings, serverId, accountId);

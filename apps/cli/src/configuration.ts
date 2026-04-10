@@ -13,8 +13,9 @@ import { isLocalishServerUrl } from '@/server/serverUrlClassification'
 import { normalizeCliArgv } from '@/cli/parseArgs'
 import {
   inferPublicReleaseRingIdFromEnvAndArgv,
-  resolveDaemonStateBasenameForRing,
 } from '@/cli/runtime/publicReleaseChannel'
+import { CANONICAL_DAEMON_STATE_BASENAME } from '@/daemon/ownership/daemonOwnershipPaths'
+import { createServerUrlComparableKey } from '@happier-dev/protocol'
 import packageJson from '../package.json'
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings'
 
@@ -267,9 +268,8 @@ class Configuration {
     this.activeServerDir = join(this.serversDir, this.activeServerId)
     this.legacyPrivateKeyFile = join(this.happyHomeDir, 'access.key')
     this.privateKeyFile = join(this.activeServerDir, 'access.key')
-    const daemonStateBasename = resolveDaemonStateBasenameForRing(this.publicReleaseRing)
-    this.daemonStateFile = join(this.activeServerDir, daemonStateBasename)
-    this.daemonLockFile = join(this.activeServerDir, `${daemonStateBasename}.lock`)
+    this.daemonStateFile = join(this.activeServerDir, CANONICAL_DAEMON_STATE_BASENAME)
+    this.daemonLockFile = join(this.activeServerDir, `${CANONICAL_DAEMON_STATE_BASENAME}.lock`)
 
     const attachMaxAgeRaw = String(process.env.HAPPIER_SESSION_ATTACH_FILE_MAX_AGE_MS ?? '').trim();
     const attachMaxAgeMs = Number.parseInt(attachMaxAgeRaw, 10);
@@ -849,9 +849,11 @@ function readActiveServerFromSettingsFile(path: string): PersistedServerSettings
 function deriveServerIdFromUrl(url: string): string {
   // Deterministic, filesystem-safe id for ad-hoc server URLs (used when env overrides are set).
   // Not cryptographic; intended only for local directory names.
+  const comparableKey = safeCreateComparableServerUrlKey(url)
+  const value = comparableKey || url
   let h = 2166136261;
-  for (let i = 0; i < url.length; i += 1) {
-    h ^= url.charCodeAt(i);
+  for (let i = 0; i < value.length; i += 1) {
+    h ^= value.charCodeAt(i);
     h = Math.imul(h, 16777619);
   }
   return `env_${(h >>> 0).toString(16)}`;
@@ -859,6 +861,16 @@ function deriveServerIdFromUrl(url: string): string {
 
 function normalizeServerUrl(url: string): string {
   return String(url ?? '').trim().replace(/\/+$/, '');
+}
+
+function safeCreateComparableServerUrlKey(url: string | null | undefined): string {
+  const value = String(url ?? '').trim();
+  if (!value) return '';
+  try {
+    return createServerUrlComparableKey(value);
+  } catch {
+    return '';
+  }
 }
 
 function resolveServerSelection(params: Readonly<{
@@ -908,9 +920,14 @@ function resolveServerSelection(params: Readonly<{
           };
 
           const matchesUrl = (server: Readonly<{ serverUrl: string; localServerUrl?: string | null }>, url: string): boolean => {
+            const targetComparableKey = safeCreateComparableServerUrlKey(url);
+            const serverComparableKey = safeCreateComparableServerUrlKey(server.serverUrl);
+            if (targetComparableKey && serverComparableKey && targetComparableKey === serverComparableKey) return true;
             if (normalizeServerUrl(server.serverUrl) === url) return true;
             const local = normalizeServerUrl(server.localServerUrl ?? '');
-            return Boolean(local && local === url);
+            if (local && local === url) return true;
+            const localComparableKey = safeCreateComparableServerUrlKey(server.localServerUrl ?? '');
+            return Boolean(targetComparableKey && localComparableKey && targetComparableKey === localComparableKey);
           };
 
           const persistedActive = params.persisted.servers[params.persisted.activeServerId] ?? null;

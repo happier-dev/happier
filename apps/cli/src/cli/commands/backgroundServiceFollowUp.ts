@@ -1,12 +1,90 @@
 import type { HappierService } from '@happier-dev/cli-common/happierRuntime';
+import type { DaemonServiceListEntry } from '@/daemon/service/cli';
 
-export function hasInstalledDefaultFollowingDaemonService(services: readonly HappierService[]): boolean {
-    return services.some((service) => (
-        service.serviceType === 'daemon'
-        && service.verification === 'verified'
-        && (service.targetMode ?? 'pinned') === 'default-following'
-        && service.installed
-    ));
+type BackgroundServiceFollowUpMode = 'user' | 'system';
+
+type BackgroundServiceInventoryEntry = HappierService | DaemonServiceListEntry;
+
+function isInstalledDefaultFollowingDaemonService(service: BackgroundServiceInventoryEntry): boolean {
+    if ('serviceType' in service) {
+        return (
+            service.serviceType === 'daemon'
+            && service.verification === 'verified'
+            && (service.targetMode ?? 'pinned') === 'default-following'
+            && service.installed
+        );
+    }
+    return service.targetMode === 'default-following' && service.installed;
+}
+
+function resolveBackgroundServiceMode(service: BackgroundServiceInventoryEntry): BackgroundServiceFollowUpMode {
+    if ('scope' in service) {
+        return service.scope === 'system' ? 'system' : 'user';
+    }
+    if ('mode' in service && service.mode != null) {
+        return service.mode === 'system' ? 'system' : 'user';
+    }
+    return String(service.path ?? '').includes('/etc/systemd/system/') ? 'system' : 'user';
+}
+
+export function resolveInstalledDefaultFollowingDaemonServiceModes(
+    services: readonly BackgroundServiceInventoryEntry[],
+): readonly BackgroundServiceFollowUpMode[] {
+    const modes = new Set<BackgroundServiceFollowUpMode>();
+
+    for (const service of services) {
+        if (!isInstalledDefaultFollowingDaemonService(service)) {
+            continue;
+        }
+        modes.add(resolveBackgroundServiceMode(service));
+    }
+
+    return [...modes].sort((left, right) => {
+        if (left === right) {
+            return 0;
+        }
+        return left === 'system' ? -1 : 1;
+    });
+}
+
+function resolveRestartModes(
+    modes: readonly BackgroundServiceFollowUpMode[] | undefined,
+): readonly BackgroundServiceFollowUpMode[] {
+    return modes != null && modes.length > 0 ? modes : ['user'];
+}
+
+function resolveRestartArgs(mode: BackgroundServiceFollowUpMode): string[] {
+    return mode === 'system'
+        ? ['service', 'restart', '--mode', 'system']
+        : ['service', 'restart'];
+}
+
+function renderRestartCommand(mode: BackgroundServiceFollowUpMode): string {
+    return mode === 'system'
+        ? '  happier service restart --mode system'
+        : '  happier service restart';
+}
+
+function hasDuplicateDefaultFollowingModes(
+    modes: readonly BackgroundServiceFollowUpMode[] | undefined,
+): boolean {
+    return (modes?.length ?? 0) > 1;
+}
+
+function renderRepairGuidance(): readonly string[] {
+    return [
+        'Multiple default-following background services are installed. Repair them before restarting a background service for this change:',
+        '  happier service repair --yes',
+    ];
+}
+
+async function restartDefaultFollowingBackgroundServices(params: Readonly<{
+    modes?: readonly BackgroundServiceFollowUpMode[];
+    runCliAction: (args: string[]) => Promise<void>;
+}>): Promise<void> {
+    for (const mode of resolveRestartModes(params.modes)) {
+        await params.runCliAction(resolveRestartArgs(mode));
+    }
 }
 
 export async function promptForDefaultFollowingBackgroundServiceRestart(params: Readonly<{
@@ -14,6 +92,7 @@ export async function promptForDefaultFollowingBackgroundServiceRestart(params: 
     promptInput: (prompt: string) => Promise<string>;
     runCliAction: (args: string[]) => Promise<void>;
     subject: string;
+    modes?: readonly BackgroundServiceFollowUpMode[];
 }>): Promise<boolean> {
     if (!params.interactive) {
         return false;
@@ -27,7 +106,10 @@ export async function promptForDefaultFollowingBackgroundServiceRestart(params: 
         return false;
     }
 
-    await params.runCliAction(['service', 'restart']);
+    await restartDefaultFollowingBackgroundServices({
+        modes: params.modes,
+        runCliAction: params.runCliAction,
+    });
     return true;
 }
 
@@ -57,22 +139,32 @@ export async function promptToAuthenticateForServerChange(params: Readonly<{
     return 'authenticated';
 }
 
-function renderManualRestartFollowUp(subject: string): readonly string[] {
+function renderManualRestartFollowUp(params: Readonly<{
+    subject: string;
+    modes?: readonly BackgroundServiceFollowUpMode[];
+}>): readonly string[] {
     return [
-        `Restart the background service so it now follows ${subject}:`,
-        '  happier service restart',
+        `Restart the background service so it now follows ${params.subject}:`,
+        ...resolveRestartModes(params.modes).map(renderRestartCommand),
     ];
 }
 
-function renderManualServerChangeFollowUp(targetServerUrl: string, hasCredentials: boolean): readonly string[] {
-    if (hasCredentials) {
-        return renderManualRestartFollowUp(targetServerUrl);
+function renderManualServerChangeFollowUp(params: Readonly<{
+    targetServerUrl: string;
+    hasCredentials: boolean;
+    modes?: readonly BackgroundServiceFollowUpMode[];
+}>): readonly string[] {
+    if (params.hasCredentials) {
+        return renderManualRestartFollowUp({
+            subject: params.targetServerUrl,
+            modes: params.modes,
+        });
     }
 
     return [
-        `Authenticate Happier against ${targetServerUrl} and then restart the background service so it follows that server:`,
+        `Authenticate Happier against ${params.targetServerUrl} and then restart the background service so it follows that server:`,
         '  happier auth login',
-        '  happier service restart',
+        ...resolveRestartModes(params.modes).map(renderRestartCommand),
     ];
 }
 
@@ -82,15 +174,37 @@ export async function runDefaultFollowingBackgroundServiceRestartFollowUp(params
     runCliAction: (args: string[]) => Promise<void>;
     subject: string;
     log: (message: string) => void;
+    modes?: readonly BackgroundServiceFollowUpMode[];
 }>): Promise<boolean> {
-    if (!params.interactive) {
-        for (const line of renderManualRestartFollowUp(params.subject)) {
+    if (hasDuplicateDefaultFollowingModes(params.modes)) {
+        for (const line of renderRepairGuidance()) {
             params.log(line);
         }
         return false;
     }
 
-    return promptForDefaultFollowingBackgroundServiceRestart(params);
+    if (!params.interactive) {
+        for (const line of renderManualRestartFollowUp({
+            subject: params.subject,
+            modes: params.modes,
+        })) {
+            params.log(line);
+        }
+        return false;
+    }
+
+    try {
+        return await promptForDefaultFollowingBackgroundServiceRestart(params);
+    } catch {
+        params.log('Background service follow-up failed after the primary change was already applied.');
+        for (const line of renderManualRestartFollowUp({
+            subject: params.subject,
+            modes: params.modes,
+        })) {
+            params.log(line);
+        }
+        return false;
+    }
 }
 
 export async function runDefaultFollowingBackgroundServiceServerChangeFollowUp(params: Readonly<{
@@ -100,27 +214,60 @@ export async function runDefaultFollowingBackgroundServiceServerChangeFollowUp(p
     targetServerUrl: string;
     hasCredentials: boolean;
     log: (message: string) => void;
+    services: readonly DaemonServiceListEntry[];
 }>): Promise<void> {
+    const modes = resolveInstalledDefaultFollowingDaemonServiceModes(params.services);
+    if (modes.length === 0) {
+        return;
+    }
+
+    if (hasDuplicateDefaultFollowingModes(modes)) {
+        for (const line of renderRepairGuidance()) {
+            params.log(line);
+        }
+        return;
+    }
+
     if (!params.interactive) {
-        for (const line of renderManualServerChangeFollowUp(params.targetServerUrl, params.hasCredentials)) {
+        for (const line of renderManualServerChangeFollowUp({
+            targetServerUrl: params.targetServerUrl,
+            hasCredentials: params.hasCredentials,
+            modes,
+        })) {
             params.log(line);
         }
         return;
     }
 
-    const authOutcome = await promptToAuthenticateForServerChange(params);
-    if (authOutcome === 'declined') {
-        params.log(`Background service was not restarted because ${params.targetServerUrl} is not authenticated yet.`);
-        for (const line of renderManualServerChangeFollowUp(params.targetServerUrl, false)) {
+    try {
+        const authOutcome = await promptToAuthenticateForServerChange(params);
+        if (authOutcome === 'declined') {
+            params.log(`Background service was not restarted because ${params.targetServerUrl} is not authenticated yet.`);
+            for (const line of renderManualServerChangeFollowUp({
+                targetServerUrl: params.targetServerUrl,
+                hasCredentials: false,
+                modes,
+            })) {
+                params.log(line);
+            }
+            return;
+        }
+
+        await promptForDefaultFollowingBackgroundServiceRestart({
+            interactive: params.interactive,
+            promptInput: params.promptInput,
+            runCliAction: params.runCliAction,
+            subject: params.targetServerUrl,
+            modes,
+        });
+    } catch {
+        params.log('Background service follow-up failed after the primary change was already applied.');
+        for (const line of renderManualServerChangeFollowUp({
+            targetServerUrl: params.targetServerUrl,
+            hasCredentials: params.hasCredentials,
+            modes,
+        })) {
             params.log(line);
         }
-        return;
     }
-
-    await promptForDefaultFollowingBackgroundServiceRestart({
-        interactive: params.interactive,
-        promptInput: params.promptInput,
-        runCliAction: params.runCliAction,
-        subject: params.targetServerUrl,
-    });
 }

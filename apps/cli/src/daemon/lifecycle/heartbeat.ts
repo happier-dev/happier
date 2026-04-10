@@ -264,7 +264,15 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
 
         let spawnStarted = false;
         try {
-          const spawned = await spawnDetachedDaemonStartSync();
+          const spawned = await spawnDetachedDaemonStartSync({
+            startupSource: 'self-restart',
+            env: fileState.runtimeId
+              ? {
+                  ...process.env,
+                  HAPPIER_DAEMON_RUNTIME_ID: fileState.runtimeId,
+                }
+              : process.env,
+          });
           spawned.unref?.();
           spawnStarted = true;
         } catch (error) {
@@ -307,6 +315,10 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
           httpPort: controlPort,
           startedAt: fileState.startedAt,
           startedWithCliVersion: fileState.startedWithCliVersion,
+          startedWithPublicReleaseChannel: fileState.startedWithPublicReleaseChannel,
+          runtimeId: fileState.runtimeId,
+          startupSource: fileState.startupSource,
+          serviceLabel: fileState.serviceLabel,
           machineId: fileState.machineId,
           lastHeartbeatAt: Date.now(),
           daemonLogPath: fileState.daemonLogPath,

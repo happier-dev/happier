@@ -153,4 +153,58 @@ describe('resolveDaemonServiceInstallConflictPlan', () => {
       'happier-daemon.default.backup',
     ]);
   });
+
+  it('treats pinned daemon services as competing when installing a default-following service', () => {
+    const plan = resolveDaemonServiceInstallConflictPlan({
+      target: {
+        platform: 'linux',
+        backend: 'systemd-user',
+        targetMode: 'default-following',
+        ring: null,
+        instanceId: null,
+        serverUrl: null,
+      },
+      strategy: 'require-explicit',
+      services: [
+        createDaemonService({
+          id: 'service:stable:company',
+          label: 'happier-daemon.company',
+          targetMode: 'pinned',
+          ring: 'stable',
+          instanceId: 'company',
+          serverUrl: 'https://company.example.test',
+          publicServerUrl: 'https://company.example.test',
+        }),
+      ],
+    });
+
+    expect(plan.competingServices.map((service) => service.label)).toEqual(['happier-daemon.company']);
+    expect(plan.servicesToRemove).toEqual([]);
+  });
+
+  it('treats equivalent loopback relay aliases as the same pinned server target', () => {
+    const plan = resolveDaemonServiceInstallConflictPlan({
+      target: {
+        platform: 'linux',
+        backend: 'systemd-user',
+        targetMode: 'pinned',
+        ring: 'stable',
+        instanceId: 'stack',
+        serverUrl: 'http://happier-stack.localhost:53288',
+      },
+      strategy: 'replace-ring',
+      services: [
+        createDaemonService({
+          id: 'service:stable:stack-local',
+          label: 'happier-daemon.stack-local',
+          instanceId: 'stack-local',
+          serverUrl: 'http://127.0.0.1:53288',
+          publicServerUrl: 'http://localhost:53288',
+        }),
+      ],
+    });
+
+    expect(plan.competingServices.map((service) => service.label)).toEqual(['happier-daemon.stack-local']);
+    expect(plan.servicesToRemove.map((service) => service.label)).toEqual(['happier-daemon.stack-local']);
+  });
 });

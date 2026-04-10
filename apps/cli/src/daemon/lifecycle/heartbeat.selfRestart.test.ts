@@ -101,6 +101,7 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
         httpPort: 8765,
         startedAt: Date.now(),
         startedWithCliVersion: '1.0.0',
+        runtimeId: 'runtime-heartbeat-restart',
         daemonLogPath: '/tmp/daemon.log',
       },
       currentCliVersion: '1.0.0',
@@ -163,6 +164,7 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
         httpPort: 8765,
         startedAt: Date.now(),
         startedWithCliVersion: '1.0.0',
+        runtimeId: 'runtime-heartbeat-restart',
         daemonLogPath: '/tmp/daemon.log',
       },
       currentCliVersion: '1.0.0',
@@ -174,6 +176,11 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
     await tick!();
 
     expect(spawnDetachedDaemonStartSync).toHaveBeenCalledTimes(1);
+    const firstSpawnCall = vi.mocked(spawnDetachedDaemonStartSync).mock.calls[0]?.[0] as
+      | { env?: Record<string, string>; startupSource?: string }
+      | undefined;
+    expect(firstSpawnCall?.startupSource).toBe('self-restart');
+    expect(firstSpawnCall?.env?.HAPPIER_DAEMON_RUNTIME_ID).toBe('runtime-heartbeat-restart');
     expect(exitSpy).not.toHaveBeenCalled();
 
     clearInterval(interval);
@@ -228,6 +235,7 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
         httpPort: 5555,
         startedAt: Date.now(),
         startedWithCliVersion: '1.0.0',
+        runtimeId: 'runtime-heartbeat-confirmed',
       },
       currentCliVersion: '1.0.0',
       requestShutdown: vi.fn(),
@@ -238,6 +246,11 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
     await tick!();
 
     expect(spawnDetachedDaemonStartSync).toHaveBeenCalledTimes(1);
+    const confirmedSpawnCall = vi.mocked(spawnDetachedDaemonStartSync).mock.calls[0]?.[0] as
+      | { env?: Record<string, string>; startupSource?: string }
+      | undefined;
+    expect(confirmedSpawnCall?.startupSource).toBe('self-restart');
+    expect(confirmedSpawnCall?.env?.HAPPIER_DAEMON_RUNTIME_ID).toBe('runtime-heartbeat-confirmed');
     expect(exitSpy).toHaveBeenCalledWith(0);
 
     clearInterval(interval);

@@ -3,14 +3,26 @@ import { spawnDetachedDaemonStartSync } from '@/daemon/runtime/spawnDetachedDaem
 import { waitForDaemonRunningWithinBudget } from '@/daemon/waitForDaemonRunningWithinBudget';
 import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
 
-export async function restartDaemonAndWait(params: Readonly<{ stopSessions?: boolean }> = {}): Promise<boolean> {
+export async function restartDaemonAndWait(
+  params: Readonly<{ stopSessions?: boolean; takeover?: boolean }> = {},
+): Promise<boolean> {
   try {
     await stopDaemon({ stopSessions: params.stopSessions });
   } catch {
     // best-effort; restart should still attempt to start even if the daemon wasn't running
   }
 
-  const child = await spawnDetachedDaemonStartSync();
+  const child = await spawnDetachedDaemonStartSync({
+    startupSource: 'self-restart',
+    ...(params.takeover === false
+      ? null
+      : {
+        env: {
+          ...process.env,
+          HAPPIER_DAEMON_TAKEOVER: '1',
+        },
+      }),
+  });
   child.unref();
 
   const timeoutMs = readPositiveIntEnv('HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS', 5000);

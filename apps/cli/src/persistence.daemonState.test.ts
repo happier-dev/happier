@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
@@ -25,6 +25,7 @@ describe('readDaemonState', () => {
             ]);
 
             setTimeout(() => {
+                mkdirSync(dirname(configuration.daemonStateFile), { recursive: true });
                 writeFileSync(
                     configuration.daemonStateFile,
                     JSON.stringify(
@@ -47,7 +48,7 @@ describe('readDaemonState', () => {
         });
     });
 
-    it('scopes the daemon state file name by public release channel so lanes do not collide', async () => {
+    it('uses a canonical server-scoped daemon state file name even when the public release channel is dev', async () => {
         await withTempDir('happier-cli-daemon-state-scope-', async (homeDir) => {
             vi.resetModules();
             envScope.patch({
@@ -58,7 +59,91 @@ describe('readDaemonState', () => {
 
             const [{ configuration }] = await Promise.all([import('./configuration')]);
 
-            expect(configuration.daemonStateFile).toBe(join(configuration.activeServerDir, 'daemon.dev.state.json'));
+            expect(configuration.daemonStateFile).toBe(join(configuration.activeServerDir, 'daemon.state.json'));
+        });
+    });
+
+    it('falls back to the legacy ring-scoped daemon state file for the active server when the canonical state file is missing', async () => {
+        await withTempDir('happier-cli-daemon-state-legacy-ring-fallback-', async (homeDir) => {
+            vi.resetModules();
+            envScope.patch({
+                HAPPIER_HOME_DIR: homeDir,
+                HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+                HAPPIER_PUBLIC_RELEASE_CHANNEL: 'dev',
+            });
+
+            const [{ configuration }, { readDaemonState }] = await Promise.all([
+                import('./configuration'),
+                import('./persistence'),
+            ]);
+
+            const legacyPath = join(configuration.activeServerDir, 'daemon.dev.state.json');
+            mkdirSync(dirname(legacyPath), { recursive: true });
+            writeFileSync(
+                legacyPath,
+                JSON.stringify(
+                    {
+                        pid: 321,
+                        httpPort: 5173,
+                        startedAt: Date.now(),
+                        startedWithCliVersion: '0.0.0-test',
+                        controlToken: 'legacy-token-321',
+                    },
+                    null,
+                    2,
+                ),
+                'utf-8',
+            );
+
+            const state = await readDaemonState();
+            expect(state?.pid).toBe(321);
+            expect(existsSync(configuration.daemonStateFile)).toBe(true);
+            expect(JSON.parse(readFileSync(configuration.daemonStateFile, 'utf-8'))).toMatchObject({
+                pid: 321,
+                controlToken: 'legacy-token-321',
+            });
+        });
+    });
+
+    it('preserves runtime ownership metadata when reading the canonical daemon state file', async () => {
+        await withTempDir('happier-cli-daemon-state-runtime-metadata-', async (homeDir) => {
+            vi.resetModules();
+            envScope.patch({
+                HAPPIER_HOME_DIR: homeDir,
+                HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+            });
+
+            const [{ configuration }, { readDaemonState }] = await Promise.all([
+                import('./configuration'),
+                import('./persistence'),
+            ]);
+
+            mkdirSync(dirname(configuration.daemonStateFile), { recursive: true });
+            writeFileSync(
+                configuration.daemonStateFile,
+                JSON.stringify(
+                    {
+                        pid: 654,
+                        httpPort: 5173,
+                        startedAt: Date.now(),
+                        startedWithCliVersion: '0.0.0-test',
+                        startedWithPublicReleaseChannel: 'preview',
+                        runtimeId: 'runtime-654',
+                        startupSource: 'background-service',
+                        serviceLabel: 'com.happier.cli.daemon.default',
+                        controlToken: 'ownership-token-654',
+                    },
+                    null,
+                    2,
+                ),
+                'utf-8',
+            );
+
+            const state = await readDaemonState();
+            expect(state?.runtimeId).toBe('runtime-654');
+            expect(state?.startupSource).toBe('background-service');
+            expect(state?.serviceLabel).toBe('com.happier.cli.daemon.default');
+            expect(state?.startedWithPublicReleaseChannel).toBe('preview');
         });
     });
 
@@ -164,6 +249,57 @@ describe('readDaemonState', () => {
             const state = await readDaemonState();
             expect(state?.pid).toBe(123);
             expect(typeof state?.startedAt).toBe('number');
+        });
+    });
+});
+
+describe('daemon state canonicalization', () => {
+    const envKeys = ['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_PUBLIC_RELEASE_CHANNEL'] as const;
+    let envScope = createEnvKeyScope(envKeys);
+
+    afterEach(() => {
+        envScope.restore();
+        envScope = createEnvKeyScope(envKeys);
+        vi.resetModules();
+    });
+
+    it('removes legacy ring-scoped daemon state files after writing the canonical owner state', async () => {
+        await withTempDir('happier-cli-daemon-state-write-canonical-', async (homeDir) => {
+            vi.resetModules();
+            envScope.patch({
+                HAPPIER_HOME_DIR: homeDir,
+                HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+                HAPPIER_PUBLIC_RELEASE_CHANNEL: 'dev',
+            });
+
+            const [{ configuration }, { writeDaemonState }] = await Promise.all([
+                import('./configuration'),
+                import('./persistence'),
+            ]);
+
+            const legacyPath = join(configuration.activeServerDir, 'daemon.dev.state.json');
+            mkdirSync(dirname(legacyPath), { recursive: true });
+            writeFileSync(
+                legacyPath,
+                JSON.stringify({
+                    pid: 999,
+                    httpPort: 5173,
+                    startedAt: Date.now(),
+                    startedWithCliVersion: '0.0.0-old',
+                }),
+                'utf-8',
+            );
+
+            writeDaemonState({
+                pid: 123,
+                httpPort: 5173,
+                startedAt: Date.now(),
+                startedWithCliVersion: '0.0.0-new',
+                runtimeId: 'runtime-123',
+            });
+
+            expect(existsSync(configuration.daemonStateFile)).toBe(true);
+            expect(existsSync(legacyPath)).toBe(false);
         });
     });
 });

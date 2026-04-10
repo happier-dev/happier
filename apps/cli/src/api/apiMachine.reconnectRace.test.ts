@@ -379,4 +379,175 @@ describe('ApiMachineClient reconnect race handling', () => {
             },
         });
     });
+
+    it('stops reconnecting and reports a relay ownership conflict from connect_error', async () => {
+        const { ApiMachineClient } = await import('./apiMachine');
+
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+
+        const client = new ApiMachineClient('token', machine, {
+            runtimeId: 'runtime-dev',
+            cliVersion: '0.2.4-dev',
+            publicReleaseChannel: 'dev',
+            startupSource: 'manual',
+            serviceManaged: false,
+        });
+        const ownershipConflict = vi.fn();
+
+        client.connect({ onOwnershipConflict: ownershipConflict });
+
+        expect(createMachineSocketTransportMock).toHaveBeenCalledWith(expect.objectContaining({
+            runtimeId: 'runtime-dev',
+            cliVersion: '0.2.4-dev',
+            publicReleaseChannel: 'dev',
+            startupSource: 'manual',
+            serviceManaged: false,
+        }));
+
+        harness.getSocket(0).trigger('connect_error', {
+            message: 'machine-owner-conflict',
+            data: {
+                error: 'machine-owner-conflict',
+                statusCode: 409,
+                owner: {
+                    cliVersion: '0.2.0',
+                    publicReleaseChannel: 'stable',
+                    startupSource: 'background-service',
+                    serviceManaged: true,
+                    serviceLabel: 'com.happier.cli.daemon.default',
+                },
+            },
+        });
+
+        const supervisor = createManagedConnectionSupervisorMock.mock.results[0]?.value;
+        expect(supervisor?.stop).toHaveBeenCalledTimes(1);
+        expect(ownershipConflict).toHaveBeenCalledWith({
+            owner: {
+                cliVersion: '0.2.0',
+                publicReleaseChannel: 'stable',
+                startupSource: 'background-service',
+                serviceManaged: true,
+                serviceLabel: 'com.happier.cli.daemon.default',
+            },
+        });
+    });
+
+    it('ignores a stale connect_error ownership conflict from an older transport socket', async () => {
+        const { ApiMachineClient } = await import('./apiMachine');
+
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+
+        const client = new ApiMachineClient('token', machine, {
+            runtimeId: 'runtime-dev',
+            cliVersion: '0.2.4-dev',
+            publicReleaseChannel: 'dev',
+            startupSource: 'manual',
+            serviceManaged: false,
+        });
+        const ownershipConflict = vi.fn();
+
+        client.connect({ onOwnershipConflict: ownershipConflict });
+        harness.publishState({ phase: 'online', reason: 'initial_connect', attempt: 0 });
+        harness.establishReconnectTransport();
+        harness.publishState({ phase: 'online', reason: 'transport_disconnect', attempt: 1 });
+
+        const firstSocket = harness.getSocket(0);
+        const secondSocket = harness.getSocket(1);
+        const supervisor = createManagedConnectionSupervisorMock.mock.results[0]?.value;
+
+        firstSocket.trigger('connect_error', {
+            message: 'machine-owner-conflict',
+            data: {
+                error: 'machine-owner-conflict',
+                statusCode: 409,
+                owner: {
+                    cliVersion: '0.2.0',
+                    publicReleaseChannel: 'stable',
+                    startupSource: 'background-service',
+                    serviceManaged: true,
+                    serviceLabel: 'com.happier.cli.daemon.default',
+                },
+            },
+        });
+
+        client.sendMachineTransferEnvelope({
+            targetMachineId: 'machine-2',
+            envelope: {
+                transferId: 'transfer-stale-connect-error',
+                kind: 'chunk',
+                sequence: 4,
+                payloadBase64: 'ZA==',
+            },
+        });
+
+        expect(supervisor?.stop).not.toHaveBeenCalled();
+        expect(ownershipConflict).not.toHaveBeenCalled();
+        expect(secondSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE, {
+            targetMachineId: 'machine-2',
+            envelope: {
+                transferId: 'transfer-stale-connect-error',
+                kind: 'chunk',
+                sequence: 4,
+                payloadBase64: 'ZA==',
+            },
+        });
+    });
+
+    it('keeps takeover on retry attempts until the first successful machine connection', async () => {
+        const { ApiMachineClient } = await import('./apiMachine');
+
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+
+        const client = new ApiMachineClient('token', machine, {
+            runtimeId: 'runtime-dev',
+            cliVersion: '0.2.4-dev',
+            publicReleaseChannel: 'dev',
+            startupSource: 'manual',
+            serviceManaged: false,
+        });
+
+        client.connect({ takeover: true });
+
+        expect(createMachineSocketTransportMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
+            takeover: true,
+        }));
+
+        harness.establishReconnectTransport();
+
+        expect(createMachineSocketTransportMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+            takeover: true,
+        }));
+
+        await (createManagedConnectionSupervisorMock.mock.calls[0]?.[0] as { onConnected?: () => Promise<void> | void } | undefined)?.onConnected?.();
+        harness.publishState({ phase: 'online', reason: 'initial_connect', attempt: 0 });
+        harness.establishReconnectTransport();
+
+        expect(createMachineSocketTransportMock).toHaveBeenNthCalledWith(3, expect.objectContaining({
+            takeover: false,
+        }));
+    });
 });

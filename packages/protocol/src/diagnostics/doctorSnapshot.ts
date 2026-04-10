@@ -58,6 +58,10 @@ export const DoctorSnapshotDaemonStatusSchema = z.object({
     httpPort: z.number().int().positive().nullable(),
     startedWithCliVersion: NonEmptyString.optional(),
     startedWithPublicReleaseChannel: PublicReleaseChannelLabelSchema.nullable().optional(),
+    runtimeId: NonEmptyString.optional(),
+    startupSource: NonEmptyString.optional(),
+    serviceManaged: z.boolean().nullable().optional(),
+    serviceLabel: NonEmptyString.nullable().optional(),
   }),
   service: z.object({
     installed: z.boolean(),

@@ -21,9 +21,9 @@ import {
   runCliAction,
 } from './commandUtilities';
 import {
-  hasInstalledDefaultFollowingDaemonService,
+  resolveInstalledDefaultFollowingDaemonServiceModes,
   runDefaultFollowingBackgroundServiceServerChangeFollowUp,
-} from '../backgroundServiceFollowUp';
+} from '../backgroundServiceFollowUp.js';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { tailscaleServeHttpsUrlForInternalServerUrl } from '@/integrations/tailscale/tailscaleServe';
 import { fetchServerAdvertisedUrls } from '@/server/serverCapabilities';
@@ -33,7 +33,8 @@ import {
   isLoopbackHttpServerUrl,
 } from '@/server/serverUrlClassification';
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
-import { discoverHappierServices } from '@happier-dev/cli-common/happierRuntime';
+import { resolveInstalledDaemonServiceInventoryForCurrentRelay } from '@/daemon/ownership/daemonServiceInventory';
+import { resolveDaemonServiceCliRuntimeFromEnv } from '@/daemon/service/cli';
 import {
   bullets,
   cmd,
@@ -358,6 +359,12 @@ async function cmdAdd(args: string[]): Promise<void> {
   if (startDaemon && !installService) {
     await runCliAction(['--server', created.id, 'daemon', 'start']);
   }
+  if (shouldUse && !installService && !startDaemon) {
+    await runServerSelectionBackgroundServiceFollowUp({
+      interactive: isInteractiveTerminal(),
+      targetServerUrl: created.serverUrl,
+    });
+  }
 }
 
 async function cmdUse(args: string[]): Promise<void> {
@@ -510,13 +517,10 @@ async function runServerSelectionBackgroundServiceFollowUp(params: Readonly<{
   interactive: boolean;
   targetServerUrl: string;
 }>): Promise<void> {
-  const serviceInventory = await discoverHappierServices({
-    processEnv: process.env,
-    platform: process.platform === 'darwin' || process.platform === 'linux' || process.platform === 'win32'
-      ? process.platform
-      : undefined,
-  });
-  if (!hasInstalledDefaultFollowingDaemonService(serviceInventory.services)) {
+  const runtime = resolveDaemonServiceCliRuntimeFromEnv({ processEnv: process.env });
+  const services = await resolveInstalledDaemonServiceInventoryForCurrentRelay(runtime);
+  const installedDefaultFollowingServiceModes = resolveInstalledDefaultFollowingDaemonServiceModes(services);
+  if (installedDefaultFollowingServiceModes.length === 0) {
     return;
   }
 
@@ -527,6 +531,7 @@ async function runServerSelectionBackgroundServiceFollowUp(params: Readonly<{
     runCliAction,
     targetServerUrl: params.targetServerUrl,
     hasCredentials: credentials != null,
+    services,
     log: console.log,
   });
 }

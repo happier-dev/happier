@@ -1,6 +1,7 @@
 import { onShutdown } from "@/utils/process/shutdown";
 import { Fastify } from "./types";
 import { buildMachineActivityEphemeral, ClientConnection, eventRouter } from "@/app/events/eventRouter";
+import { buildMachineOwnerConflictSocketPayload, readMachineDaemonOwnershipMetadataFromSocketAuth } from "@happier-dev/protocol";
 import { Server, Socket } from "socket.io";
 import { log } from "@/utils/logging/log";
 import { auth } from "@/app/auth/auth";
@@ -25,6 +26,7 @@ import { db } from "@/storage/db";
 import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
 import { readMachineTransferFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveSessionScopedSocketBinding } from "./socket/sessionScopedBinding";
+import { createMachineSocketOwnershipRegistry } from "./socket/machineSocketOwnershipRegistry";
 
 export const DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE = 25_000_000;
 
@@ -78,17 +80,22 @@ export function startSocket(app: Fastify) {
         serveClient: false // Don't serve the client files
     });
 
-    function rejectSocket(params: { statusCode: number; error: string; provider?: string }) {
+    function rejectSocket(params: { statusCode: number; error: string; provider?: string; data?: Record<string, unknown> }) {
         const err: any = new Error(params.error);
         err.data = {
             error: params.error,
             statusCode: params.statusCode,
             ...(params.provider ? { provider: params.provider } : {}),
+            ...(params.data ?? {}),
         };
         return err;
     }
 
     let rpcListeners = new Map<string, Map<string, Socket>>();
+    const machineOwnershipRegistry = createMachineSocketOwnershipRegistry({
+        io,
+        config: shouldEnableRedisAdapter ? { enabled: true, instanceId } : { enabled: false },
+    });
     app.forwardRpcForUser = createServerRpcForwarder({
         io,
         allRpcListeners: rpcListeners,
@@ -102,6 +109,9 @@ export function startSocket(app: Fastify) {
         const clientPurpose = socket.handshake.auth.clientPurpose as string | undefined;
         const sessionId = socket.handshake.auth.sessionId as string | undefined;
         const machineId = socket.handshake.auth.machineId as string | undefined;
+        const takeoverRequested =
+            socket.handshake.auth.takeover === true ||
+            socket.handshake.auth.takeover === "true";
 
         if (!token) {
             return next(rejectSocket({ statusCode: 401, error: 'invalid-token' }));
@@ -136,6 +146,24 @@ export function startSocket(app: Fastify) {
             });
             if (!machine) {
                 return next(rejectSocket({ statusCode: 403, error: 'invalid-machine' }));
+            }
+
+            const ownershipClaim = await machineOwnershipRegistry.claimOwner({
+                accountId: verified.userId,
+                machineId: machineId!,
+                socketId: socket.id,
+                owner: {
+                    ...readMachineDaemonOwnershipMetadataFromSocketAuth(socket.handshake.auth),
+                    takeoverRequested,
+                },
+            });
+            if (ownershipClaim.result === 'conflict') {
+                const { socketId: _socketId, ...owner } = ownershipClaim.owner;
+                return next(rejectSocket({
+                    statusCode: 409,
+                    error: 'machine-owner-conflict',
+                    data: buildMachineOwnerConflictSocketPayload(readMachineDaemonOwnershipMetadataFromSocketAuth(owner)),
+                }));
             }
         }
 
@@ -256,6 +284,14 @@ export function startSocket(app: Fastify) {
 
         socket.on('disconnect', (reason) => {
             websocketEventsCounter.inc({ event_type: 'disconnect' });
+
+            if (connection.connectionType === 'machine-scoped') {
+                void machineOwnershipRegistry.releaseOwner({
+                    accountId: userId,
+                    machineId: connection.machineId,
+                    socketId: socket.id,
+                });
+            }
 
             // Cleanup connections
             eventRouter.removeConnection(userId, connection);

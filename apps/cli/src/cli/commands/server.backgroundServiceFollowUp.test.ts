@@ -1,276 +1,192 @@
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { HappierService } from '@happier-dev/cli-common/happierRuntime';
+import type { DaemonServiceListEntry } from '@/daemon/service/cli';
 
-import type { HappierServiceInventory } from '@happier-dev/cli-common/happierRuntime';
-import { reloadConfiguration } from '@/configuration';
-import { writeCredentialsLegacy } from '@/persistence';
-import { addServerProfile, useServerProfile } from '@/server/serverProfiles';
-import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
+import {
+    resolveInstalledDefaultFollowingDaemonServiceModes,
+    runDefaultFollowingBackgroundServiceRestartFollowUp,
+    runDefaultFollowingBackgroundServiceServerChangeFollowUp,
+} from './backgroundServiceFollowUp';
 
-const promptAnswers: string[] = [];
-const promptQuestions: string[] = [];
-const { spawnHappyCLIMock, discoverHappierServicesMock } = vi.hoisted(() => ({
-    spawnHappyCLIMock: vi.fn(),
-    discoverHappierServicesMock: vi.fn<(...args: unknown[]) => Promise<HappierServiceInventory>>(async () => ({ services: [] })),
-}));
-
-vi.mock('node:readline', () => ({
-    createInterface: () => ({
-        question: (prompt: string, cb: (answer: string) => void) => {
-            promptQuestions.push(prompt);
-            cb(promptAnswers.shift() ?? '');
-        },
-        close: () => {},
-    }),
-}));
-
-vi.mock('@/utils/spawnHappyCLI', () => ({
-    spawnHappyCLI: (...args: unknown[]) => spawnHappyCLIMock(...args),
-}));
-
-vi.mock('@happier-dev/cli-common/happierRuntime', async () => {
-    const actual = await vi.importActual<typeof import('@happier-dev/cli-common/happierRuntime')>('@happier-dev/cli-common/happierRuntime');
+function createServiceInventoryEntry(overrides: Partial<HappierService> = {}): HappierService {
     return {
-        ...actual,
-        discoverHappierServices: (...args: Parameters<typeof actual.discoverHappierServices>) => discoverHappierServicesMock(...args),
-    };
-});
-
-function setTtyMode(stdinIsTTY: boolean, stdoutIsTTY: boolean): () => void {
-    const stdinDescriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
-    const stdoutDescriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
-
-    Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: stdinIsTTY });
-    Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: stdoutIsTTY });
-
-    return () => {
-        if (stdinDescriptor) Object.defineProperty(process.stdin, 'isTTY', stdinDescriptor);
-        else delete (process.stdin as { isTTY?: boolean }).isTTY;
-        if (stdoutDescriptor) Object.defineProperty(process.stdout, 'isTTY', stdoutDescriptor);
-        else delete (process.stdout as { isTTY?: boolean }).isTTY;
+        id: 'svc-default',
+        serviceType: 'daemon',
+        verification: 'verified',
+        installed: true,
+        running: true,
+        scope: 'user',
+        ring: null,
+        instanceId: null,
+        definitionPath: '/tmp/happier-daemon.default.service',
+        executablePath: '/tmp/happier',
+        platform: 'linux',
+        backend: 'systemd-user',
+        label: 'happier-daemon.default',
+        targetMode: 'default-following',
+        ...overrides,
     };
 }
 
-describe('happier server background service follow-up', () => {
-    afterEach(() => {
-        vi.restoreAllMocks();
-        spawnHappyCLIMock.mockReset();
-        discoverHappierServicesMock.mockReset();
-        promptAnswers.length = 0;
-        promptQuestions.length = 0;
+function createDaemonServiceListEntry(overrides: Partial<DaemonServiceListEntry> = {}): DaemonServiceListEntry {
+    return {
+        serverId: 'default',
+        name: 'Default background service',
+        installed: true,
+        path: '/tmp/happier-daemon.default.service',
+        platform: 'linux',
+        releaseChannel: 'stable',
+        label: 'happier-daemon.default',
+        targetMode: 'default-following',
+        ...overrides,
+    };
+}
+
+describe('server background service follow-up helpers', () => {
+    it('restarts a default-following background service after an authenticated interactive server change', async () => {
+        const promptInput = vi.fn(async () => 'y');
+        const runCliAction = vi.fn(async () => undefined);
+
+        await runDefaultFollowingBackgroundServiceServerChangeFollowUp({
+            interactive: true,
+            promptInput,
+            runCliAction,
+            targetServerUrl: 'https://b.example.test',
+            hasCredentials: true,
+            log: vi.fn(),
+            services: [createDaemonServiceListEntry()],
+        });
+
+        expect(promptInput).toHaveBeenCalledWith(
+            'Restart the background service so it now follows https://b.example.test? [Y/n]: ',
+        );
+        expect(runCliAction).toHaveBeenCalledWith(['service', 'restart']);
     });
 
-    it('prompts to restart a default-following background service after switching active servers', async () => {
-        const home = await mkdtemp(join(tmpdir(), 'happier-server-use-followup-'));
-        const previousHome = process.env.HAPPIER_HOME_DIR;
-        const restoreTty = setTtyMode(true, true);
+    it('logs auth + restart guidance when authentication is declined', async () => {
+        const output: string[] = [];
 
-        try {
-            process.env.HAPPIER_HOME_DIR = home;
-            reloadConfiguration();
+        await runDefaultFollowingBackgroundServiceServerChangeFollowUp({
+            interactive: true,
+            promptInput: async () => 'n',
+            runCliAction: vi.fn(async () => undefined),
+            targetServerUrl: 'https://b.example.test',
+            hasCredentials: false,
+            log: (message) => output.push(message),
+            services: [createDaemonServiceListEntry()],
+        });
 
-            const serverA = await addServerProfile({
-                name: 'A',
-                serverUrl: 'https://a.example.test',
-                webappUrl: 'https://a.example.test',
-                use: true,
-            });
-            const serverB = await addServerProfile({
-                name: 'B',
-                serverUrl: 'https://b.example.test',
-                webappUrl: 'https://b.example.test',
-                use: false,
-            });
-
-            await useServerProfile(serverB.id);
-            reloadConfiguration();
-            await writeCredentialsLegacy({
-                token: 'token-b',
-                secret: new Uint8Array([1, 2, 3, 4]),
-            });
-            await useServerProfile(serverA.id);
-            reloadConfiguration();
-
-            discoverHappierServicesMock.mockResolvedValue({
-                services: [{
-                    id: 'svc-default',
-                    serviceType: 'daemon',
-                    platform: process.platform === 'darwin' || process.platform === 'linux' || process.platform === 'win32' ? process.platform : 'darwin',
-                    backend: process.platform === 'linux' ? 'systemd-user' : process.platform === 'win32' ? 'schtasks-user' : 'launchd',
-                    label: 'happier-default',
-                    targetMode: 'default-following',
-                    verification: 'verified',
-                    ring: null,
-                    instanceId: null,
-                    scope: 'user',
-                    definitionPath: '/tmp/happier-default',
-                    executablePath: '/tmp/happier',
-                    installed: true,
-                    running: true,
-                    serverUrl: 'https://a.example.test',
-                    publicServerUrl: 'https://a.example.test',
-                }],
-            });
-            spawnHappyCLIMock.mockReturnValue({
-                on: (event: string, cb: (value?: number) => void) => {
-                    if (event === 'close') cb(0);
-                    return undefined;
-                },
-            });
-            promptAnswers.push('y');
-
-            const { handleServerCommand } = await import('./server');
-            await handleServerCommand(['use', serverB.id]);
-
-            expect(spawnHappyCLIMock).toHaveBeenCalledWith(['service', 'restart'], expect.objectContaining({
-                stdio: 'inherit',
-            }));
-        } finally {
-            restoreTty();
-            if (previousHome === undefined) delete process.env.HAPPIER_HOME_DIR;
-            else process.env.HAPPIER_HOME_DIR = previousHome;
-            reloadConfiguration();
-            await rm(home, { recursive: true, force: true });
-        }
+        expect(output.join('\n')).toContain('Background service was not restarted');
+        expect(output.join('\n')).toContain('happier auth login');
+        expect(output.join('\n')).toContain('happier service restart');
     });
 
-    it('does not restart the default-following background service when authentication for the new server is declined', async () => {
-        const home = await mkdtemp(join(tmpdir(), 'happier-server-use-auth-declined-'));
-        const previousHome = process.env.HAPPIER_HOME_DIR;
-        const restoreTty = setTtyMode(true, true);
-        const output = captureConsoleLogAndMuteStdout();
+    it('logs manual restart guidance in non-interactive mode', async () => {
+        const output: string[] = [];
 
-        try {
-            process.env.HAPPIER_HOME_DIR = home;
-            reloadConfiguration();
+        await runDefaultFollowingBackgroundServiceServerChangeFollowUp({
+            interactive: false,
+            promptInput: async () => '',
+            runCliAction: vi.fn(async () => undefined),
+            targetServerUrl: 'https://b.example.test',
+            hasCredentials: true,
+            log: (message) => output.push(message),
+            services: [createDaemonServiceListEntry()],
+        });
 
-            const serverA = await addServerProfile({
-                name: 'A',
-                serverUrl: 'https://a.example.test',
-                webappUrl: 'https://a.example.test',
-                use: true,
-            });
-            const serverB = await addServerProfile({
-                name: 'B',
-                serverUrl: 'https://b.example.test',
-                webappUrl: 'https://b.example.test',
-                use: false,
-            });
-
-            discoverHappierServicesMock.mockResolvedValue({
-                services: [{
-                    id: 'svc-default',
-                    serviceType: 'daemon',
-                    platform: process.platform === 'darwin' || process.platform === 'linux' || process.platform === 'win32' ? process.platform : 'darwin',
-                    backend: process.platform === 'linux' ? 'systemd-user' : process.platform === 'win32' ? 'schtasks-user' : 'launchd',
-                    label: 'happier-default',
-                    targetMode: 'default-following',
-                    verification: 'verified',
-                    ring: null,
-                    instanceId: null,
-                    scope: 'user',
-                    definitionPath: '/tmp/happier-default',
-                    executablePath: '/tmp/happier',
-                    installed: true,
-                    running: true,
-                    serverUrl: 'https://a.example.test',
-                    publicServerUrl: 'https://a.example.test',
-                }],
-            });
-            promptAnswers.push('n');
-
-            const { handleServerCommand } = await import('./server');
-            await handleServerCommand(['use', serverB.id]);
-
-            expect(promptQuestions).toEqual([
-                'Authenticate Happier against https://b.example.test now? [Y/n]: ',
-            ]);
-            expect(spawnHappyCLIMock).not.toHaveBeenCalled();
-            expect(output.logs.join('\n')).toContain('Background service was not restarted');
-        } finally {
-            output.restore();
-            restoreTty();
-            if (previousHome === undefined) delete process.env.HAPPIER_HOME_DIR;
-            else process.env.HAPPIER_HOME_DIR = previousHome;
-            reloadConfiguration();
-            await rm(home, { recursive: true, force: true });
-        }
+        expect(output.join('\n')).toContain('happier service restart');
+        expect(output.join('\n')).toContain('https://b.example.test');
     });
 
-    it('prints manual follow-up guidance in non-interactive mode when a default-following background service exists', async () => {
-        const home = await mkdtemp(join(tmpdir(), 'happier-server-use-noninteractive-followup-'));
-        const previousHome = process.env.HAPPIER_HOME_DIR;
-        const restoreTty = setTtyMode(false, false);
-        const output = captureConsoleLogAndMuteStdout();
+    it('renders system-mode restart commands for system inventory entries', async () => {
+        const output: string[] = [];
+        const services: HappierService[] = [
+            createServiceInventoryEntry({
+                backend: 'systemd-system',
+                scope: 'system',
+                definitionPath: '/etc/systemd/system/happier-daemon.default.service',
+            }),
+        ];
 
-        try {
-            process.env.HAPPIER_HOME_DIR = home;
-            reloadConfiguration();
+        await runDefaultFollowingBackgroundServiceServerChangeFollowUp({
+            interactive: false,
+            promptInput: async () => '',
+            runCliAction: vi.fn(async () => undefined),
+            targetServerUrl: 'https://b.example.test',
+            hasCredentials: true,
+            log: (message) => output.push(message),
+            services: [createDaemonServiceListEntry({
+                path: '/etc/systemd/system/happier-daemon.default.service',
+            })],
+        });
 
-            await addServerProfile({
-                name: 'A',
-                serverUrl: 'https://a.example.test',
-                webappUrl: 'https://a.example.test',
-                use: true,
-            });
-            const serverB = await addServerProfile({
-                name: 'B',
-                serverUrl: 'https://b.example.test',
-                webappUrl: 'https://b.example.test',
-                use: false,
-            });
+        expect(resolveInstalledDefaultFollowingDaemonServiceModes(services)).toEqual(['system']);
+        expect(output.join('\n')).toContain('happier service restart --mode system');
+    });
 
-            await useServerProfile(serverB.id);
-            reloadConfiguration();
-            await writeCredentialsLegacy({
-                token: 'token-b',
-                secret: new Uint8Array([1, 2, 3, 4]),
-            });
-            await addServerProfile({
-                name: 'C',
-                serverUrl: 'https://c.example.test',
-                webappUrl: 'https://c.example.test',
-                use: false,
-            });
-            await useServerProfile('A');
-            reloadConfiguration();
+    it('prefers explicit daemon service list entry mode over path heuristics', async () => {
+        const output: string[] = [];
 
-            discoverHappierServicesMock.mockResolvedValue({
-                services: [{
-                    id: 'svc-default',
-                    serviceType: 'daemon',
-                    platform: process.platform === 'darwin' || process.platform === 'linux' || process.platform === 'win32' ? process.platform : 'darwin',
-                    backend: process.platform === 'linux' ? 'systemd-user' : process.platform === 'win32' ? 'schtasks-user' : 'launchd',
-                    label: 'happier-default',
-                    targetMode: 'default-following',
-                    verification: 'verified',
-                    ring: null,
-                    instanceId: null,
-                    scope: 'user',
-                    definitionPath: '/tmp/happier-default',
-                    executablePath: '/tmp/happier',
-                    installed: true,
-                    running: true,
-                }],
-            });
+        await runDefaultFollowingBackgroundServiceServerChangeFollowUp({
+            interactive: false,
+            promptInput: async () => '',
+            runCliAction: vi.fn(async () => undefined),
+            targetServerUrl: 'https://b.example.test',
+            hasCredentials: true,
+            log: (message) => output.push(message),
+            services: [createDaemonServiceListEntry({
+                mode: 'system',
+                path: '/tmp/happier-daemon.default.service',
+            })],
+        });
 
-            const { handleServerCommand } = await import('./server');
-            await handleServerCommand(['use', serverB.id]);
+        expect(resolveInstalledDefaultFollowingDaemonServiceModes([
+            createDaemonServiceListEntry({
+                mode: 'system',
+                path: '/tmp/happier-daemon.default.service',
+            }),
+        ])).toEqual(['system']);
+        expect(output.join('\n')).toContain('happier service restart --mode system');
+    });
 
-            expect(spawnHappyCLIMock).not.toHaveBeenCalled();
-            const out = output.logs.join('\n');
-            expect(out).toContain('happier service restart');
-            expect(out).toContain('https://b.example.test');
-        } finally {
-            output.restore();
-            restoreTty();
-            if (previousHome === undefined) delete process.env.HAPPIER_HOME_DIR;
-            else process.env.HAPPIER_HOME_DIR = previousHome;
-            reloadConfiguration();
-            await rm(home, { recursive: true, force: true });
-        }
+    it('fails closed with repair guidance when duplicate user and system default-following services exist', async () => {
+        const output: string[] = [];
+        const runCliAction = vi.fn(async () => undefined);
+
+        await runDefaultFollowingBackgroundServiceServerChangeFollowUp({
+            interactive: true,
+            promptInput: async () => 'y',
+            runCliAction,
+            targetServerUrl: 'https://b.example.test',
+            hasCredentials: true,
+            log: (message) => output.push(message),
+            services: [
+                createDaemonServiceListEntry({ path: '/tmp/happier-daemon.default.service' }),
+                createDaemonServiceListEntry({ path: '/etc/systemd/system/happier-daemon.default.service' }),
+            ],
+        });
+
+        expect(runCliAction).not.toHaveBeenCalled();
+        expect(output.join('\n')).toContain('Multiple default-following background services are installed');
+        expect(output.join('\n')).toContain('happier service repair --yes');
+    });
+
+    it('warns instead of failing when restart follow-up execution fails after the primary action already applied', async () => {
+        const output: string[] = [];
+
+        await expect(runDefaultFollowingBackgroundServiceRestartFollowUp({
+            interactive: true,
+            promptInput: async () => 'y',
+            runCliAction: async () => {
+                throw new Error('restart failed');
+            },
+            subject: 'https://b.example.test',
+            modes: ['user'],
+            log: (message) => output.push(message),
+        })).resolves.toBe(false);
+
+        expect(output.join('\n')).toContain('Background service follow-up failed');
+        expect(output.join('\n')).toContain('happier service restart');
     });
 });

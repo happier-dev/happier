@@ -2,21 +2,23 @@ import { homedir } from 'node:os';
 
 import { configuration } from '@/configuration';
 
-import { applyDaemonServiceInstallPlan, applyDaemonServiceUninstallPlan } from './apply';
+import {
+  applyDaemonServiceInstallPlan,
+  applyDaemonServiceUninstallPlan,
+  type DaemonServiceCommandFailureMode,
+} from './apply';
+import {
+  resolveDaemonServiceInstallConflictPlan,
+  type DaemonServiceInstallStrategy,
+  type DaemonServiceInstallTarget,
+} from './daemonInstallConflict';
+import { assertDaemonServiceModeSupported } from './assertDaemonServiceModeSupported';
+import { discoverInstalledDaemonServiceEntries } from './discoverInstalledDaemonServiceEntries';
 import { planDaemonServiceInstall, planDaemonServiceUninstall } from './plan';
 import type { DaemonServiceMode, DaemonServiceTargetMode } from './plan';
 import { resolveDaemonServiceInstallRuntimeTarget } from './resolveDaemonServiceInstallRuntimeTarget';
 import {
-  discoverHappierServices,
-  resolveDaemonServiceInstallConflictPlan,
-  type DaemonServiceInstallStrategy,
-  type DaemonServiceInstallTarget,
-} from '@happier-dev/cli-common/happierRuntime';
-import type { HappierServiceBackend } from '@happier-dev/cli-common/happierRuntime';
-import {
-  getReleaseRingCatalogEntry,
   normalizePublicReleaseRingId,
-  resolvePublicReleaseRingIdForLabel,
   type PublicReleaseRingId,
 } from '@happier-dev/release-runtime/releaseRings';
 
@@ -38,6 +40,7 @@ export async function installDaemonService(options: Readonly<{
   systemUser?: string;
   channel?: PublicReleaseRingId;
   targetMode?: DaemonServiceTargetMode;
+  darwinInstallMode?: 'rebootstrap' | 'kickstart';
   instanceId?: string;
   strategy?: DaemonServiceInstallStrategy;
   serverUrl?: string;
@@ -46,18 +49,22 @@ export async function installDaemonService(options: Readonly<{
   nodePath?: string;
   entryPath?: string;
   runCommands?: boolean;
+  commandFailureMode?: DaemonServiceCommandFailureMode;
 }> = {}): Promise<void> {
   const platformInput = options.platform ?? process.platform;
   const platform = resolveSupportedPlatform(platformInput);
   if (!platform) {
     throw new Error('Daemon service installation is currently only supported on macOS, Linux, and Windows');
   }
+  assertDaemonServiceModeSupported(platform, options.mode === 'system' ? 'system' : 'user');
 
   const uid = options.uid ?? (process.getuid ? process.getuid() : undefined);
   const userHomeDir = options.userHomeDir ?? homedir();
   const happierHomeDir = options.happierHomeDir ?? configuration.happyHomeDir;
   const instanceId = options.instanceId ?? configuration.activeServerId;
-  const targetMode: DaemonServiceTargetMode = options.targetMode ?? 'pinned';
+  const envChannel = normalizePublicReleaseRingId(String(process.env.HAPPIER_DAEMON_SERVICE_CHANNEL ?? '').trim());
+  const channel: PublicReleaseRingId = options.channel ?? (envChannel || 'stable');
+  const targetMode: DaemonServiceTargetMode = options.targetMode ?? 'default-following';
   // Daemon should prefer the local API URL when available (e.g. canonical HTTPS URL + local loopback HTTP).
   // We express this using env override semantics: HAPPIER_PUBLIC_SERVER_URL (canonical) + HAPPIER_SERVER_URL (API).
   const serverUrl = options.serverUrl ?? configuration.apiServerUrl;
@@ -75,26 +82,24 @@ export async function installDaemonService(options: Readonly<{
   const strategy: DaemonServiceInstallStrategy = options.strategy
     ?? resolveDaemonServiceInstallerStrategyFromEnv(process.env);
 
-  const discoveredServices = await discoverHappierServices({
-    processEnv: process.env,
+  const discoveredServices = await discoverInstalledDaemonServiceEntries({
     platform,
+    userHomeDir,
+    happierHomeDir,
+    mode: options.mode === 'system' ? 'system' : 'user',
+    serversById: {},
   });
   const target: DaemonServiceInstallTarget = {
     platform,
-    backend: resolveDaemonServiceBackend(platform, options.mode),
     targetMode,
-    ring: targetMode === 'default-following'
-      ? null
-      : getReleaseRingCatalogEntry(
-          normalizePublicReleaseRingId(options.channel ?? process.env.HAPPIER_DAEMON_SERVICE_CHANNEL ?? 'stable') || 'stable',
-        ).publicLabel,
+    ring: channel,
     instanceId: targetMode === 'default-following' ? null : instanceId,
-    serverUrl: targetMode === 'default-following' ? null : serverUrl,
+    happierHomeDir,
   };
   const conflictPlan = resolveDaemonServiceInstallConflictPlan({
     target,
     strategy,
-    services: discoveredServices.services,
+    services: discoveredServices,
   });
 
   if (!conflictPlan.exactTargetExists && strategy === 'require-explicit' && conflictPlan.competingServices.length > 0) {
@@ -105,28 +110,32 @@ export async function installDaemonService(options: Readonly<{
     );
   }
 
-  if (!conflictPlan.exactTargetExists) {
-    for (const service of conflictPlan.servicesToRemove) {
-      await uninstallDaemonService({
-        platform,
-        uid,
-        userHomeDir,
-        happierHomeDir,
-        mode: resolveDaemonServiceModeFromBackend(service.backend),
-        channel: service.ring ? resolvePublicReleaseRingIdForLabel(service.ring) : undefined,
-        targetMode: service.targetMode ?? 'pinned',
-        instanceId: service.instanceId ?? undefined,
-        runCommands: options.runCommands,
-      });
-    }
+  for (const service of conflictPlan.servicesToRemove) {
+    await uninstallDaemonService({
+      platform,
+      uid,
+      userHomeDir,
+      happierHomeDir,
+      mode: options.mode,
+      channel: service.releaseChannel,
+      targetMode: service.targetMode,
+      instanceId: service.serverId,
+      runCommands: options.runCommands,
+      commandFailureMode: options.commandFailureMode,
+    });
+  }
+
+  if (conflictPlan.exactTargetExists) {
+    return;
   }
 
   const plan = planDaemonServiceInstall({
     platform,
-    mode: options.mode,
-    systemUser: options.systemUser,
-    channel: options.channel,
+      mode: options.mode,
+      systemUser: options.systemUser,
+      channel,
     targetMode,
+    darwinInstallMode: options.darwinInstallMode,
     instanceId,
     uid,
     userHomeDir,
@@ -137,7 +146,10 @@ export async function installDaemonService(options: Readonly<{
     nodePath: runtimeTarget.nodePath,
     entryPath: runtimeTarget.entryPath,
   });
-  await applyDaemonServiceInstallPlan(plan, { runCommands: options.runCommands });
+  await applyDaemonServiceInstallPlan(plan, {
+    runCommands: options.runCommands,
+    commandFailureMode: options.commandFailureMode,
+  });
 }
 
 function resolveDaemonServiceInstallerStrategyFromEnv(processEnv: NodeJS.ProcessEnv): DaemonServiceInstallStrategy {
@@ -146,16 +158,6 @@ function resolveDaemonServiceInstallerStrategyFromEnv(processEnv: NodeJS.Process
   if (raw === 'replace-ring') return 'replace-ring';
   if (raw === 'replace-all') return 'replace-all';
   return 'require-explicit';
-}
-
-function resolveDaemonServiceModeFromBackend(backend: string): DaemonServiceMode {
-  return backend === 'systemd-system' || backend === 'schtasks-system' ? 'system' : 'user';
-}
-
-function resolveDaemonServiceBackend(platform: SupportedPlatform, mode?: DaemonServiceMode): HappierServiceBackend {
-  if (platform === 'darwin') return 'launchd';
-  if (platform === 'win32') return mode === 'system' ? 'schtasks-system' : 'schtasks-user';
-  return mode === 'system' ? 'systemd-system' : 'systemd-user';
 }
 
 function createDaemonServiceConflictError(message: string, conflicts: readonly unknown[]): Error {
@@ -175,28 +177,35 @@ export async function uninstallDaemonService(options: Readonly<{
   targetMode?: DaemonServiceTargetMode;
   instanceId?: string;
   runCommands?: boolean;
+  commandFailureMode?: DaemonServiceCommandFailureMode;
 }> = {}): Promise<void> {
   const platformInput = options.platform ?? process.platform;
   const platform = resolveSupportedPlatform(platformInput);
   if (!platform) {
     throw new Error('Daemon service uninstallation is currently only supported on macOS, Linux, and Windows');
   }
+  assertDaemonServiceModeSupported(platform, options.mode === 'system' ? 'system' : 'user');
 
   const uid = options.uid ?? (process.getuid ? process.getuid() : undefined);
   const userHomeDir = options.userHomeDir ?? homedir();
   const happierHomeDir = options.happierHomeDir ?? configuration.happyHomeDir;
   const instanceId = options.instanceId ?? configuration.activeServerId;
-  const targetMode: DaemonServiceTargetMode = options.targetMode ?? 'pinned';
+  const envChannel = normalizePublicReleaseRingId(String(process.env.HAPPIER_DAEMON_SERVICE_CHANNEL ?? '').trim());
+  const channel: PublicReleaseRingId = options.channel ?? (envChannel || 'stable');
+  const targetMode: DaemonServiceTargetMode = options.targetMode ?? 'default-following';
 
   const plan = planDaemonServiceUninstall({
     platform,
     mode: options.mode,
-    channel: options.channel,
+    channel,
     targetMode,
     instanceId,
     uid,
     userHomeDir,
     happierHomeDir,
   });
-  await applyDaemonServiceUninstallPlan(plan, { runCommands: options.runCommands });
+  await applyDaemonServiceUninstallPlan(plan, {
+    runCommands: options.runCommands,
+    commandFailureMode: options.commandFailureMode,
+  });
 }

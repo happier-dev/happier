@@ -43,6 +43,9 @@ describe('DoctorSnapshotSchema', () => {
           httpPort: null,
           startedWithCliVersion: '1.2.3',
           startedWithPublicReleaseChannel: 'preview',
+          startupSource: 'background-service',
+          serviceManaged: true,
+          serviceLabel: 'com.happier.cli.daemon.default',
         },
         service: {
           installed: true,
@@ -127,6 +130,9 @@ describe('DoctorSnapshotSchema', () => {
     expect(parsed.snapshot.daemonStatus?.server.localServerUrl).toBe('http://127.0.0.1:3005');
     expect(parsed.snapshot.daemonStatus?.daemon.startedWithCliVersion).toBe('1.2.3');
     expect(parsed.snapshot.daemonStatus?.daemon.startedWithPublicReleaseChannel).toBe('preview');
+    expect(parsed.snapshot.daemonStatus?.daemon.startupSource).toBe('background-service');
+    expect(parsed.snapshot.daemonStatus?.daemon.serviceManaged).toBe(true);
+    expect(parsed.snapshot.daemonStatus?.daemon.serviceLabel).toBe('com.happier.cli.daemon.default');
     expect(parsed.snapshot.installations?.happier.installations[0]?.ring).toBe('preview');
     expect(parsed.snapshot.services?.happier.services[0]?.label).toContain('com.happier.cli.daemon.preview.cloud');
     expect(parsed.snapshot.services?.happier.services[0]?.serverUrl).toBe('https://api.happier.dev/path');
