@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { chmod, copyFile, mkdir, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -14,7 +14,12 @@ import {
 } from '../service/index.js';
 
 import { checkRelayRuntimeHealth, resolveRelayRuntimeDefaults } from './relayRuntime.js';
-import { applyEnvOverridesToEnvText, parseEnvText, renderSelfHostServerEnvText } from './selfHostServerEnv.js';
+import {
+    mergeSelfHostServerEnvText,
+    parseEnvText,
+    renderSelfHostServerEnvText,
+    resolveConfiguredSelfHostBaseUrl,
+} from './selfHostServerEnv.js';
 
 async function copyDirectoryContents(params: Readonly<{
     sourceDir: string;
@@ -233,9 +238,12 @@ export async function installOrUpdateRelayRuntimeLocal(params: Readonly<{
         arch,
         platform,
     });
-    const envText = params.env && Object.keys(params.env).length > 0
-        ? applyEnvOverridesToEnvText(baseEnvText, params.env)
-        : baseEnvText;
+    const existingEnvText = existsSync(configEnvPath) ? await readFile(configEnvPath, 'utf8').catch(() => '') : '';
+    const envText = mergeSelfHostServerEnvText({
+        baseEnvText,
+        existingEnvText,
+        overrides: params.env,
+    });
     await writeFile(configEnvPath, envText, 'utf8');
     const env = parseEnvText(envText);
 
@@ -276,11 +284,15 @@ export async function installOrUpdateRelayRuntimeLocal(params: Readonly<{
     };
     await writeJsonFile(statePath, state);
 
-    const baseUrl = `http://${defaults.serverHost}:${defaults.serverPort}`;
+    const baseUrl = resolveConfiguredSelfHostBaseUrl({
+        fallbackBaseUrl: `http://${defaults.serverHost}:${defaults.serverPort}`,
+        envText,
+    });
     if (params.skipHealthCheck !== true && params.runServiceCommands !== false) {
+        const baseUrlObject = new URL(baseUrl);
         const result = await checkRelayRuntimeHealth({
-            host: defaults.serverHost,
-            port: defaults.serverPort,
+            host: baseUrlObject.hostname,
+            port: Number.parseInt(baseUrlObject.port, 10),
             timeoutMs: 30_000,
             probePortOpen: async ({ host, port, timeoutMs }) => await probePortOpen({ host, port, timeoutMs }),
             fetchJson: async ({ url, timeoutMs }) => await fetchJson({ url, timeoutMs }),

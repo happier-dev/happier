@@ -28,3 +28,17 @@ test('install.ps1 supports a whitelisted post-install -Run action', async () => 
   // Ensure the script does not accept arbitrary execution.
   assert.doesNotMatch(trimmed, /Invoke-Expression\s+\$Run/i);
 });
+
+test('install.ps1 resolves post-install relay actions through the requested lane shim', async () => {
+  const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
+  const raw = await readFile(path, 'utf8');
+  const resolverMatch = raw.match(/function Resolve-InstalledCliInvoker\s*\{[\s\S]*?\n\}/);
+
+  assert.ok(resolverMatch, 'expected Resolve-InstalledCliInvoker to exist');
+  assert.match(resolverMatch[0], /\$shim\s*=\s*Resolve-CliShimName/i);
+  assert.doesNotMatch(
+    resolverMatch[0],
+    /\$target\b/,
+    'preview/dev run actions must not fall back to the generic stable happier.exe invoker',
+  );
+});

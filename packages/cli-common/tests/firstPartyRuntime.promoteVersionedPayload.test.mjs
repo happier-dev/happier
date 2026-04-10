@@ -58,6 +58,27 @@ test('promoteVersionedPayload updates current payload and preserves previous pay
   }
 });
 
+test('promoteVersionedPayload embeds the public release ring marker into the promoted payload', async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), 'happier-first-party-runtime-'));
+  const env = { ...process.env, HAPPIER_HOME_DIR: homeDir };
+
+  try {
+    const stagedPayloadPath = await createStagedPayload(homeDir, '1.0.0-preview.1', 'preview-version');
+    const promotion = await promoteVersionedPayload({
+      componentId: 'happier-cli',
+      processEnv: env,
+      releaseRing: 'preview',
+      versionId: '1.0.0-preview.1',
+      stagedPayloadPath,
+    });
+
+    assert.equal(existsSync(join(promotion.versionPath, 'public-release-ring.id')), true);
+    assert.equal(await readFile(join(promotion.versionPath, 'public-release-ring.id'), 'utf8'), 'preview\n');
+  } finally {
+    await rm(homeDir, { recursive: true, force: true });
+  }
+});
+
 test('rollbackVersionedPayload swaps current and previous payloads', async () => {
   const homeDir = await mkdtemp(join(tmpdir(), 'happier-first-party-runtime-'));
   const env = { ...process.env, HAPPIER_HOME_DIR: homeDir };

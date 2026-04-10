@@ -150,9 +150,9 @@ function normalizeSchtasksStatus(raw: RelayRuntimeServiceRaw): RelayRuntimeNorma
 }
 
 const DEFAULT_RELAY_RUNTIME_PORTS: Readonly<Record<PublicReleaseRingId, number>> = Object.freeze({
-  stable: 53288,
-  preview: 53388,
-  publicdev: 53488,
+  stable: 3005,
+  preview: 3005,
+  publicdev: 3005,
 });
 
 function resolveDefaultRelayRuntimePort(channel: PublicReleaseRingId): number {

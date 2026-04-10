@@ -83,17 +83,18 @@ test('install.sh --setup-relay forwards default relay host flags to the CLI', as
   const binDir = join(root, 'bin');
   const installDir = join(root, 'install');
   const outBinDir = join(root, 'out-bin');
+  const previewCliDir = join(installDir, 'cli-preview', 'current');
 
   await mkdir(homeDir, { recursive: true });
   await mkdir(binDir, { recursive: true });
-  await mkdir(join(installDir, 'cli', 'current'), { recursive: true });
+  await mkdir(previewCliDir, { recursive: true });
   await mkdir(outBinDir, { recursive: true });
 
   const curlStubPath = join(binDir, 'curl');
   await writeFile(curlStubPath, '#!/usr/bin/env bash\necho \"curl should not run\" >&2\nexit 88\n', 'utf8');
   await chmod(curlStubPath, 0o755);
 
-  const cliPath = join(installDir, 'cli', 'current', 'happier');
+  const cliPath = join(previewCliDir, 'happier');
   await writeFile(
     cliPath,
     `#!/usr/bin/env bash
@@ -113,6 +114,10 @@ if [[ "$1" = "relay" && "$2" = "host" && "$3" = "install" ]]; then
   if [[ " $* " != *" --yes "* ]]; then
     echo "missing --yes" >&2
     exit 24
+  fi
+  if [[ " $* " != *" --channel preview "* ]]; then
+    echo "missing --channel preview" >&2
+    exit 25
   fi
   echo "ok"
   exit 0
@@ -134,6 +139,7 @@ exit 22
     HAPPIER_INSTALL_DIR: installDir,
     HAPPIER_BIN_DIR: outBinDir,
     HAPPIER_NONINTERACTIVE: '1',
+    HAPPIER_CHANNEL: 'preview',
   };
 
   const res = spawnSync('bash', [installerPath, '--setup-relay'], { env, encoding: 'utf8' });

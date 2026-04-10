@@ -1,9 +1,10 @@
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { inferPublicReleaseRingIdFromEnvAndArgv } from '@/cli/runtime/publicReleaseChannel';
 import { createOutputBuilder, ok } from '@happier-dev/cli-common/output';
 import { isInteractiveTerminal, promptInput } from '@/terminal/prompts/promptInput';
 import { promptSecret } from '@/terminal/prompts/promptSecret';
@@ -145,7 +146,17 @@ function normalizeMode(raw: unknown): 'user' | 'system' {
 }
 
 function normalizeChannel(raw: unknown): 'stable' | 'preview' | 'dev' {
-  return normalizePublicReleaseRingLabel(raw) || 'stable';
+  const explicit = String(raw ?? '').trim();
+  if (explicit) {
+    return normalizePublicReleaseRingLabel(explicit) || 'stable';
+  }
+  const inferred = inferPublicReleaseRingIdFromEnvAndArgv({
+    env: process.env,
+    argv: process.argv,
+    argv0: process.argv0,
+    execPath: process.execPath,
+  });
+  return inferred === 'publicdev' ? 'dev' : inferred;
 }
 
 function resolveTestFirstPartyPayloadOverride(): Readonly<{ payloadRoot: string; versionId: string }> | null {
@@ -183,6 +194,27 @@ function resolveLocalServerBinaryFromPayloadRoot(payloadRoot: string): string {
     join(root, name),
     join(root, 'bin', name),
   ]);
+}
+
+function resolveLocalServerPayloadOverrideFromBinaryPath(serverBinaryPath: string): Readonly<{
+  payloadRoot: string;
+  versionId: string;
+}> {
+  const binaryPath = String(serverBinaryPath ?? '').trim();
+  if (!binaryPath || !existsSync(binaryPath)) {
+    throw new Error(`server binary not found: ${binaryPath || '(empty)'}`);
+  }
+  const binaryDir = dirname(binaryPath);
+  const payloadRoot = basename(binaryDir) === 'bin'
+    ? dirname(binaryDir)
+    : binaryDir;
+  if (!existsSync(payloadRoot) || !lstatSync(payloadRoot).isDirectory()) {
+    throw new Error(`server payload root not found: ${payloadRoot}`);
+  }
+  return {
+    payloadRoot,
+    versionId: basename(payloadRoot) || 'local-server',
+  };
 }
 
 function quoteForRemoteBash(command: string): string {
@@ -790,10 +822,13 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
   }
 
   if (op === 'install') {
+    const localServerPayloadOverride = ssh && serverBinaryOverride
+      ? resolveLocalServerPayloadOverrideFromBinaryPath(serverBinaryOverride)
+      : null;
     const installParams: RelayRuntimeTaskParams = {
       ...taskParams,
       ...(env ? { env } : {}),
-      ...(serverBinaryOverride ? { selfHostRelayBinaryOverride: serverBinaryOverride } : {}),
+      ...(!ssh && serverBinaryOverride ? { selfHostRelayBinaryOverride: serverBinaryOverride } : {}),
     };
     const result = ssh
       ? (() => {
@@ -821,6 +856,16 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
                   await runner.copyLocalDirectoryToRemote(localPath, remotePath);
                 },
                 preparePayload: async (payloadParams) => {
+                  if (payloadParams.componentId === 'happier-server' && localServerPayloadOverride) {
+                    return {
+                      componentId: payloadParams.componentId,
+                      channel: payloadParams.channel,
+                      versionId: localServerPayloadOverride.versionId,
+                      payloadRoot: localServerPayloadOverride.payloadRoot,
+                      source: null,
+                      cleanup: async () => undefined,
+                    };
+                  }
                   if (override) {
                     return {
                       componentId: payloadParams.componentId,

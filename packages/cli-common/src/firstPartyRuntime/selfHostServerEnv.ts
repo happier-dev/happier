@@ -1,6 +1,69 @@
 import { existsSync } from 'node:fs';
 import { join, win32 as win32Path } from 'node:path';
 
+const SELF_HOST_SERVER_ENV_MANAGED_KEYS = new Set<string>([
+    'DATABASE_URL',
+    'HAPPIER_DB_PROVIDER',
+    'HAPPIER_FILES_BACKEND',
+    'HAPPIER_SERVER_UI_DIR',
+    'HAPPIER_SQLITE_AUTO_MIGRATE',
+    'HAPPIER_SQLITE_MIGRATIONS_DIR',
+    'HAPPIER_SERVER_LIGHT_DATA_DIR',
+    'HAPPIER_SERVER_LIGHT_FILES_DIR',
+    'HAPPIER_SERVER_LIGHT_DB_DIR',
+    'HAPPIER_WEBAPP_URL',
+    'HAPPY_WEBAPP_URL',
+    'METRICS_ENABLED',
+    'NODE_PATH',
+    'PRISMA_CLIENT_ENGINE_TYPE',
+    'PRISMA_QUERY_ENGINE_LIBRARY',
+]);
+
+export function renderSelfHostServerEnvTextFromResolvedValues(params: Readonly<{
+    port: number;
+    host: string;
+    dataDir: string;
+    filesDir: string;
+    dbDir: string;
+    databaseUrl: string;
+    sqliteAutoMigrate: string;
+    sqliteMigrationsDir: string;
+    uiDir?: string;
+    nodeModulesPath?: string;
+    prismaEnginePath?: string;
+}>): string {
+    const uiDir = typeof params.uiDir === 'string' && params.uiDir.trim() ? params.uiDir.trim() : '';
+    const nodeModulesPath = typeof params.nodeModulesPath === 'string' && params.nodeModulesPath.trim()
+        ? params.nodeModulesPath.trim()
+        : '';
+    const prismaEnginePath = typeof params.prismaEnginePath === 'string' && params.prismaEnginePath.trim()
+        ? params.prismaEnginePath.trim()
+        : '';
+
+    return [
+        `PORT=${params.port}`,
+        `HAPPIER_SERVER_HOST=${params.host}`,
+        ...(uiDir ? [`HAPPIER_SERVER_UI_DIR=${uiDir}`] : []),
+        'METRICS_ENABLED=false',
+        'HAPPIER_DB_PROVIDER=sqlite',
+        `DATABASE_URL=${params.databaseUrl}`,
+        'HAPPIER_FILES_BACKEND=local',
+        ...(nodeModulesPath ? [`NODE_PATH=${nodeModulesPath}`] : []),
+        ...(prismaEnginePath
+            ? [
+                'PRISMA_CLIENT_ENGINE_TYPE=library',
+                `PRISMA_QUERY_ENGINE_LIBRARY=${prismaEnginePath}`,
+            ]
+            : []),
+        `HAPPIER_SQLITE_AUTO_MIGRATE=${params.sqliteAutoMigrate}`,
+        `HAPPIER_SQLITE_MIGRATIONS_DIR=${params.sqliteMigrationsDir}`,
+        `HAPPIER_SERVER_LIGHT_DATA_DIR=${params.dataDir}`,
+        `HAPPIER_SERVER_LIGHT_FILES_DIR=${params.filesDir}`,
+        `HAPPIER_SERVER_LIGHT_DB_DIR=${params.dbDir}`,
+        '',
+    ].join('\n');
+}
+
 export function renderSelfHostServerEnvText(params: Readonly<{
     port: number;
     host: string;
@@ -56,28 +119,19 @@ export function renderSelfHostServerEnvText(params: Readonly<{
     const prismaEnginePath = prismaEngineCandidates.find((candidate) => existsSync(candidate)) || '';
     const nodeModulesPath = serverBinDir ? join(serverBinDir, 'node_modules') : '';
 
-    return [
-        `PORT=${params.port}`,
-        `HAPPIER_SERVER_HOST=${params.host}`,
-        ...(uiDir ? [`HAPPIER_SERVER_UI_DIR=${uiDir}`] : []),
-        'METRICS_ENABLED=false',
-        'HAPPIER_DB_PROVIDER=sqlite',
-        `DATABASE_URL=${databaseUrl}`,
-        'HAPPIER_FILES_BACKEND=local',
-        ...(nodeModulesPath ? [`NODE_PATH=${nodeModulesPath}`] : []),
-        ...(prismaEnginePath
-            ? [
-                'PRISMA_CLIENT_ENGINE_TYPE=library',
-                `PRISMA_QUERY_ENGINE_LIBRARY=${prismaEnginePath}`,
-            ]
-            : []),
-        `HAPPIER_SQLITE_AUTO_MIGRATE=${autoMigrateSqlite}`,
-        `HAPPIER_SQLITE_MIGRATIONS_DIR=${migrationsDir}`,
-        `HAPPIER_SERVER_LIGHT_DATA_DIR=${params.dataDir}`,
-        `HAPPIER_SERVER_LIGHT_FILES_DIR=${params.filesDir}`,
-        `HAPPIER_SERVER_LIGHT_DB_DIR=${params.dbDir}`,
-        '',
-    ].join('\n');
+    return renderSelfHostServerEnvTextFromResolvedValues({
+        port: params.port,
+        host: params.host,
+        dataDir: params.dataDir,
+        filesDir: params.filesDir,
+        dbDir: params.dbDir,
+        databaseUrl,
+        sqliteAutoMigrate: autoMigrateSqlite,
+        sqliteMigrationsDir: migrationsDir,
+        uiDir,
+        nodeModulesPath,
+        prismaEnginePath,
+    });
 }
 
 export function parseEnvText(raw: string): Record<string, string> {
@@ -94,6 +148,23 @@ export function parseEnvText(raw: string): Record<string, string> {
         env[key] = value;
     }
     return env;
+}
+
+export function resolveConfiguredSelfHostBaseUrl(params: Readonly<{ fallbackBaseUrl: string; envText: string }>): string {
+    const raw = String(params.envText ?? '').trim();
+    if (!raw) return params.fallbackBaseUrl;
+
+    const parsed = parseEnvText(raw);
+    const portRaw = typeof parsed.PORT === 'string' ? parsed.PORT.trim() : '';
+    const port = portRaw ? Number.parseInt(portRaw, 10) : Number.NaN;
+    if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
+        return params.fallbackBaseUrl;
+    }
+
+    const hostRaw = typeof parsed.HAPPIER_SERVER_HOST === 'string' ? parsed.HAPPIER_SERVER_HOST.trim() : '';
+    const host = hostRaw && hostRaw !== '0.0.0.0' ? hostRaw : '127.0.0.1';
+    const authority = host.includes(':') && !host.startsWith('[') && !host.endsWith(']') ? `[${host}]` : host;
+    return `http://${authority}:${port}`;
 }
 
 export function applyEnvOverridesToEnvText(
@@ -138,6 +209,25 @@ export function applyEnvOverridesToEnvText(
 
     const rendered = next.join('\n');
     return rendered.endsWith('\n') ? rendered : `${rendered}\n`;
+}
+
+export function mergeSelfHostServerEnvText(params: Readonly<{
+    baseEnvText: string;
+    existingEnvText?: string | null;
+    overrides?: Readonly<Record<string, string>>;
+}>): string {
+    let merged = String(params.baseEnvText ?? '');
+    const existing = parseEnvText(String(params.existingEnvText ?? ''));
+    const preservedExistingEntries = Object.fromEntries(
+        Object.entries(existing).filter(([key]) => !SELF_HOST_SERVER_ENV_MANAGED_KEYS.has(key)),
+    );
+    if (Object.keys(preservedExistingEntries).length > 0) {
+        merged = applyEnvOverridesToEnvText(merged, preservedExistingEntries);
+    }
+    if (params.overrides && Object.keys(params.overrides).length > 0) {
+        merged = applyEnvOverridesToEnvText(merged, params.overrides);
+    }
+    return merged;
 }
 
 function assertValidEnvOverrideKey(key: string): void {

@@ -44,6 +44,7 @@ if ($Token) {
   $GitHubHeaders["Authorization"] = "Bearer $Token"
 }
 $InstallDir = if ($env:HAPPIER_INSTALL_DIR) { $env:HAPPIER_INSTALL_DIR } else { Join-Path $env:USERPROFILE ".happier" }
+$DaemonServiceStateHomeDir = if ($env:HAPPIER_HOME_DIR) { $env:HAPPIER_HOME_DIR } else { Join-Path $env:USERPROFILE ".happier" }
 $LegacyBinDir = Join-Path $env:USERPROFILE ".local\bin"
 $BinDir = Join-Path $InstallDir "bin"
 if ($env:HAPPIER_BIN_DIR) {
@@ -91,8 +92,7 @@ function Resolve-InstalledCliInvoker {
     (Join-Path $BinDir "$shim.exe"),
     (Join-Path $BinDir $shim),
     (Join-Path $InstallDir "bin\\$shim.exe"),
-    (Join-Path $InstallDir "bin\\$shim"),
-    $target
+    (Join-Path $InstallDir "bin\\$shim")
   )
 
   foreach ($candidate in $candidates) {
@@ -155,7 +155,8 @@ function Test-InteractiveInstallerPromptAvailable {
 
 function Read-BackgroundServicePromptChoice {
   param (
-    [Parameter(Mandatory = $true)] [string] $DefaultChoice
+    [Parameter(Mandatory = $true)] [string] $DefaultChoice,
+    [Parameter(Mandatory = $true)] [bool] $HasExistingServices
   )
 
   if (-not (Test-InteractiveInstallerPromptAvailable)) {
@@ -170,8 +171,44 @@ function Read-BackgroundServicePromptChoice {
     $recommendedNote = "recommended: yes"
   }
 
+  $prompt = "Install background service for automatic startup on the $channelLabel release-channel?"
+  if ($HasExistingServices) {
+    $prompt = "Update background service startup after installing the $channelLabel release-channel CLI?"
+  }
+
   while ($true) {
-    $answer = Read-Host "Install background service for automatic startup on the $channelLabel release-channel? [$defaultHint] ($recommendedNote)"
+    $answer = Read-Host "$prompt [$defaultHint] ($recommendedNote)"
+    $normalized = ([string]$answer).Trim().ToLowerInvariant()
+    switch ($normalized) {
+      "" { return $DefaultChoice }
+      "y" { return "1" }
+      "yes" { return "1" }
+      "n" { return "0" }
+      "no" { return "0" }
+      default { Write-Warning "Please answer yes or no." }
+    }
+  }
+}
+
+function Read-InstallerYesNoChoice {
+  param (
+    [Parameter(Mandatory = $true)] [string] $Prompt,
+    [Parameter(Mandatory = $true)] [string] $DefaultChoice
+  )
+
+  if (-not (Test-InteractiveInstallerPromptAvailable)) {
+    return $DefaultChoice
+  }
+
+  $defaultHint = "y/N"
+  $recommendedNote = "recommended: no"
+  if ($DefaultChoice -eq "1") {
+    $defaultHint = "Y/n"
+    $recommendedNote = "recommended: yes"
+  }
+
+  while ($true) {
+    $answer = Read-Host "$Prompt [$defaultHint] ($recommendedNote)"
     $normalized = ([string]$answer).Trim().ToLowerInvariant()
     switch ($normalized) {
       "" { return $DefaultChoice }
@@ -185,6 +222,10 @@ function Read-BackgroundServicePromptChoice {
 }
 
 function Resolve-WithDaemonPreference {
+  param (
+    [Parameter(Mandatory = $false)] [object[]] $ExistingEntries = @()
+  )
+
   if ($WithDaemonExplicit) {
     return ConvertTo-InstallerBoolean -Raw ([string]$WithDaemonPreference)
   }
@@ -193,7 +234,7 @@ function Resolve-WithDaemonPreference {
   if ($Noninteractive -eq "1") {
     return $defaultChoice
   }
-  return Read-BackgroundServicePromptChoice -DefaultChoice $defaultChoice
+  return Read-BackgroundServicePromptChoice -DefaultChoice $defaultChoice -HasExistingServices ($ExistingEntries.Count -gt 0)
 }
 
 function Invoke-InstallerCommandWithDaemonServiceContext {
@@ -219,6 +260,9 @@ function Invoke-InstallerCommandWithDaemonServiceContext {
     }
     $env:HAPPIER_PUBLIC_RELEASE_CHANNEL = $channelLabel
     $env:HAPPIER_DAEMON_SERVICE_CHANNEL = $channelLabel
+    if ($env:HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY) {
+      $env:HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY = $env:HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY
+    }
     & $CliPath @CommandArgs
   }
   finally {
@@ -255,6 +299,127 @@ function Invoke-InstallerCommandWithDaemonServiceContext {
   }
 }
 
+function Get-InstalledBackgroundServiceInventory {
+  param (
+    [Parameter(Mandatory = $true)] [string] $CliPath
+  )
+
+  try {
+    $raw = Invoke-InstallerCommandWithDaemonServiceContext -CliPath $CliPath -CommandArgs @("service", "list", "--json") -HomeDir $DaemonServiceStateHomeDir | Out-String
+    if (-not $raw) {
+      return @{
+        Supported = $false
+        Entries = @()
+      }
+    }
+    $payload = $raw | ConvertFrom-Json
+    $propertyNames = @($payload.PSObject.Properties.Name)
+    if ($propertyNames -contains 'entries') {
+      return @{
+        Supported = $true
+        Entries = @($payload.entries)
+      }
+    }
+    if ($propertyNames -contains 'services') {
+      return @{
+        Supported = $true
+        Entries = @($payload.services)
+      }
+    }
+  }
+  catch {
+    return @{
+      Supported = $false
+      Entries = @()
+    }
+  }
+
+  return @{
+    Supported = $false
+    Entries = @()
+  }
+}
+
+function Test-BackgroundServiceInventoryHasDefaultFollowing {
+  param (
+    [Parameter(Mandatory = $true)] [object[]] $Entries
+  )
+
+  return @($Entries | Where-Object { $_.targetMode -eq 'default-following' }).Count -gt 0
+}
+
+function Show-InstalledBackgroundServiceSummary {
+  param (
+    [Parameter(Mandatory = $true)] [string] $CliPath,
+    [Parameter(Mandatory = $true)] [object[]] $Entries
+  )
+
+  if ($Entries.Count -eq 0) {
+    return
+  }
+
+  Write-Host "Current background services:"
+  try {
+    Invoke-InstallerCommandWithDaemonServiceContext -CliPath $CliPath -CommandArgs @("service", "list") -HomeDir $DaemonServiceStateHomeDir
+  }
+  catch {
+    # best-effort summary only
+  }
+  try {
+    Invoke-InstallerCommandWithDaemonServiceContext -CliPath $CliPath -CommandArgs @("service", "status") -HomeDir $DaemonServiceStateHomeDir
+  }
+  catch {
+    # best-effort summary only
+  }
+
+  if (Test-BackgroundServiceInventoryHasDefaultFollowing -Entries $Entries) {
+    Write-Host "Automatic startup follows the managed default release-channel, not the newly installed CLI lane." -ForegroundColor Yellow
+    Write-Host "Switch the managed default background service to this release-channel only if you want automatic startup to follow this lane." -ForegroundColor Cyan
+    Write-Host "Keep the current default background service if you only want to use this CLI interactively. Replace it only if you also want to clean up competing services." -ForegroundColor Cyan
+    Write-Host "You can still run this CLI directly. Interactive session commands will not replace the current relay owner unless you explicitly switch or take it over." -ForegroundColor Cyan
+    return
+  }
+
+  Write-Host "Pinned background services keep their current release-channels and relay targets until you replace them." -ForegroundColor Yellow
+  Write-Host "Installing this CLI alone does not move automatic startup to this lane." -ForegroundColor Cyan
+  Write-Host "You can still run this CLI directly. Interactive session commands will not replace the current relay owner unless you explicitly switch or take it over." -ForegroundColor Cyan
+}
+
+function Resolve-ExistingBackgroundServiceInstallStrategy {
+  param (
+    [Parameter(Mandatory = $true)] [object[]] $Entries
+  )
+
+  if ($Noninteractive -eq "1") {
+    return ""
+  }
+
+  if ($Entries.Count -eq 0) {
+    return ""
+  }
+
+  $replacePrompt = "Existing background services detected. Replace them with this installation?"
+  if (Test-BackgroundServiceInventoryHasDefaultFollowing -Entries $Entries) {
+    $replacePrompt = "A default background service is already installed. Switch the managed default background service to this release-channel?"
+  }
+
+  $replaceChoice = Read-InstallerYesNoChoice -Prompt $replacePrompt -DefaultChoice "1"
+  if ($replaceChoice -eq "1") {
+    return "replace-all"
+  }
+
+  if (Test-BackgroundServiceInventoryHasDefaultFollowing -Entries $Entries) {
+    return "skip"
+  }
+
+  $addChoice = Read-InstallerYesNoChoice -Prompt "Install an additional background service alongside the existing one(s)?" -DefaultChoice "0"
+  if ($addChoice -eq "1") {
+    return "add"
+  }
+
+  return "skip"
+}
+
 function Invoke-PostInstallAction {
   param (
     [Parameter(Mandatory = $true)] [string] $CliPath
@@ -263,7 +428,7 @@ function Invoke-PostInstallAction {
   $setupRelayDefaultArgs = @()
   if ($SetupRelay -and -not $Run) {
     $Run = "setup-relay"
-    $setupRelayDefaultArgs = @("--mode", "user", "--yes")
+    $setupRelayDefaultArgs = @("--mode", "user", "--yes", "--channel", $(if ($Channel -eq "publicdev") { "dev" } else { $Channel }))
   }
   if (-not $Run) {
     return
@@ -320,7 +485,7 @@ function Invoke-PostInstallAction {
       throw "Installed Happier CLI does not support the '$requiredSubcommand' command surface required for -Run $runValue. Update your Happier CLI (or switch installer channel) and try again."
     }
   }
-  Invoke-InstallerCommandWithDaemonServiceContext -CliPath $CliPath -CommandArgs $argsToPass -HomeDir $InstallDir
+  Invoke-InstallerCommandWithDaemonServiceContext -CliPath $CliPath -CommandArgs $argsToPass -HomeDir $DaemonServiceStateHomeDir
 }
 
 if (($SetupRelay -or $Run) -and ($existing = Resolve-InstalledCliInvoker)) {
@@ -605,13 +770,55 @@ try {
   Write-Host "Happier CLI installed at $invoker"
   & $invoker --version
 
-  $resolvedWithDaemon = Resolve-WithDaemonPreference
+  $backgroundServiceInventory = @{
+    Supported = $false
+    Entries = @()
+  }
+  $backgroundServiceInventory = Get-InstalledBackgroundServiceInventory -CliPath $invoker
+  if ($backgroundServiceInventory.Supported -and $backgroundServiceInventory.Entries.Count -gt 0 -and $Noninteractive -ne "1") {
+    Show-InstalledBackgroundServiceSummary -CliPath $invoker -Entries $backgroundServiceInventory.Entries
+  }
+
+  $resolvedWithDaemon = Resolve-WithDaemonPreference -ExistingEntries $backgroundServiceInventory.Entries
   if ($resolvedWithDaemon -ne "0") {
-    Write-Host "Installing background service (user-mode)..."
-    try {
-      Invoke-InstallerCommandWithDaemonServiceContext -CliPath $invoker -CommandArgs @("service", "install") -HomeDir $InstallDir *> $null
-    } catch {
-      Write-Warning "background service install failed. You can retry manually: `"$invoker service install`""
+    if ($backgroundServiceInventory.Supported) {
+      $installStrategy = Resolve-ExistingBackgroundServiceInstallStrategy -Entries $backgroundServiceInventory.Entries
+      if ($installStrategy -eq "replace-all") {
+        Write-Host "Switching managed background-service startup to this release-channel..."
+        try {
+          Invoke-InstallerCommandWithDaemonServiceContext -CliPath $invoker -CommandArgs @("service", "repair", "--yes") -HomeDir $DaemonServiceStateHomeDir *> $null
+        } catch {
+          Write-Warning "background service install failed. You can retry manually: `"$invoker service repair --yes`""
+        }
+      }
+      elseif ($installStrategy -eq "add") {
+        Write-Host "Installing an additional background service (user-mode)..."
+        try {
+          Invoke-InstallerCommandWithDaemonServiceContext -CliPath $invoker -CommandArgs @("service", "install", "--yes") -HomeDir $DaemonServiceStateHomeDir *> $null
+        } catch {
+          Write-Warning "background service install failed. You can retry manually: `"$invoker service install --yes`""
+        }
+      }
+      elseif ($installStrategy -eq "skip") {
+        Write-Host "Keeping existing background services unchanged."
+      }
+      else {
+        if ($Noninteractive -eq "1") {
+          Write-Host "Reconciling existing background services (best-effort)..."
+          try {
+            Invoke-InstallerCommandWithDaemonServiceContext -CliPath $invoker -CommandArgs @("service", "repair", "--yes") -HomeDir $DaemonServiceStateHomeDir *> $null
+          }
+          catch {
+            # best-effort
+          }
+        }
+        Write-Host "Installing background service (user-mode)..."
+        try {
+          Invoke-InstallerCommandWithDaemonServiceContext -CliPath $invoker -CommandArgs @("service", "install", "--yes") -HomeDir $DaemonServiceStateHomeDir *> $null
+        } catch {
+          Write-Warning "background service install failed. You can retry manually: `"$invoker service install --yes`""
+        }
+      }
     }
   }
 

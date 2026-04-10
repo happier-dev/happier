@@ -1,5 +1,6 @@
 import { basename } from 'node:path';
 
+import { readEmbeddedPublicReleaseRingFromPath } from '@happier-dev/cli-common/firstPartyRuntime';
 import {
   getReleaseRingCatalogEntry,
   normalizePublicReleaseRingId,
@@ -15,9 +16,20 @@ function normalizeInvokerCandidate(raw: string): string {
     .toLowerCase();
 }
 
+function resolvePublicReleaseRingIdFromPathHint(raw: string | null | undefined): PublicReleaseRingId | '' {
+  const normalized = String(raw ?? '').trim().replaceAll('\\', '/').toLowerCase();
+  if (!normalized) return '';
+  if (/(^|\/)cli-preview(\/|$)/.test(normalized)) return 'preview';
+  if (/(^|\/)cli-dev(\/|$)/.test(normalized)) return 'publicdev';
+  return '';
+}
+
 export function inferPublicReleaseRingIdFromEnvAndArgv(params: Readonly<{
   env: NodeJS.ProcessEnv;
   argv: readonly string[];
+  argv0?: string | null;
+  execPath?: string | null;
+  additionalCandidates?: readonly string[];
 }>): PublicReleaseRingId {
   const envValue = String(
     params.env.HAPPIER_PUBLIC_RELEASE_CHANNEL ??
@@ -28,8 +40,18 @@ export function inferPublicReleaseRingIdFromEnvAndArgv(params: Readonly<{
   const envRing = envValue ? normalizePublicReleaseRingId(envValue) : '';
   if (envRing) return envRing;
 
-  const candidates = [params.argv[0] ?? '', params.argv[1] ?? ''];
+  const candidates = [
+    params.execPath ?? process.execPath,
+    params.argv0 ?? process.argv0,
+    params.argv[0] ?? '',
+    params.argv[1] ?? '',
+    ...(params.additionalCandidates ?? []),
+  ];
   for (const candidate of candidates) {
+    const ringFromEmbeddedMarker = readEmbeddedPublicReleaseRingFromPath(candidate);
+    if (ringFromEmbeddedMarker) return ringFromEmbeddedMarker;
+    const ringFromPath = resolvePublicReleaseRingIdFromPathHint(candidate);
+    if (ringFromPath) return ringFromPath;
     const name = normalizeInvokerCandidate(candidate);
     const ring = resolvePublicReleaseRingIdForCliInvokerName(name);
     if (ring) return ring;

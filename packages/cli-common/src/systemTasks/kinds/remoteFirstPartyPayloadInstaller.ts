@@ -12,6 +12,7 @@ import {
   resolveFirstPartyComponentPublicReleaseVariant,
 } from '../../firstPartyRuntime/index.js';
 
+import { createScpReadyPayloadArchive } from './createScpReadyPayloadArchive.js';
 import type { SystemTaskSshConnectionConfig } from './relayRuntimeKinds.js';
 import { normalizeScpRemotePath } from '../ssh/scpRemotePath.js';
 
@@ -155,48 +156,59 @@ export async function installRemoteFirstPartyComponent(params: Readonly<{
   });
 
   try {
+    const scpReadyPayload = await createScpReadyPayloadArchive(prepared.payloadRoot);
     const component = getFirstPartyComponentCatalogEntry(params.componentId);
-    const variant = resolveFirstPartyComponentPublicReleaseVariant({
-      componentId: params.componentId,
-      channel,
-    });
-    const stageParent = `${remoteHomeDir}/bootstrap-staging/${sanitizeRemotePathSegment(params.componentId)}-${sanitizeRemotePathSegment(prepared.versionId)}-${resolvedDeps.now()}`;
-    const stageParentForScp = normalizeScpRemotePath(stageParent);
-    await resolvedDeps.runRemoteText({
-      ssh: params.ssh,
-      knownHostsMode: params.knownHostsMode,
-      remoteCommand: `mkdir -p ${stageParent}`,
-    });
-    await resolvedDeps.copyLocalDirectoryToRemote({
-      ssh: params.ssh,
-      knownHostsMode: params.knownHostsMode,
-      localPath: prepared.payloadRoot,
-      remotePath: stageParentForScp,
-    });
+    try {
+      const variant = resolveFirstPartyComponentPublicReleaseVariant({
+        componentId: params.componentId,
+        channel,
+      });
+      const stageParent = `${remoteHomeDir}/bootstrap-staging/${sanitizeRemotePathSegment(params.componentId)}-${sanitizeRemotePathSegment(prepared.versionId)}-${resolvedDeps.now()}`;
+      const stageParentForScp = normalizeScpRemotePath(stageParent);
+      await resolvedDeps.runRemoteText({
+        ssh: params.ssh,
+        knownHostsMode: params.knownHostsMode,
+        remoteCommand: `mkdir -p ${stageParent}`,
+      });
+      await resolvedDeps.copyLocalDirectoryToRemote({
+        ssh: params.ssh,
+        knownHostsMode: params.knownHostsMode,
+        localPath: scpReadyPayload.archiveStageRoot,
+        remotePath: stageParentForScp,
+      });
 
-    const remotePayloadRoot = `${stageParent}/${sanitizeRemotePathSegment(basename(prepared.payloadRoot))}`;
-    const installRoot = `${remoteHomeDir}/${variant.installRootName}`;
-    const versionsDir = `${installRoot}/versions`;
-    const versionDir = `${versionsDir}/${sanitizeRemotePathSegment(prepared.versionId)}`;
-    const currentPath = `${installRoot}/current`;
-    const previousPath = `${installRoot}/previous`;
-    const binaryPath = `${currentPath}/${component.binaryRelativePath}`;
+      const remoteArchiveRoot = `${stageParent}/${sanitizeRemotePathSegment(basename(scpReadyPayload.archiveStageRoot))}`;
+      const remoteArchivePath = `${remoteArchiveRoot}/${sanitizeRemotePathSegment(scpReadyPayload.archiveFileName)}`;
+      const remoteExtractRoot = `${stageParent}/payload-extracted`;
+      const remotePayloadRoot = `${remoteExtractRoot}/${sanitizeRemotePathSegment(scpReadyPayload.extractedPayloadDirName)}`;
+      const installRoot = `${remoteHomeDir}/${variant.installRootName}`;
+      const versionsDir = `${installRoot}/versions`;
+      const versionDir = `${versionsDir}/${sanitizeRemotePathSegment(prepared.versionId)}`;
+      const currentPath = `${installRoot}/current`;
+      const previousPath = `${installRoot}/previous`;
+      const binaryPath = `${currentPath}/${component.binaryRelativePath}`;
 
-    await resolvedDeps.runRemoteText({
-      ssh: params.ssh,
-      knownHostsMode: params.knownHostsMode,
-      remoteCommand: [
-        'set -eu',
-        `cleanup() { rm -rf ${stageParent}; }`,
-        'trap cleanup EXIT',
-        `mkdir -p ${versionsDir}`,
-        `rm -rf ${versionDir}`,
-        `cp -R ${remotePayloadRoot} ${versionDir}`,
-        `if [ -L ${currentPath} ]; then prev="$(readlink ${currentPath} || true)"; if [ -n "$prev" ]; then ln -sfn "$prev" ${previousPath}; fi; fi`,
-        `ln -sfn ${versionDir} ${currentPath}`,
-        `chmod +x ${binaryPath}`,
-      ].join('; '),
-    });
+      await resolvedDeps.runRemoteText({
+        ssh: params.ssh,
+        knownHostsMode: params.knownHostsMode,
+        remoteCommand: [
+          'set -eu',
+          `cleanup() { rm -rf ${stageParent}; }`,
+          'trap cleanup EXIT',
+          `mkdir -p ${versionsDir}`,
+          `rm -rf ${versionDir}`,
+          `rm -rf ${remoteExtractRoot}`,
+          `mkdir -p ${remoteExtractRoot}`,
+          `tar -xf ${remoteArchivePath} -C ${remoteExtractRoot}`,
+          `cp -R ${remotePayloadRoot} ${versionDir}`,
+          `if [ -L ${currentPath} ]; then prev="$(readlink ${currentPath} || true)"; if [ -n "$prev" ]; then ln -sfn "$prev" ${previousPath}; fi; fi`,
+          `ln -sfn ${versionDir} ${currentPath}`,
+          `chmod +x ${binaryPath}`,
+        ].join('; '),
+      });
+    } finally {
+      await scpReadyPayload.cleanup();
+    }
 
     return {
       binaryPath: resolveRemoteInstalledFirstPartyBinaryPath({ componentId: params.componentId, channel: params.channel, remoteHomeDir }),

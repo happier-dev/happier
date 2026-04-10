@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile, mkdir, readFile } from 'node:fs/promises';
+import { createConnection } from 'node:net';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, posix as posixPath } from 'node:path';
 
@@ -8,6 +9,7 @@ import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier
 
 import {
   applyServicePlan,
+  buildServiceCommandEnv,
   buildServiceDefinition,
   resolveServiceBackend,
   planServiceAction,
@@ -16,9 +18,18 @@ import {
 } from '../service/index.js';
 import { buildLaunchdPlistXml } from '../service/launchd.js';
 import { renderSystemdServiceUnit } from '../service/systemd.js';
-import { resolveRelayRuntimeDefaults, type RelayRuntimeDefaults } from '../firstPartyRuntime/relayRuntime.js';
+import {
+  checkRelayRuntimeHealth,
+  resolveRelayRuntimeDefaults,
+  type RelayRuntimeDefaults,
+} from '../firstPartyRuntime/relayRuntime.js';
 import { installOrUpdateRelayRuntimeLocal } from '../firstPartyRuntime/relayRuntimeInstall.js';
-import { applyEnvOverridesToEnvText, parseEnvText } from '../firstPartyRuntime/selfHostServerEnv.js';
+import {
+    mergeSelfHostServerEnvText,
+    parseEnvText,
+    renderSelfHostServerEnvTextFromResolvedValues,
+    resolveConfiguredSelfHostBaseUrl,
+} from '../firstPartyRuntime/selfHostServerEnv.js';
 
 import { buildRelayRuntimeHealthProbeCommand, RELAY_RUNTIME_HEALTH_OK_TOKEN } from './buildRelayRuntimeHealthProbeCommand.js';
 
@@ -57,6 +68,7 @@ type RemoteInstaller = (params: Readonly<{
   ssh: SystemTaskSshConnectionConfig;
   knownHostsMode?: 'app' | 'system';
   installerBinaryPath?: string;
+  localBinaryPath?: string;
   remoteHomeDir?: string;
 }>) => Promise<Readonly<{ binaryPath: string; versionId: string }>>;
 
@@ -80,6 +92,10 @@ export type RelayHostEngine = Readonly<{
   control: (params: RelayRuntimeTaskParams & Readonly<{ action: 'start' | 'stop' | 'restart' | 'uninstall' }>) => Promise<void>;
 }>;
 
+const LOCAL_RELAY_STATUS_HEALTH_TIMEOUT_MS = 1_000;
+const LOCAL_RELAY_CONTROL_HEALTH_TIMEOUT_MS = 30_000;
+const RELAY_RUNTIME_CHANNELS: readonly PublicReleaseRingId[] = ['stable', 'preview', 'publicdev'];
+
 function quoteRemoteShellArg(value: string): string {
   const raw = String(value ?? '');
   if (raw === '') return "''";
@@ -98,12 +114,51 @@ function sanitizeRemotePathSegment(value: string): string {
   return sanitized || 'payload';
 }
 
+async function readRecentLocalRelayStderr(stderrPath: string): Promise<string> {
+  const text = await readFile(stderrPath, 'utf8').catch(() => '');
+  const lines = text
+    .split(/\r?\n/u)
+    .map((line) => line.trimEnd())
+    .filter(Boolean);
+  return lines.slice(-80).join('\n');
+}
+
+async function assertLocalRelayRuntimeHealthy(params: Readonly<{
+  relayUrl: string;
+  healthPath: string;
+  stderrPath: string;
+}>): Promise<void> {
+  const healthy = await resolveLocalRelayHealth({
+    baseUrl: params.relayUrl,
+    healthPath: params.healthPath,
+    timeoutMs: LOCAL_RELAY_CONTROL_HEALTH_TIMEOUT_MS,
+  }).catch(() => false);
+  if (healthy) {
+    return;
+  }
+
+  const tailText = await readRecentLocalRelayStderr(params.stderrPath);
+  const message = [
+    `Local relay runtime did not become healthy at ${params.relayUrl}.`,
+    tailText ? `Recent stderr:\n${tailText}` : '',
+  ].filter(Boolean).join('\n');
+  throw new Error(message);
+}
+
 function normalizeChannel(raw: unknown): PublicReleaseRingId {
   return normalizePublicReleaseRingId(raw) || 'stable';
 }
 
 function normalizeMode(raw: unknown): 'user' | 'system' {
   return String(raw ?? '').trim().toLowerCase() === 'system' ? 'system' : 'user';
+}
+
+function formatRelayChannelLabel(channel: PublicReleaseRingId): 'stable' | 'preview' | 'dev' {
+  return channel === 'publicdev' ? 'dev' : channel;
+}
+
+function listOtherRelayChannels(channel: PublicReleaseRingId): readonly PublicReleaseRingId[] {
+  return RELAY_RUNTIME_CHANNELS.filter((candidate) => candidate !== channel);
 }
 
 function resolveRemoteHomeDirForRuntime(): string {
@@ -164,6 +219,166 @@ function resolveRelayDefaultsForRemote(params: Readonly<{
   });
 }
 
+async function probeLocalPortOpen(params: Readonly<{ host: string; port: number; timeoutMs: number }>): Promise<boolean> {
+  return await new Promise((resolve) => {
+    const socket = createConnection({
+      host: params.host,
+      port: params.port,
+    });
+    const finish = (value: boolean): void => {
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(value);
+    };
+    socket.setTimeout(params.timeoutMs);
+    socket.once('connect', () => finish(true));
+    socket.once('timeout', () => finish(false));
+    socket.once('error', () => finish(false));
+  });
+}
+
+async function fetchLocalJson(params: Readonly<{ url: string; timeoutMs: number }>): Promise<{
+  ok: boolean;
+  status: number;
+  body: unknown;
+}> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), params.timeoutMs);
+  try {
+    const response = await fetch(params.url, {
+      signal: controller.signal,
+      headers: {
+        accept: 'application/json',
+      },
+    });
+    return {
+      ok: response.ok,
+      status: response.status,
+      body: await response.json().catch(() => ({})),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function resolveLocalRelayHealth(params: Readonly<{
+  baseUrl: string;
+  healthPath: string;
+  timeoutMs?: number;
+}>): Promise<boolean> {
+  const parsedUrl = new URL(params.baseUrl);
+  const port = Number.parseInt(parsedUrl.port, 10);
+  const result = await checkRelayRuntimeHealth({
+    host: parsedUrl.hostname,
+    port: Number.isInteger(port) && port > 0 ? port : 80,
+    path: params.healthPath,
+    timeoutMs: params.timeoutMs ?? LOCAL_RELAY_STATUS_HEALTH_TIMEOUT_MS,
+    probePortOpen: async ({ host, port: localPort, timeoutMs }) => await probeLocalPortOpen({ host, port: localPort, timeoutMs }),
+    fetchJson: async ({ url, timeoutMs }) => await fetchLocalJson({ url, timeoutMs }),
+  });
+  return result.reachable;
+}
+
+async function resolveLocalDesiredRelayUrl(params: Readonly<{
+  mode: 'user' | 'system';
+  channel: PublicReleaseRingId;
+  envOverrides?: Record<string, string>;
+}>): Promise<string> {
+  const defaults = resolveRelayRuntimeDefaults({
+    platform: process.platform,
+    mode: params.mode,
+    channel: params.channel,
+    homeDir: homedir(),
+  });
+  const envPath = join(defaults.configDir, 'server.env');
+  const baseEnvText = renderSelfHostServerEnvTextFromResolvedValues({
+    port: defaults.serverPort,
+    host: defaults.serverHost,
+    dataDir: defaults.dataDir,
+    filesDir: join(defaults.dataDir, 'files'),
+    dbDir: join(defaults.dataDir, 'pglite'),
+    databaseUrl: `file:${join(defaults.dataDir, 'happier-server-light.sqlite')}`,
+    sqliteAutoMigrate: process.platform === 'darwin' ? '0' : '1',
+    sqliteMigrationsDir: join(defaults.dataDir, 'migrations', 'sqlite'),
+  });
+  const existingEnvText = existsSync(envPath) ? await readFile(envPath, 'utf8').catch(() => '') : '';
+  const envText = mergeSelfHostServerEnvText({
+    baseEnvText,
+    existingEnvText,
+    overrides: params.envOverrides,
+  });
+  return resolveConfiguredSelfHostBaseUrl({
+    fallbackBaseUrl: `http://${defaults.serverHost}:${defaults.serverPort}`,
+    envText,
+  });
+}
+
+function resolveRemoteDesiredRelayUrl(params: Readonly<{
+  platform: 'linux' | 'darwin';
+  mode: 'user' | 'system';
+  channel: PublicReleaseRingId;
+  existingEnvText?: string;
+  envOverrides?: Record<string, string>;
+}>): string {
+  const defaults = resolveRelayDefaultsForRemote({
+    platform: params.platform,
+    channel: params.channel,
+    mode: params.mode,
+  });
+  const baseEnvText = renderSelfHostServerEnvTextFromResolvedValues({
+    port: defaults.serverPort,
+    host: defaults.serverHost,
+    dataDir: defaults.dataDir,
+    filesDir: `${defaults.dataDir}/files`,
+    dbDir: `${defaults.dataDir}/pglite`,
+    databaseUrl: `file:${defaults.dataDir}/happier-server-light.sqlite`,
+    sqliteAutoMigrate: params.platform === 'darwin' ? '0' : '1',
+    sqliteMigrationsDir: `${defaults.dataDir}/migrations/sqlite`,
+  });
+  const envText = mergeSelfHostServerEnvText({
+    baseEnvText,
+    existingEnvText: params.existingEnvText,
+    overrides: params.envOverrides,
+  });
+  return resolveConfiguredSelfHostBaseUrl({
+    fallbackBaseUrl: `http://${defaults.serverHost}:${defaults.serverPort}`,
+    envText,
+  });
+}
+
+function createRelayLaneConflictError(params: Readonly<{
+  requestedChannel: PublicReleaseRingId;
+  conflictingChannel: PublicReleaseRingId;
+  relayUrl: string;
+}>): Error {
+  return new Error(
+    `A ${formatRelayChannelLabel(params.conflictingChannel)} relay is already installed at ${params.relayUrl}. `
+    + 'Relay lanes keep separate data and are not replaced automatically. '
+    + `Use --channel ${formatRelayChannelLabel(params.conflictingChannel)} to manage that relay, choose a different PORT, or uninstall it before installing ${formatRelayChannelLabel(params.requestedChannel)}.`,
+  );
+}
+
+async function resolveRemoteRelayHealth(params: Readonly<{
+  deps: RelayHostEngineDeps;
+  ssh: SystemTaskSshConnectionConfig;
+  knownHostsMode: 'app' | 'system';
+  relayUrl: string;
+  healthPath: string;
+}>): Promise<boolean> {
+  const probeResult = await params.deps.runRemoteText({
+    ssh: params.ssh,
+    knownHostsMode: params.knownHostsMode,
+    remoteCommand: buildRelayRuntimeHealthProbeCommand({
+      baseUrl: params.relayUrl,
+      path: params.healthPath,
+      maxAttempts: 1,
+      sleepSeconds: 0,
+    }),
+  }).catch(() => ({ status: 1, stdout: '', stderr: '' }));
+  const probeStdout = String(probeResult.stdout ?? '');
+  return probeResult.status === 0 || probeStdout.includes(RELAY_RUNTIME_HEALTH_OK_TOKEN);
+}
+
 function buildRemoteInstallBinaryShimCommand(params: Readonly<{ sourcePath: string; destPath: string; privilegedPrefix?: string }>): string {
   const source = quoteRemoteShellArg(params.sourcePath);
   const dest = quoteRemoteShellArg(params.destPath);
@@ -181,60 +396,13 @@ function buildRemoteProbeExistsCommand(params: Readonly<{ path: string; kind: 'f
   return `if [ ${testFlag} ${quoteRemoteShellArg(params.path)} ]; then echo yes; fi`;
 }
 
-function resolveRemotePrismaEngineCandidates(params: Readonly<{
-  platform: 'linux' | 'darwin';
-  arch: 'x64' | 'arm64';
-  serverBinDir: string;
-}>): readonly string[] {
-  if (params.platform === 'darwin' && params.arch === 'arm64') {
-    return [
-      posixPath.join(params.serverBinDir, 'node_modules', '.prisma', 'client', 'libquery_engine-darwin-arm64.dylib.node'),
-      posixPath.join(params.serverBinDir, 'generated', 'sqlite-client', 'libquery_engine-darwin-arm64.dylib.node'),
-    ];
-  }
-  if (params.platform === 'linux' && params.arch === 'arm64') {
-    return [
-      posixPath.join(params.serverBinDir, 'node_modules', '.prisma', 'client', 'libquery_engine-linux-arm64-openssl-3.0.x.so.node'),
-      posixPath.join(params.serverBinDir, 'generated', 'sqlite-client', 'libquery_engine-linux-arm64-openssl-3.0.x.so.node'),
-    ];
-  }
-  if (params.platform === 'linux' && params.arch === 'x64') {
-    return [
-      posixPath.join(params.serverBinDir, 'node_modules', '.prisma', 'client', 'libquery_engine-debian-openssl-3.0.x.so.node'),
-      posixPath.join(params.serverBinDir, 'generated', 'sqlite-client', 'libquery_engine-debian-openssl-3.0.x.so.node'),
-    ];
-  }
-  return [];
-}
-
-async function resolveFirstRemoteExistingPath(
-  deps: Pick<RemoteDeps, 'runRemoteText'>,
-  params: Readonly<{
-    ssh: SystemTaskSshConnectionConfig;
-    knownHostsMode?: 'app' | 'system';
-    candidates: readonly string[];
-  }>,
-): Promise<string> {
-  if (params.candidates.length === 0) return '';
-  const chain = params.candidates
-    .map((candidate) => `if [ -f ${quoteRemoteShellArg(candidate)} ]; then echo ${quoteRemoteShellArg(candidate)}; exit 0; fi`)
-    .join('; ');
-  const cmd = ['set -eu', chain, 'echo ""'].join('; ');
-  const result = await deps.runRemoteText({
-    ssh: params.ssh,
-    knownHostsMode: params.knownHostsMode,
-    remoteCommand: cmd,
-  });
-  return String(result.stdout ?? '').trim();
-}
-
 function buildRemoteRelayRuntimeEnvText(params: Readonly<{
   platform: 'linux' | 'darwin';
   arch: 'x64' | 'arm64';
   defaults: RelayRuntimeDefaults;
   envOverrides?: Record<string, string>;
+  existingEnvText?: string;
   serverBinDir: string;
-  prismaEnginePath?: string;
   nodeModulesPath?: string;
 }>): Readonly<{ envText: string; parsed: Record<string, string> }> {
   const normalizedDataDir = String(params.defaults.dataDir ?? '').replace(/\/+$/, '') || String(params.defaults.dataDir ?? '');
@@ -244,32 +412,22 @@ function buildRemoteRelayRuntimeEnvText(params: Readonly<{
   const filesDir = `${params.defaults.dataDir}/files`;
   const dbDir = `${params.defaults.dataDir}/pglite`;
 
-  const baseLines = [
-    `PORT=${params.defaults.serverPort}`,
-    `HAPPIER_SERVER_HOST=${params.defaults.serverHost}`,
-    'METRICS_ENABLED=false',
-    'HAPPIER_DB_PROVIDER=sqlite',
-    `DATABASE_URL=${databaseUrl}`,
-    'HAPPIER_FILES_BACKEND=local',
-    ...(params.nodeModulesPath ? [`NODE_PATH=${params.nodeModulesPath}`] : []),
-    ...(params.prismaEnginePath
-      ? [
-          'PRISMA_CLIENT_ENGINE_TYPE=library',
-          `PRISMA_QUERY_ENGINE_LIBRARY=${params.prismaEnginePath}`,
-        ]
-      : []),
-    `HAPPIER_SQLITE_AUTO_MIGRATE=${params.platform === 'darwin' ? '0' : '1'}`,
-    `HAPPIER_SQLITE_MIGRATIONS_DIR=${migrationsDir}`,
-    `HAPPIER_SERVER_LIGHT_DATA_DIR=${params.defaults.dataDir}`,
-    `HAPPIER_SERVER_LIGHT_FILES_DIR=${filesDir}`,
-    `HAPPIER_SERVER_LIGHT_DB_DIR=${dbDir}`,
-    '',
-  ];
-
-  const baseText = `${baseLines.join('\n')}\n`;
-  const envText = params.envOverrides && Object.keys(params.envOverrides).length > 0
-    ? applyEnvOverridesToEnvText(baseText, params.envOverrides)
-    : baseText;
+  const baseText = renderSelfHostServerEnvTextFromResolvedValues({
+    port: params.defaults.serverPort,
+    host: params.defaults.serverHost,
+    dataDir: params.defaults.dataDir,
+    filesDir,
+    dbDir,
+    databaseUrl,
+    nodeModulesPath: params.nodeModulesPath,
+    sqliteAutoMigrate: params.platform === 'darwin' ? '0' : '1',
+    sqliteMigrationsDir: migrationsDir,
+  });
+  const envText = mergeSelfHostServerEnvText({
+    baseEnvText: baseText,
+    existingEnvText: params.existingEnvText,
+    overrides: params.envOverrides,
+  });
   return {
     envText,
     parsed: parseEnvText(envText),
@@ -339,22 +497,6 @@ function buildRemoteReadTextFileCommand(params: Readonly<{ path: string; privile
   return `if [ -f ${quoted} ]; then ${cat} ${quoted} 2>/dev/null || true; else echo ''; fi`;
 }
 
-function resolveConfiguredRelayBaseUrl(params: Readonly<{ fallbackBaseUrl: string; envText: string }>): string {
-  const raw = String(params.envText ?? '').trim();
-  if (!raw) return params.fallbackBaseUrl;
-
-  const parsed = parseEnvText(raw);
-  const portRaw = typeof parsed.PORT === 'string' ? parsed.PORT.trim() : '';
-  const port = portRaw ? Number.parseInt(portRaw, 10) : Number.NaN;
-  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
-    return params.fallbackBaseUrl;
-  }
-
-  const hostRaw = typeof parsed.HAPPIER_SERVER_HOST === 'string' ? parsed.HAPPIER_SERVER_HOST.trim() : '';
-  const host = hostRaw && hostRaw !== '0.0.0.0' ? hostRaw : '127.0.0.1';
-  return `http://${host}:${port}`;
-}
-
 function tryParseJsonObject(text: string): Record<string, unknown> | null {
   const raw = String(text ?? '').trim();
   if (!raw) return null;
@@ -370,7 +512,7 @@ function tryParseJsonObject(text: string): Record<string, unknown> | null {
 function buildRemoteServiceStatusCommand(params: Readonly<{ backend: ServiceBackend; serviceName: string }>): string {
   const svc = `${params.serviceName}.service`;
   if (params.backend === 'systemd-user') {
-    return `systemctl --user show ${quoteRemoteShellArg(svc)} --property=UnitFileState,ActiveState,SubState`;
+    return wrapRemoteSystemdUserCommand(`systemctl --user show ${quoteRemoteShellArg(svc)} --property=UnitFileState,ActiveState,SubState`);
   }
   if (params.backend === 'systemd-system') {
     return `systemctl show ${quoteRemoteShellArg(svc)} --property=UnitFileState,ActiveState,SubState`;
@@ -379,6 +521,10 @@ function buildRemoteServiceStatusCommand(params: Readonly<{ backend: ServiceBack
     return `launchctl list ${quoteRemoteShellArg(params.serviceName)}`;
   }
   throw new Error(`Unsupported remote backend: ${params.backend}`);
+}
+
+function wrapRemoteSystemdUserCommand(command: string): string {
+  return `XDG_RUNTIME_DIR="\${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" DBUS_SESSION_BUS_ADDRESS="\${DBUS_SESSION_BUS_ADDRESS:-unix:path=\${XDG_RUNTIME_DIR}/bus}" ${command}`;
 }
 
 function parseSystemctlShowOutput(stdout: string): Readonly<{ unitFileState: string; activeState: string; subState: string }> {
@@ -434,9 +580,9 @@ function buildRemoteControlCommand(params: Readonly<{ backend: ServiceBackend; s
   const svc = `${params.serviceName}.service`;
   if (params.backend === 'systemd-user') {
     if (params.action === 'uninstall') {
-      return `systemctl --user disable --now ${quoteRemoteShellArg(svc)} 2>/dev/null || true; systemctl --user daemon-reload`;
+      return `${wrapRemoteSystemdUserCommand(`systemctl --user disable --now ${quoteRemoteShellArg(svc)}`)} 2>/dev/null || true; ${wrapRemoteSystemdUserCommand('systemctl --user daemon-reload')}`;
     }
-    return `systemctl --user ${params.action} ${quoteRemoteShellArg(svc)}`;
+    return wrapRemoteSystemdUserCommand(`systemctl --user ${params.action} ${quoteRemoteShellArg(svc)}`);
   }
   if (params.backend === 'systemd-system') {
     const sudoSetup = "SUDO_PREFIX=''; if [ \"$(id -u)\" -ne 0 ]; then SUDO_PREFIX=\"sudo -n \"; fi; ";
@@ -457,8 +603,9 @@ function buildRemoteControlCommand(params: Readonly<{ backend: ServiceBackend; s
       return `${sudoSetup}${privilegedPrefix}launchctl unload -w ${quoteRemoteShellArg(resolveLaunchdPlistPath(params.serviceName, params.backend === 'launchd-system'))}`;
     }
     const plistPath = resolveLaunchdPlistPath(params.serviceName, params.backend === 'launchd-system');
-    const domain = params.backend === 'launchd-system' ? `system/${params.serviceName}` : `gui/${typeof process.getuid === 'function' ? process.getuid() : 0}/${params.serviceName}`;
-    return `${sudoSetup}${privilegedPrefix}launchctl bootout -w ${quoteRemoteShellArg(plistPath)} 2>/dev/null || true; ${privilegedPrefix}launchctl bootstrap ${params.backend === 'launchd-system' ? 'system' : `gui/${typeof process.getuid === 'function' ? process.getuid() : 0}` } ${quoteRemoteShellArg(plistPath)}; ${privilegedPrefix}launchctl enable ${quoteRemoteShellArg(domain)}; ${privilegedPrefix}launchctl kickstart -k ${quoteRemoteShellArg(domain)}`;
+    const launchdDomain = params.backend === 'launchd-system' ? 'system' : 'gui/$(id -u)';
+    const serviceDomain = `${launchdDomain}/${params.serviceName}`;
+    return `${sudoSetup}${privilegedPrefix}launchctl bootout -w ${quoteRemoteShellArg(plistPath)} 2>/dev/null || true; ${privilegedPrefix}launchctl bootstrap ${launchdDomain} ${quoteRemoteShellArg(plistPath)}; ${privilegedPrefix}launchctl enable ${quoteRemoteShellArg(serviceDomain)}; ${privilegedPrefix}launchctl kickstart -k ${quoteRemoteShellArg(serviceDomain)}`;
   }
   throw new Error(`Unsupported remote backend: ${params.backend}`);
 }
@@ -633,11 +780,17 @@ async function installRemoteService(params: Readonly<{
 
   if (params.backend === 'systemd-user' || params.backend === 'systemd-system') {
     const prefix = params.backend === 'systemd-user' ? '--user ' : '';
-    installCommands.push(`${privilegedPrefix}systemctl ${prefix}daemon-reload`);
-    // Restart after install so updated unit/env changes take effect even when the service is already running.
-    // `systemctl enable --now` does not restart existing services.
-    installCommands.push(`${privilegedPrefix}systemctl ${prefix}enable ${quoteRemoteShellArg(`${params.serviceName}.service`)}`);
-    installCommands.push(`${privilegedPrefix}systemctl ${prefix}restart ${quoteRemoteShellArg(`${params.serviceName}.service`)}`);
+    if (params.backend === 'systemd-user') {
+      installCommands.push(wrapRemoteSystemdUserCommand('systemctl --user daemon-reload'));
+      installCommands.push(wrapRemoteSystemdUserCommand(`systemctl --user enable ${quoteRemoteShellArg(`${params.serviceName}.service`)}`));
+      installCommands.push(wrapRemoteSystemdUserCommand(`systemctl --user restart ${quoteRemoteShellArg(`${params.serviceName}.service`)}`));
+    } else {
+      installCommands.push(`${privilegedPrefix}systemctl ${prefix}daemon-reload`);
+      // Restart after install so updated unit/env changes take effect even when the service is already running.
+      // `systemctl enable --now` does not restart existing services.
+      installCommands.push(`${privilegedPrefix}systemctl ${prefix}enable ${quoteRemoteShellArg(`${params.serviceName}.service`)}`);
+      installCommands.push(`${privilegedPrefix}systemctl ${prefix}restart ${quoteRemoteShellArg(`${params.serviceName}.service`)}`);
+    }
   } else if (params.backend === 'launchd-user' || params.backend === 'launchd-system') {
     const plist = quoteRemoteShellArg(remoteDefinitionPath);
     installCommands.push(`${privilegedPrefix}launchctl unload -w ${plist} 2>/dev/null || true`);
@@ -669,6 +822,7 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
     const res = spawnSync(cmd, [...args], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
+      env: buildServiceCommandEnv({ cmd, args, env: process.env }),
     });
     return {
       status: typeof res.status === 'number' ? res.status : 1,
@@ -731,23 +885,50 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
     const installed = Boolean(version) || existsSync(installBinaryPath);
     const envPath = join(defaults.configDir, 'server.env');
     const envText = existsSync(envPath) ? await readFile(envPath, 'utf8').catch(() => '') : '';
-    const baseUrl = resolveConfiguredRelayBaseUrl({
+    const baseUrl = resolveConfiguredSelfHostBaseUrl({
       fallbackBaseUrl: `http://${defaults.serverHost}:${defaults.serverPort}`,
       envText,
     });
+    const healthy = service.active === true
+      ? await resolveLocalRelayHealth({
+        baseUrl,
+        healthPath: defaults.healthPath,
+        timeoutMs: LOCAL_RELAY_STATUS_HEALTH_TIMEOUT_MS,
+      }).catch(() => false)
+      : service.active === null
+        ? null
+        : false;
 
     return {
       installed,
       version,
       service,
       baseUrl,
-      healthy: service.active === true,
+      healthy,
     };
   }
 
   async function installLocal(parsed: RelayRuntimeTaskParams): Promise<Readonly<{ relayUrl: string; mode: 'user' | 'system' }>> {
     const mode = normalizeMode(parsed.mode);
     const channel = normalizeChannel(parsed.channel);
+    const desiredRelayUrl = await resolveLocalDesiredRelayUrl({
+      mode,
+      channel,
+      envOverrides: parsed.env,
+    });
+    for (const otherChannel of listOtherRelayChannels(channel)) {
+      const otherStatus = await readLocalStatus({
+        ...parsed,
+        channel: formatRelayChannelLabel(otherChannel),
+      });
+      if (otherStatus.installed && otherStatus.baseUrl === desiredRelayUrl) {
+        throw createRelayLaneConflictError({
+          requestedChannel: channel,
+          conflictingChannel: otherChannel,
+          relayUrl: desiredRelayUrl,
+        });
+      }
+    }
     const serverBinaryPath = typeof parsed.selfHostRelayBinaryOverride === 'string'
       ? parsed.selfHostRelayBinaryOverride.trim()
       : '';
@@ -892,17 +1073,28 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       knownHostsMode,
       remoteCommand: buildRemoteReadTextFileCommand({ path: envPath, privilegedPrefix }),
     }).then((result) => String(result.stdout ?? '')).catch(() => '');
-    const baseUrl = resolveConfiguredRelayBaseUrl({
+    const baseUrl = resolveConfiguredSelfHostBaseUrl({
       fallbackBaseUrl: `http://${defaults.serverHost}:${defaults.serverPort}`,
       envText,
     });
+    const healthy = service.active === true
+      ? await resolveRemoteRelayHealth({
+        deps,
+        ssh: params.ssh,
+        knownHostsMode,
+        relayUrl: baseUrl,
+        healthPath: defaults.healthPath,
+      })
+      : service.active === null
+        ? null
+        : false;
 
     return {
       installed: Boolean(version) || binaryExists,
       version,
       service,
       baseUrl,
-      healthy: service.active === true,
+      healthy,
     };
   }
 
@@ -916,6 +1108,39 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
     const remoteHomeDir = await resolveRemoteUserHomeDir(deps, { ssh: params.ssh, knownHostsMode })
       ?? resolveRemoteHomeDirForRuntime();
     const remoteComponentHomeDir = resolveRemoteHomeDirForComponents();
+    const backend = resolveServiceBackend({ platform, mode });
+    const privilegedPrefix = backend === 'systemd-system' || backend === 'launchd-system'
+      ? 'sudo -n '
+      : '';
+    const configEnvPath = `${defaults.configDir}/server.env`;
+    const existingEnvText = await deps.runRemoteText({
+      ssh: params.ssh,
+      knownHostsMode,
+      remoteCommand: buildRemoteReadTextFileCommand({ path: configEnvPath, privilegedPrefix }),
+    }).then((result) => String(result.stdout ?? '')).catch(() => '');
+    const desiredRelayUrl = resolveRemoteDesiredRelayUrl({
+      platform,
+      mode,
+      channel,
+      existingEnvText,
+      envOverrides: params.parsed.env,
+    });
+    for (const otherChannel of listOtherRelayChannels(channel)) {
+      const otherStatus = await readRemoteStatus({
+        parsed: {
+          ...params.parsed,
+          channel: formatRelayChannelLabel(otherChannel),
+        },
+        ssh: params.ssh,
+      });
+      if (otherStatus.installed && otherStatus.baseUrl === desiredRelayUrl) {
+        throw createRelayLaneConflictError({
+          requestedChannel: channel,
+          conflictingChannel: otherChannel,
+          relayUrl: desiredRelayUrl,
+        });
+      }
+    }
 
     const remoteCli = await deps.installRemoteComponent({
       componentId: 'happier-cli',
@@ -928,22 +1153,20 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
     const remoteServerOverride = typeof params.parsed.selfHostRelayBinaryOverride === 'string'
       ? params.parsed.selfHostRelayBinaryOverride.trim()
       : '';
-    const remoteServer = remoteServerOverride
-      ? { binaryPath: remoteServerOverride, versionId: '' }
-      : await deps.installRemoteComponent({
-          componentId: 'happier-server',
-          channel,
-          ssh: params.ssh,
-          knownHostsMode,
-          remoteHomeDir: remoteComponentHomeDir,
-          installerBinaryPath: remoteCli.binaryPath,
-        });
+    const remoteServer = await deps.installRemoteComponent({
+      componentId: 'happier-server',
+      channel,
+      ssh: params.ssh,
+      knownHostsMode,
+      remoteHomeDir: remoteComponentHomeDir,
+      ...(remoteServerOverride ? { localBinaryPath: remoteServerOverride } : {}),
+      ...(!remoteServerOverride ? { installerBinaryPath: remoteCli.binaryPath } : {}),
+    });
 
     const installServerBinaryPath = `${defaults.installRoot}/bin/happier-server`;
     const shimPath = `${defaults.binDir}/happier-server`;
     const stdoutPath = `${defaults.logDir}/server.out.log`;
     const stderrPath = `${defaults.logDir}/server.err.log`;
-    const configEnvPath = `${defaults.configDir}/server.env`;
     const statePath = `${defaults.installRoot}/self-host-state.json`;
     const filesDir = `${defaults.dataDir}/files`;
     const dbDir = `${defaults.dataDir}/pglite`;
@@ -957,27 +1180,14 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       ? `${serverBinDir}/node_modules`
       : '').catch(() => '');
 
-    const prismaEnginePath = await resolveFirstRemoteExistingPath(
-      deps,
-      {
-        ssh: params.ssh,
-        knownHostsMode,
-        candidates: resolveRemotePrismaEngineCandidates({
-          platform,
-          arch: target.arch,
-          serverBinDir,
-        }),
-      },
-    );
-
     const renderedEnv = buildRemoteRelayRuntimeEnvText({
       platform,
       arch: target.arch,
       defaults,
       envOverrides: params.parsed.env,
+      existingEnvText,
       serverBinDir,
       nodeModulesPath: nodeModulesPath || undefined,
-      prismaEnginePath: prismaEnginePath || undefined,
     });
 
     const serviceSpec: ServiceSpec = {
@@ -989,7 +1199,6 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       stdoutPath,
       stderrPath,
     };
-    const backend = resolveServiceBackend({ platform, mode });
     const remotePathEnv = await resolveRemotePathEnv(deps, { ssh: params.ssh, knownHostsMode });
     const definitionPath = resolveRemoteServiceDefinitionPath({
       backend,
@@ -1023,30 +1232,30 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
     const remoteEnvPath = `${staged.remoteRoot}/server.env`;
     const remoteStatePath = `${staged.remoteRoot}/self-host-state.json`;
 
-    const privilegedPrefix = backend === 'systemd-system' || backend === 'launchd-system'
+    const setupPrivilegedPrefix = backend === 'systemd-system' || backend === 'launchd-system'
       ? '${SUDO_PREFIX}'
       : '';
 
     const setupCommands = [
       'set -eu',
-      ...(privilegedPrefix
+      ...(setupPrivilegedPrefix
         ? [
             "SUDO_PREFIX=''",
             'if [ "$(id -u)" -ne 0 ]; then SUDO_PREFIX="sudo -n "; fi',
           ]
         : []),
-      `${privilegedPrefix}mkdir -p ${quoteRemoteShellArg(defaults.installRoot)}`,
-      `${privilegedPrefix}mkdir -p ${quoteRemoteShellArg(defaults.binDir)}`,
-      `${privilegedPrefix}mkdir -p ${quoteRemoteShellArg(defaults.configDir)}`,
-      `${privilegedPrefix}mkdir -p ${quoteRemoteShellArg(defaults.dataDir)}`,
-      `${privilegedPrefix}mkdir -p ${quoteRemoteShellArg(filesDir)}`,
-      `${privilegedPrefix}mkdir -p ${quoteRemoteShellArg(dbDir)}`,
-      `${privilegedPrefix}mkdir -p ${quoteRemoteShellArg(defaults.logDir)}`,
-      `${privilegedPrefix}mkdir -p ${quoteRemoteShellArg(`${defaults.installRoot}/bin`)}`,
-      buildRemoteInstallBinaryShimCommand({ sourcePath: remoteServer.binaryPath, destPath: installServerBinaryPath, privilegedPrefix }),
-      buildRemoteInstallBinaryShimCommand({ sourcePath: installServerBinaryPath, destPath: shimPath, privilegedPrefix }),
-      `${privilegedPrefix}cp ${quoteRemoteShellArg(remoteEnvPath)} ${quoteRemoteShellArg(configEnvPath)}`,
-      `${privilegedPrefix}cp ${quoteRemoteShellArg(remoteStatePath)} ${quoteRemoteShellArg(statePath)}`,
+      `${setupPrivilegedPrefix}mkdir -p ${quoteRemoteShellArg(defaults.installRoot)}`,
+      `${setupPrivilegedPrefix}mkdir -p ${quoteRemoteShellArg(defaults.binDir)}`,
+      `${setupPrivilegedPrefix}mkdir -p ${quoteRemoteShellArg(defaults.configDir)}`,
+      `${setupPrivilegedPrefix}mkdir -p ${quoteRemoteShellArg(defaults.dataDir)}`,
+      `${setupPrivilegedPrefix}mkdir -p ${quoteRemoteShellArg(filesDir)}`,
+      `${setupPrivilegedPrefix}mkdir -p ${quoteRemoteShellArg(dbDir)}`,
+      `${setupPrivilegedPrefix}mkdir -p ${quoteRemoteShellArg(defaults.logDir)}`,
+      `${setupPrivilegedPrefix}mkdir -p ${quoteRemoteShellArg(`${defaults.installRoot}/bin`)}`,
+      buildRemoteInstallBinaryShimCommand({ sourcePath: remoteServer.binaryPath, destPath: installServerBinaryPath, privilegedPrefix: setupPrivilegedPrefix }),
+      buildRemoteInstallBinaryShimCommand({ sourcePath: installServerBinaryPath, destPath: shimPath, privilegedPrefix: setupPrivilegedPrefix }),
+      `${setupPrivilegedPrefix}cp ${quoteRemoteShellArg(remoteEnvPath)} ${quoteRemoteShellArg(configEnvPath)}`,
+      `${setupPrivilegedPrefix}cp ${quoteRemoteShellArg(remoteStatePath)} ${quoteRemoteShellArg(statePath)}`,
       staged.cleanupRemoteCommand,
     ].join('; ');
 
@@ -1082,6 +1291,7 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       knownHostsMode,
       backend,
       relayUrl,
+      healthPath: defaults.healthPath,
       stderrPath,
     });
 
@@ -1097,6 +1307,7 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
     knownHostsMode: 'app' | 'system';
     backend: ServiceBackend;
     relayUrl: string;
+    healthPath: string;
     stderrPath: string;
   }>): Promise<void> {
     const privilegedPrefix = params.backend === 'systemd-system' || params.backend === 'launchd-system'
@@ -1104,6 +1315,7 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       : '';
     const probeCommand = buildRelayRuntimeHealthProbeCommand({
       baseUrl: params.relayUrl,
+      path: params.healthPath,
       maxAttempts: 120,
       sleepSeconds: 1,
     });
@@ -1208,6 +1420,10 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
     async control(params) {
       const parsed = params;
       if (parsed.target.kind !== 'ssh') {
+        if (parsed.action === 'uninstall') {
+          await uninstallLocal(parsed);
+          return;
+        }
         const mode = normalizeMode(parsed.mode);
         const channel = normalizeChannel(parsed.channel);
         const defaults = resolveRelayRuntimeDefaults({
@@ -1218,18 +1434,33 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
         });
         const backend = resolveServiceBackend({ platform: process.platform, mode });
         const serviceName = defaults.serviceName;
-        if (parsed.action === 'uninstall') {
-          await uninstallLocal(parsed);
-          return;
-        }
+        const ensureLocalRelayHealthy = async (): Promise<void> => {
+          if (parsed.action !== 'start' && parsed.action !== 'restart') {
+            return;
+          }
+          const envPath = join(defaults.configDir, 'server.env');
+          const envText = existsSync(envPath) ? await readFile(envPath, 'utf8').catch(() => '') : '';
+          const baseUrl = resolveConfiguredSelfHostBaseUrl({
+            fallbackBaseUrl: `http://${defaults.serverHost}:${defaults.serverPort}`,
+            envText,
+          });
+          await assertLocalRelayRuntimeHealthy({
+            relayUrl: baseUrl,
+            healthPath: defaults.healthPath,
+            stderrPath: join(defaults.logDir, 'server.err.log'),
+          });
+        };
+
         if (backend === 'systemd-user' || backend === 'systemd-system') {
           const prefix = backend === 'systemd-user' ? ['--user'] : [];
           const result = runLocalText('systemctl', [...prefix, parsed.action, `${serviceName}.service`]);
           if (result.status !== 0) {
             throw new Error(result.stderr.trim() || `Failed to ${parsed.action} relay runtime.`);
           }
+          await ensureLocalRelayHealthy();
           return;
         }
+
         if (backend === 'launchd-user' || backend === 'launchd-system') {
           const uid = typeof process.getuid === 'function' ? process.getuid() : 0;
           const domain = backend === 'launchd-system' ? `system/${serviceName}` : `gui/${uid}/${serviceName}`;
@@ -1253,6 +1484,7 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
           if (parsed.action === 'restart') {
             const kickstartResult = runLaunchctl(['kickstart', '-k', domain], { allowFail: true });
             if (kickstartResult.status === 0) {
+              await ensureLocalRelayHealthy();
               return;
             }
           }
@@ -1262,6 +1494,7 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
             runLaunchctl(['bootstrap', `gui/${uid}`, plistPath]);
             runLaunchctl(['enable', domain]);
             runLaunchctl(['kickstart', '-k', domain]);
+            await ensureLocalRelayHealthy();
             return;
           }
 
@@ -1270,12 +1503,15 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
             runLaunchctl(['bootstrap', 'system', plistPath]);
             runLaunchctl(['enable', domain]);
             runLaunchctl(['kickstart', '-k', domain]);
+            await ensureLocalRelayHealthy();
             return;
           }
 
           runLaunchctl(['kickstart', '-k', domain]);
+          await ensureLocalRelayHealthy();
           return;
         }
+
         const taskName = `Happier\\${serviceName}`;
         const args = parsed.action === 'stop'
           ? ['/End', '/TN', taskName]
@@ -1284,6 +1520,7 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
         if (result.status !== 0) {
           throw new Error(result.stderr.trim() || `Failed to ${parsed.action} relay runtime.`);
         }
+        await ensureLocalRelayHealthy();
         return;
       }
       const knownHostsMode: 'app' | 'system' = parsed.target.ssh.knownHostsPath ? 'app' : 'system';
@@ -1308,6 +1545,18 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       });
       if (result.status !== 0) {
         throw new Error(result.stderr.trim() || `Failed to ${parsed.action} relay runtime.`);
+      }
+      if (parsed.action === 'start' || parsed.action === 'restart') {
+        const status = await readRemoteStatus({ parsed, ssh: parsed.target.ssh });
+        await assertRemoteRelayRuntimeHealthy({
+          deps,
+          ssh: parsed.target.ssh,
+          knownHostsMode,
+          backend,
+          relayUrl: status.baseUrl,
+          healthPath: defaults.healthPath,
+          stderrPath: `${defaults.logDir}/server.err.log`,
+        });
       }
     },
   };

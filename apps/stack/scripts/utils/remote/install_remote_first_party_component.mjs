@@ -1,4 +1,8 @@
-import { basename } from 'node:path';
+import { execFile } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { basename, join } from 'node:path';
+import { promisify } from 'node:util';
 
 import {
   getFirstPartyComponentCatalogEntry,
@@ -8,6 +12,8 @@ import {
 import { normalizePublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 import { run, runCapture } from '../proc/proc.mjs';
+
+const execFileAsync = promisify(execFile);
 
 function safeBashSingleQuote(value) {
   const raw = String(value ?? '');
@@ -29,6 +35,23 @@ function parseJsonLinesBestEffort(stdout) {
     }
   }
   return null;
+}
+
+async function runRemoteText({ target, command }) {
+  await run('ssh', [target, 'bash', '-lc', safeBashSingleQuote(command)], { env: process.env });
+}
+
+async function runRemoteJson({ target, command }) {
+  const out = await runCapture('ssh', [target, 'bash', '-lc', safeBashSingleQuote(command)], { env: process.env });
+  const parsed = parseJsonLinesBestEffort(out);
+  if (!parsed) {
+    throw new Error('Remote command did not return valid JSON');
+  }
+  return parsed;
+}
+
+function normalizeChannel(channel) {
+  return normalizePublicReleaseRingId(channel) || 'stable';
 }
 
 function sanitizeRemotePathSegment(value) {
@@ -53,21 +76,43 @@ function normalizeRemoteReleaseArch(value) {
   throw new Error(`Unsupported remote bootstrap architecture: ${normalized || 'unknown'}`);
 }
 
-async function runRemoteText({ target, command }) {
-  await run('ssh', [target, 'bash', '-lc', safeBashSingleQuote(command)], { env: process.env });
-}
-
-async function runRemoteJson({ target, command }) {
-  const out = await runCapture('ssh', [target, 'bash', '-lc', safeBashSingleQuote(command)], { env: process.env });
-  const parsed = parseJsonLinesBestEffort(out);
-  if (!parsed) {
-    throw new Error('Remote command did not return valid JSON');
+function normalizeScpRemotePath(remotePath) {
+  const trimmed = String(remotePath ?? '').trim();
+  if (!trimmed) return trimmed;
+  if (trimmed.startsWith('$HOME/')) {
+    return trimmed.slice('$HOME/'.length);
   }
-  return parsed;
+  if (trimmed === '$HOME') {
+    return '.';
+  }
+  return trimmed;
 }
 
-function normalizeChannel(channel) {
-  return normalizePublicReleaseRingId(channel) || 'stable';
+async function createScpReadyPayloadArchive(payloadRoot) {
+  const archiveStageRoot = await mkdtemp(join(tmpdir(), 'happier-first-party-scp-archive-'));
+  const extractedPayloadDirName = basename(payloadRoot);
+  const archiveFileName = `${extractedPayloadDirName}.tar`;
+
+  try {
+    await execFileAsync('tar', [
+      '-chf',
+      join(archiveStageRoot, archiveFileName),
+      '-C',
+      join(payloadRoot, '..'),
+      extractedPayloadDirName,
+    ]);
+    return {
+      archiveStageRoot,
+      archiveFileName,
+      extractedPayloadDirName,
+      cleanup: async () => {
+        await rm(archiveStageRoot, { recursive: true, force: true });
+      },
+    };
+  } catch (error) {
+    await rm(archiveStageRoot, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 export function resolveRemoteInstalledFirstPartyBinaryPath({ componentId, channel, remoteHomeDir = '$HOME/.happier' }) {
@@ -132,38 +177,62 @@ export async function installRemoteFirstPartyComponent(
 
   try {
     const component = getFirstPartyComponentCatalogEntry(componentId);
-    const stageParent = `${remoteHomeDir}/bootstrap-staging/${sanitizeRemotePathSegment(componentId)}-${sanitizeRemotePathSegment(prepared.versionId)}-${resolvedDeps.now()}`;
-    await resolvedDeps.runRemoteText({
-      target,
-      command: `mkdir -p ${stageParent}`,
-    });
-    await resolvedDeps.runScp({
-      localPath: prepared.payloadRoot,
-      remoteTarget: `${target}:${stageParent}`,
-    });
-
-    const remotePayloadRoot = `${stageParent}/${basename(prepared.payloadRoot)}`;
-    const installerBinaryPath = `${remotePayloadRoot}/${component.binaryRelativePath}`;
-    await resolvedDeps.runRemoteText({
-      target,
-      command: [
-        'set -euo pipefail',
-        `cleanup() { rm -rf ${stageParent}; }`,
-        'trap cleanup EXIT',
-        `mkdir -p ${remoteHomeDir}`,
-        `env HAPPIER_HOME_DIR=${remoteHomeDir} ${installerBinaryPath} self __install-payload --component '${componentId}' --payload-root ${remotePayloadRoot} --version '${prepared.versionId}' --channel '${normalizedChannel}'`,
-      ].join('; '),
-    });
-
-    return {
-      binaryPath: resolveRemoteInstalledFirstPartyBinaryPath({
+    const archive = await createScpReadyPayloadArchive(prepared.payloadRoot);
+    try {
+      const variant = resolveFirstPartyComponentPublicReleaseVariant({
         componentId,
         channel: normalizedChannel,
-        remoteHomeDir,
-      }),
-      versionId: prepared.versionId,
-      source: prepared.source,
-    };
+      });
+      const stageParent = `${remoteHomeDir}/bootstrap-staging/${sanitizeRemotePathSegment(componentId)}-${sanitizeRemotePathSegment(prepared.versionId)}-${resolvedDeps.now()}`;
+      const remoteArchivePath = `${stageParent}/${sanitizeRemotePathSegment(archive.archiveFileName)}`;
+      const remoteExtractRoot = `${stageParent}/payload-extracted`;
+      const remotePayloadRoot = `${remoteExtractRoot}/${sanitizeRemotePathSegment(archive.extractedPayloadDirName)}`;
+      const installRoot = `${remoteHomeDir}/${variant.installRootName}`;
+      const versionsDir = `${installRoot}/versions`;
+      const versionDir = `${versionsDir}/${sanitizeRemotePathSegment(prepared.versionId)}`;
+      const currentPath = `${installRoot}/current`;
+      const previousPath = `${installRoot}/previous`;
+      const binaryPath = `${currentPath}/${component.binaryRelativePath}`;
+
+      await resolvedDeps.runRemoteText({
+        target,
+        command: `mkdir -p ${stageParent}`,
+      });
+      await resolvedDeps.runScp({
+        localPath: join(archive.archiveStageRoot, archive.archiveFileName),
+        remoteTarget: `${target}:${normalizeScpRemotePath(remoteArchivePath)}`,
+      });
+
+      await resolvedDeps.runRemoteText({
+        target,
+        command: [
+          'set -eu',
+          `cleanup() { rm -rf ${stageParent}; }`,
+          'trap cleanup EXIT',
+          `mkdir -p ${versionsDir}`,
+          `rm -rf ${versionDir}`,
+          `rm -rf ${remoteExtractRoot}`,
+          `mkdir -p ${remoteExtractRoot}`,
+          `tar -xf ${remoteArchivePath} -C ${remoteExtractRoot}`,
+          `cp -R ${remotePayloadRoot} ${versionDir}`,
+          `if [ -L ${currentPath} ]; then prev="$(readlink ${currentPath} || true)"; if [ -n "$prev" ]; then ln -sfn "$prev" ${previousPath}; fi; fi`,
+          `ln -sfn ${versionDir} ${currentPath}`,
+          `chmod +x ${binaryPath}`,
+        ].join('; '),
+      });
+
+      return {
+        binaryPath: resolveRemoteInstalledFirstPartyBinaryPath({
+          componentId,
+          channel: normalizedChannel,
+          remoteHomeDir,
+        }),
+        versionId: prepared.versionId,
+        source: prepared.source,
+      };
+    } finally {
+      await archive.cleanup();
+    }
   } finally {
     await prepared.cleanup();
   }

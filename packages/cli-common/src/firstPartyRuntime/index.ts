@@ -48,6 +48,10 @@ export type {
   ReleaseAssetBundle,
 } from './releaseAssetBundle.js';
 export { extractReleasePayloadRootFromArchive } from './extractReleasePayloadRootFromArchive.js';
+export {
+  readEmbeddedPublicReleaseRingFromPath,
+  writeEmbeddedPublicReleaseRingMarker,
+} from './embeddedPublicReleaseRingMarker.js';
 
 export { listInstalledVersionIdsNewestFirst } from './listInstalledVersionIdsNewestFirst.js';
 export { installVersionedPayload } from './installVersionedPayload.js';

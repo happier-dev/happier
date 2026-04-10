@@ -48,4 +48,15 @@ describe('buildRelayRuntimeHealthProbeCommand', () => {
     const result = spawnSync('bash', ['-lc', command], { encoding: 'utf8' });
     expect(result.status).not.toBe(0);
   });
+
+  it('supports a custom health path', () => {
+    const command = buildRelayRuntimeHealthProbeCommand({
+      baseUrl: 'http://127.0.0.1:3005',
+      path: '/v1/version',
+      maxAttempts: 1,
+      sleepSeconds: 0,
+    });
+
+    expect(command).toContain("HEALTH_URL='http://127.0.0.1:3005/v1/version'");
+  });
 });

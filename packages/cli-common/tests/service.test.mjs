@@ -70,6 +70,23 @@ test('renderSystemdServiceUnit escapes percent signs in ExecStart args', () => {
   assert.match(unit, /ExecStart=.*\s100%%\n/);
 });
 
+test('planServiceAction restarts systemd services after install instead of relying on enable --now', () => {
+  const plan = planServiceAction({
+    backend: 'systemd-user',
+    action: 'install',
+    label: 'dev.happier.test',
+    definitionPath: '/home/me/.config/systemd/user/dev.happier.test.service',
+    definitionContents: '[Unit]\nDescription=Happier Test\n',
+    persistent: true,
+  });
+
+  const argsText = plan.commands.map((command) => `${command.cmd} ${command.args.join(' ')}`).join('\n');
+  assert.match(argsText, /systemctl --user daemon-reload/);
+  assert.match(argsText, /systemctl --user enable dev\.happier\.test\.service/);
+  assert.match(argsText, /systemctl --user restart dev\.happier\.test\.service/);
+  assert.doesNotMatch(argsText, /enable --now/);
+});
+
 test('renderWindowsScheduledTaskWrapperPs1 sets env and runs program args', () => {
   const ps1 = renderWindowsScheduledTaskWrapperPs1({
     workingDirectory: 'C:\\\\Users\\\\me\\\\.happier\\\\self-host',
@@ -322,6 +339,39 @@ test('applyServicePlan throws when a command exits non-zero (unless allowFail)',
     writes: [],
     commands: [{ cmd: process.execPath, args: ['-e', 'process.exit(2)'], allowFail: true }],
   });
+});
+
+test('applyServicePlan explains when systemd user services lack a session bus', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-cli-common-systemctl-user-bus-'));
+  const binDir = join(root, 'bin');
+  await mkdir(binDir, { recursive: true });
+
+  const systemctlPath = join(binDir, 'systemctl');
+  await writeFile(
+    systemctlPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\${1:-}" == "--user" ]]; then
+  echo "Failed to connect to bus: No medium found" >&2
+  exit 1
+fi
+exit 0
+`,
+    'utf8',
+  );
+  await chmod(systemctlPath, 0o755);
+
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${binDir}:${originalPath ?? ''}`;
+  try {
+    await assert.rejects(
+      () => applyServicePlan({ writes: [], commands: [{ cmd: 'systemctl', args: ['--user', 'daemon-reload'] }] }),
+      /Systemd user service is unavailable/i,
+    );
+  } finally {
+    process.env.PATH = originalPath;
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('applyServicePlan falls back to launchctl load when bootstrap gui/uid fails with EIO', async () => {
