@@ -15,6 +15,10 @@ describe('inferPermissionIntentFromClaudeArgs', () => {
     expect(inferPermissionIntentFromClaudeArgs(['--permission-mode', 'bypassPermissions'])).toBe('yolo');
   });
 
+  it('maps --permission-mode=bypassPermissions to yolo intent', () => {
+    expect(inferPermissionIntentFromClaudeArgs(['--permission-mode=bypassPermissions'])).toBe('yolo');
+  });
+
   it('passes through --permission-mode default as default intent', () => {
     expect(inferPermissionIntentFromClaudeArgs(['--permission-mode', 'default'])).toBe('default');
   });

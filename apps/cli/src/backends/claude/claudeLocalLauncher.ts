@@ -36,6 +36,9 @@ function upsertClaudePermissionModeArgs(
             }
             continue;
         }
+        if (arg.startsWith('--permission-mode=')) {
+            continue;
+        }
         if (arg === '--dangerously-skip-permissions') {
             continue;
         }

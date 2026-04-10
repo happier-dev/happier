@@ -239,6 +239,7 @@ export async function claudeLocal(opts: {
             // Ensure positional args come after all flags (including our injected --settings).
             const flagArgs: string[] = [];
             const positionalArgs: string[] = [];
+            let trailingPermissionFlagArgs: string[] = [];
 	            const flagsWithValue = new Set<string>([
 	                '--model',
 	                '--effort',
@@ -262,6 +263,25 @@ export async function claudeLocal(opts: {
             if (opts.claudeArgs) {
                 for (let i = 0; i < opts.claudeArgs.length; i++) {
                     const arg = opts.claudeArgs[i];
+                    if (arg === '--dangerously-skip-permissions') {
+                        trailingPermissionFlagArgs = ['--permission-mode', 'bypassPermissions'];
+                        continue;
+                    }
+                    if (arg === '--permission-mode') {
+                        const nextArg = i + 1 < opts.claudeArgs.length ? opts.claudeArgs[i + 1] : undefined;
+                        if (typeof nextArg === 'string' && !nextArg.startsWith('-')) {
+                            trailingPermissionFlagArgs = ['--permission-mode', nextArg];
+                            i++;
+                            continue;
+                        }
+                    }
+                    if (arg.startsWith('--permission-mode=')) {
+                        const normalizedValue = arg.slice('--permission-mode='.length).trim();
+                        if (normalizedValue) {
+                            trailingPermissionFlagArgs = ['--permission-mode', normalizedValue];
+                            continue;
+                        }
+                    }
                     if (arg.startsWith('-')) {
                         flagArgs.push(arg);
                         if (flagsWithValue.has(arg) && i + 1 < opts.claudeArgs.length) {
@@ -291,6 +311,9 @@ export async function claudeLocal(opts: {
             // Add flag arguments before positional prompts.
             if (flagArgs.length > 0) {
                 args.push(...flagArgs);
+            }
+            if (trailingPermissionFlagArgs.length > 0) {
+                args.push(...trailingPermissionFlagArgs);
             }
             if (positionalArgs.length > 0) {
                 // Claude Code treats some flags (notably `--mcp-config`) as variadic, so they will

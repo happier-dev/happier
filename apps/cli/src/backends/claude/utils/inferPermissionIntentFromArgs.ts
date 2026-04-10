@@ -30,8 +30,15 @@ export function inferPermissionIntentFromClaudeArgs(args?: string[]): Permission
             }
             continue;
         }
+
+        if (arg.startsWith('--permission-mode=')) {
+            const rawValue = arg.slice('--permission-mode='.length).trim();
+            if (rawValue) {
+                const parsed = parsePermissionIntentAlias(rawValue);
+                if (parsed) inferred = parsed;
+            }
+        }
     }
 
     return inferred;
 }
-

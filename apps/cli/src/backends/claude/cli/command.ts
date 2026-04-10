@@ -139,6 +139,17 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
         process.exit(1);
       }
       options.permissionMode = value;
+    } else if (arg.startsWith('--permission-mode=')) {
+      const value = arg.slice('--permission-mode='.length).trim();
+      if (!value) {
+        console.error(chalk.red(`Missing value for --permission-mode. Valid values: ${PERMISSION_MODES.join(', ')}`));
+        process.exit(1);
+      }
+      if (!isPermissionMode(value)) {
+        console.error(chalk.red(`Invalid --permission-mode value: ${value}. Valid values: ${PERMISSION_MODES.join(', ')}`));
+        process.exit(1);
+      }
+      options.permissionMode = value;
     } else if (arg === '--permission-mode-updated-at') {
       if (i + 1 >= strippedArgs.length) {
         console.error(chalk.red('Missing value for --permission-mode-updated-at (expected: unix ms timestamp)'));

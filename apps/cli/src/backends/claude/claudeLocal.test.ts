@@ -623,6 +623,48 @@ describe('claudeLocal --continue handling', () => {
         expect(spawnArgs).not.toContain('--session-id');
     });
 
+    it('normalizes equals-form permission mode so resumed launches keep --resume before the permission flag', async () => {
+        await claudeLocal({
+            abort: new AbortController().signal,
+            sessionId: null,
+            path: '/tmp',
+            onSessionFound,
+            hookSettingsPath: '/tmp/hooks.json',
+            claudeArgs: ['--permission-mode=bypassPermissions', '--resume'],
+        });
+
+        const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+        const resumeIndex = spawnArgs.indexOf('--resume');
+        const permissionIndex = spawnArgs.indexOf('--permission-mode');
+
+        expect(spawnArgs).not.toContain('--permission-mode=bypassPermissions');
+        expect(resumeIndex).toBeGreaterThan(-1);
+        expect(permissionIndex).toBeGreaterThan(-1);
+        expect(permissionIndex).toBeGreaterThan(resumeIndex);
+        expect(spawnArgs[permissionIndex + 1]).toBe('bypassPermissions');
+    });
+
+    it('normalizes --dangerously-skip-permissions so resumed launches keep --resume before the permission flag', async () => {
+        await claudeLocal({
+            abort: new AbortController().signal,
+            sessionId: null,
+            path: '/tmp',
+            onSessionFound,
+            hookSettingsPath: '/tmp/hooks.json',
+            claudeArgs: ['--dangerously-skip-permissions', '--resume'],
+        });
+
+        const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+        const resumeIndex = spawnArgs.indexOf('--resume');
+        const permissionIndex = spawnArgs.indexOf('--permission-mode');
+
+        expect(spawnArgs).not.toContain('--dangerously-skip-permissions');
+        expect(resumeIndex).toBeGreaterThan(-1);
+        expect(permissionIndex).toBeGreaterThan(-1);
+        expect(permissionIndex).toBeGreaterThan(resumeIndex);
+        expect(spawnArgs[permissionIndex + 1]).toBe('bypassPermissions');
+    });
+
     it('should extract and use --resume <id> when session ID is provided', async () => {
         mockClaudeFindLastSession.mockReturnValue(null);
         const claudeArgs = ['--resume', 'abc-123-def'];

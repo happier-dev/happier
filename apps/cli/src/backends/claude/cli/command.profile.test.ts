@@ -69,5 +69,43 @@ describe('handleClaudeCliCommand --profile', () => {
       }
     }
   });
-});
 
+  it('treats --permission-mode=<value> as an explicit override so profile seeds do not replace it', async () => {
+    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue({
+      token: 'x',
+      encryption: { type: 'legacy', secret: new Uint8Array(32) },
+    } as any);
+    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ chromeMode: false, machineId: 'machine-1' } as any);
+    vi.spyOn(ensureDaemonModule, 'shouldAutoStartDaemonAfterAuth').mockReturnValue(false);
+    vi.spyOn(providerSettingsModule, 'resolveProviderOutgoingMessageMetaExtras').mockReturnValue({});
+    vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
+      source: 'none',
+      settings: {
+        profiles: [
+          {
+            id: 'work',
+            name: 'Work',
+            permissionMode: 'default',
+          },
+        ],
+      },
+      settingsVersion: 0,
+      loadedAtMs: Date.now(),
+      whenRefreshed: null,
+    } as any);
+
+    const runSpy = vi.spyOn(runClaudeModule, 'runClaude').mockResolvedValue(undefined);
+
+    await handleClaudeCliCommand({
+      args: ['--profile', 'work', '--permission-mode=bypassPermissions'],
+      rawArgv: ['happier', '--profile', 'work', '--permission-mode=bypassPermissions'],
+      terminalRuntime: null,
+    } as any);
+
+    const passedOptions = runSpy.mock.calls[0]?.[1] as any;
+    expect(passedOptions?.permissionMode).toBe('bypassPermissions');
+
+    const claudeArgs = Array.isArray(passedOptions?.claudeArgs) ? passedOptions.claudeArgs : [];
+    expect(claudeArgs).not.toContain('--permission-mode=bypassPermissions');
+  });
+});
