@@ -4,73 +4,58 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 interface ChangelogEntry {
-    version: number;
+    id: string;
+    versionLabel: string;
     date: string;
-    summary: string;
-    changes: string[];
-    rawMarkdown?: string;
+    markdown: string;
 }
 
 interface ChangelogData {
     entries: ChangelogEntry[];
-    latestVersion: number;
+    latestReleaseId: string | null;
+}
+
+function parseChangelogContent(content: string): ChangelogData {
+    const entries: ChangelogEntry[] = [];
+
+    // Split by release headers while preserving everything under each release as markdown.
+    const versionSections = content.split(/^## Version (.+?) - (\d{4}-\d{2}-\d{2})$/gm);
+
+    // Skip the first element (content before first version)
+    for (let i = 1; i < versionSections.length; i += 3) {
+        const versionLabel = versionSections[i]?.trim();
+        const dateStr = versionSections[i + 1];
+        const changesContent = versionSections[i + 2];
+
+        if (!versionLabel || !dateStr || changesContent === undefined) {
+            continue;
+        }
+
+        const markdown = changesContent.trim();
+        entries.push({
+            id: versionLabel,
+            versionLabel,
+            date: dateStr.trim(),
+            markdown,
+        });
+    }
+
+    return {
+        entries,
+        latestReleaseId: entries[0]?.id ?? null,
+    };
 }
 
 function parseChangelog(): ChangelogData {
     const changelogPath = path.join(__dirname, '../../CHANGELOG.md');
-    
+
     if (!fs.existsSync(changelogPath)) {
         console.warn('CHANGELOG.md not found, creating empty changelog data');
-        return { entries: [], latestVersion: 0 };
+        return { entries: [], latestReleaseId: null };
     }
 
     const content = fs.readFileSync(changelogPath, 'utf-8');
-    const entries: ChangelogEntry[] = [];
-    
-    // Split by version headers (## Version X - Date)
-    const versionSections = content.split(/^## Version (\d+) - (.+)$/gm);
-    
-    // Skip the first element (content before first version)
-    for (let i = 1; i < versionSections.length; i += 3) {
-        const versionStr = versionSections[i];
-        const dateStr = versionSections[i + 1];
-        const changesContent = versionSections[i + 2];
-        
-        const version = parseInt(versionStr, 10);
-        if (isNaN(version)) continue;
-        
-        // Extract summary and bullet points
-        const changes: string[] = [];
-        const lines = changesContent.trim().split('\n');
-        let summary = '';
-        let foundFirstBullet = false;
-        
-        for (const line of lines) {
-            const trimmed = line.trim();
-            if (trimmed.startsWith('- ')) {
-                foundFirstBullet = true;
-                changes.push(trimmed.substring(2));
-            } else if (!foundFirstBullet && trimmed.length > 0) {
-                // This is part of the summary (before any bullet points)
-                summary += (summary ? ' ' : '') + trimmed;
-            }
-        }
-        
-        entries.push({
-            version,
-            date: dateStr.trim(),
-            summary: summary.trim(),
-            changes,
-            rawMarkdown: `## Version ${version} - ${dateStr}\n${changesContent}`.trim()
-        });
-    }
-    
-    // Sort entries by version descending (newest first)
-    entries.sort((a, b) => b.version - a.version);
-    
-    const latestVersion = entries.length > 0 ? entries[0].version : 0;
-    
-    return { entries, latestVersion };
+    return parseChangelogContent(content);
 }
 
 function main() {
@@ -89,7 +74,7 @@ function main() {
     fs.writeFileSync(outputPath, JSON.stringify(changelogData, null, 2));
     
     console.log(`✅ Parsed ${changelogData.entries.length} changelog entries`);
-    console.log(`📝 Latest version: ${changelogData.latestVersion}`);
+    console.log(`📝 Latest release: ${changelogData.latestReleaseId ?? 'none'}`);
     console.log(`💾 Output written to: ${outputPath}`);
 }
 
@@ -97,4 +82,4 @@ if (require.main === module) {
     main();
 }
 
-export { parseChangelog };
+export { parseChangelog, parseChangelogContent };

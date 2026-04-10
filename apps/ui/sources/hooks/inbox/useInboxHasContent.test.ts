@@ -23,7 +23,7 @@ vi.mock('./useUpdates', () => ({
 vi.mock('./useChangelog', () => ({
     useChangelog: () => ({
         hasUnread: mockHasUnread,
-        latestVersion: 0,
+        latestReleaseId: null,
         markAsRead: () => {},
     }),
 }));

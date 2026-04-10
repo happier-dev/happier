@@ -7086,7 +7086,7 @@ settingsSession: {
 
   changelog: {
     // Used by the changelog screen
-    version: ({ version }: { version: number }) => `Версия ${version}`,
+    version: ({ version }: { version: string }) => `Версия ${version}`,
     noEntriesAvailable: "Записи журнала изменений недоступны.",
   },
 

@@ -1,12 +1,11 @@
 export interface ChangelogEntry {
-    version: number;
+    id: string;
+    versionLabel: string;
     date: string;
-    summary: string;
-    changes: string[];
-    rawMarkdown?: string;
+    markdown: string;
 }
 
 export interface ChangelogData {
     entries: ChangelogEntry[];
-    latestVersion: number;
+    latestReleaseId: string | null;
 }

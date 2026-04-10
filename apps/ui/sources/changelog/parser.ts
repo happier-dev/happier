@@ -10,7 +10,7 @@ export function getChangelogData(): ChangelogData {
             changelogData = require('./changelog.json') as ChangelogData;
         } catch (error) {
             console.warn('Changelog data not found, returning empty changelog');
-            changelogData = { entries: [], latestVersion: 0 };
+            changelogData = { entries: [], latestReleaseId: null };
         }
     }
     return changelogData;
@@ -20,10 +20,20 @@ export function getChangelogEntries(): ChangelogEntry[] {
     return getChangelogData().entries;
 }
 
-export function getLatestVersion(): number {
-    return getChangelogData().latestVersion;
+export function getLatestReleaseId(): string | null {
+    return getChangelogData().latestReleaseId;
 }
 
-export function getUnreadEntries(lastViewedVersion: number): ChangelogEntry[] {
-    return getChangelogData().entries.filter(entry => entry.version > lastViewedVersion);
+export function getUnreadEntries(lastViewedReleaseId: string | null): ChangelogEntry[] {
+    const entries = getChangelogData().entries;
+    if (!lastViewedReleaseId) {
+        return entries;
+    }
+
+    const lastViewedIndex = entries.findIndex((entry) => entry.id === lastViewedReleaseId);
+    if (lastViewedIndex === -1) {
+        return entries;
+    }
+
+    return entries.slice(0, lastViewedIndex);
 }

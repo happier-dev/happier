@@ -5344,7 +5344,7 @@ settingsSession: {
 
     changelog: {
         // Used by the changelog screen
-        version: ({ version }: { version: number }) => `版本 ${version}`,
+        version: ({ version }: { version: string }) => `版本 ${version}`,
         noEntriesAvailable: '沒有可用的更新日誌條目。',
     },
 

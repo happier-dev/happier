@@ -6599,7 +6599,7 @@ settingsSession: {
 
     changelog: {
         // Used by the changelog screen
-        version: ({ version }: { version: number }) => `Version ${version}`,
+        version: ({ version }: { version: string }) => `Version ${version}`,
         noEntriesAvailable: 'No changelog entries available.',
     },
 

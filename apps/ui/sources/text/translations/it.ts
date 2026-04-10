@@ -7454,7 +7454,7 @@ settingsSession: {
 
   changelog: {
     // Used by the changelog screen
-    version: ({ version }: { version: number }) => `Versione ${version}`,
+    version: ({ version }: { version: string }) => `Versione ${version}`,
     noEntriesAvailable: "Nessuna voce di changelog disponibile.",
   },
 

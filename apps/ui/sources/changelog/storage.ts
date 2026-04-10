@@ -2,17 +2,25 @@ import { MMKV } from 'react-native-mmkv';
 
 const mmkv = new MMKV();
 
-const LAST_VIEWED_VERSION_KEY = 'changelog-last-viewed-version';
+const LAST_VIEWED_RELEASE_ID_KEY = 'changelog-last-viewed-release-id';
 
-export function getLastViewedVersion(): number {
-    return mmkv.getNumber(LAST_VIEWED_VERSION_KEY) ?? 0;
+export function getLastViewedReleaseId(): string | null {
+    return mmkv.getString(LAST_VIEWED_RELEASE_ID_KEY) ?? null;
 }
 
-export function setLastViewedVersion(version: number): void {
-    mmkv.set(LAST_VIEWED_VERSION_KEY, version);
+export function setLastViewedReleaseId(releaseId: string): void {
+    mmkv.set(LAST_VIEWED_RELEASE_ID_KEY, releaseId);
 }
 
-export function hasUnreadChangelog(latestVersion: number): boolean {
-    const lastViewed = getLastViewedVersion();
-    return latestVersion > lastViewed;
+export function hasUnreadChangelog(latestReleaseId: string | null): boolean {
+    if (!latestReleaseId) {
+        return false;
+    }
+
+    const lastViewedReleaseId = getLastViewedReleaseId();
+    if (lastViewedReleaseId === null) {
+        return false;
+    }
+
+    return latestReleaseId !== lastViewedReleaseId;
 }

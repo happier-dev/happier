@@ -2,9 +2,9 @@ import { useState, useCallback } from 'react';
 import type { FeatureId } from '@happier-dev/protocol';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import {
-    getLastViewedVersion,
-    setLastViewedVersion,
-    getLatestVersion
+    getLastViewedReleaseId,
+    setLastViewedReleaseId,
+    getLatestReleaseId,
 } from '@/changelog';
 
 const CHANGELOG_FEATURE_ID = 'app.ui.changelog' as const satisfies FeatureId;
@@ -12,36 +12,35 @@ const CHANGELOG_FEATURE_ID = 'app.ui.changelog' as const satisfies FeatureId;
 export function useChangelog() {
     const enabled = getFeatureBuildPolicyDecision(CHANGELOG_FEATURE_ID) !== 'deny';
     // MMKV reads are synchronous - no need for useEffect
-    const latestVersion = enabled ? getLatestVersion() : 0;
+    const latestReleaseId = enabled ? getLatestReleaseId() : null;
 
     const [hasUnread, setHasUnread] = useState(() => {
-        if (!enabled) {
+        if (!enabled || !latestReleaseId) {
             return false;
         }
-        const lastViewed = getLastViewedVersion();
+        const lastViewedReleaseId = getLastViewedReleaseId();
 
         // On first install, mark as read so user doesn't see old entries
-        if (lastViewed === 0 && latestVersion > 0) {
-            setLastViewedVersion(latestVersion);
+        if (lastViewedReleaseId === null) {
+            setLastViewedReleaseId(latestReleaseId);
             return false;
         }
 
-        return latestVersion > lastViewed;
+        return latestReleaseId !== lastViewedReleaseId;
     });
 
     const markAsRead = useCallback(() => {
-        if (!enabled) {
+        if (!enabled || !latestReleaseId) {
             return;
         }
-        if (latestVersion > 0) {
-            setLastViewedVersion(latestVersion);
-            setHasUnread(false);
-        }
-    }, [enabled, latestVersion]);
+
+        setLastViewedReleaseId(latestReleaseId);
+        setHasUnread(false);
+    }, [enabled, latestReleaseId]);
 
     return {
         hasUnread: enabled ? hasUnread : false,
-        latestVersion,
-        markAsRead
+        latestReleaseId,
+        markAsRead,
     };
 }

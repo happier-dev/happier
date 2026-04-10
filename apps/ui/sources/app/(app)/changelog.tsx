@@ -1,9 +1,9 @@
 import React, { useEffect } from 'react';
 import { ScrollView, View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
-import { getChangelogEntries, getLatestVersion, setLastViewedVersion } from '@/changelog';
+import { getChangelogEntries, getLatestReleaseId, setLastViewedReleaseId } from '@/changelog';
 import { Typography } from '@/constants/Typography';
 import { layout } from '@/components/ui/layout/layout';
 import { t } from '@/text';
@@ -40,32 +40,16 @@ const styles = StyleSheet.create((theme, runtime) => ({
         color: theme.colors.textSecondary,
         marginBottom: 12,
     },
-    summaryText: {
-        ...Typography.default('regular'),
-        fontSize: 15,
-        lineHeight: 22,
-        color: theme.colors.textSecondary,
-        marginBottom: 16,
-    },
-    changesContainer: {
+    entryBodyContainer: {
         backgroundColor: theme.colors.surfaceHigh,
         borderRadius: 12,
         padding: 16,
     },
-    changeItem: {
+    markdownText: {
         ...Typography.default('regular'),
         fontSize: 16,
         lineHeight: 24,
         color: theme.colors.text,
-        marginBottom: 12,
-    },
-    bulletPoint: {
-        ...Typography.default('semiBold'),
-        fontSize: 16,
-        color: theme.colors.textLink,
-        marginRight: 10,
-        alignSelf: 'flex-start',
-        marginTop: 1,
     },
     emptyState: {
         flex: 1,
@@ -83,15 +67,14 @@ const styles = StyleSheet.create((theme, runtime) => ({
 }));
 
 function ChangelogScreenEnabled() {
-    const { theme } = useUnistyles();
     const insets = useSafeAreaInsets();
     const entries = getChangelogEntries();
     
     useEffect(() => {
         // Mark as viewed when component mounts
-        const latestVersion = getLatestVersion();
-        if (latestVersion > 0) {
-            setLastViewedVersion(latestVersion);
+        const latestReleaseId = getLatestReleaseId();
+        if (latestReleaseId) {
+            setLastViewedReleaseId(latestReleaseId);
         }
     }, []);
 
@@ -123,28 +106,18 @@ function ChangelogScreenEnabled() {
                 showsVerticalScrollIndicator={false}
             >
                 {entries.map((entry) => (
-                    <View key={entry.version} style={styles.entryContainer}>
+                    <View key={entry.id} style={styles.entryContainer}>
                         <Text style={styles.versionHeader}>
-                            {t('changelog.version', { version: entry.version })}
+                            {t('changelog.version', { version: entry.versionLabel })}
                         </Text>
                         <Text style={styles.dateText}>
                             {entry.date}
                         </Text>
-                        {entry.summary && (
-                            <Text style={styles.summaryText}>
-                                {entry.summary}
-                            </Text>
-                        )}
-                        <View style={styles.changesContainer}>
-                            {entry.changes.map((change, index) => (
-                                <View key={index} style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-                                    <Text style={styles.bulletPoint}>•</Text>
-                                    <Text style={[styles.changeItem, { flex: 1 }]}>
-                                        {change}
-                                    </Text>
-                                </View>
-                            ))}
-                        </View>
+                        {entry.markdown ? (
+                            <View style={styles.entryBodyContainer}>
+                                <MarkdownView markdown={entry.markdown} textStyle={styles.markdownText} />
+                            </View>
+                        ) : null}
                     </View>
                 ))}
             </ScrollView>

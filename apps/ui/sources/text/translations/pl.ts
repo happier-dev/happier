@@ -7130,7 +7130,7 @@ settingsSession: {
 
   changelog: {
     // Used by the changelog screen
-    version: ({ version }: { version: number }) => `Wersja ${version}`,
+    version: ({ version }: { version: string }) => `Wersja ${version}`,
     noEntriesAvailable: "Brak dostępnych wpisów dziennika zmian.",
   },
 
