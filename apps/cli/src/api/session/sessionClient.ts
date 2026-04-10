@@ -26,10 +26,9 @@ import { createUserScopedSocket } from './sockets';
 import { isToolTraceEnabled, recordAcpToolTraceEventIfNeeded, recordClaudeToolTraceEvents, recordCodexToolTraceEventIfNeeded } from './toolTrace';
 import { updateSessionAgentStateWithAck, updateSessionMetadataWithAck } from './stateUpdates';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import { calculateCost } from '@/utils/pricing';
 import { buildAcpAgentMessageEnvelope, shouldTraceAcpMessageType } from './acpMessageEnvelope';
 import { normalizeAcpSessionMessageBody, normalizeCodexSessionMessageBody } from './sessionOutboundMessageNormalization';
-import { buildUsageReportFromAcpTokenCount } from './acpTokenCountUsageReport';
+import { createUsageObservationPublisher } from '@/usage/createUsageObservationPublisher';
 import {
     fetchLatestUserPermissionIntentFromEncryptedTranscript,
     fetchRecentTranscriptTextItemsForAcpImportFromServer,
@@ -57,6 +56,7 @@ import {
 import { createLoopbackReadinessProbe } from '@/api/connection/createLoopbackReadinessProbe';
 import { createSessionSocketTransport } from './connection/createSessionSocketTransport';
 import { connectionState } from '@/api/offline/serverConnectionErrors';
+import type { HappyMcpExecutionRunService } from '@/mcp/startHappyServer';
 import {
     executeExecutionRunAction,
     getExecutionRun,
@@ -66,6 +66,12 @@ import {
     stopExecutionRun,
 } from '@/session/services/executionRuns';
 import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
+import {
+    buildLegacyUsageReportFromUsageObservation,
+    extractUsageObservationFromTokenCountMessage,
+    type UsageObservation,
+} from '@/usage/usageObservation';
+import { estimateClaudeUsageCost } from '../../backends/claude/usage/estimateClaudeUsageCost';
 
 function resolveSessionSocketMachineIdForBootstrap(metadata: Metadata | null): string | undefined {
     if (!metadata || typeof metadata.machineId !== 'string') {
@@ -139,38 +145,8 @@ export class ApiSessionClient extends EventEmitter {
     private readonly materializationRecoveryScheduler: KeyedSingleFlightScheduler;
     private readonly transcriptRecoveryErrorStateByLocalId = new Map<string, { lastLoggedAt: number; suppressed: number }>();
     private messageCommitQueueTail: Promise<unknown> = Promise.resolve();
-    readonly executionRuns = {
-        start: async (request: unknown) =>
-            await startExecutionRun({
-                ...this.getExecutionRunServiceContext(),
-                request,
-            }),
-        list: async (request: unknown) =>
-            await listExecutionRuns({
-                ...this.getExecutionRunServiceContext(),
-                request,
-            }),
-        get: async (request: unknown) =>
-            await getExecutionRun({
-                ...this.getExecutionRunServiceContext(),
-                request,
-            }),
-        send: async (request: unknown) =>
-            await sendExecutionRunMessage({
-                ...this.getExecutionRunServiceContext(),
-                request,
-            }),
-        stop: async (request: unknown) =>
-            await stopExecutionRun({
-                ...this.getExecutionRunServiceContext(),
-                request,
-            }),
-        action: async (request: unknown) =>
-            await executeExecutionRunAction({
-                ...this.getExecutionRunServiceContext(),
-                request,
-            }),
-    } as const;
+    private readonly usageObservationPublisher: ReturnType<typeof createUsageObservationPublisher>;
+    readonly executionRuns: HappyMcpExecutionRunService;
 
     /**
      * Returns the latest known agentState (may be stale if socket is disconnected).
@@ -213,6 +189,52 @@ export class ApiSessionClient extends EventEmitter {
                 typeof session.seq === 'number' && Number.isFinite(session.seq) && session.seq >= 0
                     ? Math.trunc(session.seq)
                     : 0;
+            this.usageObservationPublisher = createUsageObservationPublisher({
+                token: this.token,
+                apiServerUrl: resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, ''),
+                resolveToken: async () => (await readCredentials())?.token ?? null,
+                emitLegacyUsageReport: (report) => {
+                    if (!this.socket.connected) {
+                        return;
+                    }
+                    this.socket.emit('usage-report', report);
+                },
+                onPublishError: (error) => {
+                    logger.debug('[SOCKET] Failed to publish usage observation (non-fatal)', error);
+                },
+            });
+            this.executionRuns = {
+                start: async (request: unknown) =>
+                    await startExecutionRun({
+                        ...this.getExecutionRunServiceContext(),
+                        request,
+                    }),
+                list: async (request: unknown) =>
+                    await listExecutionRuns({
+                        ...this.getExecutionRunServiceContext(),
+                        request,
+                    }),
+                get: async (request: unknown) =>
+                    await getExecutionRun({
+                        ...this.getExecutionRunServiceContext(),
+                        request,
+                    }),
+                send: async (request: unknown) =>
+                    await sendExecutionRunMessage({
+                        ...this.getExecutionRunServiceContext(),
+                        request,
+                    }),
+                stop: async (request: unknown) =>
+                    await stopExecutionRun({
+                        ...this.getExecutionRunServiceContext(),
+                        request,
+                    }),
+                action: async (request: unknown) =>
+                    await executeExecutionRunAction({
+                        ...this.getExecutionRunServiceContext(),
+                        request,
+                    }),
+            } as const;
 	        if (session.encryptionMode === 'plain') {
 	            this.sessionEncryptionMode = 'plain';
 	            // Plaintext sessions should not require encryption materials. Keep dummy values for
@@ -1454,18 +1476,10 @@ export class ApiSessionClient extends EventEmitter {
 
         // Best-effort: allow ACP providers to report token usage via a token_count message.
         if (normalizedBody?.type === 'token_count') {
-            try {
-                const report = buildUsageReportFromAcpTokenCount({
-                    provider: 'codex',
-                    sessionId: this.sessionId,
-                    body: normalizedBody,
-                });
-                if (report && this.socket.connected) {
-                    this.socket.emit('usage-report', report);
-                }
-            } catch (error) {
-                logger.debug('[SOCKET] Failed to send token_count usage report (non-fatal)', error);
-            }
+            void this.publishTokenCountObservation({
+                provider: 'codex',
+                body: normalizedBody,
+            });
         }
     }
 
@@ -1544,18 +1558,10 @@ export class ApiSessionClient extends EventEmitter {
 
         // Best-effort: allow ACP providers to report token usage via a token_count message.
         if (normalizedBody.type === 'token_count') {
-            try {
-                const report = buildUsageReportFromAcpTokenCount({
-                    provider,
-                    sessionId: this.sessionId,
-                    body: normalizedBody,
-                });
-                if (report && this.socket.connected) {
-                    this.socket.emit('usage-report', report);
-                }
-            } catch (error) {
-                logger.debug('[SOCKET] Failed to send token_count usage report (non-fatal)', error);
-            }
+            void this.publishTokenCountObservation({
+                provider,
+                body: normalizedBody,
+            });
         }
     }
 
@@ -1810,30 +1816,57 @@ export class ApiSessionClient extends EventEmitter {
         // Calculate total tokens
         const totalTokens = usage.input_tokens + usage.output_tokens + (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0);
 
-        const costs = calculateCost(usage, model);
+        const costs = estimateClaudeUsageCost(usage, model);
 
-        // Transform Claude usage format to backend expected format
-        const usageReport = {
+        const observation: UsageObservation = {
+            provider: 'claude',
+            source: 'claude-assistant-usage',
+            scope: 'turn_delta',
             key: 'claude-session',
-            sessionId: this.sessionId,
+            modelId: typeof model === 'string' && model.trim().length > 0 ? model.trim() : null,
             tokens: {
                 total: totalTokens,
                 input: usage.input_tokens,
                 output: usage.output_tokens,
                 cache_creation: usage.cache_creation_input_tokens || 0,
-                cache_read: usage.cache_read_input_tokens || 0
+                cache_read: usage.cache_read_input_tokens || 0,
             },
             cost: {
+                estimatedUsd: costs.total,
                 total: costs.total,
                 input: costs.input,
-                output: costs.output
-            }
+                output: costs.output,
+            },
+            contextUsedTokens: null,
+            contextWindowTokens: null,
+        };
+        logger.debugLargeJson('[SOCKET] Sending usage data:', buildLegacyUsageReportFromUsageObservation({
+            sessionId: this.sessionId,
+            observation,
+        }))
+        void this.usageObservationPublisher.publish({
+            sessionId: this.sessionId,
+            observation,
+        });
+    }
+
+    private async publishTokenCountObservation(params: Readonly<{
+        provider: ACPProvider | 'codex';
+        body: unknown;
+    }>): Promise<void> {
+        try {
+            const observation = extractUsageObservationFromTokenCountMessage({
+                provider: params.provider,
+                body: params.body,
+            });
+            if (!observation) return;
+            await this.usageObservationPublisher.publish({
+                sessionId: this.sessionId,
+                observation,
+            });
+        } catch (error) {
+            logger.debug('[SOCKET] Failed to publish token_count usage observation (non-fatal)', error);
         }
-        logger.debugLargeJson('[SOCKET] Sending usage data:', usageReport)
-        if (!this.socket.connected) {
-            return;
-        }
-        this.socket.emit('usage-report', usageReport);
     }
 
     /**

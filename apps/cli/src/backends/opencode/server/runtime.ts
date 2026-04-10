@@ -23,6 +23,12 @@ import { asRecord, normalizeString, normalizeStringArray } from './openCodeParsi
 import { extractOpenCodeErrorText } from './openCodeErrorText';
 import { extractOpenCodeSessionMessageId, parseOpenCodeToolPart } from './openCodeMessageParsing';
 import {
+  buildOpenCodeMessageUpdatedUsageTelemetry,
+  buildOpenCodeStepFinishUsageTelemetry,
+  buildOpenCodeUsageDedupeFingerprint,
+  extractOpenCodeModelContextWindowTokens,
+} from './openCodeUsageTelemetry';
+import {
   canonicalizeOpenCodeConfiguredMcpToolName,
   resolveOpenCodeChangeTitleToolNameForMcpClient,
   resolveOpenCodeSessionTitleSetToolNameForMcpClient,
@@ -48,6 +54,7 @@ import { extractOpenCodeFileDiff } from '../utils/extractOpenCodeFileDiff';
 import { readOpenCodeSessionRuntimeHandleFromMetadata } from '../utils/opencodeSessionAffinity';
 import { extractOpenCodeSessionDiffPayload } from './extractOpenCodeSessionDiffPayload';
 import { buildOpenCodeThinkingModelOptionsFromVariants } from '../modelOptions/openCodeThinkingModelOption';
+import { buildTokenCountSessionMessageFromUsageObservation } from '@/usage/usageObservation';
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -184,6 +191,8 @@ export function createOpenCodeServerRuntime(params: {
   const partTypeByPartKey = new Map<string, string>();
   const toolCallSentByCallId = new Set<string>();
   const toolResultSentByCallId = new Set<string>();
+  const contextWindowTokensByModelId = new Map<string, number>();
+  const usageFingerprintByMessageId = new Map<string, string>();
 
   const ensureClient = async (): Promise<OpenCodeServerRuntimeClient> => {
     if (client) return client;
@@ -193,6 +202,58 @@ export function createOpenCodeServerRuntime(params: {
       messageBuffer: params.messageBuffer,
     });
     return client;
+  };
+
+  const resolveCurrentModelId = (): string | null => {
+    if (selectedModel) {
+      return `${selectedModel.providerID}/${selectedModel.modelID}`;
+    }
+    const snapshot = params.session.getMetadataSnapshot();
+    const currentModelId = typeof snapshot?.sessionModelsV1?.currentModelId === 'string'
+      ? snapshot.sessionModelsV1.currentModelId
+      : typeof snapshot?.acpSessionModelsV1?.currentModelId === 'string'
+        ? snapshot.acpSessionModelsV1.currentModelId
+        : null;
+    return currentModelId && currentModelId.trim().length > 0 ? currentModelId.trim() : null;
+  };
+
+  const resolveContextWindowTokensForModelId = (modelId: string | null | undefined): number | null => {
+    const normalized = typeof modelId === 'string' ? modelId.trim() : '';
+    if (!normalized) return null;
+    return contextWindowTokensByModelId.get(normalized) ?? null;
+  };
+
+  const emitUsageTelemetry = (telemetry: ReturnType<typeof buildOpenCodeMessageUpdatedUsageTelemetry> | ReturnType<typeof buildOpenCodeStepFinishUsageTelemetry>): void => {
+    if (!telemetry) {
+      logger.debug('[OpenCodeServer] usage telemetry builder returned null');
+      return;
+    }
+    if (telemetry.dedupeKey) {
+      const fingerprint = buildOpenCodeUsageDedupeFingerprint(telemetry.observation);
+      if (usageFingerprintByMessageId.get(telemetry.dedupeKey) === fingerprint) {
+        logger.debug('[OpenCodeServer] usage telemetry deduped', {
+          dedupeKey: telemetry.dedupeKey,
+          source: telemetry.observation.source,
+        });
+        return;
+      }
+      usageFingerprintByMessageId.set(telemetry.dedupeKey, fingerprint);
+    }
+    const message = buildTokenCountSessionMessageFromUsageObservation(telemetry.observation);
+    if (!message) {
+      logger.debug('[OpenCodeServer] usage telemetry did not produce token_count message', {
+        source: telemetry.observation.source,
+        key: telemetry.observation.key,
+        modelId: telemetry.observation.modelId,
+      });
+      return;
+    }
+    logger.debug('[OpenCodeServer] emitting token_count telemetry', {
+      source: telemetry.observation.source,
+      key: telemetry.observation.key,
+      modelId: telemetry.observation.modelId,
+    });
+    params.session.sendAgentMessage(provider, message);
   };
 
   const publishDynamicSessionOptionsBestEffort = () => {
@@ -208,6 +269,7 @@ export function createOpenCodeServerRuntime(params: {
 
       const defaultModelId = typeof (config as any)?.model === 'string' ? String((config as any).model).trim() : '';
       const defaultProviderId = defaultModelId ? resolveOpenCodeDefaultProviderIdFromModelId(defaultModelId) : '';
+      contextWindowTokensByModelId.clear();
 
       const includedProviders = (Array.isArray(providers) ? providers : []).filter((p) => {
         const id = normalizeString((p as any)?.id);
@@ -240,6 +302,10 @@ export function createOpenCodeServerRuntime(params: {
           const input = capabilities ? asRecord((capabilities as any)?.input) : null;
           if (input && (input as any).text === false) continue;
           const fullId = `${providerId}/${modelId}`;
+          const contextWindowTokens = extractOpenCodeModelContextWindowTokens(modelRec);
+          if (contextWindowTokens != null) {
+            contextWindowTokensByModelId.set(fullId, contextWindowTokens);
+          }
           const name = normalizeString(asRecord(modelRec)?.name) || modelId;
           const description = normalizeString(asRecord(modelRec)?.family) || '';
           const supportsReasoning = capabilities ? capabilities.reasoning === true : false;
@@ -403,6 +469,7 @@ export function createOpenCodeServerRuntime(params: {
       partTypeByPartKey.clear();
       toolCallSentByCallId.clear();
       toolResultSentByCallId.clear();
+      usageFingerprintByMessageId.clear();
     if (turnControlAbort) {
       try {
         turnControlAbort.abort();
@@ -1618,6 +1685,21 @@ export function createOpenCodeServerRuntime(params: {
     const props = payload.properties;
     shapeLogger.log(`event:${type || 'unknown'}`, payload);
 
+    if (type === 'message.updated') {
+      const info = asRecord(props)?.info;
+      const telemetry = buildOpenCodeMessageUpdatedUsageTelemetry({
+        info,
+        fallbackModelId: resolveCurrentModelId(),
+        contextWindowTokens: resolveContextWindowTokensForModelId(
+          normalizeString(asRecord(info)?.providerID).trim() && normalizeString(asRecord(info)?.modelID).trim()
+            ? `${normalizeString(asRecord(info)?.providerID).trim()}/${normalizeString(asRecord(info)?.modelID).trim()}`
+            : resolveCurrentModelId(),
+        ),
+      });
+      emitUsageTelemetry(telemetry);
+      return;
+    }
+
     if (type === 'message.part.updated' || type === 'message.part.created') {
       const part = asRecord(asRecord(props)?.part);
       if (!part) return;
@@ -1628,6 +1710,14 @@ export function createOpenCodeServerRuntime(params: {
       const partID = normalizeString(part.id);
       const partType = normalizeString(part.type);
       if (partID && partType) partTypeByPartKey.set(`${sessionID}:${partID}`, partType);
+      if (partType === 'step-finish') {
+        emitUsageTelemetry(buildOpenCodeStepFinishUsageTelemetry({
+          part,
+          fallbackModelId: resolveCurrentModelId(),
+          contextWindowTokens: resolveContextWindowTokensForModelId(resolveCurrentModelId()),
+        }));
+        return;
+      }
 
       const maybeTool = parseOpenCodeToolPart(part);
       if (maybeTool) {

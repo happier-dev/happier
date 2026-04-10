@@ -116,6 +116,15 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            }, 20);',
         '            continue;',
         '        }',
+        '        if (text === "usage-telemetry") {',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "thread/tokenUsage/updated", params: { threadId: msg.params?.threadId ?? null, turnId: turnId, tokenUsage: { total: { total_tokens: 184, input_tokens: 120, cached_input_tokens: 20, output_tokens: 35, reasoning_output_tokens: 9 }, last: { total_tokens: 23, input_tokens: 10, cached_input_tokens: 5, output_tokens: 7, reasoning_output_tokens: 1 }, model_context_window: 258400 } } }) + "\\n");',
+        '            }, 8);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId } } }) + "\\n");',
+        '            }, 16);',
+        '            continue;',
+        '        }',
         '        if (text === "bridge-mcp-elicitation") {',
         '            setTimeout(() => {',
         '                process.stdout.write(JSON.stringify({ id: "mcp-elicitation-request", method: "mcpServer/elicitation/request", params: { toolUseId: "mcp_tool_1", invocation: { server: "happier", tool: "change_title", arguments: { title: "New Title" } } } }) + "\\n");',
@@ -713,6 +722,42 @@ describe('createCodexAppServerRuntime', () => {
                 [expect.objectContaining({ type: 'tool-call', callId: 'patch_1', name: 'CodexPatch', input: { auto_approved: true, changes: { 'src/file.ts': { hunks: 2 } } } })],
                 [expect.objectContaining({ type: 'tool-call-result', callId: 'patch_1', output: { stdout: 'patched', success: true } })],
             ]),
+        );
+    });
+
+    it('forwards thread/tokenUsage/updated notifications as canonical token_count telemetry', async () => {
+        const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-usage-telemetry-');
+
+        const session = {
+            updateMetadata: vi.fn(),
+            sendAgentMessageCommitted: vi.fn(async () => {}),
+            sendCodexMessage: vi.fn(),
+        };
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: session as any,
+        });
+
+        await runtime.startOrLoad({});
+        await runtime.sendPrompt('usage-telemetry');
+
+        expect(session.sendCodexMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'token_count',
+                source: 'codex-app-server-token-usage',
+                scope: 'session_cumulative',
+                model: 'gpt-5.4',
+                tokens: {
+                    total: 184,
+                    input: 120,
+                    cache_read: 20,
+                    output: 35,
+                    thought: 9,
+                },
+                context_used_tokens: 184,
+                context_window_tokens: 258400,
+            }),
         );
     });
 

@@ -32,6 +32,8 @@ import { recordBugReportUserAction } from '@/utils/system/bugReportActionTrail';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { SettingsUsageSummaryStrip } from '@/components/settings/usage/SettingsUsageSummaryStrip';
+import { useUsageAnalyticsSummary } from '@/components/settings/usage/useUsageAnalyticsSummary';
 import type { FeatureId } from '@happier-dev/protocol';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import { isRunningOnMac } from '@/utils/platform/platform';
@@ -76,6 +78,7 @@ export const SettingsView = React.memo(function SettingsView() {
     const avatarUrl = getAvatarUrl(profile);
     const bio = getBio(profile);
     const pushRoute = React.useCallback((route: Parameters<typeof router.push>[0]) => {
+    const usageSummary = useUsageAnalyticsSummary(auth.credentials, usageReportingEnabled);
         deferOnWeb(() => {
             navigateWithBlurOnWeb(() => {
                 router.push(route);
@@ -240,6 +243,15 @@ export const SettingsView = React.memo(function SettingsView() {
 
             {/* Add your phone (desktop/web only) */}
             {(isRunningOnMac() || (Platform.OS === 'web' && !isPhoneSizedWeb)) &&
+            {usageReportingEnabled ? (
+                <SettingsUsageSummaryStrip
+                    summary={usageSummary.summary}
+                    isLoading={usageSummary.isLoading}
+                    errorMessage={usageSummary.errorMessage}
+                    onOpenUsage={(target) => pushRoute(target)}
+                />
+            ) : null}
+
             auth.isAuthenticated ? (
                 <ItemGroup>
                     <Item

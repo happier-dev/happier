@@ -44,6 +44,7 @@ function createFakeClient() {
             name: 'GPT-5.2',
             status: 'active',
             capabilities: { toolcall: true, reasoning: true, input: { text: true } },
+            limit: { context: 1_000_000 },
             variants: {
               low: { reasoningEffort: 'low' },
               medium: { reasoningEffort: 'medium' },
@@ -152,6 +153,18 @@ function getCommittedTranscriptRows(
   return rows
     .filter((row) => (opts?.type ? row.body.type === opts.type : true))
     .filter((row) => (opts?.sidechainId !== undefined ? (row.body.sidechainId ?? null) === opts.sidechainId : true));
+}
+
+function getSentAgentMessages(
+  session: ReturnType<typeof createFakeSession>,
+  type?: string,
+): ReadonlyArray<{ provider: unknown; body: Record<string, unknown> }> {
+  return (session.sendAgentMessage as any).mock.calls
+    .map((call: any[]) => ({
+      provider: call?.[0],
+      body: (call?.[1] ?? {}) as Record<string, unknown>,
+    }))
+    .filter((row: { provider: unknown; body: Record<string, unknown> }) => (type ? row.body?.type === type : true));
 }
 
 async function flushTranscriptCommitMicrotasks(): Promise<void> {
@@ -306,6 +319,288 @@ describe('createOpenCodeServerRuntime', () => {
     });
     expect(metadata.sessionModesV1).toEqual(metadata.acpSessionModesV1);
     expect(metadata.sessionModelsV1).toEqual(metadata.acpSessionModelsV1);
+  });
+
+  it('emits canonical token-count telemetry from assistant message.updated usage info', async () => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
+    });
+
+    await runtime.startOrLoad({});
+    await expect.poll(() => session.updateMetadata.mock.calls.length).toBeGreaterThan(0);
+
+    await client.__emit({
+      directory: '/tmp',
+      payload: {
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'msg_asst_1',
+            sessionID: 'ses_1',
+            role: 'assistant',
+            providerID: 'openai',
+            modelID: 'gpt-5.2',
+            cost: 0.42,
+            tokens: {
+              input: 100,
+              output: 900,
+              reasoning: 200,
+              cache: {
+                read: 20,
+                write: 14,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(getSentAgentMessages(session, 'token_count')).toEqual([
+      {
+        provider: 'opencode',
+        body: {
+          type: 'token_count',
+          key: 'opencode-message:msg_asst_1',
+          model: 'openai/gpt-5.2',
+          source: 'opencode-message-updated',
+          scope: 'turn_delta',
+          tokens: {
+            total: 1234,
+            input: 100,
+            output: 900,
+            thought: 200,
+            cache_read: 20,
+            cache_creation: 14,
+          },
+          cost: {
+            total: 0.42,
+          },
+          context_used_tokens: 1234,
+          context_window_tokens: 1_000_000,
+        },
+      },
+    ]);
+  });
+
+  it('emits canonical token-count telemetry from message.updated usage info even when the role is not assistant', async () => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
+    });
+
+    await runtime.startOrLoad({});
+    await expect.poll(() => session.updateMetadata.mock.calls.length).toBeGreaterThan(0);
+
+    await client.__emit({
+      directory: '/tmp',
+      payload: {
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'msg_dev_1',
+            sessionID: 'ses_1',
+            role: 'developer',
+            providerID: 'openai',
+            modelID: 'gpt-5.2',
+            cost: 0.73,
+            tokens: {
+              input: 11,
+              output: 12,
+              reasoning: 13,
+              cache: {
+                read: 14,
+                write: 15,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(getSentAgentMessages(session, 'token_count')).toEqual([
+      expect.objectContaining({
+        provider: 'opencode',
+        body: expect.objectContaining({
+          type: 'token_count',
+          key: 'opencode-message:msg_dev_1',
+          model: 'openai/gpt-5.2',
+          source: 'opencode-message-updated',
+          scope: 'turn_delta',
+          tokens: expect.objectContaining({
+            total: 65,
+            input: 11,
+            output: 12,
+            thought: 13,
+            cache_read: 14,
+            cache_creation: 15,
+          }),
+          cost: {
+            total: 0.73,
+          },
+          context_used_tokens: 65,
+          context_window_tokens: 1_000_000,
+        }),
+      }),
+    ]);
+  });
+
+  it('emits canonical token-count telemetry from step-finish parts when assistant info telemetry is absent', async () => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
+    });
+
+    await runtime.startOrLoad({});
+    await expect.poll(() => session.updateMetadata.mock.calls.length).toBeGreaterThan(0);
+
+    await client.__emit({
+      directory: '/tmp',
+      payload: {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'part_finish_1',
+            type: 'step-finish',
+            sessionID: 'ses_1',
+            messageID: 'msg_asst_1',
+            cost: 0.5,
+            tokens: {
+              input: 1,
+              output: 2,
+              reasoning: 3,
+              cache: {
+                read: 4,
+                write: 5,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(getSentAgentMessages(session, 'token_count')).toEqual([
+      {
+        provider: 'opencode',
+        body: {
+          type: 'token_count',
+          key: 'opencode-step-finish:msg_asst_1:part_finish_1',
+          model: 'openai/gpt-5.2',
+          source: 'opencode-step-finish',
+          scope: 'turn_delta',
+          tokens: {
+            total: 15,
+            input: 1,
+            output: 2,
+            thought: 3,
+            cache_read: 4,
+            cache_creation: 5,
+          },
+          cost: {
+            total: 0.5,
+          },
+          context_used_tokens: 15,
+          context_window_tokens: 1_000_000,
+        },
+      },
+    ]);
+  });
+
+  it('dedupes identical step-finish and message.updated usage telemetry for the same assistant message', async () => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
+    });
+
+    await runtime.startOrLoad({});
+    await expect.poll(() => session.updateMetadata.mock.calls.length).toBeGreaterThan(0);
+
+    await client.__emit({
+      directory: '/tmp',
+      payload: {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'part_finish_1',
+            type: 'step-finish',
+            sessionID: 'ses_1',
+            messageID: 'msg_asst_1',
+            cost: 0.42,
+            tokens: {
+              total: 1234,
+              input: 100,
+              output: 900,
+              reasoning: 200,
+              cache: {
+                read: 20,
+                write: 14,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    await client.__emit({
+      directory: '/tmp',
+      payload: {
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'msg_asst_1',
+            sessionID: 'ses_1',
+            role: 'assistant',
+            providerID: 'openai',
+            modelID: 'gpt-5.2',
+            cost: 0.42,
+            tokens: {
+              total: 1234,
+              input: 100,
+              output: 900,
+              reasoning: 200,
+              cache: {
+                read: 20,
+                write: 14,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(getSentAgentMessages(session, 'token_count')).toHaveLength(1);
   });
 
   it('applies the OpenCode session directory on resume (uses sessionGet.directory)', async () => {

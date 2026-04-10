@@ -333,7 +333,7 @@ export const UI_FEATURE_REGISTRY = {
     'usage.reporting': {
         settingsToggle: {
             showInSettings: true,
-            isExperimental: true,
+            isExperimental: false,
             defaultEnabled: true,
             titleKey: 'settingsFeatures.expUsageReporting',
             subtitleKey: 'settingsFeatures.expUsageReportingSubtitle',

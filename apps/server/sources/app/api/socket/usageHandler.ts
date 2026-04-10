@@ -1,8 +1,7 @@
 import { Socket } from "socket.io";
 import { AsyncLock } from "@/utils/runtime/lock";
-import { db } from "@/storage/db";
-import { buildUsageEphemeral, eventRouter } from "@/app/events/eventRouter";
 import { log } from "@/utils/logging/log";
+import { recordLegacyUsageReport } from "@/app/usage/usageWriteService";
 
 export function usageHandler(userId: string, socket: Socket) {
     const receiveUsageLock = new AsyncLock();
@@ -43,68 +42,32 @@ export function usageHandler(userId: string, socket: Socket) {
                 }
 
                 try {
-                    // If sessionId provided, verify it belongs to the user
-                    if (sessionId) {
-                        const session = await db.session.findFirst({
-                            where: {
-                                id: sessionId,
-                                accountId: userId
-                            }
-                        });
-
-                        if (!session) {
-                            if (callback) {
-                                callback({ success: false, error: 'Session not found' });
-                            }
-                            return;
-                        }
-                    }
-
-                    // Prepare usage data
-                    const usageData: PrismaJson.UsageReportData = {
+                    const result = await recordLegacyUsageReport({
+                        accountId: userId,
+                        key,
+                        sessionId: sessionId || null,
                         tokens,
-                        cost
-                    };
-
-                    // Upsert the usage report
-                    const report = await db.usageReport.upsert({
-                        where: {
-                            accountId_sessionId_key: {
-                                accountId: userId,
-                                sessionId: sessionId || null,
-                                key
-                            }
-                        },
-                        update: {
-                            data: usageData,
-                            updatedAt: new Date()
-                        },
-                        create: {
-                            accountId: userId,
-                            sessionId: sessionId || null,
-                            key,
-                            data: usageData
-                        }
+                        cost,
                     });
 
-                    log({ module: 'websocket' }, `Usage report saved: key=${key}, sessionId=${sessionId || 'none'}, userId=${userId}`);
-
-                    // Emit usage ephemeral update if sessionId is provided
-                    if (sessionId) {
-                        const usageEvent = buildUsageEphemeral(sessionId, key, usageData.tokens, usageData.cost);
-                        eventRouter.emitEphemeral({
-                            userId,
-                            payload: usageEvent,
-                            recipientFilter: { type: 'user-scoped-only' }
-                        });
+                    if (!result.ok) {
+                        if (callback) {
+                            callback({
+                                success: false,
+                                error: result.error === 'session-not-found' ? 'Session not found' : 'Invalid parameters',
+                            });
+                        }
+                        return;
                     }
+
+                    log({ module: 'websocket' }, `Usage report saved: key=${key}, sessionId=${sessionId || 'none'}, userId=${userId}`);
 
                     if (callback) {
                         callback({
                             success: true,
-                            reportId: report.id,
-                            createdAt: report.createdAt.getTime(),
-                            updatedAt: report.updatedAt.getTime()
+                            reportId: result.report.id,
+                            createdAt: result.report.createdAt.getTime(),
+                            updatedAt: result.report.updatedAt.getTime(),
                         });
                     }
                 } catch (error) {

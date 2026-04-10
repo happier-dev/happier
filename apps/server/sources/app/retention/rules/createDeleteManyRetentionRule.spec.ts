@@ -25,6 +25,7 @@ function createPolicy(): RetentionPolicy {
         domains: {
             sessions: { mode: 'keep_forever' },
             accountChanges: { mode: 'keep_forever' },
+            usageEvents: { mode: 'keep_forever' },
             voiceSessionLeases: { mode: 'keep_forever' },
             userFeedItems: { mode: 'keep_forever' },
             sessionShareAccessLogs: { mode: 'keep_forever' },

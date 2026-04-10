@@ -1,0 +1,4 @@
+ALTER TABLE `UsageEvent`
+ADD COLUMN `invoiceCostUsd` DOUBLE NOT NULL DEFAULT 0,
+ADD COLUMN `billingContext` TEXT NULL,
+ADD COLUMN `costSource` TEXT NULL;

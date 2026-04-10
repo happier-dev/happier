@@ -53,6 +53,7 @@ import {
     publishLatestTurnRollbackRangeMetadata,
     type CompletedTurnSeqRange,
 } from './rollbackMetadata';
+import { buildCodexAppServerTokenCountSessionMessage } from '../usage/buildCodexAppServerTokenCountSessionMessage';
 
 type CodexAppServerStartOrLoadOptions = Readonly<{
     resumeId?: string | null;
@@ -840,6 +841,19 @@ export function createCodexAppServerRuntime(params: Readonly<{
                     registerTerminalHandler('turn/completed');
                     registerTerminalHandler('turn/interrupted');
                     registerTerminalHandler('turn/interrupt');
+                    client.registerNotificationHandler('thread/tokenUsage/updated', (notificationParams) => {
+                        void runBridgeWork(async () => {
+                            const tokenCountMessage = buildCodexAppServerTokenCountSessionMessage({
+                                notificationParams,
+                                modelId: currentModelId,
+                            });
+                            if (!tokenCountMessage) return;
+                            params.session.sendCodexMessage({
+                                ...tokenCountMessage,
+                                id: randomUUID(),
+                            });
+                        });
+                    });
                     return client;
                 })
                 .catch((error) => {

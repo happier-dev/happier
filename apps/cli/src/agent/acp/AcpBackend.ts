@@ -90,6 +90,12 @@ import {
 } from './updates/legacyMessageChunkMirrorDedup';
 import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
 import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
+import { buildTokenCountAgentMessageFromUsageObservation } from '@/usage/usageObservation';
+import {
+  buildAcpPromptUsageObservation,
+  buildAcpSessionUpdateUsageObservation,
+  buildAcpUsageUpdateObservation,
+} from './usage/buildAcpUsageObservation';
 
 function makeAbortError(message: string): Error {
   const err = new Error(message);
@@ -1728,109 +1734,28 @@ export class AcpBackend implements AgentBackend {
       }
 
       if (sessionUpdateType === 'usage_update') {
-        const usedRaw = (update as any).used;
-        const sizeRaw = (update as any).size;
-        const asNum = (value: unknown): number | null =>
-          typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
-        const used = asNum(usedRaw);
-        const size = asNum(sizeRaw);
-        if (used != null || size != null) {
-          const tokens: Record<string, number> = { total: used ?? 0 };
-          if (used != null) tokens.used = used;
-          if (size != null) tokens.size = size;
-          this.emit({
-            type: 'token-count',
-            key: 'acp-usage-update',
-            tokens,
-            source: 'acp-usage-update',
-          });
-        }
-        // Some ACP providers report per-turn usage via usage_update with OpenAI-like fields.
-        // Accept these best-effort and convert them into token-count telemetry.
-        if (used == null && size == null) {
-          const input = asNum((update as any).input_tokens) ?? asNum((update as any).prompt_tokens);
-          const output = asNum((update as any).output_tokens) ?? asNum((update as any).completion_tokens);
-          const cacheRead =
-            asNum((update as any).cache_read_input_tokens) ?? asNum((update as any).cache_read_tokens);
-          const cacheCreation =
-            asNum((update as any).cache_creation_input_tokens) ?? asNum((update as any).cache_creation_tokens);
-
-          const anyPresent = input != null || output != null || cacheRead != null || cacheCreation != null;
-          if (anyPresent) {
-            const total = (input ?? 0) + (output ?? 0) + (cacheRead ?? 0) + (cacheCreation ?? 0);
-            const tokens: Record<string, number> = { total };
-            if (input != null) tokens.input = input;
-            if (output != null) tokens.output = output;
-            if (cacheRead != null) tokens.cache_read = cacheRead;
-            if (cacheCreation != null) tokens.cache_creation = cacheCreation;
-            this.emit({
-              type: 'token-count',
-              key: 'acp-usage-update',
-              tokens,
-              source: 'acp-usage-update',
-            });
-          }
+        const observation = buildAcpUsageUpdateObservation({
+          provider: this.options.agentName,
+          update,
+        });
+        const telemetry = observation ? buildTokenCountAgentMessageFromUsageObservation(observation) : null;
+        if (telemetry) {
+          this.emit(telemetry);
         }
         return;
       }
 
       // Best-effort: some ACP providers attach usage to non-usage session updates (e.g. task_complete).
       const usageCandidate = (update as any).usage;
-      if (usageCandidate && typeof usageCandidate === 'object' && !Array.isArray(usageCandidate)) {
-        const record = usageCandidate as Record<string, unknown>;
-        const asNum = (value: unknown): number | null =>
-          typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
-
-        const input =
-          asNum(record.input_tokens) ??
-          asNum(record.inputTokens) ??
-          asNum(record.prompt_tokens) ??
-          asNum(record.promptTokens);
-        const output =
-          asNum(record.output_tokens) ??
-          asNum(record.outputTokens) ??
-          asNum(record.completion_tokens) ??
-          asNum(record.completionTokens);
-        const thought = asNum(record.thought_tokens) ?? asNum(record.thoughtTokens);
-        const cacheRead =
-          asNum(record.cached_read_tokens) ??
-          asNum(record.cachedReadTokens) ??
-          asNum(record.cache_read_tokens) ??
-          asNum(record.cacheReadTokens);
-        const cacheWrite =
-          asNum(record.cached_write_tokens) ??
-          asNum(record.cachedWriteTokens) ??
-          asNum(record.cache_creation_tokens) ??
-          asNum(record.cacheCreationTokens);
-        const totalFromResponse =
-          asNum(record.total_tokens) ??
-          asNum(record.totalTokens);
-        const total =
-          totalFromResponse ??
-          (input ?? 0) + (output ?? 0) + (cacheRead ?? 0) + (cacheWrite ?? 0) + (thought ?? 0);
-
-        const anyPresent =
-          totalFromResponse != null ||
-          input != null ||
-          output != null ||
-          cacheRead != null ||
-          cacheWrite != null ||
-          thought != null;
-
-        if (anyPresent) {
-          const tokens: Record<string, number> = { total };
-          if (input != null) tokens.input = input;
-          if (output != null) tokens.output = output;
-          if (cacheRead != null) tokens.cache_read = cacheRead;
-          if (cacheWrite != null) tokens.cache_creation = cacheWrite;
-          if (thought != null) tokens.thought = thought;
-          this.emit({
-            type: 'token-count',
-            key: 'acp-session-update-usage',
-            tokens,
-            source: 'acp-session-update-usage',
-          });
-        }
+      const usageObservation = usageCandidate
+        ? buildAcpSessionUpdateUsageObservation({
+            provider: this.options.agentName,
+            usage: usageCandidate,
+          })
+        : null;
+      const usageTelemetry = usageObservation ? buildTokenCountAgentMessageFromUsageObservation(usageObservation) : null;
+      if (usageTelemetry) {
+        this.emit(usageTelemetry);
       }
 
       // Handle legacy and auxiliary update types
@@ -2198,48 +2123,14 @@ export class AcpBackend implements AgentBackend {
       };
 
       const emitPromptUsage = (promptResponse: any): void => {
-        const usage = promptResponse?.usage;
-        if (!usage || typeof usage !== 'object' || Array.isArray(usage)) return;
-
-        const record = usage as Record<string, unknown>;
-        const asNum = (value: unknown): number | null =>
-          typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
-
-        const input = asNum(record.input_tokens);
-        const output = asNum(record.output_tokens);
-        const thought = asNum(record.thought_tokens);
-        const cacheRead = asNum(record.cached_read_tokens);
-        const cacheWrite = asNum(record.cached_write_tokens);
-        const totalFromResponse = asNum(record.total_tokens);
-        const total =
-          totalFromResponse ??
-          (input ?? 0) +
-            (output ?? 0) +
-            (cacheRead ?? 0) +
-            (cacheWrite ?? 0) +
-            (thought ?? 0);
-
-        const tokens: Record<string, number> = { total };
-        if (input != null) tokens.input = input;
-        if (output != null) tokens.output = output;
-        if (cacheRead != null) tokens.cache_read = cacheRead;
-        if (cacheWrite != null) tokens.cache_creation = cacheWrite;
-        if (thought != null) tokens.thought = thought;
-
-        const modelId =
-          typeof promptResponse?.modelId === 'string'
-            ? String(promptResponse.modelId)
-            : typeof promptResponse?.model === 'string'
-              ? String(promptResponse.model)
-              : undefined;
-
-        this.emit({
-          type: 'token-count',
-          key: 'acp-prompt-usage',
-          tokens,
-          ...(modelId ? { modelId } : null),
-          source: 'acp-prompt-usage',
+        const observation = buildAcpPromptUsageObservation({
+          provider: this.options.agentName,
+          promptResponse,
         });
+        const telemetry = observation ? buildTokenCountAgentMessageFromUsageObservation(observation) : null;
+        if (telemetry) {
+          this.emit(telemetry);
+        }
       };
 
       const firstUpdateSentinel = Symbol('acp-first-session-update');

@@ -23,6 +23,7 @@ export function resolveEffectiveRetentionDomains(policy: RetentionPolicy): Reten
     return Object.freeze({
         sessions: KEEP_FOREVER_POLICY as SessionRetentionPolicy,
         accountChanges: KEEP_FOREVER_POLICY as KeepForeverRetentionPolicy,
+        usageEvents: KEEP_FOREVER_POLICY as KeepForeverRetentionPolicy,
         voiceSessionLeases: KEEP_FOREVER_POLICY as KeepForeverRetentionPolicy,
         userFeedItems: KEEP_FOREVER_POLICY as KeepForeverRetentionPolicy,
         sessionShareAccessLogs: KEEP_FOREVER_POLICY as KeepForeverRetentionPolicy,

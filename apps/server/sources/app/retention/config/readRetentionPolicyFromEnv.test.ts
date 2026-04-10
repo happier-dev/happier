@@ -17,6 +17,7 @@ describe('retention/readRetentionPolicyFromEnv', () => {
                 accountChanges: { mode: 'keep_forever' },
                 voiceSessionLeases: { mode: 'keep_forever' },
                 userFeedItems: { mode: 'keep_forever' },
+                usageEvents: { mode: 'keep_forever' },
             },
         });
     });
@@ -35,6 +36,7 @@ describe('retention/readRetentionPolicyFromEnv', () => {
                 accountChanges: { mode: 'keep_forever' },
                 voiceSessionLeases: { mode: 'keep_forever' },
                 userFeedItems: { mode: 'keep_forever' },
+                usageEvents: { mode: 'keep_forever' },
             },
         });
     });
@@ -52,6 +54,8 @@ describe('retention/readRetentionPolicyFromEnv', () => {
             HAPPIER_SERVER_RETENTION__ACCOUNT_CHANGES__DAYS: '14',
             HAPPIER_SERVER_RETENTION__VOICE_SESSION_LEASES__MODE: 'delete_older_than',
             HAPPIER_SERVER_RETENTION__VOICE_SESSION_LEASES__DAYS: '7',
+            HAPPIER_SERVER_RETENTION__USAGE_EVENTS__MODE: 'delete_older_than',
+            HAPPIER_SERVER_RETENTION__USAGE_EVENTS__DAYS: '180',
         });
 
         expect(policy).toMatchObject({
@@ -64,6 +68,7 @@ describe('retention/readRetentionPolicyFromEnv', () => {
                 sessions: { mode: 'delete_inactive', inactivityDays: 30 },
                 accountChanges: { mode: 'delete_older_than', days: 14 },
                 voiceSessionLeases: { mode: 'delete_older_than', days: 7 },
+                usageEvents: { mode: 'delete_older_than', days: 180 },
             },
         });
     });

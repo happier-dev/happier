@@ -1,283 +1,212 @@
-import React, { useState, useEffect } from 'react';
-import { View, ActivityIndicator, ScrollView, Pressable } from 'react-native';
-import { Text } from '@/components/ui/text/Text';
+import React from 'react';
+import { ActivityIndicator, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { Text } from '@/components/ui/text/Text';
 import { useAuth } from '@/auth/context/AuthContext';
-import { Item } from '@/components/ui/lists/Item';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { UsageChart } from './UsageChart';
-import { UsageBar } from './UsageBar';
-import { getUsageForPeriod, calculateTotals, UsageDataPoint } from '@/sync/api/account/apiUsage';
-import { Ionicons } from '@expo/vector-icons';
 import { HappyError } from '@/utils/errors/errors';
 import { t } from '@/text';
+import { getUsageForPeriod, type UsageResponse } from '@/sync/api/account/apiUsage';
+import {
+    buildUsageAnalyticsViewModel,
+    type UsageCostMode,
+    type UsageFilterState,
+    type UsageFocus,
+    type UsageMetric,
+} from '@/sync/api/account/usageAnalytics';
+import { UsageAnalyticsDashboard } from './UsageAnalyticsDashboard';
 
-type TimePeriod = 'today' | '7days' | '30days';
+type UsagePanelProps = {
+    sessionId?: string;
+    initialFilters?: UsageFilterState;
+    onFiltersChange?: (filters: UsageFilterState) => void;
+};
+
+function resolveInitialFilters(initialFilters?: UsageFilterState): UsageFilterState {
+    return initialFilters ?? {
+        period: '7days',
+        metric: 'tokens',
+        costMode: 'auto',
+        focus: null,
+    };
+}
+
+function areUsageFocusEqual(left: UsageFocus | null, right: UsageFocus | null): boolean {
+    if (left == null || right == null) {
+        return left === right;
+    }
+
+    return left.dimension === right.dimension
+        && left.key === right.key
+        && left.label === right.label;
+}
+
+function areUsageFiltersEqual(left: UsageFilterState, right: UsageFilterState): boolean {
+    return left.period === right.period
+        && left.metric === right.metric
+        && left.costMode === right.costMode
+        && areUsageFocusEqual(left.focus, right.focus);
+}
 
 const styles = StyleSheet.create((theme) => ({
-    container: {
-        flex: 1,
-    },
-    periodSelector: {
-        flexDirection: 'row',
-        padding: 16,
-        gap: 8,
-    },
-    periodButton: {
-        flex: 1,
-        paddingVertical: 8,
-        paddingHorizontal: 12,
-        borderRadius: 8,
-        backgroundColor: theme.colors.surface,
-        alignItems: 'center',
-    },
-    periodButtonActive: {
-        backgroundColor: '#007AFF',
-    },
-    periodText: {
-        fontSize: 14,
-        color: theme.colors.text,
-        fontWeight: '500',
-    },
-    periodTextActive: {
-        color: '#FFFFFF',
-    },
-    statsContainer: {
-        padding: 16,
-        backgroundColor: theme.colors.surface,
-        margin: 16,
-        borderRadius: 12,
-        gap: 12,
-    },
-    statRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-    },
-    statLabel: {
-        fontSize: 16,
-        color: theme.colors.text,
-    },
-    statValue: {
-        fontSize: 20,
-        fontWeight: '700',
-        color: theme.colors.text,
-    },
-    chartSection: {
-        marginTop: 16,
-    },
-    sectionTitle: {
-        fontSize: 18,
-        fontWeight: '600',
-        color: theme.colors.text,
-        marginHorizontal: 16,
-        marginBottom: 8,
-    },
     loadingContainer: {
         flex: 1,
-        justifyContent: 'center',
         alignItems: 'center',
-        padding: 32,
-    },
-    errorContainer: {
-        padding: 32,
-        alignItems: 'center',
-    },
-    errorText: {
-        fontSize: 14,
-        color: theme.colors.status.error,
-        textAlign: 'center',
-    },
-    metricToggle: {
-        flexDirection: 'row',
         justifyContent: 'center',
-        gap: 16,
-        padding: 16,
+        padding: 32,
+        backgroundColor: theme.colors.groupped.background,
     },
-    metricButton: {
-        paddingVertical: 6,
-        paddingHorizontal: 16,
-        borderRadius: 16,
-        backgroundColor: theme.colors.divider,
-    },
-    metricButtonActive: {
-        backgroundColor: '#007AFF',
-    },
-    metricText: {
+    loadingText: {
+        marginTop: 12,
         fontSize: 14,
         color: theme.colors.textSecondary,
-        fontWeight: '500',
+        fontWeight: '600',
     },
-    metricTextActive: {
-        color: '#FFFFFF',
-    }
 }));
 
-export const UsagePanel: React.FC<{ sessionId?: string }> = ({ sessionId }) => {
+export const UsagePanel: React.FC<UsagePanelProps> = ({ sessionId, initialFilters, onFiltersChange }) => {
     const { theme } = useUnistyles();
     const auth = useAuth();
-    const [period, setPeriod] = useState<TimePeriod>('7days');
-    const [chartMetric, setChartMetric] = useState<'tokens' | 'cost'>('tokens');
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [usageData, setUsageData] = useState<UsageDataPoint[]>([]);
-    const [totals, setTotals] = useState({
-        totalTokens: 0,
-        totalCost: 0,
-        tokensByModel: {} as Record<string, number>,
-        costByModel: {} as Record<string, number>
-    });
-    
-    useEffect(() => {
-        loadUsageData();
-    }, [period, sessionId]);
-    
-    const loadUsageData = async () => {
-        if (!auth.credentials) {
-            setError('Not authenticated');
+    const resolvedInitialFilters = React.useMemo(() => resolveInitialFilters(initialFilters), [initialFilters]);
+    const [period, setPeriod] = React.useState<UsageFilterState['period']>(resolvedInitialFilters.period);
+    const [metric, setMetric] = React.useState<UsageMetric>(resolvedInitialFilters.metric);
+    const [costMode, setCostMode] = React.useState<UsageCostMode>(resolvedInitialFilters.costMode);
+    const [focus, setFocus] = React.useState<UsageFocus | null>(resolvedInitialFilters.focus);
+    const [usageData, setUsageData] = React.useState<UsageResponse | null>(null);
+    const [loading, setLoading] = React.useState(true);
+    const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
+    const [reloadToken, setReloadToken] = React.useState(0);
+    const hasPublishedFiltersRef = React.useRef(false);
+    const lastAppliedInitialFiltersRef = React.useRef<UsageFilterState>(resolvedInitialFilters);
+    const latestOnFiltersChangeRef = React.useRef(onFiltersChange);
+
+    React.useEffect(() => {
+        latestOnFiltersChangeRef.current = onFiltersChange;
+    }, [onFiltersChange]);
+
+    React.useEffect(() => {
+        if (areUsageFiltersEqual(lastAppliedInitialFiltersRef.current, resolvedInitialFilters)) {
             return;
         }
-        
-        setLoading(true);
-        setError(null);
-        
-        try {
-            const response = await getUsageForPeriod(auth.credentials, period, sessionId);
-            setUsageData(response.usage || []);
-            setTotals(calculateTotals(response.usage || []));
-        } catch (err) {
-            console.error('Failed to load usage data:', err);
-            if (err instanceof HappyError) {
-                setError(err.message);
-            } else {
-                setError('Failed to load usage data');
+
+        lastAppliedInitialFiltersRef.current = resolvedInitialFilters;
+        setPeriod((current) => current === resolvedInitialFilters.period ? current : resolvedInitialFilters.period);
+        setMetric((current) => current === resolvedInitialFilters.metric ? current : resolvedInitialFilters.metric);
+        setCostMode((current) => current === resolvedInitialFilters.costMode ? current : resolvedInitialFilters.costMode);
+        setFocus((current) => areUsageFocusEqual(current, resolvedInitialFilters.focus) ? current : resolvedInitialFilters.focus);
+    }, [resolvedInitialFilters]);
+
+    React.useEffect(() => {
+        const nextFilters = {
+            period,
+            metric,
+            costMode,
+            focus,
+        } satisfies UsageFilterState;
+
+        if (!hasPublishedFiltersRef.current) {
+            hasPublishedFiltersRef.current = true;
+            return;
+        }
+
+        latestOnFiltersChangeRef.current?.(nextFilters);
+    }, [period, metric, costMode, focus]);
+
+    React.useEffect(() => {
+        let cancelled = false;
+
+        async function loadUsageData() {
+            if (!auth.credentials) {
+                if (!cancelled) {
+                    setUsageData(null);
+                    setErrorMessage(t('errors.unknownError'));
+                    setLoading(false);
+                }
+                return;
             }
-        } finally {
-            setLoading(false);
+
+            setLoading(true);
+
+            try {
+                const response = await getUsageForPeriod(auth.credentials, period, sessionId, focus, costMode);
+                if (cancelled) {
+                    return;
+                }
+
+                const nextViewModel = buildUsageAnalyticsViewModel(response, {
+                    period,
+                    metric,
+                    costMode,
+                    focus,
+                });
+
+                setUsageData(response);
+                setErrorMessage(null);
+                if (focus && nextViewModel.filteredUsageCount === 0) {
+                    setFocus(null);
+                }
+            } catch (error) {
+                if (cancelled) {
+                    return;
+                }
+
+                if (error instanceof HappyError) {
+                    setErrorMessage(error.message);
+                } else {
+                    setErrorMessage(t('errors.unknownError'));
+                }
+            } finally {
+                if (!cancelled) {
+                    setLoading(false);
+                }
+            }
         }
-    };
-    
-    const formatTokens = (tokens: number): string => {
-        if (tokens >= 1000000) {
-            return `${(tokens / 1000000).toFixed(2)}M`;
-        } else if (tokens >= 1000) {
-            return `${(tokens / 1000).toFixed(1)}K`;
-        }
-        return tokens.toLocaleString();
-    };
-    
-    const formatCost = (cost: number): string => {
-        return `$${cost.toFixed(4)}`;
-    };
-    
-    const periodLabels: Record<TimePeriod, string> = {
-        'today': t('usage.today'),
-        '7days': t('usage.last7Days'),
-        '30days': t('usage.last30Days')
-    };
-    
-    if (loading) {
+
+        void loadUsageData();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [auth.credentials, period, sessionId, focus, costMode, reloadToken]);
+
+    const viewModel = React.useMemo(() => {
+        return buildUsageAnalyticsViewModel(usageData ?? [], {
+            period,
+            metric,
+            costMode,
+            focus,
+        });
+    }, [usageData, period, metric, costMode, focus]);
+
+    if (loading && usageData == null) {
         return (
             <View style={styles.loadingContainer}>
                 <ActivityIndicator size="large" color={theme.colors.accent.blue} />
+                <Text style={styles.loadingText}>{t('common.loading')}</Text>
             </View>
         );
     }
-    
-    if (error) {
-        return (
-            <View style={styles.errorContainer}>
-                <Ionicons name="alert-circle-outline" size={48} color={theme.colors.status.error} />
-                <Text style={styles.errorText}>{error}</Text>
-            </View>
-        );
-    }
-    
-    // Get top models by usage
-    const topModels = Object.entries(totals.tokensByModel)
-        .sort(([, a], [, b]) => b - a)
-        .slice(0, 5);
-    
-    const maxModelTokens = Math.max(...Object.values(totals.tokensByModel), 1);
-    
+
     return (
-        <ScrollView style={styles.container}>
-            {/* Period Selector */}
-            <View style={styles.periodSelector}>
-                {(['today', '7days', '30days'] as TimePeriod[]).map((p) => (
-                    <Pressable
-                        key={p}
-                        style={[styles.periodButton, period === p && styles.periodButtonActive]}
-                        onPress={() => setPeriod(p)}
-                    >
-                        <Text style={[styles.periodText, period === p && styles.periodTextActive]}>
-                            {periodLabels[p]}
-                        </Text>
-                    </Pressable>
-                ))}
-            </View>
-            
-            {/* Summary Stats */}
-            <View style={styles.statsContainer}>
-                <View style={styles.statRow}>
-                    <Text style={styles.statLabel}>{t('usage.totalTokens')}</Text>
-                    <Text style={styles.statValue}>{formatTokens(totals.totalTokens)}</Text>
-                </View>
-                <View style={styles.statRow}>
-                    <Text style={styles.statLabel}>{t('usage.totalCost')}</Text>
-                    <Text style={styles.statValue}>{formatCost(totals.totalCost)}</Text>
-                </View>
-            </View>
-            
-            {/* Usage Chart */}
-            {usageData.length > 0 && (
-                <View style={styles.chartSection}>
-                    <Text style={styles.sectionTitle}>{t('usage.usageOverTime')}</Text>
-                    
-                    {/* Metric Toggle */}
-                    <View style={styles.metricToggle}>
-                        <Pressable
-                            style={[styles.metricButton, chartMetric === 'tokens' && styles.metricButtonActive]}
-                            onPress={() => setChartMetric('tokens')}
-                        >
-                            <Text style={[styles.metricText, chartMetric === 'tokens' && styles.metricTextActive]}>
-                                {t('usage.tokens')}
-                            </Text>
-                        </Pressable>
-                        <Pressable
-                            style={[styles.metricButton, chartMetric === 'cost' && styles.metricButtonActive]}
-                            onPress={() => setChartMetric('cost')}
-                        >
-                            <Text style={[styles.metricText, chartMetric === 'cost' && styles.metricTextActive]}>
-                                {t('usage.cost')}
-                            </Text>
-                        </Pressable>
-                    </View>
-                    
-                    <UsageChart 
-                        data={usageData}
-                        metric={chartMetric}
-                        height={180}
-                    />
-                </View>
-            )}
-            
-            {/* Usage by Model */}
-            {topModels.length > 0 && (
-                <ItemGroup title={t('usage.byModel')}>
-                    <View style={{ padding: 16 }}>
-                        {topModels.map(([model, tokens]) => (
-                            <UsageBar
-                                key={model}
-                                label={model}
-                                value={tokens}
-                                maxValue={maxModelTokens}
-                                color={theme.colors.accent.blue}
-                            />
-                        ))}
-                    </View>
-                </ItemGroup>
-            )}
-        </ScrollView>
+        <UsageAnalyticsDashboard
+            viewModel={viewModel}
+            filters={{ period, metric, costMode, focus }}
+            isRefreshing={loading && usageData != null}
+            errorMessage={errorMessage}
+            onPeriodChange={(nextPeriod) => {
+                setPeriod(nextPeriod);
+            }}
+            onMetricChange={(nextMetric) => {
+                setMetric(nextMetric);
+            }}
+            onCostModeChange={(nextCostMode) => {
+                setCostMode(nextCostMode);
+            }}
+            onFocusChange={(nextFocus) => {
+                setFocus(nextFocus);
+            }}
+            onRetry={() => {
+                setReloadToken((value) => value + 1);
+            }}
+        />
     );
 };

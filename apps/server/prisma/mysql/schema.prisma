@@ -57,6 +57,7 @@ model Account {
     AccountAuthRequest     AccountAuthRequest[]
     AuthPairingSession     AuthPairingSession[]
     UsageReport            UsageReport[]
+    UsageEvent             UsageEvent[]
     Machine                Machine[]
     UploadedFile           UploadedFile[]
     ServiceAccountToken    ServiceAccountToken[]
@@ -283,6 +284,7 @@ model Session {
     messages          SessionMessage[]
     pendingMessages   SessionPendingMessage[]
     usageReports      UsageReport[]
+    usageEvents       UsageEvent[]
     accessKeys        AccessKey[]
     shares            SessionShare[]
     publicShare       PublicSessionShare?
@@ -400,6 +402,52 @@ model UsageReport {
     @@unique([accountId, sessionId, key])
     @@index([accountId])
     @@index([sessionId])
+}
+
+model UsageEvent {
+    id                 String   @id @default(cuid())
+    accountId          String
+    account            Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    sessionId          String?
+    session            Session? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+    observedAt         DateTime
+    providerId         String
+    backendMode        String?
+    modelId            String?
+    projectKey         String?
+    workspaceId        String?
+    machineId          String?
+    source             String
+    scope              String
+    externalKey        String?
+    turnId             String?
+    isCumulative       Boolean  @default(false)
+    inputTokens        Int      @default(0)
+    outputTokens       Int      @default(0)
+    reasoningTokens    Int      @default(0)
+    cacheReadTokens    Int      @default(0)
+    cacheWriteTokens   Int      @default(0)
+    totalTokens        Int      @default(0)
+    reportedCostUsd    Float    @default(0)
+    estimatedCostUsd   Float    @default(0)
+    invoiceCostUsd     Float    @default(0)
+    billingContext     String?
+    costSource         String?
+    currency           String   @default("USD")
+    contextUsedTokens  Int?
+    contextWindowTokens Int?
+    metadata           Json?
+    createdAt          DateTime @default(now())
+    updatedAt          DateTime @updatedAt
+
+    @@index([accountId, observedAt])
+    @@index([sessionId, observedAt])
+    @@index([accountId, providerId, observedAt])
+    @@index([accountId, modelId, observedAt])
+    @@index([accountId, projectKey, observedAt])
+    @@index([accountId, workspaceId, observedAt])
+    @@index([accountId, source, observedAt])
+    @@index([accountId, sessionId, source, externalKey])
 }
 
 //

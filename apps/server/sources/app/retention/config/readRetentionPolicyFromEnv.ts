@@ -74,6 +74,11 @@ function readDomainPolicies(env: NodeJS.ProcessEnv): RetentionDomainPolicies {
             modeKey: 'HAPPIER_SERVER_RETENTION__ACCOUNT_CHANGES__MODE',
             daysKey: 'HAPPIER_SERVER_RETENTION__ACCOUNT_CHANGES__DAYS',
         }),
+        usageEvents: readAgePolicy({
+            env,
+            modeKey: 'HAPPIER_SERVER_RETENTION__USAGE_EVENTS__MODE',
+            daysKey: 'HAPPIER_SERVER_RETENTION__USAGE_EVENTS__DAYS',
+        }),
         voiceSessionLeases: readAgePolicy({
             env,
             modeKey: 'HAPPIER_SERVER_RETENTION__VOICE_SESSION_LEASES__MODE',

@@ -9,6 +9,7 @@ import { createGlobalLockRetentionRule } from '@/app/retention/rules/globalLockR
 import { createPublicShareAccessLogRetentionRule } from '@/app/retention/rules/publicShareAccessLogRetentionRule';
 import { createRepeatKeyRetentionRule } from '@/app/retention/rules/repeatKeyRetentionRule';
 import { createSessionShareAccessLogRetentionRule } from '@/app/retention/rules/sessionShareAccessLogRetentionRule';
+import { createUsageEventRetentionRule } from '@/app/retention/rules/usageEventRetentionRule';
 import { runSessionRetentionRule } from '@/app/retention/rules/sessionRetentionRule';
 import { createTerminalAuthRequestRetentionRule } from '@/app/retention/rules/terminalAuthRequestRetentionRule';
 import { createAccountAuthRequestRetentionRule } from '@/app/retention/rules/accountAuthRequestRetentionRule';
@@ -55,6 +56,7 @@ export function createRetentionRuleRegistry(): readonly RetentionRule[] {
                 };
             },
         },
+        createUsageEventRetentionRule(),
         createVoiceSessionLeaseRetentionRule(),
         createUserFeedItemRetentionRule(),
         createSessionShareAccessLogRetentionRule(),

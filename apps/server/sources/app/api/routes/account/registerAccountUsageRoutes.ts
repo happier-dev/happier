@@ -1,8 +1,48 @@
+import {
+    UsageAnalyticsQueryRequestSchema,
+    UsageAnalyticsQueryResponseSchema,
+    UsageEventIngestRequestSchema,
+} from "@happier-dev/protocol";
 import { z } from "zod";
 import { db } from "@/storage/db";
-import { buildUsageEphemeral, eventRouter } from "@/app/events/eventRouter";
 import { log } from "@/utils/logging/log";
+import { queryUsageAnalytics } from "@/app/usage/usageQueryService";
+import { recordLegacyUsageReport, recordUsageEvent } from "@/app/usage/usageWriteService";
 import { type Fastify } from "../../types";
+
+const LegacyUsageReportRouteBodySchema = z.object({
+    key: z.string(),
+    sessionId: z.string(),
+    tokens: z.object({ total: z.number() }).catchall(z.number()),
+    cost: z.object({ total: z.number() }).catchall(z.number()),
+});
+
+const LegacyUsageReportRouteResponseSchema = z.object({
+    success: z.literal(true),
+    reportId: z.string(),
+    createdAt: z.number(),
+    updatedAt: z.number(),
+});
+
+const UsageEventIngestRouteResponseSchema = z.object({
+    success: z.literal(true),
+    eventId: z.string(),
+    createdAt: z.number(),
+});
+
+async function ensureOwnedSessionIds(accountId: string, sessionIds: readonly string[]): Promise<boolean> {
+    if (sessionIds.length === 0) {
+        return true;
+    }
+
+    const count = await db.session.count({
+        where: {
+            accountId,
+            id: { in: [...sessionIds] },
+        },
+    });
+    return count === sessionIds.length;
+}
 
 export function registerAccountUsageRoutes(app: Fastify): void {
     app.post('/v1/usage/query', {
@@ -11,17 +51,16 @@ export function registerAccountUsageRoutes(app: Fastify): void {
                 sessionId: z.string().nullish(),
                 startTime: z.number().int().positive().nullish(),
                 endTime: z.number().int().positive().nullish(),
-                groupBy: z.enum(['hour', 'day']).nullish()
-            })
+                groupBy: z.enum(['hour', 'day']).nullish(),
+            }),
         },
-        preHandler: app.authenticate
+        preHandler: app.authenticate,
     }, async (request, reply) => {
         const userId = request.userId;
         const { sessionId, startTime, endTime, groupBy } = request.body;
         const actualGroupBy = groupBy || 'day';
 
         try {
-            // Build query conditions
             const where: {
                 accountId: string;
                 sessionId?: string | null;
@@ -30,16 +69,16 @@ export function registerAccountUsageRoutes(app: Fastify): void {
                     lte?: Date;
                 };
             } = {
-                accountId: userId
+                accountId: userId,
             };
 
             if (sessionId) {
-                // Verify session belongs to user
                 const session = await db.session.findFirst({
                     where: {
                         id: sessionId,
-                        accountId: userId
-                    }
+                        accountId: userId,
+                    },
+                    select: { id: true },
                 });
                 if (!session) {
                     return reply.code(404).send({ error: 'Session not found' });
@@ -57,15 +96,13 @@ export function registerAccountUsageRoutes(app: Fastify): void {
                 }
             }
 
-            // Fetch usage reports
             const reports = await db.usageReport.findMany({
                 where,
                 orderBy: {
-                    createdAt: 'desc'
-                }
+                    createdAt: 'desc',
+                },
             });
 
-            // Aggregate data by time period
             const aggregated = new Map<string, {
                 tokens: Record<string, number>;
                 cost: Record<string, number>;
@@ -76,62 +113,44 @@ export function registerAccountUsageRoutes(app: Fastify): void {
             for (const report of reports) {
                 const data = report.data as PrismaJson.UsageReportData;
                 const date = new Date(report.createdAt);
+                const timestamp = actualGroupBy === 'hour'
+                    ? Math.floor(new Date(date.getFullYear(), date.getMonth(), date.getDate(), date.getHours(), 0, 0, 0).getTime() / 1000)
+                    : Math.floor(new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0).getTime() / 1000);
 
-                // Calculate timestamp based on groupBy
-                let timestamp: number;
-                if (actualGroupBy === 'hour') {
-                    // Round down to hour
-                    const hourDate = new Date(date.getFullYear(), date.getMonth(), date.getDate(), date.getHours(), 0, 0, 0);
-                    timestamp = Math.floor(hourDate.getTime() / 1000);
-                } else {
-                    // Round down to day
-                    const dayDate = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
-                    timestamp = Math.floor(dayDate.getTime() / 1000);
-                }
+                const current = aggregated.get(String(timestamp)) ?? {
+                    tokens: {},
+                    cost: {},
+                    count: 0,
+                    timestamp,
+                };
+                current.count += 1;
 
-                const key = timestamp.toString();
-
-                if (!aggregated.has(key)) {
-                    aggregated.set(key, {
-                        tokens: {},
-                        cost: {},
-                        count: 0,
-                        timestamp
-                    });
-                }
-
-                const agg = aggregated.get(key)!;
-                agg.count++;
-
-                // Aggregate tokens
                 for (const [tokenKey, tokenValue] of Object.entries(data.tokens)) {
                     if (typeof tokenValue === 'number') {
-                        agg.tokens[tokenKey] = (agg.tokens[tokenKey] || 0) + tokenValue;
+                        current.tokens[tokenKey] = (current.tokens[tokenKey] || 0) + tokenValue;
                     }
                 }
 
-                // Aggregate costs
                 for (const [costKey, costValue] of Object.entries(data.cost)) {
                     if (typeof costValue === 'number') {
-                        agg.cost[costKey] = (agg.cost[costKey] || 0) + costValue;
+                        current.cost[costKey] = (current.cost[costKey] || 0) + costValue;
                     }
                 }
+
+                aggregated.set(String(timestamp), current);
             }
 
-            // Convert to array and sort by timestamp
-            const result = Array.from(aggregated.values())
-                .map(data => ({
-                    timestamp: data.timestamp,
-                    tokens: data.tokens,
-                    cost: data.cost,
-                    reportCount: data.count
-                }))
-                .sort((a, b) => a.timestamp - b.timestamp);
-
             return reply.send({
-                usage: result,
+                usage: Array.from(aggregated.values())
+                    .map((entry) => ({
+                        timestamp: entry.timestamp,
+                        tokens: entry.tokens,
+                        cost: entry.cost,
+                        reportCount: entry.count,
+                    }))
+                    .sort((left, right) => left.timestamp - right.timestamp),
                 groupBy: actualGroupBy,
-                totalReports: reports.length
+                totalReports: reports.length,
             });
         } catch (error) {
             log({ module: 'api', level: 'error' }, `Failed to query usage reports: ${error}`);
@@ -139,22 +158,65 @@ export function registerAccountUsageRoutes(app: Fastify): void {
         }
     });
 
-    // V2 - Record usage reports (durable store + optional ephemeral hint)
+    app.post('/v2/usage/query', {
+        schema: {
+            body: UsageAnalyticsQueryRequestSchema,
+            response: {
+                200: UsageAnalyticsQueryResponseSchema,
+                404: z.object({ error: z.literal('Session not found') }),
+                500: z.object({ error: z.literal('Failed to query usage analytics') }),
+            },
+        },
+        preHandler: app.authenticate,
+    }, async (request, reply) => {
+        try {
+            if (request.body.filters?.sessionIds?.length) {
+                const isOwned = await ensureOwnedSessionIds(request.userId, request.body.filters.sessionIds);
+                if (!isOwned) {
+                    return reply.code(404).send({ error: 'Session not found' });
+                }
+            }
+
+            const response = await queryUsageAnalytics(request.userId, request.body);
+            return reply.send(response);
+        } catch (error) {
+            log({ module: 'api', level: 'error' }, `Failed to query usage analytics: ${error}`);
+            return reply.code(500).send({ error: 'Failed to query usage analytics' });
+        }
+    });
+
+    app.post('/v2/usage-events', {
+        schema: {
+            body: UsageEventIngestRequestSchema,
+            response: {
+                200: UsageEventIngestRouteResponseSchema,
+                404: z.object({ error: z.literal('Session not found') }),
+                500: z.object({ error: z.literal('Failed to save usage event') }),
+            },
+        },
+        preHandler: app.authenticate,
+    }, async (request, reply) => {
+        try {
+            const result = await recordUsageEvent(request.userId, request.body);
+            if (!result.ok) {
+                return reply.code(404).send({ error: 'Session not found' });
+            }
+            return reply.send({
+                success: true,
+                eventId: result.event.id,
+                createdAt: result.event.createdAt.getTime(),
+            });
+        } catch (error) {
+            log({ module: 'api', level: 'error' }, `Failed to save usage event: ${error}`);
+            return reply.code(500).send({ error: 'Failed to save usage event' });
+        }
+    });
+
     app.post('/v2/usage-reports', {
         schema: {
-            body: z.object({
-                key: z.string(),
-                sessionId: z.string(),
-                tokens: z.object({ total: z.number() }).catchall(z.number()),
-                cost: z.object({ total: z.number() }).catchall(z.number()),
-            }),
+            body: LegacyUsageReportRouteBodySchema,
             response: {
-                200: z.object({
-                    success: z.literal(true),
-                    reportId: z.string(),
-                    createdAt: z.number(),
-                    updatedAt: z.number(),
-                }),
+                200: LegacyUsageReportRouteResponseSchema,
                 400: z.object({ error: z.literal('Invalid parameters') }),
                 404: z.object({ error: z.literal('Session not found') }),
                 500: z.object({ error: z.literal('Failed to save usage report') }),
@@ -162,55 +224,26 @@ export function registerAccountUsageRoutes(app: Fastify): void {
         },
         preHandler: app.authenticate,
     }, async (request, reply) => {
-        const userId = request.userId;
-        const { key, sessionId, tokens, cost } = request.body;
-
-        if (!key || typeof key !== 'string' || typeof tokens?.total !== 'number' || typeof cost?.total !== 'number') {
-            return reply.code(400).send({ error: 'Invalid parameters' });
-        }
-
         try {
-            const session = await db.session.findFirst({
-                where: { id: sessionId, accountId: userId },
-                select: { id: true },
+            const result = await recordLegacyUsageReport({
+                accountId: request.userId,
+                key: request.body.key,
+                sessionId: request.body.sessionId,
+                tokens: request.body.tokens,
+                cost: request.body.cost,
             });
-            if (!session) {
-                return reply.code(404).send({ error: 'Session not found' });
+
+            if (!result.ok) {
+                return reply.code(result.error === 'invalid-params' ? 400 : 404).send({
+                    error: result.error === 'invalid-params' ? 'Invalid parameters' : 'Session not found',
+                });
             }
-
-            const usageData: PrismaJson.UsageReportData = { tokens, cost };
-            const report = await db.usageReport.upsert({
-                where: {
-                    accountId_sessionId_key: {
-                        accountId: userId,
-                        sessionId,
-                        key,
-                    },
-                },
-                update: {
-                    data: usageData,
-                    updatedAt: new Date(),
-                },
-                create: {
-                    accountId: userId,
-                    sessionId,
-                    key,
-                    data: usageData,
-                },
-            });
-
-            const usageEvent = buildUsageEphemeral(sessionId, key, usageData.tokens, usageData.cost);
-            eventRouter.emitEphemeral({
-                userId,
-                payload: usageEvent,
-                recipientFilter: { type: 'user-scoped-only' },
-            });
 
             return reply.send({
                 success: true,
-                reportId: report.id,
-                createdAt: report.createdAt.getTime(),
-                updatedAt: report.updatedAt.getTime(),
+                reportId: result.report.id,
+                createdAt: result.report.createdAt.getTime(),
+                updatedAt: result.report.updatedAt.getTime(),
             });
         } catch (error) {
             log({ module: 'api', level: 'error' }, `Failed to save usage report: ${error}`);

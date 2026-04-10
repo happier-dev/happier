@@ -395,11 +395,23 @@ describe('ClaudeSdkAgentBackend', () => {
 
         expect(tokens.length).toBeGreaterThan(0);
         const last = tokens[tokens.length - 1] as any;
-        expect(last.input_tokens).toBe(11);
-        expect(last.output_tokens).toBe(22);
-        expect(last.cache_read_input_tokens).toBe(3);
-        expect(last.cache_creation_input_tokens).toBe(4);
-        expect(last.cost).toBe(0.123);
+        expect(last).toEqual({
+          type: 'token-count',
+          key: 'claude-session',
+          modelId: 'chat-model',
+          source: 'claude-sdk-result',
+          scope: 'session_final',
+          tokens: {
+            total: 40,
+            input: 11,
+            output: 22,
+            cache_read: 3,
+            cache_creation: 4,
+          },
+          cost: {
+            total: 0.123,
+          },
+        });
       },
     );
   });

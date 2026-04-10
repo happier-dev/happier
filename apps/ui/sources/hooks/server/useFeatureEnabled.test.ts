@@ -49,6 +49,29 @@ describe('useFeatureEnabled', () => {
         expect(fetchMock.mock.calls.some((call) => String((call as unknown[])[0] ?? '').endsWith('/v1/features'))).toBe(false);
     });
 
+    it('keeps usage reporting enabled without requiring experimental settings', async () => {
+        vi.resetModules();
+
+        const fetchMock = vi.fn(async () => ({
+            ok: false,
+            status: 404,
+            json: async () => ({}),
+        }));
+        vi.stubGlobal('fetch', fetchMock as any);
+
+        const { getStorage } = await import('@/sync/domains/state/storage');
+        getStorage().getState().applySettingsLocal({
+            experiments: false,
+            featureToggles: {},
+        });
+
+        const { useFeatureEnabled } = await import('./useFeatureEnabled');
+        const seen = await renderHookAndCollectValues(() => useFeatureEnabled('usage.reporting'));
+
+        expect(seen.at(-1)).toBe(true);
+        expect(fetchMock.mock.calls.some((call) => String((call as unknown[])[0] ?? '').endsWith('/v1/features'))).toBe(false);
+    });
+
     it('does not probe server features when build policy denies a server-required feature', async () => {
         vi.resetModules();
 

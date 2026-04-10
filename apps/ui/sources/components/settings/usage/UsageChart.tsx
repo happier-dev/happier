@@ -2,14 +2,15 @@ import React from 'react';
 import { View, ScrollView, Pressable } from 'react-native';
 import { Text } from '@/components/ui/text/Text';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { UsageDataPoint } from '@/sync/api/account/apiUsage';
+import type { UsageMetric, UsageTrendPoint } from '@/sync/api/account/usageAnalytics';
 import { t } from '@/text';
 
 interface UsageChartProps {
-    data: UsageDataPoint[];
-    metric: 'tokens' | 'cost';
+    points: UsageTrendPoint[];
+    metric: UsageMetric;
     height?: number;
-    onBarPress?: (dataPoint: UsageDataPoint, index: number) => void;
+    testID?: string;
+    onBarPress?: (dataPoint: UsageTrendPoint, index: number) => void;
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -59,14 +60,15 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 export const UsageChart: React.FC<UsageChartProps> = ({
-    data,
+    points,
     metric,
     height = 200,
+    testID,
     onBarPress
 }) => {
     const { theme } = useUnistyles();
     
-    if (!data || data.length === 0) {
+    if (!points || points.length === 0) {
         return (
             <View style={styles.emptyState}>
                 <Text style={styles.emptyText}>{t('usage.noData')}</Text>
@@ -75,27 +77,31 @@ export const UsageChart: React.FC<UsageChartProps> = ({
     }
     
     // Calculate max value for scaling
-    const getValueForDataPoint = (point: UsageDataPoint): number => {
+    const getValueForDataPoint = (point: UsageTrendPoint): number => {
         if (metric === 'tokens') {
-            return Object.values(point.tokens).reduce((sum, val) => sum + (val || 0), 0);
-        } else {
-            return Object.values(point.cost).reduce((sum, val) => sum + (val || 0), 0);
+            return point.tokens;
         }
+        return point.cost;
     };
-    
-    const maxValue = Math.max(...data.map(getValueForDataPoint), 1);
-    
+
+    // Limit bars to show (for better visibility)
+    const maxBarsToShow = 30;
+    const displayData = points.length > maxBarsToShow
+        ? points.slice(-maxBarsToShow)
+        : points;
+
+    const maxValue = Math.max(...displayData.map(getValueForDataPoint), 1);
+
     // Format date label
     const formatLabel = (timestamp: number): string => {
         const date = new Date(timestamp * 1000);
         const now = new Date();
         const isToday = date.toDateString() === now.toDateString();
-        
+
         if (isToday) {
-            return date.toLocaleTimeString('en-US', { hour: 'numeric' });
-        } else {
-            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            return new Intl.DateTimeFormat(undefined, { hour: 'numeric' }).format(date);
         }
+        return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date);
     };
     
     // Format value for display
@@ -111,14 +117,8 @@ export const UsageChart: React.FC<UsageChartProps> = ({
         }
     };
     
-    // Limit bars to show (for better visibility)
-    const maxBarsToShow = 30;
-    const displayData = data.length > maxBarsToShow 
-        ? data.slice(-maxBarsToShow) 
-        : data;
-    
     return (
-        <View style={styles.container}>
+        <View testID={testID} style={styles.container}>
             <ScrollView 
                 horizontal 
                 showsHorizontalScrollIndicator={false}
@@ -147,8 +147,8 @@ export const UsageChart: React.FC<UsageChartProps> = ({
                                         {
                                             height: Math.max(barHeight, 2),
                                             backgroundColor: metric === 'cost' 
-                                                ? '#FF9500' 
-                                                : '#007AFF',
+                                                ? theme.colors.accent.orange
+                                                : theme.colors.accent.blue,
                                         }
                                     ]}
                                 />

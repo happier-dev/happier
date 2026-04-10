@@ -9,9 +9,11 @@ import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction
 import { emitCanonicalTurnDiffTool } from '@/agent/runtime/emitCanonicalTurnDiffTool';
 import { ensureClaudeJsRuntimeExecutable } from '@/backends/claude/utils/ensureClaudeJsRuntimeExecutable';
 import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2';
+import { buildTokenCountAgentMessageFromUsageObservation } from '@/usage/usageObservation';
 import { ClaudeTurnChangeTracker } from '../utils/ClaudeTurnChangeTracker';
 import { isClaudeExplicitDiffToolInput } from '../utils/isClaudeExplicitDiffToolInput';
 import { isReadOnlyClaudeSdkToolAllowed } from './isReadOnlyClaudeSdkToolAllowed';
+import { buildClaudeSdkResultUsageObservation } from '../usage/buildClaudeSdkResultUsageObservation';
 
 export type ClaudeSdkPermissionPolicy = 'no_tools' | 'read_only' | 'workspace_write';
 
@@ -549,32 +551,14 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
   }
 
   private emitTokenCountTelemetry(result: SDKResultMessage): void {
-    const usage = (result as any)?.usage;
-    if (!usage || typeof usage !== 'object' || Array.isArray(usage)) return;
-
-    const asNum = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined);
-
-    const inputTokens = asNum((usage as any).input_tokens);
-    const outputTokens = asNum((usage as any).output_tokens);
-    const cacheReadTokens = asNum((usage as any).cache_read_input_tokens);
-    const cacheCreationTokens = asNum((usage as any).cache_creation_input_tokens);
-
-    if (inputTokens == null && outputTokens == null && cacheReadTokens == null && cacheCreationTokens == null) return;
-
-    const payload: Record<string, unknown> = {
-      type: 'token-count',
-      ...(inputTokens != null ? { input_tokens: inputTokens } : {}),
-      ...(outputTokens != null ? { output_tokens: outputTokens } : {}),
-      ...(cacheReadTokens != null ? { cache_read_input_tokens: cacheReadTokens } : {}),
-      ...(cacheCreationTokens != null ? { cache_creation_input_tokens: cacheCreationTokens } : {}),
-    };
-
-    const cost = (result as any)?.total_cost_usd;
-    if (typeof cost === 'number' && Number.isFinite(cost) && cost >= 0) {
-      payload.cost = cost;
+    const observation = buildClaudeSdkResultUsageObservation({
+      modelId: this.opts.modelId,
+      result,
+    });
+    const telemetry = observation ? buildTokenCountAgentMessageFromUsageObservation(observation) : null;
+    if (telemetry) {
+      this.emit(telemetry as any);
     }
-
-    this.emit(payload as any);
   }
 
   private noteVendorSessionId(sessionIdRaw: unknown): void {

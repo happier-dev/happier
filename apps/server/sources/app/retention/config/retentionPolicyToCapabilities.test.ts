@@ -13,6 +13,7 @@ function createPolicy(overrides?: Partial<RetentionPolicy>): RetentionPolicy {
         domains: {
             sessions: { mode: 'keep_forever' },
             accountChanges: { mode: 'keep_forever' },
+            usageEvents: { mode: 'keep_forever' },
             voiceSessionLeases: { mode: 'keep_forever' },
             userFeedItems: { mode: 'keep_forever' },
             sessionShareAccessLogs: { mode: 'keep_forever' },
@@ -38,6 +39,7 @@ describe('retention/retentionPolicyToCapabilities', () => {
                 accountChanges: { mode: 'delete_older_than', days: 14 },
                 voiceSessionLeases: { mode: 'keep_forever' },
                 userFeedItems: { mode: 'keep_forever' },
+                usageEvents: { mode: 'keep_forever' },
                 sessionShareAccessLogs: { mode: 'keep_forever' },
                 publicShareAccessLogs: { mode: 'keep_forever' },
                 terminalAuthRequests: { mode: 'keep_forever' },
@@ -55,6 +57,7 @@ describe('retention/retentionPolicyToCapabilities', () => {
             enabled: false,
             sessions: { mode: 'keep_forever' },
             accountChanges: { mode: 'keep_forever' },
+            usageEvents: { mode: 'keep_forever' },
         });
     });
 
@@ -65,6 +68,7 @@ describe('retention/retentionPolicyToCapabilities', () => {
                 accountChanges: { mode: 'delete_older_than', days: 14 },
                 voiceSessionLeases: { mode: 'delete_older_than', days: 7 },
                 userFeedItems: { mode: 'keep_forever' },
+                usageEvents: { mode: 'delete_older_than', days: 180 },
                 sessionShareAccessLogs: { mode: 'delete_older_than', days: 21 },
                 publicShareAccessLogs: { mode: 'keep_forever' },
                 terminalAuthRequests: { mode: 'keep_forever' },
@@ -87,6 +91,7 @@ describe('retention/retentionPolicyToCapabilities', () => {
             },
             accountChanges: { mode: 'delete_older_than', days: 14 },
             voiceSessionLeases: { mode: 'delete_older_than', days: 7 },
+            usageEvents: { mode: 'delete_older_than', days: 180 },
             automationRuns: { mode: 'delete_older_than', days: 45 },
             automationRunEvents: { mode: 'delete_older_than', days: 45 },
         });

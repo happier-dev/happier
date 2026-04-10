@@ -1,5 +1,5 @@
 import React from 'react';
-import { View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { Text } from '@/components/ui/text/Text';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -10,6 +10,9 @@ interface UsageBarProps {
     color?: string;
     showPercentage?: boolean;
     height?: number;
+    active?: boolean;
+    testID?: string;
+    onPress?: () => void;
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -39,7 +42,15 @@ const styles = StyleSheet.create((theme) => ({
     barFill: {
         height: '100%',
         borderRadius: 4,
-    }
+    },
+    pressable: {
+        borderRadius: 12,
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+    },
+    pressableActive: {
+        backgroundColor: theme.colors.surfaceHigh,
+    },
 }));
 
 export const UsageBar: React.FC<UsageBarProps> = ({
@@ -48,33 +59,56 @@ export const UsageBar: React.FC<UsageBarProps> = ({
     maxValue,
     color,
     showPercentage = false,
-    height = 8
+    height = 8,
+    active = false,
+    testID,
+    onPress,
 }) => {
     const { theme } = useUnistyles();
     const percentage = maxValue > 0 ? (value / maxValue) * 100 : 0;
-    const fillColor = color || '#007AFF';
+    const fillColor = color || theme.colors.accent.blue;
     
     const displayValue = showPercentage 
         ? `${percentage.toFixed(1)}%`
         : value.toLocaleString();
-    
-    return (
-        <View style={styles.container}>
+
+    const content = (
+        <>
             <View style={styles.labelRow}>
                 <Text style={styles.label}>{label}</Text>
                 <Text style={styles.value}>{displayValue}</Text>
             </View>
             <View style={[styles.barContainer, { height }]}>
-                <View 
+                <View
                     style={[
                         styles.barFill,
-                        { 
+                        {
                             width: `${Math.min(percentage, 100)}%`,
                             backgroundColor: fillColor
                         }
                     ]}
                 />
             </View>
+        </>
+    );
+
+    const containerStyle = [styles.container, styles.pressable, active && styles.pressableActive];
+
+    if (typeof onPress === 'function') {
+        return (
+            <Pressable
+                testID={testID}
+                style={containerStyle}
+                onPress={onPress}
+            >
+                {content}
+            </Pressable>
+        );
+    }
+
+    return (
+        <View testID={testID} style={containerStyle}>
+            {content}
         </View>
     );
 };
