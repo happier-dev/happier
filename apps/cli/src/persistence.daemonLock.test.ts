@@ -36,4 +36,37 @@ describe('acquireDaemonLock', () => {
     await expect(acquireDaemonLock(1, 1)).rejects.toThrow();
     expect(existsSync(configuration.daemonLockFile)).toBe(true);
   });
+
+  it('uses string lock flags for Bun-compatible Windows runtimes', async () => {
+    vi.doMock('node:fs/promises', async () => {
+      const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+
+      return {
+        ...actual,
+        open: async (...args: Parameters<typeof actual.open>) => {
+          const [path, flags] = args;
+          if (String(path).endsWith('.lock') && typeof flags === 'number') {
+            const error = Object.assign(
+              new Error(`ENOENT: no such file or directory, open '${String(path)}'`),
+              { code: 'ENOENT' as const },
+            );
+            throw error;
+          }
+          return actual.open(...args);
+        },
+      };
+    });
+    vi.doMock('@/daemon/doctor', () => ({
+      findHappyProcessByPid: async () => null,
+    }));
+
+    const { configuration } = await import('@/configuration');
+    const { acquireDaemonLock } = await import('@/persistence');
+
+    const fileHandle = await acquireDaemonLock(1, 1);
+
+    expect(fileHandle).not.toBeNull();
+    expect(existsSync(configuration.daemonLockFile)).toBe(true);
+    await fileHandle?.close();
+  });
 });

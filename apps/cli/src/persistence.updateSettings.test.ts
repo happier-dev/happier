@@ -93,4 +93,37 @@ describe('updateSettings', () => {
     expect(existsSync(configuration.settingsFile)).toBe(true);
     expect(existsSync(`${configuration.settingsFile}.lock`)).toBe(false);
   });
+
+  it('acquires the settings lock with string flags for Bun-compatible Windows runtimes', async () => {
+    vi.doMock('node:fs/promises', async () => {
+      const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+
+      return {
+        ...actual,
+        open: async (...args: Parameters<typeof actual.open>) => {
+          const [path, flags] = args;
+          if (String(path).endsWith('settings.json.lock') && typeof flags === 'number') {
+            const error = Object.assign(
+              new Error(`ENOENT: no such file or directory, open '${String(path)}'`),
+              { code: 'ENOENT' as const },
+            );
+            throw error;
+          }
+          return actual.open(...args);
+        },
+      };
+    });
+
+    const { configuration } = await import('@/configuration');
+    const { updateSettings } = await import('@/persistence');
+
+    const updated = await updateSettings((current) => ({
+      ...current,
+      onboardingCompleted: true,
+    }));
+
+    expect(updated.onboardingCompleted).toBe(true);
+    expect(existsSync(configuration.settingsFile)).toBe(true);
+    expect(existsSync(`${configuration.settingsFile}.lock`)).toBe(false);
+  });
 });

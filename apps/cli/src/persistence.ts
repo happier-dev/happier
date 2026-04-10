@@ -483,8 +483,8 @@ export async function updateSettings(
   // Acquire exclusive lock with retries
   while (attempts < MAX_LOCK_ATTEMPTS) {
     try {
-      // O_CREAT | O_EXCL | O_WRONLY = create exclusively, fail if exists
-      fileHandle = await open(lockFile, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY);
+      // Prefer the string flag form for Windows Bun-compiled binaries, which mis-handle numeric O_EXCL flags.
+      fileHandle = await open(lockFile, 'wx', 0o600);
       break;
     } catch (err: any) {
       if (err.code === 'ENOENT') {
@@ -880,10 +880,10 @@ export async function acquireDaemonLock(
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      // O_EXCL ensures we only create if it doesn't exist (atomic lock acquisition)
+      // Prefer the string flag form for Windows Bun-compiled binaries, which mis-handle numeric O_EXCL flags.
       const fileHandle = await open(
         configuration.daemonLockFile,
-        constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
+        'wx',
         0o600
       );
       // Write PID to lock file for debugging
