@@ -96,6 +96,131 @@ describe('providers harness: token telemetry extraction', () => {
     });
   });
 
+  it('extracts nested Codex token usage from new-message socket updates when info.total_token_usage is present', async () => {
+    const secret = new Uint8Array(32).fill(9);
+    const encrypted = encryptLegacyBase64(
+      {
+        type: 'token_count',
+        key: 'turn-7',
+        model: 'codex/gpt-5',
+        info: {
+          total_token_usage: {
+            input_tokens: 11,
+            output_tokens: 9,
+            cache_read_input_tokens: 4,
+            reasoning_output_tokens: 6,
+            total_tokens: 30,
+          },
+          last_token_usage: {
+            input_tokens: 2,
+            output_tokens: 1,
+            total_tokens: 3,
+          },
+        },
+      },
+      secret,
+    );
+
+    const entries = await extractProviderTokenTelemetryEntries({
+      providerId: 'codex',
+      scenarioId: 'codex_thread_token_usage',
+      phase: 'single',
+      sessionId: 'sess_7',
+      modelId: null,
+      events: [
+        {
+          at: 2,
+          kind: 'update',
+          payload: {
+            body: {
+              t: 'new-message',
+              message: {
+                id: 'msg_7',
+                seq: 1,
+                content: { t: 'encrypted', c: encrypted },
+                localId: null,
+                createdAt: 1,
+                updatedAt: 1,
+              },
+            },
+          },
+        },
+      ],
+      secret,
+    });
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      providerId: 'codex',
+      scenarioId: 'codex_thread_token_usage',
+      phase: 'single',
+      sessionId: 'sess_7',
+      key: 'turn-7',
+      modelId: 'codex/gpt-5',
+      source: 'socket-update-token-count',
+      tokens: { total: 30, input: 11, output: 9, cache_read: 4, thought: 6 },
+    });
+  });
+
+  it('falls back to nested Codex token usage from info.last_token_usage when total is absent', async () => {
+    const secret = new Uint8Array(32).fill(11);
+    const encrypted = encryptLegacyBase64(
+      {
+        type: 'token_count',
+        key: 'turn-8',
+        model: 'codex/gpt-5',
+        info: {
+          last_token_usage: {
+            input_tokens: 5,
+            output_tokens: 7,
+            reasoning_output_tokens: 2,
+          },
+        },
+      },
+      secret,
+    );
+
+    const entries = await extractProviderTokenTelemetryEntries({
+      providerId: 'codex',
+      scenarioId: 'codex_thread_token_usage',
+      phase: 'single',
+      sessionId: 'sess_8',
+      modelId: null,
+      events: [
+        {
+          at: 2,
+          kind: 'update',
+          payload: {
+            body: {
+              t: 'new-message',
+              message: {
+                id: 'msg_8',
+                seq: 1,
+                content: { t: 'encrypted', c: encrypted },
+                localId: null,
+                createdAt: 1,
+                updatedAt: 1,
+              },
+            },
+          },
+        },
+      ],
+      secret,
+    });
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      providerId: 'codex',
+      scenarioId: 'codex_thread_token_usage',
+      phase: 'single',
+      sessionId: 'sess_8',
+      key: 'turn-8',
+      modelId: 'codex/gpt-5',
+      source: 'socket-update-token-count',
+      tokens: { total: 14, input: 5, output: 7, thought: 2 },
+    });
+  });
+
   it('normalizes malformed usage payloads to a safe shape', async () => {
     const entries = await extractProviderTokenTelemetryEntries({
       providerId: 'codex',

@@ -312,18 +312,20 @@ function findTokenCountRecord(decrypted: unknown): Record<string, unknown> | nul
   return dataRecord.type === 'token_count' ? dataRecord : null;
 }
 
-function extractNormalizedTokenCounts(record: Record<string, unknown>): Record<string, number> | null {
-  const nestedTokens = normalizeTokenMap(record.tokens);
-  const topLevelTokens = normalizeTokenMap({
+function extractUsageTokensFromRecord(record: Record<string, unknown>): Record<string, number> | null {
+  const tokens = normalizeTokenMap({
     input: record.input_tokens ?? record.input ?? record.prompt_tokens,
     output: record.output_tokens ?? record.output ?? record.completion_tokens,
     cache_creation: record.cache_creation_input_tokens ?? record.cache_creation,
     cache_read: record.cache_read_input_tokens ?? record.cache_read,
-    thought: record.thought_tokens ?? record.thought,
+    thought:
+      record.thought_tokens ??
+      record.reasoning_output_tokens ??
+      record.reasoning_tokens ??
+      record.thought,
     total: record.total_tokens ?? record.total,
   });
 
-  const tokens = Object.keys(nestedTokens).length > 0 ? nestedTokens : topLevelTokens;
   if (Object.keys(tokens).length === 0) return null;
 
   if (tokens.total == null) {
@@ -336,4 +338,37 @@ function extractNormalizedTokenCounts(record: Record<string, unknown>): Record<s
   }
 
   return tokens;
+}
+
+function extractNormalizedTokenCounts(record: Record<string, unknown>): Record<string, number> | null {
+  const nestedTokens = normalizeTokenMap(record.tokens);
+  if (Object.keys(nestedTokens).length > 0) {
+    if (nestedTokens.total == null) {
+      nestedTokens.total =
+        (nestedTokens.input ?? 0) +
+        (nestedTokens.output ?? 0) +
+        (nestedTokens.cache_creation ?? 0) +
+        (nestedTokens.cache_read ?? 0) +
+        (nestedTokens.thought ?? 0);
+    }
+    return nestedTokens;
+  }
+
+  const info = record.info;
+  if (info && typeof info === 'object' && !Array.isArray(info)) {
+    const infoRecord = info as Record<string, unknown>;
+    const totalUsage = infoRecord.total_token_usage;
+    if (totalUsage && typeof totalUsage === 'object' && !Array.isArray(totalUsage)) {
+      const tokens = extractUsageTokensFromRecord(totalUsage as Record<string, unknown>);
+      if (tokens) return tokens;
+    }
+
+    const lastUsage = infoRecord.last_token_usage;
+    if (lastUsage && typeof lastUsage === 'object' && !Array.isArray(lastUsage)) {
+      const tokens = extractUsageTokensFromRecord(lastUsage as Record<string, unknown>);
+      if (tokens) return tokens;
+    }
+  }
+
+  return extractUsageTokensFromRecord(record);
 }
