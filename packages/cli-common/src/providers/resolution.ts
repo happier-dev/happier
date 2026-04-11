@@ -1,5 +1,5 @@
 import { accessSync, constants as fsConstants, existsSync, readFileSync } from 'node:fs';
-import { delimiter, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 
 import {
   getProviderCliRuntimeSpec,
@@ -9,8 +9,12 @@ import {
 } from '@happier-dev/agents';
 import { buildBackendTargetKey } from '@happier-dev/protocol';
 
-import { resolveWindowsCommandOnPath } from '../process/index.js';
-import { resolveJavaScriptRuntimeCommand } from './managedJavaScriptRuntime.js';
+import { expandHomeDirPath } from '../path/expandHomeDirPath.js';
+import { resolveWindowsCommandOnPath, resolveWindowsCommandPath } from '../process/index.js';
+import {
+  resolveExplicitJavaScriptRuntimeCommand,
+  resolveJavaScriptRuntimeCommand,
+} from './managedJavaScriptRuntime.js';
 import { resolveHappyHomeDirFromEnvironment } from './resolveHappyHomeDir.js';
 
 export type ProviderCliResolutionSource = 'override' | 'system' | 'managed';
@@ -24,6 +28,11 @@ type RuntimeResolutionOptions = Readonly<{
   isBunRuntime?: boolean;
   currentExecPath?: string | null;
 }>;
+
+export type ProviderCliJavaScriptRuntimeKind = 'none' | 'node' | 'bun';
+
+const PROVIDER_CLI_SOURCE_OVERRIDE_FILE_EXTENSIONS = /\.(?:[cm]?[jt]sx?)$/i;
+const PROVIDER_CLI_SHEBANG_RUNTIME_FILE_EXTENSIONS = /\.(?:[cm]?tsx?|jsx)$/i;
 
 function readBackendCliSourcePreferenceMap(processEnv: NodeJS.ProcessEnv): Partial<Record<AgentId, ProviderCliSourcePreference>> {
   const raw = typeof processEnv.HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON === 'string'
@@ -57,28 +66,42 @@ function resolveManagedCommandBasename(spec: ProviderCliManagedInstallSpec): str
 
 export function readProviderCliOverride(agentId: AgentId, processEnv: NodeJS.ProcessEnv = process.env): string | null {
   const envKey = `HAPPIER_${agentId.toUpperCase()}_PATH`;
-  const override = typeof processEnv[envKey] === 'string' ? String(processEnv[envKey]).trim() : '';
+  const override = expandHomeDirPath(
+    typeof processEnv[envKey] === 'string' ? String(processEnv[envKey]).trim() : '',
+    processEnv,
+  );
   return override || null;
+}
+
+function providerCliCandidatePathExists(agentId: AgentId, candidatePath: string): boolean {
+  const runtimeSpec = getProviderCliRuntimeSpec(agentId);
+  const accessMode = process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK;
+  try {
+    accessSync(candidatePath, accessMode);
+    return true;
+  } catch {
+    if (!runtimeSpec.acceptsJavaScriptFileOverride || process.platform === 'win32') return false;
+    if (!PROVIDER_CLI_SOURCE_OVERRIDE_FILE_EXTENSIONS.test(candidatePath)) return false;
+    try {
+      accessSync(candidatePath, fsConstants.F_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }
 
 function resolveProviderCliOverride(agentId: AgentId, processEnv: NodeJS.ProcessEnv): string | null {
   const override = readProviderCliOverride(agentId, processEnv);
   if (!override) return null;
-  const accessMode = process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK;
-  try {
-    accessSync(override, accessMode);
-    return override;
-  } catch {
-    const runtimeSpec = getProviderCliRuntimeSpec(agentId);
-    if (!runtimeSpec.acceptsJavaScriptFileOverride || process.platform === 'win32') return null;
-    if (!/\.(?:c?js|mjs)$/i.test(override)) return null;
-    try {
-      accessSync(override, fsConstants.F_OK);
-      return override;
-    } catch {
-      return null;
-    }
+  if (process.platform === 'win32') {
+    const normalizedOverride =
+      (override.includes('/') || override.includes('\\') || override.includes(':'))
+        ? resolveWindowsCommandPath(override, processEnv)
+        : resolveWindowsCommandOnPath(override, processEnv);
+    if (normalizedOverride) return normalizedOverride;
   }
+  return providerCliCandidatePathExists(agentId, override) ? override : null;
 }
 
 export function resolveProviderCliManagedCommandPath(
@@ -129,24 +152,117 @@ function readFileHeader(candidatePath: string): string | null {
   }
 }
 
-function unixScriptRequiresJavaScriptRuntime(candidatePath: string): boolean {
+function resolveUnixScriptRuntimeKind(candidatePath: string): ProviderCliJavaScriptRuntimeKind {
   const header = readFileHeader(candidatePath);
-  if (!header?.startsWith('#!')) return false;
+  if (!header?.startsWith('#!')) return 'none';
   const firstLine = header.split(/\r?\n/, 1)[0]?.trim() ?? '';
-  if (!firstLine) return false;
-  return /(?:^#!.*\b(?:env(?:\s+-S)?\s+)?)\b(?:node|bun)(?:\s|$)/i.test(firstLine);
+  if (!firstLine) return 'none';
+  if (/(?:^#!.*\b(?:env(?:\s+-S)?\s+)?)\bnode(?:\s|$)/i.test(firstLine)) {
+    return 'node';
+  }
+  if (/(?:^#!.*\b(?:env(?:\s+-S)?\s+)?)\bbun(?:\s|$)/i.test(firstLine)) {
+    return 'bun';
+  }
+  return 'none';
 }
 
-export function providerCliPathRequiresJavaScriptRuntime(candidatePath: string): boolean {
+export function resolveProviderCliJavaScriptRuntimeKind(candidatePath: string): ProviderCliJavaScriptRuntimeKind {
   if (/\.(?:c?js|mjs)$/i.test(candidatePath)) {
-    return true;
+    return 'node';
+  }
+
+  if (PROVIDER_CLI_SHEBANG_RUNTIME_FILE_EXTENSIONS.test(candidatePath)) {
+    return resolveUnixScriptRuntimeKind(candidatePath);
   }
 
   if (process.platform === 'win32') {
-    return false;
+    return 'none';
   }
 
-  return unixScriptRequiresJavaScriptRuntime(candidatePath);
+  return resolveUnixScriptRuntimeKind(candidatePath);
+}
+
+export function providerCliPathRequiresJavaScriptRuntime(candidatePath: string): boolean {
+  return resolveProviderCliJavaScriptRuntimeKind(candidatePath) !== 'none';
+}
+
+function resolveBunRuntimeCommand(
+  commandPath: string,
+  processEnv: NodeJS.ProcessEnv,
+  runtimeOptions: RuntimeResolutionOptions,
+): string | null {
+  const explicitRuntime = resolveExplicitJavaScriptRuntimeCommand(processEnv);
+  if (explicitRuntime) {
+    const normalized = process.platform === 'win32'
+      ? explicitRuntime.toLowerCase()
+      : explicitRuntime;
+    if (/(^|[\\/])bun(?:\.exe)?$/i.test(normalized)) {
+      return explicitRuntime;
+    }
+  }
+
+  const currentExecPath =
+    typeof runtimeOptions.currentExecPath === 'string' && runtimeOptions.currentExecPath.trim().length > 0
+      ? runtimeOptions.currentExecPath.trim()
+      : process.execPath;
+  if (/(^|[\\/])bun(?:\.exe)?$/i.test(currentExecPath)) {
+    try {
+      accessSync(currentExecPath, process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK);
+      return currentExecPath;
+    } catch {
+      // Fall through to sibling/PATH lookup.
+    }
+  }
+
+  const siblingBun = join(
+    dirname(commandPath),
+    process.platform === 'win32' ? 'bun.exe' : 'bun',
+  );
+  try {
+    accessSync(siblingBun, process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK);
+    return siblingBun;
+  } catch {
+    // Fall through to PATH lookup.
+  }
+
+  let currentDir = dirname(commandPath);
+  let previousDir: string | null = null;
+  while (currentDir !== previousDir) {
+    if (/^\.bun$/i.test(currentDir.split(/[\\/]/).pop() ?? '')) {
+      const bunFromEnclosingHome = join(
+        currentDir,
+        'bin',
+        process.platform === 'win32' ? 'bun.exe' : 'bun',
+      );
+      try {
+        accessSync(bunFromEnclosingHome, process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK);
+        return bunFromEnclosingHome;
+      } catch {
+        break;
+      }
+    }
+    previousDir = currentDir;
+    currentDir = dirname(currentDir);
+  }
+
+  return resolveCommandOnPath('bun', processEnv);
+}
+
+export function resolveProviderCliJavaScriptRuntimeCommand(
+  commandPath: string,
+  processEnv: NodeJS.ProcessEnv,
+  runtimeOptions: RuntimeResolutionOptions,
+): string | null {
+  const runtimeKind = resolveProviderCliJavaScriptRuntimeKind(commandPath);
+  if (runtimeKind === 'none') return null;
+  if (runtimeKind === 'bun') {
+    return resolveBunRuntimeCommand(commandPath, processEnv, runtimeOptions);
+  }
+  return resolveJavaScriptRuntimeCommand({
+    isBunRuntime: runtimeOptions.isBunRuntime ?? (typeof process.versions.bun === 'string'),
+    processEnv,
+    currentExecPath: runtimeOptions.currentExecPath,
+  });
 }
 
 function resolveCommandInKnownUserDirs(agentId: AgentId, command: string, processEnv: NodeJS.ProcessEnv): string | null {
@@ -196,11 +312,7 @@ export function isProviderCliPathRunnable(
     return true;
   }
 
-  return Boolean(resolveJavaScriptRuntimeCommand({
-    isBunRuntime: runtimeOptions.isBunRuntime ?? (typeof process.versions.bun === 'string'),
-    processEnv,
-    currentExecPath: runtimeOptions.currentExecPath,
-  }));
+  return Boolean(resolveProviderCliJavaScriptRuntimeCommand(commandPath, processEnv, runtimeOptions));
 }
 
 export function resolveProviderCliCommand(

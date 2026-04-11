@@ -9,10 +9,14 @@ import { AGENTS, type CatalogAgentId, type CliDetectSpec } from '@/backends/cata
 import { resolveCliAuthHomeDir } from '@/capabilities/cliAuth/shared';
 import type { CliAuthSpec, CliAuthStatus } from '@/backends/types';
 import { resolveProviderCliCommand } from '@/runtime/managedTools/providerCliResolution';
-import { resolveJavaScriptRuntimeExecutable } from '@/runtime/js/resolveJavaScriptRuntimeExecutable';
 import { AsyncTtlCache } from '@happier-dev/protocol';
 import { getProviderCliRuntimeSpec } from '@happier-dev/agents';
-import { isProviderCliPathRunnable, providerCliPathRequiresJavaScriptRuntime } from '@happier-dev/cli-common/providers';
+import {
+    isProviderCliPathRunnable,
+    providerCliPathRequiresJavaScriptRuntime,
+    resolveProviderCliJavaScriptRuntimeCommand,
+    resolveProviderCliJavaScriptRuntimeKind,
+} from '@happier-dev/cli-common/providers';
 import { resolveWindowsCommandInvocation, resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
 
 const execFileAsync = promisify(execFile);
@@ -294,23 +298,24 @@ async function isCliPathRunnable(resolvedPath: string): Promise<boolean> {
     });
     if (runnable) return true;
 
-    if (!providerCliPathRequiresJavaScriptRuntime(resolvedPath)) {
+    if (resolveProviderCliJavaScriptRuntimeKind(resolvedPath) !== 'node') {
         return false;
     }
 
     const pathEnv = typeof process.env.PATH === 'string' ? process.env.PATH : null;
-    const nodePath = await resolveCommandOnPath('node', pathEnv);
-    return Boolean(nodePath);
+    return Boolean(await resolveCommandOnPath('node', pathEnv));
 }
 
-async function resolveJavaScriptRuntimeExecutableForCliSnapshot(): Promise<string | null> {
-    const isBunRuntime = typeof process.versions.bun === 'string';
-    const resolved = resolveJavaScriptRuntimeExecutable({
-        isBunRuntime,
-        processEnv: process.env,
+async function resolveJavaScriptRuntimeExecutableForCliSnapshot(resolvedPath: string): Promise<string | null> {
+    const resolved = resolveProviderCliJavaScriptRuntimeCommand(resolvedPath, process.env, {
+        isBunRuntime: typeof process.versions.bun === 'string',
         currentExecPath: process.execPath,
     });
     if (resolved) return resolved;
+
+    if (resolveProviderCliJavaScriptRuntimeKind(resolvedPath) !== 'node') {
+        return null;
+    }
 
     const pathEnv = typeof process.env.PATH === 'string' ? process.env.PATH : null;
     return await resolveCommandOnPath('node', pathEnv);
@@ -321,7 +326,7 @@ async function resolveCliLaunchCommand(params: { resolvedPath: string }): Promis
         return quoteShellArgument(params.resolvedPath);
     }
 
-    const runtimeExecutable = await resolveJavaScriptRuntimeExecutableForCliSnapshot();
+    const runtimeExecutable = await resolveJavaScriptRuntimeExecutableForCliSnapshot(params.resolvedPath);
     if (!runtimeExecutable) return quoteShellArgument(params.resolvedPath);
     return `${quoteShellArgument(runtimeExecutable)} ${quoteShellArgument(params.resolvedPath)}`;
 }
@@ -454,10 +459,10 @@ async function detectCliVersion(params: { name: DetectCliName; resolvedPath: str
 	            await new Promise((resolve) => setTimeout(resolve, 0));
 	            const second = await probeSemverOnce(file, args, options);
 	            return second.semver;
-	        };
+        };
 
         if (needsJavaScriptRuntime) {
-            const runtimeExecutable = await resolveJavaScriptRuntimeExecutableForCliSnapshot();
+            const runtimeExecutable = await resolveJavaScriptRuntimeExecutableForCliSnapshot(params.resolvedPath);
             if (!runtimeExecutable) return null;
             for (const args of argsToTry) {
                 const semver = await probeSemverWithRetry(runtimeExecutable, [params.resolvedPath, ...args], {

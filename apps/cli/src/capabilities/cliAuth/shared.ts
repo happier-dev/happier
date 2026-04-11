@@ -4,9 +4,11 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
-import { providerCliPathRequiresJavaScriptRuntime } from '@happier-dev/cli-common/providers';
+import {
+  providerCliPathRequiresJavaScriptRuntime,
+  resolveProviderCliJavaScriptRuntimeCommand,
+} from '@happier-dev/cli-common/providers';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
-import { ensureJavaScriptRuntimeExecutable } from '@/runtime/js/ensureJavaScriptRuntimeExecutable';
 
 const execFileAsync = promisify(execFile);
 
@@ -28,6 +30,10 @@ export async function runCliCommandBestEffort(params: Readonly<{
   const isWindows = process.platform === 'win32';
   const isCmdScript = isWindows && /\.(cmd|bat)$/i.test(params.resolvedPath);
   const needsJavaScriptRuntime = providerCliPathRequiresJavaScriptRuntime(params.resolvedPath);
+  const runtimeExecutable = resolveProviderCliJavaScriptRuntimeCommand(params.resolvedPath, process.env, {
+    isBunRuntime: typeof process.versions.bun === 'string',
+    currentExecPath: process.execPath,
+  });
 
   const asString = (value: unknown): string => {
     if (typeof value === 'string') return value;
@@ -36,14 +42,11 @@ export async function runCliCommandBestEffort(params: Readonly<{
   };
 
   try {
-    if (needsJavaScriptRuntime) {
-      const runtimeExecutable = await ensureJavaScriptRuntimeExecutable({
-        isBunRuntime: typeof process.versions.bun === 'string',
-      });
-      if (!runtimeExecutable) {
-        return { ok: false, stdout: '', stderr: '', exitCode: null };
-      }
+    if (needsJavaScriptRuntime && !runtimeExecutable) {
+      return { ok: false, stdout: '', stderr: '', exitCode: null };
+    }
 
+    if (runtimeExecutable) {
       const { stdout, stderr } = await execFileAsync(runtimeExecutable, [params.resolvedPath, ...params.args], {
         timeout: timeoutMs,
         windowsHide: true,

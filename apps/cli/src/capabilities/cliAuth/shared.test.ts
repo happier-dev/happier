@@ -4,7 +4,11 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
-import { writePnpmNodeBridge } from '@/testkit/fs/executableShim';
+import {
+  resolveSystemJavaScriptRuntimeBinary,
+  writeExecutableShim,
+  writePnpmNodeBridge,
+} from '@/testkit/fs/executableShim';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 import { runCliCommandBestEffort } from './shared';
@@ -92,6 +96,47 @@ describe('runCliCommandBestEffort', () => {
         'utf8',
       );
       await chmod(scriptPath, 0o755);
+
+      envScope.patch({
+        PATH: '',
+        HAPPIER_JS_RUNTIME_PATH: undefined,
+        HAPPIER_MANAGED_NODE_BIN: undefined,
+        HAPPIER_NODE_PATH: undefined,
+      });
+      process.env.HAPPIER_PNPM_BIN = await writePnpmNodeBridge({ dir, pathLookup: systemPath });
+
+      const result = await runCliCommandBestEffort({
+        resolvedPath: scriptPath,
+        args: ['auth', 'list'],
+        timeoutMs: 2_000,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe('auth list');
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'executes bun-shebang CLIs through a sibling bun runtime instead of node',
+    async () => {
+      const dir = await createTempDir('happier-cli-auth-bun-shebang-');
+      tempDirs.push(dir);
+
+      const scriptPath = join(dir, 'fake-omp');
+      await writeFile(
+        scriptPath,
+        '#!/usr/bin/env bun\nconst message: string = "unreachable";\nprocess.stdout.write(message);\n',
+        'utf8',
+      );
+      await chmod(scriptPath, 0o755);
+
+      const runtimeBinary = resolveSystemJavaScriptRuntimeBinary(systemPath);
+      await writeExecutableShim({
+        dir,
+        fileName: 'bun',
+        contents: `#!/bin/sh\nshift\nexec "${runtimeBinary}" -e 'process.stdout.write(process.argv.slice(1).join(\" \"))' -- "$@"\n`,
+      });
 
       envScope.patch({
         PATH: '',

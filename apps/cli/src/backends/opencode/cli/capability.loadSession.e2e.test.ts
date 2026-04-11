@@ -36,6 +36,7 @@ function makeCliSnapshot(overrides: Partial<DetectCliSnapshot['clis']>): DetectC
       kilo: makeUnavailableCliEntry(),
       kiro: makeUnavailableCliEntry(),
       customAcp: makeUnavailableCliEntry(),
+      ohMyPi: makeUnavailableCliEntry(),
       pi: makeUnavailableCliEntry(),
       copilot: makeUnavailableCliEntry(),
       ...overrides,

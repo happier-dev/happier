@@ -20,6 +20,7 @@ function makeDetectCliSnapshot(): DetectCliSnapshot {
       kilo: makeUnavailableCliEntry(),
       kiro: makeUnavailableCliEntry(),
       customAcp: makeUnavailableCliEntry(),
+      ohMyPi: makeUnavailableCliEntry(),
       pi: makeUnavailableCliEntry(),
       copilot: makeUnavailableCliEntry(),
     },

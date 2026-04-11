@@ -17,6 +17,7 @@ const SCOPED_ENV_KEYS = [
   'HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON',
   'HAPPIER_CLAUDE_PATH',
   'HAPPIER_CODEX_PATH',
+  'HAPPIER_OHMYPI_PATH',
   'HAPPIER_OPENCODE_PATH',
   'HAPPIER_PNPM_BIN',
   'HAPPIER_JS_RUNTIME_PATH',
@@ -69,6 +70,7 @@ describe('detectCliSnapshotOnDaemonPath', () => {
     setEnv('HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON', undefined);
     setEnv('HAPPIER_CLAUDE_PATH', undefined);
     setEnv('HAPPIER_CODEX_PATH', undefined);
+    setEnv('HAPPIER_OHMYPI_PATH', undefined);
     setEnv('HAPPIER_OPENCODE_PATH', undefined);
   });
 
@@ -211,6 +213,41 @@ describe('detectCliSnapshotOnDaemonPath', () => {
       const snapshot = await detectCliSnapshotOnDaemonPath({});
       expect(snapshot.clis.gemini.available).toBe(false);
       expect(snapshot.clis.gemini.resolvedPath).toBeUndefined();
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'detects ohMyPi when a bun-shebang CLI is paired with a sibling bun runtime',
+    async () => {
+      const binDir = join(workDir, 'omp-bin');
+      mkdirSync(binDir, { recursive: true });
+
+      const ompPath = join(binDir, 'omp');
+      writeFileSync(
+        ompPath,
+        [
+          '#!/usr/bin/env bun',
+          'const version: string = "omp/14.0.4";',
+          'if (process.argv.includes("--version")) process.stdout.write(version + "\\n");',
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+      chmodSync(ompPath, 0o755);
+
+      writeExecutableShimSync({
+        dir: binDir,
+        fileName: 'bun',
+        contents: '#!/bin/sh\nif [ "$2" = "--version" ]; then\n  printf \'omp/14.0.4\\n\'\n  exit 0\nfi\nexit 1\n',
+      });
+
+      setEnv('PATH', '');
+      setEnv('HAPPIER_OHMYPI_PATH', ompPath);
+
+      const snapshot = await detectCliSnapshotOnDaemonPath({});
+      expect(snapshot.clis.ohMyPi.available).toBe(true);
+      expect(snapshot.clis.ohMyPi.resolvedPath).toBe(ompPath);
+      expect(snapshot.clis.ohMyPi.version).toBe('14.0.4');
     },
   );
 

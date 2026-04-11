@@ -3,6 +3,8 @@ import { chmod, mkdir, open, rename, rm, stat, writeFile } from 'node:fs/promise
 import type { FileHandle } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
+import { expandHomeDirPath } from '../path/expandHomeDirPath.js';
+import { resolveWindowsCommandOnPath, resolveWindowsCommandPath } from '../process/index.js';
 import { createManagedToolScratchDir } from './createManagedToolScratchDir.js';
 import { downloadGitHubReleaseAsset } from './downloadGitHubReleaseAsset.js';
 import { extractGitHubReleaseAsset } from './extractGitHubReleaseAsset.js';
@@ -79,6 +81,13 @@ function resolveNextManagedNodeBinaryPath(processEnv: NodeJS.ProcessEnv, binaryR
 export function resolveExplicitJavaScriptRuntimeCommand(processEnv: NodeJS.ProcessEnv = process.env): string | null {
   const override = readExplicitJavaScriptRuntimeCommand(processEnv);
   if (override) {
+    if (process.platform === 'win32') {
+      const normalizedOverride =
+        (override.includes('/') || override.includes('\\') || override.includes(':'))
+          ? resolveWindowsCommandPath(override, processEnv)
+          : resolveWindowsCommandOnPath(override, processEnv);
+      if (normalizedOverride) return normalizedOverride;
+    }
     try {
       accessSync(override, process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK);
       return override;
@@ -96,7 +105,7 @@ export function readExplicitJavaScriptRuntimeCommand(processEnv: NodeJS.ProcessE
     processEnv.HAPPIER_MANAGED_NODE_BIN,
     processEnv.HAPPIER_NODE_PATH,
   ]
-    .map((value) => String(value ?? '').trim())
+    .map((value) => expandHomeDirPath(String(value ?? '').trim(), processEnv))
     .find((value) => value.length > 0);
   return override ?? null;
 }

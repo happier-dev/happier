@@ -7,6 +7,7 @@ export type {
 } from './install.js';
 export { installProviderCli, planProviderCliInstall, resolvePlatformFromNodePlatform } from './install.js';
 export type {
+  ProviderCliJavaScriptRuntimeKind,
   ProviderCliCommandResolution,
   ProviderCliResolutionSource,
 } from './resolution.js';
@@ -15,6 +16,8 @@ export {
   providerCliPathRequiresJavaScriptRuntime,
   readBackendCliSourcePreference,
   readProviderCliOverride,
+  resolveProviderCliJavaScriptRuntimeCommand,
+  resolveProviderCliJavaScriptRuntimeKind,
   resolveProviderCliCommand,
   resolveProviderCliManagedCommandPath,
 } from './resolution.js';

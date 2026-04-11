@@ -259,4 +259,36 @@ describe('resolveProviderCliCommand', () => {
       }),
     );
   });
+
+  it('falls back to the managed oh-my-pi binary when the system install is a bun script but bun is unavailable', () => {
+    if (process.platform === 'win32') return;
+
+    const root = createTempDirSync('happier-managed-cli-resolution-', tmpdir());
+    tempDirs.add(root);
+    process.env.HAPPIER_HOME_DIR = join(root, 'home');
+    mkdirSync(process.env.HAPPIER_HOME_DIR, { recursive: true });
+
+    const systemBin = join(root, 'system-bin');
+    mkdirSync(systemBin, { recursive: true });
+    const systemPath = join(systemBin, 'omp');
+    writeTextFileSync(systemPath, '#!/usr/bin/env bun\nconsole.log("ok");\n');
+    chmodSync(systemPath, 0o755);
+    process.env.PATH = systemBin;
+
+    const managedPath = resolveProviderCliManagedCommandPath('ohMyPi', { happyHomeDir: process.env.HAPPIER_HOME_DIR });
+    writeManagedExecutable(managedPath, '#!/bin/sh\necho ok\n');
+
+    expect(
+      resolveProviderCliCommand('ohMyPi', {
+        isBunRuntime: false,
+        currentExecPath: join(root, 'happier'),
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        source: 'managed',
+        command: managedPath,
+      }),
+    );
+    expect(systemPath).not.toBe(managedPath);
+  });
 });
