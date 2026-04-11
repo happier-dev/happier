@@ -39,6 +39,7 @@ export {
 export {
   getAgentLocalControlCapability,
   usesProviderAttachForLocalControl,
+  usesTerminalHostedLocalControl,
   type AgentLocalControlCapability,
 } from './localControl.js';
 export { resolveAgentIdFromFlavor } from './resolveAgentIdFromFlavor.js';

@@ -31,6 +31,7 @@ export const AGENT_SESSION_MODE_DESCRIPTORS: Readonly<Record<AgentId, AgentSessi
   kilo: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' },
   kiro: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' },
   customAcp: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' },
+  ohMyPi: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' },
   pi: { source: 'none', semantics: 'none', runtimeSwitch: 'none' },
   copilot: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' },
 });
@@ -59,6 +60,7 @@ export const AGENT_SESSION_MODES: Readonly<Record<AgentId, AgentSessionModesKind
   kilo: descriptorToSessionModesKind(AGENT_SESSION_MODE_DESCRIPTORS.kilo),
   kiro: descriptorToSessionModesKind(AGENT_SESSION_MODE_DESCRIPTORS.kiro),
   customAcp: descriptorToSessionModesKind(AGENT_SESSION_MODE_DESCRIPTORS.customAcp),
+  ohMyPi: descriptorToSessionModesKind(AGENT_SESSION_MODE_DESCRIPTORS.ohMyPi),
   pi: descriptorToSessionModesKind(AGENT_SESSION_MODE_DESCRIPTORS.pi),
   copilot: descriptorToSessionModesKind(AGENT_SESSION_MODE_DESCRIPTORS.copilot),
 });

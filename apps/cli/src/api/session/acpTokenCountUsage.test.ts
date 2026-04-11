@@ -60,6 +60,33 @@ describe('acp token_count usage extraction', () => {
     expect(res).toBeNull();
   });
 
+  it('extracts tokens from nested Codex info.total_token_usage payloads', () => {
+    const res = extractTokensFromAcpTokenCountMessage({
+      type: 'token_count',
+      info: {
+        total_token_usage: {
+          total_tokens: 184,
+          input_tokens: 120,
+          cached_input_tokens: 20,
+          output_tokens: 35,
+          reasoning_output_tokens: 9,
+        },
+      },
+    });
+
+    expect(res).toEqual({
+      key: null,
+      modelId: null,
+      tokens: {
+        total: 184,
+        input: 120,
+        cache_read: 20,
+        output: 35,
+        thought: 9,
+      },
+    });
+  });
+
   it('does not allow __proto__ token keys to mutate the resulting map prototype', () => {
     const res = extractTokensFromAcpTokenCountMessage({
       type: 'token_count',

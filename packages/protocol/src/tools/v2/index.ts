@@ -24,6 +24,11 @@ export {
   type ChangeTitleToolNameAlias,
 } from './aliases.js';
 export {
+  normalizePatchInputRecord,
+  deriveCanonicalPatchFileDiffs,
+  type CanonicalPatchFileDiff,
+} from './patch.js';
+export {
   LEGACY_SUBAGENT_TOOL_NAME_ALIASES,
   GENERIC_SUBAGENT_TOOL_NAME_ALIASES,
   canonicalizeGenericSubAgentToolName,

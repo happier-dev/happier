@@ -1,4 +1,7 @@
-import { extractTokensFromAcpTokenCountMessage } from '@/api/session/acpTokenCountUsage';
+import {
+  buildTokenCountSessionMessageFromUsageObservation,
+  extractUsageObservationFromTokenCountMessage,
+} from '@/usage/usageObservation';
 
 function asFiniteNonNegativeNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
@@ -83,20 +86,16 @@ function clampTokenCountTokensForForwarding(tokens: Record<string, number>): Rec
 
 export function buildTokenCountSessionMessageForForwarding(
   agentMessage: Record<string, unknown>,
-): { type: 'token_count'; tokens: Record<string, number>; key?: string; model?: string; cost?: { total: number; [key: string]: number } } | null {
-  const extracted = extractTokensFromAcpTokenCountMessage(agentMessage);
-  if (!extracted) return null;
+): ReturnType<typeof buildTokenCountSessionMessageFromUsageObservation> | null {
+  const observation = extractUsageObservationFromTokenCountMessage({
+    provider: 'unknown',
+    body: agentMessage,
+  });
+  if (!observation) return null;
 
-  const tokens = clampTokenCountTokensForForwarding(extracted.tokens);
-  const key = extracted.key;
-  const model = extracted.modelId;
-  const cost = normalizeTokenCountCostForForwarding(agentMessage.cost);
-
-  return {
-    type: 'token_count',
-    tokens,
-    ...(key ? { key } : {}),
-    ...(model ? { model } : {}),
-    ...(cost ? { cost } : {}),
-  };
+  return buildTokenCountSessionMessageFromUsageObservation({
+    ...observation,
+    tokens: observation.tokens ? (clampTokenCountTokensForForwarding(observation.tokens) as any) : null,
+    cost: normalizeTokenCountCostForForwarding(agentMessage.cost),
+  });
 }

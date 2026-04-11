@@ -34,6 +34,18 @@ export const BUILT_IN_ACP_CONFIG: Readonly<Partial<Record<AgentId, BuiltInAcpCon
     supportsModels: 'auto',
     promptImageSupport: 'auto',
   },
+  ohMyPi: {
+    agentId: 'ohMyPi',
+    launcher: {
+      command: providerLauncherCommand('ohMyPi'),
+      args: ['--mode', 'acp'],
+    },
+    transportProfile: 'generic',
+    supportsLoadSession: true,
+    supportsModes: 'yes',
+    supportsModels: 'yes',
+    promptImageSupport: 'yes',
+  },
   kiro: {
     agentId: 'kiro',
     launcher: {

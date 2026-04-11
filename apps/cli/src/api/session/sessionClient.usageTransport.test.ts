@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 
 import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import {
     type ApiSessionSocketStub,
     createApiSessionSocketStub,
@@ -128,6 +129,134 @@ describe('ApiSessionClient usage transport', () => {
         expect(
             sessionSocket.emit.mock.calls.some((call) => call[0] === 'usage-report'),
         ).toBe(false);
+    });
+
+    it('publishes Codex token_count usage with backend mode and stable external key', async () => {
+        vi.resetModules();
+        fetchServerFeaturesSnapshotMock.mockReset();
+        readCredentialsMock.mockReset();
+        readCredentialsMock.mockResolvedValue({ token: 'fake-token' });
+        fetchServerFeaturesSnapshotMock.mockResolvedValue({
+            status: 'ready',
+            features: FeaturesResponseSchema.parse({
+                features: {},
+                capabilities: {
+                    server: {
+                        usageAnalytics: {
+                            version: 1,
+                            eventsIngest: { path: '/v2/usage-events' },
+                            query: { path: '/v2/usage/query' },
+                            legacy: {
+                                usageReportsPath: '/v2/usage-reports',
+                                usageQueryPath: '/v1/usage/query',
+                            },
+                        },
+                    },
+                },
+            }),
+        });
+        sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+        userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+
+        const axiosMod = await import('axios');
+        const axios = axiosMod.default as any;
+        const postSpy = vi.spyOn(axios, 'post').mockResolvedValue({ data: { success: true, eventId: 'evt-codex', createdAt: 1 } });
+
+        const { ApiSessionClient } = await import('./sessionClient');
+        const client = new ApiSessionClient(
+            'fake-token',
+            createPlainSessionFixture({
+                id: 'session-1',
+                metadata: createTestMetadata({ codexBackendMode: 'appServer' }),
+            }),
+        );
+
+        client.sendCodexMessage({
+            type: 'token_count',
+            id: 'codex-token-1',
+            tokens: { total: 9, input: 4, output: 5 },
+            source: 'codex-app-server-token-usage',
+            scope: 'session_cumulative',
+        } as any);
+
+        await vi.waitFor(() => {
+            expect(postSpy).toHaveBeenCalled();
+        });
+
+        expect(postSpy.mock.calls[0]?.[1]).toEqual(
+            expect.objectContaining({
+                sessionId: 'session-1',
+                providerId: 'codex',
+                backendMode: 'appServer',
+                externalKey: 'codex-token-1',
+            }),
+        );
+    });
+
+    it('publishes OpenCode token_count usage with backend mode and stable external key', async () => {
+        vi.resetModules();
+        fetchServerFeaturesSnapshotMock.mockReset();
+        readCredentialsMock.mockReset();
+        readCredentialsMock.mockResolvedValue({ token: 'fake-token' });
+        fetchServerFeaturesSnapshotMock.mockResolvedValue({
+            status: 'ready',
+            features: FeaturesResponseSchema.parse({
+                features: {},
+                capabilities: {
+                    server: {
+                        usageAnalytics: {
+                            version: 1,
+                            eventsIngest: { path: '/v2/usage-events' },
+                            query: { path: '/v2/usage/query' },
+                            legacy: {
+                                usageReportsPath: '/v2/usage-reports',
+                                usageQueryPath: '/v1/usage/query',
+                            },
+                        },
+                    },
+                },
+            }),
+        });
+        sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+        userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+
+        const axiosMod = await import('axios');
+        const axios = axiosMod.default as any;
+        const postSpy = vi.spyOn(axios, 'post').mockResolvedValue({ data: { success: true, eventId: 'evt-open', createdAt: 1 } });
+
+        const { ApiSessionClient } = await import('./sessionClient');
+        const client = new ApiSessionClient(
+            'fake-token',
+            createPlainSessionFixture({
+                id: 'session-1',
+                metadata: createTestMetadata({ opencodeBackendMode: 'server' }),
+            }),
+        );
+
+        client.sendAgentMessage(
+            'opencode',
+            {
+                type: 'token_count',
+                key: 'opencode-message:1',
+                tokens: { total: 9, input: 4, output: 5 },
+                source: 'opencode-message-updated',
+                scope: 'turn_delta',
+            } as any,
+            { localId: 'opencode-local-1' },
+        );
+
+        await vi.waitFor(() => {
+            expect(postSpy).toHaveBeenCalled();
+        });
+
+        expect(postSpy.mock.calls[0]?.[1]).toEqual(
+            expect.objectContaining({
+                sessionId: 'session-1',
+                providerId: 'opencode',
+                backendMode: 'server',
+                externalKey: 'opencode-message:1',
+            }),
+        );
     });
 
     it('falls back to legacy usage-report when v2 analytics ingest is unavailable', async () => {

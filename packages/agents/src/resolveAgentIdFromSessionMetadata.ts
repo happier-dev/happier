@@ -23,8 +23,8 @@ export function resolveAgentIdFromSessionMetadata(metadata: unknown): AgentId | 
   if (byFlavor) return byFlavor;
 
   const runtimeDescriptor = readAgentRuntimeDescriptorV1(record.agentRuntimeDescriptorV1);
-  if (runtimeDescriptor?.providerId === 'codex' || runtimeDescriptor?.providerId === 'opencode' || runtimeDescriptor?.providerId === 'pi') {
-    return runtimeDescriptor.providerId;
+  if (runtimeDescriptor?.providerId && AGENT_IDS.includes(runtimeDescriptor.providerId as AgentId)) {
+    return runtimeDescriptor.providerId as AgentId;
   }
 
   for (const id of AGENT_IDS) {

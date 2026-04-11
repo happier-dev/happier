@@ -26,3 +26,7 @@ export function getAgentLocalControlCapability(agentId: AgentId): AgentLocalCont
 export function usesProviderAttachForLocalControl(agentId: AgentId): boolean {
   return getAgentLocalControlCapability(agentId)?.attachStrategy === 'provider_attach';
 }
+
+export function usesTerminalHostedLocalControl(agentId: AgentId): boolean {
+  return getAgentLocalControlCapability(agentId)?.attachStrategy === 'terminal_host';
+}

@@ -1,3 +1,5 @@
+import { normalizePatchInputRecord } from '@happier-dev/protocol/tools/v2';
+
 type UnknownRecord = Record<string, unknown>;
 
 function asRecord(value: unknown): UnknownRecord | null {
@@ -22,110 +24,6 @@ function asNonEmptyStringArray(value: unknown): string[] | null {
         .map((v) => v.trim())
         .filter((v) => v.length > 0);
     return out.length > 0 ? out : null;
-}
-
-function parseApplyPatchTextChanges(patchText: string): Record<string, unknown> | null {
-    const lines = patchText.replace(/\r\n/g, '\n').split('\n');
-    const changes: Record<string, unknown> = {};
-
-    for (const line of lines) {
-        const match = line.match(/^\*\*\*\s+(Update File|Add File|Delete File):\s+(.+)\s*$/);
-        if (!match) continue;
-        const path = match[2].trim();
-        if (!path) continue;
-
-        const label = match[1].toLowerCase();
-        const type =
-            label.startsWith('add')
-                ? 'add'
-                : label.startsWith('delete')
-                    ? 'delete'
-                    : 'update';
-        changes[path] = { type };
-    }
-
-    return Object.keys(changes).length > 0 ? changes : null;
-}
-
-function normalizeSinglePatchChange(raw: unknown): UnknownRecord {
-    const record = asRecord(raw);
-    if (!record) return { value: raw };
-
-    const type = firstNonEmptyString(record.type)?.toLowerCase() ?? null;
-    const content = firstNonEmptyString(record.content);
-    const unifiedDiff = firstNonEmptyString((record as any).unified_diff) ?? firstNonEmptyString((record as any).unifiedDiff);
-    const oldContent =
-        firstNonEmptyString(record.old_content) ??
-        firstNonEmptyString(record.oldContent) ??
-        null;
-    const newContent =
-        firstNonEmptyString(record.new_content) ??
-        firstNonEmptyString(record.newContent) ??
-        null;
-
-    // Keep the original record keys for debugging; add normalized fields when possible.
-    const next: UnknownRecord = { ...record };
-
-    if (type === 'add' && content) {
-        next.add = { content };
-        return next;
-    }
-
-    if ((type === 'update' || type === 'modify') && oldContent && newContent) {
-        next.modify = { old_content: oldContent, new_content: newContent };
-        return next;
-    }
-
-    if ((type === 'update' || type === 'modify') && unifiedDiff) {
-        const parsed = parseUnifiedDiffPreview(unifiedDiff);
-        if (parsed.oldText.length > 0 || parsed.newText.length > 0) {
-            next.modify = { old_content: parsed.oldText, new_content: parsed.newText };
-            return next;
-        }
-    }
-
-    if (type === 'delete' || type === 'remove') {
-        next.delete = { content: content ?? oldContent ?? '' };
-        return next;
-    }
-
-    // Unknown / insufficient information — return as-is.
-    return next;
-}
-
-function parseUnifiedDiffPreview(unifiedDiff: string): { oldText: string; newText: string } {
-    const lines = unifiedDiff.split('\n');
-    const oldLines: string[] = [];
-    const newLines: string[] = [];
-    let inHunk = false;
-
-    for (const line of lines) {
-        if (line.startsWith('@@')) {
-            inHunk = true;
-            continue;
-        }
-        if (!inHunk) continue;
-
-        if (line.startsWith('+')) {
-            newLines.push(line.substring(1));
-        } else if (line.startsWith('-')) {
-            oldLines.push(line.substring(1));
-        } else if (line.startsWith(' ')) {
-            oldLines.push(line.substring(1));
-            newLines.push(line.substring(1));
-        } else if (line === '\\ No newline at end of file') {
-            continue;
-        } else if (line === '') {
-            oldLines.push('');
-            newLines.push('');
-        }
-    }
-
-    let oldText = oldLines.join('\n');
-    let newText = newLines.join('\n');
-    if (oldText.endsWith('\n')) oldText = oldText.slice(0, -1);
-    if (newText.endsWith('\n')) newText = newText.slice(0, -1);
-    return { oldText, newText };
 }
 
 export function normalizePatchResult(rawOutput: unknown): UnknownRecord {
@@ -188,17 +86,11 @@ export function normalizePatchInput(rawInput: unknown): UnknownRecord {
             firstNonEmptyString((record as any).patch_text) ??
             firstNonEmptyString((record as any).patch);
         if (patchText) {
-            const inferred = parseApplyPatchTextChanges(patchText);
-            if (inferred) return { ...record, changes: inferred };
+            return normalizePatchInputRecord(record);
         }
 
-        return { ...record };
+        return normalizePatchInputRecord(record);
     }
 
-    const normalizedChanges: Record<string, unknown> = {};
-    for (const [path, change] of Object.entries(changes)) {
-        normalizedChanges[path] = normalizeSinglePatchChange(change);
-    }
-
-    return { ...record, changes: normalizedChanges };
+    return normalizePatchInputRecord(record);
 }

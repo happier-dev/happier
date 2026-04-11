@@ -17,6 +17,7 @@ import { importAcpReplayHistoryV1 } from '@/agent/acp/history/importAcpReplayHis
 import { importAcpReplaySidechainV1 } from '@/agent/acp/history/importAcpReplaySidechain';
 import { createCatalogAcpBackend } from '@/agent/acp/createCatalogAcpBackend';
 import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
+import { isAbortLikeError } from '@/agent/executionRuns/runtime/turnDelivery';
 import { getAgentModelConfig, type AgentId } from '@happier-dev/agents';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { createStreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
@@ -463,6 +464,13 @@ export function createAcpRuntime(params: {
     params.onSessionIdChange?.(sessionId);
   };
 
+  const surfaceStatusErrorDetail = (detailRaw: unknown) => {
+    const detail = typeof detailRaw === 'string' ? detailRaw.trim() : '';
+    if (!detail || isAbortLikeError(detail)) return;
+    const message = /^error[:\\s]/i.test(detail) ? detail : `Error: ${detail}`;
+    params.session.sendAgentMessage(params.provider as Parameters<AcpRuntimeSessionClient['sendAgentMessage']>[0], { type: 'message', message });
+  };
+
   const attachMessageHandler = (b: AcpRuntimeBackend) => {
     const forwarder = createAcpAgentMessageForwarder({
       sendAcp: (provider, body) => params.session.sendAgentMessage(provider, body),
@@ -473,11 +481,7 @@ export function createAcpRuntime(params: {
     b.onMessage((msg: AgentMessage) => {
       if (loadingSession) {
         if (msg.type === 'status' && msg.status === 'error') {
-          const detail = typeof msg.detail === 'string' ? msg.detail.trim() : '';
-          if (detail) {
-            const message = /^error[:\\s]/i.test(detail) ? detail : `Error: ${detail}`;
-            params.session.sendAgentMessage(params.provider, { type: 'message', message });
-          }
+          surfaceStatusErrorDetail(msg.detail);
           turnAborted = true;
           params.session.sendAgentMessage(params.provider, { type: 'turn_aborted', id: randomUUID() });
         }
@@ -549,11 +553,7 @@ export function createAcpRuntime(params: {
 
           if (msg.status === 'error') {
             if (!turnAborted) {
-              const detail = typeof msg.detail === 'string' ? msg.detail.trim() : '';
-              if (detail) {
-                const message = /^error[:\\s]/i.test(detail) ? detail : `Error: ${detail}`;
-                params.session.sendAgentMessage(params.provider, { type: 'message', message });
-              }
+              surfaceStatusErrorDetail(msg.detail);
             }
             void streamedTranscriptWriter.flushAll({ reason: 'abort', interruptedReason: 'status-error' }).finally(() => {
               params.session.sendAgentMessage(params.provider, { type: 'turn_aborted', id: randomUUID() });

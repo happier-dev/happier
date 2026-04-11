@@ -195,6 +195,54 @@ export { buildConnectedServiceCredentialRecord } from './connect/buildConnectedS
 
 export { parseBooleanEnv, parseOptionalBooleanEnv } from './env/parseBooleanEnv.js';
 export type { ServerRetentionCapabilities } from './features/payload/capabilities/serverRetentionCapabilities.js';
+export type { ServerUsageAnalyticsCapabilities } from './features/payload/capabilities/serverUsageAnalyticsCapabilities.js';
+export {
+  ServerUsageAnalyticsCapabilitiesSchema,
+  UsageAnalyticsBreakdownDimensionSchema,
+  UsageAnalyticsBreakdownEntrySchema,
+  UsageAnalyticsBreakdownsSchema,
+  UsageAnalyticsGranularitySchema,
+  UsageAnalyticsQueryFiltersSchema,
+  UsageAnalyticsQueryRequestSchema,
+  UsageAnalyticsQueryResponseSchema,
+  UsageAnalyticsSeriesBucketSchema,
+  UsageAnalyticsTotalsSchema,
+  UsageEventIngestRequestSchema,
+  UsageObservationContextSchema,
+  UsageObservationCostSchema,
+  UsageObservationScopeSchema,
+  UsageObservationTokensSchema,
+} from './usage/index.js';
+export type {
+  UsageAnalyticsBreakdownDimension,
+  UsageAnalyticsBreakdownEntry,
+  UsageAnalyticsBreakdowns,
+  UsageAnalyticsGranularity,
+  UsageAnalyticsQueryFilters,
+  UsageAnalyticsQueryRequest,
+  UsageAnalyticsQueryResponse,
+  UsageAnalyticsSeriesBucket,
+  UsageAnalyticsTotals,
+  UsageEventIngestRequest,
+  UsageObservationContext,
+  UsageObservationCost,
+  UsageObservationScope,
+  UsageObservationTokens,
+} from './usage/index.js';
+export {
+  MACHINE_DAEMON_STARTUP_SOURCE_VALUES,
+  MACHINE_OWNER_CONFLICT_ERROR,
+  MachineDaemonOwnershipMetadataSchema,
+  MachineDaemonStartupSourceSchema,
+  MachineOwnerConflictSocketPayloadSchema,
+  buildMachineOwnerConflictSocketPayload,
+  buildMachineScopedSocketAuth,
+  readMachineDaemonOwnershipMetadataFromSocketAuth,
+  readMachineOwnerConflictSocketPayload,
+  type MachineDaemonOwnershipMetadata,
+  type MachineOwnerConflictMetadata,
+  type MachineOwnerConflictSocketPayload,
+} from './machineOwnership/daemonOwnership.js';
 
 export {
   buildReadyNotificationContent,
@@ -1058,6 +1106,10 @@ export {
   type DaemonTerminalRestartRequest,
   type DaemonTerminalRestartResponse,
 } from './daemonTerminal.js';
+
+export {
+  resolveDirectSessionsSourceKey,
+} from './providers/directSessionsCatalog.js';
 
 export {
   DirectSessionsProviderIdSchema,

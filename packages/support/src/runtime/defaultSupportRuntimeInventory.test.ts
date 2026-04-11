@@ -18,15 +18,13 @@ const happierRuntimeMocks = vi.hoisted(() => ({
     resolveHappierServiceRuntimeTargetMock: vi.fn(),
 }));
 
-vi.mock('@happier-dev/cli-common', () => ({
-    happierRuntime: {
-        discoverHappierInstallations: happierRuntimeMocks.discoverHappierInstallationsMock,
-        discoverHappierServices: happierRuntimeMocks.discoverHappierServicesMock,
-        buildHappierRuntimeWarnings: happierRuntimeMocks.buildHappierRuntimeWarningsMock,
-        normalizeHappierRuntimePath: happierRuntimeMocks.normalizeHappierRuntimePathMock,
-        isHappierRuntimePathWithinRoot: happierRuntimeMocks.isHappierRuntimePathWithinRootMock,
-        resolveHappierServiceRuntimeTarget: happierRuntimeMocks.resolveHappierServiceRuntimeTargetMock,
-    },
+vi.mock('@happier-dev/cli-common/happierRuntime', () => ({
+    discoverHappierInstallations: happierRuntimeMocks.discoverHappierInstallationsMock,
+    discoverHappierServices: happierRuntimeMocks.discoverHappierServicesMock,
+    buildHappierRuntimeWarnings: happierRuntimeMocks.buildHappierRuntimeWarningsMock,
+    normalizeHappierRuntimePath: happierRuntimeMocks.normalizeHappierRuntimePathMock,
+    isHappierRuntimePathWithinRoot: happierRuntimeMocks.isHappierRuntimePathWithinRootMock,
+    resolveHappierServiceRuntimeTarget: happierRuntimeMocks.resolveHappierServiceRuntimeTargetMock,
 }));
 
 describe('defaultSupportRuntimeInventory', () => {

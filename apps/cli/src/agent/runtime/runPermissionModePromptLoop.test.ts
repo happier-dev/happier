@@ -355,6 +355,51 @@ describe('runPermissionModePromptLoop', () => {
     expect(sentMessages.join('\n')).not.toContain('[object Object]');
   });
 
+  it('does not surface abort-like prompt failures as agent messages', async () => {
+    const session = createPromptLoopSession();
+    const sendAgentMessageSpy = vi.spyOn(session, 'sendAgentMessage');
+    const queue = createModeQueue();
+    const runtime = createRuntime() as any;
+    runtime.sendPromptWithMeta = vi.fn(async () => {
+      throw new Error('OpenCode session aborted');
+    });
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push({ text: 'hello', localId: 'local-abort-error' }, { permissionMode: 'default' });
+
+    let shouldExit = false;
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'opencode',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime,
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => {
+        shouldExit = true;
+      },
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: formatProviderPromptErrorMessage,
+    });
+
+    expect(sendAgentMessageSpy).not.toHaveBeenCalledWith('opencode', expect.objectContaining({
+      type: 'message',
+    }));
+  });
+
   it('refreshes the session snapshot and re-syncs metadata overrides before sending the next queued prompt when queue delivery wins the race', async () => {
     const session = createPromptLoopSession();
     const initialMetadata = createPromptLoopMetadata({

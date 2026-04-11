@@ -24,6 +24,14 @@ describe('PROVIDER_CLI_RUNTIME_SPECS', () => {
         githubRepo: 'openai/codex',
       },
     });
+    expect(getProviderCliRuntimeSpec('ohMyPi')).toMatchObject({
+      sourcePreferenceDefault: 'system-first',
+      managedInstall: {
+        kind: 'github_release_binary',
+        binaryName: 'omp',
+        githubRepo: 'can1357/oh-my-pi',
+      },
+    });
   });
 
   it('declares managed package sources for package-backed CLIs', () => {
@@ -54,6 +62,9 @@ describe('PROVIDER_CLI_RUNTIME_SPECS', () => {
       acceptsJavaScriptFileOverride: true,
       installGuideUrl: 'https://code.claude.com/docs/en/setup',
     });
+    expect(getProviderCliRuntimeSpec('ohMyPi')).toMatchObject({
+      acceptsJavaScriptFileOverride: true,
+    });
     expect(getProviderCliRuntimeSpec('qwen')).toMatchObject({
       managedInstall: {
         kind: 'managed_package',
@@ -76,6 +87,7 @@ describe('PROVIDER_CLI_RUNTIME_SPECS', () => {
     expect(getProviderCliRuntimeSpec('opencode').installGuideUrl).toBe('https://opencode.ai/docs');
     expect(getProviderCliRuntimeSpec('kimi').installGuideUrl).toBe('https://kimi.moonshot.cn/docs/cli');
     expect(getProviderCliRuntimeSpec('qwen').installGuideUrl).toBe('https://qwenlm.github.io/qwen-code-docs/');
+    expect(getProviderCliRuntimeSpec('ohMyPi').installGuideUrl).toBe('https://github.com/can1357/oh-my-pi#via-bun-recommended');
     expect(getProviderCliRuntimeSpec('pi').installGuideUrl).toBe('https://github.com/badlogic/pi-mono');
     expect(getProviderCliRuntimeSpec('codex').installGuideUrl).toBeNull();
   });
@@ -90,10 +102,13 @@ describe('PROVIDER_CLI_RUNTIME_SPECS', () => {
     expect(getProviderCliRuntimeSpec('opencode')).toMatchObject({
       knownUserBinDirSuffixes: ['.opencode/bin'],
     });
+    expect(getProviderCliRuntimeSpec('ohMyPi')).toMatchObject({
+      knownUserBinDirSuffixes: ['.bun/bin'],
+    });
     expect(getProviderCliRuntimeSpec('codex').knownUserBinDirSuffixes).toBeNull();
   });
 
-  it('does not keep legacy manual install recipes for managed-install providers', () => {
+  it('keeps manual-install metadata only when the provider intentionally exposes user-facing guidance', () => {
     expect(getProviderCliRuntimeSpec('codex').manualInstallRecipes).toBeNull();
     expect(getProviderCliRuntimeSpec('gemini').manualInstallRecipes).toBeNull();
     expect(getProviderCliRuntimeSpec('auggie').manualInstallRecipes).toBeNull();
@@ -101,6 +116,14 @@ describe('PROVIDER_CLI_RUNTIME_SPECS', () => {
     expect(getProviderCliRuntimeSpec('pi').manualInstallRecipes).toBeNull();
     expect(getProviderCliRuntimeSpec('copilot').manualInstallRecipes).toBeNull();
     expect(getProviderCliRuntimeSpec('qwen').manualInstallRecipes).toBeNull();
+    expect(getProviderCliRuntimeSpec('ohMyPi')).toMatchObject({
+      manualInstallKind: 'vendor_recipe',
+      manualInstallRecipes: {
+        darwin: [expect.objectContaining({ cmd: 'bun' })],
+        linux: [expect.objectContaining({ cmd: 'bun' })],
+        win32: [expect.objectContaining({ cmd: 'bun' })],
+      },
+    });
   });
 
   it('covers every built-in provider', () => {
@@ -118,6 +141,7 @@ describe('PROVIDER_CLI_RUNTIME_SPECS', () => {
       'kimi',
       'kilo',
       'kiro',
+      'ohMyPi',
       'pi',
       'copilot',
     ]);

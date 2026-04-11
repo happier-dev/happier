@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { getAgentLocalControlCapability, usesProviderAttachForLocalControl } from './localControl';
+import {
+  getAgentLocalControlCapability,
+  usesProviderAttachForLocalControl,
+  usesTerminalHostedLocalControl,
+} from './localControl';
 
 describe('agent local control capability', () => {
   it('exposes shared provider-attach local control for opencode', () => {
@@ -10,19 +14,22 @@ describe('agent local control capability', () => {
       attachStrategy: 'provider_attach',
     });
     expect(usesProviderAttachForLocalControl('opencode')).toBe(true);
+    expect(usesTerminalHostedLocalControl('opencode')).toBe(false);
   });
 
-  it('exposes tmux-backed exclusive local control for claude', () => {
+  it('exposes terminal-hosted exclusive local control for claude', () => {
     expect(getAgentLocalControlCapability('claude')).toEqual({
       supported: true,
       topology: 'exclusive',
-      attachStrategy: 'tmux',
+      attachStrategy: 'terminal_host',
     });
     expect(usesProviderAttachForLocalControl('claude')).toBe(false);
+    expect(usesTerminalHostedLocalControl('claude')).toBe(true);
   });
 
   it('returns null for providers without local control', () => {
     expect(getAgentLocalControlCapability('gemini')).toBeNull();
     expect(usesProviderAttachForLocalControl('gemini')).toBe(false);
+    expect(usesTerminalHostedLocalControl('gemini')).toBe(false);
   });
 });

@@ -40,6 +40,10 @@ describe('createAcpRuntime (token-count forwarding)', () => {
       model: 'model-a',
       tokens: { total: 5, input: 2, output: 3 },
       cost: { total: 1.25 },
+      source: 'acp-prompt-usage',
+      scope: 'turn_delta',
+      context_used_tokens: 5,
+      context_window_tokens: 100,
     } as any);
 
     expect(sent.some((b) => b.type === 'token_count')).toBe(true);
@@ -48,6 +52,10 @@ describe('createAcpRuntime (token-count forwarding)', () => {
     expect(token.key).toBe('turn-1');
     expect(token.model).toBe('model-a');
     expect(token.cost).toEqual({ total: 1.25 });
+    expect(token.source).toBe('acp-prompt-usage');
+    expect(token.scope).toBe('turn_delta');
+    expect(token.context_used_tokens).toBe(5);
+    expect(token.context_window_tokens).toBe(100);
   });
 
   it('sanitizes tokens and cost payloads before forwarding', async () => {

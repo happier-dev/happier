@@ -64,7 +64,7 @@ describe('AcpBackend session usage_update', () => {
       source: 'acp-usage-update',
       scope: 'session_cumulative',
       tokens: { total: 123, used: 123, size: 1000 },
-      cost: { total: 1.25 },
+      cost: { reportedUsd: 1.25, total: 1.25, costSource: 'provider_reported', currency: 'USD' },
       context_used_tokens: 123,
       context_window_tokens: 1000,
     });

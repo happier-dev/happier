@@ -5,4 +5,11 @@ import { createCatalogDefinedAcpEntry } from './createCatalogDefinedAcpEntry';
 export const BUILT_IN_CATALOG_DEFINED_ACP_AGENTS = {
   customAcp: createCatalogDefinedAcpEntry('customAcp'),
   kiro: createCatalogDefinedAcpEntry('kiro'),
-} as const satisfies Record<'customAcp' | 'kiro', AgentCatalogEntry>;
+  ohMyPi: createCatalogDefinedAcpEntry('ohMyPi', {
+    getDirectSessionProviderOps: async () =>
+      (await import('@/backends/ohMyPi/directSessions/providerOps')).ohMyPiDirectSessionProviderOps,
+    getConnectedServicesSpawnMaterializer: async () =>
+      (await import('@/backends/ohMyPi/connectedServices/createOhMyPiConnectedServicesSpawnMaterializer'))
+        .createOhMyPiConnectedServicesSpawnMaterializer(),
+  }),
+} as const satisfies Record<'customAcp' | 'kiro' | 'ohMyPi', AgentCatalogEntry>;

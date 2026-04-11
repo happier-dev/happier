@@ -71,7 +71,8 @@ import {
     extractUsageObservationFromTokenCountMessage,
     type UsageObservation,
 } from '@/usage/usageObservation';
-import { estimateClaudeUsageCost } from '../../backends/claude/usage/estimateClaudeUsageCost';
+import { buildClaudeAssistantUsageObservation } from '@/backends/claude/usage/buildClaudeAssistantUsageObservation';
+import { resolvePersistedCodexRuntimeIdentity, readOpenCodeSessionAffinityFromMetadata } from '@happier-dev/agents';
 
 function resolveSessionSocketMachineIdForBootstrap(metadata: Metadata | null): string | undefined {
     if (!metadata || typeof metadata.machineId !== 'string') {
@@ -79,6 +80,38 @@ function resolveSessionSocketMachineIdForBootstrap(metadata: Metadata | null): s
     }
     const machineId = metadata.machineId.trim();
     return machineId.length > 0 ? machineId : undefined;
+}
+
+function resolveUsageObservationExternalKey(params: Readonly<{
+    body: unknown;
+    fallbackLocalId?: string | null;
+}>): string | null {
+    const body = params.body && typeof params.body === 'object' && !Array.isArray(params.body)
+        ? params.body as Record<string, unknown>
+        : null;
+    const key = typeof body?.key === 'string' ? body.key.trim() : '';
+    if (key.length > 0) {
+        return key;
+    }
+    const id = typeof body?.id === 'string' ? body.id.trim() : '';
+    if (id.length > 0) {
+        return id;
+    }
+    const fallbackLocalId = typeof params.fallbackLocalId === 'string' ? params.fallbackLocalId.trim() : '';
+    return fallbackLocalId.length > 0 ? fallbackLocalId : null;
+}
+
+function resolveUsageObservationBackendMode(params: Readonly<{
+    metadata: Metadata | null;
+    provider: ACPProvider | 'codex';
+}>): string | null {
+    if (params.provider === 'codex') {
+        return resolvePersistedCodexRuntimeIdentity(params.metadata)?.backendMode ?? null;
+    }
+    if (params.provider === 'opencode') {
+        return readOpenCodeSessionAffinityFromMetadata(params.metadata).backendMode ?? null;
+    }
+    return null;
 }
 
 export class ApiSessionClient extends EventEmitter {
@@ -1448,6 +1481,15 @@ export class ApiSessionClient extends EventEmitter {
             toolCallCanonicalNameByProviderAndId: this.toolCallCanonicalNameByProviderAndId,
             debug: (message, data) => logger.debug(message, data),
         });
+        const localId = randomUUID();
+        const backendMode = resolveUsageObservationBackendMode({
+            metadata: this.getMetadataSnapshot(),
+            provider: 'codex',
+        });
+        const externalKey = resolveUsageObservationExternalKey({
+            body: normalizedBody,
+            fallbackLocalId: localId,
+        });
 
         let content = {
             role: 'agent',
@@ -1466,7 +1508,6 @@ export class ApiSessionClient extends EventEmitter {
         this.logSendWhileDisconnected('Codex message', { type: normalizedBody?.type });
 
         const payload = this.buildOutboundSessionMessagePayload(content);
-        const localId = randomUUID();
         this.commitSessionMessageBestEffort({
             message: payload,
             localId,
@@ -1479,6 +1520,8 @@ export class ApiSessionClient extends EventEmitter {
             void this.publishTokenCountObservation({
                 provider: 'codex',
                 body: normalizedBody,
+                backendMode,
+                externalKey,
             });
         }
     }
@@ -1561,6 +1604,14 @@ export class ApiSessionClient extends EventEmitter {
             void this.publishTokenCountObservation({
                 provider,
                 body: normalizedBody,
+                backendMode: resolveUsageObservationBackendMode({
+                    metadata: this.getMetadataSnapshot(),
+                    provider,
+                }),
+                externalKey: resolveUsageObservationExternalKey({
+                    body: normalizedBody,
+                    fallbackLocalId: localId,
+                }),
             });
         }
     }
@@ -1813,37 +1864,17 @@ export class ApiSessionClient extends EventEmitter {
      * Send usage data to the server
      */
     sendUsageData(usage: Usage, model?: string) {
-        // Calculate total tokens
-        const totalTokens = usage.input_tokens + usage.output_tokens + (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0);
-
-        const costs = estimateClaudeUsageCost(usage, model);
-
-        const observation: UsageObservation = {
-            provider: 'claude',
-            source: 'claude-assistant-usage',
-            scope: 'turn_delta',
-            key: 'claude-session',
-            modelId: typeof model === 'string' && model.trim().length > 0 ? model.trim() : null,
-            tokens: {
-                total: totalTokens,
-                input: usage.input_tokens,
-                output: usage.output_tokens,
-                cache_creation: usage.cache_creation_input_tokens || 0,
-                cache_read: usage.cache_read_input_tokens || 0,
-            },
-            cost: {
-                estimatedUsd: costs.total,
-                total: costs.total,
-                input: costs.input,
-                output: costs.output,
-            },
-            contextUsedTokens: null,
-            contextWindowTokens: null,
-        };
+        const observation = buildClaudeAssistantUsageObservation({
+            modelId: model ?? null,
+            usage,
+        });
+        if (!observation) {
+            return;
+        }
         logger.debugLargeJson('[SOCKET] Sending usage data:', buildLegacyUsageReportFromUsageObservation({
             sessionId: this.sessionId,
             observation,
-        }))
+        }));
         void this.usageObservationPublisher.publish({
             sessionId: this.sessionId,
             observation,
@@ -1853,6 +1884,8 @@ export class ApiSessionClient extends EventEmitter {
     private async publishTokenCountObservation(params: Readonly<{
         provider: ACPProvider | 'codex';
         body: unknown;
+        backendMode?: string | null;
+        externalKey?: string | null;
     }>): Promise<void> {
         try {
             const observation = extractUsageObservationFromTokenCountMessage({
@@ -1863,6 +1896,8 @@ export class ApiSessionClient extends EventEmitter {
             await this.usageObservationPublisher.publish({
                 sessionId: this.sessionId,
                 observation,
+                backendMode: params.backendMode ?? null,
+                externalKey: params.externalKey ?? null,
             });
         } catch (error) {
             logger.debug('[SOCKET] Failed to publish token_count usage observation (non-fatal)', error);

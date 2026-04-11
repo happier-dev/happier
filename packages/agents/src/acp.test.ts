@@ -5,7 +5,7 @@ import { getProviderCliRuntimeSpec } from './providers/providerCliRuntime.js';
 
 describe('built-in ACP config', () => {
   it('keeps the built-in ACP allowlist explicit and drift-free', () => {
-    expect(Object.keys(BUILT_IN_ACP_CONFIG).sort()).toEqual(['customAcp', 'kiro']);
+    expect(Object.keys(BUILT_IN_ACP_CONFIG).sort()).toEqual(['customAcp', 'kiro', 'ohMyPi']);
   });
 
   it('exposes Custom ACP as a built-in generic ACP agent family', () => {
@@ -33,6 +33,22 @@ describe('built-in ACP config', () => {
         args: ['acp'],
       },
       transportProfile: 'kiro',
+      supportsLoadSession: true,
+      supportsModes: 'yes',
+      supportsModels: 'yes',
+      promptImageSupport: 'yes',
+    });
+  });
+
+  it('exposes ohMyPi as a built-in generic ACP agent with explicit session/model/image capabilities', () => {
+    expect(hasBuiltInAcpConfig('ohMyPi')).toBe(true);
+    expect(getBuiltInAcpConfig('ohMyPi')).toMatchObject({
+      agentId: 'ohMyPi',
+      launcher: {
+        command: getProviderCliRuntimeSpec('ohMyPi').binaryName,
+        args: ['--mode', 'acp'],
+      },
+      transportProfile: 'generic',
       supportsLoadSession: true,
       supportsModes: 'yes',
       supportsModels: 'yes',

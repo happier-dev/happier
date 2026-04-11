@@ -2,7 +2,7 @@ import { getAgentAuthProbeConfig, type AgentId } from '@happier-dev/agents';
 
 import { createCatalogCliAuthSpec } from '@/capabilities/cliAuth/createCatalogCliAuthSpec';
 import { createUnknownCliAuthSpec } from '@/capabilities/cliAuth/createUnknownCliAuthSpec';
-import { runCliCommandBestEffort } from '@/capabilities/cliAuth/shared';
+import { resolveCommonApiKeyStatus, runCliCommandBestEffort } from '@/capabilities/cliAuth/shared';
 import type { CliAuthSpec, CliAuthStatusDraft } from '@/backends/types';
 
 function parseKiroWhoamiAccountLabel(stdout: string): string | null {
@@ -59,6 +59,22 @@ export function createCatalogDefinedCliAuthSpec(agentId: AgentId): CliAuthSpec {
   if (config.parser === 'kiroWhoamiJson' && config.statusCommand) {
     return createCatalogCliAuthSpec(agentId, {
       detectAuthStatus: async ({ resolvedPath }) => detectKiroAuthStatus(resolvedPath, config.statusCommand ?? []),
+    });
+  }
+
+  if (config.parser === 'piEnvOnly') {
+    return createCatalogCliAuthSpec(agentId, {
+      detectAuthStatus: async () => {
+        const envStatus = resolveCommonApiKeyStatus(config.envVars ?? []);
+        if (envStatus.state === 'logged_in') {
+          return envStatus;
+        }
+
+        return {
+          state: 'logged_out',
+          reason: 'missing_credentials',
+        };
+      },
     });
   }
 

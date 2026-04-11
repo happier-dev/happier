@@ -36,6 +36,23 @@ describe('AGENT_AUTH_PROBE_CONFIG', () => {
     });
   });
 
+  it('probes ohMyPi auth via environment-only checks for its supported vendors', () => {
+    expect(getAgentAuthProbeConfig('ohMyPi')).toMatchObject({
+      agentId: 'ohMyPi',
+      binaryNames: ['omp'],
+      statusCommand: null,
+      parser: 'piEnvOnly',
+      backgroundChecks: 'safe',
+      envVars: [
+        'OPENAI_CODEX_OAUTH_TOKEN',
+        'OPENAI_API_KEY',
+        'ANTHROPIC_OAUTH_TOKEN',
+        'ANTHROPIC_API_KEY',
+        'GEMINI_API_KEY',
+      ],
+    });
+  });
+
   it('derives auth probe binary names from the provider runtime catalog', () => {
     for (const agentId of AGENT_IDS) {
       expect(getAgentAuthProbeConfig(agentId).binaryNames).toEqual([getProviderCliRuntimeSpec(agentId).binaryName]);

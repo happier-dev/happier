@@ -13,6 +13,7 @@ import type { PermissionModeQueuedPrompt } from '@/agent/runtime/permission/perm
 import {
   resolveProviderPromptWithReplaySeed,
 } from '@/agent/runtime/replaySeed/replaySeedV1';
+import { isAbortLikeError } from '@/agent/executionRuns/runtime/turnDelivery';
 
 type PromptRuntime = {
   beginTurn: () => void;
@@ -314,7 +315,9 @@ export async function runPermissionModePromptLoop(opts: {
         suppressFlushTurnFailure = true;
         throw error;
       }
-      opts.session.sendAgentMessage(opts.agentMessageType, { type: 'message', message: opts.formatPromptErrorMessage(error) });
+      if (!isAbortLikeError(error)) {
+        opts.session.sendAgentMessage(opts.agentMessageType, { type: 'message', message: opts.formatPromptErrorMessage(error) });
+      }
     } finally {
       turnInFlight = false;
       if (suppressFlushTurnFailure) {

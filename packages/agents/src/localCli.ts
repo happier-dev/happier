@@ -118,6 +118,11 @@ export const AGENT_LOCAL_CLI_CONFIG: Readonly<Record<AgentId, AgentLocalCliConfi
     authSupport: 'unsupported',
     loginLaunch: null,
   }),
+  ohMyPi: createAgentLocalCliConfig('ohMyPi', {
+    machineLoginKey: 'oh-my-pi',
+    authSupport: 'manual_only',
+    loginLaunch: null,
+  }),
   pi: createAgentLocalCliConfig('pi', {
     machineLoginKey: 'pi',
     authSupport: 'status_only',

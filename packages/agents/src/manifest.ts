@@ -29,7 +29,7 @@ export const AGENTS_CORE = {
             sessionRollback: { conversation: 'unsupported' },
         },
         handoff: { vendorStateTransfer: 'supported' },
-        localControl: { supported: true, topology: 'exclusive', attachStrategy: 'tmux' },
+        localControl: { supported: true, topology: 'exclusive', attachStrategy: 'terminal_host' },
         tools: { delivery: 'native_mcp', support: 'supported' },
     },
     codex: {
@@ -80,7 +80,7 @@ export const AGENTS_CORE = {
             },
         },
         handoff: { vendorStateTransfer: 'experimental', requiresExplicitSessionId: true },
-        localControl: { supported: true, topology: 'exclusive', attachStrategy: 'tmux' },
+        localControl: { supported: true, topology: 'exclusive', attachStrategy: 'terminal_host' },
         tools: { delivery: 'native_mcp', support: 'supported' },
     },
     opencode: {
@@ -244,6 +244,32 @@ export const AGENTS_CORE = {
         sessionCapabilities: {
             sessionListing: 'unsupported',
             sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },
+            sessionRollback: { conversation: 'unsupported' },
+        },
+        handoff: { vendorStateTransfer: 'unsupported' },
+        tools: { delivery: 'native_mcp', support: 'supported' },
+    },
+    ohMyPi: {
+        id: 'ohMyPi',
+        cliSubcommand: 'ohMyPi',
+        detectKey: providerDetectKey('ohMyPi'),
+        flavorAliases: ['oh-my-pi', 'omp'],
+        cloudConnect: null,
+        connectedServices: {
+            supportedServiceIds: ['openai-codex', 'openai', 'claude-subscription', 'anthropic', 'gemini'],
+            supportedKindsByServiceId: {
+                'openai-codex': ['oauth'],
+                openai: ['token'],
+                'claude-subscription': ['token'],
+                anthropic: ['token'],
+                gemini: ['oauth', 'token'],
+            },
+        },
+        resume: { vendorResume: 'supported', vendorResumeIdField: 'ohMyPiSessionId' },
+        sessionStorage: { direct: true, persisted: true },
+        sessionCapabilities: {
+            sessionListing: 'supported',
+            sessionFork: { conversation: 'supported', fromMessage: 'unsupported' },
             sessionRollback: { conversation: 'unsupported' },
         },
         handoff: { vendorStateTransfer: 'unsupported' },

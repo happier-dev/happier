@@ -1,4 +1,5 @@
 import { splitUnifiedDiffByFile, type ChangeConfidence, type ChangeEvidenceSource, type FileChangeEvidence, type TurnChangeSet } from '@happier-dev/protocol';
+import { deriveCanonicalPatchFileDiffs } from '@happier-dev/protocol/tools/v2';
 
 import { TurnDiffEmitter } from './turnDiffEmitter';
 
@@ -126,12 +127,43 @@ export class TurnChangeSetCollector {
         source: ChangeEvidenceSource;
         confidence: ChangeConfidence;
     }>): void {
-        for (const filePath of Object.keys(params.changes)) {
-            if (!filePath.trim()) continue;
+        const files = deriveCanonicalPatchFileDiffs({ changes: params.changes });
+        if (files.length === 0) {
+            for (const filePath of Object.keys(params.changes)) {
+                if (!filePath.trim()) continue;
+                this.metadataByFilePath.set(filePath, {
+                    source: params.source,
+                    confidence: params.confidence,
+                });
+                this.emitter.observeUnifiedDiff({
+                    filePath,
+                    unifiedDiff: `diff --git a/${filePath} b/${filePath}`,
+                });
+            }
+            return;
+        }
+
+        for (const file of files) {
+            const filePath = file.filePath;
             this.metadataByFilePath.set(filePath, {
                 source: params.source,
                 confidence: params.confidence,
             });
+            if (typeof file.oldText === 'string' && typeof file.newText === 'string') {
+                this.emitter.observeTextDiff({
+                    filePath,
+                    oldText: file.oldText,
+                    newText: file.newText,
+                });
+                continue;
+            }
+            if (typeof file.unifiedDiff === 'string' && file.unifiedDiff.trim().length > 0) {
+                this.emitter.observeUnifiedDiff({
+                    filePath,
+                    unifiedDiff: file.unifiedDiff,
+                });
+                continue;
+            }
             this.emitter.observeUnifiedDiff({
                 filePath,
                 unifiedDiff: `diff --git a/${filePath} b/${filePath}`,

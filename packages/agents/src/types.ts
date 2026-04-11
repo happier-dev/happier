@@ -2,7 +2,7 @@ export type { ConnectedServiceId } from '@happier-dev/protocol';
 import { SESSION_PERMISSION_MODES, type ConnectedServiceId } from '@happier-dev/protocol';
 import type { AnyAgentRuntimeKindsManifest } from './runtimeKinds.js';
 
-export const AGENT_IDS = ['claude', 'codex', 'opencode', 'gemini', 'auggie', 'qwen', 'kimi', 'kilo', 'kiro', 'customAcp', 'pi', 'copilot'] as const;
+export const AGENT_IDS = ['claude', 'codex', 'opencode', 'gemini', 'auggie', 'qwen', 'kimi', 'kilo', 'kiro', 'customAcp', 'ohMyPi', 'pi', 'copilot'] as const;
 export type AgentId = (typeof AGENT_IDS)[number];
 
 export const PERMISSION_MODES = SESSION_PERMISSION_MODES;
@@ -31,7 +31,7 @@ export type VendorHandoffSupportLevel = 'supported' | 'unsupported' | 'experimen
 export type AgentToolsDelivery = 'native_mcp' | 'shell_bridge' | 'unsupported';
 export type AgentToolsSupportLevel = 'supported' | 'experimental' | 'unsupported';
 export type AgentLocalControlTopology = 'exclusive' | 'shared';
-export type AgentLocalControlAttachStrategy = 'tmux' | 'provider_attach' | 'unsupported';
+export type AgentLocalControlAttachStrategy = 'terminal_host' | 'provider_attach' | 'unsupported';
 export type AgentSessionStorage = Readonly<{
     direct: boolean;
     persisted: boolean;
@@ -58,6 +58,7 @@ export type VendorResumeIdField =
     | 'kimiSessionId'
     | 'kiloSessionId'
     | 'kiroSessionId'
+    | 'ohMyPiSessionId'
     | 'piSessionId'
     | 'copilotSessionId';
 

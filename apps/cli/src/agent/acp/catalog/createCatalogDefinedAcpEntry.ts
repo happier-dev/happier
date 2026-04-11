@@ -6,7 +6,15 @@ import { createCatalogDefinedCliAuthSpec } from './auth/createCatalogDefinedCliA
 import { createCatalogDefinedAcpBackend } from './createCatalogDefinedAcpBackend';
 import { createCatalogDefinedCliDetect } from './createCatalogDefinedCliDetect';
 
-export function createCatalogDefinedAcpEntry(agentId: AgentId): AgentCatalogEntry {
+type CatalogDefinedAcpEntryOverrides = Readonly<{
+  getDirectSessionProviderOps?: AgentCatalogEntry['getDirectSessionProviderOps'];
+  getConnectedServicesSpawnMaterializer?: AgentCatalogEntry['getConnectedServicesSpawnMaterializer'];
+}>;
+
+export function createCatalogDefinedAcpEntry(
+  agentId: AgentId,
+  overrides: CatalogDefinedAcpEntryOverrides = {},
+): AgentCatalogEntry {
   if (!hasBuiltInAcpConfig(agentId)) {
     throw new Error(`Agent '${agentId}' is not registered as a built-in generic ACP agent`);
   }
@@ -24,6 +32,12 @@ export function createCatalogDefinedAcpEntry(agentId: AgentId): AgentCatalogEntr
     },
     getCliDetect: async () => createCatalogDefinedCliDetect(agentId),
     getCliAuthSpec: async () => createCatalogDefinedCliAuthSpec(agentId),
+    ...(overrides.getDirectSessionProviderOps
+      ? { getDirectSessionProviderOps: overrides.getDirectSessionProviderOps }
+      : {}),
+    ...(overrides.getConnectedServicesSpawnMaterializer
+      ? { getConnectedServicesSpawnMaterializer: overrides.getConnectedServicesSpawnMaterializer }
+      : {}),
     vendorResumeSupport: core.resume.vendorResume,
     getAcpBackendFactory: async () => {
       return (opts) => ({ backend: createCatalogDefinedAcpBackend(agentId, opts as never) });

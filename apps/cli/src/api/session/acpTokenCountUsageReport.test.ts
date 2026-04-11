@@ -89,4 +89,31 @@ describe('acp token_count -> usage-report', () => {
     expect((report as any).cost.component).toBe(0.1);
     expect((report as any).cost.polluted).toBeUndefined();
   });
+
+  it('strips semantic cost fields from legacy usage-report payloads', () => {
+    const report = buildUsageReportFromAcpTokenCount({
+      provider: 'claude',
+      sessionId: 'sess6',
+      body: {
+        type: 'token_count',
+        key: 'turn-3',
+        tokens: { total: 12, input: 7, output: 5 },
+        cost: {
+          total: 0.42,
+          reportedUsd: 0.42,
+          estimatedUsd: 0.99,
+          invoiceUsd: 0.2,
+          billingContext: 'api_usage',
+          costSource: 'provider_reported',
+        },
+      },
+    });
+
+    expect(report).toEqual({
+      key: 'turn-3',
+      sessionId: 'sess6',
+      tokens: { total: 12, input: 7, output: 5 },
+      cost: { total: 0.42 },
+    });
+  });
 });

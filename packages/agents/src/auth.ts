@@ -107,6 +107,20 @@ export const AGENT_AUTH_PROBE_CONFIG: Readonly<Record<AgentId, AgentAuthProbeCon
     parser: 'unknown',
     backgroundChecks: 'manual_only',
   },
+  ohMyPi: {
+    agentId: 'ohMyPi',
+    binaryNames: [getProviderCliRuntimeSpec('ohMyPi').binaryName],
+    statusCommand: null,
+    parser: 'piEnvOnly',
+    backgroundChecks: 'safe',
+    envVars: [
+      'OPENAI_CODEX_OAUTH_TOKEN',
+      'OPENAI_API_KEY',
+      'ANTHROPIC_OAUTH_TOKEN',
+      'ANTHROPIC_API_KEY',
+      'GEMINI_API_KEY',
+    ],
+  },
   pi: {
     agentId: 'pi',
     binaryNames: [getProviderCliRuntimeSpec('pi').binaryName],

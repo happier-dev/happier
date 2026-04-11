@@ -15,6 +15,14 @@ describe('resolveRequestedSessionDirectory', () => {
         })).toBe('/tmp/explicit-session-directory');
     });
 
+    it('expands ~ in the explicit requested directory', () => {
+        expect(resolveRequestedSessionDirectory({
+            requestedDirectory: '~/workspace',
+            env: { HOME: '/Users/tester' },
+            cwd: '/private/tmp/explicit-session-directory',
+        })).toBe('/Users/tester/workspace');
+    });
+
     it('consumes the daemon-seeded requested directory from the environment', () => {
         const env: NodeJS.ProcessEnv = {
             [SESSION_REQUESTED_DIRECTORY_ENV]: '/tmp/seeded-session-directory',
@@ -25,6 +33,19 @@ describe('resolveRequestedSessionDirectory', () => {
             env,
             cwd: '/private/tmp/seeded-session-directory',
         })).toBe('/tmp/seeded-session-directory');
+        expect(env[SESSION_REQUESTED_DIRECTORY_ENV]).toBeUndefined();
+    });
+
+    it('expands ~ in the daemon-seeded requested directory from the environment', () => {
+        const env: NodeJS.ProcessEnv = {
+            HOME: '/Users/tester',
+            [SESSION_REQUESTED_DIRECTORY_ENV]: '~/seeded-session-directory',
+        };
+
+        expect(resolveRequestedSessionDirectory({
+            env,
+            cwd: '/private/tmp/seeded-session-directory',
+        })).toBe('/Users/tester/seeded-session-directory');
         expect(env[SESSION_REQUESTED_DIRECTORY_ENV]).toBeUndefined();
     });
 
@@ -45,6 +66,19 @@ describe('resolveRequestedSessionDirectory', () => {
             env,
             cwd: '/tmp/happier-wrapper-cwd',
         })).toBe('/tmp/happier-stack-invoked-cwd');
+    });
+
+    it('expands ~ in the stack-invoked cwd when present', () => {
+        const env: NodeJS.ProcessEnv = {
+            HOME: '/Users/tester',
+            HAPPIER_STACK_INVOKED_CWD: '~/stack-invoked-cwd',
+            PWD: '/tmp/happier-wrapper-cwd',
+        };
+
+        expect(resolveRequestedSessionDirectory({
+            env,
+            cwd: '/tmp/happier-wrapper-cwd',
+        })).toBe('/Users/tester/stack-invoked-cwd');
     });
 
     it('returns null when the requested directory env seed is blank', () => {

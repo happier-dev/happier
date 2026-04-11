@@ -1,5 +1,7 @@
 import { realpathSync } from 'node:fs';
 
+import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
+
 export const SESSION_REQUESTED_DIRECTORY_ENV = 'HAPPIER_SESSION_REQUESTED_DIRECTORY' as const;
 export const STACK_INVOKED_CWD_ENV = 'HAPPIER_STACK_INVOKED_CWD' as const;
 
@@ -41,22 +43,22 @@ export function resolveRequestedSessionDirectory(params?: Readonly<{
     env?: NodeJS.ProcessEnv;
     cwd?: string;
 }>): string {
+    const env = params?.env ?? process.env;
     const explicitDirectory = normalizeNonEmptyString(params?.requestedDirectory);
     if (explicitDirectory) {
-        return explicitDirectory;
+        return expandHomeDirPath(explicitDirectory, env);
     }
 
-    const env = params?.env ?? process.env;
     const cwd = params?.cwd ?? process.cwd();
     const requestedDirectory = consumeRequestedSessionDirectoryFromEnvironment(env);
     if (requestedDirectory) {
-        return requestedDirectory;
+        return expandHomeDirPath(requestedDirectory, env);
     }
 
     const stackInvokedCwd = normalizeNonEmptyString(env[STACK_INVOKED_CWD_ENV]);
     if (stackInvokedCwd) {
-        return stackInvokedCwd;
+        return expandHomeDirPath(stackInvokedCwd, env);
     }
 
-    return resolveLogicalPwd({ env, cwd }) ?? cwd;
+    return expandHomeDirPath(resolveLogicalPwd({ env, cwd }) ?? cwd, env);
 }

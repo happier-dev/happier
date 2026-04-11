@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { AcpBackend } from '../AcpBackend';
 
 describe('AcpBackend sendPrompt usage telemetry', () => {
-  it('emits a token-count message when ACP prompt response includes usage', async () => {
+  it('emits a token-count message when ACP prompt response includes camelCase usage', async () => {
     const backend = new AcpBackend({
       agentName: 'test',
       cwd: process.cwd(),
@@ -17,13 +17,14 @@ describe('AcpBackend sendPrompt usage telemetry', () => {
     (backend as any).connection = {
       prompt: async () => ({
         stopReason: 'end_turn',
+        modelId: 'openai/gpt-5',
         usage: {
-          total_tokens: 10,
-          input_tokens: 7,
-          output_tokens: 3,
-          cached_read_tokens: 2,
-          cached_write_tokens: 1,
-          thought_tokens: 4,
+          totalTokens: 10,
+          inputTokens: 7,
+          outputTokens: 3,
+          cachedReadTokens: 2,
+          cachedWriteTokens: 1,
+          thoughtTokens: 4,
         },
       }),
     };
@@ -32,13 +33,20 @@ describe('AcpBackend sendPrompt usage telemetry', () => {
 
     const tokenCount = emitted.find((m) => m?.type === 'token-count');
     expect(tokenCount).toBeTruthy();
-    expect(tokenCount.tokens).toEqual({
-      total: 10,
-      input: 7,
-      output: 3,
-      cache_read: 2,
-      cache_creation: 1,
-      thought: 4,
+    expect(tokenCount).toEqual({
+      type: 'token-count',
+      key: 'acp-prompt-usage',
+      modelId: 'openai/gpt-5',
+      source: 'acp-prompt-usage',
+      scope: 'turn_delta',
+      tokens: {
+        total: 10,
+        input: 7,
+        output: 3,
+        cache_read: 2,
+        cache_creation: 1,
+        thought: 4,
+      },
     });
   });
 

@@ -59,6 +59,13 @@ function powershellInstall(command: string): ProviderCliInstallCommand {
   };
 }
 
+function bunGlobalAdd(packageName: string): ProviderCliInstallCommand {
+  return {
+    cmd: 'bun',
+    args: ['install', '-g', packageName],
+  };
+}
+
 function cmdInstall(command: string, opts: Readonly<{ requiresAdmin?: boolean; note?: string | null }> = {}): ProviderCliInstallCommand {
   return {
     cmd: 'cmd.exe',
@@ -208,6 +215,27 @@ export const PROVIDER_CLI_RUNTIME_SPECS: Readonly<Record<AgentId, ProviderCliRun
     manualInstallRecipes: null,
     acceptsJavaScriptFileOverride: false,
     docsUrl: null,
+  },
+  ohMyPi: {
+    id: 'ohMyPi',
+    title: 'oh-my-pi CLI',
+    binaryName: 'omp',
+    knownUserBinDirSuffixes: ['.bun/bin'],
+    sourcePreferenceDefault: 'system-first',
+    managedInstall: {
+      kind: 'github_release_binary',
+      githubRepo: 'can1357/oh-my-pi',
+      binaryName: 'omp',
+    },
+    manualInstallKind: 'vendor_recipe',
+    manualInstallRecipes: {
+      darwin: [bunGlobalAdd('@oh-my-pi/pi-coding-agent')],
+      linux: [bunGlobalAdd('@oh-my-pi/pi-coding-agent')],
+      win32: [bunGlobalAdd('@oh-my-pi/pi-coding-agent')],
+    },
+    acceptsJavaScriptFileOverride: true,
+    installGuideUrl: 'https://github.com/can1357/oh-my-pi#via-bun-recommended',
+    docsUrl: 'https://github.com/can1357/oh-my-pi',
   },
   kilo: {
     id: 'kilo',

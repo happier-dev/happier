@@ -41,4 +41,41 @@ describe('createAcpRuntime (status error surfacing)', () => {
     expect(sent.some((msg) => msg.type === 'message' && msg.message.includes('Model not found'))).toBe(true);
     expect(sent.some((msg) => msg.type === 'turn_aborted')).toBe(true);
   });
+
+  it('does not surface abort-like status:error detail as a transcript message', async () => {
+    const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
+
+    const sent: ACPMessageData[] = [];
+    const session = createBasicSessionClientWithOverrides({
+      sendAgentMessage: (_provider, body) => {
+        sent.push(body);
+      },
+    });
+
+    const runtime = createAcpRuntime({
+      provider: 'opencode',
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+    });
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+
+    backend.emit({
+      type: 'status',
+      status: 'error',
+      detail: 'Error: OpenCode session aborted\n    at Object.cancel (/tmp/runtime.ts:10:1)',
+    } satisfies AgentMessage);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(sent.some((msg) => msg.type === 'message' && msg.message.includes('OpenCode session aborted'))).toBe(false);
+    expect(sent.some((msg) => msg.type === 'message' && msg.message.includes('at Object.cancel'))).toBe(false);
+    expect(sent.some((msg) => msg.type === 'turn_aborted')).toBe(true);
+  });
 });
