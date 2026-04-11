@@ -5,6 +5,7 @@ import { commandExists, resolveBunCommand, resolveYarnCommand } from '@happier-d
 
 import { resolveStackBaseDir, resolveStackEnvPath } from '../utils/paths/paths.mjs';
 import { parseArgs } from '../utils/cli/args.mjs';
+import { ensureCliBuilt } from '../utils/proc/pm.mjs';
 import { createRuntimeFingerprint } from '../runtime/shared/runtime_fingerprint.mjs';
 import { resolveStackComponentArtifactDir, resolveStackRuntimePaths } from '../runtime/shared/runtime_paths.mjs';
 import { collectBuildSourceMetadata } from './collect_build_source_metadata.mjs';
@@ -47,6 +48,23 @@ export function assertSelectedBuildPrerequisites({
   }
 }
 
+export async function ensureArtifactSourceInputsReady({
+  selection,
+  repoDir,
+  env = process.env,
+  ensureCliBuiltImpl = ensureCliBuilt,
+}) {
+  if (!selection?.components?.daemon) {
+    return;
+  }
+
+  await ensureCliBuiltImpl(join(repoDir, 'apps', 'cli'), {
+    buildCli: true,
+    quiet: true,
+    env,
+  });
+}
+
 export async function buildStackArtifacts({ rootDir, argv = [], env = process.env }) {
   const { flags } = parseArgs(argv);
   const selection = parseBuildSelection({ argv });
@@ -57,6 +75,11 @@ export async function buildStackArtifacts({ rootDir, argv = [], env = process.en
   assertSelectedBuildPrerequisites({ selection, env });
 
   const sourceMetadata = await collectBuildSourceMetadata({ rootDir, env });
+  await ensureArtifactSourceInputsReady({
+    selection,
+    repoDir: sourceMetadata.repoDir,
+    env,
+  });
   const { baseDir: stackBaseDir } = resolveStackBaseDir(stackName, env);
   const runtimePaths = resolveStackRuntimePaths({ stackBaseDir });
   const retentionPolicy = resolveRuntimeRetentionPolicy({ env });

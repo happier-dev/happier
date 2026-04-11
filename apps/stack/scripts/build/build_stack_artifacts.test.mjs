@@ -117,3 +117,59 @@ test('assertSelectedBuildPrerequisites accepts bun from BUN_INSTALL even when PA
     rmSync(tempRoot, { recursive: true, force: true });
   }
 });
+
+test('ensureArtifactSourceInputsReady refreshes cli dist before daemon artifact builds', async (t) => {
+  assert.equal(typeof buildModule.ensureArtifactSourceInputsReady, 'function');
+  const ensureCliBuiltCalls = [];
+  const ensureCliBuiltMock = async (...args) => {
+    ensureCliBuiltCalls.push(args);
+    return { built: true, reason: 'changed' };
+  };
+
+  await buildModule.ensureArtifactSourceInputsReady({
+    selection: {
+      components: {
+        web: false,
+        server: false,
+        daemon: true,
+      },
+    },
+    repoDir: '/repo',
+    env: { HAPPIER_STACK_CLI_BUILD_MODE: 'auto' },
+    ensureCliBuiltImpl: ensureCliBuiltMock,
+  });
+
+  assert.equal(ensureCliBuiltCalls.length, 1);
+  assert.deepEqual(ensureCliBuiltCalls[0], [
+    join('/repo', 'apps', 'cli'),
+    {
+      buildCli: true,
+      quiet: true,
+      env: { HAPPIER_STACK_CLI_BUILD_MODE: 'auto' },
+    },
+  ]);
+});
+
+test('ensureArtifactSourceInputsReady skips cli dist refresh when daemon artifacts are not selected', async (t) => {
+  assert.equal(typeof buildModule.ensureArtifactSourceInputsReady, 'function');
+  const ensureCliBuiltCalls = [];
+  const ensureCliBuiltMock = async (...args) => {
+    ensureCliBuiltCalls.push(args);
+    return { built: true, reason: 'changed' };
+  };
+
+  await buildModule.ensureArtifactSourceInputsReady({
+    selection: {
+      components: {
+        web: true,
+        server: true,
+        daemon: false,
+      },
+    },
+    repoDir: '/repo',
+    env: {},
+    ensureCliBuiltImpl: ensureCliBuiltMock,
+  });
+
+  assert.equal(ensureCliBuiltCalls.length, 0);
+});

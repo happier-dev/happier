@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, statSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,7 +13,7 @@ function writeJson(path, value) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
-function writeCliCommonWorkspacesStub(cliCommonDir) {
+function writeCliCommonWorkspacesStub(cliCommonDir, { bundlePackageNameField = 'name' } = {}) {
   const workspacesDir = resolve(cliCommonDir, 'dist', 'workspaces');
   mkdirSync(workspacesDir, { recursive: true });
   writeFileSync(resolve(workspacesDir, 'index.js'), `
@@ -43,7 +43,7 @@ export function resolveWorkspaceBundlesFromPackageJson({ repoRoot, hostPackageDi
     if (typeof name !== 'string' || !name.startsWith('@happier-dev/')) continue;
     const short = name.slice('@happier-dev/'.length);
     bundles.push({
-      name,
+      ${bundlePackageNameField}: name,
       srcDir: resolve(repoRoot, 'packages', short),
       destDir: resolve(hostPackageDir, 'node_modules', '@happier-dev', short),
     });
@@ -174,6 +174,7 @@ function createBundleFixture(prefix = 'happy-stack-bundle-workspace-deps-') {
     },
   });
   writeFileSync(resolve(cliCommonDir, 'dist', 'index.js'), 'export const common = 1;\n', 'utf8');
+  writeFileSync(resolve(cliCommonDir, 'dist', 'index.d.ts'), 'export declare const common: number;\n', 'utf8');
   writeCliCommonWorkspacesStub(cliCommonDir);
 
   writeJson(resolve(agentsDir, 'package.json'), {
@@ -189,6 +190,7 @@ function createBundleFixture(prefix = 'happy-stack-bundle-workspace-deps-') {
     },
   });
   writeFileSync(resolve(agentsDir, 'dist', 'index.js'), 'export const agents = 1;\n', 'utf8');
+  writeFileSync(resolve(agentsDir, 'dist', 'index.d.ts'), 'export declare const agents: number;\n', 'utf8');
 
   writeJson(resolve(protocolDir, 'package.json'), {
     name: '@happier-dev/protocol',
@@ -200,6 +202,7 @@ function createBundleFixture(prefix = 'happy-stack-bundle-workspace-deps-') {
     scripts: { postinstall: 'echo should-not-run' },
   });
   writeFileSync(resolve(protocolDir, 'dist', 'index.js'), 'export const protocol = 1;\n', 'utf8');
+  writeFileSync(resolve(protocolDir, 'dist', 'index.d.ts'), 'export declare const protocol: number;\n', 'utf8');
 
   writeJson(resolve(connectionSupervisorDir, 'package.json'), {
     name: '@happier-dev/connection-supervisor',
@@ -211,6 +214,7 @@ function createBundleFixture(prefix = 'happy-stack-bundle-workspace-deps-') {
     scripts: { postinstall: 'echo should-not-run' },
   });
   writeFileSync(resolve(connectionSupervisorDir, 'dist', 'index.js'), 'export const supervisor = 1;\n', 'utf8');
+  writeFileSync(resolve(connectionSupervisorDir, 'dist', 'index.d.ts'), 'export declare const supervisor: number;\n', 'utf8');
 
   writeJson(resolve(releaseRuntimeDir, 'package.json'), {
     name: '@happier-dev/release-runtime',
@@ -222,6 +226,7 @@ function createBundleFixture(prefix = 'happy-stack-bundle-workspace-deps-') {
     scripts: { postinstall: 'echo should-not-run' },
   });
   writeFileSync(resolve(releaseRuntimeDir, 'dist', 'index.js'), 'export const release = 1;\n', 'utf8');
+  writeFileSync(resolve(releaseRuntimeDir, 'dist', 'index.d.ts'), 'export declare const release: number;\n', 'utf8');
 
   return { repoRoot, stackDir, agentsDir, cliCommonDir, connectionSupervisorDir, protocolDir };
 }
@@ -251,6 +256,32 @@ test('bundleWorkspaceDeps copies dist + writes a sanitized package.json without 
 
     const bundledDistPath = resolve(stackDir, 'node_modules', '@happier-dev', 'cli-common', 'dist', 'index.js');
     assert.ok(existsSync(bundledDistPath), 'dist/index.js should be copied to bundled location');
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('bundleWorkspaceDeps records bundled workspace package names in the freshness manifest', async () => {
+  const { repoRoot, stackDir } = createBundleFixture('happy-stack-bundle-workspace-deps-manifest-package-name-');
+  try {
+    writeCliCommonWorkspacesStub(resolve(repoRoot, 'packages', 'cli-common'), { bundlePackageNameField: 'packageName' });
+
+    await bundleWorkspaceDeps({ repoRoot, stackDir });
+
+    const manifest = JSON.parse(
+      readFileSync(resolve(stackDir, 'node_modules', '@happier-dev', '.workspace-bundle-manifest.json'), 'utf8'),
+    );
+
+    assert.deepEqual(
+      manifest.bundles.map((bundle) => bundle.packageName),
+      [
+        '@happier-dev/agents',
+        '@happier-dev/cli-common',
+        '@happier-dev/connection-supervisor',
+        '@happier-dev/protocol',
+        '@happier-dev/release-runtime',
+      ],
+    );
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }
@@ -358,6 +389,203 @@ test('bundleWorkspaceDeps vendors external runtime dependency trees for bundled 
       ).name,
       'dep-b',
     );
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('bundleWorkspaceDeps refreshes the bundle when a vendored runtime dependency is incomplete', async () => {
+  const { repoRoot, stackDir, cliCommonDir } = createBundleFixture('happy-stack-bundle-workspace-deps-refresh-runtime-dep-');
+  try {
+    const depADir = resolve(repoRoot, 'node_modules', 'dep-a');
+    mkdirSync(depADir, { recursive: true });
+
+    writeJson(resolve(cliCommonDir, 'package.json'), {
+      name: '@happier-dev/cli-common',
+      version: '0.0.0',
+      type: 'module',
+      main: './dist/index.js',
+      exports: { '.': { default: './dist/index.js' } },
+      dependencies: {
+        'dep-a': '^1.0.0',
+      },
+    });
+    writeFileSync(resolve(cliCommonDir, 'dist', 'index.js'), 'export const z = 3;\n', 'utf8');
+
+    writeJson(resolve(depADir, 'package.json'), {
+      name: 'dep-a',
+      version: '1.0.0',
+      main: 'index.js',
+    });
+    writeFileSync(resolve(depADir, 'index.js'), 'module.exports = { a: true };\n', 'utf8');
+
+    await bundleWorkspaceDeps({ repoRoot, stackDir });
+
+    const manifestPath = resolve(stackDir, 'node_modules', '@happier-dev', '.workspace-bundle-manifest.json');
+    const vendoredEntryPath = resolve(stackDir, 'node_modules', '@happier-dev', 'cli-common', 'node_modules', 'dep-a', 'index.js');
+    const firstMtimeMs = statSync(manifestPath).mtimeMs;
+
+    unlinkSync(vendoredEntryPath);
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+
+    await bundleWorkspaceDeps({ repoRoot, stackDir });
+
+    assert.equal(existsSync(vendoredEntryPath), true);
+    assert.ok(statSync(manifestPath).mtimeMs > firstMtimeMs);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('bundleWorkspaceDeps refreshes the bundle when a vendored runtime dependency is missing a non-exported runtime file', async () => {
+  const { repoRoot, stackDir, cliCommonDir } = createBundleFixture('happy-stack-bundle-workspace-deps-refresh-runtime-dep-internal-file-');
+  try {
+    const depADir = resolve(repoRoot, 'node_modules', 'dep-a');
+    mkdirSync(resolve(depADir, 'lib'), { recursive: true });
+
+    writeJson(resolve(cliCommonDir, 'package.json'), {
+      name: '@happier-dev/cli-common',
+      version: '0.0.0',
+      type: 'module',
+      main: './dist/index.js',
+      exports: { '.': { default: './dist/index.js' } },
+      dependencies: {
+        'dep-a': '^1.0.0',
+      },
+    });
+    writeFileSync(resolve(cliCommonDir, 'dist', 'index.js'), 'export const z = 3;\n', 'utf8');
+
+    writeJson(resolve(depADir, 'package.json'), {
+      name: 'dep-a',
+      version: '1.0.0',
+      main: 'index.js',
+      exports: { '.': './index.js' },
+    });
+    writeFileSync(resolve(depADir, 'index.js'), "module.exports = require('./lib/internal.js');\n", 'utf8');
+    writeFileSync(resolve(depADir, 'lib', 'internal.js'), 'module.exports = { ok: true };\n', 'utf8');
+
+    await bundleWorkspaceDeps({ repoRoot, stackDir });
+
+    const manifestPath = resolve(stackDir, 'node_modules', '@happier-dev', '.workspace-bundle-manifest.json');
+    const vendoredInternalPath = resolve(
+      stackDir,
+      'node_modules',
+      '@happier-dev',
+      'cli-common',
+      'node_modules',
+      'dep-a',
+      'lib',
+      'internal.js',
+    );
+    const firstMtimeMs = statSync(manifestPath).mtimeMs;
+
+    unlinkSync(vendoredInternalPath);
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+
+    await bundleWorkspaceDeps({ repoRoot, stackDir });
+
+    assert.equal(existsSync(vendoredInternalPath), true);
+    assert.ok(statSync(manifestPath).mtimeMs > firstMtimeMs);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('bundleWorkspaceDeps skips rebundling when the existing bundle is already fresh and complete', async () => {
+  const { repoRoot, stackDir } = createBundleFixture('happy-stack-bundle-workspace-deps-skip-fresh-');
+  try {
+    await bundleWorkspaceDeps({ repoRoot, stackDir });
+
+    const manifestPath = resolve(stackDir, 'node_modules', '@happier-dev', '.workspace-bundle-manifest.json');
+    const firstMtimeMs = statSync(manifestPath).mtimeMs;
+
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+    await bundleWorkspaceDeps({ repoRoot, stackDir });
+
+    assert.equal(statSync(manifestPath).mtimeMs, firstMtimeMs);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('bundleWorkspaceDeps refreshes the bundle when the source dist changes', async () => {
+  const { repoRoot, stackDir, cliCommonDir } = createBundleFixture('happy-stack-bundle-workspace-deps-refresh-source-');
+  try {
+    await bundleWorkspaceDeps({ repoRoot, stackDir });
+
+    const manifestPath = resolve(stackDir, 'node_modules', '@happier-dev', '.workspace-bundle-manifest.json');
+    const bundledCliCommonIndexPath = resolve(stackDir, 'node_modules', '@happier-dev', 'cli-common', 'dist', 'index.js');
+    const firstMtimeMs = statSync(manifestPath).mtimeMs;
+
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+    writeFileSync(resolve(cliCommonDir, 'dist', 'index.js'), 'export const z = 42;\n', 'utf8');
+
+    await bundleWorkspaceDeps({ repoRoot, stackDir });
+
+    assert.match(readFileSync(bundledCliCommonIndexPath, 'utf8'), /42/);
+    assert.ok(statSync(manifestPath).mtimeMs > firstMtimeMs);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('bundleWorkspaceDeps refreshes the bundle when the existing bundled dist is incomplete', async () => {
+  const { repoRoot, stackDir } = createBundleFixture('happy-stack-bundle-workspace-deps-refresh-incomplete-');
+  try {
+    await bundleWorkspaceDeps({ repoRoot, stackDir });
+
+    const manifestPath = resolve(stackDir, 'node_modules', '@happier-dev', '.workspace-bundle-manifest.json');
+    const bundledCliCommonIndexPath = resolve(stackDir, 'node_modules', '@happier-dev', 'cli-common', 'dist', 'index.js');
+    const firstMtimeMs = statSync(manifestPath).mtimeMs;
+
+    unlinkSync(bundledCliCommonIndexPath);
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+
+    await bundleWorkspaceDeps({ repoRoot, stackDir });
+
+    assert.equal(existsSync(bundledCliCommonIndexPath), true);
+    assert.ok(statSync(manifestPath).mtimeMs > firstMtimeMs);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('bundleWorkspaceDeps refreshes the bundle when a bundled workspace is missing a non-exported dist runtime file', async () => {
+  const { repoRoot, stackDir, agentsDir } = createBundleFixture('happy-stack-bundle-workspace-deps-refresh-internal-runtime-file-');
+  try {
+    mkdirSync(resolve(agentsDir, 'dist', 'providers'), { recursive: true });
+    writeFileSync(
+      resolve(agentsDir, 'dist', 'manifest.js'),
+      "import './providers/providerCliRuntime.js';\nexport const manifest = true;\n",
+      'utf8',
+    );
+    writeFileSync(
+      resolve(agentsDir, 'dist', 'providers', 'providerCliRuntime.js'),
+      'export const providerCliRuntime = true;\n',
+      'utf8',
+    );
+
+    await bundleWorkspaceDeps({ repoRoot, stackDir });
+
+    const manifestPath = resolve(stackDir, 'node_modules', '@happier-dev', '.workspace-bundle-manifest.json');
+    const bundledRuntimeFilePath = resolve(
+      stackDir,
+      'node_modules',
+      '@happier-dev',
+      'agents',
+      'dist',
+      'providers',
+      'providerCliRuntime.js',
+    );
+    const firstMtimeMs = statSync(manifestPath).mtimeMs;
+
+    unlinkSync(bundledRuntimeFilePath);
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+
+    await bundleWorkspaceDeps({ repoRoot, stackDir });
+
+    assert.equal(existsSync(bundledRuntimeFilePath), true);
+    assert.ok(statSync(manifestPath).mtimeMs > firstMtimeMs);
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }

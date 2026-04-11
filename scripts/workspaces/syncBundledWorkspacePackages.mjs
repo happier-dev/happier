@@ -1,6 +1,20 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 
+import { vendorBundledPackageRuntimeDependenciesFallback } from './vendorBundledWorkspaceRuntimeDependenciesFallback.mjs';
+
+function stripInternalBundledWorkspaceDependencies(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+
+  const out = {};
+  for (const [name, version] of Object.entries(value)) {
+    if (name.startsWith('@happier-dev/')) continue;
+    out[name] = version;
+  }
+
+  return out;
+}
+
 function collectPackageJsonRelativeFileTargets(value, result) {
   if (typeof value === 'string') {
     if (value.startsWith('./') && !value.includes('*')) {
@@ -75,15 +89,16 @@ function sanitizeBundledPackageJsonFallback(raw) {
     module,
     types,
     exports,
-    dependencies,
+    dependencies: stripInternalBundledWorkspaceDependencies(dependencies),
     peerDependencies,
-    optionalDependencies,
+    optionalDependencies: stripInternalBundledWorkspaceDependencies(optionalDependencies),
     engines,
   };
 }
 
 let sanitizeBundledPackageJsonImpl = sanitizeBundledPackageJsonFallback;
 let readBundledWorkspacePackageNamesImpl = null;
+let vendorBundledPackageRuntimeDependenciesImpl = null;
 
 try {
   const mod = await import('../../packages/cli-common/dist/workspaces/index.js');
@@ -93,6 +108,9 @@ try {
   if (mod && typeof mod.readBundledWorkspacePackageNames === 'function') {
     readBundledWorkspacePackageNamesImpl = mod.readBundledWorkspacePackageNames;
   }
+  if (mod && typeof mod.vendorBundledPackageRuntimeDependencies === 'function') {
+    vendorBundledPackageRuntimeDependenciesImpl = mod.vendorBundledPackageRuntimeDependencies;
+  }
 } catch {
   // Best-effort: local preflight sandboxes may not have `packages/cli-common/dist/**` available.
 }
@@ -100,6 +118,8 @@ try {
 export function sanitizeBundledWorkspacePackageJson(raw) {
   return sanitizeBundledPackageJsonImpl(raw);
 }
+
+export { vendorBundledPackageRuntimeDependenciesFallback };
 
 let syncSequence = 0;
 const DEFAULT_STALE_SWAP_DIR_AGE_MS = 60_000;
@@ -295,6 +315,10 @@ export function syncBundledWorkspacePackages(opts = {}) {
   const writeFile = opts.writeFileSync ?? writeFileSync;
   const syncId = opts.syncId;
   const replaceExisting = opts.replaceExisting !== false;
+  const vendorBundledPackageRuntimeDependencies =
+    typeof opts.vendorBundledPackageRuntimeDependencies === 'function'
+      ? opts.vendorBundledPackageRuntimeDependencies
+      : vendorBundledPackageRuntimeDependenciesImpl ?? vendorBundledPackageRuntimeDependenciesFallback;
   const hostApps = Array.isArray(opts.hostApps) && opts.hostApps.length > 0
     ? opts.hostApps
     : ['cli', 'stack'];
@@ -350,6 +374,10 @@ export function syncBundledWorkspacePackages(opts = {}) {
           destPackageDir,
           packageJsonRaw: raw,
           fsOps: { existsSync: exists, cpSync: cp, mkdirSync: mkdir, statSync },
+        });
+        vendorBundledPackageRuntimeDependencies({
+          srcPackageJsonPath,
+          destPackageDir,
         });
       } catch {
         // Best-effort: keep local bundled deps usable even if package.json sync fails.
