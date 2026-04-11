@@ -193,6 +193,8 @@ const UsageAnalyticsLeaderSchema = z.object({
   key: z.string().trim().min(1),
   label: z.string().trim().min(1).optional(),
   eventCount: z.number().int().min(0),
+  tokens: UsageObservationTokensSchema.optional(),
+  cost: UsageObservationCostSchema.optional(),
 }).strict();
 
 const UsageAnalyticsLeadersSchema = z.object({

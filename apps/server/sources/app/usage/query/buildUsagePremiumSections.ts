@@ -6,6 +6,7 @@ import type {
 } from "@happier-dev/protocol";
 
 import type { UsageMessageStats } from "./loadUsageMessageStatsForQuery";
+import { addUsageCost, addUsageTokens, createEmptyUsageCost, createEmptyUsageTokens } from "../usageMetrics";
 import { resolveEffectiveUsageCostUsd, resolveUsageCostMode, resolveUsageCostPresentationSource } from "./resolveUsageCostMode";
 
 type UsageEventRow = {
@@ -23,6 +24,12 @@ type UsageEventRow = {
 
 type UsageLeaderGroup = NonNullable<UsageAnalyticsQueryResponse["leaders"]>;
 type UsageAnalyticsLeader = NonNullable<NonNullable<UsageLeaderGroup["providers"]>[number]>;
+type UsageAnalyticsLeaderAggregate = UsageAnalyticsLeader & {
+    tokens: UsageObservationTokens;
+    cost: UsageObservationCost;
+    totalTokens: number;
+    effectiveUsd: number;
+};
 type UsageInsights = NonNullable<UsageAnalyticsQueryResponse["insights"]>;
 type UsageActivity = NonNullable<UsageAnalyticsQueryResponse["activity"]>;
 type UsageTimeline = NonNullable<UsageAnalyticsQueryResponse["modelTimeline"]>;
@@ -81,7 +88,7 @@ function buildLeaderList(
     topLimit: number,
     resolveKey: (row: UsageEventRow) => string | null,
 ): UsageAnalyticsLeader[] | undefined {
-    const grouped = new Map<string, UsageAnalyticsLeader & { totalTokens: number; effectiveUsd: number }>();
+    const grouped = new Map<string, UsageAnalyticsLeaderAggregate>();
     const mode = resolveUsageCostMode(undefined);
 
     for (const row of rows) {
@@ -93,12 +100,16 @@ function buildLeaderList(
             key,
             label: key,
             eventCount: 0,
+            tokens: createEmptyUsageTokens(),
+            cost: createEmptyUsageCost(),
             totalTokens: 0,
             effectiveUsd: 0,
-        };
+        } satisfies UsageAnalyticsLeaderAggregate;
         existing.eventCount += 1;
         existing.totalTokens += row.tokens.total;
         existing.effectiveUsd += resolveEffectiveUsageCostUsd(row.cost, mode);
+        existing.tokens = addUsageTokens(existing.tokens, row.tokens);
+        existing.cost = addUsageCost(existing.cost, row.cost);
         grouped.set(key, existing);
     }
 
@@ -287,7 +298,12 @@ function buildTimeline(
     topLimit: number,
     resolveKey: (row: UsageEventRow) => string | null,
 ): UsageTimeline | undefined {
-    const buckets = new Map<number, { bucketStartMs: number; bucketEndMs: number; leaders: Map<string, number> }>();
+    const mode = resolveUsageCostMode(undefined);
+    const buckets = new Map<number, {
+        bucketStartMs: number;
+        bucketEndMs: number;
+        leaders: Map<string, UsageAnalyticsLeaderAggregate>;
+    }>();
 
     for (const row of rows) {
         const key = resolveKey(row);
@@ -298,9 +314,23 @@ function buildTimeline(
         const bucket = buckets.get(bounds.bucketStartMs) ?? {
             bucketStartMs: bounds.bucketStartMs,
             bucketEndMs: bounds.bucketEndMs,
-            leaders: new Map<string, number>(),
+            leaders: new Map<string, UsageAnalyticsLeaderAggregate>(),
         };
-        bucket.leaders.set(key, (bucket.leaders.get(key) ?? 0) + row.tokens.total);
+        const existing = bucket.leaders.get(key) ?? {
+            key,
+            label: key,
+            eventCount: 0,
+            totalTokens: 0,
+            effectiveUsd: 0,
+            tokens: createEmptyUsageTokens(),
+            cost: createEmptyUsageCost(),
+        } satisfies UsageAnalyticsLeaderAggregate;
+        existing.eventCount += 1;
+        existing.totalTokens += row.tokens.total;
+        existing.effectiveUsd += resolveEffectiveUsageCostUsd(row.cost, mode);
+        existing.tokens = addUsageTokens(existing.tokens, row.tokens);
+        existing.cost = addUsageCost(existing.cost, row.cost);
+        bucket.leaders.set(key, existing);
         buckets.set(bounds.bucketStartMs, bucket);
     }
 
@@ -315,13 +345,25 @@ function buildTimeline(
             bucketEndMs: bucket.bucketEndMs,
             leaders: Array.from(bucket.leaders.entries())
                 .sort((left, right) => {
-                    if (right[1] !== left[1]) {
-                        return right[1] - left[1];
+                    if (right[1].totalTokens !== left[1].totalTokens) {
+                        return right[1].totalTokens - left[1].totalTokens;
+                    }
+                    if (right[1].effectiveUsd !== left[1].effectiveUsd) {
+                        return right[1].effectiveUsd - left[1].effectiveUsd;
+                    }
+                    if (right[1].eventCount !== left[1].eventCount) {
+                        return right[1].eventCount - left[1].eventCount;
                     }
                     return left[0].localeCompare(right[0]);
                 })
                 .slice(0, topLimit)
-                .map(([key, _value]) => ({ key, label: key, eventCount: 1 })),
+                .map(([, leader]) => ({
+                    key: leader.key,
+                    label: leader.label,
+                    eventCount: leader.eventCount,
+                    tokens: leader.tokens,
+                    cost: leader.cost,
+                })),
         }));
 }
 

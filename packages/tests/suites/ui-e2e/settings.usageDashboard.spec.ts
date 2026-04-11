@@ -241,7 +241,11 @@ test.describe('ui e2e: usage dashboard', () => {
         'usage-costmode-auto',
         'usage-insights-section',
         'usage-activity-section',
+        'usage-timeline-section',
         'usage-leaders-section',
+        'usage-export-copy-summary',
+        'usage-export-json',
+        'usage-export-share-summary',
         'usage-breakdown-row-provider-anthropic',
         'usage-breakdown-row-model-claude-3.7-sonnet',
         'usage-breakdown-row-provider-openai',
@@ -271,6 +275,10 @@ test.describe('ui e2e: usage dashboard', () => {
     await expect(page.getByTestId('usage-costmode-reported')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByTestId('usage-metric-cost')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByTestId('usage-trend-metric-cost')).toHaveCount(1, { timeout: 60_000 });
+    await expect(page.getByTestId('usage-timeline-section')).toHaveCount(1, { timeout: 60_000 });
+    await expect(page.getByTestId('usage-export-copy-summary')).toHaveCount(1, { timeout: 60_000 });
+    await expect(page.getByTestId('usage-export-json')).toHaveCount(1, { timeout: 60_000 });
+    await expect(page.getByTestId('usage-export-share-summary')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByTestId('usage-focus-clear')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByTestId(`usage-breakdown-row-session-${sessionBeta.sessionId}`)).toHaveCount(0, { timeout: 60_000 });
 
@@ -279,11 +287,13 @@ test.describe('ui e2e: usage dashboard', () => {
       page,
       expectedPathname: `/session/${sessionAlpha.sessionId}/usage`,
       requiredTestIds: [
+        'usage-session-drilldown',
         'usage-costmode-auto',
         `usage-breakdown-row-session-${sessionAlpha.sessionId}`,
       ],
       timeoutMs: 180_000,
     });
+    await expect(page.getByTestId('usage-session-drilldown')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByTestId(`usage-breakdown-row-session-${sessionAlpha.sessionId}`)).toHaveCount(1, { timeout: 60_000 });
   });
 });

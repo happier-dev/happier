@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { ActivityIndicator, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -102,7 +102,12 @@ export const SettingsUsageSummaryStrip = React.memo(function SettingsUsageSummar
             containerStyle={{ overflow: 'visible' }}
         >
             <View testID="settings-usage-summary-strip" style={styles.stripBody}>
-                {errorMessage ? (
+                {isLoading && summary == null ? (
+                    <View style={styles.emptyState}>
+                        <ActivityIndicator size="small" color={theme.colors.accent.blue} />
+                        <Text style={styles.emptyText}>{t('common.loading')}</Text>
+                    </View>
+                ) : errorMessage ? (
                     <View style={styles.errorCard}>
                         <Text style={styles.errorTitle}>{t('usage.summary.title')}</Text>
                         <Text style={styles.errorSubtitle}>{errorMessage}</Text>

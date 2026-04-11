@@ -13,6 +13,9 @@ export function resolveEffectiveUsageCostUsd(cost: UsageObservationCost, mode: U
     if (mode === "estimated") {
         return cost.estimatedUsd;
     }
+    if ((cost.invoiceUsd ?? 0) > 0) {
+        return cost.invoiceUsd ?? 0;
+    }
     if (cost.reportedUsd > 0) {
         return cost.reportedUsd;
     }
@@ -25,6 +28,9 @@ export function resolveUsageCostPresentationSource(cost: UsageObservationCost, m
     }
     if (mode === "estimated") {
         return cost.estimatedUsd > 0 ? "pricing_estimate" : "none";
+    }
+    if ((cost.invoiceUsd ?? 0) > 0) {
+        return "invoice";
     }
     if (cost.reportedUsd > 0) {
         return cost.costSource ?? "provider_reported";

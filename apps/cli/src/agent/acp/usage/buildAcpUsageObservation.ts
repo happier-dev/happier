@@ -11,10 +11,28 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 function normalizeAcpUsageUpdateCost(raw: unknown): unknown {
     const record = asRecord(raw);
     if (!record) return raw;
-    const amount = typeof record.amount === 'number' && Number.isFinite(record.amount) && record.amount >= 0
-        ? record.amount
-        : null;
-    return amount != null ? { total: amount } : raw;
+    const amount =
+        (typeof record.reportedUsd === 'number' && Number.isFinite(record.reportedUsd) && record.reportedUsd >= 0
+            ? record.reportedUsd
+            : null)
+        ?? (typeof record.reported_usd === 'number' && Number.isFinite(record.reported_usd) && record.reported_usd >= 0
+            ? record.reported_usd
+            : null)
+        ?? (typeof record.amount === 'number' && Number.isFinite(record.amount) && record.amount >= 0
+            ? record.amount
+            : null)
+        ?? (typeof record.total === 'number' && Number.isFinite(record.total) && record.total >= 0
+            ? record.total
+            : null);
+    if (amount == null) return raw;
+
+    const { amount: _amount, reportedUsd: _reportedUsd, reported_usd: _reportedUsdSnake, total: _total, ...rest } = record;
+    return {
+        ...rest,
+        reportedUsd: amount,
+        total: amount,
+        costSource: 'provider_reported',
+    };
 }
 
 export function buildAcpUsageUpdateObservation(params: Readonly<{

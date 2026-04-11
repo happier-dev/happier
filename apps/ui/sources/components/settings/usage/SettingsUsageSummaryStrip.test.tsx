@@ -22,6 +22,19 @@ vi.mock('@/components/ui/lists/ItemGroupColumns', () => ({
 }));
 
 describe('SettingsUsageSummaryStrip', () => {
+    it('shows a loading state instead of an empty state while the summary is still loading', async () => {
+        const { SettingsUsageSummaryStrip } = await import('./SettingsUsageSummaryStrip');
+        const screen = await renderScreen(
+            <SettingsUsageSummaryStrip
+                summary={null}
+                isLoading
+            />,
+        );
+
+        expect(screen.getTextContent()).toContain('common.loading');
+        expect(screen.getTextContent()).not.toContain('usage.noData');
+    });
+
     it('uses the canonical ItemGroupColumns layout for the Variant A summary row', async () => {
         const { SettingsUsageSummaryStrip } = await import('./SettingsUsageSummaryStrip');
         const screen = await renderScreen(

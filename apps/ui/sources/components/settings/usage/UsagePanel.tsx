@@ -14,6 +14,7 @@ import {
     type UsageMetric,
 } from '@/sync/api/account/usageAnalytics';
 import { UsageAnalyticsDashboard } from './UsageAnalyticsDashboard';
+import { SessionUsageDrilldownFrame } from './SessionUsageDrilldownFrame';
 
 type UsagePanelProps = {
     sessionId?: string;
@@ -187,26 +188,32 @@ export const UsagePanel: React.FC<UsagePanelProps> = ({ sessionId, initialFilter
     }
 
     return (
-        <UsageAnalyticsDashboard
-            viewModel={viewModel}
-            filters={{ period, metric, costMode, focus }}
-            isRefreshing={loading && usageData != null}
-            errorMessage={errorMessage}
-            onPeriodChange={(nextPeriod) => {
-                setPeriod(nextPeriod);
-            }}
-            onMetricChange={(nextMetric) => {
-                setMetric(nextMetric);
-            }}
-            onCostModeChange={(nextCostMode) => {
-                setCostMode(nextCostMode);
-            }}
-            onFocusChange={(nextFocus) => {
-                setFocus(nextFocus);
-            }}
-            onRetry={() => {
-                setReloadToken((value) => value + 1);
-            }}
-        />
+        <>
+            {sessionId ? (
+                <SessionUsageDrilldownFrame sessionId={sessionId} />
+            ) : null}
+            <UsageAnalyticsDashboard
+                viewModel={viewModel}
+                filters={{ period, metric, costMode, focus }}
+                sessionId={sessionId}
+                isRefreshing={loading && usageData != null}
+                errorMessage={errorMessage}
+                onPeriodChange={(nextPeriod) => {
+                    setPeriod(nextPeriod);
+                }}
+                onMetricChange={(nextMetric) => {
+                    setMetric(nextMetric);
+                }}
+                onCostModeChange={(nextCostMode) => {
+                    setCostMode(nextCostMode);
+                }}
+                onFocusChange={(nextFocus) => {
+                    setFocus(nextFocus);
+                }}
+                onRetry={() => {
+                    setReloadToken((value) => value + 1);
+                }}
+            />
+        </>
     );
 };

@@ -68,6 +68,36 @@ const response: UsageAnalyticsQueryResponse = {
         workspaces: [{ key: 'workspace-a', label: 'Workspace A', eventCount: 3 }],
         engines: [{ key: 'claude:remote', label: 'Claude Remote', eventCount: 3 }],
     },
+    modelTimeline: [
+        {
+            bucketStartMs: 1_700_000_000_000,
+            bucketEndMs: 1_700_086_400_000,
+            leaders: [
+                {
+                    key: 'claude-3.7-sonnet',
+                    label: 'Claude 3.7 Sonnet',
+                    eventCount: 2,
+                    tokens: { input: 80, output: 30, reasoning: 10, cacheRead: 5, cacheWrite: 0, total: 125 },
+                    cost: { reportedUsd: 11, estimatedUsd: 7, currency: 'USD' },
+                },
+            ],
+        },
+    ],
+    engineTimeline: [
+        {
+            bucketStartMs: 1_700_000_000_000,
+            bucketEndMs: 1_700_086_400_000,
+            leaders: [
+                {
+                    key: 'claude:remote',
+                    label: 'Claude Remote',
+                    eventCount: 3,
+                    tokens: { input: 90, output: 30, reasoning: 10, cacheRead: 5, cacheWrite: 0, total: 135 },
+                    cost: { reportedUsd: 12, estimatedUsd: 8, currency: 'USD' },
+                },
+            ],
+        },
+    ],
     messageStats: {
         sessionCount: 2,
         messageCount: 12,
@@ -113,6 +143,9 @@ describe('UsageAnalyticsDashboard', () => {
         expect(screen.findByTestId('usage-insights-section')).toBeTruthy();
         expect(screen.findByTestId('usage-activity-section')).toBeTruthy();
         expect(screen.findByTestId('usage-leaders-section')).toBeTruthy();
+        expect(screen.findByTestId('usage-timeline-section')).toBeTruthy();
+        expect(screen.findByTestId('usage-export-copy-summary')).toBeTruthy();
+        expect(screen.findByTestId('usage-export-json')).toBeTruthy();
         expect(screen.findByTestId('usage-period-7days')).toBeTruthy();
         expect(screen.findByTestId('usage-metric-cost')).toBeTruthy();
         expect(screen.findByTestId('usage-costmode-reported')).toBeTruthy();
@@ -131,6 +164,99 @@ describe('UsageAnalyticsDashboard', () => {
             dimension: 'model',
             key: 'claude-3.7-sonnet',
         }));
+    });
+
+    it('hides misleading reported and estimated cost modes when the legacy fallback only exposes a synthesized total', async () => {
+        const legacyUsage: UsageDataPoint[] = [
+            {
+                timestamp: 1_700_000_000,
+                tokens: { total: 100, input: 80, output: 20 },
+                cost: { total: 1.5, input: 1.0, output: 0.5 },
+                reportCount: 1,
+                providerId: 'anthropic',
+                modelId: 'claude-3.7-sonnet',
+                sessionId: 'session-a',
+                projectKey: 'project-a',
+                workspaceKey: 'workspace-a',
+            },
+        ];
+        const viewModel = buildUsageAnalyticsViewModel(legacyUsage, {
+            period: '7days',
+            metric: 'cost',
+            focus: null,
+            costMode: 'auto',
+        });
+
+        const screen = await renderScreen(React.createElement(UsageAnalyticsDashboard, {
+            viewModel,
+            filters: {
+                period: '7days',
+                metric: 'cost',
+                focus: null,
+                costMode: 'auto',
+            },
+            onPeriodChange: vi.fn(),
+            onMetricChange: vi.fn(),
+            onFocusChange: vi.fn(),
+            onCostModeChange: vi.fn(),
+        }));
+
+        expect(screen.findByTestId('usage-costmode-auto')).toBeTruthy();
+        expect(screen.findAllByTestId('usage-costmode-reported')).toHaveLength(0);
+        expect(screen.findAllByTestId('usage-costmode-estimated')).toHaveLength(0);
+    });
+
+    it('renders a real timeline section for model and engine timelines', async () => {
+        const viewModel = buildUsageAnalyticsViewModel(response, {
+            period: '30days',
+            metric: 'tokens',
+            focus: null,
+            costMode: 'auto',
+        });
+
+        const screen = await renderScreen(React.createElement(UsageAnalyticsDashboard, {
+            viewModel,
+            filters: {
+                period: '30days',
+                metric: 'tokens',
+                focus: null,
+                costMode: 'auto',
+            },
+            onPeriodChange: vi.fn(),
+            onMetricChange: vi.fn(),
+            onFocusChange: vi.fn(),
+            onCostModeChange: vi.fn(),
+        }));
+
+        expect(screen.findByTestId('usage-timeline-section')).toBeTruthy();
+        expect(screen.findByTestId('usage-model-timeline-card')).toBeTruthy();
+        expect(screen.findByTestId('usage-engine-timeline-card')).toBeTruthy();
+    });
+
+    it('exposes copy and JSON export actions for the filtered usage dashboard', async () => {
+        const viewModel = buildUsageAnalyticsViewModel(response, {
+            period: '30days',
+            metric: 'cost',
+            focus: null,
+            costMode: 'reported',
+        });
+
+        const screen = await renderScreen(React.createElement(UsageAnalyticsDashboard, {
+            viewModel,
+            filters: {
+                period: '30days',
+                metric: 'cost',
+                focus: null,
+                costMode: 'reported',
+            },
+            onPeriodChange: vi.fn(),
+            onMetricChange: vi.fn(),
+            onFocusChange: vi.fn(),
+            onCostModeChange: vi.fn(),
+        }));
+
+        expect(screen.findByTestId('usage-export-copy-summary')).toBeTruthy();
+        expect(screen.findByTestId('usage-export-json')).toBeTruthy();
     });
 
     it('does not render legacy bucket fallback rows when only compatibility bucket data is present', async () => {

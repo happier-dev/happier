@@ -8,6 +8,8 @@ import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { t } from '@/text';
 import { UsageBar } from './UsageBar';
 import { UsageChart } from './UsageChart';
+import { UsageExportActions } from './UsageExportActions';
+import { UsageTimelineSection } from './UsageTimelineSection';
 import { UsageToggleChip } from './UsageToggleChip';
 import { formatUsageCurrency } from './formatUsageCurrency';
 import type {
@@ -29,6 +31,7 @@ const Ionicons = SafeIonicons;
 interface UsageAnalyticsDashboardProps {
     viewModel: UsageAnalyticsViewModel;
     filters: UsageFilterState;
+    sessionId?: string;
     isRefreshing?: boolean;
     errorMessage?: string | null;
     onPeriodChange: (period: UsageFilterState['period']) => void;
@@ -64,6 +67,11 @@ const styles = StyleSheet.create((theme) => ({
         elevation: 2,
     },
     chipRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+    },
+    actionRow: {
         flexDirection: 'row',
         flexWrap: 'wrap',
         gap: 8,
@@ -533,6 +541,7 @@ function renderLeadersSection(leaders: UsageAnalyticsLeaderSections): React.Reac
 export const UsageAnalyticsDashboard: React.FC<UsageAnalyticsDashboardProps> = ({
     viewModel,
     filters,
+    sessionId,
     isRefreshing = false,
     errorMessage,
     onPeriodChange,
@@ -564,6 +573,9 @@ export const UsageAnalyticsDashboard: React.FC<UsageAnalyticsDashboardProps> = (
     const focusLabel = viewModel.focus
         ? `${dimensionLabel(viewModel.focus.dimension)} · ${viewModel.focus.label}`
         : null;
+    const displayCostMode = viewModel.availableCostModes.includes(filters.costMode)
+        ? filters.costMode
+        : 'auto';
 
     return (
         <ScrollView style={styles.screen}>
@@ -632,23 +644,34 @@ export const UsageAnalyticsDashboard: React.FC<UsageAnalyticsDashboardProps> = (
                         <UsageToggleChip
                             testID="usage-costmode-auto"
                             label={t('usage.auto')}
-                            selected={filters.costMode === 'auto'}
+                            selected={displayCostMode === 'auto'}
                             accentColor={theme.colors.accent.blue}
                             onPress={() => onCostModeChange('auto')}
                         />
-                        <UsageToggleChip
-                            testID="usage-costmode-reported"
-                            label={t('usage.reported')}
-                            selected={filters.costMode === 'reported'}
-                            accentColor={theme.colors.accent.orange}
-                            onPress={() => onCostModeChange('reported')}
-                        />
-                        <UsageToggleChip
-                            testID="usage-costmode-estimated"
-                            label={t('usage.estimated')}
-                            selected={filters.costMode === 'estimated'}
-                            accentColor={theme.colors.accent.green}
-                            onPress={() => onCostModeChange('estimated')}
+                        {viewModel.availableCostModes.includes('reported') ? (
+                            <UsageToggleChip
+                                testID="usage-costmode-reported"
+                                label={t('usage.reported')}
+                                selected={displayCostMode === 'reported'}
+                                accentColor={theme.colors.accent.orange}
+                                onPress={() => onCostModeChange('reported')}
+                            />
+                        ) : null}
+                        {viewModel.availableCostModes.includes('estimated') ? (
+                            <UsageToggleChip
+                                testID="usage-costmode-estimated"
+                                label={t('usage.estimated')}
+                                selected={displayCostMode === 'estimated'}
+                                accentColor={theme.colors.accent.green}
+                                onPress={() => onCostModeChange('estimated')}
+                            />
+                        ) : null}
+                    </View>
+                    <View style={styles.actionRow}>
+                        <UsageExportActions
+                            viewModel={viewModel}
+                            filters={{ ...filters, costMode: displayCostMode }}
+                            sessionId={sessionId}
                         />
                     </View>
                     {isRefreshing ? (
@@ -668,7 +691,7 @@ export const UsageAnalyticsDashboard: React.FC<UsageAnalyticsDashboardProps> = (
                     <SummaryCard
                         label={t('usage.totalCost')}
                         value={formatCost(viewModel.overview.totalCost, viewModel.costPresentation.currency)}
-                        subtitle={viewModel.costPresentation ? resolveCostModeLabel(viewModel.costPresentation.mode) : viewModel.focus ? viewModel.focus.label : undefined}
+                        subtitle={viewModel.costPresentation ? resolveCostModeLabel(displayCostMode) : viewModel.focus ? viewModel.focus.label : undefined}
                     />
                 </View>
 
@@ -716,6 +739,8 @@ export const UsageAnalyticsDashboard: React.FC<UsageAnalyticsDashboardProps> = (
                 </View>
 
                 {renderActivitySection(viewModel.activity, viewModel.insights)}
+
+                <UsageTimelineSection viewModel={viewModel} />
 
                 {renderLeadersSection(viewModel.leaders)}
 

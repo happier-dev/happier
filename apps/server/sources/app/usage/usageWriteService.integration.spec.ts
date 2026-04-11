@@ -149,6 +149,63 @@ describe("usageWriteService", () => {
         expect(await db.usageEvent.count({ where: { accountId: account.id } })).toBe(1);
     });
 
+    it("persists a stable idempotency key for external-keyed usage events", async () => {
+        const account = await db.account.create({
+            data: { publicKey: "pk-usage-service-idempotency-key" },
+            select: { id: true },
+        });
+        const session = await db.session.create({
+            data: {
+                accountId: account.id,
+                tag: "usage-service-idempotency-key",
+                encryptionMode: "e2ee",
+                metadata: "ciphertext",
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                seq: 0,
+                pendingVersion: 0,
+                pendingCount: 0,
+                active: true,
+            },
+            select: { id: true },
+        });
+
+        const externalKey = "vendor-turn-2";
+        const result = await recordUsageEvent(account.id, {
+            sessionId: session.id,
+            observedAt: 1_714_000_010_000,
+            providerId: "codex",
+            backendMode: "appServer",
+            modelId: "gpt-5-codex",
+            projectKey: null,
+            workspaceId: null,
+            machineId: null,
+            source: "token_count",
+            scope: "session_cumulative",
+            externalKey,
+            turnId: "turn-2",
+            isCumulative: true,
+            tokens: { input: 10, output: 5, reasoning: 1, cacheRead: 0, cacheWrite: 0, total: 16 },
+            cost: { reportedUsd: 0.11, estimatedUsd: 0.09, currency: "USD" },
+            context: { usedTokens: 16, windowTokens: 200000 },
+        });
+
+        expect(result).toMatchObject({ ok: true });
+
+        const rows = await db.$queryRaw<Array<{ idempotencyKey: string | null }>>`
+            SELECT "idempotencyKey"
+            FROM "UsageEvent"
+            WHERE "accountId" = ${account.id}
+              AND "sessionId" = ${session.id}
+              AND "source" = ${"token_count"}
+              AND "externalKey" = ${externalKey}
+        `;
+
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.idempotencyKey).toBe(JSON.stringify([account.id, session.id, "token_count", externalKey]));
+    });
+
     it("persists invoice, billing context, and cost source on usage events", async () => {
         const account = await db.account.create({
             data: { publicKey: "pk-usage-service-cost-metadata" },

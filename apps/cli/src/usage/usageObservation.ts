@@ -230,12 +230,15 @@ function normalizeCostMap(raw: unknown): UsageCostMap | null {
             .filter(([key]) => key !== 'total')
             .reduce((sum, [, value]) => sum + value, 0);
     }
+    const billingContext = record ? asUsageBillingContext(record.billingContext) : null;
+    const costSource = record ? asUsageCostSource(record.costSource) : null;
+    const currency = record ? asNonEmptyString(record.currency) : null;
     const out = {
         ...(normalized as UsageCostMap),
         ...(record ? {
-            ...(asUsageBillingContext(record.billingContext) ? { billingContext: asUsageBillingContext(record.billingContext) } : {}),
-            ...(asUsageCostSource(record.costSource) ? { costSource: asUsageCostSource(record.costSource) } : {}),
-            ...(asNonEmptyString(record.currency) ? { currency: asNonEmptyString(record.currency) ?? undefined } : {}),
+            ...(billingContext ? { billingContext } : {}),
+            ...(costSource ? { costSource } : {}),
+            ...(currency ? { currency } : {}),
         } : {}),
     } satisfies UsageCostMap;
     return out;
@@ -368,14 +371,29 @@ export function buildLegacyUsageReportFromUsageObservation(params: Readonly<{
 }>): UsageReportV1 | null {
     const tokens = getCompatibleLegacyTokens(params.observation);
     if (!tokens) return null;
-    const cost = Object.fromEntries(
-        Object.entries(params.observation.cost ?? {})
-            .filter(([, value]) => typeof value === 'number' && Number.isFinite(value) && value >= 0),
-    ) as UsageNumberMap;
+    const cost = createSafeNumberMap();
+    for (const [key, value] of Object.entries(params.observation.cost ?? {})) {
+        if (
+            key === 'reportedUsd' ||
+            key === 'estimatedUsd' ||
+            key === 'invoiceUsd' ||
+            key === 'billingContext' ||
+            key === 'costSource' ||
+            key === 'currency'
+        ) {
+            continue;
+        }
+        if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) continue;
+        cost[key] = value;
+    }
     return {
         key: params.observation.key ?? `${params.observation.provider}-session`,
         sessionId: params.sessionId,
         tokens,
-        cost: Object.keys(cost).length > 0 ? cost : ({ total: 0 } satisfies UsageNumberMap),
+        cost: Object.keys(cost).length > 0 ? (cost as UsageNumberMap) : (() => {
+            const out = createSafeNumberMap();
+            out.total = 0;
+            return out as UsageNumberMap;
+        })(),
     };
 }

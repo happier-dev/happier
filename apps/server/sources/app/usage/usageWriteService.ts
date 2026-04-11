@@ -68,6 +68,7 @@ function toUsageEventCreateInput(
         source: request.source,
         scope: request.scope,
         externalKey: request.externalKey ?? null,
+        idempotencyKey: buildUsageEventIdempotencyKey(accountId, request),
         turnId: request.turnId ?? null,
         isCumulative: request.isCumulative,
         inputTokens: request.tokens.input,
@@ -86,6 +87,17 @@ function toUsageEventCreateInput(
         contextWindowTokens: request.context?.windowTokens ?? null,
         metadata: request.metadata ?? null,
     };
+}
+
+function buildUsageEventIdempotencyKey(
+    accountId: string,
+    request: Pick<UsageEventIngestRequest, "sessionId" | "source" | "externalKey">,
+): string | null {
+    if (!request.externalKey) {
+        return null;
+    }
+
+    return JSON.stringify([accountId, request.sessionId, request.source, request.externalKey]);
 }
 
 async function ensureSessionOwnedByAccount(
@@ -177,18 +189,16 @@ export async function recordUsageEvent(
         }
 
         if (request.externalKey) {
-            const existing = await tx.usageEvent.findFirst({
+            const idempotencyKey = buildUsageEventIdempotencyKey(accountId, request);
+            const created = await tx.usageEvent.upsert({
                 where: {
-                    accountId,
-                    sessionId: request.sessionId,
-                    source: request.source,
-                    externalKey: request.externalKey,
+                    idempotencyKey: idempotencyKey ?? "",
                 },
+                update: {},
+                create: toUsageEventCreateInput(accountId, request),
                 select: { id: true, createdAt: true },
             });
-            if (existing) {
-                return { ok: true, event: existing };
-            }
+            return { ok: true, event: created };
         }
 
         const created = await tx.usageEvent.create({

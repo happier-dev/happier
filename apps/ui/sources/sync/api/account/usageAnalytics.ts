@@ -107,6 +107,17 @@ export interface UsageAnalyticsLeaderRow {
     eventCount: number;
 }
 
+export interface UsageAnalyticsTimelineLeaderRow extends UsageAnalyticsLeaderRow {
+    totalTokens: number;
+    totalCost: number;
+}
+
+export interface UsageAnalyticsTimelineBucket {
+    bucketStartMs: number;
+    bucketEndMs: number;
+    leaders: UsageAnalyticsTimelineLeaderRow[];
+}
+
 export interface UsageAnalyticsLeaderSections {
     providers: UsageAnalyticsLeaderRow[];
     models: UsageAnalyticsLeaderRow[];
@@ -123,6 +134,9 @@ export interface UsageAnalyticsViewModel {
     insights: UsageAnalyticsInsightsViewModel;
     activity: UsageAnalyticsActivityViewModel;
     leaders: UsageAnalyticsLeaderSections;
+    modelTimeline: UsageAnalyticsTimelineBucket[];
+    engineTimeline: UsageAnalyticsTimelineBucket[];
+    availableCostModes: UsageCostMode[];
     costPresentation: NonNullable<UsageAnalyticsQueryResponse['costPresentation']>;
     filteredUsageCount: number;
     focus: UsageFocus | null;
@@ -163,6 +177,9 @@ const dimensionKeys: Record<UsageDimension, keyof UsageDataPoint> = {
 };
 
 function resolveDisplayCost(cost: ProtocolUsageAnalyticsTotals['cost']): number {
+    if ((cost.invoiceUsd ?? 0) > 0) {
+        return cost.invoiceUsd ?? 0;
+    }
     return cost.reportedUsd > 0 ? cost.reportedUsd : cost.estimatedUsd;
 }
 
@@ -195,9 +212,27 @@ function resolveAnalyticsCost(
 function resolveCostSource(cost: ProtocolUsageAnalyticsTotals['cost'], mode: UsageCostMode): NonNullable<UsageAnalyticsViewModel['costPresentation']>['source'] {
     if (mode === 'reported') return cost.reportedUsd > 0 ? 'provider_reported' : 'none';
     if (mode === 'estimated') return cost.estimatedUsd > 0 ? 'pricing_estimate' : 'none';
+    if ((cost.invoiceUsd ?? 0) > 0) return 'invoice';
     if (cost.reportedUsd > 0) return 'provider_reported_api_equivalent';
     if (cost.estimatedUsd > 0) return 'pricing_estimate';
     return 'none';
+}
+
+function resolveAvailableCostModes(cost: ProtocolUsageAnalyticsTotals['cost'], legacyOnly = false): UsageCostMode[] {
+    const modes: UsageCostMode[] = ['auto'];
+
+    if (legacyOnly) {
+        return modes;
+    }
+
+    if (cost.reportedUsd > 0) {
+        modes.push('reported');
+    }
+    if (cost.estimatedUsd > 0) {
+        modes.push('estimated');
+    }
+
+    return modes;
 }
 
 function resolveEffectiveCost(cost: ProtocolUsageAnalyticsTotals['cost'], mode: UsageCostMode): number {
@@ -214,6 +249,25 @@ function createCostPresentation(
         currency: cost.currency,
         source: resolveCostSource(cost, mode),
     };
+}
+
+function createLegacyCostPresentation(cost: ProtocolUsageAnalyticsTotals['cost']): NonNullable<UsageAnalyticsViewModel['costPresentation']> {
+    return {
+        mode: 'auto',
+        effectiveUsd: cost.reportedUsd > 0 ? cost.reportedUsd : cost.estimatedUsd,
+        currency: cost.currency,
+        source: 'legacy_total_synthesized',
+    };
+}
+
+function resolveResponseCostPresentation(
+    response: UsageAnalyticsQueryResponse,
+    requestedMode: UsageCostMode,
+): NonNullable<UsageAnalyticsViewModel['costPresentation']> {
+    if (response.costPresentation && response.costPresentation.mode === requestedMode) {
+        return response.costPresentation;
+    }
+    return createCostPresentation(response.totals.cost, requestedMode);
 }
 
 function countActiveBuckets(series: readonly UsageAnalyticsSeriesBucket[]): number {
@@ -517,6 +571,44 @@ function buildLeadersFromResponse(response: UsageAnalyticsQueryResponse): UsageA
     };
 }
 
+function mapTimelineLeaderEntry(
+    entry: NonNullable<NonNullable<UsageAnalyticsQueryResponse['modelTimeline']>[number]['leaders']>[number],
+    costPresentation: UsageCostMode | NonNullable<UsageAnalyticsViewModel['costPresentation']>,
+): UsageAnalyticsTimelineLeaderRow {
+    const tokens = entry.tokens ?? {
+        input: 0,
+        output: 0,
+        reasoning: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 0,
+    };
+    const cost = entry.cost ?? {
+        reportedUsd: 0,
+        estimatedUsd: 0,
+        currency: 'USD',
+    };
+
+    return {
+        key: entry.key,
+        label: entry.label ?? entry.key,
+        eventCount: entry.eventCount,
+        totalTokens: tokens.total,
+        totalCost: resolveAnalyticsCost(cost, costPresentation),
+    };
+}
+
+function buildTimelineFromResponse(
+    entries: UsageAnalyticsQueryResponse['modelTimeline'] | UsageAnalyticsQueryResponse['engineTimeline'] | undefined,
+    costPresentation: UsageCostMode | NonNullable<UsageAnalyticsViewModel['costPresentation']>,
+): UsageAnalyticsTimelineBucket[] {
+    return (entries ?? []).map((bucket) => ({
+        bucketStartMs: bucket.bucketStartMs,
+        bucketEndMs: bucket.bucketEndMs,
+        leaders: bucket.leaders.map((entry) => mapTimelineLeaderEntry(entry, costPresentation)),
+    }));
+}
+
 function buildTotalsFromResponse(
     totals: ProtocolUsageAnalyticsTotals,
     series: readonly UsageAnalyticsSeriesBucket[] | undefined,
@@ -790,11 +882,12 @@ export function buildUsageAnalyticsViewModel(
     filters: UsageFilterState,
 ): UsageAnalyticsViewModel {
     if (isUsageAnalyticsQueryResponse(source)) {
-        const costPresentation = source.costPresentation ?? createCostPresentation(source.totals.cost, filters.costMode);
+        const costPresentation = resolveResponseCostPresentation(source, filters.costMode);
         const activity = buildActivityFromResponse(source);
         const leaders = buildLeadersFromResponse(source);
         const insights = buildInsightsFromResponse(source, activity);
         const overview = buildTotalsFromResponse(source.totals, source.series, filters.costMode);
+        const availableCostModes = resolveAvailableCostModes(source.totals.cost);
         return {
             overview,
             trend: buildTrendFromResponse(source.series, filters.costMode),
@@ -802,6 +895,9 @@ export function buildUsageAnalyticsViewModel(
             insights,
             activity,
             leaders,
+            modelTimeline: buildTimelineFromResponse(source.modelTimeline, costPresentation),
+            engineTimeline: buildTimelineFromResponse(source.engineTimeline, costPresentation),
+            availableCostModes,
             costPresentation,
             filteredUsageCount: source.totals.eventCount,
             focus: filters.focus,
@@ -813,11 +909,11 @@ export function buildUsageAnalyticsViewModel(
     const activity = buildActivityFromLegacyUsage(filteredUsage);
     const insights = buildInsightsFromLegacyUsage(filteredUsage, activity);
     const leaders = buildLeadersFromLegacyUsage(filteredUsage);
-    const costPresentation = createCostPresentation({
+    const costPresentation = createLegacyCostPresentation({
         reportedUsd: totals.totalCost,
         estimatedUsd: totals.totalCost,
         currency: 'USD',
-    }, filters.costMode);
+    });
 
     return {
         overview: {
@@ -829,6 +925,13 @@ export function buildUsageAnalyticsViewModel(
         insights,
         activity,
         leaders,
+        modelTimeline: [],
+        engineTimeline: [],
+        availableCostModes: resolveAvailableCostModes({
+            reportedUsd: totals.totalCost,
+            estimatedUsd: totals.totalCost,
+            currency: 'USD',
+        }, true),
         costPresentation,
         breakdowns: {
             providers: buildLegacyRowsForDimension(filteredUsage, 'provider'),
