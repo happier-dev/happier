@@ -15,6 +15,7 @@ const envKeys = [
   'PATH',
   'HAPPIER_HOME_DIR',
   'HAPPIER_GEMINI_PATH',
+  'HAPPIER_OHMYPI_PATH',
   'HAPPIER_JS_RUNTIME_PATH',
   'HAPPIER_MANAGED_NODE_BIN',
   'HAPPIER_NODE_PATH',
@@ -91,6 +92,58 @@ describe('requireProviderCliLaunchSpec', () => {
       resolvedPath: providerPath,
       command: providerPath,
       args: [],
+    });
+  });
+
+  it('wraps bun-shebang provider scripts with the bun runtime instead of node', async () => {
+    const root = await createTempDir('happier-provider-launch-bun-', tmpdir());
+    tempDirs.add(root);
+    const pathDir = join(root, 'bin');
+    await mkdir(pathDir, { recursive: true });
+
+    const providerPath = await createExecutable(
+      pathDir,
+      'omp',
+      '#!/usr/bin/env bun\nconsole.log("ok")\n',
+    );
+    const bunPath = await createExecutable(pathDir, 'bun', '#!/bin/sh\nexit 0\n');
+
+    process.env.PATH = pathDir;
+    delete process.env.HAPPIER_JS_RUNTIME_PATH;
+
+    expect(requireProviderCliLaunchSpec('ohMyPi')).toEqual({
+      source: 'system',
+      resolvedPath: providerPath,
+      command: bunPath,
+      args: [providerPath],
+    });
+  });
+
+  it('wraps direct oh-my-pi Bun TypeScript entrypoints with the Bun binary from the enclosing Bun home', async () => {
+    const root = await createTempDir('happier-provider-launch-ohmypi-bun-home-', tmpdir());
+    tempDirs.add(root);
+    const bunRoot = join(root, '.bun');
+    const cliDir = join(bunRoot, 'install', 'global', 'node_modules', '@oh-my-pi', 'pi-coding-agent', 'src');
+    const bunBinDir = join(bunRoot, 'bin');
+    await mkdir(cliDir, { recursive: true });
+    await mkdir(bunBinDir, { recursive: true });
+
+    const providerPath = await createExecutable(
+      cliDir,
+      'cli.ts',
+      '#!/usr/bin/env bun\nconsole.log("ok")\n',
+    );
+    const bunPath = await createExecutable(bunBinDir, 'bun', '#!/bin/sh\nexit 0\n');
+
+    process.env.PATH = '';
+    process.env.HAPPIER_OHMYPI_PATH = providerPath;
+    delete process.env.HAPPIER_JS_RUNTIME_PATH;
+
+    expect(requireProviderCliLaunchSpec('ohMyPi')).toEqual({
+      source: 'override',
+      resolvedPath: providerPath,
+      command: bunPath,
+      args: [providerPath],
     });
   });
 

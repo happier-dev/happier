@@ -13,6 +13,7 @@ export function buildLaunchAgentPlistXml(params: Readonly<{
   stdoutPath: string;
   stderrPath: string;
   workingDirectory?: string | null;
+  abandonProcessGroup?: boolean;
 }>): string {
   const workingDirectory = String(params.workingDirectory ?? '').trim();
   return buildLaunchdPlistXml({
@@ -22,5 +23,6 @@ export function buildLaunchAgentPlistXml(params: Readonly<{
     stdoutPath: params.stdoutPath,
     stderrPath: params.stderrPath,
     workingDirectory: workingDirectory || undefined,
+    abandonProcessGroup: params.abandonProcessGroup,
   });
 }

@@ -1,6 +1,6 @@
 import type { DoctorSnapshot } from '@/ui/doctorSnapshot';
-import type { PublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
 import type { HappierServiceBackend, HappierServiceTargetMode } from '@happier-dev/cli-common/happierRuntime';
+import type { PublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
 
 export type HappierRuntimeRepairAction =
   | Readonly<{

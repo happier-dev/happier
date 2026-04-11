@@ -53,6 +53,11 @@ function isRetryableRenameError(err: unknown): boolean {
   return code === 'ENOTEMPTY' || code === 'EBUSY' || code === 'EPERM' || code === 'EACCES';
 }
 
+function isMissingPathError(err: unknown): boolean {
+  const code = err && typeof err === 'object' ? Reflect.get(err, 'code') : null;
+  return code === 'ENOENT';
+}
+
 export function sanitizeBundledPackageJson(raw: any): any {
   const {
     name,
@@ -170,8 +175,13 @@ export function atomicReplaceDirSync(params: Readonly<{
         rename(params.destDir, backupDir);
         didRenameDestToBackup = true;
       } catch (error) {
-        if (!isRetryableRenameError(error)) throw error;
-        rmDirSafeSync(params.destDir, { rmSyncImpl: rm });
+        if (isMissingPathError(error)) {
+          // Another process already removed/replaced the destination after our existence check.
+        } else if (!isRetryableRenameError(error)) {
+          throw error;
+        } else {
+          rmDirSafeSync(params.destDir, { rmSyncImpl: rm });
+        }
       }
     }
 

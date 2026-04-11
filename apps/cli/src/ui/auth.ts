@@ -164,6 +164,28 @@ async function applyAutoPublicServerUrlFromTailscaleServeBestEffort(): Promise<v
     }
 }
 
+function rehydrateRelayScopeEnvFromConfiguration(): void {
+    const activeServerId = sanitizeServerIdForFilesystem(configuration.activeServerId ?? '', '');
+    if (activeServerId) {
+        process.env.HAPPIER_ACTIVE_SERVER_ID = activeServerId;
+    }
+
+    const serverUrl = String(configuration.serverUrl ?? '').trim();
+    if (serverUrl) {
+        process.env.HAPPIER_SERVER_URL = serverUrl;
+    }
+
+    const publicServerUrl = String(configuration.publicServerUrl ?? '').trim();
+    if (publicServerUrl) {
+        process.env.HAPPIER_PUBLIC_SERVER_URL = publicServerUrl;
+    }
+
+    const webappUrl = String(configuration.webappUrl ?? '').trim();
+    if (webappUrl) {
+        process.env.HAPPIER_WEBAPP_URL = webappUrl;
+    }
+}
+
 export async function doAuth(): Promise<Credentials | null> {
     // Ink requires raw mode support; in daemon/non-tty contexts we must never render Ink
     // (it will crash with "Raw mode is not supported on the current process.stdin").
@@ -842,6 +864,7 @@ export async function authAndSetupMachineIfNeeded(): Promise<{
     const { machineId } = await ensureMachineIdForCredentials(credentials, { forceNew: newAuth });
 
     logger.debug(`[AUTH] Machine ID: ${machineId}`);
+    rehydrateRelayScopeEnvFromConfiguration();
 
     if (
       shouldAutoStartDaemonAfterAuth({

@@ -338,4 +338,77 @@ describe('happier self release-channel command', () => {
             await rm(homeDir, { recursive: true, force: true });
         }
     });
+
+    it('restarts the system-scoped default-following background service with --mode system', async () => {
+        const homeDir = await mkdtemp(join(tmpdir(), 'happier-self-release-channel-system-restart-'));
+        const previousHome = process.env.HAPPIER_HOME_DIR;
+        const previousArgv = [...process.argv];
+        const restoreTty = setTtyMode(true, true);
+
+        try {
+            process.env.HAPPIER_HOME_DIR = homeDir;
+            process.argv[1] = join(homeDir, 'bin', 'happier');
+
+            await promoteVersionedPayload({
+                componentId: 'happier-cli',
+                processEnv: process.env,
+                releaseRing: 'stable',
+                versionId: '1.0.0',
+                stagedPayloadPath: await createStagedPayload(homeDir, '1.0.0', 'stable-binary'),
+            });
+            await promoteVersionedPayload({
+                componentId: 'happier-cli',
+                processEnv: process.env,
+                releaseRing: 'preview',
+                versionId: '2.0.0',
+                stagedPayloadPath: await createStagedPayload(homeDir, '2.0.0', 'preview-binary'),
+            });
+
+            discoverHappierServicesMock.mockResolvedValue({
+                services: [{
+                    id: 'svc-default-system',
+                    serviceType: 'daemon',
+                    platform: process.platform === 'darwin' || process.platform === 'linux' || process.platform === 'win32' ? process.platform : 'darwin',
+                    backend: process.platform === 'linux' ? 'systemd-system' : process.platform === 'win32' ? 'schtasks-system' : 'launchd',
+                    label: 'happier-default-system',
+                    targetMode: 'default-following',
+                    verification: 'verified',
+                    ring: null,
+                    instanceId: null,
+                    scope: 'system',
+                    definitionPath: '/tmp/happier-default-system',
+                    executablePath: '/tmp/happier',
+                    installed: true,
+                    running: true,
+                }],
+            });
+            spawnHappyCLIMock.mockReturnValue({
+                on: (event: string, cb: (value?: number) => void) => {
+                    if (event === 'close') cb(0);
+                    return undefined;
+                },
+            });
+            promptAnswers.push('y');
+
+            const { handleSelfCliCommand } = await import('./self');
+            await handleSelfCliCommand({
+                args: ['self', 'release-channel', 'use', 'preview'],
+                rawArgv: ['happier', 'self', 'release-channel', 'use', 'preview'],
+                terminalRuntime: null,
+            });
+
+            expect(spawnHappyCLIMock).toHaveBeenCalledWith(
+                process.platform === 'linux' ? ['service', 'restart', '--mode', 'system'] : ['service', 'restart'],
+                expect.objectContaining({
+                    stdio: 'inherit',
+                }),
+            );
+        } finally {
+            restoreTty();
+            if (previousHome == null) delete process.env.HAPPIER_HOME_DIR;
+            else process.env.HAPPIER_HOME_DIR = previousHome;
+            process.argv = previousArgv;
+            await rm(homeDir, { recursive: true, force: true });
+        }
+    });
 });

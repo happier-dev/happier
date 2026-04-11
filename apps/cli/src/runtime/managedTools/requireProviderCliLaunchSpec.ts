@@ -1,7 +1,7 @@
 import type { AgentId } from '@happier-dev/agents';
 import {
   providerCliPathRequiresJavaScriptRuntime,
-  resolveJavaScriptRuntimeCommand,
+  resolveProviderCliJavaScriptRuntimeCommand,
   resolveProviderCliCommand,
   type ProviderCliCommandResolution,
 } from '@happier-dev/cli-common/providers';
@@ -29,6 +29,11 @@ export function resolveProviderCliLaunchSpec(
   });
   if (!resolved) return null;
 
+  const runtimeCommand = resolveProviderCliJavaScriptRuntimeCommand(resolved.command, processEnv, {
+    isBunRuntime: isBun(),
+    currentExecPath: process.execPath,
+  });
+
   if (!providerCliPathRequiresJavaScriptRuntime(resolved.command)) {
     return {
       source: resolved.source,
@@ -37,12 +42,6 @@ export function resolveProviderCliLaunchSpec(
       args: [],
     };
   }
-
-  const runtimeCommand = resolveJavaScriptRuntimeCommand({
-    isBunRuntime: isBun(),
-    processEnv,
-    currentExecPath: process.execPath,
-  });
   if (!runtimeCommand) return null;
 
   return {

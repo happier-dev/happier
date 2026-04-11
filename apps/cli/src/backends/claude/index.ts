@@ -13,6 +13,9 @@ export const agent = {
   getCloudConnectTarget: async () => (await import('@/backends/claude/cloud/connect')).claudeCloudConnect,
   getDaemonSpawnHooks: async () => claudeDaemonSpawnHooks,
   getDirectSessionProviderOps: async () => (await import('@/backends/claude/directSessions/providerOps')).claudeDirectSessionProviderOps,
+  getConnectedServicesSpawnMaterializer: async () =>
+    (await import('@/backends/claude/connectedServices/createClaudeConnectedServicesSpawnMaterializer'))
+      .createClaudeConnectedServicesSpawnMaterializer(),
   vendorResumeSupport: AGENTS_CORE.claude.resume.vendorResume,
   getPreflightSessionControlsProbeAdapter: async () => (await import('@/backends/claude/preflight/claudePreflightModelsProbeAdapter')).claudePreflightModelsProbeAdapter,
   getHeadlessTmuxArgvTransform: async () => (await import('@/terminal/tmux/headlessTmuxArgs')).ensureRemoteStartingModeArgs,

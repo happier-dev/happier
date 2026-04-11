@@ -13,6 +13,9 @@ export const agent = {
   getCliAuthSpec: async () => (await import('@/backends/opencode/cli/auth/opencodeCliAuthSpec')).opencodeCliAuthSpec,
   getDaemonSpawnHooks: async () => opencodeDaemonSpawnHooks,
   getDirectSessionProviderOps: async () => (await import('@/backends/opencode/directSessions/providerOps')).openCodeDirectSessionProviderOps,
+  getConnectedServicesSpawnMaterializer: async () =>
+    (await import('@/backends/opencode/connectedServices/createOpenCodeConnectedServicesSpawnMaterializer'))
+      .createOpenCodeConnectedServicesSpawnMaterializer(),
   getProviderAttachOps: async () => (await import('@/backends/opencode/attach/providerAttachOps')).openCodeProviderAttachOps,
   vendorResumeSupport: AGENTS_CORE.opencode.resume.vendorResume,
   getAcpBackendFactory: async () => {

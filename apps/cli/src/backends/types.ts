@@ -16,6 +16,8 @@ export type { CatalogAgentId, VendorResumeSupportLevel };
 import type { CodexBackendMode } from '@happier-dev/agents';
 import type { InstallableKey } from '@happier-dev/protocol';
 import type { PreflightSessionControlsProbeAdapter } from '@/capabilities/probes/preflightSessionControlsProbeAdapterTypes';
+import type { ConnectedServicesSpawnMaterializer } from './connectedServices/spawnMaterializer';
+export type { ConnectedServicesSpawnMaterializer };
 import type {
   CliAuthMethod,
   CliAuthReason,
@@ -133,6 +135,12 @@ export type AgentCatalogEntry = Readonly<{
    * and expose them through this catalog hook instead of side registries.
    */
   getDirectSessionProviderOps?: () => Promise<DirectSessionProviderOps>;
+  /**
+   * Optional provider-owned connected-services materializer used before spawning the backend.
+   *
+   * This keeps provider-specific auth file/env shaping out of the daemon core.
+   */
+  getConnectedServicesSpawnMaterializer?: () => Promise<ConnectedServicesSpawnMaterializer | null>;
   /**
    * Optional provider-owned attach operations for shared local-control backends.
    *

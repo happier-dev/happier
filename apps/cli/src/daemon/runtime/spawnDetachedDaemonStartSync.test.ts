@@ -38,5 +38,6 @@ describe('spawnDetachedDaemonStartSync', () => {
     expect(spawnMock).toHaveBeenCalledTimes(1);
     const [, , options] = spawnMock.mock.calls[0] as any[];
     expect(options?.env?.HAPPIER_PUBLIC_RELEASE_CHANNEL).toBe('dev');
+    expect(options?.env?.HAPPIER_DAEMON_STARTUP_SOURCE).toBe('manual');
   });
 });

@@ -117,4 +117,52 @@ describe('atomicReplaceDirSync', () => {
     expect(readFileSync(resolve(destDir, tempFileName), 'utf8')).toBe('new');
     expect(existsSync(resolve(destDir, previousFileName))).toBe(false);
   });
+
+  it('continues when the destination disappears after the existence check', () => {
+    rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-atomic-replace-'));
+
+    const destDir = resolve(rootDir, 'apps/cli/node_modules/@happier-dev/protocol');
+    const tempFileName = 'next.txt';
+    const previousFileName = 'previous.txt';
+
+    mkdirSync(destDir, { recursive: true });
+    writeFileSync(resolve(destDir, previousFileName), 'old');
+
+    let stagedDir = '';
+    let existsChecks = 0;
+    let renameCalls = 0;
+
+    atomicReplaceDirSync({
+      destDir,
+      buildInto(tempDir) {
+        stagedDir = tempDir;
+        mkdirSync(tempDir, { recursive: true });
+        writeFileSync(resolve(tempDir, tempFileName), 'new');
+      },
+      fsOps: {
+        existsSync(targetPath) {
+          if (targetPath === destDir) {
+            existsChecks += 1;
+            return existsChecks === 1 ? true : existsSync(targetPath);
+          }
+          return existsSync(targetPath);
+        },
+        renameSync(source, target) {
+          if (source === destDir && target !== destDir && renameCalls === 0) {
+            renameCalls += 1;
+            rmSync(destDir, { recursive: true, force: true });
+            const error = new Error('ENOENT');
+            Reflect.set(error, 'code', 'ENOENT');
+            throw error;
+          }
+
+          return renameSync(source, target);
+        },
+      },
+    });
+
+    expect(renameCalls).toBe(1);
+    expect(readFileSync(resolve(destDir, tempFileName), 'utf8')).toBe('new');
+    expect(existsSync(resolve(destDir, previousFileName))).toBe(false);
+  });
 });

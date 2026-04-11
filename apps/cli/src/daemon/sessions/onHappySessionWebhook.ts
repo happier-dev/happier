@@ -2,14 +2,14 @@ import type { Metadata } from '@/api/types';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 
-import { inferAgentIdFromSessionMetadata, resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
+import { AGENTS_CORE, inferAgentIdFromSessionMetadata, resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 import { findHappyProcessByPid } from '../doctor';
 import type { TrackedSession } from '../types';
-import { hashProcessCommand, writeSessionMarker } from '../sessionRegistry';
+import { hashProcessCommand, listSessionMarkers, writeSessionMarker } from '../sessionRegistry';
 import { buildSessionRunnerRespawnDescriptorV1FromSpawnOptions } from '../processSupervision/sessionRunnerRespawnDescriptor';
 
 const DEFAULT_PARENT_PID_LOOKUP_TIMEOUT_MS = 1000;
@@ -74,6 +74,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
   pidToTrackedSession: Map<number, TrackedSession>;
   pidToAwaiter: Map<number, (session: TrackedSession) => void>;
   findHappyProcessByPidFn?: typeof findHappyProcessByPid;
+  listSessionMarkersFn?: typeof listSessionMarkers;
   writeSessionMarkerFn?: typeof writeSessionMarker;
   getParentPidFn?: (pid: number) => number | null;
 }>): (sessionId: string, sessionMetadata: Metadata) => void {
@@ -81,6 +82,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
     pidToTrackedSession,
     pidToAwaiter,
     findHappyProcessByPidFn = findHappyProcessByPid,
+    listSessionMarkersFn = listSessionMarkers,
     writeSessionMarkerFn = writeSessionMarker,
     getParentPidFn = getParentPid,
   } = params;
@@ -230,6 +232,48 @@ export function createOnHappySessionWebhook(params: Readonly<{
       }
     }
 
+    const inferKnownVendorResumeId = async (): Promise<string | null> => {
+      if (!trackedForPid) return null;
+
+      const agentId = inferAgentIdFromSessionMetadata(normalizedMetadata);
+      const metadataVendorResumeId = resolveVendorResumeIdFromSessionMetadata(agentId, normalizedMetadata);
+      if (metadataVendorResumeId) {
+        trackedForPid.vendorResumeId = metadataVendorResumeId;
+        return metadataVendorResumeId;
+      }
+
+      if (trackedForPid.vendorResumeId) {
+        return trackedForPid.vendorResumeId;
+      }
+
+      const markers = await listSessionMarkersFn().catch(() => []);
+      const existingMarker = markers
+        .filter((marker) => marker.pid === pid)
+        .sort((left, right) => right.updatedAt - left.updatedAt)[0] ?? null;
+      const markerVendorResumeId = existingMarker
+        ? resolveVendorResumeIdFromSessionMetadata(agentId, existingMarker.metadata)
+        : null;
+      if (markerVendorResumeId) {
+        trackedForPid.vendorResumeId = markerVendorResumeId;
+        return markerVendorResumeId;
+      }
+
+      return null;
+    };
+
+    const mergeKnownVendorResumeIdIntoMetadata = (vendorResumeId: string | null): Metadata => {
+      if (!vendorResumeId) return normalizedMetadata;
+      const agentId = inferAgentIdFromSessionMetadata(normalizedMetadata);
+      const resumeConfig = AGENTS_CORE[agentId].resume;
+      const vendorResumeIdField = 'vendorResumeIdField' in resumeConfig ? resumeConfig.vendorResumeIdField ?? null : null;
+      if (!vendorResumeIdField) return normalizedMetadata;
+      if (resolveVendorResumeIdFromSessionMetadata(agentId, normalizedMetadata)) return normalizedMetadata;
+      return {
+        ...normalizedMetadata,
+        [vendorResumeIdField]: vendorResumeId,
+      };
+    };
+
     if (trackedForPid) {
       const agentId = inferAgentIdFromSessionMetadata(normalizedMetadata);
       const vendorResumeId = resolveVendorResumeIdFromSessionMetadata(agentId, normalizedMetadata);
@@ -253,14 +297,16 @@ export function createOnHappySessionWebhook(params: Readonly<{
           ? buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(trackedForPid.spawnOptions)
           : null;
 
+      const persistedMetadata = mergeKnownVendorResumeIdIntoMetadata(await inferKnownVendorResumeId());
+
       await writeSessionMarkerFn({
         pid,
         happySessionId: sessionId,
-        startedBy: normalizedMetadata.startedBy ?? 'terminal',
+        startedBy: persistedMetadata.startedBy ?? 'terminal',
         cwd: normalizedPath,
         processCommandHash,
         processCommand: proc?.command,
-        metadata: normalizedMetadata,
+        metadata: persistedMetadata,
         ...(respawn ? { respawn } : {}),
       });
     })().catch((e) => {

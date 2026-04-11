@@ -11,6 +11,7 @@ import {
   resolveFirstPartyComponentPublicReleaseVariant,
 } from '@happier-dev/cli-common/firstPartyRuntime';
 import type { FirstPartyComponentId } from '@happier-dev/cli-common/firstPartyRuntime';
+import { createStepPrinter } from '@happier-dev/cli-common/output';
 import {
   compareVersions,
   readNpmDistTagVersion,
@@ -191,6 +192,22 @@ function resolveUpdatePackageName(): string {
   });
 }
 
+async function runSelfUpdateStep<T>(
+  steps: ReturnType<typeof createStepPrinter>,
+  label: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  steps.start(label);
+  try {
+    const result = await fn();
+    steps.stop('✓', label);
+    return result;
+  } catch (error) {
+    steps.stop('x', label);
+    throw error;
+  }
+}
+
 async function cmdCheck(argv: string[]): Promise<void> {
   const channel = parseSelfChannel(argv);
   const quiet = argv.includes('--quiet');
@@ -272,6 +289,7 @@ async function cmdCheck(argv: string[]): Promise<void> {
 
 async function cmdUpdate(argv: string[]): Promise<void> {
   const channel = parseSelfChannel(argv);
+  const steps = createStepPrinter({ enabled: true });
   const toArg = (() => {
     const i = argv.indexOf('--to');
     if (i >= 0) return argv[i + 1] ?? '';
@@ -301,11 +319,13 @@ async function cmdUpdate(argv: string[]): Promise<void> {
   const githubToken = resolveBinaryUpdateToken(process.env);
   const tag = resolveBinaryUpdateTag(effective.channel);
   const minisignPubkeyFile = String(process.env.HAPPIER_MINISIGN_PUBKEY ?? '').trim() || undefined;
-  const release = await fetchGitHubReleaseByTag({
-    githubRepo,
-    tag,
-    githubToken,
-    userAgent: 'happier-cli',
+  const release = await runSelfUpdateStep(steps, 'Resolving release metadata', async () => {
+    return await fetchGitHubReleaseByTag({
+      githubRepo,
+      tag,
+      githubToken,
+      userAgent: 'happier-cli',
+    });
   });
   const assets = typeof release === 'object' && release != null && 'assets' in release ? (release as any).assets : null;
   resolveCliBinaryAssetBundleFromReleaseAssets({
@@ -315,26 +335,30 @@ async function cmdUpdate(argv: string[]): Promise<void> {
     preferVersion: effective.preferVersion,
   });
 
-  const result = await updateInstalledCliPayloadFromReleaseAssets({
-    assets,
-    os,
-    arch,
-    happyHomeDir: configuration.happyHomeDir,
-    preferVersion: effective.preferVersion,
-    minisignPubkeyFile,
-    channel: effective.channel,
+  const result = await runSelfUpdateStep(steps, 'Downloading and installing payload', async () => {
+    return await updateInstalledCliPayloadFromReleaseAssets({
+      assets,
+      os,
+      arch,
+      happyHomeDir: configuration.happyHomeDir,
+      preferVersion: effective.preferVersion,
+      minisignPubkeyFile,
+      channel: effective.channel,
+    });
   });
 
   // Refresh cache best-effort.
-  await cmdCheck([
-    'check',
-    '--quiet',
-    ...(effective.channel === 'preview'
-      ? ['--preview']
-      : effective.channel === 'publicdev'
-        ? ['--dev']
-        : []),
-  ]);
+  await runSelfUpdateStep(steps, 'Refreshing update cache', async () => {
+    await cmdCheck([
+      'check',
+      '--quiet',
+      ...(effective.channel === 'preview'
+        ? ['--preview']
+        : effective.channel === 'publicdev'
+          ? ['--dev']
+          : []),
+    ]);
+  });
   console.log(chalk.green(`✓ Updated happier to ${result.updatedTo}`));
   await maybeRunVersionGatedRuntimeMigration({
     fromVersion: result.previousVersionId,

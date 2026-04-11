@@ -70,6 +70,10 @@ export function resolvePublicReleaseRingIdFromCliArgs(params: Readonly<{
 
   const ch = args.find((a) => a === '--channel' || a.startsWith('--channel='));
   if (!ch) {
+    const ringFromEmbeddedMarker = readEmbeddedPublicReleaseRingFromPath(params.invokedPath);
+    if (ringFromEmbeddedMarker) return ringFromEmbeddedMarker;
+    const ringFromPath = resolvePublicReleaseRingIdFromPathHint(params.invokedPath);
+    if (ringFromPath) return ringFromPath;
     const name = normalizeInvokerCandidate(params.invokedPath);
     const ring = resolvePublicReleaseRingIdForCliInvokerName(name);
     if (ring) return ring;

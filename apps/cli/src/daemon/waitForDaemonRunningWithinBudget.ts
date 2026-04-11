@@ -16,10 +16,8 @@ export async function waitForDaemonRunningWithinBudget(params: {
     const sleepMs = Math.min(params.pollMs, remainingMs);
     await sleep(sleepMs);
     remainingMs -= sleepMs;
-    if (remainingMs <= 0) break;
     if (await params.isRunning()) return true;
   }
 
   return false;
 }
-

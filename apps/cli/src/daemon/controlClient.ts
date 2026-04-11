@@ -115,12 +115,12 @@ function resolveDaemonStopWaitForDeathTimeoutMs(): number {
   return Math.max(DEFAULT_DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_MS, drainGraceMs + 2_000);
 }
 
-type DaemonRunningInspection =
+export type DaemonRunningInspection =
   | { status: 'not-running' }
   | { status: 'starting'; state: NonNullable<Awaited<ReturnType<typeof readDaemonState>>> }
   | { status: 'running'; state: NonNullable<Awaited<ReturnType<typeof readDaemonState>>> };
 
-async function inspectDaemonRunningStateAndCleanupStaleState(): Promise<DaemonRunningInspection> {
+export async function inspectDaemonRunningStateAndCleanupStaleState(): Promise<DaemonRunningInspection> {
   const state = await readDaemonState();
   if (!state) {
     return { status: 'not-running' };

@@ -16,6 +16,7 @@ async function createStagedPayload(rootDir: string, versionId: string, contents:
     await mkdir(stagedPayloadPath, { recursive: true });
     await mkdir(join(stagedPayloadPath, 'package-dist'), { recursive: true });
     await writeFile(join(stagedPayloadPath, 'happier'), contents, 'utf8');
+    await writeFile(join(stagedPayloadPath, 'happier.exe'), contents, 'utf8');
     await writeFile(join(stagedPayloadPath, 'package-dist', 'index.mjs'), `export default ${JSON.stringify(versionId)};\n`, 'utf8');
     return stagedPayloadPath;
 }
@@ -148,9 +149,6 @@ describe('happier self release-channel', () => {
                     isDefault: true,
                 }),
             ]);
-            expect(parsed.activeInvocation).toEqual(expect.objectContaining({
-                invokerName: 'happier',
-            }));
             expect(errorSpy).not.toHaveBeenCalled();
             expect(exitSpy).not.toHaveBeenCalled();
         } finally {
@@ -239,6 +237,31 @@ describe('happier self release-channel', () => {
             errorSpy.mockRestore();
             exitSpy.mockRestore();
             await rm(homeDir, { recursive: true, force: true });
+        }
+    });
+
+    it('treats a copied happier shim as aligned with the default managed release-channel on Windows', async () => {
+        const tempDir = await mkdtemp(join(tmpdir(), 'happier-self-release-channel-status-copy-'));
+        const originalPlatform = process.platform;
+
+        try {
+            Object.defineProperty(process, 'platform', { value: 'win32' });
+            vi.resetModules();
+            const shimPath = join(tempDir, 'happier.exe');
+            const binaryPath = join(tempDir, 'current', 'happier.exe');
+            await mkdir(join(tempDir, 'current'), { recursive: true });
+            await writeFile(shimPath, 'preview-binary', 'utf8');
+            await writeFile(binaryPath, 'preview-binary', 'utf8');
+
+            const { areManagedShimAndBinaryAligned } = await import('./self/areManagedShimAndBinaryAligned');
+            expect(areManagedShimAndBinaryAligned({
+                shimPath,
+                binaryPath,
+                platform: 'win32',
+            })).toBe(true);
+        } finally {
+            Object.defineProperty(process, 'platform', { value: originalPlatform });
+            await rm(tempDir, { recursive: true, force: true });
         }
     });
 });

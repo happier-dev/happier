@@ -4,7 +4,10 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { inferPublicReleaseRingIdFromEnvAndArgv } from './publicReleaseChannel';
+import {
+    inferPublicReleaseRingIdFromEnvAndArgv,
+    resolvePublicReleaseRingIdFromCliArgs,
+} from './publicReleaseChannel';
 
 describe('inferPublicReleaseRingIdFromEnvAndArgv', () => {
     it('prefers an embedded payload release ring marker when launcher and path hints are generic', async () => {
@@ -77,5 +80,14 @@ describe('inferPublicReleaseRingIdFromEnvAndArgv', () => {
                 ],
             }),
         ).toBe('publicdev');
+    });
+});
+
+describe('resolvePublicReleaseRingIdFromCliArgs', () => {
+    it('infers public dev from the managed cli-dev current path when no explicit channel flag is provided', () => {
+        expect(resolvePublicReleaseRingIdFromCliArgs({
+            args: ['update'],
+            invokedPath: '/Users/test/.happier/cli-dev/current/happier',
+        })).toBe('publicdev');
     });
 });

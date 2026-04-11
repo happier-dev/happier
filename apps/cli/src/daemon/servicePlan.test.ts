@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
-import { planDaemonServiceInstall } from './service/plan';
+import { planDaemonServiceInstall, planDaemonServiceLifecycle } from './service/plan';
 
 describe('daemon service install plan', () => {
   const envScope = createEnvKeyScope(['PATH']);
@@ -51,6 +51,29 @@ describe('daemon service install plan', () => {
     expect(commandsText).toContain('launchctl bootstrap gui/501');
   });
 
+  it('enables a LaunchAgent before bootstrapping it on darwin install', () => {
+    const plan = planDaemonServiceInstall({
+      platform: 'darwin',
+      channel: 'stable',
+      instanceId: 'company',
+      uid: 501,
+      userHomeDir: '/Users/test',
+      happierHomeDir: '/Users/test/.happier',
+      serverUrl: 'https://api.happier.dev',
+      webappUrl: 'https://app.happier.dev',
+      publicServerUrl: 'https://api.happier.dev',
+      nodePath: '/opt/homebrew/bin/node',
+      entryPath: '/usr/local/lib/node_modules/@happier-dev/cli/dist/index.mjs',
+    });
+
+    expect(plan.commands).toEqual([
+      { cmd: 'launchctl', args: ['bootout', 'gui/501/com.happier.cli.daemon.company'] },
+      { cmd: 'launchctl', args: ['enable', 'gui/501/com.happier.cli.daemon.company'] },
+      { cmd: 'launchctl', args: ['bootstrap', 'gui/501', '/Users/test/Library/LaunchAgents/com.happier.cli.daemon.company.plist'] },
+      { cmd: 'launchctl', args: ['kickstart', '-k', 'gui/501/com.happier.cli.daemon.company'] },
+    ]);
+  });
+
   it('plans channel-scoped LaunchAgent labels for preview (darwin)', () => {
     envScope.patch({ PATH: '/custom/bin' });
     const plan = planDaemonServiceInstall({
@@ -71,6 +94,27 @@ describe('daemon service install plan', () => {
     expect(plan.files[0]?.path).toBe('/Users/test/Library/LaunchAgents/com.happier.cli.daemon.preview.cloud.plist');
     expect(plan.files[0]?.content).toContain('<key>HAPPIER_PUBLIC_RELEASE_CHANNEL</key>');
     expect(plan.files[0]?.content).toContain('<string>preview</string>');
+  });
+
+  it('plans darwin restart with kickstart-only when requested', () => {
+    const plan = planDaemonServiceLifecycle({
+      platform: 'darwin',
+      action: 'restart',
+      channel: 'stable',
+      targetMode: 'default-following',
+      instanceId: 'company',
+      uid: 501,
+      userHomeDir: '/Users/test',
+      happierHomeDir: '/Users/test/.happier',
+      darwinRestartMode: 'kickstart',
+    });
+
+    expect(plan.commands).toEqual([
+      {
+        cmd: 'launchctl',
+        args: ['kickstart', '-k', 'gui/501/com.happier.cli.daemon.default'],
+      },
+    ]);
   });
 
   it('plans a systemd --user unit install (linux)', () => {
@@ -99,6 +143,7 @@ describe('daemon service install plan', () => {
     expect(plan.files[0]?.content).toContain('Environment=HAPPIER_DAEMON_WAIT_FOR_AUTH=1');
     expect(plan.files[0]?.content).toContain('Environment=PATH=');
     expect(plan.files[0]?.content).toContain('/home/test/.local/bin');
+    expect(plan.files[0]?.content).toContain('KillMode=process');
 
     let hasSystemctl = false;
     let systemctlArgsText = '';
@@ -110,28 +155,31 @@ describe('daemon service install plan', () => {
     expect(systemctlArgsText).toContain('--user daemon-reload');
   });
 
-  it('plans a default-following systemd user unit without pinning server or release-channel env', () => {
+  it('plans a default-following systemd user unit without pinning server env', () => {
     const plan = planDaemonServiceInstall({
       platform: 'linux',
       mode: 'user',
+      channel: 'preview',
       targetMode: 'default-following',
-      instanceId: 'cloud',
+      instanceId: 'company',
       userHomeDir: '/home/test',
       happierHomeDir: '/home/test/.happier',
-      serverUrl: 'https://api.happier.dev',
-      webappUrl: 'https://app.happier.dev',
-      publicServerUrl: 'https://api.happier.dev',
-      nodePath: '/usr/bin/happier',
-      entryPath: '',
+      serverUrl: 'https://company.example.test',
+      webappUrl: 'https://app.company.example.test',
+      publicServerUrl: 'https://company.example.test',
+      nodePath: '/usr/bin/node',
+      entryPath: '/usr/lib/node_modules/@happier-dev/cli/dist/index.mjs',
     });
 
     expect(plan.files).toHaveLength(1);
     expect(plan.files[0]?.path).toBe('/home/test/.config/systemd/user/happier-daemon.default.service');
-    expect(plan.files[0]?.content).toContain('ExecStart=/usr/bin/happier daemon start-sync');
     expect(plan.files[0]?.content).toContain('Environment=HAPPIER_DAEMON_SERVICE_TARGET_MODE=default-following');
+    expect(plan.files[0]?.content).toContain('Environment=HAPPIER_DAEMON_STARTUP_SOURCE=background-service');
+    expect(plan.files[0]?.content).toContain('Environment=HAPPIER_DAEMON_SERVICE_LABEL=com.happier.cli.daemon.default');
+    expect(plan.files[0]?.content).toContain('Environment=HAPPIER_PUBLIC_RELEASE_CHANNEL=preview');
     expect(plan.files[0]?.content).not.toContain('Environment=HAPPIER_ACTIVE_SERVER_ID=');
     expect(plan.files[0]?.content).not.toContain('Environment=HAPPIER_SERVER_URL=');
-    expect(plan.files[0]?.content).not.toContain('Environment=HAPPIER_PUBLIC_RELEASE_CHANNEL=');
+    expect(plan.files[0]?.content).not.toContain('Environment=HAPPIER_PUBLIC_SERVER_URL=');
   });
 
   it('plans channel-scoped unit names for dev (linux)', () => {
@@ -179,13 +227,15 @@ describe('daemon service install plan', () => {
     expect(plan.files[0]?.content).toContain('Environment=HAPPIER_HOME_DIR=/home/happier/.happier');
     expect(plan.files[0]?.content).toContain('Environment=PATH=/usr/local/bin:/root/.cargo/bin:/usr/local/sbin:/home/happier/.local/bin:/home/happier/bin');
     expect(plan.files[0]?.content).toContain('Environment=HAPPIER_ACTIVE_SERVER_ID=cloud');
+    expect(plan.files[0]?.content).toContain('KillMode=process');
 
     const systemctlArgsText = plan.commands
       .filter((c) => c.cmd === 'systemctl')
       .map((c) => c.args.join(' '))
       .join('\n');
     expect(systemctlArgsText).toContain('daemon-reload');
-    expect(systemctlArgsText).toContain('enable --now happier-daemon.cloud.service');
+    expect(systemctlArgsText).toContain('enable happier-daemon.cloud.service');
+    expect(systemctlArgsText).toContain('restart happier-daemon.cloud.service');
     expect(systemctlArgsText).not.toContain('--user');
   });
 

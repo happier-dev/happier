@@ -41,6 +41,8 @@ describe('systemTasks protocol exports', () => {
     const setupThisComputerSteps = (protocol as Record<string, unknown>).SETUP_THIS_COMPUTER_SYSTEM_TASK_STEP_IDS_V1;
     expect(Array.isArray(setupThisComputerSteps)).toBe(true);
     expect(setupThisComputerSteps).toContain('setup.thisComputer.resolveRelay');
+    expect(setupThisComputerSteps).toContain('setup.thisComputer.preflight.releaseChannel');
+    expect(setupThisComputerSteps).toContain('setup.thisComputer.preflight.serviceConflict');
   });
 });
 

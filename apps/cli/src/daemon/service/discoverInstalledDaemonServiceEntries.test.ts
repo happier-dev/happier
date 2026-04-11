@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
-import { renderSystemdServiceUnit } from '@happier-dev/cli-common/service';
+import { buildLaunchdPlistXml, renderSystemdServiceUnit } from '@happier-dev/cli-common/service';
 
 import { withTempDir } from '@/testkit/fs/tempDir';
 
@@ -71,6 +71,52 @@ describe('discoverInstalledDaemonServiceEntries', () => {
       });
 
       expect(entries).toEqual([]);
+    });
+  });
+
+  it('accepts legacy darwin launch agents installed by older Happier installers without startup-source metadata', async () => {
+    await withTempDir('happier-discover-service-entry-darwin-legacy-', async (homeDir) => {
+      const servicesDir = join(homeDir, 'Library', 'LaunchAgents');
+      const path = join(servicesDir, 'com.happier.cli.daemon.default.plist');
+      mkdirSync(servicesDir, { recursive: true });
+      writeFileSync(
+        path,
+        buildLaunchdPlistXml({
+          label: 'com.happier.cli.daemon.default',
+          programArgs: [
+            '/Users/tester/.happier/cli/current/happier',
+            'daemon',
+            'start-sync',
+          ],
+          env: {
+            HAPPIER_HOME_DIR: '/Users/tester/.happier',
+            HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
+            HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
+          },
+          stdoutPath: '/tmp/happier-daemon.log',
+          stderrPath: '/tmp/happier-daemon.log',
+        }),
+        'utf-8',
+      );
+
+      const entries = await discoverInstalledDaemonServiceEntries({
+        platform: 'darwin',
+        userHomeDir: homeDir,
+        happierHomeDir: join(homeDir, '.happier'),
+        mode: 'user',
+        serversById: {},
+      });
+
+      expect(entries).toEqual([
+        expect.objectContaining({
+          serverId: 'default',
+          name: 'Default background service',
+          happierHomeDir: '/Users/tester/.happier',
+          targetMode: 'default-following',
+          releaseChannel: 'stable',
+          path,
+        }),
+      ]);
     });
   });
 

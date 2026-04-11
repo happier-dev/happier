@@ -50,6 +50,7 @@ export async function installDaemonService(options: Readonly<{
   entryPath?: string;
   runCommands?: boolean;
   commandFailureMode?: DaemonServiceCommandFailureMode;
+  startExisting?: boolean;
 }> = {}): Promise<void> {
   const platformInput = options.platform ?? process.platform;
   const platform = resolveSupportedPlatform(platformInput);
@@ -125,7 +126,7 @@ export async function installDaemonService(options: Readonly<{
     });
   }
 
-  if (conflictPlan.exactTargetExists) {
+  if (conflictPlan.exactTargetExists && options.startExisting !== true) {
     return;
   }
 

@@ -118,6 +118,61 @@ describe('createOnHappySessionWebhook', () => {
     expect(pidToTrackedSession.get(444)?.vendorResumeId).toBe('vendor-session-444');
   });
 
+  it('preserves a previously discovered provider session id when a later webhook metadata payload is stale', async () => {
+    const tracked: TrackedSession = {
+      pid: 445,
+      startedBy: 'daemon',
+      happySessionId: 'session-daemon-445',
+    };
+    const pidToTrackedSession = new Map<number, TrackedSession>([[445, tracked]]);
+    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
+
+    let markerArgs: any = null;
+    let resolveMarker!: () => void;
+    const markerWritten = new Promise<void>((resolve) => {
+      resolveMarker = resolve;
+    });
+
+    const onWebhook = createOnHappySessionWebhook({
+      pidToTrackedSession,
+      pidToAwaiter,
+      getParentPidFn: () => null,
+      findHappyProcessByPidFn: async () => null,
+      listSessionMarkersFn: async () => [
+        {
+          pid: 445,
+          happySessionId: 'session-daemon-445',
+          happyHomeDir: configuration.happyHomeDir,
+          createdAt: 1,
+          updatedAt: 2,
+          flavor: 'ohMyPi',
+          metadata: {
+            flavor: 'ohMyPi',
+            hostPid: 445,
+            path: '/tmp',
+            ohMyPiSessionId: 'omp-session-existing',
+          },
+        },
+      ],
+      writeSessionMarkerFn: async (args: Record<string, unknown>) => {
+        markerArgs = args;
+        resolveMarker();
+      },
+    } as any);
+
+    onWebhook('session-daemon-445', {
+      ...createMetadata(445, 'daemon'),
+      flavor: 'ohMyPi',
+    });
+    await markerWritten;
+
+    expect(markerArgs.metadata).toEqual(expect.objectContaining({
+      flavor: 'ohMyPi',
+      hostPid: 445,
+      ohMyPiSessionId: 'omp-session-existing',
+    }));
+  });
+
   it('does not resolve daemon awaiter on PID placeholder and resolves on canonical id', () => {
     const tracked: TrackedSession = {
       pid: 9001,

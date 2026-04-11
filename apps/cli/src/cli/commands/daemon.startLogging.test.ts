@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { writeTextFile } from '@/testkit/fs/fileHelpers';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
-import { captureConsoleText } from '@/testkit/logger/captureOutput';
+import { captureConsoleText, captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
 import { waitForDaemonRunningWithinBudget } from '@/daemon/waitForDaemonRunningWithinBudget';
 
 const { checkIfDaemonRunningMock, getLatestDaemonLogMock } = vi.hoisted(() => ({
@@ -90,7 +90,7 @@ describe('happier daemon start output', () => {
     await vi.runAllTimersAsync();
 
     expect(await startedPromise).toBe(false);
-    expect(isRunning).toHaveBeenCalledTimes(1);
+    expect(isRunning).toHaveBeenCalledTimes(2);
 
     vi.useRealTimers();
   }, 20_000);
@@ -135,9 +135,79 @@ describe('happier daemon start output', () => {
       const stdout = await runDaemonStartAndCapture(0);
 
       expect(stdout).toContain('Daemon started successfully');
-      expect(stdout).toContain('Server: http://localhost:4321');
-      expect(stdout).toContain('Server ID: env_test');
+      expect(stdout).toContain('Relay: http://localhost:4321');
+      expect(stdout).toContain('Relay ID: env_test');
       expect(stdout).toContain('Account: account-123');
+    } finally {
+      envScope.restore();
+      await removeTempDir(tmp);
+    }
+  }, 60_000);
+
+  it('prints structured JSON for daemon start --json on success', async () => {
+    vi.useRealTimers();
+
+    const envScope = createEnvKeyScope([
+      'HAPPIER_HOME_DIR',
+      'HAPPIER_SERVER_URL',
+      'HAPPIER_WEBAPP_URL',
+      'HAPPIER_ACTIVE_SERVER_ID',
+      'HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS',
+    ]);
+    const tmp = await createTempDir('happier-daemon-start-json-');
+
+    try {
+      vi.resetModules();
+      envScope.patch({
+        HAPPIER_HOME_DIR: tmp,
+        HAPPIER_SERVER_URL: 'http://localhost:4321',
+        HAPPIER_WEBAPP_URL: 'http://localhost:9999',
+        HAPPIER_ACTIVE_SERVER_ID: 'env_test',
+        HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS: '1',
+      });
+
+      const credDir = join(tmp, 'servers', 'env_test');
+      await writeTextFile(
+        join(credDir, 'access.key'),
+        JSON.stringify(
+          {
+            encryption: { publicKey: Buffer.from('a').toString('base64'), machineKey: Buffer.from('b').toString('base64') },
+            token: buildJwtWithSub('account-123'),
+          },
+          null,
+          2,
+        ),
+      );
+
+      const output = captureStdoutJsonOutput<{
+        ok: boolean;
+        status: string;
+        relay: string;
+        relayId: string;
+        account?: string;
+      }>();
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+        throw new Error(`exit:${code ?? ''}`);
+      }) as any);
+      try {
+        const { handleDaemonCliCommand } = await import('./daemon');
+        await expect(handleDaemonCliCommand({
+          args: ['daemon', 'start', '--json'],
+          rawArgv: [],
+          terminalRuntime: null,
+        })).rejects.toThrow(/exit:0/);
+
+        expect(output.json()).toEqual(expect.objectContaining({
+          ok: true,
+          status: 'started',
+          relay: 'http://localhost:4321',
+          relayId: 'env_test',
+          account: 'account-123',
+        }));
+      } finally {
+        exitSpy.mockRestore();
+        output.restore();
+      }
     } finally {
       envScope.restore();
       await removeTempDir(tmp);

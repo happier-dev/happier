@@ -53,6 +53,7 @@ export function renderSystemdServiceUnit(params: Readonly<{
   workingDirectory?: string;
   env?: Record<string, string>;
   restart?: string;
+  killMode?: 'control-group' | 'mixed' | 'process' | 'none';
   runAsUser?: string;
   stdoutPath?: string;
   stderrPath?: string;
@@ -65,6 +66,10 @@ export function renderSystemdServiceUnit(params: Readonly<{
   const restartPolicy = assertSingleLineSystemdField(
     'restart',
     String(params.restart ?? '').trim() || 'always',
+  );
+  const killMode = assertSingleLineSystemdField(
+    'killMode',
+    String(params.killMode ?? '').trim(),
   );
   const workDir = assertSingleLineSystemdField('workingDirectory', String(params.workingDirectory ?? '').trim());
   const out = assertSingleLineSystemdField('stdoutPath', String(params.stdoutPath ?? '').trim());
@@ -81,6 +86,7 @@ export function renderSystemdServiceUnit(params: Readonly<{
   const envLines = systemdEnvLines(params.env);
   const workDirLine = workDir ? `WorkingDirectory=${workDir}\n` : '';
   const userLine = runAsUser ? `User=${runAsUser}\n` : '';
+  const killModeLine = killMode ? `KillMode=${killMode}\n` : '';
   const outLine = out ? `StandardOutput=append:${out}\n` : '';
   const errLine = err ? `StandardError=append:${err}\n` : '';
   const wantedBy = assertSingleLineSystemdField(
@@ -97,7 +103,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-${workDirLine}${userLine}${envBlock}ExecStart=${execStart}
+${workDirLine}${userLine}${killModeLine}${envBlock}ExecStart=${execStart}
 Restart=${restartPolicy}
 RestartSec=2
 ${outLine}${errLine}[Install]

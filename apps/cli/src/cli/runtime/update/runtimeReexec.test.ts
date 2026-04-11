@@ -79,6 +79,38 @@ describe('maybeReexecToRuntime', () => {
     expect(exit).toHaveBeenCalledWith(0);
   });
 
+  it('forwards the public release channel into the runtime child env', async () => {
+    const exec = vi.fn();
+    const exit = createExitMock();
+    const exists = (path: string) => path.endsWith('/runtime.preview/node_modules/@happier-dev/cli/dist/index.mjs');
+    const readVersion = (path: string) => (path.includes('/runtime.preview/') ? '9.9.9' : '1.0.0');
+
+    await maybeReexecToRuntime({
+      cliRootDir: '/repo/apps/cli',
+      homeDir: '/home/x/.happier',
+      packageName: '@happier-dev/cli',
+      publicReleaseRing: 'preview',
+      argv: ['service', 'install'],
+      env: {},
+      exec,
+      exit,
+      exists,
+      readVersion,
+    });
+
+    expect(exec).toHaveBeenCalledWith(
+      process.execPath,
+      expect.arrayContaining(['/home/x/.happier/runtime.preview/node_modules/@happier-dev/cli/dist/index.mjs', 'service', 'install']),
+      expect.objectContaining({
+        env: expect.objectContaining({
+          HAPPIER_CLI_RUNTIME_REEXEC: '1',
+          HAPPIER_PUBLIC_RELEASE_CHANNEL: 'preview',
+        }),
+      }),
+    );
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
   it('does not exec into runtime when runtime version is not newer', async () => {
     const exec = vi.fn();
     const exists = (path: string) => path.endsWith('/runtime/node_modules/@happier-dev/cli/dist/index.mjs');

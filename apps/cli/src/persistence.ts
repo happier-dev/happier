@@ -6,7 +6,7 @@
 
 import { FileHandle } from 'node:fs/promises'
 import { readFile, writeFile, mkdir, open, unlink, rename, stat, chmod, readdir } from 'node:fs/promises'
-import { chmodSync, existsSync, mkdirSync, writeFileSync, readFileSync, unlinkSync, renameSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs'
 import { constants } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { configuration } from '@/configuration'
@@ -23,6 +23,7 @@ import * as z from 'zod';
 import { decodeBase64, encodeBase64 } from '@/api/encryption';
 import { logger } from '@/ui/logger';
 import { resolveMachineIdForServerFromSettings } from '@/daemon/resolveMachineIdForServerFromSettings';
+import { cleanupAtomicWriteTempFiles, cleanupAtomicWriteTempFilesSync, writeJsonAtomicSync } from '@/utils/fs/writeJsonAtomicSync';
 
 async function bestEffortChmod(path: string, mode: number): Promise<void> {
   if (process.platform === 'win32') return;
@@ -65,14 +66,7 @@ function cleanupLegacyDaemonStateFilesBestEffortSync(): void {
     } catch {
       // best-effort
     }
-    try {
-      const tmpPath = `${legacyPath}.tmp`;
-      if (existsSync(tmpPath)) {
-        unlinkSync(tmpPath);
-      }
-    } catch {
-      // best-effort
-    }
+    cleanupAtomicWriteTempFilesSync(legacyPath);
   }
 }
 
@@ -85,14 +79,7 @@ async function cleanupLegacyDaemonStateFilesBestEffort(): Promise<void> {
     } catch {
       // best-effort
     }
-    try {
-      const tmpPath = `${legacyPath}.tmp`;
-      if (existsSync(tmpPath)) {
-        await unlink(tmpPath);
-      }
-    } catch {
-      // best-effort
-    }
+    await cleanupAtomicWriteTempFiles(legacyPath);
   }
 }
 
@@ -806,42 +793,8 @@ export async function readDaemonState(): Promise<DaemonLocallyPersistedState | n
  * Write daemon state to local file (synchronously for atomic operation)
  */
 export function writeDaemonState(state: DaemonLocallyPersistedState): void {
-  const dir = dirname(configuration.daemonStateFile);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-  const tmpPath = `${configuration.daemonStateFile}.tmp`;
-  try {
-    writeFileSync(tmpPath, JSON.stringify(state, null, 2), { encoding: 'utf-8', mode: 0o600 });
-    try {
-      renameSync(tmpPath, configuration.daemonStateFile);
-    } catch (e) {
-      const err = e as NodeJS.ErrnoException;
-      // On Windows, renameSync may fail if destination exists.
-      if (err?.code === 'EEXIST' || err?.code === 'EPERM') {
-        try {
-          unlinkSync(configuration.daemonStateFile);
-        } catch {
-          // ignore unlink failure (e.g. ENOENT)
-        }
-        renameSync(tmpPath, configuration.daemonStateFile);
-      } else {
-        throw e;
-      }
-    }
-    bestEffortChmodSync(configuration.daemonStateFile, 0o600)
-    cleanupLegacyDaemonStateFilesBestEffortSync();
-  } catch (e) {
-    // Best-effort cleanup to avoid leaving behind orphan tmp files on failures like disk full.
-    try {
-      if (existsSync(tmpPath)) {
-        unlinkSync(tmpPath);
-      }
-    } catch {
-      // ignore cleanup failure
-    }
-    throw e;
-  }
+  writeJsonAtomicSync(configuration.daemonStateFile, state);
+  cleanupLegacyDaemonStateFilesBestEffortSync();
 }
 
 /**
@@ -851,10 +804,7 @@ export async function clearDaemonState(): Promise<void> {
   if (existsSync(configuration.daemonStateFile)) {
     await unlink(configuration.daemonStateFile);
   }
-  const tmpPath = `${configuration.daemonStateFile}.tmp`;
-  if (existsSync(tmpPath)) {
-    await unlink(tmpPath).catch(() => {});
-  }
+  await cleanupAtomicWriteTempFiles(configuration.daemonStateFile);
   await cleanupLegacyDaemonStateFilesBestEffort();
   // Also clean up lock file if it exists (for stale cleanup)
   if (existsSync(configuration.daemonLockFile)) {

@@ -13,6 +13,7 @@ describe('daemon service (darwin) plist', () => {
       },
       stdoutPath: '/Users/test/.happier/logs/daemon-service.out.log',
       stderrPath: '/Users/test/.happier/logs/daemon-service.err.log',
+      abandonProcessGroup: true,
       workingDirectory: '/tmp',
     });
 
@@ -24,6 +25,8 @@ describe('daemon service (darwin) plist', () => {
     expect(xml).toContain('<string>start-sync</string>');
     expect(xml).toContain('<key>RunAtLoad</key>');
     expect(xml).toContain('<key>KeepAlive</key>');
+    expect(xml).toContain('<key>AbandonProcessGroup</key>');
+    expect(xml).toContain('<true/>');
     expect(xml).toContain('<key>HAPPIER_NO_BROWSER_OPEN</key>');
   });
 

@@ -302,4 +302,54 @@ describe('daemon state canonicalization', () => {
             expect(existsSync(legacyPath)).toBe(false);
         });
     });
+
+    it('uses a unique temp file per daemon state write to avoid cross-write corruption during restarts', async () => {
+        await withTempDir('happier-cli-daemon-state-unique-tmp-', async (homeDir) => {
+            const writeFileSyncSpy = vi.fn();
+
+            vi.resetModules();
+            envScope.patch({
+                HAPPIER_HOME_DIR: homeDir,
+                HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+            });
+
+            vi.doMock('node:fs', async (importOriginal) => {
+                const actual = await importOriginal<typeof import('node:fs')>();
+                return {
+                    ...actual,
+                    writeFileSync: (...args: Parameters<typeof actual.writeFileSync>) => {
+                        writeFileSyncSpy(...args);
+                        return actual.writeFileSync(...args);
+                    },
+                };
+            });
+
+            const [{ configuration }, { writeDaemonState }] = await Promise.all([
+                import('./configuration'),
+                import('./persistence'),
+            ]);
+
+            writeDaemonState({
+                pid: 123,
+                httpPort: 5173,
+                startedAt: Date.now(),
+                startedWithCliVersion: '0.0.0-a',
+            });
+
+            writeDaemonState({
+                pid: 123,
+                httpPort: 5173,
+                startedAt: Date.now(),
+                startedWithCliVersion: '0.0.0-b',
+                lastHeartbeatAt: Date.now(),
+            });
+
+            const tempWrites = writeFileSyncSpy.mock.calls
+                .map((call) => call[0])
+                .filter((value): value is string => typeof value === 'string' && value.startsWith(`${configuration.daemonStateFile}.tmp`));
+
+            expect(tempWrites.length).toBeGreaterThanOrEqual(2);
+            expect(tempWrites[tempWrites.length - 1]).not.toBe(tempWrites[tempWrites.length - 2]);
+        });
+    });
 });

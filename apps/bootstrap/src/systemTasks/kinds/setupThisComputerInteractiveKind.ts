@@ -2,6 +2,7 @@ import {
   applyBackgroundServiceSetupGuidance,
   type BackgroundServiceSetupGuidanceCancellationReason,
   createLocalHappierJsonExecutor,
+  ensureLocalFirstPartyComponentCommand,
   formatBackgroundServiceReleaseChannelSwitchPrompt,
   formatBackgroundServiceReplacementPrompt,
   readBackgroundServiceSetupGuidance,
@@ -54,6 +55,7 @@ export type SetupThisComputerInteractiveParams = Readonly<{
 }>;
 
 export type SetupThisComputerInteractiveDeps = Readonly<{
+  ensureLocalHappierTools: (params: Readonly<{ releaseChannel?: PublicReleaseRingId }>) => Promise<void>;
   readActiveRelayProfile: (params: Readonly<{ releaseRing?: PublicReleaseRingId }>) => Promise<SetupThisComputerRelayProfile>;
   createRecipeExecutor: (params: Readonly<{ releaseRing?: PublicReleaseRingId }>) => SetupMachineRecipeExecutor;
   readBackgroundServiceSetupGuidance: (params: Readonly<{
@@ -73,6 +75,12 @@ export function createSetupThisComputerInteractiveTaskKind(
     async run(ctx) {
       const parsed = parseSetupThisComputerInteractiveParams(ctx.params);
       const releaseRing = parsed.channel ? normalizeBootstrapChannel(parsed.channel).releaseChannel : undefined;
+      ctx.emit({
+        type: 'progress',
+        stepId: 'setup.thisComputer.ensureCli',
+        message: 'Installing Happier tools',
+      });
+      await deps.ensureLocalHappierTools({ releaseChannel: releaseRing });
       ctx.emit({
         type: 'progress',
         stepId: 'setup.thisComputer.resolveRelay',
@@ -240,6 +248,18 @@ function createSetupThisComputerInteractiveDeps(
   overrides: Partial<SetupThisComputerInteractiveDeps>,
 ): SetupThisComputerInteractiveDeps {
   return {
+    ensureLocalHappierTools: async ({ releaseChannel }) => {
+      await ensureLocalFirstPartyComponentCommand({
+        componentId: 'happier-cli',
+        processEnv: process.env,
+        releaseRing: releaseChannel,
+      });
+      await syncInstalledFirstPartyShims({
+        componentId: 'happier-cli',
+        channel: releaseChannel,
+        processEnv: process.env,
+      });
+    },
     readActiveRelayProfile: async ({ releaseRing }) => {
       const executor = createLocalHappierJsonExecutor({ releaseRing });
       const parsed = await executor.runHappierJson(['server', 'current', '--json']);

@@ -31,12 +31,14 @@ test('renderSystemdServiceUnit includes User= when runAsUser is set', () => {
     workingDirectory: '%h',
     env: { PORT: '3005' },
     restart: 'always',
+    killMode: 'process',
     runAsUser: 'happier',
     stdoutPath: '/var/log/happier/test.out.log',
     stderrPath: '/var/log/happier/test.err.log',
     wantedBy: 'multi-user.target',
   });
   assert.match(unit, /\nUser=happier\n/);
+  assert.match(unit, /\nKillMode=process\n/);
   assert.match(unit, /Environment=PORT=3005/);
   assert.match(unit, /WantedBy=multi-user\.target/);
 });
@@ -142,6 +144,19 @@ test('buildLaunchdPlistXml uses KeepAlive SuccessfulExit=false by default', () =
   });
   assert.match(plist, /<key>KeepAlive<\/key>\s*<dict>/);
   assert.match(plist, /<key>SuccessfulExit<\/key>\s*<false\/>/);
+});
+
+test('buildLaunchdPlistXml optionally abandons process-group cleanup', () => {
+  const plist = buildLaunchdPlistXml({
+    label: 'dev.happier.stack',
+    programArgs: ['/usr/bin/true'],
+    env: {},
+    stdoutPath: '/tmp/out.log',
+    stderrPath: '/tmp/err.log',
+    workingDirectory: '/tmp',
+    abandonProcessGroup: true,
+  });
+  assert.match(plist, /<key>AbandonProcessGroup<\/key>\s*<true\/>/);
 });
 
 test('buildServiceDefinition writes expected service definition paths', () => {

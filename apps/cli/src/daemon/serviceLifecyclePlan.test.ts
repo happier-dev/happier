@@ -35,11 +35,21 @@ describe('daemon service lifecycle planning', () => {
   });
 
   it.each([
-    ['stop', 'launchctl bootout gui/501/com.happier.cli.daemon.cloud'],
-    ['start', 'launchctl bootstrap gui/501 /Users/test/Library/LaunchAgents/com.happier.cli.daemon.cloud.plist'],
-    ['restart', 'launchctl kickstart -k gui/501/com.happier.cli.daemon.cloud'],
-    ['status', 'launchctl list com.happier.cli.daemon.cloud'],
-  ] as const)('plans darwin %s command set', (action, expectedLine) => {
+    ['stop', ['launchctl bootout gui/501/com.happier.cli.daemon.cloud']],
+    ['start', [
+      'launchctl bootout gui/501/com.happier.cli.daemon.cloud',
+      'launchctl enable gui/501/com.happier.cli.daemon.cloud',
+      'launchctl bootstrap gui/501 /Users/test/Library/LaunchAgents/com.happier.cli.daemon.cloud.plist',
+      'launchctl kickstart -k gui/501/com.happier.cli.daemon.cloud',
+    ]],
+    ['restart', [
+      'launchctl bootout gui/501/com.happier.cli.daemon.cloud',
+      'launchctl enable gui/501/com.happier.cli.daemon.cloud',
+      'launchctl bootstrap gui/501 /Users/test/Library/LaunchAgents/com.happier.cli.daemon.cloud.plist',
+      'launchctl kickstart -k gui/501/com.happier.cli.daemon.cloud',
+    ]],
+    ['status', ['launchctl print gui/501/com.happier.cli.daemon.cloud']],
+  ] as const)('plans darwin %s command set', (action, expectedLines) => {
     const plan = planDaemonServiceLifecycle({
       platform: 'darwin',
       action,
@@ -48,8 +58,16 @@ describe('daemon service lifecycle planning', () => {
       userHomeDir: '/Users/test',
       uid: 501,
     });
-    const lines = plan.commands.map((c) => `${c.cmd} ${c.args.join(' ')}`).join('\n');
-    expect(lines).toContain(expectedLine);
+    const lines = plan.commands.map((c) => `${c.cmd} ${c.args.join(' ')}`);
+    for (const expectedLine of expectedLines) {
+      expect(lines).toContain(expectedLine);
+    }
+    if (action === 'start' || action === 'restart') {
+      const enableIndex = lines.indexOf('launchctl enable gui/501/com.happier.cli.daemon.cloud');
+      const bootstrapIndex = lines.indexOf('launchctl bootstrap gui/501 /Users/test/Library/LaunchAgents/com.happier.cli.daemon.cloud.plist');
+      expect(enableIndex).toBeGreaterThanOrEqual(0);
+      expect(bootstrapIndex).toBeGreaterThan(enableIndex);
+    }
   });
 
   it('returns no darwin commands when uid is unavailable', () => {
@@ -61,5 +79,24 @@ describe('daemon service lifecycle planning', () => {
       userHomeDir: '/Users/test',
     });
     expect(plan.commands).toEqual([]);
+  });
+
+  it('plans darwin start with kickstart-only when requested', () => {
+    const plan = planDaemonServiceLifecycle({
+      platform: 'darwin',
+      action: 'start',
+      channel: 'stable',
+      instanceId: 'cloud',
+      userHomeDir: '/Users/test',
+      uid: 501,
+      darwinStartMode: 'kickstart',
+    });
+
+    expect(plan.commands).toEqual([
+      {
+        cmd: 'launchctl',
+        args: ['kickstart', '-k', 'gui/501/com.happier.cli.daemon.cloud'],
+      },
+    ]);
   });
 });

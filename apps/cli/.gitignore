@@ -41,3 +41,6 @@ happy-coder-*.tgz
 
 # npm auth token (never commit)
 .npmrc
+
+# Local publish/cache directories
+.npm-cache/

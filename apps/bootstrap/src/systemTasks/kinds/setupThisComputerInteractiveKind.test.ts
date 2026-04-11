@@ -61,6 +61,58 @@ function createRecipeExecutor(invocations: string[]): SetupMachineRecipeExecutor
 }
 
 describe('createSetupThisComputerInteractiveTaskKind', () => {
+  it('ensures the local Happier tools before running the rest of setup', async () => {
+    const invocations: string[] = [];
+    const kind = createSetupThisComputerInteractiveTaskKind({
+      ensureLocalHappierTools: async ({ releaseChannel }) => {
+        invocations.push(`ensureLocalHappierTools:${releaseChannel}`);
+      },
+      readActiveRelayProfile: async () => ({
+        serverUrl: 'https://relay.example.test',
+        webappUrl: 'https://app.example.test',
+        localServerUrl: null,
+      }),
+      createRecipeExecutor: () => createRecipeExecutor(invocations),
+      readBackgroundServiceSetupGuidance: async () => ({
+        targetReleaseChannel: 'preview',
+        targetServerUrl: 'https://relay.example.test',
+        currentDefaultReleaseChannel: 'preview',
+        managedReleaseChannels: [],
+        conflictingServices: [],
+        exactDefaultServiceExists: true,
+        shouldOfferDefaultReleaseChannelSwitch: false,
+        shouldPromptForServiceReplacement: false,
+      }),
+      switchDefaultReleaseChannel: async () => undefined,
+      uninstallExistingDaemonServices: async () => undefined,
+    });
+
+    const runner = createSystemTasksRunner({
+      kinds: {
+        'setup.thisComputer.v1': kind,
+      },
+    });
+
+    await runner.start({
+      taskId: 'setup-task-tools',
+      kind: 'setup.thisComputer.v1',
+      params: {
+        surface: 'desktop.ui',
+        target: 'thisComputer',
+        channel: 'preview',
+      },
+    });
+
+    const finalPoll = await waitForResult(runner, { taskId: 'setup-task-tools', cursor: 0 });
+    expect(finalPoll.result?.ok).toBe(true);
+    expect(invocations).toEqual([
+      'ensureLocalHappierTools:preview',
+      'configureRelay',
+      'installDaemonService',
+      'startDaemonService',
+    ]);
+  });
+
   it('prompts to switch the default release channel and replace conflicting local background services before setup completes', async () => {
     const invocations: string[] = [];
     const kind = createSetupThisComputerInteractiveTaskKind({

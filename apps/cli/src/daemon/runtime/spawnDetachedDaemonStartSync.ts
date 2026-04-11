@@ -2,12 +2,16 @@ import { spawn, type ChildProcess, type SpawnOptions } from 'child_process';
 
 import { getReleaseRingCatalogEntry } from '@happier-dev/release-runtime/releaseRings';
 import { configuration } from '@/configuration';
+import type { DaemonStartupSource } from '@/daemon/ownership/daemonOwnershipMetadata';
 import { resolveDaemonLaunchSpec } from './resolveDaemonLaunchSpec';
 
-export async function spawnDetachedDaemonStartSync(options: Readonly<SpawnOptions> = {}): Promise<ChildProcess> {
+export async function spawnDetachedDaemonStartSync(
+  options: Readonly<SpawnOptions & { startupSource?: DaemonStartupSource }> = {},
+): Promise<ChildProcess> {
+  const { startupSource, ...spawnOptions } = options;
   const launchSpec = await resolveDaemonLaunchSpec(['daemon', 'start-sync']);
   const env = {
-    ...(options.env ?? process.env),
+    ...(spawnOptions.env ?? process.env),
     ...(launchSpec.env ?? {}),
   };
 
@@ -17,8 +21,11 @@ export async function spawnDetachedDaemonStartSync(options: Readonly<SpawnOption
   if (!String(env.HAPPIER_PUBLIC_RELEASE_CHANNEL ?? '').trim()) {
     env.HAPPIER_PUBLIC_RELEASE_CHANNEL = getReleaseRingCatalogEntry(configuration.publicReleaseRing).publicLabel;
   }
+  if (!String(env.HAPPIER_DAEMON_STARTUP_SOURCE ?? '').trim()) {
+    env.HAPPIER_DAEMON_STARTUP_SOURCE = startupSource ?? 'manual';
+  }
   return spawn(launchSpec.filePath, launchSpec.args, {
-    ...options,
+    ...spawnOptions,
     env,
     detached: true,
     stdio: 'ignore',

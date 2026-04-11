@@ -21,6 +21,8 @@ function makeJwtWithSub(sub: string): string {
 describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
   const previousHomeDir = process.env.HAPPIER_HOME_DIR;
   const previousActiveServerId = process.env.HAPPIER_ACTIVE_SERVER_ID;
+  const previousServerUrl = process.env.HAPPIER_SERVER_URL;
+  const previousWebappUrl = process.env.HAPPIER_WEBAPP_URL;
   const previousAutostart = process.env.HAPPIER_SESSION_AUTOSTART_DAEMON;
 
   afterEach(() => {
@@ -28,6 +30,10 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
     else process.env.HAPPIER_HOME_DIR = previousHomeDir;
     if (previousActiveServerId === undefined) delete process.env.HAPPIER_ACTIVE_SERVER_ID;
     else process.env.HAPPIER_ACTIVE_SERVER_ID = previousActiveServerId;
+    if (previousServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
+    else process.env.HAPPIER_SERVER_URL = previousServerUrl;
+    if (previousWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
+    else process.env.HAPPIER_WEBAPP_URL = previousWebappUrl;
     if (previousAutostart === undefined) delete process.env.HAPPIER_SESSION_AUTOSTART_DAEMON;
     else process.env.HAPPIER_SESSION_AUTOSTART_DAEMON = previousAutostart;
     vi.clearAllMocks();
@@ -275,6 +281,67 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
       );
       expect(logger.info).not.toHaveBeenCalledWith(expect.stringContaining('acct-a'));
       expect(logger.info).not.toHaveBeenCalledWith(expect.stringContaining('acct-b'));
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rehydrates relay scope env from the active relay profile before any post-auth daemon autostart', async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-auth-relay-scope-env-'));
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    process.env.HAPPIER_SERVER_URL = 'http://127.0.0.1:24541';
+    process.env.HAPPIER_WEBAPP_URL = 'http://happier-stack.localhost:24541';
+    delete process.env.HAPPIER_ACTIVE_SERVER_ID;
+    delete process.env.HAPPIER_PUBLIC_SERVER_URL;
+    delete process.env.HAPPIER_SESSION_AUTOSTART_DAEMON;
+
+    try {
+      const settingsPath = join(homeDir, 'settings.json');
+      writeFileSync(
+        settingsPath,
+        JSON.stringify(
+          {
+            schemaVersion: 6,
+            onboardingCompleted: true,
+            activeServerId: 'stack_main__id_default',
+            servers: {
+              stack_main__id_default: {
+                id: 'stack_main__id_default',
+                name: 'stack',
+                serverUrl: 'http://127.0.0.1:24541',
+                publicServerUrl: 'http://localhost:24541',
+                webappUrl: 'http://happier-stack.localhost:24541',
+                createdAt: 0,
+                updatedAt: 0,
+                lastUsedAt: 0,
+              },
+            },
+            machineIdByServerId: { stack_main__id_default: 'machine-stack' },
+            lastTokenSubByServerId: { stack_main__id_default: 'acct-a' },
+          },
+          null,
+          2,
+        ),
+        'utf8',
+      );
+
+      const serverDir = join(homeDir, 'servers', 'stack_main__id_default');
+      mkdirSync(serverDir, { recursive: true });
+      const accessKeyPayload = JSON.stringify(
+        { token: makeJwtWithSub('acct-a'), secret: Buffer.from('x').toString('base64') },
+        null,
+        2,
+      );
+      writeFileSync(join(serverDir, 'access.key'), accessKeyPayload, 'utf8');
+      writeFileSync(join(homeDir, 'access.key'), accessKeyPayload, 'utf8');
+
+      vi.resetModules();
+      const { authAndSetupMachineIfNeeded } = await import('./auth');
+      const result = await authAndSetupMachineIfNeeded();
+
+      expect(result.machineId).toBe('machine-stack');
+      expect(process.env.HAPPIER_ACTIVE_SERVER_ID).toBe('stack_main__id_default');
+      expect(process.env.HAPPIER_WEBAPP_URL).toBe('http://happier-stack.localhost:24541');
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
     }

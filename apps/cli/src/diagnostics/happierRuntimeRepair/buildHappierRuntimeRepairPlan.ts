@@ -135,19 +135,26 @@ export function buildHappierRuntimeRepairPlan(snapshot: DoctorSnapshot): Happier
     }
 
     const removableServices = new Map<string, RepairableService>();
+    let handledOrphanServices = false;
+    let handledDuplicateDefaultFollowingServices = false;
     const addRemovableServices = (entries: readonly RepairableService[]) => {
         for (const service of entries) {
             removableServices.set(service.id, service);
         }
     };
 
-    addRemovableServices(collectOrphanServices({
+    const orphanServices = collectOrphanServices({
         services,
         installationRoots: collectInstallationRoots(snapshot),
-    }));
+    });
+    if (orphanServices.length > 0) {
+        handledOrphanServices = true;
+        addRemovableServices(orphanServices);
+    }
 
     const defaultFollowingServices = services.filter((service) => service.targetMode === 'default-following');
     if (defaultFollowingServices.length > 1) {
+        handledDuplicateDefaultFollowingServices = true;
         const preferredDefaultService = preferServiceToKeep({
             services: defaultFollowingServices,
             activeInvocationRealPath,
@@ -199,12 +206,20 @@ export function buildHappierRuntimeRepairPlan(snapshot: DoctorSnapshot): Happier
         });
     }
 
-    const automaticallyHandledWarningCodes = new Set([
-        'DAEMON_STARTED_WITH_DIFFERENT_CLI',
-        'ORPHAN_DAEMON_SERVICE',
-        'DUPLICATE_DEFAULT_FOLLOWING_DAEMON_SERVICE',
-        'LEGACY_PINNED_DAEMON_SERVICE',
-    ]);
+    const automaticallyHandledWarningCodes = new Set(['DAEMON_STARTED_WITH_DIFFERENT_CLI']);
+    if (handledOrphanServices) {
+        automaticallyHandledWarningCodes.add('ORPHAN_DAEMON_SERVICE');
+    }
+    if (handledDuplicateDefaultFollowingServices) {
+        automaticallyHandledWarningCodes.add('DUPLICATE_DEFAULT_FOLLOWING_DAEMON_SERVICE');
+    }
+    const removableServiceIds = new Set(removableServiceList.map((service) => service.id));
+    const allPinnedServicesAutomaticallyHandled = pinnedServices.length > 0
+        && pinnedServices.every((service) => removableServiceIds.has(service.id))
+        && actions.some((action) => action.kind === 'install-default-following-service');
+    if (allPinnedServicesAutomaticallyHandled) {
+        automaticallyHandledWarningCodes.add('LEGACY_PINNED_DAEMON_SERVICE');
+    }
 
     return {
         actions,

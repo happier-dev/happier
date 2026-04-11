@@ -13,6 +13,9 @@ export const agent = {
   getCliAuthSpec: async () => (await import('@/backends/gemini/cli/auth/geminiCliAuthSpec')).geminiCliAuthSpec,
   getCloudConnectTarget: async () => (await import('@/backends/gemini/cloud/connect')).geminiCloudConnect,
   getDaemonSpawnHooks: async () => geminiDaemonSpawnHooks,
+  getConnectedServicesSpawnMaterializer: async () =>
+    (await import('@/backends/gemini/connectedServices/createGeminiConnectedServicesSpawnMaterializer'))
+      .createGeminiConnectedServicesSpawnMaterializer(),
   vendorResumeSupport: AGENTS_CORE.gemini.resume.vendorResume,
   getAcpBackendFactory: async () => {
     const { createGeminiBackend } = await import('@/backends/gemini/acp/backend');

@@ -426,7 +426,7 @@ async function waitForExpectedDaemonServiceOwnership(params: Readonly<{
         return false;
       }
 
-      if (params.healthCommand && !runCommandCaptureBestEffort(params.healthCommand).ok) {
+      if (params.platform !== 'darwin' && params.healthCommand && !runCommandCaptureBestEffort(params.healthCommand).ok) {
         stableSince = null;
         return false;
       }
@@ -1072,6 +1072,7 @@ export async function runDaemonServiceCliCommand(
           strategy,
           runCommands: true,
           commandFailureMode: 'strict',
+          startExisting: true,
         }).then(async () => {
           await assertExpectedDaemonServiceOwnership({
             action: 'install',

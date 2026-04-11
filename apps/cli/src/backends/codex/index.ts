@@ -19,6 +19,9 @@ export const agent = {
   getCloudConnectTarget: async () => (await import('@/backends/codex/cloud/connect')).codexCloudConnect,
   getDaemonSpawnHooks: async () => codexDaemonSpawnHooks,
   getDirectSessionProviderOps: async () => (await import('@/backends/codex/directSessions/providerOps')).codexDirectSessionProviderOps,
+  getConnectedServicesSpawnMaterializer: async () =>
+    (await import('@/backends/codex/connectedServices/createCodexConnectedServicesSpawnMaterializer'))
+      .createCodexConnectedServicesSpawnMaterializer(),
   vendorResumeSupport: AGENTS_CORE.codex.resume.vendorResume,
   getVendorResumeSupport: async () => supportsCodexVendorResume,
   getAcpBackendFactory: async () => {

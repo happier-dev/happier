@@ -50,6 +50,13 @@ describe('buildHappySessionControlArgs', () => {
     })).toEqual(['--permission-mode', 'safe']);
   });
 
+  it('normalizes Claude permission mode aliases before passing session-control flags', () => {
+    expect(buildHappySessionControlArgs({
+      permissionMode: 'safe-yolo',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+    })).toEqual(['--permission-mode', 'acceptEdits']);
+  });
+
   it('supports model timestamp boundary value zero', () => {
     expect(buildHappySessionControlArgs({
       modelId: 'o3',

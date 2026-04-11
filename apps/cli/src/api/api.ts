@@ -388,8 +388,18 @@ export class ApiClient {
     return new ApiSessionClient(this.credential.token, session);
   }
 
-  machineSyncClient(machine: Machine): ApiMachineClient {
-    return new ApiMachineClient(this.credential.token, machine);
+  machineSyncClient(
+    machine: Machine,
+    ownershipMetadata?: Readonly<{
+      runtimeId?: string;
+      cliVersion?: string;
+      publicReleaseChannel?: string;
+      startupSource?: string;
+      serviceManaged?: boolean;
+      serviceLabel?: string;
+    }>,
+  ): ApiMachineClient {
+    return new ApiMachineClient(this.credential.token, machine, ownershipMetadata);
   }
 
   push(): PushNotificationClient {

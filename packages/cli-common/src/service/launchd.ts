@@ -20,6 +20,7 @@ export function buildLaunchdPlistXml(params: Readonly<{
   stdoutPath: string;
   stderrPath: string;
   workingDirectory?: string;
+  abandonProcessGroup?: boolean;
   keepAliveOnFailure?: boolean;
   startIntervalSec?: number;
   startCalendarInterval?: Readonly<{ hour: number; minute: number }>;
@@ -45,6 +46,9 @@ export function buildLaunchdPlistXml(params: Readonly<{
   const workingDirXml = workingDirectory
     ? `\n    <key>WorkingDirectory</key>\n    <string>${xmlEscape(workingDirectory)}</string>\n`
     : '\n';
+  const abandonProcessGroupXml = params.abandonProcessGroup === true
+    ? `\n    <key>AbandonProcessGroup</key>\n    <true/>\n`
+    : '';
 
   const keepAlive = params.keepAliveOnFailure === false
     ? ''
@@ -101,6 +105,7 @@ ${programArgsXml}
     <true/>
 ${keepAlive}
 ${startCalendarInterval || startInterval}
+${abandonProcessGroupXml}
 ${workingDirXml}    <key>StandardOutPath</key>
     <string>${xmlEscape(stdoutPath)}</string>
     <key>StandardErrorPath</key>

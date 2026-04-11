@@ -9,6 +9,12 @@ describe('DaemonStateSchema', () => {
       pid: 12345,
       httpPort: 43210,
       startedAt: 1_700_000_000_000,
+      runtimeId: 'runtime-123',
+      cliVersion: '0.2.0',
+      publicReleaseChannel: 'dev',
+      startupSource: 'background-service',
+      serviceManaged: true,
+      serviceLabel: 'com.happier.cli.daemon.default',
       transfer: {
         supported: {
           import: false,
@@ -72,5 +78,11 @@ describe('DaemonStateSchema', () => {
         version: 1,
       },
     });
+    expect(result.data.runtimeId).toBe('runtime-123');
+    expect(result.data.cliVersion).toBe('0.2.0');
+    expect(result.data.publicReleaseChannel).toBe('dev');
+    expect(result.data.startupSource).toBe('background-service');
+    expect(result.data.serviceManaged).toBe(true);
+    expect(result.data.serviceLabel).toBe('com.happier.cli.daemon.default');
   });
 });

@@ -13,6 +13,12 @@ function createSnapshot(params: Readonly<{
     running?: boolean;
     executablePath?: string | null;
   }>;
+  warnings?: Array<{
+    code: string;
+    severity?: 'info' | 'warning' | 'error';
+    message: string;
+    repairCommands?: string[];
+  }>;
 }> = {}) {
   return {
     capturedAt: '2026-04-07T00:00:00.000Z',
@@ -68,7 +74,7 @@ function createSnapshot(params: Readonly<{
         })),
       },
     },
-    warnings: [],
+    warnings: params.warnings ?? [],
   };
 }
 
@@ -191,20 +197,58 @@ describe('buildHappierRuntimeRepairPlan', () => {
       ],
     }) as never);
 
-    expect(plan.actions).toEqual([
+    expect(plan.actions[0]).toEqual({
+      kind: 'install-default-following-service',
+      command: 'happier service install --yes',
+      mode: 'user',
+      targetServerUrl: 'https://api.happier.dev',
+    });
+    expect(plan.actions[1]).toEqual(expect.objectContaining({
+      kind: 'uninstall-daemon-services',
+      services: [
+        expect.objectContaining({
+          id: 'launchd:com.happier.cli.daemon.cloud',
+          targetMode: 'pinned',
+        }),
+      ],
+    }));
+  });
+
+  it('keeps legacy pinned warnings visible when no bounded migration action was planned', () => {
+    const plan = buildHappierRuntimeRepairPlan(createSnapshot({
+      services: [
+        {
+          id: 'launchd:com.happier.cli.daemon.cloud',
+          label: 'com.happier.cli.daemon.cloud',
+          targetMode: 'pinned',
+          ring: 'stable',
+          instanceId: 'cloud',
+          serverUrl: 'https://api.happier.dev',
+          executablePath: '/Users/test/.happier/cli/current/happier',
+        },
+        {
+          id: 'launchd:com.happier.cli.daemon.cloud-copy',
+          label: 'com.happier.cli.daemon.cloud-copy',
+          targetMode: 'pinned',
+          ring: 'preview',
+          instanceId: 'cloud-copy',
+          serverUrl: 'https://api.happier.dev',
+          executablePath: '/Users/test/.happier/cli/current/happier',
+        },
+      ],
+      warnings: [
+        {
+          code: 'LEGACY_PINNED_DAEMON_SERVICE',
+          severity: 'warning',
+          message: 'Pinned Happier background services were detected and may need migration to the default-following model.',
+          repairCommands: ['happier service repair'],
+        },
+      ],
+    }) as never);
+
+    expect(plan.manualWarnings).toEqual([
       expect.objectContaining({
-        kind: 'install-default-following-service',
-        command: 'happier service install --yes',
-        targetServerUrl: 'https://api.happier.dev',
-      }),
-      expect.objectContaining({
-        kind: 'uninstall-daemon-services',
-        services: [
-          expect.objectContaining({
-            id: 'launchd:com.happier.cli.daemon.cloud',
-            targetMode: 'pinned',
-          }),
-        ],
+        code: 'LEGACY_PINNED_DAEMON_SERVICE',
       }),
     ]);
   });

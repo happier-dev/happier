@@ -3,6 +3,10 @@ import { UsageSchema } from '@/api/usage'
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc'
 import { SentFromSchema } from '@happier-dev/protocol'
 import type { ExecutionRunPublicState } from '@happier-dev/protocol'
+import {
+  DaemonPublicReleaseChannelLabelSchema,
+  DaemonStartupSourceSchema,
+} from '@/daemon/ownership/daemonOwnershipMetadata'
 import type {
   AcpConfigOptionOverridesV1,
   AcpSessionModeOverrideV1,
@@ -270,6 +274,12 @@ export const DaemonStateSchema = z.object({
   pid: z.number().optional(),
   httpPort: z.number().optional(),
   startedAt: z.number().optional(),
+  runtimeId: z.string().optional(),
+  cliVersion: z.string().optional(),
+  publicReleaseChannel: DaemonPublicReleaseChannelLabelSchema.optional(),
+  startupSource: DaemonStartupSourceSchema.optional(),
+  serviceManaged: z.boolean().optional(),
+  serviceLabel: z.string().optional(),
   shutdownRequestedAt: z.number().optional(),
   shutdownSource:
     z.union([
@@ -469,6 +479,8 @@ export type Metadata = {
   qwenSessionId?: string, // Qwen Code ACP session ID (opaque)
   kimiSessionId?: string, // Kimi ACP session ID (opaque)
   kiloSessionId?: string, // Kilo ACP session ID (opaque)
+  kiroSessionId?: string, // Kiro ACP session ID (opaque)
+  ohMyPiSessionId?: string, // oh-my-pi ACP session ID (opaque)
   piSessionId?: string, // Pi RPC session ID (opaque)
   copilotSessionId?: string, // Copilot ACP session ID (opaque)
   auggieAllowIndexing?: boolean, // Auggie indexing enablement (spawn-time)

@@ -16,6 +16,7 @@ import type {
   AcpForkContinuationHandler,
   AgentCatalogEntry,
   CatalogAgentId,
+  ConnectedServicesSpawnMaterializer,
   DirectSessionProviderOps,
   ProviderAttachOps,
   ProviderNativeForkHandler,
@@ -46,6 +47,7 @@ export function requireCatalogEntry(agentId: CatalogAgentId): AgentCatalogEntry 
 
 const cachedVendorResumeSupportPromises = new Map<CatalogAgentId, Promise<VendorResumeSupportFn>>();
 const cachedDirectSessionProviderOpsPromises = new Map<DirectSessionsProviderId, Promise<DirectSessionProviderOps>>();
+const cachedConnectedServicesSpawnMaterializerPromises = new Map<CatalogAgentId, Promise<ConnectedServicesSpawnMaterializer | null>>();
 const cachedProviderAttachOpsPromises = new Map<CatalogAgentId, Promise<ProviderAttachOps | null>>();
 const cachedAcpForkContinuationHandlerPromises = new Map<CatalogAgentId, Promise<AcpForkContinuationHandler | null>>();
 const cachedProviderNativeForkHandlerPromises = new Map<CatalogAgentId, Promise<ProviderNativeForkHandler | null>>();
@@ -84,6 +86,18 @@ export async function getDirectSessionProviderOps(providerId: DirectSessionsProv
 
   const promise = entry.getDirectSessionProviderOps();
   cachedDirectSessionProviderOpsPromises.set(providerId, promise);
+  return await promise;
+}
+
+export async function getConnectedServicesSpawnMaterializer(agentId: CatalogAgentId): Promise<ConnectedServicesSpawnMaterializer | null> {
+  const existing = cachedConnectedServicesSpawnMaterializerPromises.get(agentId);
+  if (existing) return await existing;
+
+  const entry = AGENTS[agentId];
+  const promise = entry?.getConnectedServicesSpawnMaterializer
+    ? entry.getConnectedServicesSpawnMaterializer()
+    : Promise.resolve(null);
+  cachedConnectedServicesSpawnMaterializerPromises.set(agentId, promise);
   return await promise;
 }
 

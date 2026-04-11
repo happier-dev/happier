@@ -9,8 +9,11 @@ import { z } from 'zod';
  */
 
 export const SETUP_THIS_COMPUTER_SYSTEM_TASK_STEP_IDS_V1 = [
+  'setup.thisComputer.ensureCli',
   'setup.thisComputer.resolveRelay',
   'setup.thisComputer.checkAuth',
+  'setup.thisComputer.preflight.releaseChannel',
+  'setup.thisComputer.preflight.serviceConflict',
   'setup.thisComputer.configureRelay',
   'setup.thisComputer.auth.request',
   'setup.thisComputer.auth.wait',

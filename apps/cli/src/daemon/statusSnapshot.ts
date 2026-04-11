@@ -63,7 +63,7 @@ export async function readDaemonStatusSnapshot(): Promise<DaemonStatusSnapshot> 
       return null;
     }
   })();
-  const serviceSnapshot = resolveDaemonServiceInstallationSnapshotFromEnv();
+  const serviceSnapshot = await resolveDaemonServiceInstallationSnapshotFromEnv();
 
   return {
     server: {
@@ -82,6 +82,12 @@ export async function readDaemonStatusSnapshot(): Promise<DaemonStatusSnapshot> 
         ? daemonState.startedWithCliVersion
         : undefined,
       startedWithPublicReleaseChannel: daemonState?.startedWithPublicReleaseChannel ?? null,
+      runtimeId: typeof daemonState?.runtimeId === 'string' ? daemonState.runtimeId : undefined,
+      startupSource: typeof daemonState?.startupSource === 'string' ? daemonState.startupSource : undefined,
+      serviceManaged: resolveDaemonStartupSourceServiceManagedState(daemonState?.startupSource),
+      serviceLabel: typeof daemonState?.serviceLabel === 'string'
+        ? daemonState.serviceLabel
+        : null,
     },
     service: {
       installed: serviceSnapshot.installed,
@@ -96,3 +102,4 @@ export async function readDaemonStatusSnapshot(): Promise<DaemonStatusSnapshot> 
     },
   };
 }
+import { resolveDaemonStartupSourceServiceManagedState } from '@/daemon/ownership/daemonOwnershipMetadata';

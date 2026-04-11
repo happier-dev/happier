@@ -1,4 +1,3 @@
-import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type {
@@ -6,31 +5,10 @@ import type {
   ConnectedServiceId,
 } from '@happier-dev/protocol';
 
+import { getConnectedServicesSpawnMaterializer } from '@/backends/catalog';
 import type { CatalogAgentId } from '@/backends/types';
-import { materializeClaudeConnectedServiceAuth } from '@/backends/claude/connectedServices/materializeClaudeConnectedServiceAuth';
-import { materializeClaudeSubscriptionConnectedServiceAuth } from '@/backends/claude/connectedServices/materializeClaudeSubscriptionConnectedServiceAuth';
-import { materializeCodexConnectedServiceAuth } from '@/backends/codex/connectedServices/materializeCodexConnectedServiceAuth';
-import { materializeGeminiConnectedServiceAuth } from '@/backends/gemini/connectedServices/materializeGeminiConnectedServiceAuth';
-import { materializeOpenCodeConnectedServiceAuth } from '@/backends/opencode/connectedServices/materializeOpenCodeConnectedServiceAuth';
-import { materializePiConnectedServiceAuth } from '@/backends/pi/connectedServices/materializePiConnectedServiceAuth';
+import type { ConnectedServicesSpawnMaterialization } from '@/backends/connectedServices/spawnMaterializer';
 import { normalizeMaterializationKeyForPath } from './normalizeMaterializationKeyForPath';
-import { requireConnectedServiceTokenCredentialRecord } from '@/daemon/connectedServices/shared/connectedServiceCredentialRecord';
-import { resolveConnectedServiceHomeDir } from '../homes/resolveConnectedServiceHomeDir';
-
-type MaterializeResult = Readonly<{
-  env: Record<string, string>;
-  cleanupOnFailure: (() => void) | null;
-  cleanupOnExit: (() => void) | null;
-}>;
-
-function bestEffortCleanupDirectory(path: string): () => void {
-  let cleaned = false;
-  return () => {
-    if (cleaned) return;
-    cleaned = true;
-    void rm(path, { recursive: true, force: true }).catch(() => {});
-  };
-}
 
 export async function materializeConnectedServicesForSpawn(params: Readonly<{
   agentId: CatalogAgentId;
@@ -38,78 +16,17 @@ export async function materializeConnectedServicesForSpawn(params: Readonly<{
   activeServerDir: string;
   baseDir: string;
   recordsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
-}>): Promise<MaterializeResult | null> {
-  const env: Record<string, string> = {};
-
+}>): Promise<ConnectedServicesSpawnMaterialization | null> {
   const materializationSegment = normalizeMaterializationKeyForPath(params.materializationKey);
   const rootDir = join(params.baseDir, materializationSegment, params.agentId);
-  const cleanupRoot = bestEffortCleanupDirectory(rootDir);
+  const materializer = await getConnectedServicesSpawnMaterializer(params.agentId);
+  if (!materializer) return null;
 
-  const codex = params.recordsByServiceId.get('openai-codex') ?? null;
-  const openai = params.recordsByServiceId.get('openai') ?? null;
-  const claudeSubscription = params.recordsByServiceId.get('claude-subscription') ?? null;
-  const anthropic = params.recordsByServiceId.get('anthropic') ?? null;
-  const gemini = params.recordsByServiceId.get('gemini') ?? null;
-
-  if (params.agentId === 'codex') {
-    if (codex) {
-      const stableRootDir = resolveConnectedServiceHomeDir({
-        activeServerDir: params.activeServerDir,
-        serviceId: codex.serviceId,
-        profileId: codex.profileId,
-        agentId: params.agentId,
-      });
-      const materialized = await materializeCodexConnectedServiceAuth({ rootDir: stableRootDir, record: codex });
-      Object.assign(env, materialized.env);
-      return { env, cleanupOnFailure: null, cleanupOnExit: null };
-    }
-    if (!openai) return null;
-    const token = requireConnectedServiceTokenCredentialRecord(openai);
-    env.OPENAI_API_KEY = token.token.token;
-    return { env, cleanupOnFailure: null, cleanupOnExit: null };
-  }
-
-  if (params.agentId === 'claude') {
-    if (claudeSubscription) {
-      Object.assign(env, materializeClaudeSubscriptionConnectedServiceAuth({ record: claudeSubscription }).env);
-      return { env, cleanupOnFailure: null, cleanupOnExit: null };
-    }
-    if (!anthropic) return null;
-    Object.assign(env, materializeClaudeConnectedServiceAuth({ record: anthropic }).env);
-    return { env, cleanupOnFailure: null, cleanupOnExit: null };
-  }
-
-  if (params.agentId === 'opencode') {
-    if (!codex && !openai && !anthropic) return null;
-    const materialized = await materializeOpenCodeConnectedServiceAuth({
-      rootDir,
-      openaiCodex: codex,
-      openai,
-      anthropic,
-    });
-    Object.assign(env, materialized.env);
-    return { env, cleanupOnFailure: cleanupRoot, cleanupOnExit: cleanupRoot };
-  }
-
-  if (params.agentId === 'pi') {
-    if (!codex && !openai && !anthropic && !claudeSubscription) return null;
-    const materialized = await materializePiConnectedServiceAuth({
-      rootDir,
-      openaiCodex: codex,
-      openai,
-      claudeSubscription,
-      anthropic,
-    });
-    Object.assign(env, materialized.env);
-    return { env, cleanupOnFailure: cleanupRoot, cleanupOnExit: cleanupRoot };
-  }
-
-  if (params.agentId === 'gemini') {
-    if (!gemini) return null;
-    const materialized = await materializeGeminiConnectedServiceAuth({ rootDir, record: gemini });
-    Object.assign(env, materialized.env);
-    return { env, cleanupOnFailure: cleanupRoot, cleanupOnExit: cleanupRoot };
-  }
-
-  return null;
+  return await materializer({
+    materializationKey: params.materializationKey,
+    activeServerDir: params.activeServerDir,
+    baseDir: params.baseDir,
+    rootDir,
+    recordsByServiceId: params.recordsByServiceId,
+  });
 }

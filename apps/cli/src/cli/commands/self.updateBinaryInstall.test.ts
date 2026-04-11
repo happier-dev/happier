@@ -100,4 +100,54 @@ describe('happier self update for binary installs', () => {
       logSpy.mockRestore();
     }
   });
+
+  it('defaults binary self update to the publicdev ring when invoked from the managed cli-dev current path', async () => {
+    const originalArgv = [...process.argv];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      process.argv[1] = '/Users/test/.happier/cli-dev/current/happier';
+      const { handleSelfCliCommand } = await import('./self');
+      await handleSelfCliCommand({
+        args: ['self', 'update'],
+        rawArgv: ['hdev', 'self', 'update'],
+        terminalRuntime: null,
+      });
+
+      expect(fetchGitHubReleaseByTagMock).toHaveBeenCalled();
+      expect(updateInstalledCliPayloadFromReleaseAssetsMock).toHaveBeenCalledTimes(1);
+      expect(updateInstalledCliPayloadFromReleaseAssetsMock).toHaveBeenCalledWith(expect.objectContaining({
+        channel: 'publicdev',
+      }));
+      expect(maybeRunVersionGatedRuntimeMigrationMock).toHaveBeenCalled();
+    } finally {
+      process.argv = originalArgv;
+      logSpy.mockRestore();
+    }
+  });
+
+  it('prints self update progress steps while resolving and installing a binary payload', async () => {
+    const originalArgv = [...process.argv];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const stdoutWriteSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+
+    try {
+      process.argv[1] = '/opt/happier/bin/happier';
+      const { handleSelfCliCommand } = await import('./self');
+      await handleSelfCliCommand({
+        args: ['self', 'update'],
+        rawArgv: ['happier', 'self', 'update'],
+        terminalRuntime: null,
+      });
+
+      const output = stdoutWriteSpy.mock.calls.map(([chunk]) => String(chunk)).join('');
+      expect(output).toContain('Resolving release metadata');
+      expect(output).toContain('Downloading and installing payload');
+      expect(output).toContain('Refreshing update cache');
+    } finally {
+      process.argv = originalArgv;
+      stdoutWriteSpy.mockRestore();
+      logSpy.mockRestore();
+    }
+  });
 });

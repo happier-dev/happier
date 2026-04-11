@@ -89,9 +89,18 @@ function hasDaemonStartSyncCommand(contents: string): boolean {
   return /\bdaemon\b[\s"']+\bstart-sync\b/i.test(contents);
 }
 
+function hasDarwinDaemonStartSyncCommand(contents: string): boolean {
+  return /<string>\s*daemon\s*<\/string>\s*<string>\s*start-sync\s*<\/string>/i.test(contents);
+}
+
 function hasLegacyManagedLinuxServiceEnv(path: string): boolean {
   return readInstalledDaemonServiceEnvValue({ platform: 'linux', path, key: 'HAPPIER_HOME_DIR' }) !== null
     || readInstalledDaemonServiceEnvValue({ platform: 'linux', path, key: 'HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR' }) !== null;
+}
+
+function hasLegacyManagedDarwinServiceEnv(path: string): boolean {
+  return readInstalledDaemonServiceEnvValue({ platform: 'darwin', path, key: 'HAPPIER_HOME_DIR' }) !== null
+    || readInstalledDaemonServiceEnvValue({ platform: 'darwin', path, key: 'HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR' }) !== null;
 }
 
 export function readInstalledDaemonServiceEnvValue(params: Readonly<{
@@ -125,7 +134,11 @@ export function isValidInstalledDaemonServiceFile(params: Readonly<{
 
   if (params.platform === 'darwin') {
     return parseDarwinPlistValue(contents, 'Label') === params.expectedLabel
-      && parseDarwinPlistValue(contents, 'HAPPIER_DAEMON_STARTUP_SOURCE') === 'background-service';
+      && hasDarwinDaemonStartSyncCommand(contents)
+      && (
+        parseDarwinPlistValue(contents, 'HAPPIER_DAEMON_STARTUP_SOURCE') === 'background-service'
+        || hasLegacyManagedDarwinServiceEnv(params.path)
+      );
   }
 
   if (params.platform === 'linux') {

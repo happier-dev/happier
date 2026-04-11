@@ -312,6 +312,50 @@ describe('materializeConnectedServicesForSpawn', () => {
     result!.cleanupOnExit?.();
   });
 
+  it('materializes ohMyPi env bindings without writing Pi auth.json state', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-test-'));
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-server-test-'));
+    const codex = buildConnectedServiceCredentialRecord({
+      now: 10,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: 123,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'acct',
+        providerEmail: null,
+      },
+    });
+    const claudeSubscription = buildConnectedServiceCredentialRecord({
+      now: 10,
+      serviceId: 'claude-subscription',
+      profileId: 'personal',
+      kind: 'token',
+      token: { token: 'anthropic-oauth-token', providerAccountId: null, providerEmail: null },
+    });
+
+    const result = await materializeConnectedServicesForSpawn({
+      agentId: 'ohMyPi',
+      materializationKey: 'session-oh-my-pi',
+      activeServerDir,
+      baseDir,
+      recordsByServiceId: new Map([
+        ['openai-codex', codex],
+        ['claude-subscription', claudeSubscription],
+      ]),
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.env.OPENAI_CODEX_OAUTH_TOKEN).toBe('access');
+    expect(result!.env.ANTHROPIC_OAUTH_TOKEN).toBe('anthropic-oauth-token');
+    expect(result!.env.PI_CODING_AGENT_DIR).toBeUndefined();
+  });
+
   it('materializes Pi auth.json with OpenAI API key credentials', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-test-'));
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-server-test-'));
