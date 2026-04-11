@@ -991,6 +991,7 @@ export const ru: TranslationStructure = {
     copied: "Скопировано",
     copy: "Копировать",
     copyWithLabel: ({ label }: { label: string }) => `Копировать ${label}`,
+        share: "Share",
     paste: "Вставить",
     expand: "Развернуть",
     collapse: "Свернуть",
@@ -3362,6 +3363,12 @@ export const ru: TranslationStructure = {
     settingsNavSidebar: "Боковая панель настроек",
     settingsNavSidebarDescription:
       "Показывать боковую панель навигации по настройкам (web/tablet)",
+    mobileWorkspaceExperience: "Режим мобильного рабочего пространства",
+    mobileWorkspaceExperienceDescription: "Выберите, как сессии и проекты открываются на телефоне",
+    mobileWorkspaceExperienceOptions: {
+      classic: "Классический",
+      cockpit: "Кокпит",
+    },
     sessionsRightPaneDefaultOpen: "Всегда показывать правую боковую панель в сессиях",
     sessionsRightPaneDefaultOpenDescription:
       "Автоматически открывать правую боковую панель при входе в сессию (web/tablet)",
@@ -3449,6 +3456,11 @@ export const ru: TranslationStructure = {
       compact: "Компактная",
       compactDescription: "Показывать больше строк на экране с меньшими интервалами",
     },
+  },
+
+  workspaceCockpit: {
+    openCockpit: "Открыть кокпит",
+    openClassicView: "Открыть классический вид",
   },
 
   settingsChannelBridges: {
@@ -4877,6 +4889,7 @@ export const ru: TranslationStructure = {
       kiro: "Kiro",
       customAcp: "Пользовательский АКП",
       pi: "Pi",
+      ohMyPi: "oh-my-pi",
       copilot: "Copilot",
     },
     auggieIndexingChip: {
@@ -7123,6 +7136,7 @@ settingsSession: {
 
   terminalEmbedded: {
     dockMenuA11y: "Закрепить терминал",
+    openNewTabA11y: "Открыть новую вкладку терминала",
     settings: {
       locationTitle: "Расположение встроенного терминала",
     },
@@ -7872,13 +7886,51 @@ settingsSession: {
     today: "Сегодня",
     last7Days: "Последние 7 дней",
     last30Days: "Последние 30 дней",
+    costMode: "Cost mode",
+    auto: "Auto",
+    reported: "Reported",
+    estimated: "Estimated",
     totalTokens: "Всего токенов",
     totalCost: "Общая стоимость",
     tokens: "Токены",
     cost: "Стоимость",
     usageOverTime: "Использование во времени",
     byModel: "По модели",
-    noData: "Данные об использовании недоступны",
+    insights: "Insights",
+    activity: "Activity",
+            timeline: "Timeline",
+        leaders: "Leaders",
+    activeDays: "Active days",
+    modelsTried: "Models tried",
+    favoriteModelChanges: "Favorite model changes",
+    busiestWindow: "Busiest window",
+    activityCalendarSubtitle: "Calendar heatmap",
+    events: "events",
+    source: "Source",
+            sessionUsage: "Session usage",
+        noData: "Данные об использовании недоступны",
+    summary: {
+      title: "Usage summary",
+      currentStreak: "Current streak",
+      currentStreakSubtitle: ({ count }: { count: number }) => `${count} active days in the last 30`,
+      thisWeek: "This week",
+      thisWeekSubtitle: "Recent momentum",
+      topModel: "Go-to model",
+      engine: "Engine",
+      export: {
+        session: "Сессия",
+        period: "Период",
+        metric: "Метрика",
+        costMode: "Режим стоимости",
+        totalTokens: "Всего токенов",
+        totalCost: "Общая стоимость",
+        activeDays: "Активные дни",
+        topModel: "Основная модель",
+        topEngine: "Основной движок",
+        modelTimeline: "Хронология моделей",
+        engineTimeline: "Хронология движков",
+      },
+    },
   },
 
   feed: {
@@ -8145,6 +8197,7 @@ settingsSession: {
       kiroSubtitleExperimental: "Kiro CLI (экспериментально)",
       customAcpSubtitleExperimental: "Пользовательский ACP CLI (экспериментально)",
       piSubtitleExperimental: "Pi CLI (экспериментально)",
+      ohMyPiSubtitleExperimental: "oh-my-pi CLI (экспериментально)",
       copilotSubtitleExperimental: "GitHub Copilot CLI (экспериментально)",
     },
     tmux: {

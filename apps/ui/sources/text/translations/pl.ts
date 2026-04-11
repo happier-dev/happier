@@ -147,6 +147,12 @@ const settingsAppearanceTranslationExtension = {
   },
   settingsNavSidebar: 'Pasek boczny ustawień',
   settingsNavSidebarDescription: 'Pokaż pasek boczny nawigacji ustawień na komputerze i tablecie',
+  mobileWorkspaceExperience: 'Tryb mobilnej przestrzeni roboczej',
+  mobileWorkspaceExperienceDescription: 'Wybierz, jak sesje i projekty otwierają się na telefonie',
+  mobileWorkspaceExperienceOptions: {
+    classic: 'Klasyczny',
+    cockpit: 'Kokpit',
+  },
 } as const;
 
 const plAcpCatalogSettingsExtension = {
@@ -987,6 +993,7 @@ export const pl: TranslationStructure = {
     copied: "Skopiowano",
     copy: "Kopiuj",
     copyWithLabel: ({ label }: { label: string }) => `Kopiuj ${label}`,
+        share: "Share",
     paste: "Wklej",
     expand: "Rozwiń",
     collapse: "Zwiń",
@@ -3501,6 +3508,11 @@ settingsDesktop: {
     },
   },
 
+  workspaceCockpit: {
+    openCockpit: 'Otwórz kokpit',
+    openClassicView: 'Otwórz widok klasyczny',
+  },
+
   settingsChannelBridges: {
     unsupported: "Mosty kanałów nie są obsługiwane w tym środowisku.",
     enableInFeatures: "Włącz mosty kanałów",
@@ -4893,6 +4905,7 @@ settingsDesktop: {
       kiro: "Kiro",
       customAcp: "Custom ACP",
       pi: "Pi",
+      ohMyPi: "oh-my-pi",
       copilot: "Copilot",
     },
     auggieIndexingChip: {
@@ -7167,6 +7180,7 @@ settingsSession: {
 
   terminalEmbedded: {
     dockMenuA11y: "Dokuj terminal",
+    openNewTabA11y: "Otwórz nową kartę terminala",
     settings: {
       locationTitle: "Lokalizacja wbudowanego terminala",
     },
@@ -7962,13 +7976,51 @@ settingsSession: {
     today: "Dzisiaj",
     last7Days: "Ostatnie 7 dni",
     last30Days: "Ostatnie 30 dni",
+    costMode: "Cost mode",
+    auto: "Auto",
+    reported: "Reported",
+    estimated: "Estimated",
     totalTokens: "Łącznie tokenów",
     totalCost: "Całkowity koszt",
     tokens: "Tokeny",
     cost: "Koszt",
     usageOverTime: "Użycie w czasie",
     byModel: "Według modelu",
-    noData: "Brak danych o użyciu",
+    insights: "Insights",
+    activity: "Activity",
+            timeline: "Timeline",
+        leaders: "Leaders",
+    activeDays: "Active days",
+    modelsTried: "Models tried",
+    favoriteModelChanges: "Favorite model changes",
+    busiestWindow: "Busiest window",
+    activityCalendarSubtitle: "Calendar heatmap",
+    events: "events",
+    source: "Source",
+            sessionUsage: "Session usage",
+        noData: "Brak danych o użyciu",
+    summary: {
+      title: "Usage summary",
+      currentStreak: "Current streak",
+      currentStreakSubtitle: ({ count }: { count: number }) => `${count} active days in the last 30`,
+      thisWeek: "This week",
+      thisWeekSubtitle: "Recent momentum",
+      topModel: "Go-to model",
+      engine: "Engine",
+      export: {
+        session: "Sesja",
+        period: "Okres",
+        metric: "Metryka",
+        costMode: "Tryb kosztów",
+        totalTokens: "Łączna liczba tokenów",
+        totalCost: "Łączny koszt",
+        activeDays: "Aktywne dni",
+        topModel: "Główny model",
+        topEngine: "Główny silnik",
+        modelTimeline: "Oś czasu modeli",
+        engineTimeline: "Oś czasu silników",
+      },
+    },
   },
 
   feed: {
@@ -8233,6 +8285,7 @@ settingsSession: {
       kiroSubtitleExperimental: "Kiro CLI (eksperymentalne)",
       customAcpSubtitleExperimental: "Niestandardowy ACP CLI (eksperymentalne)",
       piSubtitleExperimental: "Pi CLI (eksperymentalne)",
+      ohMyPiSubtitleExperimental: "oh-my-pi CLI (eksperymentalne)",
       copilotSubtitleExperimental: "GitHub Copilot CLI (eksperymentalne)",
     },
     tmux: {

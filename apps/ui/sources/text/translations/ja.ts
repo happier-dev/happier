@@ -154,6 +154,12 @@ const settingsAppearanceTranslationExtension = {
   },
   settingsNavSidebar: '設定サイドバー',
   settingsNavSidebarDescription: 'デスクトップとタブレットで設定ナビゲーションのサイドバーを表示',
+  mobileWorkspaceExperience: 'モバイルワークスペースモード',
+  mobileWorkspaceExperienceDescription: 'スマートフォンでセッションやプロジェクトを開く方法を選択',
+  mobileWorkspaceExperienceOptions: {
+    classic: 'クラシック',
+    cockpit: 'コックピット',
+  },
 } as const;
 
 const jaAcpCatalogSettingsExtension = {
@@ -947,6 +953,7 @@ export const ja: TranslationStructure = {
     copied: "コピーしました",
     copy: "コピー",
     copyWithLabel: ({ label }: { label: string }) => `${label} をコピー`,
+        share: "Share",
     paste: "貼り付け",
     expand: "展開",
     collapse: "折りたたむ",
@@ -1219,6 +1226,7 @@ export const ja: TranslationStructure = {
       kiroSubtitleExperimental: "Kiro CLI（実験）",
       customAcpSubtitleExperimental: "カスタム ACP CLI（実験）",
       piSubtitleExperimental: "Pi CLI（実験）",
+      ohMyPiSubtitleExperimental: "oh-my-pi CLI（実験）",
       copilotSubtitleExperimental: "GitHub Copilot CLI（実験的）",
     },
     tmux: {
@@ -3750,6 +3758,11 @@ localTailscale: {
     },
   },
 
+  workspaceCockpit: {
+    openCockpit: 'コックピットを開く',
+    openClassicView: 'クラシック表示を開く',
+  },
+
   settingsChannelBridges: {
     unsupported: "この環境ではチャンネルブリッジはサポートされていません。",
     enableInFeatures: "チャンネルブリッジを有効にする",
@@ -5139,6 +5152,7 @@ localTailscale: {
       kiro: "Kiro",
       customAcp: "カスタム ACP",
       pi: "Pi",
+      ohMyPi: "oh-my-pi",
       copilot: "Copilot",
     },
     auggieIndexingChip: {
@@ -7391,6 +7405,7 @@ settingsSession: {
 
   terminalEmbedded: {
     dockMenuA11y: "ターミナルをドック",
+    openNewTabA11y: "新しいターミナルタブを開く",
     settings: {
       locationTitle: "埋め込みターミナルの場所",
     },
@@ -8175,13 +8190,51 @@ settingsSession: {
     today: "今日",
     last7Days: "過去7日間",
     last30Days: "過去30日間",
+    costMode: "Cost mode",
+    auto: "Auto",
+    reported: "Reported",
+    estimated: "Estimated",
     totalTokens: "合計トークン",
     totalCost: "合計コスト",
     tokens: "トークン",
     cost: "コスト",
     usageOverTime: "使用量の推移",
     byModel: "モデル別",
-    noData: "使用データがありません",
+    insights: "Insights",
+    activity: "Activity",
+            timeline: "Timeline",
+        leaders: "Leaders",
+    activeDays: "Active days",
+    modelsTried: "Models tried",
+    favoriteModelChanges: "Favorite model changes",
+    busiestWindow: "Busiest window",
+    activityCalendarSubtitle: "Calendar heatmap",
+    events: "events",
+    source: "Source",
+            sessionUsage: "Session usage",
+        noData: "使用データがありません",
+    summary: {
+      title: "Usage summary",
+      currentStreak: "Current streak",
+      currentStreakSubtitle: ({ count }: { count: number }) => `${count} active days in the last 30`,
+      thisWeek: "This week",
+      thisWeekSubtitle: "Recent momentum",
+      topModel: "Go-to model",
+      engine: "Engine",
+      export: {
+        session: "セッション",
+        period: "期間",
+        metric: "指標",
+        costMode: "コストモード",
+        totalTokens: "合計トークン",
+        totalCost: "合計コスト",
+        activeDays: "アクティブ日数",
+        topModel: "トップモデル",
+        topEngine: "主要エンジン",
+        modelTimeline: "モデルのタイムライン",
+        engineTimeline: "エンジンのタイムライン",
+      },
+    },
   },
 
   secrets: {

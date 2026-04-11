@@ -147,6 +147,12 @@ const settingsAppearanceTranslationExtension = {
   },
   settingsNavSidebar: 'Barra lateral de configuració',
   settingsNavSidebarDescription: 'Mostra la barra lateral de navegació de configuració a l’escriptori i a la tauleta',
+  mobileWorkspaceExperience: 'Mode d’espai de treball mòbil',
+  mobileWorkspaceExperienceDescription: 'Tria com s’obren les sessions i els projectes al telèfon',
+  mobileWorkspaceExperienceOptions: {
+    classic: 'Clàssic',
+    cockpit: 'Cabina',
+  },
 } as const;
 
 const caAcpCatalogSettingsExtension = {
@@ -946,6 +952,7 @@ export const ca: TranslationStructure = {
         copied: 'Copiat',
         copy: 'Copiar',
         copyWithLabel: ({ label }: { label: string }) => `Copia ${label}`,
+        share: "Share",
         paste: 'Enganxa',
         expand: 'Expandeix',
         collapse: 'Replega',
@@ -3300,6 +3307,11 @@ export const ca: TranslationStructure = {
         },
     },
 
+    workspaceCockpit: {
+        openCockpit: 'Obre la cabina',
+        openClassicView: 'Obre la vista clàssica',
+    },
+
     settingsChannelBridges: {
         unsupported: 'Els ponts de canals no són compatibles amb aquest entorn.',
         enableInFeatures: 'Activa els ponts de canals',
@@ -4553,6 +4565,7 @@ deps: {
             kiro: 'Kiro',
         customAcp: 'ACP personalitzat',
             pi: 'Pi',
+            ohMyPi: 'oh-my-pi',
             copilot: 'Copilot',
         },
         auggieIndexingChip: {
@@ -6560,6 +6573,7 @@ settingsSession: {
 
     terminalEmbedded: {
         dockMenuA11y: 'Acoblar terminal',
+        openNewTabA11y: 'Obre una pestanya nova de terminal',
         settings: {
             locationTitle: 'Ubicació del terminal incrustat',
         },
@@ -7229,13 +7243,51 @@ settingsSession: {
         today: 'Avui',
         last7Days: 'Últims 7 dies',
         last30Days: 'Últims 30 dies',
+        costMode: 'Cost mode',
+        auto: 'Auto',
+        reported: 'Reported',
+        estimated: 'Estimated',
         totalTokens: 'Tokens totals',
         totalCost: 'Cost total',
         tokens: 'Tokens (IA)',
         cost: 'Cost (estim.)',
         usageOverTime: 'Ús al llarg del temps',
         byModel: 'Per model',
+        insights: 'Insights',
+        activity: 'Activity',
+                timeline: "Timeline",
+        leaders: 'Leaders',
+        activeDays: 'Active days',
+        modelsTried: 'Models tried',
+        favoriteModelChanges: 'Favorite model changes',
+        busiestWindow: 'Busiest window',
+        activityCalendarSubtitle: 'Calendar heatmap',
+        events: 'events',
+        source: 'Source',
+                sessionUsage: "Session usage",
         noData: "No hi ha dades d'ús disponibles",
+        summary: {
+            title: 'Usage summary',
+            currentStreak: 'Current streak',
+            currentStreakSubtitle: ({ count }: { count: number }) => `${count} active days in the last 30`,
+            thisWeek: 'This week',
+            thisWeekSubtitle: 'Recent momentum',
+            topModel: 'Go-to model',
+            engine: 'Engine',
+            export: {
+                session: 'Sessió',
+                period: 'Període',
+                metric: 'Mètrica',
+                costMode: 'Mode de cost',
+                totalTokens: 'Tokens totals',
+                totalCost: 'Cost total',
+                activeDays: 'Dies actius',
+                topModel: 'Model principal',
+                topEngine: 'Motor principal',
+                modelTimeline: 'Cronologia dels models',
+                engineTimeline: 'Cronologia dels motors',
+            },
+        },
     },
 
     profiles: {
@@ -7420,6 +7472,7 @@ settingsSession: {
             kiroSubtitleExperimental: 'CLI de Kiro (experimental)',
             customAcpSubtitleExperimental: 'CLI d’ACP personalitzat (experimental)',
             piSubtitleExperimental: 'CLI de Pi (experimental)',
+            ohMyPiSubtitleExperimental: 'CLI d\'oh-my-pi (experimental)',
             copilotSubtitleExperimental: 'GitHub Copilot CLI (en proves)',
         },
         tmux: {

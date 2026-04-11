@@ -148,6 +148,12 @@ const settingsAppearanceTranslationExtension = {
   },
   settingsNavSidebar: 'Barra laterale impostazioni',
   settingsNavSidebarDescription: 'Mostra la barra laterale di navigazione delle impostazioni su desktop e tablet',
+  mobileWorkspaceExperience: 'Modalità spazio di lavoro mobile',
+  mobileWorkspaceExperienceDescription: 'Scegli come si aprono sessioni e progetti sul telefono',
+  mobileWorkspaceExperienceOptions: {
+    classic: 'Classico',
+    cockpit: 'Cockpit',
+  },
 } as const;
 
 const acpCatalogTranslationExtension = {
@@ -964,6 +970,7 @@ export const it: TranslationStructure = {
     copied: "Copiato",
     copy: "Copia",
     copyWithLabel: ({ label }: { label: string }) => `Copia ${label}`,
+        share: "Share",
     paste: "Incolla",
     expand: "Espandi",
     collapse: "Comprimi",
@@ -1236,6 +1243,7 @@ export const it: TranslationStructure = {
       kiroSubtitleExperimental: "Kiro CLI (sperimentale)",
       customAcpSubtitleExperimental: "CLI ACP personalizzata (sperimentale)",
       piSubtitleExperimental: "Pi CLI (sperimentale)",
+      ohMyPiSubtitleExperimental: "CLI oh-my-pi (sperimentale)",
       copilotSubtitleExperimental: "GitHub Copilot CLI (sperimentale)",
     },
     tmux: {
@@ -3812,6 +3820,11 @@ export const it: TranslationStructure = {
     },
   },
 
+  workspaceCockpit: {
+    openCockpit: 'Apri cockpit',
+    openClassicView: 'Apri vista classica',
+  },
+
   settingsChannelBridges: {
     unsupported: "I ponti di canale non sono supportati in questo ambiente.",
     enableInFeatures: "Abilita i ponti di canale",
@@ -5217,6 +5230,7 @@ export const it: TranslationStructure = {
       kiro: "Kiro",
       customAcp: "ACP personalizzato",
       pi: "Pi",
+      ohMyPi: "oh-my-pi",
       copilot: "Copilot",
     },
     auggieIndexingChip: {
@@ -7491,6 +7505,7 @@ settingsSession: {
 
   terminalEmbedded: {
     dockMenuA11y: "Aggancia terminale",
+    openNewTabA11y: "Apri una nuova scheda del terminale",
     settings: {
       locationTitle: "Posizione del terminale incorporato",
     },
@@ -8274,13 +8289,51 @@ settingsSession: {
     today: "Oggi",
     last7Days: "Ultimi 7 giorni",
     last30Days: "Ultimi 30 giorni",
+    costMode: "Cost mode",
+    auto: "Auto",
+    reported: "Reported",
+    estimated: "Estimated",
     totalTokens: "Token totali",
     totalCost: "Costo totale",
     tokens: "Token",
     cost: "Costo",
     usageOverTime: "Utilizzo nel tempo",
     byModel: "Per modello",
-    noData: "Nessun dato di utilizzo disponibile",
+    insights: "Insights",
+    activity: "Activity",
+            timeline: "Timeline",
+        leaders: "Leaders",
+    activeDays: "Active days",
+    modelsTried: "Models tried",
+    favoriteModelChanges: "Favorite model changes",
+    busiestWindow: "Busiest window",
+    activityCalendarSubtitle: "Calendar heatmap",
+    events: "events",
+    source: "Source",
+            sessionUsage: "Session usage",
+        noData: "Nessun dato di utilizzo disponibile",
+    summary: {
+      title: "Usage summary",
+      currentStreak: "Current streak",
+      currentStreakSubtitle: ({ count }: { count: number }) => `${count} active days in the last 30`,
+      thisWeek: "This week",
+      thisWeekSubtitle: "Recent momentum",
+      topModel: "Go-to model",
+      engine: "Engine",
+      export: {
+        session: "Sessione",
+        period: "Periodo",
+        metric: "Metrica",
+        costMode: "Modalità costo",
+        totalTokens: "Token totali",
+        totalCost: "Costo totale",
+        activeDays: "Giorni attivi",
+        topModel: "Modello principale",
+        topEngine: "Motore principale",
+        modelTimeline: "Cronologia dei modelli",
+        engineTimeline: "Cronologia dei motori",
+      },
+    },
   },
 
   secrets: {

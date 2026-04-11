@@ -3046,6 +3046,12 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         multiPanePanelsDescription: '顯示可調整大小的右側檔案/版本控制面板（Web/平板）',
         settingsNavSidebar: '設定側邊欄',
         settingsNavSidebarDescription: '顯示設定導覽側邊欄（Web/平板）',
+        mobileWorkspaceExperience: '行動工作區模式',
+        mobileWorkspaceExperienceDescription: '選擇在手機上開啟工作階段與專案的方式',
+        mobileWorkspaceExperienceOptions: {
+            classic: '經典',
+            cockpit: '駕駛艙',
+        },
         sessionsRightPaneDefaultOpen: '在工作階段中一律顯示右側邊欄',
         sessionsRightPaneDefaultOpenDescription: '進入工作階段時自動開啟右側邊欄（Web/平板）',
         detailsPaneTabsBehavior: '編輯器分頁',
@@ -3104,6 +3110,11 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             compact: '緊湊',
             compactDescription: '使用更緊密的間距，在畫面上顯示更多列',
         },
+    },
+
+    workspaceCockpit: {
+        openCockpit: '開啟駕駛艙',
+        openClassicView: '開啟經典檢視',
     },
 
     settingsChannelBridges: {
@@ -3883,6 +3894,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             claude: 'Claude',
             codex: 'Codex',
             customAcp: '自訂 ACP',
+            ohMyPi: 'oh-my-pi',
             gemini: 'Gemini',
             copilot: 'Copilot',
         },
@@ -5376,6 +5388,7 @@ settingsSession: {
 
     terminalEmbedded: {
         dockMenuA11y: '停靠終端',
+        openNewTabA11y: '開啟新的終端機分頁',
         settings: {
             locationTitle: '嵌入式終端位置',
         },
@@ -6033,13 +6046,51 @@ settingsSession: {
         today: '今天',
         last7Days: '過去 7 天',
         last30Days: '過去 30 天',
+        costMode: 'Cost mode',
+        auto: 'Auto',
+        reported: 'Reported',
+        estimated: 'Estimated',
         totalTokens: '總權杖數',
         totalCost: '總費用',
         tokens: '權杖',
         cost: '費用',
         usageOverTime: '使用趨勢',
         byModel: '按模型',
+        insights: 'Insights',
+        activity: 'Activity',
+                timeline: "Timeline",
+        leaders: 'Leaders',
+        activeDays: 'Active days',
+        modelsTried: 'Models tried',
+        favoriteModelChanges: 'Favorite model changes',
+        busiestWindow: 'Busiest window',
+        activityCalendarSubtitle: 'Calendar heatmap',
+        events: 'events',
+        source: 'Source',
+                sessionUsage: "Session usage",
         noData: '暫無使用資料',
+        summary: {
+            title: 'Usage summary',
+            currentStreak: 'Current streak',
+            currentStreakSubtitle: ({ count }: { count: number }) => `${count} active days in the last 30`,
+            thisWeek: 'This week',
+            thisWeekSubtitle: 'Recent momentum',
+            topModel: 'Go-to model',
+            engine: 'Engine',
+            export: {
+                session: '工作階段',
+                period: '期間',
+                metric: '指標',
+                costMode: '成本模式',
+                totalTokens: '總 Token 數',
+                totalCost: '總成本',
+                activeDays: '活躍天數',
+                topModel: '常用模型',
+                topEngine: '主要引擎',
+                modelTimeline: '模型時間線',
+                engineTimeline: '引擎時間線',
+            },
+        },
     },
 
     feed: {
@@ -6081,6 +6132,7 @@ settingsSession: {
         },
         aiBackend: {
             copilotSubtitleExperimental: 'GitHub Copilot CLI（實驗）',
+            ohMyPiSubtitleExperimental: 'oh-my-pi CLI（實驗）',
         },
     },
 };
