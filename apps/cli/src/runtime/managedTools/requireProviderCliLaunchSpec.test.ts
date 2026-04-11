@@ -147,6 +147,32 @@ describe('requireProviderCliLaunchSpec', () => {
     });
   });
 
+  it('wraps shebang-less TypeScript overrides with the configured JavaScript runtime', async () => {
+    if (process.platform === 'win32') return;
+
+    const root = await createTempDir('happier-provider-launch-ohmypi-ts-', tmpdir());
+    tempDirs.add(root);
+    const cliDir = join(root, 'src');
+    const runtimeDir = join(root, 'runtime');
+    await mkdir(cliDir, { recursive: true });
+    await mkdir(runtimeDir, { recursive: true });
+
+    const providerPath = join(cliDir, 'cli.ts');
+    await writeTextFile(providerPath, 'console.log("ok")\n');
+    const runtimePath = await createExecutable(runtimeDir, 'node', '#!/bin/sh\nexit 0\n');
+
+    process.env.PATH = '';
+    process.env.HAPPIER_OHMYPI_PATH = providerPath;
+    process.env.HAPPIER_JS_RUNTIME_PATH = runtimePath;
+
+    expect(requireProviderCliLaunchSpec('ohMyPi')).toEqual({
+      source: 'override',
+      resolvedPath: providerPath,
+      command: runtimePath,
+      args: [providerPath],
+    });
+  });
+
   it('keeps managed wrappers as direct commands', async () => {
     const homeDir = await createTempDir('happier-provider-launch-managed-', tmpdir());
     tempDirs.add(homeDir);
