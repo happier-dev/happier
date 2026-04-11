@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { t } from '@/text';
+import { shadowLevelStyle } from '@/shadowElevation';
 
 import type { UsageRecapCardAccentTone, UsageRecapCardModel } from './buildUsageRecapCardModels';
 import { UsageActivitySquareMatrix, UsageProgressMeter, UsageSparkBars } from './UsageMiniVisuals';
@@ -16,7 +17,8 @@ const styles = StyleSheet.create((theme) => ({
         borderRadius: 999,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: theme.colors.surfacePressedOverlay,
+        backgroundColor: theme.colors.surfaceHigh,
+        ...shadowLevelStyle(theme.colors.shadowLevels[1]),
     },
 }));
 
@@ -84,7 +86,7 @@ export function UsageRecapCard(props: Readonly<{
     return (
         <UsageStatCard
             testID={card.testID}
-            variant="surface"
+            variant="inset"
             label={card.label}
             value={card.value}
             subtitle={card.subtitle}

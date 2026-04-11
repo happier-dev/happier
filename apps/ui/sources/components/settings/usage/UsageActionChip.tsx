@@ -4,6 +4,8 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
+import { shadowLevelStyle } from '@/shadowElevation';
 
 const Ionicons = SafeIonicons;
 
@@ -18,20 +20,20 @@ const styles = StyleSheet.create((theme) => ({
     chip: {
         minHeight: 34,
         borderRadius: 999,
-        borderWidth: 1,
-        borderColor: theme.colors.divider,
         backgroundColor: theme.colors.surface,
-        paddingHorizontal: 12,
+        paddingHorizontal: 14,
         paddingVertical: 7,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
         gap: 8,
+        ...shadowLevelStyle(theme.colors.shadowLevels[1]),
     },
     chipText: {
+        ...Typography.default('semiBold'),
         fontSize: 13,
-        fontWeight: '600',
         color: theme.colors.textSecondary,
+        letterSpacing: -0.04,
     },
 }));
 

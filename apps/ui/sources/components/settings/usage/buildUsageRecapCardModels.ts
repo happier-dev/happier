@@ -5,6 +5,7 @@ import type {
     UsageFilterState,
     UsageSummaryActivityPoint,
 } from '@/sync/api/account/usageAnalytics';
+import { formatUsageWeekdayHourLabel } from '@/sync/api/account/formatUsageRhythmLabel';
 import { getUsagePeriodDefinition } from '@/sync/api/account/usagePeriods';
 
 import { formatUsageCurrency } from './formatUsageCurrency';
@@ -118,20 +119,6 @@ function buildRhythmActivity(viewModel: UsageAnalyticsViewModel): UsageSummaryAc
         }));
 }
 
-function formatWeekdayLabel(weekday: number): string {
-    const base = new Date(Date.UTC(2024, 0, 7 + weekday));
-    return new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(base);
-}
-
-function formatHourLabel(hour: number): string {
-    const base = new Date(Date.UTC(2024, 0, 1, hour));
-    return new Intl.DateTimeFormat(undefined, { hour: 'numeric' }).format(base);
-}
-
-function formatWeekdayHourLabel(weekday: number, hour: number): string {
-    return `${formatWeekdayLabel(weekday)} · ${formatHourLabel(hour)}`;
-}
-
 function buildSummaryViewModel(viewModel: UsageAnalyticsViewModel): UsageAnalyticsSummaryViewModel {
     const recentActivity = buildRecentActivity(viewModel);
     const topModel = viewModel.breakdowns.models[0] ?? null;
@@ -149,7 +136,7 @@ function buildSummaryViewModel(viewModel: UsageAnalyticsViewModel): UsageAnalyti
         weekCost: viewModel.overview.totalCost,
         topModel,
         topEngine,
-        busiestWindowLabel: busiestBucket ? formatWeekdayHourLabel(busiestBucket.weekday, busiestBucket.hour) : null,
+        busiestWindowLabel: busiestBucket ? formatUsageWeekdayHourLabel(busiestBucket.weekday, busiestBucket.hour) : null,
         recentActivity,
         hasData: viewModel.overview.totalTokens > 0 || viewModel.overview.totalCost > 0,
     };

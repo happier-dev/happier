@@ -1,12 +1,13 @@
 import * as React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemGroupColumn, ItemGroupColumns } from '@/components/ui/lists/ItemGroupColumns';
+import { layout } from '@/components/ui/layout/layout';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import type { UsageAnalyticsSummaryViewModel } from '@/sync/api/account/usageAnalytics';
+import { shadowLevelStyle } from '@/shadowElevation';
 
 import { UsageActivitySquareMatrix, UsageProgressMeter, UsageSparkBars } from './UsageMiniVisuals';
 import { UsageStatCard } from './UsageStatCard';
@@ -21,38 +22,43 @@ type SettingsUsageSummaryStripProps = Readonly<{
 }>;
 
 const styles = StyleSheet.create((theme) => ({
+    stripWrapper: {
+        alignSelf: 'center',
+        width: '100%',
+        maxWidth: layout.maxWidth,
+        paddingHorizontal: 16,
+        paddingTop: 12,
+        paddingBottom: 10,
+    },
     stripBody: {
-        paddingBottom: 16,
+        gap: 14,
     },
     stripColumn: {
-        minWidth: 170,
+        minWidth: 0,
+    },
+    summaryCard: {
+        minHeight: 136,
+        justifyContent: 'space-between',
     },
     emptyState: {
-        paddingVertical: 10,
+        borderRadius: 16,
+        backgroundColor: theme.colors.surface,
+        paddingVertical: 18,
         alignItems: 'center',
+        gap: 8,
+        ...shadowLevelStyle(theme.colors.shadowLevels[1]),
     },
     emptyText: {
         fontSize: 13,
         color: theme.colors.textSecondary,
     },
     errorCard: {
-        marginHorizontal: 16,
         borderRadius: 16,
-        borderWidth: 1,
-        borderColor: theme.colors.status.error,
         backgroundColor: theme.colors.surface,
         paddingHorizontal: 14,
         paddingVertical: 12,
         gap: 4,
-    },
-    errorTitle: {
-        fontSize: 13,
-        fontWeight: '700',
-        color: theme.colors.text,
-    },
-    errorSubtitle: {
-        fontSize: 12,
-        color: theme.colors.textSecondary,
+        ...shadowLevelStyle(theme.colors.shadowLevels[1]),
     },
 }));
 
@@ -68,6 +74,7 @@ function formatTokens(value: number): string {
 
 export const SettingsUsageSummaryStrip = React.memo(function SettingsUsageSummaryStrip(props: SettingsUsageSummaryStripProps) {
     const { theme } = useUnistyles();
+    const { width } = useWindowDimensions();
     const { summary, isLoading = false, errorMessage = null, onOpenUsage } = props;
 
     if (!isLoading && summary == null && !errorMessage) {
@@ -95,12 +102,10 @@ export const SettingsUsageSummaryStrip = React.memo(function SettingsUsageSummar
     const topModelShare = topModel && current.totalTokens > 0
         ? topModel.totalTokens / current.totalTokens
         : 0;
+    const columns = width >= 1180 ? 4 : width >= 720 ? 2 : 1;
 
     return (
-        <ItemGroup
-            title={t('usage.summary.title')}
-            containerStyle={{ overflow: 'visible' }}
-        >
+        <View style={styles.stripWrapper}>
             <View testID="settings-usage-summary-strip" style={styles.stripBody}>
                 {isLoading && summary == null ? (
                     <View style={styles.emptyState}>
@@ -109,14 +114,13 @@ export const SettingsUsageSummaryStrip = React.memo(function SettingsUsageSummar
                     </View>
                 ) : errorMessage ? (
                     <View style={styles.errorCard}>
-                        <Text style={styles.errorTitle}>{t('usage.summary.title')}</Text>
-                        <Text style={styles.errorSubtitle}>{errorMessage}</Text>
+                        <Text style={styles.emptyText}>{errorMessage}</Text>
                     </View>
                 ) : current.hasData ? (
                     <ItemGroupColumns
-                        columns={4}
-                        collapseBelow="medium"
-                        paddingHorizontal={16}
+                        columns={columns as 1 | 2 | 3 | 4}
+                        collapseBelow="compact"
+                        paddingHorizontal={0}
                         paddingVertical={0}
                         columnGap={12}
                         rowGap={12}
@@ -124,17 +128,20 @@ export const SettingsUsageSummaryStrip = React.memo(function SettingsUsageSummar
                         <ItemGroupColumn style={styles.stripColumn}>
                             <UsageStatCard
                                 testID="settings-usage-summary-streak-card"
-                                variant="inset"
+                                variant="surface"
                                 label={t('usage.summary.currentStreak')}
                                 value={`${current.currentStreakDays}d`}
                                 subtitle={t('usage.summary.currentStreakSubtitle', { count: current.activeDays })}
                                 visual={(
                                     <UsageActivitySquareMatrix
                                         activity={current.recentActivity}
+                                        squareCount={14}
+                                        rowSize={7}
                                         color={theme.colors.accent.orange}
                                     />
                                 )}
                                 accentColor={theme.colors.accent.orange}
+                                contentStyle={styles.summaryCard}
                                 onPress={onOpenUsage
                                     ? () => onOpenUsage(buildUsageSettingsRouteTarget({
                                         period: 'year',
@@ -147,7 +154,7 @@ export const SettingsUsageSummaryStrip = React.memo(function SettingsUsageSummar
                         <ItemGroupColumn style={styles.stripColumn}>
                             <UsageStatCard
                                 testID="settings-usage-summary-week-card"
-                                variant="inset"
+                                variant="surface"
                                 label={t('usage.summary.thisWeek')}
                                 value={formatTokens(current.weekTokens)}
                                 subtitle={`${formatUsageCurrency(current.weekCost, current.currency, {
@@ -161,6 +168,7 @@ export const SettingsUsageSummaryStrip = React.memo(function SettingsUsageSummar
                                     />
                                 )}
                                 accentColor={theme.colors.accent.blue}
+                                contentStyle={styles.summaryCard}
                                 onPress={onOpenUsage
                                     ? () => onOpenUsage(buildUsageSettingsRouteTarget({
                                         period: '7days',
@@ -173,7 +181,7 @@ export const SettingsUsageSummaryStrip = React.memo(function SettingsUsageSummar
                         <ItemGroupColumn style={styles.stripColumn}>
                             <UsageStatCard
                                 testID="settings-usage-summary-model-card"
-                                variant="inset"
+                                variant="surface"
                                 valueTone="compact"
                                 label={t('usage.summary.topModel')}
                                 value={topModel?.label ?? '—'}
@@ -185,6 +193,7 @@ export const SettingsUsageSummaryStrip = React.memo(function SettingsUsageSummar
                                     />
                                 )}
                                 accentColor={theme.colors.accent.purple}
+                                contentStyle={styles.summaryCard}
                                 onPress={onOpenUsage && topModel
                                     ? () => onOpenUsage(buildUsageSettingsRouteTarget({
                                         period: '30days',
@@ -202,11 +211,11 @@ export const SettingsUsageSummaryStrip = React.memo(function SettingsUsageSummar
                         <ItemGroupColumn style={styles.stripColumn}>
                             <UsageStatCard
                                 testID="settings-usage-summary-engine-card"
-                                variant="inset"
+                                variant="surface"
                                 valueTone="compact"
-                                label={t('usage.summary.engine')}
-                                value={topEngine?.label ?? '—'}
-                                subtitle={current.busiestWindowLabel ?? (topEngine ? `${formatTokens(topEngine.totalTokens)} ${t('usage.tokens').toLowerCase()}` : t('usage.noData'))}
+                                label={t('usage.busiestWindow')}
+                                value={current.busiestWindowLabel ?? '—'}
+                                subtitle={topEngine?.label ?? t('usage.noData')}
                                 visual={(
                                     <UsageSparkBars
                                         activity={current.recentActivity}
@@ -214,6 +223,7 @@ export const SettingsUsageSummaryStrip = React.memo(function SettingsUsageSummar
                                     />
                                 )}
                                 accentColor={theme.colors.accent.green}
+                                contentStyle={styles.summaryCard}
                                 onPress={onOpenUsage && topEngine
                                     ? () => onOpenUsage(buildUsageSettingsRouteTarget({
                                         period: '30days',
@@ -234,6 +244,6 @@ export const SettingsUsageSummaryStrip = React.memo(function SettingsUsageSummar
                     </View>
                 )}
             </View>
-        </ItemGroup>
+        </View>
     );
 });

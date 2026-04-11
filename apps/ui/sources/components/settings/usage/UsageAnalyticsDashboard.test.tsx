@@ -153,8 +153,8 @@ describe('UsageAnalyticsDashboard', () => {
             onCostModeChange,
         }));
 
-        expect(screen.getTextContent()).toContain('Total Tokens');
-        expect(screen.getTextContent()).toContain('Total Cost');
+        expect(screen.getTextContent()).toContain('Usage summary');
+        expect(screen.getTextContent()).toContain('$12');
         expect(screen.findByTestId('usage-costmode-auto')).toBeTruthy();
         expect(screen.findByTestId('usage-insights-section')).toBeTruthy();
         expect(screen.findByTestId('usage-activity-section')).toBeTruthy();

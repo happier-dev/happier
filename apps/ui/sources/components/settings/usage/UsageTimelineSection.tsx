@@ -1,90 +1,80 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemGroupColumn, ItemGroupColumns } from '@/components/ui/lists/ItemGroupColumns';
 import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import type { UsageAnalyticsTimelineBucket, UsageAnalyticsViewModel, UsageSummaryActivityPoint } from '@/sync/api/account/usageAnalytics';
+import type { UsageAnalyticsViewModel } from '@/sync/api/account/usageAnalytics';
 
-import { UsageSparkBars } from './UsageMiniVisuals';
-import { UsageStatCard } from './UsageStatCard';
+import { UsageJourneyChart } from './UsageJourneyChart';
 
 const styles = StyleSheet.create((theme) => ({
     sectionBody: {
-        gap: 12,
+        paddingBottom: 16,
+        gap: 18,
     },
-    cardRow: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: 12,
-    },
-    cardColumn: {
-        flexGrow: 1,
-        flexBasis: '48%',
-        minWidth: 160,
-    },
-    sectionNote: {
-        fontSize: 12,
+    note: {
+        paddingHorizontal: 16,
+        ...Typography.default(),
+        fontSize: 13,
+        lineHeight: 18,
         color: theme.colors.textSecondary,
+    },
+    column: {
+        minWidth: 0,
+    },
+    card: {
+        gap: 12,
+    },
+    cardHeader: {
+        paddingHorizontal: 4,
+        gap: 4,
+    },
+    cardLabel: {
+        ...Typography.default('semiBold'),
+        fontSize: 12,
+        lineHeight: 16,
+        color: theme.colors.groupped.sectionTitle,
+        letterSpacing: -0.08,
+    },
+    cardValue: {
+        ...Typography.default('semiBold'),
+        fontSize: 34,
+        lineHeight: 38,
+        color: theme.colors.text,
+        letterSpacing: -0.5,
     },
 }));
 
-function buildTimelineVisualPoints(timeline: readonly UsageAnalyticsTimelineBucket[]): UsageSummaryActivityPoint[] {
-    return timeline.map((bucket) => {
-        const leader = bucket.leaders[0] ?? null;
-        return {
-            timestamp: Math.floor(bucket.bucketStartMs / 1000),
-            active: Boolean(leader),
-            tokens: leader?.totalTokens ?? 0,
-            cost: leader?.totalCost ?? 0,
-        };
-    });
-}
-
-function buildTimelineSubtitle(timeline: readonly UsageAnalyticsTimelineBucket[]): string {
-    if (timeline.length === 0) {
-        return t('usage.noData');
-    }
-    const firstBucket = timeline[0];
-    const lastBucket = timeline[timeline.length - 1];
-    const topLeader = lastBucket?.leaders[0]?.label ?? t('usage.noData');
-    const start = new Date(firstBucket.bucketStartMs).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    const end = new Date(lastBucket.bucketEndMs).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    return `${start} - ${end} · ${topLeader}`;
-}
-
-function buildTimelineValue(timeline: readonly UsageAnalyticsTimelineBucket[]): string {
-    const lastBucket = [...timeline].sort((left, right) => right.bucketStartMs - left.bucketStartMs)[0];
-    return lastBucket?.leaders[0]?.label ?? t('usage.noData');
-}
-
-function TimelineCard(props: Readonly<{
+function TimelineJourneyCard(props: Readonly<{
     testID: string;
     label: string;
-    timeline: readonly UsageAnalyticsTimelineBucket[];
-    accentColor: string;
+    timeline: UsageAnalyticsViewModel['modelTimeline'];
 }>): React.ReactElement {
-    const visualPoints = buildTimelineVisualPoints(props.timeline);
+    const leader = props.timeline[props.timeline.length - 1]?.leaders[0]?.label ?? t('usage.noData');
 
     return (
-        <UsageStatCard
-            testID={props.testID}
-            variant="surface"
-            label={props.label}
-            value={buildTimelineValue(props.timeline)}
-            subtitle={buildTimelineSubtitle(props.timeline)}
-            visual={<UsageSparkBars activity={visualPoints} color={props.accentColor} />}
-        />
+        <View testID={props.testID} style={styles.card}>
+            <View style={styles.cardHeader}>
+                <Text style={styles.cardLabel}>{props.label}</Text>
+                <Text numberOfLines={1} adjustsFontSizeToFit style={styles.cardValue}>
+                    {leader}
+                </Text>
+            </View>
+            <UsageJourneyChart timeline={props.timeline} />
+        </View>
     );
 }
 
 export function UsageTimelineSection(props: Readonly<{
     viewModel: Pick<UsageAnalyticsViewModel, 'modelTimeline' | 'engineTimeline'>;
 }>): React.ReactElement | null {
-    const { theme } = useUnistyles();
+    const { modelTimeline, engineTimeline } = props.viewModel;
 
-    if (props.viewModel.modelTimeline.length === 0 && props.viewModel.engineTimeline.length === 0) {
+    if (modelTimeline.length === 0 && engineTimeline.length === 0) {
         return null;
     }
 
@@ -92,29 +82,34 @@ export function UsageTimelineSection(props: Readonly<{
         <View testID="usage-timeline-section">
             <ItemGroup title={t('usage.timeline')}>
                 <View style={styles.sectionBody}>
-                    <Text style={styles.sectionNote}>{t('usage.activityCalendarSubtitle')}</Text>
-                    <View style={styles.cardRow}>
-                        {props.viewModel.modelTimeline.length > 0 ? (
-                            <View style={styles.cardColumn}>
-                                <TimelineCard
+                    <Text style={styles.note}>{t('usage.activityCalendarSubtitle')}</Text>
+                    <ItemGroupColumns
+                        columns={2}
+                        collapseBelow="medium"
+                        paddingHorizontal={16}
+                        paddingVertical={0}
+                        columnGap={12}
+                        rowGap={12}
+                    >
+                        {modelTimeline.length > 0 ? (
+                            <ItemGroupColumn style={styles.column}>
+                                <TimelineJourneyCard
                                     testID="usage-model-timeline-card"
                                     label={t('usage.summary.topModel')}
-                                    timeline={props.viewModel.modelTimeline}
-                                    accentColor={theme.colors.accent.green}
+                                    timeline={modelTimeline}
                                 />
-                            </View>
+                            </ItemGroupColumn>
                         ) : null}
-                        {props.viewModel.engineTimeline.length > 0 ? (
-                            <View style={styles.cardColumn}>
-                                <TimelineCard
+                        {engineTimeline.length > 0 ? (
+                            <ItemGroupColumn style={styles.column}>
+                                <TimelineJourneyCard
                                     testID="usage-engine-timeline-card"
                                     label={t('usage.summary.engine')}
-                                    timeline={props.viewModel.engineTimeline}
-                                    accentColor={theme.colors.accent.orange}
+                                    timeline={engineTimeline}
                                 />
-                            </View>
+                            </ItemGroupColumn>
                         ) : null}
-                    </View>
+                    </ItemGroupColumns>
                 </View>
             </ItemGroup>
         </View>

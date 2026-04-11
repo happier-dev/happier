@@ -1,8 +1,10 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { Pressable, View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
+import { shadowLevelStyle } from '@/shadowElevation';
 
 type UsageStatCardVariant = 'inset' | 'surface';
 type UsageStatCardValueTone = 'numeric' | 'compact';
@@ -18,22 +20,20 @@ type UsageStatCardProps = Readonly<{
     variant?: UsageStatCardVariant;
     valueTone?: UsageStatCardValueTone;
     accentColor?: string | null;
+    contentStyle?: StyleProp<ViewStyle>;
 }>;
 
 const styles = StyleSheet.create((theme) => ({
     card: {
-        borderRadius: 18,
-        padding: 16,
-        gap: 10,
+        borderRadius: 16,
+        paddingHorizontal: 18,
+        paddingVertical: 16,
+        gap: 8,
         minWidth: 0,
     },
     surfaceCard: {
         backgroundColor: theme.colors.surface,
-        shadowColor: theme.colors.shadow.color,
-        shadowOpacity: theme.colors.shadow.opacity,
-        shadowRadius: 16,
-        shadowOffset: { width: 0, height: 6 },
-        elevation: 2,
+        ...shadowLevelStyle(theme.colors.shadowLevels[1]),
     },
     header: {
         flexDirection: 'row',
@@ -42,46 +42,46 @@ const styles = StyleSheet.create((theme) => ({
     },
     insetCard: {
         backgroundColor: theme.colors.surfaceHigh,
-        borderWidth: 1,
-        borderColor: theme.colors.divider,
     },
     label: {
         flex: 1,
-        fontSize: 12,
-        fontWeight: '700',
-        color: theme.colors.textSecondary,
+        ...Typography.default('semiBold'),
+        fontSize: 11,
+        lineHeight: 14,
+        color: theme.colors.groupped.sectionTitle,
+        letterSpacing: 0.24,
         textTransform: 'uppercase',
-        letterSpacing: 0.4,
     },
     valueNumeric: {
-        fontSize: 28,
-        lineHeight: 32,
-        fontWeight: '800',
+        ...Typography.default('semiBold'),
+        fontSize: 40,
+        lineHeight: 44,
+        letterSpacing: -0.7,
         color: theme.colors.text,
     },
     valueCompact: {
-        fontSize: 21,
-        lineHeight: 26,
-        fontWeight: '700',
+        ...Typography.default('semiBold'),
+        fontSize: 28,
+        lineHeight: 33,
+        letterSpacing: -0.4,
         color: theme.colors.text,
     },
     subtitle: {
+        ...Typography.default(),
         fontSize: 13,
         lineHeight: 18,
         color: theme.colors.textSecondary,
     },
     footer: {
-        gap: 8,
-        marginTop: 2,
-    },
-    accentLine: {
-        height: 3,
-        borderRadius: 999,
-        backgroundColor: theme.colors.divider,
-        marginTop: 2,
+        gap: 10,
+        marginTop: 4,
     },
     pressable: {
-        borderRadius: 18,
+        borderRadius: 16,
+        overflow: 'hidden',
+    },
+    pressablePressed: {
+        opacity: 0.985,
     },
 }));
 
@@ -97,6 +97,7 @@ export const UsageStatCard = React.memo(function UsageStatCard(props: UsageStatC
         variant = 'surface',
         valueTone = 'numeric',
         accentColor,
+        contentStyle,
     } = props;
 
     const content = (
@@ -105,6 +106,7 @@ export const UsageStatCard = React.memo(function UsageStatCard(props: UsageStatC
             style={[
                 styles.card,
                 variant === 'surface' ? styles.surfaceCard : styles.insetCard,
+                contentStyle,
             ]}
         >
             <View style={styles.header}>
@@ -124,7 +126,6 @@ export const UsageStatCard = React.memo(function UsageStatCard(props: UsageStatC
                 </Text>
             ) : null}
             {visual ? <View style={styles.footer}>{visual}</View> : null}
-            {accentColor ? <View style={[styles.accentLine, { backgroundColor: accentColor }]} /> : null}
         </View>
     );
 
@@ -133,7 +134,7 @@ export const UsageStatCard = React.memo(function UsageStatCard(props: UsageStatC
     }
 
     return (
-        <Pressable style={styles.pressable} onPress={onPress}>
+        <Pressable style={({ pressed }) => [styles.pressable, pressed && styles.pressablePressed]} onPress={onPress}>
             {content}
         </Pressable>
     );

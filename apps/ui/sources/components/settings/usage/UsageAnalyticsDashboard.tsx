@@ -4,17 +4,24 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { layout } from '@/components/ui/layout/layout';
 import { Text } from '@/components/ui/text/Text';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemGroupColumn, ItemGroupColumns } from '@/components/ui/lists/ItemGroupColumns';
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { t } from '@/text';
+import { formatUsageWeekdayHourLabel } from '@/sync/api/account/formatUsageRhythmLabel';
 import { USAGE_PERIODS, getUsagePeriodDefinition } from '@/sync/api/account/usagePeriods';
 import { UsageBar } from './UsageBar';
-import { UsageChart } from './UsageChart';
+import { UsageActivityPoster } from './UsageActivityPoster';
 import { UsageExportActions } from './UsageExportActions';
+import { UsageRankingBoard } from './UsageRankingBoard';
 import { UsageRecapHighlightsSection } from './UsageRecapHighlightsSection';
+import { UsageStatCard } from './UsageStatCard';
 import { UsageTimelineSection } from './UsageTimelineSection';
 import { UsageToggleChip } from './UsageToggleChip';
+import { UsageVolumeBubbleChart } from './UsageVolumeBubbleChart';
 import { buildUsageCurrentStreakSubtitle } from './buildUsageCurrentStreakSubtitle';
 import { formatUsageCurrency } from './formatUsageCurrency';
+import { Typography } from '@/constants/Typography';
+import { shadowLevelStyle } from '@/shadowElevation';
 import type {
     UsageAnalyticsActivityViewModel,
     UsageAnalyticsInsightsViewModel,
@@ -56,18 +63,14 @@ const styles = StyleSheet.create((theme) => ({
         width: '100%',
         maxWidth: layout.maxWidth,
     },
-    filtersCard: {
-        marginHorizontal: 16,
-        marginBottom: 12,
-        padding: 14,
-        borderRadius: 18,
-        backgroundColor: theme.colors.surface,
+    sectionBody: {
+        paddingBottom: 16,
         gap: 12,
-        shadowColor: theme.colors.shadow.color,
-        shadowOpacity: theme.colors.shadow.opacity,
-        shadowRadius: 16,
-        shadowOffset: { width: 0, height: 6 },
-        elevation: 2,
+    },
+    filterBody: {
+        paddingHorizontal: 16,
+        paddingBottom: 16,
+        gap: 12,
     },
     chipRow: {
         flexDirection: 'row',
@@ -79,97 +82,79 @@ const styles = StyleSheet.create((theme) => ({
         flexWrap: 'wrap',
         gap: 8,
     },
-    overviewGrid: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: 12,
-        marginHorizontal: 16,
-        marginBottom: 12,
-    },
     cardGrid: {
         flexDirection: 'row',
         flexWrap: 'wrap',
         gap: 12,
     },
-    summaryCard: {
-        flexGrow: 1,
-        flexBasis: '48%',
-        minWidth: 156,
-        padding: 16,
-        borderRadius: 18,
-        backgroundColor: theme.colors.surface,
-        shadowColor: theme.colors.shadow.color,
-        shadowOpacity: theme.colors.shadow.opacity,
-        shadowRadius: 16,
-        shadowOffset: { width: 0, height: 6 },
-        elevation: 2,
-        gap: 6,
-    },
-    summaryLabel: {
-        fontSize: 12,
-        color: theme.colors.textSecondary,
-        fontWeight: '600',
-        textTransform: 'uppercase',
-        letterSpacing: 0.4,
-    },
-    summaryValue: {
-        fontSize: 28,
-        fontWeight: '700',
-        color: theme.colors.text,
-    },
-    summarySubvalue: {
-        fontSize: 13,
-        color: theme.colors.textSecondary,
-    },
-    cardSection: {
-        marginHorizontal: 16,
-        marginBottom: 12,
-        borderRadius: 20,
-        backgroundColor: theme.colors.surface,
-        padding: 16,
-        shadowColor: theme.colors.shadow.color,
-        shadowOpacity: theme.colors.shadow.opacity,
-        shadowRadius: 16,
-        shadowOffset: { width: 0, height: 6 },
-        elevation: 2,
-        gap: 14,
-    },
-    cardVisual: {
-        gap: 8,
-        marginTop: 6,
+    gridColumn: {
+        minWidth: 0,
     },
     cardHeader: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
         gap: 12,
+        paddingHorizontal: 16,
     },
     sectionTitle: {
-        fontSize: 18,
-        fontWeight: '700',
+        ...Typography.default('semiBold'),
+        fontSize: 17,
+        lineHeight: 22,
         color: theme.colors.text,
     },
     sectionSubtitle: {
+        ...Typography.default(),
         fontSize: 13,
+        lineHeight: 18,
         color: theme.colors.textSecondary,
         marginTop: 2,
     },
     chartWrap: {
-        paddingTop: 6,
+        paddingHorizontal: 16,
+        paddingBottom: 16,
     },
-    sectionBody: {
-        gap: 12,
+    heroSection: {
+        paddingHorizontal: 16,
+        paddingBottom: 16,
+        gap: 16,
+    },
+    heroPanel: {
+        paddingHorizontal: 4,
+        gap: 6,
+    },
+    heroEyebrow: {
+        ...Typography.default('semiBold'),
+        fontSize: 12,
+        lineHeight: 16,
+        color: theme.colors.groupped.sectionTitle,
+        letterSpacing: -0.08,
+        textTransform: 'uppercase',
+    },
+    heroValue: {
+        ...Typography.default('semiBold'),
+        fontSize: 54,
+        lineHeight: 58,
+        letterSpacing: -1.2,
+        color: theme.colors.text,
+    },
+    heroSubtitle: {
+        ...Typography.default(),
+        fontSize: 16,
+        lineHeight: 22,
+        color: theme.colors.textSecondary,
+        maxWidth: 560,
     },
     heatmapGrid: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        gap: 4,
+        gap: 6,
     },
     heatmapSquare: {
-        width: 14,
-        height: 14,
+        width: 12,
+        height: 12,
         borderRadius: 4,
-        backgroundColor: theme.colors.surfacePressedOverlay,
+        backgroundColor: theme.colors.groupped.background,
     },
     heatmapSquareActive: {
         backgroundColor: theme.colors.accent.orange,
@@ -183,9 +168,8 @@ const styles = StyleSheet.create((theme) => ({
         padding: 14,
         borderRadius: 18,
         backgroundColor: theme.colors.surface,
-        borderWidth: 1,
-        borderColor: theme.colors.status.error,
         gap: 10,
+        ...shadowLevelStyle(theme.colors.shadowLevels[1]),
     },
     errorRow: {
         flexDirection: 'row',
@@ -216,6 +200,7 @@ const styles = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface,
         alignItems: 'center',
         gap: 8,
+        ...shadowLevelStyle(theme.colors.shadowLevels[1]),
     },
     emptyTitle: {
         fontSize: 16,
@@ -239,10 +224,13 @@ const styles = StyleSheet.create((theme) => ({
     },
     sectionMiniLabel: {
         fontSize: 11,
-        color: theme.colors.textSecondary,
+        color: theme.colors.groupped.sectionTitle,
         fontWeight: '600',
         textTransform: 'uppercase',
         letterSpacing: 0.3,
+    },
+    sectionInset: {
+        paddingHorizontal: 16,
     },
 }));
 
@@ -284,20 +272,6 @@ function formatCost(value: number, currency: string): string {
 
 function formatCount(value: number): string {
     return value.toLocaleString();
-}
-
-function formatWeekdayLabel(weekday: number): string {
-    const base = new Date(Date.UTC(2024, 0, 7 + weekday));
-    return new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(base);
-}
-
-function formatHourLabel(hour: number): string {
-    const base = new Date(Date.UTC(2024, 0, 1, hour));
-    return new Intl.DateTimeFormat(undefined, { hour: 'numeric' }).format(base);
-}
-
-function formatWeekdayHourLabel(weekday: number, hour: number): string {
-    return `${formatWeekdayLabel(weekday)} · ${formatHourLabel(hour)}`;
 }
 
 function resolveCostModeLabel(mode: UsageCostMode): string {
@@ -355,26 +329,28 @@ function SummaryCard({
     value,
     subtitle,
     visual,
+    accentColor,
+    valueTone,
 }: {
     testID?: string;
     label: string;
     value: string;
     subtitle?: string;
     visual?: React.ReactNode;
+    accentColor?: string;
+    valueTone?: 'numeric' | 'compact';
 }) {
-    const { theme } = useUnistyles();
     return (
-        <View testID={testID} style={styles.summaryCard}>
-            <Text style={styles.summaryLabel}>{label}</Text>
-            <Text style={styles.summaryValue}>{value}</Text>
-            {subtitle ? (
-                <Text style={styles.summarySubvalue}>{subtitle}</Text>
-            ) : null}
-            {visual ? (
-                <View style={styles.cardVisual}>{visual}</View>
-            ) : null}
-            <View style={{ height: 2, backgroundColor: theme.colors.divider, borderRadius: 999, marginTop: 4 }} />
-        </View>
+        <UsageStatCard
+            testID={testID}
+            variant="inset"
+            label={label}
+            value={value}
+            subtitle={subtitle}
+            visual={visual}
+            accentColor={accentColor}
+            valueTone={valueTone}
+        />
     );
 }
 
@@ -432,32 +408,47 @@ function renderInsightSection(
     return (
         <ItemGroup title={t('usage.insights')}>
             <View testID="usage-insights-section" style={styles.sectionBody}>
-                <View style={styles.cardGrid}>
-                    <SummaryCard
-                        testID="usage-insight-current-streak"
-                        label={t('usage.summary.currentStreak')}
-                        value={`${insights.currentStreakDays}d`}
-                        subtitle={buildUsageCurrentStreakSubtitle(period, insights.activeDays)}
-                    />
-                    <SummaryCard
-                        testID="usage-insight-active-days"
-                        label={t('usage.activeDays')}
-                        value={formatCount(insights.activeDays)}
-                        subtitle={t('usage.summary.thisWeekSubtitle')}
-                    />
-                    <SummaryCard
-                        testID="usage-insight-models-tried"
-                        label={t('usage.modelsTried')}
-                        value={formatCount(insights.modelsTried)}
-                        subtitle={insights.favoriteModel ? insights.favoriteModel.label : t('usage.noData')}
-                    />
-                    <SummaryCard
-                        testID="usage-insight-favorite-model-changes"
-                        label={t('usage.favoriteModelChanges')}
-                        value={formatCount(insights.favoriteModelChangeCount)}
-                        subtitle={insights.favoriteModel ? insights.favoriteModel.label : t('usage.noData')}
-                    />
-                </View>
+                <ItemGroupColumns
+                    columns={2}
+                    collapseBelow="medium"
+                    paddingHorizontal={16}
+                    paddingVertical={0}
+                    columnGap={12}
+                    rowGap={12}
+                >
+                    <ItemGroupColumn style={styles.gridColumn}>
+                        <SummaryCard
+                            testID="usage-insight-current-streak"
+                            label={t('usage.summary.currentStreak')}
+                            value={`${insights.currentStreakDays}d`}
+                            subtitle={buildUsageCurrentStreakSubtitle(period, insights.activeDays)}
+                        />
+                    </ItemGroupColumn>
+                    <ItemGroupColumn style={styles.gridColumn}>
+                        <SummaryCard
+                            testID="usage-insight-active-days"
+                            label={t('usage.activeDays')}
+                            value={formatCount(insights.activeDays)}
+                            subtitle={t('usage.summary.thisWeekSubtitle')}
+                        />
+                    </ItemGroupColumn>
+                    <ItemGroupColumn style={styles.gridColumn}>
+                        <SummaryCard
+                            testID="usage-insight-models-tried"
+                            label={t('usage.modelsTried')}
+                            value={formatCount(insights.modelsTried)}
+                            subtitle={insights.favoriteModel ? insights.favoriteModel.label : t('usage.noData')}
+                        />
+                    </ItemGroupColumn>
+                    <ItemGroupColumn style={styles.gridColumn}>
+                        <SummaryCard
+                            testID="usage-insight-favorite-model-changes"
+                            label={t('usage.favoriteModelChanges')}
+                            value={formatCount(insights.favoriteModelChangeCount)}
+                            subtitle={insights.favoriteModel ? insights.favoriteModel.label : t('usage.noData')}
+                        />
+                    </ItemGroupColumn>
+                </ItemGroupColumns>
             </View>
         </ItemGroup>
     );
@@ -476,35 +467,53 @@ function renderActivitySection(
     return (
         <ItemGroup title={t('usage.activity')}>
             <View testID="usage-activity-section" style={styles.sectionBody}>
-                <View style={styles.cardGrid}>
-                    <SummaryCard
-                        testID="usage-activity-calendar"
-                        label={t('usage.activeDays')}
-                        value={formatCount(insights.activeDays)}
-                        subtitle={t('usage.activityCalendarSubtitle')}
-                        visual={renderActivityHeatmap(activity.calendarDays)}
-                    />
-                    <SummaryCard
-                        testID="usage-activity-rhythm"
-                        label={t('usage.busiestWindow')}
-                        value={busiestBucket ? formatWeekdayHourLabel(busiestBucket.weekday, busiestBucket.hour) : t('usage.noData')}
-                        subtitle={insights.busiestHour?.label ?? t('usage.noData')}
-                        visual={
-                            <View style={styles.leaderRowStack}>
-                                {activity.weekdayHourBuckets.slice(0, 4).map((bucket) => (
-                                    <UsageBar
-                                        key={`${bucket.weekday}:${bucket.hour}`}
-                                        label={formatWeekdayHourLabel(bucket.weekday, bucket.hour)}
-                                        value={bucket.eventCount}
-                                        maxValue={Math.max(...activity.weekdayHourBuckets.map((entry) => entry.eventCount), 1)}
-                                        showPercentage={false}
-                                        height={6}
-                                    />
-                                ))}
-                            </View>
-                        }
-                    />
-                </View>
+                <ItemGroupColumns
+                    columns={2}
+                    collapseBelow="medium"
+                    paddingHorizontal={16}
+                    paddingVertical={0}
+                    columnGap={12}
+                    rowGap={12}
+                >
+                    <ItemGroupColumn span={2} style={styles.gridColumn}>
+                        <UsageActivityPoster activity={activity} insights={insights} />
+                    </ItemGroupColumn>
+                    <ItemGroupColumn style={styles.gridColumn}>
+                        <SummaryCard
+                            testID="usage-activity-calendar"
+                            label={t('usage.activeDays')}
+                            value={formatCount(insights.activeDays)}
+                            subtitle={t('usage.activityCalendarSubtitle')}
+                            visual={renderActivityHeatmap(activity.calendarDays)}
+                        />
+                    </ItemGroupColumn>
+                    <ItemGroupColumn style={styles.gridColumn}>
+                        <SummaryCard
+                            testID="usage-activity-rhythm"
+                            label={t('usage.busiestWindow')}
+                            value={busiestBucket ? formatUsageWeekdayHourLabel(busiestBucket.weekday, busiestBucket.hour) : t('usage.noData')}
+                            subtitle={insights.busiestHour?.label ?? t('usage.noData')}
+                            visual={
+                                <View style={styles.leaderRowStack}>
+                                    {[...activity.weekdayHourBuckets]
+                                        .sort((left, right) => right.eventCount - left.eventCount)
+                                        .slice(0, 4)
+                                        .map((bucket) => (
+                                        <UsageBar
+                                            key={`${bucket.weekday}:${bucket.hour}`}
+                                            label={formatUsageWeekdayHourLabel(bucket.weekday, bucket.hour)}
+                                            value={bucket.eventCount}
+                                            maxValue={Math.max(...activity.weekdayHourBuckets.map((entry) => entry.eventCount), 1)}
+                                            showPercentage={false}
+                                            height={6}
+                                        />
+                                    ))}
+                                </View>
+                            }
+                            valueTone="compact"
+                        />
+                    </ItemGroupColumn>
+                </ItemGroupColumns>
             </View>
         </ItemGroup>
     );
@@ -527,18 +536,32 @@ function renderLeadersSection(leaders: UsageAnalyticsLeaderSections): React.Reac
     return (
         <ItemGroup title={t('usage.leaders')}>
             <View testID="usage-leaders-section" style={styles.sectionBody}>
-                <View style={styles.cardGrid}>
-                    {sections.map((section) => (
-                        <SummaryCard
-                            key={section.key}
-                            testID={`usage-leader-${section.key}`}
-                            label={section.title}
-                            value={section.rows[0]?.label ?? t('usage.noData')}
-                            subtitle={summarizeLeaders(section.rows)}
-                            visual={renderLeaderRows(section.rows)}
-                        />
+                {leaders.models.length > 0 ? (
+                    <View style={{ paddingHorizontal: 16 }}>
+                        <UsageRankingBoard rows={leaders.models} />
+                    </View>
+                ) : null}
+                <ItemGroupColumns
+                    columns={2}
+                    collapseBelow="medium"
+                    paddingHorizontal={16}
+                    paddingVertical={0}
+                    columnGap={12}
+                    rowGap={12}
+                >
+                    {sections.filter((section) => section.key !== 'models').map((section) => (
+                        <ItemGroupColumn key={section.key} style={styles.gridColumn}>
+                            <SummaryCard
+                                testID={`usage-leader-${section.key}`}
+                                label={section.title}
+                                value={section.rows[0]?.label ?? t('usage.noData')}
+                                subtitle={summarizeLeaders(section.rows)}
+                                visual={renderLeaderRows(section.rows)}
+                                valueTone="compact"
+                            />
+                        </ItemGroupColumn>
                     ))}
-                </View>
+                </ItemGroupColumns>
             </View>
         </ItemGroup>
     );
@@ -600,100 +623,141 @@ export const UsageAnalyticsDashboard: React.FC<UsageAnalyticsDashboardProps> = (
                     </View>
                 ) : null}
 
-                <View style={styles.filtersCard}>
-                    <View style={styles.chipRow}>
-                        {USAGE_PERIODS.map((period) => (
-                            <UsageToggleChip
-                                key={period}
-                                testID={`usage-period-${period}`}
-                                label={t(getUsagePeriodDefinition(period).translationKey)}
-                                selected={filters.period === period}
-                                onPress={() => onPeriodChange(period)}
-                            />
-                        ))}
-                    </View>
-                    <View style={styles.chipRow}>
-                        <UsageToggleChip
-                            testID="usage-metric-tokens"
-                            label={t('usage.tokens')}
-                            selected={filters.metric === 'tokens'}
-                            accentColor={theme.colors.accent.blue}
-                            onPress={() => onMetricChange('tokens')}
-                        />
-                        <UsageToggleChip
-                            testID="usage-metric-cost"
-                            label={t('usage.cost')}
-                            selected={filters.metric === 'cost'}
-                            accentColor={theme.colors.accent.orange}
-                            onPress={() => onMetricChange('cost')}
-                        />
-                        {focusLabel ? (
-                            <UsageToggleChip
-                                testID="usage-focus-clear"
-                                label={`${focusLabel}`}
-                                selected
-                                accentColor={theme.colors.accent.indigo}
-                                onPress={() => onFocusChange(null)}
-                            />
-                        ) : null}
-                    </View>
-                    <View style={styles.chipRow}>
-                        <Text style={styles.sectionMiniLabel}>{t('usage.costMode')}</Text>
-                    </View>
-                    <View style={styles.chipRow}>
-                        <UsageToggleChip
-                            testID="usage-costmode-auto"
-                            label={t('usage.auto')}
-                            selected={displayCostMode === 'auto'}
-                            accentColor={theme.colors.accent.blue}
-                            onPress={() => onCostModeChange('auto')}
-                        />
-                        {viewModel.availableCostModes.includes('reported') ? (
-                            <UsageToggleChip
-                                testID="usage-costmode-reported"
-                                label={t('usage.reported')}
-                                selected={displayCostMode === 'reported'}
-                                accentColor={theme.colors.accent.orange}
-                                onPress={() => onCostModeChange('reported')}
-                            />
-                        ) : null}
-                        {viewModel.availableCostModes.includes('estimated') ? (
-                            <UsageToggleChip
-                                testID="usage-costmode-estimated"
-                                label={t('usage.estimated')}
-                                selected={displayCostMode === 'estimated'}
-                                accentColor={theme.colors.accent.green}
-                                onPress={() => onCostModeChange('estimated')}
-                            />
-                        ) : null}
-                    </View>
-                    <View style={styles.actionRow}>
-                        <UsageExportActions
-                            viewModel={viewModel}
-                            filters={{ ...filters, costMode: displayCostMode }}
-                            sessionId={sessionId}
-                        />
-                    </View>
-                    {isRefreshing ? (
-                        <View style={styles.refreshBadge}>
-                            <ActivityIndicator size="small" color={theme.colors.accent.blue} />
-                            <Text style={styles.refreshText}>{t('common.loading')}</Text>
+                <ItemGroup containerStyle={{ overflow: 'visible' }}>
+                    <View style={styles.filterBody}>
+                        <View style={styles.chipRow}>
+                            {USAGE_PERIODS.map((period) => (
+                                <UsageToggleChip
+                                    key={period}
+                                    testID={`usage-period-${period}`}
+                                    label={t(getUsagePeriodDefinition(period).translationKey)}
+                                    selected={filters.period === period}
+                                    onPress={() => onPeriodChange(period)}
+                                />
+                            ))}
                         </View>
-                    ) : null}
-                </View>
+                        <View style={styles.chipRow}>
+                            <UsageToggleChip
+                                testID="usage-metric-tokens"
+                                label={t('usage.tokens')}
+                                selected={filters.metric === 'tokens'}
+                                accentColor={theme.colors.accent.blue}
+                                onPress={() => onMetricChange('tokens')}
+                            />
+                            <UsageToggleChip
+                                testID="usage-metric-cost"
+                                label={t('usage.cost')}
+                                selected={filters.metric === 'cost'}
+                                accentColor={theme.colors.accent.orange}
+                                onPress={() => onMetricChange('cost')}
+                            />
+                            {focusLabel ? (
+                                <UsageToggleChip
+                                    testID="usage-focus-clear"
+                                    label={`${focusLabel}`}
+                                    selected
+                                    accentColor={theme.colors.accent.indigo}
+                                    onPress={() => onFocusChange(null)}
+                                />
+                            ) : null}
+                        </View>
+                        <View style={styles.chipRow}>
+                            <Text style={styles.sectionMiniLabel}>{t('usage.costMode')}</Text>
+                        </View>
+                        <View style={styles.chipRow}>
+                            <UsageToggleChip
+                                testID="usage-costmode-auto"
+                                label={t('usage.auto')}
+                                selected={displayCostMode === 'auto'}
+                                accentColor={theme.colors.accent.blue}
+                                onPress={() => onCostModeChange('auto')}
+                            />
+                            {viewModel.availableCostModes.includes('reported') ? (
+                                <UsageToggleChip
+                                    testID="usage-costmode-reported"
+                                    label={t('usage.reported')}
+                                    selected={displayCostMode === 'reported'}
+                                    accentColor={theme.colors.accent.orange}
+                                    onPress={() => onCostModeChange('reported')}
+                                />
+                            ) : null}
+                            {viewModel.availableCostModes.includes('estimated') ? (
+                                <UsageToggleChip
+                                    testID="usage-costmode-estimated"
+                                    label={t('usage.estimated')}
+                                    selected={displayCostMode === 'estimated'}
+                                    accentColor={theme.colors.accent.green}
+                                    onPress={() => onCostModeChange('estimated')}
+                                />
+                            ) : null}
+                        </View>
+                        <View style={styles.actionRow}>
+                            <UsageExportActions
+                                viewModel={viewModel}
+                                filters={{ ...filters, costMode: displayCostMode }}
+                                sessionId={sessionId}
+                            />
+                        </View>
+                        {isRefreshing ? (
+                            <View style={styles.refreshBadge}>
+                                <ActivityIndicator size="small" color={theme.colors.accent.blue} />
+                                <Text style={styles.refreshText}>{t('common.loading')}</Text>
+                            </View>
+                        ) : null}
+                    </View>
+                </ItemGroup>
 
-                <View style={styles.overviewGrid}>
-                    <SummaryCard
-                        label={t('usage.totalTokens')}
-                        value={formatTokens(viewModel.overview.totalTokens)}
-                        subtitle={viewModel.focus ? dimensionLabel(viewModel.focus.dimension) : undefined}
-                    />
-                    <SummaryCard
-                        label={t('usage.totalCost')}
-                        value={formatCost(viewModel.overview.totalCost, viewModel.costPresentation.currency)}
-                        subtitle={viewModel.costPresentation ? resolveCostModeLabel(displayCostMode) : viewModel.focus ? viewModel.focus.label : undefined}
-                    />
-                </View>
+                <ItemGroup title={t('usage.summary.title')} containerStyle={{ overflow: 'visible' }}>
+                    <View style={styles.heroSection}>
+                        <View style={styles.heroPanel}>
+                            <Text style={styles.heroEyebrow}>{t(getUsagePeriodDefinition(filters.period).translationKey)}</Text>
+                            <Text style={styles.heroValue}>
+                                {filters.metric === 'cost'
+                                    ? formatCost(viewModel.overview.totalCost, viewModel.costPresentation.currency)
+                                    : formatTokens(viewModel.overview.totalTokens)}
+                            </Text>
+                            <Text style={styles.heroSubtitle}>
+                                {filters.metric === 'cost'
+                                    ? `${formatTokens(viewModel.overview.totalTokens)} ${t('usage.tokens').toLowerCase()} · ${resolveCostModeLabel(displayCostMode)}`
+                                    : `${formatCost(viewModel.overview.totalCost, viewModel.costPresentation.currency)} · ${formatCount(viewModel.insights.activeDays)} ${t('usage.activeDays').toLowerCase()} · ${formatCount(viewModel.insights.modelsTried)} ${t('usage.modelsTried').toLowerCase()}`}
+                            </Text>
+                        </View>
+                        <ItemGroupColumns
+                            columns={3}
+                            collapseBelow="medium"
+                            paddingHorizontal={0}
+                            paddingVertical={0}
+                            columnGap={12}
+                            rowGap={12}
+                        >
+                            <ItemGroupColumn style={styles.gridColumn}>
+                                <SummaryCard
+                                    label={t('settings.sessions')}
+                                    value={formatCount(viewModel.insights.sessionsUsed)}
+                                    subtitle={viewModel.focus ? viewModel.focus.label : t('usage.summary.thisWeekSubtitle')}
+                                />
+                            </ItemGroupColumn>
+                            <ItemGroupColumn style={styles.gridColumn}>
+                                <SummaryCard
+                                    label={t('usage.activeDays')}
+                                    value={formatCount(viewModel.insights.activeDays)}
+                                    subtitle={buildUsageCurrentStreakSubtitle(filters.period, viewModel.insights.activeDays)}
+                                />
+                            </ItemGroupColumn>
+                            <ItemGroupColumn style={styles.gridColumn}>
+                                <SummaryCard
+                                    label={t('usage.modelsTried')}
+                                    value={formatCount(viewModel.insights.modelsTried)}
+                                    subtitle={
+                                        viewModel.insights.favoriteModel
+                                            ? `${formatCount(viewModel.insights.favoriteModelChangeCount)} ${t('usage.favoriteModelChanges').toLowerCase()}`
+                                            : t('usage.noData')
+                                    }
+                                />
+                            </ItemGroupColumn>
+                        </ItemGroupColumns>
+                    </View>
+                </ItemGroup>
 
                 <UsageRecapHighlightsSection
                     viewModel={viewModel}
@@ -703,46 +767,48 @@ export const UsageAnalyticsDashboard: React.FC<UsageAnalyticsDashboardProps> = (
 
                 {renderInsightSection(filters.period, viewModel.insights)}
 
-                <View style={styles.cardSection}>
-                    <View style={styles.cardHeader}>
-                        <View style={{ flex: 1 }}>
-                            <Text style={styles.sectionTitle}>{t('usage.usageOverTime')}</Text>
-                        </View>
-                        {isRefreshing ? (
-                            <ActivityIndicator size="small" color={theme.colors.accent.blue} />
-                        ) : null}
-                    </View>
-                    <View style={styles.chipRow}>
-                        <UsageToggleChip
-                            testID="usage-trend-metric-tokens"
-                            label={t('usage.tokens')}
-                            selected={filters.metric === 'tokens'}
-                            accentColor={theme.colors.accent.blue}
-                            onPress={() => onMetricChange('tokens')}
-                        />
-                        <UsageToggleChip
-                            testID="usage-trend-metric-cost"
-                            label={t('usage.cost')}
-                            selected={filters.metric === 'cost'}
-                            accentColor={theme.colors.accent.orange}
-                            onPress={() => onMetricChange('cost')}
-                        />
-                    </View>
-                    <View style={styles.chartWrap}>
-                        {hasTrendData ? (
-                            <UsageChart
-                                testID="usage-trend-chart"
-                                points={viewModel.trend}
-                                metric={filters.metric}
-                                height={180}
-                            />
-                        ) : (
-                            <View style={{ paddingVertical: 24, alignItems: 'center' }}>
-                                <Text style={styles.sectionSubtitle}>{t('usage.noData')}</Text>
+                <ItemGroup title={t('usage.usageOverTime')}>
+                    <View style={styles.sectionBody}>
+                        <View style={styles.cardHeader}>
+                            <View style={{ flex: 1 }}>
+                                <Text style={styles.sectionSubtitle}>{t('usage.summary.thisWeekSubtitle')}</Text>
                             </View>
-                        )}
+                            {isRefreshing ? (
+                                <ActivityIndicator size="small" color={theme.colors.accent.blue} />
+                            ) : null}
+                        </View>
+                        <View style={[styles.chipRow, { paddingHorizontal: 16 }]}>
+                            <UsageToggleChip
+                                testID="usage-trend-metric-tokens"
+                                label={t('usage.tokens')}
+                                selected={filters.metric === 'tokens'}
+                                accentColor={theme.colors.accent.blue}
+                                onPress={() => onMetricChange('tokens')}
+                            />
+                            <UsageToggleChip
+                                testID="usage-trend-metric-cost"
+                                label={t('usage.cost')}
+                                selected={filters.metric === 'cost'}
+                                accentColor={theme.colors.accent.orange}
+                                onPress={() => onMetricChange('cost')}
+                            />
+                        </View>
+                        <View style={styles.chartWrap}>
+                            {hasTrendData ? (
+                                <UsageVolumeBubbleChart
+                                    testID="usage-trend-chart"
+                                    points={viewModel.trend}
+                                    metric={filters.metric}
+                                    height={220}
+                                />
+                            ) : (
+                                <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+                                    <Text style={styles.sectionSubtitle}>{t('usage.noData')}</Text>
+                                </View>
+                            )}
+                        </View>
                     </View>
-                </View>
+                </ItemGroup>
 
                 {renderActivitySection(viewModel.activity, viewModel.insights)}
 

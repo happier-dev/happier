@@ -6,22 +6,22 @@ import type { UsageSummaryActivityPoint } from '@/sync/api/account/usageAnalytic
 
 const styles = StyleSheet.create((theme) => ({
     activityRowStack: {
-        gap: 4,
+        gap: 7,
     },
     activityRow: {
         flexDirection: 'row',
-        gap: 4,
+        gap: 7,
     },
     activitySquare: {
         flex: 1,
-        height: 10,
-        borderRadius: 3,
-        backgroundColor: theme.colors.divider,
+        height: 11,
+        borderRadius: 4,
+        backgroundColor: theme.colors.groupped.background,
     },
     progressTrack: {
-        height: 7,
+        height: 8,
         borderRadius: 999,
-        backgroundColor: theme.colors.surfacePressedOverlay,
+        backgroundColor: theme.colors.groupped.background,
         overflow: 'hidden',
     },
     progressFill: {
@@ -31,15 +31,15 @@ const styles = StyleSheet.create((theme) => ({
     sparkBars: {
         flexDirection: 'row',
         alignItems: 'flex-end',
-        gap: 4,
-        minHeight: 38,
-        paddingTop: 2,
+        gap: 8,
+        minHeight: 52,
+        paddingTop: 6,
     },
     sparkBar: {
         flex: 1,
-        minHeight: 6,
+        minHeight: 8,
         borderRadius: 999,
-        backgroundColor: theme.colors.accent.green,
+        backgroundColor: theme.colors.groupped.background,
     },
 }));
 
@@ -77,7 +77,7 @@ export function UsageActivitySquareMatrix({
                                 point.active
                                     ? {
                                         backgroundColor: color,
-                                        opacity: Math.min(1, 0.35 + Math.min(0.65, point.tokens / peak)),
+                                        opacity: Math.min(1, 0.34 + Math.min(0.66, point.tokens / peak)),
                                     }
                                     : null,
                             ]}
@@ -106,6 +106,7 @@ export function UsageProgressMeter({
                     {
                         width: `${widthPercentage}%`,
                         backgroundColor: color,
+                        opacity: 0.92,
                     },
                 ]}
             />
@@ -132,8 +133,8 @@ export function UsageSparkBars({
                         styles.sparkBar,
                         {
                             backgroundColor: color,
-                            height: Math.max(6, Math.round((point.tokens / peak) * 38)),
-                            opacity: point.active ? 1 : 0.25,
+                            height: Math.max(8, Math.round((point.tokens / peak) * 42)),
+                            opacity: point.active ? 0.9 : 0.2,
                         },
                     ]}
                 />

@@ -1,7 +1,9 @@
 import React from 'react';
-import { Pressable } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
+import { shadowLevelStyle } from '@/shadowElevation';
 
 interface UsageToggleChipProps {
     label: string;
@@ -13,26 +15,33 @@ interface UsageToggleChipProps {
 
 const styles = StyleSheet.create((theme) => ({
     chip: {
-        minHeight: 32,
+        minHeight: 34,
         borderRadius: 999,
-        borderWidth: 1,
-        borderColor: theme.colors.divider,
         backgroundColor: theme.colors.surface,
         paddingHorizontal: 14,
-        paddingVertical: 6,
+        paddingVertical: 7,
         alignItems: 'center',
         justifyContent: 'center',
+        flexDirection: 'row',
+        gap: 8,
+        ...shadowLevelStyle(theme.colors.shadowLevels[1]),
     },
     chipSelected: {
-        borderColor: 'transparent',
+        backgroundColor: theme.colors.surfaceHigh,
     },
     chipText: {
+        ...Typography.default('semiBold'),
         fontSize: 13,
-        fontWeight: '600',
         color: theme.colors.textSecondary,
+        letterSpacing: -0.04,
     },
     chipTextSelected: {
-        color: theme.colors.overlay.text,
+        color: theme.colors.text,
+    },
+    chipDot: {
+        width: 6,
+        height: 6,
+        borderRadius: 999,
     },
 }));
 
@@ -44,7 +53,7 @@ export const UsageToggleChip: React.FC<UsageToggleChipProps> = ({
     onPress,
 }) => {
     const { theme } = useUnistyles();
-    const backgroundColor = selected ? (accentColor ?? theme.colors.accent.blue) : theme.colors.surface;
+    const resolvedAccentColor = accentColor ?? theme.colors.accent.blue;
 
     return (
         <Pressable
@@ -54,10 +63,10 @@ export const UsageToggleChip: React.FC<UsageToggleChipProps> = ({
             style={[
                 styles.chip,
                 selected && styles.chipSelected,
-                { backgroundColor },
             ]}
             onPress={onPress}
         >
+            {selected ? <View style={[styles.chipDot, { backgroundColor: resolvedAccentColor }]} /> : null}
             <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
                 {label}
             </Text>
