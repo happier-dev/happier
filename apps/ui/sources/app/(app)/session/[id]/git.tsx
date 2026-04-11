@@ -15,13 +15,13 @@ import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForR
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 
-export default function FilesScreenRoute() {
+export default function SessionGitScreenRoute() {
     const router = useRouter();
     const navigation = useNavigation();
     const isFocused = useIsFocused();
     const { id: sessionIdParam } = useLocalSearchParams<{ id: string }>();
     const sessionId = normalizeSessionId(sessionIdParam);
-    const sessionHydrated = useHydrateSessionForRoute(sessionId, 'SessionFilesRoute.ensureSessionVisible');
+    const sessionHydrated = useHydrateSessionForRoute(sessionId, 'SessionGitRoute.ensureSessionVisible');
     const { cockpitEnabled } = useMobileWorkspaceExperienceState();
     const scopeId = `session:${sessionId}`;
     const pane = useAppPaneScope(scopeId);
@@ -36,11 +36,11 @@ export default function FilesScreenRoute() {
     React.useEffect(() => {
         if (!isFocused) return;
         if (!sessionId) return;
-        openRight({ tabId: 'files' });
-        if (pane.scopeState?.right?.activeTabId !== 'files') {
-            setRightTab('files');
+        openRight({ tabId: 'git' });
+        if (pane.scopeState?.right?.activeTabId !== 'git') {
+            setRightTab('git');
         }
-    }, [isFocused, openRight, sessionId, setRightTab, pane.scopeState?.right?.activeTabId]);
+    }, [isFocused, openRight, pane.scopeState?.right?.activeTabId, sessionId, setRightTab]);
 
     const handleNavigateToDetails = React.useCallback((key: string) => {
         router.push({
@@ -64,7 +64,7 @@ export default function FilesScreenRoute() {
 
     usePersistSessionMobileSurface({
         sessionId,
-        surface: cockpitEnabled ? 'browse' : null,
+        surface: cockpitEnabled ? 'git' : null,
     });
 
     const onRequestClose = React.useCallback(() => {
@@ -77,10 +77,10 @@ export default function FilesScreenRoute() {
     }
 
     return (
-        <View testID={cockpitEnabled ? undefined : 'session-files-screen'} style={{ flex: 1 }}>
+        <View testID={cockpitEnabled ? undefined : 'session-git-screen'} style={{ flex: 1 }}>
             {sessionHydrated ? (
                 cockpitEnabled ? (
-                    <SessionCockpitShell sessionId={sessionId} scopeId={scopeId} surface="browse" />
+                    <SessionCockpitShell sessionId={sessionId} scopeId={scopeId} surface="git" />
                 ) : (
                     <SessionRightPanel sessionId={sessionId} scopeId={scopeId} onRequestClose={onRequestClose} />
                 )

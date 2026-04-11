@@ -14,6 +14,7 @@ describe('useSessionListRenderModels', () => {
                 sessionCount: 0,
             },
             visibleSessionListIndex: [],
+            hasHiddenInactiveSessions: false,
             showLoading: false,
             showEmptyState: true,
         };
@@ -65,6 +66,7 @@ describe('useSessionListRenderModels', () => {
                     sessionId: 'session-1',
                 },
             ] as any[],
+            hasHiddenInactiveSessions: false,
             showLoading: false,
             showEmptyState: false,
         } as VisibleSessionListPaneState;

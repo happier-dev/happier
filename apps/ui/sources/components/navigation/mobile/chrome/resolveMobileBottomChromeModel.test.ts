@@ -33,6 +33,17 @@ describe('resolveMobileBottomChromeModel', () => {
         });
     });
 
+    it('returns hidden for non-detail session history routes in cockpit mode', () => {
+        expect(resolveMobileBottomChromeModel(createChromeInput({
+            pathname: '/session/recent',
+            mobileWorkspaceExperience: 'cockpit',
+        }))).toEqual({ kind: 'hidden' });
+        expect(resolveMobileBottomChromeModel(createChromeInput({
+            pathname: '/session/archived',
+            mobileWorkspaceExperience: 'cockpit',
+        }))).toEqual({ kind: 'hidden' });
+    });
+
     it('uses persisted cockpit state for the session root route', () => {
         expect(resolveMobileBottomChromeModel(createChromeInput({
             pathname: '/session/session-1',

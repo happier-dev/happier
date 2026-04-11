@@ -103,8 +103,8 @@ vi.mock('@/hooks/server/useFeatureDecision', () => ({
     }),
 }));
 
-vi.mock('@/hooks/ui/useTabState', () => ({
-    useTabState: () => ({
+vi.mock('@/components/navigation/mobile/chrome/MainAppTabStateProvider', () => ({
+    useMainAppTabState: () => ({
         activeTab: 'sessions',
         setActiveTab: async () => {},
         isLoading: false,
@@ -130,8 +130,8 @@ vi.mock('@/components/ui/buttons/FABWide', () => ({
     FABWide: 'FABWide',
 }));
 
-vi.mock('@/components/ui/navigation/TabBar', () => ({
-    TabBar: 'TabBar',
+vi.mock('@/components/navigation/mobile/chrome/bars/MainAppTabBar', () => ({
+    MainAppTabBar: 'MainAppTabBar',
 }));
 
 vi.mock('@/components/navigation/shell/InboxView', () => ({

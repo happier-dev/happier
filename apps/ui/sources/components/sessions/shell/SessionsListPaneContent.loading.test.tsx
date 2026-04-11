@@ -13,6 +13,7 @@ const sessionListState = vi.hoisted(() => ({
             sessionCount: 0,
         },
         visibleSessionListViewData: [{ type: 'session', session: { id: 'session-1' } }] as any[],
+        hasHiddenInactiveSessions: false,
         showLoading: true,
         showEmptyState: false,
     },
@@ -62,6 +63,9 @@ vi.mock('@/components/sessions/shell/SessionsListEmptyState', () => ({
 vi.mock('@/components/sessions/shell/DirectSessionsEmptyState', () => ({
     DirectSessionsEmptyState: (props: any) => React.createElement('DirectSessionsEmptyState', props),
 }));
+vi.mock('@/components/sessions/shell/HiddenInactiveSessionsEmptyState', () => ({
+    HiddenInactiveSessionsEmptyState: (props: any) => React.createElement('HiddenInactiveSessionsEmptyState', props),
+}));
 
 describe('SessionsListPaneContent (loading)', () => {
     it('shows the loading indicator while the canonical session summary is not ready', async () => {
@@ -84,6 +88,7 @@ describe('SessionsListPaneContent (loading)', () => {
                 sessionCount: 0,
             },
             visibleSessionListViewData: [{ type: 'session', session: { id: 'session-1' } }] as any[],
+            hasHiddenInactiveSessions: false,
             showLoading: false,
             showEmptyState: true,
         };
@@ -94,6 +99,27 @@ describe('SessionsListPaneContent (loading)', () => {
         );
 
         expect(screen.findByType('DirectSessionsEmptyState' as any)).toBeTruthy();
+        expect(screen.findAllByType('SessionsListView' as any)).toHaveLength(0);
+    });
+
+    it('shows the hidden inactive sessions empty state when the inactive filter hides every persisted session', async () => {
+        sessionListState.paneState = {
+            summary: {
+                sessionsReady: true,
+                sessionCount: 0,
+            },
+            visibleSessionListViewData: [],
+            showLoading: false,
+            showEmptyState: true,
+            hasHiddenInactiveSessions: true,
+        };
+
+        const { SessionsListPaneContent } = await import('./SessionsListPaneContent');
+        const screen = await renderScreen(
+            <SessionsListPaneContent storageKind="persisted" fallbackGuidanceVariant="sidebar" />,
+        );
+
+        expect(screen.findByType('HiddenInactiveSessionsEmptyState' as any)).toBeTruthy();
         expect(screen.findAllByType('SessionsListView' as any)).toHaveLength(0);
     });
 });

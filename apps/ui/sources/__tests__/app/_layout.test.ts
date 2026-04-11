@@ -19,6 +19,10 @@ type PlatformSelectOptions<T> = {
 const platformState = vi.hoisted(() => ({
     os: 'web' as 'web' | 'ios',
 }));
+const tauriDesktopState = vi.hoisted(() => ({
+    value: false,
+}));
+const invokeTauriSpy = vi.hoisted(() => vi.fn());
 
 let isAuthenticated = true;
 let segments: string[] = ['(app)'];
@@ -139,6 +143,14 @@ vi.mock('@/hooks/server/useHappierVoiceSupport', () => ({
     useHappierVoiceSupport: () => true,
 }));
 
+vi.mock('@/components/navigation/mobile/chrome/MobileBottomChromeHost', () => ({
+    MobileBottomChromeHost: () => React.createElement('MobileBottomChromeHost'),
+}));
+
+vi.mock('@/components/navigation/mobile/chrome/MainAppTabStateProvider', () => ({
+    MainAppTabStateProvider: ({ children }: { children: React.ReactNode }) => React.createElement(React.Fragment, null, children),
+}));
+
 vi.mock('@/activity/badges/ActivityBadgeRuntime', () => ({
     ActivityBadgeRuntime: () => null,
 }));
@@ -238,13 +250,21 @@ vi.mock('@/utils/platform/platform', () => {
     return { isRunningOnMac: () => false };
 });
 
+vi.mock('@/utils/platform/tauri', () => ({
+    isTauriDesktop: () => tauriDesktopState.value,
+    invokeTauri: (...args: any[]) => invokeTauriSpy(...args),
+    listenTauriEvent: vi.fn(async () => () => {}),
+}));
+
 afterEach(() => {
     vi.unstubAllGlobals();
     vi.resetModules();
     router.replace.mockReset();
     router.push.mockReset();
+    invokeTauriSpy.mockReset();
     lastNotificationResponse = null;
     platformState.os = 'web';
+    tauriDesktopState.value = false;
     isAuthenticated = true;
     segments = ['(app)'];
 });
@@ -377,5 +397,33 @@ describe('RootLayout activity surfaces', () => {
         const screen = await renderScreen(React.createElement(RootLayout));
 
         expect(screen.findAllByType('ActivitySurfacesRuntime')).toHaveLength(1);
+    }, 60_000);
+});
+
+describe('RootLayout desktop window sizing', () => {
+    it('expands the Tauri desktop window for authenticated users even off the home route', async () => {
+        stubFeatureFetch();
+        tauriDesktopState.value = true;
+        isAuthenticated = true;
+        segments = ['(app)', 'settings'];
+        pathname = '/settings';
+
+        const { default: RootLayout } = await import('@/app/(app)/_layout');
+        await renderScreen(React.createElement(RootLayout));
+
+        expect(invokeTauriSpy).toHaveBeenCalledWith('desktop_set_window_mode', { mode: 'main' });
+    }, 60_000);
+
+    it('shrinks the Tauri desktop window for unauthenticated users at the app shell', async () => {
+        stubFeatureFetch();
+        tauriDesktopState.value = true;
+        isAuthenticated = false;
+        segments = ['(app)'];
+        pathname = '/';
+
+        const { default: RootLayout } = await import('@/app/(app)/_layout');
+        await renderScreen(React.createElement(RootLayout));
+
+        expect(invokeTauriSpy).toHaveBeenCalledWith('desktop_set_window_mode', { mode: 'preAuth' });
     }, 60_000);
 });

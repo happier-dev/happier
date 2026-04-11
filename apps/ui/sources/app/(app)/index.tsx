@@ -7,7 +7,8 @@ import { MainView } from '@/components/navigation/shell/MainView';
 import { BaseModal } from '@/modal/components/BaseModal';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { clearPendingSetupIntent, getPendingSetupIntent, setPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
-import { invokeTauri, isTauriDesktop } from '@/utils/platform/tauri';
+import { getPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
+import { isTauriDesktop } from '@/utils/platform/tauri';
 import { resolvePostAuthSetupRoute, PreAuthOnboardingWizardEntry } from '@/components/onboarding';
 import { SetupWizardSurface } from '@/components/onboarding/surfaces/SetupWizardSurface';
 import { useConnectionHealth } from '@/components/navigation/connectionStatus/useConnectionHealth';
@@ -29,10 +30,6 @@ const stylesheet = StyleSheet.create({
 export default function Home() {
     const auth = useAuth();
     const activeServerSnapshot = useActiveServerSnapshot();
-    React.useEffect(() => {
-        if (!isTauriDesktop()) return;
-        void invokeTauri('desktop_set_window_mode', { mode: auth.isAuthenticated ? 'main' : 'preAuth' });
-    }, [auth.isAuthenticated]);
     if (!auth.isAuthenticated) {
         if (shouldHoldUnauthenticatedShellForWebServerOverride(auth.isAuthenticated, activeServerSnapshot.serverUrl)) {
             return null;
@@ -69,10 +66,12 @@ function Authenticated() {
         hasRelayDrift,
     });
     const pendingSetupIntent = getPendingSetupIntent();
+    const pendingTerminalConnect = getPendingTerminalConnect();
     const pendingSetupIntentDismissed = pendingSetupIntent?.phase === 'dismissed';
     const hasPendingSetupContinuation =
         pendingSetupIntent?.phase === 'awaiting_auth'
         || pendingSetupIntent?.phase === 'post_auth';
+    const hasPendingTerminalConnectApproval = pendingTerminalConnect != null;
     const shouldSkipSetupWizardBecauseAnotherMachineIsOnline =
         isTauriDesktop() !== true
         && (connectionHealth.onlineCount ?? 0) > 0;
@@ -80,6 +79,8 @@ function Authenticated() {
         ? (!currentMachineIsConfiguredAndHealthy || hasRelayDrift)
         : (connectionHealth.onlineCount ?? 0) === 0;
     const needsSetupWizard =
+        !hasPendingTerminalConnectApproval
+        &&
         pendingSetupIntentDismissed !== true
         && shouldSkipSetupWizardBecauseAnotherMachineIsOnline !== true
         && (hasPendingSetupContinuation || shouldAutoOpenSetupWizard);

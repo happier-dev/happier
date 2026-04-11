@@ -12,6 +12,7 @@ import { resolveScaledPaneWidthPx } from '@/components/appShell/panes/layout/pan
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { resolveSidebarDockMaxWidthPx, SIDEBAR_COLLAPSED_WIDTH_PX, SIDEBAR_DOCK_MIN_WIDTH_PX } from './sidebarSizing';
 import { isDesktopActivityOverlayWindowContext } from '@/activity/adapters/desktop/runtime/isDesktopActivityOverlayWindowContext';
+import { isTerminalConnectWebPathname } from '@/utils/path/terminalConnectUrl';
 
 type DrawerNavigatorComponent = typeof ExpoRouterDrawer.Drawer;
 
@@ -34,7 +35,7 @@ export const SidebarNavigator = React.memo(() => {
     const isTablet = useIsTablet();
     const isDesktopOverlayWindow = isDesktopActivityOverlayWindowContext();
     const editorFocusModeEnabled = useLocalSetting('editorFocusModeEnabled');
-    const bypassDesktopDrawerShell = Platform.OS === 'web' && pathname === '/terminal/connect';
+    const bypassDesktopDrawerShell = Platform.OS === 'web' && isTerminalConnectWebPathname(pathname);
     const desktopDrawerEnabled = auth.isAuthenticated && isTablet && !isDesktopOverlayWindow;
     const showPermanentDrawer = desktopDrawerEnabled && !editorFocusModeEnabled;
     const { theme } = useUnistyles();

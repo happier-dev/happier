@@ -5,6 +5,7 @@ import { Pressable, View } from 'react-native';
 import { SessionHeaderActionMenu } from '@/components/sessions/actions/SessionHeaderActionMenu';
 import { SessionHeaderSubagentsButton } from '@/components/sessions/actions/SessionHeaderSubagentsButton';
 import { SessionHeaderTerminalButton } from '@/components/sessions/actions/SessionHeaderTerminalButton';
+import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Text } from '@/components/ui/text/Text';
 import { getAgentCore } from '@/agents/catalog/catalog';
 import { t } from '@/text';
@@ -45,6 +46,7 @@ type ResolveSessionViewHeaderPropsInput = Readonly<{
     subagentActiveCount: number;
     navigateWithBlurOnWeb: (action: () => void) => void;
     handleHeaderExtraItemSelect: (actionId: string) => boolean;
+    headerMenuExtraItems?: ReadonlyArray<DropdownMenuItem>;
     router: Readonly<{
         push: (path: string) => void;
         navigate: (path: string, options: { dangerouslySingular: () => string }) => void;
@@ -100,6 +102,7 @@ function buildSessionViewHeaderPropsCacheKey(input: Readonly<{
     statusErrorColor: string;
     paneScopeId: string;
     sessionAutomationsEnabledCount: number;
+    headerMenuExtraItemIdsKey: string;
 }>): string {
     return JSON.stringify([
         input.sessionId,
@@ -123,6 +126,7 @@ function buildSessionViewHeaderPropsCacheKey(input: Readonly<{
         input.statusErrorColor,
         input.paneScopeId,
         input.sessionAutomationsEnabledCount,
+        input.headerMenuExtraItemIdsKey,
     ]);
 }
 
@@ -175,6 +179,7 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         statusErrorColor: input.statusErrorColor,
         paneScopeId: input.paneScopeId,
         sessionAutomationsEnabledCount: input.sessionAutomationsEnabledCount,
+        headerMenuExtraItemIdsKey: (input.headerMenuExtraItems ?? []).map((item) => item.id).join('|'),
     });
 
     const cached = SESSION_VIEW_HEADER_PROPS_CACHE.get(cacheKey);
@@ -194,6 +199,10 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         showAutomations: input.showAutomations,
         actionIconColor: input.actionIconColor,
     });
+    const resolvedHeaderMenuExtraItems = [
+        ...resolvedFoldedHeaderItems,
+        ...(input.headerMenuExtraItems ?? []),
+    ];
 
     const next: SessionViewHeaderProps = {
         title,
@@ -209,7 +218,7 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
                 <SessionHeaderActionMenu
                     sessionId={input.sessionId}
                     session={session}
-                    extraItems={resolvedFoldedHeaderItems.length > 0 ? resolvedFoldedHeaderItems : undefined}
+                    extraItems={resolvedHeaderMenuExtraItems.length > 0 ? resolvedHeaderMenuExtraItems : undefined}
                     onSelectExtraItem={input.handleHeaderExtraItemSelect}
                 />
                 {!shouldFoldHeaderIconActions ? (

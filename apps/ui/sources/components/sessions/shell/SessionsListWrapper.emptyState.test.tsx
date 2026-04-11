@@ -133,13 +133,13 @@ describe('SessionsListWrapper (empty state)', () => {
         await screen.unmount();
     });
 
-    it('falls back to getting-started guidance only for unsupported empty-state kinds', async () => {
+    it('reuses the shared sessions empty state for select-session guidance', async () => {
         gettingStartedState.kind = 'select_session';
 
         const screen = await renderScreen(<SessionsListWrapper />);
 
-        expect(() => screen.findByType('SessionGettingStartedGuidance' as any)).not.toThrow();
-        expect(() => screen.findByType('SessionsListEmptyState' as any)).toThrow();
+        expect(() => screen.findByType('SessionsListEmptyState' as any)).not.toThrow();
+        expect(() => screen.findByType('SessionGettingStartedGuidance' as any)).toThrow();
 
         await screen.unmount();
     });

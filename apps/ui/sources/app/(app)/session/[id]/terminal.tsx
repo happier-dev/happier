@@ -7,12 +7,14 @@ import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneSco
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
 import { SessionRightPanel } from '@/components/sessions/panes/SessionRightPanel';
 import { buildActiveDetailsRouteParams } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import { SessionCockpitShell } from '@/components/workspaceCockpit/session/SessionCockpitShell';
+import { usePersistSessionMobileSurface } from '@/components/workspaceCockpit/session/usePersistSessionMobileSurface';
+import { useLegacyDetailsRouteRedirect } from '@/components/workspaceCockpit/useLegacyDetailsRouteRedirect';
+import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit/useMobileWorkspaceExperienceState';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
-import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
-import { useLocalSetting } from '@/sync/domains/state/storage';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
-import { useDeviceType } from '@/utils/platform/responsive';
+import { useSessionTerminalAvailability } from '@/components/sessions/terminal/useSessionTerminalAvailability';
 
 export default function TerminalScreenRoute() {
     const router = useRouter();
@@ -27,20 +29,12 @@ export default function TerminalScreenRoute() {
     const closeRight = pane.closeRight;
     const setRightTab = pane.setRightTab;
 
-    const deviceType = useDeviceType();
-    const terminalEnabled = useFeatureEnabled('terminal.embeddedPty');
-    const dockLocationRaw = useLocalSetting('embeddedTerminalDockLocation');
-    const dockLocation = deviceType === 'phone' ? 'sidebar' : dockLocationRaw;
-    const terminalTabAvailable = terminalEnabled && dockLocation === 'sidebar';
+    const { cockpitEnabled } = useMobileWorkspaceExperienceState();
+    const { sidebarTabAvailable: terminalTabAvailable } = useSessionTerminalAvailability();
 
     const activeDetailsKey = pane.scopeState?.details?.activeTabKey ?? null;
     const detailsIsOpen = pane.scopeState?.details?.isOpen ?? false;
     const detailsTabs = pane.scopeState?.details?.tabs ?? [];
-    const lastPushedDetailsKeyRef = React.useRef<string | null>(null);
-
-    React.useEffect(() => {
-        lastPushedDetailsKeyRef.current = null;
-    }, [sessionId]);
 
     // Navigate back if terminal tab is unavailable (feature disabled or docked elsewhere)
     React.useEffect(() => {
@@ -60,18 +54,7 @@ export default function TerminalScreenRoute() {
         setRightTab('terminal');
     }, [isFocused, openRight, sessionId, setRightTab, terminalTabAvailable]);
 
-    React.useEffect(() => {
-        if (!sessionId) return;
-        if (!detailsIsOpen) {
-            lastPushedDetailsKeyRef.current = null;
-            return;
-        }
-        if (!isFocused) return;
-        if (!detailsTabs.length) return;
-        const key = typeof activeDetailsKey === 'string' && activeDetailsKey ? activeDetailsKey : detailsTabs.at(-1)?.key ?? null;
-        if (!key) return;
-        if (lastPushedDetailsKeyRef.current === key) return;
-        lastPushedDetailsKeyRef.current = key;
+    const handleNavigateToDetails = React.useCallback((key: string) => {
         router.push({
             pathname: '/session/[id]/details',
             params: {
@@ -79,7 +62,22 @@ export default function TerminalScreenRoute() {
                 ...buildActiveDetailsRouteParams(detailsTabs, key),
             },
         } as any);
-    }, [activeDetailsKey, detailsIsOpen, detailsTabs, isFocused, router, sessionId]);
+    }, [detailsTabs, router, sessionId]);
+
+    useLegacyDetailsRouteRedirect({
+        resetKey: sessionId,
+        enabled: Boolean(sessionId) && !cockpitEnabled,
+        isFocused,
+        detailsIsOpen,
+        activeDetailsKey,
+        detailsTabs,
+        onNavigate: handleNavigateToDetails,
+    });
+
+    usePersistSessionMobileSurface({
+        sessionId,
+        surface: cockpitEnabled && terminalTabAvailable ? 'terminal' : null,
+    });
 
     const onRequestClose = React.useCallback(() => {
         closeRight();
@@ -91,9 +89,18 @@ export default function TerminalScreenRoute() {
     }
 
     return (
-        <View testID="session-terminal-screen" style={{ flex: 1 }}>
+        <View testID={cockpitEnabled ? undefined : 'session-terminal-screen'} style={{ flex: 1 }}>
             {sessionHydrated ? (
-                <SessionRightPanel sessionId={sessionId} scopeId={scopeId} onRequestClose={onRequestClose} />
+                cockpitEnabled ? (
+                    <SessionCockpitShell
+                        sessionId={sessionId}
+                        scopeId={scopeId}
+                        surface="terminal"
+                        terminalTabAvailable={terminalTabAvailable}
+                    />
+                ) : (
+                    <SessionRightPanel sessionId={sessionId} scopeId={scopeId} onRequestClose={onRequestClose} />
+                )
             ) : (
                 <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
                     <ActivityIndicator />

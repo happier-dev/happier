@@ -55,6 +55,8 @@ import { getCurrentReactOwnerHint, getUnexpectedPrimitiveViewChildInfo } from '@
 import { resolveForegroundNotificationBehavior } from '@/activity/notifications/resolveForegroundNotificationBehavior';
 import { resolveBootCredentials } from '@/boot/resolveBootCredentials';
 import { installTauriMcpBridgeOnce } from '@/desktop/mcp/maybeInstallTauriMcpBridge';
+import { MainAppTabStateProvider } from '@/components/navigation/mobile/chrome/MainAppTabStateProvider';
+import { isTerminalConnectWebPathname } from '@/utils/path/terminalConnectUrl';
 
 initializeSentryOnce();
 installTauriMcpBridgeOnce();
@@ -652,7 +654,7 @@ function AppBoot(props: {
     const pathname = usePathname();
     const [initState, setInitState] = React.useState<{ credentials: AuthCredentials | null } | null>(null);
     const restartBugReportCheckedRef = React.useRef(false);
-    const isTerminalConnectRoute = pathname === '/terminal/connect';
+    const isTerminalConnectRoute = isTerminalConnectWebPathname(pathname);
 
     React.useEffect(() => {
         let cancelled = false;
@@ -734,13 +736,9 @@ function AppBoot(props: {
     // Boot
     //
 
-    const appShell = isTerminalConnectRoute ? (
-        <View style={{ flex: 1 }}>
-            <Stack screenOptions={{ headerShown: false }} />
-        </View>
-    ) : (
+    const appShell = (
         <>
-            <DesktopUpdateBanner />
+            {!isTerminalConnectRoute ? <DesktopUpdateBanner /> : null}
             <View style={{ flex: 1 }}>
                 <SidebarNavigator />
             </View>
@@ -758,7 +756,9 @@ function AppBoot(props: {
                                 <CommandPaletteProvider>
                                     <RealtimeProvider>
                                         <HorizontalSafeAreaWrapper>
-                                            {appShell}
+                                            <MainAppTabStateProvider>
+                                                {appShell}
+                                            </MainAppTabStateProvider>
                                         </HorizontalSafeAreaWrapper>
                                     </RealtimeProvider>
                                 </CommandPaletteProvider>

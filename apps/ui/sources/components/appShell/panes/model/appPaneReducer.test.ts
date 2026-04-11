@@ -5,6 +5,22 @@ function createFileTab(path: string) {
     return { key: `file:${path}`, kind: 'file', title: path.split('/').at(-1) ?? path, resource: { path } };
 }
 
+function createTerminalTab(params: Readonly<{
+    key: string;
+    cwd: string;
+}>) {
+    return {
+        key: params.key,
+        kind: 'terminal',
+        title: 'Terminal',
+        resource: {
+            kind: 'terminal',
+            terminalInstanceId: params.key.replace(/^terminal:/, ''),
+            cwd: params.cwd,
+        },
+    };
+}
+
 describe('appPaneReduce', () => {
     it('creates and activates scopes, keeping an LRU order', () => {
         let state = createAppPaneState({ maxScopesInMemory: 3 });
@@ -75,6 +91,50 @@ describe('appPaneReduce', () => {
         expect(state.scopes['session:1']?.details.activeTabKey).toBe('file:a.txt');
     });
 
+    it('refreshes an existing details tab resource when reopening the same keyed tab', () => {
+        let state = createAppPaneState({ maxScopesInMemory: 3 });
+        state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:1' });
+        state = appPaneReduce(state, {
+            type: 'openDetailsTab',
+            scopeId: 'session:1',
+            tab: createTerminalTab({
+                key: 'terminal:project:wr_1:terminal',
+                cwd: '/repo/.worktrees/feature-a',
+            }),
+            openAs: 'pinned',
+        });
+        state = appPaneReduce(state, {
+            type: 'setDetailsTabState',
+            scopeId: 'session:1',
+            tabKey: 'terminal:project:wr_1:terminal',
+            nextState: { scrollbackCursor: 42 },
+        });
+
+        state = appPaneReduce(state, {
+            type: 'openDetailsTab',
+            scopeId: 'session:1',
+            tab: createTerminalTab({
+                key: 'terminal:project:wr_1:terminal',
+                cwd: '/repo/.worktrees/feature-b',
+            }),
+            openAs: 'pinned',
+        });
+
+        const terminalTab = state.scopes['session:1']?.details.tabs.find((tab) => tab.key === 'terminal:project:wr_1:terminal');
+        expect(terminalTab).toMatchObject({
+            isPinned: true,
+            isPreview: false,
+            resource: {
+                kind: 'terminal',
+                cwd: '/repo/.worktrees/feature-b',
+            },
+        });
+        expect(state.scopes['session:1']?.details.tabState['terminal:project:wr_1:terminal']).toEqual({
+            scrollbackCursor: 42,
+        });
+        expect(state.scopes['session:1']?.details.activeTabKey).toBe('terminal:project:wr_1:terminal');
+    });
+
     it('evicts least-recently-used scopes beyond the max', () => {
         let state = createAppPaneState({ maxScopesInMemory: 2 });
         state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:1' });
@@ -100,6 +160,16 @@ describe('appPaneReduce', () => {
         state = appPaneReduce(state, { type: 'openRight', scopeId: 'session:1', tabId: 'git' });
 
         expect(state.scopes['session:1']?.right.tabState.git).toEqual({ commitMessageDraft: 'wip: draft' });
+    });
+
+    it('treats reopening the same right tab as a no-op', () => {
+        let state = createAppPaneState({ maxScopesInMemory: 3 });
+        state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:1' });
+        state = appPaneReduce(state, { type: 'openRight', scopeId: 'session:1', tabId: 'files' });
+
+        const reopened = appPaneReduce(state, { type: 'openRight', scopeId: 'session:1', tabId: 'files' });
+
+        expect(reopened).toBe(state);
     });
 
     it('retains bottom tab state across open/close cycles', () => {

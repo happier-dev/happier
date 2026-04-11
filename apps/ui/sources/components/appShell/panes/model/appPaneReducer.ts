@@ -225,23 +225,36 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
             return evictScopesIfNeeded(next);
         }
         case 'openRight': {
-            return upsertScope(state, action.scopeId, (prev) => ({
+            const prev = state.scopes[action.scopeId] ?? createEmptyScopeState();
+            const nextTabId = action.tabId ?? prev.right.activeTabId;
+            if (prev.right.isOpen === true && prev.right.activeTabId === nextTabId) {
+                return state;
+            }
+            return upsertScope(state, action.scopeId, () => ({
                 ...prev,
                 right: {
                     ...prev.right,
                     isOpen: true,
-                    activeTabId: action.tabId ?? prev.right.activeTabId,
+                    activeTabId: nextTabId,
                 },
             }));
         }
         case 'closeRight': {
-            return upsertScope(state, action.scopeId, (prev) => ({
+            const prev = state.scopes[action.scopeId] ?? createEmptyScopeState();
+            if (prev.right.isOpen === false) {
+                return state;
+            }
+            return upsertScope(state, action.scopeId, () => ({
                 ...prev,
                 right: { ...prev.right, isOpen: false },
             }));
         }
         case 'setRightTab': {
-            return upsertScope(state, action.scopeId, (prev) => ({
+            const prev = state.scopes[action.scopeId] ?? createEmptyScopeState();
+            if (prev.right.activeTabId === action.tabId) {
+                return state;
+            }
+            return upsertScope(state, action.scopeId, () => ({
                 ...prev,
                 right: { ...prev.right, activeTabId: action.tabId },
             }));
@@ -259,23 +272,36 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
             }));
         }
         case 'openBottom': {
-            return upsertScope(state, action.scopeId, (prev) => ({
+            const prev = state.scopes[action.scopeId] ?? createEmptyScopeState();
+            const nextTabId = action.tabId ?? prev.bottom.activeTabId;
+            if (prev.bottom.isOpen === true && prev.bottom.activeTabId === nextTabId) {
+                return state;
+            }
+            return upsertScope(state, action.scopeId, () => ({
                 ...prev,
                 bottom: {
                     ...prev.bottom,
                     isOpen: true,
-                    activeTabId: action.tabId ?? prev.bottom.activeTabId,
+                    activeTabId: nextTabId,
                 },
             }));
         }
         case 'closeBottom': {
-            return upsertScope(state, action.scopeId, (prev) => ({
+            const prev = state.scopes[action.scopeId] ?? createEmptyScopeState();
+            if (prev.bottom.isOpen === false) {
+                return state;
+            }
+            return upsertScope(state, action.scopeId, () => ({
                 ...prev,
                 bottom: { ...prev.bottom, isOpen: false },
             }));
         }
         case 'setBottomTab': {
-            return upsertScope(state, action.scopeId, (prev) => ({
+            const prev = state.scopes[action.scopeId] ?? createEmptyScopeState();
+            if (prev.bottom.activeTabId === action.tabId) {
+                return state;
+            }
+            return upsertScope(state, action.scopeId, () => ({
                 ...prev,
                 bottom: { ...prev.bottom, activeTabId: action.tabId },
             }));
@@ -299,7 +325,15 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
                     const existing = prev.details.tabs[existingIndex]!;
                     const pinned = action.openAs === 'pinned' ? true : existing.isPinned;
                     const preview = pinned ? false : existing.isPreview;
-                    const nextTabs = prev.details.tabs.map((t, index) => (index === existingIndex ? { ...t, isPinned: pinned, isPreview: preview } : t));
+                    const nextTabs = prev.details.tabs.map((t, index) => (
+                        index === existingIndex
+                            ? {
+                                ...action.tab,
+                                isPinned: pinned,
+                                isPreview: preview,
+                            }
+                            : t
+                    ));
                     return {
                         ...prev,
                         details: { ...prev.details, isOpen: true, tabs: nextTabs, activeTabKey: action.tab.key },

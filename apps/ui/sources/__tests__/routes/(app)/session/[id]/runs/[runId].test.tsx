@@ -63,6 +63,7 @@ const stackScreenSpy = vi.fn((_props: any) => null);
 const routerPushSpy = vi.fn();
 const routerBackSpy = vi.fn();
 const routerReplaceSpy = vi.fn();
+const navigateWithBlurOnWebSpy = vi.hoisted(() => vi.fn((action: () => void) => action()));
 const navigationCanGoBackSpy = vi.fn(() => true);
 let localSearchParamsMock: Record<string, unknown> = { id: 'session-1', runId: 'run_1' };
 let hydrateReady = true;
@@ -84,6 +85,10 @@ const sessionFixture: Session = {
     accessLevel: 'edit',
     canApprovePermissions: true,
 };
+
+vi.mock('@/utils/platform/navigateWithBlurOnWeb', () => ({
+    navigateWithBlurOnWeb: navigateWithBlurOnWebSpy,
+}));
 
 installSessionRouteCommonModuleMocks({
     reactNative: async () => {
@@ -256,6 +261,7 @@ describe('Session Run Details Screen', () => {
         routerPushSpy.mockReset();
         routerBackSpy.mockReset();
         routerReplaceSpy.mockReset();
+        navigateWithBlurOnWebSpy.mockClear();
         navigationCanGoBackSpy.mockReturnValue(true);
         localSearchParamsMock = { id: 'session-1', runId: 'run_1' };
         hydrateReady = true;
@@ -414,6 +420,7 @@ describe('Session Run Details Screen', () => {
 
         await screen.pressByTestIdAsync('session-run-details-open-tool-message');
 
+        expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
         expect(routerPushSpy).toHaveBeenCalledWith('/session/session-1/message/tool%3Aside_1');
     });
 

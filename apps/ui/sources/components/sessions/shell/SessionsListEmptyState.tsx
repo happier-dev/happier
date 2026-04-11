@@ -19,7 +19,7 @@ import type { SessionGettingStartedDecisionKind } from '@/components/sessions/gu
 
 type SessionsListEmptyStateKind = Extract<
     SessionGettingStartedDecisionKind,
-    'create_session' | 'connect_machine' | 'start_daemon'
+    'create_session' | 'connect_machine' | 'start_daemon' | 'select_session'
 >;
 
 type SessionsListEmptyStateProps = Readonly<{

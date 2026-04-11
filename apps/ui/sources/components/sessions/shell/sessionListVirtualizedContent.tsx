@@ -6,6 +6,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Ionicons } from '@expo/vector-icons';
 import { t } from '@/text';
 import { layout } from '@/components/ui/layout/layout';
+import { useSetting } from '@/sync/domains/state/storage';
 
 import { sessionListStyles } from './sessionListStyles';
 import { SessionsListHeader } from './sessionListChrome';
@@ -37,6 +38,7 @@ const SessionsListArchivedFooter = React.memo(function SessionsListArchivedFoote
 }>) {
     const styles = sessionListStyles;
     const { theme } = useUnistyles();
+    const hideInactiveSessions = useSetting('hideInactiveSessions') === true;
 
     return (
         <View style={styles.footerContainer}>
@@ -47,7 +49,9 @@ const SessionsListArchivedFooter = React.memo(function SessionsListArchivedFoote
             >
                 <Ionicons name="archive-outline" size={18} color={theme.colors.text} />
                 <Text style={styles.footerButtonLabel}>
-                    {t('sessionInfo.archivedSessions')}
+                    {hideInactiveSessions
+                        ? t('sessionInfo.inactiveAndArchivedSessions')
+                        : t('sessionInfo.archivedSessions')}
                 </Text>
             </Pressable>
         </View>

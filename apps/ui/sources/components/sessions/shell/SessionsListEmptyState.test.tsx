@@ -180,4 +180,16 @@ describe('SessionsListEmptyState', () => {
             step: 'setup_this_computer',
         }));
     });
+
+    it('renders select-session as the browse-style summary without setup actions', async () => {
+        const { SessionsListEmptyState } = await import('./SessionsListEmptyState');
+        const screen = await renderScreen(<SessionsListEmptyState kind="select_session" targetLabel="leeroy-mbp" />);
+
+        expect(screen.findByProps({ testID: 'session-getting-started-kind-select_session' })).toBeTruthy();
+        expect(screen.findByTestId('sessions-empty-state-summary')).not.toBeNull();
+        expect(screen.findByTestId('sessions-empty-state-title')).not.toBeNull();
+        expect(screen.findByTestId('sessions-empty-state-description')).not.toBeNull();
+        expect(screen.findByTestId('sessions-empty-state-open-setup')).toBeNull();
+        expect(() => screen.findByProps({ testID: 'sessions-empty-state-machine:m-online' })).toThrow();
+    });
 });

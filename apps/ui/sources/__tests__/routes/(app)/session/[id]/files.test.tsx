@@ -16,6 +16,8 @@ const routerReplaceSpy = vi.fn();
 let mockSessionId = 'session-1';
 let isFocused = true;
 let canGoBack = true;
+let mobileWorkspaceExperience: 'classic' | 'cockpit' = 'classic';
+let deviceType: 'phone' | 'tablet' | 'desktop' = 'desktop';
 
 const openRightSpy = vi.fn();
 const closeRightSpy = vi.fn();
@@ -57,6 +59,15 @@ installSessionRouteCommonModuleMocks({
             }),
         };
     },
+    storageModule: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useLocalSetting: ((key: string) => (key === 'mobileWorkspaceExperienceV1' ? mobileWorkspaceExperience : null)) as any,
+            },
+        });
+    },
 });
 
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
@@ -80,6 +91,10 @@ vi.mock('@/components/sessions/panes/SessionRightPanel', () => ({
     SessionRightPanel: (props: any) => React.createElement('SessionRightPanel', props),
 }));
 
+vi.mock('@/components/workspaceCockpit/session/SessionCockpitShell', () => ({
+    SessionCockpitShell: (props: any) => React.createElement('SessionCockpitShell', props),
+}));
+
 vi.mock('@/sync/sync', () => ({
     sync: {
         ensureSessionVisibleForMessageRoute: (sessionId: string) => ensureSessionVisibleSpy(sessionId),
@@ -93,6 +108,10 @@ vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
     },
 }));
 
+vi.mock('@/utils/platform/responsive', () => ({
+    useDeviceType: () => deviceType,
+}));
+
 let SessionFilesRouteScreen: React.ComponentType<any>;
 
 describe('/session/[id]/files', () => {
@@ -104,6 +123,8 @@ describe('/session/[id]/files', () => {
         mockSessionId = 'session-1';
         isFocused = true;
         canGoBack = true;
+        mobileWorkspaceExperience = 'classic';
+        deviceType = 'desktop';
         scopeState = {
             right: { isOpen: false, activeTabId: null, tabState: {} },
             details: null,
@@ -134,6 +155,18 @@ describe('/session/[id]/files', () => {
         expect(panel.props.scopeId).toBe('session:session-1');
         expect(openRightSpy).toHaveBeenCalledWith({ tabId: 'files' });
         expect(setRightTabSpy).toHaveBeenCalledWith('files');
+    });
+
+    it('renders the session cockpit shell on phone in cockpit mode', async () => {
+        mobileWorkspaceExperience = 'cockpit';
+        deviceType = 'phone';
+
+        const screen = await renderRouteScreen();
+
+        const cockpit = screen.findByType('SessionCockpitShell' as any);
+        expect(cockpit.props.sessionId).toBe('session-1');
+        expect(cockpit.props.surface).toBe('browse');
+        expect(screen.findAllByType('SessionRightPanel' as any)).toHaveLength(0);
     });
 
     it('forces the files tab even when another right-pane tab was remembered', async () => {
@@ -196,6 +229,24 @@ describe('/session/[id]/files', () => {
             pathname: '/session/[id]/details',
             params: { id: 'session-1', details: 'file', path: 'README.md' },
         });
+    });
+
+    it('stays on the browse route in cockpit mode when a details tab opens', async () => {
+        mobileWorkspaceExperience = 'cockpit';
+        deviceType = 'phone';
+        scopeState = {
+            right: { isOpen: true, activeTabId: 'git', tabState: {} },
+            details: {
+                isOpen: true,
+                tabs: [{ key: 'file:README.md', kind: 'file', resource: { kind: 'file', path: 'README.md' } }],
+                activeTabKey: 'file:README.md',
+                tabState: {},
+            },
+        };
+
+        await renderRouteScreen();
+
+        expect(routerPushSpy).not.toHaveBeenCalled();
     });
 
     it('does not navigate to details when tabs exist but the details pane is closed', async () => {

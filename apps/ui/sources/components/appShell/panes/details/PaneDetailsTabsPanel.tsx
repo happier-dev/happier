@@ -3,6 +3,7 @@ import { ActivityIndicator, Platform, Pressable, ScrollView, View } from 'react-
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Octicons } from '@expo/vector-icons';
 
+import { CenteredInfoTile } from '@/components/ui/lists/CenteredInfoTile';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
@@ -101,20 +102,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
-    },
-    empty: {
-        flex: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 24,
-        minHeight: 0,
-        minWidth: 0,
-    },
-    emptyText: {
-        color: theme.colors.textSecondary,
-        fontSize: 13,
-        ...Typography.default(),
-        textAlign: 'center',
     },
     loading: {
         flex: 1,
@@ -412,8 +399,22 @@ export const PaneDetailsTabsPanel = React.memo((props: PaneDetailsTabsPanelProps
             </View>
             {forceEmptyState || tabs.length === 0 ? (
                 props.renderEmptyState ? props.renderEmptyState() : (
-                    <View style={styles.empty}>
-                        <Text style={styles.emptyText}>{t('session.detailsPanel.emptyHint')}</Text>
+                    <View style={{ flex: 1, minHeight: 0, minWidth: 0, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 }}>
+                        <CenteredInfoTile
+                            titleTestID="pane-details-empty-state-title"
+                            descriptionTestID="pane-details-empty-state-description"
+                            icon={(
+                                <Octicons
+                                    name="plus-circle"
+                                    size={44}
+                                    color={theme.colors.textSecondary}
+                                    style={{ marginBottom: 12 }}
+                                />
+                            )}
+                            title={t('session.detailsPanel.emptyTitle')}
+                            description={t('session.detailsPanel.emptyHint')}
+                            paddingHorizontal={0}
+                        />
                     </View>
                 )
             ) : (

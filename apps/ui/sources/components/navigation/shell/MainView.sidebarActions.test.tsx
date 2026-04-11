@@ -18,6 +18,10 @@ const directSessionsFeatureState = vi.hoisted(() => ({
     enabled: false,
 }));
 
+const mainAppTabStateMock = vi.hoisted(() => ({
+    shouldThrow: false,
+}));
+
 const localSettingsState = vi.hoisted(() => ({
     sessionsListStorageTab: 'persisted' as 'persisted' | 'direct',
 }));
@@ -90,12 +94,17 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => false,
 }));
 
-vi.mock('@/hooks/ui/useTabState', () => ({
-    useTabState: () => ({
-        activeTab: 'sessions',
-        setActiveTab: async () => {},
-        isLoading: false,
-    }),
+vi.mock('@/components/navigation/mobile/chrome/MainAppTabStateProvider', () => ({
+    useMainAppTabState: () => {
+        if (mainAppTabStateMock.shouldThrow) {
+            throw new Error('useMainAppTabState must be used within MainAppTabStateProvider');
+        }
+        return {
+            activeTab: 'sessions',
+            setActiveTab: async () => {},
+            isLoading: false,
+        };
+    },
 }));
 
 vi.mock('@/components/sessions/guidance/SessionGettingStartedGuidance', () => ({
@@ -126,8 +135,8 @@ vi.mock('@/components/ui/buttons/FABWide', () => ({
     FABWide: 'FABWide',
 }));
 
-vi.mock('@/components/ui/navigation/TabBar', () => ({
-    TabBar: 'TabBar',
+vi.mock('@/components/navigation/mobile/chrome/bars/MainAppTabBar', () => ({
+    MainAppTabBar: 'MainAppTabBar',
 }));
 
 vi.mock('@/components/navigation/shell/InboxView', () => ({
@@ -188,6 +197,7 @@ describe('MainView sidebar actions', () => {
         directSessionsFeatureState.enabled = false;
         localSettingsState.sessionsListStorageTab = 'persisted';
         gettingStartedState.kind = 'create_session';
+        mainAppTabStateMock.shouldThrow = false;
     });
 
     beforeAll(async () => {
@@ -208,6 +218,15 @@ describe('MainView sidebar actions', () => {
 
         expect(() => tree!.findByType('SessionsListPaneContent')).not.toThrow();
         expect(() => tree!.findByType('SessionGettingStartedGuidance')).toThrow();
+    });
+
+    it('does not read the main app tab provider when rendering the sidebar variant', async () => {
+        mainAppTabStateMock.shouldThrow = true;
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        tree = (await renderScreen(<MainView variant="sidebar" />)).tree;
+
+        expect(() => tree!.findByType('SessionsListPaneContent')).not.toThrow();
     });
 
     it('keeps using the sessions list pane content for reconnect states in the sidebar', async () => {

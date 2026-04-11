@@ -46,6 +46,15 @@ const resolveVoiceSessionComposerRoutingSpy = vi.hoisted(() => vi.fn((_params: a
 const featureEnabledState = vi.hoisted(() => ({ voice: false, 'files.reviewComments': false }));
 const settingsState = vi.hoisted(() => ({ current: {} as any }));
 const settingByKeyState = vi.hoisted(() => ({ current: {} as Record<string, unknown> }));
+const sessionUsageState = vi.hoisted(() => ({ current: null as null | {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreation: number;
+  cacheRead: number;
+  contextSize: number;
+  timestamp: number;
+  contextWindowTokens?: number;
+} }));
 const participantTargetsState = vi.hoisted(() => ({ current: [] as any[] }));
 const reviewCommentDraftsState = vi.hoisted(() => ({ current: [] as any[] }));
 const focusState = vi.hoisted(() => ({ current: true }));
@@ -203,7 +212,7 @@ installSessionShellCommonModuleMocks({
         useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true }),
         useWorkspaceReviewCommentsDrafts: () => reviewCommentDraftsState.current,
         useSessionReviewCommentsDrafts: () => reviewCommentDraftsState.current,
-        useSessionUsage: () => null,
+        useSessionUsage: () => sessionUsageState.current,
         useLocalSetting: readLocalSetting,
         useLocalSettingMutable: <K extends keyof LocalSettings>(key: K) => [readLocalSetting(key), vi.fn<(value: LocalSettings[K]) => void>()],
         useSetting: readSetting,
@@ -454,6 +463,7 @@ describe('SessionView (direct sessions)', () => {
     resolveVoiceSessionComposerRoutingSpy.mockReturnValue(null);
     resolvePreferredServerIdForSessionIdSpy.mockReset();
     participantTargetsState.current = [];
+    sessionUsageState.current = null;
     reviewCommentDraftsState.current = [];
     focusState.current = true;
     pathnameState.current = '/session/s1';
@@ -688,6 +698,53 @@ describe('SessionView (direct sessions)', () => {
       sessionId: 's1',
       configId: 'thinking',
       value: 'high',
+    }));
+  });
+
+  it('passes live usage context-window telemetry through to AgentInput', async () => {
+    sessionUsageState.current = {
+      inputTokens: 700,
+      outputTokens: 250,
+      cacheCreation: 0,
+      cacheRead: 200,
+      contextSize: 1200,
+      timestamp: 1,
+      contextWindowTokens: 258400,
+    };
+    storageState.sessions.s1.latestUsage = {
+      inputTokens: 10,
+      outputTokens: 5,
+      cacheCreation: 0,
+      cacheRead: 0,
+      contextSize: 20,
+      timestamp: 1,
+      contextWindowTokens: 99999,
+    };
+
+    const screen = await renderSessionViewAndSettle();
+
+    expect(findAgentInput(screen).props.usageData).toEqual(expect.objectContaining({
+      contextSize: 1200,
+      contextWindowTokens: 258400,
+    }));
+  });
+
+  it('falls back to latest session usage context-window telemetry when live usage is unavailable', async () => {
+    storageState.sessions.s1.latestUsage = {
+      inputTokens: 700,
+      outputTokens: 250,
+      cacheCreation: 0,
+      cacheRead: 200,
+      contextSize: 1200,
+      timestamp: 1,
+      contextWindowTokens: 258400,
+    };
+
+    const screen = await renderSessionViewAndSettle();
+
+    expect(findAgentInput(screen).props.usageData).toEqual(expect.objectContaining({
+      contextSize: 1200,
+      contextWindowTokens: 258400,
     }));
   });
 

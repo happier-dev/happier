@@ -7,7 +7,6 @@ import { SessionGettingStartedGuidance } from '@/components/sessions/guidance/Se
 import { useSessionListStorageKind } from '@/components/sessions/model/useSessionListStorageKind';
 import { SessionsListStorageChrome } from '@/components/sessions/shell/SessionsListStorageChrome';
 import { FABWide } from '@/components/ui/buttons/FABWide';
-import { TabBar, TabType } from '@/components/ui/navigation/TabBar';
 import { InboxView } from '@/components/navigation/shell/InboxView';
 import { FriendsView } from '@/components/navigation/shell/FriendsView';
 import { SettingsViewWrapper } from '@/components/settings/shell/SettingsViewWrapper';
@@ -29,11 +28,11 @@ import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityRe
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useInboxAvailable } from '@/hooks/inbox/useInboxAvailable';
-import { useTabState } from '@/hooks/ui/useTabState';
 import { Text } from '@/components/ui/text/Text';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import type { FeatureId } from '@happier-dev/protocol';
 import { SessionsListPaneContent } from '@/components/sessions/shell/SessionsListPaneContent';
+import { useMainAppTabState } from '@/components/navigation/mobile/chrome/MainAppTabStateProvider';
 
 
 interface MainViewProps {
@@ -216,13 +215,46 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
     const { theme } = useUnistyles();
     const { directSessionsEnabled, storageKind, setStorageKind } = useSessionListStorageKind();
     const isTablet = useIsTablet();
+    if (variant === 'sidebar') {
+        const storageChrome = (
+            <SessionsListStorageChrome
+                directSessionsEnabled={directSessionsEnabled}
+                storageKind={storageKind}
+                onSelectStorageKind={setStorageKind}
+            />
+        );
+
+        return (
+            <View style={styles.sidebarContainer}>
+                {storageChrome}
+                <View style={styles.sidebarContentContainer}>
+                    <SessionsListPaneContent storageKind={storageKind} fallbackGuidanceVariant="sidebar" />
+                </View>
+            </View>
+        );
+    }
+
+    return (
+        <PhoneMainView
+            directSessionsEnabled={directSessionsEnabled}
+            storageKind={storageKind}
+            isTablet={isTablet}
+            themeGroupedBackground={theme.colors.groupped.background}
+        />
+    );
+});
+
+const PhoneMainView = React.memo((props: Readonly<{
+    directSessionsEnabled: boolean;
+    storageKind: 'persisted' | 'direct';
+    isTablet: boolean;
+    themeGroupedBackground: string;
+}>) => {
     const router = useRouter();
     const friendsEnabled = useFriendsEnabled();
     const inboxEnabled = useInboxAvailable();
     const voiceEnabled = useFeatureEnabled('voice');
-    // Tab state management
-    // NOTE: Zen tab removed - the feature never got to a useful state
-    const { activeTab, setActiveTab } = useTabState();
+    const { activeTab, setActiveTab } = useMainAppTabState();
 
     React.useEffect(() => {
         if (!inboxEnabled && activeTab === 'inbox') {
@@ -244,15 +276,6 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
         return normalized;
     }, [activeTab, friendsEnabled, inboxEnabled]);
 
-    const handleNewSession = React.useCallback(() => {
-        router.push('/new');
-    }, [router]);
-
-    const handleTabPress = React.useCallback((tab: TabType) => {
-        void setActiveTab(tab);
-    }, [setActiveTab]);
-
-    // Regular phone mode with tabs - define this before any conditional returns
     const renderTabContent = React.useCallback(() => {
         switch (activeTab) {
             case 'inbox':
@@ -269,32 +292,10 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
         }
     }, [activeTab, friendsEnabled, inboxEnabled]);
 
-    // Sidebar variant
-    if (variant === 'sidebar') {
-        const storageChrome = (
-            <SessionsListStorageChrome
-                directSessionsEnabled={directSessionsEnabled}
-                storageKind={storageKind}
-                onSelectStorageKind={setStorageKind}
-            />
-        );
-
-        return (
-            <View style={styles.sidebarContainer}>
-                {storageChrome}
-                <View style={styles.sidebarContentContainer}>
-                    <SessionsListPaneContent storageKind={storageKind} fallbackGuidanceVariant="sidebar" />
-                </View>
-            </View>
-        );
-    }
-
-    // Phone variant
-    // Tablet in phone mode - special case (when showing index view on tablets, show empty view)
-    if (isTablet) {
+    if (props.isTablet) {
         const buildPolicyDecision = getFeatureBuildPolicyDecision(SESSION_GETTING_STARTED_GUIDANCE_FEATURE_ID);
         if (buildPolicyDecision !== 'deny') {
-            if (directSessionsEnabled && storageKind === 'direct') {
+            if (props.directSessionsEnabled && props.storageKind === 'direct') {
                 return (
                     <View style={styles.primaryPaneFallback}>
                         <DirectSessionsEmptyState surface="primaryPane" />
@@ -312,26 +313,19 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
         );
     }
 
-    // Regular phone mode with tabs
     return (
-        <>
-            <View style={styles.phoneContainer}>
-                <View style={{ backgroundColor: theme.colors.groupped.background }}>
-                    <Header
-                        title={<HeaderTitle activeTab={headerTab} />}
-                        headerRight={() => <HeaderRight activeTab={headerTab} />}
-                        headerLeft={() => <HeaderLogo />}
-                        headerShadowVisible={false}
-                        headerTransparent={true}
-                    />
-                    {voiceEnabled ? <VoiceSurface variant="sidebar" /> : null}
-                </View>
-                {renderTabContent()}
+        <View style={styles.phoneContainer}>
+            <View style={{ backgroundColor: props.themeGroupedBackground }}>
+                <Header
+                    title={<HeaderTitle activeTab={headerTab} />}
+                    headerRight={() => <HeaderRight activeTab={headerTab} />}
+                    headerLeft={() => <HeaderLogo />}
+                    headerShadowVisible={false}
+                    headerTransparent={true}
+                />
+                {voiceEnabled ? <VoiceSurface variant="sidebar" /> : null}
             </View>
-            <TabBar
-                activeTab={activeTab}
-                onTabPress={handleTabPress}
-            />
-        </>
+            {renderTabContent()}
+        </View>
     );
 });

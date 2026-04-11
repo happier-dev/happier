@@ -24,6 +24,9 @@ const sessionExecutionRunsSupportedState = vi.hoisted(() => ({ supported: false 
 const executionRunsBackendsState = vi.hoisted(() => ({ backends: null as Record<string, unknown> | null }));
 const sessionMessagesState = vi.hoisted(() => ({ messages: [] as any[] }));
 const automationsSupportState = vi.hoisted(() => ({ enabled: false }));
+const localSettingsState = vi.hoisted(() => ({
+  mobileWorkspaceExperienceV1: 'classic' as 'classic' | 'cockpit',
+}));
 const sessionState = vi.hoisted(() => ({
   session: {
     id: 's1',
@@ -266,6 +269,7 @@ installSessionShellCommonModuleMocks({
         if (key === 'acknowledgedCliVersions') return {};
         if (key === 'uiMultiPanePanelsEnabled') return false;
         if (key === 'detailsPaneTabsBehavior') return 'preview';
+        if (key === 'mobileWorkspaceExperienceV1') return localSettingsState.mobileWorkspaceExperienceV1;
         if (key === 'rightPaneWidthPx') return 360;
         if (key === 'rightPaneWidthBasisPx') return 1200;
         if (key === 'detailsPaneWidthPx') return 520;
@@ -330,6 +334,7 @@ describe('SessionView header action menu visibility', () => {
     executionRunsBackendsState.backends = null;
     sessionMessagesState.messages = [];
     automationsSupportState.enabled = false;
+    localSettingsState.mobileWorkspaceExperienceV1 = 'classic';
     headerActionMenuSpy.mockClear();
     chatHeaderSpy.mockClear();
     routerPushSpy.mockReset();
@@ -580,6 +585,34 @@ describe('SessionView header action menu visibility', () => {
     await renderSessionView();
 
     expect(headerActionMenuSpy).toHaveBeenCalled();
+  });
+
+  it('adds an open cockpit menu item on phone when classic mode is active', async () => {
+    platformState.os = 'web';
+    responsiveState.deviceType = 'phone';
+    responsiveState.isLandscape = false;
+    localSettingsState.mobileWorkspaceExperienceV1 = 'classic';
+
+    await renderSessionView();
+
+    expect(headerActionMenuSpy).toHaveBeenCalled();
+    const props = headerActionMenuSpy.mock.calls.at(-1)?.[0] as any;
+    const extraIds = (props?.extraItems ?? []).map((item: any) => item?.id);
+    expect(extraIds).toContain('header.openMobileWorkspaceCockpit');
+  });
+
+  it('adds an open classic view menu item on phone when cockpit mode is active', async () => {
+    platformState.os = 'web';
+    responsiveState.deviceType = 'phone';
+    responsiveState.isLandscape = false;
+    localSettingsState.mobileWorkspaceExperienceV1 = 'cockpit';
+
+    await renderSessionView();
+
+    expect(headerActionMenuSpy).toHaveBeenCalled();
+    const props = headerActionMenuSpy.mock.calls.at(-1)?.[0] as any;
+    const extraIds = (props?.extraItems ?? []).map((item: any) => item?.id);
+    expect(extraIds).toContain('header.openMobileWorkspaceClassic');
   });
 
   it('renders a raised landscape back button on Android phones when the top header is hidden', async () => {

@@ -23,6 +23,9 @@ const ensureSessionVisibleSpy = vi.fn((_sessionId: string) => Promise.resolve())
 const closeDetailsSpy = vi.fn();
 const openDetailsTabSpy = vi.fn();
 let canGoBack = true;
+let deviceType: 'phone' | 'tablet' | 'desktop' = 'desktop';
+let mobileWorkspaceExperience: 'classic' | 'cockpit' = 'classic';
+let setScopeStateForTest: React.Dispatch<React.SetStateAction<MockScopeState>> | null = null;
 const routerMock = createExpoRouterMock({
     router: {
         back: routerBackSpy,
@@ -53,6 +56,15 @@ installSessionRouteCommonModuleMocks({
         useGlobalSearchParams: () => ({ id: mockSessionId, details: mockDetailsParam, path: mockPathParam, sha: mockShaParam }),
         useNavigation: () => ({ canGoBack: () => canGoBack }),
     }),
+    storageModule: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useLocalSetting: ((key: string) => (key === 'mobileWorkspaceExperienceV1' ? mobileWorkspaceExperience : null)) as any,
+            },
+        });
+    },
 });
 
 vi.mock('@react-navigation/native', () => ({
@@ -62,6 +74,7 @@ vi.mock('@react-navigation/native', () => ({
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     useAppPaneScope: () => {
         const [state, setState] = React.useState<MockScopeState>(scopeState);
+        setScopeStateForTest = setState;
         return {
             scopeId: `session:${mockSessionId}`,
             scopeState: state,
@@ -94,6 +107,9 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
 
 vi.mock('@/components/sessions/panes/SessionDetailsPanel', () => ({
     SessionDetailsPanel: (props: any) => React.createElement('SessionDetailsPanel', props),
+}));
+vi.mock('@/components/workspaceCockpit/session/SessionCockpitShell', () => ({
+    SessionCockpitShell: (props: any) => React.createElement('SessionCockpitShell', props),
 }));
 
 vi.mock('@/components/sessions/panes/url/sessionPaneUrlState', () => ({
@@ -142,6 +158,10 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
+vi.mock('@/utils/platform/responsive', () => ({
+    useDeviceType: () => deviceType,
+}));
+
 describe('/session/[id]/details', () => {
     let Screen: React.ComponentType<any>;
 
@@ -157,12 +177,15 @@ describe('/session/[id]/details', () => {
         mockPathParam = undefined;
         mockShaParam = undefined;
         canGoBack = true;
+        deviceType = 'desktop';
+        mobileWorkspaceExperience = 'classic';
         scopeState = { details: null };
         routerBackSpy.mockClear();
         routerReplaceSpy.mockClear();
         ensureSessionVisibleSpy.mockClear();
         closeDetailsSpy.mockClear();
         openDetailsTabSpy.mockClear();
+        setScopeStateForTest = null;
         vi.clearAllMocks();
     });
 
@@ -204,6 +227,36 @@ describe('/session/[id]/details', () => {
         const panel = screen.findByType('SessionDetailsPanel' as any);
         expect(panel.props.sessionId).toBe('session-1');
         expect(panel.props.scopeId).toBe('session:session-1');
+    });
+
+    it('renders the session cockpit shell on phone in cockpit mode', async () => {
+        deviceType = 'phone';
+        mobileWorkspaceExperience = 'cockpit';
+
+        const screen = await renderScreen(<Screen />);
+
+        const cockpit = screen.findByType('SessionCockpitShell' as any);
+        expect(cockpit.props.sessionId).toBe('session-1');
+        expect(cockpit.props.surface).toBe('tabs');
+        expect(screen.findAllByType('SessionDetailsPanel' as any)).toHaveLength(0);
+    });
+
+    it('does not dismiss the cockpit details route when details pane state closes', async () => {
+        deviceType = 'phone';
+        mobileWorkspaceExperience = 'cockpit';
+        scopeState = { details: { isOpen: true, tabs: [{ key: 'file:README.md' }], activeTabKey: 'file:README.md' } };
+
+        await renderScreen(<Screen />);
+
+        await act(async () => {
+            setScopeStateForTest?.((prev) => ({
+                ...prev,
+                details: prev.details ? { ...prev.details, isOpen: false } : prev.details,
+            }));
+        });
+
+        expect(routerBackSpy).not.toHaveBeenCalled();
+        expect(routerReplaceSpy).not.toHaveBeenCalled();
     });
 
     it('hydrates the session for deep links by requesting session visibility', async () => {

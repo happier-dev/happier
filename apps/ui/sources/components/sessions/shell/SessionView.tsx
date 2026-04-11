@@ -118,6 +118,10 @@ import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import { isHiddenSystemSession } from '@happier-dev/protocol';
 import { useSessionViewBootstrap } from './view/useSessionViewBootstrap';
+import {
+    resolveMobileWorkspaceExperienceToggleActionId,
+} from '@/components/workspaceCockpit/mobileWorkspaceExperience';
+import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit/useMobileWorkspaceExperienceState';
 import { SessionViewLayout } from './view/SessionViewLayout';
 import { combineSessionViewExtraActionChips } from './view/combineSessionViewExtraActionChips';
 import { resolveSessionViewModeOptionIds } from './view/resolveSessionViewModeOptionIds';
@@ -175,6 +179,12 @@ export const SessionView = React.memo((props: {
     const multiPaneEnabled = useLocalSetting('uiMultiPanePanelsEnabled') !== false;
     const paneScopeId = useRegisterSessionPaneDriver(sessionId);
     const sessionsRightPaneDefaultOpen = useLocalSetting('sessionsRightPaneDefaultOpen');
+    const {
+        mobileWorkspaceExperience,
+        showWorkspaceExperienceToggle,
+        workspaceExperienceToggleLabelKey,
+        toggleWorkspaceExperience,
+    } = useMobileWorkspaceExperienceState();
     const { pane, machineReachable: isMachineReachable } = useSessionViewBootstrap({
         sessionId,
         paneScopeId,
@@ -217,11 +227,32 @@ export const SessionView = React.memo((props: {
         && ((pane.scopeState?.right.isOpen ?? false) || (pane.scopeState?.details.isOpen ?? false)));
 
     const handleHeaderExtraItemSelect = React.useCallback((actionId: string) => {
-        if (actionId !== 'header.openSubagents') return false;
-        pane.openRight({ tabId: 'agents' });
-        pane.setRightTab('agents');
-        return true;
-    }, [pane]);
+        if (actionId === 'header.openSubagents') {
+            pane.openRight({ tabId: 'agents' });
+            pane.setRightTab('agents');
+            return true;
+        }
+        const workspaceModeToggleActionId = resolveMobileWorkspaceExperienceToggleActionId(mobileWorkspaceExperience);
+        if (actionId === workspaceModeToggleActionId && showWorkspaceExperienceToggle) {
+            if (mobileWorkspaceExperience === 'cockpit' && pathname === `/session/${sessionId}`) {
+                router.replace(`/session/${sessionId}` as any);
+            }
+            toggleWorkspaceExperience();
+            return true;
+        }
+        return false;
+    }, [mobileWorkspaceExperience, pane, showWorkspaceExperienceToggle, toggleWorkspaceExperience]);
+
+    const headerMenuExtraItems = React.useMemo(() => {
+        if (!showWorkspaceExperienceToggle) {
+            return undefined;
+        }
+        return [{
+            id: resolveMobileWorkspaceExperienceToggleActionId(mobileWorkspaceExperience),
+            title: t(workspaceExperienceToggleLabelKey),
+            icon: <Ionicons name="swap-horizontal-outline" size={18} color={theme.colors.textSecondary} />,
+        }];
+    }, [mobileWorkspaceExperience, showWorkspaceExperienceToggle, theme.colors.textSecondary, workspaceExperienceToggleLabelKey]);
 
     // Compute header props based on session state
     const headerProps = resolveSessionViewHeaderProps({
@@ -237,6 +268,7 @@ export const SessionView = React.memo((props: {
         subagentActiveCount: subagentCounts.active,
         navigateWithBlurOnWeb,
         handleHeaderExtraItemSelect,
+        headerMenuExtraItems,
         router,
         actionIconColor: theme.colors.textSecondary,
         headerTintColor: theme.colors.header.tint,
@@ -420,6 +452,8 @@ function SessionViewLoaded({
     const modelMode = liveComposerState.modelMode;
     const sessionStatus = useSessionStatus(session);
     const sessionUsage = useSessionUsage(sessionId);
+    const sessionUsageWithContextWindowTokens = sessionUsage as (typeof sessionUsage & { contextWindowTokens?: number }) | null;
+    const latestUsageWithContextWindowTokens = session.latestUsage as (typeof session.latestUsage & { contextWindowTokens?: number }) | null;
     const activeServerId = getActiveServerSnapshot().serverId;
     const capabilityServerId = activeServerId;
     const alwaysShowContextSize = useSetting('alwaysShowContextSize');
@@ -1493,18 +1527,24 @@ function SessionViewLoaded({
                 autocompletePrefixes={['@', '/']}
                 autocompleteSuggestions={(query) => getSuggestions(sessionId, query)}
                 disabled={isReadOnly}
-                usageData={sessionUsage ? {
-                    inputTokens: sessionUsage.inputTokens,
-                    outputTokens: sessionUsage.outputTokens,
-                    cacheCreation: sessionUsage.cacheCreation,
-                    cacheRead: sessionUsage.cacheRead,
-                    contextSize: sessionUsage.contextSize
-                } : session.latestUsage ? {
-                    inputTokens: session.latestUsage.inputTokens,
-                    outputTokens: session.latestUsage.outputTokens,
-                    cacheCreation: session.latestUsage.cacheCreation,
-                    cacheRead: session.latestUsage.cacheRead,
-                    contextSize: session.latestUsage.contextSize
+                usageData={sessionUsageWithContextWindowTokens ? {
+                    inputTokens: sessionUsageWithContextWindowTokens.inputTokens,
+                    outputTokens: sessionUsageWithContextWindowTokens.outputTokens,
+                    cacheCreation: sessionUsageWithContextWindowTokens.cacheCreation,
+                    cacheRead: sessionUsageWithContextWindowTokens.cacheRead,
+                    contextSize: sessionUsageWithContextWindowTokens.contextSize,
+                    ...(typeof sessionUsageWithContextWindowTokens.contextWindowTokens === 'number'
+                        ? { contextWindowTokens: sessionUsageWithContextWindowTokens.contextWindowTokens }
+                        : {}),
+                } : latestUsageWithContextWindowTokens ? {
+                    inputTokens: latestUsageWithContextWindowTokens.inputTokens,
+                    outputTokens: latestUsageWithContextWindowTokens.outputTokens,
+                    cacheCreation: latestUsageWithContextWindowTokens.cacheCreation,
+                    cacheRead: latestUsageWithContextWindowTokens.cacheRead,
+                    contextSize: latestUsageWithContextWindowTokens.contextSize,
+                    ...(typeof latestUsageWithContextWindowTokens.contextWindowTokens === 'number'
+                        ? { contextWindowTokens: latestUsageWithContextWindowTokens.contextWindowTokens }
+                        : {}),
                 } : undefined}
                 alwaysShowContextSize={alwaysShowContextSize}
                 extraActionChips={agentInputExtraActionChips}

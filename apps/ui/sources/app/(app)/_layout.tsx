@@ -17,7 +17,7 @@ import { getPendingTerminalConnect } from '@/sync/domains/pending/pendingTermina
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Text } from '@/components/ui/text/Text';
 import { bootstrapActiveServerFromWebLocation } from '@/sync/domains/server/url/bootstrapActiveServerFromWebLocation';
-import { buildTerminalConnectWebHref } from '@/utils/path/terminalConnectUrl';
+import { buildTerminalConnectWebHref, isTerminalConnectWebPathname } from '@/utils/path/terminalConnectUrl';
 import { useWebInitialRouteReconcile } from '@/hooks/ui/useWebInitialRouteReconcile';
 import { useHappierVoiceSupport } from '@/hooks/server/useHappierVoiceSupport';
 import { shouldHoldAuthenticatedShellForWebServerOverride } from '@/sync/domains/server/url/shouldHoldAuthenticatedShellForWebServerOverride';
@@ -35,7 +35,8 @@ import { isDesktopActivityOverlayWindowContext } from '@/activity/adapters/deskt
 import { DesktopTrayRuntime } from '@/desktop/tray/DesktopTrayRuntime';
 import { DesktopTrayDaemonLifecycleRuntime } from '@/desktop/tray/DesktopTrayDaemonLifecycleRuntime';
 import { useNotificationResponseRouting } from '@/activity/notifications/runtime/useNotificationResponseRouting';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { invokeTauri, isTauriDesktop } from '@/utils/platform/tauri';
+import { MobileBottomChromeHost } from '@/components/navigation/mobile/chrome/MobileBottomChromeHost';
 
 const bootstrappedWebServerOverride = bootstrapActiveServerFromWebLocation({ scope: 'device' });
 
@@ -52,9 +53,14 @@ export default function RootLayout() {
     const happierVoiceSupported = useHappierVoiceSupport();
     const isDesktopOverlayWindow = isDesktopActivityOverlayWindowContext();
     const isTauriDesktopHost = isTauriDesktop();
-    const isTerminalConnectRoute = pathname === '/terminal/connect';
+    const isTerminalConnectRoute = isTerminalConnectWebPathname(pathname);
 
     useWebInitialRouteReconcile({ routerPathname: pathname });
+
+    React.useEffect(() => {
+        if (!isTauriDesktopHost) return;
+        void invokeTauri('desktop_set_window_mode', { mode: isAuthenticated ? 'main' : 'preAuth' });
+    }, [isAuthenticated, isTauriDesktopHost]);
 
     const [isApplyingWebServerOverride, setIsApplyingWebServerOverride] = React.useState(() =>
         shouldHoldAuthenticatedShellForWebServerOverride(isAuthenticated),
@@ -375,6 +381,12 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
+                name="session/[id]/git"
+                options={{
+                    headerShown: false,
+                }}
+            />
+            <Stack.Screen
                 name="session/[id]/details"
                 options={{
                     headerShown: false,
@@ -382,6 +394,12 @@ export default function RootLayout() {
             />
             <Stack.Screen
                 name="session/[id]/terminal"
+                options={{
+                    headerShown: false,
+                }}
+            />
+            <Stack.Screen
+                name="projects/[workspaceRefId]/terminal"
                 options={{
                     headerShown: false,
                 }}
@@ -402,6 +420,14 @@ export default function RootLayout() {
             />
             <Stack.Screen
                 name="session/recent"
+                options={{
+                    headerShown: true,
+                    headerTitle: t('sessionHistory.title'),
+                    headerBackTitle: t('common.back'),
+                }}
+            />
+            <Stack.Screen
+                name="session/archived"
                 options={{
                     headerShown: true,
                     headerTitle: t('sessionHistory.title'),
@@ -690,6 +716,7 @@ export default function RootLayout() {
                 }}
             />
             </Stack>
+            <MobileBottomChromeHost />
         </>
     );
 }

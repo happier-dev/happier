@@ -42,10 +42,8 @@ const expoRouterMock = createExpoRouterMock({
 vi.mock('expo-router', () => expoRouterMock.module);
 
 const tauriDesktopState = vi.hoisted(() => ({ value: true }));
-const invokeTauriSpy = vi.hoisted(() => vi.fn());
 vi.mock('@/utils/platform/tauri', () => ({
     isTauriDesktop: () => tauriDesktopState.value,
-    invokeTauri: (...args: any[]) => invokeTauriSpy(...args),
 }));
 
 let isAuthenticated = true;
@@ -63,8 +61,11 @@ vi.mock('@/components/navigation/shell/HomeHeader', () => ({
     HomeHeaderNotAuth: () => null,
 }));
 
+const pendingTerminalConnectState = vi.hoisted(() => ({
+    value: null as null | { publicKeyB64Url: string; serverUrl: string },
+}));
 vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
-    getPendingTerminalConnect: () => null,
+    getPendingTerminalConnect: () => pendingTerminalConnectState.value,
 }));
 
 const connectionHealthState = vi.hoisted(() => ({ value: 0 as number }));
@@ -114,6 +115,7 @@ describe('/ (welcome) setup continuation', () => {
         isAuthenticated = true;
         tauriDesktopState.value = true;
         connectionHealthState.value = 0;
+        pendingTerminalConnectState.value = null;
         getPendingSetupIntentMock.mockReset();
         getPendingSetupIntentMock.mockReturnValue({
             branch: 'thisComputer',
@@ -131,7 +133,6 @@ describe('/ (welcome) setup continuation', () => {
         };
         expoRouterMock.spies.replace.mockReset();
         expoRouterMock.spies.push.mockReset();
-        invokeTauriSpy.mockReset();
     });
 
     afterEach(() => {
@@ -145,17 +146,6 @@ describe('/ (welcome) setup continuation', () => {
 
         expect(expoRouterMock.spies.replace).not.toHaveBeenCalledWith('/setup');
         expect(screen.findAllByType('SetupWizardSurface' as never)).toHaveLength(1);
-        expect(invokeTauriSpy).toHaveBeenCalledWith('desktop_set_window_mode', { mode: 'main' });
-    });
-
-    it('shrinks the desktop window to pre-auth mode when unauthenticated on Tauri desktop', async () => {
-        isAuthenticated = false;
-
-        const Screen = (await import('@/app/(app)/index')).default;
-        await renderScreen(React.createElement(Screen));
-        await flushHookEffects({ cycles: 1, turns: 2 });
-
-        expect(invokeTauriSpy).toHaveBeenCalledWith('desktop_set_window_mode', { mode: 'preAuth' });
     });
 
     it('keeps authenticated browser web users on / and opens the setup wizard overlay when a setup auth continuation is pending', async () => {
@@ -327,5 +317,20 @@ describe('/ (welcome) setup continuation', () => {
         await flushHookEffects({ cycles: 1, turns: 3 });
 
         expect(screen.findAllByType('SetupWizardSurface' as never)).toHaveLength(0);
+    });
+
+    it('does not open the post-auth setup wizard while a terminal connect approval is pending', async () => {
+        tauriDesktopState.value = false;
+        pendingTerminalConnectState.value = {
+            publicKeyB64Url: 'abc123',
+            serverUrl: 'https://relay.example.test',
+        };
+
+        const Screen = (await import('@/app/(app)/index')).default;
+        const screen = await renderScreen(React.createElement(Screen));
+        await flushHookEffects({ cycles: 1, turns: 3 });
+
+        expect(screen.findAllByType('SetupWizardSurface' as never)).toHaveLength(0);
+        expect(setPendingSetupIntentMock).not.toHaveBeenCalledWith(expect.objectContaining({ phase: 'post_auth' }));
     });
 });

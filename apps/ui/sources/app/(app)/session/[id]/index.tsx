@@ -1,19 +1,26 @@
 import * as React from 'react';
 import { useLocalSearchParams } from 'expo-router';
 import { ActivityIndicator, View } from 'react-native';
+import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { SessionView } from '@/components/sessions/shell/SessionView';
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import { parseSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import { SessionCockpitShell } from '@/components/workspaceCockpit/session/SessionCockpitShell';
+import { resolveSessionMobileSurfaceIntent } from '@/components/workspaceCockpit/session/sessionCockpitState';
+import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit/useMobileWorkspaceExperienceState';
 import { getTempData } from '@/utils/sessions/tempDataStore';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
+import { useLocalSetting } from '@/sync/domains/state/storage';
 import { storage } from '@/sync/domains/state/storageStore';
+import { useSessionTerminalAvailability } from '@/components/sessions/terminal/useSessionTerminalAvailability';
 
 export default function SessionRouteIndex() {
     const params = useLocalSearchParams<{
         id?: string | string[];
+        mobileSurface?: string | string[];
         jumpSeq?: string | string[];
         right?: string | string[];
         bottom?: string | string[];
@@ -22,8 +29,18 @@ export default function SessionRouteIndex() {
         sha?: string | string[];
         recoveryDataId?: string | string[];
     }>();
-    const { id: sessionIdParam, jumpSeq: jumpSeqParam, recoveryDataId: recoveryDataIdParam } = params;
+    const {
+        id: sessionIdParam,
+        mobileSurface: mobileSurfaceParam,
+        jumpSeq: jumpSeqParam,
+        recoveryDataId: recoveryDataIdParam,
+    } = params;
     const sessionId = normalizeSessionId(sessionIdParam);
+    const explicitMobileSurfaceHint = typeof mobileSurfaceParam === 'string'
+        ? mobileSurfaceParam
+        : Array.isArray(mobileSurfaceParam)
+            ? (mobileSurfaceParam[0] ?? null)
+            : null;
     const jumpSeqRaw = typeof jumpSeqParam === 'string'
         ? jumpSeqParam
         : Array.isArray(jumpSeqParam)
@@ -47,6 +64,11 @@ export default function SessionRouteIndex() {
         return Array.isArray(data?.attachmentDrafts) ? data.attachmentDrafts : null;
     }, [recoveryDataId]);
     const paneUrlState = React.useMemo(() => parseSessionPaneUrlState(params as any), [params]);
+    const scopeId = `session:${sessionId}`;
+    const pane = useAppPaneScope(scopeId);
+    const { cockpitEnabled } = useMobileWorkspaceExperienceState();
+    const lastMobileSurfaceBySessionId = useLocalSetting('sessionLastMobileSurfaceBySessionId');
+    const { sidebarTabAvailable: terminalTabAvailable } = useSessionTerminalAvailability();
 
     const [activeServerGeneration, setActiveServerGeneration] = React.useState(() => getActiveServerSnapshot().generation);
     React.useEffect(() => {
@@ -70,6 +92,27 @@ export default function SessionRouteIndex() {
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
                 <ActivityIndicator size="small" />
             </View>
+        );
+    }
+
+    if (cockpitEnabled) {
+        const surface = resolveSessionMobileSurfaceIntent({
+            routeKind: 'index',
+            activeRightTabId: pane.scopeState?.right?.activeTabId,
+            detailsTargetPresent: (pane.scopeState?.details?.tabs?.length ?? 0) > 0,
+            persistedSurface: explicitMobileSurfaceHint ?? lastMobileSurfaceBySessionId?.[sessionId] ?? null,
+            terminalTabAvailable,
+        });
+        return (
+            <SessionCockpitShell
+                sessionId={sessionId}
+                scopeId={scopeId}
+                surface={surface}
+                jumpToSeq={jumpToSeq}
+                paneUrlState={paneUrlState ?? undefined}
+                initialAttachmentDrafts={recoverableAttachmentDrafts}
+                terminalTabAvailable={terminalTabAvailable}
+            />
         );
     }
 

@@ -7,6 +7,7 @@ import {
     type SessionGettingStartedGuidanceVariant,
 } from '@/components/sessions/guidance/SessionGettingStartedGuidance';
 import { DirectSessionsEmptyState } from '@/components/sessions/shell/DirectSessionsEmptyState';
+import { HiddenInactiveSessionsEmptyState } from '@/components/sessions/shell/HiddenInactiveSessionsEmptyState';
 import { SessionsListView } from '@/components/sessions/shell/SessionsList';
 import { SessionsListEmptyState } from '@/components/sessions/shell/SessionsListEmptyState';
 import { useSessionGettingStartedGuidanceBaseModel } from '@/components/sessions/guidance/useSessionGettingStartedGuidanceBaseModel';
@@ -62,6 +63,16 @@ export const SessionsListPaneContent = React.memo((props: SessionsListPaneConten
     }
 
     if (sessionListPaneState.showEmptyState) {
+        if (props.storageKind === 'persisted' && sessionListPaneState.hasHiddenInactiveSessions) {
+            return (
+                <View style={styles.emptyStateContainer}>
+                    <View style={styles.emptyStateContentContainer}>
+                        <HiddenInactiveSessionsEmptyState />
+                    </View>
+                </View>
+            );
+        }
+
         if (props.storageKind === 'direct') {
             return (
                 <View style={styles.emptyStateContainer}>
