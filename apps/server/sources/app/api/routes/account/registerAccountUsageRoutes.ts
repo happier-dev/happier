@@ -9,6 +9,7 @@ import { log } from "@/utils/logging/log";
 import { queryUsageAnalytics } from "@/app/usage/usageQueryService";
 import { recordLegacyUsageReport, recordUsageEvent } from "@/app/usage/usageWriteService";
 import { type Fastify } from "../../types";
+import { accountUsageRoutePaths } from "./accountUsageRoutePaths";
 
 const LegacyUsageReportRouteBodySchema = z.object({
     key: z.string(),
@@ -45,7 +46,7 @@ async function ensureOwnedSessionIds(accountId: string, sessionIds: readonly str
 }
 
 export function registerAccountUsageRoutes(app: Fastify): void {
-    app.post('/v1/usage/query', {
+    app.post(accountUsageRoutePaths.legacyQuery, {
         schema: {
             body: z.object({
                 sessionId: z.string().nullish(),
@@ -158,7 +159,7 @@ export function registerAccountUsageRoutes(app: Fastify): void {
         }
     });
 
-    app.post('/v2/usage/query', {
+    app.post(accountUsageRoutePaths.analyticsQuery, {
         schema: {
             body: UsageAnalyticsQueryRequestSchema,
             response: {
@@ -185,7 +186,7 @@ export function registerAccountUsageRoutes(app: Fastify): void {
         }
     });
 
-    app.post('/v2/usage-events', {
+    app.post(accountUsageRoutePaths.analyticsEventsIngest, {
         schema: {
             body: UsageEventIngestRequestSchema,
             response: {
@@ -212,7 +213,7 @@ export function registerAccountUsageRoutes(app: Fastify): void {
         }
     });
 
-    app.post('/v2/usage-reports', {
+    app.post(accountUsageRoutePaths.legacyReportsIngest, {
         schema: {
             body: LegacyUsageReportRouteBodySchema,
             response: {

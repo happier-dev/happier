@@ -420,6 +420,7 @@ model UsageEvent {
     source             String
     scope              String
     externalKey        String?
+    idempotencyKey     String?  @unique
     turnId             String?
     isCumulative       Boolean  @default(false)
     inputTokens        Int      @default(0)

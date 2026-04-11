@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
     UsageEventIngestRequest,
     UsageObservationCost,
@@ -90,6 +91,19 @@ function toUsageEventCreateInput(
 }
 
 function buildUsageEventIdempotencyKey(
+    accountId: string,
+    request: Pick<UsageEventIngestRequest, "sessionId" | "source" | "externalKey">,
+): string | null {
+    if (!request.externalKey) {
+        return null;
+    }
+
+    const rawKey = JSON.stringify([accountId, request.sessionId, request.source, request.externalKey]);
+    const digest = createHash("sha256").update(rawKey).digest("hex");
+    return `usage_event:v1:${digest}`;
+}
+
+function buildLegacyUsageEventIdempotencyKey(
     accountId: string,
     request: Pick<UsageEventIngestRequest, "sessionId" | "source" | "externalKey">,
 ): string | null {
@@ -190,6 +204,29 @@ export async function recordUsageEvent(
 
         if (request.externalKey) {
             const idempotencyKey = buildUsageEventIdempotencyKey(accountId, request);
+            const legacyIdempotencyKey = buildLegacyUsageEventIdempotencyKey(accountId, request);
+            const existingByCurrentKey = await tx.usageEvent.findUnique({
+                where: {
+                    idempotencyKey: idempotencyKey ?? "",
+                },
+                select: { id: true, createdAt: true },
+            });
+            if (existingByCurrentKey) {
+                return { ok: true, event: existingByCurrentKey };
+            }
+
+            if (legacyIdempotencyKey) {
+                const existingByLegacyKey = await tx.usageEvent.findUnique({
+                    where: {
+                        idempotencyKey: legacyIdempotencyKey,
+                    },
+                    select: { id: true, createdAt: true },
+                });
+                if (existingByLegacyKey) {
+                    return { ok: true, event: existingByLegacyKey };
+                }
+            }
+
             const created = await tx.usageEvent.upsert({
                 where: {
                     idempotencyKey: idempotencyKey ?? "",

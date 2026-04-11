@@ -3,12 +3,14 @@ import { describe, expect, it } from "vitest";
 import { resolveMachineTransferFeature } from "../machineTransferFeature";
 import { resolveChannelBridgesFeature } from "../channelBridgesFeature";
 import { resolveSessionHandoffFeature } from "../sessionHandoffFeature";
+import { resolveServerUsageAnalyticsCapabilitiesFeature } from "../serverUsageAnalyticsCapabilitiesFeature";
 import { resolveTerminalFeature } from "../terminalFeature";
 import { resolveServerFeaturePayload } from "./resolveServerFeaturePayload";
 import { resolveServerFeatureBuildPolicy } from "./serverFeatureBuildPolicy";
 import type { ServerFeatureResolver } from "./serverFeatureRegistry";
 import type { FeaturesPayloadDelta } from "../types";
 import { evaluateFeatureBuildPolicy } from "@happier-dev/protocol";
+import { accountUsageRoutePaths } from "@/app/api/routes/account/accountUsageRoutePaths";
 
 function fromPartial(partial: FeaturesPayloadDelta): ServerFeatureResolver {
     return () => partial;
@@ -203,6 +205,7 @@ describe("resolveServerFeaturePayload", () => {
                 HAPPIER_PUBLIC_SERVER_URL: "https://stack.example.test/",
             } as NodeJS.ProcessEnv,
             [
+                resolveServerUsageAnalyticsCapabilitiesFeature,
                 fromPartial({
                     capabilities: {
                         server: {
@@ -222,6 +225,7 @@ describe("resolveServerFeaturePayload", () => {
                                     requires: ["updatedAt", "lastActiveAt"],
                                 },
                                 accountChanges: { mode: "delete_older_than", days: 30 },
+                                usageEvents: { mode: "keep_forever" },
                                 voiceSessionLeases: { mode: "keep_forever" },
                                 userFeedItems: { mode: "delete_older_than", days: 30 },
                                 sessionShareAccessLogs: { mode: "delete_older_than", days: 30 },
@@ -242,6 +246,16 @@ describe("resolveServerFeaturePayload", () => {
 
         expect(payload.capabilities.server.canonicalServerUrl).toBe("https://stack.example.test");
         expect(payload.capabilities.server.retention?.enabled).toBe(true);
+        expect(payload.capabilities.server.usageAnalytics).toMatchObject({
+            version: 1,
+            eventsIngest: { path: accountUsageRoutePaths.analyticsEventsIngest },
+            query: { path: accountUsageRoutePaths.analyticsQuery },
+            legacy: {
+                usageReportsPath: accountUsageRoutePaths.legacyReportsIngest,
+                usageQueryPath: accountUsageRoutePaths.legacyQuery,
+            },
+        });
+        expect(readOptionalPath(payload, ["features", "server", "usageAnalytics"])).toBeUndefined();
     });
 
     it("deep-merges nested feature branches from different resolvers", () => {

@@ -149,7 +149,7 @@ describe("usageWriteService", () => {
         expect(await db.usageEvent.count({ where: { accountId: account.id } })).toBe(1);
     });
 
-    it("persists a stable idempotency key for external-keyed usage events", async () => {
+    it("persists a bounded stable idempotency key for external-keyed usage events", async () => {
         const account = await db.account.create({
             data: { publicKey: "pk-usage-service-idempotency-key" },
             select: { id: true },
@@ -171,7 +171,7 @@ describe("usageWriteService", () => {
             select: { id: true },
         });
 
-        const externalKey = "vendor-turn-2";
+        const externalKey = `vendor-turn-2-${"x".repeat(512)}`;
         const result = await recordUsageEvent(account.id, {
             sessionId: session.id,
             observedAt: 1_714_000_010_000,
@@ -203,7 +203,97 @@ describe("usageWriteService", () => {
         `;
 
         expect(rows).toHaveLength(1);
-        expect(rows[0]?.idempotencyKey).toBe(JSON.stringify([account.id, session.id, "token_count", externalKey]));
+        expect(rows[0]?.idempotencyKey).toBeTruthy();
+        expect(rows[0]?.idempotencyKey?.length ?? 0).toBeLessThanOrEqual(191);
+        expect(rows[0]?.idempotencyKey).not.toContain(externalKey);
+    });
+
+    it("treats retries against legacy raw idempotency rows as duplicates during rollout", async () => {
+        const account = await db.account.create({
+            data: { publicKey: "pk-usage-service-legacy-idempotency" },
+            select: { id: true },
+        });
+        const session = await db.session.create({
+            data: {
+                accountId: account.id,
+                tag: "usage-service-legacy-idempotency",
+                encryptionMode: "e2ee",
+                metadata: "ciphertext",
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                seq: 0,
+                pendingVersion: 0,
+                pendingCount: 0,
+                active: true,
+            },
+            select: { id: true },
+        });
+
+        const externalKey = "vendor-turn-legacy";
+        const legacyIdempotencyKey = JSON.stringify([account.id, session.id, "claude_sdk", externalKey]);
+        const legacyRow = await db.usageEvent.create({
+            data: {
+                accountId: account.id,
+                sessionId: session.id,
+                observedAt: new Date(1_714_000_020_000),
+                providerId: "claude",
+                backendMode: "remote",
+                modelId: "claude-sonnet",
+                projectKey: null,
+                workspaceId: null,
+                machineId: null,
+                source: "claude_sdk",
+                scope: "turn_delta",
+                externalKey,
+                idempotencyKey: legacyIdempotencyKey,
+                turnId: "turn-legacy",
+                isCumulative: false,
+                inputTokens: 8,
+                outputTokens: 4,
+                reasoningTokens: 0,
+                cacheReadTokens: 0,
+                cacheWriteTokens: 0,
+                totalTokens: 12,
+                reportedCostUsd: 0.11,
+                estimatedCostUsd: 0,
+                invoiceCostUsd: 0,
+                billingContext: null,
+                costSource: null,
+                currency: "USD",
+                contextUsedTokens: 12,
+                contextWindowTokens: 200000,
+                metadata: null,
+            },
+            select: { id: true, idempotencyKey: true },
+        });
+
+        const retried = await recordUsageEvent(account.id, {
+            sessionId: session.id,
+            observedAt: 1_714_000_021_000,
+            providerId: "claude",
+            backendMode: "remote",
+            modelId: "claude-sonnet",
+            projectKey: null,
+            workspaceId: null,
+            machineId: null,
+            source: "claude_sdk",
+            scope: "turn_delta",
+            externalKey,
+            turnId: "turn-legacy",
+            isCumulative: false,
+            tokens: { input: 8, output: 4, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 12 },
+            cost: { reportedUsd: 0.11, estimatedUsd: 0, currency: "USD" },
+            context: { usedTokens: 12, windowTokens: 200000 },
+        });
+
+        expect(retried).toMatchObject({ ok: true });
+        if (!retried.ok) {
+            throw new Error("Expected usage event retry to be accepted");
+        }
+
+        expect(retried.event.id).toBe(legacyRow.id);
+        expect(await db.usageEvent.count({ where: { accountId: account.id } })).toBe(1);
     });
 
     it("persists invoice, billing context, and cost source on usage events", async () => {
