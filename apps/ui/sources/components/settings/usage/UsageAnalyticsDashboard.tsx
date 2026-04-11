@@ -6,9 +6,11 @@ import { Text } from '@/components/ui/text/Text';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { t } from '@/text';
+import { USAGE_PERIODS, getUsagePeriodDefinition } from '@/sync/api/account/usagePeriods';
 import { UsageBar } from './UsageBar';
 import { UsageChart } from './UsageChart';
 import { UsageExportActions } from './UsageExportActions';
+import { UsageRecapHighlightsSection } from './UsageRecapHighlightsSection';
 import { UsageTimelineSection } from './UsageTimelineSection';
 import { UsageToggleChip } from './UsageToggleChip';
 import { formatUsageCurrency } from './formatUsageCurrency';
@@ -596,17 +598,11 @@ export const UsageAnalyticsDashboard: React.FC<UsageAnalyticsDashboardProps> = (
 
                 <View style={styles.filtersCard}>
                     <View style={styles.chipRow}>
-                        {(['today', '7days', '30days'] as const).map((period) => (
+                        {USAGE_PERIODS.map((period) => (
                             <UsageToggleChip
                                 key={period}
                                 testID={`usage-period-${period}`}
-                                label={
-                                    period === 'today'
-                                        ? t('usage.today')
-                                        : period === '7days'
-                                            ? t('usage.last7Days')
-                                            : t('usage.last30Days')
-                                }
+                                label={t(getUsagePeriodDefinition(period).translationKey)}
                                 selected={filters.period === period}
                                 onPress={() => onPeriodChange(period)}
                             />
@@ -694,6 +690,12 @@ export const UsageAnalyticsDashboard: React.FC<UsageAnalyticsDashboardProps> = (
                         subtitle={viewModel.costPresentation ? resolveCostModeLabel(displayCostMode) : viewModel.focus ? viewModel.focus.label : undefined}
                     />
                 </View>
+
+                <UsageRecapHighlightsSection
+                    viewModel={viewModel}
+                    filters={{ ...filters, costMode: displayCostMode }}
+                    sessionId={sessionId}
+                />
 
                 {renderInsightSection(viewModel.insights)}
 

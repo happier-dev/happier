@@ -7243,6 +7243,7 @@ settingsSession: {
         today: 'Avui',
         last7Days: 'Últims 7 dies',
         last30Days: 'Últims 30 dies',
+        lastYear: 'Últim any',
         costMode: 'Cost mode',
         auto: 'Auto',
         reported: 'Reported',

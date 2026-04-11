@@ -12,6 +12,7 @@ type UsageStatCardProps = Readonly<{
     value: string;
     subtitle?: string;
     visual?: React.ReactNode;
+    headerAccessory?: React.ReactNode;
     testID?: string;
     onPress?: () => void;
     variant?: UsageStatCardVariant;
@@ -34,12 +35,18 @@ const styles = StyleSheet.create((theme) => ({
         shadowOffset: { width: 0, height: 6 },
         elevation: 2,
     },
+    header: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
     insetCard: {
         backgroundColor: theme.colors.surfaceHigh,
         borderWidth: 1,
         borderColor: theme.colors.divider,
     },
     label: {
+        flex: 1,
         fontSize: 12,
         fontWeight: '700',
         color: theme.colors.textSecondary,
@@ -84,6 +91,7 @@ export const UsageStatCard = React.memo(function UsageStatCard(props: UsageStatC
         value,
         subtitle,
         visual,
+        headerAccessory,
         testID,
         onPress,
         variant = 'surface',
@@ -99,7 +107,10 @@ export const UsageStatCard = React.memo(function UsageStatCard(props: UsageStatC
                 variant === 'surface' ? styles.surfaceCard : styles.insetCard,
             ]}
         >
-            <Text style={styles.label}>{label}</Text>
+            <View style={styles.header}>
+                <Text style={styles.label}>{label}</Text>
+                {headerAccessory}
+            </View>
             <Text
                 numberOfLines={valueTone === 'compact' ? 2 : 1}
                 ellipsizeMode="tail"

@@ -130,4 +130,72 @@ describe('apiUsage v2 analytics query', () => {
         expect(urls.some((url) => url.includes('/v2/usage/query'))).toBe(true);
         expect(urls.some((url) => url.includes('/v1/usage/query'))).toBe(true);
     });
+
+    it('uses a year-long date range with month granularity for the year filter and downgrades legacy fallback grouping to day', async () => {
+        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
+            getActiveServerSnapshot: () => ({
+                serverId: 'server-a',
+                serverUrl: 'https://api.example.test',
+                kind: 'custom',
+                generation: 1,
+            }),
+        }));
+
+        vi.spyOn(Date, 'now').mockReturnValue(1_735_689_600_000);
+
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.includes('/v2/usage/query')) {
+                return {
+                    ok: false,
+                    status: 404,
+                    json: async () => ({ error: 'not found' }),
+                };
+            }
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    usage: [],
+                    groupBy: 'day',
+                    totalReports: 0,
+                }),
+            };
+        });
+        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+        const { getUsageForPeriod } = await import('./apiUsage');
+        await getUsageForPeriod(credentials, 'year');
+
+        const usageCalls = fetchMock.mock.calls as unknown as Array<[RequestInfo | URL, RequestInit?]>;
+        const v2Call = usageCalls.find(([url]) => String(url).includes('/v2/usage/query'));
+        expect(v2Call).toBeDefined();
+        if (!v2Call) {
+            throw new Error('v2 usage query call missing');
+        }
+
+        const [, v2Options] = v2Call;
+        const v2Body = JSON.parse(String(v2Options?.body));
+        expect(v2Body).toMatchObject({
+            granularity: 'month',
+        });
+        expect(v2Body.dateRange).toEqual({
+            startMs: 1_704_153_600_000,
+            endMs: 1_735_689_600_000,
+        });
+
+        const v1Call = usageCalls.find(([url]) => String(url).includes('/v1/usage/query'));
+        expect(v1Call).toBeDefined();
+        if (!v1Call) {
+            throw new Error('v1 usage query call missing');
+        }
+
+        const [, v1Options] = v1Call;
+        const v1Body = JSON.parse(String(v1Options?.body));
+        expect(v1Body).toMatchObject({
+            groupBy: 'day',
+            startTime: 1_704_153_600,
+            endTime: 1_735_689_600,
+        });
+    });
 });

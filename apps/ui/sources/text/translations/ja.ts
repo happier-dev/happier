@@ -8190,6 +8190,7 @@ settingsSession: {
     today: "今日",
     last7Days: "過去7日間",
     last30Days: "過去30日間",
+    lastYear: "過去1年",
     costMode: "Cost mode",
     auto: "Auto",
     reported: "Reported",

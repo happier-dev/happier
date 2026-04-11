@@ -7976,6 +7976,7 @@ settingsSession: {
     today: "Dzisiaj",
     last7Days: "Ostatnie 7 dni",
     last30Days: "Ostatnie 30 dni",
+    lastYear: "Ostatni rok",
     costMode: "Cost mode",
     auto: "Auto",
     reported: "Reported",

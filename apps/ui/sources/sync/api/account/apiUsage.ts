@@ -6,6 +6,13 @@ import type {
     UsageAnalyticsQueryRequest,
     UsageAnalyticsQueryResponse,
 } from '@happier-dev/protocol';
+import {
+    getUsagePeriodDefinition,
+    resolveUsagePeriodStartTimeSeconds,
+    type UsageLegacyPeriodGranularity,
+    type UsagePeriod,
+    type UsagePeriodGranularity,
+} from './usagePeriods';
 
 export interface UsageDataPoint {
     timestamp: number;
@@ -28,7 +35,7 @@ export interface UsageQueryParams {
     sessionId?: string;
     startTime?: number; // Unix timestamp in seconds
     endTime?: number;   // Unix timestamp in seconds
-    groupBy?: 'hour' | 'day';
+    groupBy?: UsagePeriodGranularity;
     costMode?: 'auto' | 'reported' | 'estimated';
     focus?: {
         dimension: string;
@@ -114,7 +121,11 @@ export async function queryUsage(
                     endMs: typeof params.endTime === 'number' ? params.endTime * 1000 : undefined,
                 }
                 : undefined,
-            granularity: params.groupBy === 'hour' ? 'hour' : 'day',
+            granularity: params.groupBy === 'hour'
+                ? 'hour'
+                : params.groupBy === 'month'
+                    ? 'month'
+                    : 'day',
             costMode: params.costMode ?? 'auto',
             includeInsights: true,
             includeActivity: true,
@@ -178,6 +189,7 @@ async function queryLegacyUsage(
     credentials: AuthCredentials,
     params: UsageQueryParams,
 ): Promise<UsageDataPoint[]> {
+    const legacyGroupBy: UsageLegacyPeriodGranularity = params.groupBy === 'hour' ? 'hour' : 'day';
     const response = await serverFetch('/v1/usage/query', {
         method: 'POST',
         headers: {
@@ -188,7 +200,7 @@ async function queryLegacyUsage(
             sessionId: params.sessionId ?? null,
             startTime: params.startTime ?? null,
             endTime: params.endTime ?? null,
-            groupBy: params.groupBy ?? 'day',
+            groupBy: legacyGroupBy,
         }),
     }, { includeAuth: false });
 
@@ -229,40 +241,21 @@ async function queryLegacyUsage(
  */
 export async function getUsageForPeriod(
     credentials: AuthCredentials,
-    period: 'today' | '7days' | '30days',
+    period: UsagePeriod,
     sessionId?: string,
     focus?: UsageQueryParams['focus'],
     costMode: UsageQueryParams['costMode'] = 'auto',
 ): Promise<UsageResponse> {
-    const now = Math.floor(Date.now() / 1000);
-    const oneDaySeconds = 24 * 60 * 60;
-    
-    let startTime: number;
-    let groupBy: 'hour' | 'day';
-    
-    switch (period) {
-        case 'today':
-            // Start of today (local timezone)
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            startTime = Math.floor(today.getTime() / 1000);
-            groupBy = 'hour';
-            break;
-        case '7days':
-            startTime = now - (7 * oneDaySeconds);
-            groupBy = 'day';
-            break;
-        case '30days':
-            startTime = now - (30 * oneDaySeconds);
-            groupBy = 'day';
-            break;
-    }
-    
+    const nowMs = Date.now();
+    const definition = getUsagePeriodDefinition(period);
+    const startTime = resolveUsagePeriodStartTimeSeconds(period, nowMs);
+    const endTime = Math.floor(nowMs / 1000);
+
     return queryUsage(credentials, {
         sessionId,
         startTime,
-        endTime: now,
-        groupBy,
+        endTime,
+        groupBy: definition.granularity,
         focus,
         costMode,
     });

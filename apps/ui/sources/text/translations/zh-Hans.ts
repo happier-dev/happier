@@ -7578,6 +7578,7 @@ settingsSession: {
     today: "今天",
     last7Days: "过去 7 天",
     last30Days: "过去 30 天",
+    lastYear: "过去 1 年",
     costMode: "Cost mode",
     auto: "Auto",
     reported: "Reported",

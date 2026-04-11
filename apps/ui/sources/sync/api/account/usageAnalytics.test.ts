@@ -174,6 +174,36 @@ describe('buildUsageAnalyticsViewModel', () => {
                 workspaces: [{ key: 'workspace-a', label: 'Workspace A', eventCount: 3 }],
                 engines: [{ key: 'claude:remote', label: 'Claude Remote', eventCount: 3 }],
             },
+            modelTimeline: [
+                {
+                    bucketStartMs: 1_700_000_000_000,
+                    bucketEndMs: 1_700_086_400_000,
+                    leaders: [
+                        {
+                            key: 'claude-3.7-sonnet',
+                            label: 'Claude 3.7 Sonnet',
+                            eventCount: 2,
+                            tokens: { input: 80, output: 30, reasoning: 10, cacheRead: 5, cacheWrite: 0, total: 125 },
+                            cost: { reportedUsd: 11, estimatedUsd: 7, currency: 'USD' },
+                        },
+                    ],
+                },
+            ],
+            engineTimeline: [
+                {
+                    bucketStartMs: 1_700_000_000_000,
+                    bucketEndMs: 1_700_086_400_000,
+                    leaders: [
+                        {
+                            key: 'claude:remote',
+                            label: 'Claude Remote',
+                            eventCount: 3,
+                            tokens: { input: 90, output: 30, reasoning: 10, cacheRead: 5, cacheWrite: 0, total: 135 },
+                            cost: { reportedUsd: 12, estimatedUsd: 8, currency: 'USD' },
+                        },
+                    ],
+                },
+            ],
             messageStats: {
                 sessionCount: 2,
                 messageCount: 12,
@@ -199,9 +229,95 @@ describe('buildUsageAnalyticsViewModel', () => {
         expect(viewModel.activity.calendarDays).toHaveLength(2);
         expect(viewModel.leaders.engines[0].label).toBe('Claude Remote');
         expect(viewModel.leaders.models[0].eventCount).toBe(2);
+        expect(viewModel.modelTimeline[0].leaders[0].totalCost).toBe(11);
+        expect(viewModel.engineTimeline[0].leaders[0].totalCost).toBe(12);
+
+        const estimatedViewModel = buildUsageAnalyticsViewModel(response, {
+            period: '30days',
+            metric: 'cost',
+            focus: null,
+            costMode: 'estimated',
+        });
+        expect(estimatedViewModel.modelTimeline[0].leaders[0].totalCost).toBe(7);
+        expect(estimatedViewModel.engineTimeline[0].leaders[0].totalCost).toBe(8);
 
         const summary = buildUsageAnalyticsSummaryViewModel(response);
         expect(summary.topEngine?.label).toBe('Claude Remote');
+    });
+
+    it('falls back to derived cost presentation fields when an older server returns a partial costPresentation object', () => {
+        const response: UsageAnalyticsQueryResponse = {
+            v: 1,
+            totals: {
+                eventCount: 1,
+                tokens: { input: 100, output: 20, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 120 },
+                cost: { reportedUsd: 0, estimatedUsd: 0.19, currency: 'USD', costSource: 'none', billingContext: 'unknown' },
+            },
+            series: [
+                {
+                    bucketStartMs: 1_700_000_000_000,
+                    bucketEndMs: 1_700_086_400_000,
+                    eventCount: 1,
+                    tokens: { input: 100, output: 20, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 120 },
+                    cost: { reportedUsd: 0, estimatedUsd: 0.19, currency: 'USD', costSource: 'none', billingContext: 'unknown' },
+                },
+            ],
+            breakdowns: {
+                provider: [],
+                model: [],
+                session: [],
+                project: [],
+                workspace: [],
+                backendMode: [],
+                source: [],
+            },
+            insights: {
+                activeDays: 1,
+                longestStreakDays: 1,
+                sessionsUsed: 1,
+                messagesUsed: 1,
+                modelsTried: 1,
+                favoriteModel: undefined,
+                favoriteModelChangeCount: 0,
+                busiestMonth: undefined,
+                busiestDay: undefined,
+                busiestHour: undefined,
+            },
+            activity: {
+                calendarDays: [{ date: '2026-04-11', eventCount: 1 }],
+                weekdayHourBuckets: [],
+            },
+            leaders: {
+                providers: [],
+                models: [],
+                sessions: [],
+                projects: [],
+                workspaces: [],
+                engines: [],
+            },
+            modelTimeline: [],
+            engineTimeline: [],
+            messageStats: {
+                sessionCount: 1,
+                messageCount: 1,
+            },
+            costPresentation: {
+                mode: 'auto',
+                effectiveUsd: 0.19,
+                source: 'none',
+            } as UsageAnalyticsQueryResponse['costPresentation'],
+        };
+
+        const viewModel = buildUsageAnalyticsViewModel(response, {
+            period: '30days',
+            metric: 'tokens',
+            focus: null,
+            costMode: 'auto',
+        });
+
+        expect(viewModel.costPresentation.mode).toBe('auto');
+        expect(viewModel.costPresentation.currency).toBe('USD');
+        expect(viewModel.costPresentation.effectiveUsd).toBeCloseTo(0.19);
     });
 
     it('uses the selected cost mode consistently for overview and breakdown totals', () => {
@@ -242,6 +358,59 @@ describe('buildUsageAnalyticsViewModel', () => {
         });
         expect(estimated.overview.totalCost).toBe(9);
         expect(estimated.breakdowns.providers[0]?.totalCost).toBe(9);
+    });
+
+    it('keeps legacy fallback cost modes honest by exposing only auto when reported and estimated are synthesized from the same total', () => {
+        const usage: UsageDataPoint[] = [
+            {
+                timestamp: 1_700_000_000,
+                tokens: { total: 100, input: 80, output: 20 },
+                cost: { total: 1.5, input: 1.0, output: 0.5 },
+                reportCount: 1,
+            },
+        ];
+
+        const viewModel = buildUsageAnalyticsViewModel(usage, baseState);
+
+        expect(viewModel.availableCostModes).toEqual(['auto']);
+        expect(viewModel.costPresentation.mode).toBe('auto');
+        expect(viewModel.costPresentation.source).toBe('legacy_total_synthesized');
+    });
+
+    it('maps model and engine timelines into the premium dashboard view model', () => {
+        const response: UsageAnalyticsQueryResponse = {
+            v: 1,
+            totals: {
+                eventCount: 2,
+                tokens: { input: 20, output: 10, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 30 },
+                cost: { reportedUsd: 4, estimatedUsd: 3, currency: 'USD', costSource: 'provider_reported', billingContext: 'api_usage' },
+            },
+            modelTimeline: [
+                {
+                    bucketStartMs: 1_700_000_000_000,
+                    bucketEndMs: 1_700_086_400_000,
+                    leaders: [
+                        { key: 'gpt-5', label: 'GPT-5', eventCount: 2, tokens: { input: 20, output: 10, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 30 }, cost: { reportedUsd: 4, estimatedUsd: 3, currency: 'USD' } },
+                    ],
+                },
+            ],
+            engineTimeline: [
+                {
+                    bucketStartMs: 1_700_000_000_000,
+                    bucketEndMs: 1_700_086_400_000,
+                    leaders: [
+                        { key: 'codex:app-server', label: 'Codex App Server', eventCount: 2, tokens: { input: 20, output: 10, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 30 }, cost: { reportedUsd: 4, estimatedUsd: 3, currency: 'USD' } },
+                    ],
+                },
+            ],
+        };
+
+        const viewModel = buildUsageAnalyticsViewModel(response, baseState);
+
+        expect(viewModel.modelTimeline).toHaveLength(1);
+        expect(viewModel.modelTimeline[0]?.leaders[0]?.label).toBe('GPT-5');
+        expect(viewModel.engineTimeline).toHaveLength(1);
+        expect(viewModel.engineTimeline[0]?.leaders[0]?.label).toBe('Codex App Server');
     });
 
     it('uses only the trailing consecutive active run for the legacy summary streak', () => {
@@ -308,5 +477,39 @@ describe('buildUsageAnalyticsViewModel', () => {
         const viewModel = buildUsageAnalyticsViewModel(legacyUsage, baseState);
 
         expect(viewModel.insights.currentStreakDays).toBe(2);
+    });
+
+    it('preserves invoice-aware auto cost presentation from the server response', () => {
+        const response: UsageAnalyticsQueryResponse = {
+            v: 1,
+            totals: {
+                eventCount: 1,
+                tokens: { input: 10, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 15 },
+                cost: {
+                    reportedUsd: 4,
+                    estimatedUsd: 3,
+                    invoiceUsd: 2,
+                    currency: 'USD',
+                    costSource: 'provider_reported',
+                    billingContext: 'api_usage',
+                },
+            },
+            costPresentation: {
+                mode: 'auto',
+                effectiveUsd: 2,
+                currency: 'USD',
+                source: 'invoice',
+            },
+        };
+
+        const viewModel = buildUsageAnalyticsViewModel(response, baseState);
+
+        expect(viewModel.costPresentation).toEqual({
+            mode: 'auto',
+            effectiveUsd: 2,
+            currency: 'USD',
+            source: 'invoice',
+        });
+        expect(viewModel.overview.totalCost).toBe(2);
     });
 });

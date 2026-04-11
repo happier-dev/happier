@@ -246,6 +246,12 @@ test.describe('ui e2e: usage dashboard', () => {
         'usage-export-copy-summary',
         'usage-export-json',
         'usage-export-share-summary',
+        'usage-period-year',
+        'usage-recap-section',
+        'usage-recap-share-streak',
+        'usage-recap-share-usage',
+        'usage-recap-share-model',
+        'usage-recap-share-rhythm',
         'usage-breakdown-row-provider-anthropic',
         'usage-breakdown-row-model-claude-3.7-sonnet',
         'usage-breakdown-row-provider-openai',
@@ -254,6 +260,8 @@ test.describe('ui e2e: usage dashboard', () => {
       timeoutMs: 180_000,
     });
 
+    await expect(page).toHaveURL(/\/settings\/usage\?period=year/, { timeout: 60_000 });
+    await expect(page.getByTestId('usage-period-year')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByTestId('usage-costmode-auto')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByTestId('usage-costmode-reported')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByTestId('usage-costmode-estimated')).toHaveCount(1, { timeout: 60_000 });
@@ -261,6 +269,11 @@ test.describe('ui e2e: usage dashboard', () => {
     await expect(page.getByTestId('usage-insight-active-days')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByTestId('usage-insight-models-tried')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByTestId('usage-insight-favorite-model-changes')).toHaveCount(1, { timeout: 60_000 });
+    await expect(page.getByTestId('usage-recap-section')).toHaveCount(1, { timeout: 60_000 });
+    await expect(page.getByTestId('usage-recap-share-streak')).toHaveCount(1, { timeout: 60_000 });
+    await expect(page.getByTestId('usage-recap-share-usage')).toHaveCount(1, { timeout: 60_000 });
+    await expect(page.getByTestId('usage-recap-share-model')).toHaveCount(1, { timeout: 60_000 });
+    await expect(page.getByTestId('usage-recap-share-rhythm')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByTestId('usage-activity-calendar')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByTestId('usage-activity-rhythm')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByTestId('usage-leader-providers')).toHaveCount(1, { timeout: 60_000 });

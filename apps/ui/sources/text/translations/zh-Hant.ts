@@ -6046,6 +6046,7 @@ settingsSession: {
         today: '今天',
         last7Days: '過去 7 天',
         last30Days: '過去 30 天',
+        lastYear: '過去 1 年',
         costMode: 'Cost mode',
         auto: 'Auto',
         reported: 'Reported',

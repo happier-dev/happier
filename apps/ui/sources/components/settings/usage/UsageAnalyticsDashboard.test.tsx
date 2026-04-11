@@ -6,6 +6,22 @@ import { UsageAnalyticsDashboard } from './UsageAnalyticsDashboard';
 import type { UsageAnalyticsQueryResponse } from '@happier-dev/protocol';
 import type { UsageDataPoint } from '@/sync/api/account/apiUsage';
 
+function getNodeTextContent(node: unknown): string {
+    if (node == null) {
+        return '';
+    }
+    if (typeof node === 'string' || typeof node === 'number') {
+        return String(node);
+    }
+    if (Array.isArray(node)) {
+        return node.map((child) => getNodeTextContent(child)).join('');
+    }
+    if (typeof node === 'object' && 'props' in node && node.props && typeof node.props === 'object' && 'children' in node.props) {
+        return getNodeTextContent((node.props as { children?: unknown }).children);
+    }
+    return '';
+}
+
 const response: UsageAnalyticsQueryResponse = {
     v: 1,
     totals: {
@@ -147,16 +163,19 @@ describe('UsageAnalyticsDashboard', () => {
         expect(screen.findByTestId('usage-export-copy-summary')).toBeTruthy();
         expect(screen.findByTestId('usage-export-json')).toBeTruthy();
         expect(screen.findByTestId('usage-period-7days')).toBeTruthy();
+        expect(screen.findByTestId('usage-period-year')).toBeTruthy();
         expect(screen.findByTestId('usage-metric-cost')).toBeTruthy();
         expect(screen.findByTestId('usage-costmode-reported')).toBeTruthy();
         expect(screen.findByTestId('usage-breakdown-row-provider-anthropic')).toBeTruthy();
         expect(screen.findByTestId('usage-breakdown-row-model-claude-3.7-sonnet')).toBeTruthy();
 
+        screen.pressByTestId('usage-period-year');
         screen.pressByTestId('usage-period-today');
         screen.pressByTestId('usage-metric-cost');
         screen.pressByTestId('usage-costmode-reported');
         screen.pressByTestId('usage-breakdown-row-model-claude-3.7-sonnet');
 
+        expect(onPeriodChange).toHaveBeenCalledWith('year');
         expect(onPeriodChange).toHaveBeenCalledWith('today');
         expect(onMetricChange).toHaveBeenCalledWith('cost');
         expect(onCostModeChange).toHaveBeenCalledWith('reported');
@@ -231,6 +250,136 @@ describe('UsageAnalyticsDashboard', () => {
         expect(screen.findByTestId('usage-timeline-section')).toBeTruthy();
         expect(screen.findByTestId('usage-model-timeline-card')).toBeTruthy();
         expect(screen.findByTestId('usage-engine-timeline-card')).toBeTruthy();
+    });
+
+    it('renders a four-card recap grid from the existing analytics view model', async () => {
+        const viewModel = buildUsageAnalyticsViewModel(response, {
+            period: '30days',
+            metric: 'tokens',
+            focus: null,
+            costMode: 'auto',
+        });
+
+        const screen = await renderScreen(React.createElement(UsageAnalyticsDashboard, {
+            viewModel,
+            filters: {
+                period: '30days',
+                metric: 'tokens',
+                focus: null,
+                costMode: 'auto',
+            },
+            onPeriodChange: vi.fn(),
+            onMetricChange: vi.fn(),
+            onFocusChange: vi.fn(),
+            onCostModeChange: vi.fn(),
+        }));
+
+        expect(screen.findByTestId('usage-recap-section')).toBeTruthy();
+        expect(screen.findByTestId('usage-recap-streak-card')).toBeTruthy();
+        expect(screen.findByTestId('usage-recap-usage-card')).toBeTruthy();
+        expect(screen.findByTestId('usage-recap-model-card')).toBeTruthy();
+        expect(screen.findByTestId('usage-recap-rhythm-card')).toBeTruthy();
+        expect(screen.findByTestId('usage-recap-share-streak')).toBeTruthy();
+        expect(screen.findByTestId('usage-recap-share-usage')).toBeTruthy();
+        expect(screen.findByTestId('usage-recap-share-model')).toBeTruthy();
+        expect(screen.findByTestId('usage-recap-share-rhythm')).toBeTruthy();
+        expect(screen.getTextContent()).not.toContain('undefined');
+        expect(screen.getTextContent()).toContain(viewModel.leaders.engines[0]?.label ?? '');
+    });
+
+    it('falls back to the top provider label when engine metadata is unknown in recap cards', async () => {
+        const responseWithUnknownEngine: UsageAnalyticsQueryResponse = {
+            ...response,
+            breakdowns: {
+                ...response.breakdowns,
+                backendMode: [
+                    {
+                        key: 'unknown',
+                        label: 'unknown',
+                        eventCount: 3,
+                        tokens: { input: 90, output: 30, reasoning: 10, cacheRead: 5, cacheWrite: 0, total: 135 },
+                        cost: { reportedUsd: 12, estimatedUsd: 8, currency: 'USD' },
+                    },
+                ],
+            },
+            leaders: {
+                ...response.leaders,
+                engines: [
+                    { key: 'unknown', label: 'unknown', eventCount: 3 },
+                ],
+                providers: [
+                    { key: 'opencode', label: 'opencode', eventCount: 3 },
+                ],
+            },
+        };
+        const viewModel = buildUsageAnalyticsViewModel(responseWithUnknownEngine, {
+            period: '30days',
+            metric: 'tokens',
+            focus: null,
+            costMode: 'auto',
+        });
+
+        const screen = await renderScreen(React.createElement(UsageAnalyticsDashboard, {
+            viewModel,
+            filters: {
+                period: '30days',
+                metric: 'tokens',
+                focus: null,
+                costMode: 'auto',
+            },
+            onPeriodChange: vi.fn(),
+            onMetricChange: vi.fn(),
+            onFocusChange: vi.fn(),
+            onCostModeChange: vi.fn(),
+        }));
+
+        expect(screen.getTextContent()).toContain('opencode');
+        expect(screen.getTextContent()).not.toContain('favorite model changes · unknown');
+    });
+
+    it('prefers the engine leader label when backend breakdown rows are unknown', async () => {
+        const responseWithUnknownBackendBreakdown: UsageAnalyticsQueryResponse = {
+            ...response,
+            breakdowns: {
+                ...response.breakdowns,
+                backendMode: [{
+                    key: 'unknown',
+                    label: 'unknown',
+                    eventCount: 3,
+                    tokens: { input: 90, output: 30, reasoning: 10, cacheRead: 5, cacheWrite: 0, total: 135 },
+                    cost: { reportedUsd: 12, estimatedUsd: 8, currency: 'USD' },
+                }],
+            },
+            leaders: {
+                ...response.leaders,
+                engines: [{ key: 'opencode', label: 'opencode', eventCount: 3 }],
+            },
+        };
+        const viewModel = buildUsageAnalyticsViewModel(responseWithUnknownBackendBreakdown, {
+            period: '30days',
+            metric: 'tokens',
+            focus: null,
+            costMode: 'auto',
+        });
+
+        const screen = await renderScreen(React.createElement(UsageAnalyticsDashboard, {
+            viewModel,
+            filters: {
+                period: '30days',
+                metric: 'tokens',
+                focus: null,
+                costMode: 'auto',
+            },
+            onPeriodChange: vi.fn(),
+            onMetricChange: vi.fn(),
+            onFocusChange: vi.fn(),
+            onCostModeChange: vi.fn(),
+        }));
+
+        const modelCard = screen.findByTestId('usage-recap-model-card');
+        const modelCardText = getNodeTextContent(modelCard);
+        expect(modelCardText).toContain('opencode');
+        expect(modelCardText).not.toContain('unknown');
     });
 
     it('exposes copy and JSON export actions for the filtered usage dashboard', async () => {

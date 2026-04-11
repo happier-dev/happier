@@ -7886,6 +7886,7 @@ settingsSession: {
     today: "Сегодня",
     last7Days: "Последние 7 дней",
     last30Days: "Последние 30 дней",
+    lastYear: "Последний год",
     costMode: "Cost mode",
     auto: "Auto",
     reported: "Reported",

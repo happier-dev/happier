@@ -9,6 +9,7 @@ import type {
 
 import type { UsageDataPoint, UsageTotals } from './apiUsage';
 import { calculateTotals, getRecordTotal } from './apiUsage';
+import type { UsagePeriod } from './usagePeriods';
 
 export type UsageMetric = 'tokens' | 'cost';
 export type UsageCostMode = 'auto' | 'reported' | 'estimated';
@@ -29,7 +30,7 @@ export interface UsageFocus {
 }
 
 export interface UsageFilterState {
-    period: 'today' | '7days' | '30days';
+    period: UsagePeriod;
     metric: UsageMetric;
     costMode: UsageCostMode;
     focus: UsageFocus | null;
@@ -264,10 +265,19 @@ function resolveResponseCostPresentation(
     response: UsageAnalyticsQueryResponse,
     requestedMode: UsageCostMode,
 ): NonNullable<UsageAnalyticsViewModel['costPresentation']> {
+    const fallback = createCostPresentation(response.totals.cost, requestedMode);
+
     if (response.costPresentation && response.costPresentation.mode === requestedMode) {
-        return response.costPresentation;
+        return {
+            mode: response.costPresentation.mode ?? fallback.mode,
+            effectiveUsd: typeof response.costPresentation.effectiveUsd === 'number'
+                ? response.costPresentation.effectiveUsd
+                : fallback.effectiveUsd,
+            currency: response.costPresentation.currency ?? fallback.currency,
+            source: response.costPresentation.source ?? fallback.source,
+        };
     }
-    return createCostPresentation(response.totals.cost, requestedMode);
+    return fallback;
 }
 
 function countActiveBuckets(series: readonly UsageAnalyticsSeriesBucket[]): number {

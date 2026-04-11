@@ -137,7 +137,7 @@ export const SettingsUsageSummaryStrip = React.memo(function SettingsUsageSummar
                                 accentColor={theme.colors.accent.orange}
                                 onPress={onOpenUsage
                                     ? () => onOpenUsage(buildUsageSettingsRouteTarget({
-                                        period: '30days',
+                                        period: 'year',
                                         metric: 'tokens',
                                     }))
                                     : undefined}

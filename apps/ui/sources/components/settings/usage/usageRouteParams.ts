@@ -6,6 +6,7 @@ import type {
     UsageFilterState,
     UsageMetric,
 } from '@/sync/api/account/usageAnalytics';
+import { isUsagePeriod } from '@/sync/api/account/usagePeriods';
 
 type RouteParamValue = string | string[] | undefined;
 
@@ -15,7 +16,6 @@ export type UsageRouteWritableParams = Readonly<Record<
     string | undefined
 >>;
 
-const VALID_PERIODS = new Set<UsageFilterState['period']>(['today', '7days', '30days']);
 const VALID_METRICS = new Set<UsageMetric>(['tokens', 'cost']);
 const VALID_COST_MODES = new Set<UsageCostMode>(['auto', 'reported', 'estimated']);
 const VALID_DIMENSIONS = new Set<UsageDimension>([
@@ -45,8 +45,8 @@ export function resolveUsagePanelInitialFilters(
     const focusKey = readSingleParam(params.focusKey);
     const focusLabel = readSingleParam(params.focusLabel);
 
-    const period = VALID_PERIODS.has(periodValue as UsageFilterState['period'])
-        ? (periodValue as UsageFilterState['period'])
+    const period = isUsagePeriod(periodValue)
+        ? periodValue
         : '7days';
     const metric = VALID_METRICS.has(metricValue as UsageMetric)
         ? (metricValue as UsageMetric)

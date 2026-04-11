@@ -3,7 +3,15 @@ import { Platform } from 'react-native';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { t } from '@/text';
 import type { UsageAnalyticsViewModel, UsageFilterState } from '@/sync/api/account/usageAnalytics';
+import { getUsagePeriodDefinition } from '@/sync/api/account/usagePeriods';
+import {
+    buildUsageRecapCardModels,
+    type UsageRecapCardAccentTone,
+    type UsageRecapCardId,
+    type UsageRecapCardValueTone,
+} from './buildUsageRecapCardModels';
 import { formatUsageCurrency } from './formatUsageCurrency';
+import { resolveUsageCostModeLabel } from './resolveUsageCostModeLabel';
 
 export type UsageAnalyticsExportInput = Readonly<{
     viewModel: UsageAnalyticsViewModel;
@@ -16,12 +24,25 @@ export type UsageAnalyticsExportPayload = Readonly<{
     sessionId: string | null;
     filters: UsageFilterState;
     viewModel: UsageAnalyticsViewModel;
+    recapCards: readonly UsageRecapCardExportPayload[];
+}>;
+
+export type UsageRecapCardExportPayload = Readonly<{
+    id: UsageRecapCardId;
+    label: string;
+    value: string;
+    subtitle: string;
+    valueTone: UsageRecapCardValueTone;
+    accentTone: UsageRecapCardAccentTone;
+    visualKind: 'activityMatrix' | 'progress' | 'sparkBars';
+}>;
+
+export type UsageRecapCardExportInput = UsageAnalyticsExportInput & Readonly<{
+    cardId: UsageRecapCardId;
 }>;
 
 function formatPeriodLabel(period: UsageFilterState['period']): string {
-    if (period === 'today') return t('usage.today');
-    if (period === '7days') return t('usage.last7Days');
-    return t('usage.last30Days');
+    return t(getUsagePeriodDefinition(period).translationKey);
 }
 
 function formatTimelineLeaderLabel(input: UsageAnalyticsViewModel['modelTimeline'] | UsageAnalyticsViewModel['engineTimeline']): string | null {
@@ -34,11 +55,25 @@ function formatFileTimestamp(date: Date): string {
 }
 
 export function buildUsageAnalyticsExportPayload(input: UsageAnalyticsExportInput): UsageAnalyticsExportPayload {
+    const recapCards = buildUsageRecapCardModels({
+        viewModel: input.viewModel,
+        filters: input.filters,
+    }).map((card) => ({
+        id: card.id,
+        label: card.label,
+        value: card.value,
+        subtitle: card.subtitle,
+        valueTone: card.valueTone,
+        accentTone: card.accentTone,
+        visualKind: card.visual.kind,
+    }));
+
     return {
         exportedAt: new Date().toISOString(),
         sessionId: input.sessionId ?? null,
         filters: input.filters,
         viewModel: input.viewModel,
+        recapCards,
     };
 }
 
@@ -46,13 +81,10 @@ export function buildUsageAnalyticsSummaryText(input: UsageAnalyticsExportInput)
     const payload = buildUsageAnalyticsExportPayload(input);
     const modelTimelineLabel = formatTimelineLeaderLabel(input.viewModel.modelTimeline);
     const engineTimelineLabel = formatTimelineLeaderLabel(input.viewModel.engineTimeline);
-    const costModeLabel = input.viewModel.availableCostModes.length === 1 && input.viewModel.availableCostModes[0] === 'auto'
-        ? t('usage.auto')
-        : payload.viewModel.costPresentation.mode === 'reported'
-            ? t('usage.reported')
-            : payload.viewModel.costPresentation.mode === 'estimated'
-                ? t('usage.estimated')
-                : t('usage.auto');
+    const costModeLabel = resolveUsageCostModeLabel({
+        availableCostModes: input.viewModel.availableCostModes,
+        mode: payload.viewModel.costPresentation.mode,
+    });
 
     const lines = [
         t('usage.summary.title'),
@@ -68,6 +100,31 @@ export function buildUsageAnalyticsSummaryText(input: UsageAnalyticsExportInput)
         `${t('usage.summary.export.topEngine')}: ${payload.viewModel.leaders.engines[0]?.label ?? t('usage.noData')}`,
         `${t('usage.summary.export.modelTimeline')}: ${modelTimelineLabel ?? t('usage.noData')}`,
         `${t('usage.summary.export.engineTimeline')}: ${engineTimelineLabel ?? t('usage.noData')}`,
+    ].filter((line): line is string => typeof line === 'string' && line.length > 0);
+
+    return lines.join('\n');
+}
+
+export function buildUsageRecapCardSummaryText(input: UsageRecapCardExportInput): string {
+    const payload = buildUsageAnalyticsExportPayload(input);
+    const recapCard = payload.recapCards.find((card) => card.id === input.cardId);
+    if (!recapCard) {
+        return buildUsageAnalyticsSummaryText(input);
+    }
+
+    const costModeLabel = resolveUsageCostModeLabel({
+        availableCostModes: input.viewModel.availableCostModes,
+        mode: payload.viewModel.costPresentation.mode,
+    });
+
+    const lines = [
+        t('usage.summary.title'),
+        payload.sessionId ? `${t('usage.summary.export.session')}: ${payload.sessionId}` : null,
+        `${recapCard.label}: ${recapCard.value}`,
+        recapCard.subtitle,
+        `${t('usage.summary.export.period')}: ${formatPeriodLabel(payload.filters.period)}`,
+        `${t('usage.summary.export.metric')}: ${payload.filters.metric}`,
+        `${t('usage.summary.export.costMode')}: ${costModeLabel}`,
     ].filter((line): line is string => typeof line === 'string' && line.length > 0);
 
     return lines.join('\n');
@@ -120,6 +177,14 @@ async function shareTextOnNative(text: string): Promise<boolean> {
 
 export async function shareUsageAnalyticsSummary(input: UsageAnalyticsExportInput): Promise<boolean> {
     const summaryText = buildUsageAnalyticsSummaryText(input);
+    if (Platform.OS === 'web') {
+        return await shareTextOnWeb(summaryText);
+    }
+    return await shareTextOnNative(summaryText);
+}
+
+export async function shareUsageRecapCardSummary(input: UsageRecapCardExportInput): Promise<boolean> {
+    const summaryText = buildUsageRecapCardSummaryText(input);
     if (Platform.OS === 'web') {
         return await shareTextOnWeb(summaryText);
     }

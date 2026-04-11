@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { renderSettingsView } from '@/dev/testkit';
+import { renderScreen, renderSettingsView } from '@/dev/testkit';
 import type { UsageAnalyticsSummaryViewModel } from '@/sync/api/account/usageAnalytics';
 import { installSettingsViewCommonModuleMocks } from './settingsViewTestHelpers';
 
@@ -12,11 +12,11 @@ type UsageSummaryHookState = {
     isLoading: boolean;
     errorMessage: string | null;
 };
-const usageSummaryState = vi.hoisted(() => ({
-    summary: null as UsageAnalyticsSummaryViewModel | null,
+const usageSummaryState = vi.hoisted<UsageSummaryHookState>(() => ({
+    summary: null,
     isLoading: false,
-    errorMessage: null as string | null,
-}) satisfies UsageSummaryHookState);
+    errorMessage: null,
+}));
 
 function createSummaryFixture(): UsageAnalyticsSummaryViewModel {
     return {
@@ -212,6 +212,23 @@ vi.mock('@/agents/catalog/catalog', () => ({
 }));
 
 describe('SettingsView usage summary strip', () => {
+    it('shows a loading state instead of an empty state while the summary is still loading', async () => {
+        usageSummaryState.summary = null;
+        usageSummaryState.errorMessage = null;
+        usageSummaryState.isLoading = true;
+        const { SettingsUsageSummaryStrip } = await import('@/components/settings/usage/SettingsUsageSummaryStrip');
+
+        const screen = await renderScreen(
+            <SettingsUsageSummaryStrip
+                summary={null}
+                isLoading
+            />,
+        );
+
+        expect(screen.getTextContent()).toContain('common.loading');
+        expect(screen.getTextContent()).not.toContain('usage.noData');
+    });
+
     it('renders the usage summary strip above the account shortcuts', async () => {
         usageSummaryState.summary = createSummaryFixture();
         usageSummaryState.errorMessage = null;
@@ -241,7 +258,7 @@ describe('SettingsView usage summary strip', () => {
         expect(routerPushMock).toHaveBeenNthCalledWith(1, {
             pathname: '/(app)/settings/usage',
             params: {
-                period: '30days',
+                period: 'year',
                 metric: 'tokens',
             },
         });
