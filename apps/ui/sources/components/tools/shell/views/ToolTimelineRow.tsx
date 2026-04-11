@@ -33,6 +33,7 @@ import { isGenericSubAgentToolName, isSubAgentTranscriptToolName } from '@happie
 import { buildToolCallMessageRouteId } from '@/sync/domains/messages/messageRouteIds';
 import { PermissionFooter } from '../permissions/PermissionFooter';
 import { resolveInactiveSessionToolCallFailure } from '../permissions/resolveInactiveSessionToolCallFailure';
+import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { Text } from '@/components/ui/text/Text';
 import { resolveToolErrorSummary } from '@/components/tools/shell/presentation/resolveToolErrorSummary';
 
@@ -105,9 +106,11 @@ export const ToolTimelineRow = React.memo((props: {
     }, [props.interaction?.disableToolNavigation, props.messageId, toolForRendering.id]);
 
     const handleOpen = React.useCallback(() => {
-        if (props.sessionId && routeMessageId) {
-            router.push(`/session/${encodeURIComponent(props.sessionId)}/message/${encodeURIComponent(routeMessageId)}`);
-        }
+        const sessionId = props.sessionId;
+        if (!sessionId || !routeMessageId) return;
+        navigateWithBlurOnWeb(() => {
+            router.push(`/session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(routeMessageId)}`);
+        });
     }, [props.sessionId, routeMessageId, router]);
 
     const canOpen = !!(props.sessionId && routeMessageId);

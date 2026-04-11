@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ToolViewProps } from '../core/_registry';
+import { resolvePermissionRequestId } from '../core/resolvePermissionRequestId';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { sessionAllowWithAnswers } from '@/sync/ops';
 import { storage } from '@/sync/domains/state/storage';
@@ -221,7 +222,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
 
     const isRunning = tool.state === 'running';
     const canApprovePermissions = interaction?.canApprovePermissions ?? true;
-    const toolCallId = tool.permission?.id;
+    const toolCallId = resolvePermissionRequestId(tool);
     const session = sessionId ? storage.getState().sessions[sessionId] : undefined;
     const activeMatchingRequest = toolCallId ? (session as any)?.agentState?.requests?.[toolCallId] : null;
     const hasActiveAskUserQuestionRequest =

@@ -13,6 +13,11 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 const routerPush = vi.fn();
+const navigateWithBlurOnWebSpy = vi.hoisted(() => vi.fn((action: () => void) => action()));
+
+vi.mock('@/utils/platform/navigateWithBlurOnWeb', () => ({
+    navigateWithBlurOnWeb: navigateWithBlurOnWebSpy,
+}));
 
 let toolDetailSetting: any = 'summary';
 
@@ -114,6 +119,7 @@ describe('PermissionPromptCard (preview)', () => {
         mockedToolInput = { path: 'file.ts' };
         mockedHeaderText = { normalizedToolName: 'edit', title: 'Edit', subtitle: null, statusText: null };
         routerPush.mockReset();
+        navigateWithBlurOnWebSpy.mockClear();
         const { PermissionPromptCard } = await import('./PermissionPromptCard');
 
         const request = { id: 'perm1', tool: 'edit', arguments: { path: 'file.ts' } } as PendingPermissionRequest;
@@ -136,6 +142,7 @@ describe('PermissionPromptCard (preview)', () => {
 
         await pressTestInstanceAsync(viewToolButton, 'permission-prompt-view-tool');
 
+        expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
         expect(routerPush).toHaveBeenCalledWith('/session/session-1/message/tool%3Acall%3Aparent%2F1?jumpChildId=tool%3Acall%3Achild%2F2');
     });
 

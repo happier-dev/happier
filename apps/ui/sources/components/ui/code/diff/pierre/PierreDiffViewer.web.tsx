@@ -21,6 +21,7 @@ import { buildPierreDiffOptionsBase } from './buildPierreDiffOptionsBase.web';
 import { resolvePierreLanguageOverride } from './resolvePierreLanguageOverride.web';
 import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildCodeLinesFromUnifiedDiff';
 import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
+import { HAPPIER_UI_FONT_SCALE_CSS_VAR } from '@/components/ui/text/webUnistylesFontOverrides';
 
 class PierreDiffErrorBoundary extends React.Component<
     Readonly<{ children: React.ReactNode; fallback: React.ReactNode }>,
@@ -199,11 +200,19 @@ function extractUnifiedPreludeDiffForSingleFile(params: Readonly<{ patch: string
     return patch;
 }
 
+export function resolvePierreTypographyStyle(): React.CSSProperties {
+    return {
+        ['--diffs-font-size' as any]: `calc(12px * var(${HAPPIER_UI_FONT_SCALE_CSS_VAR}, 1))`,
+        ['--diffs-line-height' as any]: `calc(22px * var(${HAPPIER_UI_FONT_SCALE_CSS_VAR}, 1))`,
+    };
+}
+
 export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
     const { theme } = useUnistyles();
     const isDark = theme.dark === true;
     const sharedVirtualizer = useVirtualizer();
     const containerRef = React.useRef<HTMLDivElement | null>(null);
+    const typographyStyle = React.useMemo(() => resolvePierreTypographyStyle(), []);
 
     const tokenizeMaxLineLengthSetting = useSetting('filesDiffTokenizationMaxLineLength');
     const intraLineDiffEnabledSetting = useSetting('filesDiffIntraLineWordDiffEnabled');
@@ -579,7 +588,8 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
                     padding: 16,
                     color: (theme as any)?.colors?.textSecondary ?? (isDark ? '#b0b0b0' : '#6a6a6a'),
                     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace',
-                    fontSize: 12,
+                    fontSize: 'var(--diffs-font-size, 12px)',
+                    lineHeight: 'var(--diffs-line-height, 20px)',
                     whiteSpace: 'pre-wrap',
                     wordBreak: 'break-word',
                 }}
@@ -600,7 +610,8 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
                     padding: 16,
                     color: (theme as any)?.colors?.textSecondary ?? (isDark ? '#b0b0b0' : '#6a6a6a'),
                     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace',
-                    fontSize: 12,
+                    fontSize: 'var(--diffs-font-size, 12px)',
+                    lineHeight: 'var(--diffs-line-height, 20px)',
                     whiteSpace: 'pre-wrap',
                     wordBreak: 'break-word',
                 }}
@@ -635,8 +646,8 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
     );
 
     const wrapperStyle = props.virtualized
-        ? ({ maxHeight: 'inherit' } as const)
-        : undefined;
+        ? ({ ...typographyStyle, maxHeight: 'inherit' } as React.CSSProperties)
+        : typographyStyle;
 
     return (
         <div

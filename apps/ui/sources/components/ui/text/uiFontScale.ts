@@ -1,5 +1,7 @@
 import type { StyleProp, TextStyle } from 'react-native';
 
+const UNISTYLES_SECRET_KEY_PREFIX = 'unistyles_';
+
 function roundTo2(value: number): number {
     return Math.round(value * 100) / 100;
 }
@@ -14,6 +16,74 @@ function clonePreservingOwnProps<T extends object>(entry: T): T {
     }
 }
 
+function scaleNumericTextMetrics(entry: any, uiFontScale: number): any {
+    const hasFontSize = typeof entry?.fontSize === 'number';
+    const hasLineHeight = typeof entry?.lineHeight === 'number';
+    const hasLetterSpacing = typeof entry?.letterSpacing === 'number';
+    if (!hasFontSize && !hasLineHeight && !hasLetterSpacing) return entry;
+
+    const next: any = clonePreservingOwnProps(entry as any);
+    try {
+        if (hasFontSize) next.fontSize = roundTo2(next.fontSize * uiFontScale);
+        if (hasLineHeight) next.lineHeight = roundTo2(next.lineHeight * uiFontScale);
+        if (hasLetterSpacing) next.letterSpacing = roundTo2(next.letterSpacing * uiFontScale);
+        return next;
+    } catch {
+        return entry;
+    }
+}
+
+function scaleResolvedTextStyle(entry: any, uiFontScale: number): any {
+    if (!entry) return entry;
+    if (Array.isArray(entry)) {
+        let changed = false;
+        const next = entry.map((nestedEntry) => {
+            const scaledNestedEntry = scaleResolvedTextStyle(nestedEntry, uiFontScale);
+            if (scaledNestedEntry !== nestedEntry) changed = true;
+            return scaledNestedEntry;
+        });
+        return changed ? next : entry;
+    }
+    if (typeof entry !== 'object') return entry;
+    const entryWithScaledSecrets = wrapUnistylesSecrets(entry, uiFontScale);
+    return scaleNumericTextMetrics(entryWithScaledSecrets, uiFontScale);
+}
+
+function wrapUnistylesSecret(secret: any, uiFontScale: number): any {
+    if (!secret || typeof secret !== 'object' || typeof secret.uni__getStyles !== 'function') {
+        return secret;
+    }
+
+    const wrappedSecret: any = clonePreservingOwnProps(secret);
+    const originalGetStyles = secret.uni__getStyles.bind(secret);
+    wrappedSecret.uni__getStyles = () => scaleResolvedTextStyle(originalGetStyles(), uiFontScale);
+    return wrappedSecret;
+}
+
+function wrapUnistylesSecrets(entry: any, uiFontScale: number): any {
+    const secretKeys = Object.keys(entry).filter((key) => key.startsWith(UNISTYLES_SECRET_KEY_PREFIX));
+    if (secretKeys.length === 0) return entry;
+
+    let nextEntry: any = entry;
+    let changed = false;
+
+    for (const secretKey of secretKeys) {
+        const scaledSecret = wrapUnistylesSecret(entry[secretKey], uiFontScale);
+        if (scaledSecret === entry[secretKey]) continue;
+        if (!changed) {
+            nextEntry = clonePreservingOwnProps(entry);
+            changed = true;
+        }
+        try {
+            nextEntry[secretKey] = scaledSecret;
+        } catch {
+            return entry;
+        }
+    }
+
+    return changed ? nextEntry : entry;
+}
+
 export function scaleTextStyle<T extends StyleProp<TextStyle> | undefined | null>(
     style: T,
     uiFontScale: number
@@ -23,29 +93,16 @@ export function scaleTextStyle<T extends StyleProp<TextStyle> | undefined | null
 
     const scaleOne = (entry: any): any => {
         if (!entry) return entry;
+        if (Array.isArray(entry)) {
+            return scaleResolvedTextStyle(entry, uiFontScale);
+        }
         if (typeof entry === 'number') {
-            // Numeric style ids come from React Native's internal style registry, which isn't available
-            // in this codebase (we avoid React Native's StyleSheet API in favor of Unistyles).
-            // Fail closed and preserve the original value.
             return entry;
         }
         if (typeof entry !== 'object') return entry;
 
-        const hasFontSize = typeof (entry as any).fontSize === 'number';
-        const hasLineHeight = typeof (entry as any).lineHeight === 'number';
-        const hasLetterSpacing = typeof (entry as any).letterSpacing === 'number';
-        if (!hasFontSize && !hasLineHeight && !hasLetterSpacing) return entry;
-
-        const next: any = clonePreservingOwnProps(entry as any);
-        try {
-            if (hasFontSize) next.fontSize = roundTo2(next.fontSize * uiFontScale);
-            if (hasLineHeight) next.lineHeight = roundTo2(next.lineHeight * uiFontScale);
-            if (hasLetterSpacing) next.letterSpacing = roundTo2(next.letterSpacing * uiFontScale);
-            return next;
-        } catch {
-            // If the style object is non-writable (or uses accessors), avoid corrupting opaque metadata.
-            return entry;
-        }
+        const entryWithScaledSecrets = wrapUnistylesSecrets(entry, uiFontScale);
+        return scaleNumericTextMetrics(entryWithScaledSecrets, uiFontScale);
     };
 
     if (Array.isArray(style)) {

@@ -115,6 +115,28 @@ function piSvg(theme: Theme): string {
     );
 }
 
+function ohMyPiSvg(theme: Theme): string {
+    // Source: https://github.com/can1357/oh-my-pi/blob/main/assets/icon.svg
+    // Keep the upstream geometry, but map fills to the app theme like the other provider marks.
+    const primary = theme.colors.text;
+    const accent = theme.colors.accent.orange;
+    const cutout = theme.colors.surface;
+    return themedSvg(
+        `
+            <title>oh-my-pi-logo</title>
+            <rect x="10" y="8" width="100" height="12" rx="2" fill="${primary}"/>
+            <rect x="25" y="20" width="12" height="62" rx="2" fill="${primary}"/>
+            <rect x="75" y="20" width="12" height="45" rx="2" fill="${primary}"/>
+            <rect x="71" y="55" width="20" height="16" rx="3" fill="${accent}"/>
+            <rect x="76" y="59" width="3" height="8" rx="1" fill="${cutout}"/>
+            <rect x="82" y="59" width="3" height="8" rx="1" fill="${cutout}"/>
+            <circle cx="18" cy="14" r="2" fill="${accent}" opacity="0.8"/>
+            <circle cx="102" cy="14" r="2" fill="${accent}" opacity="0.8"/>
+        `,
+        '0 0 120 90',
+    );
+}
+
 function copilotSvg(theme: Theme): string {
     return monochrome(
         theme.colors.text,
@@ -173,6 +195,7 @@ export const PROVIDER_LOGO_SVG_XML: Partial<Record<AgentId, AgentIconSvgXmlResol
     kilo: kiloSvg,
     kiro: kiroSvg,
     opencode: opencodeSvg,
+    ohMyPi: ohMyPiSvg,
     pi: piSvg,
     qwen: qwenSvg,
 };

@@ -282,6 +282,86 @@ describe('reducer', () => {
         });
     });
 
+    describe('live usage projection', () => {
+        it('projects usage-only agent records into latestUsage without creating transcript messages', () => {
+            const state = createReducer();
+            const messages: NormalizedMessage[] = [
+                {
+                    id: 'usage-1',
+                    localId: null,
+                    createdAt: 1000,
+                    role: 'agent',
+                    isSidechain: false,
+                    content: [],
+                    usage: {
+                        input_tokens: 11,
+                        output_tokens: 7,
+                        cache_creation_input_tokens: 3,
+                        cache_read_input_tokens: 2,
+                    },
+                },
+            ];
+
+            const result = reducer(state, messages);
+
+            expect(result.messages).toHaveLength(0);
+            expect(result.usage).toEqual({
+                inputTokens: 11,
+                outputTokens: 7,
+                cacheCreation: 3,
+                cacheRead: 2,
+                contextSize: 16,
+            });
+            expect(state.latestUsage).toEqual({
+                inputTokens: 11,
+                outputTokens: 7,
+                cacheCreation: 3,
+                cacheRead: 2,
+                contextSize: 16,
+                timestamp: 1000,
+            });
+        });
+
+        it('does not let older usage-only records overwrite newer live usage', () => {
+            const state = createReducer();
+
+            reducer(state, [{
+                id: 'usage-new',
+                localId: null,
+                createdAt: 2000,
+                role: 'agent',
+                isSidechain: false,
+                content: [],
+                usage: {
+                    input_tokens: 20,
+                    output_tokens: 5,
+                },
+            }]);
+
+            const result = reducer(state, [{
+                id: 'usage-old',
+                localId: null,
+                createdAt: 1000,
+                role: 'agent',
+                isSidechain: false,
+                content: [],
+                usage: {
+                    input_tokens: 2,
+                    output_tokens: 1,
+                },
+            }]);
+
+            expect(result.messages).toHaveLength(0);
+            expect(result.usage).toEqual({
+                inputTokens: 20,
+                outputTokens: 5,
+                cacheCreation: 0,
+                cacheRead: 0,
+                contextSize: 20,
+            });
+        });
+    });
+
     describe('thinking timeline', () => {
         it('does not merge thinking across a tool-call boundary (separate messages)', () => {
             const state = createReducer();
@@ -1232,6 +1312,66 @@ describe('reducer', () => {
             const finalPwdMessage = state.messages.get(pwdMessageId!);
             expect(finalLsMessage?.tool?.startedAt).toBe(4000);
             expect(finalPwdMessage?.tool?.startedAt).toBe(3000);
+        });
+
+        it('should update an existing permission placeholder to the real tool name when the tool call arrives later', () => {
+            const state = createReducer();
+
+            const agentState1: AgentState = {
+                requests: {
+                    'call-1': {
+                        tool: 'external_directory',
+                        arguments: {
+                            permissionId: 'call-1',
+                            providerPermissionId: 'perm-1',
+                            toolCallId: 'call-1',
+                            toolName: 'external_directory',
+                            filePath: '/tmp/outside.txt',
+                            toolCall: {
+                                toolCallId: 'call-1',
+                                status: 'pending',
+                                rawInput: {
+                                    filePath: '/tmp/outside.txt',
+                                },
+                            },
+                            permission: {
+                                id: 'perm-1',
+                                kind: 'external_directory',
+                            },
+                        },
+                        createdAt: 1000,
+                    },
+                },
+            };
+
+            reducer(state, [], agentState1);
+
+            const permissionMessageId = state.toolIdToMessageId.get('call-1');
+            expect(permissionMessageId).toBeDefined();
+            expect(state.messages.get(permissionMessageId!)?.tool?.name).toBe('external_directory');
+
+            const messages: NormalizedMessage[] = [
+                {
+                    id: 'tool-msg-1',
+                    localId: null,
+                    createdAt: 5000,
+                    role: 'agent',
+                    content: [{
+                        type: 'tool-call',
+                        id: 'call-1',
+                        name: 'Read',
+                        input: { filePath: '/tmp/outside.txt' },
+                        description: null,
+                        uuid: 'tool-uuid-1',
+                        parentUUID: null
+                    }],
+                    isSidechain: false
+                }
+            ];
+
+            reducer(state, messages, agentState1);
+
+            expect(state.messages.get(permissionMessageId!)?.tool?.name).toBe('Read');
         });
 
         it('should update permission message when tool call has matching ID', () => {

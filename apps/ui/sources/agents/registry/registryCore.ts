@@ -25,6 +25,7 @@ import { KILO_CORE } from '@/agents/providers/kilo/core';
 import { KIRO_CORE } from '@/agents/providers/kiro/core';
 import { CUSTOM_ACP_CORE } from '@/agents/providers/customAcp/core';
 import { PI_CORE } from '@/agents/providers/pi/core';
+import { OH_MY_PI_CORE } from '@/agents/providers/ohMyPi/core';
 import { COPILOT_CORE } from '@/agents/providers/copilot/core';
 
 export type { AgentId };
@@ -172,7 +173,7 @@ export type AgentCoreConfig = Readonly<{
         /**
          * Attachment mechanism used by terminal attach flows.
          */
-        attachStrategy?: 'tmux' | 'provider_attach' | 'unsupported';
+        attachStrategy?: 'terminal_host' | 'provider_attach' | 'unsupported';
     }>;
     toolRendering: Readonly<{
         /**
@@ -214,6 +215,7 @@ export const AGENTS_CORE = Object.freeze({
     kiro: KIRO_CORE,
     customAcp: CUSTOM_ACP_CORE,
     pi: PI_CORE,
+    ohMyPi: OH_MY_PI_CORE,
     copilot: COPILOT_CORE,
 }) satisfies Readonly<Record<string, AgentCoreConfig>>;
 

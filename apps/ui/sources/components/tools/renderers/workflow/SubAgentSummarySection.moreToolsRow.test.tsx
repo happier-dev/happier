@@ -10,6 +10,11 @@ import { installWorkflowRendererCommonModuleMocks } from './workflowRendererTest
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const pushSpy = vi.fn();
+const navigateWithBlurOnWebSpy = vi.hoisted(() => vi.fn((action: () => void) => action()));
+
+vi.mock('@/utils/platform/navigateWithBlurOnWeb', () => ({
+    navigateWithBlurOnWeb: navigateWithBlurOnWebSpy,
+}));
 
 installWorkflowRendererCommonModuleMocks({
     reactNative: async () => {
@@ -155,6 +160,7 @@ describe('SubAgentSummarySection (+N more tools row)', () => {
 
     it('renders the +N more tools row above the visible tools (and makes it tappable)', async () => {
         pushSpy.mockClear();
+        navigateWithBlurOnWebSpy.mockClear();
         const { SubAgentSummarySection } = await import('./SubAgentSummarySection');
 
         const taskTool = makeToolCall({
@@ -195,6 +201,7 @@ describe('SubAgentSummarySection (+N more tools row)', () => {
         expect(order[0]).toBe('task-like-summary-more-tools');
 
         await screen.pressByTestIdAsync('task-like-summary-more-tools');
+        expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
         expect(pushSpy).toHaveBeenCalledWith('/session/s1/message/msg-task-1');
     });
 });

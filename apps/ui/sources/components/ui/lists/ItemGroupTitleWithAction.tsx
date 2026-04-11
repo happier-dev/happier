@@ -5,6 +5,7 @@ import { Text } from '@/components/ui/text/Text';
 
 
 export type ItemGroupTitleAction = {
+    testID?: string;
     accessibilityLabel: string;
     iconName: React.ComponentProps<typeof Ionicons>['name'];
     iconColor?: string;
@@ -28,6 +29,7 @@ export const ItemGroupTitleWithAction = React.memo((props: ItemGroupTitleWithAct
             </Text>
             {props.action ? (
                 <Pressable
+                    testID={props.action.testID}
                     onPress={props.action.onPress}
                     hitSlop={10}
                     style={{ padding: 2, marginLeft: 8 }}
@@ -43,4 +45,3 @@ export const ItemGroupTitleWithAction = React.memo((props: ItemGroupTitleWithAct
         </View>
     );
 });
-

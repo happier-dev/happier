@@ -8,7 +8,14 @@ import { RPC_ERROR_CODES, RPC_METHODS, isRpcMethodNotFoundResult } from '@happie
 
 import { apiSocket } from '../api/session/apiSocket';
 import type { MachineMetadata } from '../domains/state/storageTypes';
-import { buildSpawnHappySessionRpcParams, type SpawnHappySessionRpcParams, type SpawnSessionOptions } from '../domains/session/spawn/spawnSessionPayload';
+import {
+    buildCompatibleSpawnHappySessionRpcParams,
+    buildSpawnHappySessionRpcParams,
+    shouldUseLegacySpawnHappySessionRpcParams,
+    type CompatibleSpawnHappySessionRpcParams,
+    type SpawnHappySessionRpcParams,
+    type SpawnSessionOptions,
+} from '../domains/session/spawn/spawnSessionPayload';
 import { readSpawnSessionRpcTimeoutMsFromEnv } from '../domains/session/spawn/spawnSessionRpcTimeout';
 import { storage } from '../domains/state/storage';
 import { isPlainObject, normalizeSpawnSessionResult } from './_shared';
@@ -20,6 +27,45 @@ import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 export type { SpawnHappySessionRpcParams, SpawnSessionOptions } from '../domains/session/spawn/spawnSessionPayload';
 export { buildSpawnHappySessionRpcParams } from '../domains/session/spawn/spawnSessionPayload';
 
+function readMachineDaemonCliVersion(machineId: string): string | null {
+    const rawVersion = storage.getState().machines[machineId]?.daemonState?.startedWithCliVersion;
+    return typeof rawVersion === 'string' && rawVersion.trim().length > 0 ? rawVersion.trim() : null;
+}
+
+function remapLegacyDirectoryCompatibilityError(params: Readonly<{
+    result: SpawnSessionResult;
+    directory: string;
+    daemonCliVersion: string | null;
+}>): SpawnSessionResult {
+    if (params.result.type !== 'error') {
+        return params.result;
+    }
+
+    if (params.result.errorCode !== SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST) {
+        return params.result;
+    }
+
+    const sentDirectory = params.directory.trim();
+    if (!sentDirectory) {
+        return params.result;
+    }
+
+    const normalizedMessage = params.result.errorMessage.trim().toLowerCase();
+    if (normalizedMessage !== 'directory is required') {
+        return params.result;
+    }
+
+    const versionLabel = params.daemonCliVersion ?? 'an older preview build';
+    return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage:
+            `The selected machine rejected the session directory even though the app sent one. ` +
+            `This usually means the machine is running an incompatible daemon (${versionLabel}) ` +
+            `or a stale machine registration. Restart or re-authorize the CLI on that machine, then update it to a compatible 0.1.0-dev or v0.2.0+ build.`,
+    };
+}
+
 // Exported session operation functions
 
 /**
@@ -28,17 +74,39 @@ export { buildSpawnHappySessionRpcParams } from '../domains/session/spawn/spawnS
 export async function machineSpawnNewSession(options: SpawnSessionOptions): Promise<SpawnSessionResult> {
     const { machineId } = options;
     const serverId = typeof options.serverId === 'string' ? options.serverId.trim() : null;
+    const daemonCliVersion = readMachineDaemonCliVersion(machineId);
 
     try {
-        const params = buildSpawnHappySessionRpcParams(options);
-        const result = await machineRpcWithServerScope<unknown, SpawnHappySessionRpcParams>({
+        if (
+            shouldUseLegacySpawnHappySessionRpcParams(daemonCliVersion)
+            && options.backendTarget.kind !== 'builtInAgent'
+        ) {
+            const versionLabel = daemonCliVersion ?? 'unknown';
+            return {
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+                errorMessage:
+                    'The selected backend target requires a compatible 0.1.0-dev build or Happier CLI v0.2.0 ' +
+                    `or newer on this machine (detected ${versionLabel}).`,
+            };
+        }
+
+        const params = buildCompatibleSpawnHappySessionRpcParams({
+            options,
+            daemonCliVersion,
+        });
+        const result = await machineRpcWithServerScope<unknown, CompatibleSpawnHappySessionRpcParams>({
             machineId,
             method: RPC_METHODS.SPAWN_HAPPY_SESSION,
             payload: params,
             serverId,
             timeoutMs: readSpawnSessionRpcTimeoutMsFromEnv(),
         });
-        return normalizeSpawnSessionResult(result);
+        return remapLegacyDirectoryCompatibilityError({
+            result: normalizeSpawnSessionResult(result),
+            directory: options.directory,
+            daemonCliVersion,
+        });
     } catch (error) {
         const rpcErrorCode = readRpcErrorCode(error);
         if (rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {

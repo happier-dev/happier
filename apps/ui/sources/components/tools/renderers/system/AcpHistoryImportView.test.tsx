@@ -82,6 +82,21 @@ describe('AcpHistoryImportView', () => {
         expect(sessionDeny).toHaveBeenCalledTimes(0);
     });
 
+    it('falls back to tool.id when permission metadata is missing during reconnect recovery', async () => {
+        sessionAllow.mockResolvedValueOnce(undefined);
+        const tree = await renderView(makeTool({ id: 'toolu_reconnect', permission: undefined }));
+
+        const importButton = findPressableByText(tree, 'tools.acpHistoryImport.actions.import');
+        expect(importButton).toBeTruthy();
+        await act(async () => {
+            await pressTestInstanceAsync(importButton!);
+        });
+
+        expect(sessionAllow).toHaveBeenCalledWith('s1', 'toolu_reconnect');
+        expect(sessionDeny).toHaveBeenCalledTimes(0);
+        expect(modalAlert).toHaveBeenCalledTimes(0);
+    });
+
     it('skips import when Skip is pressed', async () => {
         sessionDeny.mockResolvedValueOnce(undefined);
         const tree = await renderView(makeTool());

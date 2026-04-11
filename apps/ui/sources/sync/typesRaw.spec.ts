@@ -580,6 +580,70 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                 }
             }
         });
+
+        it('normalizes Codex token_count messages into usage-only agent records', () => {
+            const codexMessage = {
+                role: 'agent',
+                content: {
+                    type: 'codex',
+                    data: {
+                        type: 'token_count',
+                        info: {
+                            total_token_usage: {
+                                input_tokens: 11,
+                                output_tokens: 7,
+                                cached_input_tokens: 5,
+                            },
+                        },
+                    },
+                },
+            };
+
+            const normalized = normalizeRawMessage('codex-token-1', null, 1000, codexMessage);
+
+            expect(normalized).not.toBeNull();
+            expect(normalized?.role).toBe('agent');
+            if (!normalized || normalized.role !== 'agent') return;
+            expect(normalized.content).toEqual([]);
+            expect(normalized.usage).toEqual({
+                input_tokens: 11,
+                output_tokens: 7,
+                cache_read_input_tokens: 5,
+            });
+        });
+
+        it('normalizes forwarded ACP token_count maps into usage-only agent records', () => {
+            const acpMessage = {
+                role: 'agent',
+                content: {
+                    type: 'acp',
+                    provider: 'opencode',
+                    data: {
+                        type: 'token_count',
+                        tokens: {
+                            input: 13,
+                            output: 8,
+                            cache_creation: 3,
+                            cache_read: 2,
+                            total: 26,
+                        },
+                    },
+                },
+            };
+
+            const normalized = normalizeRawMessage('acp-token-1', null, 1001, acpMessage);
+
+            expect(normalized).not.toBeNull();
+            expect(normalized?.role).toBe('agent');
+            if (!normalized || normalized.role !== 'agent') return;
+            expect(normalized.content).toEqual([]);
+            expect(normalized.usage).toEqual({
+                input_tokens: 13,
+                output_tokens: 8,
+                cache_creation_input_tokens: 3,
+                cache_read_input_tokens: 2,
+            });
+        });
     });
 
     describe('Handles unexpected data formats gracefully', () => {

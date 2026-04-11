@@ -20,6 +20,11 @@ vi.mock('@/sync/sync', () => ({
 }));
 
 const pushSpy = vi.fn();
+const navigateWithBlurOnWebSpy = vi.hoisted(() => vi.fn((action: () => void) => action()));
+
+vi.mock('@/utils/platform/navigateWithBlurOnWeb', () => ({
+    navigateWithBlurOnWeb: navigateWithBlurOnWebSpy,
+}));
 
 installToolShellCommonModuleMocks({
     expoRouter: async () => {
@@ -116,6 +121,7 @@ afterEach(() => {
 describe('ToolView (tap action: expand)', () => {
     it('toggles inline expansion even without navigation params', async () => {
         pushSpy.mockReset();
+        navigateWithBlurOnWebSpy.mockClear();
         renderedToolViewSpy.mockReset();
         ensureSidechainMessagesLoadedMock.mockReset();
         ensureSidechainMessagesLoadedMock.mockResolvedValue('loaded');
@@ -141,6 +147,7 @@ describe('ToolView (tap action: expand)', () => {
 
     it('preloads sidechain messages when expanding Task tools', async () => {
         pushSpy.mockReset();
+        navigateWithBlurOnWebSpy.mockClear();
         renderedToolViewSpy.mockReset();
         ensureSidechainMessagesLoadedMock.mockReset();
         ensureSidechainMessagesLoadedMock.mockResolvedValue('loaded');
@@ -170,6 +177,7 @@ describe('ToolView (tap action: expand)', () => {
 
     it('preloads sidechain messages when expanding SubAgentRun tools (prefers result.sidechainId when present)', async () => {
         pushSpy.mockReset();
+        navigateWithBlurOnWebSpy.mockClear();
         renderedToolViewSpy.mockReset();
         ensureSidechainMessagesLoadedMock.mockReset();
         ensureSidechainMessagesLoadedMock.mockResolvedValue('loaded');
@@ -199,6 +207,7 @@ describe('ToolView (tap action: expand)', () => {
 
     it('uses hitSlop for the secondary action icon to keep it easy to tap', async () => {
         pushSpy.mockReset();
+        navigateWithBlurOnWebSpy.mockClear();
         renderedToolViewSpy.mockReset();
         ensureSidechainMessagesLoadedMock.mockReset();
         ensureSidechainMessagesLoadedMock.mockResolvedValue('loaded');
@@ -221,6 +230,7 @@ describe('ToolView (tap action: expand)', () => {
 
     it('uses the stable server route for the secondary open action when the message is already persisted', async () => {
         pushSpy.mockReset();
+        navigateWithBlurOnWebSpy.mockClear();
         renderedToolViewSpy.mockReset();
         ensureSidechainMessagesLoadedMock.mockReset();
         ensureSidechainMessagesLoadedMock.mockResolvedValue('loaded');
@@ -249,11 +259,13 @@ describe('ToolView (tap action: expand)', () => {
             screen.pressByTestId('tool-view-header-secondary');
         });
 
+        expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
         expect(pushSpy).toHaveBeenCalledWith('/session/s1/message/server%3Aserver-msg-1');
     });
 
     it('hides the secondary open action when tool navigation is disabled, even if the tool has its own id', async () => {
         pushSpy.mockReset();
+        navigateWithBlurOnWebSpy.mockClear();
         renderedToolViewSpy.mockReset();
         ensureSidechainMessagesLoadedMock.mockReset();
         ensureSidechainMessagesLoadedMock.mockResolvedValue('loaded');

@@ -5,6 +5,7 @@ import { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { knownTools } from '../../catalog';
+import { resolvePermissionRequestId } from '../core/resolvePermissionRequestId';
 import { sessionAllow, sessionAllowWithPermissionUpdates, sessionDeny } from '@/sync/ops';
 import { Modal } from '@/modal';
 import { t } from '@/text';
@@ -152,10 +153,11 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
             : interaction?.permissionDisabledReason === 'readOnly'
                 ? t('session.sharing.permissionApprovalsDisabledReadOnly')
                 : t('session.sharing.permissionApprovalsDisabledNotGranted');
+    const permissionRequestId = resolvePermissionRequestId(tool);
 
     const handleApprove = React.useCallback(async (mode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan', opts?: { updatedPermissions?: unknown }) => {
         if (!sessionId || isApproving || isRejecting || !canInteract) return;
-        const permissionId = tool.permission?.id;
+        const permissionId = permissionRequestId;
         if (!permissionId) {
             Modal.alert(t('common.error'), t('errors.missingPermissionId'));
             return;
@@ -179,7 +181,7 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
         } finally {
             setIsApproving(false);
         }
-    }, [sessionId, tool.permission?.id, canInteract, isApproving, isRejecting]);
+    }, [sessionId, permissionRequestId, canInteract, isApproving, isRejecting]);
 
     const handleApproveOptions = React.useCallback(() => {
         if (!canInteract || isApproving || isRejecting) return;
@@ -249,7 +251,7 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
 
     const handleReject = React.useCallback(async () => {
         if (!sessionId || isApproving || isRejecting || !canInteract) return;
-        const permissionId = tool.permission?.id;
+        const permissionId = permissionRequestId;
         if (!permissionId) {
             Modal.alert(t('common.error'), t('errors.missingPermissionId'));
             return;
@@ -264,7 +266,7 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
         } finally {
             setIsRejecting(false);
         }
-    }, [sessionId, tool.permission?.id, canInteract, isApproving, isRejecting]);
+    }, [sessionId, permissionRequestId, canInteract, isApproving, isRejecting]);
 
     const handleRequestChanges = React.useCallback(() => {
         if (!canInteract || isApproving || isRejecting) return;
@@ -279,7 +281,7 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
 
     const handleSendChangeRequest = React.useCallback(async () => {
         if (!sessionId || isApproving || isRejecting || !canInteract) return;
-        const permissionId = tool.permission?.id;
+        const permissionId = permissionRequestId;
         if (!permissionId) {
             Modal.alert(t('common.error'), t('errors.missingPermissionId'));
             return;
@@ -301,7 +303,7 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
         } finally {
             setIsRejecting(false);
         }
-    }, [sessionId, tool.permission?.id, canInteract, isApproving, isRejecting, changeRequestText]);
+    }, [sessionId, permissionRequestId, canInteract, isApproving, isRejecting, changeRequestText]);
 
     return (
         <ToolSectionView>

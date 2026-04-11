@@ -32,6 +32,7 @@ import { buildToolCallMessageRouteId } from '@/sync/domains/messages/messageRout
 import { Typography } from '@/constants/Typography';
 import { isGenericSubAgentToolName, isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2';
 import { resolveInactiveSessionToolCallFailure } from '../permissions/resolveInactiveSessionToolCallFailure';
+import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 
 
 interface ToolViewProps {
@@ -123,7 +124,9 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
         if (onPress) {
             onPress();
         } else if (sessionId && routeMessageId) {
-            router.push(`/session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(routeMessageId)}`);
+            navigateWithBlurOnWeb(() => {
+                router.push(`/session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(routeMessageId)}`);
+            });
         }
     }, [onPress, routeMessageId, router, sessionId]);
 

@@ -88,6 +88,12 @@ describe('agents/registryCore', () => {
         expect(pi.cli.detectKey).toBeTruthy();
     });
 
+    it('provides core config for ohMyPi', () => {
+        const ohMyPi = getAgentCore('ohMyPi');
+        expect(ohMyPi.id).toBe('ohMyPi');
+        expect(ohMyPi.cli.detectKey).toBe('omp');
+    });
+
     it('provides core config for kiro', () => {
         const kiro = getAgentCore('kiro');
         expect(kiro.id).toBe('kiro');
@@ -101,7 +107,7 @@ describe('agents/registryCore', () => {
     });
 
     it('uses generic installer guidance instead of hardcoded package-manager commands', () => {
-        for (const agentId of ['codex', 'opencode', 'qwen', 'kilo', 'kiro', 'customAcp', 'pi', 'copilot'] as const) {
+        for (const agentId of ['codex', 'opencode', 'qwen', 'kilo', 'kiro', 'customAcp', 'ohMyPi', 'pi', 'copilot'] as const) {
             const core = getAgentCore(agentId);
             expect(core.cli.installBanner.installKind).toBe('ifAvailable');
             expect(core.cli.installBanner.installCommand).toBeUndefined();
@@ -109,7 +115,7 @@ describe('agents/registryCore', () => {
     });
 
     it('uses centralized setup guide URLs for provider install banners', () => {
-        for (const agentId of ['claude', 'opencode', 'kimi', 'qwen', 'pi'] as const) {
+        for (const agentId of ['claude', 'opencode', 'kimi', 'qwen', 'ohMyPi', 'pi'] as const) {
             expect(getAgentCore(agentId).cli.installBanner.guideUrl).toBe(getProviderCliInstallGuideUrl(agentId));
         }
     });

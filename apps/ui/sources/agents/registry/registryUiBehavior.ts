@@ -1,5 +1,10 @@
 import type { ReactNode } from 'react';
-import type { AccountProfile, DirectSessionLinkEnsureRequest, DirectSessionsSource } from '@happier-dev/protocol';
+import type {
+    AccountProfile,
+    AgentRuntimeDescriptorV1,
+    DirectSessionLinkEnsureRequest,
+    DirectSessionsSource,
+} from '@happier-dev/protocol';
 import type { DetailsTab } from '@/components/appShell/panes/model/appPaneReducer';
 import type { AgentId } from './registryCore';
 import { AGENT_IDS, getAgentCore, resolveAgentIdFromFlavor } from './registryCore';
@@ -15,6 +20,7 @@ import { AUGGIE_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/auggie/uiBehavio
 import { OPENCODE_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/opencode/uiBehavior';
 import { PI_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/pi/uiBehavior';
 import { CUSTOM_ACP_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/customAcp/uiBehavior';
+import { OH_MY_PI_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/ohMyPi/uiBehavior';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput';
 
 type CapabilityResults = Partial<Record<CapabilityId, CapabilityDetectResult>>;
@@ -51,6 +57,13 @@ export type DirectBrowseSourceOption = Readonly<{
 export type DirectBrowseLinkEnsureRequestExtras = Readonly<
     Partial<Omit<DirectSessionLinkEnsureRequest, 'machineId' | 'providerId' | 'remoteSessionId' | 'titleHint' | 'directoryHint'>>
 >;
+
+export type AgentSessionHandoffProviderPatch = Readonly<{
+    clearMetadataKeys?: readonly string[];
+    metadataPatch?: Record<string, unknown>;
+    runtimeDescriptor?: AgentRuntimeDescriptorV1 | null;
+    directSessionRuntimeDescriptor?: AgentRuntimeDescriptorV1 | null;
+}>;
 
 export type AgentUiBehavior = Readonly<{
     guidance?: Readonly<{
@@ -106,6 +119,16 @@ export type AgentUiBehavior = Readonly<{
                 candidate: Readonly<{ details?: Record<string, unknown> }>;
             }) => DirectBrowseLinkEnsureRequestExtras;
         }>;
+    }>;
+    sessionHandoff?: Readonly<{
+        buildProviderPatch?: (ctx: {
+            agentId: AgentId;
+            metadata: Record<string, unknown>;
+            sourceMetadataForHandoff?: Record<string, unknown>;
+            targetRemoteSessionId: string;
+            targetDirectSource: DirectSessionsSource | Record<string, unknown>;
+            targetRuntimeDescriptor?: AgentRuntimeDescriptorV1;
+        }) => AgentSessionHandoffProviderPatch;
     }>;
     payload?: Readonly<{
         buildSpawnEnvironmentVariables?: (opts: {
@@ -208,6 +231,9 @@ function mergeAgentUiBehavior(a: AgentUiBehavior, b: AgentUiBehavior): AgentUiBe
                 },
             }
             : {}),
+        ...(a.sessionHandoff || b.sessionHandoff
+            ? { sessionHandoff: { ...(a.sessionHandoff ?? {}), ...(b.sessionHandoff ?? {}) } }
+            : {}),
         ...(a.payload || b.payload ? { payload: { ...(a.payload ?? {}), ...(b.payload ?? {}) } } : {}),
         ...(a.sessionSubagents || b.sessionSubagents
             ? { sessionSubagents: { ...(a.sessionSubagents ?? {}), ...(b.sessionSubagents ?? {}) } }
@@ -239,6 +265,7 @@ const AGENTS_UI_BEHAVIOR_OVERRIDES: Readonly<Partial<Record<AgentId, AgentUiBeha
     opencode: OPENCODE_UI_BEHAVIOR_OVERRIDE,
     auggie: AUGGIE_UI_BEHAVIOR_OVERRIDE,
     pi: PI_UI_BEHAVIOR_OVERRIDE,
+    ohMyPi: OH_MY_PI_UI_BEHAVIOR_OVERRIDE,
     customAcp: CUSTOM_ACP_UI_BEHAVIOR_OVERRIDE,
 });
 

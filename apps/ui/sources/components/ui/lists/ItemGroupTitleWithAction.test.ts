@@ -72,4 +72,21 @@ describe('ItemGroupTitleWithAction', () => {
         expect(tree!.findAllByType('ActivityIndicator' as any).length).toBe(1);
         expect(tree!.findAllByType('Ionicons' as any).length).toBe(0);
     });
+
+    it('forwards an explicit test id onto the action button', async () => {
+        const { ItemGroupTitleWithAction } = await import('./ItemGroupTitleWithAction');
+
+        const screen = await renderScreen(React.createElement(ItemGroupTitleWithAction, {
+            title: 'Detected CLIs',
+            action: {
+                testID: 'detected-clis-refresh',
+                accessibilityLabel: 'Refresh',
+                iconName: 'refresh',
+                iconColor: '#666',
+                onPress: vi.fn(),
+            },
+        }));
+
+        expect(screen.findByTestId('detected-clis-refresh')).toBeTruthy();
+    });
 });

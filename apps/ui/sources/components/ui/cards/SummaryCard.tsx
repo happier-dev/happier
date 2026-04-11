@@ -1,9 +1,10 @@
 import * as React from 'react';
-import { View, Pressable, ViewStyle, StyleProp } from 'react-native';
+import { View, ViewStyle, StyleProp } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { SurfaceCard } from './SurfaceCard';
 
 export interface SummaryCardEntry {
     label: string;
@@ -15,21 +16,24 @@ export interface SummaryCardProps {
     onPress?: () => void;
     testID?: string;
     style?: StyleProp<ViewStyle>;
+    tone?: 'surface' | 'muted';
 }
 
-export const SummaryCard = React.memo<SummaryCardProps>(({ entries, onPress, testID, style }) => {
+export const SummaryCard = React.memo<SummaryCardProps>(({ entries, onPress, testID, style, tone = 'surface' }) => {
     const { theme } = useUnistyles();
     const styles = stylesheet;
 
-    const content = (
+    return (
+        <SurfaceCard
+            testID={testID}
+            onPress={onPress}
+            tone={tone}
+            padding="sm"
+            style={style}
+        >
         <View
             style={[
                 styles.container,
-                {
-                    backgroundColor: theme.colors.surfaceHigh,
-                    borderColor: theme.colors.divider,
-                },
-                style,
             ]}
         >
             <View style={styles.entriesRow}>
@@ -58,27 +62,15 @@ export const SummaryCard = React.memo<SummaryCardProps>(({ entries, onPress, tes
                 />
             ) : null}
         </View>
+        </SurfaceCard>
     );
-
-    if (onPress) {
-        return (
-            <Pressable testID={testID} onPress={onPress}>
-                {content}
-            </Pressable>
-        );
-    }
-
-    return <View testID={testID}>{content}</View>;
 });
 
 const stylesheet = StyleSheet.create(() => ({
     container: {
-        borderRadius: 12,
-        borderWidth: 1,
-        paddingHorizontal: 14,
-        paddingVertical: 10,
         flexDirection: 'row',
         alignItems: 'center',
+        minWidth: 0,
     },
     entriesRow: {
         flex: 1,

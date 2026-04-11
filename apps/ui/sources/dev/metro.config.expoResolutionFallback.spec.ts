@@ -99,6 +99,21 @@ describe('apps/ui/metro.config.js (Expo resolution fallbacks)', () => {
         expect(config?.resolver?.useWatchman).toBe(false);
     });
 
+    it('resolves internal workspace subpath exports through root node_modules in stack builds', () => {
+        process.env.HAPPIER_STACK_STACK = 'qa-test';
+        delete process.env.CI;
+        delete process.env.EXPO_NO_METRO_WORKSPACE_ROOT;
+        delete process.env.HAPPIER_UI_METRO_NARROW_WATCH_FOLDERS;
+
+        const config = requireFreshMetroConfig();
+
+        const relayAccessCatalogResult = config.resolver.resolveRequest({}, '@happier-dev/cli-common/relayAccess/catalog', 'web');
+        expect(relayAccessCatalogResult).toEqual({
+            type: 'sourceFile',
+            filePath: path.resolve(__dirname, '../../../../node_modules/@happier-dev/cli-common/dist/relayAccess/catalog.js'),
+        });
+    });
+
     it('resolves explicit .js relative imports by file path in CI mode (avoids Metro resolver regressions)', () => {
         process.env.CI = '1';
         delete process.env.HAPPIER_STACK_STACK;

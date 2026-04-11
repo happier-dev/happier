@@ -41,6 +41,24 @@ export type {
 
 type WindowRect = PopoverWindowRect;
 
+const RECT_UPDATE_TOLERANCE = 1;
+
+function arePopoverRenderPropsEqual(a: PopoverRenderProps, b: PopoverRenderProps): boolean {
+    return a.placement === b.placement && a.maxHeight === b.maxHeight && a.maxWidth === b.maxWidth;
+}
+
+function areWindowRectsEqual(a: WindowRect | null, b: WindowRect | null): boolean {
+    if (a === b) return true;
+    if (!a || !b) return false;
+
+    return (
+        Math.abs(a.x - b.x) <= RECT_UPDATE_TOLERANCE
+        && Math.abs(a.y - b.y) <= RECT_UPDATE_TOLERANCE
+        && Math.abs(a.width - b.width) <= RECT_UPDATE_TOLERANCE
+        && Math.abs(a.height - b.height) <= RECT_UPDATE_TOLERANCE
+    );
+}
+
 type PopoverCommonProps = Readonly<{
     open: boolean;
     anchorRef: React.RefObject<any>;
@@ -595,13 +613,14 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                 return false;
             }
 
-            setComputed({
+            const nextComputed: PopoverRenderProps = {
                 placement: resolvedPlacement,
                 maxHeight: nextMaxHeight,
                 maxWidth: nextMaxWidth,
-            });
-            setAnchorRectState(anchorRect);
-            setBoundaryRectState(effectiveBoundaryRect);
+            };
+            setComputed((prev) => arePopoverRenderPropsEqual(prev, nextComputed) ? prev : nextComputed);
+            setAnchorRectState((prev) => areWindowRectsEqual(prev, anchorRect) ? prev : anchorRect);
+            setBoundaryRectState((prev) => areWindowRectsEqual(prev, effectiveBoundaryRect) ? prev : effectiveBoundaryRect);
             return true;
         };
 

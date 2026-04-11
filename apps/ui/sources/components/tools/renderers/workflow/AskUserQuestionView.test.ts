@@ -15,6 +15,7 @@ const sessionAllowWithAnswers = vi.fn();
 const modalAlert = vi.fn();
 let supportsAnswersInPermission = true;
 let activeAskUserQuestionRequest: { tool: string; kind?: 'user_action' } | null = null;
+let activeAskUserQuestionRequestId = 'toolu_1';
 
 installWorkflowRendererCommonModuleMocks({
     modal: async () => {
@@ -36,7 +37,7 @@ installWorkflowRendererCommonModuleMocks({
                                 capabilities: { askUserQuestionAnswersInPermission: supportsAnswersInPermission },
                                 requests: activeAskUserQuestionRequest
                                     ? {
-                                        toolu_1: {
+                                        [activeAskUserQuestionRequestId]: {
                                             tool: activeAskUserQuestionRequest.tool,
                                             ...(activeAskUserQuestionRequest.kind ? { kind: activeAskUserQuestionRequest.kind } : {}),
                                             arguments: {},
@@ -170,6 +171,7 @@ describe('AskUserQuestionView', () => {
         sessionAllowWithAnswers.mockReset();
         modalAlert.mockReset();
         supportsAnswersInPermission = true;
+        activeAskUserQuestionRequestId = 'toolu_1';
         activeAskUserQuestionRequest = { tool: 'AskUserQuestion', kind: 'user_action' };
     });
 
@@ -194,8 +196,23 @@ describe('AskUserQuestionView', () => {
         expect(screen.findByProps({ testID: 'ask-user-question.submit' })).toBeTruthy();
     });
 
-    it('does not allow answering when the permission id is missing', async () => {
-        const screen = await renderView(makeTool({ permission: undefined }));
+    it('falls back to tool.id when permission metadata is missing but the matching request is still active', async () => {
+        activeAskUserQuestionRequestId = 'toolu_reconnect';
+        sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
+
+        const screen = await renderView(makeTool({ id: 'toolu_reconnect', permission: undefined }));
+
+        await chooseOptionAndSubmit(screen, 'A');
+
+        expect(sessionAllowWithAnswers).toHaveBeenCalledTimes(1);
+        expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_reconnect', { 'Pick one': 'A' });
+        expect(sessionDeny).toHaveBeenCalledTimes(0);
+        expect(sendMessage).toHaveBeenCalledTimes(0);
+        expect(modalAlert).toHaveBeenCalledTimes(0);
+    });
+
+    it('does not allow answering when no permission request id is available', async () => {
+        const screen = await renderView(makeTool({ id: undefined, permission: undefined }));
 
         const option = findPressableByLabel(screen, 'A');
         expect(option).toBeTruthy();

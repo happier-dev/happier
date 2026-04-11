@@ -1,4 +1,5 @@
 import type { AgentId } from '@/agents/catalog/catalog';
+import { buildClaudeReasoningEffortMessageMetaOverrides } from '@/agents/providers/claude/buildClaudeReasoningEffortMessageMetaOverrides';
 
 import { addProviderMessageMetaExtras } from '@/sync/domains/messages/messageMetaProviders';
 import { buildOutgoingMessageMeta } from '@/sync/domains/messages/messageMeta';
@@ -32,9 +33,16 @@ export function buildSendMessageMeta(args: {
         session: args.session,
     });
 
-    if (!args.metaOverrides) return withProviderExtras;
+    const metaOverrides = args.agentId === 'claude'
+        ? buildClaudeReasoningEffortMessageMetaOverrides({
+            session: args.session,
+            metaOverrides: args.metaOverrides as Record<string, unknown> | undefined,
+        })
+        : args.metaOverrides;
+
+    if (!metaOverrides) return withProviderExtras;
     return {
         ...withProviderExtras,
-        ...args.metaOverrides,
+        ...metaOverrides,
     };
 }

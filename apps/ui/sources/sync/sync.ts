@@ -164,7 +164,7 @@ import { publishAcpSessionModeOverrideToMetadata as publishAcpSessionModeOverrid
 import { publishModelOverrideToMetadata as publishModelOverrideToMetadataEngine } from './engine/overrides/modelOverridePublish';
 import { publishAcpConfigOptionOverrideToMetadata as publishAcpConfigOptionOverrideToMetadataEngine, type AcpConfigOptionOverrideValueId } from './engine/overrides/acpConfigOptionOverridePublish';
 import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { isRpcMethodNotAvailableError } from '@/sync/runtime/rpcErrors';
+import { isRpcMethodNotAvailableError, readRpcErrorCode } from '@/sync/runtime/rpcErrors';
 import { MessageAckResponseSchema, type MessageAckResponse } from '@happier-dev/protocol/updates';
 import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
@@ -202,6 +202,7 @@ import {
     handleSocketUpdate,
     parseUpdateContainer,
 } from './engine/socket/socket';
+import { isVersionSupported, MINIMUM_CLI_SESSION_USER_MESSAGE_RPC_VERSION } from '@/utils/system/versionUtils';
 
 const SESSION_MESSAGES_PAGE_SIZE = 150;
 
@@ -225,9 +226,28 @@ function hasAuthoritativeSessionRouteData(session: Session | null | undefined): 
 }
 
 function isFallbackSafeSessionUserMessageRpcError(error: unknown): boolean {
-    // The only intended fallback here is compatibility with older daemons that don't implement
-    // the active-session runtime RPC yet.
-    return isRpcMethodNotAvailableError(error);
+    // Fallback here is compatibility with older daemons / preview CLIs that may expose
+    // the active-session send surface under a different method set or during reconnect churn.
+    if (isRpcMethodNotAvailableError(error) || readRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_FOUND) {
+        return true;
+    }
+
+    const errorMessage = error instanceof Error ? error.message : String(error ?? '');
+    if (errorMessage === 'Method not found' || errorMessage === 'Socket connect timeout') {
+        return true;
+    }
+
+    return errorMessage.toLowerCase().includes('connect_error');
+}
+
+function canUseSessionUserMessageRuntimeRpc(session: Readonly<{
+    metadata?: { version?: unknown } | null;
+}> | null | undefined): boolean {
+    const cliVersion = typeof session?.metadata?.version === 'string' ? session.metadata.version.trim() : '';
+    if (cliVersion.length === 0) {
+        return true;
+    }
+    return isVersionSupported(cliVersion, MINIMUM_CLI_SESSION_USER_MESSAGE_RPC_VERSION);
 }
 
 function readOptionalSessionMetadataString(value: unknown): string | null {
@@ -1061,7 +1081,7 @@ class Sync {
                 rawRecord: content,
             });
 
-            if (session.active === true) {
+            if (session.active === true && canUseSessionUserMessageRuntimeRpc(session)) {
                 try {
                     await apiSocket.sessionRPC<{ ok: true }, {
                         text: string;

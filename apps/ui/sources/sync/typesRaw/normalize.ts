@@ -1,5 +1,6 @@
 import type { MessageMeta } from '../domains/messages/messageMetaTypes';
 import { rawRecordSchema, type AgentEvent, type RawAgentContent, type RawRecord, type UsageData } from './schemas';
+import { extractUsageDataFromTokenCountRecord } from './tokenCountUsage';
 
 // Normalized types
 //
@@ -600,6 +601,24 @@ export function normalizeRawMessage(
                     meta: raw.meta
                 } satisfies NormalizedMessage;
             }
+            if (raw.content.data.type === 'token_count') {
+                const usage = extractUsageDataFromTokenCountRecord(raw.content.data);
+                if (!usage) {
+                    return null;
+                }
+
+                return {
+                    id,
+                    ...(seq !== undefined ? { seq } : {}),
+                    localId,
+                    createdAt,
+                    role: 'agent',
+                    isSidechain: false,
+                    content: [],
+                    meta: raw.meta,
+                    usage,
+                } satisfies NormalizedMessage;
+            }
         }
           // ACP (Agent Communication Protocol) - unified format for all agent providers
           if (raw.content.type === 'acp') {
@@ -825,7 +844,25 @@ export function normalizeRawMessage(
                     meta: raw.meta
                 } satisfies NormalizedMessage;
             }
-            // Task lifecycle events (task_started, task_complete, turn_aborted) and token_count
+            if (raw.content.data.type === 'token_count') {
+                const usage = extractUsageDataFromTokenCountRecord(raw.content.data);
+                if (!usage) {
+                    return null;
+                }
+
+                return {
+                    id,
+                    ...(seq !== undefined ? { seq } : {}),
+                    localId,
+                    createdAt,
+                    role: 'agent',
+                    isSidechain: false,
+                    content: [],
+                    meta: raw.meta,
+                    usage,
+                } satisfies NormalizedMessage;
+            }
+            // Task lifecycle events (task_started, task_complete, turn_aborted)
             // are status/metrics - skip normalization, they don't need UI rendering
         }
     }
@@ -835,7 +872,7 @@ export function normalizeRawMessage(
         const contentType = raw.content.type;
         if (contentType === 'codex' || contentType === 'acp') {
             const dataType = (raw.content as any).data?.type;
-            if (dataType === 'token_count' || dataType === 'task_started' || dataType === 'task_complete' || dataType === 'turn_aborted') {
+            if (dataType === 'task_started' || dataType === 'task_complete' || dataType === 'turn_aborted') {
                 return null;
             }
         }

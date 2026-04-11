@@ -104,17 +104,19 @@ function RenderListBlock(props: { items: { depth: number, spans: MarkdownSpan[] 
             {props.items.map((item, index) => (
                 <View testID="markdown-list-item-row" style={[style.listRow, { paddingLeft: item.depth * 20 }]} key={index}>
                     <Text selectable={props.selectable} testID="markdown-list-item-marker" style={style.listMarker}>•</Text>
-                    <Text selectable={props.selectable} style={listStyle}>
-                        <MarkdownSpansView
-                            spans={item.spans}
-                            baseStyle={listStyle}
-                            linkStyle={style.link}
-                            resolveSpanStyle={(sn) => {
-                                if (props.variant === 'thinking' && sn === 'code') return style.thinkingInlineCode;
-                                return (style as any)[sn];
-                            }}
-                        />
-                    </Text>
+                    <View style={style.listContent}>
+                        <Text selectable={props.selectable} style={listStyle}>
+                            <MarkdownSpansView
+                                spans={item.spans}
+                                baseStyle={listStyle}
+                                linkStyle={style.link}
+                                resolveSpanStyle={(sn) => {
+                                    if (props.variant === 'thinking' && sn === 'code') return style.thinkingInlineCode;
+                                    return (style as any)[sn];
+                                }}
+                            />
+                        </Text>
+                    </View>
                 </View>
             ))}
         </View>
@@ -128,17 +130,19 @@ function RenderNumberedListBlock(props: { items: { depth: number, number: number
             {props.items.map((item, index) => (
                 <View testID="markdown-list-item-row" style={[style.listRow, { paddingLeft: item.depth * 20 }]} key={index}>
                     <Text selectable={props.selectable} testID="markdown-list-item-marker" style={style.numberedListMarker}>{item.number.toString()}.</Text>
-                    <Text selectable={props.selectable} style={listStyle}>
-                        <MarkdownSpansView
-                            spans={item.spans}
-                            baseStyle={listStyle}
-                            linkStyle={style.link}
-                            resolveSpanStyle={(sn) => {
-                                if (props.variant === 'thinking' && sn === 'code') return style.thinkingInlineCode;
-                                return (style as any)[sn];
-                            }}
-                        />
-                    </Text>
+                    <View style={style.listContent}>
+                        <Text selectable={props.selectable} style={listStyle}>
+                            <MarkdownSpansView
+                                spans={item.spans}
+                                baseStyle={listStyle}
+                                linkStyle={style.link}
+                                resolveSpanStyle={(sn) => {
+                                    if (props.variant === 'thinking' && sn === 'code') return style.thinkingInlineCode;
+                                    return (style as any)[sn];
+                                }}
+                            />
+                        </Text>
+                    </View>
                 </View>
             ))}
         </View>
@@ -362,13 +366,16 @@ const style = StyleSheet.create((theme) => ({
         alignItems: 'flex-start',
         width: '100%',
     },
+    listContent: {
+        flexShrink: 1,
+        minWidth: 0,
+        maxWidth: '100%',
+    },
     listText: {
         ...Typography.default(),
         color: theme.colors.text,
         marginTop: 0,
         marginBottom: 0,
-        flex: 1,
-        minWidth: 0,
     },
     listMarker: {
         ...Typography.default(),

@@ -10,6 +10,7 @@ import { t } from '@/text';
 import { Text } from '@/components/ui/text/Text';
 import { collectSubAgentSummaryTools } from './collectSubAgentSummaryTools';
 import { buildToolCallMessageRouteId } from '@/sync/domains/messages/messageRouteIds';
+import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 
 
 type TaskOperation = 'run' | 'create' | 'list' | 'update' | 'unknown';
@@ -142,7 +143,9 @@ export const SubAgentSummarySection = React.memo<{
     const canOpenDetails = Boolean(sessionId && routeMessageId) && detailLevel !== 'full';
     const handleOpenDetails = React.useCallback(() => {
         if (!sessionId || !routeMessageId) return;
-        router.push(`/session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(routeMessageId)}`);
+        navigateWithBlurOnWeb(() => {
+            router.push(`/session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(routeMessageId)}`);
+        });
     }, [routeMessageId, router, sessionId]);
 
     if (detailLevel === 'title') return null;

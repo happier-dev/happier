@@ -13,6 +13,7 @@ function buildArgs(overrides?: {
     model?: string | null;
     fallbackModel?: string | null;
     settings?: Record<string, unknown>;
+    session?: unknown;
     metaOverrides?: Record<string, unknown>;
 }) {
     return {
@@ -24,7 +25,7 @@ function buildArgs(overrides?: {
         fallbackModel: overrides?.fallbackModel,
         agentId: overrides?.agentId ?? 'claude',
         settings: overrides?.settings ?? settingsParse({}),
-        session: { id: 's1' },
+        session: overrides?.session ?? { id: 's1' },
         metaOverrides: overrides?.metaOverrides,
     };
 }
@@ -117,5 +118,31 @@ describe('buildSendMessageMeta', () => {
 
         expect((meta as any).happier?.kind).toBe('review_comments.v1');
         expect((meta as any).claudeRemoteAgentSdkEnabled).toBe(true);
+    });
+
+    it('keeps an explicit reasoningEffort meta override instead of replacing it from Claude session metadata', () => {
+        const meta = buildSendMessageMeta(buildArgs({
+            agentId: 'claude',
+            session: {
+                id: 's1',
+                metadata: {
+                    sessionConfigOptionOverridesV1: {
+                        v: 1,
+                        updatedAt: 12,
+                        overrides: {
+                            reasoning_effort: {
+                                updatedAt: 12,
+                                value: 'low',
+                            },
+                        },
+                    },
+                },
+            },
+            metaOverrides: {
+                reasoningEffort: 'medium',
+            },
+        }));
+
+        expect((meta as any).reasoningEffort).toBe('medium');
     });
 });

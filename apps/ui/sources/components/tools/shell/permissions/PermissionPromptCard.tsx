@@ -16,6 +16,7 @@ import { buildPermissionPromptModel } from '@/components/tools/shell/permissions
 import { useSetting } from '@/sync/domains/state/storage';
 import { resolveToolViewDetailLevel } from '@/components/tools/normalization/policy/resolveToolViewDetailLevel';
 import { ToolInlineBody } from '@/components/tools/shell/views/ToolInlineBody';
+import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import {
     resolveToolViewDetailLevelDefaultForChromeMode,
     type ToolViewDetailLevelSetting,
@@ -44,7 +45,9 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
     const headerText = model.headerText;
 
     const onViewTool = React.useCallback(() => {
-        router.push(buildPermissionToolCallRoute({ sessionId: props.sessionId, location: props.location }));
+        navigateWithBlurOnWeb(() => {
+            router.push(buildPermissionToolCallRoute({ sessionId: props.sessionId, location: props.location }));
+        });
     }, [props.location, props.sessionId, router]);
     const canOpenToolRoute = canOpenPermissionToolCallRoute(props.location);
 

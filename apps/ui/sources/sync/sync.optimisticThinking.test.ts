@@ -59,7 +59,7 @@ import { RpcError } from '@happier-dev/protocol/rpcErrors';
 
 const initialStorageState = storage.getState();
 
-function createSession(params: { sessionId: string }): Session {
+function createSession(params: { sessionId: string; metadata?: Session['metadata'] }): Session {
     const now = Date.now();
     return {
         id: params.sessionId,
@@ -68,7 +68,7 @@ function createSession(params: { sessionId: string }): Session {
         updatedAt: now,
         active: true,
         activeAt: now,
-        metadata: null,
+        metadata: params.metadata ?? null,
         metadataVersion: 0,
         agentState: null,
         // Mark as ready to avoid the 10s wait-for-ready timeout.
@@ -82,6 +82,15 @@ function createSession(params: { sessionId: string }): Session {
 
 function createRpcMethodNotAvailableError(): RpcError {
     return new RpcError('RPC method not available', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE);
+}
+
+function createFallbackSafeSessionRpcErrors(): Error[] {
+    return [
+        new RpcError('RPC method not available', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE),
+        new RpcError('Method not found', RPC_ERROR_CODES.METHOD_NOT_FOUND),
+        new Error('Socket connect timeout'),
+        new Error('connect_error: legacy daemon reconnecting'),
+    ];
 }
 
 describe('sync.sendMessage optimistic thinking', () => {
@@ -227,20 +236,63 @@ describe('sync.sendMessage optimistic thinking', () => {
         sessionRpcSpy.mockRestore();
     });
 
-    it('falls back to the socket commit path when active-session runtime RPC is unavailable', async () => {
-        const sessionId = 's_active_runtime_rpc_fallback';
-        storage.getState().applySessions([createSession({ sessionId })]);
+    it.each(createFallbackSafeSessionRpcErrors())(
+        'falls back to the socket commit path when active-session runtime RPC fails with %s',
+        async (sessionRpcError) => {
+            const sessionId = 's_active_runtime_rpc_fallback';
+            storage.getState().applySessions([createSession({ sessionId })]);
+
+            const encryption = await Encryption.create(new Uint8Array(32).fill(9));
+            await encryption.initializeSessions(new Map([[sessionId, null]]));
+
+            const sessionRpcSpy = vi.spyOn(apiSocket, 'sessionRPC').mockRejectedValue(sessionRpcError);
+            const emitWithAck = vi.fn(async () => ({
+                ok: true,
+                id: 'm-fallback',
+                seq: 7,
+                localId: null,
+                didWrite: true,
+            })) as any;
+
+            const { sync } = await import('./sync');
+            sync.encryption = encryption;
+            sync.setMessageTransport({
+                emitWithAck,
+                send: vi.fn(),
+            });
+
+            await sync.sendMessage(sessionId, 'fallback please');
+
+            expect(sessionRpcSpy).toHaveBeenCalledTimes(1);
+            expect(emitWithAck).toHaveBeenCalledWith(
+                'message',
+                expect.objectContaining({
+                    sid: sessionId,
+                    localId: expect.any(String),
+                }),
+                expect.anything(),
+            );
+
+            sessionRpcSpy.mockRestore();
+        },
+    );
+
+    it('skips session runtime RPC for older attached CLI versions and uses the legacy socket commit path directly', async () => {
+        const sessionId = 's_active_legacy_cli';
+        storage.getState().applySessions([createSession({
+            sessionId,
+            metadata: {
+                version: '0.0.9',
+            } as any,
+        })]);
 
         const encryption = await Encryption.create(new Uint8Array(32).fill(9));
         await encryption.initializeSessions(new Map([[sessionId, null]]));
 
-        const sessionRpcError = Object.assign(new Error('RPC method not available'), {
-            rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-        });
-        const sessionRpcSpy = vi.spyOn(apiSocket, 'sessionRPC').mockRejectedValue(sessionRpcError);
+        const sessionRpcSpy = vi.spyOn(apiSocket, 'sessionRPC').mockResolvedValue({ ok: true } as any);
         const emitWithAck = vi.fn(async () => ({
             ok: true,
-            id: 'm-fallback',
+            id: 'm-legacy',
             seq: 7,
             localId: null,
             didWrite: true,
@@ -253,9 +305,9 @@ describe('sync.sendMessage optimistic thinking', () => {
             send: vi.fn(),
         });
 
-        await sync.sendMessage(sessionId, 'fallback please');
+        await sync.sendMessage(sessionId, 'legacy please');
 
-        expect(sessionRpcSpy).toHaveBeenCalledTimes(1);
+        expect(sessionRpcSpy).not.toHaveBeenCalled();
         expect(emitWithAck).toHaveBeenCalledWith(
             'message',
             expect.objectContaining({
@@ -264,8 +316,6 @@ describe('sync.sendMessage optimistic thinking', () => {
             }),
             expect.anything(),
         );
-
-        sessionRpcSpy.mockRestore();
     });
 
     it('sendPendingMessageNow preserves the pending localId in the outbound payload and does not remove the queued row', async () => {

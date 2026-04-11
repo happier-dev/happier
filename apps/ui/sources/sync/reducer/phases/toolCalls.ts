@@ -48,6 +48,9 @@ export function runToolCallsPhase(params: Readonly<{
                             if (!message.tool.id) {
                                 message.tool.id = c.id;
                             }
+                            if (typeof c.name === 'string' && c.name.length > 0 && message.tool.name !== c.name) {
+                                message.tool.name = c.name;
+                            }
                             message.tool.description = c.description;
 
                             // Merge updated tool input (ACP providers can send late-arriving titles, locations,

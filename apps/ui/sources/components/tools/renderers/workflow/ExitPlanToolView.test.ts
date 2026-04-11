@@ -227,6 +227,53 @@ describe('ExitPlanToolView', () => {
         expect(sendMessage).toHaveBeenCalledTimes(0);
     });
 
+    it('falls back to tool.id when approve is pressed before permission metadata is reattached', async () => {
+        sessionAllow.mockResolvedValueOnce(undefined);
+        const tree = await renderView(makeRunningTool({ id: 'toolu_reconnect', permission: undefined }));
+
+        await act(async () => {
+            await tree.pressByTestIdAsync('exit-plan-approve');
+        });
+
+        expect(sessionAllow).toHaveBeenCalledTimes(1);
+        expect(sessionAllow).toHaveBeenCalledWith('s1', 'toolu_reconnect');
+        expect(modalAlert).toHaveBeenCalledTimes(0);
+    });
+
+    it('falls back to tool.id when reject is pressed before permission metadata is reattached', async () => {
+        sessionDeny.mockResolvedValueOnce(undefined);
+        const tree = await renderView(makeRunningTool({ id: 'toolu_reconnect', permission: undefined }));
+
+        await act(async () => {
+            await tree.pressByTestIdAsync('exit-plan-reject');
+        });
+
+        expect(sessionDeny).toHaveBeenCalledTimes(1);
+        expect(sessionDeny).toHaveBeenCalledWith('s1', 'toolu_reconnect');
+        expect(modalAlert).toHaveBeenCalledTimes(0);
+    });
+
+    it('falls back to tool.id when requesting changes before permission metadata is reattached', async () => {
+        sessionDeny.mockResolvedValueOnce(undefined);
+        const tree = await renderView(makeRunningTool({ id: 'toolu_reconnect', permission: undefined }));
+
+        await act(async () => {
+            await tree.pressByTestIdAsync('exit-plan-request-changes');
+        });
+
+        await act(async () => {
+            tree.changeTextByTestId('exit-plan-request-changes-input', 'Please change step 2');
+        });
+
+        await act(async () => {
+            await tree.pressByTestIdAsync('exit-plan-request-changes-send');
+        });
+
+        expect(sessionDeny).toHaveBeenCalledTimes(1);
+        expect(sessionDeny).toHaveBeenCalledWith('s1', 'toolu_reconnect', undefined, undefined, undefined, 'Please change step 2');
+        expect(modalAlert).toHaveBeenCalledTimes(0);
+    });
+
     it('shows an error when requesting plan changes fails', async () => {
         const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         sessionDeny.mockRejectedValueOnce(new Error('network'));
@@ -265,8 +312,8 @@ describe('ExitPlanToolView', () => {
         expect(modalAlert).toHaveBeenCalledWith('common.error', 'tools.exitPlanMode.requestChangesEmpty');
     });
 
-    it('does not mark as responded when approve is pressed without a permission id', async () => {
-        const tree = await renderView(makeRunningTool({ permission: undefined }));
+    it('does not mark as responded when approve is pressed without any permission request id', async () => {
+        const tree = await renderView(makeRunningTool({ id: undefined, permission: undefined }));
 
         await act(async () => {
             await tree.pressByTestIdAsync('exit-plan-approve');
@@ -279,8 +326,8 @@ describe('ExitPlanToolView', () => {
         expect(buttonsAfter.length).toBeGreaterThanOrEqual(2);
     });
 
-    it('does not mark as responded when reject is pressed without a permission id', async () => {
-        const tree = await renderView(makeRunningTool({ permission: undefined }));
+    it('does not mark as responded when reject is pressed without any permission request id', async () => {
+        const tree = await renderView(makeRunningTool({ id: undefined, permission: undefined }));
 
         await act(async () => {
             await tree.pressByTestIdAsync('exit-plan-reject');

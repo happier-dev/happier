@@ -26,4 +26,18 @@ describe('agents/registryUi', () => {
         expect(svgXml).toContain('fill="#123456"');
         expect(svgXml).not.toContain('fill="#000000"');
     });
+
+    it('uses a dedicated oh-my-pi logo instead of reusing the plain pi mark', () => {
+        const theme = createThemeFixture({
+            colors: {
+                text: '#123456',
+                accent: {
+                    orange: '#f97316',
+                },
+            },
+        }) as Parameters<typeof getAgentIconSvgXml>[1];
+        const svgXml = getAgentIconSvgXml('ohMyPi', theme) ?? '';
+        expect(svgXml).toContain('oh-my-pi-logo');
+        expect(svgXml).toContain(`fill="${theme.colors.accent.orange}"`);
+    });
 });

@@ -142,8 +142,15 @@ if (wants('verify-expo-router-web-modal-patch')) {
         path.resolve(repoRootDir, 'node_modules', 'expo-router', 'build', 'layouts', '_web-modal.js'),
         path.resolve(expoAppDir, 'node_modules', 'expo-router', 'build', 'layouts', '_web-modal.js'),
     ];
+    const expoRouterModalStackCandidatePaths = [
+        path.resolve(repoRootDir, 'node_modules', 'expo-router', 'build', 'modal', 'web', 'ModalStack.js'),
+        path.resolve(expoAppDir, 'node_modules', 'expo-router', 'build', 'modal', 'web', 'ModalStack.js'),
+    ];
 
     const existingExpoRouterWebModalPaths = expoRouterWebModalCandidatePaths.filter((candidatePath) =>
+        fs.existsSync(candidatePath),
+    );
+    const existingExpoRouterModalStackPaths = expoRouterModalStackCandidatePaths.filter((candidatePath) =>
         fs.existsSync(candidatePath),
     );
 
@@ -156,10 +163,25 @@ if (wants('verify-expo-router-web-modal-patch')) {
         process.exit(1);
     }
 
+    if (existingExpoRouterModalStackPaths.length === 0) {
+        console.error(
+            `Could not find expo-router ModalStack.js at:\n${expoRouterModalStackCandidatePaths
+                .map((p) => `- ${p}`)
+                .join('\n')}`,
+        );
+        process.exit(1);
+    }
+
     const unpatchedPaths = [];
     for (const filePath of existingExpoRouterWebModalPaths) {
         const contents = fs.readFileSync(filePath, 'utf8');
         if (!contents.includes('ExperimentalModalStack')) {
+            unpatchedPaths.push(filePath);
+        }
+    }
+    for (const filePath of existingExpoRouterModalStackPaths) {
+        const contents = fs.readFileSync(filePath, 'utf8');
+        if (!contents.includes('preloadedRoutes: state.preloadedRoutes ?? []')) {
             unpatchedPaths.push(filePath);
         }
     }

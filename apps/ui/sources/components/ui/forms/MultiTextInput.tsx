@@ -28,6 +28,8 @@ export interface MultiTextInputHandle {
     blur: () => void;
 }
 
+export type MultiTextInputSubmitBehavior = 'newline' | 'submit' | 'blurAndSubmit';
+
 interface MultiTextInputProps {
     textStyle?: TextStyle;
     value: string;
@@ -44,6 +46,8 @@ interface MultiTextInputProps {
     onKeyPress?: OnKeyPressCallback;
     onSelectionChange?: (selection: { start: number; end: number }) => void;
     onStateChange?: (state: TextInputState) => void;
+    submitBehavior?: MultiTextInputSubmitBehavior;
+    onSubmitEditing?: () => void;
     // Web-only: file attachments via paste.
     onFilesPasted?: (files: readonly File[]) => void;
 }
@@ -213,7 +217,8 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
                 autoFocus={props.autoFocus}
                 editable={props.editable}
                 textContentType="none"
-                submitBehavior="newline"
+                submitBehavior={props.submitBehavior ?? 'newline'}
+                onSubmitEditing={props.onSubmitEditing ? () => props.onSubmitEditing?.() : undefined}
             />
         </View>
     );

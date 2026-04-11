@@ -1,0 +1,81 @@
+import type { UsageData } from './schemas';
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    return value as Record<string, unknown>;
+}
+
+function asFiniteNonNegativeNumber(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function pickUsageNumber(record: Record<string, unknown>, ...keys: readonly string[]): number | null {
+    for (const key of keys) {
+        const value = asFiniteNonNegativeNumber(record[key]);
+        if (value != null) return value;
+    }
+    return null;
+}
+
+function buildUsageData(parts: Readonly<{
+    input: number | null;
+    output: number | null;
+    cacheCreation?: number | null;
+    cacheRead?: number | null;
+}>): UsageData | null {
+    if (parts.input == null || parts.output == null) return null;
+
+    return {
+        input_tokens: parts.input,
+        output_tokens: parts.output,
+        ...(parts.cacheCreation != null ? { cache_creation_input_tokens: parts.cacheCreation } : {}),
+        ...(parts.cacheRead != null ? { cache_read_input_tokens: parts.cacheRead } : {}),
+    };
+}
+
+function extractUsageDataFromTokenMap(raw: unknown): UsageData | null {
+    const record = asRecord(raw);
+    if (!record) return null;
+
+    return buildUsageData({
+        input: pickUsageNumber(record, 'input'),
+        output: pickUsageNumber(record, 'output'),
+        cacheCreation: pickUsageNumber(record, 'cache_creation'),
+        cacheRead: pickUsageNumber(record, 'cache_read'),
+    });
+}
+
+function extractUsageDataFromNestedInfo(raw: unknown): UsageData | null {
+    const record = asRecord(raw);
+    if (!record) return null;
+
+    const total = asRecord(record.total_token_usage);
+    const last = asRecord(record.last_token_usage);
+    const source = total ?? last;
+    if (!source) return null;
+
+    return buildUsageData({
+        input: pickUsageNumber(source, 'input_tokens', 'input'),
+        output: pickUsageNumber(source, 'output_tokens', 'output'),
+        cacheCreation: pickUsageNumber(source, 'cache_creation_input_tokens', 'cache_creation'),
+        cacheRead: pickUsageNumber(source, 'cache_read_input_tokens', 'cache_read', 'cached_input_tokens'),
+    });
+}
+
+export function extractUsageDataFromTokenCountRecord(raw: unknown): UsageData | null {
+    const record = asRecord(raw);
+    if (!record) return null;
+
+    const nestedInfoUsage = extractUsageDataFromNestedInfo(record.info);
+    if (nestedInfoUsage) return nestedInfoUsage;
+
+    const nestedTokenMapUsage = extractUsageDataFromTokenMap(record.tokens);
+    if (nestedTokenMapUsage) return nestedTokenMapUsage;
+
+    return buildUsageData({
+        input: pickUsageNumber(record, 'input_tokens', 'input', 'prompt_tokens'),
+        output: pickUsageNumber(record, 'output_tokens', 'output', 'completion_tokens'),
+        cacheCreation: pickUsageNumber(record, 'cache_creation_input_tokens', 'cache_creation'),
+        cacheRead: pickUsageNumber(record, 'cache_read_input_tokens', 'cache_read', 'cached_input_tokens'),
+    });
+}

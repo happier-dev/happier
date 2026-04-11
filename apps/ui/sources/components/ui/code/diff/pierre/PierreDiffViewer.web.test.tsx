@@ -109,6 +109,15 @@ describe('PierreDiffViewer (web)', () => {
         expect(wrapper.props.style?.maxHeight).toBe('inherit');
     });
 
+    it('publishes scale-aware diff typography CSS variables', async () => {
+        const { resolvePierreTypographyStyle } = await import('./PierreDiffViewer.web');
+
+        expect(resolvePierreTypographyStyle()).toMatchObject({
+            '--diffs-font-size': 'calc(12px * var(--happier-ui-font-scale, 1))',
+            '--diffs-line-height': 'calc(22px * var(--happier-ui-font-scale, 1))',
+        });
+    });
+
     it('passes tokenization budgets into Pierre options', async () => {
         fileDiffSpy.mockClear();
         const { PierreDiffViewer } = await import('./PierreDiffViewer.web');

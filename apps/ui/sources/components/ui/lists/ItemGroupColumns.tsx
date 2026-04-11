@@ -19,7 +19,7 @@ const VIEWPORT_CLASS_ORDER: Record<ViewportClass, number> = Object.freeze({
 
 export type ItemGroupColumnsProps = Readonly<{
     children: React.ReactNode;
-    columns?: 1 | 2 | 3;
+    columns?: 1 | 2 | 3 | 4;
     collapseBelow?: ViewportClass;
     style?: StyleProp<ViewStyle>;
     paddingHorizontal?: number;
@@ -30,7 +30,7 @@ export type ItemGroupColumnsProps = Readonly<{
 
 export type ItemGroupColumnProps = Readonly<{
     children: React.ReactNode;
-    span?: 1 | 2 | 3;
+    span?: 1 | 2 | 3 | 4;
     style?: StyleProp<ViewStyle>;
 }>;
 

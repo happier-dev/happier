@@ -9,11 +9,16 @@ import { installToolShellCommonModuleMocks } from './ToolView.testHelpers';
 
 const ensureSidechainMessagesLoadedMock = vi.fn(async () => 'loaded');
 const pushSpy = vi.fn();
+const navigateWithBlurOnWebSpy = vi.hoisted(() => vi.fn((action: () => void) => action()));
 
 vi.mock('@/sync/sync', () => ({
     sync: {
         ensureSidechainMessagesLoaded: ensureSidechainMessagesLoadedMock,
     },
+}));
+
+vi.mock('@/utils/platform/navigateWithBlurOnWeb', () => ({
+    navigateWithBlurOnWeb: navigateWithBlurOnWebSpy,
 }));
 
 installToolShellCommonModuleMocks({
@@ -131,6 +136,7 @@ function findHeaderTitleFontSize(screen: Awaited<ReturnType<typeof renderToolTim
 describe('ToolTimelineRow (tap action)', () => {
     beforeEach(() => {
         pushSpy.mockClear();
+        navigateWithBlurOnWebSpy.mockClear();
         specificToolViewMock.mockClear();
         ensureSidechainMessagesLoadedMock.mockReset();
         ensureSidechainMessagesLoadedMock.mockResolvedValue('loaded');
@@ -196,6 +202,7 @@ describe('ToolTimelineRow (tap action)', () => {
             screen.pressByTestId('tool-timeline-row');
         });
 
+        expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
         expect(pushSpy).toHaveBeenCalledTimes(1);
         expect(pushSpy).toHaveBeenCalledWith('/session/s1/message/server%3Aserver-msg-1');
         expect(screen.findAllByType('SpecificToolView' as any)).toHaveLength(0);

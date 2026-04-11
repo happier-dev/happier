@@ -14,6 +14,7 @@ import { KILO_UI } from '@/agents/providers/kilo/ui';
 import { KIRO_UI } from '@/agents/providers/kiro/ui';
 import { CUSTOM_ACP_UI } from '@/agents/providers/customAcp/ui';
 import { PI_UI } from '@/agents/providers/pi/ui';
+import { OH_MY_PI_UI } from '@/agents/providers/ohMyPi/ui';
 import { COPILOT_UI } from '@/agents/providers/copilot/ui';
 
 export type AgentIconSvgXmlResolver = (
@@ -58,6 +59,7 @@ export const AGENTS_UI: Readonly<Record<AgentId, AgentUiConfig>> = Object.freeze
     kiro: KIRO_UI,
     customAcp: CUSTOM_ACP_UI,
     pi: PI_UI,
+    ohMyPi: OH_MY_PI_UI,
     copilot: COPILOT_UI,
 });
 

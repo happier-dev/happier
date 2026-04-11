@@ -106,6 +106,7 @@ const MetadataObjectSchema = z.object({
             id: z.string(),
             name: z.string(),
             description: z.string().optional(),
+            contextWindowTokens: z.number().int().nonnegative().optional(),
             modelOptions: z.array(z.object({
                 id: z.string(),
                 name: z.string(),
@@ -129,6 +130,7 @@ const MetadataObjectSchema = z.object({
             id: z.string(),
             name: z.string(),
             description: z.string().optional(),
+            contextWindowTokens: z.number().int().nonnegative().optional(),
             modelOptions: z.array(z.object({
                 id: z.string(),
                 name: z.string(),

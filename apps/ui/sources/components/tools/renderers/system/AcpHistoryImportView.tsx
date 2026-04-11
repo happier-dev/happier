@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ToolViewProps } from '../core/_registry';
+import { resolvePermissionRequestId } from '../core/resolvePermissionRequestId';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { sessionAllow, sessionDeny } from '@/sync/ops';
 import { Modal } from '@/modal';
@@ -29,7 +30,7 @@ export const AcpHistoryImportView = React.memo<ToolViewProps>(({ tool, sessionId
   const [loading, setLoading] = React.useState<'import' | 'skip' | null>(null);
 
   if (!sessionId) return null;
-  const permissionId = tool.permission?.id;
+  const permissionId = resolvePermissionRequestId(tool);
   if (!permissionId) return null;
 
   const canApprovePermissions = interaction?.canApprovePermissions ?? true;
@@ -49,7 +50,9 @@ export const AcpHistoryImportView = React.memo<ToolViewProps>(({ tool, sessionId
   const remoteTail = asPreviewList(input?.remoteTail);
   const note = typeof input?.note === 'string' ? input.note : undefined;
 
-  const isPending = tool.permission?.status === 'pending';
+  const isPending =
+    tool.permission?.status === 'pending'
+      || (tool.permission == null && tool.state === 'running');
 
   const onImport = async () => {
     if (!isPending || loading || !canApprovePermissions) return;

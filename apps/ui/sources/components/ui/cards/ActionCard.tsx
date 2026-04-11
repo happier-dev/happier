@@ -1,9 +1,10 @@
 import * as React from 'react';
 import { View, ViewStyle, StyleProp } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { SurfaceCard } from './SurfaceCard';
 
 export interface ActionCardProps {
     title: string;
@@ -15,29 +16,25 @@ export interface ActionCardProps {
     disabled?: boolean;
     testID?: string;
     style?: StyleProp<ViewStyle>;
+    tone?: 'surface' | 'muted';
 }
 
 export const ActionCard = React.memo<ActionCardProps>(
-    ({ title, description, primaryAction, secondaryAction, icon, loading, disabled, testID, style }) => {
-        const { theme } = useUnistyles();
+    ({ title, description, primaryAction, secondaryAction, icon, loading, disabled, testID, style, tone = 'surface' }) => {
         const styles = stylesheet;
 
         return (
-            <View
+            <SurfaceCard
                 testID={testID}
-                style={[
-                    styles.container,
-                    {
-                        backgroundColor: theme.colors.surfaceHigh,
-                        borderColor: theme.colors.divider,
-                    },
-                    style,
-                ]}
+                tone={tone}
+                padding="md"
+                style={style}
             >
+                <View style={styles.container}>
                 {icon ? <View style={styles.iconRow}>{icon}</View> : null}
-                <Text style={[styles.title, { color: theme.colors.text }]}>{title}</Text>
+                <Text style={styles.title}>{title}</Text>
                 {description ? (
-                    <Text style={[styles.description, { color: theme.colors.textSecondary }]}>
+                    <Text style={styles.description}>
                         {description}
                     </Text>
                 ) : null}
@@ -58,16 +55,16 @@ export const ActionCard = React.memo<ActionCardProps>(
                         />
                     ) : null}
                 </View>
-            </View>
+                </View>
+            </SurfaceCard>
         );
     },
 );
 
-const stylesheet = StyleSheet.create(() => ({
+const stylesheet = StyleSheet.create((theme) => ({
     container: {
-        borderRadius: 12,
-        padding: 16,
-        borderWidth: 1,
+        minWidth: 0,
+        gap: 0,
     },
     iconRow: {
         marginBottom: 12,
@@ -76,15 +73,18 @@ const stylesheet = StyleSheet.create(() => ({
         ...Typography.default('semiBold'),
         fontSize: 16,
         lineHeight: 22,
+        color: theme.colors.text,
     },
     description: {
         ...Typography.default('regular'),
         fontSize: 14,
         lineHeight: 20,
         marginTop: 4,
+        color: theme.colors.textSecondary,
     },
     buttonRow: {
         flexDirection: 'row',
+        flexWrap: 'wrap',
         gap: 12,
         marginTop: 16,
     },
