@@ -1,9 +1,11 @@
 import { spawn } from 'node:child_process';
-import { open } from 'node:fs/promises';
+import { open, readFile as readFileText, readdir, rm } from 'node:fs/promises';
+import { setTimeout as delay } from 'node:timers/promises';
 import { join } from 'node:path';
 import { buildConfigureServerLinks } from '@happier-dev/cli-common/links';
 
-import { findExistingStackCredentialPath } from '../utils/auth/credentials_paths.mjs';
+import { cleanupStaleDaemonState, stopLocalDaemon } from '../daemon.mjs';
+import { findExistingStackCredentialPath, resolveStackDaemonStatePaths } from '../utils/auth/credentials_paths.mjs';
 import { ensureDir } from '../utils/fs/ops.mjs';
 import { readLastLines } from '../utils/fs/tail.mjs';
 import { isTcpPortFree, listListenPids, pickNextFreeTcpPort } from '../utils/net/ports.mjs';
@@ -17,6 +19,7 @@ import { getCliHomeDirFromEnvOrDefault } from '../utils/stack/dirs.mjs';
 import { findRunningExpoStateInRoot, looksLikeExpoMetro } from '../utils/expo/expo.mjs';
 import {
   deleteStackRuntimeStateFile,
+  getStackRuntimeProcessEntries,
   getStackRuntimeStatePath,
   isPidAlive,
   recordStackRuntimeStart,
@@ -117,76 +120,301 @@ export function shouldAdoptOccupiedRuntimePortsForRecovery(existingRuntimeStatus
   );
 }
 
+async function forceStopRecordedPid(pid) {
+  const targetPid = Number(pid);
+  if (!Number.isFinite(targetPid) || targetPid <= 1 || !isPidAlive(targetPid)) {
+    return false;
+  }
+
+  const terminate = (signal) => {
+    try {
+      process.kill(-targetPid, signal);
+      return true;
+    } catch {
+      try {
+        process.kill(targetPid, signal);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  };
+
+  terminate('SIGTERM');
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if (!isPidAlive(targetPid)) {
+      return true;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await delay(100);
+  }
+
+  terminate('SIGKILL');
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if (!isPidAlive(targetPid)) {
+      return true;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await delay(100);
+  }
+
+  return !isPidAlive(targetPid);
+}
+
+async function collectDaemonStatePids({ cliHomeDir, serverUrl, env }) {
+  const pairs = resolveStackDaemonStatePaths({ cliHomeDir, serverUrl, env }).pairs ?? [];
+  const statePaths = new Set(
+    pairs
+      .map((pair) => String(pair?.statePath ?? '').trim())
+      .filter(Boolean),
+  );
+  try {
+    const serverEntries = await readdir(join(cliHomeDir, 'servers'), { withFileTypes: true });
+    for (const entry of serverEntries) {
+      if (!entry.isDirectory()) continue;
+      statePaths.add(join(cliHomeDir, 'servers', entry.name, 'daemon.state.json'));
+    }
+  } catch {
+    // ignore missing or unreadable server-scoped daemon directories
+  }
+  const pids = [];
+
+  for (const statePath of statePaths) {
+    try {
+      const parsed = JSON.parse(await readFileText(statePath, 'utf8'));
+      const pid = Number(parsed?.pid);
+      if (Number.isFinite(pid) && pid > 1) {
+        pids.push(pid);
+      }
+    } catch {
+      // ignore unreadable or missing daemon state files
+    }
+  }
+
+  return [...new Set(pids)];
+}
+
+async function removeDaemonStateFiles({ cliHomeDir, serverUrl, env }) {
+  const pairs = resolveStackDaemonStatePaths({ cliHomeDir, serverUrl, env }).pairs ?? [];
+  const statePaths = new Set(
+    pairs
+      .flatMap((pair) => [pair?.statePath, pair?.lockPath])
+      .map((path) => String(path ?? '').trim())
+      .filter(Boolean),
+  );
+  try {
+    const serverEntries = await readdir(join(cliHomeDir, 'servers'), { withFileTypes: true });
+    for (const entry of serverEntries) {
+      if (!entry.isDirectory()) continue;
+      statePaths.add(join(cliHomeDir, 'servers', entry.name, 'daemon.state.json'));
+      statePaths.add(join(cliHomeDir, 'servers', entry.name, 'daemon.state.json.lock'));
+    }
+  } catch {
+    // ignore missing or unreadable server-scoped daemon directories
+  }
+
+  for (const path of statePaths) {
+    // eslint-disable-next-line no-await-in-loop
+    await rm(path, { force: true }).catch(() => {});
+  }
+}
+
+async function cleanupFailedRestartAttempt({
+  rootDir,
+  stackName,
+  baseDir,
+  env,
+  runtimeStatePath,
+  wantsJson = false,
+}) {
+  const runtimeStateBeforeCleanup = runtimeStatePath ? await readStackRuntimeStateFile(runtimeStatePath) : null;
+  const forcedRuntimePids = [
+    Number(runtimeStateBeforeCleanup?.ownerPid),
+    ...getStackRuntimeProcessEntries(runtimeStateBeforeCleanup).map(({ pid }) => Number(pid)),
+  ].filter((pid, index, all) => Number.isFinite(pid) && pid > 1 && all.indexOf(pid) === index);
+  const recordedDaemonPid = Number(runtimeStateBeforeCleanup?.processes?.daemonPid);
+  const cliHomeDir = (env.HAPPIER_STACK_CLI_HOME_DIR ?? join(baseDir, 'cli')).toString();
+  const serverPort = coercePort(env.HAPPIER_STACK_SERVER_PORT);
+  const internalServerUrl = serverPort ? `http://127.0.0.1:${serverPort}` : 'http://127.0.0.1:3005';
+
+  try {
+    await stopStackWithEnv({
+      rootDir,
+      stackName,
+      baseDir,
+      env,
+      json: wantsJson,
+      noDocker: false,
+      aggressive: false,
+      sweepOwned: true,
+      autoSweep: true,
+      preserveDaemon: false,
+    });
+  } catch {
+    // Best-effort cleanup; preserve the original restart failure.
+  }
+
+  for (const pid of forcedRuntimePids) {
+    if (!isPidAlive(pid)) continue;
+    // eslint-disable-next-line no-await-in-loop
+    await forceStopRecordedPid(pid).catch(() => {});
+  }
+
+  await stopLocalDaemon({
+    cliBin: join(cliHomeDir, 'bin', 'happier.mjs'),
+    internalServerUrl,
+    cliHomeDir,
+    env,
+    runtimeStatePath,
+  }).catch(() => {});
+
+  const daemonStatePids = await collectDaemonStatePids({
+    cliHomeDir,
+    serverUrl: internalServerUrl,
+    env,
+  }).catch(() => []);
+  for (const daemonPid of daemonStatePids) {
+    // eslint-disable-next-line no-await-in-loop
+    await forceStopRecordedPid(daemonPid).catch(() => {});
+  }
+
+  const hasLiveDaemonPid = [recordedDaemonPid, ...daemonStatePids].some((daemonPid) => isPidAlive(daemonPid));
+  if (hasLiveDaemonPid) {
+    await cleanupStaleDaemonState(cliHomeDir, { serverUrl: internalServerUrl, env }).catch(() => {});
+  } else {
+    await removeDaemonStateFiles({
+      cliHomeDir,
+      serverUrl: internalServerUrl,
+      env,
+    }).catch(() => {});
+  }
+
+  if (!runtimeStatePath) {
+    return;
+  }
+  const runtimeStateAfterCleanup = await readStackRuntimeStateFile(runtimeStatePath);
+  const hasLiveTrackedProcesses = getStackRuntimeProcessEntries(runtimeStateAfterCleanup).some(({ pid }) => isPidAlive(pid));
+  if (!hasLiveTrackedProcesses) {
+    await deleteStackRuntimeStateFile(runtimeStatePath).catch(() => {});
+  }
+}
+
 export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPath, args, extraEnv = {}, background = false }) {
   await withStackEnv({
     stackName,
     extraEnv,
     fn: async ({ env, envPath, stackEnv, runtimeStatePath, runtimeState }) => {
-      const runtimeLaunchContext =
-        scriptPath === 'run.mjs'
-          ? await resolveStackRuntimeLaunchContext({ argv: args, env })
-          : { snapshot: null };
-      const runtimeSnapshotId = runtimeLaunchContext.snapshot?.snapshotId ?? null;
       const isStartLike = scriptPath === 'dev.mjs' || scriptPath === 'run.mjs';
+      const wantsRestart = args.includes('--restart');
+      const wantsJson = args.includes('--json');
+      const { baseDir } = resolveStackEnvPath(stackName, env);
+      const expectedUiDir = getComponentDir(rootDir, 'happier-ui', env);
+
+      let runtimeLaunchContext = { snapshot: null };
+      if (scriptPath === 'run.mjs') {
+        try {
+          runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv: args, env });
+        } catch (error) {
+          if (isStartLike && wantsRestart) {
+            let shouldCleanup = shouldReuseRuntimePortsOnRestart({
+              wantsRestart,
+              runtimeState,
+              wasRunning: false,
+            });
+
+            if (!shouldCleanup) {
+              try {
+                const existingRuntimeStatus = await inspectExistingStartLikeRuntime({
+                  stackName,
+                  envPath,
+                  baseDir,
+                  expectedUiDir,
+                  scriptPath,
+                  args,
+                  runtimeState,
+                });
+                shouldCleanup = shouldReuseRuntimePortsOnRestart({
+                  wantsRestart,
+                  runtimeState,
+                  wasRunning: existingRuntimeStatus.wasRunning,
+                });
+              } catch {
+                // Preserve the original launch-context failure; cleanup is best-effort.
+              }
+            }
+
+            if (shouldCleanup) {
+              await cleanupFailedRestartAttempt({
+                rootDir,
+                stackName,
+                baseDir,
+                env,
+                runtimeStatePath,
+                wantsJson,
+              });
+            }
+          }
+          throw error;
+        }
+      }
+      const runtimeSnapshotId = runtimeLaunchContext.snapshot?.snapshotId ?? null;
       if (!isStartLike) {
         await run(process.execPath, [join(rootDir, 'scripts', scriptPath), ...args], { cwd: rootDir, env });
         return;
       }
 
-      const wantsRestart = args.includes('--restart');
-      const wantsJson = args.includes('--json');
       const pinnedServerPort = Boolean((stackEnv.HAPPIER_STACK_SERVER_PORT ?? '').trim());
       const serverComponent = (stackEnv.HAPPIER_STACK_SERVER_COMPONENT ?? '').toString().trim() || 'happier-server-light';
       const managedInfra =
         serverComponent === 'happier-server'
           ? (stackEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1').toString().trim() !== '0'
           : false;
-      const { baseDir } = resolveStackEnvPath(stackName, env);
-      const expectedUiDir = getComponentDir(rootDir, 'happier-ui', env);
+      let preservedDaemonForRestart = false;
 
-      // If this is an ephemeral-port stack and it's already running, avoid spawning a second copy.
-      const existingOwnerPid = Number(runtimeState?.ownerPid);
-      const existingPort = Number(runtimeState?.ports?.server);
-      const existingUiPort = Number(runtimeState?.expo?.webPort);
-      const existingPorts = runtimeState?.ports && typeof runtimeState.ports === 'object' ? runtimeState.ports : null;
-      const existingRuntimeStatus = await inspectExistingStartLikeRuntime({
-        stackName,
-        envPath,
-        baseDir,
-        expectedUiDir,
-        scriptPath,
-        args,
-        runtimeState,
-      });
-      const wasRunning = existingRuntimeStatus.wasRunning;
-      // True restart = there was an active runner for this stack. If the stack is not running,
-      // `--restart` should behave like a normal start (allocate new ephemeral ports if needed).
-      const isTrueRestart = shouldReuseRuntimePortsOnRestart({ wantsRestart, runtimeState, wasRunning });
+      try {
+        // If this is an ephemeral-port stack and it's already running, avoid spawning a second copy.
+        const existingOwnerPid = Number(runtimeState?.ownerPid);
+        const existingPort = Number(runtimeState?.ports?.server);
+        const existingUiPort = Number(runtimeState?.expo?.webPort);
+        const existingPorts = runtimeState?.ports && typeof runtimeState.ports === 'object' ? runtimeState.ports : null;
+        const existingRuntimeStatus = await inspectExistingStartLikeRuntime({
+          stackName,
+          envPath,
+          baseDir,
+          expectedUiDir,
+          scriptPath,
+          args,
+          runtimeState,
+        });
+        const wasRunning = existingRuntimeStatus.wasRunning;
+        // True restart = there was an active runner for this stack. If the stack is not running,
+        // `--restart` should behave like a normal start (allocate new ephemeral ports if needed).
+        const isTrueRestart = shouldReuseRuntimePortsOnRestart({ wantsRestart, runtimeState, wasRunning });
 
-      // Restart semantics (stack mode):
-      // - Stop stack-owned processes first (runner, daemon, Expo, etc.)
-      // - Never kill arbitrary port listeners
-      // - Preserve previous runtime ports in memory so a true restart can reuse them
-      if (wantsRestart && !wantsJson) {
-        const baseDir = resolveStackEnvPath(stackName).baseDir;
-        try {
-          await stopStackWithEnv({
-            rootDir,
-            stackName,
-            baseDir,
-            env,
-            json: false,
-            noDocker: false,
-            aggressive: false,
-            sweepOwned: true,
-          });
-        } catch {
-          // ignore (fail-closed below on port checks)
+        // Restart semantics (stack mode):
+        // - Stop stack-owned processes first (runner, daemon, Expo, etc.)
+        // - Never kill arbitrary port listeners
+        // - Preserve previous runtime ports in memory so a true restart can reuse them
+        if (wantsRestart && !wantsJson) {
+          try {
+            await stopStackWithEnv({
+              rootDir,
+              stackName,
+              baseDir,
+              env,
+              json: false,
+              noDocker: false,
+              aggressive: false,
+              sweepOwned: true,
+              preserveDaemon: true,
+            });
+            preservedDaemonForRestart = true;
+          } catch {
+            // ignore (fail-closed below on port checks)
+          }
         }
-        await deleteStackRuntimeStateFile(runtimeStatePath).catch(() => {});
-      }
-      if (existingRuntimeStatus.canShortCircuit) {
-        if (!wantsRestart) {
+        if (existingRuntimeStatus.canShortCircuit) {
+          if (!wantsRestart) {
           const serverPart = Number.isFinite(existingPort) && existingPort > 0 ? ` server=${existingPort}` : '';
           const uiPart =
             scriptPath === 'dev.mjs' && Number.isFinite(existingRuntimeStatus.uiPort) && existingRuntimeStatus.uiPort > 0
@@ -230,10 +458,10 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
           return;
         }
         // Restart: already handled above (stopStackWithEnv is ownership-gated).
-      }
+        }
 
-      // Ephemeral ports: allocate at start time, store only in runtime state (not in stack env).
-      if (!pinnedServerPort) {
+        // Ephemeral ports: allocate at start time, store only in runtime state (not in stack env).
+        if (!pinnedServerPort) {
         const reserved = await collectReservedStackPorts({ excludeStackName: stackName });
 
         // Also avoid ports held by other *running* ephemeral stacks.
@@ -335,6 +563,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
                     noDocker: false,
                     aggressive: false,
                     sweepOwned: true,
+                    preserveDaemon: true,
                   });
                 } catch {
                   // ignore
@@ -555,7 +784,9 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
             } catch {
               // ignore
             }
-            await deleteStackRuntimeStateFile(runtimeStatePath).catch(() => {});
+            if (!preservedDaemonForRestart) {
+              await deleteStackRuntimeStateFile(runtimeStatePath).catch(() => {});
+            }
             throw e;
           }
 
@@ -604,17 +835,17 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
             }
           }
         }
-        return;
-      }
+          return;
+        }
 
-      // Pinned port stack: run normally under the pinned env.
-      if (background && wantsJson) {
+        // Pinned port stack: run normally under the pinned env.
+        if (background && wantsJson) {
         // Background mode is meaningless for a dry-run. Run the script normally so callers
         // can still use `--background --json` as a config probe.
         await run(process.execPath, [join(rootDir, 'scripts', scriptPath), ...args], { cwd: rootDir, env });
         return;
-      }
-      if (background) {
+        }
+        if (background) {
         const pinnedPort = coercePort(env.HAPPIER_STACK_SERVER_PORT);
         if (!pinnedPort) {
           throw new Error(`[stack] ${stackName}: cannot start in background (missing HAPPIER_STACK_SERVER_PORT)`);
@@ -713,7 +944,9 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
           } catch {
             // ignore
           }
-          await deleteStackRuntimeStateFile(runtimeStatePath).catch(() => {});
+          if (!preservedDaemonForRestart) {
+            await deleteStackRuntimeStateFile(runtimeStatePath).catch(() => {});
+          }
           throw e;
         }
 
@@ -726,8 +959,8 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
           // ignore
         }
         return;
-      }
-      if (wantsRestart && !wantsJson) {
+        }
+        if (wantsRestart && !wantsJson) {
         const pinnedPort = coercePort(env.HAPPIER_STACK_SERVER_PORT);
         if (pinnedPort && !(await isTcpPortFree(pinnedPort))) {
           // Last resort: kill listener only if it is stack-owned.
@@ -745,8 +978,21 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
             );
           }
         }
+        }
+        await run(process.execPath, [join(rootDir, 'scripts', scriptPath), ...args], { cwd: rootDir, env });
+      } catch (error) {
+        if (preservedDaemonForRestart) {
+          await cleanupFailedRestartAttempt({
+            rootDir,
+            stackName,
+            baseDir,
+            env,
+            runtimeStatePath,
+            wantsJson,
+          });
+        }
+        throw error;
       }
-      await run(process.execPath, [join(rootDir, 'scripts', scriptPath), ...args], { cwd: rootDir, env });
     },
   });
 }

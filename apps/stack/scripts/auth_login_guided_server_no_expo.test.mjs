@@ -1,20 +1,42 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
+import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, writeFile, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { authScriptPath, runNodeCapture } from './testkit/auth_testkit.mjs';
 import { ensureMinimalMonorepoLayout } from './testkit/core/minimal_monorepo_layout.mjs';
 import { writeRuntimeSnapshotLayout } from './testkit/core/runtime_snapshot_layout.mjs';
 import { writeStubHappierCliFiles } from './testkit/core/stub_happier_cli_files.mjs';
 import { getExpoStatePaths, writePidState } from './utils/expo/expo.mjs';
+import { resolveStackCredentialPaths } from './utils/auth/credentials_paths.mjs';
 import { resolveStackWebappTargetForAuth } from './utils/auth/stack_guided_login.mjs';
 
-async function createHealthyServer({ rootBody = 'ok', rootContentType = 'text/plain' } = {}) {
+async function createHealthyServer({
+  rootBody = 'ok',
+  rootContentType = 'text/plain',
+  onHealthRequest = null,
+  onProfileRequest = null,
+} = {}) {
   const server = createServer((req, res) => {
+    if (req.url === '/v1/account/profile') {
+      if (typeof onProfileRequest === 'function') {
+        onProfileRequest({ req, res, server });
+        return;
+      }
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ account: { id: 'acct_test' } }));
+      return;
+    }
     if (req.url === '/health') {
+      if (typeof onHealthRequest === 'function') {
+        onHealthRequest({ req, res, server });
+        return;
+      }
       res.statusCode = 200;
       res.setHeader('content-type', 'application/json');
       res.end(JSON.stringify({ status: 'ok', service: 'happier-server' }));
@@ -48,6 +70,86 @@ async function reserveUnusedPort() {
   return port;
 }
 
+async function spawnMetroLikeExpoWebServer({ projectDir, rootHtml = '<!doctype html><html><body>expo ui</body></html>\n' } = {}) {
+  const script = `
+    const http = require('node:http');
+    const projectDir = process.argv[2] || '';
+    const rootHtml = process.argv[3] || '<!doctype html><html><body>expo ui</body></html>\\n';
+    const server = http.createServer((req, res) => {
+      if (req.url === '/status') {
+        res.writeHead(200, { 'content-type': 'text/plain' });
+        res.end('packager-status:running');
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end(rootHtml);
+    });
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      console.log(JSON.stringify({ pid: process.pid, port: address && typeof address === 'object' ? address.port : 0, projectDir }));
+    });
+    setInterval(() => {}, 1000);
+  `.trim();
+
+  const child = spawn(process.execPath, ['-e', script, String(projectDir ?? ''), rootHtml], {
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  const line = await new Promise((resolve, reject) => {
+    let buffer = '';
+    child.stdout.on('data', (chunk) => {
+      buffer += chunk.toString();
+      const newlineIndex = buffer.indexOf('\n');
+      if (newlineIndex >= 0) {
+        resolve(buffer.slice(0, newlineIndex));
+      }
+    });
+    child.on('error', reject);
+    child.on('exit', (code) => reject(new Error(`[test] metro-like Expo child exited unexpectedly (code=${code ?? 'unknown'})`)));
+  });
+  const parsed = JSON.parse(String(line ?? '').trim());
+  const port = Number(parsed?.port);
+  assert.ok(Number.isFinite(port) && port > 0, `expected metro-like Expo child port, got ${String(parsed?.port)}`);
+
+  return {
+    pid: Number(parsed?.pid),
+    port,
+    async kill() {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        // ignore
+      }
+    },
+  };
+}
+
+function buildSuccessfulAuthBinScript() {
+  return [
+    `import { mkdirSync, writeFileSync } from 'node:fs';`,
+    `import { dirname } from 'node:path';`,
+    `const credentialPath = process.env.HAPPIER_TEST_AUTH_SUCCESS_CREDENTIAL_PATH || '';`,
+    `if (credentialPath) {`,
+    `  mkdirSync(dirname(credentialPath), { recursive: true });`,
+    `  writeFileSync(credentialPath, \`\${process.env.HAPPIER_TEST_AUTH_SUCCESS_TOKEN || 'test-token'}\\n\`, 'utf-8');`,
+    `}`,
+    `process.exit(0);`,
+    '',
+  ].join('\n');
+}
+
+function wrapSuccessfulAuthRuntimeCliScript(runtimeCliScript) {
+  const raw = String(runtimeCliScript ?? '');
+  const normalizedBody = raw.startsWith('#!') ? raw.replace(/^#![^\n]*\n?/, '') : raw;
+  return [
+    '#!/bin/sh',
+    'if [ -n "${HAPPIER_TEST_AUTH_SUCCESS_CREDENTIAL_PATH-}" ]; then',
+    '  mkdir -p "$(dirname "$HAPPIER_TEST_AUTH_SUCCESS_CREDENTIAL_PATH")"',
+    '  printf "%s\\n" "${HAPPIER_TEST_AUTH_SUCCESS_TOKEN-test-token}" > "$HAPPIER_TEST_AUTH_SUCCESS_CREDENTIAL_PATH"',
+    'fi',
+    normalizedBody,
+  ].join('\n');
+}
+
 async function buildGuidedNoExpoFixture({
   publicServerUrl = '',
   runtimeSnapshot = false,
@@ -58,21 +160,39 @@ async function buildGuidedNoExpoFixture({
   rootContentType = 'text/plain',
   includeSourceCli = true,
   runtimeCliScript = '#!/bin/sh\nexit 0\n',
+  successfulLoginWritesCredentials = true,
+  onHealthRequest = null,
+  onProfileRequest = null,
 } = {}) {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-auth-guided-no-expo-'));
   const storageDir = join(tmp, 'storage');
   const monoRoot = join(tmp, 'happier');
+  const cliHomeDir = join(storageDir, stackName, 'cli');
   await ensureMinimalMonorepoLayout(monoRoot);
+  const serverFixture = startServer
+    ? await createHealthyServer({ rootBody, rootContentType, onHealthRequest, onProfileRequest })
+    : null;
+  const server = serverFixture?.server ?? null;
+  const port = serverFixture?.port ?? (await reserveUnusedPort());
+  const serverUrl = `http://127.0.0.1:${port}`;
+  const authEnv = {
+    ...process.env,
+    HAPPIER_STACK_STACK: stackName,
+    HAPPIER_ACTIVE_SERVER_ID: `stack_${stackName}__id_default`,
+  };
+  const credentialPaths = resolveStackCredentialPaths({
+    cliHomeDir,
+    serverUrl,
+    env: authEnv,
+  });
   if (includeSourceCli) {
+    const sourceCliScript = buildSuccessfulAuthBinScript();
     await writeStubHappierCliFiles(monoRoot, {
-      distIndexScript: 'export {};\n',
-      binHappierScript: 'process.exit(0);\n',
+      distIndexScript: sourceCliScript,
+      binHappierScript: sourceCliScript,
     });
   }
 
-  const serverFixture = startServer ? await createHealthyServer({ rootBody, rootContentType }) : null;
-  const server = serverFixture?.server ?? null;
-  const port = serverFixture?.port ?? (await reserveUnusedPort());
   await mkdir(join(storageDir, stackName), { recursive: true });
   const envPath = join(storageDir, stackName, 'env');
   await writeFile(
@@ -113,7 +233,7 @@ async function buildGuidedNoExpoFixture({
         artifactFingerprint: 'srv-auth',
       },
       daemon: {
-        content: runtimeCliScript,
+        content: wrapSuccessfulAuthRuntimeCliScript(runtimeCliScript),
         artifactFingerprint: 'cli-auth',
         nodeEntrypoint: 'cli/package-dist/index.mjs',
         nodeContent: 'export {};\n',
@@ -123,6 +243,8 @@ async function buildGuidedNoExpoFixture({
 
   return {
     tmp,
+    storageDir,
+    stackName,
     server,
     port,
     env: {
@@ -135,6 +257,12 @@ async function buildGuidedNoExpoFixture({
       HAPPIER_STACK_AUTH_UI_READY_TIMEOUT_MS: '1',
       HAPPIER_STACK_AUTH_EXPO_SOFT_TIMEOUT_MS: '1',
       HAPPIER_NO_BROWSER_OPEN: '1',
+      ...(successfulLoginWritesCredentials
+        ? {
+            HAPPIER_TEST_AUTH_SUCCESS_CREDENTIAL_PATH: credentialPaths.serverScopedPath,
+            HAPPIER_TEST_AUTH_SUCCESS_TOKEN: 'test-token',
+          }
+        : {}),
     },
     async cleanup() {
       if (server) {
@@ -143,6 +271,149 @@ async function buildGuidedNoExpoFixture({
       await rm(tmp, { recursive: true, force: true }).catch(() => {});
     },
   };
+}
+
+function applyProcessEnv(patch) {
+  const previous = {};
+  for (const [key, value] of Object.entries(patch ?? {})) {
+    previous[key] = Object.prototype.hasOwnProperty.call(process.env, key) ? process.env[key] : undefined;
+    if (value === undefined || value === null) {
+      delete process.env[key];
+    } else {
+      process.env[key] = String(value);
+    }
+  }
+  return () => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  };
+}
+
+async function writeOrchestratedAuthStubLoader({ dir, markerPath }) {
+  const loaderPath = join(dir, 'orchestrated-auth-loader.mjs');
+  const registerPath = join(dir, 'register-orchestrated-auth-loader.mjs');
+  const stubUrl = `data:text/javascript,${encodeURIComponent(`
+import { appendFileSync } from 'node:fs';
+
+export async function runOrchestratedGuidedAuthFlow() {
+  throw new Error('runOrchestratedGuidedAuthFlow should not be called in this test');
+}
+
+export async function startDaemonPostAuth() {
+  appendFileSync(${JSON.stringify(markerPath)}, 'startDaemonPostAuth\\n', 'utf-8');
+  return { ok: true };
+}
+`)}`;
+
+  await writeFile(
+    loaderPath,
+    [
+      `const targetSpecifier = './utils/auth/orchestrated_stack_auth_flow.mjs';`,
+      `const stubUrl = ${JSON.stringify(stubUrl)};`,
+      '',
+      'export async function resolve(specifier, context, defaultResolve) {',
+      '  if (specifier === targetSpecifier) {',
+      '    return { url: stubUrl, shortCircuit: true };',
+      '  }',
+      '  return defaultResolve(specifier, context, defaultResolve);',
+      '}',
+      '',
+    ].join('\n'),
+    'utf-8',
+  );
+  await writeFile(
+    registerPath,
+    [
+      `import { register } from 'node:module';`,
+      `register(${JSON.stringify(pathToFileURL(loaderPath).href)}, import.meta.url);`,
+      '',
+    ].join('\n'),
+    'utf-8',
+  );
+  return registerPath;
+}
+
+async function writeProcRunStubLoader({ dir, markerPath }) {
+  const loaderPath = join(dir, 'proc-run-loader.mjs');
+  const registerPath = join(dir, 'register-proc-run-loader.mjs');
+  const stubUrl = `data:text/javascript,${encodeURIComponent(`
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+
+export async function run(command, args = [], options = {}) {
+  appendFileSync(
+    ${JSON.stringify(markerPath)},
+    JSON.stringify({
+      command,
+      args: Array.isArray(args) ? args.map((value) => String(value)) : [],
+      env: {
+        HAPPIER_STACK_AUTH_FLOW: String(options?.env?.HAPPIER_STACK_AUTH_FLOW ?? ''),
+        HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH: String(options?.env?.HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH ?? ''),
+        HAPPIER_STACK_SKIP_REFRESH_DEPS: String(options?.env?.HAPPIER_STACK_SKIP_REFRESH_DEPS ?? ''),
+      },
+    }) + '\\n',
+    'utf-8',
+  );
+
+  const env = options?.env && typeof options.env === 'object' ? options.env : process.env;
+  const argList = Array.isArray(args) ? args.map((value) => String(value)) : [];
+  if (argList.includes('auth') && argList.includes('login')) {
+    const credentialPath = String(env.HAPPIER_TEST_AUTH_SUCCESS_CREDENTIAL_PATH ?? '').trim();
+    if (credentialPath) {
+      mkdirSync(dirname(credentialPath), { recursive: true });
+      writeFileSync(credentialPath, String(env.HAPPIER_TEST_AUTH_SUCCESS_TOKEN ?? 'test-token') + '\\n', 'utf-8');
+    }
+  }
+  return '';
+}
+
+export function spawnProc() {
+  return {
+    pid: 999999,
+    exitCode: 0,
+    stdout: { on() {} },
+    stderr: { on() {} },
+    on() {},
+    kill() {},
+  };
+}
+
+export async function runCapture() {
+  return '';
+}
+`)}`;
+
+  await writeFile(
+    loaderPath,
+    [
+      `const targetSpecifier = './utils/proc/proc.mjs';`,
+      `const stubUrl = ${JSON.stringify(stubUrl)};`,
+      '',
+      'export async function resolve(specifier, context, defaultResolve) {',
+      '  if (specifier === targetSpecifier) {',
+      '    return { url: stubUrl, shortCircuit: true };',
+      '  }',
+      '  return defaultResolve(specifier, context, defaultResolve);',
+      '}',
+      '',
+    ].join('\n'),
+    'utf-8',
+  );
+  await writeFile(
+    registerPath,
+    [
+      `import { register } from 'node:module';`,
+      `register(${JSON.stringify(pathToFileURL(loaderPath).href)}, import.meta.url);`,
+      '',
+    ].join('\n'),
+    'utf-8',
+  );
+  return registerPath;
 }
 
 test('hstack auth login --webapp=expo fails closed when Expo web UI is not ready (does not fall back to server URL)', async (t) => {
@@ -169,10 +440,10 @@ test('hstack auth login --webapp=expo fails closed when Expo web UI is not ready
     assert.match(res.stderr, /attempted to start stack UI in background/i, `stderr:\n${res.stderr}`);
     assert.match(
       res.stderr,
-      /guid(ed)? login web UI is still not ready|startup failed/i,
+      /guid(ed)? login web UI is still not ready|stack-served web UI did not become ready|startup failed/i,
       `stderr:\n${res.stderr}`
     );
-    assert.match(res.stderr, /Stack runtime state unavailable:/i, `stderr:\n${res.stderr}`);
+    assert.match(res.stderr, /Stack runtime path:|Stack runtime state unavailable:/i, `stderr:\n${res.stderr}`);
     assert.doesNotMatch(res.stdout, new RegExp(`URL: http://localhost:${fixture.port}\\b`), `stdout:\n${res.stdout}`);
   } finally {
     if (fixture) await fixture.cleanup();
@@ -211,6 +482,108 @@ test('hstack auth login (auto) prefers the runtime-backed stack UI over Expo whe
     assert.doesNotMatch(res.stderr, /Expo web UI/i, `stderr:\n${res.stderr}`);
     assert.doesNotMatch(res.stderr, /attempted to start stack UI in background/i, `stderr:\n${res.stderr}`);
   } finally {
+    if (fixture) await fixture.cleanup();
+  }
+});
+
+test('resolveStackWebappTargetForAuth skips Expo probing when a runtime snapshot is active and no Expo UI is running', async (t) => {
+  let fixture;
+  try {
+    try {
+      fixture = await buildGuidedNoExpoFixture({
+        stackName: 'runtime-webapp-target-no-expo',
+        runtimeSnapshot: true,
+      });
+    } catch (e) {
+      if (e && typeof e === 'object' && 'code' in e && e.code === 'EPERM') {
+        t.skip('sandbox disallows binding localhost test server (EPERM)');
+        return;
+      }
+      throw e;
+    }
+    const restoreEnv = applyProcessEnv({
+      HAPPIER_STACK_STORAGE_DIR: fixture.storageDir,
+      HAPPIER_STACK_STACK: fixture.stackName,
+      HAPPIER_STACK_ENV_FILE: join(fixture.storageDir, fixture.stackName, 'env'),
+    });
+    t.after(restoreEnv);
+
+    const startedAt = Date.now();
+    const resolved = await resolveStackWebappTargetForAuth({
+      rootDir: join(fixture.tmp, 'happier'),
+      stackName: fixture.stackName,
+      env: {
+        ...fixture.env,
+        HAPPIER_STACK_RUNTIME_MODE: 'prefer',
+        HAPPIER_STACK_AUTH_UI_READY_TIMEOUT_MS: '2000',
+      },
+    });
+    const elapsedMs = Date.now() - startedAt;
+
+    assert.equal(resolved.kind, 'server');
+    assert.match(resolved.webappUrl, new RegExp(`:${fixture.port}$`));
+    assert.ok(elapsedMs < 1000, `expected runtime-backed auth target to resolve without waiting for Expo timeout (elapsed=${elapsedMs}ms)`);
+  } finally {
+    if (fixture) await fixture.cleanup();
+  }
+});
+
+test('resolveStackWebappTargetForAuth ignores stray Expo state when a runtime snapshot is active', async (t) => {
+  let fixture;
+  let strayExpo;
+  try {
+    try {
+      fixture = await buildGuidedNoExpoFixture({
+        stackName: 'runtime-webapp-target-stray-expo',
+        runtimeSnapshot: true,
+      });
+      strayExpo = await spawnMetroLikeExpoWebServer({
+        projectDir: join(fixture.tmp, 'stray-ui'),
+      });
+    } catch (e) {
+      if (e && typeof e === 'object' && 'code' in e && e.code === 'EPERM') {
+        t.skip('sandbox disallows binding localhost test server (EPERM)');
+        return;
+      }
+      throw e;
+    }
+    const restoreEnv = applyProcessEnv({
+      HAPPIER_STACK_STORAGE_DIR: fixture.storageDir,
+      HAPPIER_STACK_STACK: fixture.stackName,
+      HAPPIER_STACK_ENV_FILE: join(fixture.storageDir, fixture.stackName, 'env'),
+    });
+    t.after(restoreEnv);
+
+    const expoPaths = getExpoStatePaths({
+      baseDir: join(fixture.storageDir, fixture.stackName),
+      kind: 'expo-dev',
+      projectDir: join(fixture.tmp, 'stray-ui'),
+      stateFileName: 'expo.state.json',
+    });
+    await writePidState(expoPaths.statePath, {
+      pid: strayExpo.pid,
+      port: strayExpo.port,
+      projectDir: join(fixture.tmp, 'stray-ui'),
+      uiDir: join(fixture.tmp, 'stray-ui'),
+      webEnabled: true,
+      startedAt: new Date().toISOString(),
+    });
+
+    const resolved = await resolveStackWebappTargetForAuth({
+      rootDir: join(fixture.tmp, 'happier'),
+      stackName: fixture.stackName,
+      env: {
+        ...fixture.env,
+        HAPPIER_STACK_RUNTIME_MODE: 'prefer',
+        HAPPIER_STACK_AUTH_UI_READY_TIMEOUT_MS: '2000',
+      },
+    });
+
+    assert.equal(resolved.kind, 'server');
+    assert.match(resolved.webappUrl, new RegExp(`:${fixture.port}$`));
+    assert.doesNotMatch(resolved.webappUrl, new RegExp(`:${strayExpo.port}$`));
+  } finally {
+    if (strayExpo) await strayExpo.kill();
     if (fixture) await fixture.cleanup();
   }
 });
@@ -268,7 +641,7 @@ test('hstack auth login uses the active runtime snapshot cli for the actual logi
   }
 });
 
-test('resolveStackWebappTargetForAuth falls back to the stack server when guided Expo resolution fails', async (t) => {
+test('hstack auth login --force fails closed when guided login exits without usable credentials and skips post-auth daemon start', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
 
@@ -276,7 +649,13 @@ test('resolveStackWebappTargetForAuth falls back to the stack server when guided
   try {
     try {
       fixture = await buildGuidedNoExpoFixture({
-        stackName: 'dev-built',
+        stackName: 'dev-cancelled-auth',
+        runtimeSnapshot: true,
+        includeSourceCli: false,
+        rootBody: '<!doctype html><html><body>runtime ui</body></html>\n<!-- Welcome to Happier Server! -->\n',
+        rootContentType: 'text/html',
+        runtimeCliScript: '#!/bin/sh\nexit 0\n',
+        successfulLoginWritesCredentials: false,
       });
     } catch (e) {
       if (e && typeof e === 'object' && 'code' in e && e.code === 'EPERM') {
@@ -286,52 +665,80 @@ test('resolveStackWebappTargetForAuth falls back to the stack server when guided
       throw e;
     }
 
-    const resolved = await resolveStackWebappTargetForAuth({
-      rootDir,
-      stackName: 'dev-built',
-      env: {
-        ...fixture.env,
-        HAPPIER_STACK_RUNTIME_MODE: 'source',
-        HAPPIER_STACK_AUTH_FLOW: '1',
-        HAPPIER_STACK_AUTH_UI_READY_TIMEOUT_MS: '1',
-      },
+    const markerPath = join(fixture.tmp, 'post-auth-daemon.marker');
+    const registerPath = await writeOrchestratedAuthStubLoader({
+      dir: fixture.tmp,
+      markerPath,
     });
+    const cliHomeDir = join(fixture.storageDir, fixture.stackName, 'cli');
+    const serverUrl = `http://127.0.0.1:${fixture.port}`;
+    const env = {
+      ...fixture.env,
+      HAPPIER_STACK_RUNTIME_MODE: 'prefer',
+      HAPPIER_ACTIVE_SERVER_ID: `stack_${fixture.stackName}__id_default`,
+    };
+    const credentialPaths = resolveStackCredentialPaths({
+      cliHomeDir,
+      serverUrl,
+      env,
+    });
+    await mkdir(dirname(credentialPaths.serverScopedPath), { recursive: true });
+    await writeFile(credentialPaths.serverScopedPath, 'stale-token\n', 'utf-8');
 
-    assert.equal(resolved.kind, 'server');
-    const resolvedUrl = new URL(resolved.webappUrl);
-    assert.equal(resolvedUrl.protocol, 'http:');
-    assert.equal(resolvedUrl.hostname, 'happier-dev-built.localhost');
-    assert.ok(Number(resolvedUrl.port) > 0, `expected a concrete server port, got ${resolved.webappUrl}`);
+    const res = await runNodeCapture(
+      [
+        '--import',
+        registerPath,
+        authScriptPath(rootDir),
+        'login',
+        '--force',
+        '--method',
+        'web',
+        '--webapp=stack',
+        '--no-open',
+      ],
+      {
+        cwd: rootDir,
+        env,
+        input: '\n\n',
+      },
+    );
+
+    assert.notStrictEqual(
+      res.code,
+      0,
+      `expected non-zero exit when login leaves no usable credentials\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`,
+    );
+    assert.match(
+      res.stderr,
+      /did not produce usable credentials|usable credentials were not created/i,
+      `stderr:\n${res.stderr}`,
+    );
+    assert.equal(
+      existsSync(markerPath),
+      false,
+      `expected post-auth daemon start to be skipped when guided login does not leave credentials\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`,
+    );
   } finally {
     if (fixture) await fixture.cleanup();
   }
 });
 
-test('hstack auth login --print --json auto prefers the live Expo web UI when runtime metadata lacks expo.webPort', async (t) => {
+test('hstack auth login --force restarts a running runtime-backed stack in auth-safe no-daemon mode before login', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
 
   let fixture;
-  const expoServer = createServer((req, res) => {
-    if (req.url === '/status') {
-      res.statusCode = 200;
-      res.setHeader('content-type', 'text/plain');
-      res.end('packager-status:running');
-      return;
-    }
-    res.statusCode = 200;
-    res.setHeader('content-type', 'text/html');
-    res.end('<!doctype html><html><body>expo ui</body></html>\n');
-  });
-
   try {
     try {
       fixture = await buildGuidedNoExpoFixture({
-        stackName: 'dev-built',
+        stackName: 'force-auth-runtime-restart',
         runtimeSnapshot: true,
-        publicServerUrl: 'https://example.invalid',
+        runtimeOwnerAlive: true,
+        startServer: true,
         rootBody: '<!doctype html><html><body>runtime ui</body></html>\n<!-- Welcome to Happier Server! -->\n',
         rootContentType: 'text/html',
+        successfulLoginWritesCredentials: false,
       });
     } catch (e) {
       if (e && typeof e === 'object' && 'code' in e && e.code === 'EPERM') {
@@ -341,50 +748,139 @@ test('hstack auth login --print --json auto prefers the live Expo web UI when ru
       throw e;
     }
 
-    await new Promise((resolvePromise, rejectPromise) => {
-      expoServer.once('error', rejectPromise);
-      expoServer.listen(0, '127.0.0.1', resolvePromise);
-    });
-    const expoPort = expoServer.address()?.port;
-    assert.ok(Number.isFinite(expoPort) && expoPort > 0, `expected listening Expo port, got ${String(expoPort)}`);
-
-    const expoProjectDir = join(fixture.tmp, 'happier', 'apps', 'ui');
-    const expoStatePaths = getExpoStatePaths({
-      baseDir: join(fixture.tmp, 'storage', 'dev-built'),
-      kind: 'expo-dev',
-      projectDir: expoProjectDir,
-      stateFileName: 'expo.state.json',
-    });
-    await writePidState(expoStatePaths.statePath, {
-      pid: process.pid,
-      port: expoPort,
-      uiDir: expoProjectDir,
-      projectDir: expoProjectDir,
-      startedAt: new Date().toISOString(),
-      webEnabled: true,
-      devClientEnabled: false,
-      host: 'lan',
-      apiServerUrl: 'http://127.0.0.1:3009',
+    const markerPath = join(fixture.tmp, 'proc-run-calls.jsonl');
+    const registerPath = await writeProcRunStubLoader({
+      dir: fixture.tmp,
+      markerPath,
     });
 
-    const res = await runNodeCapture([authScriptPath(rootDir), 'login', '--print', '--no-open', '--json', '--method', 'web'], {
-      cwd: rootDir,
-      env: {
-        ...fixture.env,
-        HAPPIER_STACK_RUNTIME_MODE: 'prefer',
+    const res = await runNodeCapture(
+      [
+        '--import',
+        registerPath,
+        authScriptPath(rootDir),
+        'login',
+        '--force',
+        '--method',
+        'web',
+        '--webapp=stack',
+        '--no-open',
+      ],
+      {
+        cwd: rootDir,
+        env: {
+          ...fixture.env,
+          HAPPIER_STACK_RUNTIME_MODE: 'prefer',
+        },
+        input: '\n\n',
       },
-    });
-    assert.equal(res.code, 0, `expected exit 0 for auto auth print with live Expo\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
-    const parsed = JSON.parse(res.stdout.trim());
-    assert.equal(parsed.webappUrlSource, 'expo', `stdout:\n${res.stdout}`);
-    assert.match(
-      parsed.webappUrl,
-      new RegExp(`^http://happier-dev-built\\.localhost:${expoPort}$`),
-      `stdout:\n${res.stdout}`
     );
-    assert.match(parsed.cmd, new RegExp(`HAPPIER_WEBAPP_URL="http://happier-dev-built\\.localhost:${expoPort}"`));
+
+    assert.equal(
+      existsSync(markerPath),
+      true,
+      `expected proc run stub to capture invoked commands\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`,
+    );
+    const calls = (await readFile(markerPath, 'utf-8'))
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+
+    const stackStopCall = calls.find((entry) => Array.isArray(entry.args) && entry.args.includes('stop') && entry.args.includes('force-auth-runtime-restart'));
+    assert.ok(stackStopCall, `expected force login to stop the running stack before clearing auth\n${JSON.stringify(calls, null, 2)}`);
+
+    const stackStartCall = calls.find((entry) => Array.isArray(entry.args) && entry.args.includes('start') && entry.args.includes('force-auth-runtime-restart'));
+    assert.ok(stackStartCall, `expected force login to restart the stack in auth-safe mode\n${JSON.stringify(calls, null, 2)}`);
+    assert.ok(stackStartCall.args.includes('--background'), `expected auth-safe restart to run in background\n${JSON.stringify(stackStartCall, null, 2)}`);
+    assert.ok(stackStartCall.args.includes('--no-daemon'), `expected auth-safe restart to skip daemon start\n${JSON.stringify(stackStartCall, null, 2)}`);
+    assert.ok(stackStartCall.args.includes('--runtime'), `expected auth-safe restart to preserve runtime snapshot mode\n${JSON.stringify(stackStartCall, null, 2)}`);
+    assert.equal(
+      stackStartCall.env?.HAPPIER_STACK_SKIP_REFRESH_DEPS,
+      '1',
+      `expected auth-safe restart to skip dependency refresh\n${JSON.stringify(stackStartCall, null, 2)}`,
+    );
+
+    const coreLoginCall = calls.find((entry) => Array.isArray(entry.args) && entry.args.includes('auth') && entry.args.includes('login'));
+    assert.ok(coreLoginCall, `expected core auth login invocation\n${JSON.stringify(calls, null, 2)}`);
   } finally {
-    await new Promise((resolvePromise) => expoServer.close(resolvePromise)).catch(() => {});
+    if (fixture) await fixture.cleanup();
+  }
+});
+
+test('hstack auth login --force fails closed when credential validation cannot reach the stack server and skips post-auth daemon start', async (t) => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+
+  let fixture;
+  try {
+    try {
+      fixture = await buildGuidedNoExpoFixture({
+        stackName: 'dev-auth-validation-offline',
+        runtimeSnapshot: true,
+        includeSourceCli: false,
+        rootBody: '<!doctype html><html><body>runtime ui</body></html>\n<!-- Welcome to Happier Server! -->\n',
+        rootContentType: 'text/html',
+        runtimeCliScript: '#!/bin/sh\nexit 0\n',
+        successfulLoginWritesCredentials: true,
+        onProfileRequest: ({ req }) => {
+          req.socket.destroy();
+        },
+      });
+    } catch (e) {
+      if (e && typeof e === 'object' && 'code' in e && e.code === 'EPERM') {
+        t.skip('sandbox disallows binding localhost test server (EPERM)');
+        return;
+      }
+      throw e;
+    }
+
+    const markerPath = join(fixture.tmp, 'post-auth-daemon-validation.marker');
+    const registerPath = await writeOrchestratedAuthStubLoader({
+      dir: fixture.tmp,
+      markerPath,
+    });
+
+    const res = await runNodeCapture(
+      [
+        '--import',
+        registerPath,
+        authScriptPath(rootDir),
+        'login',
+        '--force',
+        '--method',
+        'web',
+        '--webapp=stack',
+        '--no-open',
+      ],
+      {
+        cwd: rootDir,
+        env: {
+          ...fixture.env,
+          HAPPIER_STACK_RUNTIME_MODE: 'prefer',
+          HAPPIER_STACK_AUTH_CREDENTIAL_VALIDATION_ATTEMPTS: '2',
+          HAPPIER_STACK_AUTH_CREDENTIAL_VALIDATION_RETRY_DELAY_MS: '1',
+        },
+        input: '\n\n',
+      },
+    );
+
+    assert.notStrictEqual(
+      res.code,
+      0,
+      `expected non-zero exit when login cannot validate credentials against the stack server\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`,
+    );
+    assert.match(
+      res.stderr,
+      /resulting credentials are not usable|request-error/i,
+      `stderr:\n${res.stderr}`,
+    );
+    assert.equal(
+      existsSync(markerPath),
+      false,
+      `expected post-auth daemon start to be skipped when credential validation cannot reach the stack server\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`,
+    );
+  } finally {
     if (fixture) await fixture.cleanup();
   }
 });
@@ -439,7 +935,12 @@ test('hstack auth login falls back to mobile when a runtime-backed stack stays u
         stackName: 'dev-built',
         runtimeSnapshot: true,
         runtimeOwnerAlive: true,
-        startServer: false,
+        startServer: true,
+        onHealthRequest: ({ res }) => {
+          res.statusCode = 503;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ status: 'starting' }));
+        },
         runtimeCliScript:
           '#!/bin/sh\n' +
           'set -eu\n' +
@@ -524,7 +1025,7 @@ test('hstack auth login suggests stack start for non-Expo guided login when the 
   }
 });
 
-test('hstack auth login (auto) keeps the interactive Expo web UI path when the stack UI can become ready', async (t) => {
+test('hstack auth login (auto) falls back to the stack-served web UI in interactive mode when Expo is not ready', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
 
@@ -544,8 +1045,9 @@ test('hstack auth login (auto) keeps the interactive Expo web UI path when the s
       env: fixture.env,
       input: '\n\n',
     });
-    assert.equal(res.code, 0, `expected exit 0 once the interactive Expo UI path becomes ready\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
-    assert.doesNotMatch(res.stderr, /falling back to hosted|switching to mobile/i, `stderr:\n${res.stderr}`);
+    assert.equal(res.code, 0, `expected exit 0 when auto mode falls back to the stack-served web UI\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+    assert.doesNotMatch(res.stderr, /attempted to start stack UI in background/i, `stderr:\n${res.stderr}`);
+    assert.doesNotMatch(res.stderr, /Expo web UI/i, `stderr:\n${res.stderr}`);
   } finally {
     if (fixture) await fixture.cleanup();
   }
@@ -579,7 +1081,7 @@ test('hstack auth login (auto) does not attempt Expo in service mode', async (t)
   }
 });
 
-test('hstack auth login (auto) falls back to hosted web app when Expo is not ready and a public URL exists', async (t) => {
+test('hstack auth login (auto) keeps the stack-served web UI when Expo is not ready even if a public URL exists', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
 
@@ -599,9 +1101,9 @@ test('hstack auth login (auto) falls back to hosted web app when Expo is not rea
       env: fixture.env,
       input: '2\n',
     });
-    assert.equal(res.code, 0, `expected exit 0 when auto auth falls back to hosted web app\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
-    assert.match(res.stderr, /falling back to hosted/i, `stderr:\n${res.stderr}`);
-    assert.match(res.stdout, /Pick \[1-\d+\]/i, `expected interactive fallback prompt\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+    assert.equal(res.code, 0, `expected exit 0 when auto auth keeps the stack-served web UI\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+    assert.doesNotMatch(res.stderr, /falling back to hosted/i, `stderr:\n${res.stderr}`);
+    assert.doesNotMatch(res.stdout, /Pick \[1-\d+\]/i, `expected no interactive hosted fallback prompt\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
   } finally {
     if (fixture) await fixture.cleanup();
   }

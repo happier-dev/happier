@@ -140,6 +140,16 @@ test('hstack auth login --print --json webapp precedence variants', async (t) =>
         assert.notEqual(parsed.webappUrl, 'https://app.happier.dev');
       },
     },
+    {
+      name: 'auto mode in tty falls back to the server webapp when Expo is not running',
+      prefix: 'hstack-auth-webapp-auto-tty-server-',
+      stackEnvLines: BASE_ENV_LINES,
+      extraEnv: { HAPPIER_STACK_TEST_TTY: '1' },
+      assertParsed(parsed) {
+        assert.equal(parsed.webappUrl, 'http://localhost:4102');
+        assert.equal(parsed.webappUrlSource, 'server');
+      },
+    },
   ];
 
   for (const scenario of matrix) {

@@ -108,7 +108,7 @@ export function getRootDir(importMetaUrl) {
 export function getHappyStacksHomeDir(env = process.env) {
   const fromEnv = (env.HAPPIER_STACK_HOME_DIR ?? '').trim();
   if (fromEnv) {
-    return expandHome(fromEnv);
+    return expandHome(fromEnv, env);
   }
   return PRIMARY_HOME_DIR;
 }
@@ -116,9 +116,9 @@ export function getHappyStacksHomeDir(env = process.env) {
 export function getWorkspaceDir(cliRootDir = null, env = process.env) {
   const fromEnv = (env.HAPPIER_STACK_WORKSPACE_DIR ?? '').trim();
   if (fromEnv) {
-    return expandHome(fromEnv);
+    return expandHome(fromEnv, env);
   }
-  const homeDir = getHappyStacksHomeDir();
+  const homeDir = getHappyStacksHomeDir(env);
   return join(homeDir, 'workspace');
 }
 
@@ -159,7 +159,7 @@ function normalizePathForEnv(rootDir, raw, env = process.env) {
   if (!trimmed) {
     return '';
   }
-  const expanded = expandHome(trimmed);
+  const expanded = expandHome(trimmed, env);
   // If the path is relative, treat it as relative to the workspace root (default: repo root).
   const workspaceDir = getWorkspaceDir(rootDir, env);
   const abs = isAbsolute(expanded) || isWin32ShapedAbsolutePath(expanded);
@@ -244,9 +244,17 @@ export function getStackLabel(stackName = null, env = process.env) {
 export function getStacksStorageRoot(env = process.env) {
   const fromEnv = (env.HAPPIER_STACK_STORAGE_DIR ?? '').trim();
   if (fromEnv) {
-    return expandHome(fromEnv);
+    return expandHome(fromEnv, env);
   }
   return PRIMARY_STORAGE_ROOT;
+}
+
+export function resolveExplicitStackEnvFilePath(env = process.env) {
+  const explicit = (env.HAPPIER_STACK_ENV_FILE ?? '').toString().trim();
+  if (!explicit) {
+    return '';
+  }
+  return expandHome(explicit, env);
 }
 
 export function resolveStackBaseDir(stackName = null, env = process.env) {
@@ -258,6 +266,10 @@ export function resolveStackEnvPath(stackName = null, env = process.env) {
   const name = (stackName ?? '').toString().trim() || getStackName(env);
   const { baseDir } = resolveStackBaseDir(name, env);
   return { envPath: join(baseDir, 'env'), isLegacy: false, baseDir };
+}
+
+export function resolveActiveStackEnvFilePath(stackName = null, env = process.env) {
+  return resolveExplicitStackEnvFilePath(env) || resolveStackEnvPath(stackName, env).envPath;
 }
 
 export function getDefaultAutostartPaths(env = process.env) {

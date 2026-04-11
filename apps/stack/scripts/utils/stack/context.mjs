@@ -1,4 +1,4 @@
-import { getStackName, resolveStackEnvPath } from '../paths/paths.mjs';
+import { getStackName, resolveActiveStackEnvFilePath } from '../paths/paths.mjs';
 import { getStackRuntimeStatePath } from './runtime_state.mjs';
 
 export function resolveStackContext({ env = process.env, autostart = null } = {}) {
@@ -6,8 +6,7 @@ export function resolveStackContext({ env = process.env, autostart = null } = {}
   const stackName = explicitStack || (autostart?.stackName ?? '') || getStackName(env);
   const stackMode = Boolean(explicitStack);
 
-  const envPath =
-    (env.HAPPIER_STACK_ENV_FILE ?? '').toString().trim() || resolveStackEnvPath(stackName, env).envPath;
+  const envPath = resolveActiveStackEnvFilePath(stackName, env);
 
   const runtimeStatePath =
     (env.HAPPIER_STACK_RUNTIME_STATE_PATH ?? '').toString().trim() || getStackRuntimeStatePath(stackName);

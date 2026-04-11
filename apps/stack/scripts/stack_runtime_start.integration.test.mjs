@@ -15,6 +15,27 @@ function stackRootDirFromMeta(metaUrl) {
   return dirname(scriptsDir);
 }
 
+function isPidAlive(pid) {
+  if (!Number.isFinite(pid) || pid <= 1) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitFor(condition, { timeoutMs = 10_000, intervalMs = 100, label = 'condition' } = {}) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (await condition()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new Error(`Timed out waiting for ${label}`);
+}
+
 async function waitForStackDaemonRunning({ rootDir, fixture, env, timeoutMs = 10_000 }) {
   const startedAt = Date.now();
   let daemonStatus = null;
@@ -147,6 +168,50 @@ test('hstack stack start --runtime --restart reuses persisted direct-peer topolo
   }
 });
 
+test('hstack stack start --runtime --restart restarts the daemon in service mode when credentials are available', async (t) => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const fixture = await createStartableRuntimeSnapshotFixture(t, { stackName: 'runtime-daemon-restart' });
+
+  const baseEnv = {
+    ...process.env,
+    HAPPIER_STACK_STORAGE_DIR: fixture.storageDir,
+    HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
+    HAPPIER_STACK_STACK: fixture.stackName,
+    HAPPIER_STACK_ENV_FILE: join(fixture.stackDir, 'env'),
+    HAPPIER_STACK_SERVICE_MODE: '1',
+  };
+
+  const startArgs = [join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'start', fixture.stackName, '--background', '--runtime', '--no-browser'];
+  const restartArgs = [...startArgs, '--restart'];
+
+  const startRes = await runNode(startArgs, { cwd: rootDir, env: baseEnv });
+  assert.equal(startRes.code, 0, `stdout:\n${startRes.stdout}\nstderr:\n${startRes.stderr}`);
+
+  try {
+    await waitForHealth(fixture.baseUrl, { timeoutMs: 30_000 });
+    await waitForStackDaemonRunning({ rootDir, fixture, env: baseEnv });
+
+    const runtimeBefore = JSON.parse(await readFile(join(fixture.stackDir, 'stack.runtime.json'), 'utf8'));
+    const daemonPidBefore = Number(runtimeBefore?.processes?.daemonPid);
+    assert.ok(daemonPidBefore > 1, `expected daemon pid before restart, got ${String(runtimeBefore?.processes?.daemonPid)}`);
+
+    const restartRes = await runNode(restartArgs, { cwd: rootDir, env: baseEnv });
+    assert.equal(restartRes.code, 0, `stdout:\n${restartRes.stdout}\nstderr:\n${restartRes.stderr}`);
+    await waitForHealth(fixture.baseUrl, { timeoutMs: 30_000 });
+    await waitForStackDaemonRunning({ rootDir, fixture, env: baseEnv });
+
+    const runtimeAfter = JSON.parse(await readFile(join(fixture.stackDir, 'stack.runtime.json'), 'utf8'));
+    const daemonPidAfter = Number(runtimeAfter?.processes?.daemonPid);
+    assert.ok(daemonPidAfter > 1, `expected daemon pid after restart, got ${String(runtimeAfter?.processes?.daemonPid)}`);
+    assert.notEqual(daemonPidAfter, daemonPidBefore, 'expected --restart to restart the daemon when credentials are available');
+  } finally {
+    await runNode([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'stop', fixture.stackName, '--yes'], {
+      cwd: rootDir,
+      env: baseEnv,
+    });
+  }
+});
+
 test('hstack stack start --runtime --restart keeps a service-owned daemon alive across restart when credentials are absent', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
   const fixture = await createStartableRuntimeSnapshotFixture(t, { stackName: 'runtime-service-restart' });
@@ -217,6 +282,101 @@ test('hstack stack start --runtime --restart keeps a service-owned daemon alive 
       cwd: rootDir,
       env: baseEnv,
     });
+  }
+});
+
+test('hstack stack start --runtime --restart cleans preserved daemon state when the restart fails', async (t) => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const fixture = await createStartableRuntimeSnapshotFixture(t, { stackName: 'runtime-restart-failure-cleanup' });
+
+  const baseEnv = {
+    ...process.env,
+    HAPPIER_STACK_STORAGE_DIR: fixture.storageDir,
+    HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
+    HAPPIER_STACK_STACK: fixture.stackName,
+    HAPPIER_STACK_ENV_FILE: join(fixture.stackDir, 'env'),
+  };
+
+  const startArgs = [join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'start', fixture.stackName, '--background', '--runtime', '--no-browser'];
+  const restartArgs = [...startArgs, '--restart'];
+  const runtimeStatePath = join(fixture.stackDir, 'stack.runtime.json');
+  const runtimeServerEntrypointPaths = [
+    join(fixture.snapshotDir, 'server', 'happier-server'),
+    join(fixture.stackDir, 'runtime', 'current', 'server', 'happier-server'),
+  ];
+
+  const startRes = await runNode(startArgs, { cwd: rootDir, env: baseEnv });
+  assert.equal(startRes.code, 0, `stdout:\n${startRes.stdout}\nstderr:\n${startRes.stderr}`);
+
+  try {
+    await waitForHealth(fixture.baseUrl, { timeoutMs: 30_000 });
+    await waitForStackDaemonRunning({ rootDir, fixture, env: baseEnv });
+
+    const runtimeBefore = JSON.parse(await readFile(runtimeStatePath, 'utf8'));
+    const daemonPidBefore = Number(runtimeBefore?.processes?.daemonPid);
+    assert.ok(daemonPidBefore > 1, `expected daemon pid before restart, got ${String(runtimeBefore?.processes?.daemonPid)}`);
+
+    for (const runtimeServerEntrypointPath of runtimeServerEntrypointPaths) {
+      await writeFile(
+        runtimeServerEntrypointPath,
+        '#!/usr/bin/env node\nsetInterval(() => {}, 1000);\nsetTimeout(() => process.exit(41), 5000);\n',
+        'utf8',
+      );
+    }
+
+    const restartRes = await runNode(restartArgs, {
+      cwd: rootDir,
+      env: {
+        ...baseEnv,
+        HAPPIER_STACK_STACK_BACKGROUND_READY_TIMEOUT_MS: '200',
+      },
+    });
+    assert.notEqual(restartRes.code, 0, 'expected restart to fail after forcing the runtime server entrypoint to miss the ready timeout');
+
+    let lastObserved = null;
+    try {
+      await waitFor(
+        async () => {
+        const runtimeExists = await readFile(runtimeStatePath, 'utf8').then(() => true, () => false);
+        const statusRes = await runNode(
+          [join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'daemon', fixture.stackName, 'status', '--json'],
+          { cwd: rootDir, env: baseEnv },
+        );
+        lastObserved = {
+          runtimeExists,
+          daemonAlive: isPidAlive(daemonPidBefore),
+          statusExitCode: statusRes.code,
+          statusStdout: statusRes.stdout.trim(),
+          statusStderr: statusRes.stderr.trim(),
+          daemonStatus: null,
+        };
+        if (statusRes.code !== 0) {
+          return false;
+        }
+
+        let daemonStatus = null;
+        try {
+          daemonStatus = JSON.parse(statusRes.stdout.trim());
+        } catch {
+          return false;
+        }
+
+        lastObserved.daemonStatus = daemonStatus?.status ?? null;
+
+        return !runtimeExists && !lastObserved.daemonAlive && !/running/i.test(String(daemonStatus?.status ?? ''));
+        },
+        { timeoutMs: 15_000, intervalMs: 150, label: 'restart failure cleanup' },
+      );
+    } catch (error) {
+      assert.fail(
+        `${error instanceof Error ? error.message : String(error)}\nlast observed: ${JSON.stringify(lastObserved, null, 2)}`
+      );
+    }
+  } finally {
+    await runNode([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'stop', fixture.stackName, '--yes'], {
+      cwd: rootDir,
+      env: baseEnv,
+    }).catch(() => {});
   }
 });
 

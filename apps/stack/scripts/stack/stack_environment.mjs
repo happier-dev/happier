@@ -6,7 +6,12 @@ import { getWorkspaceDir, resolveStackEnvPath } from '../utils/paths/paths.mjs';
 import { stackExistsSync } from '../utils/stack/stacks.mjs';
 import { STACK_WRAPPER_PRESERVE_KEYS, scrubHappierStackEnv } from '../utils/env/scrub_env.mjs';
 import { applyStackActiveServerScopeEnv } from '../utils/auth/stable_scope_id.mjs';
-import { getStackRuntimeStatePath, isPidAlive, readStackRuntimeStateFile } from '../utils/stack/runtime_state.mjs';
+import {
+  getStackRuntimeStatePath,
+  hasLiveStackRuntimeProcesses,
+  isPidAlive,
+  readStackRuntimeStateFile,
+} from '../utils/stack/runtime_state.mjs';
 import { readStackRuntimeStateWithDaemonSync } from '../utils/stack/runtime_daemon_state.mjs';
 import { checkDaemonState } from '../daemon.mjs';
 
@@ -123,15 +128,9 @@ export async function withStackEnv({ stackName, fn, extraEnv = {} }) {
   // Runtime-only port overlay (ephemeral stacks): prefer stack.runtime.json ports when the stack
   // is still running, even if the original "owner" process is gone (common during dev restarts).
   const ownerPid = Number(runtimeState?.ownerPid);
-  const processes = runtimeState?.processes && typeof runtimeState.processes === 'object' ? runtimeState.processes : {};
-  const serverPid = Number(processes.serverPid);
-  const expoPid = Number(processes.expoPid);
-  const daemonPid = Number(processes.daemonPid);
   const shouldTrustRuntimePorts =
     isPidAlive(ownerPid) ||
-    isPidAlive(serverPid) ||
-    isPidAlive(expoPid) ||
-    isPidAlive(daemonPid);
+    hasLiveStackRuntimeProcesses(runtimeState);
 
   if (shouldTrustRuntimePorts) {
     const ports = runtimeState?.ports && typeof runtimeState.ports === 'object' ? runtimeState.ports : {};

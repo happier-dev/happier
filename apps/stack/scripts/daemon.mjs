@@ -105,7 +105,7 @@ export async function cleanupStaleDaemonState(homeDir, options = {}) {
   const env = resolveEnvFromOptions(options);
   const { statePath, lockPath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir: homeDir, serverUrl, env });
 
-  if (!existsSync(lockPath)) {
+  if (!existsSync(lockPath) && !existsSync(statePath)) {
     return;
   }
 

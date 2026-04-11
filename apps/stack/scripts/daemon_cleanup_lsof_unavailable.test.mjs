@@ -110,3 +110,25 @@ test('cleanupStaleDaemonState removes lock/state when daemon is not running', as
     await rm(tmp, { recursive: true, force: true });
   }
 });
+
+test('cleanupStaleDaemonState removes stale state when the lock file is already gone', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-cleanup-stale-state-only-'));
+  try {
+    const cliHomeDir = join(tmp, 'cli-home');
+    const internalServerUrl = 'http://127.0.0.1:3005';
+    const { statePath, lockPath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl: internalServerUrl, env: {} });
+
+    const stalePid = 999999;
+    await mkdir(dirname(statePath), { recursive: true });
+    await writeFile(statePath, JSON.stringify({ pid: stalePid, httpPort: 0 }) + '\n', 'utf-8');
+
+    assert.equal(existsSync(lockPath), false, 'lock file should be absent before cleanup');
+    assert.equal(existsSync(statePath), true, 'state file should exist before cleanup');
+
+    await cleanupStaleDaemonState(cliHomeDir, { serverUrl: internalServerUrl, env: {} });
+
+    assert.equal(existsSync(statePath), false, 'state file should be removed when the daemon is not running');
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});

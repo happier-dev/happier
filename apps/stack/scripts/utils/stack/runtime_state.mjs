@@ -44,6 +44,23 @@ function deepMerge(a, b) {
   return out;
 }
 
+export function getStackRuntimeProcessEntries(runtimeState) {
+  const processes = runtimeState?.processes;
+  if (!isPlainObject(processes)) return [];
+
+  return Object.entries(processes)
+    .filter(([key]) => /Pid$/.test(String(key)))
+    .map(([key, value]) => {
+      const pid = Number(value);
+      return { key: String(key), pid };
+    })
+    .filter(({ pid }) => Number.isFinite(pid) && pid > 1);
+}
+
+export function hasLiveStackRuntimeProcesses(runtimeState, { isPidAliveImpl = isPidAlive } = {}) {
+  return getStackRuntimeProcessEntries(runtimeState).some(({ pid }) => isPidAliveImpl(pid));
+}
+
 export async function updateStackRuntimeStateFile(statePath, patch) {
   const existing = (await readStackRuntimeStateFile(statePath)) ?? {};
   const next = deepMerge(existing, patch ?? {});
@@ -91,13 +108,14 @@ export async function recordStackRuntimeUpdate(statePath, patch = {}) {
 
 export async function recordStackRuntimeStopRequest(
   statePath,
-  { signal = 'SIGTERM', requestedBy = 'unknown', reason = '' } = {},
+  { signal = 'SIGTERM', requestedBy = 'unknown', reason = '', preserveDaemon = false } = {},
 ) {
   return await updateStackRuntimeStateFile(statePath, {
     stopRequest: {
       signal: String(signal ?? 'SIGTERM'),
       requestedBy: String(requestedBy ?? 'unknown'),
       reason: String(reason ?? ''),
+      preserveDaemon: preserveDaemon === true,
       requestedAt: new Date().toISOString(),
     },
     updatedAt: new Date().toISOString(),

@@ -71,6 +71,38 @@ test('hstack env edits the explicit stack env file when HAPPIER_STACK_ENV_FILE i
   assert.ok(raw.includes('FOO=bar'), `expected FOO in explicit env file\n${raw}`);
 });
 
+test('hstack env expands ~/ explicit env file overrides against HOME', async (t) => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+  const tmp = await withTempRoot(t);
+
+  const storageDir = join(tmp, 'storage');
+  const homeDir = join(tmp, 'home');
+  const envPath = join(homeDir, '.happier', 'stacks', 'dev', 'env');
+  await mkdir(storageDir, { recursive: true });
+  await mkdir(homeDir, { recursive: true });
+
+  const baseEnv = {
+    ...process.env,
+    HOME: homeDir,
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_ENV_FILE: '~/.happier/stacks/dev/env',
+  };
+
+  const setRes = await runNode([join(rootDir, 'scripts', 'env.mjs'), 'set', 'FOO=bar'], { cwd: rootDir, env: baseEnv });
+  assert.equal(setRes.code, 0, `expected exit 0, got ${setRes.code}\nstdout:\n${setRes.stdout}\nstderr:\n${setRes.stderr}`);
+
+  const pathRes = await runNode([join(rootDir, 'scripts', 'env.mjs'), 'path', '--json'], { cwd: rootDir, env: baseEnv });
+  assert.equal(pathRes.code, 0, `expected exit 0, got ${pathRes.code}\nstdout:\n${pathRes.stdout}\nstderr:\n${pathRes.stderr}`);
+
+  const pathOut = JSON.parse(pathRes.stdout || '{}');
+  assert.equal(pathOut.envPath, envPath);
+
+  const raw = await readFile(envPath, 'utf-8');
+  assert.ok(raw.includes('FOO=bar'), `expected FOO in expanded env file\n${raw}`);
+});
+
 test('hstack env (no subcommand) prints usage and exits 0', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);

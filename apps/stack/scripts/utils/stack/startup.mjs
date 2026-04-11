@@ -354,7 +354,14 @@ export async function maybeAutoCopyAuthFromMainIfNeeded({
   try {
     const out = await runCapture(
       process.execPath,
-      [`${rootDir}/scripts/auth.mjs`, 'copy-from', fromStackName, '--json', ...(linkAuth ? ['--link'] : [])],
+      [
+        `${rootDir}/scripts/auth.mjs`,
+        'copy-from',
+        fromStackName,
+        '--offline-ok',
+        '--json',
+        ...(linkAuth ? ['--link'] : []),
+      ],
       {
       cwd: rootDir,
       env: authEnv && typeof authEnv === 'object' ? authEnv : env,

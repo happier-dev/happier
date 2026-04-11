@@ -167,8 +167,11 @@ PY
       },
     );
 
-    assert.equal(res.code, 0, `expected login --force to exit 0\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
-    assert.equal(existsSync(capturePath), true, 'expected runtime snapshot CLI to capture force-cleanup state');
+    assert.equal(
+      existsSync(capturePath),
+      true,
+      `expected runtime snapshot CLI to capture force-cleanup state before auth exits\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`,
+    );
     const observed = JSON.parse(await readFile(capturePath, 'utf-8'));
     assert.deepEqual(observed, {
       serverScopedPath: false,

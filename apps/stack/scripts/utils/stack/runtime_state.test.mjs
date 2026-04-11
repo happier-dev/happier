@@ -57,6 +57,7 @@ test('recordStackRuntimeStopRequest persists stop attribution details', async (t
     signal: 'SIGTERM',
     requestedBy: 'service restart',
     reason: 'explicit restart',
+    preserveDaemon: true,
   });
 
   const state = await readStackRuntimeStateFile(statePath);
@@ -64,6 +65,7 @@ test('recordStackRuntimeStopRequest persists stop attribution details', async (t
     signal: 'SIGTERM',
     requestedBy: 'service restart',
     reason: 'explicit restart',
+    preserveDaemon: true,
     requestedAt: state?.stopRequest?.requestedAt,
   });
   assert.equal(typeof state?.stopRequest?.requestedAt, 'string');

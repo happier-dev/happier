@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runNodeCapture } from './testkit/stack_script_command_testkit.mjs';
 import { createStackHappierCliCommandFixture } from './testkit/stack_happier_cli_command_testkit.mjs';
+import { createRuntimeSnapshotFixture } from './testkit/runtime_snapshot_testkit.mjs';
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = dirname(scriptsDir);
@@ -217,6 +218,44 @@ test('hstack stack happier <name> seeds stack server profile in CLI settings for
   assert.equal(settings.servers[out.activeServerId].webappUrl, 'http://localhost:45123');
 });
 
+test('hstack stack happier <name> reuses an equivalent loopback profile id when seeding stack settings', async (t) => {
+  const fixture = await createHappyStackFixture(t, {
+    prefix: 'happier-stack-stack-happy-seed-loopback-',
+    message: 'seed-loopback',
+    serverPort: 45124,
+    stackCliSettings: {
+      schemaVersion: 6,
+      onboardingCompleted: true,
+      activeServerId: 'stack-local',
+      servers: {
+        'stack-local': {
+          id: 'stack-local',
+          name: 'Stack local',
+          serverUrl: 'http://localhost:45124',
+          localServerUrl: 'http://127.0.0.1:45124',
+          webappUrl: 'http://localhost:45124',
+          createdAt: 1,
+          updatedAt: 1,
+          lastUsedAt: 1,
+        },
+      },
+    },
+  });
+
+  const settingsPath = join(fixture.storageDir, fixture.stackName, 'cli', 'settings.json');
+  const res = await runNodeCapture([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'happier', fixture.stackName], {
+    cwd: rootDir,
+    env: fixture.baseEnv,
+  });
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+  const out = JSON.parse(res.stdout.trim());
+  const settings = JSON.parse(await readFile(settingsPath, 'utf-8'));
+  assert.equal(out.activeServerId, 'stack-local');
+  assert.equal(settings.activeServerId, 'stack-local');
+  assert.equal(Object.keys(settings.servers).filter((id) => id === 'stack-local').length, 1);
+});
+
 test('hstack stack happier <name> uses stack.runtime.json ports when env file does not pin HAPPIER_STACK_SERVER_PORT', async (t) => {
   const fixture = await createHappyStackFixture(t, {
     prefix: 'happier-stack-stack-happy-runtime-ports-',
@@ -238,6 +277,30 @@ test('hstack stack happier <name> uses stack.runtime.json ports when env file do
   assert.equal(out.message, 'runtime-ports');
   assert.equal(out.stack, fixture.stackName);
   assert.equal(out.serverUrl, 'http://127.0.0.1:4777');
+});
+
+test('hstack stack happier <name> forwards wrapper runtime flags to happier.mjs', async (t) => {
+  const fixture = await createRuntimeSnapshotFixture(t, {
+    stackName: 'runtime-wrapper-passthrough',
+    cliEntrypoint: 'cli/happier.mjs',
+    cliSource: 'process.stdout.write("SNAPSHOT WRAPPER HELP\\n");\n',
+  });
+
+  const res = await runNodeCapture(
+    [join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'happier', fixture.stackName, '--runtime', '--', '--help'],
+    {
+      cwd: rootDir,
+      env: {
+        ...process.env,
+        HAPPIER_STACK_STORAGE_DIR: fixture.storageDir,
+        HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
+        HAPPIER_STACK_REPO_DIR: fixture.root,
+      },
+    },
+  );
+
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+  assert.match(res.stdout, /SNAPSHOT WRAPPER HELP/);
 });
 
 test('hstack happier (HAPPIER_STACK_STACK set) uses stack.runtime.json ports when env file does not pin HAPPIER_STACK_SERVER_PORT', async (t) => {

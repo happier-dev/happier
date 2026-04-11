@@ -255,6 +255,7 @@ async function main() {
 	  const stackCtx = resolveStackContext({ env: baseEnv, autostart });
 	  const { stackMode, runtimeStatePath, stackName, envPath, ephemeral } = stackCtx;
 	  const daemonScopeEnv = applyStackActiveServerScopeEnv({ env: baseEnv, stackName, cliIdentity: 'default' });
+	  const serviceMode = (daemonScopeEnv.HAPPIER_STACK_SERVICE_MODE ?? '').toString().trim() === '1';
 
   serverPort = await resolveLocalServerPortForStack({
     env: baseEnv,
@@ -385,7 +386,7 @@ async function main() {
   if (serverComponentName === 'happier-server') {
     const managed = (baseEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1') !== '0';
     if (managed) {
-      const envPath = baseEnv.HAPPIER_STACK_ENV_FILE ?? '';
+      const envPath = resolveExplicitStackEnvFilePath(baseEnv);
       const infra = await ensureHappyServerManagedInfra({
         stackName: autostart.stackName,
         baseDir: autostart.baseDir,
@@ -521,13 +522,48 @@ async function main() {
 
   // Daemon
   if (startDaemon) {
+    const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+    const initialGate = daemonStartGate({ env: daemonScopeEnv, cliHomeDir, serverUrl: effectiveInternalServerUrl });
+
+    if (initialGate.reason !== 'auth_flow_missing_credentials') {
+      if (!runtimeBackedStart && serverComponentName === 'happier-server' && happierServerAccountCount == null) {
+        const acct = await getAccountCountForServerComponent({
+          serverComponentName,
+          serverDir: sourceServerDir,
+          env: serverEnv,
+          bestEffort: true,
+        });
+        happierServerAccountCount = typeof acct.accountCount === 'number' ? acct.accountCount : null;
+      }
+      const accountCount =
+        serverComponentName === 'happier-server-light' ? serverLightAccountCount : happierServerAccountCount;
+      const autoSeedEnabled = resolveAutoCopyFromMainEnabled({ env: daemonScopeEnv, stackName, isInteractive });
+      await maybeRunInteractiveStackAuthSetup({
+        rootDir,
+        env: daemonScopeEnv,
+        stackName,
+        cliHomeDir,
+        accountCount,
+        isInteractive,
+        autoSeedEnabled,
+      });
+      await prepareDaemonAuthSeedIfNeeded({
+      rootDir,
+      env: daemonScopeEnv,
+      stackName,
+      cliHomeDir,
+        startDaemon,
+        isInteractive,
+        accountCount,
+        quiet: false,
+      });
+    }
+
     const gate = daemonStartGate({ env: daemonScopeEnv, cliHomeDir, serverUrl: effectiveInternalServerUrl });
     if (!gate.ok) {
-      const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
       // In orchestrated auth flows, keep server/UI up and let the orchestrator start daemon post-auth.
       if (gate.reason === 'auth_flow_missing_credentials') {
         console.log('[local] auth flow: skipping daemon start until credentials exist');
-        const serviceMode = (daemonScopeEnv.HAPPIER_STACK_SERVICE_MODE ?? '').toString().trim() === '1';
         if (serviceMode) {
           const pollMs = daemonScopeEnv.HAPPIER_STACK_SERVICE_DAEMON_AUTOSTART_POLL_MS ?? '';
           const maxAttemptsPerCredentials =
@@ -564,7 +600,7 @@ async function main() {
               publicServerUrl,
               runtimeStatePath,
               isShuttingDown: () => shuttingDown,
-              forceRestart: restart,
+              forceRestart: restart && !serviceMode,
               env: daemonScopeEnv,
               stackName,
               cliIdentity: 'default',
@@ -606,40 +642,8 @@ async function main() {
         );
       }
     } else {
-      const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
-      if (!runtimeBackedStart && serverComponentName === 'happier-server' && happierServerAccountCount == null) {
-        const acct = await getAccountCountForServerComponent({
-          serverComponentName,
-          serverDir: sourceServerDir,
-          env: serverEnv,
-          bestEffort: true,
-        });
-        happierServerAccountCount = typeof acct.accountCount === 'number' ? acct.accountCount : null;
-      }
-      const accountCount =
-        serverComponentName === 'happier-server-light' ? serverLightAccountCount : happierServerAccountCount;
-      const autoSeedEnabled = resolveAutoCopyFromMainEnabled({ env: daemonScopeEnv, stackName, isInteractive });
-      await maybeRunInteractiveStackAuthSetup({
-        rootDir,
-        env: daemonScopeEnv,
-        stackName,
-        cliHomeDir,
-        accountCount,
-        isInteractive,
-        autoSeedEnabled,
-      });
-      await prepareDaemonAuthSeedIfNeeded({
-      rootDir,
-      env: daemonScopeEnv,
-      stackName,
-      cliHomeDir,
-      startDaemon,
-      isInteractive,
-      accountCount,
-      quiet: false,
-    });
-		    await startLocalDaemonWithAuth({
-		      cliBin,
+      await startLocalDaemonWithAuth({
+          cliBin,
           cliEntrypoint: cliLaunchSpec?.entrypoint ?? '',
           cliNodeEntrypoint,
           cliCommand,
@@ -649,8 +653,8 @@ async function main() {
 		      publicServerUrl,
 		      runtimeStatePath,
 		      isShuttingDown: () => shuttingDown,
-		      forceRestart: restart,
-		        env: daemonScopeEnv,
+		      forceRestart: restart && !serviceMode,
+		      env: daemonScopeEnv,
 	        stackName,
 	    });
 	      const daemonEnvForState = getDaemonEnv({
@@ -701,12 +705,14 @@ async function main() {
     if (shutdownRequest) {
       const requestedBy = String(shutdownRequest.requestedBy ?? '').trim();
       const reason = String(shutdownRequest.reason ?? '').trim();
+      const preserveDaemon = shutdownRequest.preserveDaemon === true;
       const requestedAt = String(shutdownRequest.requestedAt ?? '').trim();
       console.log(
         `[local] shutdown request: ` +
           [
             requestedBy ? `requestedBy=${requestedBy}` : null,
             reason ? `reason=${reason}` : null,
+            preserveDaemon ? 'preserveDaemon=true' : null,
             requestedAt ? `requestedAt=${requestedAt}` : null,
           ]
             .filter(Boolean)
@@ -720,7 +726,9 @@ async function main() {
       // ignore
     }
 
-	    if (startDaemon) {
+    const preserveDaemonOnShutdown = shutdownRequest?.preserveDaemon === true;
+
+	    if (startDaemon && !preserveDaemonOnShutdown) {
 	      if (ownedDaemonPid && Number.isFinite(ownedDaemonPid) && ownedDaemonPid > 0) {
 		        await stopLocalDaemon({
 		          cliBin,

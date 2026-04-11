@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { getRepoDir, isWin32ShapedAbsolutePath } from './paths.mjs';
+import { getRepoDir, isWin32ShapedAbsolutePath, resolveExplicitStackEnvFilePath } from './paths.mjs';
 
 test('getRepoDir treats win32 absolute paths as absolute (does not resolve under workspace)', () => {
   const rootDir = '/tmp/happier-stack-root';
@@ -33,4 +33,14 @@ test('getRepoDir treats current-drive rooted win32 paths as absolute', () => {
     HAPPIER_STACK_REPO_DIR: '\\happier\\workspace\\main',
   };
   assert.equal(getRepoDir(rootDir, env), '\\happier\\workspace\\main');
+});
+
+test('resolveExplicitStackEnvFilePath expands home-prefixed env file paths with scoped HOME', () => {
+  assert.equal(
+    resolveExplicitStackEnvFilePath({
+      HOME: '/scoped/home',
+      HAPPIER_STACK_ENV_FILE: '~/stacks/dev/env',
+    }),
+    '/scoped/home/stacks/dev/env',
+  );
 });

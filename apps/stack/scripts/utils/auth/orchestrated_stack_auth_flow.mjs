@@ -143,6 +143,7 @@ async function tryStartStackUiInBackgroundForAuth({ rootDir, stackName, env = pr
         env: {
           ...process.env,
           ...(env ?? {}),
+          HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
           ...(useRuntimeStart ? {} : { HAPPIER_STACK_AUTH_FLOW: '1' }),
         },
       }

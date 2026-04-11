@@ -4,7 +4,7 @@ import { dirname } from 'node:path';
 import { readEnvObjectFromFile } from '../env/read.mjs';
 import { isPidAlive } from '../proc/pids.mjs';
 import { stopStackWithEnv } from './stop.mjs';
-import { readStackRuntimeStateFile } from './runtime_state.mjs';
+import { getStackRuntimeProcessEntries, readStackRuntimeStateFile } from './runtime_state.mjs';
 
 function parseFlagValue(flag) {
   const entry = process.argv.slice(2).find((arg) => arg.startsWith(`${flag}=`));
@@ -23,6 +23,11 @@ function countKilledProcesses(actions) {
   const uiDevKills = Array.isArray(actions?.uiDev) ? actions.uiDev.length : 0;
   const mobileKills = Array.isArray(actions?.mobile) ? actions.mobile.length : 0;
   return directKills + sweepKills + expoDevKills + uiDevKills + mobileKills;
+}
+
+function formatRuntimeProcesses(entries) {
+  if (!entries.length) return '';
+  return entries.map(({ key, pid }) => `${key}=${pid}`).join(', ');
 }
 
 const rootDir = parseFlagValue('--root-dir');
@@ -111,6 +116,14 @@ async function tick() {
   }
 
   if (ownerPid > 1 && isPidAlive(ownerPid)) {
+    return;
+  }
+
+  const liveRuntimeProcesses = getStackRuntimeProcessEntries(runtimeState).filter(({ pid }) => isPidAlive(pid));
+  if (liveRuntimeProcesses.length > 0) {
+    await writeLog(
+      `owner pid ${ownerPid} is gone but runtime still has live child processes (${formatRuntimeProcesses(liveRuntimeProcesses)}); keeping runtime`,
+    );
     return;
   }
 

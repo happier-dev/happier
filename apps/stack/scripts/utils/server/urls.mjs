@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 
-import { getStackName, resolveStackEnvPath } from '../paths/paths.mjs';
+import { getStackName, resolveActiveStackEnvFilePath } from '../paths/paths.mjs';
 import { preferStackLocalhostUrl } from '../paths/localhost_host.mjs';
 import { resolvePublicServerUrl } from '../../tailscale.mjs';
 import { resolveServerPortFromEnv } from './port.mjs';
@@ -8,9 +8,7 @@ import { normalizeUrlNoTrailingSlash } from '../net/url.mjs';
 
 function readStackEnvRaw({ env, stackName }) {
   try {
-    const envPath =
-      (env.HAPPIER_STACK_ENV_FILE ?? '').toString().trim() ||
-      resolveStackEnvPath(stackName, env).envPath;
+    const envPath = resolveActiveStackEnvFilePath(stackName, env);
     if (!envPath || !existsSync(envPath)) return null;
     return readFileSync(envPath, 'utf-8');
   } catch {

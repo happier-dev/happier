@@ -15,13 +15,11 @@ import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { parseEnvToObject } from './utils/env/dotenv.mjs';
-import { readEnvObjectFromFile } from './utils/env/read.mjs';
 import { run, runCapture } from './utils/proc/proc.mjs';
 import { applyStackCacheEnv, ensureDepsInstalled } from './utils/proc/pm.mjs';
 import { applyHappyServerMigrations, ensureHappyServerManagedInfra } from './utils/server/infra/happy_server_infra.mjs';
 import { resolvePrismaClientImportForDbProvider, resolvePrismaClientImportForServerComponent } from './utils/server/flavor_scripts.mjs';
 import { clearDevAuthKey, readDevAuthKey, writeDevAuthKey } from './utils/auth/dev_key.mjs';
-import { getExpoStatePaths, isStateProcessRunning } from './utils/expo/expo.mjs';
 import { resolveAuthSeedFromEnv } from './utils/stack/startup.mjs';
 import { copyFileIfMissing, linkFileIfMissing, removeFileOrSymlinkIfExists, writeSecretFileIfMissing } from './utils/auth/files.mjs';
 import { clearStackForceLoginCredentialPaths } from './utils/auth/clearStackForceLoginCredentialPaths.mjs';
@@ -36,14 +34,15 @@ import {
   getServerLightDataDirFromEnvOrDefault,
   resolveCliHomeDir,
 } from './utils/stack/dirs.mjs';
-import { resolveLocalhostHost, preferStackLocalhostUrl } from './utils/paths/localhost_host.mjs';
+import { preferStackLocalhostUrl } from './utils/paths/localhost_host.mjs';
 import { banner, bullets, cmd as cmdFmt, kv, ok, sectionTitle, warn } from './utils/ui/layout.mjs';
 import { bold, cyan, dim } from './utils/ui/ansi.mjs';
 import { getVerbosityLevel } from './utils/cli/verbosity.mjs';
 import { runOrchestratedGuidedAuthFlow, startDaemonPostAuth } from './utils/auth/orchestrated_stack_auth_flow.mjs';
 import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
 import { isLocalishUrl } from './utils/service/auth_guidance.mjs';
-import { resolveStackAuthCliExecutable } from './utils/auth/stack_guided_login.mjs';
+import { resolveBestExpoWebappUrlForAuth, resolveStackAuthCliExecutable } from './utils/auth/stack_guided_login.mjs';
+import { buildAuthSafeStackStartSpec } from './utils/auth/buildAuthSafeStackStartSpec.mjs';
 import {
   findAnyCredentialPathInCliHome,
   findExistingStackCredentialPath,
@@ -92,26 +91,54 @@ async function getInternalServerUrlCompat() {
 }
 
 async function resolveWebappUrlFromRunningExpo({ rootDir, stackName, env = process.env }) {
-  try {
-    const { baseDir, envPath } = resolveStackEnvPath(stackName, env);
-    const stackEnv = await readEnvObjectFromFile(envPath);
-    const mergedEnv = { ...process.env, ...(stackEnv ?? {}) };
-    const uiDir = getComponentDir(rootDir, 'happier-ui', mergedEnv);
-    const uiPaths = getExpoStatePaths({
-      baseDir,
-      kind: 'expo-dev',
-      projectDir: uiDir,
-      stateFileName: 'expo.state.json',
+  return await resolveBestExpoWebappUrlForAuth({ rootDir, stackName, env, timeoutMs: 250 });
+}
+
+function resolveAuthCredentialValidationAttempts(env = process.env) {
+  const raw = String(env.HAPPIER_STACK_AUTH_CREDENTIAL_VALIDATION_ATTEMPTS ?? '').trim();
+  if (!raw) return 4;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 4;
+}
+
+function resolveAuthCredentialValidationRetryDelayMs(env = process.env) {
+  const raw = String(env.HAPPIER_STACK_AUTH_CREDENTIAL_VALIDATION_RETRY_DELAY_MS ?? '').trim();
+  if (!raw) return 250;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 250;
+}
+
+async function validateAuthTokenAgainstServerWithRetries({
+  credentialPath,
+  internalServerUrl,
+  env = process.env,
+}) {
+  const attempts = resolveAuthCredentialValidationAttempts(env);
+  const retryDelayMs = resolveAuthCredentialValidationRetryDelayMs(env);
+  let lastValidation = null;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    lastValidation = await validateAuthTokenAgainstServer({
+      credentialPath,
+      internalServerUrl,
     });
-    const uiRunning = await isStateProcessRunning(uiPaths.statePath);
-    if (!uiRunning.running) return null;
-    const port = Number(uiRunning.state?.port);
-    if (!Number.isFinite(port) || port <= 0) return null;
-    const host = resolveLocalhostHost({ stackMode: stackName !== 'main', stackName });
-    return `http://${host}:${port}`;
-  } catch {
-    return null;
+    if (lastValidation.valid !== null || lastValidation.code === 'missing-token') {
+      return lastValidation;
+    }
+    if (attempt < attempts - 1 && retryDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    }
   }
+
+  return (
+    lastValidation ?? {
+      checked: false,
+      valid: null,
+      status: null,
+      code: 'not-checked',
+      error: null,
+    }
+  );
 }
 
 // NOTE: common fs helpers live in scripts/utils/fs/ops.mjs
@@ -212,6 +239,42 @@ async function validateAuthTokenAgainstServer({ credentialPath, internalServerUr
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function assertLoginProducedUsableCredentials({
+  stackName,
+  cliHomeDir,
+  internalServerUrl,
+  env,
+}) {
+  const credentialPath = findExistingStackCredentialPath({
+    cliHomeDir,
+    serverUrl: internalServerUrl,
+    env,
+  });
+  if (!credentialPath) {
+    throw new Error(
+      `[auth] ${stackName}: guided login finished, but usable credentials were not created.\n` +
+      `[auth] Aborting before post-auth daemon start.`,
+    );
+  }
+
+  const validation = await validateAuthTokenAgainstServerWithRetries({
+    credentialPath,
+    internalServerUrl,
+    env,
+  });
+  if (validation.valid === true) {
+    return credentialPath;
+  }
+
+  const statusText = validation.status != null ? ` status=${validation.status}` : '';
+  const codeText = validation.code ? ` code=${validation.code}` : '';
+  const errorText = validation.error ? ` error=${validation.error}` : '';
+  throw new Error(
+    `[auth] ${stackName}: guided login finished, but the resulting credentials are not usable for this stack server.${statusText}${codeText}${errorText}\n` +
+    `[auth] Aborting before post-auth daemon start.`,
+  );
 }
 
 function authLoginSuggestion(stackName) {
@@ -1612,7 +1675,7 @@ async function cmdLogin({ argv, json }) {
   const runtimeSnapshotActive = Boolean(runtimeLaunchContext.snapshot);
 
   const serviceMode = (process.env.HAPPIER_STACK_SERVICE_MODE ?? '').toString().trim() === '1';
-  const wantsDefaultExpoInAuto =
+  const prefersExpoAuthInAuto =
     requestedWebappMode === 'auto' &&
     !explicitWebappUrl &&
     !envWebappUrl &&
@@ -1620,9 +1683,21 @@ async function cmdLogin({ argv, json }) {
     tty &&
     !serviceMode &&
     !runtimeSnapshotActive;
-  const effectiveWebappMode = wantsDefaultExpoInAuto ? 'expo' : requestedWebappMode;
+  const effectiveWebappMode =
+    prefersExpoAuthInAuto && expoWebappUrl
+      ? 'expo'
+      : requestedWebappMode;
   const shouldUseRuntimeStart = runtimeSnapshotActive && effectiveWebappMode !== 'expo';
-  const guidedStartKind = shouldUseRuntimeStart ? 'runtime' : effectiveWebappMode === 'expo' ? 'dev' : 'start';
+  const shouldStartDevForAutoAuth =
+    !shouldUseRuntimeStart &&
+    requestedWebappMode === 'auto' &&
+    prefersExpoAuthInAuto;
+  const guidedStartKind =
+    shouldUseRuntimeStart
+      ? 'runtime'
+      : effectiveWebappMode === 'expo' || shouldStartDevForAutoAuth
+        ? 'dev'
+        : 'start';
   const guidedStartCommand = resolveGuidedStackStartCommand({
     stackName,
     startKind: guidedStartKind,
@@ -1750,7 +1825,16 @@ async function cmdLogin({ argv, json }) {
   }
 
   const shouldAutoStart = flags.has('--start-if-needed');
+  let startedStackForExpoAuth = false;
   const guidedReadyTimeoutMs = resolveGuidedServerReadyTimeoutMs(process.env);
+  const authSafeStartSpec = buildAuthSafeStackStartSpec({
+    rootDir,
+    stackName,
+    shouldUseRuntimeStart,
+    effectiveWebappMode,
+    shouldStartDevForAutoAuth,
+    baseEnv: process.env,
+  });
   const waitForGuidedServerReadyOrThrow = async (reason) => {
     const ready = await waitForHappierHealthOk(internalServerUrl, {
       timeoutMs: guidedReadyTimeoutMs,
@@ -1764,6 +1848,43 @@ async function cmdLogin({ argv, json }) {
       );
     }
   };
+
+  const restartRunningStackInAuthSafeModeOrThrow = async () => {
+    await run(
+      process.execPath,
+      [join(rootDir, 'scripts', 'stack.mjs'), 'stop', stackName, '--yes'],
+      { cwd: rootDir, env: process.env }
+    ).catch((err) => {
+      const msg =
+        `[auth] ${stackName}: failed to stop the running stack before force login.\n` +
+        `[auth] Try stopping it manually:\n` +
+        `  hstack stack stop ${stackName} --yes\n\n` +
+        `${String(err?.stack ?? err)}`;
+      throw new Error(msg);
+    });
+
+    await run(...authSafeStartSpec.args, {
+      cwd: rootDir,
+      env: authSafeStartSpec.env,
+    }).catch((err) => {
+      const msg =
+        `[auth] ${stackName}: failed to restart the stack in auth-safe mode for force login.\n` +
+        `[auth] Try starting it manually:\n` +
+        `  ${guidedStartCommand}\n\n` +
+        `${String(err?.stack ?? err)}`;
+      throw new Error(msg);
+    });
+
+    startedStackForExpoAuth = authSafeStartSpec.startedStackForExpoAuth;
+    await waitForGuidedServerReadyOrThrow('restarting in auth-safe mode');
+  };
+
+  if (force && (await isStackRuntimeOwnerAlive(stackName))) {
+    // Force login clears credentials before invoking the underlying auth flow. If a live stack owner
+    // stays up while creds are cleared, it can immediately try to restart the daemon in non-interactive
+    // mode and destabilize the runtime. Restart the stack first in auth-safe no-daemon mode.
+    await restartRunningStackInAuthSafeModeOrThrow();
+  }
 
   const health = await fetchHappierHealth(internalServerUrl);
   if (!health.ok) {
@@ -1839,22 +1960,10 @@ async function cmdLogin({ argv, json }) {
         );
       }
 
-      await run(
-        process.execPath,
-        [
-          join(rootDir, 'scripts', 'stack.mjs'),
-          shouldUseRuntimeStart ? 'start' : effectiveWebappMode === 'expo' ? 'dev' : 'start',
-          stackName,
-          '--background',
-          ...(shouldUseRuntimeStart ? ['--runtime'] : []),
-          '--no-daemon',
-          '--no-browser',
-        ],
-        {
-          cwd: rootDir,
-          env: { ...process.env, ...(!shouldUseRuntimeStart && effectiveWebappMode === 'expo' ? { HAPPIER_STACK_AUTH_FLOW: '1' } : {}) },
-        }
-      ).catch((err) => {
+      await run(...authSafeStartSpec.args, {
+        cwd: rootDir,
+        env: authSafeStartSpec.env,
+      }).catch((err) => {
         const msg =
           `[auth] ${stackName}: failed to start the stack for guided login.\n` +
           `[auth] Try starting it manually:\n` +
@@ -1862,6 +1971,7 @@ async function cmdLogin({ argv, json }) {
           `${String(err?.stack ?? err)}`;
         throw new Error(msg);
       });
+      startedStackForExpoAuth = authSafeStartSpec.startedStackForExpoAuth;
 
       await waitForGuidedServerReadyOrThrow('starting in background');
     }
@@ -1883,7 +1993,7 @@ async function cmdLogin({ argv, json }) {
   };
 
   let webappUrlForDaemon = webappUrl;
-  if (method !== 'mobile' && effectiveWebappMode === 'expo') {
+  if (method !== 'mobile' && (effectiveWebappMode === 'expo' || webappUrlSource === 'expo' || startedStackForExpoAuth)) {
     const guidedEnv = applyStackActiveServerScopeEnv({
       env: { ...scopedEnv, HAPPIER_STACK_AUTH_FLOW: '1' },
       stackName,
@@ -2014,6 +2124,13 @@ async function cmdLogin({ argv, json }) {
   } else {
     await runLogin(scopedEnv);
   }
+
+  await assertLoginProducedUsableCredentials({
+    stackName,
+    cliHomeDir,
+    internalServerUrl,
+    env: scopedEnv,
+  });
 
   try {
     const daemonStart = await startDaemonPostAuth({

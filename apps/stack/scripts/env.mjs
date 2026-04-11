@@ -3,16 +3,12 @@ import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { ensureEnvFilePruned, ensureEnvFileUpdated } from './utils/env/env_file.mjs';
 import { parseEnvToObject } from './utils/env/dotenv.mjs';
-import { resolveStackEnvPath } from './utils/paths/paths.mjs';
+import { resolveActiveStackEnvFilePath } from './utils/paths/paths.mjs';
 import { readTextOrEmpty } from './utils/fs/ops.mjs';
 
 function resolveTargetEnvPath() {
-  // If we're already running under a stack wrapper, respect it.
-  const explicit = (process.env.HAPPIER_STACK_ENV_FILE ?? '').trim();
-  if (explicit) return explicit;
-
   // Self-host default: no stacks knowledge required; persist in the main stack env file.
-  return resolveStackEnvPath('main').envPath;
+  return resolveActiveStackEnvFilePath('main', process.env);
 }
 
 async function main() {

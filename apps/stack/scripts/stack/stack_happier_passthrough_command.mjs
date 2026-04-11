@@ -8,19 +8,61 @@ import { parseCliIdentityOrThrow, resolveCliHomeDirForIdentity } from '../utils/
 
 import { withStackEnv } from './stack_environment.mjs';
 
-export async function runStackHappierPassthroughCommand({ rootDir, stackName, passthrough }) {
+function stripIdentityWrapperArgs(args) {
+  const stripped = [];
+
+  for (let idx = 0; idx < args.length; idx += 1) {
+    const arg = String(args[idx] ?? '');
+    if (!arg) continue;
+    if (arg === '--identity') {
+      idx += 1;
+      continue;
+    }
+    if (arg.startsWith('--identity=')) {
+      continue;
+    }
+    stripped.push(arg);
+  }
+
+  return stripped;
+}
+
+function readIdentityWrapperArg(args) {
+  for (let idx = 0; idx < args.length; idx += 1) {
+    const arg = String(args[idx] ?? '');
+    if (!arg) continue;
+    if (arg === '--identity') {
+      const next = String(args[idx + 1] ?? '').trim();
+      return next ? next : null;
+    }
+    if (arg.startsWith('--identity=')) {
+      const value = arg.slice('--identity='.length).trim();
+      return value ? value : null;
+    }
+  }
+
+  return null;
+}
+
+export function resolveStackHappierPassthroughInvocation({ passthrough = [] } = {}) {
   const sepIdx = passthrough.indexOf('--');
   const wrapperArgs = sepIdx === -1 ? passthrough : passthrough.slice(0, sepIdx);
   const forwardedArgsRaw = sepIdx === -1 ? passthrough : passthrough.slice(sepIdx + 1);
-
   const { kv } = parseArgs(wrapperArgs);
-  const identityRaw = (kv.get('--identity') ?? '').toString().trim();
+  const inlineIdentity = (kv.get('--identity') ?? '').toString().trim();
+  const identityRaw = inlineIdentity || readIdentityWrapperArg(wrapperArgs) || '';
   const identity = identityRaw ? parseCliIdentityOrThrow(identityRaw) : null;
 
-  const forwardedArgs =
-    sepIdx === -1
-      ? forwardedArgsRaw.filter((arg) => !(identity && typeof arg === 'string' && arg.trim().startsWith('--identity=')))
-      : forwardedArgsRaw;
+  const childArgs = sepIdx === -1 ? stripIdentityWrapperArgs(forwardedArgsRaw) : [...stripIdentityWrapperArgs(wrapperArgs), ...forwardedArgsRaw];
+
+  return {
+    identity,
+    childArgs,
+  };
+}
+
+export async function runStackHappierPassthroughCommand({ rootDir, stackName, passthrough }) {
+  const { identity, childArgs } = resolveStackHappierPassthroughInvocation({ passthrough });
 
   await withStackEnv({
     stackName,
@@ -45,7 +87,7 @@ export async function runStackHappierPassthroughCommand({ rootDir, stackName, pa
         cliIdentity: identity || (envForHappy.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default',
       });
 
-      const child = spawn(process.execPath, [join(rootDir, 'scripts', 'happier.mjs'), ...forwardedArgs], {
+      const child = spawn(process.execPath, [join(rootDir, 'scripts', 'happier.mjs'), ...childArgs], {
         cwd: rootDir,
         env: envForHappy,
         stdio: 'inherit',

@@ -151,11 +151,11 @@ test('happier wrapper skips bundled workspace preflight when disabled', async ()
   }
 });
 
-test('happier script refreshes bundled workspace packages before loading the main CLI entrypoint', async () => {
+test('happier script loads the main CLI entrypoint without bundle preflight', async () => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
   const fixtureDir = mkdtempSync(join(tmpdir(), 'happier-script-bootstrap-'));
   try {
-    const syncMarkerPath = join(fixtureDir, 'sync.json');
+    const syncMarkerPath = join(fixtureDir, 'bundle-imported.txt');
     const cliMarkerPath = join(fixtureDir, 'cli.txt');
     const syncModulePath = join(fixtureDir, 'syncBundledWorkspacePackages.mjs');
     const cliStubPath = join(fixtureDir, 'happier_main.mjs');
@@ -165,9 +165,8 @@ test('happier script refreshes bundled workspace packages before loading the mai
       syncModulePath,
       [
         "import { writeFileSync } from 'node:fs';",
-        'export async function bundleWorkspaceDeps(opts) {',
-        `  writeFileSync(${JSON.stringify(syncMarkerPath)}, JSON.stringify(opts ?? {}), 'utf8');`,
-        '}',
+        `writeFileSync(${JSON.stringify(syncMarkerPath)}, 'imported', 'utf8');`,
+        'export async function bundleWorkspaceDeps() {}',
         '',
       ].join('\n'),
       'utf8',
@@ -209,8 +208,7 @@ test('happier script refreshes bundled workspace packages before loading the mai
     });
 
     assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
-    const syncOptions = JSON.parse(readFileSync(syncMarkerPath, 'utf8'));
-    assert.deepEqual(syncOptions, {});
+    assert.equal(existsSync(syncMarkerPath), false, 'expected scripts/happier.mjs to skip bundle preflight');
     const cliMarker = readFileSync(cliMarkerPath, 'utf8');
     assert.equal(cliMarker, 'happier\n');
   } finally {
