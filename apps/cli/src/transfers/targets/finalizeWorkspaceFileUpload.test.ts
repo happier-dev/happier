@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 let renameAttemptCount = 0;
+let firstRenameErrorCode: string | null = 'EXDEV';
 let failingRmPath: string | null = null;
 let failingRmCode: string | null = null;
 
@@ -18,9 +19,9 @@ vi.mock('node:fs/promises', async () => {
     ...actual,
     rename: vi.fn(async (from: string, to: string) => {
       renameAttemptCount += 1;
-      if (renameAttemptCount === 1) {
+      if (renameAttemptCount === 1 && firstRenameErrorCode) {
         const error = new Error('cross-device rename') as NodeJS.ErrnoException;
-        error.code = 'EXDEV';
+        error.code = firstRenameErrorCode;
         throw error;
       }
       await actualRename(from, to);
@@ -44,6 +45,7 @@ describe('finalizeWorkspaceFileUpload', () => {
 
   afterEach(async () => {
     renameAttemptCount = 0;
+    firstRenameErrorCode = 'EXDEV';
     failingRmPath = null;
     failingRmCode = null;
     vi.clearAllMocks();
@@ -101,5 +103,32 @@ describe('finalizeWorkspaceFileUpload', () => {
     });
     expect(readFileSync(destPath, 'utf8')).toBe('original-destination');
     expect(readFileSync(tempPath, 'utf8')).toBe('payload');
+  });
+
+  it.each(['EPERM', 'EEXIST'] as const)('overwrites an existing destination when same-volume rename fails with %s', async (renameErrorCode) => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-finalize-upload-'));
+    tempDirs.push(root);
+    const tempPath = join(root, 'temp.txt');
+    const destPath = join(root, 'dest', 'file.txt');
+    mkdirSync(dirname(destPath), { recursive: true });
+    writeFileSync(destPath, 'original-destination', 'utf8');
+    writeFileSync(tempPath, 'payload', 'utf8');
+    firstRenameErrorCode = renameErrorCode;
+
+    const result = await finalizeWorkspaceFileUpload({
+      tempPath,
+      destPath,
+      destDisplayPath: '~/dest/file.txt',
+      overwrite: true,
+      sizeBytes: 7,
+    });
+
+    expect(result).toEqual({
+      success: true,
+      path: '~/dest/file.txt',
+      sizeBytes: 7,
+    });
+    expect(readFileSync(destPath, 'utf8')).toBe('payload');
+    await expect(access(tempPath)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });

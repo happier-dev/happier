@@ -4,6 +4,7 @@ import { basename, dirname, join } from 'node:path';
 
 const CROSS_DEVICE_STAGING_PREFIX = '.happier-upload-stage-';
 const CROSS_DEVICE_BACKUP_PREFIX = '.happier-upload-backup-';
+const FALLBACK_MOVE_ERROR_CODES = new Set(['EXDEV', 'EEXIST', 'EPERM']);
 
 export class CrossDeviceMoveSourceCleanupError extends Error {
     readonly sourcePath: string;
@@ -69,7 +70,7 @@ export async function moveFileWithCrossDeviceFallback(sourcePath: string, destPa
         await rename(sourcePath, destPath);
         return;
     } catch (error) {
-        if (readErrorCode(error) !== 'EXDEV') {
+        if (!FALLBACK_MOVE_ERROR_CODES.has(readErrorCode(error) ?? '')) {
             throw error;
         }
     }
