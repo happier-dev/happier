@@ -57,6 +57,68 @@ describe('forwardCodexErrorToUi', () => {
 });
 
 describe('createCodexMcpMessageHandler', () => {
+  it('normalizes raw Codex token_count telemetry before forwarding it to the session', () => {
+    let thinking = false;
+    let currentTaskId: string | null = null;
+    const session = {
+      sendAgentMessage: vi.fn(),
+      sendAgentMessageCommitted: vi.fn(async () => {}),
+      sendCodexMessage: vi.fn(),
+      sendSessionEvent: vi.fn(),
+      keepAlive: vi.fn(),
+    };
+    const messageBuffer = { addMessage: vi.fn() };
+    const logger = { debug: vi.fn() };
+    const diffProcessor = { processDiff: vi.fn() };
+
+    const handler = createCodexMcpMessageHandler({
+      logger,
+      session,
+      messageBuffer,
+      sendReady: vi.fn(),
+      publishCodexThreadIdToMetadata: vi.fn(),
+      diffProcessor,
+      getCurrentTaskId: () => currentTaskId,
+      setCurrentTaskId: (next: string | null) => {
+        currentTaskId = next;
+      },
+      getThinking: () => thinking,
+      setThinking: (next: boolean) => {
+        thinking = next;
+      },
+    });
+
+    handler({
+      type: 'token_count',
+      info: {
+        total_token_usage: {
+          total_tokens: 184,
+          input_tokens: 120,
+          cached_input_tokens: 20,
+          output_tokens: 35,
+          reasoning_output_tokens: 9,
+        },
+        model_context_window: 258400,
+      },
+    });
+
+    expect(session.sendCodexMessage).toHaveBeenCalledWith({
+      type: 'token_count',
+      id: expect.any(String),
+      source: 'codex-mcp-token-count',
+      scope: 'session_cumulative',
+      tokens: {
+        total: 184,
+        input: 120,
+        cache_read: 20,
+        output: 35,
+        thought: 9,
+      },
+      context_used_tokens: 184,
+      context_window_tokens: 258400,
+    });
+  });
+
   it('logs MCP message shapes without leaking string payloads', () => {
     let thinking = false;
     let currentTaskId: string | null = null;

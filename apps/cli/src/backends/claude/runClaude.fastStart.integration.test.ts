@@ -59,6 +59,8 @@ async function waitFor<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
 let loopStarted: Deferred<void> = createDeferred<void>();
 let loopExit: Deferred<number> = createDeferred<number>();
 let lastLoopOpts: any = null;
+let capturedUserMessageHandler: ((message: any) => void) | null = null;
+let metadataSnapshot: Record<string, unknown> | null = null;
 let autoSessionReady = true;
 let readSettingsCalls = 0;
 let initializeBackendApiContextCalls = 0;
@@ -108,9 +110,11 @@ let loopCalls = 0;
 const sessionSyncClientSpy = vi.fn((resp: any) => ({
   sessionId: resp?.id ?? 'sess_1',
   rpcHandlerManager: { registerHandler: vi.fn(), invokeLocal: vi.fn() },
-  ensureMetadataSnapshot: vi.fn(async () => ({})),
-  getMetadataSnapshot: vi.fn(() => ({})),
-  onUserMessage: vi.fn(),
+  ensureMetadataSnapshot: vi.fn(async () => metadataSnapshot ?? {}),
+  getMetadataSnapshot: vi.fn(() => metadataSnapshot ?? {}),
+  onUserMessage: vi.fn((handler: (message: any) => void) => {
+    capturedUserMessageHandler = handler;
+  }),
   sendSessionEvent: sendSessionEventSpy,
   updateMetadata: vi.fn(),
   updateAgentState: vi.fn(),
@@ -302,6 +306,8 @@ describe('runClaude fast-start', () => {
     loopStarted = createDeferred<void>();
     loopExit = createDeferred<number>();
     lastLoopOpts = null;
+    capturedUserMessageHandler = null;
+    metadataSnapshot = null;
     autoSessionReady = true;
     initResolved = false;
     backendInitDelayMs = 200;
@@ -653,6 +659,76 @@ describe('runClaude fast-start', () => {
       expect(lastLoopOpts).not.toBeNull();
       lastLoopOpts?.onSessionReady?.(sessionReady);
       expect(sessionReady.setPushSender).toHaveBeenCalled();
+    } catch (e) {
+      testError = e;
+    } finally {
+      loopExit.resolve(0);
+      await runPromise;
+    }
+
+    if (testError) {
+      throw testError;
+    }
+  });
+
+  it('applies the legacy reasoning_effort message-meta alias during local fast-start queueing', async () => {
+    vi.resetModules();
+    loopStarted = createDeferred<void>();
+    loopExit = createDeferred<number>();
+    lastLoopOpts = null;
+    capturedUserMessageHandler = null;
+    metadataSnapshot = {
+      sessionConfigOptionOverridesV1: {
+        v: 1,
+        updatedAt: 10,
+        overrides: {
+          reasoning_effort: {
+            updatedAt: 10,
+            value: 'high',
+          },
+        },
+      },
+    };
+    autoSessionReady = true;
+    initResolved = false;
+    backendInitDelayMs = 0;
+    getOrCreateSessionSpy.mockImplementation(async () => ({ id: 'sess_1', metadataVersion: 1 }));
+    startOfflineReconnectionSpy.mockClear();
+    lastOfflineReconnectionConfig = null;
+
+    const { runClaude } = await import('./runClaude');
+    const credentials = createLegacyCredentials();
+
+    let testError: unknown = null;
+    const runPromise = runClaude(credentials, { startedBy: 'terminal', startingMode: 'local' }).catch((e) => {
+      testError = e;
+    });
+
+    try {
+      await expect(waitFor(loopStarted.promise, loopStartWaitMs)).resolves.toBeUndefined();
+      await expect(
+        waitFor(
+          new Promise<void>((resolve, reject) => {
+            const startedAt = Date.now();
+            const tick = () => {
+              if (capturedUserMessageHandler) return resolve();
+              if (Date.now() - startedAt > 500) return reject(new Error('Timed out waiting for onUserMessage registration'));
+              setTimeout(tick, 0);
+            };
+            tick();
+          }),
+          1000,
+        ),
+      ).resolves.toBeUndefined();
+
+      expect(capturedUserMessageHandler).not.toBeNull();
+      capturedUserMessageHandler!({
+        content: { text: 'keep it light' },
+        meta: { reasoning_effort: 'low' },
+        createdAt: 20,
+      });
+
+      expect(lastLoopOpts?.messageQueue?.queue?.[0]?.mode?.reasoningEffort).toBe('low');
     } catch (e) {
       testError = e;
     } finally {

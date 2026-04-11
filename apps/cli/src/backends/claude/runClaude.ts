@@ -105,6 +105,38 @@ export interface StartOptions {
     accountSettings?: import('@happier-dev/protocol').AccountSettings | null
 }
 
+function normalizeReasoningEffortValue(raw: unknown): string | null {
+    if (typeof raw !== 'string') return null;
+    const trimmed = raw.trim().toLowerCase();
+    return trimmed.length > 0 ? trimmed : null;
+}
+
+function adoptReasoningEffortOverrideFromMessageMeta(opts: Readonly<{
+    currentValueId: string | null;
+    currentUpdatedAt: number;
+    messageMeta: Record<string, unknown> | null | undefined;
+    updatedAt: number;
+}>): { valueId: string | null; updatedAt: number; didChange: boolean } {
+    const meta = opts.messageMeta;
+    if (!meta) {
+        return { valueId: opts.currentValueId, updatedAt: opts.currentUpdatedAt, didChange: false };
+    }
+
+    const hasCamelCase = Object.prototype.hasOwnProperty.call(meta, 'reasoningEffort');
+    const hasSnakeCase = Object.prototype.hasOwnProperty.call(meta, 'reasoning_effort');
+    if (!hasCamelCase && !hasSnakeCase) {
+        return { valueId: opts.currentValueId, updatedAt: opts.currentUpdatedAt, didChange: false };
+    }
+
+    const rawValue = hasCamelCase ? meta.reasoningEffort : meta.reasoning_effort;
+    const valueId = normalizeReasoningEffortValue(rawValue);
+    if (!valueId || opts.updatedAt <= opts.currentUpdatedAt) {
+        return { valueId: opts.currentValueId, updatedAt: opts.currentUpdatedAt, didChange: false };
+    }
+
+    return { valueId, updatedAt: opts.updatedAt, didChange: true };
+}
+
 export async function runClaude(credentials: Credentials, options: StartOptions = {}): Promise<void> {
     const accountSettingsSecretsReadKeys = deriveSettingsSecretsReadKeysForCredentials(credentials);
     logger.debug(`[CLAUDE] ===== CLAUDE MODE STARTING =====`);
@@ -595,6 +627,21 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             currentReasoningEffort = adoptedReasoningEffort.valueId ?? undefined;
             currentReasoningEffortUpdatedAt = adoptedReasoningEffort.updatedAt;
             logger.debug(`[loop] Thinking updated from session metadata: ${currentReasoningEffort || 'default'}`);
+        }
+
+        const adoptedReasoningEffortFromMessage = adoptReasoningEffortOverrideFromMessageMeta({
+            currentValueId: currentReasoningEffort ?? null,
+            currentUpdatedAt: currentReasoningEffortUpdatedAt,
+            messageMeta: message.meta as Record<string, unknown> | null | undefined,
+            updatedAt:
+                typeof message.createdAt === 'number' && Number.isFinite(message.createdAt) && message.createdAt > 0
+                    ? message.createdAt
+                    : Date.now(),
+        });
+        if (adoptedReasoningEffortFromMessage.didChange) {
+            currentReasoningEffort = adoptedReasoningEffortFromMessage.valueId ?? undefined;
+            currentReasoningEffortUpdatedAt = adoptedReasoningEffortFromMessage.updatedAt;
+            logger.debug(`[loop] Thinking updated from user message: ${currentReasoningEffort || 'default'}`);
         }
 
         // Resolve permission mode from meta - pass through as-is, mapping happens at SDK boundary
@@ -1186,6 +1233,20 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                     if (adoptedReasoningEffort.didChange) {
                         currentReasoningEffort = adoptedReasoningEffort.valueId ?? undefined;
                         currentReasoningEffortUpdatedAt = adoptedReasoningEffort.updatedAt;
+                    }
+
+                    const adoptedReasoningEffortFromMessage = adoptReasoningEffortOverrideFromMessageMeta({
+                        currentValueId: currentReasoningEffort ?? null,
+                        currentUpdatedAt: currentReasoningEffortUpdatedAt,
+                        messageMeta: message.meta as Record<string, unknown> | null | undefined,
+                        updatedAt:
+                            typeof message.createdAt === 'number' && Number.isFinite(message.createdAt) && message.createdAt > 0
+                                ? message.createdAt
+                                : Date.now(),
+                    });
+                    if (adoptedReasoningEffortFromMessage.didChange) {
+                        currentReasoningEffort = adoptedReasoningEffortFromMessage.valueId ?? undefined;
+                        currentReasoningEffortUpdatedAt = adoptedReasoningEffortFromMessage.updatedAt;
                     }
 
                     let messagePermissionMode: PermissionMode = currentPermissionMode;

@@ -36,6 +36,10 @@ const testCredentials: Credentials = {
 };
 
 let metadataUpdateDeferred: Deferred<void>;
+let loopDeferred: Deferred<number>;
+let capturedUserMessageHandler: ((message: any) => void) | null = null;
+let lastLoopOptions: any = null;
+let metadataSnapshot: Record<string, unknown> | null = null;
 let currentMetadataVersion = 1;
 
 const applyStartupMetadataUpdateToSessionMock = vi.fn(() => metadataUpdateDeferred.promise);
@@ -80,9 +84,11 @@ vi.mock('@/agent/runtime/initializeBackendApiContext', () => ({
             sessionSyncClient: vi.fn(() => ({
                 sessionId: 'session-start',
                 rpcHandlerManager: { registerHandler: vi.fn(), invokeLocal: vi.fn() },
-                ensureMetadataSnapshot: vi.fn(async () => ({ path: '/srv/project' })),
-                getMetadataSnapshot: vi.fn(() => ({ path: '/srv/project' })),
-                onUserMessage: vi.fn(),
+                ensureMetadataSnapshot: vi.fn(async () => metadataSnapshot ?? { path: '/srv/project' }),
+                getMetadataSnapshot: vi.fn(() => metadataSnapshot ?? { path: '/srv/project' }),
+                onUserMessage: vi.fn((handler: (message: any) => void) => {
+                    capturedUserMessageHandler = handler;
+                }),
                 sendSessionEvent: vi.fn(),
                 updateMetadata: vi.fn(),
                 updateAgentState: vi.fn(),
@@ -193,7 +199,10 @@ vi.mock('@/mcp/runtime/resolveRunnerMcpServers', () => ({
 }));
 
 vi.mock('@/backends/claude/loop', () => ({
-    loop: vi.fn(async () => 0),
+    loop: vi.fn(async (opts: any) => {
+        lastLoopOptions = opts;
+        return await loopDeferred.promise;
+    }),
 }));
 
 describe('runClaude startup metadata ordering', () => {
@@ -206,6 +215,10 @@ describe('runClaude startup metadata ordering', () => {
         vi.resetModules();
         vi.clearAllMocks();
         metadataUpdateDeferred = createDeferred<void>();
+        loopDeferred = createDeferred<number>();
+        capturedUserMessageHandler = null;
+        lastLoopOptions = null;
+        metadataSnapshot = null;
         currentMetadataVersion = 1;
     });
 
@@ -353,5 +366,53 @@ describe('runClaude startup metadata ordering', () => {
                 process.env.HAPPIER_SESSION_REQUESTED_DIRECTORY = previousRequestedDirectory;
             }
         }
+    });
+
+    it('prefers a newer reasoningEffort from user-message meta over the older session metadata override', async () => {
+        currentMetadataVersion = 1;
+        metadataSnapshot = {
+            path: '/srv/project',
+            sessionConfigOptionOverridesV1: {
+                v: 1,
+                updatedAt: 10,
+                overrides: {
+                    reasoning_effort: {
+                        updatedAt: 10,
+                        value: 'high',
+                    },
+                },
+            },
+        };
+        initializeRuntimeOverridesSynchronizerMock.mockResolvedValueOnce({
+            seedFromSession: vi.fn(async () => {}),
+            syncFromMetadata: vi.fn(),
+            getSnapshot: () => ({
+                permissionMode: { current: 'default', updatedAt: 0 },
+                modelOverride: { current: null, updatedAt: 0 },
+            }),
+        } as any);
+
+        const { runClaude } = await import('./runClaude');
+
+        const runPromise = runClaude(testCredentials, {
+            startedBy: 'daemon',
+            startingMode: 'remote',
+        });
+
+        await waitFor(() => applyStartupMetadataUpdateToSessionMock.mock.calls.length === 1);
+        metadataUpdateDeferred.resolve();
+        await waitFor(() => capturedUserMessageHandler !== null && lastLoopOptions !== null);
+        expect(capturedUserMessageHandler).not.toBeNull();
+        capturedUserMessageHandler!({
+            content: { text: 'use less thinking' },
+            meta: { reasoningEffort: 'low' },
+            createdAt: 20,
+        });
+
+        const queuedMode = lastLoopOptions?.messageQueue?.queue?.[0]?.mode;
+        expect(queuedMode?.reasoningEffort).toBe('low');
+
+        loopDeferred.resolve(0);
+        await expect(runPromise).resolves.toBeUndefined();
     });
 });

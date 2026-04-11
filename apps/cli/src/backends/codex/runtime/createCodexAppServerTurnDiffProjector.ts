@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { emitCanonicalTurnDiffTool } from '@/agent/runtime/emitCanonicalTurnDiffTool';
 import { TurnChangeSetCollector } from '@/agent/tools/diff/turnChangeSetCollector';
 import type { CodexAppServerStreamUpdate } from '@/backends/codex/appServer/streamEventBridge';
+import { normalizePatchInputRecord } from '@happier-dev/protocol/tools/v2';
 
 type CodexTurnDiffSession = Readonly<{
     sendCodexMessage: (body: unknown) => void;
@@ -46,7 +47,7 @@ export function createCodexAppServerTurnDiffProjector(params: Readonly<{
 
         observeFileChangeToolCall(input: unknown): void {
             const normalizedInput = input && typeof input === 'object' && !Array.isArray(input)
-                ? input as Record<string, unknown>
+                ? normalizePatchInputRecord(input as Record<string, unknown>)
                 : null;
             const changes = normalizedInput?.changes;
             if (changes && typeof changes === 'object' && !Array.isArray(changes)) {

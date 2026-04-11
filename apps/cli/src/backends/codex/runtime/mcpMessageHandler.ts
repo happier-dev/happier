@@ -5,6 +5,10 @@ import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import { createStreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
+import {
+  buildTokenCountSessionMessageFromUsageObservation,
+  extractUsageObservationFromTokenCountMessage,
+} from '@/usage/usageObservation';
 
 import { nextCodexLifecycleAcpMessages } from '../utils/codexAcpLifecycle';
 import { formatCodexEventForUi } from '../utils/formatCodexEventForUi';
@@ -194,8 +198,17 @@ export function createCodexMcpMessageHandler(opts: {
       });
     }
     if (message?.type === 'token_count') {
+      const observation = extractUsageObservationFromTokenCountMessage({
+        provider: 'codex',
+        defaultSource: 'codex-mcp-token-count',
+        defaultScope: 'session_cumulative',
+        body: message,
+      });
+      const normalizedTokenCount = observation
+        ? buildTokenCountSessionMessageFromUsageObservation(observation)
+        : null;
       opts.session.sendCodexMessage({
-        ...message,
+        ...(normalizedTokenCount ?? message),
         id: randomUUID(),
       });
     }

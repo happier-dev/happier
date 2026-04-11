@@ -1764,6 +1764,96 @@ describe('createOpenCodeServerRuntime', () => {
     expect(permissionHandler.handleToolCall).not.toHaveBeenCalled();
   });
 
+  it('bridges permission.asked requests onto the blocked tool call id with blocked tool input', async () => {
+    const client = createFakeClient();
+    client.sessionMessagesList.mockResolvedValue([
+      {
+        info: {
+          id: 'msg_tool_1',
+          role: 'assistant',
+          sessionID: 'ses_1',
+          time: { created: 1000 },
+        },
+        parts: [{
+          type: 'tool',
+          sessionID: 'ses_1',
+          messageID: 'msg_tool_1',
+          callID: 'call_1',
+          tool: 'read',
+          state: {
+            status: 'error',
+            input: {
+              filePath: '/tmp/outside.txt',
+            },
+          },
+        }],
+      },
+    ]);
+    const session = createFakeSession();
+    const permissionHandler = { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any;
+
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler,
+      onThinkingChange: vi.fn(),
+      getPermissionMode: () => 'default',
+    }, {
+      createClient: async () => client as any,
+    });
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+
+    client.__emit({
+      directory: '/tmp',
+      payload: {
+        type: 'permission.asked',
+        properties: {
+          id: 'perm_1',
+          sessionID: 'ses_1',
+          permission: 'external_directory',
+          patterns: ['/tmp/*'],
+          always: ['/tmp/*'],
+          metadata: {
+            filepath: '/tmp/outside.txt',
+            parentDir: '/tmp',
+          },
+          tool: { messageID: 'msg_tool_1', callID: 'call_1' },
+        },
+      },
+    });
+
+    await expect.poll(() => permissionHandler.handleToolCall.mock.calls.length).toBe(1);
+    expect(permissionHandler.handleToolCall).toHaveBeenCalledWith(
+      'call_1',
+      'read',
+      expect.objectContaining({
+        permissionId: 'call_1',
+        providerPermissionId: 'perm_1',
+        sessionId: 'ses_1',
+        toolCallId: 'call_1',
+        toolName: 'read',
+        filePath: '/tmp/outside.txt',
+        permission: expect.objectContaining({
+          id: 'perm_1',
+          kind: 'external_directory',
+          toolName: 'read',
+        }),
+        toolCall: expect.objectContaining({
+          toolCallId: 'call_1',
+          status: 'pending',
+          rawInput: expect.objectContaining({
+            filePath: '/tmp/outside.txt',
+          }),
+        }),
+      }),
+    );
+    expect(client.permissionReply).toHaveBeenCalledWith({ requestId: 'perm_1', reply: 'once' });
+  });
+
   it('auto-approves permission.asked requests in yolo mode (no UI prompt)', async () => {
     const client = createFakeClient();
     const session = createFakeSession();
@@ -3626,6 +3716,85 @@ describe('createOpenCodeServerRuntime', () => {
     expect(errorMessages[0]?.[1]?.message).toContain('Model not found');
   });
 
+  it('does not surface abort-like prompt_async errors as agent messages', async () => {
+    const client = createFakeClient() as any;
+    client.sessionPromptAsync = vi.fn(async () => {
+      const error = new Error('The operation was aborted.');
+      error.name = 'AbortError';
+      throw error;
+    });
+
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as any,
+    });
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+
+    await expect((runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-abort-prompt-async' })).rejects.toBeTruthy();
+
+    const errorMessages = session.sendAgentMessage.mock.calls.filter(
+      (c: any[]) => c?.[0] === 'opencode' && c?.[1]?.type === 'message',
+    );
+    expect(errorMessages).toHaveLength(0);
+    expect(session.sendAgentMessage.mock.calls.some(
+      (c: any[]) => c?.[0] === 'opencode' && c?.[1]?.type === 'turn_aborted',
+    )).toBe(true);
+  });
+
+  it('does not surface abort-like session.error details as agent messages', async () => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as any,
+    });
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+
+    const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-session-abort' });
+    await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+
+    client.__emit({
+      directory: '/tmp',
+      payload: {
+        type: 'session.error',
+        properties: {
+          sessionID: 'ses_1',
+          error: {
+            name: 'AbortError',
+            message: 'The operation was aborted.',
+          },
+        },
+      },
+    });
+
+    await expect(promptPromise).rejects.toBeTruthy();
+
+    const errorMessages = session.sendAgentMessage.mock.calls.filter(
+      (c: any[]) => c?.[0] === 'opencode' && c?.[1]?.type === 'message',
+    );
+    expect(errorMessages).toHaveLength(0);
+    expect(session.sendAgentMessage.mock.calls.some(
+      (c: any[]) => c?.[0] === 'opencode' && c?.[1]?.type === 'turn_aborted',
+    )).toBe(true);
+  });
+
   it('emits tool-result errors with { status: \"failed\" } and omits empty metadata (matches ACP dialect baselines)', async () => {
     const client = createFakeClient();
     const session = createFakeSession();
@@ -4007,7 +4176,16 @@ describe('createOpenCodeServerRuntime', () => {
     expect(permissionHandler.handleToolCall).toHaveBeenCalledWith(
       'per_1',
       'external_directory',
-      expect.objectContaining({ permission: 'external_directory' }),
+      expect.objectContaining({
+        permissionId: 'per_1',
+        providerPermissionId: 'per_1',
+        toolCallId: 'per_1',
+        toolName: 'external_directory',
+        permission: expect.objectContaining({
+          id: 'per_1',
+          kind: 'external_directory',
+        }),
+      }),
     );
     expect(client.permissionReply).toHaveBeenCalledWith({ requestId: 'per_1', reply: 'once' });
 
@@ -4019,6 +4197,100 @@ describe('createOpenCodeServerRuntime', () => {
     });
 
     await expect(promptPromise).resolves.toBeUndefined();
+  });
+
+  it('clears observed permission-bridge tool parts on reset before a reused call id is handled again', async () => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+    const permissionHandler = createFakePermissionHandler();
+
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: permissionHandler as unknown as ProviderEnforcedPermissionHandler,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
+    });
+
+    await runtime.startOrLoad({});
+    await client.__emit({
+      directory: '/tmp',
+      payload: {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'part_tool_old',
+            type: 'tool',
+            sessionID: 'ses_1',
+            messageID: 'msg_old',
+            callID: 'call_reused',
+            tool: 'Read',
+            state: {
+              status: 'running',
+              input: { filePath: '/tmp/observed-old.txt' },
+            },
+          },
+        },
+      },
+    });
+
+    await runtime.reset();
+
+    permissionHandler.handleToolCall.mockClear();
+    client.permissionReply.mockClear();
+    client.sessionMessagesList.mockClear();
+
+    let permissionResponses: unknown[][] = [
+      [
+        {
+          id: 'per_new',
+          sessionID: 'ses_1',
+          permission: 'external_directory',
+          patterns: ['/tmp/*'],
+          always: ['/tmp/*'],
+          metadata: { filePath: '/tmp/fallback-new.txt' },
+          tool: { messageID: 'msg_new', callID: 'call_reused' },
+        },
+      ],
+      [],
+    ];
+
+    client.permissionList.mockImplementation(async () => permissionResponses.shift() ?? []);
+    client.sessionMessagesList.mockResolvedValueOnce([]);
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+
+    const secondPromptPromise = (runtime as any).sendPromptWithMeta({ text: 'second turn', localId: 'local-reset-bridge-2' });
+
+    await expect.poll(() => client.permissionReply.mock.calls.length).toBe(1);
+    expect(
+      client.sessionMessagesList.mock.calls.some((call) => {
+        const [firstArg] = call as [({ sessionId?: string } | undefined)?];
+        return firstArg?.sessionId === 'ses_1';
+      }),
+    ).toBe(true);
+    expect(permissionHandler.handleToolCall).toHaveBeenLastCalledWith(
+      'call_reused',
+      'external_directory',
+      expect.objectContaining({
+        filePath: '/tmp/fallback-new.txt',
+        permission: expect.objectContaining({
+          id: 'per_new',
+          kind: 'external_directory',
+          toolName: 'external_directory',
+        }),
+      }),
+    );
+
+    await client.__emit({
+      directory: '/tmp',
+      payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } },
+    });
+    await expect(secondPromptPromise).resolves.toBeUndefined();
   });
 
   it('fails closed when permission polling fails before turn completion', async () => {

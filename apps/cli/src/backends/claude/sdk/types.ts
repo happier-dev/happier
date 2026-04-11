@@ -65,6 +65,10 @@ export interface SDKResultMessage extends SDKMessage {
         cache_read_input_tokens?: number
         cache_creation_input_tokens?: number
     }
+    modelUsage?: {
+        contextWindow?: number
+        [key: string]: unknown
+    }
     total_cost_usd: number
     duration_ms: number
     duration_api_ms: number

@@ -12,6 +12,7 @@ import { buildChangeTitleInstruction, shouldAppendChangeTitleInstruction } from 
 import { isChangeTitleToolNameAlias } from '@happier-dev/protocol';
 import { TurnChangeSetCollector } from '@/agent/tools/diff/turnChangeSetCollector';
 import { emitCanonicalTurnDiffTool } from '@/agent/runtime/emitCanonicalTurnDiffTool';
+import { isAbortLikeError } from '@/agent/executionRuns/runtime/turnDelivery';
 import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
 
 import type { OpenCodeGlobalEvent, OpenCodeModelRef, OpenCodePermissionRequest, OpenCodeQuestionRequest, OpenCodeSession } from './types';
@@ -99,6 +100,13 @@ async function raceWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promi
 
 function normalizeEnvVar(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function shouldSurfaceOpenCodeErrorDetail(detail: unknown): detail is string {
+  if (typeof detail !== 'string') return false;
+  const trimmed = detail.trim();
+  if (!trimmed) return false;
+  return !isAbortLikeError(trimmed);
 }
 
 class OpenCodeControlPlaneRequestListError extends Error {
@@ -191,8 +199,131 @@ export function createOpenCodeServerRuntime(params: {
   const partTypeByPartKey = new Map<string, string>();
   const toolCallSentByCallId = new Set<string>();
   const toolResultSentByCallId = new Set<string>();
+  const observedToolPartByCallKey = new Map<string, NonNullable<ReturnType<typeof parseOpenCodeToolPart>>>();
   const contextWindowTokensByModelId = new Map<string, number>();
   const usageFingerprintByMessageId = new Map<string, string>();
+
+  const buildOpenCodeToolCallKey = (remoteSessionId: string, callId: string): string => `${remoteSessionId}:${callId}`;
+
+  const resolveOpenCodeToolNameForAcp = (toolRaw: string): string => {
+    const normalizedTool = toolRaw.trim();
+    const toolLower = normalizedTool.toLowerCase();
+    const canonicalMcpToolName =
+      canonicalizeOpenCodeConfiguredMcpToolName(normalizedTool, params.mcpServers);
+    return canonicalMcpToolName ?? (toolLower === 'grep' ? 'search' : normalizedTool);
+  };
+
+  const buildOpenCodePermissionFallbackInput = (metadata: Record<string, unknown>): Record<string, unknown> => {
+    const filePath =
+      normalizeString(metadata.filePath)
+      || normalizeString(metadata.filepath)
+      || normalizeString(metadata.path);
+    const parentDir = normalizeString(metadata.parentDir);
+    const out: Record<string, unknown> = {};
+    if (filePath) {
+      out.filePath = filePath;
+      out.filepath = filePath;
+    }
+    if (parentDir) {
+      out.parentDir = parentDir;
+    }
+    return out;
+  };
+
+  const findToolPartForPermissionRequest = async (
+    req: OpenCodePermissionRequest,
+  ): Promise<NonNullable<ReturnType<typeof parseOpenCodeToolPart>> | null> => {
+    const remoteCallId = normalizeString(req.tool?.callID);
+    const remoteMessageId = normalizeString(req.tool?.messageID);
+    if (!remoteCallId || !remoteMessageId) return null;
+
+    const callKey = buildOpenCodeToolCallKey(req.sessionID, remoteCallId);
+    const observed = observedToolPartByCallKey.get(callKey);
+    if (observed) {
+      return observed;
+    }
+
+    try {
+      const c = await ensureClient();
+      const rawMessages = await c.sessionMessagesList({ sessionId: req.sessionID });
+      if (!Array.isArray(rawMessages)) return null;
+
+      for (const rawMessage of rawMessages) {
+        const message = asRecord(rawMessage);
+        if (!message) continue;
+        const info = asRecord(message.info);
+        if (normalizeString(info?.id) !== remoteMessageId) continue;
+        const parts = Array.isArray(message.parts) ? message.parts : [];
+        for (const rawPart of parts) {
+          const parsed = parseOpenCodeToolPart(rawPart);
+          if (!parsed) continue;
+          if (parsed.sessionID !== req.sessionID || parsed.callID !== remoteCallId) continue;
+          observedToolPartByCallKey.set(callKey, parsed);
+          return parsed;
+        }
+      }
+    } catch (error) {
+      logger.debug('[OpenCodeServer] failed to resolve blocked tool part for permission request (non-fatal)', {
+        requestId: req.id,
+        sessionId: req.sessionID,
+        toolCallId: remoteCallId,
+      }, error);
+    }
+
+    return null;
+  };
+
+  const resolvePermissionAskedToolBridge = async (req: OpenCodePermissionRequest): Promise<{
+    localRequestId: string;
+    toolName: string;
+    toolInput: Record<string, unknown>;
+  }> => {
+    const localRequestId = normalizeString(req.tool?.callID) || req.id;
+    const matchedToolPart = await findToolPartForPermissionRequest(req);
+    const matchedState = matchedToolPart ? asRecord(matchedToolPart.state) : null;
+    const partInput = matchedState ? (asRecord(matchedState.input) ?? {}) : {};
+    const fallbackInput = buildOpenCodePermissionFallbackInput(req.metadata);
+    const rawInput =
+      Object.keys(partInput).length > 0
+        ? { ...fallbackInput, ...partInput }
+        : fallbackInput;
+    const toolName = matchedToolPart
+      ? resolveOpenCodeToolNameForAcp(normalizeString(matchedToolPart.tool))
+      : req.permission;
+    const title = matchedState ? normalizeString(matchedState.title) : '';
+
+    return {
+      localRequestId,
+      toolName,
+      toolInput: {
+        ...rawInput,
+        permissionId: localRequestId,
+        providerPermissionId: req.id,
+        sessionId: req.sessionID,
+        toolCallId: localRequestId,
+        toolName,
+        patterns: req.patterns,
+        always: req.always,
+        metadata: req.metadata,
+        permission: {
+          id: req.id,
+          kind: req.permission,
+          patterns: req.patterns,
+          always: req.always,
+          metadata: req.metadata,
+          toolName,
+          ...(title ? { title } : null),
+        },
+        toolCall: {
+          toolCallId: localRequestId,
+          rawInput,
+          status: 'pending',
+          kind: req.permission,
+          ...(title ? { title } : null),
+        },
+      },
+    };
+  };
 
   const ensureClient = async (): Promise<OpenCodeServerRuntimeClient> => {
     if (client) return client;
@@ -465,11 +596,12 @@ export function createOpenCodeServerRuntime(params: {
     sidechainStreamSeenBySidechainId.clear();
     pendingTaskSidechainImportsBySidechainId.clear();
     pendingTaskChildSessionDiscoveryCallKeys.clear();
-      accumulatedTextByPartKey.clear();
-      partTypeByPartKey.clear();
-      toolCallSentByCallId.clear();
-      toolResultSentByCallId.clear();
-      usageFingerprintByMessageId.clear();
+    accumulatedTextByPartKey.clear();
+    partTypeByPartKey.clear();
+    toolCallSentByCallId.clear();
+    toolResultSentByCallId.clear();
+    observedToolPartByCallKey.clear();
+    usageFingerprintByMessageId.clear();
     if (turnControlAbort) {
       try {
         turnControlAbort.abort();
@@ -1341,9 +1473,8 @@ export function createOpenCodeServerRuntime(params: {
         }
       }
 
-      const canonicalMcpToolName =
-        canonicalizeOpenCodeConfiguredMcpToolName(toolRaw, params.mcpServers);
-      const toolNameForAcp = canonicalMcpToolName ?? (toolLower === 'grep' ? 'search' : toolRaw);
+      observedToolPartByCallKey.set(callKey, part);
+      const toolNameForAcp = resolveOpenCodeToolNameForAcp(toolRaw);
       const meta = buildSidechainMeta(
         { opencodeMessageId: messageID, opencodeRemoteSessionId: part.sessionID },
         part.sessionID,
@@ -1583,12 +1714,12 @@ export function createOpenCodeServerRuntime(params: {
 
     let decision: Awaited<ReturnType<typeof params.permissionHandler.handleToolCall>>;
     try {
-      decision = await params.permissionHandler.handleToolCall(req.id, req.permission, {
-        permission: req.permission,
-        patterns: req.patterns,
-        always: req.always,
-        metadata: req.metadata,
-      });
+      const resolved = await resolvePermissionAskedToolBridge(req);
+      decision = await params.permissionHandler.handleToolCall(
+        resolved.localRequestId,
+        resolved.toolName,
+        resolved.toolInput,
+      );
     } catch (error) {
       logger.debug('[OpenCodeServer] permission handler threw; rejecting permission request (fail-closed)', {
         requestId: req.id,
@@ -1872,7 +2003,7 @@ export function createOpenCodeServerRuntime(params: {
         params.session.sendAgentMessage(provider, { type: 'turn_aborted', id: randomUUID() });
       });
       const detail = extractOpenCodeErrorText(rec.error);
-      if (detail) {
+      if (shouldSurfaceOpenCodeErrorDetail(detail)) {
         params.session.sendAgentMessage(provider, { type: 'message', message: detail });
       }
       rejectTurn(rec.error ?? new Error('OpenCode session error'));
@@ -2141,7 +2272,7 @@ export function createOpenCodeServerRuntime(params: {
         setThinking(false);
         await flushAndClearStreamWriters({ reason: 'abort', interruptedReason: 'prompt_async_error' });
         const detail = extractOpenCodeErrorText(error);
-        if (detail) {
+        if (shouldSurfaceOpenCodeErrorDetail(detail)) {
           params.session.sendAgentMessage(provider, { type: 'message', message: detail });
         }
         params.session.sendAgentMessage(provider, { type: 'turn_aborted', id: randomUUID() });
