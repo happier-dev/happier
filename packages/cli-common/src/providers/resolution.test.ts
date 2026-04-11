@@ -178,4 +178,25 @@ describe('resolveProviderCliCommand', () => {
       command: cliPath,
     });
   });
+
+  it('fails closed for a Unix TypeScript override without a shebang when no JavaScript runtime is available', () => {
+    if (process.platform === 'win32') return;
+
+    const root = join(tmpdir(), `happier-cli-common-provider-ohmypi-unix-ts-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const cliDir = join(root, 'src');
+    mkdirSync(cliDir, { recursive: true });
+
+    const cliPath = join(cliDir, 'cli.ts');
+    writeFileSync(cliPath, 'console.log("ok")\n', 'utf8');
+    chmodSync(cliPath, 0o644);
+
+    expect(resolveProviderCliCommand('ohMyPi', {
+      processEnv: {
+        PATH: '',
+        HAPPIER_OHMYPI_PATH: cliPath,
+      },
+      isBunRuntime: true,
+      currentExecPath: join(root, 'happier'),
+    })).toBeNull();
+  });
 });

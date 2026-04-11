@@ -166,13 +166,26 @@ function resolveUnixScriptRuntimeKind(candidatePath: string): ProviderCliJavaScr
   return 'none';
 }
 
+function resolveJavaScriptSourceOverrideRuntimeKind(candidatePath: string): ProviderCliJavaScriptRuntimeKind {
+  const shebangRuntimeKind = process.platform === 'win32'
+    ? 'none'
+    : resolveUnixScriptRuntimeKind(candidatePath);
+  if (shebangRuntimeKind !== 'none') {
+    return shebangRuntimeKind;
+  }
+
+  // Source-file overrides still need a JS runtime even when the file itself
+  // does not declare one via shebang. Prefer Bun for raw TS/TSX/JSX sources.
+  return 'bun';
+}
+
 export function resolveProviderCliJavaScriptRuntimeKind(candidatePath: string): ProviderCliJavaScriptRuntimeKind {
   if (/\.(?:c?js|mjs)$/i.test(candidatePath)) {
     return 'node';
   }
 
   if (PROVIDER_CLI_SHEBANG_RUNTIME_FILE_EXTENSIONS.test(candidatePath)) {
-    return resolveUnixScriptRuntimeKind(candidatePath);
+    return resolveJavaScriptSourceOverrideRuntimeKind(candidatePath);
   }
 
   if (process.platform === 'win32') {
