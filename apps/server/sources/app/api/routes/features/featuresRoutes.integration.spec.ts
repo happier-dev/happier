@@ -625,6 +625,32 @@ describe("featuresRoutes", () => {
             expect(payload.capabilities.server.webappUrl).toBe("https://ui.example.test");
         });
 
+        it("derives webappUrl from canonicalServerUrl when the server is serving UI at root", async () => {
+            resetEnv({
+                HAPPIER_PUBLIC_SERVER_URL: "https://stack.example.test/",
+                HAPPIER_WEBAPP_URL: undefined,
+                HAPPIER_SERVER_UI_DIR: "/tmp/ui",
+                HAPPIER_SERVER_UI_PREFIX: "/",
+            });
+
+            const { payload } = await getFeaturesPayload();
+            expect(payload.capabilities.server.canonicalServerUrl).toBe("https://stack.example.test");
+            expect(payload.capabilities.server.webappUrl).toBe("https://stack.example.test");
+        });
+
+        it("derives webappUrl from canonicalServerUrl plus the UI prefix when the server is serving UI below root", async () => {
+            resetEnv({
+                HAPPIER_PUBLIC_SERVER_URL: "https://stack.example.test/base/",
+                HAPPIER_WEBAPP_URL: undefined,
+                HAPPIER_SERVER_UI_DIR: "/tmp/ui",
+                HAPPIER_SERVER_UI_PREFIX: "/ui/",
+            });
+
+            const { payload } = await getFeaturesPayload();
+            expect(payload.capabilities.server.canonicalServerUrl).toBe("https://stack.example.test/base");
+            expect(payload.capabilities.server.webappUrl).toBe("https://stack.example.test/base/ui");
+        });
+
         it("strips userinfo/query/hash from advertised urls", async () => {
             resetEnv({
                 HAPPIER_PUBLIC_SERVER_URL: "https://user:pass@stack.example.test/?q=1#frag",

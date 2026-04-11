@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  readAuthMtlsFeatureEnv,
   readAuthFeatureEnv,
   readChannelBridgesFeatureEnv,
   readConnectedServicesFeatureEnv,
@@ -62,6 +63,20 @@ describe('readAuthFeatureEnv', () => {
     const res = readAuthFeatureEnv(env);
     expect(res.recoveryProviderResetEnabled).toBe(false);
     expect(res.uiRecoveryKeyReminderEnabled).toBe(false);
+  });
+});
+
+describe('readAuthMtlsFeatureEnv', () => {
+  it('uses the effective local UI webapp URL in default returnTo allow-prefixes when HAPPIER_WEBAPP_URL is unset', () => {
+    const env: NodeJS.ProcessEnv = {
+      HAPPIER_FEATURE_AUTH_MTLS__ENABLED: 'true',
+      HAPPIER_PUBLIC_SERVER_URL: 'https://stack.example.test/base/',
+      HAPPIER_SERVER_UI_DIR: '/tmp/ui',
+      HAPPIER_SERVER_UI_PREFIX: '/ui/',
+    };
+
+    const res = readAuthMtlsFeatureEnv(env);
+    expect(res.returnToAllowPrefixes).toEqual(['happier://', 'https://stack.example.test/base/ui']);
   });
 });
 

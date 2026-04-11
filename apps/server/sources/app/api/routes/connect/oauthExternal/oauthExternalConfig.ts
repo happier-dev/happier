@@ -1,5 +1,7 @@
 import { isLoopbackHostname } from "@/utils/network/urlSafety";
 import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
+import { resolveUiConfig } from "@/app/api/uiConfig";
+import { DEFAULT_WEBAPP_URL, resolveEffectiveWebappBaseUrl } from "../../../../serverUrls/effectiveServerUrls";
 
 export function isProviderResetEnabled(env: NodeJS.ProcessEnv): boolean {
     return isServerFeatureEnabledForRequest("auth.recovery.providerReset", env);
@@ -43,13 +45,36 @@ function tryNormalizeSafeWebRedirectUrl(env: NodeJS.ProcessEnv, raw: string): st
 }
 
 function resolveWebAppBaseUrlFromEnv(env: NodeJS.ProcessEnv): string {
-    return (env.HAPPIER_WEBAPP_URL ?? env.HAPPY_WEBAPP_URL ?? "https://app.happier.dev").toString().trim() || "https://app.happier.dev";
+    return resolveEffectiveWebappBaseUrl(env).trim() || DEFAULT_WEBAPP_URL;
 }
 
 function readSingleHeaderValue(headers: Record<string, unknown>, name: string): string {
     const raw = (headers as any)[name] ?? (headers as any)[name.toLowerCase()] ?? (headers as any)[name.toUpperCase()];
     if (Array.isArray(raw)) return typeof raw[0] === "string" ? raw[0] : "";
     return typeof raw === "string" ? raw : "";
+}
+
+function resolveLoopbackUiBasePath(pathname: string, uiPrefix: string): string {
+    const normalizedUiPrefix = uiPrefix === "/" ? "/" : `/${uiPrefix.replace(/^\/+|\/+$/g, "")}`;
+    if (normalizedUiPrefix === "/") {
+        return normalizedUiPrefix;
+    }
+
+    if (pathname === normalizedUiPrefix || pathname.startsWith(`${normalizedUiPrefix}/`)) {
+        return normalizedUiPrefix;
+    }
+
+    const prefixedSegment = `${normalizedUiPrefix}/`;
+    const prefixIndex = pathname.indexOf(prefixedSegment);
+    if (prefixIndex >= 0) {
+        return pathname.slice(0, prefixIndex + normalizedUiPrefix.length) || normalizedUiPrefix;
+    }
+
+    if (pathname.endsWith(normalizedUiPrefix)) {
+        return pathname;
+    }
+
+    return normalizedUiPrefix;
 }
 
 /**
@@ -69,17 +94,19 @@ export function resolveWebAppOAuthReturnUrlFromRequestHeaders(params: {
     if (!providerId) return null;
 
     const candidates: string[] = [];
-    const origin = readSingleHeaderValue(params.headers, "origin").trim();
-    if (origin) candidates.push(origin);
     const referer = readSingleHeaderValue(params.headers, "referer").trim();
     if (referer) candidates.push(referer);
+    const origin = readSingleHeaderValue(params.headers, "origin").trim();
+    if (origin) candidates.push(origin);
+    const uiPrefix = resolveUiConfig(params.env).prefix;
 
     for (const raw of candidates) {
         try {
             const url = new URL(raw);
             if (!isLoopbackHostname(url.hostname)) continue;
             if (url.protocol !== "http:" && url.protocol !== "https:") continue;
-            const returnUrl = `${url.origin}/oauth/${encodeURIComponent(providerId)}`;
+            const loopbackUiBasePath = resolveLoopbackUiBasePath(url.pathname, uiPrefix);
+            const returnUrl = `${url.origin}${loopbackUiBasePath.replace(/\/+$/, "")}/oauth/${encodeURIComponent(providerId)}`;
             const normalized = tryNormalizeSafeWebRedirectUrl(params.env, returnUrl);
             if (normalized) return normalized;
         } catch {
@@ -114,7 +141,7 @@ export function resolveWebAppOAuthReturnUrlFromEnv(env: NodeJS.ProcessEnv, provi
 
     const base = resolveWebAppBaseUrlFromEnv(env).trim();
     const suffix = `/oauth/${encodedProvider}`;
-    if (!base) return `https://app.happier.dev${suffix}`;
+    if (!base) return `${DEFAULT_WEBAPP_URL}${suffix}`;
     let candidate: string;
     if (new RegExp(`${suffix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\/?$`).test(base)) {
         candidate = base;
@@ -127,7 +154,7 @@ export function resolveWebAppOAuthReturnUrlFromEnv(env: NodeJS.ProcessEnv, provi
     const normalized = tryNormalizeSafeWebRedirectUrl(env, candidate);
     if (normalized) return normalized;
 
-    return `https://app.happier.dev${suffix}`;
+    return `${DEFAULT_WEBAPP_URL}${suffix}`;
 }
 
 export function buildRedirectUrl(baseUrl: string, params: Record<string, string>): string {

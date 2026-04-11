@@ -20,6 +20,7 @@ import {
     resolveDefaultSocketAdapter,
 } from '@/config/backends';
 import http from 'node:http';
+import { homedir } from 'node:os';
 import { Server as SocketIOServer } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-streams-adapter';
 import { getRedisClient } from '@/storage/redis/redis';
@@ -34,6 +35,40 @@ import { startRetentionWorker } from '@/app/retention/runtime/startRetentionWork
 
 export type ServerFlavor = 'full' | 'light';
 export type ServerRole = 'all' | 'api' | 'worker';
+
+function resolveServerHomeDirFromEnvironment(env: NodeJS.ProcessEnv): string {
+    const envHome =
+        process.platform === 'win32'
+            ? (env.USERPROFILE || env.HOME)
+            : env.HOME;
+    const trimmedEnvHome = typeof envHome === 'string' ? envHome.trim() : '';
+    if (trimmedEnvHome) {
+        return trimmedEnvHome;
+    }
+    const resolvedHomeDir = homedir().trim();
+    return resolvedHomeDir;
+}
+
+function expandHomeDirPath(value: string, env: NodeJS.ProcessEnv): string {
+    const homeDir = resolveServerHomeDirFromEnvironment(env);
+    if (!homeDir) {
+        return value;
+    }
+    if (value === '~') {
+        return homeDir;
+    }
+    if (value.startsWith('~/') || value.startsWith('~\\')) {
+        return join(homeDir, value.slice(2));
+    }
+    return value;
+}
+
+function resolveServerLightDataDir(env: NodeJS.ProcessEnv): string {
+    return expandHomeDirPath(
+        (env.HAPPIER_SERVER_LIGHT_DATA_DIR ?? env.HAPPY_SERVER_LIGHT_DATA_DIR ?? '').trim(),
+        env,
+    );
+}
 
 export function getServerRoleFromEnv(env: NodeJS.ProcessEnv): ServerRole {
     const raw = env.SERVER_ROLE?.trim();
@@ -79,14 +114,13 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
     } else if (dbProvider === 'pglite') {
         await initDbPglite();
     } else if (dbProvider === 'sqlite') {
+        const dataDir = resolveServerLightDataDir(process.env);
         if (!process.env.DATABASE_URL || !process.env.DATABASE_URL.trim()) {
-            const dataDir = (process.env.HAPPIER_SERVER_LIGHT_DATA_DIR ?? process.env.HAPPY_SERVER_LIGHT_DATA_DIR ?? '').trim();
             if (!dataDir) {
                 throw new Error('HAPPIER_SERVER_LIGHT_DATA_DIR (or HAPPY_SERVER_LIGHT_DATA_DIR) must be set when using sqlite without DATABASE_URL');
             }
             process.env.DATABASE_URL = pathToFileURL(join(dataDir, 'happier-server-light.sqlite')).href;
         }
-        const dataDir = (process.env.HAPPY_SERVER_LIGHT_DATA_DIR ?? process.env.HAPPIER_SERVER_LIGHT_DATA_DIR ?? '').trim();
         if (dataDir) {
             await applySqliteMigrationsIfNeeded({ env: process.env, dataDir });
         }

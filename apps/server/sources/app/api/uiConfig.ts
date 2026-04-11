@@ -1,4 +1,4 @@
-import { parseBooleanEnv } from "@/config/env";
+import { parseBooleanEnv } from "../../config/env";
 
 export type UiConfig = {
     dir: string | null;

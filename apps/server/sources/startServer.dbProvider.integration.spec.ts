@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { pathToFileURL } from "node:url";
 import {
     createStartServerDbMocks,
@@ -25,6 +26,11 @@ installStartServerDbModuleMock(startServerDbMocks);
 
 installStartServerCommonWiringMocks();
 
+const applySqliteMigrationsIfNeeded = vi.fn(async () => {});
+vi.mock("@/flavors/light/sqliteMigrations", () => ({
+    applySqliteMigrationsIfNeeded,
+}));
+
 // Avoid hanging in tests: startServer calls awaitShutdown().
 vi.mock("@/utils/process/shutdown", async () => {
     const actual = await vi.importActual<any>("@/utils/process/shutdown");
@@ -44,6 +50,7 @@ describe("startServer DB provider selection", () => {
     beforeEach(() => {
         startServerDbMocks.reset();
         startServerHarness.reset();
+        applySqliteMigrationsIfNeeded.mockReset().mockImplementation(async () => {});
     });
 
     afterEach(() => {
@@ -92,5 +99,56 @@ describe("startServer DB provider selection", () => {
         expect(process.env.DATABASE_URL).toBe(
             pathToFileURL(join("/tmp/happy server #light", "happier-server-light.sqlite")).href,
         );
+    });
+
+    it("expands ~ in the sqlite light data dir before building DATABASE_URL", async () => {
+        await startServerHarness.start("light", {
+            SERVER_ROLE: "api",
+            HAPPY_DB_PROVIDER: "sqlite",
+            HAPPY_SERVER_LIGHT_DATA_DIR: "~/happy-server-light",
+            HOME: "/Users/tester",
+            DATABASE_URL: undefined,
+        });
+
+        expect(process.env.DATABASE_URL).toBe(
+            pathToFileURL(join("/Users/tester/happy-server-light", "happier-server-light.sqlite")).href,
+        );
+    });
+
+    it("uses the same preferred light data dir for DATABASE_URL and sqlite migrations", async () => {
+        await startServerHarness.start("light", {
+            SERVER_ROLE: "api",
+            HAPPY_DB_PROVIDER: "sqlite",
+            HAPPIER_SERVER_LIGHT_DATA_DIR: "/tmp/happier-preferred-dir",
+            HAPPY_SERVER_LIGHT_DATA_DIR: "/tmp/happy-legacy-dir",
+            DATABASE_URL: undefined,
+        });
+
+        expect(process.env.DATABASE_URL).toBe(
+            pathToFileURL(join("/tmp/happier-preferred-dir", "happier-server-light.sqlite")).href,
+        );
+        expect(applySqliteMigrationsIfNeeded).toHaveBeenCalledWith(expect.objectContaining({
+            dataDir: "/tmp/happier-preferred-dir",
+        }));
+    });
+
+    it("falls back to the OS home directory when expanding ~ without HOME or USERPROFILE", async () => {
+        const expectedDataDir = join(homedir(), "happy-server-light");
+
+        await startServerHarness.start("light", {
+            SERVER_ROLE: "api",
+            HAPPY_DB_PROVIDER: "sqlite",
+            HAPPY_SERVER_LIGHT_DATA_DIR: "~/happy-server-light",
+            HOME: undefined,
+            USERPROFILE: undefined,
+            DATABASE_URL: undefined,
+        });
+
+        expect(process.env.DATABASE_URL).toBe(
+            pathToFileURL(join(expectedDataDir, "happier-server-light.sqlite")).href,
+        );
+        expect(applySqliteMigrationsIfNeeded).toHaveBeenCalledWith(expect.objectContaining({
+            dataDir: expectedDataDir,
+        }));
     });
 });
