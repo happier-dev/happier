@@ -1,4 +1,4 @@
-import { getAgentLocalControlCapability, type AgentId } from '@happier-dev/agents';
+import { type AgentId, usesProviderAttachForLocalControl } from '@happier-dev/agents';
 
 import { getProviderAttachOps } from '@/backends/catalog';
 import { configuration } from '@/configuration';
@@ -69,7 +69,7 @@ export async function buildAttachSelectionModel(params: Readonly<{
     const shouldInclude =
       localInfo !== null
       || metadataMachineId === params.currentMachineId
-      || getAgentLocalControlCapability(rowModel.agentId)?.attachStrategy === 'provider_attach';
+      || usesProviderAttachForLocalControl(rowModel.agentId);
     if (!shouldInclude) continue;
 
     rows.push({

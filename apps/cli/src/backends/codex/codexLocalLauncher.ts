@@ -16,7 +16,7 @@ import { resolveCodexCliInvocation } from './utils/resolveCodexCliInvocation';
 import { delay } from '@/utils/time';
 
 import { CodexRolloutMirror } from './localControl/codexRolloutMirror';
-import { resolveCodexRolloutSessionStoreBinding } from './localControl/resolveCodexRolloutSessionStoreBinding';
+import { resolveCodexLocalHostedDirectTranscriptBinding } from './localControl/resolveCodexLocalHostedDirectTranscriptBinding';
 import { discoverCodexRolloutFileOnce } from './rollout/discovery/rolloutDiscovery';
 import { resolveCodexMcpPolicyForPermissionMode } from './utils/permissionModePolicy';
 
@@ -449,7 +449,7 @@ export async function codexLocalLauncher<TMode>(opts: {
       ? process.env.CODEX_HOME
       : null;
 
-    const rolloutSessionStore = resolveCodexRolloutSessionStoreBinding({
+    const directTranscriptBinding = resolveCodexLocalHostedDirectTranscriptBinding({
       activeServerDir: configuration.activeServerDir,
       candidateFilePath: candidateFile.filePath,
       codexHome,
@@ -462,7 +462,7 @@ export async function codexLocalLauncher<TMode>(opts: {
       codexHome,
       debug,
       allowLegacyFollowerFallback: process.env.HAPPIER_CODEX_ALLOW_NONCANONICAL_LOCAL_CONTROL_FALLBACK === '1',
-      rolloutSessionStore,
+      directTranscriptBinding,
       session: opts.session,
       onCodexSessionId: async (id) => {
         queueCodexSessionIdPublish(id);
