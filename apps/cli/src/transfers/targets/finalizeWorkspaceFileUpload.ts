@@ -1,6 +1,10 @@
-import { mkdir, rename, rm, stat } from 'fs/promises';
+import { mkdir, stat } from 'fs/promises';
 import { dirname } from 'path';
 
+import {
+  CrossDeviceMoveSourceCleanupError,
+  moveFileWithCrossDeviceFallback,
+} from '../../utils/fs/moveFileWithCrossDeviceFallback';
 import type { UploadTransferFinalizeResult } from './uploadTransferTarget';
 
 export async function finalizeWorkspaceFileUpload(input: Readonly<{
@@ -27,10 +31,21 @@ export async function finalizeWorkspaceFileUpload(input: Readonly<{
     if (!input.overwrite) {
       return { success: false, error: 'Destination already exists', keepSession: true };
     }
-    await rm(input.destPath, { force: true });
   }
 
-  await rename(input.tempPath, input.destPath);
+  try {
+    await moveFileWithCrossDeviceFallback(input.tempPath, input.destPath);
+  } catch (error) {
+    if (error instanceof CrossDeviceMoveSourceCleanupError && error.destinationRolledBack) {
+      return {
+        success: false,
+        error: 'Failed to finalize uploaded file because the staged upload file is still in use. Retry the upload finalization.',
+        keepSession: true,
+      };
+    }
+    throw error;
+  }
+
   return {
     success: true,
     path: input.destDisplayPath,
