@@ -49,6 +49,12 @@ describe('sessionPaneUrlState', () => {
                 details: { kind: 'terminal' },
             });
         });
+
+        it('parses terminal details target with an explicit terminal instance id', () => {
+            expect(parseSessionPaneUrlState({ details: 'terminal', terminalInstanceId: 'term-7' })).toEqual({
+                details: { kind: 'terminal', terminalInstanceId: 'term-7' },
+            });
+        });
     });
 
     describe('applySessionPaneUrlState', () => {
@@ -135,7 +141,36 @@ describe('sessionPaneUrlState', () => {
                 expect.objectContaining({
                     key: 'terminal:embedded',
                     kind: 'terminal',
-                    resource: { kind: 'terminal' },
+                    resource: expect.objectContaining({
+                        kind: 'terminal',
+                        terminalInstanceId: 'embedded',
+                    }),
+                }),
+                { intent: 'pinned' },
+            );
+        });
+
+        it('restores an explicit terminal details instance from url state', () => {
+            const pane = {
+                openRight: vi.fn(),
+                setRightTab: vi.fn(),
+                openBottom: vi.fn(),
+                setBottomTab: vi.fn(),
+                openDetailsTab: vi.fn(),
+            };
+
+            applySessionPaneUrlState(pane as any, {
+                details: { kind: 'terminal', terminalInstanceId: 'term-7' },
+            });
+
+            expect(pane.openDetailsTab).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    key: 'terminal:term-7',
+                    kind: 'terminal',
+                    resource: expect.objectContaining({
+                        kind: 'terminal',
+                        terminalInstanceId: 'term-7',
+                    }),
                 }),
                 { intent: 'pinned' },
             );
@@ -215,6 +250,17 @@ describe('sessionPaneUrlState', () => {
                 details: 'terminal',
             });
         });
+
+        it('serializes terminal details state with an explicit terminal instance id', () => {
+            expect(
+                serializeSessionPaneUrlState({
+                    details: { kind: 'terminal', terminalInstanceId: 'term-7' },
+                })
+            ).toEqual({
+                details: 'terminal',
+                terminalInstanceId: 'term-7',
+            });
+        });
     });
 
     describe('deriveSessionPaneUrlStateFromScopeState', () => {
@@ -277,6 +323,31 @@ describe('sessionPaneUrlState', () => {
         });
 
         it('derives an active terminal details tab', () => {
+            expect(
+                deriveSessionPaneUrlStateFromScopeState({
+                    right: { isOpen: false, activeTabId: null, tabState: {} },
+                    bottom: { isOpen: false, activeTabId: null, tabState: {} },
+                    details: {
+                        isOpen: true,
+                        tabs: [
+                            {
+                                key: 'terminal:terminal-instance-7',
+                                kind: 'terminal',
+                                title: 'Terminal',
+                                resource: { kind: 'terminal', terminalInstanceId: 'terminal-instance-7' },
+                                isPinned: true,
+                                isPreview: false,
+                            },
+                        ],
+                        activeTabKey: 'terminal:terminal-instance-7',
+                    },
+                } as any)
+            ).toEqual({
+                details: { kind: 'terminal', terminalInstanceId: 'terminal-instance-7' },
+            });
+        });
+
+        it('keeps legacy singleton terminal details tabs routable during migration', () => {
             expect(
                 deriveSessionPaneUrlStateFromScopeState({
                     right: { isOpen: false, activeTabId: null, tabState: {} },

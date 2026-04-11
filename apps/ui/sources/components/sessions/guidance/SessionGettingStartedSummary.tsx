@@ -16,7 +16,7 @@ import { getSessionGettingStartedSubtitle, getSessionGettingStartedTitle } from 
 
 type SessionGettingStartedSummaryKind = Extract<
     SessionGettingStartedDecisionKind,
-    'create_session' | 'connect_machine' | 'start_daemon'
+    'create_session' | 'connect_machine' | 'start_daemon' | 'select_session'
 >;
 
 type SessionGettingStartedSummaryProps = Readonly<{
@@ -81,7 +81,13 @@ export const SessionGettingStartedSummary = React.memo((props: SessionGettingSta
                 descriptionTestID={props.descriptionTestID}
                 icon={(
                     <Ionicons
-                        name={props.kind === 'create_session' ? 'terminal-outline' : 'desktop-outline'}
+                        name={
+                            props.kind === 'create_session'
+                                ? 'terminal-outline'
+                                : props.kind === 'select_session'
+                                    ? 'chatbubbles-outline'
+                                    : 'desktop-outline'
+                        }
                         size={48}
                         color={theme.colors.textSecondary}
                         style={{ marginBottom: 12 }}

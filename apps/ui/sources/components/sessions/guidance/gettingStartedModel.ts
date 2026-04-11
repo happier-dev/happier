@@ -1,3 +1,5 @@
+import { resolveServerScopedMachines } from '@/sync/domains/machines/resolveServerScopedMachines';
+
 export type SessionGettingStartedDecisionKind =
     | 'loading'
     | 'connect_machine'
@@ -53,6 +55,7 @@ export function computeSessionGettingStartedDecision(params: Readonly<{
 export type SessionGettingStartedViewModelInput = Readonly<{
     sessionsReady: boolean;
     sessionCount: number;
+    activeMachines: ReadonlyArray<Readonly<{ active: boolean; revokedAt?: number | null }>>;
     selection: Readonly<{
         activeTarget: Readonly<{ kind: 'server' | 'group'; id: string; groupId?: string }>;
         activeServerId: string;
@@ -60,7 +63,7 @@ export type SessionGettingStartedViewModelInput = Readonly<{
     }>;
     serverSelectionGroups: ReadonlyArray<Readonly<{ id: string; name: string }>> | null | undefined;
     activeServerProfile: Readonly<{ id: string; name: string; serverUrl: string }>;
-    machineListByServerId: Readonly<Record<string, ReadonlyArray<Readonly<{ active: boolean }>> | null | undefined>>;
+    machineListByServerId: Readonly<Record<string, ReadonlyArray<Readonly<{ active: boolean; revokedAt?: number | null }>> | null | undefined>>;
 }>;
 
 export type SessionGettingStartedViewModel = Readonly<{
@@ -98,15 +101,17 @@ export function buildSessionGettingStartedViewModel(input: SessionGettingStarted
     const targetLabel = resolveTargetLabel(input, activeProfile.name);
 
     const perServer = input.selection.allowedServerIds.map((serverId) => {
-        if (!Object.prototype.hasOwnProperty.call(input.machineListByServerId, serverId)) {
+        const machines = resolveServerScopedMachines({
+            serverId,
+            activeServerId: input.selection.activeServerId,
+            activeMachines: input.activeMachines,
+            machineListByServerId: input.machineListByServerId,
+        });
+        if (!machines) {
             return { machineCount: null, onlineCount: null };
         }
-        const list = input.machineListByServerId[serverId];
-        if (!Array.isArray(list)) {
-            return { machineCount: null, onlineCount: null };
-        }
-        const online = list.filter((m) => m.active === true).length;
-        return { machineCount: list.length, onlineCount: online };
+        const online = machines.filter((m) => m.active === true).length;
+        return { machineCount: machines.length, onlineCount: online };
     });
     const machines = computeMachinesSummary(perServer);
 

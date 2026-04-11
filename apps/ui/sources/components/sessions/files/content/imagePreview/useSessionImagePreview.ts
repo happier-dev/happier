@@ -81,6 +81,15 @@ export function useSessionImagePreview(input: Readonly<{
         const raw = typeof maxPreviewBytesSetting === 'number' && Number.isFinite(maxPreviewBytesSetting) ? maxPreviewBytesSetting : 0;
         return Math.max(0, raw);
     }, [maxPreviewBytesSetting]);
+    const requestedPreviewReadBytes = React.useMemo(() => {
+        if (sizeBytes != null) {
+            return Math.max(0, sizeBytes);
+        }
+        if (maxPreviewBytes > 0) {
+            return maxPreviewBytes;
+        }
+        return undefined;
+    }, [maxPreviewBytes, sizeBytes]);
 
     const lastAppliedLimitsRef = React.useRef<typeof cacheLimits | null>(null);
     React.useEffect(() => {
@@ -150,7 +159,9 @@ export function useSessionImagePreview(input: Readonly<{
                     machineId: resolvedScope.machineId,
                     rootPath: resolvedScope.rootPath,
                     serverId: resolvedScope.serverId,
-                }, filePath);
+                }, filePath, {
+                    maxBytes: requestedPreviewReadBytes,
+                });
                 if (cancelled) return;
                 if (!res.success || typeof res.content !== 'string' || res.content.trim().length === 0) {
                     const err = (res as any)?.error;
@@ -202,7 +213,7 @@ export function useSessionImagePreview(input: Readonly<{
         return () => {
             cancelled = true;
         };
-    }, [cacheKey, cacheScopeId, canCache, enabled, filePath, maxPreviewBytes, mime, resolvedScope, sizeBytes]);
+    }, [cacheKey, cacheScopeId, canCache, enabled, filePath, maxPreviewBytes, mime, requestedPreviewReadBytes, resolvedScope, sizeBytes]);
 
     return state;
 }

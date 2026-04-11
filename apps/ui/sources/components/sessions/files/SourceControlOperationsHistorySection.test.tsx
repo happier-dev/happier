@@ -39,7 +39,7 @@ describe('SourceControlOperationsHistorySection', () => {
         },
     } as any;
 
-    it('shows 5 commits initially when more can be loaded, then expands when requested', async () => {
+    it('shows more commits initially when more can be loaded, then expands when requested', async () => {
         const { SourceControlOperationsHistorySection } = await import('@/components/workspaces/scm/SourceControlOperationsHistorySection');
 
         const onLoadMoreHistory = vi.fn();
@@ -54,8 +54,11 @@ describe('SourceControlOperationsHistorySection', () => {
                     onOpenCommit={onOpenCommit}
                 />);
 
-        const commitRowsBefore = getCommitRows(screen, 5);
-        expect(commitRowsBefore).toHaveLength(5);
+        const commitRowsBefore = getCommitRows(screen, 12);
+        expect(commitRowsBefore).toHaveLength(12);
+
+        const headBadges = screen.findAllByTestId('scm-commit-entry-head-badge');
+        expect(headBadges).toHaveLength(1);
 
         const loadMore = screen.findAllByTestId('scm-commit-load-more');
         expect(loadMore).toHaveLength(1);
@@ -67,7 +70,7 @@ describe('SourceControlOperationsHistorySection', () => {
         expect(onLoadMoreHistory).toHaveBeenCalledTimes(1);
 
         const commitRowsAfter = getCommitRows(screen, 20);
-        expect(commitRowsAfter.length).toBeGreaterThan(5);
+        expect(commitRowsAfter.length).toBeGreaterThan(12);
         expect(commitRowsAfter).toHaveLength(20);
     });
 
@@ -88,5 +91,52 @@ describe('SourceControlOperationsHistorySection', () => {
 
         const loadMore = screen.findAllByTestId('scm-commit-load-more');
         expect(loadMore).toHaveLength(0);
+    });
+
+    it('reveals more already-loaded commits without requesting another page', async () => {
+        const { SourceControlOperationsHistorySection } = await import('@/components/workspaces/scm/SourceControlOperationsHistorySection');
+
+        const onLoadMoreHistory = vi.fn();
+        const screen = await renderScreen(<SourceControlOperationsHistorySection
+                    theme={theme}
+                    historyLoading={false}
+                    historyEntries={makeEntries(40)}
+                    historyHasMore={true}
+                    onLoadMoreHistory={onLoadMoreHistory}
+                    onOpenCommit={vi.fn()}
+                />);
+
+        const loadMore = screen.findAllByTestId('scm-commit-load-more');
+        expect(loadMore).toHaveLength(1);
+
+        await act(async () => {
+            await pressTestInstanceAsync(loadMore[0]);
+        });
+
+        expect(getCommitRows(screen, 37)).toHaveLength(37);
+        expect(onLoadMoreHistory).not.toHaveBeenCalled();
+    });
+
+    it('opens commit details from timeline rows', async () => {
+        const { SourceControlOperationsHistorySection } = await import('@/components/workspaces/scm/SourceControlOperationsHistorySection');
+
+        const onOpenCommit = vi.fn();
+        const screen = await renderScreen(<SourceControlOperationsHistorySection
+                    theme={theme}
+                    historyLoading={false}
+                    historyEntries={makeEntries(3)}
+                    historyHasMore={false}
+                    onLoadMoreHistory={vi.fn()}
+                    onOpenCommit={onOpenCommit}
+                />);
+
+        const firstCommit = screen.findAllByTestId('scm-commit-entry-sha-1');
+        expect(firstCommit).toHaveLength(1);
+
+        await act(async () => {
+            await pressTestInstanceAsync(firstCommit[0]);
+        });
+
+        expect(onOpenCommit).toHaveBeenCalledWith('sha-1');
     });
 });

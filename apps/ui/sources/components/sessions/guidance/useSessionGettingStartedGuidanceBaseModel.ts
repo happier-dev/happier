@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
 import { useVisibleSessionListSummaryState } from '@/hooks/session/useVisibleSessionListSummaryState';
-import { useMachineListByServerId, useSetting } from '@/sync/domains/state/storage';
+import { useAllMachines, useMachineListByServerId, useSetting } from '@/sync/domains/state/storage';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 
 import type { SessionGettingStartedViewModel } from './gettingStartedModel';
@@ -12,6 +12,7 @@ export function useSessionGettingStartedGuidanceBaseModel(): SessionGettingStart
     const { selection: summarySelection, summary: sessionSummary } = useVisibleSessionListSummaryState();
     const serverProfilesGeneration = useServerProfilesGeneration();
     const serverSelectionGroups = useSetting('serverSelectionGroups');
+    const activeMachines = useAllMachines();
     const machineListByServerId = useMachineListByServerId();
     const selectionSnapshot = React.useMemo(() => ({
         activeTarget: summarySelection.activeTarget,
@@ -33,6 +34,7 @@ export function useSessionGettingStartedGuidanceBaseModel(): SessionGettingStart
         return buildSessionGettingStartedViewModel({
             sessionsReady: sessionSummary.sessionsReady,
             sessionCount: sessionSummary.sessionCount,
+            activeMachines,
             selection: selectionSnapshot,
             serverSelectionGroups,
             activeServerProfile,
@@ -40,6 +42,7 @@ export function useSessionGettingStartedGuidanceBaseModel(): SessionGettingStart
         });
     }, [
         activeServerProfile,
+        activeMachines,
         machineListByServerId,
         selectionSnapshot,
         serverSelectionGroups,

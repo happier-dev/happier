@@ -14,10 +14,13 @@ import {
 } from '@/agents/registry/sessionSubagentUiBehavior';
 import { SessionExecutionRunLauncherView } from '@/components/sessions/runs/launcher/SessionExecutionRunLauncherView';
 import { SessionEmbeddedTerminalPane } from '@/components/sessions/terminal/SessionEmbeddedTerminalPane';
+import { SESSION_PRIMARY_TERMINAL_INSTANCE_ID } from '@/components/sessions/terminal/embeddedTerminalDocking';
+import { readTerminalDetailsInstanceId } from '@/components/terminal/terminalDetailsTabModel';
 import { t } from '@/text';
 import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { resolveOptionalSessionScreenTestId, useSessionScreenTestIdsEnabled } from '../shell/sessionScreenTestIds';
+import { createSessionFileDetailsTab } from './details/sessionDetailsTabBuilders';
 
 export type SessionDetailsPanelProps = Readonly<{
     sessionId: string;
@@ -87,12 +90,6 @@ function isScmStashResource(value: unknown): value is Readonly<{ kind: 'scmStash
     return maybe.kind === 'scmStash';
 }
 
-function isTerminalResource(value: unknown): value is Readonly<{ kind: 'terminal' }> {
-    if (!value || typeof value !== 'object') return false;
-    const maybe = value as { kind?: unknown };
-    return maybe.kind === 'terminal';
-}
-
 function isSubagentResource(value: unknown): value is Readonly<{ kind: 'subagent'; subagentId: string }> {
     if (!value || typeof value !== 'object') return false;
     const maybe = value as { kind?: unknown; subagentId?: unknown };
@@ -119,17 +116,8 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
     const sessionScreenTestIdsEnabled = useSessionScreenTestIdsEnabled();
 
     const openFileTab = React.useCallback((path: string, intent: 'default' | 'pinned' = 'default') => {
-        const fileName = path.split('/').pop() ?? path;
         deferOnWeb(() => {
-            pane.openDetailsTab(
-                {
-                    key: `file:${path}`,
-                    kind: 'file',
-                    title: fileName,
-                    resource: { kind: 'file', path },
-                },
-                { intent },
-            );
+            pane.openDetailsTab(createSessionFileDetailsTab(path), { intent });
         });
     }, [pane]);
 
@@ -189,12 +177,18 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
             }
         }
         if (resource?.kind === 'terminal') {
-            if (isTerminalResource(tab.resource)) {
+            const fallbackTerminalInstanceId =
+                typeof tab?.key === 'string' && tab.key.startsWith('terminal:')
+                    ? tab.key.slice('terminal:'.length)
+                    : SESSION_PRIMARY_TERMINAL_INSTANCE_ID;
+            const terminalInstanceId = readTerminalDetailsInstanceId(tab.resource, fallbackTerminalInstanceId);
+            if (terminalInstanceId) {
                 return (
                     <SessionEmbeddedTerminalPane
                         sessionId={props.sessionId}
                         scopeId={props.scopeId}
                         currentDockLocation="details"
+                        terminalInstanceId={terminalInstanceId}
                         testIdPrefix={sessionScreenTestIdsEnabled ? 'session-details-terminal' : null}
                     />
                 );

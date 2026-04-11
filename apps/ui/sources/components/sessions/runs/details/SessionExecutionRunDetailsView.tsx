@@ -26,6 +26,7 @@ import { sync } from '@/sync/sync';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { buildToolCallMessageRouteId } from '@/sync/domains/messages/messageRouteIds';
+import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import {
     buildExecutionRunPublicStateFromTranscriptState,
     findTranscriptExecutionRunState,
@@ -217,7 +218,9 @@ export const SessionExecutionRunDetailsView = React.memo(React.forwardRef<Sessio
                         accessibilityLabel={t('toolView.open')}
                         testID="session-run-details-open-tool-message"
                         onPress={() => {
-                            router.push(`/session/${encodeURIComponent(props.sessionId)}/message/${encodeURIComponent(transcriptToolRouteId)}`);
+                            navigateWithBlurOnWeb(() => {
+                                router.push(`/session/${encodeURIComponent(props.sessionId)}/message/${encodeURIComponent(transcriptToolRouteId)}`);
+                            });
                         }}
                         style={{
                             alignSelf: 'flex-start',

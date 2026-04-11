@@ -8,6 +8,7 @@ type SessionListOrderingModeV1 = 'custom' | 'created' | 'updated';
 
 const viewState = vi.hoisted(() => ({
     orderingMode: 'updated' as SessionListOrderingModeV1,
+    hideInactiveSessions: false,
     selection: {
         enabled: true,
         presentation: 'grouped',
@@ -69,7 +70,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
         overrides: {
             useSessionListRowStateByServerId: () => viewState.rowsByServerId,
             useSetting: ((key: string) => {
-                if (key === 'hideInactiveSessions') return false;
+                if (key === 'hideInactiveSessions') return viewState.hideInactiveSessions;
                 if (key === 'pinnedSessionKeysV1') return [];
                 if (key === 'sessionListOrderingModeV1') {
                     viewState.observedOrderingMode.push(viewState.orderingMode);
@@ -112,6 +113,7 @@ describe('useVisibleSessionListViewState (index pipeline)', () => {
         viewState.groupOrder = {
             'server:s1:day:2026-02-17': ['s1:missing', 's1:a'],
         };
+        viewState.hideInactiveSessions = false;
         viewState.rowsByServerId = {};
         viewState.observedOrderingMode.length = 0;
         viewState.setGroupOrder.mockClear();
@@ -138,5 +140,24 @@ describe('useVisibleSessionListViewState (index pipeline)', () => {
         expect(sessionIds).toEqual(['a', 'b']);
         expect(viewState.observedOrderingMode).toEqual(['updated']);
         expect(viewState.setGroupOrder).not.toHaveBeenCalled();
+    });
+
+    it('exposes when the inactive filter hides all visible sessions', async () => {
+        viewState.hideInactiveSessions = true;
+        viewState.source = [
+            { type: 'session', sessionId: 'inactive', serverId: 's1', section: 'inactive', groupKey: 'server:s1:day:2026-02-17', groupKind: 'date' },
+        ];
+        viewState.rowsByServerId = {
+            s1: {
+                inactive: makeSessionRow('inactive', { active: false, keepVisibleWhenInactive: false }),
+            },
+        };
+
+        const { useVisibleSessionListViewState } = await import('./useVisibleSessionListViewState');
+        const hook = await renderHook(() => useVisibleSessionListViewState('all'));
+        await flushHookEffects();
+
+        expect(hook.getCurrent()?.visibleSessionListIndex).toEqual([]);
+        expect(hook.getCurrent()?.hasHiddenInactiveSessions).toBe(true);
     });
 });

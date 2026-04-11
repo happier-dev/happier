@@ -1,7 +1,6 @@
-import { V2SessionListResponseSchema, type V2SessionListResponse } from '@happier-dev/protocol';
+import { type V2SessionListResponse } from '@happier-dev/protocol';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { HappyError } from '@/utils/errors/errors';
 import { serverFetch } from '@/sync/http/client';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { reportNewAgentRequestsFromSessionTransition } from '@/voice/context/reportNewAgentRequestsFromSessionTransition';
@@ -12,6 +11,7 @@ import { buildSessionListRenderableFromSession } from '@/sync/domains/session/li
 import type { SessionListCacheEntryV1 } from '@/sync/domains/state/warmCachePersistence';
 
 import { parsePlainSessionAgentState, parsePlainSessionMetadata } from './parsePlainSessionPayload';
+import { fetchSessionListPageCompat } from './sessionHttpCompat';
 
 type SessionEncryption = {
     decryptAgentState: (version: number, value: string | null) => Promise<any>;
@@ -85,7 +85,47 @@ function buildRenderableFromRowAndCache(
     };
 }
 
-function needsWarmHydration(row: SessionListRow, cachedEntry: SessionListCacheEntryV1 | undefined): boolean {
+function buildRenderableFromCachedEntry(cachedEntry: SessionListCacheEntryV1): SessionListRenderableSession {
+    return {
+        id: cachedEntry.sessionId,
+        seq: 0,
+        createdAt: cachedEntry.createdAt,
+        updatedAt: cachedEntry.updatedAt,
+        active: cachedEntry.active,
+        activeAt: cachedEntry.activeAt,
+        archivedAt: cachedEntry.archivedAt ?? null,
+        pendingCount: cachedEntry.pendingCount,
+        pendingVersion: cachedEntry.pendingVersion,
+        metadataVersion: cachedEntry.metadataVersion,
+        agentStateVersion: cachedEntry.agentStateVersion,
+        metadata: {
+            name: cachedEntry.name,
+            summaryText: cachedEntry.summaryText ?? null,
+            path: cachedEntry.path,
+            homeDir: cachedEntry.homeDir ?? null,
+            host: cachedEntry.host ?? null,
+            machineId: cachedEntry.machineId ?? null,
+            flavor: cachedEntry.flavor ?? null,
+            directSessionV1: cachedEntry.directSessionV1 ?? null,
+            hiddenSystemSession: cachedEntry.hiddenSystemSession === true,
+        },
+        thinking: false,
+        thinkingAt: 0,
+        presence: cachedEntry.active ? 'online' : cachedEntry.activeAt,
+        accessLevel: cachedEntry.accessLevel,
+        canApprovePermissions: cachedEntry.canApprovePermissions,
+        hasPendingPermissionRequests: cachedEntry.hasPendingPermissionRequests,
+        hasPendingUserActionRequests: cachedEntry.hasPendingUserActionRequests,
+    };
+}
+
+function needsWarmHydration(params: {
+    row: SessionListRow;
+    cachedEntry: SessionListCacheEntryV1 | undefined;
+    existingSession?: Session | null | undefined;
+}): boolean {
+    if (!params.existingSession) return true;
+    const { row, cachedEntry } = params;
     if (!cachedEntry) return true;
     if (cachedEntry.metadataVersion !== row.metadataVersion) return true;
     if (cachedEntry.agentStateVersion !== row.agentStateVersion) return true;
@@ -238,42 +278,27 @@ export async function fetchAndApplySessions(params: {
     const SESSION_LIST_LIMIT = 150;
     const sessions: V2SessionListResponse['sessions'] = [];
     const concurrencyLimit = Math.max(1, Math.trunc(params.sessionListHydrationConcurrencyLimit ?? 4));
+    let usedLegacyV1Snapshot = false;
 
     let cursor: string | null = null;
     while (sessions.length < SESSION_LIST_LIMIT) {
         const pageLimit = Math.min(200, SESSION_LIST_LIMIT - sessions.length);
-        const url = new URL('/v2/sessions', 'http://placeholder.local');
-        url.searchParams.set('limit', String(pageLimit));
-        if (cursor) url.searchParams.set('cursor', cursor);
-
-        const response = await request(url.pathname + url.search, {
-            headers: {
-                'Authorization': `Bearer ${credentials.token}`,
-                'Content-Type': 'application/json',
-            },
+        const page = await fetchSessionListPageCompat({
+            request,
+            token: credentials.token,
+            cursor,
+            limit: pageLimit,
         });
 
-        if (!response.ok) {
-            if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
-                throw new HappyError(`Failed to fetch sessions (${response.status})`, false);
-            }
-            throw new Error(`Failed to fetch sessions: ${response.status}`);
-        }
-
-        const data = await response.json();
-        const parsed = V2SessionListResponseSchema.safeParse(data);
-        if (!parsed.success) {
-            throw new Error('Invalid /v2/sessions response');
-        }
-
-        for (const row of parsed.data.sessions) {
+        for (const row of page.sessions) {
             sessions.push(row);
         }
+        if (page.source === 'v1') {
+            usedLegacyV1Snapshot = true;
+        }
 
-        const hasNext = parsed.data.hasNext === true;
-        const nextCursor = typeof parsed.data.nextCursor === 'string' ? parsed.data.nextCursor : null;
-        if (!hasNext || !nextCursor) break;
-        cursor = nextCursor;
+        if (!page.hasNext || !page.nextCursor || page.source === 'v1') break;
+        cursor = page.nextCursor;
     }
 
     const sessionKeys = new Map<string, Uint8Array | null>();
@@ -303,19 +328,31 @@ export async function fetchAndApplySessions(params: {
             sessionDataKeys.delete(result.sessionId);
         }
     }
-    params.onSnapshotFetched?.(sessions.map((session) => session.id));
+    const cachedSessionListEntries = params.cachedSessionListEntries ?? {};
+    const fetchedSessionIds = sessions.map((session) => session.id);
+    const fetchedSessionIdSet = new Set(fetchedSessionIds);
+    const retainedCachedSessionIds = usedLegacyV1Snapshot
+        ? Object.keys(cachedSessionListEntries).filter((sessionId) => !fetchedSessionIdSet.has(sessionId))
+        : [];
+    params.onSnapshotFetched?.([...fetchedSessionIds, ...retainedCachedSessionIds]);
     await encryption.initializeSessions(sessionKeys);
 
-    const cachedSessionListEntries = params.cachedSessionListEntries ?? {};
     const shouldApplyRenderables = typeof params.applySessionListRenderables === 'function';
     const shouldContinue = params.shouldContinue ?? (() => true);
 
     if (shouldApplyRenderables) {
-        const renderables = sessions.map((row) => buildRenderableFromRowAndCache(row, cachedSessionListEntries[row.id]));
+        const renderables = [
+            ...sessions.map((row) => buildRenderableFromRowAndCache(row, cachedSessionListEntries[row.id])),
+            ...retainedCachedSessionIds.map((sessionId) => buildRenderableFromCachedEntry(cachedSessionListEntries[sessionId]!)),
+        ];
         params.applySessionListRenderables!(renderables, { replace: true });
 
         const rowsNeedingHydration = orderRowsForWarmHydration({
-            rows: sessions.filter((row) => needsWarmHydration(row, cachedSessionListEntries[row.id])),
+            rows: sessions.filter((row) => needsWarmHydration({
+                row,
+                cachedEntry: cachedSessionListEntries[row.id],
+                existingSession: params.getExistingSession?.(row.id),
+            })),
             prioritizedSessionIds: params.prioritizeSessionIds,
             eagerHydrationCount: params.sessionListEagerHydrationCount,
         });

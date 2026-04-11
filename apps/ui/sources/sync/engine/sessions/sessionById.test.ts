@@ -11,6 +11,211 @@ vi.mock('@/voice/context/voiceHooks', () => ({
 }));
 
 describe('fetchAndApplySessionById', () => {
+  it('accepts legacy-compatible single-session payloads when newer fields are omitted', async () => {
+    const applySessions = vi.fn();
+    const request = vi.fn(async () => new Response(JSON.stringify({
+      session: {
+        id: 's_legacy_payload',
+        createdAt: 1,
+        updatedAt: 2,
+        seq: 3,
+        active: true,
+        activeAt: 2,
+        encryptionMode: 'plain',
+        metadataVersion: 1,
+        metadata: JSON.stringify({ readStateV1: null }),
+        agentStateVersion: 1,
+        agentState: JSON.stringify({ controlledByUser: true }),
+        accessLevel: 'admin',
+        canApprovePermissions: true,
+      },
+    }), { status: 200 }));
+
+    const result = await fetchAndApplySessionById({
+      sessionId: 's_legacy_payload',
+      credentials: { token: 't' } as any,
+      encryption: {
+        decryptEncryptionKey: async () => null,
+        initializeSessions: async () => {},
+        getSessionEncryption: () => null,
+      },
+      sessionDataKeys: new Map<string, Uint8Array>(),
+      request,
+      applySessions,
+      log: { log: () => {} },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(applySessions).toHaveBeenCalledWith([
+      expect.objectContaining({
+        id: 's_legacy_payload',
+        accessLevel: 'admin',
+        canApprovePermissions: true,
+      }),
+    ]);
+  });
+
+  it('falls back to scanning /v2/sessions when the single-session route is missing', async () => {
+    const applySessions = vi.fn();
+    const request = vi.fn(async (path: string) => {
+      if (path === '/v2/sessions/s_legacy') {
+        return new Response(JSON.stringify({
+          error: 'Not found',
+          path: '/v2/sessions/s_legacy',
+          method: 'GET',
+        }), { status: 404 });
+      }
+
+      expect(path).toBe('/v2/sessions?limit=200');
+      return new Response(JSON.stringify({
+        sessions: [
+          {
+            id: 's_legacy',
+            createdAt: 1,
+            updatedAt: 2,
+            seq: 3,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            dataEncryptionKey: null,
+            metadataVersion: 1,
+            metadata: JSON.stringify({ readStateV1: null }),
+            agentStateVersion: 1,
+            agentState: JSON.stringify({ controlledByUser: true }),
+            share: null,
+          },
+        ],
+        nextCursor: null,
+        hasNext: false,
+      }), { status: 200 });
+    });
+
+    const result = await fetchAndApplySessionById({
+      sessionId: 's_legacy',
+      credentials: { token: 't' } as any,
+      encryption: {
+        decryptEncryptionKey: async () => null,
+        initializeSessions: async () => {},
+        getSessionEncryption: () => null,
+      },
+      sessionDataKeys: new Map<string, Uint8Array>(),
+      request,
+      applySessions,
+      log: { log: () => {} },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(applySessions).toHaveBeenCalledWith([
+      expect.objectContaining({
+        id: 's_legacy',
+        encryptionMode: 'plain',
+      }),
+    ]);
+    expect(request.mock.calls.map((call) => call[0])).toEqual([
+      '/v2/sessions/s_legacy',
+      '/v2/sessions?limit=200',
+    ]);
+  });
+
+  it('hydrates from /v1/sessions when older servers are missing both /v2 session routes', async () => {
+    const applySessions = vi.fn();
+    const request = vi.fn(async (path: string) => {
+      if (path === '/v2/sessions/s_legacy_v1') {
+        return new Response(JSON.stringify({
+          error: 'Not found',
+          path: '/v2/sessions/s_legacy_v1',
+          method: 'GET',
+        }), { status: 404 });
+      }
+
+      if (path === '/v2/sessions?limit=200') {
+        return new Response(JSON.stringify({
+          error: 'Not found',
+          path: '/v2/sessions',
+          method: 'GET',
+        }), { status: 404 });
+      }
+
+      expect(path).toBe('/v1/sessions');
+      return new Response(JSON.stringify({
+        sessions: [
+          {
+            id: 's_legacy_v1',
+            createdAt: 1,
+            updatedAt: 2,
+            seq: 3,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            dataEncryptionKey: null,
+            metadataVersion: 1,
+            metadata: JSON.stringify({ readStateV1: null }),
+            agentStateVersion: 1,
+            agentState: JSON.stringify({ controlledByUser: true }),
+            share: null,
+          },
+        ],
+      }), { status: 200 });
+    });
+
+    const result = await fetchAndApplySessionById({
+      sessionId: 's_legacy_v1',
+      credentials: { token: 't' } as any,
+      encryption: {
+        decryptEncryptionKey: async () => null,
+        initializeSessions: async () => {},
+        getSessionEncryption: () => null,
+      },
+      sessionDataKeys: new Map<string, Uint8Array>(),
+      request,
+      applySessions,
+      log: { log: () => {} },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(applySessions).toHaveBeenCalledWith([
+      expect.objectContaining({
+        id: 's_legacy_v1',
+        encryptionMode: 'plain',
+      }),
+    ]);
+    expect(request.mock.calls.map((call) => call[0])).toEqual([
+      '/v2/sessions/s_legacy_v1',
+      '/v2/sessions?limit=200',
+      '/v1/sessions',
+    ]);
+  });
+
+  it('returns not_found for the current-server session-by-id 404 contract without compat scanning', async () => {
+    const applySessions = vi.fn();
+    const request = vi.fn(async () => new Response(JSON.stringify({
+      error: 'Session not found',
+    }), { status: 404 }));
+
+    const result = await fetchAndApplySessionById({
+      sessionId: 's_missing',
+      credentials: { token: 't' } as any,
+      encryption: {
+        decryptEncryptionKey: async () => null,
+        initializeSessions: async () => {},
+        getSessionEncryption: () => null,
+      },
+      sessionDataKeys: new Map<string, Uint8Array>(),
+      request,
+      applySessions,
+      log: { log: () => {} },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      session: null,
+      errorCode: 'not_found',
+      httpStatus: 404,
+    });
+    expect(applySessions).not.toHaveBeenCalled();
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
   it('announces new fetched agent requests relative to existing session state', async () => {
     onAgentRequest.mockReset();
     const applySessions = vi.fn();

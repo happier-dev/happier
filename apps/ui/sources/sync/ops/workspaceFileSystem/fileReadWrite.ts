@@ -46,14 +46,19 @@ export type WorkspaceReadFileResponse =
 export async function workspaceReadFile(
     target: WorkspaceFileSystemTarget,
     path: string,
+    options?: Readonly<{ maxBytes?: number | null }>,
 ): Promise<WorkspaceReadFileResponse> {
     const inlineMaxBytes = resolveWorkspaceFileInlineMaxBytes();
+    const requestedMaxBytes =
+        typeof options?.maxBytes === 'number' && Number.isFinite(options.maxBytes)
+            ? Math.max(0, Math.floor(options.maxBytes))
+            : inlineMaxBytes;
     const download = await downloadDaemonWorkspaceFileToBase64({
         machineId: target.machineId,
         serverId: target.serverId,
         rootPath: target.rootPath,
         path,
-        maxBytes: inlineMaxBytes,
+        maxBytes: Math.min(requestedMaxBytes, inlineMaxBytes),
     });
     if (!download.ok) {
         return {

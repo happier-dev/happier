@@ -1,10 +1,16 @@
-import { V2SessionByIdResponseSchema, type V2SessionByIdResponse } from '@happier-dev/protocol';
+import type { V2SessionByIdResponse } from '@happier-dev/protocol';
 
 import type { Metadata, Session } from '@/sync/domains/state/storageTypes';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { reportNewAgentRequestsFromSessionTransition } from '@/voice/context/reportNewAgentRequestsFromSessionTransition';
 
 import { parsePlainSessionAgentState, parsePlainSessionMetadata } from './parsePlainSessionPayload';
+import {
+  looksLikeCurrentV2SessionNotFound404,
+  looksLikeMissingV2SessionRoute404,
+  parseCompatSessionByIdResponse,
+  scanSessionByIdFromCompatList,
+} from './sessionHttpCompat';
 
 type SessionEncryption = {
   decryptAgentState: (version: number, value: string | null) => Promise<any>;
@@ -42,6 +48,7 @@ export async function fetchAndApplySessionById(params: Readonly<{
   const timeoutId = controller ? setTimeout(() => controller.abort(), Math.max(1, timeoutMs)) : null;
 
   let response: Response;
+  let body: unknown = null;
   try {
     response = await params.request(`/v2/sessions/${encodeURIComponent(sessionId)}`, {
       method: 'GET',
@@ -59,22 +66,59 @@ export async function fetchAndApplySessionById(params: Readonly<{
   }
 
   if (!response.ok) {
+    if (response.status === 404) {
+      body = await response.json().catch(() => null);
+      if (looksLikeCurrentV2SessionNotFound404(body)) {
+        return { ok: false, session: null, errorCode: 'not_found', httpStatus: 404 };
+      }
+      if (looksLikeMissingV2SessionRoute404(body, sessionId)) {
+        const fallbackRow = await scanSessionByIdFromCompatList({
+          request: params.request,
+          token: params.credentials.token,
+          sessionId,
+        });
+        if (!fallbackRow) {
+          return { ok: false, session: null, errorCode: 'not_found', httpStatus: 404 };
+        }
+        body = { session: fallbackRow };
+      }
+    }
+
+    if (body === null) {
+      const status = response.status;
+      const errorCode =
+        status === 404 ? 'not_found'
+          : status === 401 ? 'unauthorized'
+              : status === 403 ? 'forbidden'
+                  : 'http_error';
+      return { ok: false, session: null, errorCode, httpStatus: status };
+    }
+  }
+
+  if (body === null) {
+    body = (await response.json().catch(() => null)) as unknown;
+  }
+
+  const parsed = parseCompatSessionByIdResponse(body);
+  if (!parsed?.session) {
+    const fallbackRow = await scanSessionByIdFromCompatList({
+      request: params.request,
+      token: params.credentials.token,
+      sessionId,
+    });
+    if (!fallbackRow) {
+      return { ok: false, session: null, errorCode: 'invalid_response' };
+    }
+    body = { session: fallbackRow };
+  }
+
+  const reparsed = parseCompatSessionByIdResponse(body);
+  if (!reparsed?.session) {
     const status = response.status;
-    const errorCode =
-      status === 404 ? 'not_found'
-        : status === 401 ? 'unauthorized'
-            : status === 403 ? 'forbidden'
-                : 'http_error';
-    return { ok: false, session: null, errorCode, httpStatus: status };
+    return { ok: false, session: null, errorCode: 'invalid_response', httpStatus: response.ok ? undefined : status };
   }
 
-  const body = (await response.json().catch(() => null)) as unknown;
-  const parsed = V2SessionByIdResponseSchema.safeParse(body);
-  if (!parsed.success || !parsed.data.session) {
-    return { ok: false, session: null, errorCode: 'invalid_response' };
-  }
-
-  const row = parsed.data.session;
+  const row = reparsed.session;
   if (String(row.id ?? '').trim() !== sessionId) {
     return { ok: false, session: null, errorCode: 'invalid_response' };
   }

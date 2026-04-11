@@ -30,6 +30,7 @@ const guidanceState = vi.hoisted(() => ({
     machineListByServerId: {
         'srv-a': [{ active: true }],
     } as Record<string, Array<{ active: boolean }> | null | undefined>,
+    activeMachines: [{ active: true }] as Array<{ active: boolean }>,
     machineListStatusByServerId: {
         'srv-a': 'idle',
     } as Record<string, string | undefined>,
@@ -53,6 +54,20 @@ vi.mock('@/hooks/session/useVisibleSessionListSummaryState', () => ({
         summary: guidanceState.summary,
     }),
 }));
+
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+        useAllMachines: () => guidanceState.activeMachines,
+        useMachineListByServerId: () => guidanceState.machineListByServerId,
+        useSetting: (key: string) => {
+            if (key === 'serverSelectionGroups') {
+                return guidanceState.serverSelectionGroups;
+            }
+            return null;
+        },
+    });
+});
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     listServerProfiles: () => guidanceState.serverProfiles,
@@ -82,6 +97,7 @@ describe('useSessionGettingStartedGuidanceBaseModel', () => {
         guidanceState.machineListByServerId = {
             'srv-a': [{ active: true }],
         };
+        guidanceState.activeMachines = [{ active: true }];
         guidanceState.machineListStatusByServerId = {
             'srv-a': 'idle',
         };

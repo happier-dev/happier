@@ -59,7 +59,7 @@ vi.mock('@/text', async () => {
 });
 
 vi.mock('@/sync/ops/workspaceFileSystem', () => ({
-    workspaceReadFile: (target: unknown, path: string) => workspaceReadFileSpy(target, path),
+    workspaceReadFile: (...args: unknown[]) => workspaceReadFileSpy(...args),
 }));
 
 vi.mock('@/sync/store/hooks', async (importOriginal) => {
@@ -73,27 +73,27 @@ vi.mock('@/sync/store/hooks', async (importOriginal) => {
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
 
-    return createStorageModuleStub({
-        storage: Object.assign(
-            ((selector?: (value: typeof storageSnapshotState.current) => unknown) =>
-                typeof selector === 'function' ? selector(storageSnapshotState.current) : storageSnapshotState.current),
-            {
+        return createStorageModuleStub({
+            storage: Object.assign(
+                ((selector?: (value: typeof storageSnapshotState.current) => unknown) =>
+                    typeof selector === 'function' ? selector(storageSnapshotState.current) : storageSnapshotState.current),
+                {
                 getState: () => storageSnapshotState.current,
                 getInitialState: () => storageSnapshotState.current,
                 setState: () => undefined,
                 subscribe: () => () => undefined,
                 destroy: () => undefined,
             },
-        ),
-        useSetting: (key: string) => {
-            if (key === 'filesImagePreviewCacheMaxEntries') return 10;
-            if (key === 'filesImagePreviewCacheMaxTotalBytes') return 1_000_000;
-            if (key === 'filesImagePreviewMaxBytes') return 1_000_000;
-            return null;
-        },
-        useSession: () => sessionState.current,
-        useAllSessions: () => allSessionsState.current,
-        useAllMachines: () => allMachinesState.current,
+            ),
+            useSetting: (key: string) => {
+                if (key === 'filesImagePreviewCacheMaxEntries') return 10;
+                if (key === 'filesImagePreviewCacheMaxTotalBytes') return 1_000_000;
+                if (key === 'filesImagePreviewMaxBytes') return 1_000_000;
+                return null;
+            },
+            useSession: () => sessionState.current,
+            useAllSessions: () => allSessionsState.current,
+            useAllMachines: () => allMachinesState.current,
         useProjectForSession: () => null,
     });
 });
@@ -222,7 +222,7 @@ describe('useSessionImagePreview', () => {
             machineId: 'm1',
             rootPath: '/repo',
             serverId: 'server-1',
-        }, '.happier/uploads/messages/m1/file.png');
+        }, '.happier/uploads/messages/m1/file.png', { maxBytes: 3 });
         expect(hook.getCurrent()).toMatchObject({
             status: 'loaded',
             uri: 'data:image/png;base64,YWJj',

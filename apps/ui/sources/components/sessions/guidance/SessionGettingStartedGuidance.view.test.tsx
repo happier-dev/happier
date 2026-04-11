@@ -207,4 +207,32 @@ describe('SessionGettingStartedGuidanceView', () => {
     expect(screen.getTextContent()).toContain('hdev');
     mockAppConfig.variant = 'production';
   });
+
+  it('renders select-session as a centered shared summary in the primary pane', async () => {
+    const { SessionGettingStartedGuidanceView } = await import('./SessionGettingStartedGuidance');
+    const screen = await renderScreen(
+      <SessionGettingStartedGuidanceView
+        variant="primaryPane"
+        model={{
+          kind: 'select_session',
+          targetLabel: 'Company',
+          serverUrl: 'https://api.company.example',
+          serverName: 'company',
+          showServerSetup: false,
+        }}
+      />,
+    );
+
+    expect(screen.findByTestId('session-getting-started-summary')).not.toBeNull();
+    expect(screen.findByTestId('session-getting-started-summary-title')).not.toBeNull();
+    expect(screen.findByTestId('session-getting-started-summary-description')).not.toBeNull();
+    expect(screen.findByTestId('session-getting-started-logo')).toBeNull();
+    const scrollView = screen.findByTestId('session-getting-started-scroll');
+    expect(scrollView).not.toBeNull();
+    const contentContainerStyle = scrollView!.props.contentContainerStyle;
+    const flattenedContentContainerStyle = Array.isArray(contentContainerStyle)
+      ? Object.assign({}, ...contentContainerStyle.filter(Boolean))
+      : contentContainerStyle;
+    expect(flattenedContentContainerStyle.justifyContent).toBe('center');
+  });
 });

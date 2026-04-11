@@ -76,6 +76,7 @@ describe('buildSessionGettingStartedViewModel', () => {
         const model = buildSessionGettingStartedViewModel({
             sessionsReady: true,
             sessionCount: 0,
+            activeMachines: [],
             selection: {
                 activeTarget: { kind: 'group', id: 'g1', groupId: 'g1' },
                 activeServerId: 'srv-a',
@@ -92,6 +93,7 @@ describe('buildSessionGettingStartedViewModel', () => {
         const model = buildSessionGettingStartedViewModel({
             sessionsReady: true,
             sessionCount: 0,
+            activeMachines: [],
             selection: {
                 activeTarget: { kind: 'server', id: 'srv-a' },
                 activeServerId: 'srv-a',
@@ -108,6 +110,7 @@ describe('buildSessionGettingStartedViewModel', () => {
         const model = buildSessionGettingStartedViewModel({
             sessionsReady: true,
             sessionCount: 0,
+            activeMachines: [],
             selection: {
                 activeTarget: { kind: 'server', id: 'cloud' },
                 activeServerId: 'cloud',
@@ -118,5 +121,23 @@ describe('buildSessionGettingStartedViewModel', () => {
             machineListByServerId: { cloud: [] },
         });
         expect(model.showServerSetup).toBe(false);
+    });
+
+    it('falls back to active machines when the active server scoped cache is empty', () => {
+        const model = buildSessionGettingStartedViewModel({
+            sessionsReady: true,
+            sessionCount: 0,
+            activeMachines: [{ active: true }],
+            selection: {
+                activeTarget: { kind: 'server', id: 'srv-a' },
+                activeServerId: 'srv-a',
+                allowedServerIds: ['srv-a'],
+            },
+            serverSelectionGroups: [],
+            activeServerProfile: { id: 'srv-a', name: 'A', serverUrl: 'https://api.a.example' },
+            machineListByServerId: { 'srv-a': [] },
+        });
+
+        expect(model.kind).toBe('create_session');
     });
 });

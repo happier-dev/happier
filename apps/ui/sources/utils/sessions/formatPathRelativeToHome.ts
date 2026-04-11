@@ -1,16 +1,21 @@
 export function formatPathRelativeToHome(path: string, homeDir?: string): string {
     if (!homeDir) return path;
 
-    const normalizedHome = homeDir.endsWith('/') ? homeDir.slice(0, -1) : homeDir;
-    const normalizedPath = path;
+    const normalizedHome = homeDir.replace(/[\\/]+/g, '/').replace(/\/+$/, '');
+    const normalizedPath = path.replace(/[\\/]+/g, '/');
 
-    if (normalizedPath === normalizedHome) {
+    if (normalizedPath === normalizedHome || normalizedPath.replace(/[\\/]+$/, '') === normalizedHome) {
         return '~';
     }
 
-    if (normalizedPath.startsWith(`${normalizedHome}/`)) {
-        return `~${normalizedPath.slice(normalizedHome.length)}`;
+    if (!normalizedPath.startsWith(normalizedHome)) {
+        return path;
     }
 
-    return path;
+    const remainder = normalizedPath.slice(normalizedHome.length);
+    if (!/^[\\/]+/.test(remainder)) {
+        return path;
+    }
+
+    return `~/${remainder.replace(/^[\\/]+/, '').replace(/[\\/]+/g, '/')}`;
 }

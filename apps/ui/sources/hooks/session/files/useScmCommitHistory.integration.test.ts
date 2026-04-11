@@ -6,15 +6,23 @@ import { join } from 'node:path';
 
 import { renderHook } from '@/dev/testkit';
 
-const { mockSessionRPC } = vi.hoisted(() => ({
-    mockSessionRPC: vi.fn(),
+const { machineRpcWithServerScopeMock, getStateMock } = vi.hoisted(() => ({
+    machineRpcWithServerScopeMock: vi.fn(),
+    getStateMock: vi.fn(),
 }));
 
-vi.mock('@/sync/api/session/apiSocket', () => ({
-    apiSocket: {
-        sessionRPC: mockSessionRPC,
-    },
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+    machineRpcWithServerScope: (params: unknown) => machineRpcWithServerScopeMock(params),
 }));
+
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+        storage: {
+            getState: getStateMock,
+        },
+    });
+});
 
 // sessions ops import sync for non-git helpers; keep this test node-safe.
 vi.mock('@/sync/sync', () => ({
@@ -59,18 +67,36 @@ function createSaplingRepoWithCommits(totalCommits: number): string {
 
 describe('useScmCommitHistory integration', () => {
     beforeEach(() => {
-        mockSessionRPC.mockReset();
+        machineRpcWithServerScopeMock.mockReset();
+        getStateMock.mockReset();
     });
 
     it('paginates real git history and supports reset reload', async () => {
-        const workspace = createRepoWithCommits(25);
-        mockSessionRPC.mockImplementation(createGitSessionRpcHarness(workspace));
+        const workspace = createRepoWithCommits(65);
+        const sessionId = 'session-history-1';
+        const harness = createGitSessionRpcHarness(workspace);
+        getStateMock.mockReturnValue({
+            settings: { scmGitRepoPreferredBackend: 'git' },
+            sessions: {
+                [sessionId]: {
+                    active: true,
+                    metadata: {
+                        path: workspace,
+                        machineId: 'machine-1',
+                    },
+                },
+            },
+        });
+        machineRpcWithServerScopeMock.mockImplementation(async (params: {
+            method: string;
+            payload: unknown;
+        }) => await harness(sessionId, params.method, params.payload));
 
         const hook = await renderHook(
             (props: HookProps) => useScmCommitHistory(props),
             {
                 initialProps: {
-                    sessionId: 'session-history-1',
+                    sessionId,
                     readLogEnabled: true,
                     sessionPath: workspace,
                 },
@@ -82,7 +108,7 @@ describe('useScmCommitHistory integration', () => {
         });
 
         const firstPage = hook.getCurrent();
-        expect(firstPage.historyEntries).toHaveLength(20);
+        expect(firstPage.historyEntries).toHaveLength(50);
         expect(firstPage.historyHasMore).toBe(true);
 
         await act(async () => {
@@ -90,7 +116,7 @@ describe('useScmCommitHistory integration', () => {
         });
 
         const secondPage = hook.getCurrent();
-        expect(secondPage.historyEntries).toHaveLength(25);
+        expect(secondPage.historyEntries).toHaveLength(65);
         expect(secondPage.historyHasMore).toBe(false);
 
         const uniqueShas = new Set(secondPage.historyEntries.map((entry) => entry.sha));
@@ -101,29 +127,46 @@ describe('useScmCommitHistory integration', () => {
         });
 
         const resetPage = hook.getCurrent();
-        expect(resetPage.historyEntries).toHaveLength(20);
+        expect(resetPage.historyEntries).toHaveLength(50);
         expect(resetPage.historyHasMore).toBe(true);
 
         await hook.unmount();
     });
 
     it('falls back to limit expansion when backend ignores skip (legacy daemon)', async () => {
-        const workspace = createRepoWithCommits(25);
+        const workspace = createRepoWithCommits(65);
+        const sessionId = 'session-history-legacy-skip';
         const harness = createGitSessionRpcHarness(workspace);
 
+        getStateMock.mockReturnValue({
+            settings: { scmGitRepoPreferredBackend: 'git' },
+            sessions: {
+                [sessionId]: {
+                    active: true,
+                    metadata: {
+                        path: workspace,
+                        machineId: 'machine-1',
+                    },
+                },
+            },
+        });
+
         // Simulate an older daemon that ignores `skip` and always returns the first page.
-        mockSessionRPC.mockImplementation(async (sessionId: string, method: string, request: any) => {
-            if (method === 'scm.log.list' && request && typeof request === 'object') {
-                return harness(sessionId, method, { ...request, skip: 0 });
+        machineRpcWithServerScopeMock.mockImplementation(async (params: {
+            method: string;
+            payload: any;
+        }) => {
+            if (params.method === 'scm.log.list' && params.payload && typeof params.payload === 'object') {
+                return await harness(sessionId, params.method, { ...params.payload, skip: 0 });
             }
-            return harness(sessionId, method, request);
+            return await harness(sessionId, params.method, params.payload);
         });
 
         const hook = await renderHook(
             (props: HookProps) => useScmCommitHistory(props),
             {
                 initialProps: {
-                    sessionId: 'session-history-legacy-skip',
+                    sessionId,
                     readLogEnabled: true,
                     sessionPath: workspace,
                 },
@@ -135,7 +178,7 @@ describe('useScmCommitHistory integration', () => {
         });
 
         const firstPage = hook.getCurrent();
-        expect(firstPage.historyEntries).toHaveLength(20);
+        expect(firstPage.historyEntries).toHaveLength(50);
         expect(firstPage.historyHasMore).toBe(true);
 
         await act(async () => {
@@ -144,7 +187,7 @@ describe('useScmCommitHistory integration', () => {
 
         const secondPage = hook.getCurrent();
         // Should still make progress by expanding limit while keeping skip=0.
-        expect(secondPage.historyEntries).toHaveLength(25);
+        expect(secondPage.historyEntries).toHaveLength(65);
         expect(secondPage.historyHasMore).toBe(false);
 
         await hook.unmount();
@@ -152,13 +195,25 @@ describe('useScmCommitHistory integration', () => {
 
     it('clears history when log reading is disabled by backend capabilities', async () => {
         const workspace = createRepoWithCommits(3);
-        mockSessionRPC.mockImplementation(createGitSessionRpcHarness(workspace));
+        const sessionId = 'session-history-2';
+        getStateMock.mockReturnValue({
+            settings: { scmGitRepoPreferredBackend: 'git' },
+            sessions: {
+                [sessionId]: {
+                    active: true,
+                    metadata: {
+                        path: workspace,
+                        machineId: 'machine-1',
+                    },
+                },
+            },
+        });
 
         const hook = await renderHook(
             (props: HookProps) => useScmCommitHistory(props),
             {
                 initialProps: {
-                    sessionId: 'session-history-2',
+                    sessionId,
                     readLogEnabled: false,
                     sessionPath: workspace,
                 },
@@ -178,13 +233,30 @@ describe('useScmCommitHistory integration', () => {
 
     it('loads sapling history entries through session scm log RPC', async () => {
         const workspace = createSaplingRepoWithCommits(3);
-        mockSessionRPC.mockImplementation(createSaplingSessionRpcHarness(workspace));
+        const sessionId = 'session-history-sapling-1';
+        const harness = createSaplingSessionRpcHarness(workspace);
+        getStateMock.mockReturnValue({
+            settings: { scmGitRepoPreferredBackend: 'git' },
+            sessions: {
+                [sessionId]: {
+                    active: true,
+                    metadata: {
+                        path: workspace,
+                        machineId: 'machine-1',
+                    },
+                },
+            },
+        });
+        machineRpcWithServerScopeMock.mockImplementation(async (params: {
+            method: string;
+            payload: unknown;
+        }) => await harness(sessionId, params.method, params.payload));
 
         const hook = await renderHook(
             (props: HookProps) => useScmCommitHistory(props),
             {
                 initialProps: {
-                    sessionId: 'session-history-sapling-1',
+                    sessionId,
                     readLogEnabled: true,
                     sessionPath: workspace,
                 },
@@ -204,22 +276,39 @@ describe('useScmCommitHistory integration', () => {
     });
 
     it('keeps last-known history entries visible when a reset reload fails', async () => {
-        const workspace = createRepoWithCommits(25);
+        const workspace = createRepoWithCommits(65);
+        const sessionId = 'session-history-swr-reset';
         const harness = createGitSessionRpcHarness(workspace);
         let failReset = false;
 
-        mockSessionRPC.mockImplementation(async (sessionId: string, method: string, request: any) => {
-            if (method === 'scm.log.list' && failReset) {
+        getStateMock.mockReturnValue({
+            settings: { scmGitRepoPreferredBackend: 'git' },
+            sessions: {
+                [sessionId]: {
+                    active: true,
+                    metadata: {
+                        path: workspace,
+                        machineId: 'machine-1',
+                    },
+                },
+            },
+        });
+
+        machineRpcWithServerScopeMock.mockImplementation(async (params: {
+            method: string;
+            payload: any;
+        }) => {
+            if (params.method === 'scm.log.list' && failReset) {
                 return { success: false, error: 'offline' };
             }
-            return harness(sessionId, method, request);
+            return await harness(sessionId, params.method, params.payload);
         });
 
         const hook = await renderHook(
             (props: HookProps) => useScmCommitHistory(props),
             {
                 initialProps: {
-                    sessionId: 'session-history-swr-reset',
+                    sessionId,
                     readLogEnabled: true,
                     sessionPath: workspace,
                 },
@@ -231,7 +320,7 @@ describe('useScmCommitHistory integration', () => {
         });
 
         const firstPage = hook.getCurrent();
-        expect(firstPage.historyEntries).toHaveLength(20);
+        expect(firstPage.historyEntries).toHaveLength(50);
 
         failReset = true;
         await act(async () => {
@@ -239,7 +328,7 @@ describe('useScmCommitHistory integration', () => {
         });
 
         const afterFailedReset = hook.getCurrent();
-        expect(afterFailedReset.historyEntries).toHaveLength(20);
+        expect(afterFailedReset.historyEntries).toHaveLength(50);
         expect(afterFailedReset.historyHasMore).toBe(false);
 
         await hook.unmount();

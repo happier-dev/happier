@@ -60,15 +60,15 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
         scopeState: {
             details: {
                 isOpen: true,
-                activeTabKey: 'terminal:embedded',
+                activeTabKey: 'terminal:term-1',
                 tabs: [
                     {
-                        key: 'terminal:embedded',
+                        key: 'terminal:term-1',
                         kind: 'terminal',
                         title: 'Terminal',
                         isPinned: true,
                         isPreview: false,
-                        resource: { kind: 'terminal' },
+                        resource: { kind: 'terminal', terminalInstanceId: 'term-1' },
                     },
                 ],
             },
@@ -86,6 +86,7 @@ describe('SessionDetailsPanel (terminal resource)', () => {
         expect(terminalViewSpy.mock.calls.length).toBeGreaterThan(0);
         const lastCallProps = terminalViewSpy.mock.calls.at(-1)?.[0];
         expect(lastCallProps?.sessionId).toBe('s1');
+        expect(lastCallProps?.terminalInstanceId).toBe('term-1');
         expect(lastCallProps?.currentDockLocation).toBe('details');
         expect(screen.findAllByType('ActivityIndicator')).toHaveLength(0);
     });

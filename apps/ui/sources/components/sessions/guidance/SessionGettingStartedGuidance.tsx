@@ -257,7 +257,7 @@ function buildSteps(model: SessionGettingStartedGuidanceViewModel): SessionGetti
                     id: 'daemon_start',
                     title: t('sessionGettingStarted.steps.daemonStart.title'),
                     description: t('sessionGettingStarted.steps.daemonStart.description'),
-                    command: `${invoker} daemon start`,
+                    command: `${invoker} service start`,
                     copyLabel: t('sessionGettingStarted.steps.daemonStart.copyLabel'),
                 },
             ];
@@ -302,10 +302,12 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
     const title = getSessionGettingStartedTitle(model.kind);
     const subtitle = getSessionGettingStartedSubtitle(model.kind, model.targetLabel);
     const steps = buildSteps(model);
-    const showCreateSessionSummaryOnly = model.kind === 'create_session';
-    const showLogo = (props.variant === 'primaryPane' || props.variant === 'newSessionBlocking') && model.kind !== 'create_session';
+    const showSummaryOnly = model.kind === 'create_session' || model.kind === 'select_session';
+    const showLogo = (props.variant === 'primaryPane' || props.variant === 'newSessionBlocking')
+        && model.kind !== 'create_session'
+        && model.kind !== 'select_session';
     const showSetupPrimaryCard = model.kind === 'connect_machine' || model.kind === 'start_daemon';
-    const showCliFollowUp = steps.length > 0 && !showSetupPrimaryCard && !showCreateSessionSummaryOnly;
+    const showCliFollowUp = steps.length > 0 && !showSetupPrimaryCard && !showSummaryOnly;
     const showCliFollowUpTitle = false;
     const handleOpenSetup = React.useCallback(() => {
         if (model.onOpenSetup) {
@@ -321,7 +323,7 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
             style={styles.scrollContainer}
             contentContainerStyle={[
                 styles.contentContainer,
-                props.variant === 'primaryPane' && showCreateSessionSummaryOnly ? styles.contentContainerCentered : null,
+                props.variant === 'primaryPane' && showSummaryOnly ? styles.contentContainerCentered : null,
             ]}
             keyboardShouldPersistTaps="handled"
         >
@@ -350,7 +352,7 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
                     </View>
                 </View>
             ) : (
-                showCreateSessionSummaryOnly ? (
+                showSummaryOnly ? (
                     <SessionGettingStartedSummary
                         testID="session-getting-started-summary"
                         titleTestID="session-getting-started-summary-title"

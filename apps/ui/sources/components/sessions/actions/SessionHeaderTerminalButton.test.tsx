@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import {
     installSessionActionsCommonModuleMocks,
     resetSessionActionsCommonModuleMockState,
 } from './sessionActionsTestHelpers';
+import { SESSION_DETAILS_TERMINAL_TAB_KEY } from '@/components/sessions/terminal/embeddedTerminalDocking';
 
+let dockLocationMock: 'bottom' | 'details' | 'sidebar' = 'bottom';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -13,7 +16,7 @@ installSessionActionsCommonModuleMocks({
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
             useLocalSetting: (key: string) => {
-                if (key === 'embeddedTerminalDockLocation') return 'bottom';
+                if (key === 'embeddedTerminalDockLocation') return dockLocationMock;
                 return null;
             },
         });
@@ -26,8 +29,14 @@ const setBottomTabSpy = vi.fn();
 const openRightSpy = vi.fn();
 const closeRightSpy = vi.fn();
 const setRightTabSpy = vi.fn();
+const openDetailsTabSpy = vi.fn();
+const closeDetailsTabSpy = vi.fn();
 
-const pane = {
+vi.mock('@/platform/randomUUID', () => ({
+    randomUUID: () => 'terminal-instance-1',
+}));
+
+const pane: AppPaneScopeApi = {
     scopeId: 'session:s1',
     scopeState: {
         right: { isOpen: false, activeTabId: null as string | null, tabState: {} },
@@ -42,11 +51,12 @@ const pane = {
     closeBottom: closeBottomSpy,
     setBottomTab: setBottomTabSpy,
     setBottomTabState: vi.fn(),
-    openDetailsTab: vi.fn(),
+    openDetailsTab: openDetailsTabSpy,
     setDetailsTabState: vi.fn(),
     pinDetailsTab: vi.fn(),
+    unpinDetailsTab: vi.fn(),
     closeDetails: vi.fn(),
-    closeDetailsTab: vi.fn(),
+    closeDetailsTab: closeDetailsTabSpy,
     setActiveDetailsTab: vi.fn(),
 };
 
@@ -71,8 +81,14 @@ describe('SessionHeaderTerminalButton', () => {
         openRightSpy.mockClear();
         closeRightSpy.mockClear();
         setRightTabSpy.mockClear();
+        openDetailsTabSpy.mockClear();
+        closeDetailsTabSpy.mockClear();
+        dockLocationMock = 'bottom';
         pane.scopeState.bottom.isOpen = false;
         pane.scopeState.bottom.activeTabId = null;
+        pane.scopeState.details.isOpen = false;
+        pane.scopeState.details.activeTabKey = null;
+        pane.scopeState.details.tabs = [];
     });
 
     it('opens terminal in the bottom pane when docked to bottom', async () => {
@@ -101,6 +117,57 @@ describe('SessionHeaderTerminalButton', () => {
 
         expect(closeBottomSpy).toHaveBeenCalledTimes(1);
         expect(openBottomSpy).not.toHaveBeenCalled();
+    });
+
+    it('opens the primary details terminal tab when docked to details', async () => {
+        dockLocationMock = 'details';
+        const { SessionHeaderTerminalButton } = await import('./SessionHeaderTerminalButton');
+
+        const screen = await renderScreen(<SessionHeaderTerminalButton sessionId="s1" scopeId="session:s1" />);
+        expect(screen.findByTestId('session-header-terminal-button')).toBeTruthy();
+
+        await screen.pressByTestIdAsync('session-header-terminal-button');
+
+        expect(openDetailsTabSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                key: SESSION_DETAILS_TERMINAL_TAB_KEY,
+                kind: 'terminal',
+                resource: expect.objectContaining({
+                    kind: 'terminal',
+                    terminalInstanceId: 'embedded',
+                }),
+            }),
+            { intent: 'pinned' },
+        );
+        expect(closeDetailsTabSpy).not.toHaveBeenCalled();
+    });
+
+    it('closes the active details terminal tab when docked to details and the terminal is already active', async () => {
+        dockLocationMock = 'details';
+        pane.scopeState.details.isOpen = true;
+        pane.scopeState.details.activeTabKey = SESSION_DETAILS_TERMINAL_TAB_KEY;
+        pane.scopeState.details.tabs = [{
+            key: SESSION_DETAILS_TERMINAL_TAB_KEY,
+            kind: 'terminal',
+            title: 'Terminal',
+            isPinned: true,
+            isPreview: false,
+            resource: {
+                kind: 'terminal',
+                terminalInstanceId: 'embedded',
+                cwd: null,
+            },
+        }];
+
+        const { SessionHeaderTerminalButton } = await import('./SessionHeaderTerminalButton');
+
+        const screen = await renderScreen(<SessionHeaderTerminalButton sessionId="s1" scopeId="session:s1" />);
+        expect(screen.findByTestId('session-header-terminal-button')).toBeTruthy();
+
+        await screen.pressByTestIdAsync('session-header-terminal-button');
+
+        expect(closeDetailsTabSpy).toHaveBeenCalledWith(SESSION_DETAILS_TERMINAL_TAB_KEY);
+        expect(openDetailsTabSpy).not.toHaveBeenCalled();
     });
 
     it('suppresses the header terminal button testID when the session screen is hidden', async () => {

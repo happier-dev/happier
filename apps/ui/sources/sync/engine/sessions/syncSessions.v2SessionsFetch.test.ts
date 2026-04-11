@@ -80,6 +80,232 @@ afterEach(() => {
 });
 
 describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
+    it('accepts legacy-compatible session rows when /v2 payloads omit newer fields', async () => {
+        const requestSpy = vi.fn(async () =>
+            jsonResponse({
+                sessions: [
+                    {
+                        id: 'legacy_v2_row',
+                        seq: 4,
+                        createdAt: 10,
+                        updatedAt: 11,
+                        active: true,
+                        activeAt: 11,
+                        metadata: JSON.stringify({ path: '/legacy', host: 'legacy-host' }),
+                        metadataVersion: 2,
+                        agentState: JSON.stringify({ controlledByUser: true }),
+                        agentStateVersion: 3,
+                        accessLevel: 'edit',
+                        canApprovePermissions: true,
+                    },
+                ],
+                nextCursor: null,
+                hasNext: false,
+            }),
+        );
+
+        const { encryption } = createEncryptionHarness();
+        const appliedSessions: Array<Record<string, unknown>> = [];
+
+        await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' } as AuthCredentials,
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applySessions: (sessions) => {
+                appliedSessions.push(...(sessions as unknown as Array<Record<string, unknown>>));
+            },
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        expect(appliedSessions).toEqual([
+            expect.objectContaining({
+                id: 'legacy_v2_row',
+                accessLevel: 'edit',
+                canApprovePermissions: true,
+            }),
+        ]);
+    });
+
+    it('falls back to /v1/sessions when the /v2 session list route is missing', async () => {
+        const requestSpy = vi.fn(async (path: string) => {
+            if (path.startsWith('/v2/sessions')) {
+                return jsonResponse({
+                    error: 'Not found',
+                    path: '/v2/sessions',
+                    method: 'GET',
+                }, 404);
+            }
+
+            expect(path).toBe('/v1/sessions');
+            return jsonResponse({
+                sessions: [
+                    buildSessionRow({
+                        id: 'legacy_list_session',
+                        encryptionMode: 'plain',
+                        metadata: JSON.stringify({ path: '/legacy', host: 'legacy-host' }),
+                        agentState: JSON.stringify({}),
+                    }),
+                ],
+            });
+        });
+
+        const { encryption } = createEncryptionHarness();
+        const appliedSessions: Array<Record<string, unknown>> = [];
+
+        await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' } as AuthCredentials,
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applySessions: (sessions) => {
+                appliedSessions.push(...(sessions as unknown as Array<Record<string, unknown>>));
+            },
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        expect(requestSpy.mock.calls.map((call) => call[0])).toEqual([
+            '/v2/sessions?limit=150',
+            '/v1/sessions',
+        ]);
+        expect(appliedSessions).toEqual([
+            expect.objectContaining({
+                id: 'legacy_list_session',
+                encryptionMode: 'plain',
+            }),
+        ]);
+    });
+
+    it('keeps cached session ids and renderables when the list falls back to capped /v1/sessions', async () => {
+        const requestSpy = vi.fn(async (path: string) => {
+            if (path.startsWith('/v2/sessions')) {
+                return jsonResponse({
+                    error: 'Not found',
+                    path: '/v2/sessions',
+                    method: 'GET',
+                }, 404);
+            }
+
+            expect(path).toBe('/v1/sessions');
+            return jsonResponse({
+                sessions: [
+                    buildSessionRow({
+                        id: 'legacy_list_session',
+                        encryptionMode: 'plain',
+                        metadata: JSON.stringify({ path: '/legacy', host: 'legacy-host' }),
+                        agentState: JSON.stringify({}),
+                    }),
+                ],
+            });
+        });
+
+        const { encryption } = createEncryptionHarness();
+        const onSnapshotFetched = vi.fn();
+        const applySessionListRenderables = vi.fn();
+
+        await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' } as AuthCredentials,
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applySessions: () => {},
+            onSnapshotFetched,
+            applySessionListRenderables,
+            cachedSessionListEntries: {
+                cached_older: {
+                    sessionId: 'cached_older',
+                    metadataVersion: 5,
+                    agentStateVersion: 7,
+                    updatedAt: 30,
+                    createdAt: 10,
+                    active: false,
+                    activeAt: 20,
+                    archivedAt: null,
+                    pendingCount: 0,
+                    pendingVersion: 0,
+                    accessLevel: 'view',
+                    canApprovePermissions: false,
+                    name: 'Older cached session',
+                    summaryText: 'Older cached summary',
+                    path: '/older',
+                    homeDir: '/home/u',
+                    host: 'legacy-host',
+                    machineId: 'm1',
+                    flavor: 'claude',
+                    directSessionV1: null,
+                    hiddenSystemSession: false,
+                    hasPendingPermissionRequests: false,
+                    hasPendingUserActionRequests: false,
+                },
+            },
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        expect(onSnapshotFetched).toHaveBeenCalledWith(['legacy_list_session', 'cached_older']);
+        expect(applySessionListRenderables).toHaveBeenCalledWith([
+            expect.objectContaining({ id: 'legacy_list_session' }),
+            expect.objectContaining({
+                id: 'cached_older',
+                metadata: expect.objectContaining({
+                    name: 'Older cached session',
+                    path: '/older',
+                }),
+            }),
+        ], { replace: true });
+    });
+
+    it('fails the snapshot when a compat page mixes valid and malformed rows', async () => {
+        const requestSpy = vi.fn(async () =>
+            jsonResponse({
+                sessions: [
+                    {
+                        id: 'legacy_valid_row',
+                        seq: 4,
+                        createdAt: 10,
+                        updatedAt: 11,
+                        active: true,
+                        activeAt: 11,
+                        metadata: JSON.stringify({ path: '/legacy', host: 'legacy-host' }),
+                        metadataVersion: 2,
+                        agentState: JSON.stringify({ controlledByUser: true }),
+                        agentStateVersion: 3,
+                    },
+                    {
+                        id: 'legacy_invalid_row',
+                        createdAt: 10,
+                        updatedAt: 11,
+                        active: true,
+                        activeAt: 11,
+                        metadata: JSON.stringify({ path: '/broken', host: 'legacy-host' }),
+                        metadataVersion: 2,
+                        agentState: JSON.stringify({ controlledByUser: true }),
+                        agentStateVersion: 3,
+                    },
+                ],
+                nextCursor: null,
+                hasNext: false,
+            }),
+        );
+
+        const { encryption } = createEncryptionHarness();
+        const applySessions = vi.fn();
+
+        await expect(fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' } as AuthCredentials,
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applySessions,
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        })).rejects.toThrow(/Invalid \/v[12]\/sessions response/);
+
+        expect(applySessions).not.toHaveBeenCalled();
+    });
+
     it('announces newly fetched agent requests relative to existing session state', async () => {
         const requestSpy = vi.fn(async () =>
             jsonResponse({
@@ -285,7 +511,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         );
     });
 
-    it('reuses warm cache list data when metadata and agentState versions match', async () => {
+    it('reuses warm cache list data when metadata and agentState versions match and the canonical session already exists', async () => {
         const requestSpy = vi.fn(async () =>
             jsonResponse({
                 sessions: [
@@ -348,6 +574,21 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                     },
                 },
                 applySessionListRenderables,
+                getExistingSession: () => ({
+                    id: 's_cached',
+                    seq: 1,
+                    createdAt: 10,
+                    updatedAt: 30,
+                    active: true,
+                    activeAt: 30,
+                    metadata: { path: '/home/u/repo', host: 'mbp', machineId: 'm1', name: 'Hydrated title' },
+                    metadataVersion: 7,
+                    agentState: null,
+                    agentStateVersion: 9,
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 'online',
+                }),
             } as any),
         } as any);
 
@@ -376,6 +617,87 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                 hasPendingUserActionRequests: true,
             }),
         ], { replace: true });
+    });
+
+    it('hydrates matching warm cache rows when the canonical sessions map is empty', async () => {
+        const requestSpy = vi.fn(async () =>
+            jsonResponse({
+                sessions: [
+                    buildSessionRow({
+                        id: 's_cached',
+                        dataEncryptionKey: 'k1',
+                        metadata: 'encrypted-meta',
+                        metadataVersion: 7,
+                        agentState: 'encrypted-state',
+                        agentStateVersion: 9,
+                    }),
+                ],
+                nextCursor: null,
+                hasNext: false,
+            }),
+        );
+
+        const { encryption, decryptMetadata, decryptAgentState } = createEncryptionHarness();
+        const applySessions = vi.fn();
+        const applySessionListRenderables = vi.fn();
+
+        await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' },
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applySessions,
+            applySessionListRenderables,
+            getExistingSession: () => null,
+            cachedSessionListEntries: {
+                s_cached: {
+                    sessionId: 's_cached',
+                    metadataVersion: 7,
+                    agentStateVersion: 9,
+                    updatedAt: 30,
+                    createdAt: 10,
+                    active: true,
+                    activeAt: 30,
+                    archivedAt: null,
+                    pendingCount: 0,
+                    pendingVersion: 0,
+                    accessLevel: 'admin',
+                    canApprovePermissions: true,
+                    name: 'Cached title',
+                    summaryText: 'Cached summary',
+                    path: '/home/u/repo',
+                    homeDir: '/home/u',
+                    host: 'mbp',
+                    machineId: 'm1',
+                    flavor: 'claude',
+                    directSessionV1: { v: 1, providerId: 'codex' },
+                    hiddenSystemSession: false,
+                    hasPendingPermissionRequests: false,
+                    hasPendingUserActionRequests: false,
+                },
+            },
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        expect(applySessionListRenderables).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: 's_cached',
+                metadata: expect.objectContaining({
+                    name: 'Cached title',
+                    path: '/home/u/repo',
+                }),
+            }),
+        ], { replace: true });
+        await expect.poll(() => decryptMetadata.mock.calls.length).toBe(1);
+        expect(decryptAgentState).toHaveBeenCalledTimes(1);
+        expect(applySessions).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: 's_cached',
+                metadataVersion: 7,
+                agentStateVersion: 9,
+            }),
+        ]);
     });
 
     it('hydrates prioritized stale rows before eager background rows', async () => {
@@ -899,9 +1221,53 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         ).rejects.toBeInstanceOf(HappyError);
     });
 
-    it('throws when /v2/sessions response shape is invalid', async () => {
+    it('falls back to /v1/sessions when /v2/sessions response shape is invalid', async () => {
         onAgentRequest.mockReset();
-        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ sessions: 'bad-shape', hasNext: false })));
+        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+            if (String(input).includes('/v2/sessions')) {
+                return jsonResponse({ sessions: 'bad-shape', hasNext: false });
+            }
+            return jsonResponse({
+                sessions: [
+                    buildSessionRow({
+                        id: 'legacy_after_invalid_v2',
+                        encryptionMode: 'plain',
+                        metadata: JSON.stringify({ path: '/legacy-after-invalid' }),
+                        agentState: JSON.stringify({}),
+                    }),
+                ],
+            });
+        }));
+        const { encryption } = createEncryptionHarness();
+        const appliedSessions: Array<Record<string, unknown>> = [];
+
+        await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' },
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            applySessions: (sessions) => {
+                appliedSessions.push(...(sessions as unknown as Array<Record<string, unknown>>));
+            },
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        expect(appliedSessions).toEqual([
+            expect.objectContaining({
+                id: 'legacy_after_invalid_v2',
+                encryptionMode: 'plain',
+            }),
+        ]);
+    });
+
+    it('throws when both /v2/sessions and /v1/sessions response shapes are invalid', async () => {
+        onAgentRequest.mockReset();
+        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+            if (String(input).includes('/v2/sessions')) {
+                return jsonResponse({ sessions: 'bad-shape', hasNext: false });
+            }
+            return jsonResponse({ sessions: [{ id: 'legacy_invalid' }] });
+        }));
         const { encryption } = createEncryptionHarness();
 
         await expect(
@@ -913,7 +1279,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                 repairInvalidReadStateV1: async () => {},
                 log: { log: () => {} },
             }),
-        ).rejects.toThrow('Invalid /v2/sessions response');
+        ).rejects.toThrow('Invalid /v1/sessions response');
     });
 
     it('uses injected request transport when provided', async () => {

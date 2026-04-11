@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { installSessionEmbeddedTerminalCommonModuleMocks } from './sessionEmbeddedTerminalTestHelpers';
 
 let lastXtermProps: Readonly<{ onInput: (data: string) => void }> | null = null;
+const sessionEmbeddedTerminalPtySpy = vi.hoisted(() => vi.fn());
 
 installSessionEmbeddedTerminalCommonModuleMocks({
     reactNative: async () => {
@@ -56,18 +57,21 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
 const onInputSpy = vi.fn();
 
 vi.mock('./useSessionEmbeddedTerminalPty', () => ({
-    useSessionEmbeddedTerminalPty: () => ({
-        status: 'connected',
-        error: null,
-        detectedUrl: null,
-        onInput: onInputSpy,
-        onResize: vi.fn(),
-        onReady: vi.fn(),
-        clearTerminal: vi.fn(),
-        requestRestart: vi.fn(),
-        retryConnect: vi.fn(),
-        dismissDetectedUrl: vi.fn(),
-    }),
+    useSessionEmbeddedTerminalPty: (input: unknown) => {
+        sessionEmbeddedTerminalPtySpy(input);
+        return {
+            status: 'connected',
+            error: null,
+            detectedUrl: null,
+            onInput: onInputSpy,
+            onResize: vi.fn(),
+            onReady: vi.fn(),
+            clearTerminal: vi.fn(),
+            requestRestart: vi.fn(),
+            retryConnect: vi.fn(),
+            dismissDetectedUrl: vi.fn(),
+        };
+    },
 }));
 
 vi.mock('@/components/terminal/xterm/webview/XtermWebViewSurface.native', () => ({
@@ -81,6 +85,7 @@ describe('SessionEmbeddedTerminalPane (native)', () => {
     it('renders an Xterm WebView surface wired to the PTY hook', async () => {
         lastXtermProps = null;
         onInputSpy.mockClear();
+        sessionEmbeddedTerminalPtySpy.mockClear();
 
         const { SessionEmbeddedTerminalPane } = await import('./SessionEmbeddedTerminalPane.native');
         const { renderScreen } = await import('@/dev/testkit');
@@ -96,5 +101,35 @@ describe('SessionEmbeddedTerminalPane (native)', () => {
         expect(lastXtermProps).not.toBeNull();
         const xtermProps = lastXtermProps as unknown as Readonly<{ onInput: (data: string) => void }>;
         expect(xtermProps.onInput).toBe(onInputSpy);
+        expect(sessionEmbeddedTerminalPtySpy.mock.calls.at(-1)?.[0]).toEqual(
+            expect.objectContaining({
+                sessionId: 's1',
+                terminalKey: 'session:s1:terminal',
+            }),
+        );
+    });
+
+    it('uses an instance-aware terminalKey when a terminal tab instance is provided', async () => {
+        lastXtermProps = null;
+        onInputSpy.mockClear();
+        sessionEmbeddedTerminalPtySpy.mockClear();
+
+        const { SessionEmbeddedTerminalPane } = await import('./SessionEmbeddedTerminalPane.native');
+        const { renderScreen } = await import('@/dev/testkit');
+        await renderScreen(
+            React.createElement(SessionEmbeddedTerminalPane, {
+                sessionId: 's1',
+                scopeId: 'scope1',
+                currentDockLocation: 'details',
+                terminalInstanceId: 'term-2',
+                testIdPrefix: 't',
+            } as const),
+        );
+
+        expect(sessionEmbeddedTerminalPtySpy.mock.calls.at(-1)?.[0]).toEqual(
+            expect.objectContaining({
+                terminalKey: 'session:s1:terminal:term-2',
+            }),
+        );
     });
 });

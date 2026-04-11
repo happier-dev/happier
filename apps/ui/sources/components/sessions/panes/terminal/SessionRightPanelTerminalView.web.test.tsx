@@ -245,7 +245,25 @@ describe('SessionRightPanelTerminalView.web', () => {
 
         expect(machineTerminalEnsureSpy).toHaveBeenCalledTimes(1);
         const ensureInput = machineTerminalEnsureSpy.mock.calls[0]?.[1];
-        expect(ensureInput?.terminalKey).toBe('session:s1:terminal');
+        expect(ensureInput?.terminalKey).toBe('session:s1:terminal:embedded');
+    });
+
+    it('uses an instance-aware session terminalKey when a terminal tab instance is provided', async () => {
+        const SessionEmbeddedTerminalPaneWeb = await loadSessionEmbeddedTerminalPaneWeb();
+
+        await renderAndFlush(
+            <SessionEmbeddedTerminalPaneWeb
+                sessionId="s1"
+                scopeId="session:s1"
+                currentDockLocation="details"
+                terminalInstanceId="term-7"
+                testIdPrefix="pane-a"
+            />,
+        );
+
+        expect(machineTerminalEnsureSpy).toHaveBeenCalledTimes(1);
+        const ensureInput = machineTerminalEnsureSpy.mock.calls[0]?.[1];
+        expect(ensureInput?.terminalKey).toBe('session:s1:terminal:term-7');
     });
 
     it('uses the resolved session machine target when the session machine id is stale', async () => {

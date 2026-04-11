@@ -47,6 +47,9 @@ import type { SourceControlRemoteAction } from '@/components/workspaces/scm/Sour
 export type SessionRightPanelGitViewProps = Readonly<{
     sessionId: string;
     scopeId: string;
+    onOpenFile?: (fullPath: string) => void;
+    onOpenFilePinned?: (fullPath: string) => void;
+    onOpenCommit?: (sha: string) => void;
 }>;
 
 export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitViewProps) => {
@@ -54,7 +57,10 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const pane = useAppPaneScope(props.scopeId);
     const resumeSession = useSessionResumeAction();
     const { activeGitSubTab, commitDraftMessage, setCommitDraftMessage, setActiveGitSubTab } = useSessionRightPanelGitTabState(pane);
-    const { openFileInDetails, openFileInDetailsPinned, openCommitInDetails } = useSessionRightPanelGitOpenDetails(pane);
+    const defaultOpenDetails = useSessionRightPanelGitOpenDetails(pane);
+    const openFileInDetails = props.onOpenFile ?? defaultOpenDetails.openFileInDetails;
+    const openFileInDetailsPinned = props.onOpenFilePinned ?? defaultOpenDetails.openFileInDetailsPinned;
+    const openCommitInDetails = props.onOpenCommit ?? defaultOpenDetails.openCommitInDetails;
 
     const session = useSession(props.sessionId);
     const scmSnapshot = useSessionProjectScmSnapshot(props.sessionId);

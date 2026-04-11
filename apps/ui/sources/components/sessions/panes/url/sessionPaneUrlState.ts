@@ -1,10 +1,18 @@
 import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';
-import { createSessionDetailsTerminalTab, SESSION_DETAILS_TERMINAL_TAB_KEY } from '@/components/sessions/terminal/embeddedTerminalDocking';
+import {
+    createPrimarySessionDetailsTerminalTab,
+    createSessionDetailsTerminalTab,
+    SESSION_PRIMARY_TERMINAL_INSTANCE_ID,
+} from '@/components/sessions/terminal/embeddedTerminalDocking';
+import {
+    isTerminalDetailsTab,
+    resolveTerminalDetailsInstanceId,
+} from '@/components/terminal/terminalDetailsTabModel';
 
 export type SessionPaneUrlDetailsTarget =
     | Readonly<{ kind: 'file'; path: string }>
     | Readonly<{ kind: 'commit'; sha: string }>
-    | Readonly<{ kind: 'terminal' }>;
+    | Readonly<{ kind: 'terminal'; terminalInstanceId?: string }>;
 
 export type SessionPaneUrlState = Readonly<{
     rightTabId?: 'git' | 'files' | 'terminal';
@@ -37,6 +45,7 @@ export function parseSessionPaneUrlState(params: Readonly<Record<string, unknown
     const detailsRaw = readSingleStringParam(params, 'details')?.trim() ?? '';
     const pathRaw = readSingleStringParam(params, 'path')?.trim() ?? '';
     const shaRaw = readSingleStringParam(params, 'sha')?.trim() ?? '';
+    const terminalInstanceIdRaw = readSingleStringParam(params, 'terminalInstanceId')?.trim() ?? '';
 
     let details: SessionPaneUrlDetailsTarget | null = null;
     if (detailsRaw === 'file' && pathRaw && isSafeWorkspaceRelativePath(pathRaw)) {
@@ -46,7 +55,9 @@ export function parseSessionPaneUrlState(params: Readonly<Record<string, unknown
         details = { kind: 'commit', sha: shaRaw };
     }
     if (detailsRaw === 'terminal') {
-        details = { kind: 'terminal' };
+        details = terminalInstanceIdRaw
+            ? { kind: 'terminal', terminalInstanceId: terminalInstanceIdRaw }
+            : { kind: 'terminal' };
     }
 
     if (!rightTabId && !bottomTabId && !details) return null;
@@ -75,6 +86,9 @@ export function serializeSessionPaneUrlState(state: SessionPaneUrlState): Record
     }
     if (state.details?.kind === 'terminal') {
         out.details = 'terminal';
+        if (typeof state.details.terminalInstanceId === 'string' && state.details.terminalInstanceId.trim().length > 0) {
+            out.terminalInstanceId = state.details.terminalInstanceId.trim();
+        }
     }
     return out;
 }
@@ -105,8 +119,16 @@ export function buildActiveDetailsRouteParams(
         return serializeSessionPaneUrlState({ details: { kind: 'commit', sha } });
     }
 
-    if (activeTab.key === SESSION_DETAILS_TERMINAL_TAB_KEY || activeTab.kind === 'terminal') {
-        return serializeSessionPaneUrlState({ details: { kind: 'terminal' } });
+    if (isTerminalDetailsTab({ resource: activeTab.resource, tabKey: activeTab.key })) {
+        const terminalInstanceId = resolveTerminalDetailsInstanceId({
+            resource: activeTab.resource,
+            tabKey: activeTab.key,
+        });
+        return serializeSessionPaneUrlState({
+            details: terminalInstanceId && terminalInstanceId !== SESSION_PRIMARY_TERMINAL_INSTANCE_ID
+                ? { kind: 'terminal', terminalInstanceId }
+                : { kind: 'terminal' },
+        });
     }
 
     return {};
@@ -142,8 +164,14 @@ export function deriveSessionPaneUrlStateFromScopeState(scopeState: PaneScopeSta
                     details = { kind: 'commit', sha: safeSha };
                 }
             }
-        } else if (tab?.key === SESSION_DETAILS_TERMINAL_TAB_KEY || tab?.kind === 'terminal') {
-            details = { kind: 'terminal' };
+        } else if (tab && isTerminalDetailsTab({ resource: tab.resource, tabKey: tab.key })) {
+            const terminalInstanceId = resolveTerminalDetailsInstanceId({
+                resource: tab.resource,
+                tabKey: tab.key,
+            });
+            details = terminalInstanceId && terminalInstanceId !== SESSION_PRIMARY_TERMINAL_INSTANCE_ID
+                ? { kind: 'terminal', terminalInstanceId }
+                : { kind: 'terminal' };
         }
     }
 
@@ -200,7 +228,13 @@ export function applySessionPaneUrlState(
     }
 
     if (state.details?.kind === 'terminal') {
-        pane.openDetailsTab(createSessionDetailsTerminalTab(), { intent: 'pinned' });
+        const terminalInstanceId = state.details.terminalInstanceId?.trim() ?? '';
+        pane.openDetailsTab(
+            terminalInstanceId
+                ? createSessionDetailsTerminalTab({ terminalInstanceId })
+                : createPrimarySessionDetailsTerminalTab(),
+            { intent: 'pinned' },
+        );
     }
 }
 

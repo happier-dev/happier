@@ -4,6 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 
 import { EmbeddedTerminalPane } from '@/components/terminal/embedded/EmbeddedTerminalPane.native';
+import { EmbeddedTerminalToolbarIconButton } from '@/components/terminal/embedded/EmbeddedTerminalToolbarIconButton';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { t } from '@/text';
@@ -13,6 +14,7 @@ import { useLocalSettingMutable } from '@/sync/domains/state/storage';
 import {
     closeEmbeddedTerminalOutsideDockLocation,
     openEmbeddedTerminalInDockLocation,
+    SESSION_PRIMARY_TERMINAL_INSTANCE_ID,
     type EmbeddedTerminalDockLocation,
 } from './embeddedTerminalDocking';
 import type { EmbeddedTerminalRendererHandle } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
@@ -37,7 +39,15 @@ export const SessionEmbeddedTerminalPane = React.memo(function SessionEmbeddedTe
     );
 
     const terminalRendererRef = React.useRef<EmbeddedTerminalRendererHandle | null>(null);
-    const terminalKey = React.useMemo(() => `session:${props.sessionId}:terminal`, [props.sessionId]);
+    const resolvedTerminalInstanceId = props.currentDockLocation === 'details'
+        ? (props.terminalInstanceId ?? SESSION_PRIMARY_TERMINAL_INSTANCE_ID)
+        : props.terminalInstanceId;
+    const terminalKey = React.useMemo(
+        () => resolvedTerminalInstanceId
+            ? `session:${props.sessionId}:terminal:${resolvedTerminalInstanceId}`
+            : `session:${props.sessionId}:terminal`,
+        [props.sessionId, resolvedTerminalInstanceId],
+    );
 
     const controller = useSessionEmbeddedTerminalPty({
         sessionId: props.sessionId,
@@ -78,16 +88,22 @@ export const SessionEmbeddedTerminalPane = React.memo(function SessionEmbeddedTe
         [pane, props.currentDockLocation, setDockLocationSetting],
     );
 
-    return (
-        <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
-            <EmbeddedTerminalPane
-                title={t('settings.terminal')}
-                controller={controller}
-                terminalRef={terminalRendererRef}
-                onRequestClose={props.onRequestClose}
-                testIdPrefix={testIdPrefix}
-                showQuickKeys={showQuickKeys}
-                toolbarActionsStart={showDockMenu ? (
+    const toolbarActionsStart = React.useMemo(() => {
+        if (!showDockMenu && !props.onOpenNewTerminalTab) {
+            return null;
+        }
+
+        return (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                {props.onOpenNewTerminalTab ? (
+                    <EmbeddedTerminalToolbarIconButton
+                        testID={testId('new-tab')}
+                        accessibilityLabel={t('terminalEmbedded.openNewTabA11y')}
+                        onPress={props.onOpenNewTerminalTab}
+                        icon="add-outline"
+                    />
+                ) : null}
+                {showDockMenu ? (
                     <DropdownMenu
                         open={dockMenuOpen}
                         onOpenChange={setDockMenuOpen}
@@ -112,6 +128,29 @@ export const SessionEmbeddedTerminalPane = React.memo(function SessionEmbeddedTe
                         onSelect={onSelectDock}
                     />
                 ) : null}
+            </View>
+        );
+    }, [
+        dockItems,
+        dockMenuOpen,
+        onSelectDock,
+        props.currentDockLocation,
+        props.onOpenNewTerminalTab,
+        testId,
+        theme.colors.textSecondary,
+        showDockMenu,
+    ]);
+
+    return (
+        <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
+            <EmbeddedTerminalPane
+                title={t('settings.terminal')}
+                controller={controller}
+                terminalRef={terminalRendererRef}
+                onRequestClose={props.onRequestClose}
+                testIdPrefix={testIdPrefix}
+                showQuickKeys={showQuickKeys}
+                toolbarActionsStart={toolbarActionsStart}
             />
         </View>
     );

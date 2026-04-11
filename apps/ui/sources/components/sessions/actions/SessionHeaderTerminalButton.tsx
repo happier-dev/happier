@@ -4,28 +4,35 @@ import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
-import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { closeEmbeddedTerminalOutsideDockLocation, openEmbeddedTerminalInDockLocation, SESSION_DETAILS_TERMINAL_TAB_KEY, type EmbeddedTerminalDockLocation } from '@/components/sessions/terminal/embeddedTerminalDocking';
-import { useDeviceType } from '@/utils/platform/responsive';
-import { useLocalSetting } from '@/sync/domains/state/storage';
+import {
+    closeEmbeddedTerminalOutsideDockLocation,
+    openEmbeddedTerminalInDockLocation,
+    SESSION_DETAILS_TERMINAL_TAB_KEY,
+    type EmbeddedTerminalDockLocation,
+} from '@/components/sessions/terminal/embeddedTerminalDocking';
 import { t } from '@/text';
 import { useOptionalSessionScreenTestId } from '../shell/sessionScreenTestIds';
+import { useSessionTerminalAvailability } from '@/components/sessions/terminal/useSessionTerminalAvailability';
+import { isTerminalDetailsTab } from '@/components/terminal/terminalDetailsTabModel';
 
 export const SessionHeaderTerminalButton = React.memo((_props: Readonly<{ sessionId: string; scopeId: string }>) => {
     const { theme } = useUnistyles();
-    const deviceType = useDeviceType();
     const pane = useAppPaneScope(_props.scopeId);
-    const terminalEnabled = useFeatureEnabled('terminal.embeddedPty');
-    const dockLocationRaw = useLocalSetting('embeddedTerminalDockLocation');
-    const dockLocation = (deviceType === 'phone' ? 'sidebar' : dockLocationRaw) as EmbeddedTerminalDockLocation;
+    const { dockLocation, terminalEnabled } = useSessionTerminalAvailability();
     const testId = useOptionalSessionScreenTestId('session-header-terminal-button');
 
     const scopeState = pane.scopeState;
     const rightTerminalActive = Boolean(scopeState?.right.isOpen) && scopeState?.right.activeTabId === 'terminal';
     const bottomTerminalActive = Boolean(scopeState?.bottom?.isOpen) && scopeState?.bottom?.activeTabId === 'terminal';
-    const detailsTerminalActive =
-        Boolean(scopeState?.details.isOpen)
-        && scopeState?.details.activeTabKey === SESSION_DETAILS_TERMINAL_TAB_KEY;
+    const activeDetailsTab = scopeState?.details.activeTabKey
+        ? scopeState.details.tabs.find((tab) => tab.key === scopeState.details.activeTabKey) ?? null
+        : null;
+    const detailsTerminalActive = Boolean(scopeState?.details.isOpen)
+        && activeDetailsTab != null
+        && isTerminalDetailsTab({
+            resource: activeDetailsTab.resource,
+            tabKey: activeDetailsTab.key,
+        });
 
     const onPress = React.useCallback(() => {
         if (!terminalEnabled) return;
@@ -42,7 +49,7 @@ export const SessionHeaderTerminalButton = React.memo((_props: Readonly<{ sessio
 
         if (dockLocation === 'details') {
             if (detailsTerminalActive) {
-                pane.closeDetailsTab(SESSION_DETAILS_TERMINAL_TAB_KEY);
+                pane.closeDetailsTab(activeDetailsTab.key);
                 return;
             }
             closeEmbeddedTerminalOutsideDockLocation({ pane, dockLocation: 'details' });
@@ -64,6 +71,7 @@ export const SessionHeaderTerminalButton = React.memo((_props: Readonly<{ sessio
         pane,
         rightTerminalActive,
         terminalEnabled,
+        activeDetailsTab,
     ]);
 
     if (!terminalEnabled) return null;

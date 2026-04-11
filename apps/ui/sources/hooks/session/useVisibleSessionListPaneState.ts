@@ -10,19 +10,36 @@ export type VisibleSessionListPaneState = Readonly<{
         sessionsReady: boolean;
         sessionCount: number;
     }>;
-    visibleSessionListIndex: SessionListIndexItem[] | null;
+    visibleSessionListIndex: ReadonlyArray<SessionListIndexItem> | null;
+    hasHiddenInactiveSessions: boolean;
     showLoading: boolean;
     showEmptyState: boolean;
 }>;
 
+function countVisibleSessions(index: ReadonlyArray<SessionListIndexItem> | null): number {
+    if (!index) return 0;
+    let count = 0;
+    for (const item of index) {
+        if (item.type === 'session') {
+            count += 1;
+        }
+    }
+    return count;
+}
+
 export function useVisibleSessionListPaneState(storageFilter: SessionListStorageFilter = 'all'): VisibleSessionListPaneState {
     const { summary } = useVisibleSessionListSummaryState(storageFilter);
-    const { visibleSessionListIndex } = useVisibleSessionListViewState(storageFilter);
+    const { visibleSessionListIndex, hasHiddenInactiveSessions } = useVisibleSessionListViewState(storageFilter);
+    const visibleSessionCount = React.useMemo(
+        () => countVisibleSessions(visibleSessionListIndex),
+        [visibleSessionListIndex],
+    );
 
     return React.useMemo(() => ({
         summary,
         visibleSessionListIndex,
+        hasHiddenInactiveSessions,
         showLoading: !summary.sessionsReady,
-        showEmptyState: summary.sessionsReady && summary.sessionCount === 0,
-    }), [summary, visibleSessionListIndex]);
+        showEmptyState: summary.sessionsReady && visibleSessionCount === 0,
+    }), [hasHiddenInactiveSessions, summary, visibleSessionCount, visibleSessionListIndex]);
 }

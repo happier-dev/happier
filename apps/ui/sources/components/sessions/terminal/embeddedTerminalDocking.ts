@@ -1,17 +1,33 @@
 import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { buildTerminalDetailsTabKey, createTerminalDetailsTab, isTerminalDetailsTab } from '@/components/terminal/terminalDetailsTabModel';
 import { t } from '@/text';
 
 export type EmbeddedTerminalDockLocation = 'sidebar' | 'details' | 'bottom';
 
-export const SESSION_DETAILS_TERMINAL_TAB_KEY = 'terminal:embedded';
+export const SESSION_PRIMARY_TERMINAL_INSTANCE_ID = 'embedded';
+export const SESSION_DETAILS_TERMINAL_TAB_KEY = buildTerminalDetailsTabKey(SESSION_PRIMARY_TERMINAL_INSTANCE_ID);
 
-export function createSessionDetailsTerminalTab() {
-    return {
-        key: SESSION_DETAILS_TERMINAL_TAB_KEY,
-        kind: 'terminal',
+export function createSessionDetailsTerminalTab(params?: Readonly<{
+    terminalInstanceId?: string | null;
+}>) {
+    return createTerminalDetailsTab({
         title: t('settings.terminal'),
-        resource: { kind: 'terminal' },
-    } as const;
+        terminalInstanceId: params?.terminalInstanceId ?? undefined,
+    });
+}
+
+export function createPrimarySessionDetailsTerminalTab() {
+    return createTerminalDetailsTab({
+        title: t('settings.terminal'),
+        terminalInstanceId: SESSION_PRIMARY_TERMINAL_INSTANCE_ID,
+    });
+}
+
+export function openNewSessionDetailsTerminalTab(pane: AppPaneScopeApi): void {
+    pane.openDetailsTab(
+        createSessionDetailsTerminalTab(),
+        { intent: 'pinned' },
+    );
 }
 
 export function closeEmbeddedTerminalOutsideDockLocation(params: Readonly<{
@@ -22,7 +38,12 @@ export function closeEmbeddedTerminalOutsideDockLocation(params: Readonly<{
 
     const rightTerminalActive = Boolean(scopeState?.right.isOpen) && scopeState?.right.activeTabId === 'terminal';
     const bottomTerminalActive = Boolean(scopeState?.bottom?.isOpen) && scopeState?.bottom?.activeTabId === 'terminal';
-    const detailsHasTerminalTab = Boolean(scopeState?.details.tabs?.some((tab) => tab.key === SESSION_DETAILS_TERMINAL_TAB_KEY));
+    const detailsTerminalTabKeys = (scopeState?.details.tabs ?? [])
+        .filter((tab) => isTerminalDetailsTab({
+            resource: tab.resource,
+            tabKey: tab.key,
+        }))
+        .map((tab) => tab.key);
 
     if (params.dockLocation !== 'sidebar' && rightTerminalActive) {
         params.pane.closeRight();
@@ -30,8 +51,10 @@ export function closeEmbeddedTerminalOutsideDockLocation(params: Readonly<{
     if (params.dockLocation !== 'bottom' && bottomTerminalActive) {
         params.pane.closeBottom();
     }
-    if (params.dockLocation !== 'details' && detailsHasTerminalTab) {
-        params.pane.closeDetailsTab(SESSION_DETAILS_TERMINAL_TAB_KEY);
+    if (params.dockLocation !== 'details') {
+        for (const tabKey of detailsTerminalTabKeys) {
+            params.pane.closeDetailsTab(tabKey);
+        }
     }
 }
 
@@ -46,7 +69,7 @@ export function openEmbeddedTerminalInDockLocation(params: Readonly<{
     }
 
     if (params.dockLocation === 'details') {
-        params.pane.openDetailsTab(createSessionDetailsTerminalTab(), { intent: 'pinned' });
+        params.pane.openDetailsTab(createPrimarySessionDetailsTerminalTab(), { intent: 'pinned' });
         return;
     }
 
