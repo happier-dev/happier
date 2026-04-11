@@ -287,6 +287,32 @@ describe('UsageAnalyticsDashboard', () => {
         expect(screen.getTextContent()).toContain(viewModel.leaders.engines[0]?.label ?? '');
     });
 
+    it('uses the selected period label in yearly streak subtitles instead of hardcoded last-30 copy', async () => {
+        const viewModel = buildUsageAnalyticsViewModel(response, {
+            period: 'year',
+            metric: 'tokens',
+            focus: null,
+            costMode: 'auto',
+        });
+
+        const screen = await renderScreen(React.createElement(UsageAnalyticsDashboard, {
+            viewModel,
+            filters: {
+                period: 'year',
+                metric: 'tokens',
+                focus: null,
+                costMode: 'auto',
+            },
+            onPeriodChange: vi.fn(),
+            onMetricChange: vi.fn(),
+            onFocusChange: vi.fn(),
+            onCostModeChange: vi.fn(),
+        }));
+
+        expect(screen.getTextContent()).toContain('Last year');
+        expect(screen.getTextContent()).not.toContain('active days in the last 30');
+    });
+
     it('falls back to the top provider label when engine metadata is unknown in recap cards', async () => {
         const responseWithUnknownEngine: UsageAnalyticsQueryResponse = {
             ...response,

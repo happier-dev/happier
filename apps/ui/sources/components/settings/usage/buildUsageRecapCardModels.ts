@@ -8,6 +8,7 @@ import type {
 import { getUsagePeriodDefinition } from '@/sync/api/account/usagePeriods';
 
 import { formatUsageCurrency } from './formatUsageCurrency';
+import { buildUsageCurrentStreakSubtitle } from './buildUsageCurrentStreakSubtitle';
 import { resolveUsageCostModeLabel } from './resolveUsageCostModeLabel';
 
 export type UsageRecapCardId = 'streak' | 'usage' | 'model' | 'rhythm';
@@ -194,7 +195,7 @@ export function buildUsageRecapCardModels(input: Readonly<{
             shareTestID: 'usage-recap-share-streak',
             label: t('usage.summary.currentStreak'),
             value: `${summary.currentStreakDays}d`,
-            subtitle: t('usage.summary.currentStreakSubtitle', { count: summary.activeDays }),
+            subtitle: buildUsageCurrentStreakSubtitle(filters.period, summary.activeDays),
             valueTone: 'numeric',
             accentTone: 'orange',
             visual: {

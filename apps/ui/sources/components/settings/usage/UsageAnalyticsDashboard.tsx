@@ -13,6 +13,7 @@ import { UsageExportActions } from './UsageExportActions';
 import { UsageRecapHighlightsSection } from './UsageRecapHighlightsSection';
 import { UsageTimelineSection } from './UsageTimelineSection';
 import { UsageToggleChip } from './UsageToggleChip';
+import { buildUsageCurrentStreakSubtitle } from './buildUsageCurrentStreakSubtitle';
 import { formatUsageCurrency } from './formatUsageCurrency';
 import type {
     UsageAnalyticsActivityViewModel,
@@ -424,7 +425,10 @@ function renderBreakdownSection(
     );
 }
 
-function renderInsightSection(insights: UsageAnalyticsInsightsViewModel): React.ReactElement {
+function renderInsightSection(
+    period: UsageFilterState['period'],
+    insights: UsageAnalyticsInsightsViewModel,
+): React.ReactElement {
     return (
         <ItemGroup title={t('usage.insights')}>
             <View testID="usage-insights-section" style={styles.sectionBody}>
@@ -433,7 +437,7 @@ function renderInsightSection(insights: UsageAnalyticsInsightsViewModel): React.
                         testID="usage-insight-current-streak"
                         label={t('usage.summary.currentStreak')}
                         value={`${insights.currentStreakDays}d`}
-                        subtitle={t('usage.summary.currentStreakSubtitle', { count: insights.activeDays })}
+                        subtitle={buildUsageCurrentStreakSubtitle(period, insights.activeDays)}
                     />
                     <SummaryCard
                         testID="usage-insight-active-days"
@@ -697,7 +701,7 @@ export const UsageAnalyticsDashboard: React.FC<UsageAnalyticsDashboardProps> = (
                     sessionId={sessionId}
                 />
 
-                {renderInsightSection(viewModel.insights)}
+                {renderInsightSection(filters.period, viewModel.insights)}
 
                 <View style={styles.cardSection}>
                     <View style={styles.cardHeader}>

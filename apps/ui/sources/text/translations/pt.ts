@@ -8109,6 +8109,7 @@ settingsSession: {
       title: "Usage summary",
       currentStreak: "Current streak",
       currentStreakSubtitle: ({ count }: { count: number }) => `${count} active days in the last 30`,
+      currentStreakSubtitleForPeriod: ({ count, period }: { count: number; period: string }) => `${count} active days · ${period}`,
       thisWeek: "This week",
       thisWeekSubtitle: "Recent momentum",
       topModel: "Go-to model",
