@@ -47,6 +47,7 @@ export const COMMAND_HELP_EXPO = {
     bullets: [
       'This command composes expo-ota / expo-native-build / expo-submit for convenience.',
       'native_submit is intentionally limited to dev, preview, and production because only those lanes have store submit profiles.',
+      'native_submit also runs App Store Connect external TestFlight distribution when APP_STORE_CONNECT_<ENV>_EXTERNAL_GROUPS is configured.',
       'Expo OTA and submit default to interactive on a local TTY and non-interactive in CI or when output is piped.',
       'Cloud native builds use two unified paths: interactive local TTY runs schedule normally and then resolve the build via EAS list/view; CI/non-interactive runs keep the direct JSON path.',
       "For local iOS builds, use --native-build-mode local and keep --native-local-runtime host (requires Xcode).",
@@ -177,6 +178,39 @@ export const COMMAND_HELP_EXPO = {
     examples: [
       'node scripts/pipeline/run.mjs expo-submit --environment dev --platform all --profile dev',
       'node scripts/pipeline/run.mjs expo-submit --environment production --platform ios --profile production --path dist/ui-mobile/happier-production-ios-v0.1.0.ipa',
+    ],
+  },
+
+  'expo-testflight-distribute': {
+    summary: 'Distribute an iOS TestFlight build to external groups via App Store Connect.',
+    usage:
+      `node scripts/pipeline/run.mjs expo-testflight-distribute --environment <${MOBILE_STORE_SUBMIT_ENVIRONMENT_CHOICES}> --external-groups <group1,group2> [--profile <submitProfile>] [--build-json <path>] [--eas-build-id <id>] [--build-number <num>] [--app-version <semver>]`,
+    options: [
+      `--environment <${MOBILE_STORE_SUBMIT_ENVIRONMENT_CHOICES}>  Required.`,
+      '--profile <name>                  Optional; submit profile / App Store Connect config owner.',
+      '--external-groups <csv>           Required; comma-separated external group names or ids.',
+      '--build-json <path>               Optional; build JSON output from expo-native-build.',
+      '--eas-build-id <id>               Optional; resolves build metadata via EAS Build view.',
+      '--build-number <num>              Optional override when known already.',
+      '--app-version <semver>            Optional override when known already.',
+      '--submit-beta-review <auto|true|false> (default: auto).',
+      '--wait-processing <true|false>    (default: true).',
+      '--processing-timeout-seconds <n>  (default: 3600).',
+      '--eas-cli-version <ver>           Optional; pins EAS CLI for build-id lookup.',
+      '--dry-run',
+      '--secrets-source <auto|env|keychain>',
+      '--keychain-service <name>         (default: happier/pipeline).',
+      '--keychain-account <name>',
+    ],
+    bullets: [
+      'Requires APPLE_API_PRIVATE_KEY and the matching apps/ui/eas.json submit profile App Store Connect config.',
+      'Uses the same iOS build metadata that expo-submit / expo-native-build produce.',
+      'External group names are resolved from the selected App Store Connect app, and internal groups are ignored.',
+      'Respects the same env-file / Keychain bundle secret loading flags as the other Expo pipeline commands.',
+    ],
+    examples: [
+      'node scripts/pipeline/run.mjs expo-testflight-distribute --environment dev --external-groups "External Beta" --build-json /tmp/eas_build.ios.json --profile dev',
+      'node scripts/pipeline/run.mjs expo-testflight-distribute --environment production --external-groups "Prod TestFlight" --eas-build-id abc123 --submit-beta-review false',
     ],
   },
 

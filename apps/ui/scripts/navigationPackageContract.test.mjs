@@ -55,3 +55,25 @@ test('apps/ui fast test lane includes the navigation package contract check', as
   assert.match(testScript, /\btest:unit\b/);
   assert.match(testScript, /navigationPackageContract\.test\.mjs/);
 });
+
+test('apps/ui patched expo-router web modal stack guards missing preloadedRoutes', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir);
+
+  const modalStackPath = join(
+    packageRoot,
+    'node_modules',
+    'expo-router',
+    'build',
+    'modal',
+    'web',
+    'ModalStack.js',
+  );
+  const modalStackContents = await readFile(modalStackPath, 'utf-8');
+
+  assert.match(
+    modalStackContents,
+    /preloadedRoutes:\s*state\.preloadedRoutes\s*\?\?\s*\[\]/,
+    'expo-router ModalStack.js should default missing preloadedRoutes to an empty array before rendering NativeStackView',
+  );
+});

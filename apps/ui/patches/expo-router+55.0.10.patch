@@ -12,3 +12,14 @@ diff --git a/node_modules/expo-router/build/layouts/_web-modal.js b/node_modules
 +const ExperimentalModalStack_1 = __importDefault(require("./ExperimentalModalStack"));
 +exports.default = ExperimentalModalStack_1.default;
  //# sourceMappingURL=_web-modal.js.map
+diff --git a/node_modules/expo-router/build/modal/web/ModalStack.js b/node_modules/expo-router/build/modal/web/ModalStack.js
+--- a/node_modules/expo-router/build/modal/web/ModalStack.js
++++ b/node_modules/expo-router/build/modal/web/ModalStack.js
+@@ -77,6 +77,7 @@ const ModalStackView = ({ state, navigation, descriptors, describe }) => {
+     const { routes: filteredRoutes, index: nonModalIndex } = (0, utils_1.convertStackStateToNonModalState)(state, descriptors, isWeb);
+     const newStackState = {
+         ...state,
++        preloadedRoutes: state.preloadedRoutes ?? [],
+         routes: filteredRoutes,
+         index: nonModalIndex,
+     };

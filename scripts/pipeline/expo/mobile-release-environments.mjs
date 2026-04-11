@@ -276,12 +276,12 @@ export function resolveMobileReleaseMetadata({ environment, appVersion }) {
   if (environment === 'production') {
     return {
       publish: true,
-      tag: `ui-mobile-v${appVersion}`,
-      title: `Happier UI Mobile v${appVersion}`,
+      tag: 'ui-mobile-stable',
+      title: 'Happier UI Mobile Stable',
       prerelease: false,
-      rollingTag: false,
-      generateNotes: true,
-      notes: '',
+      rollingTag: true,
+      generateNotes: false,
+      notes: 'Rolling stable build.',
     };
   }
 
@@ -293,5 +293,21 @@ export function resolveMobileReleaseMetadata({ environment, appVersion }) {
     rollingTag: cfg.rollingTag,
     generateNotes: cfg.generateNotes,
     notes: cfg.releaseNotes,
+  };
+}
+
+/**
+ * @param {{ environment: MobileReleaseEnvironment; appVersion: string }}
+ */
+export function resolveMobileImmutableReleaseMetadata({ environment, appVersion }) {
+  if (environment !== 'production') return null;
+  return {
+    publish: true,
+    tag: `ui-mobile-v${appVersion}`,
+    title: `Happier UI Mobile v${appVersion}`,
+    prerelease: false,
+    rollingTag: false,
+    generateNotes: true,
+    notes: '',
   };
 }

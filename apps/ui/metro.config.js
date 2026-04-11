@@ -295,7 +295,7 @@ function resolvePackageExportTarget(entry) {
 }
 
 function resolveInternalWorkspacePackageViaRootNodeModules(moduleName, blockList) {
-  if (!shouldRestoreMinimalNodeModulesPaths) return null;
+  if (!(shouldRestoreMinimalNodeModulesPaths || isStackRun)) return null;
   if (typeof moduleName !== "string" || !moduleName.startsWith("@happier-dev/")) return null;
 
   const parts = moduleName.split("/");

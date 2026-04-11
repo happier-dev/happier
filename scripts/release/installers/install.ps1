@@ -77,6 +77,8 @@ RWQ85PZ7FyiukYbL3qv/bKnwgbT68wLVzotapeMFIb8n+c7pBQ7U8W2t
 $MinisignPubKey = if ($env:HAPPIER_MINISIGN_PUBKEY) { $env:HAPPIER_MINISIGN_PUBKEY } else { $DefaultMinisignPubKey.Trim() }
 $MinisignPubKeyUrl = if ($env:HAPPIER_MINISIGN_PUBKEY_URL) { $env:HAPPIER_MINISIGN_PUBKEY_URL } else { "https://happier.dev/happier-release.pub" }
 
+$target = Join-Path $InstallDir "bin\happier.exe"
+
 function Resolve-CliShimName {
   if ($Channel -eq "preview") { return "hprev" }
   if ($Channel -eq "publicdev") { return "hdev" }

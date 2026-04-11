@@ -22,7 +22,7 @@ test('promote-ui publishes mobile assets under ui-mobile-* GitHub release tags',
   assert.match(raw, /uses:\s*\.\/\.github\/workflows\/build-ui-mobile-local\.yml/);
 
   const { resolveMobileReleaseMetadata } = await loadMobileReleaseEnvironmentsModule();
-  assert.equal(resolveMobileReleaseMetadata({ environment: 'production', appVersion: '1.2.3' }).tag, 'ui-mobile-v1.2.3');
+  assert.equal(resolveMobileReleaseMetadata({ environment: 'production', appVersion: '1.2.3' }).tag, 'ui-mobile-stable');
   assert.equal(resolveMobileReleaseMetadata({ environment: 'preview', appVersion: '1.2.3' }).tag, 'ui-mobile-preview');
   assert.equal(resolveMobileReleaseMetadata({ environment: 'publicdev', appVersion: '1.2.3' }).tag, 'ui-mobile-dev');
 
@@ -42,7 +42,7 @@ test('promote-ui labels mobile releases as UI Mobile for clarity', async () => {
   assert.match(raw, /uses:\s*\.\/\.github\/workflows\/build-ui-mobile-local\.yml/);
 
   const { resolveMobileReleaseMetadata } = await loadMobileReleaseEnvironmentsModule();
-  assert.equal(resolveMobileReleaseMetadata({ environment: 'production', appVersion: '1.2.3' }).title, 'Happier UI Mobile v1.2.3');
+  assert.equal(resolveMobileReleaseMetadata({ environment: 'production', appVersion: '1.2.3' }).title, 'Happier UI Mobile Stable');
   assert.equal(resolveMobileReleaseMetadata({ environment: 'preview', appVersion: '1.2.3' }).title, 'Happier UI Mobile Preview');
   assert.equal(resolveMobileReleaseMetadata({ environment: 'publicdev', appVersion: '1.2.3' }).title, 'Happier UI Mobile Dev');
 
@@ -59,4 +59,17 @@ test('promote-ui runs a dedicated public APK release build for preview and produ
   assert.match(raw, /platform:\s*android/);
   assert.match(raw, /profile:\s*\$\{\{\s*inputs\.environment == 'production' && 'production-apk' \|\| 'preview-apk'\s*\}\}/);
   assert.match(raw, /publish_apk_release:\s*"true"/);
+});
+
+test('production mobile APK publishing keeps an immutable version tag alongside the rolling stable tag', async () => {
+  const { resolveMobileImmutableReleaseMetadata, resolveMobileReleaseMetadata } = await loadMobileReleaseEnvironmentsModule();
+  const meta = resolveMobileReleaseMetadata({ environment: 'production', appVersion: '1.2.3' });
+  const immutableMeta = resolveMobileImmutableReleaseMetadata({ environment: 'production', appVersion: '1.2.3' });
+
+  assert.equal(meta.rollingTag, true);
+  assert.equal(meta.prerelease, false);
+  assert.equal(meta.generateNotes, false);
+  assert.equal(immutableMeta?.tag, 'ui-mobile-v1.2.3');
+  assert.equal(immutableMeta?.rollingTag, false);
+  assert.equal(immutableMeta?.generateNotes, true);
 });

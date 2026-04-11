@@ -348,6 +348,19 @@ test('install.sh skips daemon service installation by default in noninteractive 
   }
 });
 
+test('install.sh prints download and extraction progress so large installs do not look stuck', async () => {
+  const scenario = await runInstallerScenario();
+  try {
+    assert.match(scenario.stdout, /Fetching cli-stable release metadata\.\.\./);
+    assert.match(scenario.stdout, /Downloading release archive\.\.\./);
+    assert.match(scenario.stdout, /Downloading checksums\.\.\./);
+    assert.match(scenario.stdout, /Downloading minisign signature\.\.\./);
+    assert.match(scenario.stdout, /Extracting payload\.\.\./);
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
 test('install.sh installs and enables daemon service when explicitly opted in (best-effort)', async () => {
   const scenario = await runInstallerScenario({
     HAPPIER_WITH_DAEMON: '1',
