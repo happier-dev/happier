@@ -7,19 +7,20 @@ import { useResolvedRepoWorktreeSelection } from '@/components/workspaces/scm/wo
 import { findVisibleRepoWorktreeByPath } from '@/components/workspaces/scm/worktrees/repoWorktreeIdentity';
 
 import {
-    buildProjectRouteHref,
     PROJECT_ROUTE_ROOT_SENTINEL,
     readProjectRouteWorktreeSelection,
-    type ProjectRouteSegment,
 } from './projectRouteState';
+import type { ProjectMobileSurface } from '@/components/workspaceCockpit/project/projectCockpitState';
 
 export function useProjectMobileRoutePersistence(params: Readonly<{
     workspaceRef: WorkspaceRefV1;
-    routeSegment: ProjectRouteSegment;
-    showWorktrees?: boolean;
     rawWorktreeId?: string | string[] | undefined;
     rawActiveRootPath: string | string[] | undefined;
-    persistedRouteSegment: ProjectRouteSegment;
+    persistedSurface: ProjectMobileSurface;
+    resolveRouteHref: (input: Readonly<{
+        activeRootPath: string;
+        activeWorktreeId: string | null;
+    }>) => string;
 }>): Readonly<{
     resolvedActiveRootPath: string;
     resolvedActiveWorktreeId: string | null;
@@ -27,10 +28,10 @@ export function useProjectMobileRoutePersistence(params: Readonly<{
     setRouteActiveRootPath: (path: string) => void;
 }> {
     const router = useRouter();
-    const lastMobileRouteByWorkspaceRefId = useLocalSetting('projectLastMobileRouteByWorkspaceRefId');
+    const lastMobileSurfaceByWorkspaceRefId = useLocalSetting('projectLastMobileSurfaceByWorkspaceRefId');
     const lastActiveRootPathByWorkspaceRefId = useLocalSetting('projectLastActiveRootPathByWorkspaceRefId');
     const lastActiveWorktreeIdByWorkspaceRefId = useLocalSetting('projectLastActiveWorktreeIdByWorkspaceRefId');
-    const [, setLastMobileRouteByWorkspaceRefId] = useLocalSettingMutable('projectLastMobileRouteByWorkspaceRefId');
+    const [, setLastMobileSurfaceByWorkspaceRefId] = useLocalSettingMutable('projectLastMobileSurfaceByWorkspaceRefId');
     const [, setLastActiveRootPathByWorkspaceRefId] = useLocalSettingMutable('projectLastActiveRootPathByWorkspaceRefId');
     const [, setLastActiveWorktreeIdByWorkspaceRefId] = useLocalSettingMutable('projectLastActiveWorktreeIdByWorkspaceRefId');
 
@@ -67,13 +68,9 @@ export function useProjectMobileRoutePersistence(params: Readonly<{
         const nextWorktreeId = trimmedPath === params.workspaceRef.rootPath
             ? null
             : (findVisibleRepoWorktreeByPath(availableWorktrees, trimmedPath)?.id ?? null);
-        router.replace(buildProjectRouteHref({
-            workspaceRefId: params.workspaceRef.id,
-            segment: params.routeSegment,
+        router.replace(params.resolveRouteHref({
             activeRootPath: trimmedPath,
-            defaultRootPath: params.workspaceRef.rootPath,
             activeWorktreeId: nextWorktreeId,
-            showWorktrees: params.showWorktrees,
         }));
         setLastActiveRootPathByWorkspaceRefId({
             ...(lastActiveRootPathByWorkspaceRefId ?? {}),
@@ -87,37 +84,32 @@ export function useProjectMobileRoutePersistence(params: Readonly<{
         availableWorktrees,
         lastActiveRootPathByWorkspaceRefId,
         lastActiveWorktreeIdByWorkspaceRefId,
-        params.workspaceRef.id,
-        params.workspaceRef.rootPath,
-        params.routeSegment,
-        params.showWorktrees,
+        params,
         router,
         setLastActiveRootPathByWorkspaceRefId,
         setLastActiveWorktreeIdByWorkspaceRefId,
     ]);
 
     React.useEffect(() => {
-        if (lastMobileRouteByWorkspaceRefId?.[params.workspaceRef.id] === params.persistedRouteSegment) return;
-        setLastMobileRouteByWorkspaceRefId({
-            ...(lastMobileRouteByWorkspaceRefId ?? {}),
-            [params.workspaceRef.id]: params.persistedRouteSegment,
+        if (lastMobileSurfaceByWorkspaceRefId?.[params.workspaceRef.id] === params.persistedSurface) return;
+        setLastMobileSurfaceByWorkspaceRefId({
+            ...(lastMobileSurfaceByWorkspaceRefId ?? {}),
+            [params.workspaceRef.id]: params.persistedSurface,
         });
     }, [
-        lastMobileRouteByWorkspaceRefId,
-        params.persistedRouteSegment,
+        lastMobileSurfaceByWorkspaceRefId,
+        params.persistedSurface,
         params.workspaceRef.id,
-        setLastMobileRouteByWorkspaceRefId,
+        setLastMobileSurfaceByWorkspaceRefId,
     ]);
 
     React.useEffect(() => {
-        if (requestedRootPath === resolvedActiveRootPath) return;
-        router.replace(buildProjectRouteHref({
-            workspaceRefId: params.workspaceRef.id,
-            segment: params.routeSegment,
+        const didCanonicalizeRootPath = requestedRootPath !== resolvedActiveRootPath;
+        const didCanonicalizeWorktreeId = requestedWorktreeId !== resolvedActiveWorktreeId;
+        if (!didCanonicalizeRootPath && !didCanonicalizeWorktreeId) return;
+        router.replace(params.resolveRouteHref({
             activeRootPath: resolvedActiveRootPath,
-            defaultRootPath: params.workspaceRef.rootPath,
             activeWorktreeId: resolvedActiveWorktreeId,
-            showWorktrees: params.showWorktrees,
         }));
         setLastActiveRootPathByWorkspaceRefId({
             ...(lastActiveRootPathByWorkspaceRefId ?? {}),
@@ -130,10 +122,7 @@ export function useProjectMobileRoutePersistence(params: Readonly<{
     }, [
         lastActiveRootPathByWorkspaceRefId,
         lastActiveWorktreeIdByWorkspaceRefId,
-        params.workspaceRef.id,
-        params.workspaceRef.rootPath,
-        params.routeSegment,
-        params.showWorktrees,
+        params,
         requestedRootPath,
         requestedWorktreeId,
         resolvedActiveRootPath,

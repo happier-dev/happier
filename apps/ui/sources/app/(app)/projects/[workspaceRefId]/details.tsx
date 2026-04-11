@@ -18,6 +18,10 @@ import {
 } from '@/components/projects/detail/projectRouteState';
 import { useProjectMobileRoutePersistence } from '@/components/projects/detail/useProjectMobileRoutePersistence';
 import { useWorkspaceRefById } from '@/components/projects/detail/useWorkspaceRefById';
+import { ProjectCockpitShell } from '@/components/workspaceCockpit/project/ProjectCockpitShell';
+import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit/useMobileWorkspaceExperienceState';
+import { resolveProjectRoutePathForSurface } from '@/components/workspaceCockpit/project/projectCockpitState';
+import { t } from '@/text';
 
 export default function ProjectDetailsScreenRoute() {
     const router = useRouter();
@@ -31,6 +35,12 @@ export default function ProjectDetailsScreenRoute() {
     }>();
     const workspaceRefId = readProjectRouteStringParam(params.workspaceRefId) ?? '';
     const showWorktrees = readProjectRouteStringParam(params.showWorktrees) === '1';
+    const {
+        cockpitEnabled,
+        showWorkspaceExperienceToggle,
+        workspaceExperienceToggleLabelKey,
+        toggleWorkspaceExperience,
+    } = useMobileWorkspaceExperienceState();
 
     const workspaceRef = useWorkspaceRefById(workspaceRefId);
 
@@ -46,7 +56,13 @@ export default function ProjectDetailsScreenRoute() {
     const hasMountedRef = React.useRef(false);
     const prevDetailsIsOpenRef = React.useRef(detailsIsOpen);
     const fallbackSegment = resolveProjectRouteSegment(pane.scopeState?.right?.activeTabId, null);
-    const persistedRouteSegment = detailsIsOpen || hasDetails ? 'details' : fallbackSegment;
+    const persistedSurface = showWorktrees
+        ? 'overview'
+        : detailsIsOpen || hasDetails
+            ? 'tabs'
+            : fallbackSegment === 'git'
+                ? 'git'
+                : 'browse';
     const {
         resolvedActiveRootPath,
         resolvedActiveWorktreeId,
@@ -54,11 +70,23 @@ export default function ProjectDetailsScreenRoute() {
         setRouteActiveRootPath,
     } = useProjectMobileRoutePersistence({
         workspaceRef,
-        routeSegment: 'details',
-        showWorktrees,
         rawWorktreeId: params.worktreeId,
         rawActiveRootPath: params.activeRootPath,
-        persistedRouteSegment,
+        persistedSurface,
+        resolveRouteHref: ({ activeRootPath, activeWorktreeId }) => cockpitEnabled
+            ? resolveProjectRoutePathForSurface({
+                workspaceRefId: workspaceRef.id,
+                surface: showWorktrees ? 'overview' : 'tabs',
+                rawWorktreeId: activeRootPath === workspaceRef.rootPath ? '@root' : activeWorktreeId,
+            })
+            : buildProjectRouteHref({
+                workspaceRefId: workspaceRef.id,
+                segment: 'details',
+                activeRootPath,
+                defaultRootPath: workspaceRef.rootPath,
+                activeWorktreeId,
+                showWorktrees,
+            }),
     });
 
     const routeActions = useProjectRouteActions({
@@ -68,20 +96,31 @@ export default function ProjectDetailsScreenRoute() {
         showWorktrees,
         pane,
     });
+    const replaceOverviewVisibility = routeActions.replaceOverviewVisibility;
+    const openTerminal = routeActions.openTerminal;
+    const handleToggleWorktrees = React.useCallback(() => {
+        replaceOverviewVisibility({
+            segment: 'details',
+            visible: !showWorktrees,
+        });
+    }, [replaceOverviewVisibility, showWorktrees]);
+    const handleOpenTerminal = React.useCallback(() => {
+        openTerminal({
+            segment: 'details',
+            exitOverview: true,
+        });
+    }, [openTerminal]);
 
     const screenOptions = useProjectRouteHeaderOptions({
         workspaceRef,
         activeRootPath: resolvedActiveRootPath,
         testIdPrefix: 'project-mobile-header',
         showWorktreesButton: true,
-        onToggleWorktrees: () => routeActions.replaceOverviewVisibility({
-            segment: 'details',
-            visible: !showWorktrees,
-        }),
-        onOpenTerminal: () => routeActions.openTerminal({
-            segment: 'details',
-            exitOverview: true,
-        }),
+        showWorkspaceExperienceButton: showWorkspaceExperienceToggle,
+        workspaceExperienceToggleA11yLabel: t(workspaceExperienceToggleLabelKey),
+        onToggleWorkspaceExperience: showWorkspaceExperienceToggle ? toggleWorkspaceExperience : undefined,
+        onToggleWorktrees: handleToggleWorktrees,
+        onOpenTerminal: handleOpenTerminal,
     });
 
     const returnToProject = React.useCallback(() => {
@@ -96,25 +135,29 @@ export default function ProjectDetailsScreenRoute() {
         hasMountedRef.current = true;
         return () => {
             hasMountedRef.current = false;
-            pane.closeDetails();
+            if (!cockpitEnabled) {
+                pane.closeDetails();
+            }
         };
-    }, [pane]);
+    }, [cockpitEnabled, pane]);
 
     React.useEffect(() => {
         if (!isFocused) return;
         if (!hasMountedRef.current) return;
         if (showWorktrees) return;
+        if (cockpitEnabled) return;
         if (hasDetails) return;
         returnToProject();
-    }, [hasDetails, isFocused, returnToProject, showWorktrees]);
+    }, [cockpitEnabled, hasDetails, isFocused, returnToProject, showWorktrees]);
 
     React.useEffect(() => {
         if (!isFocused) return;
         if (!hasMountedRef.current) return;
         if (showWorktrees) return;
+        if (cockpitEnabled) return;
         if (prevDetailsIsOpenRef.current && !detailsIsOpen) returnToProject();
         prevDetailsIsOpenRef.current = detailsIsOpen;
-    }, [detailsIsOpen, isFocused, returnToProject, showWorktrees]);
+    }, [cockpitEnabled, detailsIsOpen, isFocused, returnToProject, showWorktrees]);
 
     const onRequestClose = React.useCallback(() => {
         if (!detailsIsOpen) {
@@ -132,15 +175,26 @@ export default function ProjectDetailsScreenRoute() {
                     <ActivityIndicator />
                 </View>
             )}>
-                <ProjectDetailsMainPanel
-                    scopeId={scopeId}
-                    workspaceRef={workspaceRef}
-                    activeRootPath={resolvedActiveRootPath}
-                    activeWorktreeId={resolvedActiveWorktreeId}
-                    forceOverviewMode={showWorktrees}
-                    onSelectRootPath={setRouteActiveRootPath}
-                    onRequestClose={onRequestClose}
-                />
+                {cockpitEnabled ? (
+                    <ProjectCockpitShell
+                        workspaceRef={workspaceRef}
+                        scopeId={scopeId}
+                        activeRootPath={resolvedActiveRootPath}
+                        activeWorktreeId={resolvedActiveWorktreeId}
+                        surface={showWorktrees ? 'overview' : 'tabs'}
+                        onSelectRootPath={setRouteActiveRootPath}
+                    />
+                ) : (
+                    <ProjectDetailsMainPanel
+                        scopeId={scopeId}
+                        workspaceRef={workspaceRef}
+                        activeRootPath={resolvedActiveRootPath}
+                        activeWorktreeId={resolvedActiveWorktreeId}
+                        forceOverviewMode={showWorktrees}
+                        onSelectRootPath={setRouteActiveRootPath}
+                        onRequestClose={onRequestClose}
+                    />
+                )}
             </React.Suspense>
             <ProjectWorktreeRecoveryToast recoveryToastKey={recoveryToastKey} />
         </View>

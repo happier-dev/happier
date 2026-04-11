@@ -17,6 +17,9 @@ export function useProjectRouteHeaderOptions(params: Readonly<{
     activeRootPath?: string | null;
     testIdPrefix: string;
     showWorktreesButton: boolean;
+    showWorkspaceExperienceButton?: boolean;
+    workspaceExperienceToggleA11yLabel?: string;
+    onToggleWorkspaceExperience?: () => void;
     onToggleWorktrees?: () => void;
     onOpenTerminal: () => void;
 }>): Readonly<Record<string, unknown>> {
@@ -55,6 +58,9 @@ export function useProjectRouteHeaderOptions(params: Readonly<{
             <ProjectHeaderActions
                 testIdPrefix={params.testIdPrefix}
                 showWorktreesButton={params.showWorktreesButton}
+                showWorkspaceExperienceButton={params.showWorkspaceExperienceButton}
+                workspaceExperienceToggleA11yLabel={params.workspaceExperienceToggleA11yLabel}
+                onToggleWorkspaceExperience={params.onToggleWorkspaceExperience}
                 onOpenWorktrees={params.onToggleWorktrees}
                 onOpenTerminal={params.onOpenTerminal}
             />
@@ -63,10 +69,13 @@ export function useProjectRouteHeaderOptions(params: Readonly<{
         handleBack,
         params.activeRootPath,
         params.onOpenTerminal,
+        params.onToggleWorkspaceExperience,
         params.onToggleWorktrees,
         params.showWorktreesButton,
+        params.showWorkspaceExperienceButton,
         params.testIdPrefix,
         params.workspaceRef,
+        params.workspaceExperienceToggleA11yLabel,
         theme.colors.header.tint,
     ]);
 }

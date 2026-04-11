@@ -1,0 +1,44 @@
+import * as React from 'react';
+import { Pressable, View } from 'react-native';
+
+import { Octicons } from '@expo/vector-icons';
+
+import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
+import { t } from '@/text';
+
+type SourceControlOperationsHistoryLoadMoreButtonProps = Readonly<{
+    theme: any;
+    historyLoading: boolean;
+    onPress: () => void;
+}>;
+
+export const SourceControlOperationsHistoryLoadMoreButton = React.memo((props: SourceControlOperationsHistoryLoadMoreButtonProps) => {
+    const backgroundColor = props.theme.colors.surfaceHigh ?? props.theme.colors.input.background;
+
+    return (
+        <Pressable
+            disabled={props.historyLoading}
+            testID="scm-commit-load-more"
+            onPress={props.onPress}
+            style={(state) => ({
+                marginTop: 8,
+                marginLeft: 40,
+                paddingVertical: 10,
+                paddingHorizontal: 12,
+                borderRadius: 14,
+                borderWidth: 1,
+                borderColor: props.theme.colors.divider,
+                backgroundColor,
+                opacity: props.historyLoading ? 0.6 : state.pressed ? 0.85 : 1,
+            })}
+        >
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Text style={{ color: props.theme.colors.textLink, fontSize: 12, ...Typography.default('semiBold') }}>
+                    {props.historyLoading ? t('common.loading') : t('files.operationsHistory.loadMore')}
+                </Text>
+                <Octicons name="chevron-down" size={14} color={props.theme.colors.textSecondary} />
+            </View>
+        </Pressable>
+    );
+});

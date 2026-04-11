@@ -2,6 +2,8 @@ import * as React from 'react';
 
 import type { ScmLogEntry, ScmLogListResponse } from '@happier-dev/protocol';
 
+import { SCM_HISTORY_PAGE_SIZE } from './historyPresentation';
+
 export function usePagedScmCommitHistory(input: Readonly<{
     enabled: boolean;
     loadPage: (request: Readonly<{ limit: number; skip: number }>) => Promise<Pick<ScmLogListResponse, 'success' | 'entries'>>;
@@ -32,7 +34,7 @@ export function usePagedScmCommitHistory(input: Readonly<{
         setHistoryLoading(true);
         try {
             const skip = opts?.reset ? 0 : historySkip;
-            const pageSize = 20;
+            const pageSize = SCM_HISTORY_PAGE_SIZE;
             const legacyPagination = legacySkipIgnoredRef.current && !opts?.reset;
             const requestSkip = legacyPagination ? 0 : skip;
             const requestLimit = legacyPagination ? (skip + pageSize) : pageSize;

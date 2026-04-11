@@ -69,6 +69,10 @@ vi.mock('@/utils/platform/deferOnWeb', () => ({
     deferOnWeb: (action: () => void) => action(),
 }));
 
+vi.mock('@/platform/randomUUID', () => ({
+    randomUUID: () => 'project-terminal-1',
+}));
+
 describe('project index route', () => {
     it('redirects phone users to the last-used project sub-route', async () => {
         deviceTypeMock = 'phone';
@@ -110,8 +114,9 @@ describe('project index route', () => {
         });
         expect(openDetailsTabSpy).toHaveBeenCalledWith(
             expect.objectContaining({
-                key: 'terminal',
+                key: 'terminal:project-terminal-1',
                 kind: 'terminal',
+                resource: { kind: 'terminal', terminalInstanceId: 'project-terminal-1' },
             }),
             expect.objectContaining({ intent: 'pinned' }),
         );

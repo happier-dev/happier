@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -11,6 +12,7 @@ const openMachinePathBrowserModalSpy = vi.hoisted(() => vi.fn<(...args: any[]) =
 const workspaceListDirectorySpy = vi.hoisted(() => vi.fn<(...args: any[]) => Promise<any>>());
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 const routerPushSpy = vi.hoisted(() => vi.fn());
+let translationPrefixMock = '';
 
 let machinesMock: Machine[] = [];
 let workspaceRefsV1Mock: any[] = [];
@@ -43,7 +45,10 @@ vi.mock('@expo/vector-icons', async () => {
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({
-        translate: (key, params) => typeof params?.machine === 'string' ? `${key}:${params.machine}` : key,
+        translate: (key, params) => {
+            const base = typeof params?.machine === 'string' ? `${key}:${params.machine}` : key;
+            return `${translationPrefixMock}${base}`;
+        },
     });
 });
 
@@ -157,6 +162,7 @@ describe('ProjectsListView', () => {
         deviceTypeMock = 'tablet';
         paneScopesMock = {};
         localSettingsMock = {};
+        translationPrefixMock = '';
         openMachinePathBrowserModalSpy.mockReset();
         workspaceListDirectorySpy.mockReset();
         modalAlertSpy.mockReset();
@@ -253,7 +259,41 @@ describe('ProjectsListView', () => {
         expect(routerPushSpy).toHaveBeenCalledWith('/projects/wr_1/files?worktreeId=%40root');
     });
 
-    it('reopens the remembered mobile worktree path from local project state', async () => {
+    it('keeps project row menu props stable across unrelated cockpit-state rerenders', async () => {
+        workspaceRefsV1Mock = [{
+            id: 'wr_1',
+            serverId: 'server-1',
+            machineId: 'm1',
+            rootPath: '/repo',
+            label: 'Repo',
+            createdAtMs: 1,
+        }];
+
+        const { ProjectsListView } = await import('./ProjectsListView');
+        const screen = await renderScreen(<ProjectsListView />);
+
+        const firstDropdown = screen.findAllByType('DropdownMenu' as any)[0];
+        expect(firstDropdown).toBeTruthy();
+        const firstItems = firstDropdown?.props?.items;
+        const firstOnSelect = firstDropdown?.props?.onSelect;
+
+        localSettingsMock = {
+            ...localSettingsMock,
+            projectLastMobileSurfaceByWorkspaceRefId: {
+                wr_1: 'git',
+            },
+        };
+
+        await act(async () => {
+            screen.tree.update(<ProjectsListView />);
+        });
+
+        const secondDropdown = screen.findAllByType('DropdownMenu' as any)[0];
+        expect(secondDropdown?.props?.items).toBe(firstItems);
+        expect(secondDropdown?.props?.onSelect).toBe(firstOnSelect);
+    });
+
+    it('reopens the remembered mobile worktree path without reviving the retired route setting', async () => {
         deviceTypeMock = 'phone';
         workspaceRefsV1Mock = [{
             id: 'wr_1',
@@ -274,7 +314,57 @@ describe('ProjectsListView', () => {
 
         await screen.pressByTestIdAsync('projects-list-item-wr_1');
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/projects/wr_1/git?worktreeId=gitwt_feature');
+        expect(routerPushSpy).toHaveBeenCalledWith('/projects/wr_1/files?worktreeId=gitwt_feature');
+    });
+
+    it('reopens the remembered cockpit-era mobile surface from local project state', async () => {
+        deviceTypeMock = 'phone';
+        workspaceRefsV1Mock = [{
+            id: 'wr_1',
+            serverId: 'server-1',
+            machineId: 'm1',
+            rootPath: '/repo',
+            label: 'Repo',
+            createdAtMs: 1,
+        }];
+        localSettingsMock = {
+            mobileWorkspaceExperienceV1: 'cockpit',
+            projectLastMobileSurfaceByWorkspaceRefId: { wr_1: 'overview' },
+            projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/repo/.worktrees/feature-auth' },
+            projectLastActiveWorktreeIdByWorkspaceRefId: { wr_1: 'gitwt_feature' },
+        };
+
+        const { ProjectsListView } = await import('./ProjectsListView');
+        const screen = await renderScreen(<ProjectsListView />);
+
+        await screen.pressByTestIdAsync('projects-list-item-wr_1');
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/projects/wr_1?worktreeId=gitwt_feature&mobileSurface=overview');
+    });
+
+    it('reopens the remembered cockpit terminal surface from local project state', async () => {
+        deviceTypeMock = 'phone';
+        workspaceRefsV1Mock = [{
+            id: 'wr_1',
+            serverId: 'server-1',
+            machineId: 'm1',
+            rootPath: '/repo',
+            label: 'Repo',
+            createdAtMs: 1,
+        }];
+        localSettingsMock = {
+            mobileWorkspaceExperienceV1: 'cockpit',
+            projectLastMobileSurfaceByWorkspaceRefId: { wr_1: 'terminal' },
+            projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/repo/.worktrees/feature-auth' },
+            projectLastActiveWorktreeIdByWorkspaceRefId: { wr_1: 'gitwt_feature' },
+        };
+
+        const { ProjectsListView } = await import('./ProjectsListView');
+        const screen = await renderScreen(<ProjectsListView />);
+
+        await screen.pressByTestIdAsync('projects-list-item-wr_1');
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/projects/wr_1/terminal?worktreeId=gitwt_feature');
     });
 
     it('anchors project row menus below the trigger', async () => {
@@ -294,5 +384,60 @@ describe('ProjectsListView', () => {
         expect(dropdowns.length).toBeGreaterThan(0);
         expect(dropdowns[0]?.props.placement).toBe('bottom');
         expect(dropdowns[0]?.props.popoverAnchorAlign).toBe('end');
+    });
+
+    it('refreshes project row menu labels after the translation output changes', async () => {
+        const workspaceRef = {
+            id: 'wr_1',
+            serverId: 'server-1',
+            machineId: 'm1',
+            rootPath: '/repo',
+            label: 'Repo',
+            createdAtMs: 1,
+        };
+        const { ProjectsListItemMenu } = await import('./ProjectsListItemMenu');
+        const theme = {
+            colors: {
+                textSecondary: '#666',
+                deleteAction: '#c00',
+            },
+        } as any;
+        const firstOnRemove = vi.fn();
+        const screen = await renderScreen(
+            <ProjectsListItemMenu
+                theme={theme}
+                workspaceRef={workspaceRef as any}
+                pinAction="pin"
+                onTogglePinned={vi.fn()}
+                onRename={vi.fn()}
+                onReset={vi.fn()}
+                onRemove={firstOnRemove}
+            />,
+        );
+
+        const englishDropdown = screen.findAllByType('DropdownMenu' as any)[0];
+        expect(englishDropdown).toBeTruthy();
+        expect(englishDropdown?.props.items.find((item: { id: string; title: string }) => item.id === 'rename')?.title)
+            .toBe('sessionsList.renameWorkspace');
+
+        translationPrefixMock = 'es:';
+        const secondOnRemove = vi.fn();
+        await act(async () => {
+            screen.tree.update(
+                <ProjectsListItemMenu
+                    theme={theme}
+                    workspaceRef={workspaceRef as any}
+                    pinAction="pin"
+                    onTogglePinned={vi.fn()}
+                    onRename={vi.fn()}
+                    onReset={vi.fn()}
+                    onRemove={secondOnRemove}
+                />,
+            );
+        });
+
+        const spanishDropdown = screen.findAllByType('DropdownMenu' as any)[0];
+        expect(spanishDropdown?.props.items.find((item: { id: string; title: string }) => item.id === 'rename')?.title)
+            .toBe('es:sessionsList.renameWorkspace');
     });
 });

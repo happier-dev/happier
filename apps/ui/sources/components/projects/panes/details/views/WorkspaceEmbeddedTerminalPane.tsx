@@ -14,6 +14,9 @@ export type WorkspaceEmbeddedTerminalPaneProps = Readonly<{
     machineId: string;
     rootPath: string;
     serverId: string;
+    terminalInstanceId?: string;
+    toolbarActionsStart?: React.ReactNode;
+    closeOnUnmount?: boolean;
 }>;
 
 export const WorkspaceEmbeddedTerminalPane = React.memo(function WorkspaceEmbeddedTerminalPane(props: WorkspaceEmbeddedTerminalPaneProps) {
@@ -21,9 +24,12 @@ export const WorkspaceEmbeddedTerminalPane = React.memo(function WorkspaceEmbedd
     const machine = useMachine(props.machineId);
     const machineReachable = Boolean(machine && isMachineOnline(machine));
 
+    const terminalInstanceId = props.terminalInstanceId?.trim() || null;
     const terminalKey = React.useMemo(
-        () => `workspace:${props.workspaceRefId}:terminal`,
-        [props.workspaceRefId],
+        () => terminalInstanceId
+            ? `workspace:${props.workspaceRefId}:terminal:${terminalInstanceId}`
+            : `workspace:${props.workspaceRefId}:terminal`,
+        [props.workspaceRefId, terminalInstanceId],
     );
 
     const controller = useMachineTerminalSession({
@@ -33,7 +39,7 @@ export const WorkspaceEmbeddedTerminalPane = React.memo(function WorkspaceEmbedd
         machineRpcTargetAvailable: true,
         terminalKey,
         terminalRef: terminalRendererRef,
-        closeOnUnmount: true,
+        closeOnUnmount: props.closeOnUnmount ?? false,
     });
 
     return (
@@ -42,6 +48,7 @@ export const WorkspaceEmbeddedTerminalPane = React.memo(function WorkspaceEmbedd
                 title={t('settings.terminal')}
                 controller={controller}
                 terminalRef={terminalRendererRef}
+                toolbarActionsStart={props.toolbarActionsStart}
                 testIdPrefix="workspace-embedded-terminal"
                 showQuickKeys={Platform.OS !== 'web'}
             />

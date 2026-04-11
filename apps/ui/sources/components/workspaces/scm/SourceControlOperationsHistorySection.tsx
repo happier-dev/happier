@@ -1,11 +1,17 @@
 import * as React from 'react';
-import { ActivityIndicator, Pressable, View } from 'react-native';
+import { ActivityIndicator, View } from 'react-native';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { Octicons } from '@expo/vector-icons';
 import type { ScmLogEntry } from '@happier-dev/protocol';
 import { t } from '@/text';
+
+import {
+    SCM_HISTORY_INITIAL_VISIBLE_COUNT,
+    SCM_HISTORY_LOAD_MORE_VISIBLE_STEP,
+} from '@/scm/history/historyPresentation';
+import { SourceControlOperationsHistoryLoadMoreButton } from './SourceControlOperationsHistoryLoadMoreButton';
+import { SourceControlOperationsHistoryTimelineRow } from './SourceControlOperationsHistoryTimelineRow';
 
 type SourceControlOperationsHistorySectionProps = Readonly<{
     theme: any;
@@ -18,9 +24,8 @@ type SourceControlOperationsHistorySectionProps = Readonly<{
 
 export function SourceControlOperationsHistorySection(props: SourceControlOperationsHistorySectionProps) {
     const { theme, historyLoading, historyEntries, historyHasMore, onLoadMoreHistory, onOpenCommit } = props;
-    const DEFAULT_VISIBLE_COUNT = 5;
-    const LOAD_MORE_STEP = 20;
-    const [visibleCount, setVisibleCount] = React.useState(DEFAULT_VISIBLE_COUNT);
+    const [visibleCount, setVisibleCount] = React.useState(SCM_HISTORY_INITIAL_VISIBLE_COUNT);
+    const renderedVisibleCount = Math.min(historyEntries.length, visibleCount);
 
     const firstSha = historyEntries.at(0)?.sha ?? null;
     const lastFirstShaRef = React.useRef<string | null>(firstSha);
@@ -28,7 +33,7 @@ export function SourceControlOperationsHistorySection(props: SourceControlOperat
         // Reset when the list is replaced (e.g., refresh/reset pagination).
         if (lastFirstShaRef.current !== firstSha) {
             lastFirstShaRef.current = firstSha;
-            setVisibleCount(DEFAULT_VISIBLE_COUNT);
+            setVisibleCount(SCM_HISTORY_INITIAL_VISIBLE_COUNT);
         }
     }, [firstSha]);
 
@@ -63,76 +68,28 @@ export function SourceControlOperationsHistorySection(props: SourceControlOperat
             >
                 {t('files.operationsHistory.recentCommits')}
             </Text>
-            {historyEntries.slice(0, Math.min(historyEntries.length, visibleCount)).map((entry) => (
-                <Pressable
+            {historyEntries.slice(0, renderedVisibleCount).map((entry, index, visibleEntries) => (
+                <SourceControlOperationsHistoryTimelineRow
                     key={entry.sha}
-                    testID={`scm-commit-entry-${entry.sha}`}
-                    onPress={() => onOpenCommit(entry.sha)}
-                    style={(p) => ({
-                        paddingVertical: 10,
-                        paddingHorizontal: 10,
-                        borderRadius: 12,
-                        backgroundColor: p.pressed
-                            ? (theme.colors.surfaceHigh ?? theme.colors.input.background)
-                            : 'transparent',
-                    })}
-                >
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                        <View
-                            style={{
-                                paddingHorizontal: 8,
-                                paddingVertical: 6,
-                                borderRadius: 10,
-                                borderWidth: 1,
-                                borderColor: theme.colors.divider,
-                                backgroundColor: theme.colors.surfaceHigh ?? theme.colors.input.background,
-                            }}
-                        >
-                            <Text style={{ color: theme.colors.textSecondary, fontSize: 11, ...Typography.mono('semiBold') }}>
-                                {entry.shortSha}
-                            </Text>
-                        </View>
-                        <View style={{ flex: 1 }}>
-                            <Text
-                                style={{ color: theme.colors.text, fontSize: 13, ...Typography.default('semiBold') }}
-                                numberOfLines={1}
-                            >
-                                {entry.subject}
-                            </Text>
-                            <Text style={{ color: theme.colors.textSecondary, fontSize: 11, ...Typography.default() }}>
-                                {new Date(entry.timestamp).toLocaleString()}
-                            </Text>
-                        </View>
-                        <Octicons name="chevron-right" size={14} color={theme.colors.textSecondary} />
-                    </View>
-                </Pressable>
+                    theme={theme}
+                    entry={entry}
+                    isHead={index === 0}
+                    showTrailingLine={index < visibleEntries.length - 1 || historyHasMore}
+                    onOpenCommit={onOpenCommit}
+                />
             ))}
             {(historyHasMore || visibleCount < historyEntries.length) && (
-                <Pressable
-                    disabled={historyLoading}
-                    testID="scm-commit-load-more"
+                <SourceControlOperationsHistoryLoadMoreButton
+                    theme={theme}
+                    historyLoading={historyLoading}
                     onPress={() => {
-                        setVisibleCount((prev) => prev + LOAD_MORE_STEP);
-                        onLoadMoreHistory();
+                        const nextVisibleCount = visibleCount + SCM_HISTORY_LOAD_MORE_VISIBLE_STEP;
+                        setVisibleCount(nextVisibleCount);
+                        if (historyHasMore && nextVisibleCount > historyEntries.length) {
+                            onLoadMoreHistory();
+                        }
                     }}
-                    style={(p) => ({
-                        marginTop: 4,
-                        paddingVertical: 10,
-                        paddingHorizontal: 10,
-                        borderRadius: 12,
-                        borderWidth: 1,
-                        borderColor: theme.colors.divider,
-                        backgroundColor: theme.colors.surfaceHigh ?? theme.colors.input.background,
-                        opacity: historyLoading ? 0.6 : p.pressed ? 0.85 : 1,
-                    })}
-                >
-                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <Text style={{ color: theme.colors.textLink, fontSize: 12, ...Typography.default('semiBold') }}>
-                            {historyLoading ? t('common.loading') : t('files.operationsHistory.loadMore')}
-                        </Text>
-                        <Octicons name="chevron-down" size={14} color={theme.colors.textSecondary} />
-                    </View>
-                </Pressable>
+                />
             )}
         </View>
     );

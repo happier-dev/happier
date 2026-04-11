@@ -1,0 +1,125 @@
+import * as React from 'react';
+import { describe, expect, it, vi } from 'vitest';
+
+import { renderScreen } from '@/dev/testkit';
+import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        Platform: {
+            OS: 'web',
+            select: (value: Record<string, unknown>) => value.web ?? value.default,
+        },
+    });
+});
+
+vi.mock('@expo/vector-icons', () => ({
+    Ionicons: 'Ionicons',
+}));
+
+vi.mock('@/text', () => ({
+    t: (key: string) => key,
+}));
+
+vi.mock('@/components/ui/media/FileIcon', () => ({
+    FileIcon: 'FileIcon',
+}));
+
+vi.mock('@/components/ui/text/Text', () => ({
+    Text: 'Text',
+}));
+
+vi.mock('@/constants/Typography', () => ({
+    Typography: {
+        default: () => ({}),
+        mono: () => ({}),
+    },
+}));
+
+vi.mock('@/components/workspaces/scm/states', () => ({
+    SourceControlUnavailableState: 'SourceControlUnavailableState',
+}));
+
+vi.mock('@/components/workspaces/files/repositoryTree/useScmTreeBadgeIndex', () => ({
+    useScmTreeBadgeIndex: () => null,
+}));
+
+vi.mock('@/hooks/workspaces/files/useWorkspaceRepositoryTreeBrowser', () => ({
+    useWorkspaceRepositoryTreeBrowser: () => ({
+        rootLoading: false,
+        rootError: null,
+        nodes: [
+            { path: 'src', name: 'src', type: 'directory', depth: 0, isExpanded: false, isLoadingChildren: false },
+            { path: 'README.md', name: 'README.md', type: 'file', depth: 0 },
+        ],
+        toggleDirectory: vi.fn(),
+        retryRoot: vi.fn(),
+        retryDirectory: vi.fn(),
+    }),
+}));
+
+vi.mock('@/components/ui/filesystemBrowser/FilesystemBrowser', () => ({
+    FilesystemBrowser: (props: any) => React.createElement(
+        'View',
+        { testID: 'workspace-repository-tree-list' },
+        ...(props.nodes ?? []).map((node: any, index: number) => React.createElement(
+            React.Fragment,
+            { key: node.path },
+            props.renderRow({ node, showDivider: index < props.nodes.length - 1 }),
+        )),
+    ),
+}));
+
+vi.mock('@/components/workspaces/files/repositoryTree/WebDropTargetView', () => ({
+    WebDropTargetView: (props: any) => React.createElement('View', { testID: props.testID }, props.children),
+}));
+
+vi.mock('@/components/ui/filesystemBrowser/FilesystemBrowserRow', () => ({
+    FilesystemBrowserRow: (props: any) => {
+        const content = React.createElement('FilesystemBrowserRow', { testID: props.testID, title: props.title });
+        if (typeof props.wrapContent === 'function') {
+            return props.wrapContent({ node: props.node, content });
+        }
+        return content;
+    },
+}));
+
+describe('WorkspaceRepositoryTreeList', () => {
+    const theme = {
+        colors: {
+            textLink: '#09f',
+            textSecondary: '#aaa',
+            surfacePressed: '#222',
+            surface: '#111',
+            divider: '#333',
+            warning: '#f80',
+            success: '#0f0',
+            textDestructive: '#f00',
+        },
+    } as any;
+
+    it('assigns one repository-tree row testID per shared workspace tree row on web', async () => {
+        const { WorkspaceRepositoryTreeList } = await import('./WorkspaceRepositoryTreeList');
+        const screen = await renderScreen(
+            <WorkspaceRepositoryTreeList
+                theme={theme}
+                workspaceCacheKey="server:m1:/repo"
+                machineId="m1"
+                rootPath="/repo"
+                expandedPaths={[]}
+                onExpandedPathsChange={() => {}}
+                onOpenFile={() => {}}
+                onWebDropTargetChange={() => {}}
+            />,
+        );
+
+        const srcRows = screen.findAllByTestId(`repository-tree-row-${toTestIdSafeValue('src')}`)
+            .filter((node) => typeof node.type === 'string');
+        const readmeRows = screen.findAllByTestId(`repository-tree-row-${toTestIdSafeValue('README.md')}`)
+            .filter((node) => typeof node.type === 'string');
+
+        expect(srcRows).toHaveLength(1);
+        expect(readmeRows).toHaveLength(1);
+    });
+});

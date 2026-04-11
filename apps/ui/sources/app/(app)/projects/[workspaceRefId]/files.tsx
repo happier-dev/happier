@@ -14,6 +14,12 @@ import { ProjectWorktreeRecoveryToast } from '@/components/projects/detail/Proje
 import { readProjectRouteStringParam } from '@/components/projects/detail/projectRouteState';
 import { useProjectMobileRoutePersistence } from '@/components/projects/detail/useProjectMobileRoutePersistence';
 import { useWorkspaceRefById } from '@/components/projects/detail/useWorkspaceRefById';
+import { useProjectSurfaceController } from '@/components/projects/detail/useProjectSurfaceController';
+import { ProjectCockpitShell } from '@/components/workspaceCockpit/project/ProjectCockpitShell';
+import { useLegacyDetailsRouteRedirect } from '@/components/workspaceCockpit/useLegacyDetailsRouteRedirect';
+import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit/useMobileWorkspaceExperienceState';
+import { resolveProjectRoutePathForSurface } from '@/components/workspaceCockpit/project/projectCockpitState';
+import { t } from '@/text';
 
 export default function ProjectFilesScreenRoute() {
     const router = useRouter();
@@ -25,6 +31,12 @@ export default function ProjectFilesScreenRoute() {
         activeRootPath?: string | string[];
     }>();
     const workspaceRefId = readProjectRouteStringParam(params.workspaceRefId) ?? '';
+    const {
+        cockpitEnabled,
+        showWorkspaceExperienceToggle,
+        workspaceExperienceToggleLabelKey,
+        toggleWorkspaceExperience,
+    } = useMobileWorkspaceExperienceState();
 
     const workspaceRef = useWorkspaceRefById(workspaceRefId);
 
@@ -41,10 +53,14 @@ export default function ProjectFilesScreenRoute() {
         setRouteActiveRootPath,
     } = useProjectMobileRoutePersistence({
         workspaceRef,
-        routeSegment: 'files',
         rawWorktreeId: params.worktreeId,
         rawActiveRootPath: params.activeRootPath,
-        persistedRouteSegment: 'files',
+        persistedSurface: 'browse',
+        resolveRouteHref: ({ activeRootPath, activeWorktreeId }) => resolveProjectRoutePathForSurface({
+            workspaceRefId: workspaceRef.id,
+            surface: 'browse',
+            rawWorktreeId: activeRootPath === workspaceRef.rootPath ? '@root' : activeWorktreeId,
+        }),
     });
 
     const routeActions = useProjectRouteActions({
@@ -53,51 +69,56 @@ export default function ProjectFilesScreenRoute() {
         activeWorktreeId: resolvedActiveWorktreeId,
         pane,
     });
+    const openWorktreesInDetails = routeActions.openWorktreesInDetails;
+    const openTerminal = routeActions.openTerminal;
+    const handleOpenWorktrees = React.useCallback(() => {
+        openWorktreesInDetails('push');
+    }, [openWorktreesInDetails]);
+    const handleOpenTerminal = React.useCallback(() => {
+        openTerminal();
+    }, [openTerminal]);
 
     const screenOptions = useProjectRouteHeaderOptions({
         workspaceRef,
         activeRootPath: resolvedActiveRootPath,
         testIdPrefix: 'project-mobile-header',
         showWorktreesButton: true,
-        onToggleWorktrees: () => routeActions.openWorktreesInDetails('push'),
-        onOpenTerminal: () => routeActions.openTerminal(),
+        showWorkspaceExperienceButton: showWorkspaceExperienceToggle,
+        workspaceExperienceToggleA11yLabel: t(workspaceExperienceToggleLabelKey),
+        onToggleWorkspaceExperience: showWorkspaceExperienceToggle ? toggleWorkspaceExperience : undefined,
+        onToggleWorktrees: handleOpenWorktrees,
+        onOpenTerminal: handleOpenTerminal,
     });
-    const openRight = pane.openRight;
+    const { syncSurface } = useProjectSurfaceController({
+        scopeId,
+        workspaceRef,
+        activeRootPath: resolvedActiveRootPath,
+        activeWorktreeId: resolvedActiveWorktreeId,
+    });
     const closeRight = pane.closeRight;
-    const setRightTab = pane.setRightTab;
 
     const activeDetailsKey = pane.scopeState?.details?.activeTabKey ?? null;
     const detailsIsOpen = pane.scopeState?.details?.isOpen ?? false;
     const detailsTabs = pane.scopeState?.details?.tabs ?? [];
-    const lastPushedDetailsKeyRef = React.useRef<string | null>(null);
-
-    React.useEffect(() => {
-        lastPushedDetailsKeyRef.current = null;
-    }, [workspaceRef.id]);
 
     React.useEffect(() => {
         if (!isFocused) return;
-        openRight({ tabId: 'files' });
-        if (pane.scopeState?.right?.activeTabId !== 'files') {
-            setRightTab('files');
-        }
-    }, [isFocused, openRight, pane.scopeState?.right?.activeTabId, setRightTab]);
+        syncSurface('browse');
+    }, [isFocused, syncSurface]);
 
-    React.useEffect(() => {
-        if (!detailsIsOpen) {
-            lastPushedDetailsKeyRef.current = null;
-            return;
-        }
-        if (!isFocused) return;
-        if (!detailsTabs.length) return;
-        const key = typeof activeDetailsKey === 'string' && activeDetailsKey
-            ? activeDetailsKey
-            : detailsTabs.at(-1)?.key ?? null;
-        if (!key) return;
-        if (lastPushedDetailsKeyRef.current === key) return;
-        lastPushedDetailsKeyRef.current = key;
+    const handleNavigateToDetails = React.useCallback(() => {
         routeActions.navigateToSegment({ segment: 'details', method: 'push' });
-    }, [activeDetailsKey, detailsIsOpen, detailsTabs, isFocused, routeActions]);
+    }, [routeActions]);
+
+    useLegacyDetailsRouteRedirect({
+        resetKey: workspaceRef.id,
+        enabled: !cockpitEnabled,
+        isFocused,
+        detailsIsOpen,
+        activeDetailsKey,
+        detailsTabs,
+        onNavigate: handleNavigateToDetails,
+    });
 
     const onRequestClose = React.useCallback(() => {
         closeRight();
@@ -109,21 +130,32 @@ export default function ProjectFilesScreenRoute() {
     }, [closeRight, navigation, routeActions, router]);
 
     return (
-        <View testID="project-files-screen" style={{ flex: 1 }}>
+        <View testID={cockpitEnabled ? undefined : 'project-files-screen'} style={{ flex: 1 }}>
             <Stack.Screen options={screenOptions} />
             <React.Suspense fallback={(
                 <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
                     <ActivityIndicator />
                 </View>
             )}>
-                <ProjectRightPanel
-                    workspaceRef={workspaceRef}
-                    scopeId={scopeId}
-                    activeRootPath={resolvedActiveRootPath}
-                    activeWorktreeId={resolvedActiveWorktreeId}
-                    onSelectRootPath={setRouteActiveRootPath}
-                    onRequestClose={onRequestClose}
-                />
+                {cockpitEnabled ? (
+                    <ProjectCockpitShell
+                        workspaceRef={workspaceRef}
+                        scopeId={scopeId}
+                        activeRootPath={resolvedActiveRootPath}
+                        activeWorktreeId={resolvedActiveWorktreeId}
+                        surface="browse"
+                        onSelectRootPath={setRouteActiveRootPath}
+                    />
+                ) : (
+                    <ProjectRightPanel
+                        workspaceRef={workspaceRef}
+                        scopeId={scopeId}
+                        activeRootPath={resolvedActiveRootPath}
+                        activeWorktreeId={resolvedActiveWorktreeId}
+                        onSelectRootPath={setRouteActiveRootPath}
+                        onRequestClose={onRequestClose}
+                    />
+                )}
             </React.Suspense>
             <ProjectWorktreeRecoveryToast recoveryToastKey={recoveryToastKey} />
         </View>

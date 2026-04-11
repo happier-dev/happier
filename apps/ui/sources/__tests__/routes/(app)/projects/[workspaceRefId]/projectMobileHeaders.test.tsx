@@ -11,6 +11,7 @@ const stackOptionsCapture = createStackOptionsCapture();
 const paneOpenDetailsTabSpy = vi.fn();
 const setLocalSettingSpy = vi.fn();
 let localSettingsMock: Record<string, unknown> = {};
+let deviceTypeMock: 'phone' | 'tablet' | 'desktop' = 'phone';
 let paneScopeStateMock: {
     right: { isOpen: boolean; activeTabId: string | null; tabState: Record<string, unknown> };
     details: {
@@ -60,6 +61,10 @@ vi.mock('@react-navigation/native', () => ({
     useNavigation: () => ({
         canGoBack: () => true,
     }),
+}));
+
+vi.mock('@/utils/platform/responsive', () => ({
+    useDeviceType: () => deviceTypeMock,
 }));
 
 vi.mock('expo-router', () => routerMock.module);
@@ -127,9 +132,14 @@ vi.mock('@/components/projects/detail/ProjectDetailsMainPanel', () => ({
     ProjectDetailsMainPanel: (props: Record<string, unknown>) => React.createElement('ProjectDetailsMainPanelStub', props),
 }));
 
+vi.mock('@/components/workspaceCockpit/project/ProjectCockpitShell', () => ({
+    ProjectCockpitShell: (props: Record<string, unknown>) => React.createElement('ProjectCockpitShellStub', props),
+}));
+
 describe('project mobile route headers', () => {
     beforeEach(() => {
         localSettingsMock = {};
+        deviceTypeMock = 'phone';
         paneScopeStateMock = {
             right: { isOpen: true, activeTabId: 'git', tabState: {} },
             details: { isOpen: false, tabs: [], activeTabKey: null, tabState: {} },
@@ -149,6 +159,7 @@ describe('project mobile route headers', () => {
         ['git', '@/app/(app)/projects/[workspaceRefId]/git'],
         ['files', '@/app/(app)/projects/[workspaceRefId]/files'],
         ['details', '@/app/(app)/projects/[workspaceRefId]/details'],
+        ['terminal', '@/app/(app)/projects/[workspaceRefId]/terminal'],
     ])('sets the native header title for the %s route', async (_name, moduleId) => {
         const Screen = (await import(moduleId)).default as React.ComponentType;
         await renderScreen(<Screen />);
@@ -162,8 +173,9 @@ describe('project mobile route headers', () => {
 
     it.each([
         ['git', '@/app/(app)/projects/[workspaceRefId]/git', { wr_1: 'git' }],
-        ['files', '@/app/(app)/projects/[workspaceRefId]/files', { wr_1: 'files' }],
+        ['files', '@/app/(app)/projects/[workspaceRefId]/files', { wr_1: 'browse' }],
         ['details', '@/app/(app)/projects/[workspaceRefId]/details', { wr_1: 'git' }],
+        ['terminal', '@/app/(app)/projects/[workspaceRefId]/terminal', { wr_1: 'terminal' }],
     ])('persists the current mobile project subroute for the %s route', async (_name, moduleId, expected) => {
         const Screen = (await import(moduleId)).default as React.ComponentType;
         await renderScreen(<Screen />);
@@ -196,13 +208,14 @@ describe('project mobile route headers', () => {
         const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/details')).default as React.ComponentType;
         await renderScreen(<Screen />);
 
-        expect(setLocalSettingSpy).toHaveBeenCalledWith({ wr_1: 'details' });
+        expect(setLocalSettingSpy).toHaveBeenCalledWith({ wr_1: 'tabs' });
     });
 
     it.each([
         ['git', '@/app/(app)/projects/[workspaceRefId]/git', 'push', '/projects/wr_1/details?worktreeId=gitwt_feature&showWorktrees=1'],
         ['files', '@/app/(app)/projects/[workspaceRefId]/files', 'push', '/projects/wr_1/details?worktreeId=gitwt_feature&showWorktrees=1'],
         ['details', '@/app/(app)/projects/[workspaceRefId]/details', 'replace', '/projects/wr_1/details?worktreeId=gitwt_feature&showWorktrees=1'],
+        ['terminal', '@/app/(app)/projects/[workspaceRefId]/terminal', 'push', '/projects/wr_1/details?worktreeId=gitwt_feature&showWorktrees=1'],
     ])('configures mobile header actions for the %s route', async (_name, moduleId, navigationMethod, expectedHref) => {
         const Screen = (await import(moduleId)).default as React.ComponentType;
         await renderScreen(<Screen />);
@@ -213,6 +226,7 @@ describe('project mobile route headers', () => {
         const headerTree = await renderScreen(React.createElement(options!.headerRight as () => React.ReactElement));
 
         expect(headerTree.root.findByProps({ testID: 'project-mobile-header-open-terminal' })).toBeTruthy();
+        expect(headerTree.root.findByProps({ testID: 'project-mobile-header-toggle-workspace-experience' })).toBeTruthy();
         const worktreeButtons = headerTree.root.findAllByProps({ testID: 'project-mobile-header-open-worktrees' });
         expect(worktreeButtons.length > 0).toBe(true);
 
@@ -230,5 +244,120 @@ describe('project mobile route headers', () => {
             terminalButton.props.onPress();
         });
         expect(paneOpenDetailsTabSpy).toHaveBeenCalled();
+        expect(paneOpenDetailsTabSpy).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+                key: 'terminal:project:wr_1:terminal',
+                kind: 'terminal',
+                resource: expect.objectContaining({
+                    kind: 'terminal',
+                    terminalInstanceId: 'project:wr_1:terminal',
+                    cwd: '/Users/test/repo/.worktrees/feature-auth',
+                }),
+            }),
+            { intent: 'pinned' },
+        );
+    });
+
+    it.each([
+        ['git', '@/app/(app)/projects/[workspaceRefId]/git', 'push'],
+        ['files', '@/app/(app)/projects/[workspaceRefId]/files', 'push'],
+        ['terminal', '@/app/(app)/projects/[workspaceRefId]/terminal', 'push'],
+    ])('routes the cockpit worktrees header action through the root overview surface for the %s route', async (_name, moduleId, navigationMethod) => {
+        localSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
+
+        const Screen = (await import(moduleId)).default as React.ComponentType;
+        await renderScreen(<Screen />);
+
+        const options = stackOptionsCapture.getResolved();
+        const headerTree = await renderScreen(React.createElement(options!.headerRight as () => React.ReactElement));
+        const worktreeButton = headerTree.root.findByProps({ testID: 'project-mobile-header-open-worktrees' });
+        routerMock.spies.push.mockClear();
+        routerMock.spies.replace.mockClear();
+
+        await act(async () => {
+            worktreeButton.props.onPress();
+        });
+
+        if (navigationMethod === 'replace') {
+            expect(routerMock.spies.replace).toHaveBeenCalledWith('/projects/wr_1?worktreeId=gitwt_feature&mobileSurface=overview');
+            expect(routerMock.spies.push).not.toHaveBeenCalled();
+            return;
+        }
+
+        expect(routerMock.spies.push).toHaveBeenCalledWith('/projects/wr_1?worktreeId=gitwt_feature&mobileSurface=overview');
+        expect(routerMock.spies.replace).not.toHaveBeenCalled();
+    });
+
+    it('routes the cockpit details header toggle through the root overview surface instead of the legacy showWorktrees query', async () => {
+        localSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
+
+        const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/details')).default as React.ComponentType;
+        await renderScreen(<Screen />);
+
+        const options = stackOptionsCapture.getResolved();
+        const headerTree = await renderScreen(React.createElement(options!.headerRight as () => React.ReactElement));
+        const worktreeButton = headerTree.root.findByProps({ testID: 'project-mobile-header-open-worktrees' });
+
+        await act(async () => {
+            worktreeButton.props.onPress();
+        });
+
+        expect(routerMock.spies.replace).toHaveBeenCalledWith('/projects/wr_1?worktreeId=gitwt_feature&mobileSurface=overview');
+        expect(routerMock.spies.push).not.toHaveBeenCalled();
+    });
+
+    it('toggles the mobile workspace experience from the project mobile header', async () => {
+        localSettingsMock = { mobileWorkspaceExperienceV1: 'classic' };
+
+        const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/git')).default as React.ComponentType;
+        await renderScreen(<Screen />);
+
+        const options = stackOptionsCapture.getResolved();
+        const headerTree = await renderScreen(React.createElement(options!.headerRight as () => React.ReactElement));
+        const toggleButton = headerTree.root.findByProps({ testID: 'project-mobile-header-toggle-workspace-experience' });
+
+        await act(async () => {
+            toggleButton.props.onPress();
+        });
+
+        expect(setLocalSettingSpy).toHaveBeenCalledWith('cockpit');
+        expect(localSettingsMock.mobileWorkspaceExperienceV1).toBe('cockpit');
+    });
+
+    it.each([
+        ['git', '@/app/(app)/projects/[workspaceRefId]/git', 'git'],
+        ['files', '@/app/(app)/projects/[workspaceRefId]/files', 'browse'],
+        ['details', '@/app/(app)/projects/[workspaceRefId]/details', 'tabs'],
+        ['terminal', '@/app/(app)/projects/[workspaceRefId]/terminal', 'terminal'],
+    ])('renders the project cockpit shell on the %s route when cockpit mode is enabled', async (_name, moduleId, surface) => {
+        localSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
+
+        const Screen = (await import(moduleId)).default as React.ComponentType;
+        const screen = await renderScreen(<Screen />);
+
+        const cockpit = screen.root.findByType('ProjectCockpitShellStub' as never);
+        expect(cockpit.props.workspaceRef.id).toBe('wr_1');
+        expect(cockpit.props.surface).toBe(surface);
+        expect(screen.root.findAllByType('ProjectRightPanelStub' as never)).toHaveLength(0);
+        expect(screen.root.findAllByType('ProjectDetailsMainPanelStub' as never)).toHaveLength(0);
+    });
+
+    it('uses the mobile header test-id prefix on the phone index cockpit route', async () => {
+        localSettingsMock = {
+            mobileWorkspaceExperienceV1: 'cockpit',
+            projectLastMobileSurfaceByWorkspaceRefId: { wr_1: 'overview' },
+            projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/Users/test/repo/.worktrees/feature-auth' },
+            projectLastActiveWorktreeIdByWorkspaceRefId: { wr_1: 'gitwt_feature' },
+        };
+
+        const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/index')).default as React.ComponentType;
+        await renderScreen(<Screen />);
+
+        const options = stackOptionsCapture.getResolved();
+        const headerTree = await renderScreen(React.createElement(options!.headerRight as () => React.ReactElement));
+
+        expect(headerTree.root.findByProps({ testID: 'project-mobile-header-open-terminal' })).toBeTruthy();
+        expect(headerTree.root.findByProps({ testID: 'project-mobile-header-toggle-workspace-experience' })).toBeTruthy();
+        expect(headerTree.root.findByProps({ testID: 'project-mobile-header-open-worktrees' })).toBeTruthy();
     });
 });

@@ -6,6 +6,7 @@ import {
     PROJECT_ROUTE_ROOT_SENTINEL,
     PROJECT_ROUTE_WORKTREE_ID_QUERY_PARAM,
     buildProjectRouteHref,
+    migrateProjectRouteSegmentToMobileSurface,
     readProjectRouteWorktreeSelection,
     resolveProjectRouteSegment,
     resolveProjectRouteHeaderTitle,
@@ -88,8 +89,18 @@ describe('projectRouteState', () => {
             .toBe('Project Alpha · feature-auth');
     });
 
-    it('resolves the project route segment from live state, then persisted state, then files', () => {
+    it('migrates legacy mobile route segments to cockpit surfaces', () => {
+        expect(migrateProjectRouteSegmentToMobileSurface('files')).toBe('browse');
+        expect(migrateProjectRouteSegmentToMobileSurface('git')).toBe('git');
+        expect(migrateProjectRouteSegmentToMobileSurface('details')).toBe('tabs');
+        expect(migrateProjectRouteSegmentToMobileSurface('unknown')).toBeNull();
+    });
+
+    it('resolves the project route segment from live state, then persisted cockpit state, then files', () => {
         expect(resolveProjectRouteSegment('git', undefined)).toBe('git');
+        expect(resolveProjectRouteSegment(undefined, 'browse')).toBe('files');
+        expect(resolveProjectRouteSegment(undefined, 'overview')).toBe('details');
+        expect(resolveProjectRouteSegment(undefined, 'terminal')).toBe('details');
         expect(resolveProjectRouteSegment(undefined, 'git')).toBe('git');
         expect(resolveProjectRouteSegment(undefined, undefined)).toBe('files');
     });

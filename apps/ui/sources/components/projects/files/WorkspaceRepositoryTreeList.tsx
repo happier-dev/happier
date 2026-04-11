@@ -17,6 +17,7 @@ import { formatByteSize } from '@/utils/files/formatByteSize';
 import { WebDropTargetView } from '@/components/workspaces/files/repositoryTree/WebDropTargetView';
 import { isWebFileDragEvent } from '@/utils/files/isWebFileDragEvent';
 import type { LazyDirectoryTreeNode } from '@/hooks/ui/filesystem/lazyDirectoryTreeTypes';
+import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 
 export type WorkspaceRepositoryTreeWebDropTarget = Readonly<{
     destinationDir: string;
@@ -131,6 +132,7 @@ export function WorkspaceRepositoryTreeList(props: WorkspaceRepositoryTreeListPr
             loadingLabel={t('common.loading')}
             inlineRetryLabel={t('errors.tryAgain')}
             renderRow={({ node, showDivider }) => {
+                const rowTestId = `repository-tree-row-${toTestIdSafeValue(node.path)}`;
                 const badge = badgeIndex
                     ? (
                         node.type === 'file'
@@ -230,6 +232,7 @@ export function WorkspaceRepositoryTreeList(props: WorkspaceRepositoryTreeListPr
 
                 return (
                     <FilesystemBrowserRow
+                        testID={rowTestId}
                         node={node}
                         title={node.type === 'directory' ? `${node.name}/` : node.name}
                         subtitle={subtitle}
@@ -268,23 +271,33 @@ export function WorkspaceRepositoryTreeList(props: WorkspaceRepositoryTreeListPr
                             borderRadius: 10,
                         }}
                         wrapContent={
-                            Platform.OS === 'web' && (node.type === 'directory' || node.type === 'file') && props.onWebDropTargetChange
+                            Platform.OS === 'web'
                                 ? ({ content }) => {
-                                    const dropTarget = buildWebDropTarget(node);
+                                    const shouldWrapDropTarget =
+                                        (node.type === 'directory' || node.type === 'file')
+                                        && Boolean(props.onWebDropTargetChange);
+                                    const wrappedContent = shouldWrapDropTarget
+                                        ? (
+                                            <WebDropTargetView
+                                                onDragEnter={(event) => {
+                                                    if (!isWebFileDragEvent(event)) return;
+                                                    props.onWebDropTargetChange?.(buildWebDropTarget(node));
+                                                }}
+                                                onDragOver={(event) => {
+                                                    if (!isWebFileDragEvent(event)) return;
+                                                    event.preventDefault?.();
+                                                    props.onWebDropTargetChange?.(buildWebDropTarget(node));
+                                                }}
+                                            >
+                                                {content}
+                                            </WebDropTargetView>
+                                        )
+                                        : content;
+
                                     return (
-                                        <WebDropTargetView
-                                            onDragEnter={(event) => {
-                                                if (!isWebFileDragEvent(event)) return;
-                                                props.onWebDropTargetChange?.(dropTarget);
-                                            }}
-                                            onDragOver={(event) => {
-                                                if (!isWebFileDragEvent(event)) return;
-                                                event.preventDefault?.();
-                                                props.onWebDropTargetChange?.(dropTarget);
-                                            }}
-                                        >
-                                            {content}
-                                        </WebDropTargetView>
+                                        <View testID={`${rowTestId}-drop-target`}>
+                                            {wrappedContent}
+                                        </View>
                                     );
                                 }
                                 : null

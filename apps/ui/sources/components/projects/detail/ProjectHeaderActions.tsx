@@ -27,6 +27,9 @@ const stylesheet = StyleSheet.create((theme) => ({
 export const ProjectHeaderActions = React.memo((props: Readonly<{
     testIdPrefix: string;
     showWorktreesButton: boolean;
+    showWorkspaceExperienceButton?: boolean;
+    workspaceExperienceToggleA11yLabel?: string;
+    onToggleWorkspaceExperience?: () => void;
     onOpenWorktrees?: () => void;
     onOpenTerminal: () => void;
 }>) => {
@@ -35,6 +38,17 @@ export const ProjectHeaderActions = React.memo((props: Readonly<{
 
     return (
         <View style={styles.container}>
+            {props.showWorkspaceExperienceButton && props.onToggleWorkspaceExperience ? (
+                <Pressable
+                    testID={`${props.testIdPrefix}-toggle-workspace-experience`}
+                    onPress={props.onToggleWorkspaceExperience}
+                    style={styles.iconButton}
+                    accessibilityRole="button"
+                    accessibilityLabel={props.workspaceExperienceToggleA11yLabel}
+                >
+                    <Ionicons name="swap-horizontal-outline" size={18} color={theme.colors.textSecondary} />
+                </Pressable>
+            ) : null}
             {props.showWorktreesButton && props.onOpenWorktrees ? (
                 <Pressable
                     testID={`${props.testIdPrefix}-open-worktrees`}

@@ -1,6 +1,6 @@
 import * as React from 'react';
-import { View, Pressable } from 'react-native';
-import { Ionicons, Octicons } from '@expo/vector-icons';
+import { View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
@@ -15,83 +15,32 @@ import { useAllMachines, useLocalSetting, useSettingMutable } from '@/sync/domai
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
 import { Modal } from '@/modal';
-import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { findWorkspaceRefByScope, upsertWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
 import { workspaceListDirectory } from '@/sync/ops/workspaceFileSystem';
 import { resolveMachineActionCandidates } from '@/utils/sessions/resolveMachineActionCandidates';
 import { useOptionalAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit/useMobileWorkspaceExperienceState';
 
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 
 import { buildProjectsListGroups } from './projectsListGrouping';
 import { buildProjectPaneScopeId } from './detail/projectPaneScope';
 import { buildProjectRouteHref, resolveProjectRouteSegment } from './detail/projectRouteState';
+import { ProjectsListItemMenu } from './ProjectsListItemMenu';
 import { resolveWorkspaceRefDisplayName } from './resolveWorkspaceRefDisplayName';
-
-type AppTheme = ReturnType<typeof useUnistyles>['theme'];
-
-type ProjectsListItemMenuProps = Readonly<{
-    theme: AppTheme;
-    items: ReadonlyArray<DropdownMenuItem>;
-    onSelect: (itemId: string) => void;
-}>;
-
-function stopPressEventPropagation(event: unknown): void {
-    const maybeEvent = event as {
-        stopPropagation?: () => void;
-        nativeEvent?: { stopPropagation?: () => void };
-    };
-    try {
-        maybeEvent.stopPropagation?.();
-    } catch {}
-    try {
-        maybeEvent.nativeEvent?.stopPropagation?.();
-    } catch {}
-}
-
-const ProjectsListItemMenu = React.memo((props: ProjectsListItemMenuProps) => {
-    const [open, setOpen] = React.useState(false);
-    return (
-        <DropdownMenu
-            open={open}
-            onOpenChange={setOpen}
-            items={props.items}
-            onSelect={props.onSelect}
-            placement="bottom"
-            popoverAnchorAlign="end"
-            variant="slim"
-            matchTriggerWidth={false}
-            maxWidthCap={240}
-            showCategoryTitles={false}
-            popoverPortalWebTarget="body"
-            trigger={({ toggle }) => (
-                <Pressable
-                    onPress={(event) => {
-                        stopPressEventPropagation(event);
-                        toggle();
-                    }}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('common.moreActions')}
-                    hitSlop={10}
-                    style={{ width: 28, height: 28, alignItems: 'center', justifyContent: 'center' }}
-                >
-                    <Octicons name="kebab-horizontal" size={14} color={props.theme.colors.textSecondary} />
-                </Pressable>
-            )}
-        />
-    );
-});
+import { resolveProjectMobileSurfaceIntent, resolveProjectRoutePathForSurface } from '@/components/workspaceCockpit/project/projectCockpitState';
 
 export const ProjectsListView = React.memo(() => {
     const { theme } = useUnistyles();
     const router = useRouter();
     const deviceType = useDeviceType();
     const paneContext = useOptionalAppPaneContext();
+    const { cockpitEnabled } = useMobileWorkspaceExperienceState();
     const activeServer = useActiveServerSnapshot();
     const allMachines = useAllMachines();
     const addFirstMachines = React.useMemo(() => resolveMachineActionCandidates(allMachines), [allMachines]);
-    const lastMobileRouteByWorkspaceRefId = useLocalSetting('projectLastMobileRouteByWorkspaceRefId');
+    const lastMobileSurfaceByWorkspaceRefId = useLocalSetting('projectLastMobileSurfaceByWorkspaceRefId');
     const lastActiveRootPathByWorkspaceRefId = useLocalSetting('projectLastActiveRootPathByWorkspaceRefId');
     const lastActiveWorktreeIdByWorkspaceRefId = useLocalSetting('projectLastActiveWorktreeIdByWorkspaceRefId');
 
@@ -118,24 +67,40 @@ export const ProjectsListView = React.memo(() => {
 
         const scopeId = buildProjectPaneScopeId(workspaceRef.id);
         const rememberedRightTabId = paneContext?.state.scopes[scopeId]?.right?.activeTabId;
-        const persistedSegment = lastMobileRouteByWorkspaceRefId?.[workspaceRef.id];
-        const segment = resolveProjectRouteSegment(
-            rememberedRightTabId,
-            typeof persistedSegment === 'string' ? persistedSegment : null,
-        );
+        const persistedSegment = typeof lastMobileSurfaceByWorkspaceRefId?.[workspaceRef.id] === 'string'
+            ? lastMobileSurfaceByWorkspaceRefId[workspaceRef.id]
+            : null;
         const persistedRootPath = lastActiveRootPathByWorkspaceRefId?.[workspaceRef.id];
         const persistedWorktreeId = lastActiveWorktreeIdByWorkspaceRefId?.[workspaceRef.id];
         const activeRootPath = typeof persistedRootPath === 'string' && persistedRootPath.trim().length > 0
             ? persistedRootPath
             : workspaceRef.rootPath;
+        const activeWorktreeId = typeof persistedWorktreeId === 'string' ? persistedWorktreeId : null;
+        if (cockpitEnabled) {
+            const surface = resolveProjectMobileSurfaceIntent({
+                routeKind: 'index',
+                activeRightTabId: rememberedRightTabId,
+                persistedSurface: typeof persistedSegment === 'string' ? persistedSegment : null,
+            });
+            router.push(resolveProjectRoutePathForSurface({
+                workspaceRefId: workspaceRef.id,
+                surface,
+                rawWorktreeId: activeRootPath === workspaceRef.rootPath ? '@root' : activeWorktreeId,
+            }));
+            return;
+        }
+        const segment = resolveProjectRouteSegment(
+            rememberedRightTabId,
+            typeof persistedSegment === 'string' ? persistedSegment : null,
+        );
         router.push(buildProjectRouteHref({
             workspaceRefId: workspaceRef.id,
             segment,
             activeRootPath,
             defaultRootPath: workspaceRef.rootPath,
-            activeWorktreeId: typeof persistedWorktreeId === 'string' ? persistedWorktreeId : null,
+            activeWorktreeId,
         }));
-    }, [deviceType, lastActiveRootPathByWorkspaceRefId, lastActiveWorktreeIdByWorkspaceRefId, lastMobileRouteByWorkspaceRefId, paneContext?.state.scopes, router]);
+    }, [cockpitEnabled, deviceType, lastActiveRootPathByWorkspaceRefId, lastActiveWorktreeIdByWorkspaceRefId, lastMobileSurfaceByWorkspaceRefId, paneContext?.state.scopes, router]);
 
     const handleAddProjectToMachine = React.useCallback(async (machineId: string) => {
         const serverId = String(activeServer.serverId ?? '').trim();
@@ -280,34 +245,12 @@ export const ProjectsListView = React.memo(() => {
                             rightElement={(
                                 <ProjectsListItemMenu
                                     theme={theme}
-                                    items={[
-                                        {
-                                            id: 'unpin',
-                                            title: t('projects.actions.unpin'),
-                                            icon: <Ionicons name="pin-outline" size={16} color={theme.colors.textSecondary} />,
-                                        },
-                                        {
-                                            id: 'rename',
-                                            title: t('sessionsList.renameWorkspace'),
-                                            icon: <Ionicons name="pencil-outline" size={16} color={theme.colors.textSecondary} />,
-                                        },
-                                        {
-                                            id: 'reset',
-                                            title: t('sessionsList.resetWorkspaceName'),
-                                            icon: <Ionicons name="refresh-outline" size={16} color={theme.colors.textSecondary} />,
-                                        },
-                                        {
-                                            id: 'remove',
-                                            title: t('projects.actions.remove'),
-                                            icon: <Ionicons name="trash-outline" size={16} color={theme.colors.deleteAction} />,
-                                        },
-                                    ] satisfies DropdownMenuItem[]}
-                                    onSelect={(itemId) => {
-                                        if (itemId === 'unpin') handleTogglePinned(workspaceRef.id);
-                                        if (itemId === 'rename') void handleRenameProject(workspaceRef);
-                                        if (itemId === 'reset') handleResetProjectName(workspaceRef);
-                                        if (itemId === 'remove') handleRemoveProject(workspaceRef);
-                                    }}
+                                    workspaceRef={workspaceRef}
+                                    pinAction="unpin"
+                                    onTogglePinned={handleTogglePinned}
+                                    onRename={handleRenameProject}
+                                    onReset={handleResetProjectName}
+                                    onRemove={handleRemoveProject}
                                 />
                             )}
                             onPress={() => handleOpenWorkspace(workspaceRef)}
@@ -326,6 +269,7 @@ export const ProjectsListView = React.memo(() => {
                             <ItemGroupTitleWithAction
                                 title={machineName}
                                 action={{
+                                    testID: `projects-add-machine:${group.machineId}`,
                                     accessibilityLabel: t('projects.actions.addProjectToMachine'),
                                     iconName: 'add-outline',
                                     iconColor: theme.colors.groupped.sectionTitle,
@@ -346,34 +290,12 @@ export const ProjectsListView = React.memo(() => {
                                 rightElement={(
                                     <ProjectsListItemMenu
                                         theme={theme}
-                                        items={[
-                                            {
-                                                id: pinnedIdSet.has(workspaceRef.id) ? 'unpin' : 'pin',
-                                                title: pinnedIdSet.has(workspaceRef.id) ? t('projects.actions.unpin') : t('projects.actions.pin'),
-                                                icon: <Ionicons name="pin-outline" size={16} color={theme.colors.textSecondary} />,
-                                            },
-                                            {
-                                                id: 'rename',
-                                                title: t('sessionsList.renameWorkspace'),
-                                                icon: <Ionicons name="pencil-outline" size={16} color={theme.colors.textSecondary} />,
-                                            },
-                                            {
-                                                id: 'reset',
-                                                title: t('sessionsList.resetWorkspaceName'),
-                                                icon: <Ionicons name="refresh-outline" size={16} color={theme.colors.textSecondary} />,
-                                            },
-                                            {
-                                                id: 'remove',
-                                                title: t('projects.actions.remove'),
-                                                icon: <Ionicons name="trash-outline" size={16} color={theme.colors.deleteAction} />,
-                                            },
-                                        ] satisfies DropdownMenuItem[]}
-                                        onSelect={(itemId) => {
-                                            if (itemId === 'pin' || itemId === 'unpin') handleTogglePinned(workspaceRef.id);
-                                            if (itemId === 'rename') void handleRenameProject(workspaceRef);
-                                            if (itemId === 'reset') handleResetProjectName(workspaceRef);
-                                            if (itemId === 'remove') handleRemoveProject(workspaceRef);
-                                        }}
+                                        workspaceRef={workspaceRef}
+                                        pinAction={pinnedIdSet.has(workspaceRef.id) ? 'unpin' : 'pin'}
+                                        onTogglePinned={handleTogglePinned}
+                                        onRename={handleRenameProject}
+                                        onReset={handleResetProjectName}
+                                        onRemove={handleRemoveProject}
                                     />
                                 )}
                                 onPress={() => handleOpenWorkspace(workspaceRef)}

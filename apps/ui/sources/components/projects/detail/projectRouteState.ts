@@ -1,6 +1,11 @@
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 
 import { resolveWorkspaceRefDisplayName } from '@/components/projects/resolveWorkspaceRefDisplayName';
+import {
+    migrateProjectRouteSegmentToMobileSurface,
+    resolveProjectLegacyRouteSegmentFromState,
+    type ProjectMobileSurface,
+} from '@/components/workspaceCockpit/project/projectCockpitState';
 
 export type ProjectRouteSegment = 'details' | 'files' | 'git';
 export const PROJECT_ROUTE_ROOT_SENTINEL = '@root';
@@ -150,17 +155,13 @@ export function replaceProjectRouteSelection(input: Readonly<{
     }));
 }
 
+export { migrateProjectRouteSegmentToMobileSurface, type ProjectMobileSurface };
+
 export function resolveProjectRouteSegment(
     activeTabId: string | null | undefined,
     persistedSegment?: string | null,
 ): ProjectRouteSegment {
-    if (activeTabId === 'git' || activeTabId === 'files') {
-        return activeTabId;
-    }
-    if (persistedSegment === 'git' || persistedSegment === 'files' || persistedSegment === 'details') {
-        return persistedSegment;
-    }
-    return 'files';
+    return resolveProjectLegacyRouteSegmentFromState(activeTabId, readProjectRouteStringParam(persistedSegment ?? undefined));
 }
 
 function resolvePathBasename(rawPath: string): string | null {

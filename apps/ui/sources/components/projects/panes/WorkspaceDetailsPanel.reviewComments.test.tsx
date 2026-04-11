@@ -5,6 +5,8 @@ import { pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/tes
 
 const routerPushSpy = vi.fn();
 const workspaceScmReviewDetailsViewSpy = vi.hoisted(() => vi.fn((_props: unknown) => null));
+const projectTerminalSurfaceSpy = vi.hoisted(() => vi.fn((_props: unknown) => null));
+const openDetailsTabSpy = vi.hoisted(() => vi.fn());
 const paneDetailsTabsPanelSpy = vi.hoisted(() => vi.fn((props: any) => React.createElement(
     React.Fragment,
     null,
@@ -36,7 +38,7 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     useAppPaneScope: () => ({
         scopeState: { details: { tabState: {} } },
         closeDetails: vi.fn(),
-        openDetailsTab: vi.fn(),
+        openDetailsTab: openDetailsTabSpy,
         pinDetailsTab: vi.fn(),
         setDetailsTabState: vi.fn(),
     }),
@@ -66,8 +68,15 @@ vi.mock('@/components/projects/panes/details/views/WorkspaceScmStashDetailsView'
     WorkspaceScmStashDetailsView: () => null,
 }));
 
-vi.mock('@/components/projects/panes/details/views/WorkspaceEmbeddedTerminalPane', () => ({
-    WorkspaceEmbeddedTerminalPane: () => null,
+vi.mock('@/components/projects/detail/surfaces/ProjectTerminalSurface', () => ({
+    ProjectTerminalSurface: (props: unknown) => {
+        projectTerminalSurfaceSpy(props);
+        return null;
+    },
+}));
+
+vi.mock('@/platform/randomUUID', () => ({
+    randomUUID: () => 'terminal-instance-2',
 }));
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
@@ -103,6 +112,8 @@ describe('WorkspaceDetailsPanel review comment launcher', () => {
     beforeEach(() => {
         routerPushSpy.mockReset();
         workspaceScmReviewDetailsViewSpy.mockReset();
+        projectTerminalSurfaceSpy.mockReset();
+        openDetailsTabSpy.mockReset();
         paneDetailsTabsPanelSpy.mockClear();
     });
 
@@ -203,5 +214,94 @@ describe('WorkspaceDetailsPanel review comment launcher', () => {
                 || node.props?.accessibilityLabel === 'session.detailsPanel.exitFocusModeA11y')
                 .length,
         ).toBe(0);
+    });
+
+    it('passes terminal instance ids into project terminal tabs', async () => {
+        const { WorkspaceDetailsPanel } = await import('./WorkspaceDetailsPanel');
+
+        await renderScreen(
+            <WorkspaceDetailsPanel
+                workspaceRef={{
+                    id: 'wr_1',
+                    serverId: 'server-1',
+                    machineId: 'machine-1',
+                    rootPath: '/repo/main',
+                    label: 'Repo',
+                } as any}
+                scopeId="project:wr_1"
+                activeRootPath="/repo/worktree-a"
+            />,
+        );
+
+        const [{ renderTabContent }] = paneDetailsTabsPanelSpy.mock.calls.at(-1) ?? [];
+        const tabContent = renderTabContent({
+            key: 'terminal:terminal-instance-2',
+            kind: 'terminal',
+            title: 'Terminal',
+            resource: { kind: 'terminal', terminalInstanceId: 'terminal-instance-2' },
+        });
+
+        expect(React.isValidElement(tabContent)).toBe(true);
+        expect((tabContent as React.ReactElement).props).toEqual(expect.objectContaining({
+            terminalInstanceId: 'terminal-instance-2',
+        }));
+    });
+
+    it('opens an instance-aware project terminal details tab from the header action', async () => {
+        const { WorkspaceDetailsPanel } = await import('./WorkspaceDetailsPanel');
+
+        const rendered = await renderScreen(
+            <WorkspaceDetailsPanel
+                workspaceRef={{
+                    id: 'wr_1',
+                    serverId: 'server-1',
+                    machineId: 'machine-1',
+                    rootPath: '/repo/main',
+                    label: 'Repo',
+                } as any}
+                scopeId="project:wr_1"
+                activeRootPath="/repo/worktree-a"
+            />,
+        );
+
+        await pressTestInstanceAsync(
+            rendered.findByTestId('workspace-details-open-terminal'),
+            'workspace-details-open-terminal',
+        );
+
+        expect(openDetailsTabSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                key: 'terminal:terminal-instance-2',
+                kind: 'terminal',
+                resource: expect.objectContaining({
+                    kind: 'terminal',
+                    terminalInstanceId: 'terminal-instance-2',
+                }),
+            }),
+            { intent: 'pinned' },
+        );
+    });
+
+    it('provides stable project details tab test ids for opened tabs', async () => {
+        const { WorkspaceDetailsPanel } = await import('./WorkspaceDetailsPanel');
+
+        await renderScreen(
+            <WorkspaceDetailsPanel
+                workspaceRef={{
+                    id: 'wr_1',
+                    serverId: 'server-1',
+                    machineId: 'machine-1',
+                    rootPath: '/repo/main',
+                    label: 'Repo',
+                } as any}
+                scopeId="project:wr_1"
+                activeRootPath="/repo/worktree-a"
+            />,
+        );
+
+        const [{ testIds }] = paneDetailsTabsPanelSpy.mock.calls.at(-1) ?? [];
+        expect(testIds?.root).toBe('workspace-details-panel-root');
+        expect(testIds?.tab?.('file_src_index_ts')).toBe('workspace-details-tab-file_src_index_ts');
+        expect(testIds?.tabClose?.('file_src_index_ts')).toBe('workspace-details-tab-close-file_src_index_ts');
     });
 });
