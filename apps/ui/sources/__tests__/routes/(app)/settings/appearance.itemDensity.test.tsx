@@ -12,6 +12,7 @@ const shared = vi.hoisted(() => ({
         themePreference: 'adaptive',
         uiFontScale: 1,
         uiItemDensity: 'comfortable',
+        mobileWorkspaceExperienceV1: 'classic',
         uiMultiPanePanelsEnabled: true,
         detailsPaneTabsBehavior: 'preview',
         editorFocusModeEnabled: false,
@@ -105,6 +106,7 @@ afterEach(() => {
     standardCleanup();
     resetSessionSettingsEntryState();
     shared.settingsState.uiItemDensity = 'comfortable';
+    shared.settingsState.mobileWorkspaceExperienceV1 = 'classic';
 });
 
 describe('Appearance settings item density', () => {
@@ -141,5 +143,24 @@ describe('Appearance settings item density', () => {
         });
 
         expect(shared.settingsState.settingsNavSidebarEnabled).toBe(false);
+    });
+
+    it('renders the mobile workspace experience dropdown and updates the local setting', async () => {
+        const mod = await import('@/app/(app)/settings/appearance');
+        const screen = await renderSettingsView(React.createElement(mod.default));
+
+        const dropdowns = screen.findAllByType('DropdownMenu' as any);
+        const workspaceModeDropdown = dropdowns.find((node: any) => node.props?.itemTrigger?.title === 'settingsAppearance.mobileWorkspaceExperience');
+        expect(workspaceModeDropdown).toBeTruthy();
+        expect(workspaceModeDropdown?.props?.selectedId).toBe('classic');
+
+        const itemIds = workspaceModeDropdown?.props?.items?.map((item: any) => item.id) ?? [];
+        expect(itemIds).toEqual(['classic', 'cockpit']);
+
+        await act(async () => {
+            workspaceModeDropdown!.props.onSelect('cockpit');
+        });
+
+        expect(shared.settingsState.mobileWorkspaceExperienceV1).toBe('cockpit');
     });
 });

@@ -7,7 +7,7 @@ import type {
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
-import { describeBackgroundServiceTargetMode } from '@/components/systemTasks/prompts/backgroundServiceReplacementPromptPresentation';
+import { describeBackgroundServiceTargetMode } from '@/components/systemTasks/describeBackgroundServiceTargetMode';
 
 import type { MachineDoctorSnapshotState } from './useMachineDoctorSnapshot';
 

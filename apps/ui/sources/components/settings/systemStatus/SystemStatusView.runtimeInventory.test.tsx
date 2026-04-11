@@ -152,6 +152,24 @@ vi.mock('expo-constants', () => ({
     default: { expoConfig: { version: '0.0.0-test' }, deviceName: 'test-device' },
 }));
 
+vi.mock('expo-application', () => ({
+    nativeApplicationVersion: '0.0.0-test',
+    nativeBuildVersion: '1',
+    applicationId: 'dev.happier.test',
+}));
+
+vi.mock('expo-updates', () => ({
+    updateId: null,
+    createdAt: null,
+    channel: 'preview',
+    runtimeVersion: '18',
+    isEmbeddedLaunch: true,
+}));
+
+vi.mock('./OtaUpdateStatusSection', () => ({
+    OtaUpdateStatusSection: () => null,
+}));
+
 vi.mock('@/constants/Typography', () => ({
     Typography: {
         default: () => ({}),
@@ -282,6 +300,7 @@ describe('SystemStatusView runtime inventory', () => {
                                 label: 'com.happier.cli.daemon.preview.machine-1',
                                 verification: 'verified',
                                 ring: 'preview',
+                                targetMode: 'default-following',
                                 instanceId: 'machine-1',
                                 scope: 'user',
                                 definitionPath: '/Users/tester/Library/LaunchAgents/com.happier.cli.daemon.preview.machine-1.plist',

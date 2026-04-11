@@ -58,16 +58,22 @@ export function resolveAbsolutePath(path: string, homeDir?: string): string {
             : homeDir;
     }
     
-    // Handle ~/ and ~/path (home directory with subdirectory)
-    if (path.startsWith('~/')) {
-        const relativePart = path.slice(2); // Remove '~/'
+    // Handle ~/ and ~\ paths (home directory with subdirectory)
+    if (path.startsWith('~/') || path.startsWith('~\\')) {
+        const relativePart = path.slice(2); // Remove '~/' or '~\'
         // Detect path separator based on homeDir - prefer the last separator found
         const hasBackslash = homeDir.lastIndexOf('\\') > homeDir.lastIndexOf('/');
         const separator = hasBackslash ? '\\' : '/';
         const normalizedHome = homeDir.endsWith('/') || homeDir.endsWith('\\') 
             ? homeDir.slice(0, -1) 
             : homeDir;
-        return normalizedHome + separator + relativePart;
+        const normalizedRelativePart = relativePart
+            .split(/[\\/]+/)
+            .filter(Boolean)
+            .join(separator);
+        return normalizedRelativePart
+            ? normalizedHome + separator + normalizedRelativePart
+            : normalizedHome + separator;
     }
     
     // Handle ~username paths (not supported, return original)

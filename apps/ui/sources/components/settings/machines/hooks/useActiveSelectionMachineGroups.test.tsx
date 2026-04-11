@@ -13,6 +13,7 @@ vi.mock('@/sync/domains/server/selection/serverSelectionResolution', () => ({
 
 type ProbeProps = Readonly<{
     allMachines: any[];
+    machineListByServerId?: Record<string, any[] | null>;
     onValue: (value: ReturnType<typeof useActiveSelectionMachineGroups>) => void;
 }>;
 
@@ -21,7 +22,7 @@ function Probe(props: ProbeProps) {
         activeServerSnapshot: { serverId: 'server-a', serverUrl: 'https://a.example.test', generation: 1 } as any,
         allMachines: props.allMachines as any,
         serverProfiles: [{ id: 'server-a', name: 'Server A', serverUrl: 'https://a.example.test', lastUsedAt: 1 }] as any,
-        machineListByServerId: {},
+        machineListByServerId: props.machineListByServerId ?? {},
         machineListStatusByServerId: {},
         settings: {
             serverSelectionGroups: null,
@@ -64,5 +65,24 @@ describe('useActiveSelectionMachineGroups', () => {
         const latest = captured.at(-1);
         expect(latest.visibleMachineGroups[0].machines).toEqual([]);
         expect(latest.hasAnyVisibleMachines).toBe(false);
+    });
+
+    it('falls back to active machines when the active server scoped cache is empty', async () => {
+        const captured: any[] = [];
+        const allMachines = [
+            { id: 'm-active', revokedAt: null },
+        ];
+
+        await renderScreen(
+            <Probe
+                allMachines={allMachines}
+                machineListByServerId={{ 'server-a': [] }}
+                onValue={(value) => captured.push(value)}
+            />,
+        );
+
+        const latest = captured.at(-1);
+        expect(latest.visibleMachineGroups[0].machines.map((m: any) => m.id)).toEqual(['m-active']);
+        expect(latest.hasAnyVisibleMachines).toBe(true);
     });
 });

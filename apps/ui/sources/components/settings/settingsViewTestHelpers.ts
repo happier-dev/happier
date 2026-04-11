@@ -26,6 +26,7 @@ const settingsViewModuleState = vi.hoisted(() => ({
         text: undefined as SettingsViewModuleFactory | undefined,
         unistyles: undefined as SettingsViewModuleFactory | undefined,
     },
+    scanProcessAuthUrlSpy: vi.fn(async (_url: string) => true),
 }));
 
 export function resetSettingsViewCommonModuleMockState() {
@@ -38,6 +39,8 @@ export function resetSettingsViewCommonModuleMockState() {
         text: undefined,
         unistyles: undefined,
     };
+    settingsViewModuleState.scanProcessAuthUrlSpy.mockReset();
+    settingsViewModuleState.scanProcessAuthUrlSpy.mockResolvedValue(true);
 }
 
 export function installSettingsViewCommonModuleMocks(
@@ -137,4 +140,13 @@ export function installSettingsViewCommonModuleMocks(
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({});
     });
+
+    vi.mock('@/app/(app)/scan/useScannedAuthUrlProcessor', () => ({
+        useScannedAuthUrlProcessor: () => ({
+            processAuthUrl: settingsViewModuleState.scanProcessAuthUrlSpy,
+            isLoading: false,
+        }),
+    }));
 }
+
+export const settingsViewScanProcessAuthUrlSpy = settingsViewModuleState.scanProcessAuthUrlSpy;

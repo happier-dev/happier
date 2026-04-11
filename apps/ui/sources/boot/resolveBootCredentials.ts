@@ -1,22 +1,12 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
-import { parseTerminalConnectUrl } from '@/utils/path/terminalConnectUrl';
+import { isTerminalConnectWebPathname, parseTerminalConnectUrl } from '@/utils/path/terminalConnectUrl';
 import { TERMINAL_CONNECT_WEB_BOOTSTRAP_STORAGE_KEY } from '@/utils/path/terminalConnectWebBootstrap';
 import { bootstrapActiveServerFromWebLocation } from '@/sync/domains/server/url/bootstrapActiveServerFromWebLocation';
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { readWebRuntimeConfigServerContext, readWebRuntimeConfigServerUrl } from '@/sync/runtime/webRuntimeConfig';
 import { invokeTauri, isTauriDesktop } from '@/utils/platform/tauri';
-
-function normalizeTerminalConnectPathname(pathname: string): string {
-    let path = String(pathname ?? '');
-    if (!path.startsWith('/')) path = `/${path}`;
-    return path.replace(/\/+$/, '') || '/';
-}
-
-function isTerminalConnectPathname(pathname: string): boolean {
-    return normalizeTerminalConnectPathname(pathname) === '/terminal/connect';
-}
 
 function resolveBootServerUrlFromTerminalConnectHash(): string | null {
     if (typeof window === 'undefined') return null;
@@ -27,7 +17,7 @@ function resolveBootServerUrlFromTerminalConnectHash(): string | null {
 
     try {
         const locationUrl = new URL(window.location.href);
-        if (!isTerminalConnectPathname(locationUrl.pathname)) {
+        if (!isTerminalConnectWebPathname(locationUrl.pathname)) {
             globalThis.sessionStorage?.removeItem?.(TERMINAL_CONNECT_WEB_BOOTSTRAP_STORAGE_KEY);
             return null;
         }
@@ -90,7 +80,6 @@ async function resolveAndPersistStackDesktopBootCredentials(bootServerUrl?: stri
             serverUrl: bootServerUrl,
             source: 'stack-env',
             scope: 'device',
-            replaceEquivalentStoredUrl: true,
         });
     }
     await TokenStorage.setCredentials(credentials).catch(() => false);
@@ -111,7 +100,6 @@ export async function resolveBootCredentials(platformOs: string): Promise<AuthCr
             serverUrl: bootServerUrl,
             source: 'url',
             scope: 'device',
-            replaceEquivalentStoredUrl: true,
         });
         const credentials = await TokenStorage.getCredentialsForServerUrl(bootServerUrl, {
             serverId: bootServerProfile.id,
@@ -126,7 +114,6 @@ export async function resolveBootCredentials(platformOs: string): Promise<AuthCr
                 serverUrl: stackRuntimeServerUrl,
                 source: 'stack-env',
                 scope: 'device',
-                replaceEquivalentStoredUrl: true,
             })
             : null;
         if (stackRuntimeServerUrl) {

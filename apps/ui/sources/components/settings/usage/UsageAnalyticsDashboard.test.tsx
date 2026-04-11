@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
+
 import { renderScreen } from '@/dev/testkit';
 import { buildUsageAnalyticsViewModel } from '@/sync/api/account/usageAnalytics';
 import { UsageAnalyticsDashboard } from './UsageAnalyticsDashboard';
@@ -285,6 +286,37 @@ describe('UsageAnalyticsDashboard', () => {
         expect(screen.findByTestId('usage-recap-share-rhythm')).toBeTruthy();
         expect(screen.getTextContent()).not.toContain('undefined');
         expect(screen.getTextContent()).toContain(viewModel.leaders.engines[0]?.label ?? '');
+    });
+
+    it('preserves translated casing in summary and recap subtitles', async () => {
+        const viewModel = buildUsageAnalyticsViewModel(response, {
+            period: '30days',
+            metric: 'tokens',
+            focus: null,
+            costMode: 'auto',
+        });
+
+        const screen = await renderScreen(React.createElement(UsageAnalyticsDashboard, {
+            viewModel,
+            filters: {
+                period: '30days',
+                metric: 'tokens',
+                focus: null,
+                costMode: 'auto',
+            },
+            onPeriodChange: vi.fn(),
+            onMetricChange: vi.fn(),
+            onFocusChange: vi.fn(),
+            onCostModeChange: vi.fn(),
+        }));
+
+        const totalCard = screen.findByTestId('usage-summary-total-card');
+        const recapModelCard = screen.findByTestId('usage-recap-model-card');
+
+        expect(getNodeTextContent(totalCard)).toContain('2 Active days');
+        expect(getNodeTextContent(totalCard)).toContain('1 Models tried');
+        expect(screen.getTextContent()).toContain('2 Sessions');
+        expect(getNodeTextContent(recapModelCard)).toContain('Favorite model changes');
     });
 
     it('uses the selected period label in yearly streak subtitles instead of hardcoded last-30 copy', async () => {

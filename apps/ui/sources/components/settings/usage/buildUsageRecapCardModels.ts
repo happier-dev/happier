@@ -84,7 +84,7 @@ function buildPeriodUsageSubtitle(viewModel: UsageAnalyticsViewModel, filters: U
     const currency = viewModel.costPresentation.currency || 'USD';
 
     if (filters.metric === 'cost') {
-        return `${formatTokens(viewModel.overview.totalTokens)} ${t('usage.tokens').toLowerCase()}`;
+        return `${formatTokens(viewModel.overview.totalTokens)} ${t('usage.tokens')}`;
     }
 
     const costModeLabel = resolveUsageCostModeLabel({
@@ -213,7 +213,7 @@ export function buildUsageRecapCardModels(input: Readonly<{
             label: t('usage.summary.topModel'),
             value: topModel?.label ?? '—',
             subtitle: topModel
-                ? `${formatTokens(viewModel.insights.favoriteModelChangeCount)} ${t('usage.favoriteModelChanges').toLowerCase()} · ${topEngineLabel}`
+                ? `${formatTokens(viewModel.insights.favoriteModelChangeCount)} ${t('usage.favoriteModelChanges')} · ${topEngineLabel}`
                 : t('usage.noData'),
             valueTone: 'compact',
             accentTone: 'purple',

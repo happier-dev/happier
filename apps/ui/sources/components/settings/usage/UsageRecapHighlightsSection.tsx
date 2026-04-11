@@ -1,10 +1,8 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { View, useWindowDimensions } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { ItemGroupColumn, ItemGroupColumns } from '@/components/ui/lists/ItemGroupColumns';
-import { t } from '@/text';
+import { CardGrid, CardGridColumn } from '@/components/ui/cards/CardGrid';
 import type { UsageAnalyticsViewModel, UsageFilterState } from '@/sync/api/account/usageAnalytics';
 
 import { buildUsageRecapCardModels } from './buildUsageRecapCardModels';
@@ -12,9 +10,6 @@ import { UsageRecapCard } from './UsageRecapCard';
 import { shareUsageRecapCardSummary } from './usageAnalyticsExport';
 
 const styles = StyleSheet.create(() => ({
-    sectionBody: {
-        paddingBottom: 16,
-    },
     recapColumn: {
         minWidth: 170,
     },
@@ -26,6 +21,7 @@ export function UsageRecapHighlightsSection(props: Readonly<{
     sessionId?: string;
 }>): React.ReactElement | null {
     const { viewModel, filters, sessionId } = props;
+    const { width } = useWindowDimensions();
 
     const recapCards = React.useMemo(() => buildUsageRecapCardModels({
         viewModel,
@@ -36,34 +32,37 @@ export function UsageRecapHighlightsSection(props: Readonly<{
         return null;
     }
 
+    const columns = width >= 1180 ? 4 : width >= 720 ? 2 : 1;
+
     return (
-        <ItemGroup title={t('usage.summary.title')} containerStyle={{ overflow: 'visible' }}>
-            <View testID="usage-recap-section" style={styles.sectionBody}>
-                <ItemGroupColumns
-                    columns={4}
-                    collapseBelow="medium"
-                    paddingHorizontal={16}
-                    paddingVertical={0}
-                    columnGap={12}
-                    rowGap={12}
-                >
-                    {recapCards.map((card) => (
-                        <ItemGroupColumn key={card.id} style={styles.recapColumn}>
-                            <UsageRecapCard
-                                card={card}
-                                onShare={() => {
-                                    void shareUsageRecapCardSummary({
-                                        viewModel,
-                                        filters,
-                                        sessionId,
-                                        cardId: card.id,
-                                    });
-                                }}
-                            />
-                        </ItemGroupColumn>
-                    ))}
-                </ItemGroupColumns>
-            </View>
-        </ItemGroup>
+        <View testID="usage-recap-section">
+            <CardGrid
+                columns={columns as 1 | 2 | 3 | 4}
+                collapseBelow="medium"
+                columnGap={12}
+                rowGap={12}
+                style={{ overflow: 'visible' }}
+            >
+                {recapCards.map((card) => (
+                    <CardGridColumn
+                        key={card.id}
+                        span={card.id === 'streak' && columns >= 4 ? 2 : 1}
+                        style={styles.recapColumn}
+                    >
+                        <UsageRecapCard
+                            card={card}
+                            onShare={() => {
+                                void shareUsageRecapCardSummary({
+                                    viewModel,
+                                    filters,
+                                    sessionId,
+                                    cardId: card.id,
+                                });
+                            }}
+                        />
+                    </CardGridColumn>
+                ))}
+            </CardGrid>
+        </View>
     );
 }

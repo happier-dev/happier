@@ -2,13 +2,13 @@ import * as React from 'react';
 import { Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { MetricCard } from '@/components/ui/cards/MetricCard';
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { t } from '@/text';
 import { shadowLevelStyle } from '@/shadowElevation';
 
 import type { UsageRecapCardAccentTone, UsageRecapCardModel } from './buildUsageRecapCardModels';
 import { UsageActivitySquareMatrix, UsageProgressMeter, UsageSparkBars } from './UsageMiniVisuals';
-import { UsageStatCard } from './UsageStatCard';
 
 const styles = StyleSheet.create((theme) => ({
     actionButton: {
@@ -84,15 +84,13 @@ export function UsageRecapCard(props: Readonly<{
     }
 
     return (
-        <UsageStatCard
+        <MetricCard
             testID={card.testID}
-            variant="inset"
             label={card.label}
             value={card.value}
             subtitle={card.subtitle}
             valueTone={card.valueTone}
             visual={visual}
-            accentColor={accentColor}
             headerAccessory={headerAccessory}
         />
     );

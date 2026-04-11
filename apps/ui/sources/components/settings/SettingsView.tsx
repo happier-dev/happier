@@ -43,6 +43,7 @@ import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { DesktopSettingsEntry } from '@/components/settings/desktop/DesktopSettingsEntry';
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
+import { useScannedAuthUrlProcessor } from '@/app/(app)/scan/useScannedAuthUrlProcessor';
 
 const Ionicons = SafeIonicons;
 
@@ -77,8 +78,8 @@ export const SettingsView = React.memo(function SettingsView() {
     const displayName = getDisplayName(profile);
     const avatarUrl = getAvatarUrl(profile);
     const bio = getBio(profile);
-    const pushRoute = React.useCallback((route: Parameters<typeof router.push>[0]) => {
     const usageSummary = useUsageAnalyticsSummary(auth.credentials, usageReportingEnabled);
+    const pushRoute = React.useCallback((route: Parameters<typeof router.push>[0]) => {
         deferOnWeb(() => {
             navigateWithBlurOnWeb(() => {
                 router.push(route);
@@ -92,7 +93,8 @@ export const SettingsView = React.memo(function SettingsView() {
     const showHiddenSettingsButtons = devModeEnabled;
     const showDesktopSettings = isTauriDesktop();
 
-    const { connectTerminal, connectWithUrl, isLoading } = useConnectTerminal();
+    const { connectTerminal, isLoading } = useConnectTerminal();
+    const { processAuthUrl } = useScannedAuthUrlProcessor();
 
     useFocusEffect(
         React.useCallback(() => {
@@ -241,8 +243,6 @@ export const SettingsView = React.memo(function SettingsView() {
                 </View>
             </View>
 
-            {/* Add your phone (desktop/web only) */}
-            {(isRunningOnMac() || (Platform.OS === 'web' && !isPhoneSizedWeb)) &&
             {usageReportingEnabled ? (
                 <SettingsUsageSummaryStrip
                     summary={usageSummary.summary}
@@ -252,6 +252,8 @@ export const SettingsView = React.memo(function SettingsView() {
                 />
             ) : null}
 
+            {/* Add your phone (desktop/web only) */}
+            {(isRunningOnMac() || (Platform.OS === 'web' && !isPhoneSizedWeb)) &&
             auth.isAuthenticated ? (
                 <ItemGroup>
                     <Item
@@ -289,7 +291,7 @@ export const SettingsView = React.memo(function SettingsView() {
                                 }
                             );
                             if (url?.trim()) {
-                                connectWithUrl(url.trim());
+                                await processAuthUrl(url.trim());
                             }
                         }}
                         showChevron={false}

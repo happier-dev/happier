@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { ScrollView, View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import Svg, { Circle, Line, Path, Text as SvgText } from 'react-native-svg';
 
@@ -100,6 +100,7 @@ function formatBucketLabel(timestampMs: number, bucketCount: number): string {
 export function UsageJourneyChart(props: UsageJourneyChartProps): React.ReactElement | null {
     const { timeline, testID } = props;
     const { theme } = useUnistyles();
+    const { width } = useWindowDimensions();
 
     if (timeline.length === 0) {
         return null;
@@ -146,83 +147,91 @@ export function UsageJourneyChart(props: UsageJourneyChartProps): React.ReactEle
 
     const latestBucket = timeline[timeline.length - 1] ?? null;
     const latestLeaders = latestBucket?.leaders.slice(0, 3).filter((leader) => typeof leader.label === 'string' && leader.label.length > 0) ?? [];
+    const renderedChartWidth = Math.max(CHART_WIDTH, Math.round(width - 96));
 
     return (
         <View testID={testID} style={styles.container}>
             <View style={styles.chartWrap}>
-                <Svg width="100%" height={CHART_HEIGHT} viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`} preserveAspectRatio="xMidYMid meet">
-                    {timeline.map((bucket, bucketIndex) => {
-                        const x = CHART_PADDING_X + (bucketCount <= 1 ? usableWidth / 2 : (bucketIndex / (bucketCount - 1)) * usableWidth);
-                        return (
-                            <Line
-                                key={`guide-${bucket.bucketStartMs}`}
-                                x1={x}
-                                y1={CHART_PADDING_TOP - 10}
-                                x2={x}
-                                y2={CHART_HEIGHT - CHART_PADDING_BOTTOM + 4}
-                                stroke={theme.colors.divider}
-                                strokeOpacity={0.8}
-                                strokeWidth={1}
-                            />
-                        );
-                    })}
-
-                    {RANK_Y.map((y, rankIndex) => (
-                        <Line
-                            key={`rank-${rankIndex}`}
-                            x1={CHART_PADDING_X}
-                            y1={y}
-                            x2={CHART_WIDTH - CHART_PADDING_X}
-                            y2={y}
-                            stroke={theme.colors.divider}
-                            strokeOpacity={0.35}
-                            strokeWidth={1}
-                            strokeDasharray="3 8"
-                        />
-                    ))}
-
-                    {Array.from(seriesByLabel.entries()).map(([label, points]) => {
-                        const color = colorByLabel.get(label) ?? theme.colors.accent.blue;
-                        return (
-                            <React.Fragment key={label}>
-                                <Path
-                                    d={buildSegmentPath(points)}
-                                    fill="none"
-                                    stroke={color}
-                                    strokeWidth={2}
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    strokeDasharray="2 6"
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    <Svg
+                        width={renderedChartWidth}
+                        height={CHART_HEIGHT}
+                        viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
+                        preserveAspectRatio="xMinYMid meet"
+                    >
+                        {timeline.map((bucket, bucketIndex) => {
+                            const x = CHART_PADDING_X + (bucketCount <= 1 ? usableWidth / 2 : (bucketIndex / (bucketCount - 1)) * usableWidth);
+                            return (
+                                <Line
+                                    key={`guide-${bucket.bucketStartMs}`}
+                                    x1={x}
+                                    y1={CHART_PADDING_TOP - 10}
+                                    x2={x}
+                                    y2={CHART_HEIGHT - CHART_PADDING_BOTTOM + 4}
+                                    stroke={theme.colors.divider}
+                                    strokeOpacity={0.8}
+                                    strokeWidth={1}
                                 />
-                                {points.map((point) => (
-                                    <Circle
-                                        key={`${label}-${point.bucketIndex}`}
-                                        cx={point.x}
-                                        cy={point.y}
-                                        r={3.5}
-                                        fill={color}
-                                    />
-                                ))}
-                            </React.Fragment>
-                        );
-                    })}
+                            );
+                        })}
 
-                    {timeline.map((bucket, bucketIndex) => {
-                        const x = CHART_PADDING_X + (bucketCount <= 1 ? usableWidth / 2 : (bucketIndex / (bucketCount - 1)) * usableWidth);
-                        return (
-                            <SvgText
-                                key={`label-${bucket.bucketStartMs}`}
-                                x={x}
-                                y={CHART_HEIGHT - 10}
-                                fontSize="11"
-                                textAnchor="middle"
-                                fill={theme.colors.textSecondary}
-                            >
-                                {formatBucketLabel(bucket.bucketStartMs, bucketCount)}
-                            </SvgText>
-                        );
-                    })}
-                </Svg>
+                        {RANK_Y.map((y, rankIndex) => (
+                            <Line
+                                key={`rank-${rankIndex}`}
+                                x1={CHART_PADDING_X}
+                                y1={y}
+                                x2={CHART_WIDTH - CHART_PADDING_X}
+                                y2={y}
+                                stroke={theme.colors.divider}
+                                strokeOpacity={0.35}
+                                strokeWidth={1}
+                                strokeDasharray="3 8"
+                            />
+                        ))}
+
+                        {Array.from(seriesByLabel.entries()).map(([label, points]) => {
+                            const color = colorByLabel.get(label) ?? theme.colors.accent.blue;
+                            return (
+                                <React.Fragment key={label}>
+                                    <Path
+                                        d={buildSegmentPath(points)}
+                                        fill="none"
+                                        stroke={color}
+                                        strokeWidth={2}
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        strokeDasharray="2 6"
+                                    />
+                                    {points.map((point) => (
+                                        <Circle
+                                            key={`${label}-${point.bucketIndex}`}
+                                            cx={point.x}
+                                            cy={point.y}
+                                            r={3.5}
+                                            fill={color}
+                                        />
+                                    ))}
+                                </React.Fragment>
+                            );
+                        })}
+
+                        {timeline.map((bucket, bucketIndex) => {
+                            const x = CHART_PADDING_X + (bucketCount <= 1 ? usableWidth / 2 : (bucketIndex / (bucketCount - 1)) * usableWidth);
+                            return (
+                                <SvgText
+                                    key={`label-${bucket.bucketStartMs}`}
+                                    x={x}
+                                    y={CHART_HEIGHT - 10}
+                                    fontSize="11"
+                                    textAnchor="middle"
+                                    fill={theme.colors.textSecondary}
+                                >
+                                    {formatBucketLabel(bucket.bucketStartMs, bucketCount)}
+                                </SvgText>
+                            );
+                        })}
+                    </Svg>
+                </ScrollView>
             </View>
 
             {latestBucket ? (

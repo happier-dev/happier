@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { compareVersions, isVersionSupported, parseVersion, MINIMUM_CLI_VERSION } from './versionUtils';
+import {
+    compareVersions,
+    isVersionSupported,
+    parseVersion,
+    MINIMUM_CLI_BACKEND_TARGET_SPAWN_VERSION,
+    MINIMUM_CLI_SESSION_USER_MESSAGE_RPC_VERSION,
+    MINIMUM_CLI_VERSION,
+} from './versionUtils';
 
 describe('versionUtils', () => {
     describe('compareVersions', () => {
@@ -15,6 +22,14 @@ describe('versionUtils', () => {
             expect(compareVersions('0.10.0-1', '0.10.0')).toBe(0);
             expect(compareVersions('0.10.0-beta', '0.10.0')).toBe(0);
             expect(compareVersions('0.10.1-1', '0.10.0')).toBe(1);
+        });
+
+        it('orders dev and preview versions using their numeric suffixes', () => {
+            expect(compareVersions('0.1.0-dev.5', '0.1.0-dev.4')).toBe(1);
+            expect(compareVersions('0.1.0-preview.1', '0.1.0-dev.99')).toBe(1);
+            expect(compareVersions('0.1.0-dev.0', '0.0.9')).toBe(1);
+            expect(compareVersions('0.1.0', '0.1.0-dev.0')).toBe(1);
+            expect(compareVersions('0.1.0', '0.1.0-preview.2')).toBe(1);
         });
 
         it('should handle versions with different segment counts', () => {
@@ -44,6 +59,12 @@ describe('versionUtils', () => {
 
         it('returns false for invalid version input', () => {
             expect(isVersionSupported('invalid', MINIMUM_CLI_VERSION)).toBe(false);
+        });
+
+        it('treats dev and preview builds as compatible with the legacy daemon compatibility gates', () => {
+            expect(isVersionSupported('0.1.0-dev.5', MINIMUM_CLI_SESSION_USER_MESSAGE_RPC_VERSION)).toBe(true);
+            expect(isVersionSupported('0.1.0-preview.2', MINIMUM_CLI_BACKEND_TARGET_SPAWN_VERSION)).toBe(true);
+            expect(isVersionSupported('0.0.9', MINIMUM_CLI_BACKEND_TARGET_SPAWN_VERSION)).toBe(false);
         });
     });
 

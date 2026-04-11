@@ -215,6 +215,7 @@ describe('MachineDetailScreen runtime inventory', () => {
                                 label: 'com.happier.cli.daemon.preview.machine-1',
                                 verification: 'verified',
                                 ring: 'preview',
+                                targetMode: 'default-following',
                                 instanceId: 'machine-1',
                                 scope: 'user',
                                 definitionPath: '/Users/tester/Library/LaunchAgents/com.happier.cli.daemon.preview.machine-1.plist',
@@ -252,6 +253,7 @@ describe('MachineDetailScreen runtime inventory', () => {
         expect(text).toContain('summary:1.2.3:1.2.0:1:1:1');
         expect(text).toContain('machine.runtimeInventoryInstallations');
         expect(text).toContain('machine.runtimeInventoryServices');
+        expect(text).toContain('machine.backgroundServiceModes.defaultFollowing');
         expect(text).toContain('MULTIPLE_HAPPIER_INSTALLATIONS_ON_PATH');
     });
 

@@ -2,12 +2,13 @@ import * as React from 'react';
 import { act, ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
-import { installSettingsViewCommonModuleMocks } from './settingsViewTestHelpers';
+import { installSettingsViewCommonModuleMocks, settingsViewScanProcessAuthUrlSpy } from './settingsViewTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const connectTerminalSpy = vi.fn();
+const promptSpy = vi.fn(async (_title?: string): Promise<string | null> => null);
 
 installSettingsViewCommonModuleMocks({
     reactNative: async () => {
@@ -44,7 +45,7 @@ installSettingsViewCommonModuleMocks({
             spies: {
                 alert: vi.fn(),
                 confirm: vi.fn(async () => false),
-                prompt: vi.fn(async () => null),
+                prompt: promptSpy,
             },
         }).module;
     },
@@ -219,5 +220,26 @@ describe('SettingsView (native connect terminal)', () => {
         });
 
         expect(connectTerminalSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('routes manual auth URLs through the shared scanned auth processor', async () => {
+        vi.resetModules();
+        promptSpy.mockReset();
+        promptSpy.mockResolvedValueOnce('happier://terminal?key=abc123&server=https%3A%2F%2Frelay.example.test');
+        settingsViewScanProcessAuthUrlSpy.mockReset();
+        settingsViewScanProcessAuthUrlSpy.mockResolvedValueOnce(true);
+
+        const { SettingsView } = await import('./SettingsView');
+        const tree = (await renderScreen(<SettingsView />)).tree;
+
+        const items = tree.findAllByType('Item' as any);
+        const manualItem = items.find((item: any) => item?.props?.testID === 'settings-connect-terminal-enter-url');
+        expect(manualItem).toBeTruthy();
+
+        await act(async () => {
+            await pressTestInstanceAsync(manualItem!);
+        });
+
+        expect(settingsViewScanProcessAuthUrlSpy).toHaveBeenCalledWith('happier://terminal?key=abc123&server=https%3A%2F%2Frelay.example.test');
     });
 });

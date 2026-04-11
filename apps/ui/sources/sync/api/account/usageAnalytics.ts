@@ -9,6 +9,8 @@ import type {
 
 import type { UsageDataPoint, UsageTotals } from './apiUsage';
 import { calculateTotals, getRecordTotal } from './apiUsage';
+import { formatUsageDimensionLabel } from './formatUsageDimensionLabel';
+import { formatUsageWeekdayHourLabel } from './formatUsageRhythmLabel';
 import type { UsagePeriod } from './usagePeriods';
 
 export type UsageMetric = 'tokens' | 'cost';
@@ -352,7 +354,9 @@ function buildLegacyRowsForDimension(
         grouped.set(groupKey, {
             dimension,
             key: groupKey,
-            label: groupKey,
+            label: dimension === 'backendMode' || dimension === 'source'
+                ? formatUsageDimensionLabel(dimension, groupKey, groupKey)
+                : groupKey,
             totalTokens: tokenTotal,
             totalCost: costTotal,
             reportCount: Number.isFinite(dataPoint.reportCount) ? dataPoint.reportCount : 0,
@@ -409,7 +413,9 @@ function mapBreakdownEntry(
     return {
         dimension,
         key: entry.key,
-        label: entry.label ?? entry.key,
+        label: dimension === 'backendMode' || dimension === 'source'
+            ? formatUsageDimensionLabel(dimension, entry.key, entry.label ?? entry.key)
+            : entry.label ?? entry.key,
         totalTokens: entry.tokens.total,
         totalCost: resolveAnalyticsCost(entry.cost, costMode),
         reportCount: entry.eventCount,
@@ -564,10 +570,15 @@ function buildActivityFromResponse(response: UsageAnalyticsQueryResponse): Usage
 }
 
 function buildLeadersFromResponse(response: UsageAnalyticsQueryResponse): UsageAnalyticsLeaderSections {
-    const mapRows = (entries: readonly { key: string; label?: string; eventCount: number }[] | undefined): UsageAnalyticsLeaderRow[] =>
+    const mapRows = (
+        entries: readonly { key: string; label?: string; eventCount: number }[] | undefined,
+        dimension?: 'backendMode' | 'source',
+    ): UsageAnalyticsLeaderRow[] =>
         (entries ?? []).map((entry) => ({
             key: entry.key,
-            label: entry.label ?? entry.key,
+            label: dimension
+                ? formatUsageDimensionLabel(dimension, entry.key, entry.label ?? entry.key)
+                : entry.label ?? entry.key,
             eventCount: entry.eventCount,
         }));
 
@@ -577,13 +588,14 @@ function buildLeadersFromResponse(response: UsageAnalyticsQueryResponse): UsageA
         sessions: mapRows(response.leaders?.sessions),
         projects: mapRows(response.leaders?.projects),
         workspaces: mapRows(response.leaders?.workspaces),
-        engines: mapRows(response.leaders?.engines),
+        engines: mapRows(response.leaders?.engines, 'backendMode'),
     };
 }
 
 function mapTimelineLeaderEntry(
     entry: NonNullable<NonNullable<UsageAnalyticsQueryResponse['modelTimeline']>[number]['leaders']>[number],
     costPresentation: UsageCostMode | NonNullable<UsageAnalyticsViewModel['costPresentation']>,
+    dimension?: 'backendMode' | 'source',
 ): UsageAnalyticsTimelineLeaderRow {
     const tokens = entry.tokens ?? {
         input: 0,
@@ -601,7 +613,9 @@ function mapTimelineLeaderEntry(
 
     return {
         key: entry.key,
-        label: entry.label ?? entry.key,
+        label: dimension
+            ? formatUsageDimensionLabel(dimension, entry.key, entry.label ?? entry.key)
+            : entry.label ?? entry.key,
         eventCount: entry.eventCount,
         totalTokens: tokens.total,
         totalCost: resolveAnalyticsCost(cost, costPresentation),
@@ -611,11 +625,12 @@ function mapTimelineLeaderEntry(
 function buildTimelineFromResponse(
     entries: UsageAnalyticsQueryResponse['modelTimeline'] | UsageAnalyticsQueryResponse['engineTimeline'] | undefined,
     costPresentation: UsageCostMode | NonNullable<UsageAnalyticsViewModel['costPresentation']>,
+    dimension?: 'backendMode' | 'source',
 ): UsageAnalyticsTimelineBucket[] {
     return (entries ?? []).map((bucket) => ({
         bucketStartMs: bucket.bucketStartMs,
         bucketEndMs: bucket.bucketEndMs,
-        leaders: bucket.leaders.map((entry) => mapTimelineLeaderEntry(entry, costPresentation)),
+        leaders: bucket.leaders.map((entry) => mapTimelineLeaderEntry(entry, costPresentation, dimension)),
     }));
 }
 
@@ -720,6 +735,8 @@ function buildSummaryFromResponse(response: UsageAnalyticsQueryResponse): UsageA
         cost: resolveAnalyticsCost(bucket.cost, costPresentation),
     }));
     const weekBuckets = series.slice(-7);
+    const busiestBucket = [...(response.activity?.weekdayHourBuckets ?? [])]
+        .sort((left, right) => right.eventCount - left.eventCount)[0] ?? null;
 
     return {
         activeDays,
@@ -734,7 +751,7 @@ function buildSummaryFromResponse(response: UsageAnalyticsQueryResponse): UsageA
             ? {
                 dimension: 'backendMode',
                 key: topEngineLeader.key,
-                label: topEngineLeader.label ?? topEngineLeader.key,
+                label: formatUsageDimensionLabel('backendMode', topEngineLeader.key, topEngineLeader.label ?? topEngineLeader.key),
                 totalTokens: matchingEngineBreakdown?.tokens.total ?? 0,
                 totalCost: matchingEngineBreakdown ? resolveAnalyticsCost(matchingEngineBreakdown.cost, costMode) : 0,
                 reportCount: topEngineLeader.eventCount,
@@ -746,8 +763,8 @@ function buildSummaryFromResponse(response: UsageAnalyticsQueryResponse): UsageA
             : response.breakdowns?.backendMode?.[0]
                 ? mapBreakdownEntry(response.breakdowns.backendMode[0], 'backendMode', costMode)
             : null,
-        busiestWindowLabel: response.insights?.busiestDay?.label && response.insights?.busiestHour?.label
-            ? `${response.insights.busiestDay.label} · ${response.insights.busiestHour.label}`
+        busiestWindowLabel: busiestBucket
+            ? formatUsageWeekdayHourLabel(busiestBucket.weekday, busiestBucket.hour)
             : response.insights?.busiestHour?.label ?? null,
         recentActivity,
         hasData: response.totals.eventCount > 0 || series.length > 0,
@@ -906,7 +923,7 @@ export function buildUsageAnalyticsViewModel(
             activity,
             leaders,
             modelTimeline: buildTimelineFromResponse(source.modelTimeline, costPresentation),
-            engineTimeline: buildTimelineFromResponse(source.engineTimeline, costPresentation),
+            engineTimeline: buildTimelineFromResponse(source.engineTimeline, costPresentation, 'backendMode'),
             availableCostModes,
             costPresentation,
             filteredUsageCount: source.totals.eventCount,

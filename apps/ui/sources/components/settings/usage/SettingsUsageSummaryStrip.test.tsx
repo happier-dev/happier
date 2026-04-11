@@ -3,10 +3,29 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 
+function getNodeTextContent(node: unknown): string {
+    if (node == null) {
+        return '';
+    }
+    if (typeof node === 'string' || typeof node === 'number') {
+        return String(node);
+    }
+    if (Array.isArray(node)) {
+        return node.map((child) => getNodeTextContent(child)).join('');
+    }
+    if (typeof node === 'object' && 'props' in node && node.props && typeof node.props === 'object' && 'children' in node.props) {
+        return getNodeTextContent((node.props as { children?: unknown }).children);
+    }
+    return '';
+}
+
 vi.mock('@/text', () => ({
     t: (key: string, params?: Record<string, unknown>) => {
         if (key === 'usage.summary.currentStreakSubtitle' && typeof params?.count === 'number') {
             return `Active on ${params.count} days`;
+        }
+        if (key === 'usage.tokens') {
+            return 'Tokens';
         }
         return key;
     },
@@ -22,6 +41,31 @@ vi.mock('@/components/ui/lists/ItemGroupColumns', () => ({
 }));
 
 describe('SettingsUsageSummaryStrip', () => {
+    it('returns nothing when the summary has no usage data to show', async () => {
+        const { SettingsUsageSummaryStrip } = await import('./SettingsUsageSummaryStrip');
+        const screen = await renderScreen(
+            <SettingsUsageSummaryStrip
+                summary={{
+                    activeDays: 0,
+                    currentStreakDays: 0,
+                    totalTokens: 0,
+                    totalCost: 0,
+                    currency: 'USD',
+                    weekTokens: 0,
+                    weekCost: 0,
+                    topModel: null,
+                    topEngine: null,
+                    busiestWindowLabel: null,
+                    recentActivity: [],
+                    hasData: false,
+                }}
+            />,
+        );
+
+        expect(screen.findAllByTestId('settings-usage-summary-strip')).toHaveLength(0);
+        expect(screen.getTextContent()).not.toContain('usage.noData');
+    });
+
     it('shows a loading state instead of an empty state while the summary is still loading', async () => {
         const { SettingsUsageSummaryStrip } = await import('./SettingsUsageSummaryStrip');
         const screen = await renderScreen(
@@ -121,5 +165,41 @@ describe('SettingsUsageSummaryStrip', () => {
         );
 
         expect(screen.getTextContent()).toContain('€');
+    });
+
+    it('preserves translated casing in the top-model subtitle', async () => {
+        const { SettingsUsageSummaryStrip } = await import('./SettingsUsageSummaryStrip');
+        const screen = await renderScreen(
+            <SettingsUsageSummaryStrip
+                summary={{
+                    activeDays: 8,
+                    currentStreakDays: 18,
+                    totalTokens: 2_400_000,
+                    totalCost: 1500,
+                    currency: 'USD',
+                    weekTokens: 800_000,
+                    weekCost: 320,
+                    topModel: {
+                        dimension: 'model',
+                        key: 'gpt-5',
+                        label: 'GPT-5',
+                        totalTokens: 1_300_000,
+                        totalCost: 800,
+                        reportCount: 9,
+                        firstSeenAt: 0,
+                        lastSeenAt: 0,
+                        contextWindowTokens: null,
+                        contextUsedTokens: null,
+                    },
+                    topEngine: null,
+                    busiestWindowLabel: null,
+                    recentActivity: [{ timestamp: 1, active: true, tokens: 10, cost: 1 }],
+                    hasData: true,
+                }}
+            />,
+        );
+
+        const topModelCard = screen.findByTestId('settings-usage-summary-model-card');
+        expect(getNodeTextContent(topModelCard)).toContain('1.30M Tokens');
     });
 });

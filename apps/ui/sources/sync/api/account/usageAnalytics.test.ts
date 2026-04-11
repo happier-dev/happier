@@ -141,8 +141,8 @@ describe('buildUsageAnalyticsViewModel', () => {
                 session: [{ key: 'session-a', label: 'Session A', eventCount: 2, tokens: { input: 40, output: 20, reasoning: 5, cacheRead: 0, cacheWrite: 0, total: 65 }, cost: { reportedUsd: 6, estimatedUsd: 4, currency: 'USD' } }],
                 project: [{ key: 'project-a', label: 'Project A', eventCount: 2, tokens: { input: 40, output: 20, reasoning: 5, cacheRead: 0, cacheWrite: 0, total: 65 }, cost: { reportedUsd: 6, estimatedUsd: 4, currency: 'USD' } }],
                 workspace: [{ key: 'workspace-a', label: 'Workspace A', eventCount: 3, tokens: { input: 90, output: 30, reasoning: 10, cacheRead: 5, cacheWrite: 0, total: 135 }, cost: { reportedUsd: 12, estimatedUsd: 8, currency: 'USD' } }],
-                backendMode: [{ key: 'claude:remote', label: 'Claude Remote', eventCount: 3, tokens: { input: 90, output: 30, reasoning: 10, cacheRead: 5, cacheWrite: 0, total: 135 }, cost: { reportedUsd: 12, estimatedUsd: 8, currency: 'USD' } }],
-                source: [{ key: 'claude_sdk', label: 'Claude SDK', eventCount: 3, tokens: { input: 90, output: 30, reasoning: 10, cacheRead: 5, cacheWrite: 0, total: 135 }, cost: { reportedUsd: 12, estimatedUsd: 8, currency: 'USD' } }],
+                backendMode: [{ key: 'google:gemini/remote', label: 'google:gemini/remote', eventCount: 3, tokens: { input: 90, output: 30, reasoning: 10, cacheRead: 5, cacheWrite: 0, total: 135 }, cost: { reportedUsd: 12, estimatedUsd: 8, currency: 'USD' } }],
+                source: [{ key: 'claude_sdk', label: 'claude_sdk', eventCount: 3, tokens: { input: 90, output: 30, reasoning: 10, cacheRead: 5, cacheWrite: 0, total: 135 }, cost: { reportedUsd: 12, estimatedUsd: 8, currency: 'USD' } }],
             },
             insights: {
                 activeDays: 2,
@@ -172,7 +172,7 @@ describe('buildUsageAnalyticsViewModel', () => {
                 sessions: [{ key: 'session-a', label: 'Session A', eventCount: 2 }],
                 projects: [{ key: 'project-a', label: 'Project A', eventCount: 2 }],
                 workspaces: [{ key: 'workspace-a', label: 'Workspace A', eventCount: 3 }],
-                engines: [{ key: 'claude:remote', label: 'Claude Remote', eventCount: 3 }],
+                engines: [{ key: 'google:gemini/remote', label: 'google:gemini/remote', eventCount: 3 }],
             },
             modelTimeline: [
                 {
@@ -195,8 +195,8 @@ describe('buildUsageAnalyticsViewModel', () => {
                     bucketEndMs: 1_700_086_400_000,
                     leaders: [
                         {
-                            key: 'claude:remote',
-                            label: 'Claude Remote',
+                            key: 'google:gemini/remote',
+                            label: 'google:gemini/remote',
                             eventCount: 3,
                             tokens: { input: 90, output: 30, reasoning: 10, cacheRead: 5, cacheWrite: 0, total: 135 },
                             cost: { reportedUsd: 12, estimatedUsd: 8, currency: 'USD' },
@@ -227,9 +227,12 @@ describe('buildUsageAnalyticsViewModel', () => {
         expect(viewModel.insights.activeDays).toBe(2);
         expect(viewModel.insights.favoriteModel?.label).toBe('Claude 3.7 Sonnet');
         expect(viewModel.activity.calendarDays).toHaveLength(2);
-        expect(viewModel.leaders.engines[0].label).toBe('Claude Remote');
+        expect(viewModel.leaders.engines[0].label).toBe('Google Gemini Remote');
+        expect(viewModel.breakdowns.backendModes[0]?.label).toBe('Google Gemini Remote');
+        expect(viewModel.breakdowns.sources[0]?.label).toBe('Claude SDK');
         expect(viewModel.leaders.models[0].eventCount).toBe(2);
         expect(viewModel.modelTimeline[0].leaders[0].totalCost).toBe(11);
+        expect(viewModel.engineTimeline[0].leaders[0].label).toBe('Google Gemini Remote');
         expect(viewModel.engineTimeline[0].leaders[0].totalCost).toBe(12);
 
         const estimatedViewModel = buildUsageAnalyticsViewModel(response, {
@@ -242,7 +245,8 @@ describe('buildUsageAnalyticsViewModel', () => {
         expect(estimatedViewModel.engineTimeline[0].leaders[0].totalCost).toBe(8);
 
         const summary = buildUsageAnalyticsSummaryViewModel(response);
-        expect(summary.topEngine?.label).toBe('Claude Remote');
+        expect(summary.topEngine?.label).toBe('Google Gemini Remote');
+        expect(summary.busiestWindowLabel).toBe('Thu · 2 PM');
     });
 
     it('falls back to derived cost presentation fields when an older server returns a partial costPresentation object', () => {

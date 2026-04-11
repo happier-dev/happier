@@ -33,6 +33,7 @@ export default React.memo(function AppearanceSettingsScreen() {
     const [themePreference, setThemePreference] = useLocalSettingMutable('themePreference');
     const [uiFontScale, setUiFontScale] = useLocalSettingMutable('uiFontScale');
     const [uiItemDensity, setUiItemDensity] = useLocalSettingMutable('uiItemDensity');
+    const [mobileWorkspaceExperience, setMobileWorkspaceExperience] = useLocalSettingMutable('mobileWorkspaceExperienceV1');
     const [uiMultiPanePanelsEnabled, setUiMultiPanePanelsEnabled] = useLocalSettingMutable('uiMultiPanePanelsEnabled');
     const [detailsPaneTabsBehavior, setDetailsPaneTabsBehavior] = useLocalSettingMutable('detailsPaneTabsBehavior');
     const [editorFocusModeEnabled, setEditorFocusModeEnabled] = useLocalSettingMutable('editorFocusModeEnabled');
@@ -40,6 +41,7 @@ export default React.memo(function AppearanceSettingsScreen() {
     const [preferredLanguage] = useSettingMutable('preferredLanguage');
     const [openTextSizeMenu, setOpenTextSizeMenu] = React.useState(false);
     const [openItemDensityMenu, setOpenItemDensityMenu] = React.useState(false);
+    const [openMobileWorkspaceExperienceMenu, setOpenMobileWorkspaceExperienceMenu] = React.useState(false);
     const [openDetailsTabsMenu, setOpenDetailsTabsMenu] = React.useState(false);
 
     const uiFontScalePresets = React.useMemo(() => {
@@ -90,6 +92,13 @@ export default React.memo(function AppearanceSettingsScreen() {
                 title: t('settingsAppearance.itemDensityOptions.compact'),
                 subtitle: t('settingsAppearance.itemDensityOptions.compactDescription'),
             },
+        ];
+    }, []);
+
+    const mobileWorkspaceExperienceMenuItems = React.useMemo(() => {
+        return [
+            { id: 'classic', title: t('settingsAppearance.mobileWorkspaceExperienceOptions.classic') },
+            { id: 'cockpit', title: t('settingsAppearance.mobileWorkspaceExperienceOptions.cockpit') },
         ];
     }, []);
 
@@ -276,6 +285,28 @@ export default React.memo(function AppearanceSettingsScreen() {
                     }
                     disabled={!panelsSupported}
                     showChevron={false}
+                />
+                <DropdownMenu
+                    open={openMobileWorkspaceExperienceMenu}
+                    onOpenChange={setOpenMobileWorkspaceExperienceMenu}
+                    variant="selectable"
+                    search={false}
+                    selectedId={mobileWorkspaceExperience as any}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    itemTrigger={{
+                        title: t('settingsAppearance.mobileWorkspaceExperience'),
+                        subtitle: t('settingsAppearance.mobileWorkspaceExperienceDescription'),
+                        icon: <Ionicons name="phone-portrait-outline" size={29} color={theme.colors.accent.blue} />,
+                        showSelectedSubtitle: false,
+                    }}
+                    items={mobileWorkspaceExperienceMenuItems as any}
+                    onSelect={(itemId) => {
+                        if (itemId !== 'classic' && itemId !== 'cockpit') return;
+                        setMobileWorkspaceExperience(itemId as any);
+                    }}
                 />
                 <DropdownMenu
                     open={openDetailsTabsMenu}

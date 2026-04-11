@@ -20,15 +20,23 @@ function normalizeServerUrl(raw: string): string | null {
     }
 }
 
-function normalizeWebPathname(pathname: string): string {
-    return String(pathname ?? '').replace(/\/+$/, '');
+export function normalizeTerminalConnectPathname(pathname: string): string {
+    let value = String(pathname ?? '').trim();
+    if (!value.startsWith('/')) {
+        value = `/${value}`;
+    }
+    return value.replace(/\/+$/, '') || '/';
+}
+
+export function isTerminalConnectWebPathname(pathname: string): boolean {
+    return normalizeTerminalConnectPathname(pathname) === TERMINAL_CONNECT_WEB_PATH;
 }
 
 function parseTerminalConnectWebUrl(raw: string): ParsedTerminalConnectUrl | null {
     try {
         const parsed = new URL(raw);
         if (!SAFE_SERVER_PROTOCOLS.has(parsed.protocol)) return null;
-        if (normalizeWebPathname(parsed.pathname) !== TERMINAL_CONNECT_WEB_PATH) return null;
+        if (!isTerminalConnectWebPathname(parsed.pathname)) return null;
 
         const hashTail = String(parsed.hash ?? '').replace(/^#/, '');
         const source = hashTail || String(parsed.search ?? '').replace(/^\?/, '');

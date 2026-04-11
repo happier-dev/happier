@@ -2,8 +2,9 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { ItemGroupColumn, ItemGroupColumns } from '@/components/ui/lists/ItemGroupColumns';
+import { CardGrid, CardGridColumn } from '@/components/ui/cards/CardGrid';
+import { CardSection } from '@/components/ui/cards/CardSection';
+import { PanelCard } from '@/components/ui/cards/PanelCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -57,15 +58,15 @@ function TimelineJourneyCard(props: Readonly<{
     const leader = props.timeline[props.timeline.length - 1]?.leaders[0]?.label ?? t('usage.noData');
 
     return (
-        <View testID={props.testID} style={styles.card}>
-            <View style={styles.cardHeader}>
-                <Text style={styles.cardLabel}>{props.label}</Text>
-                <Text numberOfLines={1} adjustsFontSizeToFit style={styles.cardValue}>
-                    {leader}
-                </Text>
+        <PanelCard
+            testID={props.testID}
+            headerEyebrow={props.label}
+            title={leader}
+        >
+            <View style={styles.card}>
+                <UsageJourneyChart timeline={props.timeline} />
             </View>
-            <UsageJourneyChart timeline={props.timeline} />
-        </View>
+        </PanelCard>
     );
 }
 
@@ -79,39 +80,36 @@ export function UsageTimelineSection(props: Readonly<{
     }
 
     return (
-        <View testID="usage-timeline-section">
-            <ItemGroup title={t('usage.timeline')}>
-                <View style={styles.sectionBody}>
-                    <Text style={styles.note}>{t('usage.activityCalendarSubtitle')}</Text>
-                    <ItemGroupColumns
-                        columns={2}
-                        collapseBelow="medium"
-                        paddingHorizontal={16}
-                        paddingVertical={0}
-                        columnGap={12}
-                        rowGap={12}
-                    >
-                        {modelTimeline.length > 0 ? (
-                            <ItemGroupColumn style={styles.column}>
-                                <TimelineJourneyCard
-                                    testID="usage-model-timeline-card"
-                                    label={t('usage.summary.topModel')}
-                                    timeline={modelTimeline}
-                                />
-                            </ItemGroupColumn>
-                        ) : null}
-                        {engineTimeline.length > 0 ? (
-                            <ItemGroupColumn style={styles.column}>
-                                <TimelineJourneyCard
-                                    testID="usage-engine-timeline-card"
-                                    label={t('usage.summary.engine')}
-                                    timeline={engineTimeline}
-                                />
-                            </ItemGroupColumn>
-                        ) : null}
-                    </ItemGroupColumns>
-                </View>
-            </ItemGroup>
-        </View>
+        <CardSection
+            title={t('usage.timeline')}
+            subtitle={t('usage.activityCalendarSubtitle')}
+            testID="usage-timeline-section"
+        >
+            <CardGrid
+                columns={2}
+                collapseBelow="medium"
+                columnGap={12}
+                rowGap={12}
+            >
+                {modelTimeline.length > 0 ? (
+                    <CardGridColumn style={styles.column}>
+                        <TimelineJourneyCard
+                            testID="usage-model-timeline-card"
+                            label={t('usage.summary.topModel')}
+                            timeline={modelTimeline}
+                        />
+                    </CardGridColumn>
+                ) : null}
+                {engineTimeline.length > 0 ? (
+                    <CardGridColumn style={styles.column}>
+                        <TimelineJourneyCard
+                            testID="usage-engine-timeline-card"
+                            label={t('usage.summary.engine')}
+                            timeline={engineTimeline}
+                        />
+                    </CardGridColumn>
+                ) : null}
+            </CardGrid>
+        </CardSection>
     );
 }

@@ -64,7 +64,7 @@ describe('useChangelog', () => {
         if (latest === null) {
             throw new Error('Expected changelog state to be captured');
         }
-        const latestValue = latest;
+        const latestValue: ChangelogSnapshot = latest;
         expect(latestValue.hasUnread).toBe(false);
         expect(latestValue.latestReleaseId).toBe('0.2.1');
         expect(new MMKV().getString(CHANGELOG_LAST_VIEWED_RELEASE_ID_KEY)).toBe('0.2.1');
@@ -88,7 +88,7 @@ describe('useChangelog', () => {
         if (latest === null) {
             throw new Error('Expected changelog state to be captured');
         }
-        const latestValue = latest;
+        const latestValue: ChangelogSnapshotWithAction = latest;
         expect(latestValue.hasUnread).toBe(true);
         expect(latestValue.latestReleaseId).toBe('0.2.1');
 

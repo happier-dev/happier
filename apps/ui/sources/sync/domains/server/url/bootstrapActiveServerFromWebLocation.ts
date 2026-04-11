@@ -1,4 +1,4 @@
-import { canonicalizeServerUrl } from './serverUrlCanonical';
+import { canonicalizeServerUrl, createServerUrlComparableKey } from './serverUrlCanonical';
 import { getActiveServerUrl } from '../serverProfiles';
 import { upsertAndActivateServer } from '../serverRuntime';
 
@@ -48,13 +48,14 @@ export function bootstrapActiveServerFromWebLocation(
     if (!desired) return null;
 
     const current = normalizeServerUrl(getActiveServerUrl() ?? '');
-    if (current !== desired) {
+    const currentKey = createServerUrlComparableKey(current ?? '');
+    const desiredKey = createServerUrlComparableKey(desired);
+    if (!currentKey || !desiredKey || currentKey !== desiredKey) {
         try {
             upsertAndActivateServer({
                 serverUrl: desired,
                 source: 'url',
                 scope: opts.scope ?? 'device',
-                replaceEquivalentStoredUrl: true,
             });
         } catch {
             // ignore

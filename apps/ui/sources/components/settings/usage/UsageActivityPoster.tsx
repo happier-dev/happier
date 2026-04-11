@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { ScrollView, View, useWindowDimensions } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -75,6 +75,9 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         gap: 8,
         alignItems: 'stretch',
+    },
+    bucketRowCompact: {
+        flexWrap: 'nowrap',
     },
     bucket: {
         flex: 1,
@@ -199,6 +202,7 @@ export function UsageActivityPoster(props: Readonly<{
     insights: UsageAnalyticsInsightsViewModel;
 }>): React.ReactElement {
     const { activity, insights } = props;
+    const { width } = useWindowDimensions();
     const monthBuckets = React.useMemo(() => buildMonthBuckets(activity), [activity]);
     const weekdayBuckets = React.useMemo(() => buildWeekdayBuckets(activity), [activity]);
     const hourBuckets = React.useMemo(() => buildHourBuckets(activity), [activity]);
@@ -206,6 +210,51 @@ export function UsageActivityPoster(props: Readonly<{
     const busiestMonthIndex = resolveMonthIndex(insights);
     const busiestWeekdayIndex = resolveWeekdayIndex(activity, insights);
     const busiestHourBucketIndex = resolveHourBucketIndex(activity, insights);
+    const useCompactScroller = width < 820;
+
+    function renderBucketRow(params: Readonly<{
+        labels: readonly string[];
+        counts: readonly number[];
+        hotIndex: number | null;
+        hotTone: 'hot' | 'warm';
+        compact?: boolean;
+    }>) {
+        const row = (
+            <View style={[styles.bucketRow, useCompactScroller ? styles.bucketRowCompact : null]}>
+                {params.labels.map((label, index) => {
+                    const isHot = params.hotIndex === index;
+                    return (
+                        <View
+                            key={label}
+                            style={[
+                                styles.bucket,
+                                params.compact ? styles.bucketCompact : null,
+                                isHot
+                                    ? (params.hotTone === 'warm' ? styles.bucketWarm : styles.bucketHot)
+                                    : null,
+                                useCompactScroller ? { width: params.compact ? 72 : 88, flex: 0 } : null,
+                            ]}
+                        >
+                            <Text style={[styles.bucketText, isHot ? styles.bucketTextHot : null]}>{label}</Text>
+                            <Text style={[styles.bucketMetric, isHot ? styles.bucketMetricHot : null]}>
+                                {params.counts[index] > 0 ? params.counts[index].toLocaleString() : ' '}
+                            </Text>
+                        </View>
+                    );
+                })}
+            </View>
+        );
+
+        if (!useCompactScroller) {
+            return row;
+        }
+
+        return (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                {row}
+            </ScrollView>
+        );
+    }
 
     return (
         <View style={styles.poster}>
@@ -222,19 +271,13 @@ export function UsageActivityPoster(props: Readonly<{
                         {insights.busiestMonth?.label ?? '—'}
                     </Text>
                 </View>
-                <View style={styles.bucketRow}>
-                    {MONTH_LABELS.map((label, index) => {
-                        const isHot = busiestMonthIndex === index;
-                        return (
-                            <View key={label} style={[styles.bucket, styles.bucketCompact, isHot ? styles.bucketHot : null]}>
-                                <Text style={[styles.bucketText, isHot ? styles.bucketTextHot : null]}>{label}</Text>
-                                <Text style={[styles.bucketMetric, isHot ? styles.bucketMetricHot : null]}>
-                                    {monthBuckets[index] > 0 ? monthBuckets[index].toLocaleString() : ' '}
-                                </Text>
-                            </View>
-                        );
-                    })}
-                </View>
+                {renderBucketRow({
+                    labels: MONTH_LABELS,
+                    counts: monthBuckets,
+                    hotIndex: busiestMonthIndex,
+                    hotTone: 'hot',
+                    compact: true,
+                })}
             </View>
 
             <View style={styles.track}>
@@ -244,19 +287,12 @@ export function UsageActivityPoster(props: Readonly<{
                         {insights.busiestDay?.label ?? '—'}
                     </Text>
                 </View>
-                <View style={styles.bucketRow}>
-                    {WEEKDAY_LABELS.map((label, index) => {
-                        const isHot = busiestWeekdayIndex === index;
-                        return (
-                            <View key={label} style={[styles.bucket, isHot ? styles.bucketHot : null]}>
-                                <Text style={[styles.bucketText, isHot ? styles.bucketTextHot : null]}>{label}</Text>
-                                <Text style={[styles.bucketMetric, isHot ? styles.bucketMetricHot : null]}>
-                                    {weekdayBuckets[index] > 0 ? weekdayBuckets[index].toLocaleString() : ' '}
-                                </Text>
-                            </View>
-                        );
-                    })}
-                </View>
+                {renderBucketRow({
+                    labels: WEEKDAY_LABELS,
+                    counts: weekdayBuckets,
+                    hotIndex: busiestWeekdayIndex,
+                    hotTone: 'hot',
+                })}
             </View>
 
             <View style={styles.track}>
@@ -266,23 +302,17 @@ export function UsageActivityPoster(props: Readonly<{
                         {insights.busiestHour?.label ?? '—'}
                     </Text>
                 </View>
-                <View style={styles.bucketRow}>
-                    {hourBuckets.map((count, index) => {
-                        const isHot = busiestHourBucketIndex === index;
-                        const colorStyle = isHot ? styles.bucketWarm : null;
+                {renderBucketRow({
+                    labels: hourBuckets.map((count, index) => {
                         const startHour = index * 2;
                         const endHour = (startHour + 2) % 24;
-                        const label = `${formatUsageHourLabel(startHour)}\u2009–\u2009${formatUsageHourLabel(endHour)}`;
-                        return (
-                            <View key={`${label}-${index}`} style={[styles.bucket, styles.bucketCompact, colorStyle]}>
-                                <Text style={[styles.bucketText, isHot ? styles.bucketTextHot : null]}>{label}</Text>
-                                <Text style={[styles.bucketMetric, isHot ? styles.bucketMetricHot : null]}>
-                                    {count > 0 ? count.toLocaleString() : ' '}
-                                </Text>
-                            </View>
-                        );
-                    })}
-                </View>
+                        return `${formatUsageHourLabel(startHour)}\u2009–\u2009${formatUsageHourLabel(endHour)}`;
+                    }),
+                    counts: hourBuckets,
+                    hotIndex: busiestHourBucketIndex,
+                    hotTone: 'warm',
+                    compact: true,
+                })}
             </View>
         </View>
     );

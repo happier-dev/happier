@@ -18,6 +18,7 @@ import { Modal } from '@/modal';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { listServerProfiles, type ServerProfile } from '@/sync/domains/server/serverProfiles';
+import { readCurrentAppRuntimeInfo } from '@/sync/runtime/readCurrentAppRuntimeInfo';
 import {
   useIsDataReady,
   useLastSyncAt,
@@ -36,6 +37,7 @@ import {
   buildMachineDoctorSnapshotTargetKey,
   useMachineDoctorSnapshotCollection,
 } from '@/components/machines/doctorSnapshot/useMachineDoctorSnapshotCollection';
+import { OtaUpdateStatusSection } from './OtaUpdateStatusSection';
 
 function formatRelativeTimeMs(ms: number | null | undefined): string {
   if (!ms) return t('status.unknown');
@@ -77,6 +79,7 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
   const realtimeStatus = useRealtimeStatus();
   const socket = useSocketStatus();
   const lastSyncAt = useLastSyncAt();
+  const appRuntimeInfo = React.useMemo(() => readCurrentAppRuntimeInfo(), []);
 
   const machineListByServerId = useMachineListByServerId();
   const machineListStatusByServerId = useMachineListStatusByServerId();
@@ -139,10 +142,20 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
     const payload = {
       capturedAt: new Date().toISOString(),
       environment: {
-        appVersion: Constants.expoConfig?.version ?? 'unknown',
+        appVersion: appRuntimeInfo.appVersion ?? 'unknown',
+        nativeApplicationVersion: appRuntimeInfo.nativeApplicationVersion,
+        nativeBuildVersion: appRuntimeInfo.nativeBuildVersion,
+        applicationId: appRuntimeInfo.applicationId,
         platform: Platform.OS,
         osVersion: typeof Platform.Version === 'string' ? Platform.Version : String(Platform.Version ?? ''),
         deviceModel: Constants.deviceName ?? undefined,
+        updates: {
+          channel: appRuntimeInfo.updateChannel,
+          updateId: appRuntimeInfo.updateId,
+          runtimeVersion: appRuntimeInfo.runtimeVersion,
+          createdAt: appRuntimeInfo.updateCreatedAt,
+          launchSource: appRuntimeInfo.launchSource,
+        },
       },
       ui: {
         isDataReady,
@@ -230,6 +243,18 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
       <React.Fragment>
         <ItemGroup title={t('systemStatus.sections.appHealth')}>
           <Item
+            title={t('bugReports.composer.environment.appVersionLabel')}
+            detail={appRuntimeInfo.appVersion ?? t('status.unknown')}
+            icon={<Ionicons name="phone-portrait-outline" size={24} color={theme.colors.accent.indigo} />}
+            copy={appRuntimeInfo.appVersion ?? false}
+          />
+          <Item
+            title={t('settingsProviders.releaseChannelTitle')}
+            detail={appRuntimeInfo.updateChannel ?? t('status.unknown')}
+            icon={<Ionicons name="git-branch-outline" size={24} color={theme.colors.accent.blue} />}
+            copy={appRuntimeInfo.updateChannel ?? false}
+          />
+          <Item
             title={t('systemStatus.ui.dataReady')}
             detail={isDataReady ? t('common.yes') : t('common.no')}
             icon={<Ionicons name="pulse-outline" size={24} color={theme.colors.accent.indigo} />}
@@ -255,6 +280,8 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
             icon={<Ionicons name="time-outline" size={24} color={theme.colors.accent.orange} />}
           />
         </ItemGroup>
+
+        <OtaUpdateStatusSection />
 
         <ItemGroup title={t('systemStatus.sections.currentServer')}>
           <Item
@@ -437,6 +464,7 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
             showChevron={false}
           />
           <Item
+            testID="system-status-copy-json"
             title={t('systemStatus.actions.copyJson')}
             subtitle={t('systemStatus.actions.copyJsonSubtitle')}
             icon={<Ionicons name="copy-outline" size={24} color={theme.colors.accent.indigo} />}

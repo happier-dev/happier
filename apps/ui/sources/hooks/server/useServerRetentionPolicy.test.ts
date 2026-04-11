@@ -29,6 +29,7 @@ describe('useServerRetentionPolicy', () => {
                     requires: ['updatedAt', 'lastActiveAt'],
                 },
                 accountChanges: { mode: 'delete_older_than', days: 30 },
+                usageEvents: { mode: 'keep_forever' },
                 voiceSessionLeases: { mode: 'keep_forever' },
                 userFeedItems: { mode: 'delete_older_than', days: 90 },
                 sessionShareAccessLogs: { mode: 'delete_older_than', days: 30 },

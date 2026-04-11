@@ -212,6 +212,30 @@ vi.mock('@/agents/catalog/catalog', () => ({
 }));
 
 describe('SettingsView usage summary strip', () => {
+    it('does not render the usage summary strip when the summary has no data', async () => {
+        usageSummaryState.summary = {
+            ...createSummaryFixture(),
+            activeDays: 0,
+            currentStreakDays: 0,
+            totalTokens: 0,
+            totalCost: 0,
+            weekTokens: 0,
+            weekCost: 0,
+            topModel: null,
+            topEngine: null,
+            busiestWindowLabel: null,
+            recentActivity: [],
+            hasData: false,
+        };
+        usageSummaryState.errorMessage = null;
+        usageSummaryState.isLoading = false;
+        const { SettingsView } = await import('./SettingsView');
+        const screen = await renderSettingsView(React.createElement(SettingsView));
+
+        expect(screen.findAllByTestId('settings-usage-summary-strip')).toHaveLength(0);
+        expect(screen.findAllByTestId('settings-usage-summary-streak-card')).toHaveLength(0);
+    });
+
     it('shows a loading state instead of an empty state while the summary is still loading', async () => {
         usageSummaryState.summary = null;
         usageSummaryState.errorMessage = null;

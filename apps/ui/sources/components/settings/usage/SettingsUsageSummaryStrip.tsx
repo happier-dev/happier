@@ -2,15 +2,15 @@ import * as React from 'react';
 import { ActivityIndicator, View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { ItemGroupColumn, ItemGroupColumns } from '@/components/ui/lists/ItemGroupColumns';
 import { layout } from '@/components/ui/layout/layout';
 import { Text } from '@/components/ui/text/Text';
+import { CardGrid, CardGridColumn } from '@/components/ui/cards/CardGrid';
+import { MetricCard } from '@/components/ui/cards/MetricCard';
 import { t } from '@/text';
 import type { UsageAnalyticsSummaryViewModel } from '@/sync/api/account/usageAnalytics';
 import { shadowLevelStyle } from '@/shadowElevation';
 
 import { UsageActivitySquareMatrix, UsageProgressMeter, UsageSparkBars } from './UsageMiniVisuals';
-import { UsageStatCard } from './UsageStatCard';
 import { formatUsageCurrency } from './formatUsageCurrency';
 import { buildUsageSettingsRouteTarget } from './usageRouteParams';
 
@@ -37,7 +37,7 @@ const styles = StyleSheet.create((theme) => ({
         minWidth: 0,
     },
     summaryCard: {
-        minHeight: 136,
+        minHeight: 148,
         justifyContent: 'space-between',
     },
     emptyState: {
@@ -77,7 +77,7 @@ export const SettingsUsageSummaryStrip = React.memo(function SettingsUsageSummar
     const { width } = useWindowDimensions();
     const { summary, isLoading = false, errorMessage = null, onOpenUsage } = props;
 
-    if (!isLoading && summary == null && !errorMessage) {
+    if (!isLoading && !errorMessage && (summary == null || summary.hasData === false)) {
         return null;
     }
 
@@ -117,18 +117,15 @@ export const SettingsUsageSummaryStrip = React.memo(function SettingsUsageSummar
                         <Text style={styles.emptyText}>{errorMessage}</Text>
                     </View>
                 ) : current.hasData ? (
-                    <ItemGroupColumns
+                    <CardGrid
                         columns={columns as 1 | 2 | 3 | 4}
                         collapseBelow="compact"
-                        paddingHorizontal={0}
-                        paddingVertical={0}
                         columnGap={12}
                         rowGap={12}
                     >
-                        <ItemGroupColumn style={styles.stripColumn}>
-                            <UsageStatCard
+                        <CardGridColumn style={styles.stripColumn}>
+                            <MetricCard
                                 testID="settings-usage-summary-streak-card"
-                                variant="surface"
                                 label={t('usage.summary.currentStreak')}
                                 value={`${current.currentStreakDays}d`}
                                 subtitle={t('usage.summary.currentStreakSubtitle', { count: current.activeDays })}
@@ -140,7 +137,6 @@ export const SettingsUsageSummaryStrip = React.memo(function SettingsUsageSummar
                                         color={theme.colors.accent.orange}
                                     />
                                 )}
-                                accentColor={theme.colors.accent.orange}
                                 contentStyle={styles.summaryCard}
                                 onPress={onOpenUsage
                                     ? () => onOpenUsage(buildUsageSettingsRouteTarget({
@@ -149,12 +145,11 @@ export const SettingsUsageSummaryStrip = React.memo(function SettingsUsageSummar
                                     }))
                                     : undefined}
                             />
-                        </ItemGroupColumn>
+                        </CardGridColumn>
 
-                        <ItemGroupColumn style={styles.stripColumn}>
-                            <UsageStatCard
+                        <CardGridColumn style={styles.stripColumn}>
+                            <MetricCard
                                 testID="settings-usage-summary-week-card"
-                                variant="surface"
                                 label={t('usage.summary.thisWeek')}
                                 value={formatTokens(current.weekTokens)}
                                 subtitle={`${formatUsageCurrency(current.weekCost, current.currency, {
@@ -167,7 +162,6 @@ export const SettingsUsageSummaryStrip = React.memo(function SettingsUsageSummar
                                         color={theme.colors.accent.blue}
                                     />
                                 )}
-                                accentColor={theme.colors.accent.blue}
                                 contentStyle={styles.summaryCard}
                                 onPress={onOpenUsage
                                     ? () => onOpenUsage(buildUsageSettingsRouteTarget({
@@ -176,23 +170,21 @@ export const SettingsUsageSummaryStrip = React.memo(function SettingsUsageSummar
                                     }))
                                     : undefined}
                             />
-                        </ItemGroupColumn>
+                        </CardGridColumn>
 
-                        <ItemGroupColumn style={styles.stripColumn}>
-                            <UsageStatCard
+                        <CardGridColumn style={styles.stripColumn}>
+                            <MetricCard
                                 testID="settings-usage-summary-model-card"
-                                variant="surface"
                                 valueTone="compact"
                                 label={t('usage.summary.topModel')}
                                 value={topModel?.label ?? '—'}
-                                subtitle={topModel ? `${formatTokens(topModel.totalTokens)} ${t('usage.tokens').toLowerCase()}` : t('usage.noData')}
+                                subtitle={topModel ? `${formatTokens(topModel.totalTokens)} ${t('usage.tokens')}` : t('usage.noData')}
                                 visual={(
                                     <UsageProgressMeter
                                         ratio={topModelShare}
                                         color={theme.colors.accent.purple}
                                     />
                                 )}
-                                accentColor={theme.colors.accent.purple}
                                 contentStyle={styles.summaryCard}
                                 onPress={onOpenUsage && topModel
                                     ? () => onOpenUsage(buildUsageSettingsRouteTarget({
@@ -206,12 +198,11 @@ export const SettingsUsageSummaryStrip = React.memo(function SettingsUsageSummar
                                     }))
                                     : undefined}
                             />
-                        </ItemGroupColumn>
+                        </CardGridColumn>
 
-                        <ItemGroupColumn style={styles.stripColumn}>
-                            <UsageStatCard
+                        <CardGridColumn style={styles.stripColumn}>
+                            <MetricCard
                                 testID="settings-usage-summary-engine-card"
-                                variant="surface"
                                 valueTone="compact"
                                 label={t('usage.busiestWindow')}
                                 value={current.busiestWindowLabel ?? '—'}
@@ -222,7 +213,6 @@ export const SettingsUsageSummaryStrip = React.memo(function SettingsUsageSummar
                                         color={theme.colors.accent.green}
                                     />
                                 )}
-                                accentColor={theme.colors.accent.green}
                                 contentStyle={styles.summaryCard}
                                 onPress={onOpenUsage && topEngine
                                     ? () => onOpenUsage(buildUsageSettingsRouteTarget({
@@ -236,13 +226,9 @@ export const SettingsUsageSummaryStrip = React.memo(function SettingsUsageSummar
                                     }))
                                     : undefined}
                             />
-                        </ItemGroupColumn>
-                    </ItemGroupColumns>
-                ) : (
-                    <View style={styles.emptyState}>
-                        <Text style={styles.emptyText}>{t('usage.noData')}</Text>
-                    </View>
-                )}
+                        </CardGridColumn>
+                    </CardGrid>
+                ) : null}
             </View>
         </View>
     );

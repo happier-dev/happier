@@ -1,84 +1,118 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect } from 'react';
 import { AppState, AppStateStatus, Platform } from 'react-native';
 import * as Updates from 'expo-updates';
+import { useUpdates as useExpoUpdates } from 'expo-updates';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+
+let otaAppStateSubscription: { remove: () => void } | null = null;
+let otaCheckInFlight: Promise<void> | null = null;
+let otaRuntimeConsumerCount = 0;
+
+function shouldManageOtaUpdates(): boolean {
+    return !__DEV__ && Platform.OS !== 'web';
+}
+
+function shouldRunOtaChecks(): boolean {
+    return shouldManageOtaUpdates() && otaRuntimeConsumerCount > 0;
+}
+
+async function runSingleFlightOtaCheck(): Promise<void> {
+    if (!shouldRunOtaChecks()) {
+        return;
+    }
+
+    if (otaCheckInFlight) {
+        return otaCheckInFlight;
+    }
+
+    otaCheckInFlight = (async () => {
+        const update = await Updates.checkForUpdateAsync();
+        if (update.isAvailable) {
+            await Updates.fetchUpdateAsync();
+        }
+    })().finally(() => {
+        otaCheckInFlight = null;
+    });
+
+    return otaCheckInFlight;
+}
+
+function startOtaRuntime(): void {
+    if (otaAppStateSubscription || !shouldRunOtaChecks()) {
+        return;
+    }
+
+    otaAppStateSubscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
+        if (nextAppState === 'active') {
+            void runSingleFlightOtaCheck().catch(() => {});
+        }
+    });
+
+    void runSingleFlightOtaCheck().catch(() => {});
+}
+
+function stopOtaRuntime(): void {
+    otaAppStateSubscription?.remove();
+    otaAppStateSubscription = null;
+}
 
 export function useUpdates() {
     const otaUpdatesEnabled = useFeatureEnabled('updates.ota');
-    const [updateAvailable, setUpdateAvailable] = useState(false);
-    const [isChecking, setIsChecking] = useState(false);
-    const isCheckingRef = useRef(false);
+    const otaRuntimeSupported = otaUpdatesEnabled && shouldManageOtaUpdates();
+    const updatesState = useExpoUpdates();
 
     const checkForUpdates = useCallback(async () => {
-        if (__DEV__) {
-            // Don't check for updates in development
+        if (!otaRuntimeSupported) {
             return;
         }
-
-        if (!otaUpdatesEnabled) {
-            return;
-        }
-
-        if (isCheckingRef.current) {
-            return;
-        }
-
-        isCheckingRef.current = true;
-        setIsChecking(true);
 
         try {
-            const update = await Updates.checkForUpdateAsync();
-            if (update.isAvailable) {
-                await Updates.fetchUpdateAsync();
-                setUpdateAvailable(true);
-            }
-        } catch (error) {
-            console.error('Error checking for updates:', error);
-        } finally {
-            isCheckingRef.current = false;
-            setIsChecking(false);
-        }
-    }, [otaUpdatesEnabled]);
-
-    const handleAppStateChange = useCallback((nextAppState: AppStateStatus) => {
-        if (nextAppState === 'active') {
-            void checkForUpdates();
-        }
-    }, [checkForUpdates]);
+            await runSingleFlightOtaCheck();
+        } catch {}
+    }, [otaRuntimeSupported]);
 
     useEffect(() => {
-        // Check for updates when app becomes active
-        const subscription = AppState.addEventListener('change', handleAppStateChange);
+        if (!otaRuntimeSupported) {
+            return;
+        }
+
+        otaRuntimeConsumerCount += 1;
+        startOtaRuntime();
 
         return () => {
-            subscription.remove();
+            otaRuntimeConsumerCount = Math.max(0, otaRuntimeConsumerCount - 1);
+            if (otaRuntimeConsumerCount === 0) {
+                stopOtaRuntime();
+            }
         };
-    }, [handleAppStateChange]);
-
-    useEffect(() => {
-        void checkForUpdates();
-    }, [checkForUpdates]);
-
-    useEffect(() => {
-        if (otaUpdatesEnabled) return;
-        setUpdateAvailable(false);
-    }, [otaUpdatesEnabled]);
+    }, [otaRuntimeSupported]);
 
     const reloadApp = useCallback(async () => {
-        if (Platform.OS === 'web') {
-            window.location.reload();
-        } else {
-            try {
+        try {
+            if (Platform.OS === 'web') {
+                window.location.reload();
+            } else {
                 await Updates.reloadAsync();
-            } catch (error) {
-                console.error('Error reloading app:', error);
             }
-        }
+        } catch {}
     }, []);
 
     return {
-        updateAvailable,
-        isChecking,
+        updateAvailable: otaRuntimeSupported && updatesState.isUpdatePending,
+        isChecking: otaRuntimeSupported && updatesState.isChecking,
+        isDownloading: otaRuntimeSupported && updatesState.isDownloading,
+        isRestarting: otaRuntimeSupported && updatesState.isRestarting,
+        isUpdateAvailable: otaRuntimeSupported && updatesState.isUpdateAvailable,
+        isUpdatePending: otaRuntimeSupported && updatesState.isUpdatePending,
+        downloadProgress: otaRuntimeSupported ? updatesState.downloadProgress : undefined,
+        checkError: otaRuntimeSupported ? updatesState.checkError : undefined,
+        downloadError: otaRuntimeSupported ? updatesState.downloadError : undefined,
+        lastCheckForUpdateTimeSinceRestart: otaRuntimeSupported ? updatesState.lastCheckForUpdateTimeSinceRestart : undefined,
+        availableUpdate: otaRuntimeSupported ? updatesState.availableUpdate : undefined,
+        downloadedUpdate: otaRuntimeSupported ? updatesState.downloadedUpdate : undefined,
+        currentlyRunning: updatesState.currentlyRunning,
+        otaUpdatesEnabled,
+        otaRuntimeSupported,
         checkForUpdates,
         reloadApp,
     };

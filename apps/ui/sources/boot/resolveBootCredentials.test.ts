@@ -38,8 +38,17 @@ function createStorageMock() {
 function stubWebRuntime(href: string): void {
     const localStorage = createStorageMock();
     const sessionStorage = createStorageMock();
+    const parsedUrl = new URL(href);
     vi.stubGlobal('window', {
-        location: { href },
+        location: {
+            hash: parsedUrl.hash,
+            host: parsedUrl.host,
+            hostname: parsedUrl.hostname,
+            href,
+            origin: parsedUrl.origin,
+            pathname: parsedUrl.pathname,
+            search: parsedUrl.search,
+        },
         localStorage,
         history: { replaceState: vi.fn() },
     });
@@ -332,6 +341,43 @@ describe('resolveBootCredentials', () => {
             serverId: 'manual-id',
         });
         expect(getActiveServerSnapshot().serverId).toBe('manual-id');
+    });
+
+    it('does not rewrite an equivalent stack relay profile url when terminal-connect boot uses another loopback alias', async () => {
+        const storageScope = `resolve_boot_stack_${Date.now()}`;
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = storageScope;
+        stubWebRuntime('http://happier-stack.localhost:24541/terminal/connect#key=abc123&server=http%3A%2F%2Flocalhost%3A24541');
+
+        const { scopedStorageId } = await import('@/utils/system/storageScope');
+        globalThis.localStorage.setItem(
+            `${scopedStorageId('server-profiles', storageScope)}:server-state-v1`,
+            JSON.stringify({
+                activeServerIdIsExplicit: true,
+                activeServerId: 'stack-id',
+                servers: {
+                    'stack-id': {
+                        id: 'stack-id',
+                        name: 'Stack Seeded',
+                        serverUrl: 'http://happier-stack.localhost:24541',
+                        createdAt: 100,
+                        updatedAt: 200,
+                        lastUsedAt: 300,
+                        source: 'stack-env',
+                    },
+                },
+            }),
+        );
+
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: 'stack-token', secret: 'stack-secret' });
+
+        const { getActiveServerId, getActiveServerUrl } = await import('@/sync/domains/server/serverProfiles');
+        const { resolveBootCredentials } = await import('./resolveBootCredentials');
+        await expect(resolveBootCredentials('web')).resolves.toEqual({ token: 'stack-token', secret: 'stack-secret' });
+        expect(getCredentialsForServerUrlMock).toHaveBeenCalledWith('http://localhost:24541', {
+            serverId: 'stack-id',
+        });
+        expect(getActiveServerId()).toBe('stack-id');
+        expect(getActiveServerUrl()).toBe('http://happier-stack.localhost:24541');
     });
 
 });

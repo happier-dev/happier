@@ -88,10 +88,31 @@ export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
         storageScope: 'local',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
     },
-    projectLastMobileRouteByWorkspaceRefId: {
-        schema: z.record(z.string(), z.enum(['details', 'files', 'git'])).default({}),
+    mobileWorkspaceExperienceV1: {
+        schema: z.enum(['classic', 'cockpit']),
+        default: 'classic',
+        description: 'Preferred mobile workspace experience mode',
+        storageScope: 'local',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
+    },
+    sessionLastMobileSurfaceBySessionId: {
+        schema: z.record(z.string(), z.enum(['chat', 'browse', 'git', 'tabs', 'terminal'])).default({}),
         default: {},
-        description: 'Last active mobile project route by workspace ref id',
+        description: 'Last active mobile session surface by session id',
+        storageScope: 'local',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'count',
+            privacy: 'count_only',
+            identityScope: 'device_user',
+            serializeCurrent: objectKeyCount,
+        },
+    },
+    projectLastMobileSurfaceByWorkspaceRefId: {
+        schema: z.record(z.string(), z.enum(['overview', 'browse', 'git', 'tabs', 'terminal'])).default({}),
+        default: {},
+        description: 'Last active mobile project surface by workspace ref id',
         storageScope: 'local',
         analytics: {
             trackCurrentState: true,

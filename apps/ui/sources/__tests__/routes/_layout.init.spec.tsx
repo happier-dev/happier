@@ -13,12 +13,13 @@ const hideAsyncMock = vi.fn(async () => {});
 let mockedPlatformOS: string = 'web';
 let mockedPathname = '/';
 let mockedConfigVariant: string = '';
+let sidebarNavigatorRenderMode: 'default' | 'tab-state-probe' = 'default';
 const sentryInitMock = vi.fn();
 const sentryMobileReplayIntegrationMock = vi.fn(() => ({ name: 'mobileReplayIntegration' }));
 const sentryWrapMock = vi.fn((Component: any) => Component);
 const routerPushMock = vi.fn();
 
-const { fromModuleMock, trackingState, fontAwesomeFontMock, ioniconsFontMock } = vi.hoisted(() => ({
+const { fromModuleMock, trackingState, fontAwesomeFontMock, ioniconsFontMock, mainAppTabStateShim } = vi.hoisted(() => ({
     fromModuleMock: vi.fn(),
     trackingState: {
         client: null as null | {
@@ -29,6 +30,9 @@ const { fromModuleMock, trackingState, fontAwesomeFontMock, ioniconsFontMock } =
     },
     fontAwesomeFontMock: { FontAwesome: 101 },
     ioniconsFontMock: { Ionicons: 202 },
+    mainAppTabStateShim: {
+        useMainAppTabState: null as null | (() => { activeTab: string; setActiveTab: () => Promise<void>; isLoading: boolean }),
+    },
 }));
 
 vi.mock('react-native-quick-base64', () => ({}));
@@ -86,6 +90,49 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
     },
     isLegacyAuthCredentials: (credentials: unknown) => Boolean(credentials),
 }));
+
+vi.mock('@/hooks/ui/useTabState', () => ({
+    useTabState: () => ({
+        activeTab: 'sessions',
+        setActiveTab: vi.fn(async () => {}),
+        isLoading: false,
+    }),
+}));
+
+vi.mock('@/components/navigation/mobile/chrome/MainAppTabStateProvider', async () => {
+    const React = await import('react');
+    const Context = React.createContext<{
+        activeTab: string;
+        setActiveTab: () => Promise<void>;
+        isLoading: boolean;
+    } | null>(null);
+
+    const useMainAppTabState = () => {
+        const value = React.useContext(Context);
+        if (!value) {
+            throw new Error('useMainAppTabState must be used within MainAppTabStateProvider');
+        }
+        return value;
+    };
+
+    mainAppTabStateShim.useMainAppTabState = useMainAppTabState;
+
+    return {
+        MainAppTabStateProvider: ({ children }: { children: React.ReactNode }) =>
+            React.createElement(
+                Context.Provider,
+                {
+                    value: {
+                        activeTab: 'sessions',
+                        setActiveTab: async () => {},
+                        isLoading: false,
+                    },
+                },
+                children,
+            ),
+        useMainAppTabState,
+    };
+});
 
 installRouteRootCommonModuleMocks({
     reactNative: async () => {
@@ -169,7 +216,20 @@ vi.mock('react-native-gesture-handler', () => {
 vi.mock('@/components/navigation/shell/SidebarNavigator', () => {
     const React = require('react');
     return {
-        SidebarNavigator: () => React.createElement('SidebarNavigator'),
+        SidebarNavigator: () => {
+            if (sidebarNavigatorRenderMode === 'tab-state-probe') {
+                const tabState = mainAppTabStateShim.useMainAppTabState?.();
+                if (!tabState) {
+                    throw new Error('missing main app tab state shim');
+                }
+                return React.createElement('SidebarNavigator', {
+                    testID: 'sidebar-navigator-tabstate-probe',
+                    activeTab: tabState.activeTab,
+                });
+            }
+
+            return React.createElement('SidebarNavigator');
+        },
     };
 });
 
@@ -264,6 +324,7 @@ describe('app/_layout init resilience', () => {
         standardCleanup();
         // Ensure no test leaks fake timers into subsequent tests.
         vi.useRealTimers();
+        sidebarNavigatorRenderMode = 'default';
         mockedPlatformOS = 'web';
         mockedPathname = '/';
         mockedConfigVariant = '';
@@ -320,6 +381,17 @@ describe('app/_layout init resilience', () => {
         delete process.env.EXPO_PUBLIC_SENTRY_DSN;
         await import('@/app/_layout');
         expect(sentryWrapMock).toHaveBeenCalledTimes(0);
+    });
+
+    it('provides the main app tab state to the root sidebar shell', async () => {
+        sidebarNavigatorRenderMode = 'tab-state-probe';
+
+        const screen = await renderSettledRootLayout();
+
+        const probes = screen.tree.findAll((node) =>
+            node.props?.testID === 'sidebar-navigator-tabstate-probe' && node.props?.activeTab === 'sessions',
+        );
+        expect(probes).toHaveLength(1);
     });
 
     it('configures separate Android notification channels for permission/action request pushes', async () => {
@@ -413,11 +485,11 @@ describe('app/_layout init resilience', () => {
         expect(screen.findByTestId('app-crash-recovery-boundary')).toBeTruthy();
     });
 
-    it('bypasses the desktop shell for terminal-connect routes', async () => {
+    it('keeps the shell navigator mounted while hiding desktop chrome for terminal-connect routes', async () => {
         mockedPathname = '/terminal/connect';
         const screen = await renderSettledRootLayout();
 
-        expect(screen.findAllByType('SidebarNavigator' as any)).toHaveLength(0);
+        expect(screen.findAllByType('SidebarNavigator' as any)).toHaveLength(1);
         expect(screen.findAllByType('DesktopUpdateBanner' as any)).toHaveLength(0);
         expect(screen.findAllByType('FaviconPermissionIndicator' as any)).toHaveLength(0);
     });

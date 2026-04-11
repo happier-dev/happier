@@ -94,6 +94,13 @@ export const ACCOUNT_CORE_SETTING_DEFINITIONS = defineSettingDefinitions({
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     },
+    agentInputEnterToSendNative: {
+        schema: z.boolean(),
+        default: false,
+        description: 'Whether pressing Enter submits/sends in the agent input (native)',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+    },
     alwaysShowContextSize: {
         schema: z.boolean(),
         default: false,

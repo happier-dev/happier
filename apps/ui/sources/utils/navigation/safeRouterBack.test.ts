@@ -85,4 +85,58 @@ describe('safeRouterBack', () => {
         expect((globalThis as any).location.pathname).toBe('/went-back');
         expect(replaceSpy).not.toHaveBeenCalled();
     });
+
+    it('falls back to replace when navigation state shows there is no back stack', () => {
+        const backSpy = vi.fn();
+        const replaceSpy = vi.fn();
+
+        safeRouterBack({
+            router: {
+                back: backSpy,
+                replace: replaceSpy,
+            },
+            navigation: {
+                getState: () => ({
+                    index: 0,
+                    routes: [{ key: 'only-route' }],
+                }),
+            },
+            fallbackHref: '/fallback',
+        });
+
+        expect(backSpy).not.toHaveBeenCalled();
+        expect(replaceSpy).toHaveBeenCalledWith('/fallback');
+    });
+
+    it('prefers navigation.goBack over router.back when the local navigator can handle back', () => {
+        vi.useFakeTimers();
+
+        const backSpy = vi.fn();
+        const replaceSpy = vi.fn();
+        const navigationGoBackSpy = vi.fn();
+
+        safeRouterBack({
+            router: {
+                back: backSpy,
+                replace: replaceSpy,
+            },
+            navigation: {
+                canGoBack: () => true,
+                goBack: navigationGoBackSpy,
+                getState: () => ({
+                    index: 1,
+                    routes: [{ key: 'previous-route' }, { key: 'current-route' }],
+                }),
+            },
+            fallbackHref: '/fallback',
+        });
+
+        expect(navigationGoBackSpy).toHaveBeenCalledTimes(1);
+        expect(backSpy).not.toHaveBeenCalled();
+        expect(replaceSpy).not.toHaveBeenCalled();
+
+        vi.runAllTimers();
+
+        expect(replaceSpy).not.toHaveBeenCalled();
+    });
 });

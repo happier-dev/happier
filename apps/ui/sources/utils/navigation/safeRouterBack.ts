@@ -6,6 +6,11 @@ type RouterLike = Readonly<{
 
 type NavigationLike = Readonly<{
     canGoBack?: () => boolean;
+    goBack?: () => void;
+    getState?: () => Readonly<{
+        index?: number;
+        routes?: ReadonlyArray<unknown>;
+    }> | undefined;
 }>;
 
 export function safeRouterBack(params: { router: RouterLike; navigation?: NavigationLike | null; fallbackHref: string }): void {
@@ -15,10 +20,17 @@ export function safeRouterBack(params: { router: RouterLike; navigation?: Naviga
     const navigationCanGoBack = typeof params.navigation?.canGoBack === 'function'
         ? params.navigation.canGoBack()
         : null;
+    const navigationStateCanGoBack = typeof params.navigation?.getState === 'function'
+        ? (() => {
+            const state = params.navigation.getState();
+            if (!state || typeof state.index !== 'number' || !Array.isArray(state.routes)) return null;
+            return state.index > 0 && state.routes.length > 1;
+        })()
+        : null;
 
     const canGoBack = routerCanGoBack === false || navigationCanGoBack === false
         ? false
-        : routerCanGoBack ?? navigationCanGoBack ?? true;
+        : routerCanGoBack ?? navigationCanGoBack ?? navigationStateCanGoBack ?? true;
 
     if (!canGoBack) {
         params.router.replace(params.fallbackHref);
@@ -26,6 +38,11 @@ export function safeRouterBack(params: { router: RouterLike; navigation?: Naviga
     }
 
     try {
+        if (typeof params.navigation?.goBack === 'function' && (navigationCanGoBack === true || navigationStateCanGoBack === true)) {
+            params.navigation.goBack();
+            return;
+        }
+
         const startHref = typeof (globalThis as any)?.location?.href === 'string'
             ? String((globalThis as any).location.href)
             : null;

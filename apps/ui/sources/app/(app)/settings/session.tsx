@@ -35,6 +35,7 @@ export default React.memo(function SessionSettingsScreen() {
     const [busySteerSendPolicy, setBusySteerSendPolicy] = useSettingMutable('sessionBusySteerSendPolicy');
 
     const [agentInputEnterToSend, setAgentInputEnterToSend] = useSettingMutable('agentInputEnterToSend');
+    const [agentInputEnterToSendNative, setAgentInputEnterToSendNative] = useSettingMutable('agentInputEnterToSendNative');
     const [agentInputHistoryScope, setAgentInputHistoryScope] = useSettingMutable('agentInputHistoryScope');
 
     const [terminalConnectLegacySecretExportEnabled, setTerminalConnectLegacySecretExportEnabled] = useSettingMutable('terminalConnectLegacySecretExportEnabled');
@@ -69,6 +70,8 @@ export default React.memo(function SessionSettingsScreen() {
     const [openSessionListDensityMenu, setOpenSessionListDensityMenu] = React.useState(false);
     const [openSessionListOrderingModeMenu, setOpenSessionListOrderingModeMenu] = React.useState(false);
     const [openWindowsRemoteSessionLaunchModeMenu, setOpenWindowsRemoteSessionLaunchModeMenu] = React.useState(false);
+    const enterToSendEnabled = Platform.OS === 'web' ? agentInputEnterToSend : agentInputEnterToSendNative;
+    const setEnterToSendEnabled = Platform.OS === 'web' ? setAgentInputEnterToSend : setAgentInputEnterToSendNative;
 
     const groupingMenuItems = React.useMemo(() => [
         {
@@ -356,11 +359,11 @@ export default React.memo(function SessionSettingsScreen() {
                 >
                     <Item
                         title={t('settingsFeatures.enterToSend')}
-                        subtitle={agentInputEnterToSend ? t('settingsFeatures.enterToSendEnabled') : t('settingsFeatures.enterToSendDisabled')}
+                        subtitle={enterToSendEnabled ? t('settingsFeatures.enterToSendEnabled') : t('settingsFeatures.enterToSendDisabled')}
                         icon={<Ionicons name="return-down-forward-outline" size={29} color={theme.colors.accent.blue} />}
-                        rightElement={<Switch value={agentInputEnterToSend} onValueChange={setAgentInputEnterToSend} />}
+                        rightElement={<Switch value={enterToSendEnabled} onValueChange={setEnterToSendEnabled} />}
                         showChevron={false}
-                        onPress={() => setAgentInputEnterToSend(!agentInputEnterToSend)}
+                        onPress={() => setEnterToSendEnabled(!enterToSendEnabled)}
                     />
 
                     <DropdownMenu
@@ -398,6 +401,16 @@ export default React.memo(function SessionSettingsScreen() {
 
             {/* Input (moved from Appearance) */}
             <ItemGroup title={t('settingsSession.input.title')} footer={t('settingsSession.input.footer')}>
+                {Platform.OS !== 'web' ? (
+                    <Item
+                        title={t('settingsFeatures.enterToSend')}
+                        subtitle={enterToSendEnabled ? t('settingsFeatures.enterToSendEnabled') : t('settingsFeatures.enterToSendDisabled')}
+                        icon={<Ionicons name="return-down-forward-outline" size={29} color={theme.colors.accent.blue} />}
+                        rightElement={<Switch value={enterToSendEnabled} onValueChange={setEnterToSendEnabled} />}
+                        showChevron={false}
+                        onPress={() => setEnterToSendEnabled(!enterToSendEnabled)}
+                    />
+                ) : null}
                 <Item
                     title={t('settingsAppearance.agentInputActionBarLayout')}
                     subtitle={t('settingsAppearance.agentInputActionBarLayoutDescription')}

@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import type { ActiveServerSnapshot, ServerProfile } from '@/sync/domains/server/serverProfiles';
+import { filterVisibleMachines, resolveServerScopedMachines } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { getEffectiveServerSelectionFromRawSettings } from '@/sync/domains/server/selection/serverSelectionResolution';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
@@ -52,12 +53,14 @@ export function useActiveSelectionMachineGroups(params: Readonly<{
     const visibleMachineGroups = React.useMemo(() => {
         const serverNameById = new Map(params.serverProfiles.map((server) => [server.id, server.name] as const));
         return visibleMachineServerIds.map((serverId) => {
-            const machines =
-                params.machineListByServerId[serverId]
-                ?? (serverId === params.activeServerSnapshot.serverId ? params.allMachines : null)
-                ?? [];
+            const machines = resolveServerScopedMachines({
+                serverId,
+                activeServerId: params.activeServerSnapshot.serverId,
+                activeMachines: params.allMachines,
+                machineListByServerId: params.machineListByServerId,
+            }) ?? [];
             const status = params.machineListStatusByServerId[serverId] ?? 'idle';
-            const visibleMachines = machines.filter((machine) => !machine.revokedAt);
+            const visibleMachines = filterVisibleMachines(machines);
             return {
                 serverId,
                 serverName: serverNameById.get(serverId) ?? serverId,
