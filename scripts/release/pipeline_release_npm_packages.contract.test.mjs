@@ -35,21 +35,19 @@ test('pipeline npm release script supports dry-run for CLI tarball publish', asy
   assert.match(out, /scripts\/pipeline\/npm\/publish-tarball\.mjs/);
 });
 
-test('pipeline npm release script supports dry-run for support tarball publish', async () => {
+test('pipeline npm release script supports dev channel prerelease versions in dry-run', async () => {
   const out = execFileSync(
     process.execPath,
     [
       resolve(repoRoot, 'scripts', 'pipeline', 'npm', 'release-packages.mjs'),
       '--channel',
-      'preview',
+      'dev',
       '--publish-cli',
-      'false',
+      'true',
       '--publish-stack',
       'false',
       '--publish-server',
       'false',
-      '--publish-support',
-      'true',
       '--dry-run',
     ],
     {
@@ -61,6 +59,6 @@ test('pipeline npm release script supports dry-run for support tarball publish',
     },
   );
 
-  assert.match(out, /packages\/support/);
-  assert.match(out, /scripts\/pipeline\/npm\/publish-tarball\.mjs/);
+  assert.match(out, /version: [\d.]+ -> [\d.]+-dev\./);
+  assert.match(out, /publish-tarball\.mjs --channel preview .* --tag dev\b/);
 });

@@ -57,3 +57,52 @@ test('pipeline CLI can compute release bump plan (dry-run safe, pure)', async ()
   assert.equal(parsed.publish_server, false);
 });
 
+test('pipeline CLI forwards cli-stack shared release inputs to release-bump-plan', async () => {
+  const out = execFileSync(
+    process.execPath,
+    [
+      resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
+      'release-bump-plan',
+      '--environment',
+      'preview',
+      '--bump-preset',
+      'patch',
+      '--bump-app-override',
+      'preset',
+      '--bump-cli-override',
+      'preset',
+      '--bump-stack-override',
+      'preset',
+      '--deploy-targets',
+      'cli,stack',
+      '--changed-ui',
+      'false',
+      '--changed-cli',
+      'false',
+      '--changed-stack',
+      'false',
+      '--changed-server',
+      'false',
+      '--changed-website',
+      'false',
+      '--changed-cli-stack-shared',
+      'true',
+      '--changed-shared',
+      'false',
+    ],
+    { cwd: repoRoot, env: process.env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 },
+  );
+
+  const lastLine = out
+    .trim()
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .at(-1);
+  assert.ok(lastLine, 'expected JSON output line');
+  const parsed = JSON.parse(lastLine);
+  assert.equal(parsed.bump_cli, 'patch');
+  assert.equal(parsed.bump_stack, 'patch');
+  assert.equal(parsed.publish_cli, true);
+  assert.equal(parsed.publish_stack, true);
+});

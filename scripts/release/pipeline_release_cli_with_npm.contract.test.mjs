@@ -60,3 +60,56 @@ test('pipeline CLI release can include npm publish lane in dry-run', async () =>
     stub.cleanup();
   }
 });
+
+test('pipeline CLI release treats cli-common-only changes as cli and stack release work in dry-run', async () => {
+  const stub = createReleaseCliDryRunEnv(process.env, {
+    diffPaths: ['packages/cli-common/src/providers/resolution.ts'],
+  });
+  try {
+    const out = execFileSync(
+      process.execPath,
+      [
+        resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
+        'release',
+        '--confirm',
+        'release dev to preview',
+        '--deploy-environment',
+        'preview',
+        '--deploy-targets',
+        'cli,stack',
+        '--bump',
+        'patch',
+        '--repository',
+        'happier-dev/happier',
+        '--npm-mode',
+        'pack+publish',
+        '--dry-run',
+        '--secrets-source',
+        'env',
+      ],
+      {
+        cwd: repoRoot,
+        env: {
+          ...stub.env,
+          NPM_TOKEN: 'npm-token',
+          GH_TOKEN: '',
+          GH_REPO: '',
+          GITHUB_REPOSITORY: '',
+        },
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: RELEASE_CLI_DRY_RUN_TIMEOUT_MS,
+      },
+    );
+
+    assert.match(out, /\[pipeline\] release: environment=preview confirm=release dev to preview/);
+    assert.match(out, /- bump_app=none bump_server=none bump_website=none bump_cli=patch bump_stack=patch/);
+    assert.match(out, /\[pipeline\] dry-run: would run/);
+    assert.match(out, /- runPublishNpm: true/);
+    assert.match(out, /- runPublishDocker: true/);
+    assert.match(out, /- dockerBuildDevBox: true/);
+    assert.match(out, /- dockerBuildRelay: false/);
+  } finally {
+    stub.cleanup();
+  }
+});

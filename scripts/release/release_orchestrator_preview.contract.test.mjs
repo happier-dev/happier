@@ -38,6 +38,37 @@ test('release workflow only promotes/bumps on production and routes source_ref b
   assert.match(raw, /publish_npm:[\s\S]*?source_ref:\s*\$\{\{ inputs\.environment == 'production' && 'main' \|\| 'preview' \}\}/);
   assert.match(raw, /deploy_ui:[\s\S]*?bump:\s*none/);
   assert.match(raw, /sync_dev:[\s\S]*?if:\s*inputs\.dry_run != true && inputs\.environment == 'production'/);
+  assert.match(
+    raw,
+    /Compute versioned component changes \(latest release tags\.\.release head\)[\s\S]*?node scripts\/pipeline\/run\.mjs release-compute-versioned-component-changes/,
+  );
+  assert.match(raw, /VERSIONED_APP_CHANGED:\s*\$\{\{\s*steps\.versioned_plan\.outputs\.changed_app\s*\}\}/);
+  assert.match(raw, /VERSIONED_CLI_CHANGED:\s*\$\{\{\s*steps\.versioned_plan\.outputs\.changed_cli\s*\}\}/);
+});
+
+test('release workflow plans preview-to-main promotions from preview instead of dev', async () => {
+  const raw = await loadWorkflow('release.yml');
+
+  assert.match(
+    raw,
+    /- name: Resolve release planning refs[\s\S]*?if \[ "\$ENVIRONMENT" = "production" \] && \{ \[ "\$CONFIRM" = "release preview to main" \] \|\| \[ "\$CONFIRM" = "reset main from preview" \]; \}; then[\s\S]*?source_ref="preview"/,
+    'release planning should switch its source ref to preview for preview-to-main promotions',
+  );
+  assert.match(
+    raw,
+    /- name: Checkout release planning source[\s\S]*?ref:\s*\$\{\{\s*steps\.plan_refs\.outputs\.source_ref\s*\}\}/,
+    'release planning should checkout the resolved source branch instead of always using dev',
+  );
+  assert.match(
+    raw,
+    /commits to release \(\$\{\{\s*steps\.plan_refs\.outputs\.compare_label\s*\}\}\)/,
+    'release plan summary should describe the actual compared branch range',
+  );
+  assert.match(
+    raw,
+    /### Changed components \(\$\{\{\s*steps\.plan_refs\.outputs\.compare_label\s*\}\}\)/,
+    'changed component summary should describe the actual compared branch range',
+  );
 });
 
 test('release workflow publishes server runner only when explicitly requested', async () => {
@@ -52,6 +83,31 @@ test('release workflow publishes server runner only when explicitly requested', 
     raw,
     /publish_server_runtime:[\s\S]*?uses:\s*\.\/\.github\/workflows\/publish-server-runtime\.yml/,
     'server runtime publishing should be handled by a dedicated workflow (decoupled from SaaS deploy)',
+  );
+  assert.match(
+    raw,
+    /publish_server_runtime:[\s\S]*?channel:\s*\$\{\{\s*inputs\.environment == 'production' && 'stable' \|\| 'preview'\s*\}\}/,
+    'server runtime publishing should select stable vs preview through the shared channel mapping',
+  );
+  assert.match(
+    raw,
+    /publish_server_runtime:[\s\S]*?source_ref:\s*\$\{\{\s*inputs\.environment == 'production' && 'main' \|\| 'preview'\s*\}\}/,
+    'server runtime publishing should build from main for production and preview for preview releases',
+  );
+  assert.match(
+    raw,
+    /publish_server_runtime:[\s\S]*?allow_stable:\s*\$\{\{\s*inputs\.environment == 'production'\s*\}\}/,
+    'server runtime publishing should explicitly unlock stable publishing only for production releases',
+  );
+  assert.match(
+    raw,
+    /publish_ui_web:[\s\S]*?channel:\s*\$\{\{\s*inputs\.environment == 'production' && 'stable' \|\| 'preview'\s*\}\}/,
+    'UI web publishing should share the same stable vs preview channel mapping',
+  );
+  assert.match(
+    raw,
+    /publish_docker:[\s\S]*?channel:\s*\$\{\{\s*inputs\.environment == 'production' && 'stable' \|\| 'preview'\s*\}\}/,
+    'Docker publishing should share the same stable vs preview channel mapping',
   );
 
   assert.match(
@@ -248,13 +304,13 @@ test('release workflow can pass a top-level release message down to promote-ui f
   assert.match(raw, /expo_update_message:\s*\$\{\{\s*inputs\.release_message\s*\}\}/);
 });
 
-test('local release planning fetches branches without syncing rolling tags', async () => {
+test('local release planning fetches branches plus immutable version tags without syncing rolling tags', async () => {
   const run = await loadFile('scripts/pipeline/run.mjs');
 
   assert.match(
     run,
-    /execFileSync\('git', \['fetch', 'origin', 'main', 'dev', 'preview', '--prune', '--no-tags'\]/,
-    'local release planning should fetch only branches; rolling tags move independently and must not break planning',
+    /execFileSync\(\s*'git',\s*\[\s*'fetch',\s*'origin',\s*'main',\s*'dev',\s*'preview',\s*'--prune',\s*'--no-tags'[\s\S]*?refs\/tags\/cli-v\*:refs\/tags\/cli-v\*[\s\S]*?refs\/tags\/stack-v\*:refs\/tags\/stack-v\*[\s\S]*?refs\/tags\/server-v\*:refs\/tags\/server-v\*[\s\S]*?refs\/tags\/ui-web-v\*:refs\/tags\/ui-web-v\*/,
+    'local release planning should fetch branches plus immutable version tags while avoiding rolling tag sync',
   );
   assert.doesNotMatch(
     run,

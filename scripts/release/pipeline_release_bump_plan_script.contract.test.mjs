@@ -125,3 +125,106 @@ test('resolve-bump-plan only publishes server runner when deploy_targets include
   assert.equal(parsed2.publish_server, true);
 });
 
+test('resolve-bump-plan honors per-component versioned change inputs over global shared fanout', async () => {
+  const out = execFileSync(
+    process.execPath,
+    [
+      resolve(repoRoot, 'scripts', 'pipeline', 'release', 'resolve-bump-plan.mjs'),
+      '--environment',
+      'preview',
+      '--bump-preset',
+      'patch',
+      '--bump-app-override',
+      'preset',
+      '--bump-cli-override',
+      'preset',
+      '--bump-stack-override',
+      'preset',
+      '--deploy-targets',
+      'ui,cli,stack,server_runner',
+      '--changed-ui',
+      'false',
+      '--changed-cli',
+      'false',
+      '--changed-stack',
+      'false',
+      '--changed-server',
+      'false',
+      '--changed-website',
+      'false',
+      '--changed-shared',
+      'true',
+      '--versioned-app-changed',
+      'false',
+      '--versioned-cli-changed',
+      'true',
+      '--versioned-stack-changed',
+      'false',
+      '--versioned-server-changed',
+      'false',
+    ],
+    { cwd: repoRoot, env: process.env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 },
+  );
+
+  const parsed = JSON.parse(out);
+  assert.deepEqual(parsed, {
+    publish_cli: true,
+    publish_stack: true,
+    publish_server: true,
+    bump_app: 'none',
+    bump_cli: 'patch',
+    bump_stack: 'none',
+    bump_server: 'none',
+    bump_website: 'none',
+    should_bump: true,
+  });
+});
+
+test('resolve-bump-plan treats cli-common host-shared changes as cli and stack releases only', async () => {
+  const out = execFileSync(
+    process.execPath,
+    [
+      resolve(repoRoot, 'scripts', 'pipeline', 'release', 'resolve-bump-plan.mjs'),
+      '--environment',
+      'preview',
+      '--bump-preset',
+      'patch',
+      '--bump-app-override',
+      'preset',
+      '--bump-cli-override',
+      'preset',
+      '--bump-stack-override',
+      'preset',
+      '--deploy-targets',
+      'ui,cli,stack,server_runner',
+      '--changed-ui',
+      'false',
+      '--changed-cli',
+      'false',
+      '--changed-stack',
+      'false',
+      '--changed-server',
+      'false',
+      '--changed-website',
+      'false',
+      '--changed-shared',
+      'false',
+      '--changed-cli-stack-shared',
+      'true',
+    ],
+    { cwd: repoRoot, env: process.env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 },
+  );
+
+  const parsed = JSON.parse(out);
+  assert.deepEqual(parsed, {
+    publish_cli: true,
+    publish_stack: true,
+    publish_server: true,
+    bump_app: 'none',
+    bump_cli: 'patch',
+    bump_stack: 'patch',
+    bump_server: 'none',
+    bump_website: 'none',
+    should_bump: true,
+  });
+});

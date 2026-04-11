@@ -15,6 +15,7 @@ import {
   resolveRollingPrerelease,
   resolveRollingReleaseLabel,
   resolveRollingReleaseTagSuffix,
+  resolveRollingVersionSuffix,
 } from './lib/public-release-rings.mjs';
 import { withCurrentVersionLine } from './lib/rolling-release-notes.mjs';
 import { resolveGitHubRepoSlug } from '../github/resolve-github-repo-slug.mjs';
@@ -44,6 +45,25 @@ function resolveAutoBool(value, name, autoValue) {
   const raw = String(value ?? '').trim().toLowerCase();
   if (!raw || raw === 'auto') return autoValue;
   return parseBool(raw, name);
+}
+
+/**
+ * @param {string} version
+ */
+function normalizeBase(version) {
+  const m = String(version ?? '').trim().match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!m) fail(`Invalid server version: ${version}`);
+  return `${m[1]}.${m[2]}.${m[3]}`;
+}
+
+/**
+ * @param {import('@happier-dev/release-runtime/releaseRings').PublicReleaseRingId} channel
+ * @param {string} baseVersion
+ */
+function computeServerVersion(channel, baseVersion) {
+  if (channel === 'stable') return baseVersion;
+  const base = normalizeBase(baseVersion);
+  return `${base}-${resolveRollingVersionSuffix(channel)}`;
 }
 
 /**
@@ -153,9 +173,10 @@ async function main() {
   const opts = { dryRun };
 
   const serverPkg = JSON.parse(fs.readFileSync(withinRepo(repoRoot, 'apps/server/package.json'), 'utf8'));
-  const serverVersion = String(serverPkg.version ?? '').trim();
-  if (!serverVersion) fail('Unable to resolve apps/server version');
+  const baseVersion = String(serverPkg.version ?? '').trim();
+  if (!baseVersion) fail('Unable to resolve apps/server version');
   const releaseRing = getPublicReleaseRingEntry(channel);
+  const serverVersion = computeServerVersion(channel, baseVersion);
 
   const tag = `server-${resolveRollingReleaseTagSuffix(channel)}`;
   const title = `Happier Server ${resolveRollingReleaseLabel(channel)}`;

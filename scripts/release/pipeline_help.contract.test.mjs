@@ -50,9 +50,9 @@ test('pipeline CLI supports help for npm-release', async () => {
   });
 
   assert.match(out, /\bnpm-release\b/);
-  assert.match(out, /--channel/);
+  assert.match(out, /--channel <dev\|preview\|production>/);
   assert.match(out, /--publish-cli/);
-  assert.match(out, /--publish-support/);
+  assert.doesNotMatch(out, /--publish-support/);
 });
 
 test('pipeline CLI supports help for npm-set-preview-versions', async () => {
@@ -65,7 +65,7 @@ test('pipeline CLI supports help for npm-set-preview-versions', async () => {
   });
 
   assert.match(out, /\bnpm-set-preview-versions\b/);
-  assert.match(out, /--publish-support/);
+  assert.doesNotMatch(out, /--publish-support/);
 });
 
 test('pipeline CLI supports help for checks', async () => {
@@ -104,6 +104,7 @@ test('pipeline CLI help reflects expanded Expo environment support', async () =>
   });
   assert.match(mobileReleaseHelp, /internaldev\*, internalpreview\*, dev\*, preview\*, production\*/);
   assert.match(mobileReleaseHelp, /--profile dev\b/);
+  assert.match(mobileReleaseHelp, /App Store Connect external TestFlight distribution/i);
   assert.doesNotMatch(mobileReleaseHelp, /\bpublicdev\b/);
 
   const downloadHelp = execFileSync(process.execPath, [pipelineCli, 'help', 'expo-download-apk'], {

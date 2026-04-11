@@ -8,10 +8,22 @@ function writeExecutable(filePath, content) {
   fs.writeFileSync(filePath, content, { encoding: 'utf8', mode: 0o700 });
 }
 
-export function createReleaseCliDryRunEnv(baseEnv = process.env) {
+export function createReleaseCliDryRunEnv(baseEnv = process.env, options = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-release-cli-dry-run-'));
   const binDir = path.join(dir, 'bin');
   fs.mkdirSync(binDir, { recursive: true });
+  const diffPaths =
+    Array.isArray(options.diffPaths) && options.diffPaths.length > 0
+      ? options.diffPaths
+      : [
+          'apps/ui/sources/app.tsx',
+          'apps/server/sources/app.ts',
+          'apps/website/app/page.tsx',
+          'apps/docs/content/docs/release.mdx',
+          'apps/cli/src/index.ts',
+          'apps/stack/src/index.ts',
+          'packages/protocol/src/features/catalog.ts',
+        ];
 
   writeExecutable(
     path.join(binDir, 'git'),
@@ -42,12 +54,31 @@ export function createReleaseCliDryRunEnv(baseEnv = process.env) {
       '  printf "main-sha\\n"',
       '  exit 0',
       'fi',
+      'if [ "${1:-}" = "tag" ] && [ "${2:-}" = "--merged" ] && [ "${4:-}" = "--list" ]; then',
+      '  case "${5:-}" in',
+      '    ui-web-v*) printf "%s\\n" "ui-web-v0.2.0" "ui-web-v0.2.1-preview.1.1" "ui-web-v0.2.1-dev.1.1" ;;',
+      '    cli-v*) printf "%s\\n" "cli-v0.2.0" "cli-v0.2.1-preview.1.1" "cli-v0.2.1-dev.1.1" ;;',
+      '    stack-v*) printf "%s\\n" "stack-v0.2.0" "stack-v0.2.1-preview.1.1" "stack-v0.2.1-dev.1.1" ;;',
+      '    server-v*) printf "%s\\n" "server-v0.2.0" "server-v0.2.1-preview.1.1" "server-v0.2.1-dev.1.1" ;;',
+      '    *) echo "unexpected git tag args: $*" >&2; exit 1 ;;',
+      '  esac',
+      '  exit 0',
+      'fi',
+      'if [ "${1:-}" = "rev-list" ] && [ "${2:-}" = "-n" ] && [ "${3:-}" = "1" ]; then',
+      '  printf "%s-commit\\n" "${4:-unknown}"',
+      '  exit 0',
+      'fi',
       'if [ "${1:-}" = "rev-list" ] && [ "${2:-}" = "--count" ]; then',
-      '  printf "3\\n"',
+      '  case "${3:-}" in',
+      '    *dev.1.1-commit..*) printf "0\\n" ;;',
+      '    *preview.1.1-commit..*) printf "1\\n" ;;',
+      '    *0.2.0-commit..*) printf "2\\n" ;;',
+      '    *) printf "3\\n" ;;',
+      '  esac',
       '  exit 0',
       'fi',
       'if [ "${1:-}" = "diff" ] && [ "${2:-}" = "--name-only" ]; then',
-      '  printf "%s\\n" "apps/ui/sources/app.tsx" "apps/server/sources/app.ts" "apps/website/app/page.tsx" "apps/docs/content/docs/release.mdx" "apps/cli/src/index.ts" "apps/stack/src/index.ts" "packages/protocol/src/features/catalog.ts"',
+      `  printf "%s\\n" ${diffPaths.map((value) => JSON.stringify(value)).join(' ')}`,
       '  exit 0',
       'fi',
       'echo "unexpected git args: $*" >&2',

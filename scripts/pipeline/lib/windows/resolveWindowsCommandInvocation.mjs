@@ -78,6 +78,38 @@ function isWindowsShellShimPath(pathLike) {
 }
 
 /**
+ * @param {string} commandLike
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {string[]}
+ */
+function buildWindowsCommandCandidates(commandLike, env) {
+  const cmd = asNonEmptyString(commandLike);
+  if (!cmd) return [];
+
+  const exts = expandPathextCaseVariants(normalizePathext(readEnvPathext(env)));
+  const lowered = cmd.toLowerCase();
+  const hasKnownExt = exts.some((ext) => lowered.endsWith(ext.toLowerCase()));
+  return hasKnownExt ? [cmd] : [...exts.map((ext) => `${cmd}${ext}`), cmd];
+}
+
+/**
+ * @param {string} commandPath
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string | null}
+ */
+export function resolveWindowsCommandPath(commandPath, env = process.env) {
+  for (const candidate of buildWindowsCommandCandidates(commandPath, env)) {
+    try {
+      if (existsSync(candidate)) return candidate;
+    } catch {
+      // ignore
+    }
+  }
+
+  return null;
+}
+
+/**
  * @param {string} command
  * @param {NodeJS.ProcessEnv} [env]
  * @returns {string | null}
@@ -89,10 +121,7 @@ export function resolveWindowsCommandOnPath(command, env = process.env) {
   const pathEnv = asNonEmptyString(readEnvPath(env));
   if (!pathEnv) return null;
 
-  const exts = expandPathextCaseVariants(normalizePathext(readEnvPathext(env)));
-  const lowered = cmd.toLowerCase();
-  const hasKnownExt = exts.some((ext) => lowered.endsWith(ext.toLowerCase()));
-  const candidates = hasKnownExt ? [cmd] : [cmd, ...exts.map((ext) => `${cmd}${ext}`)];
+  const candidates = buildWindowsCommandCandidates(cmd, env);
 
   for (const dir of pathEnv.split(pathDelimiter)) {
     const trimmedDir = dir.trim();
@@ -185,7 +214,7 @@ export function resolveWindowsCommandInvocation(params) {
   const resolvedCommand =
     shouldResolveOnPath && isCommandOnly(command)
       ? (resolveWindowsCommandOnPath(command, env) ?? command)
-      : command;
+      : (resolveWindowsCommandPath(command, env) ?? command);
 
   if (!isWindowsShellShimPath(resolvedCommand)) {
     return { command: resolvedCommand, args };
@@ -193,4 +222,3 @@ export function resolveWindowsCommandInvocation(params) {
 
   return buildCmdExeInvocation({ resolvedCommand, args, env, comspec: params.comspec });
 }
-

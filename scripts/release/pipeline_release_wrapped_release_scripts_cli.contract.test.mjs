@@ -16,6 +16,7 @@ const cases = [
   ['release-publish-manifests', 'scripts/pipeline/release/publish-manifests.mjs'],
   ['release-verify-artifacts', 'scripts/pipeline/release/verify-artifacts.mjs'],
   ['release-compute-changed-components', 'scripts/pipeline/release/compute-changed-components.mjs'],
+  ['release-compute-versioned-component-changes', 'scripts/pipeline/release/compute-versioned-component-changes.mjs'],
   ['release-resolve-bump-plan', 'scripts/pipeline/release/resolve-bump-plan.mjs'],
   ['release-compute-deploy-plan', 'scripts/pipeline/release/compute-deploy-plan.mjs'],
   ['release-build-ui-web-bundle', 'scripts/pipeline/release/build-ui-web-bundle.mjs'],

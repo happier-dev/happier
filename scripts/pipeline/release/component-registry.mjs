@@ -24,6 +24,10 @@ export const components = Object.freeze({
     id: 'stack',
     changedPrefixes: ['apps/stack/'],
   },
+  cli_stack_shared: {
+    id: 'cli_stack_shared',
+    changedPrefixes: ['packages/cli-common/'],
+  },
   website: {
     id: 'website',
     changedPrefixes: ['apps/website/', 'scripts/release/installers/'],
@@ -37,6 +41,29 @@ export const components = Object.freeze({
   shared: {
     id: 'shared',
     changedPrefixes: ['packages/agents/', 'packages/protocol/'],
+  },
+});
+
+export const versionedComponents = Object.freeze({
+  app: {
+    id: 'app',
+    baselineTagPrefix: 'ui-web-v',
+    changedWhen: ['ui', 'shared'],
+  },
+  cli: {
+    id: 'cli',
+    baselineTagPrefix: 'cli-v',
+    changedWhen: ['cli', 'shared', 'cli_stack_shared'],
+  },
+  stack: {
+    id: 'stack',
+    baselineTagPrefix: 'stack-v',
+    changedWhen: ['stack', 'shared', 'cli_stack_shared'],
+  },
+  server: {
+    id: 'server',
+    baselineTagPrefix: 'server-v',
+    changedWhen: ['server', 'shared'],
   },
 });
 
@@ -60,5 +87,13 @@ export function classifyChangedPaths(paths) {
     }
   }
 
+  return flags;
+}
+
+export function deriveVersionedComponentChanges(classified) {
+  const flags = Object.create(null);
+  for (const [key, def] of Object.entries(versionedComponents)) {
+    flags[key] = def.changedWhen.some((componentKey) => Boolean(classified[componentKey]));
+  }
   return flags;
 }

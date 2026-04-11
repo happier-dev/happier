@@ -43,3 +43,35 @@ test('pipeline CLI can npm-publish in dry-run using env-only secrets', async () 
   assert.match(out, /--tag next/);
 });
 
+test('pipeline CLI maps the public dev lane to preview npm publishing with a dev dist-tag', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-npm-publish-cli-dev-'));
+  const tarballDir = path.join(tmpDir, 'dist', 'release-assets', 'cli');
+  fs.mkdirSync(tarballDir, { recursive: true });
+  fs.writeFileSync(path.join(tarballDir, 'happier-cli-v0.0.0-dev.tgz'), 'dummy', 'utf8');
+
+  const out = execFileSync(
+    process.execPath,
+    [
+      resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
+      'npm-publish',
+      '--channel',
+      'dev',
+      '--tarball-dir',
+      tarballDir,
+      '--dry-run',
+      '--secrets-source',
+      'env',
+    ],
+    {
+      cwd: repoRoot,
+      env: { ...process.env, NPM_TOKEN: 'npm-token' },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    },
+  );
+
+  assert.match(out, /\[pipeline\] npm publish: channel=dev/);
+  assert.match(out, /publish-tarball\.mjs"\s+"--channel"\s+"preview"/);
+  assert.match(out, /publish-tarball\.mjs"[\s\S]*"--tag"\s+"dev"/);
+});

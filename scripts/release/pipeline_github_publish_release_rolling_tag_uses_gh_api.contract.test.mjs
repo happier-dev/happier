@@ -132,6 +132,11 @@ exit 0
   // `force` must be a JSON boolean, not the string "true" (GitHub API rejects `-f force=true` with HTTP 422).
   assert.match(log, /\s-F\s+force=true\b/);
   assert.doesNotMatch(log, /\s-f\s+force=true\b/);
+  assert.doesNotMatch(
+    log,
+    /gh release edit dev-test[\s\S]*\s--target\s/,
+    'rolling release edits should keep target selection driven by the tag ref, not a raw commit SHA',
+  );
 
   const gitCalls = fs.readFileSync(gitLog, 'utf8');
   assert.doesNotMatch(gitCalls, /\bgit push\b/);

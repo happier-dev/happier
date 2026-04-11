@@ -31,11 +31,13 @@ import {
   supportsMobileApkReleasePublishing,
   supportsMobileNativeSubmit,
 } from './expo/mobile-release-environments.mjs';
+import { resolveTestflightDistributionConfig } from './expo/testflight-distribution-config.mjs';
 import {
   formatPublicReleaseChannel,
   formatPublicReleaseChannelChoices,
   normalizePublicReleaseChannel,
 } from './release/lib/public-release-rings.mjs';
+import { resolveReleaseEnvironmentChannel } from './release/resolve-release-environment-channel.mjs';
 
 function fail(message) {
   console.error(message);
@@ -81,6 +83,14 @@ function parseGlobalCliFlags(rawArgv) {
  */
 function isDeployEnvironment(v) {
   return v === 'production' || v === 'preview';
+}
+
+/**
+ * @param {string} v
+ * @returns {v is 'dev' | 'production' | 'preview'}
+ */
+function isReleaseDeployEnvironment(v) {
+  return v === 'dev' || v === 'production' || v === 'preview';
 }
 
 function normalizeTauriReleaseEnvironment(raw) {
@@ -257,7 +267,7 @@ function resolveAutoBool(value, name, autoValue) {
  *
  * @param {string[]} argv
  * @returns {{
- *   deployEnvironment: 'production' | 'preview';
+ *   deployEnvironment: 'dev' | 'production' | 'preview';
  *   dryRun: boolean;
  *   secretsSource: 'auto' | 'env' | 'keychain';
  *   keychainService: string;
@@ -266,7 +276,7 @@ function resolveAutoBool(value, name, autoValue) {
  * }}
  */
 function splitWrappedReleaseArgs(argv) {
-  /** @type {'production' | 'preview'} */
+  /** @type {'dev' | 'production' | 'preview'} */
   let deployEnvironment = 'production';
   let dryRun = false;
   /** @type {'auto' | 'env' | 'keychain'} */
@@ -306,8 +316,8 @@ function splitWrappedReleaseArgs(argv) {
       const { value, nextIndex } = takeValue(arg, i);
       i = nextIndex;
       const v = String(value ?? '').trim();
-      if (!isDeployEnvironment(v)) {
-        fail(`--deploy-environment must be 'production' or 'preview' (got: ${v || '<empty>'})`);
+      if (!isReleaseDeployEnvironment(v)) {
+        fail(`--deploy-environment must be 'dev', 'production', or 'preview' (got: ${v || '<empty>'})`);
       }
       deployEnvironment = v;
       continue;
@@ -656,6 +666,22 @@ function runExpoPublishApkRelease({ repoRoot, env, args, dryRun }) {
 /**
  * @param {{ repoRoot: string; env: Record<string, string>; args: string[]; dryRun: boolean }} opts
  */
+function runExpoTestflightDistribute({ repoRoot, env, args, dryRun }) {
+  const scriptPath = path.join(repoRoot, 'scripts', 'pipeline', 'expo', 'testflight-distribute.mjs');
+  const fullArgs = [scriptPath, ...args];
+  if (dryRun) {
+    console.log(`[pipeline] exec: node ${fullArgs.map((a) => JSON.stringify(a)).join(' ')}`);
+  }
+  execFileSync(process.execPath, fullArgs, {
+    cwd: repoRoot,
+    env,
+    stdio: 'inherit',
+  });
+}
+
+/**
+ * @param {{ repoRoot: string; env: Record<string, string>; args: string[]; dryRun: boolean }} opts
+ */
 function runExpoBumpUiVersion({ repoRoot, env, args, dryRun }) {
   const scriptPath = path.join(repoRoot, 'scripts', 'pipeline', 'expo', 'bump-ui-version.mjs');
   const fullArgs = [scriptPath, ...args];
@@ -969,6 +995,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         subcommand !== 'release-publish-manifests' &&
         subcommand !== 'release-verify-artifacts' &&
         subcommand !== 'release-compute-changed-components' &&
+        subcommand !== 'release-compute-versioned-component-changes' &&
         subcommand !== 'release-resolve-bump-plan' &&
         subcommand !== 'release-compute-deploy-plan' &&
         subcommand !== 'release-build-ui-web-bundle' &&
@@ -978,6 +1005,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       subcommand !== 'expo-mobile-meta' &&
       subcommand !== 'expo-submit' &&
       subcommand !== 'expo-publish-apk-release' &&
+      subcommand !== 'expo-testflight-distribute' &&
       subcommand !== 'ui-mobile-release' &&
       subcommand !== 'tauri-prepare-assets' &&
       subcommand !== 'tauri-validate-updater-pubkey' &&
@@ -1196,7 +1224,6 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         'publish-cli': { type: 'string', default: 'false' },
         'publish-stack': { type: 'string', default: 'false' },
         'publish-server': { type: 'string', default: 'false' },
-        'publish-support': { type: 'string', default: 'false' },
         'server-runner-dir': { type: 'string', default: 'packages/relay-server' },
         write: { type: 'string', default: 'true' },
       },
@@ -1207,7 +1234,6 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     const publishCli = String(values['publish-cli'] ?? '').trim() || 'false';
     const publishStack = String(values['publish-stack'] ?? '').trim() || 'false';
     const publishServer = String(values['publish-server'] ?? '').trim() || 'false';
-    const publishSupport = String(values['publish-support'] ?? '').trim() || 'false';
     const serverRunnerDir = String(values['server-runner-dir'] ?? '').trim() || 'packages/relay-server';
     const write = String(values.write ?? '').trim() || 'true';
 
@@ -1223,8 +1249,6 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         publishStack,
         '--publish-server',
         publishServer,
-        '--publish-support',
-        publishSupport,
         '--server-runner-dir',
         serverRunnerDir,
         '--write',
@@ -1253,8 +1277,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     });
 
     const channel = String(values.channel ?? '').trim();
-    if (!isDeployEnvironment(channel)) {
-      fail(`--channel must be 'production' or 'preview' (got: ${channel || '<empty>'})`);
+    if (!isReleaseDeployEnvironment(channel)) {
+      fail(`--channel must be 'dev', 'preview', or 'production' (got: ${channel || '<empty>'})`);
     }
 
     const { env, sources } = loadPipelineEnv({ repoRoot });
@@ -1286,6 +1310,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       const tarball = String(values.tarball ?? '').trim();
       const tarballDir = String(values['tarball-dir'] ?? '').trim();
       const tag = String(values.tag ?? '').trim();
+      const publishChannel = channel === 'dev' ? 'preview' : channel;
+      const publishTag = tag || (channel === 'dev' ? 'dev' : '');
       const allowDirty = parseBoolString(values['allow-dirty'], '--allow-dirty');
       const dryRun = values['dry-run'] === true;
       if (!dryRun) assertCleanWorktree({ cwd: repoRoot, allowDirty });
@@ -1298,8 +1324,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       dryRun,
       args: [
         '--channel',
-        channel,
-        ...(tag ? ['--tag', tag] : []),
+        publishChannel,
+        ...(publishTag ? ['--tag', publishTag] : []),
         ...(tarball ? ['--tarball', tarball] : []),
         ...(tarballDir ? ['--tarball-dir', tarballDir] : []),
         ...(dryRun ? ['--dry-run'] : []),
@@ -1317,7 +1343,6 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           'publish-cli': { type: 'string', default: 'false' },
           'publish-stack': { type: 'string', default: 'false' },
           'publish-server': { type: 'string', default: 'false' },
-          'publish-support': { type: 'string', default: 'false' },
           'server-runner-dir': { type: 'string', default: 'packages/relay-server' },
           'run-tests': { type: 'string', default: 'auto' },
           mode: { type: 'string', default: 'pack+publish' },
@@ -1331,8 +1356,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     });
 
     const channel = String(values.channel ?? '').trim();
-    if (!isDeployEnvironment(channel)) {
-      fail(`--channel must be 'production' or 'preview' (got: ${channel || '<empty>'})`);
+    if (!isReleaseDeployEnvironment(channel)) {
+      fail(`--channel must be 'dev', 'preview', or 'production' (got: ${channel || '<empty>'})`);
     }
 
     const { env, sources } = loadPipelineEnv({ repoRoot });
@@ -1364,7 +1389,6 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     const publishCli = String(values['publish-cli'] ?? '').trim();
     const publishStack = String(values['publish-stack'] ?? '').trim();
     const publishServer = String(values['publish-server'] ?? '').trim();
-    const publishSupport = String(values['publish-support'] ?? '').trim();
       const runnerDir = String(values['server-runner-dir'] ?? '').trim();
       const runTests = String(values['run-tests'] ?? '').trim();
       const mode = String(values.mode ?? '').trim();
@@ -1384,7 +1408,6 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         ...(publishCli ? ['--publish-cli', publishCli] : []),
         ...(publishStack ? ['--publish-stack', publishStack] : []),
         ...(publishServer ? ['--publish-server', publishServer] : []),
-        ...(publishSupport ? ['--publish-support', publishSupport] : []),
         ...(runnerDir ? ['--server-runner-dir', runnerDir] : []),
         ...(runTests ? ['--run-tests', runTests] : []),
         ...(mode ? ['--mode', mode] : []),
@@ -1734,7 +1757,12 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         'changed-stack': { type: 'string' },
         'changed-server': { type: 'string' },
         'changed-website': { type: 'string' },
+        'changed-cli-stack-shared': { type: 'string' },
         'changed-shared': { type: 'string' },
+        'versioned-app-changed': { type: 'string', default: '' },
+        'versioned-cli-changed': { type: 'string', default: '' },
+        'versioned-stack-changed': { type: 'string', default: '' },
+        'versioned-server-changed': { type: 'string', default: '' },
       },
       allowPositionals: false,
     });
@@ -1771,8 +1799,18 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         String(values['changed-server'] ?? ''),
         '--changed-website',
         String(values['changed-website'] ?? ''),
+        '--changed-cli-stack-shared',
+        String(values['changed-cli-stack-shared'] ?? ''),
         '--changed-shared',
         String(values['changed-shared'] ?? ''),
+        '--versioned-app-changed',
+        String(values['versioned-app-changed'] ?? ''),
+        '--versioned-cli-changed',
+        String(values['versioned-cli-changed'] ?? ''),
+        '--versioned-stack-changed',
+        String(values['versioned-stack-changed'] ?? ''),
+        '--versioned-server-changed',
+        String(values['versioned-server-changed'] ?? ''),
       ],
     });
     return;
@@ -1829,6 +1867,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         subcommand === 'release-publish-manifests' ||
         subcommand === 'release-verify-artifacts' ||
         subcommand === 'release-compute-changed-components' ||
+        subcommand === 'release-compute-versioned-component-changes' ||
         subcommand === 'release-resolve-bump-plan' ||
         subcommand === 'release-compute-deploy-plan' ||
         subcommand === 'release-build-ui-web-bundle'
@@ -1860,6 +1899,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
                       ? 'verify-artifacts.mjs'
                       : subcommand === 'release-compute-changed-components'
                         ? 'compute-changed-components.mjs'
+                        : subcommand === 'release-compute-versioned-component-changes'
+                          ? 'compute-versioned-component-changes.mjs'
                         : subcommand === 'release-resolve-bump-plan'
                           ? 'resolve-bump-plan.mjs'
                           : subcommand === 'release-compute-deploy-plan'
@@ -2167,6 +2208,111 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           ...(dryRun ? ['--dry-run'] : []),
         ],
       });
+
+    return;
+  }
+
+  if (subcommand === 'expo-testflight-distribute') {
+    const { values } = parseArgs({
+      args: rest,
+      options: {
+        environment: { type: 'string' },
+        profile: { type: 'string', default: '' },
+        'external-groups': { type: 'string', default: '' },
+        'build-json': { type: 'string', default: '' },
+        'eas-build-id': { type: 'string', default: '' },
+        'build-number': { type: 'string', default: '' },
+        'app-version': { type: 'string', default: '' },
+        'submit-beta-review': { type: 'string', default: 'auto' },
+        'wait-processing': { type: 'string', default: 'true' },
+        'processing-timeout-seconds': { type: 'string', default: '3600' },
+        'eas-cli-version': { type: 'string', default: '' },
+        'secrets-source': { type: 'string', default: 'auto' },
+        'keychain-service': { type: 'string', default: 'happier/pipeline' },
+        'keychain-account': { type: 'string', default: '' },
+        'dry-run': { type: 'boolean', default: false },
+      },
+      allowPositionals: false,
+    });
+
+    const environment = normalizeMobileReleaseEnvironment(values.environment);
+    if (!environment || !supportsMobileNativeSubmit(environment)) {
+      fail(`--environment must be ${JSON.stringify(MOBILE_STORE_SUBMIT_ENVIRONMENT_CHOICES)} (got: ${String(values.environment ?? '').trim() || '<empty>'})`);
+    }
+    const environmentArg = formatMobileReleaseEnvironment(environment);
+    const externalGroups = parseCsvList(values['external-groups']);
+    if (externalGroups.length === 0) fail('--external-groups is required');
+
+    const requestedProfile = String(values.profile ?? '').trim();
+    const profile = normalizeMobileReleaseProfile(requestedProfile) || requestedProfile || environment;
+    const dryRun = values['dry-run'] === true;
+    const waitProcessing = parseBoolString(values['wait-processing'], '--wait-processing');
+    const submitBetaReview = String(values['submit-beta-review'] ?? '').trim().toLowerCase() || 'auto';
+    if (submitBetaReview !== 'auto' && submitBetaReview !== 'true' && submitBetaReview !== 'false') {
+      fail(`--submit-beta-review must be 'auto', 'true', or 'false' (got: ${values['submit-beta-review']})`);
+    }
+    const processingTimeoutSecondsRaw = String(values['processing-timeout-seconds'] ?? '').trim();
+    const processingTimeoutSeconds = Number.parseInt(processingTimeoutSecondsRaw || '3600', 10);
+    if (!Number.isFinite(processingTimeoutSeconds) || processingTimeoutSeconds <= 0) {
+      fail(`--processing-timeout-seconds must be a positive integer (got: ${values['processing-timeout-seconds']})`);
+    }
+
+    const deployEnvironment = resolveUiMobilePipelineEnvironment(environment);
+    const { env, sources } = loadPipelineEnv({
+      repoRoot,
+      deployEnvironment,
+    });
+    const secretsSourceRaw = String(values['secrets-source'] ?? '').trim();
+    const secretsSource =
+      secretsSourceRaw === 'auto' || secretsSourceRaw === 'env' || secretsSourceRaw === 'keychain'
+        ? secretsSourceRaw
+        : 'auto';
+    if (secretsSourceRaw && secretsSource !== secretsSourceRaw) {
+      fail(`--secrets-source must be 'auto', 'env', or 'keychain' (got: ${secretsSourceRaw})`);
+    }
+
+    const keychainService = String(values['keychain-service'] ?? '').trim() || 'happier/pipeline';
+    const keychainAccount = String(values['keychain-account'] ?? '').trim() || undefined;
+    const { env: mergedEnv, usedKeychain } = loadSecrets({
+      baseEnv: env,
+      secretsSource,
+      keychainService,
+      keychainAccount,
+      deployEnvironment,
+    });
+    if (sources.length > 0) {
+      console.log(`[pipeline] using env sources: ${sources.join(', ')}`);
+      console.log('[pipeline] warning: env-file mode is for fast local iteration; prefer Keychain bundle for long-term use.');
+    }
+    if (usedKeychain) {
+      console.log("[pipeline] loaded secrets from Keychain service 'happier/pipeline'");
+    }
+
+    runExpoTestflightDistribute({
+      repoRoot,
+      env: mergedEnv,
+      dryRun,
+      args: [
+        '--environment',
+        environmentArg,
+        '--profile',
+        profile,
+        '--external-groups',
+        externalGroups.join(','),
+        ...(String(values['build-json'] ?? '').trim() ? ['--build-json', String(values['build-json'] ?? '').trim()] : []),
+        ...(String(values['eas-build-id'] ?? '').trim() ? ['--eas-build-id', String(values['eas-build-id'] ?? '').trim()] : []),
+        ...(String(values['build-number'] ?? '').trim() ? ['--build-number', String(values['build-number'] ?? '').trim()] : []),
+        ...(String(values['app-version'] ?? '').trim() ? ['--app-version', String(values['app-version'] ?? '').trim()] : []),
+        '--submit-beta-review',
+        submitBetaReview,
+        '--wait-processing',
+        waitProcessing ? 'true' : 'false',
+        '--processing-timeout-seconds',
+        String(processingTimeoutSeconds),
+        ...(String(values['eas-cli-version'] ?? '').trim() ? ['--eas-cli-version', String(values['eas-cli-version'] ?? '').trim()] : []),
+        ...(dryRun ? ['--dry-run'] : []),
+      ],
+    });
 
     return;
   }
@@ -2871,8 +3017,41 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
                 ...(dryRun ? ['--dry-run'] : []),
               ],
             });
-          }
         }
+      }
+
+      if (platform === 'ios' || platform === 'all') {
+        const testflightDistributionConfig = resolveTestflightDistributionConfig({ environment, env: mergedEnv });
+        if (!testflightDistributionConfig.enabled) {
+          console.log('[pipeline] ui-mobile release: skipping TestFlight distribution (no external groups configured).');
+        } else if (!dryRun && nativeBuildMode === 'cloud' && !cloudBuildPresence.ios) {
+          console.log('[pipeline] ui-mobile release: skipping TestFlight distribution (no iOS build was scheduled).');
+        } else {
+          runExpoTestflightDistribute({
+            repoRoot,
+            env: mergedEnv,
+            dryRun,
+            args: [
+              '--environment',
+              environmentArg,
+              '--profile',
+              profile,
+              '--external-groups',
+              testflightDistributionConfig.externalGroups,
+              '--build-json',
+              buildJsonForPlatform('ios'),
+              '--submit-beta-review',
+              testflightDistributionConfig.submitBetaReview,
+              '--wait-processing',
+              testflightDistributionConfig.waitProcessing ? 'true' : 'false',
+              '--processing-timeout-seconds',
+              String(testflightDistributionConfig.processingTimeoutSeconds),
+              ...(easCliVersion ? ['--eas-cli-version', easCliVersion] : []),
+              ...(dryRun ? ['--dry-run'] : []),
+            ],
+          });
+        }
+      }
       }
 
       return;
@@ -3854,6 +4033,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           const action = String(values.confirm ?? '').trim();
           if (!action) fail('--confirm is required (e.g. "release dev to preview")');
           if (
+            action !== 'release dev to dev' &&
             action !== 'release dev to preview' &&
             action !== 'release preview to main' &&
             action !== 'reset main from preview' &&
@@ -3867,13 +4047,16 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           if (!repository) fail('--repository is required (e.g. happier-dev/happier)');
 
           const deployEnvironment = String(values['deploy-environment'] ?? '').trim();
-          if (!isDeployEnvironment(deployEnvironment)) {
-            fail(`--deploy-environment must be 'production' or 'preview' (got: ${deployEnvironment || '<empty>'})`);
+          if (!isReleaseDeployEnvironment(deployEnvironment)) {
+            fail(`--deploy-environment must be 'dev', 'production', or 'preview' (got: ${deployEnvironment || '<empty>'})`);
+          }
+          if (deployEnvironment === 'dev' && action !== 'release dev to dev') {
+            fail('Confirmation mismatch for dev releases. Expected: "release dev to dev"');
           }
           if (deployEnvironment === 'preview' && action !== 'release dev to preview') {
             fail('Confirmation mismatch for preview releases. Expected: "release dev to preview"');
           }
-          if (deployEnvironment === 'production' && action === 'release dev to preview') {
+          if (deployEnvironment === 'production' && (action === 'release dev to dev' || action === 'release dev to preview')) {
             fail(
               'Confirmation mismatch for production releases. Expected: "release preview to main", "reset main from preview", "release dev to main", or "reset main from dev"',
             );
@@ -3979,8 +4162,10 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           const releaseMessage = String(values['release-message'] ?? '').trim();
           console.log(`[pipeline] release: environment=${deployEnvironment} confirm=${action}`);
 
-          if (deployEnvironment === 'preview') {
-            // Ensure all preview release steps compute the same preview.<run>.<attempt> suffix.
+          const releaseRing = resolveReleaseEnvironmentChannel(deployEnvironment);
+
+          if (releaseRing.rollingVersionPrefix) {
+            // Ensure all rolling release steps compute the same <ring>.<run>.<attempt> suffix.
             // Locally we synthesize the missing run vars; in GitHub Actions we rely on the provided ones.
             const runNumberRaw = String(releaseEnv.GITHUB_RUN_NUMBER ?? '').trim();
             const runNumber = runNumberRaw || String(Math.floor(Date.now() / 1000));
@@ -3990,19 +4175,36 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             const attempt = attemptRaw || '1';
             if (!attemptRaw) releaseEnv.GITHUB_RUN_ATTEMPT = attempt;
 
-            console.log(`[pipeline] preview version suffix: preview.${runNumber}.${attempt}`);
+            console.log(`[pipeline] rolling version suffix: ${releaseRing.rollingVersionPrefix}.${runNumber}.${attempt}`);
           }
 
             // Plan: compute changed components (main..dev) and resolve bump/publish plan.
             console.log('[pipeline] release: fetching origin main/dev/preview for plan');
-            // Release planning only needs branch refs. Rolling tags move during publishing,
-            // so syncing tags here can fail with "would clobber existing tag" on healthy repos.
-            execFileSync('git', ['fetch', 'origin', 'main', 'dev', 'preview', '--prune', '--no-tags'], {
-              cwd: repoRoot,
-              env: process.env,
-              stdio: 'inherit',
-              timeout: 120_000,
-            });
+            // Release planning only needs branch refs plus immutable component version tags.
+            // Rolling tags move during publishing, so syncing all tags here can fail with
+            // "would clobber existing tag" on healthy repos.
+            execFileSync(
+              'git',
+              [
+                'fetch',
+                'origin',
+                'main',
+                'dev',
+                'preview',
+                '--prune',
+                '--no-tags',
+                'refs/tags/cli-v*:refs/tags/cli-v*',
+                'refs/tags/stack-v*:refs/tags/stack-v*',
+                'refs/tags/server-v*:refs/tags/server-v*',
+                'refs/tags/ui-web-v*:refs/tags/ui-web-v*',
+              ],
+              {
+                cwd: repoRoot,
+                env: process.env,
+                stdio: 'inherit',
+                timeout: 120_000,
+              },
+            );
 
             const currentBranch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
               cwd: repoRoot,
@@ -4055,8 +4257,27 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             changed_server: String(changedRaw?.changed_server ?? '').trim() === 'true',
             changed_website: String(changedRaw?.changed_website ?? '').trim() === 'true',
             changed_docs: String(changedRaw?.changed_docs ?? '').trim() === 'true',
+            changed_cli_stack_shared: String(changedRaw?.changed_cli_stack_shared ?? '').trim() === 'true',
             changed_shared: String(changedRaw?.changed_shared ?? '').trim() === 'true',
             changed_stack: String(changedRaw?.changed_stack ?? '').trim() === 'true',
+          };
+
+          const versionedChangedRaw = runJsonScript({
+            repoRoot,
+            env: { ...process.env },
+            scriptRel: 'scripts/pipeline/release/compute-versioned-component-changes.mjs',
+            args: ['--environment', deployEnvironment, '--head', planHeadSha],
+          });
+
+          const versionedChanged = {
+            changed_app: String(versionedChangedRaw?.changed_app ?? '').trim() === 'true',
+            changed_cli: String(versionedChangedRaw?.changed_cli ?? '').trim() === 'true',
+            changed_stack: String(versionedChangedRaw?.changed_stack ?? '').trim() === 'true',
+            changed_server: String(versionedChangedRaw?.changed_server ?? '').trim() === 'true',
+            app_baseline_tag: String(versionedChangedRaw?.app_baseline_tag ?? '').trim(),
+            cli_baseline_tag: String(versionedChangedRaw?.cli_baseline_tag ?? '').trim(),
+            stack_baseline_tag: String(versionedChangedRaw?.stack_baseline_tag ?? '').trim(),
+            server_baseline_tag: String(versionedChangedRaw?.server_baseline_tag ?? '').trim(),
           };
 
           const bumpPlanRaw = runJsonScript({
@@ -4086,8 +4307,18 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               changed.changed_server ? 'true' : 'false',
               '--changed-website',
               changed.changed_website ? 'true' : 'false',
+              '--changed-cli-stack-shared',
+              changed.changed_cli_stack_shared ? 'true' : 'false',
               '--changed-shared',
               changed.changed_shared ? 'true' : 'false',
+              '--versioned-app-changed',
+              versionedChanged.changed_app ? 'true' : 'false',
+              '--versioned-cli-changed',
+              versionedChanged.changed_cli ? 'true' : 'false',
+              '--versioned-stack-changed',
+              versionedChanged.changed_stack ? 'true' : 'false',
+              '--versioned-server-changed',
+              versionedChanged.changed_server ? 'true' : 'false',
             ],
           });
 
@@ -4107,6 +4338,11 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           for (const [k, v] of Object.entries(changed)) {
             console.log(`- ${k.replace(/^changed_/, '')}: ${v}`);
           }
+          console.log('[pipeline] release plan: versioned components since latest release tags');
+          console.log(`- app: ${versionedChanged.changed_app} (baseline=${versionedChanged.app_baseline_tag || 'none'})`);
+          console.log(`- cli: ${versionedChanged.changed_cli} (baseline=${versionedChanged.cli_baseline_tag || 'none'})`);
+          console.log(`- stack: ${versionedChanged.changed_stack} (baseline=${versionedChanged.stack_baseline_tag || 'none'})`);
+          console.log(`- server: ${versionedChanged.changed_server} (baseline=${versionedChanged.server_baseline_tag || 'none'})`);
           console.log('[pipeline] release plan: bump/publish');
           console.log(
             `- bump_app=${bumpPlan.bump_app} bump_server=${bumpPlan.bump_server} bump_website=${bumpPlan.bump_website} bump_cli=${bumpPlan.bump_cli} bump_stack=${bumpPlan.bump_stack}`,
@@ -4142,8 +4378,15 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             });
 
           if (dryRun) {
-            const sourceRef = deployEnvironment === 'production' ? 'main' : 'dev';
-            const deployPlan = computeDeployPlan(sourceRef);
+            const deployPlan =
+              deployEnvironment === 'dev'
+                ? {
+                    deploy_ui: { needed: false },
+                    deploy_server: { needed: false },
+                    deploy_website: { needed: false },
+                    deploy_docs: { needed: false },
+                  }
+                : computeDeployPlan(releaseRing.sourceRef);
             const uiExpoProfile =
               uiExpoProfileRaw === 'auto' ? deployEnvironment : normalizeMobileReleaseProfile(uiExpoProfileRaw) || uiExpoProfileRaw;
             const predicted = computeReleaseExecutionPlan({
@@ -4226,8 +4469,13 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             });
           }
 
-          const releaseSourceRef = deployEnvironment === 'production' ? 'main' : 'preview';
-          const deployPlan = computeDeployPlan(releaseSourceRef);
+          const releaseSourceRef = releaseRing.sourceRef;
+          const deployPlan = deployEnvironment === 'dev' ? {
+            deploy_ui: { needed: false },
+            deploy_server: { needed: false },
+            deploy_website: { needed: false },
+            deploy_docs: { needed: false },
+          } : computeDeployPlan(releaseSourceRef);
 
           const execution = computeReleaseExecutionPlan({
             environment: deployEnvironment,
@@ -4295,16 +4543,16 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
 
           // Preview-only publishing surfaces.
           if (execution.runPublishUiWeb) {
-            console.log('[pipeline] release: publish ui-web (preview rolling)');
+            console.log(`[pipeline] release: publish ui-web (${releaseRing.publicChannelArg} rolling)`);
             runPublishUiWeb({
               repoRoot,
               env: releaseEnv,
               dryRun: false,
               args: [
                 '--channel',
-                'preview',
+                releaseRing.publicChannelArg,
                 '--allow-stable',
-                'false',
+                releaseRing.allowStable,
                 '--release-message',
                 releaseMessage,
                 '--run-contracts',
@@ -4315,16 +4563,16 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             });
           }
           if (execution.runPublishServerRuntime) {
-            console.log('[pipeline] release: publish server-runtime (preview rolling)');
+            console.log(`[pipeline] release: publish server-runtime (${releaseRing.publicChannelArg} rolling)`);
             runPublishServerRuntime({
               repoRoot,
               env: releaseEnv,
               dryRun: false,
               args: [
                 '--channel',
-                'preview',
+                releaseRing.publicChannelArg,
                 '--allow-stable',
-                'false',
+                releaseRing.allowStable,
                 '--release-message',
                 releaseMessage,
                 '--run-contracts',
@@ -4335,14 +4583,14 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             });
           }
           if (execution.runPublishDocker) {
-            console.log('[pipeline] release: publish docker images (preview)');
+            console.log(`[pipeline] release: publish docker images (${releaseRing.dockerChannelArg})`);
             runDockerPublishImages({
               repoRoot,
               env: releaseEnv,
               dryRun: false,
               args: [
                 '--channel',
-                'preview',
+                releaseRing.dockerChannelArg,
                 '--push-latest',
                 'true',
                 '--build-relay',
@@ -4354,8 +4602,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           }
 
           // CLI/stack rolling binaries (preview/stable based on environment).
-          const rollingChannel = deployEnvironment === 'production' ? 'stable' : 'preview';
-          const allowStable = deployEnvironment === 'production' ? 'true' : 'false';
+          const rollingChannel = releaseRing.publicChannelArg;
+          const allowStable = releaseRing.allowStable;
           if (execution.runPublishCliBinaries) {
             console.log(`[pipeline] release: publish cli binaries (${rollingChannel})`);
             runPublishCliBinaries({
@@ -4406,7 +4654,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               dryRun: false,
               args: [
                 '--channel',
-                deployEnvironment,
+                releaseRing.npmChannelArg,
                 '--publish-cli',
                 bumpPlan.publish_cli ? 'true' : 'false',
                 '--publish-stack',

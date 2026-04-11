@@ -14,7 +14,7 @@ import { formatPublicReleaseChannelChoices } from '../../release/lib/public-rele
 
 /**
  * Wrapper flags (owned by `run.mjs`) for `release-*` wrapped scripts:
- * - `--deploy-environment <preview|production>`
+ * - `--deploy-environment <dev|preview|production>`
  * - `--dry-run`
  * - `--secrets-source <auto|env|keychain>`
  * - `--keychain-service <name>`
@@ -30,9 +30,9 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
   'release-bump-plan': {
     summary: 'Compute a bump plan from “changed components” inputs (workflow helper).',
     usage:
-      'node scripts/pipeline/run.mjs release-bump-plan --environment <preview|production> --bump-preset <none|patch|minor|major> [--deploy-targets <csv>]',
+      'node scripts/pipeline/run.mjs release-bump-plan --environment <dev|preview|production> --bump-preset <none|patch|minor|major> [--deploy-targets <csv>]',
     options: [
-      '--environment <preview|production>  Required.',
+      '--environment <dev|preview|production>  Required.',
       '--bump-preset <preset>            Required; none|patch|minor|major.',
       '--bump-app-override <preset>      (default: preset).',
       '--bump-cli-override <preset>      (default: preset).',
@@ -44,6 +44,10 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
       '--changed-server <bool>',
       '--changed-website <bool>',
       '--changed-shared <bool>',
+      '--versioned-app-changed <bool>   Optional per-component override.',
+      '--versioned-cli-changed <bool>   Optional per-component override.',
+      '--versioned-stack-changed <bool> Optional per-component override.',
+      '--versioned-server-changed <bool> Optional per-component override.',
     ],
     bullets: ['Most operators should use `release`, not this subcommand.'],
     examples: [
@@ -232,17 +236,35 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
     examples: ['node scripts/pipeline/run.mjs release-compute-changed-components --base origin/main --head HEAD'],
   },
 
-  'release-resolve-bump-plan': {
-    summary: 'Resolve which components should be bumped given a preset + changed inputs (advanced helper).',
+  'release-compute-versioned-component-changes': {
+    summary: 'Compute per-component version bump changes using the latest immutable release tags for the target environment.',
     usage:
-      'node scripts/pipeline/run.mjs release-resolve-bump-plan --environment <preview|production> --bump-preset <none|patch|minor|major> [--github-output <path>]',
+      'node scripts/pipeline/run.mjs release-compute-versioned-component-changes --environment <dev|preview|production> --head <ref> [--out <githubOutputPath>]',
     options: [
       '--deploy-environment <env>        Wrapper flag (default: production).',
       '--dry-run                         Wrapper flag.',
       '--secrets-source <auto|env|keychain>  Wrapper flag.',
       '--keychain-service <name>         Wrapper flag.',
       '--keychain-account <name>         Wrapper flag.',
-      '--environment <preview|production>  Script flag (required).',
+      '--environment <dev|preview|production>  Script flag (required).',
+      '--head <ref>                      Script flag (required).',
+      '--out <path>                      Script flag; writes KEY=VALUE lines.',
+    ],
+    bullets: ['Used by release planning to decide whether versioned components need a new release since the last channel-appropriate tag.'],
+    examples: ['node scripts/pipeline/run.mjs release-compute-versioned-component-changes --environment preview --head origin/dev'],
+  },
+
+  'release-resolve-bump-plan': {
+    summary: 'Resolve which components should be bumped given a preset + changed inputs (advanced helper).',
+    usage:
+      'node scripts/pipeline/run.mjs release-resolve-bump-plan --environment <dev|preview|production> --bump-preset <none|patch|minor|major> [--github-output <path>]',
+    options: [
+      '--deploy-environment <env>        Wrapper flag (default: production).',
+      '--dry-run                         Wrapper flag.',
+      '--secrets-source <auto|env|keychain>  Wrapper flag.',
+      '--keychain-service <name>         Wrapper flag.',
+      '--keychain-account <name>         Wrapper flag.',
+      '--environment <dev|preview|production>  Script flag (required).',
       '--bump-preset <preset>            Script flag (required).',
       '--bump-app-override <preset>      Script flag (default: preset).',
       '--bump-cli-override <preset>      Script flag (default: preset).',
@@ -254,6 +276,10 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
       '--changed-server <bool>',
       '--changed-website <bool>',
       '--changed-shared <bool>',
+      '--versioned-app-changed <bool>   Optional per-component override.',
+      '--versioned-cli-changed <bool>   Optional per-component override.',
+      '--versioned-stack-changed <bool> Optional per-component override.',
+      '--versioned-server-changed <bool> Optional per-component override.',
       '--github-output <path>',
     ],
     bullets: ['Generally invoked via release-bump-plan.'],

@@ -6,7 +6,7 @@
  */
 
 /**
- * @typedef {'preview'|'production'} DeployEnvironment
+ * @typedef {'dev'|'preview'|'production'} DeployEnvironment
  * @typedef {'ui'|'server'|'website'|'docs'|'cli'|'stack'|'server_runner'} DeployTarget
  * @typedef {'none'|'patch'|'minor'|'major'} Bump
  * @typedef {'none'|'ota'|'native'|'native_submit'} UiExpoAction
@@ -20,6 +20,7 @@
  *   changed_docs: boolean;
  *   changed_shared: boolean;
  *   changed_stack: boolean;
+ *   changed_cli_stack_shared?: boolean;
  * }} ChangedComponents
  *
  * @typedef {{
@@ -73,7 +74,7 @@ function hasTarget(deployTargets, target) {
  *
  * Notes:
  * - This function is intentionally side-effect free; it only decides what to run.
- * - UI web deploy is production-only in the current policy (preview UI web deploys are treated as production).
+ * - Hosted deploy branch promotion is only for preview/production; the public dev lane is publish-only.
  *
  * @param {{
  *   environment: DeployEnvironment;
@@ -104,6 +105,7 @@ export function computeReleaseExecutionPlan(input) {
   const hasCli = hasTarget(targets, 'cli');
   const hasStack = hasTarget(targets, 'stack');
   const hasServerRunner = hasTarget(targets, 'server_runner');
+  const supportsHostedDeploys = env === 'preview' || env === 'production';
 
   const runBumpVersionsDev = !dryRun && bumpPlan.should_bump === true;
   const runPromoteMain = !dryRun && env === 'production';
@@ -118,7 +120,7 @@ export function computeReleaseExecutionPlan(input) {
   const uiExpoAction = input.uiExpoAction;
   const desktopMode = input.desktopMode;
 
-  // Mirrors release.yml: preview UI deploy branch promotion is disabled; UI deploy job is still used for Expo/desktop.
+  // Hosted UI/webhook deploys are disabled for the public dev lane; UI work there is publish/mobile/desktop only.
   const wantsUiWork =
     hasUi &&
     !dryRun &&
@@ -126,26 +128,27 @@ export function computeReleaseExecutionPlan(input) {
       ? (deployUiNeeded || bumpPlan.bump_app !== 'none' || forceDeploy)
       : uiExpoAction !== 'none' || desktopMode !== 'none');
 
-  const runDeployUi = wantsUiWork;
-  const runDeployServer = hasServer && !dryRun && (deployServerNeeded || bumpPlan.bump_server !== 'none' || forceDeploy);
-  const runDeployWebsite = hasWebsite && !dryRun && (deployWebsiteNeeded || bumpPlan.bump_website !== 'none' || forceDeploy);
-  const runDeployDocs = hasDocs && !dryRun && (deployDocsNeeded || forceDeploy);
+  const runDeployUi = supportsHostedDeploys && wantsUiWork;
+  const runDeployServer = supportsHostedDeploys && hasServer && !dryRun && (deployServerNeeded || bumpPlan.bump_server !== 'none' || forceDeploy);
+  const runDeployWebsite = supportsHostedDeploys && hasWebsite && !dryRun && (deployWebsiteNeeded || bumpPlan.bump_website !== 'none' || forceDeploy);
+  const runDeployDocs = supportsHostedDeploys && hasDocs && !dryRun && (deployDocsNeeded || forceDeploy);
 
-  const runPublishServerRuntime = !dryRun && env === 'preview' && hasServerRunner;
-  const runPublishUiWeb = !dryRun && env === 'preview' && hasUi;
+  const runPublishServerRuntime = !dryRun && hasServerRunner;
+  const runPublishUiWeb = !dryRun && hasUi;
 
   const runPublishDocker =
     !dryRun &&
-    env === 'preview' &&
     (forceDeploy ||
       changed.changed_ui ||
       changed.changed_server ||
       changed.changed_cli ||
       changed.changed_stack ||
+      changed.changed_cli_stack_shared ||
       changed.changed_shared);
 
   const dockerBuildRelay = forceDeploy || changed.changed_ui || changed.changed_server || changed.changed_shared;
-  const dockerBuildDevBox = forceDeploy || changed.changed_cli || changed.changed_stack || changed.changed_shared;
+  const dockerBuildDevBox =
+    forceDeploy || changed.changed_cli || changed.changed_stack || changed.changed_cli_stack_shared || changed.changed_shared;
 
   // `release.yml` routes npm publishing through `release-npm.yml` when any publish_* is true.
   const runPublishNpm = !dryRun && (bumpPlan.publish_cli || bumpPlan.publish_stack || bumpPlan.publish_server);
@@ -172,4 +175,3 @@ export function computeReleaseExecutionPlan(input) {
     dockerBuildDevBox,
   };
 }
-

@@ -217,6 +217,41 @@ function updateRollingTagViaGithubApi(params) {
   return true;
 }
 
+/**
+ * Ensure a versioned (immutable) tag exists and points at the requested sha.
+ * This is required because `gh release create --target <sha>` is rejected by the
+ * GitHub API (expects a branch/tag-ish value, not a raw commit SHA).
+ *
+ * @param {{ repo: string; tag: string; sha: string; env: Record<string, string>; dryRun: boolean }} params
+ */
+function ensureImmutableTagViaGithubApi(params) {
+  const repo = String(params.repo ?? '').trim();
+  const tag = String(params.tag ?? '').trim();
+  const sha = String(params.sha ?? '').trim();
+  if (!repo || !tag || !sha) return false;
+
+  const existingSha = readTagShaViaGithubApi({
+    repo,
+    tag,
+    env: params.env,
+    dryRun: params.dryRun,
+  });
+
+  if (existingSha) {
+    if (existingSha !== sha) {
+      fail(`Tag refs/tags/${tag} already exists at a different sha (${existingSha}); refusing to move immutable tag.`);
+    }
+    return true;
+  }
+
+  run(
+    'gh',
+    ['api', '-X', 'POST', `repos/${repo}/git/refs`, '-f', `ref=refs/tags/${tag}`, '-f', `sha=${sha}`],
+    { env: params.env, dryRun: params.dryRun },
+  );
+  return true;
+}
+
 function main() {
   const { values } = parseArgs({
     options: {
@@ -291,6 +326,7 @@ function main() {
   }
 
   let pushedRollingTag = true;
+  let tagEnsured = false;
   if (rollingTag) {
     try {
       // Prefer GH API so the workflow does not rely on git remote auth being configured.
@@ -310,6 +346,25 @@ function main() {
       pushedRollingTag = false;
       console.log('::warning::Rolling tag push failed (tag protections or permissions). Skipping asset upload for rolling tag.');
     }
+    tagEnsured = pushedRollingTag;
+  } else {
+    try {
+      if (repo) {
+        tagEnsured = ensureImmutableTagViaGithubApi({ repo, tag, sha, env: ghEnv, dryRun });
+      } else {
+        tagEnsured = false;
+      }
+      if (!tagEnsured) {
+        run('git', ['tag', tag, sha], { dryRun });
+        run('git', ['push', 'origin', `refs/tags/${tag}`], { dryRun });
+        tagEnsured = true;
+      }
+    } catch (err) {
+      if (!dryRun) {
+        fail(`Failed to create immutable tag refs/tags/${tag}: ${formatExecError(err)}`);
+      }
+      tagEnsured = true;
+    }
   }
 
   const prereleaseFlag = prerelease ? ['--prerelease'] : [];
@@ -323,10 +378,13 @@ function main() {
   }
 
   if (!releaseExists) {
+    if (!tagEnsured && !dryRun) {
+      fail(`Cannot create release ${tag}: tag ref could not be ensured.`);
+    }
     if (generateNotes) {
       run(
         'gh',
-        ['release', 'create', tag, ...prereleaseFlag, '--title', title, '--target', sha, '--generate-notes'],
+        ['release', 'create', tag, ...prereleaseFlag, '--title', title, '--generate-notes'],
         { env: ghEnv, dryRun },
       );
     } else {
@@ -336,7 +394,7 @@ function main() {
       if (!body) fail('notes or release_message is required when generate_notes=false');
       run(
         'gh',
-        ['release', 'create', tag, ...prereleaseFlag, '--title', title, '--target', sha, '--notes', body],
+        ['release', 'create', tag, ...prereleaseFlag, '--title', title, '--notes', body],
         { env: ghEnv, dryRun },
       );
     }
@@ -370,7 +428,7 @@ function main() {
       }
     }
 
-    run('gh', buildRollingReleaseEditArgs({ tag, title, notes: body, targetSha: sha }), { env: ghEnv, dryRun });
+    run('gh', buildRollingReleaseEditArgs({ tag, title, notes: body }), { env: ghEnv, dryRun });
   }
 
   // Prune assets (rolling tags typically).

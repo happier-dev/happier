@@ -32,6 +32,18 @@ function parseBoolString(value, name) {
 }
 
 /**
+ * @param {unknown} value
+ * @param {string} name
+ * @returns {boolean | undefined}
+ */
+function parseOptionalBoolString(value, name) {
+  if (value === undefined) return undefined;
+  const raw = String(value ?? '').trim();
+  if (!raw) return undefined;
+  return parseBoolString(raw, name);
+}
+
+/**
  * @param {string} outputPath
  * @param {Record<string, string>} values
  */
@@ -97,7 +109,12 @@ function main() {
       'changed-stack': { type: 'string' },
       'changed-server': { type: 'string' },
       'changed-website': { type: 'string' },
+      'changed-cli-stack-shared': { type: 'string' },
       'changed-shared': { type: 'string' },
+      'versioned-app-changed': { type: 'string' },
+      'versioned-cli-changed': { type: 'string' },
+      'versioned-stack-changed': { type: 'string' },
+      'versioned-server-changed': { type: 'string' },
       'github-output': { type: 'string', default: '' },
     },
     allowPositionals: false,
@@ -105,8 +122,8 @@ function main() {
 
   const environment = String(values.environment ?? '').trim();
   if (!environment) fail('--environment is required');
-  if (environment !== 'preview' && environment !== 'production') {
-    fail(`--environment must be 'preview' or 'production' (got: ${environment})`);
+  if (environment !== 'dev' && environment !== 'preview' && environment !== 'production') {
+    fail(`--environment must be 'dev', 'preview', or 'production' (got: ${environment})`);
   }
 
   const bumpPreset = String(values['bump-preset'] ?? '').trim();
@@ -141,16 +158,21 @@ function main() {
   const changedStackRaw = parseBoolString(values['changed-stack'], '--changed-stack');
   const changedServerRaw = parseBoolString(values['changed-server'], '--changed-server');
   const changedWebsite = parseBoolString(values['changed-website'], '--changed-website');
+  const changedCliStackShared = parseOptionalBoolString(values['changed-cli-stack-shared'], '--changed-cli-stack-shared') ?? false;
   const changedShared = parseBoolString(values['changed-shared'], '--changed-shared');
+  const versionedAppChanged = parseOptionalBoolString(values['versioned-app-changed'], '--versioned-app-changed');
+  const versionedCliChanged = parseOptionalBoolString(values['versioned-cli-changed'], '--versioned-cli-changed');
+  const versionedStackChanged = parseOptionalBoolString(values['versioned-stack-changed'], '--versioned-stack-changed');
+  const versionedServerChanged = parseOptionalBoolString(values['versioned-server-changed'], '--versioned-server-changed');
 
   const publishCli = deployTargets.includes('cli');
   const publishStack = deployTargets.includes('stack');
   const publishServer = deployTargets.includes('server_runner');
 
-  const changedApp = changedUi || changedShared;
-  const changedCli = changedCliRaw || changedShared;
-  const changedStack = changedStackRaw || changedShared;
-  const changedServer = changedServerRaw || changedShared;
+  const changedApp = versionedAppChanged ?? (changedUi || changedShared);
+  const changedCli = versionedCliChanged ?? (changedCliRaw || changedShared || changedCliStackShared);
+  const changedStack = versionedStackChanged ?? (changedStackRaw || changedShared || changedCliStackShared);
+  const changedServer = versionedServerChanged ?? (changedServerRaw || changedShared);
 
   const bumpApp = shouldBumpComponent(changedApp, resolveOverride(bumpAppOverride, bumpPreset));
   const bumpCli = shouldBumpComponent(changedCli, resolveOverride(bumpCliOverride, bumpPreset));
@@ -238,4 +260,3 @@ function main() {
 }
 
 main();
-

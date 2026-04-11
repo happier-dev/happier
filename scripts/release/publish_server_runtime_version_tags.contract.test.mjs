@@ -1,11 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
+const serverBaseVersion = JSON.parse(fs.readFileSync(resolve(repoRoot, 'apps', 'server', 'package.json'), 'utf8')).version;
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 for (const { channel, rollingTag } of [
   { channel: 'preview', rollingTag: 'server-preview' },
@@ -42,8 +48,8 @@ for (const { channel, rollingTag } of [
 
     assert.match(out, new RegExp(`--tag\\s+${rollingTag}\\b`));
     assert.match(out, new RegExp(`--tag\\s+${rollingTag}\\b[^\\n]*--generate-notes\\s+false\\b`));
-    assert.match(out, /--tag\s+server-v/);
-    assert.match(out, /--tag\s+server-v[^\s"]+[^\n]*--generate-notes\s+true\b/);
+    assert.match(out, new RegExp(`--tag\\s+server-v${escapeRegExp(serverBaseVersion)}-${rollingTag.split('-')[1]}\\.\\d+\\.\\d+\\b`));
+    assert.match(out, new RegExp(`--tag\\s+server-v${escapeRegExp(serverBaseVersion)}-[^\\s"]+[^\n]*--generate-notes\\s+true\\b`));
     assert.match(out, /clean artifacts dir: dist\/release-assets\/server|ensure clean artifacts dir: dist\/release-assets\/server/i);
   });
 }

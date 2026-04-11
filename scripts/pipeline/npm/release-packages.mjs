@@ -6,6 +6,12 @@ import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { resolveWindowsCommandInvocation } from '../lib/windows/resolveWindowsCommandInvocation.mjs';
 import { resolvePackedTarball } from './resolvePackedTarball.mjs';
+import {
+  formatPublicReleaseChannel,
+  formatPublicReleaseChannelChoices,
+  normalizePublicReleaseChannel,
+  resolveRollingVersionSuffix,
+} from '../release/lib/public-release-rings.mjs';
 
 function fail(message) {
   console.error(message);
@@ -65,6 +71,17 @@ function patchPackageVersion(pkgJsonPath, nextVersion) {
   if (!prevVersion) fail(`package.json missing version: ${pkgJsonPath}`);
   parsed.version = nextVersion;
   fs.writeFileSync(pkgJsonPath, JSON.stringify(parsed, null, 2) + '\n', 'utf8');
+  return () => {
+    fs.writeFileSync(pkgJsonPath, raw, 'utf8');
+  };
+}
+
+/**
+ * @param {string} pkgJsonPath
+ * @returns {() => void}
+ */
+function snapshotPackageManifest(pkgJsonPath) {
+  const raw = fs.readFileSync(pkgJsonPath, 'utf8');
   return () => {
     fs.writeFileSync(pkgJsonPath, raw, 'utf8');
   };
@@ -195,13 +212,16 @@ function packTo(repoRoot, pkgDir, outDir, outName, opts) {
  * @param {string} repoRoot
  * @param {string} channel
  * @param {string} tarballPath
+ * @param {{ tag?: string }} publishOpts
  * @param {{ dryRun: boolean }} opts
  */
-function publishTarball(repoRoot, channel, tarballPath, opts) {
+function publishTarball(repoRoot, channel, tarballPath, publishOpts, opts) {
   const script = withinRepo(repoRoot, 'scripts/pipeline/npm/publish-tarball.mjs');
-  const args = [script, '--channel', channel, '--tarball', tarballPath];
+  const args = [script, '--channel', channel, '--tarball', tarballPath, ...(publishOpts.tag ? ['--tag', publishOpts.tag] : [])];
   if (opts.dryRun) {
-    console.log(`[dry-run] ${process.execPath} ${path.relative(repoRoot, script)} --channel ${channel} --tarball ${path.relative(repoRoot, tarballPath)}`);
+    console.log(
+      `[dry-run] ${process.execPath} ${path.relative(repoRoot, script)} --channel ${channel} --tarball ${path.relative(repoRoot, tarballPath)}${publishOpts.tag ? ` --tag ${publishOpts.tag}` : ''}`,
+    );
     return;
   }
   execFileSync(process.execPath, args, {
@@ -225,19 +245,11 @@ function readPackageVersion(repoRoot, pkgDir) {
 }
 
 /**
- * @param {string} channel
+ * @param {import('@happier-dev/release-runtime/releaseRings').PublicReleaseRingId} channel
  */
 function resolvePreviewSuffix(channel) {
-  if (channel !== 'preview') return '';
-  const runRaw = String(process.env.GITHUB_RUN_NUMBER ?? '').trim();
-  const attemptRaw = String(process.env.GITHUB_RUN_ATTEMPT ?? '').trim();
-
-  const runNumber = runRaw ? Number(runRaw) : NaN;
-  const attemptNumber = attemptRaw ? Number(attemptRaw) : NaN;
-
-  const run = Number.isFinite(runNumber) ? Math.max(0, Math.floor(runNumber)) : Math.floor(Date.now() / 1000);
-  const attempt = Number.isFinite(attemptNumber) ? Math.max(1, Math.floor(attemptNumber)) : Math.max(1, Math.floor(process.pid));
-  return `preview.${run}.${attempt}`;
+  if (channel === 'stable') return '';
+  return resolveRollingVersionSuffix(channel);
 }
 
 function main() {
@@ -248,7 +260,6 @@ function main() {
       'publish-cli': { type: 'string', default: 'false' },
       'publish-stack': { type: 'string', default: 'false' },
       'publish-server': { type: 'string', default: 'false' },
-      'publish-support': { type: 'string', default: 'false' },
       'server-runner-dir': { type: 'string', default: 'packages/relay-server' },
       'run-tests': { type: 'string', default: 'auto' },
       mode: { type: 'string', default: 'pack+publish' },
@@ -257,16 +268,19 @@ function main() {
     allowPositionals: false,
   });
 
-  const channel = String(values.channel ?? '').trim();
-  if (!channel) fail('--channel is required');
-  if (channel !== 'preview' && channel !== 'production') {
-    fail(`--channel must be 'preview' or 'production' (got: ${channel})`);
+  const requestedChannel = String(values.channel ?? '').trim();
+  if (!requestedChannel) fail('--channel is required');
+  const channelId = normalizePublicReleaseChannel(requestedChannel);
+  if (!channelId) {
+    fail(
+      `--channel must be ${JSON.stringify(formatPublicReleaseChannelChoices({ stableAlias: 'production', preferredOrder: ['dev', 'preview', 'stable'] }))} (got: ${requestedChannel})`,
+    );
   }
+  const channel = formatPublicReleaseChannel(channelId, { stableAlias: 'production' });
 
   const publishCli = parseBool(values['publish-cli'], '--publish-cli');
   const publishStack = parseBool(values['publish-stack'], '--publish-stack');
   const publishServer = parseBool(values['publish-server'], '--publish-server');
-  const publishSupport = parseBool(values['publish-support'], '--publish-support');
   const runnerDir = String(values['server-runner-dir'] ?? '').trim() || 'packages/relay-server';
   const runTests = resolveAutoBool(values['run-tests'], '--run-tests', process.env.GITHUB_ACTIONS === 'true');
   const mode = String(values.mode ?? '').trim() || 'pack+publish';
@@ -277,7 +291,7 @@ function main() {
     fail(`--mode must be 'pack' or 'pack+publish' (got: ${mode})`);
   }
 
-  /** @type {Array<{ key: 'cli' | 'stack' | 'server' | 'support'; dir: string; outDir: string; prepare: () => void; }>} */
+  /** @type {Array<{ key: 'cli' | 'stack' | 'server'; dir: string; outDir: string; prepare: () => void; }>} */
   const packages = [];
 
   if (publishCli) {
@@ -319,57 +333,60 @@ function main() {
     });
   }
 
-  if (publishSupport) {
-    packages.push({
-      key: 'support',
-      dir: 'packages/support',
-      outDir: 'dist/release-assets/support',
-      prepare: () => {
-        run(opts, 'yarn', ['build'], { cwd: withinRepo(repoRoot, 'packages/support') });
-        run(opts, process.execPath, ['scripts/bundleWorkspaceDeps.mjs'], { cwd: withinRepo(repoRoot, 'packages/support') });
-      },
-    });
-  }
-
   if (packages.length === 0) {
-    fail('At least one of --publish-cli/--publish-stack/--publish-server/--publish-support must be true');
+    fail('At least one of --publish-cli/--publish-stack/--publish-server must be true');
   }
 
-  const previewSuffix = resolvePreviewSuffix(channel);
+  const previewSuffix = resolvePreviewSuffix(channelId);
+  const publishTarget =
+    channelId === 'publicdev'
+      ? { channel: 'preview', tag: 'dev' }
+      : { channel, tag: '' };
 
-  for (const pkg of packages) {
-    const pkgJsonPath = withinRepo(repoRoot, path.join(pkg.dir, 'package.json'));
-    if (!fs.existsSync(pkgJsonPath)) fail(`Expected package.json missing: ${path.relative(repoRoot, pkgJsonPath)}`);
+  /** @type {Array<() => void>} */
+  const restorePackageManifests = [];
+  try {
+    for (const pkg of packages) {
+      const pkgJsonPath = withinRepo(repoRoot, path.join(pkg.dir, 'package.json'));
+      if (!fs.existsSync(pkgJsonPath)) fail(`Expected package.json missing: ${path.relative(repoRoot, pkgJsonPath)}`);
+      if (!dryRun) {
+        restorePackageManifests.push(snapshotPackageManifest(pkgJsonPath));
+      }
 
-    const originalVersion = readPackageVersion(repoRoot, pkg.dir);
-    const base = normalizeBase(originalVersion);
-    const nextVersion = channel === 'preview' ? `${base}-${previewSuffix}` : originalVersion;
+      const originalVersion = readPackageVersion(repoRoot, pkg.dir);
+      const base = normalizeBase(originalVersion);
+      const nextVersion = channelId === 'stable' ? originalVersion : `${base}-${previewSuffix}`;
 
-    console.log(`\n==> ${pkg.dir} (${pkg.key})`);
-    console.log(`version: ${originalVersion}${channel === 'preview' ? ` -> ${nextVersion}` : ''}`);
+      console.log(`\n==> ${pkg.dir} (${pkg.key})`);
+      console.log(`version: ${originalVersion}${channelId !== 'stable' ? ` -> ${nextVersion}` : ''}`);
 
-    /** @type {null | (() => void)} */
-    let restore = null;
-    try {
-      if (channel === 'preview') {
-        if (dryRun) {
-          console.log(`[dry-run] patch ${path.relative(repoRoot, pkgJsonPath)} version -> ${nextVersion}`);
-        } else {
-          restore = patchPackageVersion(pkgJsonPath, nextVersion);
+      /** @type {null | (() => void)} */
+      let restore = null;
+      try {
+        if (channelId !== 'stable') {
+          if (dryRun) {
+            console.log(`[dry-run] patch ${path.relative(repoRoot, pkgJsonPath)} version -> ${nextVersion}`);
+          } else {
+            restore = patchPackageVersion(pkgJsonPath, nextVersion);
+          }
+        }
+
+        pkg.prepare();
+
+        const outName = `${pkg.key}-${nextVersion}.tgz`;
+        const tarballPath = packTo(repoRoot, pkg.dir, pkg.outDir, outName, opts);
+        if (mode === 'pack+publish') {
+          publishTarball(repoRoot, publishTarget.channel, tarballPath, { tag: publishTarget.tag }, opts);
+        }
+      } finally {
+        if (restore) {
+          restore();
         }
       }
-
-      pkg.prepare();
-
-      const outName = `${pkg.key}-${nextVersion}.tgz`;
-      const tarballPath = packTo(repoRoot, pkg.dir, pkg.outDir, outName, opts);
-      if (mode === 'pack+publish') {
-        publishTarball(repoRoot, channel, tarballPath, opts);
-      }
-    } finally {
-      if (restore) {
-        restore();
-      }
+    }
+  } finally {
+    for (const restoreManifest of restorePackageManifests.reverse()) {
+      restoreManifest();
     }
   }
 }

@@ -13,13 +13,13 @@
 /** @type {Record<string, CommandHelpSpec>} */
 export const COMMAND_HELP_ORCHESTRATORS = {
   release: {
-    summary: 'Orchestrate a full preview/production release (recommended entrypoint).',
+    summary: 'Orchestrate a full dev/preview/production release (recommended entrypoint).',
     usage:
-      'node scripts/pipeline/run.mjs release --confirm <action> --repository <owner/repo> [--deploy-environment preview|production] [--deploy-targets <csv>] [--dry-run]',
+      'node scripts/pipeline/run.mjs release --confirm <action> --repository <owner/repo> [--deploy-environment dev|preview|production] [--deploy-targets <csv>] [--dry-run]',
     options: [
       '--confirm <action>                Required safety confirmation.',
       '--repository <owner/repo>         Required; e.g. happier-dev/happier.',
-      "--deploy-environment <env>        preview|production (default: preview).",
+      "--deploy-environment <env>        dev|preview|production (default: preview).",
       '--deploy-targets <csv>            ui,server,website,docs,cli,stack,server_runner (default: ui,server,website,docs).',
       '--force-deploy <bool>             true|false (default: false).',
       '--bump <preset>                   none|patch|minor|major (default: none).',
@@ -48,6 +48,7 @@ export const COMMAND_HELP_ORCHESTRATORS = {
       'Use --dry-run first; once green, re-run without --dry-run to execute.',
     ],
     examples: [
+      'node scripts/pipeline/run.mjs release --confirm "release dev to dev" --repository happier-dev/happier --deploy-environment dev --dry-run',
       'node scripts/pipeline/run.mjs release --confirm "release dev to preview" --repository happier-dev/happier --deploy-environment preview --dry-run',
       'node scripts/pipeline/run.mjs release --confirm "release dev to preview" --repository happier-dev/happier --deploy-environment preview',
     ],

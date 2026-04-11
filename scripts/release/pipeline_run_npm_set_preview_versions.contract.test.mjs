@@ -24,7 +24,6 @@ function readJson(dir, rel) {
 test('pipeline run exposes npm-set-preview-versions (write=false compute-only)', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'happier-preview-versions-'));
   writeJson(dir, 'apps/cli/package.json', { name: '@happier-dev/cli', version: '1.2.3' });
-  writeJson(dir, 'packages/support/package.json', { name: '@happier-dev/support', version: '7.8.9' });
 
   const out = execFileSync(
     process.execPath,
@@ -39,8 +38,6 @@ test('pipeline run exposes npm-set-preview-versions (write=false compute-only)',
       'false',
       '--publish-server',
       'false',
-      '--publish-support',
-      'true',
       '--write',
       'false',
     ],
@@ -55,7 +52,5 @@ test('pipeline run exposes npm-set-preview-versions (write=false compute-only)',
 
   const parsed = JSON.parse(out);
   assert.equal(parsed.cli, '1.2.3-preview.123.2');
-  assert.equal(parsed.support, '7.8.9-preview.123.2');
   assert.equal(readJson(dir, 'apps/cli/package.json').version, '1.2.3');
-  assert.equal(readJson(dir, 'packages/support/package.json').version, '7.8.9');
 });

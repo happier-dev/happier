@@ -5,6 +5,7 @@
 import { join } from 'node:path';
 import { mkdir, rm } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import { bundleWorkspaceDeps } from '../../../apps/stack/scripts/bundleWorkspaceDeps.mjs';
 
 import {
   CLI_STACK_TARGETS,
@@ -45,6 +46,10 @@ async function main() {
     availableTargets: CLI_STACK_TARGETS,
     requested: kv.get('--targets'),
   });
+
+  // The hstack binary compiles against the bundled workspace copies under apps/stack/node_modules.
+  // Prepare that dependency tree first so bun can resolve vendored runtime deps like zod.
+  await bundleWorkspaceDeps({ repoRoot, stackDir: join(repoRoot, 'apps', 'stack') });
 
   await ensureFileExists(entrypoint);
   await mkdir(tempBaseDir, { recursive: true });

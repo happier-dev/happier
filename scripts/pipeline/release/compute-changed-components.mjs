@@ -63,6 +63,7 @@ function main() {
     changed_server: String(Boolean(classified.server)),
     changed_website: String(Boolean(classified.website)),
     changed_docs: String(Boolean(classified.docs)),
+    changed_cli_stack_shared: String(Boolean(classified.cli_stack_shared)),
     changed_shared: String(Boolean(classified.shared)),
     changed_stack: String(Boolean(classified.stack)),
     commit_count: String(commitCount),
@@ -81,4 +82,3 @@ function main() {
 Promise.resolve()
   .then(() => main())
   .catch((err) => fail(err?.stack || String(err)));
-

@@ -190,4 +190,3 @@ test('dry-run: no mutating jobs run', () => {
     assert.equal(v, false, `expected ${k} to be false in dry-run mode`);
   }
 });
-
