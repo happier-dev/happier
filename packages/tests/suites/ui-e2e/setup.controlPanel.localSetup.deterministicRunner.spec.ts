@@ -109,9 +109,11 @@ test.describe('ui e2e: setup control panel flow (deterministic runner)', () => {
         await createAccountAndReachSetupWizardState({ page });
 
         await expect(page.getByTestId('setupWizard-setup-this-computer')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('setupWizard-setup-this-computer-checklist-row-setup.thisComputer.resolveRelay')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('setupWizard-setup-this-computer-checklist-row-setup.thisComputer.checkAuth')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('setupWizard-setup-this-computer-checklist-row-setup.thisComputer.installService')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('setupWizard-setup-this-computer-checklist-row-setup.thisComputer.stage.confirmRelay')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('setupWizard-setup-this-computer-checklist-row-setup.thisComputer.stage.resolveBackgroundService')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('setupWizard-setup-this-computer-checklist-row-setup.thisComputer.stage.registerComputer')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('setupWizard-setup-this-computer-checklist-row-setup.thisComputer.stage.enableBackgroundService')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('setupWizard-setup-this-computer-checklist-row-setup.thisComputer.stage.verifyReady')).toHaveCount(1, { timeout: 120_000 });
         await expect(page.getByTestId('setupWizard.surface-primary')).toBeEnabled({ timeout: 120_000 });
     });
 

@@ -89,7 +89,9 @@ describe('TerminalConnectScreen hash parsing', () => {
         const screen = await renderScreen(<Screen />);
         await act(async () => {});
 
-        expect(screen.getTextContent()).toContain('terminal.invalidConnectionLink');
+        const textContent = screen.getTextContent();
+        expect(textContent).toContain('terminal.invalidConnectionLink');
+        expect(textContent.split('terminal.invalidConnectionLinkDescription')).toHaveLength(2);
     });
 
     it('restores key from pending terminal connect when hash is empty (dev strict-mode remount safety)', async () => {

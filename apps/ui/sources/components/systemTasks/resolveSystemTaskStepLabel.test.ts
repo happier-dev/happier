@@ -25,6 +25,15 @@ describe('resolveSystemTaskStepLabel', () => {
         expect(resolveSystemTaskStepLabel('relay.access.configure.apply')).not.toBe('relay.access.configure.apply');
     });
 
+    it('translates setup-this-computer preflight ownership step ids', () => {
+        expect(resolveSystemTaskStepLabel('setup.thisComputer.ensureCli'))
+            .not.toBe('setup.thisComputer.ensureCli');
+        expect(resolveSystemTaskStepLabel('setup.thisComputer.preflight.releaseChannel'))
+            .not.toBe('setup.thisComputer.preflight.releaseChannel');
+        expect(resolveSystemTaskStepLabel('setup.thisComputer.preflight.serviceConflict'))
+            .not.toBe('setup.thisComputer.preflight.serviceConflict');
+    });
+
     it('returns null for unknown step ids', () => {
         expect(resolveSystemTaskStepLabel('unknown.step.id')).toBe('unknown.step.id');
     });

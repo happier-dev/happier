@@ -7,6 +7,7 @@ import type {
     PlanChecklistExecutionState,
     PlanChecklistItem,
     PlanChecklistPhase,
+    PlanChecklistVariant,
 } from './types';
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -35,6 +36,7 @@ export type PlanChecklistCardProps = Readonly<{
     testID?: string;
     items: readonly PlanChecklistItem[];
     phase: PlanChecklistPhase;
+    variant?: PlanChecklistVariant;
     selectedIds: readonly string[];
     executionById?: Readonly<Record<string, PlanChecklistExecutionState>>;
     expandedIds?: readonly string[];
@@ -49,6 +51,71 @@ export type PlanChecklistCardProps = Readonly<{
 
 function buildIdSet(ids: readonly string[]): ReadonlySet<string> {
     return new Set(ids);
+}
+
+function hasSelectedDescendant(item: PlanChecklistItem, selectedSet: ReadonlySet<string>): boolean {
+    if (item.children && item.children.length > 0) {
+        return item.children.some((child) => hasSelectedDescendant(child, selectedSet));
+    }
+    return selectedSet.has(item.id);
+}
+
+function buildLeafExecutionState(
+    item: PlanChecklistItem,
+    phase: PlanChecklistPhase,
+    selectedSet: ReadonlySet<string>,
+    executionById?: Readonly<Record<string, PlanChecklistExecutionState>>,
+): PlanChecklistExecutionState {
+    const selected = selectedSet.has(item.id);
+    const execution = executionById?.[item.id];
+    if (phase === 'select') {
+        return {
+            status: item.satisfied
+                ? (selected || item.disabled ? 'done' : 'idle')
+                : (selected ? 'queued' : 'idle'),
+            logs: execution?.logs ?? [],
+            error: execution?.error,
+        };
+    }
+    return {
+        status: execution?.status ?? (item.satisfied ? 'done' : (selected ? 'queued' : 'idle')),
+        logs: execution?.logs ?? [],
+        error: execution?.error,
+    };
+}
+
+function aggregateExecutionStates(states: readonly PlanChecklistExecutionState[]): PlanChecklistExecutionState {
+    const status = states.some((state) => state.status === 'error')
+        ? 'error'
+        : states.some((state) => state.status === 'running')
+            ? 'running'
+            : states.some((state) => state.status === 'queued')
+                ? 'queued'
+                : states.every((state) => state.status === 'done')
+                    ? 'done'
+                    : states.some((state) => state.status === 'done')
+                        ? 'running'
+                        : 'idle';
+    return {
+        status,
+        logs: [],
+        error: states.find((state) => state.error)?.error,
+    };
+}
+
+function resolveExecutionState(
+    item: PlanChecklistItem,
+    phase: PlanChecklistPhase,
+    selectedSet: ReadonlySet<string>,
+    executionById?: Readonly<Record<string, PlanChecklistExecutionState>>,
+): PlanChecklistExecutionState | undefined {
+    if (!item.children || item.children.length === 0) {
+        return executionById?.[item.id];
+    }
+    return aggregateExecutionStates(item.children.map((child) => (
+        resolveExecutionState(child, phase, selectedSet, executionById)
+        ?? buildLeafExecutionState(child, phase, selectedSet, executionById)
+    )));
 }
 
 export const PlanChecklistCard = React.memo(function PlanChecklistCard(props: PlanChecklistCardProps) {
@@ -66,7 +133,26 @@ export const PlanChecklistCard = React.memo(function PlanChecklistCard(props: Pl
 
             <View>
                 {props.items.map((item, index) => {
-                    const execution = props.executionById?.[item.id];
+                    const execution = resolveExecutionState(item, props.phase, selectedSet, props.executionById);
+                    const selected = hasSelectedDescendant(item, selectedSet);
+                    const childrenCard = item.children && item.children.length > 0 ? (
+                        <PlanChecklistCard
+                            testID={props.testID ? `${props.testID}-row-${item.id}-children` : undefined}
+                            items={item.children}
+                            phase={props.phase}
+                            variant={props.variant}
+                            selectedIds={props.selectedIds}
+                            executionById={props.executionById}
+                            expandedIds={expandedIds}
+                            onToggleItem={props.onToggleItem}
+                            onToggleExpanded={props.onToggleExpanded}
+                            onCopyDiagnostics={props.onCopyDiagnostics}
+                            style={{
+                                borderRadius: 12,
+                                overflow: 'hidden',
+                            }}
+                        />
+                    ) : null;
                     return (
                         <View key={item.id}>
                             {index > 0 ? (
@@ -75,10 +161,12 @@ export const PlanChecklistCard = React.memo(function PlanChecklistCard(props: Pl
                             <PlanChecklistRow
                                 testID={props.testID ? `${props.testID}-row-${item.id}` : undefined}
                                 item={item}
+                                variant={props.variant ?? 'default'}
                                 phase={props.phase}
-                                selected={selectedSet.has(item.id)}
+                                selected={selected}
                                 execution={execution}
                                 expanded={expandedSet.has(item.id)}
+                                childrenContent={childrenCard}
                                 onToggle={() => props.onToggleItem?.(item.id)}
                                 onToggleExpanded={() => props.onToggleExpanded?.(item.id)}
                                 onCopyDiagnostics={props.onCopyDiagnostics ? () => props.onCopyDiagnostics?.(item) : undefined}

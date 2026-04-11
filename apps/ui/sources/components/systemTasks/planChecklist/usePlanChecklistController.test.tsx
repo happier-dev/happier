@@ -292,6 +292,53 @@ describe('usePlanChecklistController', () => {
         expect(mapper.mock.calls[0]?.[2]).toEqual(['install_cli', 'install_daemon']);
     });
 
+    it('tracks nested child ids in the selected and expanded state for stage items', async () => {
+        const { usePlanChecklistController } = await import('./usePlanChecklistController');
+
+        const items = [
+            {
+                id: 'register_computer',
+                kind: 'stage',
+                title: 'Register this computer',
+                satisfied: false,
+                disabled: true,
+                children: [
+                    {
+                        id: 'check_auth',
+                        title: 'Check sign-in',
+                        satisfied: false,
+                        disabled: false,
+                        defaultSelected: true,
+                    },
+                    {
+                        id: 'configure_relay',
+                        title: 'Connect to relay',
+                        satisfied: false,
+                        disabled: false,
+                        defaultSelected: true,
+                    },
+                ],
+            },
+        ] as const;
+
+        const hook = await renderHook(() => usePlanChecklistController({
+            items,
+            initialExpandedIds: ['register_computer', 'configure_relay'],
+            buildExecutionPlan: (selectedIds) => ({ selectedIds }),
+            runExecutionPlan: async () => undefined,
+            mapExecutionSnapshotToRowState: () => ({}),
+        }));
+
+        expect(new Set(hook.getCurrent().selectedIds)).toEqual(new Set(['check_auth', 'configure_relay']));
+        expect(new Set(hook.getCurrent().expandedIds)).toEqual(new Set(['register_computer', 'configure_relay']));
+
+        await act(async () => {
+            hook.getCurrent().toggleItem('configure_relay');
+        });
+
+        expect(hook.getCurrent().selectedIds).toEqual(['check_auth']);
+    });
+
     it('can reset back to selection after starting execution', async () => {
         const { usePlanChecklistController } = await import('./usePlanChecklistController');
 

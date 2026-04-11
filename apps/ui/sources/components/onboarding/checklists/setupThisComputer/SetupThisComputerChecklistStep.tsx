@@ -9,30 +9,27 @@ import { t } from '@/text';
 
 import {
     PlanChecklistCard,
-    type PlanChecklistItem,
     usePlanChecklistController,
 } from '@/components/systemTasks/planChecklist';
+import { buildLocalMachineSetupSystemTaskSpec } from '@/components/systemTasks/buildLocalMachineSetupSystemTaskSpec';
 import { readLatestSystemTaskPrompt } from '@/components/systemTasks/prompts/readLatestSystemTaskPrompt';
+import { buildThisComputerSetupStageModel } from '@/components/systemTasks/thisComputerSetup/buildThisComputerSetupStageModel';
+import {
+    mapThisComputerSetupExecutionToStages,
+    resolveThisComputerSetupStageIdForStepId,
+} from '@/components/systemTasks/thisComputerSetup/mapThisComputerSetupExecutionToStages';
+import { resolveThisComputerSetupPrompt } from '@/components/systemTasks/thisComputerSetup/resolveThisComputerSetupPrompt';
 import { useThisComputerSetupPromptModals } from '@/components/systemTasks/thisComputerSetup/useThisComputerSetupPromptModals';
 import { resolveThisComputerSetupFollowUp, useThisComputerSetupTask } from '@/components/systemTasks/useThisComputerSetupTask';
-import { buildLocalMachineSetupSystemTaskSpec } from '@/components/systemTasks/buildLocalMachineSetupSystemTaskSpec';
 import type { SystemTaskRunState } from '@/components/systemTasks/types';
 
-import { buildThisComputerChecklistItems } from './buildThisComputerChecklistItems';
-import { mapThisComputerTaskToChecklistExecution } from './mapThisComputerTaskToChecklistExecution';
-import { useThisComputerSetupPreflight } from './useThisComputerSetupPreflight';
-import type { ThisComputerChecklistItemId } from './types';
 import { buildThisComputerChecklistDiagnosticsPayload } from './buildThisComputerChecklistDiagnosticsPayload';
+import { useThisComputerSetupPreflight } from './useThisComputerSetupPreflight';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
         width: '100%',
         gap: 14,
-        alignItems: 'stretch',
-    },
-    footer: {
-        width: '100%',
-        gap: 10,
         alignItems: 'stretch',
     },
     hint: {
@@ -45,6 +42,44 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
+const BACKGROUND_SERVICE_SELECTION_IDS = [
+    'setup.thisComputer.installService',
+    'setup.thisComputer.startService',
+    'setup.thisComputer.verifyService',
+] as const;
+
+function normalizeSetupSelectedIds(selectedIds: readonly string[]): readonly string[] {
+    const selected = new Set(selectedIds);
+    const backgroundServiceEnabled = selected.has('setup.thisComputer.installService');
+
+    if (!backgroundServiceEnabled) {
+        for (const stepId of BACKGROUND_SERVICE_SELECTION_IDS) {
+            selected.delete(stepId);
+        }
+    } else {
+        for (const stepId of BACKGROUND_SERVICE_SELECTION_IDS) {
+            selected.add(stepId);
+        }
+    }
+
+    return [...selected];
+}
+
+function computeIsReady(preflight: ReturnType<typeof useThisComputerSetupPreflight>): boolean {
+    return Boolean(
+        preflight.localCliReady === true
+        && preflight.activeRelayUrl
+        && !preflight.needsAuth
+        && !preflight.accountMismatch
+        && !preflight.serverMismatch
+        && !preflight.pairingRequired
+        && !preflight.relayDriftBanner
+        && preflight.serviceInstalled
+        && preflight.daemonRunning
+        && preflight.machineId,
+    );
+}
+
 export type SetupThisComputerWizardPrimaryState = Readonly<{
     label: string;
     disabled: boolean;
@@ -55,12 +90,12 @@ export const SetupThisComputerChecklistStep = React.memo(function SetupThisCompu
     testID?: string;
     onSucceeded?: (machineId: string | null) => void;
     onNeedsAuth?: () => void;
-    onNeedsApproval?: () => void;
     onWizardPrimaryChange?: (state: SetupThisComputerWizardPrimaryState | null) => void;
     onRequestAdvance?: () => void;
 }>) {
     const styles = stylesheet;
     const preflight = useThisComputerSetupPreflight();
+    const isReady = computeIsReady(preflight);
     const {
         activeTaskId,
         activeTaskSnapshot,
@@ -72,7 +107,6 @@ export const SetupThisComputerChecklistStep = React.memo(function SetupThisCompu
     } = useThisComputerSetupTask({
         autoStart: false,
         onNeedsAuth: props.onNeedsAuth,
-        onNeedsApproval: props.onNeedsApproval,
         onSucceeded: (snapshot) => {
             const machineId = snapshot.result?.ok
                 ? (snapshot.result.data as { machineId?: unknown } | undefined)?.machineId
@@ -80,107 +114,87 @@ export const SetupThisComputerChecklistStep = React.memo(function SetupThisCompu
             props.onSucceeded?.(typeof machineId === 'string' && machineId.trim().length > 0 ? machineId.trim() : null);
         },
     });
-    const prompt = React.useMemo(() => readLatestSystemTaskPrompt(activeTaskSnapshot), [activeTaskSnapshot]);
+
+    const promptEnvelope = React.useMemo(() => readLatestSystemTaskPrompt(activeTaskSnapshot), [activeTaskSnapshot]);
+    const prompt = React.useMemo(() => resolveThisComputerSetupPrompt(promptEnvelope), [promptEnvelope]);
+
     useThisComputerSetupPromptModals({
         runner,
         taskId: activeTaskId,
         snapshot: activeTaskSnapshot,
-        prompt,
+        prompt: promptEnvelope,
     });
-    const liveChecklistItems = React.useMemo(() => buildThisComputerChecklistItems(preflight), [preflight]);
-    const [checklistItems, setChecklistItems] = React.useState<readonly PlanChecklistItem[]>(liveChecklistItems);
-    const followUp = resolveThisComputerSetupFollowUp(activeTaskSnapshot?.result ?? null);
-    const requestAdvanceRef = React.useRef(props.onRequestAdvance);
-    const wizardPrimaryChangeRef = React.useRef(props.onWizardPrimaryChange);
-    const needsAuthRef = React.useRef(props.onNeedsAuth);
-    const needsApprovalRef = React.useRef(props.onNeedsApproval);
-    const isReady = Boolean(
-        preflight.activeRelayUrl
-            && !preflight.needsAuth
-            && !preflight.accountMismatch
-            && !preflight.serverMismatch
-            && !preflight.pairingRequired
-            && !preflight.relayDriftBanner
-            && preflight.serviceInstalled
-            && preflight.daemonRunning
-            && preflight.machineId,
-    );
-    const requiresExecution = Boolean(
-        !preflight.activeRelayUrl
-            || preflight.needsAuth
-            || preflight.accountMismatch
-            || preflight.serverMismatch
-            || preflight.pairingRequired
-            || preflight.relayDriftBanner,
-    );
 
-    const normalizeSelectedIds = React.useCallback((selectedIds: readonly string[]) => {
-        const set = new Set(selectedIds);
-        // Enforce simple dependencies for service-related rows.
-        if (!set.has('setup.thisComputer.installService')) {
-            set.delete('setup.thisComputer.startService');
-            set.delete('setup.thisComputer.verifyService');
-        }
-        if (!set.has('setup.thisComputer.startService')) {
-            set.delete('setup.thisComputer.verifyService');
-        }
-        return [...set];
-    }, []);
+    const stageItems = React.useMemo(() => buildThisComputerSetupStageModel({
+        preflight,
+        prompt,
+    }), [preflight, prompt]);
 
-    const buildExecutionPlan = React.useCallback((selectedIds: readonly string[]) => ({ selectedIds }), []);
+    const initialExpandedStageIds = React.useMemo(() => {
+        const stageId = resolveThisComputerSetupStageIdForStepId(activeTaskSnapshot?.currentStepId);
+        return stageId ? [stageId] : [];
+    }, [activeTaskSnapshot?.currentStepId]);
 
-    const runExecutionPlan = React.useCallback(async (plan: { selectedIds: readonly string[] }) => {
-        const selected = new Set(plan.selectedIds);
+    const buildExecutionPlan = React.useCallback((selectedIds: readonly string[]) => {
+        const selected = new Set(selectedIds);
         const installService = selected.has('setup.thisComputer.installService');
-        const startService = selected.has('setup.thisComputer.startService');
-        const verifyService = selected.has('setup.thisComputer.verifyService');
-
-        await start(buildLocalMachineSetupSystemTaskSpec({
+        return buildLocalMachineSetupSystemTaskSpec({
             installService,
-            startService,
-            verifyService,
-        }));
+            startService: installService && selected.has('setup.thisComputer.startService'),
+            verifyService: installService && selected.has('setup.thisComputer.verifyService'),
+        });
+    }, []);
+    const runExecutionPlan = React.useCallback(async (spec: ReturnType<typeof buildLocalMachineSetupSystemTaskSpec>) => {
+        await start(spec);
     }, [start]);
-
-    const mapExecutionSnapshotToRowState = React.useCallback((snapshot: SystemTaskRunState | null) => {
-        return mapThisComputerTaskToChecklistExecution(snapshot);
+    const mapExecutionSnapshotToRowState = React.useCallback((snapshot: SystemTaskRunState | null, _items: readonly unknown[], selectedIds: readonly string[]) => {
+        return mapThisComputerSetupExecutionToStages(snapshot, selectedIds);
     }, []);
 
-    const controller = usePlanChecklistController<{ selectedIds: readonly string[] }, SystemTaskRunState | null>({
-        items: checklistItems,
-        normalizeSelectedIds,
+    const controller = usePlanChecklistController<ReturnType<typeof buildLocalMachineSetupSystemTaskSpec>, SystemTaskRunState | null>({
+        items: stageItems,
         buildExecutionPlan,
         runExecutionPlan,
         mapExecutionSnapshotToRowState,
         onCancelExecution: cancel,
+        normalizeSelectedIds: normalizeSetupSelectedIds,
         initialPhase: activeTaskSnapshot ? 'execute' : 'select',
-        initialExpandedIds: activeTaskSnapshot?.currentStepId ? [activeTaskSnapshot.currentStepId] : [],
+        initialExpandedIds: initialExpandedStageIds,
     });
 
-    const selectedIdsKey = controller.selectedIds.join('\n');
+    React.useEffect(() => {
+        if (!activeTaskSnapshot) {
+            return;
+        }
+        controller.publishSnapshot(activeTaskSnapshot);
+    }, [activeTaskSnapshot, controller.publishSnapshot]);
+
+    const expandedStageIds = React.useMemo(() => {
+        const expanded = new Set(controller.expandedIds);
+        const currentStageId = resolveThisComputerSetupStageIdForStepId(activeTaskSnapshot?.currentStepId);
+        if (currentStageId) {
+            expanded.add(currentStageId);
+        }
+        return [...expanded];
+    }, [activeTaskSnapshot?.currentStepId, controller.expandedIds]);
+
+    const executionById = controller.phase === 'execute'
+        ? controller.executionById
+        : undefined;
+    const followUp = resolveThisComputerSetupFollowUp(activeTaskSnapshot?.result ?? null);
+    const requestAdvanceRef = React.useRef(props.onRequestAdvance);
+    const wizardPrimaryChangeRef = React.useRef(props.onWizardPrimaryChange);
+    const needsAuthRef = React.useRef(props.onNeedsAuth);
+    const continueRef = React.useRef(controller.continue);
+    const retryRef = React.useRef(controller.retry);
 
     React.useEffect(() => {
         requestAdvanceRef.current = props.onRequestAdvance;
         wizardPrimaryChangeRef.current = props.onWizardPrimaryChange;
         needsAuthRef.current = props.onNeedsAuth;
-        needsApprovalRef.current = props.onNeedsApproval;
-    }, [props.onNeedsApproval, props.onNeedsAuth, props.onRequestAdvance, props.onWizardPrimaryChange]);
-
-    React.useEffect(() => {
-        if (controller.phase !== 'select') {
-            return;
-        }
-        setChecklistItems(liveChecklistItems);
-    }, [controller.phase, liveChecklistItems]);
-
-    const executionById = controller.phase === 'execute'
-        ? controller.executionById
-        : undefined;
-
-    React.useEffect(() => {
-        if (!activeTaskSnapshot) return;
-        controller.publishSnapshot(activeTaskSnapshot);
-    }, [activeTaskSnapshot, controller.publishSnapshot]);
+        continueRef.current = controller.continue;
+        retryRef.current = controller.retry;
+    }, [controller.continue, controller.retry, props.onNeedsAuth, props.onRequestAdvance, props.onWizardPrimaryChange]);
 
     const handleCopyDiagnostics = React.useCallback(async (itemId: string) => {
         const payload = buildThisComputerChecklistDiagnosticsPayload({
@@ -192,43 +206,21 @@ export const SetupThisComputerChecklistStep = React.memo(function SetupThisCompu
         });
         await Clipboard.setStringAsync(JSON.stringify(payload, null, 2));
         Modal.alert(t('common.copied'), t('items.copiedToClipboard', { label: t('common.details') }));
-    }, [
-        activeTaskSnapshot,
-        controller.selectedIds,
-        executionById,
-        preflight,
-    ]);
-
-    const hasSelectableWorkSelected = React.useMemo(() => {
-        const selectedSet = new Set(controller.selectedIds);
-        return checklistItems.some((item) => selectedSet.has(item.id) && !item.disabled && !item.satisfied);
-    }, [checklistItems, selectedIdsKey]);
-
-    const continueRef = React.useRef(controller.continue);
-    const retryRef = React.useRef(controller.retry);
-    React.useEffect(() => {
-        continueRef.current = controller.continue;
-        retryRef.current = controller.retry;
-    }, [controller.continue, controller.retry]);
+    }, [activeTaskSnapshot, controller.selectedIds, executionById, preflight]);
 
     React.useLayoutEffect(() => {
         const onWizardPrimaryChange = wizardPrimaryChangeRef.current;
-        if (!onWizardPrimaryChange) return;
+        if (!onWizardPrimaryChange) {
+            return;
+        }
 
         if (controller.phase === 'select') {
-            const canStartExecution = requiresExecution || hasSelectableWorkSelected;
-
             onWizardPrimaryChange({
                 label: t('common.continue'),
-                disabled: isReady
-                    ? false
-                    : (!canStartExecution || isStarting),
+                disabled: isReady ? false : isStarting,
                 onPress: isReady && props.onRequestAdvance
                     ? (requestAdvanceRef.current ?? (() => undefined))
                     : async () => {
-                        if (!canStartExecution) {
-                            return;
-                        }
                         await continueRef.current();
                     },
             });
@@ -246,18 +238,7 @@ export const SetupThisComputerChecklistStep = React.memo(function SetupThisCompu
             return;
         }
 
-        if (!activeTaskSnapshot) {
-            // Execution was requested but the system-task snapshot has not materialized yet.
-            // Keep the primary CTA disabled to avoid an enabled no-op state.
-            onWizardPrimaryChange({
-                label: t('common.continue'),
-                disabled: true,
-                onPress: async () => undefined,
-            });
-            return;
-        }
-
-        if (activeTaskSnapshot?.status === 'running' || activeTaskSnapshot?.status === 'canceling') {
+        if (!activeTaskSnapshot || activeTaskSnapshot.status === 'running' || activeTaskSnapshot.status === 'canceling') {
             onWizardPrimaryChange({
                 label: t('common.continue'),
                 disabled: true,
@@ -275,16 +256,7 @@ export const SetupThisComputerChecklistStep = React.memo(function SetupThisCompu
             return;
         }
 
-        if (followUp === 'approval' && needsApprovalRef.current) {
-            onWizardPrimaryChange({
-                label: t('settings.machineSetupRemotePromptApproveAction'),
-                disabled: false,
-                onPress: needsApprovalRef.current,
-            });
-            return;
-        }
-
-        if (activeTaskSnapshot?.result && !activeTaskSnapshot.result.ok) {
+        if (activeTaskSnapshot.result && !activeTaskSnapshot.result.ok) {
             onWizardPrimaryChange({
                 label: t('common.retry'),
                 disabled: isStarting,
@@ -295,7 +267,7 @@ export const SetupThisComputerChecklistStep = React.memo(function SetupThisCompu
             return;
         }
 
-        if (activeTaskSnapshot?.status === 'succeeded' && props.onRequestAdvance) {
+        if (activeTaskSnapshot.status === 'succeeded' && props.onRequestAdvance) {
             onWizardPrimaryChange({
                 label: t('common.continue'),
                 disabled: false,
@@ -311,13 +283,11 @@ export const SetupThisComputerChecklistStep = React.memo(function SetupThisCompu
         });
     }, [
         activeTaskSnapshot,
-        activeTaskSnapshot?.result,
-        activeTaskSnapshot?.status,
         controller.phase,
-        selectedIdsKey,
         followUp,
-        hasSelectableWorkSelected,
+        isReady,
         isStarting,
+        props.onRequestAdvance,
         startError,
     ]);
 
@@ -328,17 +298,18 @@ export const SetupThisComputerChecklistStep = React.memo(function SetupThisCompu
             {startError ? <Text style={styles.error}>{startError}</Text> : null}
             <PlanChecklistCard
                 testID={props.testID ? `${props.testID}-checklist` : undefined}
-                items={checklistItems}
+                items={stageItems}
                 phase={controller.phase}
+                variant="onboarding"
                 selectedIds={controller.selectedIds}
                 onToggleItem={controller.toggleItem}
                 executionById={executionById}
-                expandedIds={controller.expandedIds}
+                expandedIds={expandedStageIds}
                 onToggleExpanded={controller.toggleExpanded}
                 onCopyDiagnostics={(item) => void handleCopyDiagnostics(item.id)}
             />
             {controller.phase === 'select' && !startError ? (
-                <Text style={styles.hint}>{t('setupOnboarding.postAuthBody')}</Text>
+                <Text style={styles.hint}>{t('setupOnboarding.thisComputerStages.footerHint')}</Text>
             ) : null}
         </View>
     );

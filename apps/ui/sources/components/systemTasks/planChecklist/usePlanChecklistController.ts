@@ -8,15 +8,42 @@ import type {
     PlanChecklistPhase,
 } from './types';
 
+function flattenItems(items: readonly PlanChecklistItem[]): readonly PlanChecklistItem[] {
+    const flattened: PlanChecklistItem[] = [];
+    for (const item of items) {
+        flattened.push(item);
+        if (item.children && item.children.length > 0) {
+            flattened.push(...flattenItems(item.children));
+        }
+    }
+    return flattened;
+}
+
+function findItemById(items: readonly PlanChecklistItem[], itemId: string): PlanChecklistItem | null {
+    for (const item of items) {
+        if (item.id === itemId) {
+            return item;
+        }
+        if (item.children && item.children.length > 0) {
+            const child = findItemById(item.children, itemId);
+            if (child) {
+                return child;
+            }
+        }
+    }
+    return null;
+}
+
 function normalizeIds(items: readonly PlanChecklistItem[], ids: readonly string[] | null | undefined): readonly string[] {
     if (!ids || ids.length === 0) {
         return [];
     }
-    const validIds = new Set(items.map((item) => item.id));
+    const flattenedItems = flattenItems(items);
+    const validIds = new Set(flattenedItems.map((item) => item.id));
     const selectedIds = new Set(ids);
     const seen = new Set<string>();
     const ordered: string[] = [];
-    for (const item of items) {
+    for (const item of flattenedItems) {
         if (!validIds.has(item.id)) {
             continue;
         }
@@ -29,7 +56,10 @@ function normalizeIds(items: readonly PlanChecklistItem[], ids: readonly string[
 }
 
 function buildDefaultSelectedIds(items: readonly PlanChecklistItem[]): readonly string[] {
-    return items.filter((item) => item.defaultSelected ?? item.selected ?? false).map((item) => item.id);
+    return flattenItems(items)
+        .filter((item) => !item.children?.length)
+        .filter((item) => item.defaultSelected ?? item.selected ?? false)
+        .map((item) => item.id);
 }
 
 function buildInitialSelection(items: readonly PlanChecklistItem[], initialSelectedIds?: readonly string[]): readonly string[] {
@@ -68,7 +98,7 @@ function buildQueuedExecutionState(
 ): Readonly<Record<string, PlanChecklistExecutionState>> {
     const selectedSet = new Set(selectedIds);
     const result: Record<string, PlanChecklistExecutionState> = {};
-    for (const item of items) {
+    for (const item of flattenItems(items)) {
         const selected = selectedSet.has(item.id);
         result[item.id] = {
             status: item.satisfied ? 'done' : (selected ? 'queued' : 'idle'),
@@ -121,7 +151,7 @@ export function usePlanChecklistController<Plan, Snapshot>(
         if (phase !== 'select') {
             return;
         }
-        const item = items.find((candidate) => candidate.id === itemId);
+        const item = findItemById(items, itemId);
         if (!item || item.disabled) {
             return;
         }

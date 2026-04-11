@@ -53,6 +53,7 @@ describe('TerminalScreen authenticated buttons', () => {
         const screen = await renderScreen(<Screen />);
         await act(async () => {});
 
+        expect(screen.findByTestId('terminal-connect-surface-card')).toBeTruthy();
         const buttonTestIds = screen
             .findAllByType('RoundButton')
             .map((node) => node.props?.testID)

@@ -72,9 +72,8 @@ describe('TerminalScreen legacy deep-link fallback', () => {
         const screen = await renderScreen(<Screen />);
         await act(async () => {});
 
-        const renderedItems = screen.findAllByType('Item' as any);
-        const publicKeyItem = renderedItems.find((item) => item.props?.title === 'terminal.publicKey');
-        expect(publicKeyItem).toBeTruthy();
-        expect(publicKeyItem?.props?.detail).toBe('abcdefghijkl...');
+        expect(screen.findByTestId('terminal-connect-surface-card')).toBeTruthy();
+        expect(screen.findByTestId('terminal-connect-approve')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('abcdefghijkl...');
     });
 });

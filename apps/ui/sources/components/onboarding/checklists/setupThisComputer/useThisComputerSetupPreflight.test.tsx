@@ -80,9 +80,14 @@ describe('useThisComputerSetupPreflight', () => {
         function Harness() {
             const preflight = useThisComputerSetupPreflight();
             return (
-                <Text testID="preflight-active-relay">
-                    {preflight.activeRelayUrl ?? ''}
-                </Text>
+                <>
+                    <Text testID="preflight-active-relay">
+                        {preflight.activeRelayUrl ?? ''}
+                    </Text>
+                    <Text testID="preflight-local-cli">
+                        {preflight.localCliReady === true ? 'ready' : 'missing'}
+                    </Text>
+                </>
             );
         }
 
@@ -92,6 +97,7 @@ describe('useThisComputerSetupPreflight', () => {
             throw new Error('Expected active relay node');
         }
         expect(firstNode.props.children).toBe('https://relay-1.example.test');
+        expect(screen.findByTestId('preflight-local-cli')?.props.children).toBe('ready');
 
         await act(async () => {
             activeServerState.setSnapshot({

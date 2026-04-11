@@ -8,11 +8,27 @@ import {
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const processAuthUrlSpy = vi.fn(async (_url: string) => true);
+const routerBackSpy = vi.fn();
+const routerReplaceSpy = vi.fn();
+const processAccountAuthUrlSpy = vi.fn(async (_url: string) => true);
+const processTerminalAuthUrlSpy = vi.fn(async (_url: string) => true);
 const promptSpy = vi.fn(async (..._args: unknown[]) => null as string | null);
+const alertAsyncSpy = vi.fn(async (..._args: unknown[]) => undefined);
+let lastAccountConnectOptions: any = null;
+let lastTerminalConnectOptions: any = null;
 
 vi.mock('@/hooks/auth/useConnectAccount', () => ({
-    useConnectAccount: (_opts?: any) => ({ processAuthUrl: processAuthUrlSpy, isLoading: false }),
+    useConnectAccount: (opts?: any) => {
+        lastAccountConnectOptions = opts ?? null;
+        return { processAuthUrl: processAccountAuthUrlSpy, isLoading: false };
+    },
+}));
+
+vi.mock('@/hooks/session/useConnectTerminal', () => ({
+    useConnectTerminal: (opts?: any) => {
+        lastTerminalConnectOptions = opts ?? null;
+        return { processAuthUrl: processTerminalAuthUrlSpy, isLoading: false };
+    },
 }));
 
 let lastScannerProps: any = null;
@@ -23,12 +39,27 @@ vi.mock('@/components/qr/QrCodeScannerView', () => ({
     },
 }));
 
+vi.mock('@/components/onboarding', () => ({
+    WizardModalShell: (props: any) => React.createElement('WizardModalShell', props, props.children),
+}));
+
 installScanRouteCommonModuleMocks({
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            router: {
+                back: routerBackSpy,
+                replace: routerReplaceSpy,
+                canGoBack: () => false,
+            },
+        }).module;
+    },
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
         return createModalModuleMock({
             spies: {
                 prompt: (...args: unknown[]) => promptSpy(...args),
+                alertAsync: (...args: unknown[]) => alertAsyncSpy(...args),
             },
         }).module;
     },
@@ -36,9 +67,32 @@ installScanRouteCommonModuleMocks({
 
 describe('/scan/account', () => {
     beforeEach(() => {
+        routerBackSpy.mockClear();
+        routerReplaceSpy.mockClear();
         promptSpy.mockClear();
-        processAuthUrlSpy.mockClear();
+        alertAsyncSpy.mockClear();
+        processAccountAuthUrlSpy.mockClear();
+        processTerminalAuthUrlSpy.mockClear();
         lastScannerProps = null;
+        lastAccountConnectOptions = null;
+        lastTerminalConnectOptions = null;
+    });
+
+    it('renders the account scan wizard shell and account-specific scanner copy', async () => {
+        const { default: Screen } = await import('@/app/(app)/scan/account');
+
+        const screen = await renderScreen(<Screen />);
+
+        const wizard = screen.findByType('WizardModalShell' as never);
+        expect(wizard.props.testID).toBe('scan-account-wizard');
+        expect(wizard.props.stepIndex).toBe(1);
+        expect(wizard.props.stepCount).toBe(1);
+        expect(wizard.props.showSkip).toBe(false);
+
+        expect(lastScannerProps?.embedded).toBe(true);
+        expect(lastScannerProps?.title).toBe('connect.linkNewDeviceTitle');
+        expect(lastScannerProps?.subtitle).toBe('connect.linkNewDeviceSubtitle');
+        expect(lastScannerProps?.permissionRequiredMessage).toBe('modals.cameraPermissionsRequiredToScanQr');
     });
 
     it('processes scanned account link URLs', async () => {
@@ -52,8 +106,26 @@ describe('/scan/account', () => {
             await lastScannerProps.onScan('happier:///account?abc123');
         });
 
-        expect(processAuthUrlSpy).toHaveBeenCalledTimes(1);
-        expect(processAuthUrlSpy).toHaveBeenCalledWith('happier:///account?abc123');
+        expect(processAccountAuthUrlSpy).toHaveBeenCalledTimes(1);
+        expect(processAccountAuthUrlSpy).toHaveBeenCalledWith('happier:///account?abc123');
+        expect(processTerminalAuthUrlSpy).not.toHaveBeenCalled();
+    });
+
+    it('rejects scanned terminal URLs from the account scanner', async () => {
+        const { default: Screen } = await import('@/app/(app)/scan/account');
+
+        await renderScreen(<Screen />);
+
+        expect(typeof lastScannerProps?.onScan).toBe('function');
+
+        await act(async () => {
+            await lastScannerProps.onScan('happier://terminal?key=abc&server=https%3A%2F%2Fapi.happier.dev');
+        });
+
+        expect(alertAsyncSpy).toHaveBeenCalledTimes(1);
+        expect(alertAsyncSpy).toHaveBeenCalledWith('common.error', 'modals.invalidAuthUrl', [{ text: 'common.ok' }]);
+        expect(processTerminalAuthUrlSpy).not.toHaveBeenCalled();
+        expect(processAccountAuthUrlSpy).not.toHaveBeenCalled();
     });
 
     it('supports manually entering an account link URL when the scanner is unavailable', async () => {
@@ -86,7 +158,46 @@ describe('/scan/account', () => {
         });
 
         expect(promptSpy).toHaveBeenCalledTimes(1);
-        expect(processAuthUrlSpy).toHaveBeenCalledTimes(1);
-        expect(processAuthUrlSpy).toHaveBeenCalledWith('happier:///account?manual');
+        expect(promptSpy).toHaveBeenCalledWith(
+            'connect.enterUrlManually',
+            undefined,
+            {
+                placeholder: 'connect.accountUrlPlaceholder',
+                confirmText: 'common.continue',
+                cancelText: 'common.cancel',
+            },
+        );
+        expect(processAccountAuthUrlSpy).toHaveBeenCalledTimes(1);
+        expect(processAccountAuthUrlSpy).toHaveBeenCalledWith('happier:///account?manual');
+        expect(processTerminalAuthUrlSpy).not.toHaveBeenCalled();
+    });
+
+    it('uses safe fallback navigation when cancelling without history', async () => {
+        const { default: Screen } = await import('@/app/(app)/scan/account');
+
+        await renderScreen(<Screen />);
+
+        await act(async () => {
+            await lastScannerProps.onCancel();
+        });
+
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/');
+        expect(routerBackSpy).not.toHaveBeenCalled();
+    });
+
+    it('uses safe fallback navigation after a successful account link when there is no back stack', async () => {
+        const { default: Screen } = await import('@/app/(app)/scan/account');
+
+        await renderScreen(<Screen />);
+
+        expect(typeof lastAccountConnectOptions?.onSuccess).toBe('function');
+
+        await act(async () => {
+            await lastAccountConnectOptions.onSuccess();
+        });
+
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/');
+        expect(routerBackSpy).not.toHaveBeenCalled();
+        expect(lastTerminalConnectOptions?.onSuccess).toBe(lastAccountConnectOptions?.onSuccess);
     });
 });

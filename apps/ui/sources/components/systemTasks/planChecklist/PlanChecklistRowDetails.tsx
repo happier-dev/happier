@@ -95,6 +95,8 @@ const stylesheet = StyleSheet.create((theme) => ({
 export type PlanChecklistRowDetailsProps = Readonly<{
     testID?: string;
     renderDetails?: () => React.ReactNode;
+    detailsTitle?: React.ReactNode | null;
+    childrenContent?: React.ReactNode;
     error?: PlanChecklistExecutionError;
     logs?: readonly PlanChecklistLogEntry[];
     onCopyDiagnostics?: () => void | Promise<void>;
@@ -106,12 +108,13 @@ export const PlanChecklistRowDetails = React.memo(function PlanChecklistRowDetai
     const hasLogs = Boolean(logText.trim().length > 0);
     const hasDetails = typeof props.renderDetails === 'function';
     const hasError = Boolean(props.error?.title || props.error?.message);
+    const hasChildrenContent = Boolean(props.childrenContent);
     const detailsNode = hasDetails ? props.renderDetails?.() : null;
     const normalizedDetailsNode = (typeof detailsNode === 'string' || typeof detailsNode === 'number')
         ? <Text style={styles.emptyText}>{String(detailsNode)}</Text>
         : detailsNode;
 
-    if (!hasDetails && !hasLogs && !hasError && !props.onCopyDiagnostics) {
+    if (!hasDetails && !hasLogs && !hasError && !props.onCopyDiagnostics && !hasChildrenContent) {
         return null;
     }
 
@@ -119,10 +122,22 @@ export const PlanChecklistRowDetails = React.memo(function PlanChecklistRowDetai
         <View testID={props.testID} style={styles.root}>
             {hasDetails ? (
                 <View style={styles.details}>
-                    <Text style={styles.detailsTitle}>{t('common.details')}</Text>
+                    {props.detailsTitle === null
+                        ? null
+                        : (
+                            <Text style={styles.detailsTitle}>
+                                {props.detailsTitle ?? t('common.details')}
+                            </Text>
+                        )}
                     <View style={styles.detailsBody}>
                         {normalizedDetailsNode}
                     </View>
+                </View>
+            ) : null}
+
+            {hasChildrenContent ? (
+                <View style={styles.details}>
+                    {props.childrenContent}
                 </View>
             ) : null}
 

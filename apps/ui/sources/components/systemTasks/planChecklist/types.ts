@@ -4,6 +4,10 @@ export type PlanChecklistPhase = 'select' | 'execute';
 
 export type PlanChecklistItemStatus = 'idle' | 'queued' | 'running' | 'done' | 'error';
 
+export type PlanChecklistKind = 'item' | 'stage' | 'substep' | 'prompt';
+
+export type PlanChecklistVariant = 'default' | 'onboarding';
+
 export type PlanChecklistLogEntry = Readonly<{
     ts: number;
     level: 'info' | 'warn' | 'error';
@@ -24,6 +28,7 @@ export type PlanChecklistExecutionState = Readonly<{
 
 export type PlanChecklistItem = Readonly<{
     id: string;
+    kind?: PlanChecklistKind;
     title: React.ReactNode;
     subtitle?: React.ReactNode;
     satisfied: boolean;
@@ -31,6 +36,7 @@ export type PlanChecklistItem = Readonly<{
     defaultSelected?: boolean;
     selected?: boolean;
     badge?: React.ReactNode;
+    children?: readonly PlanChecklistItem[];
     renderDetails?: () => React.ReactNode;
     details?: React.ReactNode | (() => React.ReactNode);
 }>;

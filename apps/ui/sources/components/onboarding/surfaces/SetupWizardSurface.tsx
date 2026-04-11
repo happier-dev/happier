@@ -273,10 +273,6 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
         router.push(`/server?url=${encodeURIComponent(relayUrl)}&auto=1`);
     }, [activeServerSnapshot.serverUrl]);
 
-    const handleLocalSetupNeedsApproval = React.useCallback(() => {
-        router.push('/inbox');
-    }, []);
-
     const clearRelayRuntimeCandidate = React.useCallback(() => {
         setRelaySwitchDecision('keep');
         setPendingRelayRuntime(null);
@@ -662,7 +658,6 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
                     testID="setupWizard-setup-this-computer"
                     onSucceeded={handleLocalSetupSucceeded}
                     onNeedsAuth={handleLocalSetupNeedsAuth}
-                    onNeedsApproval={handleLocalSetupNeedsApproval}
                     onWizardPrimaryChange={handleWizardPrimaryChange}
                     onRequestAdvance={() => dispatch({ type: 'wizard/goToStep', stepId: 'providers_optional' })}
                 />
@@ -705,7 +700,6 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
                 onToggleProviderId,
                 onLocalSetupSucceeded: handleLocalSetupSucceeded,
                 onLocalSetupNeedsAuth: handleLocalSetupNeedsAuth,
-                onLocalSetupNeedsApproval: handleLocalSetupNeedsApproval,
                 relaySwitchDecision,
                 onRelaySwitchDecisionChange: setRelaySwitchDecision,
                 onLocalRelayStatusChange: handleLocalRelayStatusChange,

@@ -20,7 +20,7 @@ vi.mock('react-native-unistyles', async () => {
     return createUnistylesMock();
 });
 
-vi.mock('./WizardCardLayout', () => ({
+vi.mock('@/components/onboarding/ui/WizardCardLayout', () => ({
     WizardCardLayout: ({
         children,
         testID,

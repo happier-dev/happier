@@ -282,4 +282,132 @@ describe('PlanChecklistCard', () => {
         expect(screen.findByTestId('plan-checklist-row-install_cli-details')).toBeTruthy();
         expect(screen.getTextContent()).toContain('This is what the step will do.');
     });
+
+    it('renders expanded stage rows with nested substeps', async () => {
+        const { PlanChecklistCard } = await import('./PlanChecklistCard');
+
+        const screen = await renderScreen(
+            React.createElement(PlanChecklistCard, {
+                testID: 'plan-checklist',
+                phase: 'execute',
+                items: [
+                    {
+                        id: 'register_computer',
+                        kind: 'stage',
+                        title: 'Register this computer',
+                        subtitle: 'Connect this device to your account',
+                        satisfied: false,
+                        disabled: true,
+                        children: [
+                            createItem({
+                                id: 'setup.thisComputer.checkAuth',
+                                title: 'Check sign-in',
+                                subtitle: 'Verify the current account',
+                                satisfied: true,
+                                disabled: true,
+                            }),
+                            createItem({
+                                id: 'setup.thisComputer.configureRelay',
+                                title: 'Connect to relay',
+                                subtitle: 'Use the selected relay',
+                                satisfied: false,
+                                disabled: true,
+                            }),
+                        ],
+                    },
+                ],
+                selectedIds: ['setup.thisComputer.checkAuth', 'setup.thisComputer.configureRelay'],
+                expandedIds: ['register_computer'],
+                executionById: {
+                    'setup.thisComputer.checkAuth': { status: 'done', logs: [] },
+                    'setup.thisComputer.configureRelay': { status: 'running', logs: [] },
+                },
+            }),
+        );
+
+        expect(screen.findByTestId('plan-checklist-row-register_computer')).toBeTruthy();
+        expect(screen.findByTestId('plan-checklist-row-register_computer-children')).toBeTruthy();
+        expect(screen.findByTestId('plan-checklist-row-register_computer-children-row-setup.thisComputer.checkAuth')).toBeTruthy();
+        expect(screen.findByTestId('plan-checklist-row-register_computer-children-row-setup.thisComputer.configureRelay')).toBeTruthy();
+    });
+
+    it('keeps one trailing status owner when execution state already communicates done', async () => {
+        const { PlanChecklistCard } = await import('./PlanChecklistCard');
+
+        const screen = await renderScreen(
+            React.createElement(PlanChecklistCard, {
+                testID: 'plan-checklist',
+                phase: 'execute',
+                items: [
+                    createItem({
+                        id: 'install_cli',
+                        title: 'Install CLI',
+                        satisfied: true,
+                        disabled: true,
+                        badge: 'common.done',
+                    }),
+                ],
+                selectedIds: ['install_cli'],
+                executionById: {
+                    install_cli: {
+                        status: 'done',
+                        logs: [],
+                    },
+                },
+            }),
+        );
+
+        const doneMatches = screen.getTextContent().match(/common\.done/g) ?? [];
+        expect(doneMatches).toHaveLength(1);
+    });
+
+    it('suppresses repeated details when the details body only repeats the subtitle', async () => {
+        const { PlanChecklistCard } = await import('./PlanChecklistCard');
+
+        const screen = await renderScreen(
+            React.createElement(PlanChecklistCard, {
+                testID: 'plan-checklist',
+                phase: 'select',
+                items: [
+                    createItem({
+                        id: 'install_cli',
+                        title: 'Install CLI',
+                        subtitle: 'Repeated detail text',
+                        renderDetails: undefined,
+                        details: 'Repeated detail text',
+                    }),
+                ],
+                selectedIds: ['install_cli'],
+                expandedId: 'install_cli',
+            }),
+        );
+
+        expect(screen.findByTestId('plan-checklist-row-install_cli-details')).toBeTruthy();
+        expect(screen.getTextContent()).not.toContain('common.details');
+    });
+
+    it('supports the onboarding visual variant with direct icons instead of boxed icons', async () => {
+        const { PlanChecklistCard } = await import('./PlanChecklistCard');
+
+        const screen = await renderScreen(
+            React.createElement(PlanChecklistCard, {
+                testID: 'plan-checklist',
+                phase: 'select',
+                variant: 'onboarding',
+                items: [createItem()],
+                selectedIds: ['install_cli'],
+            }),
+        );
+
+        const statusSlot = screen.findByTestId('plan-checklist-row-install_cli-status-slot');
+        if (!statusSlot) {
+            throw new Error('Expected onboarding status slot');
+        }
+        const flattenedStyle = Array.isArray(statusSlot.props.style)
+            ? Object.assign({}, ...statusSlot.props.style.filter(Boolean))
+            : statusSlot.props.style;
+        expect(flattenedStyle.borderWidth ?? 0).toBe(0);
+        expect(flattenedStyle.width).toBeGreaterThan(26);
+        expect(flattenedStyle.height).toBeGreaterThan(26);
+    });
 });

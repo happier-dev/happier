@@ -11,38 +11,54 @@ import {
 type FakeLocator = Locator & {
   countCalls: number;
   clickCalls: number;
+  visibleCalls: number;
 };
 
 function createFakePage(params: Readonly<{
   testIdCounts?: Record<string, number[]>;
+  testIdVisibility?: Record<string, boolean[]>;
   onEvaluate?: () => void;
   evaluateResults?: unknown[];
   localStorageSnapshots?: Array<Record<string, string>>;
 }>): CreateAccountAndReachConnectMachineStatePage {
-  const testIdCalls = new Map<string, number>();
+  const countCalls = new Map<string, number>();
+  const visibleCalls = new Map<string, number>();
   const testIdCounts = params.testIdCounts ?? {};
+  const testIdVisibility = params.testIdVisibility ?? {};
   const clickCounts = new Map<string, number>();
   const evaluateResults = [...(params.evaluateResults ?? [])];
   const localStorageSnapshots = [...(params.localStorageSnapshots ?? [])];
 
   const nextCount = (key: string): number => {
-    const idx = testIdCalls.get(key) ?? 0;
-    testIdCalls.set(key, idx + 1);
+    const idx = countCalls.get(key) ?? 0;
+    countCalls.set(key, idx + 1);
     const sequence = testIdCounts[key] ?? [0];
     return sequence[Math.min(idx, sequence.length - 1)] ?? 0;
   };
 
+  const nextVisible = (key: string): boolean => {
+    const idx = visibleCalls.get(key) ?? 0;
+    visibleCalls.set(key, idx + 1);
+    const countSequence = testIdCounts[key] ?? [0];
+    const visibleSequence = testIdVisibility[key] ?? countSequence.map((value) => value > 0);
+    return visibleSequence[Math.min(idx, visibleSequence.length - 1)] ?? false;
+  };
+
   const makeLocator = (key: string): FakeLocator => ({
     count: async () => nextCount(key),
+    isVisible: async () => nextVisible(key),
     click: async () => {
       clickCounts.set(key, (clickCounts.get(key) ?? 0) + 1);
     },
     first: () => makeLocator(key),
     get countCalls() {
-      return testIdCalls.get(key) ?? 0;
+      return countCalls.get(key) ?? 0;
     },
     get clickCalls() {
       return clickCounts.get(key) ?? 0;
+    },
+    get visibleCalls() {
+      return visibleCalls.get(key) ?? 0;
     },
   } as unknown as FakeLocator);
 
@@ -115,101 +131,179 @@ describe('createAccountAndReachConnectMachineState', () => {
     await expect(createAccountAndReachConnectMachineState({ page })).resolves.toBeUndefined();
   });
 
-    it('accepts an already-visible connect-machine state without requiring create-account first', async () => {
-        const page = createFakePage({
-            testIdCounts: {
-                'welcome-create-account': [0],
-                'session-getting-started-kind-connect_machine': [1, 1],
+  it('accepts an already-visible connect-machine state without requiring create-account first', async () => {
+    const page = createFakePage({
+      testIdCounts: {
+        'welcome-create-account': [0],
+        'session-getting-started-kind-connect_machine': [1, 1],
         'setupWizard.surface': [0],
       },
     });
 
-        await expect(createAccountAndReachConnectMachineState({ page })).resolves.toBeUndefined();
+    await expect(createAccountAndReachConnectMachineState({ page })).resolves.toBeUndefined();
+  });
+
+  it('treats a lingering hidden create-account CTA as inactive once connect-machine is visible', async () => {
+    const page = createFakePage({
+      testIdCounts: {
+        'welcome-create-account': [1, 1, 1, 1],
+        'session-getting-started-kind-connect_machine': [0, 1, 1],
+        'setupWizard.surface': [0, 0, 0],
+      },
+      testIdVisibility: {
+        'welcome-create-account': [true, true, false, false],
+        'session-getting-started-kind-connect_machine': [false, true, true],
+        'setupWizard.surface': [false, false, false],
+      },
     });
 
-    it('waits for create-account to disappear before accepting connect-machine as authenticated state', async () => {
-        const page = createFakePage({
-            testIdCounts: {
-                'welcome-create-account': [1, 1, 1, 0, 0],
-                'session-getting-started-kind-connect_machine': [1, 1, 1, 1, 1],
-                'setupWizard.surface': [0, 0, 0, 0],
+    await expect(createAccountAndReachConnectMachineState({ page })).resolves.toBeUndefined();
+  });
+
+  it('waits for create-account to disappear before accepting connect-machine as authenticated state', async () => {
+    const page = createFakePage({
+      testIdCounts: {
+        'welcome-create-account': [1, 1, 1, 0, 0],
+        'session-getting-started-kind-connect_machine': [1, 1, 1, 1, 1],
+        'setupWizard.surface': [0, 0, 0, 0],
+      },
+    });
+
+    await expect(createAccountAndReachConnectMachineState({ page })).resolves.toBeUndefined();
+    expect((page.getByTestId('welcome-create-account') as FakeLocator).visibleCalls).toBeGreaterThanOrEqual(4);
+  });
+
+  it('waits for persisted auth credentials before accepting connect-machine as authenticated state', async () => {
+    const page = createFakePage({
+      testIdCounts: {
+        'welcome-create-account': [1, 0, 0, 0, 0],
+        'session-getting-started-kind-connect_machine': [0, 1, 1, 1, 1],
+        'setupWizard.surface': [0, 0, 0, 0],
+      },
+      evaluateResults: [false, false, true],
+    });
+
+    await expect(createAccountAndReachConnectMachineState({ page })).resolves.toBeUndefined();
+    expect(page.evaluate).toHaveBeenCalledTimes(3);
+  });
+
+  it('waits for persisted auth credentials that match the active server profile', async () => {
+    const page = createFakePage({
+      testIdCounts: {
+        'welcome-create-account': [1, 0, 0, 0, 0],
+        'session-getting-started-kind-connect_machine': [0, 1, 1, 1, 1],
+        'setupWizard.surface': [0, 0, 0, 0],
+      },
+      localStorageSnapshots: [
+        {
+          'server-profiles:server-state-v1': JSON.stringify({
+            activeServerId: '127.0.0.1-33628',
+            servers: {
+              '127.0.0.1-33628': {
+                id: '127.0.0.1-33628',
+                serverUrl: 'http://127.0.0.1:33628',
+              },
             },
-        });
-
-        await expect(createAccountAndReachConnectMachineState({ page })).resolves.toBeUndefined();
-        expect((page.getByTestId('welcome-create-account') as FakeLocator).countCalls).toBeGreaterThanOrEqual(4);
-    });
-
-    it('waits for persisted auth credentials before accepting connect-machine as authenticated state', async () => {
-        const page = createFakePage({
-            testIdCounts: {
-                'welcome-create-account': [1, 0, 0, 0, 0],
-                'session-getting-started-kind-connect_machine': [0, 1, 1, 1, 1],
-                'setupWizard.surface': [0, 0, 0, 0],
+          }),
+          'auth_credentials__srv_127.0.0.1-3009': JSON.stringify({ token: 'wrong-token', secret: 'wrong-secret' }),
+        },
+        {
+          'server-profiles:server-state-v1': JSON.stringify({
+            activeServerId: '127.0.0.1-33628',
+            servers: {
+              '127.0.0.1-33628': {
+                id: '127.0.0.1-33628',
+                serverUrl: 'http://127.0.0.1:33628',
+              },
             },
-            evaluateResults: [false, false, true],
-        });
-
-        await expect(createAccountAndReachConnectMachineState({ page })).resolves.toBeUndefined();
-        expect(page.evaluate).toHaveBeenCalledTimes(3);
-    });
-
-    it('waits for persisted auth credentials that match the active server profile', async () => {
-        const page = createFakePage({
-            testIdCounts: {
-                'welcome-create-account': [1, 0, 0, 0, 0],
-                'session-getting-started-kind-connect_machine': [0, 1, 1, 1, 1],
-                'setupWizard.surface': [0, 0, 0, 0],
+          }),
+          'auth_credentials__srv_127.0.0.1-3009': JSON.stringify({ token: 'wrong-token', secret: 'wrong-secret' }),
+        },
+        {
+          'server-profiles:server-state-v1': JSON.stringify({
+            activeServerId: '127.0.0.1-33628',
+            servers: {
+              '127.0.0.1-33628': {
+                id: '127.0.0.1-33628',
+                serverUrl: 'http://127.0.0.1:33628',
+              },
             },
-            localStorageSnapshots: [
-                {
-                    'server-profiles:server-state-v1': JSON.stringify({
-                        activeServerId: '127.0.0.1-33628',
-                        servers: {
-                            '127.0.0.1-33628': {
-                                id: '127.0.0.1-33628',
-                                serverUrl: 'http://127.0.0.1:33628',
-                            },
-                        },
-                    }),
-                    'auth_credentials__srv_127.0.0.1-3009': JSON.stringify({ token: 'wrong-token', secret: 'wrong-secret' }),
-                },
-                {
-                    'server-profiles:server-state-v1': JSON.stringify({
-                        activeServerId: '127.0.0.1-33628',
-                        servers: {
-                            '127.0.0.1-33628': {
-                                id: '127.0.0.1-33628',
-                                serverUrl: 'http://127.0.0.1:33628',
-                            },
-                        },
-                    }),
-                    'auth_credentials__srv_127.0.0.1-3009': JSON.stringify({ token: 'wrong-token', secret: 'wrong-secret' }),
-                },
-                {
-                    'server-profiles:server-state-v1': JSON.stringify({
-                        activeServerId: '127.0.0.1-33628',
-                        servers: {
-                            '127.0.0.1-33628': {
-                                id: '127.0.0.1-33628',
-                                serverUrl: 'http://127.0.0.1:33628',
-                            },
-                        },
-                    }),
-                    'auth_credentials__srv_127.0.0.1-3009': JSON.stringify({ token: 'wrong-token', secret: 'wrong-secret' }),
-                    'auth_credentials__srv_127.0.0.1-33628': JSON.stringify({ token: 'right-token', secret: 'right-secret' }),
-                },
-            ],
-        });
-
-        await expect(createAccountAndReachConnectMachineState({ page })).resolves.toBeUndefined();
-        expect(page.evaluate).toHaveBeenCalledTimes(3);
+          }),
+          'auth_credentials__srv_127.0.0.1-3009': JSON.stringify({ token: 'wrong-token', secret: 'wrong-secret' }),
+          'auth_credentials__srv_127.0.0.1-33628': JSON.stringify({ token: 'right-token', secret: 'right-secret' }),
+        },
+      ],
     });
 
-    it('dismisses setup wizard only when visible', async () => {
-        const page = createFakePage({
-            testIdCounts: {
-                'setupWizard.surface': [1, 1, 0],
+    await expect(createAccountAndReachConnectMachineState({ page })).resolves.toBeUndefined();
+    expect(page.evaluate).toHaveBeenCalledTimes(3);
+  });
+
+  it('switches to the sessions tab when the mobile shell hides session actions off-tab', async () => {
+    const page = createFakePage({
+      testIdCounts: {
+        'welcome-create-account': [1, 0, 0, 0, 0],
+        'session-getting-started-kind-connect_machine': [0, 0, 1, 1],
+        'session-getting-started-kind-create_session': [0, 0, 1, 1],
+        'setupWizard.surface': [0, 0, 0, 0],
+        'tabbar-tab-sessions': [1, 1, 1],
+      },
+      evaluateResults: [true],
+    });
+
+    await expect(createAccountAndReachConnectMachineState({ page })).resolves.toBeUndefined();
+    expect((page.getByTestId('tabbar-tab-sessions') as FakeLocator).clickCalls).toBeGreaterThanOrEqual(1);
+  });
+
+  it('accepts the create-session surface as an authenticated mobile home state', async () => {
+    const page = createFakePage({
+      testIdCounts: {
+        'welcome-create-account': [1, 0, 0, 0],
+        'session-getting-started-kind-connect_machine': [0, 0, 0, 0],
+        'session-getting-started-kind-create_session': [0, 1, 1, 1],
+        'setupWizard.surface': [0, 0, 0, 0],
+        'tabbar-tab-sessions': [1, 1, 1],
+      },
+      evaluateResults: [true],
+    });
+
+    await expect(createAccountAndReachConnectMachineState({ page })).resolves.toBeUndefined();
+  });
+
+  it('accepts the start-daemon surface as an authenticated mobile home state', async () => {
+    const page = createFakePage({
+      testIdCounts: {
+        'welcome-create-account': [1, 0, 0, 0],
+        'session-getting-started-kind-connect_machine': [0, 0, 0, 0],
+        'session-getting-started-kind-start_daemon': [0, 1, 1, 1],
+        'setupWizard.surface': [0, 0, 0, 0],
+        'tabbar-tab-sessions': [1, 1, 1],
+      },
+      evaluateResults: [true],
+    });
+
+    await expect(createAccountAndReachConnectMachineState({ page })).resolves.toBeUndefined();
+  });
+
+  it('accepts the start-daemon surface before persisted auth credentials become readable', async () => {
+    const page = createFakePage({
+      testIdCounts: {
+        'welcome-create-account': [1, 0, 0, 0],
+        'session-getting-started-kind-connect_machine': [0, 0, 0, 0],
+        'session-getting-started-kind-start_daemon': [0, 1, 1, 1],
+        'setupWizard.surface': [0, 0, 0, 0],
+        'tabbar-tab-sessions': [1, 1, 1],
+      },
+      evaluateResults: Array.from({ length: 64 }, () => false),
+    });
+
+    await expect(createAccountAndReachConnectMachineState({ page })).resolves.toBeUndefined();
+  });
+
+  it('dismisses setup wizard only when visible', async () => {
+    const page = createFakePage({
+      testIdCounts: {
+        'setupWizard.surface': [1, 1, 0],
         'setupWizard.surface-skip': [1, 1],
       },
     });

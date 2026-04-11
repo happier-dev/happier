@@ -98,6 +98,7 @@ describe('TerminalConnectScreen approval render', () => {
         const screen = await renderScreen(<Screen />);
         await act(async () => {});
 
+        expect(screen.findByTestId('terminal-connect-surface-card')).toBeTruthy();
         expect(screen.findByTestId('terminal-connect-approve')).toBeTruthy();
         expect(screen.findByTestId('terminal-connect-reject')).toBeTruthy();
     });

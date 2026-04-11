@@ -13,6 +13,7 @@ import type {
     PlanChecklistItem,
     PlanChecklistItemStatus,
     PlanChecklistPhase,
+    PlanChecklistVariant,
 } from './types';
 
 function getRowStatus(
@@ -72,6 +73,34 @@ function getStatusLabel(status: PlanChecklistItemStatus): string | null {
         default:
             return null;
     }
+}
+
+function normalizeNodeText(node: React.ReactNode): string | null {
+    if (typeof node === 'string' || typeof node === 'number') {
+        const value = String(node).trim();
+        return value.length > 0 ? value : null;
+    }
+    return null;
+}
+
+function shouldSuppressDetailsSummary(item: PlanChecklistItem): boolean {
+    const subtitle = normalizeNodeText(item.subtitle);
+    const details = typeof item.details === 'function' ? null : normalizeNodeText(item.details);
+    if (!subtitle || !details) {
+        return false;
+    }
+    return subtitle === details;
+}
+
+function shouldRenderBadge(statusLabel: string | null, badge: React.ReactNode): boolean {
+    if (!statusLabel) {
+        return true;
+    }
+    const badgeText = normalizeNodeText(badge);
+    if (!badgeText) {
+        return true;
+    }
+    return badgeText !== statusLabel;
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -195,15 +224,28 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderColor: theme.colors.accent.blue,
         backgroundColor: theme.colors.surface,
     },
+    iconPlainBase: {
+        width: 30,
+        height: 30,
+        borderWidth: 0,
+        borderRadius: 0,
+        backgroundColor: 'transparent',
+    },
+    iconPlainRunning: {
+        width: 30,
+        height: 30,
+    },
 }));
 
 export type PlanChecklistRowProps = Readonly<{
     testID?: string;
     item: PlanChecklistItem;
+    variant: PlanChecklistVariant;
     phase: PlanChecklistPhase;
     selected: boolean;
     execution?: PlanChecklistExecutionState;
     expanded: boolean;
+    childrenContent?: React.ReactNode;
     onToggle: () => void;
     onToggleExpanded: () => void;
     onCopyDiagnostics?: () => void | Promise<void>;
@@ -215,7 +257,11 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
     const [hovered, setHovered] = React.useState(false);
     const status = getRowStatus(props.item, props.phase, props.selected, props.execution);
     const statusLabel = props.phase === 'execute' ? getStatusLabel(status) : null;
+    const suppressRepeatedDetails = shouldSuppressDetailsSummary(props.item);
     const itemRenderDetails: (() => React.ReactNode) | undefined = React.useMemo(() => {
+        if (suppressRepeatedDetails) {
+            return undefined;
+        }
         if (props.item.renderDetails) {
             return props.item.renderDetails;
         }
@@ -227,8 +273,8 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
             return () => details;
         }
         return undefined;
-    }, [props.item.details, props.item.renderDetails]);
-    const detailsAvailable = Boolean(itemRenderDetails || (props.execution?.logs?.length ?? 0) > 0 || props.onCopyDiagnostics);
+    }, [props.item.details, props.item.renderDetails, suppressRepeatedDetails]);
+    const detailsAvailable = Boolean(itemRenderDetails || props.childrenContent || (props.execution?.logs?.length ?? 0) > 0 || props.onCopyDiagnostics);
     const shouldRevealDetailsToggle = detailsAvailable && (Platform.OS !== 'web' || hovered || props.expanded);
     const iconName = props.phase === 'select'
         ? (status === 'done' ? 'checkmark-circle' : (props.selected ? 'checkmark-circle-outline' : 'ellipse-outline'))
@@ -246,6 +292,7 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
     }, [canToggleExpanded, canToggleSelection, props.onToggle, props.onToggleExpanded]);
     const dimRow = props.phase === 'select' && props.item.disabled && props.item.satisfied;
     const statusSlotTestID = props.testID ? `${props.testID}-status-slot` : undefined;
+    const usesOnboardingVariant = props.variant === 'onboarding';
 
     const detailsToggle = detailsAvailable ? (
         <View style={styles.detailsToggleSlot} pointerEvents={shouldRevealDetailsToggle ? 'auto' : 'none'}>
@@ -293,20 +340,21 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
                         <View
                             testID={statusSlotTestID}
                             style={[
-                                styles.iconBoxBase,
-                                status === 'done' ? styles.iconBoxDone : null,
-                                status === 'error' ? styles.iconBoxError : null,
-                                status === 'queued' ? styles.iconBoxQueued : null,
-                                status === 'running' ? styles.iconBoxRunning : null,
-                                props.selected ? styles.iconBoxSelected : null,
+                                usesOnboardingVariant ? styles.iconPlainBase : styles.iconBoxBase,
+                                !usesOnboardingVariant && status === 'done' ? styles.iconBoxDone : null,
+                                !usesOnboardingVariant && status === 'error' ? styles.iconBoxError : null,
+                                !usesOnboardingVariant && status === 'queued' ? styles.iconBoxQueued : null,
+                                !usesOnboardingVariant && status === 'running' ? styles.iconBoxRunning : null,
+                                !usesOnboardingVariant && props.selected ? styles.iconBoxSelected : null,
+                                usesOnboardingVariant && status === 'running' ? styles.iconPlainRunning : null,
                             ]}
                         >
                             {status === 'running' ? (
-                                <ActivityIndicator size={16} color={theme.colors.accent.blue} />
+                                <ActivityIndicator size={usesOnboardingVariant ? 18 : 16} color={theme.colors.accent.blue} />
                             ) : iconName ? (
                                 <Ionicons
                                     name={iconName}
-                                    size={16}
+                                    size={usesOnboardingVariant ? 22 : 16}
                                     color={
                                         status === 'done'
                                             ? theme.colors.success
@@ -337,7 +385,7 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
                     {statusLabel ? (
                         <Text style={styles.statusLabel}>{statusLabel}</Text>
                     ) : null}
-                    {props.item.badge ? (
+                    {props.item.badge && shouldRenderBadge(statusLabel, props.item.badge) ? (
                         <View style={styles.badge}>
                             {typeof props.item.badge === 'string' ? (
                                 <Text style={styles.badgeText}>{props.item.badge}</Text>
@@ -355,6 +403,8 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
                     <PlanChecklistRowDetails
                         testID={props.testID ? `${props.testID}-details` : undefined}
                         renderDetails={itemRenderDetails}
+                        detailsTitle={suppressRepeatedDetails ? null : undefined}
+                        childrenContent={props.childrenContent}
                         error={props.execution?.error}
                         logs={props.execution?.logs}
                         onCopyDiagnostics={props.onCopyDiagnostics}

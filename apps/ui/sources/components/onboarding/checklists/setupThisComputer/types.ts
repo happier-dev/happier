@@ -2,6 +2,7 @@ import type { RelayDriftBanner } from '@/components/settings/server/relayDriftTy
 
 export type ThisComputerSetupPreflight = Readonly<{
     activeRelayUrl: string | null;
+    localCliReady?: boolean;
     serviceInstalled: boolean;
     daemonRunning: boolean;
     machineId: string | null;
@@ -16,14 +17,3 @@ export type ThisComputerSetupPreflight = Readonly<{
     pairingRequired: boolean;
     relayDriftBanner: RelayDriftBanner | null;
 }>;
-
-export type ThisComputerChecklistItemId =
-    | 'setup.thisComputer.resolveRelay'
-    | 'setup.thisComputer.checkAuth'
-    | 'setup.thisComputer.configureRelay'
-    | 'setup.thisComputer.installTailscale'
-    | 'setup.thisComputer.auth.request'
-    | 'setup.thisComputer.auth.wait'
-    | 'setup.thisComputer.installService'
-    | 'setup.thisComputer.startService'
-    | 'setup.thisComputer.verifyService';

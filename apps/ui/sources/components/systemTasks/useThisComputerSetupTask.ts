@@ -7,7 +7,7 @@ import { useSystemTaskSnapshot } from './useSystemTaskSnapshot';
 import type { SystemTaskRunState, SystemTaskRunner } from './types';
 import type { SystemTaskSpec } from '@happier-dev/protocol';
 
-export type ThisComputerSetupFollowUp = 'auth' | 'approval' | null;
+export type ThisComputerSetupFollowUp = 'auth' | null;
 
 export function resolveThisComputerSetupFollowUp(result: SystemTaskResult | null): ThisComputerSetupFollowUp {
     if (!result || result.ok) {
@@ -16,9 +16,6 @@ export function resolveThisComputerSetupFollowUp(result: SystemTaskResult | null
     if (result.error.code === 'not_authenticated') {
         return 'auth';
     }
-    if (result.error.code === 'machine_id_unavailable') {
-        return 'approval';
-    }
     return null;
 }
 
@@ -26,7 +23,6 @@ export function useThisComputerSetupTask(options: Readonly<{
     runner?: SystemTaskRunner;
     autoStart?: boolean;
     onNeedsAuth?: () => void;
-    onNeedsApproval?: () => void;
     onSucceeded?: (snapshot: SystemTaskRunState) => void;
 }> = {}) {
     const runner = options.runner ?? getSystemTasksRunner();
@@ -86,9 +82,6 @@ export function useThisComputerSetupTask(options: Readonly<{
         if (followUp === 'auth') {
             options.onNeedsAuth?.();
             return;
-        }
-        if (followUp === 'approval') {
-            options.onNeedsApproval?.();
         }
     }, [activeTaskSnapshot, options]);
 

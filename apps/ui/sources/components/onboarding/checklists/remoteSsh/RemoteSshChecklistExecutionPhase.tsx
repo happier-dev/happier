@@ -44,6 +44,7 @@ export const RemoteSshChecklistExecutionPhase = React.memo(function RemoteSshChe
             <PlanChecklistCard
                 testID={props.testID ? `${props.testID}-execution` : 'remote-ssh-checklist-execution'}
                 phase="execute"
+                variant="onboarding"
                 items={props.planItems}
                 executionById={props.executionById}
                 selectedIds={props.selectedIds}

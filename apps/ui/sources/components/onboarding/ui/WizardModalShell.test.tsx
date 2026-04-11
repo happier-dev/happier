@@ -15,7 +15,7 @@ vi.mock('react-native-unistyles', async () => {
     return createUnistylesMock();
 });
 
-vi.mock('./WizardCardLayout', () => ({
+vi.mock('@/components/onboarding/ui/WizardCardLayout', () => ({
     WizardCardLayout: ({ children, testID, showScrim, scrollable }: { children: React.ReactNode; testID?: string; showScrim?: boolean; scrollable?: boolean }) =>
         React.createElement('WizardCardLayout', { testID, showScrim, scrollable }, children),
     useWizardCardLayoutMetrics: () => null,

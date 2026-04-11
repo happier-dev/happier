@@ -198,6 +198,12 @@ function createSucceededSnapshot(
     };
 }
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    return Array.isArray(style)
+        ? Object.assign({}, ...style.filter(Boolean) as Array<Record<string, unknown>>)
+        : (style as Record<string, unknown>);
+}
+
 describe('RemoteSshChecklistStep', () => {
     afterEach(() => {
         standardCleanup();
@@ -509,8 +515,16 @@ describe('RemoteSshChecklistStep', () => {
             await (requirePrimary().onPress as any)?.();
         });
         expect(screen.findByTestId('remote-ssh-step-plan')).toBeTruthy();
+        const planStatusSlot = screen.findByTestId('remote-ssh-step-plan-row-install_relay_runtime-status-slot');
+        if (!planStatusSlot) {
+            throw new Error('Expected remote SSH plan status slot');
+        }
         expect(screen.findByTestId('remote-ssh-step-plan-row-install_relay_runtime')).toBeTruthy();
         expect(screen.findAllByTestId('remote-ssh-step-plan-row-install_daemon')).toHaveLength(0);
+        const flattenedPlanStatusSlotStyle = flattenStyle(planStatusSlot.props.style);
+        expect(flattenedPlanStatusSlotStyle.borderWidth ?? 0).toBe(0);
+        expect(Number(flattenedPlanStatusSlotStyle.width)).toBeGreaterThan(26);
+        expect(Number(flattenedPlanStatusSlotStyle.height)).toBeGreaterThan(26);
         await flushHookEffects({ cycles: 3, turns: 3 });
         expect(requirePrimary().disabled).toBe(false);
 
@@ -523,7 +537,15 @@ describe('RemoteSshChecklistStep', () => {
         expect(spec?.kind).toBe('remote.ssh.bootstrapMachine.v1');
         expect((spec?.params as any)?.serviceMode).toBe('none');
         expect((spec?.params as any)?.relayRuntime?.enabled).toBe(true);
+        const executionStatusSlot = screen.findByTestId('remote-ssh-step-execution-row-install_relay_runtime-status-slot');
+        if (!executionStatusSlot) {
+            throw new Error('Expected remote SSH execution status slot');
+        }
         expect(screen.findByTestId('remote-ssh-step-execution')).toBeTruthy();
+        const flattenedExecutionStatusSlotStyle = flattenStyle(executionStatusSlot.props.style);
+        expect(flattenedExecutionStatusSlotStyle.borderWidth ?? 0).toBe(0);
+        expect(Number(flattenedExecutionStatusSlotStyle.width)).toBeGreaterThan(26);
+        expect(Number(flattenedExecutionStatusSlotStyle.height)).toBeGreaterThan(26);
     });
 
     it('prefers the explicit public relay URL when completing remote relay hosting', async () => {
@@ -599,7 +621,15 @@ describe('RemoteSshChecklistStep', () => {
                 },
             }),
         ]);
+        const completeStatusSlot = screen.findByTestId('remote-ssh-step-complete-checklist-row-install_relay_runtime-status-slot');
+        if (!completeStatusSlot) {
+            throw new Error('Expected remote SSH completion status slot');
+        }
         expect(screen.findByTestId('remote-ssh-step-complete-checklist-row-install_relay_runtime')).toBeTruthy();
+        const flattenedCompleteStatusSlotStyle = flattenStyle(completeStatusSlot.props.style);
+        expect(flattenedCompleteStatusSlotStyle.borderWidth ?? 0).toBe(0);
+        expect(Number(flattenedCompleteStatusSlotStyle.width)).toBeGreaterThan(26);
+        expect(Number(flattenedCompleteStatusSlotStyle.height)).toBeGreaterThan(26);
         expect(screen.getTextContent()).toContain('https://public-relay.example.test');
         expect(screen.getTextContent()).not.toContain('http://127.0.0.1:53288');
     });

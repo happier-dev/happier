@@ -2,6 +2,36 @@ import { expect, type Page } from '@playwright/test';
 
 export type CreateAccountAndReachConnectMachineStatePage = Pick<Page, 'getByTestId'> & Partial<Pick<Page, 'evaluate'>>;
 
+async function isVisible(locator: ReturnType<Page['getByTestId']>): Promise<boolean> {
+  try {
+    return await locator.first().isVisible();
+  } catch {
+    return false;
+  }
+}
+
+async function trySwitchToSessionsTab(params: Readonly<{
+  page: CreateAccountAndReachConnectMachineStatePage;
+  switchedRef: { current: boolean };
+}>): Promise<boolean> {
+  if (params.switchedRef.current) {
+    return false;
+  }
+
+  const sessionsTab = params.page.getByTestId('tabbar-tab-sessions');
+  if (!(await isVisible(sessionsTab))) {
+    return false;
+  }
+
+  try {
+    await sessionsTab.click();
+    params.switchedRef.current = true;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function hasPersistedAuthCredentials(page: CreateAccountAndReachConnectMachineStatePage): Promise<boolean> {
     if (!page.evaluate) return true;
 
@@ -77,7 +107,48 @@ async function countAuthenticatedShellSurfaces(page: CreateAccountAndReachConnec
     + (await page.getByTestId('sidebar-expand-button').count())
     + (await page.getByTestId('session-composer-input').count())
     + (await page.getByTestId('session-getting-started-kind-connect_machine').count())
+    + (await page.getByTestId('session-getting-started-kind-start_daemon').count())
+    + (await page.getByTestId('session-getting-started-kind-create_session').count())
+    + (await page.getByTestId('session-getting-started-kind-select_session').count())
+    + (await page.getByTestId('main-header-start-new-session').count())
   );
+}
+
+async function isAuthenticatedSessionHomeVisible(page: CreateAccountAndReachConnectMachineStatePage): Promise<boolean> {
+  const connectMachine = page.getByTestId('session-getting-started-kind-connect_machine');
+  if (await isVisible(connectMachine)) return true;
+
+  const startDaemon = page.getByTestId('session-getting-started-kind-start_daemon');
+  if (await isVisible(startDaemon)) return true;
+
+  const createSession = page.getByTestId('session-getting-started-kind-create_session');
+  if (await isVisible(createSession)) return true;
+
+  const selectSession = page.getByTestId('session-getting-started-kind-select_session');
+  if (await isVisible(selectSession)) return true;
+
+  const startNewSession = page.getByTestId('main-header-start-new-session');
+  if (await isVisible(startNewSession)) return true;
+
+  return false;
+}
+
+async function hasDurableAuthenticatedSessionHomeVisible(
+  page: CreateAccountAndReachConnectMachineStatePage,
+): Promise<boolean> {
+  const startDaemon = page.getByTestId('session-getting-started-kind-start_daemon');
+  if (await isVisible(startDaemon)) return true;
+
+  const createSession = page.getByTestId('session-getting-started-kind-create_session');
+  if (await isVisible(createSession)) return true;
+
+  const selectSession = page.getByTestId('session-getting-started-kind-select_session');
+  if (await isVisible(selectSession)) return true;
+
+  const startNewSession = page.getByTestId('main-header-start-new-session');
+  if (await isVisible(startNewSession)) return true;
+
+  return false;
 }
 
 async function navigateToSetupWizard(page: CreateAccountAndReachConnectMachineStatePage): Promise<void> {
@@ -110,24 +181,28 @@ export async function createAccountAndReachConnectMachineState(params: Readonly<
 }>): Promise<void> {
   const createAccount = params.page.getByTestId('welcome-create-account');
   const createButton = params.useFirstCreateButton === true ? createAccount.first() : createAccount;
-  const connectMachine = params.page.getByTestId('session-getting-started-kind-connect_machine');
   const setupWizard = params.page.getByTestId('setupWizard.surface');
+  const switchedToSessionsTabRef = { current: false };
 
-  let initialState: 'create-account' | 'connect-machine' | 'setup-wizard' | null = null;
+  let initialState: 'create-account' | 'authenticated-home' | 'setup-wizard' | null = null;
   await expect
     .poll(async () => {
-      const createAccountVisible = (await createButton.count()) > 0;
+      const createAccountVisible = await isVisible(createButton);
       if (createAccountVisible) {
         initialState = 'create-account';
         return true;
       }
-      if ((await connectMachine.count()) > 0) {
-        initialState = 'connect-machine';
+      if (await isAuthenticatedSessionHomeVisible(params.page)) {
+        initialState = 'authenticated-home';
         return true;
       }
-      if ((await setupWizard.count()) > 0) {
+      if (await isVisible(setupWizard)) {
         initialState = 'setup-wizard';
         return true;
+      }
+      if (await trySwitchToSessionsTab({ page: params.page, switchedRef: switchedToSessionsTabRef })) {
+        initialState = null;
+        return false;
       }
       initialState = null;
       return false;
@@ -140,17 +215,21 @@ export async function createAccountAndReachConnectMachineState(params: Readonly<
 
   await expect
     .poll(async () => {
-      const createAccountVisible = (await createButton.count()) > 0;
-      if ((await setupWizard.count()) > 0) return true;
+      const createAccountVisible = await isVisible(createButton);
+      if (await isVisible(setupWizard)) return true;
       if (createAccountVisible) return false;
-      return (await connectMachine.count()) > 0;
+      if (await trySwitchToSessionsTab({ page: params.page, switchedRef: switchedToSessionsTabRef })) {
+        return false;
+      }
+      return isAuthenticatedSessionHomeVisible(params.page);
     }, { timeout: 120_000 })
     .toBe(true);
 
   await dismissSetupWizardIfVisible({ page: params.page });
   await expect.poll(async () => {
-    if ((await createButton.count()) > 0) return 0;
-    if ((await connectMachine.count()) !== 1) return 0;
+    if (await isVisible(createButton)) return 0;
+    if (!(await isAuthenticatedSessionHomeVisible(params.page))) return 0;
+    if (await hasDurableAuthenticatedSessionHomeVisible(params.page)) return 1;
     return (await hasPersistedAuthCredentials(params.page)) ? 1 : 0;
   }, { timeout: 120_000 }).toBe(1);
 }
@@ -166,11 +245,11 @@ export async function createAccountAndReachSetupWizardState(params: Readonly<{
   let initialState: 'create-account' | 'setup-wizard' | null = null;
   await expect
     .poll(async () => {
-      if ((await createButton.count()) > 0) {
+      if (await isVisible(createButton)) {
         initialState = 'create-account';
         return true;
       }
-      if ((await setupWizard.count()) > 0) {
+      if (await isVisible(setupWizard)) {
         initialState = 'setup-wizard';
         return true;
       }
@@ -189,11 +268,11 @@ export async function createAccountAndReachSetupWizardState(params: Readonly<{
 
   await expect
     .poll(async () => {
-      return (await setupWizard.count()) > 0 || (await countAuthenticatedShellSurfaces(params.page)) > 0;
+      return (await isVisible(setupWizard)) || (await countAuthenticatedShellSurfaces(params.page)) > 0;
     }, { timeout: 120_000 })
     .toBe(true);
 
-  if ((await setupWizard.count()) === 0) {
+  if (!(await isVisible(setupWizard))) {
     await navigateToSetupWizard(params.page);
   }
 

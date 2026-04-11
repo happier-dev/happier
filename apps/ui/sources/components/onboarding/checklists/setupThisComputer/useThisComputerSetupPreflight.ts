@@ -18,6 +18,7 @@ export function useThisComputerSetupPreflight(): ThisComputerSetupPreflight {
         activeRelayUrl: typeof activeServerSnapshot.serverUrl === 'string' && activeServerSnapshot.serverUrl.trim().length > 0
             ? activeServerSnapshot.serverUrl.trim()
             : null,
+        localCliReady: daemon.status != null,
         serviceInstalled: daemon.status?.serviceInstalled === true,
         daemonRunning: daemon.status?.daemonRunning === true,
         machineId: daemon.status?.machineId ?? null,
@@ -59,6 +60,7 @@ export function useThisComputerSetupPreflight(): ThisComputerSetupPreflight {
     }), [
         activeServerSnapshot.serverUrl,
         activeServerSnapshot.activeLocalRelayUrl,
+        daemon.status,
         daemon.status?.daemonRunning,
         daemon.status?.daemonServerUrl,
         daemon.status?.daemonComparableKey,

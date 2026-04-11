@@ -275,6 +275,7 @@ export function RelayHostLocalChecklistStep(props: Readonly<{
                 testID={props.testID ? `${props.testID}-checklist` : 'relay-host-local-checklist'}
                 items={items}
                 phase={checklist.phase}
+                variant="onboarding"
                 selectedIds={checklist.selectedIds}
                 onToggleItem={checklist.toggleItem}
                 executionById={executionById}

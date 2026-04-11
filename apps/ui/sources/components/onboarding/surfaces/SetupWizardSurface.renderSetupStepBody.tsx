@@ -64,7 +64,6 @@ export function renderSetupStepBody(params: Readonly<{
     onToggleProviderId: (providerId: AgentId) => void;
     onLocalSetupSucceeded: (machineId: string | null) => void;
     onLocalSetupNeedsAuth: () => void;
-    onLocalSetupNeedsApproval: () => void;
     relaySwitchDecision: RelaySwitchDecision;
     onRelaySwitchDecisionChange: (decision: RelaySwitchDecision) => void;
     onLocalRelayStatusChange: (status: unknown) => void;
@@ -96,7 +95,6 @@ export function renderSetupStepBody(params: Readonly<{
                     testID="setupWizard-setup-this-computer"
                     onSucceeded={params.onLocalSetupSucceeded}
                     onNeedsAuth={params.onLocalSetupNeedsAuth}
-                    onNeedsApproval={params.onLocalSetupNeedsApproval}
                 />
             );
         case 'host_relay_local':

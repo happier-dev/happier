@@ -22,7 +22,6 @@ describe('SetupThisComputerWizardStep', () => {
                 testID="wizard-setup-this-computer"
                 onSucceeded={() => {}}
                 onNeedsAuth={() => {}}
-                onNeedsApproval={() => {}}
             />,
         );
 
@@ -31,7 +30,6 @@ describe('SetupThisComputerWizardStep', () => {
             testID: 'wizard-setup-this-computer',
             onSucceeded: expect.any(Function),
             onNeedsAuth: expect.any(Function),
-            onNeedsApproval: expect.any(Function),
         }));
     });
 });
