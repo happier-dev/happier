@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { DirectSessionsSourceSchema } from '../../directSessions/daemonRpcV1.js';
+import { DirectSessionsSourceSchema } from '../../providers/directSessionsCatalog.js';
 import { AgentRuntimeDescriptorV1Schema } from '../../sessionMetadata/agentRuntimeDescriptorV1.js';
 import { CODEX_BACKEND_MODES } from '../../providers/codex/backendMode.js';
 

@@ -1,3 +1,4 @@
+import { resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
 import type { DirectSessionsProviderId } from '@happier-dev/protocol';
 
 import type { DaemonSessionMarker } from '@/daemon/sessionRegistry';
@@ -10,22 +11,7 @@ function extractVendorSessionIdFromMarkerMetadata(params: Readonly<{
   const rec = params.metadata as Record<string, unknown>;
   const expectedFlavor = typeof rec.flavor === 'string' ? rec.flavor.trim() : '';
   if (expectedFlavor && expectedFlavor !== params.providerId) return null;
-
-      const raw = (() => {
-        switch (params.providerId) {
-          case 'codex':
-            return rec.codexSessionId;
-          case 'claude':
-            return rec.claudeSessionId;
-          case 'opencode':
-            return rec.opencodeSessionId;
-          default:
-            return null;
-        }
-      })();
-
-  const normalized = typeof raw === 'string' ? raw.trim() : '';
-  return normalized.length > 0 ? normalized : null;
+  return resolveVendorResumeIdFromSessionMetadata(params.providerId, rec);
 }
 
 export function findTrustedDirectSessionOwner(params: Readonly<{

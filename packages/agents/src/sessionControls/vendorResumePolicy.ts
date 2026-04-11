@@ -1,9 +1,7 @@
 import { buildBackendTargetKey } from '@happier-dev/protocol';
 import type { AgentId } from '../types.js';
 import { AGENTS_CORE } from '../manifest.js';
-import { isCodexVendorResumeBackendEnabled } from '../providerSettings/definitions/codex.js';
-import { resolveCodexSessionBackendMode } from './providerSessionBackends.js';
-import { readSessionMetadataRuntimeDescriptor } from './agentRuntimeDescriptor.js';
+import { getProviderSessionControlAdapter } from '../providers/sessionControlAdapterRegistry.js';
 
 export type VendorResumeEligibilityReasonCode =
   | 'agent_unsupported'
@@ -28,23 +26,11 @@ function isBackendDisabledByAccountSettings(agentId: AgentId, accountSettings: R
 }
 
 export function resolveVendorResumeIdFromSessionMetadata(agentId: AgentId, metadata: unknown): string | null {
+  const adapterResumeId = getProviderSessionControlAdapter(agentId)?.resolveVendorResumeId?.(metadata);
+  if (adapterResumeId) return adapterResumeId;
+
   const record = asRecord(metadata);
   if (!record) return null;
-
-  if (agentId === 'codex') {
-    const runtimeDescriptor = readSessionMetadataRuntimeDescriptor(record, 'codex');
-    if (runtimeDescriptor?.vendorSessionId) return runtimeDescriptor.vendorSessionId;
-  }
-
-  if (agentId === 'opencode') {
-    const runtimeDescriptor = readSessionMetadataRuntimeDescriptor(record, 'opencode');
-    if (runtimeDescriptor?.vendorSessionId) return runtimeDescriptor.vendorSessionId;
-  }
-
-  if (agentId === 'pi') {
-    const runtimeDescriptor = readSessionMetadataRuntimeDescriptor(record, 'pi');
-    if (runtimeDescriptor?.vendorSessionId) return runtimeDescriptor.vendorSessionId;
-  }
 
   const resume = AGENTS_CORE[agentId]?.resume;
   const field = resume && 'vendorResumeIdField' in resume ? resume.vendorResumeIdField ?? null : null;
@@ -74,16 +60,11 @@ export function evaluateVendorResumeEligibility(input: Readonly<{
   }
 
   if (resumeConfig.vendorResume === 'experimental') {
-    // Codex vendor-resume is currently available through the supported richer backend modes.
-    if (input.agentId === 'codex') {
-      const codexBackendMode = resolveCodexSessionBackendMode({
-        metadata: input.metadata,
-        accountSettings,
-      });
-      if (!isCodexVendorResumeBackendEnabled(codexBackendMode ? { codexBackendMode } : {})) {
-        return { eligible: false, reasonCode: 'experimental_disabled' };
-      }
-    } else {
+    const enabled = getProviderSessionControlAdapter(input.agentId)?.isExperimentalVendorResumeEnabled?.({
+      metadata: input.metadata,
+      accountSettings,
+    }) === true;
+    if (!enabled) {
       return { eligible: false, reasonCode: 'experimental_disabled' };
     }
   }

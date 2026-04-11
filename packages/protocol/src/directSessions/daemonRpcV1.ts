@@ -2,57 +2,21 @@ import { z } from 'zod';
 
 import { AgentRuntimeDescriptorV1Schema } from '../sessionMetadata/agentRuntimeDescriptorV1.js';
 import { CODEX_BACKEND_MODES } from '../providers/codex/backendMode.js';
-import { AgentProviderIdV1Schema } from '../providers/agentProviderIdsV1.js';
+import {
+  DirectSessionsProviderIdSchema,
+  DirectSessionsSourceSchema,
+  type DirectSessionsProviderId,
+  type DirectSessionsSource,
+} from '../providers/directSessionsCatalog.js';
 
-export const DirectSessionsProviderIdSchema = AgentProviderIdV1Schema;
-export type DirectSessionsProviderId = z.infer<typeof DirectSessionsProviderIdSchema>;
-
-const DirectSessionsCodexHomeSourceSchema = z
-  .object({
-    kind: z.literal('codexHome'),
-    home: z.enum(['user', 'connectedService']),
-    homePath: z.string().min(1).optional(),
-    connectedServiceId: z.string().min(1).optional(),
-    connectedServiceProfileId: z.string().min(1).optional(),
-  })
-  .passthrough()
-  .superRefine((value, ctx) => {
-    if (value.home === 'connectedService') {
-      if (!value.connectedServiceId) {
-        ctx.addIssue({ code: 'custom', message: 'connectedServiceId is required when home=connectedService', path: ['connectedServiceId'] });
-      }
-      return;
-    }
-    if (value.connectedServiceId) {
-      ctx.addIssue({ code: 'custom', message: 'connectedServiceId is not allowed when home=user', path: ['connectedServiceId'] });
-    }
-    if (value.connectedServiceProfileId) {
-      ctx.addIssue({ code: 'custom', message: 'connectedServiceProfileId is not allowed when home=user', path: ['connectedServiceProfileId'] });
-    }
-  });
-
-const DirectSessionsClaudeConfigSourceSchema = z
-  .object({
-    kind: z.literal('claudeConfig'),
-    configDir: z.string().min(1).max(10_000).nullish(),
-    projectId: z.string().min(1).max(2000).nullish(),
-  })
-  .passthrough();
-
-const DirectSessionsOpenCodeServerSourceSchema = z
-  .object({
-    kind: z.literal('opencodeServer'),
-    baseUrl: z.string().url().nullish(),
-    directory: z.string().min(1).max(10_000).nullish(),
-  })
-  .passthrough();
-
-export const DirectSessionsSourceSchema = z.discriminatedUnion('kind', [
-  DirectSessionsCodexHomeSourceSchema,
-  DirectSessionsClaudeConfigSourceSchema,
-  DirectSessionsOpenCodeServerSourceSchema,
-]);
-export type DirectSessionsSource = z.infer<typeof DirectSessionsSourceSchema>;
+export {
+  DirectSessionsProviderIdSchema,
+  DirectSessionsSourceSchema,
+};
+export type {
+  DirectSessionsProviderId,
+  DirectSessionsSource,
+};
 
 export const DirectSessionsCandidatesListRequestSchema = z
   .object({

@@ -2,18 +2,17 @@ import { createHash } from 'node:crypto';
 import os from 'node:os';
 
 import {
-  buildCodexAgentRuntimeDescriptor,
-  buildOpenCodeAgentRuntimeDescriptor,
-  normalizeCodexBackendMode,
+  AGENTS_CORE,
   type CodexBackendMode,
 } from '@happier-dev/agents';
 import {
-  readCanonicalAgentRuntimeDescriptorV1ForProvider,
+  resolveDirectSessionsSourceKey,
   type AgentRuntimeDescriptorV1,
   type DirectSessionsProviderId,
   type DirectSessionsSource,
 } from '@happier-dev/protocol';
 
+import { getDirectSessionProviderOps } from '@/backends/catalog';
 import type { Credentials } from '@/persistence';
 import { fetchSessionById, fetchSessionsPage, getOrCreateSessionByTag } from '@/session/transport/http/sessionsHttp';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
@@ -128,170 +127,13 @@ async function refreshExistingDirectSessionMetadataIfNeeded(params: Readonly<{
   }).catch(() => undefined);
 }
 
-function resolveSourceKey(providerId: DirectSessionsProviderId, source: DirectSessionsSource): string {
-  switch (providerId) {
-    case 'codex': {
-      if (source.kind !== 'codexHome') return 'codexHome:invalid';
-      const home = source.home === 'connectedService' ? 'connectedService' : 'user';
-      const connectedServiceId = home === 'connectedService' ? normalizeNullableString(source.connectedServiceId) ?? '' : '';
-      const connectedServiceProfileId = home === 'connectedService' ? normalizeNullableString(source.connectedServiceProfileId) ?? '' : '';
-      const homePath = normalizeNullableString(source.homePath) ?? '';
-      return `codexHome:${home}:${connectedServiceId}:${connectedServiceProfileId}:${homePath}`;
-    }
-    case 'claude': {
-      if (source.kind !== 'claudeConfig') return 'claudeConfig:invalid';
-      const configDir = normalizeNullableString(source.configDir) ?? '';
-      const projectId = normalizeNullableString(source.projectId) ?? '';
-      return `claudeConfig:${configDir}:${projectId}`;
-    }
-    case 'opencode': {
-      if (source.kind !== 'opencodeServer') return 'opencodeServer:invalid';
-      const baseUrl = normalizeNullableString(source.baseUrl) ?? '';
-      const directory = normalizeNullableString(source.directory) ?? '';
-      return `opencodeServer:${baseUrl}:${directory}`;
-    }
-    default:
-      return 'unknown';
-  }
-}
-
-function resolveCodexRuntimeSourceAffinity(source: DirectSessionsSource): Readonly<{
-  home: 'user' | 'connectedService';
-  connectedServiceId?: string;
-  connectedServiceProfileId?: string;
-  homePath?: string;
-}> {
-  if (source.kind !== 'codexHome' || source.home !== 'connectedService') {
-    return {
-      home: 'user',
-      ...(typeof (source as any).homePath === 'string' && (source as any).homePath.trim().length > 0
-        ? { homePath: (source as any).homePath.trim() }
-        : {}),
-    };
-  }
-
-  return {
-    home: 'connectedService',
-    ...(typeof source.connectedServiceId === 'string' && source.connectedServiceId.trim().length > 0
-      ? { connectedServiceId: source.connectedServiceId.trim() }
-      : {}),
-    ...(typeof source.connectedServiceProfileId === 'string' && source.connectedServiceProfileId.trim().length > 0
-      ? { connectedServiceProfileId: source.connectedServiceProfileId.trim() }
-      : {}),
-    ...(typeof source.homePath === 'string' && source.homePath.trim().length > 0
-      ? { homePath: source.homePath.trim() }
-      : {}),
-  };
-}
-
-function resolveCodexDirectSessionLinkIdentity(params: Readonly<{
-  remoteSessionId: string;
-  source: DirectSessionsSource;
-  codexBackendMode?: CodexBackendMode | null;
-  runtimeDescriptor?: AgentRuntimeDescriptorV1 | null;
-}>): Readonly<{
-  remoteSessionId: string;
-  codexBackendMode: CodexBackendMode | null;
-  runtimeDescriptor: AgentRuntimeDescriptorV1 | null;
-  source: DirectSessionsSource;
-}> {
-  const canonicalRuntimeDescriptor = readCanonicalAgentRuntimeDescriptorV1ForProvider(params.runtimeDescriptor, 'codex');
-  const runtimeVendorSessionId = canonicalRuntimeDescriptor?.vendorSessionId ?? '';
-  const remoteSessionId = runtimeVendorSessionId || params.remoteSessionId;
-  const codexBackendMode = normalizeCodexBackendMode(canonicalRuntimeDescriptor?.backendMode)
-    ?? normalizeCodexBackendMode(params.codexBackendMode)
-    ?? null;
-
-  if (!codexBackendMode) {
-    return {
-      remoteSessionId,
-      codexBackendMode: null,
-      runtimeDescriptor: params.runtimeDescriptor ?? null,
-      source: params.source,
-    };
-  }
-
-  const sourceAffinity = resolveCodexRuntimeSourceAffinity(params.source);
-  const source: DirectSessionsSource = canonicalRuntimeDescriptor?.home === 'connectedService'
-    ? {
-      kind: 'codexHome',
-      home: 'connectedService',
-      ...(canonicalRuntimeDescriptor.connectedServiceId ? { connectedServiceId: canonicalRuntimeDescriptor.connectedServiceId } : {}),
-      ...(canonicalRuntimeDescriptor.connectedServiceProfileId ? { connectedServiceProfileId: canonicalRuntimeDescriptor.connectedServiceProfileId } : {}),
-      ...(canonicalRuntimeDescriptor.homePath ? { homePath: canonicalRuntimeDescriptor.homePath } : {}),
-    }
-    : canonicalRuntimeDescriptor?.home === 'user'
-      ? {
-        kind: 'codexHome',
-        home: 'user',
-        ...(canonicalRuntimeDescriptor.homePath ? { homePath: canonicalRuntimeDescriptor.homePath } : {}),
-      }
-      : params.source;
-
-  return {
-    remoteSessionId,
-    codexBackendMode,
-    source,
-    runtimeDescriptor: buildCodexAgentRuntimeDescriptor({
-      backendMode: codexBackendMode,
-      vendorSessionId: remoteSessionId,
-      home: canonicalRuntimeDescriptor?.home ?? sourceAffinity.home,
-      connectedServiceId: canonicalRuntimeDescriptor?.connectedServiceId ?? sourceAffinity.connectedServiceId,
-      connectedServiceProfileId:
-        canonicalRuntimeDescriptor?.connectedServiceProfileId ?? sourceAffinity.connectedServiceProfileId,
-      homePath: canonicalRuntimeDescriptor?.homePath ?? sourceAffinity.homePath,
-    }),
-  };
-}
-
-function resolveOpenCodeDirectSessionLinkIdentity(params: Readonly<{
-  remoteSessionId: string;
-  source: DirectSessionsSource;
-  runtimeDescriptor?: AgentRuntimeDescriptorV1 | null;
-}>): Readonly<{
-  remoteSessionId: string;
-  runtimeDescriptor: AgentRuntimeDescriptorV1 | null;
-}> {
-  const canonicalRuntimeDescriptor = readCanonicalAgentRuntimeDescriptorV1ForProvider(params.runtimeDescriptor, 'opencode');
-  const runtimeVendorSessionId = canonicalRuntimeDescriptor?.vendorSessionId ?? '';
-  const remoteSessionId = runtimeVendorSessionId || params.remoteSessionId;
-
-  // Direct sessions for OpenCode are currently backed by OpenCode server transport only.
-  // Keep the linked runtime descriptor consistent with the direct-session source, even if a stale
-  // descriptor claims ACP mode (for example from handoff bundles).
-  const backendMode =
-    params.source.kind === 'opencodeServer'
-      ? 'server'
-      : canonicalRuntimeDescriptor?.backendMode === 'acp' || canonicalRuntimeDescriptor?.backendMode === 'server'
-        ? canonicalRuntimeDescriptor.backendMode
-        : null;
-  if (!backendMode) {
-    return { remoteSessionId, runtimeDescriptor: params.runtimeDescriptor ?? null };
-  }
-
-  const serverBaseUrl = canonicalRuntimeDescriptor?.serverBaseUrl
-    ?? (params.source.kind === 'opencodeServer' && typeof params.source.baseUrl === 'string' && params.source.baseUrl.trim().length > 0
-      ? params.source.baseUrl.trim()
-      : undefined);
-
-  return {
-    remoteSessionId,
-    runtimeDescriptor: buildOpenCodeAgentRuntimeDescriptor({
-      backendMode,
-      vendorSessionId: remoteSessionId,
-      ...(serverBaseUrl ? { serverBaseUrl } : {}),
-      ...((canonicalRuntimeDescriptor?.serverBaseUrlExplicit ?? Boolean(serverBaseUrl)) ? { serverBaseUrlExplicit: true } : {}),
-    }),
-  };
-}
-
 function computeDirectSessionTag(params: Readonly<{
   machineId: string;
   providerId: DirectSessionsProviderId;
   remoteSessionId: string;
   source: DirectSessionsSource;
 }>): string {
-  const sourceKey = resolveSourceKey(params.providerId, params.source);
+  const sourceKey = resolveDirectSessionsSourceKey(params.source);
   const fingerprint = `${params.machineId}|${params.providerId}|${params.remoteSessionId}|${sourceKey}`;
   return `direct:v1:${sha256Hex(fingerprint)}`;
 }
@@ -337,12 +179,16 @@ function buildDirectSessionMetadata(params: Readonly<{
   source: DirectSessionsSource;
   codexBackendMode?: CodexBackendMode | null;
   runtimeDescriptor?: AgentRuntimeDescriptorV1 | null;
+  vendorMetadata?: Record<string, unknown>;
+  directSessionMetadata?: Record<string, unknown>;
   titleHint?: string | null;
   directoryHint?: string | null;
   nowMs: number;
 }>): Record<string, unknown> {
   const titleHint = normalizeNullableString(params.titleHint);
   const directoryHint = normalizeNullableString(params.directoryHint) ?? '';
+  const resume = AGENTS_CORE[params.providerId].resume;
+  const vendorResumeIdField = 'vendorResumeIdField' in resume ? resume.vendorResumeIdField ?? null : null;
   const base: Record<string, unknown> = {
     tag: params.tag,
     path: directoryHint,
@@ -356,45 +202,18 @@ function buildDirectSessionMetadata(params: Readonly<{
       remoteSessionId: params.remoteSessionId,
       source: params.source,
       linkedAtMs: params.nowMs,
-      ...(params.providerId === 'codex' && params.codexBackendMode ? { codexBackendMode: params.codexBackendMode } : {}),
+      ...(params.codexBackendMode ? { codexBackendMode: params.codexBackendMode } : {}),
+      ...(params.directSessionMetadata ?? {}),
       ...(params.runtimeDescriptor ? { agentRuntimeDescriptorV1: params.runtimeDescriptor } : {}),
     },
+    ...(vendorResumeIdField ? { [vendorResumeIdField]: params.remoteSessionId } : {}),
+    ...(params.vendorMetadata ?? {}),
   };
   if (titleHint) {
     base.name = titleHint;
   }
-
-  switch (params.providerId) {
-    case 'codex':
-      base.codexSessionId = params.remoteSessionId;
-      if (params.codexBackendMode) {
-        base.codexBackendMode = params.codexBackendMode;
-      }
-      if (params.runtimeDescriptor) {
-        base.agentRuntimeDescriptorV1 = params.runtimeDescriptor;
-      }
-      break;
-    case 'claude':
-      base.claudeSessionId = params.remoteSessionId;
-      break;
-    case 'opencode':
-      base.opencodeSessionId = params.remoteSessionId;
-      if (params.runtimeDescriptor?.providerId === 'opencode') {
-        const backendMode = params.runtimeDescriptor.provider.backendMode;
-        if (backendMode === 'server' || backendMode === 'acp') {
-          base.opencodeBackendMode = backendMode;
-        }
-        if (typeof params.runtimeDescriptor.provider.serverBaseUrl === 'string' && params.runtimeDescriptor.provider.serverBaseUrl.trim()) {
-          base.opencodeServerBaseUrl = params.runtimeDescriptor.provider.serverBaseUrl.trim();
-          if (params.runtimeDescriptor.provider.serverBaseUrlExplicit === true) {
-            base.opencodeServerBaseUrlExplicit = true;
-          }
-        }
-        base.agentRuntimeDescriptorV1 = params.runtimeDescriptor;
-      } else {
-        base.opencodeBackendMode = 'server';
-      }
-      break;
+  if (params.runtimeDescriptor) {
+    base.agentRuntimeDescriptorV1 = params.runtimeDescriptor;
   }
 
   return base;
@@ -413,26 +232,25 @@ export async function ensureDirectSessionLink(params: Readonly<{
   nowMs?: () => number;
 }>): Promise<{ sessionId: string; created: boolean; tag: string }> {
   const nowMs = params.nowMs ?? (() => Date.now());
-
-  const codexIdentity = params.providerId === 'codex'
-    ? resolveCodexDirectSessionLinkIdentity({
-      remoteSessionId: params.remoteSessionId,
-      source: params.source,
-      codexBackendMode: params.codexBackendMode,
-      runtimeDescriptor: params.runtimeDescriptor,
-    })
-    : null;
-  const openCodeIdentity = params.providerId === 'opencode'
-    ? resolveOpenCodeDirectSessionLinkIdentity({
-      remoteSessionId: params.remoteSessionId,
-      source: params.source,
-      runtimeDescriptor: params.runtimeDescriptor,
-    })
-    : null;
-  const remoteSessionId = codexIdentity?.remoteSessionId ?? openCodeIdentity?.remoteSessionId ?? params.remoteSessionId;
-  const source = codexIdentity?.source ?? params.source;
-  const codexBackendMode = codexIdentity?.codexBackendMode ?? params.codexBackendMode ?? null;
-  const runtimeDescriptor = codexIdentity?.runtimeDescriptor ?? openCodeIdentity?.runtimeDescriptor ?? params.runtimeDescriptor ?? null;
+  const providerOps = await getDirectSessionProviderOps(params.providerId);
+  const linkIdentity = providerOps.resolveLinkIdentity
+    ? await providerOps.resolveLinkIdentity({
+        remoteSessionId: params.remoteSessionId,
+        source: params.source,
+        runtimeDescriptor: params.runtimeDescriptor,
+        metadata: params.codexBackendMode ? { codexBackendMode: params.codexBackendMode } : undefined,
+      })
+    : {
+        remoteSessionId: params.remoteSessionId,
+        source: params.source,
+        runtimeDescriptor: params.runtimeDescriptor ?? null,
+      };
+  const remoteSessionId = linkIdentity.remoteSessionId;
+  const source = linkIdentity.source;
+  const codexBackendMode = typeof linkIdentity.vendorMetadata?.codexBackendMode === 'string'
+    ? linkIdentity.vendorMetadata.codexBackendMode as CodexBackendMode
+    : params.codexBackendMode ?? null;
+  const runtimeDescriptor = linkIdentity.runtimeDescriptor ?? params.runtimeDescriptor ?? null;
 
   const tag = computeDirectSessionTag({
     machineId: params.machineId,
@@ -459,6 +277,8 @@ export async function ensureDirectSessionLink(params: Readonly<{
     source,
     codexBackendMode,
     runtimeDescriptor,
+    vendorMetadata: linkIdentity.vendorMetadata,
+    directSessionMetadata: linkIdentity.directSessionMetadata,
     titleHint: params.titleHint,
     directoryHint: params.directoryHint,
     nowMs: nowMs(),

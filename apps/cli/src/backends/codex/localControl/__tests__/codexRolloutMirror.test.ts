@@ -217,9 +217,7 @@ describe('CodexRolloutMirror', () => {
     const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'codex-rollout-mirror-store-')));
     const codexHome = join(root, 'codex-home');
     const sessionsDir = join(codexHome, 'sessions');
-    const activeServerDir = join(root, 'servers', 'cloud');
     await mkdir(sessionsDir, { recursive: true });
-    await mkdir(activeServerDir, { recursive: true });
 
     const sessionId = '12121212-1212-1212-1212-121212121212';
     const filePath = join(sessionsDir, `rollout-2026-01-02T00-00-00-${sessionId}.jsonl`);
@@ -246,8 +244,8 @@ describe('CodexRolloutMirror', () => {
       onCodexSessionId: (id) => {
         codexSessionIds.push(id);
       },
-      rolloutSessionStore: {
-        activeServerDir,
+      directTranscriptBinding: {
+        providerId: 'codex',
         source: {
           kind: 'codexHome',
           home: 'user',
@@ -289,9 +287,7 @@ describe('CodexRolloutMirror', () => {
     const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'codex-rollout-mirror-flat-store-')));
     const codexHome = join(root, 'codex-home');
     const sessionsDir = join(codexHome, 'sessions');
-    const activeServerDir = join(root, 'servers', 'cloud');
     await mkdir(sessionsDir, { recursive: true });
-    await mkdir(activeServerDir, { recursive: true });
 
     const sessionId = 'flat-shared-store-session';
     const filePath = join(sessionsDir, 'rollout-test.jsonl');
@@ -315,8 +311,8 @@ describe('CodexRolloutMirror', () => {
       codexHome,
       debug: false,
       onCodexSessionId: () => {},
-      rolloutSessionStore: {
-        activeServerDir,
+      directTranscriptBinding: {
+        providerId: 'codex',
         source: {
           kind: 'codexHome',
           home: 'user',
@@ -357,9 +353,7 @@ describe('CodexRolloutMirror', () => {
     const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'codex-rollout-mirror-flat-store-tail-')));
     const codexHome = join(root, 'codex-home');
     const sessionsDir = join(codexHome, 'sessions');
-    const activeServerDir = join(root, 'servers', 'cloud');
     await mkdir(sessionsDir, { recursive: true });
-    await mkdir(activeServerDir, { recursive: true });
 
     const sessionId = 'flat-shared-store-tail-session';
     const filePath = join(sessionsDir, 'rollout-test.jsonl');
@@ -376,8 +370,8 @@ describe('CodexRolloutMirror', () => {
       codexHome,
       debug: false,
       onCodexSessionId: () => {},
-      rolloutSessionStore: {
-        activeServerDir,
+      directTranscriptBinding: {
+        providerId: 'codex',
         source: {
           kind: 'codexHome',
           home: 'user',
@@ -427,9 +421,7 @@ describe('CodexRolloutMirror', () => {
     const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'codex-rollout-mirror-flat-store-start-race-')));
     const codexHome = join(root, 'codex-home');
     const sessionsDir = join(codexHome, 'sessions');
-    const activeServerDir = join(root, 'servers', 'cloud');
     await mkdir(sessionsDir, { recursive: true });
-    await mkdir(activeServerDir, { recursive: true });
 
     const sessionId = 'flat-shared-store-start-race';
     const filePath = join(sessionsDir, 'rollout-test.jsonl');
@@ -448,8 +440,8 @@ describe('CodexRolloutMirror', () => {
       onCodexSessionId: async () => {
         await new Promise((resolve) => setTimeout(resolve, 25));
       },
-      rolloutSessionStore: {
-        activeServerDir,
+      directTranscriptBinding: {
+        providerId: 'codex',
         source: {
           kind: 'codexHome',
           home: 'user',
@@ -780,9 +772,7 @@ describe('CodexRolloutMirror', () => {
     const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'codex-rollout-mirror-empty-store-')));
     const codexHome = join(root, 'codex-home');
     const sessionsDir = join(codexHome, 'sessions');
-    const activeServerDir = join(root, 'servers', 'cloud');
     await mkdir(sessionsDir, { recursive: true });
-    await mkdir(activeServerDir, { recursive: true });
 
     const sessionId = '34343434-3434-3434-3434-343434343434';
     const actualFilePath = join(sessionsDir, `rollout-2026-01-02T00-00-00-${sessionId}.jsonl`);
@@ -797,8 +787,8 @@ describe('CodexRolloutMirror', () => {
       onCodexSessionId: (id) => {
         codexSessionIds.push(id);
       },
-      rolloutSessionStore: {
-        activeServerDir,
+      directTranscriptBinding: {
+        providerId: 'codex',
         source: {
           kind: 'codexHome',
           home: 'user',

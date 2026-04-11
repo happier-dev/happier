@@ -1,53 +1,23 @@
-import { stat } from 'node:fs/promises';
-
 import { readJsonlFileBackwardPage } from '@/api/session/fileBackedTranscripts/jsonl/pageJsonlBackward';
 import { readJsonlFileForward } from '@/api/session/fileBackedTranscripts/jsonl/readJsonlForward';
 
 import type { RawJSONLines } from '../../../types';
+import {
+    decodeClaudeRawJsonlTranscriptForwardCursor,
+    encodeClaudeRawJsonlTranscriptForwardCursor,
+} from './claudeRawJsonlTranscriptForwardCursor';
 import { projectClaudeJsonlLineToRawMessage } from '../../projection/projectClaudeJsonlLineToRawMessage';
+import { readClaudeJsonlFileSize } from './readClaudeJsonlFileSize';
 
 const DEFAULT_MAX_BYTES = 1024 * 1024;
 const DEFAULT_MAX_ITEMS = 1000;
-
-type ClaudeRawScannerForwardCursor = Readonly<{
-    v: 1;
-    kind: 'claudeScannerForward';
-    sessionFilePath: string;
-    offsetBytes: number;
-}>;
-
-function encodeForwardCursor(value: ClaudeRawScannerForwardCursor): string {
-    return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
-}
-
-function decodeForwardCursor(raw: string | null | undefined): ClaudeRawScannerForwardCursor | null {
-    if (typeof raw !== 'string' || raw.trim().length === 0) return null;
-    try {
-        const parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as Partial<ClaudeRawScannerForwardCursor>;
-        if (parsed.v !== 1 || parsed.kind !== 'claudeScannerForward') return null;
-        if (typeof parsed.sessionFilePath !== 'string' || parsed.sessionFilePath.trim().length === 0) return null;
-        if (typeof parsed.offsetBytes !== 'number' || !Number.isFinite(parsed.offsetBytes) || parsed.offsetBytes < 0) return null;
-        return {
-            v: 1,
-            kind: 'claudeScannerForward',
-            sessionFilePath: parsed.sessionFilePath,
-            offsetBytes: Math.trunc(parsed.offsetBytes),
-        };
-    } catch {
-        return null;
-    }
-}
-
-async function readFileSize(sessionFilePath: string): Promise<number> {
-    return stat(sessionFilePath).then((entry) => entry.size).catch(() => 0);
-}
 
 async function readFullHistory(sessionFilePath: string, maxBytes: number, maxItems: number): Promise<{
     items: RawJSONLines[];
     nextCursor: string | null;
     initialized: boolean;
 }> {
-    const fileSize = await readFileSize(sessionFilePath);
+    const fileSize = await readClaudeJsonlFileSize(sessionFilePath);
     if (fileSize <= 0) {
         return { items: [], nextCursor: null, initialized: false };
     }
@@ -80,7 +50,7 @@ async function readFullHistory(sessionFilePath: string, maxBytes: number, maxIte
 
     return {
         items: pageBatches.reverse().flatMap((batch) => batch),
-        nextCursor: encodeForwardCursor({
+        nextCursor: encodeClaudeRawJsonlTranscriptForwardCursor({
             v: 1,
             kind: 'claudeScannerForward',
             sessionFilePath,
@@ -105,10 +75,10 @@ export async function readClaudeRawJsonlSessionMessages(params: Readonly<{
     const maxItems = Math.max(1, Math.trunc(params.maxItems ?? DEFAULT_MAX_ITEMS));
 
     if (params.cursor === 'tail') {
-        const fileSize = await readFileSize(params.sessionFilePath);
+        const fileSize = await readClaudeJsonlFileSize(params.sessionFilePath);
         return {
             items: [],
-            nextCursor: encodeForwardCursor({
+            nextCursor: encodeClaudeRawJsonlTranscriptForwardCursor({
                 v: 1,
                 kind: 'claudeScannerForward',
                 sessionFilePath: params.sessionFilePath,
@@ -124,7 +94,7 @@ export async function readClaudeRawJsonlSessionMessages(params: Readonly<{
         return { ...full, truncated: false };
     }
 
-    const decoded = decodeForwardCursor(params.cursor);
+    const decoded = decodeClaudeRawJsonlTranscriptForwardCursor(params.cursor);
     if (!decoded || decoded.sessionFilePath !== params.sessionFilePath) {
         const full = await readFullHistory(params.sessionFilePath, maxBytes, maxItems);
         return { ...full, truncated: true };
@@ -151,7 +121,7 @@ export async function readClaudeRawJsonlSessionMessages(params: Readonly<{
 
     return {
         items,
-        nextCursor: encodeForwardCursor({
+        nextCursor: encodeClaudeRawJsonlTranscriptForwardCursor({
             v: 1,
             kind: 'claudeScannerForward',
             sessionFilePath: params.sessionFilePath,

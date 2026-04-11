@@ -1,127 +1,14 @@
-import { realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
-
 import type { DirectSessionsProviderId, DirectSessionsSource } from '@happier-dev/protocol';
 
-import {
-  expandHomeDirForDirectSessions,
-  resolveConfiguredClaudeConfigDir,
-} from '@/backends/claude/directSessions/resolveClaudeConfigDir';
+import { getDirectSessionProviderOps } from '@/backends/catalog';
+import type { DirectSourceValidationResult } from '@/backends/directSessions/sourceValidation';
 
-type DirectSourceValidationResult =
-  | Readonly<{ ok: true; source: DirectSessionsSource }>
-  | Readonly<{ ok: false; error: string }>;
-
-function err(error: string): DirectSourceValidationResult {
-  return { ok: false, error };
-}
-
-function canonicalizePath(raw: string): string {
-  const resolved = resolve(expandHomeDirForDirectSessions(raw));
-  try {
-    return realpathSync(resolved);
-  } catch {
-    return resolved;
-  }
-}
-
-function normalizeUrl(raw: string): string {
-  const url = new URL(raw.trim());
-  url.hash = '';
-  url.search = '';
-  const normalized = url.toString().replace(/\/+$/, '');
-  return normalized || raw.trim();
-}
-
-function isSafeConnectedServiceId(raw: unknown): raw is string {
-  if (typeof raw !== 'string') return false;
-  const value = raw.trim();
-  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(value);
-}
-
-function resolveConfiguredCodexHome(env: NodeJS.ProcessEnv): string {
-  const configuredHome =
-    typeof env.CODEX_HOME === 'string' && env.CODEX_HOME.trim().length > 0
-      ? env.CODEX_HOME
-      : join(homedir(), '.codex');
-  return canonicalizePath(configuredHome);
-}
-
-export function validateDirectMachineSource(params: Readonly<{
+export async function validateDirectMachineSource(params: Readonly<{
   providerId: DirectSessionsProviderId;
   source: DirectSessionsSource;
   env: NodeJS.ProcessEnv;
-}>): DirectSourceValidationResult {
+}>): Promise<DirectSourceValidationResult> {
   const { providerId, source, env } = params;
-
-  switch (providerId) {
-    case 'codex': {
-      if (source.kind !== 'codexHome') return err('provider/source mismatch');
-      if (source.home === 'connectedService' && !isSafeConnectedServiceId(source.connectedServiceId)) {
-        return err('invalid connectedServiceId');
-      }
-      if (source.home === 'user') {
-        const requestedHomePath =
-          typeof source.homePath === 'string' && source.homePath.trim().length > 0
-            ? canonicalizePath(source.homePath)
-            : null;
-        const configuredHomePath = resolveConfiguredCodexHome(env);
-        if (requestedHomePath && requestedHomePath !== configuredHomePath) {
-          return err('source homePath override is not allowed');
-        }
-        return {
-          ok: true,
-          source: {
-            ...source,
-            homePath: configuredHomePath,
-          },
-        };
-      }
-      return { ok: true, source };
-    }
-    case 'claude': {
-      if (source.kind !== 'claudeConfig') return err('provider/source mismatch');
-      const requestedConfigDir = typeof source.configDir === 'string' && source.configDir.trim().length > 0 ? canonicalizePath(source.configDir) : null;
-      const configuredConfigDir = canonicalizePath(resolveConfiguredClaudeConfigDir({ env }));
-      if (requestedConfigDir && requestedConfigDir !== configuredConfigDir) {
-        return err('source configDir override is not allowed');
-      }
-      return {
-        ok: true,
-        source: {
-          ...source,
-          configDir: configuredConfigDir,
-        },
-      };
-    }
-    case 'opencode': {
-      if (source.kind !== 'opencodeServer') return err('provider/source mismatch');
-      const requestedBaseUrl = typeof source.baseUrl === 'string' && source.baseUrl.trim().length > 0 ? normalizeUrl(source.baseUrl) : null;
-      const configuredBaseUrl =
-        typeof env.HAPPIER_OPENCODE_SERVER_URL === 'string' && env.HAPPIER_OPENCODE_SERVER_URL.trim().length > 0
-          ? normalizeUrl(env.HAPPIER_OPENCODE_SERVER_URL)
-          : null;
-
-      if (requestedBaseUrl && !configuredBaseUrl) {
-        return err('source baseUrl override is not allowed');
-      }
-      if (requestedBaseUrl && configuredBaseUrl && requestedBaseUrl !== configuredBaseUrl) {
-        return err('source baseUrl override is not allowed');
-      }
-
-      return {
-        ok: true,
-        source: configuredBaseUrl
-          ? {
-              ...source,
-              baseUrl: configuredBaseUrl,
-            }
-          : source,
-      };
-    }
-    default: {
-      return err('unsupported direct session provider');
-    }
-  }
+  const providerOps = await getDirectSessionProviderOps(providerId);
+  return await providerOps.validateSource({ source, env });
 }

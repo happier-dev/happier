@@ -33,8 +33,9 @@ export async function readClaudeSessionJsonlMessages(params: Readonly<{
   }
 
   const lines = tail.tail.split('\n');
+  const candidateLines = tail.truncated ? lines.slice(1) : lines;
   const messages: RawJSONLines[] = [];
-  for (const line of lines) {
+  for (const line of candidateLines) {
     try {
       if (line.trim() === '') continue;
       const raw = JSON.parse(line);

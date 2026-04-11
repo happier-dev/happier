@@ -1,29 +1,22 @@
 import { join, relative, resolve } from 'node:path';
 
-import type { DirectSessionsSource } from '@happier-dev/protocol';
+import type { LocalHostedDirectTranscriptBinding } from '@/agent/localControl/directTranscriptBinding';
 
 import { inferCodexDirectSessionsSourceFromHome } from '../directSessions/resolveCodexHomeEntriesForDirectSessionsSource';
 import { parseCodexRolloutSessionIdFromFilename } from '../rollout/discovery/parseCodexRolloutSessionIdFromFilename';
-
-type CodexRolloutSessionStoreBinding = Readonly<{
-    activeServerDir: string;
-    source: DirectSessionsSource;
-    remoteSessionId: string;
-    env: NodeJS.ProcessEnv;
-}>;
 
 function isPathInside(parentPath: string, childPath: string): boolean {
     const relativePath = relative(resolve(parentPath), resolve(childPath));
     return relativePath === '' || (!relativePath.startsWith('..') && !relativePath.includes('..\\'));
 }
 
-export function resolveCodexRolloutSessionStoreBinding(params: Readonly<{
+export function resolveCodexLocalHostedDirectTranscriptBinding(params: Readonly<{
     activeServerDir: string;
     candidateFilePath: string;
     codexHome: string | null;
     remoteSessionId: string | null;
     sessionMetaId: string | null;
-}>): CodexRolloutSessionStoreBinding | undefined {
+}>): LocalHostedDirectTranscriptBinding | undefined {
     const remoteSessionId = typeof params.remoteSessionId === 'string' && params.remoteSessionId.trim().length > 0
         ? params.remoteSessionId.trim()
         : null;
@@ -50,7 +43,7 @@ export function resolveCodexRolloutSessionStoreBinding(params: Readonly<{
     }
 
     return {
-        activeServerDir: params.activeServerDir,
+        providerId: 'codex',
         source: inferCodexDirectSessionsSourceFromHome({
             codexHome,
             activeServerDir: params.activeServerDir,

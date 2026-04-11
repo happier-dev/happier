@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveCodexRolloutSessionStoreBinding } from './resolveCodexRolloutSessionStoreBinding';
+import { resolveCodexLocalHostedDirectTranscriptBinding } from './resolveCodexLocalHostedDirectTranscriptBinding';
 
-describe('resolveCodexRolloutSessionStoreBinding', () => {
-    it('returns a shared-store binding for canonical rollout files whose filename includes the resume id', () => {
-        const binding = resolveCodexRolloutSessionStoreBinding({
+describe('resolveCodexLocalHostedDirectTranscriptBinding', () => {
+    it('returns a direct-transcript binding for canonical rollout files whose filename includes the resume id', () => {
+        const binding = resolveCodexLocalHostedDirectTranscriptBinding({
             activeServerDir: '/tmp/happier-active-server',
             candidateFilePath: '/tmp/codex-home/sessions/2026/04/05/rollout-2026-04-05T10-00-00-123e4567-e89b-12d3-a456-426614174000.jsonl',
             codexHome: '/tmp/codex-home',
@@ -13,7 +13,7 @@ describe('resolveCodexRolloutSessionStoreBinding', () => {
         });
 
         expect(binding).toEqual({
-            activeServerDir: '/tmp/happier-active-server',
+            providerId: 'codex',
             env: process.env,
             remoteSessionId: '123e4567-e89b-12d3-a456-426614174000',
             source: {
@@ -24,8 +24,8 @@ describe('resolveCodexRolloutSessionStoreBinding', () => {
         });
     });
 
-    it('returns a shared-store binding for canonical flat rollout files when session_meta.id matches the resume id', () => {
-        const binding = resolveCodexRolloutSessionStoreBinding({
+    it('returns a direct-transcript binding for canonical flat rollout files when session_meta.id matches the resume id', () => {
+        const binding = resolveCodexLocalHostedDirectTranscriptBinding({
             activeServerDir: '/tmp/happier-active-server',
             candidateFilePath: '/tmp/codex-home/sessions/rollout-2026-04-05T10-00-00-flat.jsonl',
             codexHome: '/tmp/codex-home',
@@ -34,7 +34,7 @@ describe('resolveCodexRolloutSessionStoreBinding', () => {
         });
 
         expect(binding).toEqual({
-            activeServerDir: '/tmp/happier-active-server',
+            providerId: 'codex',
             env: process.env,
             remoteSessionId: '123e4567-e89b-12d3-a456-426614174000',
             source: {
@@ -45,8 +45,8 @@ describe('resolveCodexRolloutSessionStoreBinding', () => {
         });
     });
 
-    it('does not return a shared-store binding for rollout files outside the canonical CODEX_HOME sessions tree', () => {
-        const binding = resolveCodexRolloutSessionStoreBinding({
+    it('does not return a direct-transcript binding for rollout files outside the canonical CODEX_HOME sessions tree', () => {
+        const binding = resolveCodexLocalHostedDirectTranscriptBinding({
             activeServerDir: '/tmp/happier-active-server',
             candidateFilePath: '/tmp/overridden-sessions/rollout-2026-04-05T10-00-00-flat.jsonl',
             codexHome: '/tmp/codex-home',
@@ -58,7 +58,7 @@ describe('resolveCodexRolloutSessionStoreBinding', () => {
     });
 
     it('does not bind canonical rollout files when the filename only contains the remote session id as a substring', () => {
-        const binding = resolveCodexRolloutSessionStoreBinding({
+        const binding = resolveCodexLocalHostedDirectTranscriptBinding({
             activeServerDir: '/tmp/happier-active-server',
             candidateFilePath: '/tmp/codex-home/sessions/2026/04/05/rollout-2026-04-05T10-00-00-abc123.jsonl',
             codexHome: '/tmp/codex-home',

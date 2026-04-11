@@ -161,6 +161,46 @@ describe('ensureDirectSessionLink', () => {
     });
   });
 
+  it('preserves the existing codex source identity when the runtime descriptor is only partially populated', async () => {
+    getOrCreateSessionByTagMock.mockResolvedValueOnce({
+      session: {
+        id: 'sess_direct_codex_partial_source',
+        metadata: {},
+      },
+    });
+
+    await ensureDirectSessionLink({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
+      machineId: 'machine_1',
+      providerId: 'codex',
+      remoteSessionId: 'thread_legacy',
+      runtimeDescriptor: buildCodexAgentRuntimeDescriptorV1({
+        backendMode: 'appServer',
+        vendorSessionId: 'thread_runtime',
+        home: 'connectedService',
+      }),
+      source: {
+        kind: 'codexHome',
+        home: 'connectedService',
+        connectedServiceId: 'openai-codex',
+        connectedServiceProfileId: 'work',
+        homePath: '/tmp/connected-codex-home',
+      },
+      titleHint: 'Codex linked session',
+      directoryHint: '/repo',
+      nowMs: () => 123,
+    });
+
+    const createdMetadata = getOrCreateSessionByTagMock.mock.calls[0]?.[0]?.metadata;
+    expect(createdMetadata?.directSessionV1?.source).toEqual({
+      kind: 'codexHome',
+      home: 'connectedService',
+      connectedServiceId: 'openai-codex',
+      connectedServiceProfileId: 'work',
+      homePath: '/tmp/connected-codex-home',
+    });
+  });
+
   it('normalizes legacy codex backend aliases when linking direct sessions without a runtime descriptor', async () => {
     getOrCreateSessionByTagMock.mockResolvedValueOnce({
       session: {

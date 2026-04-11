@@ -9,6 +9,7 @@ import {
   getDirectSessionProviderOps,
   getProviderAttachOps,
   getProviderNativeForkHandler,
+  getVendorResumeSupport,
   requireCatalogEntry,
 } from './catalog';
 import { DEFAULT_CATALOG_AGENT_ID } from './types';
@@ -20,6 +21,10 @@ describe('AGENTS', () => {
 
   it('includes pi', () => {
     expect(Object.prototype.hasOwnProperty.call(AGENTS, 'pi')).toBe(true);
+  });
+
+  it('includes ohMyPi', () => {
+    expect(Object.prototype.hasOwnProperty.call(AGENTS, 'ohMyPi')).toBe(true);
   });
 
   it('has unique cliSubcommand values', () => {
@@ -38,9 +43,15 @@ describe('AGENTS', () => {
   });
 
   it('declares vendor resume support for every agent', () => {
-    for (const entry of Object.values(AGENTS)) {
-      expect(entry.vendorResumeSupport).toBeTruthy();
+    for (const id of AGENT_IDS) {
+      const entry = requireCatalogEntry(id);
+      expect(entry.vendorResumeSupport).toBe(AGENTS_CORE[id].resume.vendorResume);
     }
+  });
+
+  it('resolves built-in ACP ohMyPi vendor resume support as enabled', async () => {
+    const supportsResume = await getVendorResumeSupport('ohMyPi');
+    expect(supportsResume({})).toBe(true);
   });
 
   it('matches shared agent ids', () => {
@@ -90,6 +101,7 @@ describe('AGENTS', () => {
   it('registers runnable CLI command handlers for built-in generic ACP agents', () => {
     expect(requireCatalogEntry('customAcp').getCliCommandHandler).toBeTypeOf('function');
     expect(requireCatalogEntry('kiro').getCliCommandHandler).toBeTypeOf('function');
+    expect(requireCatalogEntry('ohMyPi').getCliCommandHandler).toBeTypeOf('function');
   });
 
   it('loads direct-session provider ops through backend catalog hooks', async () => {
@@ -97,16 +109,26 @@ describe('AGENTS', () => {
       listCandidates: expect.any(Function),
       pageTranscript: expect.any(Function),
       readAfterTranscript: expect.any(Function),
+      validateSource: expect.any(Function),
       getActivity: expect.any(Function),
       acquireFollowLease: expect.any(Function),
       resolveTakeoverSpawnOptions: expect.any(Function),
     });
     await expect(getDirectSessionProviderOps('codex')).resolves.toMatchObject({
       listCandidates: expect.any(Function),
+      validateSource: expect.any(Function),
       acquireFollowLease: expect.any(Function),
     });
     await expect(getDirectSessionProviderOps('opencode')).resolves.toMatchObject({
       listCandidates: expect.any(Function),
+    });
+    await expect(getDirectSessionProviderOps('ohMyPi')).resolves.toMatchObject({
+      listCandidates: expect.any(Function),
+      validateSource: expect.any(Function),
+      pageTranscript: expect.any(Function),
+      readAfterTranscript: expect.any(Function),
+      acquireFollowLease: expect.any(Function),
+      resolveTakeoverSpawnOptions: expect.any(Function),
     });
   });
 

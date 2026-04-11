@@ -1,6 +1,7 @@
 import {
   getAgentLocalControlCapability,
   inferAgentIdFromSessionMetadata,
+  usesTerminalHostedLocalControl,
   type AgentId,
 } from '@happier-dev/agents';
 
@@ -260,7 +261,7 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
     };
   }
 
-  if (localControl.attachStrategy !== 'tmux') {
+  if (!agentId || !usesTerminalHostedLocalControl(agentId)) {
     return {
       eligible: false,
       agentId,

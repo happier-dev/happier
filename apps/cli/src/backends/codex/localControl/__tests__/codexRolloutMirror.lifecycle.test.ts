@@ -56,7 +56,7 @@ describe('CodexRolloutMirror lifecycle', () => {
     state.appendAfterFlushCount = 0;
   });
 
-  it('fails fast when no shared-store binding exists and the legacy fallback is disabled', async () => {
+  it('fails fast when no direct-transcript binding exists and the legacy fallback is disabled', async () => {
     const mirror = new CodexRolloutMirror({
       filePath: '/tmp/mock.jsonl',
       debug: false,
@@ -84,7 +84,7 @@ describe('CodexRolloutMirror lifecycle', () => {
     expect(outcome.kind).toBe('rejected');
     if (outcome.kind === 'rejected') {
       expect(outcome.error).toBeInstanceOf(Error);
-      expect(String((outcome.error as Error).message)).toContain('shared-store');
+      expect(String((outcome.error as Error).message)).toContain('direct-transcript');
     }
 
     await startPromise.catch(() => undefined);

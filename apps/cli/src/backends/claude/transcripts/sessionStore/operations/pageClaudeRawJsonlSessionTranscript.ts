@@ -1,8 +1,8 @@
 import type { DirectSessionsSource } from '@happier-dev/protocol';
 
-import { readJsonlFileBackwardPage } from '@/api/session/fileBackedTranscripts/jsonl/pageJsonlBackward';
-
 import type { RawJSONLines } from '../../../types';
+import { encodeClaudeRawJsonlTranscriptForwardCursor } from './claudeRawJsonlTranscriptForwardCursor';
+import { pageClaudeProjectedJsonlSessionTranscript } from './pageClaudeProjectedJsonlSessionTranscript';
 import { projectClaudeJsonlLineToRawMessage } from '../../projection/projectClaudeJsonlLineToRawMessage';
 import { resolveClaudeJsonlSessionFile } from './resolveClaudeJsonlSessionFile';
 
@@ -51,76 +51,31 @@ export async function pageClaudeRawJsonlSessionTranscript(params: Readonly<{
         truncated?: boolean;
     }>
 > {
-    const resolved = await resolveClaudeJsonlSessionFile({
+    return await pageClaudeProjectedJsonlSessionTranscript({
+        resolved: await resolveClaudeJsonlSessionFile({
         source: params.source,
         env: params.env,
         remoteSessionId: params.remoteSessionId,
-    });
-    if (!resolved) {
-        return { items: [], nextCursor: null, tailCursor: null, hasMore: false };
-    }
-
-    const cursor = decodeBackwardCursor(params.cursor);
-    let truncated = false;
-    let endOffsetBytes: number | null = null;
-    if (cursor) {
-        if (cursor.fileRelPath !== resolved.fileRelPath) {
-            truncated = true;
-            endOffsetBytes = null;
-        } else {
-            endOffsetBytes = cursor.endOffsetBytes;
-        }
-    }
-
-    const fileSize = await import('node:fs/promises').then(({ stat }) => stat(resolved.filePath).then((entry) => entry.size).catch(() => 0));
-    const tailRead = await import('./readClaudeRawJsonlSessionMessages').then(({ readClaudeRawJsonlSessionMessages }) =>
-        readClaudeRawJsonlSessionMessages({
-            sessionFilePath: resolved.filePath,
-            cursor: 'tail',
-            maxBytes: params.maxBytes,
-            maxItems: params.maxItems,
         }),
-    );
-
-    const resolvedEnd = endOffsetBytes === null ? fileSize : Math.min(fileSize, Math.max(0, Math.trunc(endOffsetBytes)));
-    if (resolvedEnd <= 0) {
-        return {
-            items: [],
-            nextCursor: null,
-            tailCursor: tailRead.nextCursor,
-            hasMore: false,
-            ...(truncated ? { truncated } : {}),
-        };
-    }
-
-    const page = await readJsonlFileBackwardPage({
-        filePath: resolved.filePath,
-        endOffsetBytes: resolvedEnd,
-        maxBytes: Math.max(1, Math.trunc(params.maxBytes)),
-        maxItems: Math.max(1, Math.trunc(params.maxItems)),
+        cursor: params.cursor,
+        maxBytes: params.maxBytes,
+        maxItems: params.maxItems,
+        decodeCursor: decodeBackwardCursor,
+        encodeCursor: ({ fileRelPath, endOffsetBytes }) => encodeBackwardCursor({
+            v: 1,
+            kind: 'claudeRawBackward',
+            fileRelPath,
+            endOffsetBytes,
+        }),
+        encodeTailCursor: ({ filePath, fileSize }) => encodeClaudeRawJsonlTranscriptForwardCursor({
+            v: 1,
+            kind: 'claudeScannerForward',
+            sessionFilePath: filePath,
+            offsetBytes: fileSize,
+        }),
+        projectLine: ({ lineValue }) => {
+            const projected = projectClaudeJsonlLineToRawMessage(lineValue);
+            return projected ? [projected] : [];
+        },
     });
-
-    const items: RawJSONLines[] = [];
-    for (const line of page.items) {
-        if (items.length >= params.maxItems) break;
-        const projected = projectClaudeJsonlLineToRawMessage(line.value);
-        if (projected) {
-            items.push(projected);
-        }
-    }
-
-    return {
-        items,
-        nextCursor: page.reachedStart
-            ? null
-            : encodeBackwardCursor({
-                  v: 1,
-                  kind: 'claudeRawBackward',
-                  fileRelPath: resolved.fileRelPath,
-                  endOffsetBytes: page.nextEndOffsetBytes,
-              }),
-        tailCursor: tailRead.nextCursor,
-        hasMore: !page.reachedStart,
-        ...(truncated ? { truncated } : {}),
-    };
 }

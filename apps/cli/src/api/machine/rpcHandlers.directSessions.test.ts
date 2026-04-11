@@ -1614,7 +1614,7 @@ describe('registerMachineDirectSessionsRpcHandlers', () => {
     expect(String(res.error)).toContain('source');
   });
 
-  it('rejects taking over a linked claude direct session when metadata points at an unconfigured config dir', async () => {
+  it('ignores a rogue persisted Claude configDir during takeover and refuses when the current configured config dir has no matching session', async () => {
     vi.stubEnv('NODE_ENV', 'development');
     vi.stubEnv('HAPPIER_CLAUDE_CONFIG_DIR', '/safe/.claude');
 
@@ -1681,7 +1681,7 @@ describe('registerMachineDirectSessionsRpcHandlers', () => {
 
     expect(res.ok).toBe(false);
     expect(res.errorCode).toBe('invalid_request');
-    expect(String(res.error)).toContain('source');
+    expect(res.error).toBe('direct_session_directory_unavailable');
     expect(spawnSession).not.toHaveBeenCalled();
     expect(stopSession).not.toHaveBeenCalled();
   });

@@ -1,5 +1,3 @@
-import { stat } from 'node:fs/promises';
-
 import type { DirectSessionsSource, DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
 import { readJsonlFileForward } from '@/api/session/fileBackedTranscripts/jsonl/readJsonlForward';
@@ -9,6 +7,7 @@ import {
     decodeClaudeJsonlTranscriptForwardCursor,
     encodeClaudeJsonlTranscriptForwardCursor,
 } from './claudeJsonlTranscriptForwardCursor';
+import { readClaudeJsonlFileSize } from './readClaudeJsonlFileSize';
 import { resolveClaudeJsonlSessionFile } from './resolveClaudeJsonlSessionFile';
 
 export async function readAfterClaudeJsonlSessionTranscript(params: Readonly<{
@@ -32,9 +31,7 @@ export async function readAfterClaudeJsonlSessionTranscript(params: Readonly<{
     const maxItems = Math.max(1, Math.trunc(params.maxItems));
 
     if (params.cursor === 'tail') {
-        const fileSize = await stat(resolved.filePath)
-            .then((entry) => entry.size)
-            .catch(() => 0);
+        const fileSize = await readClaudeJsonlFileSize(resolved.filePath);
         return {
             items: [],
             nextCursor: encodeClaudeJsonlTranscriptForwardCursor({
@@ -53,9 +50,7 @@ export async function readAfterClaudeJsonlSessionTranscript(params: Readonly<{
     }
 
     if (decoded.fileRelPath !== resolved.fileRelPath) {
-        const fileSize = await stat(resolved.filePath)
-            .then((entry) => entry.size)
-            .catch(() => 0);
+        const fileSize = await readClaudeJsonlFileSize(resolved.filePath);
         return {
             items: [],
             nextCursor: encodeClaudeJsonlTranscriptForwardCursor({
@@ -75,9 +70,7 @@ export async function readAfterClaudeJsonlSessionTranscript(params: Readonly<{
         maxItems,
     });
     if (read.truncated) {
-        const fileSize = await stat(resolved.filePath)
-            .then((entry) => entry.size)
-            .catch(() => 0);
+        const fileSize = await readClaudeJsonlFileSize(resolved.filePath);
         return {
             items: [],
             nextCursor: encodeClaudeJsonlTranscriptForwardCursor({

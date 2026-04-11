@@ -1,5 +1,6 @@
 import { listClaudeSessionCandidates } from './listClaudeSessionCandidates';
-import { resolveClaudeConfigDir } from './resolveClaudeConfigDir';
+import { validateClaudeDirectSessionsSource } from './validateClaudeDirectSessionsSource';
+import { resolveCanonicalConfiguredClaudeConfigDir, resolveClaudeConfigDir } from './resolveClaudeConfigDir';
 
 import {
   mergeDirectSessionEnvironmentVariables,
@@ -9,6 +10,7 @@ import {
 import { acquireClaudeJsonlSessionStore, withClaudeJsonlSessionStore } from '../transcripts/sessionStore';
 
 export const claudeDirectSessionProviderOps: DirectSessionProviderOps = {
+  validateSource: ({ source, env }) => validateClaudeDirectSessionsSource({ source, env }),
   listCandidates: async ({ source, cursor, limit, searchTerm }) => {
     const res = await listClaudeSessionCandidates({ source, cursor, limit, searchTerm });
     return { candidates: res.candidates, nextCursor: res.nextCursor ?? null };
@@ -85,6 +87,18 @@ export const claudeDirectSessionProviderOps: DirectSessionProviderOps = {
           truncated: event.truncated,
         });
       }),
+    };
+  },
+  canonicalizeLinkedSession: async ({ remoteSessionId, source }) => {
+    if (source.kind !== 'claudeConfig') {
+      return { remoteSessionId, source };
+    }
+    return {
+      remoteSessionId,
+      source: {
+        ...source,
+        configDir: resolveCanonicalConfiguredClaudeConfigDir({ env: process.env }),
+      },
     };
   },
   resolveTakeoverSpawnOptions: async ({ linked, sessionId }) => {

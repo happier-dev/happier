@@ -1,4 +1,5 @@
 import type {
+  AgentRuntimeDescriptorV1,
   DirectSessionCandidateV1,
   DirectSessionsSource,
   DirectTranscriptRawMessageV1,
@@ -45,7 +46,23 @@ export type DirectSessionFollowLease = Readonly<{
   getTailCursor?: () => string | null;
 }>;
 
+export type DirectSessionLinkIdentity = Readonly<{
+  remoteSessionId: string;
+  source: DirectSessionsSource;
+  runtimeDescriptor?: AgentRuntimeDescriptorV1 | null;
+  vendorMetadata?: Record<string, unknown>;
+  directSessionMetadata?: Record<string, unknown>;
+}>;
+
+export type DirectSessionSourceValidationResult =
+  | Readonly<{ ok: true; source: DirectSessionsSource }>
+  | Readonly<{ ok: false; error: string }>;
+
 export type DirectSessionProviderOps = Readonly<{
+  validateSource: (params: Readonly<{
+    source: DirectSessionsSource;
+    env: NodeJS.ProcessEnv;
+  }>) => Promise<DirectSessionSourceValidationResult> | DirectSessionSourceValidationResult;
   listCandidates: (params: Readonly<{
     source: DirectSessionsSource;
     cursor?: string;
@@ -76,6 +93,20 @@ export type DirectSessionProviderOps = Readonly<{
     remoteSessionId: string;
     reason: DirectSessionFollowLeaseReason;
   }>) => Promise<DirectSessionFollowLease | null>;
+  canonicalizeLinkedSession?: (params: Readonly<{
+    metadata: Record<string, unknown>;
+    remoteSessionId: string;
+    source: DirectSessionsSource;
+  }>) => Promise<Readonly<{
+    remoteSessionId: string;
+    source: DirectSessionsSource;
+  }>>;
+  resolveLinkIdentity?: (params: Readonly<{
+    remoteSessionId: string;
+    source: DirectSessionsSource;
+    runtimeDescriptor?: AgentRuntimeDescriptorV1 | null;
+    metadata?: Record<string, unknown>;
+  }>) => Promise<DirectSessionLinkIdentity>;
   resolveTakeoverSpawnOptions: (params: Readonly<{
     linked: LoadedLinkedDirectSession;
     sessionId: string;

@@ -1,13 +1,13 @@
-import type { DirectSessionsSource, DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
-import type { FileBackedTranscriptSessionLease, FileBackedTranscriptSessionStore } from '@/api/session/fileBackedTranscripts/store';
+import { createLocalHostedDirectTranscriptMirror } from '@/agent/localControl/createLocalHostedDirectTranscriptMirror';
+import type { LocalHostedDirectTranscriptBinding } from '@/agent/localControl/directTranscriptBinding';
 import { createKeyedStreamedTranscriptBridge } from '@/api/session/createKeyedStreamedTranscriptBridge';
 import { createCodexSyntheticSubagentTracker } from '../collaboration/createCodexSyntheticSubagentTracker';
 import { mapCodexRolloutEventToActions, type CodexRolloutAction } from '../rollout/projection/mapCodexRolloutEventToActions';
 import { projectCodexRolloutActions } from '../rollout/projectCodexRolloutActions';
 import { createCodexRolloutSemanticTracker } from '../rollout/createCodexRolloutSemanticTracker';
 import { CodexRolloutFollowerRuntime } from '../rollout/runtime/CodexRolloutFollowerRuntime';
-import { acquireCodexRolloutSessionStore } from '../rollout/sessionStore/codexRolloutSessionStoreRegistry';
 import { finalizeCodexSyntheticSubagent, startCodexSyntheticSubagent } from '../runtime/emitCodexSyntheticSubagentLifecycle';
 import { sendCodexProjectedToolEvent } from '../runtime/sendCodexProjectedToolEvent';
 
@@ -22,10 +22,9 @@ export class CodexRolloutMirror {
     private readonly rolloutSemanticTracker = createCodexRolloutSemanticTracker();
     private readonly followerRuntime;
     private readonly processedSharedStoreItemIds = new Set<string>();
-    private readonly rolloutSessionStoreBinding;
+    private readonly directTranscriptBinding;
     private readonly allowLegacyFollowerFallback;
-    private rolloutSessionStoreLease: FileBackedTranscriptSessionLease<FileBackedTranscriptSessionStore<DirectTranscriptRawMessageV1>> | null = null;
-    private rolloutSessionStoreUnsubscribe: (() => void) | null = null;
+    private directTranscriptMirror: ReturnType<typeof createLocalHostedDirectTranscriptMirror> | null = null;
     private startedMode: 'follower' | 'shared-store' | null = null;
 
     constructor(
@@ -36,12 +35,7 @@ export class CodexRolloutMirror {
             debug: boolean;
             onCodexSessionId: (id: string) => void | Promise<void>;
             allowLegacyFollowerFallback?: boolean;
-            rolloutSessionStore?: Readonly<{
-                activeServerDir: string;
-                source: DirectSessionsSource;
-                remoteSessionId: string;
-                env?: NodeJS.ProcessEnv;
-            }>;
+            directTranscriptBinding?: LocalHostedDirectTranscriptBinding;
         },
     ) {
         this.itemTranscriptBridge = createKeyedStreamedTranscriptBridge<{
@@ -56,7 +50,7 @@ export class CodexRolloutMirror {
         this.syntheticSubagentTracker = createCodexSyntheticSubagentTracker({
             session: this.opts.session,
         });
-        this.rolloutSessionStoreBinding = this.opts.rolloutSessionStore ?? null;
+        this.directTranscriptBinding = this.opts.directTranscriptBinding ?? null;
         this.allowLegacyFollowerFallback = this.opts.allowLegacyFollowerFallback === true;
         this.followerRuntime = new CodexRolloutFollowerRuntime({
             filePath: this.opts.filePath,
@@ -70,12 +64,12 @@ export class CodexRolloutMirror {
         if (this.startedMode === 'shared-store' || this.startedMode === 'follower') {
             return;
         }
-        if (this.rolloutSessionStoreBinding) {
+        if (this.directTranscriptBinding) {
             await this.startSharedStoreMirror();
             return;
         }
         if (!this.allowLegacyFollowerFallback) {
-            throw new Error('Codex local control requires a shared-store binding; enable the legacy follower fallback explicitly for noncanonical fixtures.');
+            throw new Error('Codex local control requires a direct-transcript binding; enable the legacy follower fallback explicitly for noncanonical fixtures.');
         }
         this.startedMode = 'follower';
         await this.followerRuntime.start();
@@ -83,13 +77,9 @@ export class CodexRolloutMirror {
 
     async stop(): Promise<void> {
         if (this.startedMode === 'shared-store') {
-            const unsubscribe = this.rolloutSessionStoreUnsubscribe;
-            this.rolloutSessionStoreUnsubscribe = null;
-            unsubscribe?.();
-
-            const lease = this.rolloutSessionStoreLease;
-            this.rolloutSessionStoreLease = null;
-            await lease?.release();
+            const mirror = this.directTranscriptMirror;
+            this.directTranscriptMirror = null;
+            await mirror?.stop();
         } else if (this.startedMode === 'follower') {
             await this.followerRuntime.stop();
         }
@@ -205,58 +195,26 @@ export class CodexRolloutMirror {
     }
 
     private async startSharedStoreMirror(): Promise<void> {
-        const binding = this.rolloutSessionStoreBinding;
+        const binding = this.directTranscriptBinding;
         if (!binding) return;
-
-        const lease = await acquireCodexRolloutSessionStore({
-            activeServerDir: binding.activeServerDir,
-            env: binding.env,
-            key: {
-                providerId: 'codex',
-                source: binding.source,
-                remoteSessionId: binding.remoteSessionId,
-            },
-        }) as FileBackedTranscriptSessionLease<FileBackedTranscriptSessionStore<DirectTranscriptRawMessageV1>>;
-        this.rolloutSessionStoreLease = lease;
         this.startedMode = 'shared-store';
-
         await this.opts.onCodexSessionId(binding.remoteSessionId);
-        await this.replaySharedStoreHistory(lease.store);
-
-        const unsubscribe = lease.store.subscribe(async (event) => {
-            if (event.items.length === 0) {
-                return;
-            }
-            await this.handleSharedStoreTranscriptItems(event.items);
+        const mirror = createLocalHostedDirectTranscriptMirror({
+            binding,
+            onItems: async (items) => {
+                await this.handleSharedStoreTranscriptItems(items);
+            },
         });
-        this.rolloutSessionStoreUnsubscribe = unsubscribe;
-
-        if (this.rolloutSessionStoreLease !== lease) {
-            unsubscribe();
-            await lease.release();
-        }
-    }
-
-    private async replaySharedStoreHistory(store: FileBackedTranscriptSessionStore): Promise<number> {
-        const pages: DirectTranscriptRawMessageV1[][] = [];
-        let cursor: string | undefined;
-        let itemCount = 0;
-
-        while (true) {
-            const page = await store.pageOlder(cursor ? { direction: 'older', cursor } : { direction: 'older' });
-            const items = Array.from(page.items as readonly DirectTranscriptRawMessageV1[]);
-            itemCount += items.length;
-            pages.push(items);
-            if (!page.hasMore || !page.nextCursor) {
-                break;
+        this.directTranscriptMirror = mirror;
+        try {
+            await mirror.start();
+        } catch (error) {
+            if (this.directTranscriptMirror === mirror) {
+                this.directTranscriptMirror = null;
             }
-            cursor = page.nextCursor;
+            this.startedMode = null;
+            throw error;
         }
-
-        for (let index = pages.length - 1; index >= 0; index -= 1) {
-            await this.handleSharedStoreTranscriptItems(pages[index] ?? []);
-        }
-        return itemCount;
     }
 
     private async handleSharedStoreTranscriptItems(items: readonly DirectTranscriptRawMessageV1[]): Promise<void> {

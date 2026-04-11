@@ -1,6 +1,8 @@
-import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import type { AgentRuntimeDescriptorV1, DirectSessionsSource, DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
 import { configuration } from '@/configuration';
-import { buildCodexSpawnRuntimeAffinityCompatFields } from '@happier-dev/agents';
+import {
+  buildCodexSpawnRuntimeAffinityCompatFields,
+} from '@happier-dev/agents';
 
 import {
   mergeDirectSessionEnvironmentVariables,
@@ -9,11 +11,18 @@ import {
 
 import { getCodexDirectSessionWorkingDirectory } from './getCodexDirectSessionWorkingDirectory';
 import { listCodexSessionCandidates } from './listCodexSessionCandidates';
+import { resolveCodexDirectSessionLinkIdentity } from './resolveCodexDirectSessionLinkIdentity';
 import { resolveCodexHomeEntriesForDirectSessionsSource } from './resolveCodexHomeEntriesForDirectSessionsSource';
+import { validateCodexDirectSessionsSource } from './validateCodexDirectSessionsSource';
 import { resolveCodexRolloutDirectTranscriptSnapshot } from '../rollout/sessionStore/codexRolloutTranscriptHistory';
 import { acquireCodexRolloutSessionStore, withCodexRolloutSessionStore } from '../rollout/sessionStore/codexRolloutSessionStoreRegistry';
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
 export const codexDirectSessionProviderOps: DirectSessionProviderOps = {
+  validateSource: ({ source, env }) => validateCodexDirectSessionsSource({ source, env }),
   listCandidates: async ({ source, cursor, limit, searchTerm }) => {
     const res = await listCodexSessionCandidates({ source, activeServerDir: configuration.activeServerDir, cursor, limit, searchTerm });
     return { candidates: res.candidates, nextCursor: res.nextCursor ?? null };
@@ -120,6 +129,27 @@ export const codexDirectSessionProviderOps: DirectSessionProviderOps = {
         });
       }),
     };
+  },
+  canonicalizeLinkedSession: async ({ metadata, remoteSessionId, source }) => {
+    const directSession = asRecord(metadata.directSessionV1);
+    const runtimeDescriptor = (directSession?.agentRuntimeDescriptorV1 ?? metadata.agentRuntimeDescriptorV1) as
+      | AgentRuntimeDescriptorV1
+      | null
+      | undefined;
+    const identity = resolveCodexDirectSessionLinkIdentity({
+      remoteSessionId,
+      source,
+      runtimeDescriptor,
+      metadata,
+    });
+
+    return {
+      remoteSessionId: identity.remoteSessionId,
+      source: identity.source,
+    };
+  },
+  resolveLinkIdentity: async ({ remoteSessionId, source, runtimeDescriptor, metadata }) => {
+    return resolveCodexDirectSessionLinkIdentity({ remoteSessionId, source, runtimeDescriptor, metadata });
   },
   resolveTakeoverSpawnOptions: async ({ linked, sessionId }) => {
     const snapshot = await resolveCodexRolloutDirectTranscriptSnapshot({

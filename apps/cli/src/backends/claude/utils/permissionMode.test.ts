@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { mapToClaudeMode, resolveClaudeSdkPermissionModeFromEnhancedMode } from './permissionMode';
+import {
+    mapToClaudeMode,
+    normalizeClaudeHappyCliSessionControlPermissionMode,
+    resolveClaudeSdkPermissionModeFromEnhancedMode,
+} from './permissionMode';
 import type { PermissionMode } from '@/api/types';
 
 describe('mapToClaudeMode', () => {
@@ -60,5 +64,19 @@ describe('resolveClaudeSdkPermissionModeFromEnhancedMode', () => {
                 agentModeId: 'plan',
             }),
         ).toBe('plan');
+    });
+});
+
+describe('normalizeClaudeHappyCliSessionControlPermissionMode', () => {
+    it('maps yolo to bypassPermissions at the Happier CLI session-control boundary', () => {
+        expect(normalizeClaudeHappyCliSessionControlPermissionMode('yolo')).toBe('bypassPermissions');
+    });
+
+    it('maps safe-yolo to acceptEdits at the Happier CLI session-control boundary', () => {
+        expect(normalizeClaudeHappyCliSessionControlPermissionMode('safe-yolo')).toBe('acceptEdits');
+    });
+
+    it('preserves read-only at the Happier CLI session-control boundary', () => {
+        expect(normalizeClaudeHappyCliSessionControlPermissionMode('read-only')).toBe('read-only');
     });
 });

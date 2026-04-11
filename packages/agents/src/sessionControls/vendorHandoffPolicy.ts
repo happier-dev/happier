@@ -1,8 +1,7 @@
 import { buildBackendTargetKey } from '@happier-dev/protocol';
 import type { AgentId } from '../types.js';
 import { AGENTS_CORE } from '../manifest.js';
-import { isCodexVendorResumeBackendEnabled } from '../providerSettings/definitions/codex.js';
-import { resolvePersistedCodexRuntimeIdentity } from './codexRuntimeIdentity.js';
+import { getProviderSessionControlAdapter } from '../providers/sessionControlAdapterRegistry.js';
 import { resolveVendorResumeIdFromSessionMetadata } from './vendorResumePolicy.js';
 
 export type VendorHandoffStorageMode = 'direct' | 'persisted';
@@ -28,17 +27,6 @@ function isBackendDisabledByAccountSettings(agentId: AgentId, accountSettings: R
   const backendEnabledByTargetKeyRecord = asRecord(backendEnabledByTargetKey);
   if (!backendEnabledByTargetKeyRecord) return false;
   return backendEnabledByTargetKeyRecord[buildBackendTargetKey({ kind: 'builtInAgent', agentId })] === false;
-}
-
-function isCodexVendorHandoffEnabled(input: Readonly<{
-  metadata: unknown;
-  accountSettings: Record<string, unknown> | null;
-}>): boolean {
-  const runtimeIdentity = resolvePersistedCodexRuntimeIdentity(input.metadata);
-  if (runtimeIdentity?.backendMode === 'acp' || runtimeIdentity?.backendMode === 'appServer') {
-    return true;
-  }
-  return isCodexVendorResumeBackendEnabled(input.accountSettings ?? {});
 }
 
 export function resolveVendorHandoffIdFromSessionMetadata(agentId: AgentId, metadata: unknown): string | null {
@@ -67,11 +55,11 @@ export function evaluateVendorHandoffEligibility(input: Readonly<{
   }
 
   if (agent.handoff.vendorStateTransfer === 'experimental') {
-    if (input.agentId === 'codex') {
-      if (!isCodexVendorHandoffEnabled({ metadata: input.metadata, accountSettings })) {
-        return { eligible: false, reasonCode: 'experimental_disabled' };
-      }
-    } else {
+    const enabled = getProviderSessionControlAdapter(input.agentId)?.isExperimentalVendorHandoffEnabled?.({
+      metadata: input.metadata,
+      accountSettings,
+    }) === true;
+    if (!enabled) {
       return { eligible: false, reasonCode: 'experimental_disabled' };
     }
   }

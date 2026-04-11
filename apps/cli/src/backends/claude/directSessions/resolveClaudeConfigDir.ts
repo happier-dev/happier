@@ -3,6 +3,8 @@ import { join } from 'node:path';
 
 import type { DirectSessionsSource } from '@happier-dev/protocol';
 
+import { canonicalizeDirectSessionsPath } from '@/backends/directSessions/sourceValidation';
+
 export function expandHomeDirForDirectSessions(raw: string): string {
   const trimmed = raw.trim();
   if (trimmed === '~') return homedir();
@@ -20,6 +22,10 @@ export function resolveConfiguredClaudeConfigDir(params: Readonly<{ env: NodeJS.
 
   const resolved = fromEnv || join(homedir(), '.claude');
   return expandHomeDirForDirectSessions(resolved) || join(homedir(), '.claude');
+}
+
+export function resolveCanonicalConfiguredClaudeConfigDir(params: Readonly<{ env: NodeJS.ProcessEnv }>): string {
+  return canonicalizeDirectSessionsPath(resolveConfiguredClaudeConfigDir(params));
 }
 
 export function resolveClaudeConfigDir(params: Readonly<{ source: DirectSessionsSource; env: NodeJS.ProcessEnv }>): string {

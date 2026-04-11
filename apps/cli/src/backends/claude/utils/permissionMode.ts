@@ -4,6 +4,12 @@ import type { PermissionMode } from '@/api/types';
 /** Derived from SDK's QueryOptions - the modes Claude actually supports */
 export type ClaudeSdkPermissionMode = NonNullable<QueryOptions['permissionMode']>;
 
+export function normalizeClaudeHappyCliSessionControlPermissionMode(mode: string): string {
+    if (mode === 'yolo') return 'bypassPermissions';
+    if (mode === 'safe-yolo') return 'acceptEdits';
+    return mode;
+}
+
 /**
  * Map any PermissionMode (7 modes) to a Claude-compatible mode (5 modes)
  * This is the ONLY place where Codex modes are mapped to Claude equivalents.

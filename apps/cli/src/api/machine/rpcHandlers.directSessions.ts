@@ -178,7 +178,7 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH, async (raw: unknown) => {
     const parsed = DirectSessionAttachRequestSchema.safeParse(raw);
     if (!parsed.success) return err('invalid_request') satisfies DirectSessionAttachResponse;
-    const validatedSource = validateDirectMachineSource({
+    const validatedSource = await validateDirectMachineSource({
       providerId: parsed.data.providerId,
       source: parsed.data.source,
       env: process.env,
@@ -235,7 +235,7 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET, async (raw: unknown) => {
     const parsed = DirectSessionFollowPolicySetRequestSchema.safeParse(raw);
     if (!parsed.success) return err('invalid_request') satisfies DirectSessionFollowPolicySetResponse;
-    const validatedSource = validateDirectMachineSource({
+    const validatedSource = await validateDirectMachineSource({
       providerId: parsed.data.providerId,
       source: parsed.data.source,
       env: process.env,
@@ -349,7 +349,7 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST, async (raw: unknown) => {
     const parsed = DirectSessionsCandidatesListRequestSchema.safeParse(raw);
     if (!parsed.success) return err('invalid_request') satisfies DirectSessionsCandidatesListResponse;
-    const validatedSource = validateDirectMachineSource({
+    const validatedSource = await validateDirectMachineSource({
       providerId: parsed.data.providerId,
       source: parsed.data.source,
       env: process.env,
@@ -376,7 +376,7 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE, async (raw: unknown) => {
     const parsed = DirectSessionLinkEnsureRequestSchema.safeParse(raw);
     if (!parsed.success) return err('invalid_request') satisfies DirectSessionLinkEnsureResponse;
-    const validatedSource = validateDirectMachineSource({
+    const validatedSource = await validateDirectMachineSource({
       providerId: parsed.data.providerId,
       source: parsed.data.source,
       env: process.env,
@@ -416,7 +416,7 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET, async (raw: unknown) => {
     const parsed = DirectSessionStatusGetRequestSchema.safeParse(raw);
     if (!parsed.success) return err('invalid_request') satisfies DirectSessionStatusGetResponse;
-    const validatedSource = validateDirectMachineSource({
+    const validatedSource = await validateDirectMachineSource({
       providerId: parsed.data.providerId,
       source: parsed.data.source,
       env: process.env,
@@ -516,7 +516,7 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_PAGE, async (raw: unknown) => {
     const parsed = DirectTranscriptPageRequestSchema.safeParse(raw);
     if (!parsed.success) return err('invalid_request') satisfies DirectTranscriptPageResponse;
-    const validatedSource = validateDirectMachineSource({
+    const validatedSource = await validateDirectMachineSource({
       providerId: parsed.data.providerId,
       source: parsed.data.source,
       env: process.env,
@@ -558,7 +558,7 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER, async (raw: unknown) => {
     const parsed = DirectTranscriptReadAfterRequestSchema.safeParse(raw);
     if (!parsed.success) return err('invalid_request') satisfies DirectTranscriptReadAfterResponse;
-    const validatedSource = validateDirectMachineSource({
+    const validatedSource = await validateDirectMachineSource({
       providerId: parsed.data.providerId,
       source: parsed.data.source,
       env: process.env,
@@ -611,7 +611,7 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
     if (!linked.ok) {
       return err(linked.errorCode, linked.error) satisfies DirectSessionTakeoverResponse;
     }
-    const validatedSource = validateDirectMachineSource({
+    const validatedSource = await validateDirectMachineSource({
       providerId: linked.session.providerId,
       source: linked.session.source,
       env: process.env,
@@ -687,7 +687,7 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
     if (!linked.ok) {
       return err(linked.errorCode, linked.error) satisfies DirectSessionTakeoverPersistResponse;
     }
-    const validatedSource = validateDirectMachineSource({
+    const validatedSource = await validateDirectMachineSource({
       providerId: linked.session.providerId,
       source: linked.session.source,
       env: process.env,

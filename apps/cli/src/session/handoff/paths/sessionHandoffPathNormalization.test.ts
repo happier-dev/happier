@@ -29,6 +29,27 @@ describe('sessionHandoffPathNormalization', () => {
         })).toBe('/home/guest/.happier/wsrepl-qa-fixtures/large-repo');
     });
 
+    it('toHomeRelativePath normalizes Windows home-contained absolute paths to forward-slash ~/ syntax', () => {
+        expect(toHomeRelativePath({
+            absolutePath: 'C:\\Users\\alice\\projects\\demo',
+            homeDir: 'C:\\Users\\alice',
+        })).toBe('~/projects/demo');
+    });
+
+    it('toHomeRelativePath matches Windows home paths case-insensitively across slash styles', () => {
+        expect(toHomeRelativePath({
+            absolutePath: 'C:/Users/Alice/projects/demo',
+            homeDir: 'C:\\Users\\alice',
+        })).toBe('~/projects/demo');
+    });
+
+    it('expandHomeRelativePath expands ~\\ on Windows-style home paths', () => {
+        expect(expandHomeRelativePath({
+            path: '~\\projects\\demo',
+            homeDir: 'C:\\Users\\alice',
+        })).toBe('C:\\Users\\alice/projects/demo');
+    });
+
     it('normalizeSessionHandoffTargetPathForLocalMachine rebases /.happier/ paths onto the local home', () => {
         expect(normalizeSessionHandoffTargetPathForLocalMachine({
             requestedTargetPath: '/Users/leeroy/.happier/wsrepl-qa-fixtures/large-repo',
@@ -39,6 +60,13 @@ describe('sessionHandoffPathNormalization', () => {
     it('normalizeSessionHandoffTargetPathForLocalMachine rebases /Users/<user>/ paths onto the local home', () => {
         expect(normalizeSessionHandoffTargetPathForLocalMachine({
             requestedTargetPath: '/Users/alice/projects/demo',
+            homeDir: '/home/guest',
+        })).toBe('/home/guest/projects/demo');
+    });
+
+    it('normalizeSessionHandoffTargetPathForLocalMachine rebases Windows home-rooted paths onto the local home', () => {
+        expect(normalizeSessionHandoffTargetPathForLocalMachine({
+            requestedTargetPath: 'C:\\Users\\alice\\projects\\demo',
             homeDir: '/home/guest',
         })).toBe('/home/guest/projects/demo');
     });
