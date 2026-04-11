@@ -5,6 +5,7 @@ import { useNavigation } from '@react-navigation/native';
 import { DEFAULT_AGENT_ID, isAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { NewSessionResumeSelectionContent } from '@/components/sessions/new/components/NewSessionResumeSelectionContent';
 import { openDirectSessionsResumeIdPickerModal } from '@/components/sessions/directSessions/browse/openDirectSessionsResumeIdPickerModal';
+import { NewSessionScreenPortalScope, createNewSessionContainedModalScreenOptions } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { canBrowseDirectSessions, resolveDirectBrowseLockedSource } from '@/components/sessions/directSessions/browse/resolveDirectBrowseLockedSourceOption';
 import { useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
@@ -94,16 +95,14 @@ export default function ResumePickerScreen() {
     const headerTitle = t('newSession.resume.pickerTitle');
     const headerBackTitle = t('common.cancel');
     const screenOptions = React.useMemo(() => {
-        return {
-            headerShown: true,
+        return createNewSessionContainedModalScreenOptions({
             title: headerTitle,
-            headerTitle,
             headerBackTitle,
-        };
+        });
     }, [headerBackTitle, headerTitle]);
 
     return (
-        <>
+        <NewSessionScreenPortalScope>
             <Stack.Screen options={screenOptions} />
             <NewSessionResumeSelectionContent
                 value={inputValue}
@@ -137,6 +136,6 @@ export default function ResumePickerScreen() {
                 } : null}
                 showInlineHeader={false}
             />
-        </>
+        </NewSessionScreenPortalScope>
     );
 }

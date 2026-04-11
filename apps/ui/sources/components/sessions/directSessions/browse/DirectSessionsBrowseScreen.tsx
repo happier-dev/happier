@@ -24,8 +24,8 @@ import {
     resolveDirectBrowseLinkEnsureRequestExtras,
     resolveDirectBrowseSourceOptions,
 } from './resolveDirectBrowseSourceOptions';
+import { resolveCompatibleDirectBrowseLinkSource } from './resolveCompatibleDirectBrowseLinkSource';
 import { DirectBrowseCandidatesList } from './DirectBrowseCandidatesList';
-import { shouldUseCandidateSource } from './shouldUseCandidateSource';
 import { useDirectBrowseCandidates, type DirectBrowseCandidate } from './useDirectBrowseCandidates';
 
 type DirectBrowseProviderId = DirectSessionsProviderId;
@@ -217,9 +217,10 @@ export const DirectSessionsBrowseScreen = React.memo((props: Readonly<{
             const candidateSource = linkEnsureExtras.source && typeof linkEnsureExtras.source === 'object'
                 ? (linkEnsureExtras.source as DirectSessionsSource)
                 : undefined;
-            const effectiveSource: DirectSessionsSource = candidateSource && shouldUseCandidateSource(selectedSource, candidateSource)
-                ? candidateSource
-                : selectedSource;
+            const effectiveSource = resolveCompatibleDirectBrowseLinkSource({
+                selectedSource,
+                candidateSource,
+            });
             const request = {
                 machineId: effectiveSelectedMachineId,
                 providerId: selectedProviderId,

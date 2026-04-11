@@ -11,7 +11,7 @@ const directBrowseModulePromise = import('./resolveDirectBrowseSourceOptions');
 describe('resolveDirectBrowseSourceOptions', () => {
     it('lists browse providers from registered provider behavior order', async () => {
         const { listDirectBrowseProviderIds } = await directBrowseModulePromise;
-        expect(listDirectBrowseProviderIds()).toEqual(['codex', 'claude', 'opencode']);
+        expect(listDirectBrowseProviderIds()).toEqual(['codex', 'claude', 'ohMyPi', 'opencode']);
     });
 
     it('returns the codex user home and per-profile connected-service sources when codex profiles exist', async () => {
@@ -127,4 +127,5 @@ describe('resolveDirectBrowseSourceOptions', () => {
             candidate: { details: { codexBackendMode: 'appServer' } },
         })).toEqual({});
     });
+
 });

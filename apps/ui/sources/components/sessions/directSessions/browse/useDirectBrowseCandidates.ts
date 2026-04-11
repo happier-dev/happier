@@ -21,12 +21,19 @@ export function useDirectBrowseCandidates(params: Readonly<{
     source: DirectSessionsSource | null;
 }>) {
     const { machineId, providerId, source, serverId } = params;
+    const currentScopeKey = React.useMemo(() => JSON.stringify({
+        machineId,
+        serverId: serverId ?? null,
+        providerId,
+        source,
+    }), [machineId, providerId, serverId, source]);
 
     const [candidates, setCandidates] = React.useState<readonly DirectBrowseCandidate[]>([]);
     const [nextCursor, setNextCursor] = React.useState<string | null>(null);
     const [loading, setLoading] = React.useState(false);
     const [loadingMore, setLoadingMore] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
+    const [loadedScopeKey, setLoadedScopeKey] = React.useState<string | null>(null);
 
     const loadGenerationRef = React.useRef(0);
 
@@ -79,6 +86,7 @@ export function useDirectBrowseCandidates(params: Readonly<{
                 details: candidate.details,
             })) satisfies readonly DirectBrowseCandidate[];
 
+            setLoadedScopeKey(currentScopeKey);
             setCandidates((current) => append ? [...current, ...nextItems] : nextItems);
             setNextCursor(result.nextCursor ?? null);
             setError(null);
@@ -87,6 +95,7 @@ export function useDirectBrowseCandidates(params: Readonly<{
                 return;
             }
             const message = loadError instanceof Error ? loadError.message : t('directSessions.browseFailedToLoad');
+            setLoadedScopeKey(currentScopeKey);
             setError(message);
             if (!append) {
                 setCandidates([]);
@@ -101,7 +110,7 @@ export function useDirectBrowseCandidates(params: Readonly<{
                 }
             }
         }
-    }, [machineId, providerId, serverId, source]);
+    }, [currentScopeKey, machineId, providerId, serverId, source]);
 
     React.useEffect(() => {
         void loadCandidates();
@@ -112,13 +121,14 @@ export function useDirectBrowseCandidates(params: Readonly<{
         await loadCandidates({ cursor: nextCursor, append: true });
     }, [loadCandidates, loadingMore, nextCursor]);
 
+    const scopeMatches = loadedScopeKey === currentScopeKey;
+
     return {
-        candidates,
-        nextCursor,
+        candidates: scopeMatches ? candidates : [],
+        nextCursor: scopeMatches ? nextCursor : null,
         loading,
         loadingMore,
-        error,
+        error: scopeMatches ? error : null,
         loadMore,
     } as const;
 }
-

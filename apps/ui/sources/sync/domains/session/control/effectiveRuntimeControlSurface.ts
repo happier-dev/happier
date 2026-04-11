@@ -1,8 +1,7 @@
 import {
+    resolveAgentConfiguredRuntimeKind,
     resolveAgentRuntimeControlSurface,
-    resolveCodexSessionBackendMode,
     resolveAgentRuntimeControlSurfaceForSession,
-    resolveOpenCodeSessionBackendMode,
     type AgentCoreRuntimeControlSurface,
     type AgentId,
 } from '@happier-dev/agents';
@@ -26,21 +25,10 @@ export function resolveEffectiveSessionRuntimeControlSurface(
 export function resolveEffectiveConfiguredRuntimeControlSurface(
     params: Pick<RuntimeSurfaceSessionContext, 'agentId' | 'accountSettings'>,
 ): AgentCoreRuntimeControlSurface {
-    const runtimeKind = (() => {
-        if (params.agentId === 'codex') {
-            return resolveCodexSessionBackendMode({
-                metadata: null,
-                accountSettings: params.accountSettings ?? null,
-            });
-        }
-        if (params.agentId === 'opencode') {
-            return resolveOpenCodeSessionBackendMode({
-                metadata: null,
-                accountSettings: params.accountSettings ?? null,
-            });
-        }
-        return null;
-    })();
+    const runtimeKind = resolveAgentConfiguredRuntimeKind({
+        agentId: params.agentId,
+        accountSettings: params.accountSettings ?? null,
+    });
 
     return resolveAgentRuntimeControlSurface(params.agentId, runtimeKind);
 }

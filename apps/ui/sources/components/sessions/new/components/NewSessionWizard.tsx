@@ -45,8 +45,10 @@ import { NewSessionKeyboardContainer } from './NewSessionKeyboardContainer';
 export interface NewSessionWizardLayoutProps {
     theme: any;
     styles: any;
+    safeAreaTop?: number;
     safeAreaBottom: number;
     headerHeight: number;
+    newSessionTopPadding?: number;
     newSessionSidePadding: number;
     newSessionBottomPadding: number;
     shouldBottomAnchor?: boolean;
@@ -122,6 +124,7 @@ export interface NewSessionWizardMachineProps {
     setSelectedMachineId: (id: string) => void;
     getBestPathForMachine: (id: string) => string;
     setSelectedPath: (path: string) => void;
+    setDraftSelectedPath?: (path: string) => void;
     favoriteMachines: ReadonlyArray<string>;
     setFavoriteMachines: (ids: string[]) => void;
     selectedPath: string;
@@ -164,6 +167,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
     const {
         theme,
         styles,
+        safeAreaTop = 0,
         newSessionSidePadding,
         newSessionBottomPadding,
         shouldBottomAnchor: shouldBottomAnchorOverride,
@@ -363,10 +367,16 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                         contentContainerStyle={styles.contentContainer}
                         keyboardShouldPersistTaps="handled"
                     >
-                                <View style={{ paddingHorizontal: 0 }}>
-                                    <View style={[
-                                        { maxWidth: layout.maxWidth, flex: 1, width: '100%', alignSelf: 'center' }
-                                    ]}>
+                        <View style={{ paddingHorizontal: 0 }}>
+                            <View style={[
+                                {
+                                    maxWidth: layout.maxWidth,
+                                    flex: 1,
+                                    width: '100%',
+                                    alignSelf: 'center',
+                                    paddingTop: safeAreaTop,
+                                },
+                            ]}>
                                         <View onLayout={registerWizardSectionOffset('profile')} style={styles.wizardContainer}>
                                 {useProfiles && (
                                     <>
@@ -654,6 +664,8 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         machineHomeDir={selectedMachine?.metadata?.homeDir || '/home'}
                                         selectedPath={selectedPath}
                                         onChangeSelectedPath={setSelectedPath}
+                                        onChangeDraftSelectedPath={props.machine.setDraftSelectedPath}
+                                        commitDraftOnBlur={true}
                                         recentPaths={recentPaths}
                                         usePickerSearch={usePathPickerSearch}
                                         searchVariant="group"

@@ -265,6 +265,126 @@ describe('NewSessionWizard', () => {
         }
     });
 
+    it('applies the top safe-area inset to the wizard content on iOS', async () => {
+        const { NewSessionWizard } = await import('./NewSessionWizard');
+
+        const screen = await renderScreen(<NewSessionWizard
+            popoverBoundaryRef={{ current: null } as any}
+            layout={{
+                theme: {
+                    colors: {
+                        divider: '#ddd',
+                        shadow: { color: '#000' },
+                        groupped: { background: '#fff' },
+                        text: '#000',
+                        textSecondary: '#666',
+                        input: { background: '#fff' },
+                        button: { secondary: { tint: '#000' } },
+                        warning: '#d97706',
+                        box: { warning: { background: '#fff8e1', border: '#f5d38f' } },
+                    },
+                } as any,
+                styles: {} as any,
+                safeAreaTop: 18,
+                safeAreaBottom: 0,
+                headerHeight: 44,
+                newSessionTopPadding: 14,
+                newSessionSidePadding: 0,
+                newSessionBottomPadding: 0,
+            } as any}
+            profiles={{
+                useProfiles: true,
+                profiles: [],
+                favoriteProfileIds: [],
+                setFavoriteProfileIds: () => {},
+                selectedProfileId: null,
+                onPressDefaultEnvironment: () => {},
+                onPressProfile: () => {},
+                selectedMachineId: 'machine-1',
+                getProfileDisabled: () => false,
+                getProfileSubtitleExtra: () => null,
+                handleAddProfile: () => {},
+                openProfileEdit: () => {},
+                handleDuplicateProfile: () => {},
+                handleDeleteProfile: () => {},
+                openProfileEnvVarsPreview: () => {},
+                suppressNextSecretAutoPromptKeyRef: { current: null },
+                openSecretRequirementModal: () => {},
+                profilesGroupTitles: { favorites: 'Favorites', custom: 'Custom', builtIn: 'Built in' },
+                getSecretOverrideReady: () => true,
+                getSecretSatisfactionForProfile: () => ({ isSatisfied: true }),
+            } as any}
+            agent={{
+                cliAvailability: { available: { codex: true }, isLoaded: true } as any,
+                tmuxRequested: false,
+                enabledAgentIds: ['codex'] as any,
+                isAgentSelectable: () => true,
+                isCliBannerDismissed: () => true,
+                dismissCliBanner: () => {},
+                agentType: 'codex' as any,
+                setAgentType: () => {},
+                modelOptions: [] as any,
+                setModelMode: () => {},
+                selectedIndicatorColor: '#000',
+                profileMap: new Map(),
+                permissionMode: 'default',
+                handlePermissionModeChange: () => {},
+            } as any}
+            machine={{
+                machines: [{
+                    id: 'machine-1',
+                    active: true,
+                    activeAt: Date.now(),
+                    revokedAt: null,
+                    metadata: {
+                        host: 'box.local',
+                        platform: 'test',
+                        happyCliVersion: '0.0.0-test',
+                        happyHomeDir: '/tmp/happy-home',
+                        homeDir: '/tmp',
+                        displayName: 'Box',
+                    },
+                    metadataVersion: 1,
+                    daemonState: null,
+                    daemonStateVersion: 0,
+                }],
+                serverId: 'server-1',
+                selectedMachine: null,
+                recentMachines: [],
+                favoriteMachineItems: [],
+                useMachinePickerSearch: false,
+                onRefreshMachines: () => {},
+                setSelectedMachineId: () => {},
+                getBestPathForMachine: () => '/tmp',
+                setSelectedPath: () => {},
+                favoriteMachines: [],
+                setFavoriteMachines: () => {},
+                selectedPath: '/tmp',
+                recentPaths: [],
+                usePathPickerSearch: false,
+                favoriteDirectories: [],
+                setFavoriteDirectories: () => {},
+            } as any}
+            footer={{
+                sessionPrompt: '',
+                setSessionPrompt: () => {},
+                handleCreateSession: () => {},
+                canCreate: false,
+                isCreating: false,
+                emptyAutocompletePrefixes: [],
+                emptyAutocompleteSuggestions: async () => [],
+                agentInputExtraActionChips: [],
+            }}
+        />);
+
+        const contentWrapper = screen.findAllByType('View' as any).find((node: any) => {
+            const style = flattenStyle(node.props?.style);
+            return style.width === '100%' && style.alignSelf === 'center' && style.paddingTop === 18;
+        });
+
+        expect(contentWrapper).toBeDefined();
+    });
+
     it('stretches the footer padding wrapper to full width on web (avoids shrink-to-fit collapse)', async () => {
         mockEnv.windowWidth = 1200;
         try {

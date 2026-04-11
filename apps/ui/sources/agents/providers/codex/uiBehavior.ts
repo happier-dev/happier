@@ -4,6 +4,7 @@ import { resolveCodexSpawnExtrasFromSettings, resolvePersistedCodexRuntimeIdenti
 import { resolveCodexBrowseSourceOptions } from '@/agents/providers/codex/directSessions/resolveCodexBrowseSourceOptions';
 import { resolveCodexLinkEnsureRequestExtras } from '@/agents/providers/codex/directSessions/resolveCodexLinkEnsureRequestExtras';
 import { resolveCodexLockedBrowseSourceOption } from '@/agents/providers/codex/directSessions/resolveCodexLockedBrowseSourceOption';
+import { buildCodexSessionHandoffProviderPatch } from '@/agents/providers/codex/buildCodexSessionHandoffProviderPatch';
 
 import type {
     AgentResumeExperiments,
@@ -119,6 +120,16 @@ export const CODEX_UI_BEHAVIOR_OVERRIDE: AgentUiBehavior = {
                     : {}
             ),
         },
+    },
+    sessionHandoff: {
+        buildProviderPatch: ({ metadata, targetRemoteSessionId, targetDirectSource, targetRuntimeDescriptor }) => (
+            buildCodexSessionHandoffProviderPatch({
+                metadata,
+                targetRemoteSessionId,
+                targetDirectSource,
+                targetRuntimeDescriptor,
+            })
+        ),
     },
     payload: {
         buildSpawnSessionExtras: ({ agentId, settings }) => {

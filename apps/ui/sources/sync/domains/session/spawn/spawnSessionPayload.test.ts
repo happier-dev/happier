@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildSpawnHappySessionRpcParams } from './spawnSessionPayload';
+import {
+    buildCompatibleSpawnHappySessionRpcParams,
+    buildSpawnHappySessionRpcParams,
+    shouldUseLegacySpawnHappySessionRpcParams,
+} from './spawnSessionPayload';
 
 describe('buildSpawnHappySessionRpcParams', () => {
     it('includes configured ACP backend targets and omits removed workspace linkage fields', () => {
@@ -127,5 +131,40 @@ describe('buildSpawnHappySessionRpcParams', () => {
         } as any);
 
         expect(params).not.toHaveProperty('token');
+    });
+
+    it('uses the legacy spawn payload shape for older daemon CLI versions', () => {
+        const params = buildCompatibleSpawnHappySessionRpcParams({
+            daemonCliVersion: '0.0.9',
+            options: {
+                machineId: 'machine-1',
+                directory: '/tmp/workspace',
+                backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                permissionMode: 'safe-yolo',
+                permissionModeUpdatedAt: 123,
+                modelId: 'o3',
+                modelUpdatedAt: 456,
+                windowsRemoteSessionLaunchMode: 'console',
+            },
+        });
+
+        expect(params).toEqual(expect.objectContaining({
+            type: 'spawn-in-directory',
+            directory: '/tmp/workspace',
+            agent: 'claude',
+            permissionMode: 'safe-yolo',
+            permissionModeUpdatedAt: 123,
+            modelId: 'o3',
+            modelUpdatedAt: 456,
+            windowsRemoteSessionConsole: 'visible',
+        }));
+        expect(params).not.toHaveProperty('backendTarget');
+    });
+
+    it('detects older daemon versions that still require the legacy spawn contract', () => {
+        expect(shouldUseLegacySpawnHappySessionRpcParams('0.0.9')).toBe(true);
+        expect(shouldUseLegacySpawnHappySessionRpcParams('0.1.0-dev.5')).toBe(false);
+        expect(shouldUseLegacySpawnHappySessionRpcParams('0.2.0')).toBe(false);
+        expect(shouldUseLegacySpawnHappySessionRpcParams(null)).toBe(false);
     });
 });

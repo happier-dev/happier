@@ -47,6 +47,7 @@ import {
 import { resolveMachineTransferAvailability } from '../domains/transfers/runtime/resolveTransferAvailability';
 import { followUpSpawnedSessionWithServerScope } from '../runtime/orchestration/serverScopedRpc/followUpSpawnedSession';
 import { buildSessionHandoffMetadataPatch } from './buildSessionHandoffMetadataPatch';
+import { resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 
 type MetadataRecord = Metadata;
 type HandoffErrorResult = Readonly<{
@@ -1168,7 +1169,10 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
             ...(sourceRecovery ? { recovery: sourceRecovery } : {}),
         };
     }
-    const providerId = preparedResponse.resume.agent;
+    const providerId = resolveAgentIdFromFlavor(preparedResponse.resume.agent);
+    if (!providerId) {
+        throw new Error(`Unsupported session handoff provider: ${preparedResponse.resume.agent}`);
+    }
     const targetSessionStorageMode = options.targetSessionStorageMode ?? options.sessionStorageMode;
     const completedAtMs = Date.now();
     const sourceMetadataForHandoffPatch = (storage.getState().sessions?.[options.sessionId]?.metadata ?? options.sourceMetadata) as MetadataRecord;

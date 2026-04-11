@@ -181,7 +181,7 @@ describe('PathSelector', () => {
         const { PathSelector } = await import('./PathSelector');
         const popoverPortalTarget = { nodeType: 1, name: 'popover-portal-target' } as any;
         const parentModalPortalTarget = { nodeType: 1, name: 'parent-modal-portal-target' } as any;
-        const onBeforeOpen = vi.fn();
+        const onBeforeBrowseMachinePath = vi.fn();
 
         const screen = await renderScreen(
             <ModalPortalTargetProvider target={popoverPortalTarget}>
@@ -193,10 +193,10 @@ describe('PathSelector', () => {
                     usePickerSearch={false}
                     favoriteDirectories={[]}
                     onChangeFavoriteDirectories={() => {}}
+                    onBeforeBrowseMachinePath={onBeforeBrowseMachinePath}
                     machineBrowse={{
                         enabled: true,
                         machineId: 'machine-1',
-                        onBeforeOpen,
                         webPortalTarget: parentModalPortalTarget,
                     }}
                 />
@@ -205,17 +205,20 @@ describe('PathSelector', () => {
 
         await act(async () => {
             const pressPromise = screen.pressByTestIdAsync('path-browser-trigger');
+            await Promise.resolve();
+            expect(onBeforeBrowseMachinePath).toHaveBeenCalledTimes(1);
+            expect(openMachinePathBrowserModalMock).not.toHaveBeenCalled();
             await vi.runAllTimersAsync();
             await pressPromise;
         });
 
-        expect(onBeforeOpen).toHaveBeenCalledTimes(1);
+        expect(onBeforeBrowseMachinePath).toHaveBeenCalledTimes(1);
         expect(openMachinePathBrowserModalMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-1',
             initialPath: '/Users/leeroy/project',
             webPortalTarget: parentModalPortalTarget,
         }));
-        expect(onBeforeOpen.mock.invocationCallOrder[0]).toBeLessThan(openMachinePathBrowserModalMock.mock.invocationCallOrder[0]);
+        expect(onBeforeBrowseMachinePath.mock.invocationCallOrder[0]).toBeLessThan(openMachinePathBrowserModalMock.mock.invocationCallOrder[0]);
 
         vi.useRealTimers();
     });

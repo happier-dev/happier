@@ -2,7 +2,7 @@ import { Ionicons, Octicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { View, Platform, useWindowDimensions, ViewStyle, ActivityIndicator, Pressable, ScrollView } from 'react-native';
 import { layout } from '@/components/ui/layout/layout';
-import { MultiTextInput, KeyPressEvent } from '@/components/ui/forms/MultiTextInput';
+import { MultiTextInput, KeyPressEvent, type MultiTextInputSubmitBehavior } from '@/components/ui/forms/MultiTextInput';
 import { Typography } from '@/constants/Typography';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import { getModelOptionsForSession, supportsFreeformModelSelectionForSession, type ModelOption } from '@/sync/domains/models/modelOptions';
@@ -54,6 +54,7 @@ import {
     computeAgentInputKeyboardOpenVariableSectionMaxHeight,
 } from './inputMaxHeight';
 import { getContextWarning } from './contextWarning';
+import { resolveContextWarningWindowTokens } from './resolveContextWarningWindowTokens';
 import { shouldRenderPermissionChip } from './permissionChipVisibility';
 import { type AgentInputContentPopoverConfig } from './components/AgentInputContentPopover';
 import { AgentInputEngineDetail } from './components/AgentInputEngineDetail';
@@ -179,6 +180,7 @@ interface AgentInputProps {
         cacheCreation: number;
         cacheRead: number;
         contextSize: number;
+        contextWindowTokens?: number;
     };
     alwaysShowContextSize?: boolean;
     onFileViewerPress?: () => void;
@@ -791,12 +793,34 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 return 'person-circle-outline';
             }, []);
 
-    // Calculate context warning
-    const contextWarning = props.usageData?.contextSize
-        ? getContextWarning(props.usageData.contextSize, props.alwaysShowContextSize ?? false, theme)
-        : null;
+    const contextWindowTokens = React.useMemo(
+        () => resolveContextWarningWindowTokens({
+            agentId,
+            metadata: props.metadata ?? null,
+            usageData: props.usageData,
+        }),
+        [agentId, props.metadata, props.usageData],
+    );
+
+    const contextWarning = React.useMemo(() => {
+        const alwaysShow = props.alwaysShowContextSize ?? false;
+        if (typeof contextWindowTokens !== 'number') {
+            return null;
+        }
+        if (!props.usageData && !alwaysShow) {
+            return null;
+        }
+
+        return getContextWarning({
+            contextSize: props.usageData?.contextSize ?? 0,
+            contextWindowTokens,
+            alwaysShow,
+            theme,
+        });
+    }, [contextWindowTokens, props.alwaysShowContextSize, props.usageData, theme]);
 
     const agentInputEnterToSend = useSetting('agentInputEnterToSend');
+    const agentInputEnterToSendNative = useSetting('agentInputEnterToSendNative');
     const agentInputHistoryScope = useSetting('agentInputHistoryScope');
     const agentInputActionBarLayout = useSetting('agentInputActionBarLayout');
     const agentInputChipDensity = useSetting('agentInputChipDensity');
@@ -808,6 +832,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     });
 
     const sendActionDisabled = Boolean(props.disabled || props.isSendDisabled || props.isSending);
+    const enterToSendEnabled = Platform.OS === 'web'
+        ? agentInputEnterToSend === true
+        : agentInputEnterToSendNative === true;
 
     const handleSend = React.useCallback(() => {
         if (sendActionDisabled) {
@@ -1626,7 +1653,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 }
             }
 
-            if (agentInputEnterToSend && event.key === 'Enter' && !event.shiftKey) {
+            if (enterToSendEnabled && event.key === 'Enter' && !event.shiftKey) {
                 if (!sendActionDisabled && props.value.trim()) {
                     handleSend();
                     return true; // Key was handled
@@ -1646,7 +1673,21 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
         }
         return false; // Key was not handled
-            }, [suggestions, moveUp, moveDown, selected, handleSuggestionSelect, inputState.text, inputState.selection.start, inputState.selection.end, props.showAbortButton, props.onAbort, isAborting, handleAbortPress, agentInputEnterToSend, props.value, handleSend, props.onPermissionModeChange, agentId, permissionModeOrder, effectivePermissionPolicy.effectiveMode, messageHistory, props.onChangeText, sendActionDisabled]);
+            }, [suggestions, moveUp, moveDown, selected, handleSuggestionSelect, inputState.text, inputState.selection.start, inputState.selection.end, props.showAbortButton, props.onAbort, isAborting, handleAbortPress, enterToSendEnabled, props.value, handleSend, props.onPermissionModeChange, agentId, permissionModeOrder, effectivePermissionPolicy.effectiveMode, messageHistory, props.onChangeText, sendActionDisabled]);
+
+    const handleSubmitEditing = React.useCallback(() => {
+        if (Platform.OS === 'web') return;
+        if (!enterToSendEnabled) return;
+        if (sendActionDisabled) return;
+        const hasSendableInput = Boolean(props.value.trim()) || props.hasSendableAttachments === true;
+        if (!hasSendableInput) return;
+        handleSend();
+    }, [enterToSendEnabled, handleSend, props.hasSendableAttachments, props.value, sendActionDisabled]);
+
+    const submitBehavior = React.useMemo<MultiTextInputSubmitBehavior | undefined>(() => {
+        if (Platform.OS === 'web') return undefined;
+        return enterToSendEnabled ? 'submit' : 'newline';
+    }, [enterToSendEnabled]);
 
 
 
@@ -1863,6 +1904,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                     placeholder={props.placeholder}
                                     onKeyPress={handleKeyPress}
                                     onStateChange={handleInputStateChange}
+                                    submitBehavior={submitBehavior}
+                                    onSubmitEditing={handleSubmitEditing}
                                     maxHeight={props.inputMaxHeight ?? defaultInputMaxHeight}
                                     editable={!props.disabled}
                                     onFilesPasted={props.onAttachmentsAdded}
@@ -2034,6 +2077,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         placeholder={props.placeholder}
                                         onKeyPress={handleKeyPress}
                                         onStateChange={handleInputStateChange}
+                                        submitBehavior={submitBehavior}
+                                        onSubmitEditing={handleSubmitEditing}
                                         maxHeight={props.inputMaxHeight ?? defaultInputMaxHeight}
                                         editable={!props.disabled}
                                         onFilesPasted={props.onAttachmentsAdded}

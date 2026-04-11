@@ -15,14 +15,18 @@ import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeFor
 import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
 import { PathInputBrowseButton } from '@/components/ui/pathBrowser/PathInputBrowseButton';
 import { type ModalPortalTarget, useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
+import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 
 
 type PathSelectorBaseProps = {
     machineHomeDir: string;
     selectedPath: string;
     onChangeSelectedPath: (path: string) => void;
+    onChangeDraftSelectedPath?: (path: string) => void;
     onSubmitSelectedPath?: (path: string) => void;
+    onBeforeBrowseMachinePath?: () => void | Promise<void>;
     submitBehavior?: 'showRow' | 'confirm';
+    commitDraftOnBlur?: boolean;
     recentPaths: ReadonlyArray<string>;
     usePickerSearch: boolean;
     searchVariant?: 'header' | 'group' | 'belowInput' | 'none';
@@ -38,7 +42,6 @@ type PathSelectorBaseProps = {
         machineId: string | null;
         serverId?: string | null;
         title?: string;
-        onBeforeOpen?: () => void | Promise<void>;
         webPortalTarget?: ModalPortalTarget;
     }>;
 };
@@ -124,6 +127,7 @@ export function PathSelector({
     machineHomeDir,
     selectedPath,
     onChangeSelectedPath,
+    onChangeDraftSelectedPath,
     recentPaths,
     usePickerSearch,
     searchVariant = 'header',
@@ -132,7 +136,9 @@ export function PathSelector({
     favoriteDirectories,
     onChangeFavoriteDirectories,
     onSubmitSelectedPath,
+    onBeforeBrowseMachinePath,
     submitBehavior = 'showRow',
+    commitDraftOnBlur = false,
     focusInputOnSelect = true,
     machineBrowse,
 }: PathSelectorProps) {
@@ -298,10 +304,11 @@ export function PathSelector({
 
     const handleChangeSelectedPath = React.useCallback((text: string) => {
         setDraftSelectedPath(text);
+        onChangeDraftSelectedPath?.(text);
         if (submittedCustomPath && text.trim() !== submittedCustomPath) {
             setSubmittedCustomPath(null);
         }
-    }, [submittedCustomPath]);
+    }, [onChangeDraftSelectedPath, submittedCustomPath]);
 
     const focusInputAtEnd = React.useCallback((value: string) => {
         if (!focusInputOnSelect) return;
@@ -318,18 +325,20 @@ export function PathSelector({
     const setPathAndFocus = React.useCallback((path: string) => {
         setDraftSelectedPath(path);
         onChangeSelectedPath(path);
+        onChangeDraftSelectedPath?.(path);
         if (submitBehavior === 'confirm') {
             onSubmitSelectedPath?.(path);
             return;
         }
         setSubmittedCustomPath(null);
         focusInputAtEnd(path);
-    }, [focusInputAtEnd, onChangeSelectedPath, onSubmitSelectedPath, submitBehavior]);
+    }, [focusInputAtEnd, onChangeDraftSelectedPath, onChangeSelectedPath, onSubmitSelectedPath, submitBehavior]);
 
     const handleSubmitPath = React.useCallback(() => {
         const trimmed = draftSelectedPath.trim();
         if (!trimmed) return;
 
+        onChangeDraftSelectedPath?.(trimmed);
         if (trimmed !== selectedPath) {
             onChangeSelectedPath(trimmed);
         }
@@ -338,18 +347,18 @@ export function PathSelector({
         if (submitBehavior !== 'confirm') {
             setSubmittedCustomPath(trimmed);
         }
-    }, [draftSelectedPath, onChangeSelectedPath, onSubmitSelectedPath, selectedPath, submitBehavior]);
+    }, [draftSelectedPath, onChangeDraftSelectedPath, onChangeSelectedPath, onSubmitSelectedPath, selectedPath, submitBehavior]);
 
     const handleBrowseMachinePath = React.useCallback(async () => {
         if (!machineBrowse?.enabled || !machineBrowse.machineId) return;
-        const browseStartPath = draftSelectedPath.trim() || machineHomeDir;
-        const resolvedPortalTarget = machineBrowse.webPortalTarget ?? modalPortalTarget;
-        if (machineBrowse.onBeforeOpen) {
-            await machineBrowse.onBeforeOpen();
-            await new Promise((resolve) => {
-                setTimeout(resolve, 0);
+        if (onBeforeBrowseMachinePath) {
+            await onBeforeBrowseMachinePath();
+            await new Promise<void>((resolve) => {
+                deferOnWeb(resolve);
             });
         }
+        const browseStartPath = draftSelectedPath.trim() || machineHomeDir;
+        const resolvedPortalTarget = machineBrowse.webPortalTarget ?? modalPortalTarget;
         const selected = await openMachinePathBrowserModal({
             machineId: machineBrowse.machineId,
             serverId: machineBrowse.serverId,
@@ -361,6 +370,7 @@ export function PathSelector({
             if (isMountedRef.current) {
                 setDraftSelectedPath(selected);
             }
+            onChangeDraftSelectedPath?.(selected);
             onChangeSelectedPath(selected);
             if (submitBehavior === 'confirm') {
                 onSubmitSelectedPath?.(selected);
@@ -370,7 +380,7 @@ export function PathSelector({
                 setSubmittedCustomPath(null);
             }
         }
-    }, [draftSelectedPath, machineBrowse, machineHomeDir, modalPortalTarget, onChangeSelectedPath, onSubmitSelectedPath, submitBehavior]);
+    }, [draftSelectedPath, machineBrowse, machineHomeDir, modalPortalTarget, onBeforeBrowseMachinePath, onChangeDraftSelectedPath, onChangeSelectedPath, onSubmitSelectedPath, submitBehavior]);
 
     const renderRightElement = React.useCallback((absolutePath: string, isSelected: boolean, isFavorite: boolean) => {
         return (

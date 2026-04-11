@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { View, Pressable, Platform } from 'react-native';
+import { View, Pressable } from 'react-native';
 import { Stack, useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { Typography } from '@/constants/Typography';
 import { useAllMachines, useAllSessionListRenderables, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
@@ -10,6 +10,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { getRecentPathsForMachine } from '@/utils/sessions/recentPaths';
 import { Text } from '@/components/ui/text/Text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { NewSessionScreenPortalScope, createNewSessionContainedModalScreenOptions } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { NewSessionPathSelectionContent } from '@/components/sessions/new/components/NewSessionPathSelectionContent';
 
@@ -140,11 +141,10 @@ export default React.memo(function PathPickerScreen() {
 
     const screenOptions = React.useMemo(() => {
         return {
-            headerShown: true,
-            title: headerTitle,
-            headerTitle,
-            headerBackTitle,
-            presentation: Platform.OS === 'ios' ? 'containedModal' : undefined,
+            ...createNewSessionContainedModalScreenOptions({
+                title: headerTitle,
+                headerBackTitle,
+            }),
             headerLeft,
             headerRight,
         } as const;
@@ -152,7 +152,7 @@ export default React.memo(function PathPickerScreen() {
 
     if (!machine) {
         return (
-            <>
+            <NewSessionScreenPortalScope>
                 <Stack.Screen
                     options={screenOptions}
                 />
@@ -161,12 +161,12 @@ export default React.memo(function PathPickerScreen() {
                         <Text style={styles.emptyText}>{t('newSession.noMachineSelected')}</Text>
                     </View>
                 </ItemList>
-            </>
+            </NewSessionScreenPortalScope>
         );
     }
 
     return (
-        <>
+        <NewSessionScreenPortalScope>
             <Stack.Screen
                 options={screenOptions}
             />
@@ -187,7 +187,7 @@ export default React.memo(function PathPickerScreen() {
                     machineId: machine.id,
                 }}
             />
-        </>
+        </NewSessionScreenPortalScope>
     );
 });
 

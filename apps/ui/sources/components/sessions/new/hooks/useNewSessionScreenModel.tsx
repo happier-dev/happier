@@ -487,12 +487,16 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         setSelectedMachineId,
         selectedPath,
         setSelectedPath,
+        setDraftSelectedPath,
+        getRequestedPath,
         getBestPathForMachine,
     } = useNewSessionMachinePathState({
         machines,
         recentMachinePaths,
         machineIdParam: effectiveMachineIdParam,
         pathParam: effectivePathParam,
+        persistedMachineId: persistedDraft?.selectedMachineId ?? tempSessionData?.machineId,
+        persistedPath: hydratedPersistedAuthoringDraft?.directory ?? hydratedTempAuthoringDraft?.directory,
     });
     const [pathPickerSearchQuery, setPathPickerSearchQuery] = React.useState('');
     const repoScmSnapshot = useNewSessionRepoScmSnapshot({
@@ -857,7 +861,10 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
                 machineHomeDir={selectedMachine?.metadata?.homeDir || '/home'}
                 selectedPath={selectedPath}
                 onChangeSelectedPath={setSelectedPath}
+                onChangeDraftSelectedPath={setDraftSelectedPath}
+                onBeforeBrowseMachinePath={requestClose}
                 submitBehavior="confirm"
+                commitDraftOnBlur={true}
                 onSubmitSelectedPath={(nextPath) => {
                     setSelectedPath(nextPath);
                     requestClose();
@@ -873,7 +880,6 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
                     enabled: true,
                     machineId: selectedMachine?.id ?? null,
                     serverId: targetServerId ?? null,
-                    onBeforeOpen: requestClose,
                     webPortalTarget: modalPortalTarget,
                 }}
             />
@@ -892,6 +898,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         selectedMachine?.metadata?.homeDir,
         selectedPath,
         setFavoriteDirectories,
+        setDraftSelectedPath,
         setSelectedPath,
         modalPortalTarget,
         targetServerId,
@@ -1290,6 +1297,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         router,
         selectedMachineId,
         selectedPath,
+        getRequestedPath,
         selectedMachine,
         setIsCreating,
         setIsResumeSupportChecking,
@@ -1397,8 +1405,10 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     } = useNewSessionWizardProps({
         theme,
         styles,
+        safeAreaTop: safeArea.top,
         safeAreaBottom: safeArea.bottom,
         headerHeight,
+        newSessionTopPadding: simpleNewSessionTopPadding,
         newSessionSidePadding,
         newSessionBottomPadding,
         shouldBottomAnchor,
@@ -1478,6 +1488,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         setSelectedMachineId,
         getBestPathForMachine,
         setSelectedPath,
+        setDraftSelectedPath,
         pathPopover,
         favoriteMachines,
         setFavoriteMachines,

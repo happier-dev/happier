@@ -48,7 +48,7 @@ describe('effectiveRuntimeControlSurface', () => {
             sessionCapabilities: {
                 sessionFork: { conversation: 'supported' },
             },
-            localControl: { supported: true, topology: 'exclusive', attachStrategy: 'tmux' },
+            localControl: { supported: true, topology: 'exclusive', attachStrategy: 'terminal_host' },
         });
     });
 });

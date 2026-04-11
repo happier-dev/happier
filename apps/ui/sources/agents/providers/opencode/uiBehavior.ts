@@ -8,6 +8,7 @@ import {
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveOpenCodeBrowseSourceOptions } from '@/agents/providers/opencode/directSessions/resolveOpenCodeBrowseSourceOptions';
 import { resolveOpenCodeLinkEnsureRequestExtras } from '@/agents/providers/opencode/directSessions/resolveOpenCodeLinkEnsureRequestExtras';
+import { buildOpenCodeSessionHandoffProviderPatch } from '@/agents/providers/opencode/buildOpenCodeSessionHandoffProviderPatch';
 
 function readOpenCodeScopedServerBaseUrlFromSettings(opts: {
     settings: Record<string, unknown> | null | undefined;
@@ -86,6 +87,16 @@ export const OPENCODE_UI_BEHAVIOR_OVERRIDE: AgentUiBehavior = {
             getSourceOptions: () => resolveOpenCodeBrowseSourceOptions(),
             buildLinkEnsureRequestExtras: ({ candidate }) => resolveOpenCodeLinkEnsureRequestExtras({ candidate }),
         },
+    },
+    sessionHandoff: {
+        buildProviderPatch: ({ metadata, targetRemoteSessionId, targetDirectSource, targetRuntimeDescriptor }) => (
+            buildOpenCodeSessionHandoffProviderPatch({
+                metadata,
+                targetRemoteSessionId,
+                targetDirectSource,
+                targetRuntimeDescriptor,
+            })
+        ),
     },
     payload: {
         buildSpawnEnvironmentVariables: ({ agentId, settings, environmentVariables, newSessionOptions }) => {

@@ -134,6 +134,81 @@ describe('useNewSessionMachinePathState', () => {
         await hook.unmount();
     });
 
+    it('reconciles a persisted machine preference to another online machine when the persisted machine is offline', async () => {
+        const now = Date.now();
+
+        const hook = await renderMachinePathState({
+            machines: toMachines(
+                { id: 'machine-online', metadata: { homeDir: '/online' }, active: true, activeAt: now - 10_000 },
+                { id: 'machine-offline', metadata: { homeDir: '/offline' }, active: false, activeAt: now - 10 * 60_000 },
+            ),
+            recentMachinePaths: [],
+            machineIdParam: null,
+            pathParam: null,
+            persistedMachineId: 'machine-offline',
+            persistedPath: '/repo/stale',
+        } as HookParams & {
+            persistedMachineId: string;
+            persistedPath: string;
+        });
+
+        expect(getSelection(hook.getCurrent())).toEqual({
+            selectedMachineId: 'machine-online',
+            selectedPath: '/online',
+        });
+
+        await hook.unmount();
+    });
+
+    it('tracks a typed draft path separately from the committed selectedPath until the path is committed', async () => {
+        const now = Date.now();
+
+        const hook = await renderMachinePathState({
+            machines: toMachines(
+                { id: 'machine-online', metadata: { homeDir: '/home/online' }, active: true, activeAt: now - 10_000 },
+            ),
+            recentMachinePaths: [{ machineId: 'machine-online', path: '/repo/current' }],
+            machineIdParam: null,
+            pathParam: null,
+        });
+
+        expect(getSelection(hook.getCurrent())).toEqual({
+            selectedMachineId: 'machine-online',
+            selectedPath: '/repo/current',
+        });
+        expect((hook.getCurrent() as HookState & {
+            getRequestedPath: () => string;
+        }).getRequestedPath()).toBe('/repo/current');
+
+        await act(async () => {
+            (hook.getCurrent() as HookState & {
+                setDraftSelectedPath: (path: string) => void;
+            }).setDraftSelectedPath('/repo/draft');
+        });
+
+        expect(getSelection(hook.getCurrent())).toEqual({
+            selectedMachineId: 'machine-online',
+            selectedPath: '/repo/current',
+        });
+        expect((hook.getCurrent() as HookState & {
+            getRequestedPath: () => string;
+        }).getRequestedPath()).toBe('/repo/draft');
+
+        await act(async () => {
+            hook.getCurrent().setSelectedPath('/repo/committed');
+        });
+
+        expect(getSelection(hook.getCurrent())).toEqual({
+            selectedMachineId: 'machine-online',
+            selectedPath: '/repo/committed',
+        });
+        expect((hook.getCurrent() as HookState & {
+            getRequestedPath: () => string;
+        }).getRequestedPath()).toBe('/repo/committed');
+
+        await hook.unmount();
+    });
+
     it('treats machines as eligible for initial selection when they are online via activeAt even if active=false', async () => {
         const now = Date.now();
 

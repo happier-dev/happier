@@ -57,6 +57,30 @@ function readCodexSource(details: Record<string, unknown> | undefined) {
     };
 }
 
+function shouldUseCandidateCodexSource(params: Readonly<{
+    selectedSource: Readonly<{
+        kind: 'codexHome';
+        home: 'user' | 'connectedService';
+        connectedServiceId?: string;
+        connectedServiceProfileId?: string;
+        homePath?: string;
+    }>;
+    candidateSource: Readonly<{
+        kind: 'codexHome';
+        home: 'user' | 'connectedService';
+        connectedServiceId?: string;
+        connectedServiceProfileId?: string;
+        homePath?: string;
+    }>;
+}>): boolean {
+    if (params.selectedSource.home !== params.candidateSource.home) return false;
+    if (params.selectedSource.home === 'connectedService') {
+        return params.selectedSource.connectedServiceId === params.candidateSource.connectedServiceId
+            && (params.selectedSource.connectedServiceProfileId ?? '') === (params.candidateSource.connectedServiceProfileId ?? '');
+    }
+    return true;
+}
+
 export function resolveCodexLinkEnsureRequestExtras(params: Readonly<{
     source: Readonly<{
         kind: 'codexHome';
@@ -69,14 +93,20 @@ export function resolveCodexLinkEnsureRequestExtras(params: Readonly<{
 }>): DirectBrowseLinkEnsureRequestExtras {
     const codexBackendMode = readCodexBackendMode(params.candidate.details);
     const candidateSource = readCodexSource(params.candidate.details);
-    const effectiveSource = candidateSource ?? params.source;
+    const compatibleCandidateSource = candidateSource && shouldUseCandidateCodexSource({
+        selectedSource: params.source,
+        candidateSource,
+    })
+        ? candidateSource
+        : null;
+    const effectiveSource = compatibleCandidateSource ?? params.source;
     const runtimeDescriptor = buildCanonicalRuntimeDescriptor({
         details: params.candidate.details,
         source: effectiveSource,
     });
     return {
         ...(codexBackendMode ? { codexBackendMode } : {}),
-        ...(candidateSource ? { source: candidateSource } : {}),
+        ...(compatibleCandidateSource ? { source: compatibleCandidateSource } : {}),
         ...(runtimeDescriptor ? { runtimeDescriptor } : {}),
     };
 }

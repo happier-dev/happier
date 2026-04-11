@@ -1,10 +1,23 @@
 import type { Theme } from '@/theme';
 import { t } from '@/text';
 
-const MAX_CONTEXT_SIZE = 190000;
+export function getContextWarning({
+    contextSize,
+    contextWindowTokens,
+    alwaysShow = false,
+    theme,
+}: {
+    contextSize: number;
+    contextWindowTokens: number | null;
+    alwaysShow?: boolean;
+    theme: Pick<Theme, 'colors'>;
+}) {
+    if (typeof contextWindowTokens !== 'number' || !Number.isFinite(contextWindowTokens) || contextWindowTokens <= 0) {
+        return null;
+    }
 
-export function getContextWarning(contextSize: number, alwaysShow: boolean = false, theme: Theme) {
-    const percentageUsed = (contextSize / MAX_CONTEXT_SIZE) * 100;
+    const safeContextSize = Number.isFinite(contextSize) && contextSize >= 0 ? contextSize : 0;
+    const percentageUsed = (safeContextSize / contextWindowTokens) * 100;
     const percentageRemaining = Math.max(0, Math.min(100, 100 - percentageUsed));
 
     if (percentageRemaining <= 5) {
@@ -17,4 +30,3 @@ export function getContextWarning(contextSize: number, alwaysShow: boolean = fal
     }
     return null; // No display needed
 }
-

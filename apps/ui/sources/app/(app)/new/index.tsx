@@ -6,7 +6,7 @@ import { useSessionGettingStartedGuidanceBaseModel } from '@/components/sessions
 import { NewSessionSimplePanel } from '@/components/sessions/new/components/NewSessionSimplePanel';
 import { NewSessionWizard } from '@/components/sessions/new/components/NewSessionWizard';
 import { useNewSessionScreenModel } from '@/components/sessions/new/hooks/useNewSessionScreenModel';
-import { PopoverScope } from '@/components/ui/popover';
+import { NewSessionScreenPortalScope } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { parseNewSessionCheckoutDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 import { loadNewSessionDraft } from '@/sync/domains/state/persistence';
 import { peekTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
@@ -65,15 +65,15 @@ function NewSessionScreen() {
 
     if (baseModel.kind === 'connect_machine' && !hasSeededDraftIntent && !hasSeededRouteIntent) {
         return (
-            <PopoverScope>
+            <NewSessionScreenPortalScope>
                 <SessionGettingStartedGuidance variant="newSessionBlocking" />
-            </PopoverScope>
+            </NewSessionScreenPortalScope>
         );
     }
     return (
-        <PopoverScope>
+        <NewSessionScreenPortalScope>
             <NewSessionScreenInner />
-        </PopoverScope>
+        </NewSessionScreenPortalScope>
     );
 }
 

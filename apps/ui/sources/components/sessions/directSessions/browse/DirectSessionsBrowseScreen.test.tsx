@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { DirectSessionCandidateV1 } from '@happier-dev/protocol';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { createPassThroughModule } from '@/dev/testkit/mocks/components';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
@@ -28,7 +29,7 @@ const candidatesListSpy = vi.hoisted(() => vi.fn(async () => ({
                 source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' },
             },
         },
-    ],
+    ] as DirectSessionCandidateV1[],
     nextCursor: null,
 })));
 const linkEnsureSpy = vi.hoisted(() => vi.fn(async () => ({
@@ -414,6 +415,87 @@ describe('DirectSessionsBrowseScreen', () => {
             directoryHint: '/tmp/worktree',
             codexBackendMode: 'appServer',
             source: expect.objectContaining({ kind: 'codexHome', home: 'connectedService', connectedServiceId: 'openai-codex', connectedServiceProfileId: 'work' } as any),
+        });
+    });
+
+    it('uses the candidate-provided ohMyPi agent dir when linking from the default source option', async () => {
+        candidatesListSpy.mockResolvedValueOnce({
+            ok: true,
+            candidates: [
+                {
+                    remoteSessionId: 'omp-session-1',
+                    title: 'Existing oh-my-pi Session',
+                    updatedAtMs: 1_700_000_000_000,
+                    activity: 'running',
+                    details: {
+                        path: '/tmp/omp-worktree',
+                        source: {
+                            kind: 'ohMyPiAgentDir',
+                            agentDir: '/tmp/omp-agent',
+                        },
+                    },
+                },
+            ],
+            nextCursor: null,
+        });
+        const { DirectSessionsBrowseScreen } = await directSessionsBrowseScreenModulePromise;
+        const screen = await renderScreen(<DirectSessionsBrowseScreen />);
+        const tree = screen.tree;
+
+        await flushHookEffects();
+        candidatesListSpy.mockClear();
+
+        const providerDropdown = findDropdownMenuByTriggerTestId(screen, 'direct-session-provider-picker-trigger');
+        expect(providerDropdown).toBeTruthy();
+
+        candidatesListSpy.mockResolvedValueOnce({
+            ok: true,
+            candidates: [
+                {
+                    remoteSessionId: 'omp-session-1',
+                    title: 'Existing oh-my-pi Session',
+                    updatedAtMs: 1_700_000_000_000,
+                    activity: 'running',
+                    details: {
+                        path: '/tmp/omp-worktree',
+                        source: {
+                            kind: 'ohMyPiAgentDir',
+                            agentDir: '/tmp/omp-agent',
+                        },
+                    },
+                },
+            ],
+            nextCursor: null,
+        });
+
+        await act(async () => {
+            await providerDropdown!.props?.onSelect?.('ohMyPi');
+        });
+
+        await act(async () => {
+            tree.update(<DirectSessionsBrowseScreen />);
+        });
+        await flushHookEffects();
+
+        expect(candidatesListSpy).toHaveBeenCalledWith({
+            machineId: 'machine-1',
+            providerId: 'ohMyPi',
+            source: { kind: 'ohMyPiAgentDir' },
+            limit: 50,
+        });
+
+        await screen.pressByTestIdAsync('direct-session-candidate:omp-session-1');
+
+        expect(linkEnsureSpy).toHaveBeenCalledWith({
+            machineId: 'machine-1',
+            providerId: 'ohMyPi',
+            remoteSessionId: 'omp-session-1',
+            titleHint: 'Existing oh-my-pi Session',
+            directoryHint: '/tmp/omp-worktree',
+            source: {
+                kind: 'ohMyPiAgentDir',
+                agentDir: '/tmp/omp-agent',
+            },
         });
     });
 

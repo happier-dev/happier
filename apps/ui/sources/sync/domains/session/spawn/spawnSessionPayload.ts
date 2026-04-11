@@ -1,6 +1,10 @@
 import type { TerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { buildCodexAgentRuntimeDescriptor, type CodexBackendMode } from '@happier-dev/agents';
+import {
+    isVersionSupported,
+    MINIMUM_CLI_BACKEND_TARGET_SPAWN_VERSION,
+} from '@/utils/system/versionUtils';
 import type {
     AcpConfigOptionOverridesV1,
     AgentRuntimeDescriptorV1,
@@ -90,6 +94,91 @@ export type SpawnHappySessionRpcParams = CodexBackendTransportFields & {
     connectedServices?: unknown
     mcpSelection?: SessionMcpSelectionV1
 };
+
+export type LegacySpawnHappySessionRpcParams = {
+    type: 'spawn-in-directory'
+    directory: string
+    approvedNewDirectoryCreation?: boolean
+    agent?: string
+    profileId?: string
+    environmentVariables?: Record<string, string>
+    resume?: string
+    permissionMode?: PermissionMode
+    permissionModeUpdatedAt?: number
+    modelId?: string
+    modelUpdatedAt?: number
+    experimentalCodexAcp?: boolean
+    terminal?: TerminalSpawnOptions
+    windowsRemoteSessionConsole?: 'hidden' | 'visible'
+    connectedServices?: unknown
+};
+
+export type CompatibleSpawnHappySessionRpcParams =
+    | SpawnHappySessionRpcParams
+    | LegacySpawnHappySessionRpcParams;
+
+export function shouldUseLegacySpawnHappySessionRpcParams(daemonCliVersion?: string | null): boolean {
+    const normalizedVersion = typeof daemonCliVersion === 'string' ? daemonCliVersion.trim() : '';
+    return normalizedVersion.length > 0
+        && !isVersionSupported(normalizedVersion, MINIMUM_CLI_BACKEND_TARGET_SPAWN_VERSION);
+}
+
+function resolveLegacyWindowsRemoteSessionConsole(params: Readonly<{
+    windowsRemoteSessionLaunchMode?: WindowsRemoteSessionLaunchMode;
+    windowsRemoteSessionConsole?: 'hidden' | 'visible';
+}>): 'hidden' | 'visible' | undefined {
+    if (params.windowsRemoteSessionConsole === 'hidden' || params.windowsRemoteSessionConsole === 'visible') {
+        return params.windowsRemoteSessionConsole;
+    }
+    if (params.windowsRemoteSessionLaunchMode === 'hidden') return 'hidden';
+    if (params.windowsRemoteSessionLaunchMode === 'console') return 'visible';
+    return undefined;
+}
+
+function buildLegacySpawnHappySessionRpcParams(options: SpawnSessionOptions): LegacySpawnHappySessionRpcParams {
+    const params = buildSpawnHappySessionRpcParams(options);
+    const legacyAgent = params.backendTarget.kind === 'builtInAgent' ? params.backendTarget.agentId.trim() : '';
+    if (legacyAgent.length === 0) {
+        throw new Error('Legacy spawn payload is only available for built-in agents');
+    }
+
+    const legacyConsole = resolveLegacyWindowsRemoteSessionConsole({
+        windowsRemoteSessionLaunchMode: params.windowsRemoteSessionLaunchMode,
+        windowsRemoteSessionConsole: params.windowsRemoteSessionConsole,
+    });
+
+    return {
+        type: 'spawn-in-directory',
+        directory: params.directory,
+        approvedNewDirectoryCreation: params.approvedNewDirectoryCreation,
+        agent: legacyAgent,
+        profileId: params.profileId,
+        environmentVariables: params.environmentVariables,
+        resume: params.resume,
+        permissionMode: params.permissionMode,
+        permissionModeUpdatedAt: params.permissionModeUpdatedAt,
+        ...(typeof params.modelId === 'string' && typeof params.modelUpdatedAt === 'number'
+            ? {
+                modelId: params.modelId,
+                modelUpdatedAt: params.modelUpdatedAt,
+            }
+            : {}),
+        ...(params.codexBackendMode === 'acp' ? { experimentalCodexAcp: true } : {}),
+        ...(params.terminal ? { terminal: params.terminal } : {}),
+        ...(legacyConsole ? { windowsRemoteSessionConsole: legacyConsole } : {}),
+        ...(params.connectedServices !== undefined ? { connectedServices: params.connectedServices } : {}),
+    };
+}
+
+export function buildCompatibleSpawnHappySessionRpcParams(params: Readonly<{
+    options: SpawnSessionOptions;
+    daemonCliVersion?: string | null;
+}>): CompatibleSpawnHappySessionRpcParams {
+    if (!shouldUseLegacySpawnHappySessionRpcParams(params.daemonCliVersion)) {
+        return buildSpawnHappySessionRpcParams(params.options);
+    }
+    return buildLegacySpawnHappySessionRpcParams(params.options);
+}
 
 export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): SpawnHappySessionRpcParams {
     const {

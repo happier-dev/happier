@@ -8,6 +8,7 @@ import {
 } from '@/agents/providers/claude/sessionSubagents/createClaudeSubagentLauncherDetailsTab';
 import { SessionClaudeSubagentLauncherView } from '@/agents/providers/claude/sessionSubagents/SessionClaudeSubagentLauncherView';
 import { resolveClaudeBrowseSourceOptions } from '@/agents/providers/claude/directSessions/resolveClaudeBrowseSourceOptions';
+import { buildClaudeSessionHandoffProviderPatch } from '@/agents/providers/claude/buildClaudeSessionHandoffProviderPatch';
 
 export const CLAUDE_UI_BEHAVIOR_OVERRIDE: AgentUiBehavior = {
     mcpServers: {
@@ -19,6 +20,9 @@ export const CLAUDE_UI_BEHAVIOR_OVERRIDE: AgentUiBehavior = {
             order: 20,
             getSourceOptions: () => resolveClaudeBrowseSourceOptions(),
         },
+    },
+    sessionHandoff: {
+        buildProviderPatch: () => buildClaudeSessionHandoffProviderPatch(),
     },
     sessionSubagents: {
         renderLaunchCards: ({ scopeId, subagents }) => {

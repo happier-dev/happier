@@ -34,8 +34,10 @@ export function useNewSessionWizardProps(params: Readonly<{
     // Layout
     theme: any;
     styles: any;
+    safeAreaTop?: number;
     safeAreaBottom: number;
     headerHeight: number;
+    newSessionTopPadding?: number;
     newSessionSidePadding: number;
     newSessionBottomPadding: number;
     shouldBottomAnchor: boolean;
@@ -112,6 +114,7 @@ export function useNewSessionWizardProps(params: Readonly<{
     setSelectedMachineId: (id: string) => void;
     getBestPathForMachine: (id: string | null) => string;
     setSelectedPath: (path: string) => void;
+    setDraftSelectedPath?: (path: string) => void;
     favoriteMachines: ReadonlyArray<string>;
     setFavoriteMachines: (ids: string[]) => void;
     selectedPath: string;
@@ -149,8 +152,10 @@ export function useNewSessionWizardProps(params: Readonly<{
         return {
             theme: params.theme,
             styles: params.styles,
+            safeAreaTop: params.safeAreaTop,
             safeAreaBottom: params.safeAreaBottom,
             headerHeight: params.headerHeight,
+            newSessionTopPadding: params.newSessionTopPadding,
             newSessionSidePadding: params.newSessionSidePadding,
             newSessionBottomPadding: params.newSessionBottomPadding,
             shouldBottomAnchor: params.shouldBottomAnchor,
@@ -159,6 +164,8 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.headerHeight,
         params.newSessionBottomPadding,
         params.newSessionSidePadding,
+        params.newSessionTopPadding,
+        params.safeAreaTop,
         params.shouldBottomAnchor,
         params.safeAreaBottom,
         params.theme,
@@ -391,6 +398,7 @@ export function useNewSessionWizardProps(params: Readonly<{
             setSelectedMachineId: params.setSelectedMachineId as any,
             getBestPathForMachine: params.getBestPathForMachine as any,
             setSelectedPath: params.setSelectedPath,
+            setDraftSelectedPath: params.setDraftSelectedPath,
             favoriteMachines: params.favoriteMachines,
             setFavoriteMachines: params.setFavoriteMachines,
             selectedPath: params.selectedPath,
@@ -415,6 +423,7 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.setFavoriteMachines,
         params.setSelectedMachineId,
         params.setSelectedPath,
+        params.setDraftSelectedPath,
         params.useMachinePickerSearch,
         params.usePathPickerSearch,
     ]);

@@ -10,8 +10,11 @@ export type NewSessionPathSelectionContentProps = Readonly<{
     machineHomeDir: string;
     selectedPath: string;
     onChangeSelectedPath: (path: string) => void;
+    onChangeDraftSelectedPath?: (path: string) => void;
     onSubmitSelectedPath?: (path: string) => void;
+    onBeforeBrowseMachinePath?: () => void | Promise<void>;
     submitBehavior?: React.ComponentProps<typeof PathSelector>['submitBehavior'];
+    commitDraftOnBlur?: React.ComponentProps<typeof PathSelector>['commitDraftOnBlur'];
     recentPaths: ReadonlyArray<string>;
     usePickerSearch: boolean;
     searchQuery: string;
@@ -30,8 +33,11 @@ export function NewSessionPathSelectionContent(props: NewSessionPathSelectionCon
                     machineHomeDir={props.machineHomeDir}
                     selectedPath={props.selectedPath}
                     onChangeSelectedPath={props.onChangeSelectedPath}
+                    onChangeDraftSelectedPath={props.onChangeDraftSelectedPath}
                     submitBehavior={props.submitBehavior}
                     onSubmitSelectedPath={props.onSubmitSelectedPath}
+                    onBeforeBrowseMachinePath={props.onBeforeBrowseMachinePath}
+                    commitDraftOnBlur={props.commitDraftOnBlur}
                     recentPaths={props.recentPaths}
                     usePickerSearch={props.usePickerSearch}
                     searchVariant="belowInput"

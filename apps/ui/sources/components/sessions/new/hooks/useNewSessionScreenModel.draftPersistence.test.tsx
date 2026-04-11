@@ -1128,8 +1128,13 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         expect(model?.simpleProps?.machineName).toBe('Machine Two');
         expect(typeof model?.simpleProps?.machinePopover?.renderContent).toBe('function');
         expect(model?.simpleProps?.selectedPath).toBe('/repo/custom');
-        expect(model?.simpleProps?.checkoutCreationDraft).toBeNull();
-        expect(getCheckoutChipLabel(model)).toBe('newSession.checkout.noWorktree');
+        expect(model?.simpleProps?.checkoutCreationDraft).toEqual({
+            kind: 'git_worktree',
+            displayName: 'feature/auth',
+            baseRef: 'main',
+            branchMode: 'new',
+        });
+        expect(getCheckoutChipLabel(model)).toBe('newSession.checkout.newWorktree');
 
         await act(async () => {
             persistDraftNowRef.current?.();
@@ -1144,6 +1149,32 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
                 },
             },
         }));
+    });
+
+    it('keeps the typed path draft available to session creation before the path is committed', async () => {
+        let model: any = null;
+        await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
+        });
+
+        const content = model?.simpleProps?.pathPopover?.renderContent?.({
+            requestClose: () => {},
+        });
+        expect(content).toBeTruthy();
+
+        const popoverScreen = await renderScreen(content);
+        const input = popoverScreen.tree.findByProps({ testID: 'path-selector-input' });
+
+        act(() => {
+            input.props.onChangeText('/repo/custom/subdir');
+        });
+
+        expect(model?.simpleProps?.selectedPath).toBe('/repo/custom');
+        expect(useCreateNewSessionArgsRef.current).toEqual(expect.objectContaining({
+            selectedPath: '/repo/custom',
+            getRequestedPath: expect.any(Function),
+        }));
+        expect((useCreateNewSessionArgsRef.current?.getRequestedPath as (() => string) | undefined)?.()).toBe('/repo/custom/subdir');
     });
 
     it('hydrates scoped worktree intent on first render when the target server is already resolved', async () => {
@@ -1177,8 +1208,13 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         expect(model?.simpleProps?.selectedWorkspaceId).toBeUndefined();
         expect(model?.simpleProps?.selectedWorkspaceLocationId).toBeUndefined();
         expect(model?.simpleProps?.selectedWorkspaceCheckoutId).toBeUndefined();
-        expect(model?.simpleProps?.checkoutCreationDraft).toBeNull();
-        expect(getCheckoutChipLabel(model)).toBe('newSession.checkout.noWorktree');
+        expect(model?.simpleProps?.checkoutCreationDraft).toEqual({
+            kind: 'git_worktree',
+            displayName: 'feature/first-render-fix',
+            baseRef: 'main',
+            branchMode: 'new',
+        });
+        expect(getCheckoutChipLabel(model)).toBe('newSession.checkout.newWorktree');
         const getServerChip = () => model?.simpleProps?.agentInputExtraActionChips?.find((chip: any) => chip?.key === 'new-session-target-server');
         expect(getServerChip()?.controlId).toBe('server');
         expect(getServerChip()?.collapsedContentPopover).toEqual(expect.objectContaining({
