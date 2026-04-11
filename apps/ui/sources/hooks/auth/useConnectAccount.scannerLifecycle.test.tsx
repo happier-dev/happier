@@ -117,7 +117,7 @@ describe('useConnectAccount (scanner lifecycle)', () => {
   it('navigates to the in-app QR scanner on phone-sized web', async () => {
     screenState.platformOS = 'web';
     screenState.windowDimensions = { width: 360, height: 800 };
-    vi.stubGlobal('navigator', { maxTouchPoints: 5, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)' } as any);
+    vi.stubGlobal('navigator', { maxTouchPoints: 5, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)', mediaDevices: { getUserMedia: vi.fn() } } as any);
 
     const { useConnectAccount } = await import('./useConnectAccount');
 
