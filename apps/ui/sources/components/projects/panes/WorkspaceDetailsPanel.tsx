@@ -24,9 +24,11 @@ import { buildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope
 import { WorkspaceCommitDetailsView } from '@/components/projects/panes/details/views/WorkspaceCommitDetailsView';
 import { WorkspaceScmReviewDetailsView } from '@/components/projects/panes/details/views/WorkspaceScmReviewDetailsView';
 import { WorkspaceScmStashDetailsView } from '@/components/projects/panes/details/views/WorkspaceScmStashDetailsView';
-import { WorkspaceEmbeddedTerminalPane } from '@/components/projects/panes/details/views/WorkspaceEmbeddedTerminalPane';
 import type { DetailsTabState } from '@/components/appShell/panes/model/appPaneReducer';
 import { resolveWorkspaceRefDisplayName } from '@/components/projects/resolveWorkspaceRefDisplayName';
+import { ProjectTerminalSurface } from '@/components/projects/detail/surfaces/ProjectTerminalSurface';
+import { readTerminalDetailsCwd, readTerminalDetailsInstanceId } from '@/components/terminal/terminalDetailsTabModel';
+import { openProjectTerminalDetailsTab } from '@/components/projects/detail/openProjectTerminalDetailsTab';
 
 export type WorkspaceDetailsPanelHeaderActionRenderParams = Readonly<{
     iconButtonStyle: Readonly<Record<string, unknown>>;
@@ -82,12 +84,6 @@ function isScmStashResource(value: unknown): value is Readonly<{ kind: 'scmStash
     if (!value || typeof value !== 'object') return false;
     const maybe = value as { kind?: unknown };
     return maybe.kind === 'scmStash';
-}
-
-function isTerminalResource(value: unknown): value is Readonly<{ kind: 'terminal' }> {
-    if (!value || typeof value !== 'object') return false;
-    const maybe = value as { kind?: unknown };
-    return maybe.kind === 'terminal';
 }
 
 export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelProps) => {
@@ -277,14 +273,21 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         }
 
         if (resource?.kind === 'terminal') {
-            if (isTerminalResource(tab.resource)) {
+            const fallbackTerminalInstanceId =
+                typeof tab?.key === 'string' && tab.key.startsWith('terminal:')
+                    ? tab.key.slice('terminal:'.length)
+                    : 'main';
+            const terminalInstanceId = readTerminalDetailsInstanceId(tab.resource, fallbackTerminalInstanceId);
+            if (terminalInstanceId) {
                 return (
-                    <WorkspaceEmbeddedTerminalPane
+                    <ProjectTerminalSurface
                         scopeId={props.scopeId}
                         workspaceRefId={props.workspaceRef.id}
                         machineId={props.workspaceRef.machineId}
-                        rootPath={effectiveRootPath}
+                        rootPath={readTerminalDetailsCwd(tab.resource) ?? effectiveRootPath}
                         serverId={props.workspaceRef.serverId}
+                        terminalInstanceId={terminalInstanceId}
+                        closeOnUnmount={true}
                     />
                 );
             }
@@ -342,16 +345,9 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
                 {props.showTerminalHeaderAction !== false && deviceType !== 'phone' ? (
                     <Pressable
                         onPress={() => {
-                            deferOnWeb(() => {
-                                pane.openDetailsTab(
-                                    {
-                                        key: 'terminal',
-                                        kind: 'terminal',
-                                        title: t('settings.terminal'),
-                                        resource: { kind: 'terminal' },
-                                    },
-                                    { intent: 'pinned' },
-                                );
+                            openProjectTerminalDetailsTab({
+                                openDetailsTab: pane.openDetailsTab,
+                                cwd: effectiveRootPath,
                             });
                         }}
                         testID="workspace-details-open-terminal"
@@ -414,7 +410,11 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
             pane={pane}
             paddingTop={insets.top}
             headerPaddingTop={10}
-            testIds={{ root: 'workspace-details-panel-root' }}
+            testIds={{
+                root: 'workspace-details-panel-root',
+                tab: (safeTabKey) => `workspace-details-tab-${safeTabKey}`,
+                tabClose: (safeTabKey) => `workspace-details-tab-close-${safeTabKey}`,
+            }}
             forceEmptyState={props.forceOverviewMode}
             renderTabContent={renderTabContent}
             renderHeaderActions={renderHeaderActions}
