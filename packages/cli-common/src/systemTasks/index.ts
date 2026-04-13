@@ -78,6 +78,7 @@ export {
   readBackgroundServiceSetupGuidance,
 } from './setupServiceGuidance/readBackgroundServiceSetupGuidance.js';
 export {
+  formatBackgroundServiceManualRelayTakeoverPrompt,
   formatBackgroundServiceReleaseChannelSwitchPrompt,
   formatBackgroundServiceReplacementPrompt,
 } from './setupServiceGuidance/formatBackgroundServiceSetupPrompts.js';

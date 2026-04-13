@@ -114,6 +114,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 12,
         backgroundColor: theme.colors.surface,
     },
+    rowCompact: {
+        paddingVertical: 10,
+        gap: 10,
+    },
     rowSelected: {
         backgroundColor: theme.colors.surfacePressedOverlay,
     },
@@ -130,11 +134,18 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: 12,
     },
+    rowContentCompact: {
+        gap: 10,
+    },
     leading: {
         width: 26,
         height: 26,
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    leadingCompact: {
+        width: 22,
+        height: 22,
     },
     iconBox: {
         alignItems: 'center',
@@ -154,11 +165,19 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 15,
         lineHeight: 19,
     },
+    titleCompact: {
+        fontSize: 13,
+        lineHeight: 18,
+    },
     subtitle: {
         ...Typography.default(),
         color: theme.colors.textSecondary,
         fontSize: 13,
         lineHeight: 18,
+    },
+    subtitleCompact: {
+        fontSize: 12,
+        lineHeight: 16,
     },
     trailing: {
         flexDirection: 'row',
@@ -235,6 +254,14 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: 30,
         height: 30,
     },
+    iconPlainCompactBase: {
+        width: 24,
+        height: 24,
+    },
+    iconPlainCompactRunning: {
+        width: 24,
+        height: 24,
+    },
 }));
 
 export type PlanChecklistRowProps = Readonly<{
@@ -246,6 +273,7 @@ export type PlanChecklistRowProps = Readonly<{
     execution?: PlanChecklistExecutionState;
     expanded: boolean;
     childrenContent?: React.ReactNode;
+    depth?: number;
     onToggle: () => void;
     onToggleExpanded: () => void;
     onCopyDiagnostics?: () => void | Promise<void>;
@@ -274,7 +302,13 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
         }
         return undefined;
     }, [props.item.details, props.item.renderDetails, suppressRepeatedDetails]);
-    const detailsAvailable = Boolean(itemRenderDetails || props.childrenContent || (props.execution?.logs?.length ?? 0) > 0 || props.onCopyDiagnostics);
+    const hasDetailsContent = Boolean(
+        itemRenderDetails
+        || props.childrenContent
+        || (props.execution?.logs?.length ?? 0) > 0
+        || props.execution?.error,
+    );
+    const detailsAvailable = hasDetailsContent;
     const shouldRevealDetailsToggle = detailsAvailable && (Platform.OS !== 'web' || hovered || props.expanded);
     const iconName = props.phase === 'select'
         ? (status === 'done' ? 'checkmark-circle' : (props.selected ? 'checkmark-circle-outline' : 'ellipse-outline'))
@@ -293,6 +327,7 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
     const dimRow = props.phase === 'select' && props.item.disabled && props.item.satisfied;
     const statusSlotTestID = props.testID ? `${props.testID}-status-slot` : undefined;
     const usesOnboardingVariant = props.variant === 'onboarding';
+    const usesCompactNestedRow = usesOnboardingVariant && (props.depth ?? 0) > 0;
 
     const detailsToggle = detailsAvailable ? (
         <View style={styles.detailsToggleSlot} pointerEvents={shouldRevealDetailsToggle ? 'auto' : 'none'}>
@@ -329,14 +364,15 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
                 onHoverOut={Platform.OS === 'web' && detailsAvailable ? () => setHovered(false) : undefined}
                 style={({ pressed }) => ([
                     styles.row,
+                    usesCompactNestedRow ? styles.rowCompact : null,
                     props.selected ? styles.rowSelected : null,
                     hovered && !props.selected && rowOnPress ? styles.rowHovered : null,
                     pressed && rowOnPress ? { backgroundColor: theme.colors.surfacePressed } : null,
                     dimRow ? styles.rowDisabled : null,
                 ])}
             >
-                <View style={styles.rowContent}>
-                    <View style={styles.leading}>
+                <View style={[styles.rowContent, usesCompactNestedRow ? styles.rowContentCompact : null]}>
+                    <View style={[styles.leading, usesCompactNestedRow ? styles.leadingCompact : null]}>
                         <View
                             testID={statusSlotTestID}
                             style={[
@@ -347,14 +383,19 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
                                 !usesOnboardingVariant && status === 'running' ? styles.iconBoxRunning : null,
                                 !usesOnboardingVariant && props.selected ? styles.iconBoxSelected : null,
                                 usesOnboardingVariant && status === 'running' ? styles.iconPlainRunning : null,
+                                usesCompactNestedRow ? styles.iconPlainCompactBase : null,
+                                usesCompactNestedRow && status === 'running' ? styles.iconPlainCompactRunning : null,
                             ]}
                         >
                             {status === 'running' ? (
-                                <ActivityIndicator size={usesOnboardingVariant ? 18 : 16} color={theme.colors.accent.blue} />
+                                <ActivityIndicator
+                                    size={usesCompactNestedRow ? 16 : (usesOnboardingVariant ? 18 : 16)}
+                                    color={theme.colors.accent.blue}
+                                />
                             ) : iconName ? (
                                 <Ionicons
                                     name={iconName}
-                                    size={usesOnboardingVariant ? 22 : 16}
+                                    size={usesCompactNestedRow ? 18 : (usesOnboardingVariant ? 22 : 16)}
                                     color={
                                         status === 'done'
                                             ? theme.colors.success
@@ -370,11 +411,19 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
                     </View>
 
                     <View style={styles.titleColumn}>
-                        <Text style={styles.title} numberOfLines={1}>
+                        <Text
+                            testID={props.testID ? `${props.testID}-title` : undefined}
+                            style={[styles.title, usesCompactNestedRow ? styles.titleCompact : null]}
+                            numberOfLines={1}
+                        >
                             {props.item.title}
                         </Text>
                         {props.item.subtitle ? (
-                            <Text style={styles.subtitle} numberOfLines={2}>
+                            <Text
+                                testID={props.testID ? `${props.testID}-subtitle` : undefined}
+                                style={[styles.subtitle, usesCompactNestedRow ? styles.subtitleCompact : null]}
+                                numberOfLines={2}
+                            >
                                 {props.item.subtitle}
                             </Text>
                         ) : null}
@@ -403,11 +452,11 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
                     <PlanChecklistRowDetails
                         testID={props.testID ? `${props.testID}-details` : undefined}
                         renderDetails={itemRenderDetails}
-                        detailsTitle={suppressRepeatedDetails ? null : undefined}
+                        detailsTitle={null}
                         childrenContent={props.childrenContent}
                         error={props.execution?.error}
                         logs={props.execution?.logs}
-                        onCopyDiagnostics={props.onCopyDiagnostics}
+                        onCopyDiagnostics={hasDetailsContent ? props.onCopyDiagnostics : undefined}
                     />
                 </View>
             ) : null}

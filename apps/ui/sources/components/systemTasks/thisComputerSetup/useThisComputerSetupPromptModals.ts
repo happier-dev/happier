@@ -26,6 +26,17 @@ function buildPromptBody(prompt: ReturnType<typeof resolveThisComputerSetupPromp
         return lines.length > 0 ? lines.join('\n') : undefined;
     }
 
+    if (prompt.kind === 'daemon.takeOverManualRelayRuntimeForSetup') {
+        const lines = [
+            prompt.targetServerUrl,
+            prompt.targetReleaseChannel,
+            prompt.currentReleaseChannel && prompt.currentCliVersion
+                ? `${prompt.currentReleaseChannel} • ${prompt.currentCliVersion}`
+                : prompt.currentReleaseChannel ?? prompt.currentCliVersion ?? null,
+        ].filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0);
+        return lines.length > 0 ? lines.join('\n') : undefined;
+    }
+
     return buildBackgroundServiceReplacementPromptBody({
         targetServerUrl: prompt.targetServerUrl,
         targetReleaseChannel: prompt.targetReleaseChannel,
@@ -67,6 +78,11 @@ export function useThisComputerSetupPromptModals(params: Readonly<{
 
             if (parsedPrompt.kind === 'releaseChannel.switchDefaultForSetup') {
                 await params.runner.respond(taskId, { switchDefaultReleaseChannel: confirmed });
+                return;
+            }
+
+            if (parsedPrompt.kind === 'daemon.takeOverManualRelayRuntimeForSetup') {
+                await params.runner.respond(taskId, { takeOverManualRelayRuntime: confirmed });
                 return;
             }
 

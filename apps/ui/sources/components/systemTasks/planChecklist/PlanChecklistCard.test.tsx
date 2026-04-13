@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { StyleSheet as ReactNativeStyleSheet } from 'react-native';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 
@@ -72,6 +73,17 @@ function createItem(overrides: Partial<import('./types').PlanChecklistItem> = {}
         renderDetails: () => React.createElement('Text', { testID: 'details-text' }, 'CLI details'),
         ...overrides,
     };
+}
+
+function flattenStyle(style: unknown): Record<string, unknown> {
+    return ReactNativeStyleSheet.flatten(style as never) as Record<string, unknown>;
+}
+
+function flattenPressableStyle(style: unknown): Record<string, unknown> {
+    if (typeof style === 'function') {
+        return flattenStyle(style({ pressed: false }));
+    }
+    return flattenStyle(style);
 }
 
 describe('PlanChecklistCard', () => {
@@ -409,5 +421,176 @@ describe('PlanChecklistCard', () => {
         expect(flattenedStyle.borderWidth ?? 0).toBe(0);
         expect(flattenedStyle.width).toBeGreaterThan(26);
         expect(flattenedStyle.height).toBeGreaterThan(26);
+    });
+
+    it('does not expose an expandable panel when a row only has copy diagnostics and no content', async () => {
+        const { PlanChecklistCard } = await import('./PlanChecklistCard');
+
+        const screen = await renderScreen(
+            React.createElement(PlanChecklistCard, {
+                testID: 'plan-checklist',
+                phase: 'select',
+                items: [
+                    createItem({
+                        id: 'install_cli',
+                        title: 'Install CLI',
+                        subtitle: undefined,
+                        renderDetails: undefined,
+                        details: undefined,
+                        children: undefined,
+                    }),
+                ],
+                selectedIds: ['install_cli'],
+                onCopyDiagnostics: () => undefined,
+            }),
+        );
+
+        expect(screen.findByTestId('plan-checklist-row-install_cli-details-toggle')).toBeNull();
+    });
+
+    it('renders nested onboarding substeps with compact density and without a generic details heading', async () => {
+        const { PlanChecklistCard } = await import('./PlanChecklistCard');
+
+        const screen = await renderScreen(
+            React.createElement(PlanChecklistCard, {
+                testID: 'plan-checklist',
+                phase: 'select',
+                variant: 'onboarding',
+                items: [
+                    createItem({
+                        id: 'install_tools',
+                        kind: 'stage',
+                        title: 'Install Happier tools',
+                        subtitle: 'Install the runtime used by local setup.',
+                        details: 'Top-level details',
+                        children: [
+                            {
+                                id: 'ensure_cli',
+                                kind: 'substep',
+                                title: 'Install local Happier command-line tools',
+                                details: 'The managed Happier runtime is available and the matching terminal command is synced.',
+                                satisfied: false,
+                                disabled: true,
+                                defaultSelected: true,
+                            },
+                        ],
+                    }),
+                ],
+                selectedIds: ['ensure_cli'],
+                expandedIds: ['install_tools', 'ensure_cli'],
+                onCopyDiagnostics: () => undefined,
+            }),
+        );
+
+        const outerRow = screen.findByTestId('plan-checklist-row-install_tools');
+        const childRow = screen.findByTestId('plan-checklist-row-install_tools-children-row-ensure_cli');
+        const outerTitle = screen.findByTestId('plan-checklist-row-install_tools-title');
+        const childTitle = screen.findByTestId('plan-checklist-row-install_tools-children-row-ensure_cli-title');
+
+        if (!outerRow || !childRow || !outerTitle || !childTitle) {
+            throw new Error('Expected nested onboarding rows');
+        }
+
+        const outerRowStyle = flattenPressableStyle(outerRow.props.style);
+        const childRowStyle = flattenPressableStyle(childRow.props.style);
+        const outerTitleStyle = flattenStyle(outerTitle.props.style);
+        const childTitleStyle = flattenStyle(childTitle.props.style);
+
+        expect(childRowStyle.paddingVertical).toBeLessThan(Number(outerRowStyle.paddingVertical ?? 0));
+        expect(childTitleStyle.fontSize).toBeLessThan(Number(outerTitleStyle.fontSize ?? 0));
+        expect(screen.getTextContent()).not.toContain('common.details');
+        expect(screen.getTextContent()).toContain('The managed Happier runtime is available and the matching terminal command is synced.');
+    });
+
+    it('aggregates child logs and errors onto the expanded parent row', async () => {
+        const { PlanChecklistCard } = await import('./PlanChecklistCard');
+
+        const screen = await renderScreen(
+            React.createElement(PlanChecklistCard, {
+                testID: 'plan-checklist',
+                phase: 'execute',
+                variant: 'onboarding',
+                items: [
+                    createItem({
+                        id: 'background_service',
+                        kind: 'stage',
+                        title: 'Background service',
+                        subtitle: 'Keep Happier ready in the background.',
+                        children: [
+                            {
+                                id: 'install_service',
+                                kind: 'substep',
+                                title: 'Installing background service',
+                                details: 'Install the local background service.',
+                                satisfied: false,
+                                disabled: true,
+                                defaultSelected: true,
+                            },
+                        ],
+                    }),
+                ],
+                selectedIds: ['install_service'],
+                expandedIds: ['background_service'],
+                executionById: {
+                    install_service: {
+                        status: 'error',
+                        logs: [{ ts: 20, level: 'info', message: 'install-service-log-line' }],
+                        error: {
+                            title: 'cli_command_failed',
+                            message: 'install-service-error-message',
+                        },
+                    },
+                },
+            }),
+        );
+
+        expect(screen.getTextContent()).toContain('install-service-log-line');
+        expect(screen.getTextContent()).toContain('cli_command_failed');
+        expect(screen.getTextContent()).toContain('install-service-error-message');
+    });
+
+    it('renders structured log details with relative timestamps', async () => {
+        const { PlanChecklistCard } = await import('./PlanChecklistCard');
+
+        const screen = await renderScreen(
+            React.createElement(PlanChecklistCard, {
+                testID: 'plan-checklist',
+                phase: 'execute',
+                items: [
+                    createItem({
+                        id: 'install_cli',
+                        title: 'Install CLI',
+                    }),
+                ],
+                selectedIds: ['install_cli'],
+                expandedIds: ['install_cli'],
+                executionById: {
+                    install_cli: {
+                        status: 'running',
+                        logs: [
+                            {
+                                ts: 1_776_005_265_915,
+                                level: 'info',
+                                message: 'Installing background service',
+                                details: '$ happier service install --json\nTarget relay: https://relay.example.test',
+                            },
+                            {
+                                ts: 1_776_005_266_025,
+                                level: 'warn',
+                                message: 'Waiting for daemon readiness',
+                                details: '$ happier daemon status --json',
+                            },
+                        ],
+                    },
+                },
+            }),
+        );
+
+        const text = screen.getTextContent();
+        expect(text).toContain('+0ms [info] Installing background service');
+        expect(text).toContain('$ happier service install --json');
+        expect(text).toContain('Target relay: https://relay.example.test');
+        expect(text).toContain('+110ms [warn] Waiting for daemon readiness');
+        expect(text).not.toContain('1776005265915ms');
     });
 });

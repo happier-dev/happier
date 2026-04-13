@@ -71,16 +71,22 @@ function buffersEqual(left, right) {
 function applyTransform(contents, transform) {
   if (!transform) return contents;
   const raw = contents.toString('utf8');
+  function applyPowerShellChannelDefaultTransform(source, channelDefault) {
+    // Keep the PowerShell transform narrow: only rewrite the Channel param default line,
+    // not unrelated "stable" text that might appear elsewhere in the file.
+    return source.replace(
+      /(^.*\$Channel\s*=\s*\$\(\s*if \(\$env:HAPPIER_CHANNEL\) \{\s*\$env:HAPPIER_CHANNEL\s*\} else \{\s*)"stable"(\s*\}\s*\).*$)/m,
+      `$1"${channelDefault}"$2`,
+    );
+  }
   if (transform === 'preview-default-channel') {
     const shellUpdated = raw.replaceAll('HAPPIER_CHANNEL:-stable', 'HAPPIER_CHANNEL:-preview');
-    // IMPORTANT: only change the default channel in the param() block; do not rewrite
-    // other logic that happens to compare against "stable".
-    const ps1Updated = shellUpdated.replace('else { "stable" }', 'else { "preview" }');
+    const ps1Updated = applyPowerShellChannelDefaultTransform(shellUpdated, 'preview');
     return Buffer.from(ps1Updated, 'utf8');
   }
   if (transform === 'publicdev-default-channel') {
     const shellUpdated = raw.replaceAll('HAPPIER_CHANNEL:-stable', 'HAPPIER_CHANNEL:-dev');
-    const ps1Updated = shellUpdated.replace('else { "stable" }', 'else { "dev" }');
+    const ps1Updated = applyPowerShellChannelDefaultTransform(shellUpdated, 'dev');
     return Buffer.from(ps1Updated, 'utf8');
   }
   throw new Error(`[release] unknown installer transform: ${transform}`);

@@ -761,6 +761,10 @@ try {
   if ($pathEntries.Length -eq 0 -or $userPath -notmatch [Regex]::Escape($BinDir)) {
     Write-Host "Added $BinDir to user PATH."
   }
+  if ($env:Path -notmatch [Regex]::Escape($BinDir)) {
+    Write-Host "To use Happier in this PowerShell session, open a new PowerShell window or run:"
+    Write-Host ('  $env:Path = "{0};$env:Path"' -f $BinDir)
+  }
 
   $invoker = Resolve-InstalledCliInvoker
   if (-not $invoker) {

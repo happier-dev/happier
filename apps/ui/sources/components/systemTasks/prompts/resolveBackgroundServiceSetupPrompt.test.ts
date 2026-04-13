@@ -3,10 +3,16 @@ import type { SystemTaskJsonObject } from '@happier-dev/protocol';
 
 import type { SystemTaskPromptEnvelope } from './readLatestSystemTaskPrompt';
 
-function createPromptEnvelope(params: Readonly<{
-    kind: string;
-    data: SystemTaskJsonObject;
-}>): SystemTaskPromptEnvelope {
+function createPromptEnvelope<const TKind extends string, const TData extends SystemTaskJsonObject>(
+    params: Readonly<{
+        kind: TKind;
+        data: TData;
+    }>,
+): Readonly<{
+    kind: TKind;
+    message: string;
+    data: TData;
+}> {
     return {
         kind: params.kind,
         message: 'Prompt message',
@@ -82,6 +88,27 @@ describe('resolveBackgroundServiceSetupPrompt', () => {
                 running: true,
                 serverUrl: 'https://relay.example.test',
             }],
+        });
+    });
+
+    it('parses manual relay-runtime takeover prompts', async () => {
+        const { resolveManualRelayRuntimeTakeoverPrompt } = await import('./resolveBackgroundServiceSetupPrompt');
+
+        expect(resolveManualRelayRuntimeTakeoverPrompt(createPromptEnvelope({
+            kind: 'daemon.takeOverManualRelayRuntimeForSetup',
+            data: {
+                targetServerUrl: 'https://relay.example.test',
+                targetReleaseChannel: 'preview',
+                currentReleaseChannel: 'stable',
+                currentCliVersion: '0.2.0',
+            },
+        }))).toEqual({
+            kind: 'daemon.takeOverManualRelayRuntimeForSetup',
+            message: 'Prompt message',
+            targetServerUrl: 'https://relay.example.test',
+            targetReleaseChannel: 'preview',
+            currentReleaseChannel: 'stable',
+            currentCliVersion: '0.2.0',
         });
     });
 

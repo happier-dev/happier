@@ -81,6 +81,16 @@ function resolveBackgroundServiceDecisionDetails(prompt: ThisComputerSetupPrompt
         ].filter(Boolean).join('\n');
     }
 
+    if (prompt.kind === 'daemon.takeOverManualRelayRuntimeForSetup') {
+        return [
+            prompt.targetServerUrl,
+            prompt.targetReleaseChannel,
+            prompt.currentReleaseChannel && prompt.currentCliVersion
+                ? `${prompt.currentReleaseChannel} • ${prompt.currentCliVersion}`
+                : prompt.currentReleaseChannel ?? prompt.currentCliVersion ?? null,
+        ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0).join('\n');
+    }
+
     const serviceLabels = prompt.services.map((service) => `${service.label} • ${service.serverUrl}`).join('\n');
     return [
         `${prompt.targetReleaseChannel} • ${prompt.targetServerUrl}`,
@@ -121,6 +131,7 @@ function createStageChild(params: Readonly<{
     id: string;
     title: string;
     satisfied: boolean;
+    details?: PlanChecklistItem['details'];
     disabled?: boolean;
     defaultSelected?: boolean;
 }>): PlanChecklistItem {
@@ -128,10 +139,100 @@ function createStageChild(params: Readonly<{
         id: params.id,
         kind: 'substep',
         title: params.title,
+        details: params.details,
         satisfied: params.satisfied,
         disabled: params.disabled ?? true,
         defaultSelected: params.defaultSelected ?? true,
     };
+}
+
+function installToolsChildDetails(preflight: ThisComputerSetupPreflight): string {
+    return hasInstalledTools(preflight)
+        ? t('setupOnboarding.thisComputerStages.installToolsReadySubtitle')
+        : t('setupOnboarding.thisComputerStages.installToolsDetails');
+}
+
+function resolveRelayChildDetails(preflight: ThisComputerSetupPreflight): string {
+    if (preflight.relayDriftBanner) {
+        return preflight.relayDriftBanner.description;
+    }
+    if (preflight.serverMismatch) {
+        return t('setupOnboarding.thisComputerStages.useRelayServerMismatchSubtitle', {
+            activeRelayUrl: preflight.activeRelayUrl ? toServerUrlDisplay(preflight.activeRelayUrl) : t('status.unknown'),
+            daemonRelayUrl: preflight.daemonServerUrl ? toServerUrlDisplay(preflight.daemonServerUrl) : t('status.unknown'),
+        });
+    }
+    if (preflight.activeRelayUrl) {
+        return t('setupOnboarding.thisComputerStages.useRelayConnectedSubtitle', {
+            relayUrl: toServerUrlDisplay(preflight.activeRelayUrl),
+        });
+    }
+    return t('setupOnboarding.thisComputerStages.useRelayMissingSubtitle');
+}
+
+function signInChildDetails(preflight: ThisComputerSetupPreflight): string {
+    if (preflight.accountMismatch) {
+        return t('setupOnboarding.thisComputerStages.useRelayAccountMismatchSubtitle');
+    }
+    if (preflight.needsAuth) {
+        return t('setupOnboarding.thisComputerStages.useRelayNeedsAuthSubtitle');
+    }
+    return t('setupOnboarding.thisComputerStages.useRelaySignedInSubtitle');
+}
+
+function configureRelayChildDetails(preflight: ThisComputerSetupPreflight): string {
+    if (preflight.relayDriftBanner || preflight.serverMismatch) {
+        return resolveRelayChildDetails(preflight);
+    }
+    if (preflight.activeRelayUrl) {
+        return t('setupOnboarding.thisComputerStages.useRelayConnectedSubtitle', {
+            relayUrl: toServerUrlDisplay(preflight.activeRelayUrl),
+        });
+    }
+    return t('setupOnboarding.thisComputerStages.useRelayDetails');
+}
+
+function registerRequestChildDetails(preflight: ThisComputerSetupPreflight): string {
+    if (preflight.machineId) {
+        return t('setupOnboarding.thisComputerStages.registerComputerDoneSubtitle');
+    }
+    if (preflight.needsAuth) {
+        return t('setupOnboarding.thisComputerStages.registerComputerNeedsAuthSubtitle');
+    }
+    return t('setupOnboarding.thisComputerStages.registerComputerSubtitle');
+}
+
+function registerWaitChildDetails(preflight: ThisComputerSetupPreflight): string {
+    if (preflight.machineId) {
+        return t('setupOnboarding.thisComputerStages.registerComputerDoneSubtitle');
+    }
+    if (preflight.needsAuth) {
+        return t('setupOnboarding.thisComputerStages.registerComputerNeedsAuthSubtitle');
+    }
+    return t('setupOnboarding.thisComputerStages.registerComputerDetails');
+}
+
+function installServiceChildDetails(preflight: ThisComputerSetupPreflight): string {
+    return preflight.serviceInstalled
+        ? t('setupOnboarding.thisComputerStages.backgroundServiceInstalledSubtitle')
+        : t('setupOnboarding.thisComputerStages.backgroundServiceDetails');
+}
+
+function startServiceChildDetails(preflight: ThisComputerSetupPreflight): string {
+    if (preflight.daemonRunning) {
+        return t('setupOnboarding.thisComputerStages.backgroundServiceRunningSubtitle');
+    }
+    if (preflight.serviceInstalled) {
+        return t('setupOnboarding.thisComputerStages.backgroundServiceInstalledSubtitle');
+    }
+    return t('setupOnboarding.thisComputerStages.backgroundServiceSubtitle');
+}
+
+function verifyServiceChildDetails(preflight: ThisComputerSetupPreflight): string {
+    if (isReady(preflight)) {
+        return t('setupOnboarding.thisComputerStages.backgroundServiceRunningSubtitle');
+    }
+    return t('setupOnboarding.thisComputerStages.backgroundServiceDetails');
 }
 
 function buildBackgroundServiceDecisionChildren(prompt: ThisComputerSetupPrompt | null): readonly PlanChecklistItem[] {
@@ -145,6 +246,20 @@ function buildBackgroundServiceDecisionChildren(prompt: ThisComputerSetupPrompt 
                 id: 'setup.thisComputer.preflight.releaseChannel',
                 title: t('setupOnboarding.thisComputerStages.backgroundServiceReleaseChannelChildTitle'),
                 satisfied: false,
+                details: resolveBackgroundServiceDecisionDetails(prompt)
+                    ?? t('setupOnboarding.thisComputerStages.backgroundServiceDetails'),
+            }),
+        ];
+    }
+
+    if (prompt.kind === 'daemon.takeOverManualRelayRuntimeForSetup') {
+        return [
+            createStageChild({
+                id: 'setup.thisComputer.preflight.manualRelayTakeover',
+                title: t('setupOnboarding.thisComputerStages.backgroundServiceConflictChildTitle'),
+                satisfied: false,
+                details: resolveBackgroundServiceDecisionDetails(prompt)
+                    ?? t('setupOnboarding.thisComputerStages.backgroundServiceDetails'),
             }),
         ];
     }
@@ -154,6 +269,8 @@ function buildBackgroundServiceDecisionChildren(prompt: ThisComputerSetupPrompt 
             id: 'setup.thisComputer.preflight.serviceConflict',
             title: t('setupOnboarding.thisComputerStages.backgroundServiceConflictChildTitle'),
             satisfied: false,
+            details: resolveBackgroundServiceDecisionDetails(prompt)
+                ?? t('setupOnboarding.thisComputerStages.backgroundServiceDetails'),
         }),
     ];
 }
@@ -188,6 +305,7 @@ export function buildThisComputerSetupStageModel(params: Readonly<{
                     id: 'setup.thisComputer.ensureCli',
                     title: t('setupOnboarding.thisComputerStages.installToolsChildTitle'),
                     satisfied: toolsInstalled,
+                    details: installToolsChildDetails(preflight),
                 }),
             ],
         },
@@ -205,16 +323,19 @@ export function buildThisComputerSetupStageModel(params: Readonly<{
                     id: 'setup.thisComputer.resolveRelay',
                     title: t('settings.machineSetupStepResolveRelay'),
                     satisfied: relayReady || Boolean(preflight.activeRelayUrl),
+                    details: resolveRelayChildDetails(preflight),
                 }),
                 createStageChild({
                     id: 'setup.thisComputer.checkAuth',
                     title: t('settings.machineSetupStepCheckAuth'),
                     satisfied: relayReady || !preflight.needsAuth,
+                    details: signInChildDetails(preflight),
                 }),
                 createStageChild({
                     id: 'setup.thisComputer.configureRelay',
                     title: t('settings.machineSetupStepConfigureRelay'),
                     satisfied: relayReady,
+                    details: configureRelayChildDetails(preflight),
                 }),
             ],
         },
@@ -232,11 +353,13 @@ export function buildThisComputerSetupStageModel(params: Readonly<{
                     id: 'setup.thisComputer.auth.request',
                     title: t('settings.machineSetupStepAuthRequest'),
                     satisfied: Boolean(preflight.machineId),
+                    details: registerRequestChildDetails(preflight),
                 }),
                 createStageChild({
                     id: 'setup.thisComputer.auth.wait',
                     title: t('settings.machineSetupStepAuthWait'),
                     satisfied: Boolean(preflight.machineId),
+                    details: registerWaitChildDetails(preflight),
                 }),
             ],
         },
@@ -258,16 +381,19 @@ export function buildThisComputerSetupStageModel(params: Readonly<{
                     title: t('settings.machineSetupStepInstallService'),
                     satisfied: preflight.serviceInstalled,
                     disabled: false,
+                    details: installServiceChildDetails(preflight),
                 }),
                 createStageChild({
                     id: 'setup.thisComputer.startService',
                     title: t('settings.machineSetupStepStartService'),
                     satisfied: preflight.daemonRunning,
+                    details: startServiceChildDetails(preflight),
                 }),
                 createStageChild({
                     id: 'setup.thisComputer.verifyService',
                     title: t('settings.machineSetupStepVerifyService'),
                     satisfied: ready,
+                    details: verifyServiceChildDetails(preflight),
                 }),
             ],
         },

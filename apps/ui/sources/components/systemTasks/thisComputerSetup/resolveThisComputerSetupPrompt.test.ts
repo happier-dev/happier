@@ -90,4 +90,23 @@ describe('resolveThisComputerSetupPrompt', () => {
             }],
         });
     });
+
+    it('parses manual relay-runtime takeover prompts', async () => {
+        const { resolveThisComputerSetupPrompt } = await import('./resolveThisComputerSetupPrompt');
+
+        expect(resolveThisComputerSetupPrompt(createSnapshot({
+            kind: 'daemon.takeOverManualRelayRuntimeForSetup',
+            targetServerUrl: 'https://relay.example.test',
+            targetReleaseChannel: 'preview',
+            currentReleaseChannel: 'stable',
+            currentCliVersion: '0.2.0',
+        }))).toEqual({
+            kind: 'daemon.takeOverManualRelayRuntimeForSetup',
+            message: 'Prompt message',
+            targetServerUrl: 'https://relay.example.test',
+            targetReleaseChannel: 'preview',
+            currentReleaseChannel: 'stable',
+            currentCliVersion: '0.2.0',
+        });
+    });
 });

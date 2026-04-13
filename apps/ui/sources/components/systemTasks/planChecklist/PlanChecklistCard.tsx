@@ -47,6 +47,7 @@ export type PlanChecklistCardProps = Readonly<{
     header?: React.ReactNode;
     footer?: React.ReactNode;
     style?: StyleProp<ViewStyle>;
+    depth?: number;
 }>;
 
 function buildIdSet(ids: readonly string[]): ReadonlySet<string> {
@@ -85,20 +86,29 @@ function buildLeafExecutionState(
 }
 
 function aggregateExecutionStates(states: readonly PlanChecklistExecutionState[]): PlanChecklistExecutionState {
-    const status = states.some((state) => state.status === 'error')
+    const hasError = states.some((state) => state.status === 'error');
+    const hasRunning = states.some((state) => state.status === 'running');
+    const hasQueued = states.some((state) => state.status === 'queued');
+    const hasDone = states.some((state) => state.status === 'done');
+    const allDone = states.length > 0 && states.every((state) => state.status === 'done');
+    const allIdle = states.every((state) => state.status === 'idle');
+
+    const status = hasError
         ? 'error'
-        : states.some((state) => state.status === 'running')
+        : hasRunning
             ? 'running'
-            : states.some((state) => state.status === 'queued')
+            : hasQueued
                 ? 'queued'
-                : states.every((state) => state.status === 'done')
+                : allDone
                     ? 'done'
-                    : states.some((state) => state.status === 'done')
-                        ? 'running'
-                        : 'idle';
+                    : allIdle
+                        ? 'idle'
+                        : hasDone
+                            ? 'done'
+                            : 'idle';
     return {
         status,
-        logs: [],
+        logs: states.flatMap((state) => state.logs),
         error: states.find((state) => state.error)?.error,
     };
 }
@@ -124,6 +134,7 @@ export const PlanChecklistCard = React.memo(function PlanChecklistCard(props: Pl
     const selectedSet = React.useMemo(() => buildIdSet(props.selectedIds), [props.selectedIds]);
     const expandedIds = props.expandedIds ?? (props.expandedId ? [props.expandedId] : []);
     const expandedSet = React.useMemo(() => buildIdSet(expandedIds), [expandedIds]);
+    const depth = props.depth ?? 0;
 
     return (
         <View testID={props.testID} style={[styles.card, props.style]}>
@@ -151,6 +162,7 @@ export const PlanChecklistCard = React.memo(function PlanChecklistCard(props: Pl
                                 borderRadius: 12,
                                 overflow: 'hidden',
                             }}
+                            depth={depth + 1}
                         />
                     ) : null;
                     return (
@@ -167,6 +179,7 @@ export const PlanChecklistCard = React.memo(function PlanChecklistCard(props: Pl
                                 execution={execution}
                                 expanded={expandedSet.has(item.id)}
                                 childrenContent={childrenCard}
+                                depth={depth}
                                 onToggle={() => props.onToggleItem?.(item.id)}
                                 onToggleExpanded={() => props.onToggleExpanded?.(item.id)}
                                 onCopyDiagnostics={props.onCopyDiagnostics ? () => props.onCopyDiagnostics?.(item) : undefined}

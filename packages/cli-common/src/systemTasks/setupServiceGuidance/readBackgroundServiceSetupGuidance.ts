@@ -9,6 +9,7 @@ import {
   buildBackgroundServiceSetupGuidance,
   type BackgroundServiceSetupGuidance,
 } from './buildBackgroundServiceSetupGuidance.js';
+import type { MachineDaemonOwnershipMetadata } from '@happier-dev/protocol';
 
 function resolveCurrentHappierServicePlatform(): 'darwin' | 'linux' | 'win32' {
   return process.platform === 'darwin' || process.platform === 'linux' || process.platform === 'win32'
@@ -19,6 +20,7 @@ function resolveCurrentHappierServicePlatform(): 'darwin' | 'linux' | 'win32' {
 export async function readBackgroundServiceSetupGuidance(params: Readonly<{
   targetReleaseChannel: PublicReleaseRingId;
   targetServerUrl: string;
+  currentRelayOwner?: Pick<MachineDaemonOwnershipMetadata, 'serviceManaged' | 'publicReleaseChannel' | 'cliVersion'> | null;
   mode?: 'user' | 'system';
 }>): Promise<BackgroundServiceSetupGuidance> {
   const platform = resolveCurrentHappierServicePlatform();
@@ -40,6 +42,7 @@ export async function readBackgroundServiceSetupGuidance(params: Readonly<{
     targetServerUrl: params.targetServerUrl,
     managedReleaseChannelInventory,
     services: serviceInventory.services,
+    currentRelayOwner: params.currentRelayOwner,
     platform,
     mode: params.mode ?? 'user',
   });

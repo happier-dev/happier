@@ -548,6 +548,44 @@ function excerptIndicatesInvalidAuth(excerpt) {
   );
 }
 
+function excerptIndicatesInstalledServiceConflict(excerpt) {
+  if (!excerpt) return false;
+  return (
+    excerpt.includes('A background service is already installed for this relay.') ||
+    excerpt.includes('Use `happier service start` to start the installed background service instead of starting a new relay runtime.') ||
+    excerpt.includes('If you want to start a manual relay runtime')
+  );
+}
+
+function extractFirstDaemonStartNoticeLine(excerpt) {
+  const lines = String(excerpt ?? '')
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^\[daemon\]\s*/, '').trim())
+    .filter(Boolean);
+  return lines[0] ?? null;
+}
+
+function extractInstalledServiceConflictGuidance(excerpt) {
+  if (!excerptIndicatesInstalledServiceConflict(excerpt)) {
+    return null;
+  }
+
+  const guidanceLines = String(excerpt ?? '')
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^\[daemon\]\s*/, '').trim())
+    .filter((line) =>
+      line === 'A background service is already installed for this relay.' ||
+      line === 'Use `happier service start` to start the installed background service instead of starting a new relay runtime.' ||
+      line === 'If you want to start a manual relay runtime, stop or replace the installed background service first.'
+    );
+
+  if (guidanceLines.length === 0) {
+    return null;
+  }
+
+  return guidanceLines.join('\n');
+}
+
 function allowDaemonWaitForAuthWithoutTty() {
   const raw = (process.env.HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH ?? '').toString().trim().toLowerCase();
   return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'y';
@@ -1416,13 +1454,27 @@ export async function startLocalDaemonWithAuth({
     };
 
     let resolvedExitCode = null;
+    let startOutput = '';
+    const startOutputTeePath = join(cliHomeDir, 'logs', `${Date.now()}-pid-${process.pid}-daemon-start-attempt.log`);
+    await mkdir(dirname(startOutputTeePath), { recursive: true }).catch(() => {});
+    const appendStartOutput = (chunk) => {
+      if (!chunk) return;
+      startOutput += chunk.toString();
+      if (startOutput.length > 16_000) {
+        startOutput = startOutput.slice(-16_000);
+      }
+    };
     const exitPromise = new Promise((resolve) => {
       const proc = spawnProc('daemon', daemonCommand.command, [...daemonCommand.argsPrefix, 'daemon', 'start'], daemonEnv, {
         stdio: ['ignore', 'pipe', 'pipe'],
         // In TUI mode, stream the daemon-start output so it routes to the daemon pane.
         // (The background daemon itself still logs to files.)
         silent: !isTui,
+        teeFile: startOutputTeePath,
+        teeLabel: 'daemon',
       });
+      proc.stdout?.on('data', appendStartOutput);
+      proc.stderr?.on('data', appendStartOutput);
       proc.on('exit', (code) => {
         resolvedExitCode = code ?? 0;
         resolve(resolvedExitCode);
@@ -1437,13 +1489,21 @@ export async function startLocalDaemonWithAuth({
       return { ok: true, exitCode: resolvedExitCode, excerpt: null, logPath: null };
     }
 
-    // Allow the exit code to settle immediately if it already has, but do not block here
-    // once the verification window elapsed.
-    await Promise.race([exitPromise, delay(0)]);
+    // Give quick failures a brief chance to flush their start output before we classify
+    // the failure, but do not block indefinitely for long-lived wrapper processes.
+    const startExitSettleGraceMs = 50;
+    await Promise.race([exitPromise, delay(startExitSettleGraceMs)]);
 
     const logPath = getLatestDaemonLogPath(cliHomeDir);
     const excerpt = logPath ? await readLastLines(logPath, 120) : null;
-    return { ok: false, exitCode: resolvedExitCode, excerpt, logPath };
+    const teeExcerpt = existsSync(startOutputTeePath) ? await readLastLines(startOutputTeePath, 120).catch(() => null) : null;
+    return {
+      ok: false,
+      exitCode: resolvedExitCode,
+      excerpt,
+      logPath,
+      startOutput: startOutput.trim() || teeExcerpt || null,
+    };
   };
 
   const first = await startOnce();
@@ -1546,6 +1606,30 @@ export async function startLocalDaemonWithAuth({
         }
         throw new Error('Failed to start daemon (after auth re-seed)');
       }
+    } else if (excerptIndicatesInstalledServiceConflict(first.startOutput) || excerptIndicatesInstalledServiceConflict(first.excerpt)) {
+      if (isTui) {
+        // Keep the TUI alive so the daemon pane can continue showing the ownership guidance
+        // that the start command already streamed.
+        console.log('[daemon] installed background service conflict detected; keeping TUI running.');
+        return;
+      }
+
+      const conflictGuidance = extractInstalledServiceConflictGuidance(first.startOutput)
+        ?? extractInstalledServiceConflictGuidance(first.excerpt);
+      if (conflictGuidance) {
+        throw new Error(
+          `Failed to start daemon due to an installed background service conflict.\n${conflictGuidance}`
+        );
+      }
+
+      throw new Error('Failed to start daemon');
+    } else if (isTui && first.exitCode !== 0) {
+      const noticeLine = extractFirstDaemonStartNoticeLine(first.startOutput);
+      if (noticeLine) {
+        console.log(`[daemon] ${noticeLine}`);
+      }
+      console.log('[daemon] daemon start failed before the relay came up; keeping TUI running.');
+      return;
     } else {
       const copyHint = authCopyFromSeedHint({ stackName: resolvedStackName, cliIdentity: resolvedCliIdentity, env: baseEnv });
       console.error(

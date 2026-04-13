@@ -3,6 +3,7 @@ import {
   type BackgroundServiceSetupGuidanceCancellationReason,
   createLocalHappierJsonExecutor,
   ensureLocalFirstPartyComponentCommand,
+  formatBackgroundServiceManualRelayTakeoverPrompt,
   formatBackgroundServiceReleaseChannelSwitchPrompt,
   formatBackgroundServiceReplacementPrompt,
   readBackgroundServiceSetupGuidance,
@@ -13,6 +14,7 @@ import {
   type InteractiveSystemTaskKind,
   type SetupMachineRecipeExecutor,
 } from '@happier-dev/cli-common/systemTasks';
+import { readMachineDaemonOwnershipMetadataFromSocketAuth, type MachineDaemonOwnershipMetadata } from '@happier-dev/protocol';
 import {
   syncInstalledFirstPartyShims,
   writeDefaultManagedReleaseChannel,
@@ -30,6 +32,12 @@ type SetupThisComputerRelayProfile = Readonly<{
   localServerUrl: string | null;
 }>;
 
+type CommandDiagnostics = Readonly<{
+  command: string;
+  args: readonly string[];
+  details?: string;
+}>;
+
 function createBackgroundServiceSetupCancellationError(
   cancellationReason: BackgroundServiceSetupGuidanceCancellationReason | null,
 ): SystemTaskExecutionError {
@@ -39,10 +47,176 @@ function createBackgroundServiceSetupCancellationError(
       'Setup was cancelled because the default release channel was kept unchanged.',
     );
   }
+  if (cancellationReason === 'declined_manual_relay_takeover') {
+    return new SystemTaskExecutionError(
+      'background_service_manual_relay_takeover_declined',
+      'Setup was cancelled because the current manual relay runtime was kept.',
+    );
+  }
   return new SystemTaskExecutionError(
     'background_service_conflict_declined',
     'Setup was cancelled because existing background services were kept.',
   );
+}
+
+function emitCommandDiagnostics(
+  ctx: Readonly<{
+    emit: (event: Readonly<{
+      type: string;
+      stepId?: string;
+      message?: string;
+      data?: unknown;
+    }>) => void;
+  }>,
+  params: Readonly<{
+    stepId: string;
+    message: string;
+    diagnostics: CommandDiagnostics;
+  }>,
+): void {
+  ctx.emit({
+    type: 'progress',
+    stepId: params.stepId,
+    message: params.message,
+    data: {
+      command: params.diagnostics.command,
+      args: params.diagnostics.args,
+      ...(params.diagnostics.details ? { details: params.diagnostics.details } : {}),
+    },
+  });
+}
+
+function createInstrumentedRecipeExecutor(
+  ctx: Readonly<{
+    emit: (event: Readonly<{
+      type: string;
+      stepId?: string;
+      message?: string;
+      data?: unknown;
+    }>) => void;
+  }>,
+  recipeExecutor: SetupMachineRecipeExecutor,
+): SetupMachineRecipeExecutor {
+  return {
+    ...recipeExecutor,
+    async configureRelay(profile) {
+      emitCommandDiagnostics(ctx, {
+        stepId: 'setup.thisComputer.configureRelay',
+        message: 'Running happier server set --json',
+        diagnostics: {
+          command: 'happier',
+          args: [
+            'server',
+            'set',
+            '--server-url',
+            profile.serverUrl,
+            ...(profile.localServerUrl ? ['--local-server-url', profile.localServerUrl] : []),
+            '--webapp-url',
+            profile.webappUrl,
+            '--json',
+          ],
+        },
+      });
+      await recipeExecutor.configureRelay(profile);
+    },
+    async readAuthStatus() {
+      emitCommandDiagnostics(ctx, {
+        stepId: 'setup.thisComputer.checkAuth',
+        message: 'Running happier auth status --json',
+        diagnostics: {
+          command: 'happier',
+          args: ['auth', 'status', '--json'],
+        },
+      });
+      return await recipeExecutor.readAuthStatus();
+    },
+    async requestAuthPairing() {
+      emitCommandDiagnostics(ctx, {
+        stepId: 'setup.thisComputer.auth.request',
+        message: 'Running happier auth request --json',
+        diagnostics: {
+          command: 'happier',
+          args: ['auth', 'request', '--json'],
+        },
+      });
+      return await recipeExecutor.requestAuthPairing();
+    },
+    async waitForAuthPairing(publicKey) {
+      emitCommandDiagnostics(ctx, {
+        stepId: 'setup.thisComputer.auth.wait',
+        message: 'Running happier auth wait --json',
+        diagnostics: {
+          command: 'happier',
+          args: ['auth', 'wait', '--public-key', '[redacted]', '--json'],
+          details: publicKey ? 'Waiting for the local pairing request to be approved.' : undefined,
+        },
+      });
+      return await recipeExecutor.waitForAuthPairing(publicKey);
+    },
+    async approveAuthPairing(publicKey) {
+      if (!recipeExecutor.approveAuthPairing) {
+        return;
+      }
+      emitCommandDiagnostics(ctx, {
+        stepId: 'setup.thisComputer.auth.request',
+        message: 'Running happier auth approve --json',
+        diagnostics: {
+          command: 'happier',
+          args: ['auth', 'approve', '--public-key', '[redacted]', '--json'],
+          details: publicKey ? 'Approving the local pairing request for this computer.' : undefined,
+        },
+      });
+      await recipeExecutor.approveAuthPairing(publicKey);
+    },
+    async installDaemonService() {
+      if (!recipeExecutor.installDaemonService) {
+        return;
+      }
+      emitCommandDiagnostics(ctx, {
+        stepId: 'setup.thisComputer.installService',
+        message: 'Running happier service install --json',
+        diagnostics: {
+          command: 'happier',
+          args: ['service', 'install', '--json'],
+        },
+      });
+      await recipeExecutor.installDaemonService();
+    },
+    async startDaemonService() {
+      if (!recipeExecutor.startDaemonService) {
+        return;
+      }
+      emitCommandDiagnostics(ctx, {
+        stepId: 'setup.thisComputer.startService',
+        message: 'Running happier service start --json',
+        diagnostics: {
+          command: 'happier',
+          args: ['service', 'start', '--json'],
+        },
+      });
+      await recipeExecutor.startDaemonService();
+    },
+    async waitForReadyDaemon(params) {
+      if (!recipeExecutor.waitForReadyDaemon) {
+        return {
+          serviceInstalled: false,
+          daemonRunning: false,
+          needsAuth: true,
+          machineId: null,
+        };
+      }
+      emitCommandDiagnostics(ctx, {
+        stepId: 'setup.thisComputer.verifyService',
+        message: 'Polling happier daemon status --json',
+        diagnostics: {
+          command: 'happier',
+          args: ['daemon', 'status', '--json'],
+          details: 'Checking whether the background service is installed, running, and authenticated for the selected relay.',
+        },
+      });
+      return await recipeExecutor.waitForReadyDaemon(params);
+    },
+  };
 }
 
 export type SetupThisComputerInteractiveParams = Readonly<{
@@ -61,8 +235,14 @@ export type SetupThisComputerInteractiveDeps = Readonly<{
   readBackgroundServiceSetupGuidance: (params: Readonly<{
     targetReleaseChannel: PublicReleaseRingId;
     targetServerUrl: string;
+    currentRelayOwner?: Pick<MachineDaemonOwnershipMetadata, 'serviceManaged' | 'publicReleaseChannel' | 'cliVersion'> | null;
   }>) => Promise<BackgroundServiceSetupGuidance>;
+  readCurrentRelayOwner: (params: Readonly<{ releaseRing?: PublicReleaseRingId }>) => Promise<Pick<
+    MachineDaemonOwnershipMetadata,
+    'serviceManaged' | 'publicReleaseChannel' | 'cliVersion'
+  > | null>;
   switchDefaultReleaseChannel: (releaseChannel: PublicReleaseRingId) => Promise<void>;
+  stopCurrentManualRelayRuntime: (params?: Readonly<{ releaseRing?: PublicReleaseRingId }>) => Promise<void>;
   uninstallExistingDaemonServices: () => Promise<void>;
 }>;
 
@@ -87,7 +267,7 @@ export function createSetupThisComputerInteractiveTaskKind(
         message: 'Resolving server configuration',
       });
       const relayProfile = await deps.readActiveRelayProfile({ releaseRing });
-      const recipeExecutor = deps.createRecipeExecutor({ releaseRing });
+      const recipeExecutor = createInstrumentedRecipeExecutor(ctx, deps.createRecipeExecutor({ releaseRing }));
       ctx.emit({
         type: 'progress',
         stepId: 'setup.thisComputer.checkAuth',
@@ -97,9 +277,11 @@ export function createSetupThisComputerInteractiveTaskKind(
 
       if (parsed.installService !== false) {
         const targetReleaseChannel = releaseRing ?? 'stable';
+        const currentRelayOwner = await deps.readCurrentRelayOwner({ releaseRing });
         const guidance = await deps.readBackgroundServiceSetupGuidance({
           targetReleaseChannel,
           targetServerUrl: relayProfile.serverUrl,
+          currentRelayOwner,
         });
 
         const guidanceResult = await applyBackgroundServiceSetupGuidance({
@@ -118,6 +300,20 @@ export function createSetupThisComputerInteractiveTaskKind(
             }) as { switchDefaultReleaseChannel?: boolean };
             return answer.switchDefaultReleaseChannel === true;
           },
+          promptTakeOverManualRelayRuntime: async () => {
+            const answer = await ctx.prompt({
+              kind: 'daemon.takeOverManualRelayRuntimeForSetup',
+              stepId: 'setup.thisComputer.preflight.manualRelayTakeover',
+              message: formatBackgroundServiceManualRelayTakeoverPrompt(guidance),
+              data: {
+                targetServerUrl: guidance.targetServerUrl,
+                targetReleaseChannel: guidance.targetReleaseChannel,
+                currentReleaseChannel: guidance.manualRelayOwner?.currentReleaseChannel ?? null,
+                currentCliVersion: guidance.manualRelayOwner?.currentCliVersion ?? null,
+              },
+            }) as { takeOverManualRelayRuntime?: boolean };
+            return answer.takeOverManualRelayRuntime === true;
+          },
           promptReplaceExistingServices: async () => {
             const answer = await ctx.prompt({
               kind: 'daemon.replaceLocalBackgroundServices',
@@ -132,9 +328,36 @@ export function createSetupThisComputerInteractiveTaskKind(
             return answer.replaceExistingServices === true;
           },
           switchDefaultReleaseChannel: async () => {
+            ctx.emit({
+              type: 'progress',
+              stepId: 'setup.thisComputer.preflight.releaseChannel',
+              message: 'Updating the default managed release channel',
+              data: {
+                details: `Switching the default managed release channel to ${targetReleaseChannel} and syncing the matching Happier terminal command.`,
+              },
+            });
             await deps.switchDefaultReleaseChannel(targetReleaseChannel);
           },
+          takeOverManualRelayRuntime: async () => {
+            emitCommandDiagnostics(ctx, {
+              stepId: 'setup.thisComputer.preflight.manualRelayTakeover',
+              message: 'Running happier daemon stop --json',
+              diagnostics: {
+                command: 'happier',
+                args: ['daemon', 'stop', '--json'],
+              },
+            });
+            await deps.stopCurrentManualRelayRuntime({ releaseRing });
+          },
           replaceExistingServices: async () => {
+            emitCommandDiagnostics(ctx, {
+              stepId: 'setup.thisComputer.preflight.serviceConflict',
+              message: 'Running happier service uninstall --all --yes --json',
+              diagnostics: {
+                command: 'happier',
+                args: ['service', 'uninstall', '--all', '--yes', '--json'],
+              },
+            });
             await deps.uninstallExistingDaemonServices();
           },
         });
@@ -287,11 +510,27 @@ function createSetupThisComputerInteractiveDeps(
     createRecipeExecutor: ({ releaseRing }) => createSetupMachineRecipeExecutorFromHappierJsonExecutor({
       executor: createLocalHappierJsonExecutor({ releaseRing }),
     }),
-    readBackgroundServiceSetupGuidance: async ({ targetReleaseChannel, targetServerUrl }) => readBackgroundServiceSetupGuidance({
+    readBackgroundServiceSetupGuidance: async ({ targetReleaseChannel, targetServerUrl, currentRelayOwner }) => readBackgroundServiceSetupGuidance({
       targetReleaseChannel,
       targetServerUrl,
+      currentRelayOwner,
       mode: 'user',
     }),
+    readCurrentRelayOwner: async ({ releaseRing }) => {
+      const executor = createLocalHappierJsonExecutor({ releaseRing });
+      const parsed = await executor.runHappierJson(['service', 'status', '--json'], {
+        allowJsonFailure: true,
+      });
+      const owner = parsed && typeof parsed === 'object'
+        ? (parsed as { owner?: unknown }).owner
+        : null;
+      const normalized = readMachineDaemonOwnershipMetadataFromSocketAuth(owner);
+      return normalized.serviceManaged === undefined
+        && normalized.publicReleaseChannel === undefined
+        && normalized.cliVersion === undefined
+        ? null
+        : normalized;
+    },
     switchDefaultReleaseChannel: async (releaseChannel) => {
       await writeDefaultManagedReleaseChannel({
         processEnv: process.env,
@@ -302,6 +541,10 @@ function createSetupThisComputerInteractiveDeps(
         channel: releaseChannel,
         processEnv: process.env,
       });
+    },
+    stopCurrentManualRelayRuntime: async ({ releaseRing } = {}) => {
+      const executor = createLocalHappierJsonExecutor({ releaseRing });
+      await executor.runHappierJson(['daemon', 'stop', '--json']);
     },
     uninstallExistingDaemonServices: async () => {
       await runLocalHappierJsonCommand({

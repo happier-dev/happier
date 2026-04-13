@@ -4,6 +4,7 @@ import {
   type PublicReleaseRingId,
   type PublicReleaseRingLabel,
 } from '@happier-dev/release-runtime/releaseRings';
+import type { MachineDaemonOwnershipMetadata } from '@happier-dev/protocol';
 
 import type { ManagedReleaseChannelInventory } from '../../happierRuntime/deriveManagedReleaseChannelInventory.js';
 import {
@@ -20,14 +21,21 @@ export type BackgroundServiceSetupGuidanceService = Readonly<{
   serverUrl: string | null;
 }>;
 
+export type BackgroundServiceSetupGuidanceManualRelayOwner = Readonly<{
+  currentReleaseChannel: string | null;
+  currentCliVersion: string | null;
+}>;
+
 export type BackgroundServiceSetupGuidance = Readonly<{
   targetReleaseChannel: PublicReleaseRingLabel;
   targetServerUrl: string | null;
   currentDefaultReleaseChannel: PublicReleaseRingLabel;
   managedReleaseChannels: ManagedReleaseChannelInventory['managedReleaseChannels'];
+  manualRelayOwner: BackgroundServiceSetupGuidanceManualRelayOwner | null;
   exactDefaultServiceExists: boolean;
   conflictingServices: readonly BackgroundServiceSetupGuidanceService[];
   shouldOfferDefaultReleaseChannelSwitch: boolean;
+  shouldPromptForManualRelayTakeover: boolean;
   shouldPromptForServiceReplacement: boolean;
 }>;
 
@@ -72,11 +80,32 @@ function resolveReleaseChannelLabel(value: PublicReleaseRingId | PublicReleaseRi
     : resolvePublicReleaseRingLabelForId(value);
 }
 
+function normalizeManualRelayOwner(
+  owner: Pick<MachineDaemonOwnershipMetadata, 'serviceManaged' | 'publicReleaseChannel' | 'cliVersion'> | null | undefined,
+): BackgroundServiceSetupGuidanceManualRelayOwner | null {
+  if (!owner || owner.serviceManaged !== false) {
+    return null;
+  }
+
+  const currentReleaseChannel = typeof owner.publicReleaseChannel === 'string' && owner.publicReleaseChannel.trim()
+    ? owner.publicReleaseChannel.trim()
+    : null;
+  const currentCliVersion = typeof owner.cliVersion === 'string' && owner.cliVersion.trim()
+    ? owner.cliVersion.trim()
+    : null;
+
+  return {
+    currentReleaseChannel,
+    currentCliVersion,
+  };
+}
+
 export function buildBackgroundServiceSetupGuidance(params: Readonly<{
   targetReleaseChannel: PublicReleaseRingId | PublicReleaseRingLabel;
   targetServerUrl?: string | null;
   managedReleaseChannelInventory: ManagedReleaseChannelInventory;
   services: readonly HappierService[];
+  currentRelayOwner?: Pick<MachineDaemonOwnershipMetadata, 'serviceManaged' | 'publicReleaseChannel' | 'cliVersion'> | null;
   platform: HappierServicePlatform;
   mode: 'user' | 'system';
 }>): BackgroundServiceSetupGuidance {
@@ -100,6 +129,7 @@ export function buildBackgroundServiceSetupGuidance(params: Readonly<{
   const conflictingServices = conflictPlan.competingServices
     .map((service) => normalizeServiceSummary(service))
     .filter((service): service is BackgroundServiceSetupGuidanceService => service != null);
+  const manualRelayOwner = normalizeManualRelayOwner(params.currentRelayOwner);
 
   return {
     targetReleaseChannel,
@@ -108,6 +138,7 @@ export function buildBackgroundServiceSetupGuidance(params: Readonly<{
       : null,
     currentDefaultReleaseChannel,
     managedReleaseChannels: params.managedReleaseChannelInventory.managedReleaseChannels,
+    manualRelayOwner,
     exactDefaultServiceExists: conflictPlan.exactTargetExists,
     conflictingServices,
     shouldOfferDefaultReleaseChannelSwitch:
@@ -115,6 +146,7 @@ export function buildBackgroundServiceSetupGuidance(params: Readonly<{
       && params.managedReleaseChannelInventory.managedReleaseChannels.some((entry) => (
         resolveReleaseChannelLabel(entry.releaseChannel) === targetReleaseChannel
       )),
+    shouldPromptForManualRelayTakeover: manualRelayOwner != null,
     shouldPromptForServiceReplacement: conflictingServices.length > 0,
   };
 }

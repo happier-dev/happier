@@ -31,6 +31,7 @@ describe('systemTasks protocol exports', () => {
     expect(Array.isArray(promptKinds)).toBe(true);
     expect(promptKinds).toContain('ssh.trustHost');
     expect(promptKinds).toContain('releaseChannel.switchDefaultForSetup');
+    expect(promptKinds).toContain('daemon.takeOverManualRelayRuntimeForSetup');
     expect(promptKinds).toContain('daemon.replaceLocalBackgroundServices');
     expect(promptKinds).toContain('daemon.replaceRemoteBackgroundServices');
 

@@ -12,6 +12,7 @@ export type PlanChecklistLogEntry = Readonly<{
     ts: number;
     level: 'info' | 'warn' | 'error';
     message: string;
+    details?: string;
 }>;
 
 export type PlanChecklistExecutionError = Readonly<{

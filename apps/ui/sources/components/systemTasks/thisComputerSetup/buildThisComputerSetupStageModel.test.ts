@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildThisComputerSetupStageModel } from './buildThisComputerSetupStageModel';
+import type { ThisComputerSetupPreflight } from '@/components/onboarding/checklists/setupThisComputer/types';
+import type { ThisComputerSetupPrompt } from './resolveThisComputerSetupPrompt';
 
 const basePreflight = {
     activeRelayUrl: 'https://relay.example.test',
@@ -18,7 +20,7 @@ const basePreflight = {
     accountMismatch: false,
     pairingRequired: false,
     relayDriftBanner: null,
-};
+} satisfies ThisComputerSetupPreflight;
 
 describe('buildThisComputerSetupStageModel', () => {
     it('builds high-level setup stages instead of low-level bootstrap rows', () => {
@@ -75,7 +77,7 @@ describe('buildThisComputerSetupStageModel', () => {
                 currentDefaultReleaseChannel: 'stable',
                 targetServerUrl: 'https://relay.example.test',
                 managedReleaseChannels: [],
-            },
+            } satisfies ThisComputerSetupPrompt,
         });
 
         const backgroundServiceStage = items.find((item) => item.id === 'setup.thisComputer.stage.backgroundService');
@@ -88,6 +90,28 @@ describe('buildThisComputerSetupStageModel', () => {
         expect(backgroundServiceStage?.satisfied).toBe(false);
         expect(backgroundServiceStage?.children?.map((item) => item.id)).toEqual([
             'setup.thisComputer.preflight.releaseChannel',
+            'setup.thisComputer.installService',
+            'setup.thisComputer.startService',
+            'setup.thisComputer.verifyService',
+        ]);
+    });
+
+    it('surfaces manual relay-runtime takeover as a background-service decision child', () => {
+        const items = buildThisComputerSetupStageModel({
+            preflight: basePreflight,
+            prompt: {
+                kind: 'daemon.takeOverManualRelayRuntimeForSetup',
+                message: 'Stop the current manual relay runtime?',
+                targetReleaseChannel: 'stable',
+                targetServerUrl: 'https://relay.example.test',
+                currentReleaseChannel: 'stable',
+                currentCliVersion: '0.2.0',
+            } satisfies ThisComputerSetupPrompt,
+        });
+
+        const backgroundServiceStage = items.find((item) => item.id === 'setup.thisComputer.stage.backgroundService');
+        expect(backgroundServiceStage?.children?.map((item) => item.id)).toEqual([
+            'setup.thisComputer.preflight.manualRelayTakeover',
             'setup.thisComputer.installService',
             'setup.thisComputer.startService',
             'setup.thisComputer.verifyService',
@@ -147,6 +171,43 @@ describe('buildThisComputerSetupStageModel', () => {
         });
 
         expect(items.every((item) => Boolean(item.details))).toBe(true);
+    });
+
+    it('adds explanatory details for every setup substep', () => {
+        const items = buildThisComputerSetupStageModel({
+            preflight: basePreflight,
+            prompt: null,
+        });
+
+        expect(items.flatMap((item) => item.children ?? []).every((item) => Boolean(item.details))).toBe(true);
+    });
+
+    it('changes the sign-in substep details when authentication is still required', () => {
+        const readyDetails = buildThisComputerSetupStageModel({
+            preflight: {
+                ...basePreflight,
+                needsAuth: false,
+            },
+            prompt: null,
+        })
+            .flatMap((item) => item.children ?? [])
+            .find((item) => item.id === 'setup.thisComputer.checkAuth')
+            ?.details;
+
+        const needsAuthDetails = buildThisComputerSetupStageModel({
+            preflight: {
+                ...basePreflight,
+                needsAuth: true,
+            },
+            prompt: null,
+        })
+            .flatMap((item) => item.children ?? [])
+            .find((item) => item.id === 'setup.thisComputer.checkAuth')
+            ?.details;
+
+        expect(readyDetails).toBeTruthy();
+        expect(needsAuthDetails).toBeTruthy();
+        expect(needsAuthDetails).not.toBe(readyDetails);
     });
 
     it('keeps install-tools incomplete when daemon state exists but local CLI readiness is not verified', () => {

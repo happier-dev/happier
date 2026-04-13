@@ -24,6 +24,13 @@ export type ReplaceLocalBackgroundServicesPromptData = Readonly<{
   services: ReadonlyArray<BackgroundServicePromptEntryWithServer>;
 }>;
 
+export type TakeOverManualRelayRuntimeForSetupPromptData = Readonly<{
+  targetReleaseChannel: string | null;
+  targetServerUrl: string | null;
+  currentReleaseChannel: string | null;
+  currentCliVersion: string | null;
+}>;
+
 export type ReplaceRemoteBackgroundServicesPromptData = Readonly<{
   targetReleaseChannel: string | null;
   targetServerUrl: string | null;
@@ -150,6 +157,17 @@ export function parseReplaceLocalBackgroundServicesPromptData(
     targetReleaseChannel: readTrimmedString(record, 'targetReleaseChannel'),
     targetServerUrl: readTrimmedString(record, 'targetServerUrl'),
     services,
+  };
+}
+
+export function parseTakeOverManualRelayRuntimeForSetupPromptData(
+  record: SystemTaskJsonObject,
+): TakeOverManualRelayRuntimeForSetupPromptData {
+  return {
+    targetReleaseChannel: readTrimmedString(record, 'targetReleaseChannel'),
+    targetServerUrl: readTrimmedString(record, 'targetServerUrl'),
+    currentReleaseChannel: readTrimmedString(record, 'currentReleaseChannel'),
+    currentCliVersion: readTrimmedString(record, 'currentCliVersion'),
   };
 }
 

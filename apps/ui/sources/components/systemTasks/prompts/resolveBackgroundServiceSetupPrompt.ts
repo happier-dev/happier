@@ -2,9 +2,11 @@ import {
     parseReleaseChannelSwitchForSetupPromptData,
     parseReplaceLocalBackgroundServicesPromptData,
     parseReplaceRemoteBackgroundServicesPromptData,
+    parseTakeOverManualRelayRuntimeForSetupPromptData,
     type ReleaseChannelSwitchForSetupPromptData,
     type ReplaceLocalBackgroundServicesPromptData,
     type ReplaceRemoteBackgroundServicesPromptData,
+    type TakeOverManualRelayRuntimeForSetupPromptData,
 } from '@happier-dev/protocol';
 
 import type { SystemTaskPromptEnvelope } from './readLatestSystemTaskPrompt';
@@ -16,6 +18,10 @@ export type ReleaseChannelSwitchSetupPrompt =
 export type BackgroundServiceReplacementPrompt =
     | (Readonly<{ kind: 'daemon.replaceLocalBackgroundServices'; message: string }> & ReplaceLocalBackgroundServicesPromptData)
     | (Readonly<{ kind: 'daemon.replaceRemoteBackgroundServices'; message: string }> & ReplaceRemoteBackgroundServicesPromptData);
+
+export type ManualRelayRuntimeTakeoverPrompt =
+    Readonly<{ kind: 'daemon.takeOverManualRelayRuntimeForSetup'; message: string }>
+    & TakeOverManualRelayRuntimeForSetupPromptData;
 
 export function resolveReleaseChannelSwitchSetupPrompt(
     prompt: SystemTaskPromptEnvelope | null,
@@ -60,4 +66,18 @@ export function resolveBackgroundServiceReplacementPrompt(
     }
 
     return null;
+}
+
+export function resolveManualRelayRuntimeTakeoverPrompt(
+    prompt: SystemTaskPromptEnvelope | null,
+): ManualRelayRuntimeTakeoverPrompt | null {
+    if (!prompt || prompt.kind !== 'daemon.takeOverManualRelayRuntimeForSetup') {
+        return null;
+    }
+
+    return {
+        kind: prompt.kind,
+        message: prompt.message,
+        ...parseTakeOverManualRelayRuntimeForSetupPromptData(prompt.data),
+    };
 }

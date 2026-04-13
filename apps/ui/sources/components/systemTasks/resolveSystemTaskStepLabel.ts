@@ -12,6 +12,7 @@ const SYSTEM_TASK_STEP_TRANSLATION_KEYS: Readonly<Record<string, TranslationKey>
     'setup.thisComputer.resolveRelay': 'settings.machineSetupStepResolveRelay',
     'setup.thisComputer.checkAuth': 'settings.machineSetupStepCheckAuth',
     'setup.thisComputer.preflight.releaseChannel': 'setupOnboarding.thisComputerStages.backgroundServiceTitle',
+    'setup.thisComputer.preflight.manualRelayTakeover': 'setupOnboarding.thisComputerStages.backgroundServiceTitle',
     'setup.thisComputer.preflight.serviceConflict': 'setupOnboarding.thisComputerStages.backgroundServiceTitle',
     'setup.thisComputer.configureRelay': 'settings.machineSetupStepConfigureRelay',
     'setup.thisComputer.auth.request': 'settings.machineSetupStepAuthRequest',

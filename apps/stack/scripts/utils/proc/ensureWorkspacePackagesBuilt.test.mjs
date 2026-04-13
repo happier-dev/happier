@@ -84,6 +84,23 @@ function applyEnvOverrides(t, vars) {
   }
 }
 
+function captureStderr(t) {
+  const chunks = [];
+  const originalWrite = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((chunk, encoding, callback) => {
+    const text = typeof chunk === 'string' ? chunk : chunk?.toString?.(encoding) ?? String(chunk ?? '');
+    chunks.push(text);
+    if (typeof callback === 'function') {
+      callback();
+    }
+    return true;
+  });
+  t.after(() => {
+    process.stderr.write = originalWrite;
+  });
+  return chunks;
+}
+
 test('ensureWorkspacePackagesBuiltForComponent builds internal dist-based workspaces when export targets are missing', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hs-ensure-workspaces-built-'));
   t.after(async () => {
@@ -273,10 +290,13 @@ test('ensureWorkspacePackagesBuiltForComponent does not run concurrent builds fo
     delaySecondsByPackage: { cliCommon: 1 },
   });
 
+  const stderrChunks = captureStderr(t);
   applyEnvOverrides(t, {
     PATH: `${binDir}:/usr/bin:/bin`,
     OUTPUT_PATH: outputPath,
     HAPPIER_STACK_ENV_FILE: null,
+    HAPPIER_WORKSPACE_BUILD_NOTICE_AFTER_MS: '0',
+    HAPPIER_WORKSPACE_BUILD_NOTICE_EVERY_MS: '999999',
   });
 
   await Promise.all([
@@ -287,6 +307,7 @@ test('ensureWorkspacePackagesBuiltForComponent does not run concurrent builds fo
   const out = await readFile(outputPath, 'utf-8');
   const occurrences = out.split('\n').filter((l) => l.includes('/packages/cli-common :: -s build')).length;
   assert.equal(occurrences, 1);
+  assert.match(stderrChunks.join(''), /waiting for @happier-dev\/cli-common dist build lock/);
 });
 
 test('ensureWorkspacePackagesBuiltForComponent rebuilds internal workspaces when exported entrypoints have missing local imports', async (t) => {
@@ -351,4 +372,73 @@ test('ensureWorkspacePackagesBuiltForComponent rebuilds internal workspaces when
   const out = await readFile(outputPath, 'utf-8');
   assert.match(out, /packages\/protocol :: -s build/);
   assert.equal(Boolean(await readFile(join(protocolDir, 'dist', 'machineTransfer', 'transferStream.js'), 'utf-8')), true);
+});
+
+test('ensureWorkspacePackagesBuiltForComponent tolerates transient missing local imports while another local build finishes', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-ensure-workspaces-built-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  await mkdir(join(root, 'apps', 'ui'), { recursive: true });
+  await mkdir(join(root, 'apps', 'cli'), { recursive: true });
+  await mkdir(join(root, 'apps', 'server'), { recursive: true });
+  await writeJson(join(root, 'apps', 'ui', 'package.json'), {
+    name: '@happier-dev/app',
+    private: true,
+    dependencies: {
+      '@happier-dev/protocol': '0.0.0',
+    },
+  });
+  await writeJson(join(root, 'apps', 'cli', 'package.json'), { name: '@happier-dev/cli', private: true });
+  await writeJson(join(root, 'apps', 'server', 'package.json'), { name: '@happier-dev/server', private: true });
+
+  const protocolDir = join(root, 'packages', 'protocol');
+  await mkdir(join(protocolDir, 'dist'), { recursive: true });
+  await writeJson(join(protocolDir, 'package.json'), {
+    name: '@happier-dev/protocol',
+    version: '0.0.0',
+    type: 'module',
+    main: './dist/index.js',
+    types: './dist/index.d.ts',
+    exports: {
+      '.': { default: './dist/index.js', types: './dist/index.d.ts' },
+    },
+    scripts: { build: 'tsc -p tsconfig.json' },
+  });
+  await writeJson(join(protocolDir, 'tsconfig.json'), { compilerOptions: { outDir: 'dist' } });
+  await writeFile(
+    join(protocolDir, 'dist', 'index.js'),
+    "export * from './machineTransfer/transferStream.js';\n",
+    'utf-8',
+  );
+  await writeFile(join(protocolDir, 'dist', 'index.d.ts'), "export declare const ok: boolean;\n", 'utf-8');
+
+  const binDir = join(root, 'bin');
+  const outputPath = join(root, 'argv.txt');
+  await writeYarnWorkspaceBuildStub({ binDir, outputPath });
+
+  const stderrChunks = captureStderr(t);
+  applyEnvOverrides(t, {
+    PATH: `${binDir}:/usr/bin:/bin`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_ENV_FILE: null,
+    HAPPIER_WORKSPACE_DIST_IMPORT_VALIDATION_RETRY_ATTEMPTS: '8',
+    HAPPIER_WORKSPACE_DIST_IMPORT_VALIDATION_RETRY_DELAY_MS: '25',
+    HAPPIER_WORKSPACE_BUILD_NOTICE_AFTER_MS: '0',
+    HAPPIER_WORKSPACE_BUILD_NOTICE_EVERY_MS: '999999',
+  });
+
+  const transientBuild = setTimeout(async () => {
+    await mkdir(join(protocolDir, 'dist', 'machineTransfer'), { recursive: true });
+    await writeFile(join(protocolDir, 'dist', 'machineTransfer', 'transferStream.js'), 'export const ok = true;\n', 'utf-8');
+  }, 40);
+  t.after(() => clearTimeout(transientBuild));
+
+  await ensureWorkspacePackagesBuiltForComponent(join(root, 'apps', 'ui'), { quiet: true, env: process.env });
+
+  const out = await readFile(outputPath, 'utf-8');
+  assert.doesNotMatch(out, /packages\/protocol :: -s build/);
+  assert.equal(Boolean(await readFile(join(protocolDir, 'dist', 'machineTransfer', 'transferStream.js'), 'utf-8')), true);
+  assert.match(stderrChunks.join(''), /waiting for @happier-dev\/protocol dist build local imports to settle/);
 });

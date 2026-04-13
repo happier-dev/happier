@@ -177,4 +177,36 @@ describe('useThisComputerSetupPromptModals', () => {
         });
         expect(respond).toHaveBeenCalledWith(taskId, { replaceExistingServices: false });
     });
+
+    it('accepts taking over a manual relay runtime and responds to the system task', async () => {
+        const { useThisComputerSetupPromptModals } = await import('./useThisComputerSetupPromptModals');
+        const { runner, respond } = createRunnerStub();
+        const taskId = 'task-3';
+        const snapshot = createSnapshot(taskId);
+        const prompt: SystemTaskPromptEnvelope = {
+            kind: 'daemon.takeOverManualRelayRuntimeForSetup',
+            message: 'Stop the current manual relay runtime and enable the background service for this computer?',
+            data: {
+                kind: 'daemon.takeOverManualRelayRuntimeForSetup',
+                targetReleaseChannel: 'preview',
+                targetServerUrl: 'https://relay.example.test',
+                currentReleaseChannel: 'stable',
+                currentCliVersion: '0.2.0',
+            },
+        };
+
+        modalSpies.confirm.mockResolvedValue(true);
+
+        await renderHook(() => useThisComputerSetupPromptModals({
+            runner,
+            taskId,
+            snapshot,
+            prompt,
+        }));
+
+        await flushHookEffects();
+
+        expect(modalSpies.confirm).toHaveBeenCalledTimes(1);
+        expect(respond).toHaveBeenCalledWith(taskId, { takeOverManualRelayRuntime: true });
+    });
 });

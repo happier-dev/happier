@@ -82,6 +82,24 @@ describe('system task prompt payload contracts', () => {
     });
   });
 
+  it('parses manual relay-runtime takeover prompts for local setup', async () => {
+    const {
+      parseTakeOverManualRelayRuntimeForSetupPromptData,
+    } = await import('./promptPayloadContracts.js');
+
+    expect(parseTakeOverManualRelayRuntimeForSetupPromptData({
+      targetServerUrl: ' https://relay.example.test ',
+      targetReleaseChannel: ' preview ',
+      currentReleaseChannel: ' stable ',
+      currentCliVersion: ' 0.2.0 ',
+    } satisfies SystemTaskJsonObject)).toEqual({
+      targetServerUrl: 'https://relay.example.test',
+      targetReleaseChannel: 'preview',
+      currentReleaseChannel: 'stable',
+      currentCliVersion: '0.2.0',
+    });
+  });
+
   it('parses remote provisioning prompt payloads', async () => {
     const {
       parseApproveRemoteProvisioningPromptData,

@@ -55,6 +55,18 @@ test('self-host config view prints effective config', (t) => {
   assert.equal(typeof parsed?.autoUpdate?.enabled, 'boolean');
 });
 
+test('self-host config view accepts spaced --channel preview arguments', (t) => {
+  const homeDir = mkdtempSync(join(tmpdir(), 'hstack-selfhost-config-preview-view-'));
+  t.after(() => rmSync(homeDir, { recursive: true, force: true }));
+
+  const res = runSelfHost(['config', 'view', '--channel', 'preview', '--json'], { homeDir });
+  assert.equal(res.status, 0, res.stderr);
+  const parsed = parseJsonLinesBestEffort(res.stdout);
+  assert.equal(parsed?.ok, true);
+  assert.equal(parsed?.channel, 'preview');
+  assert.match(String(parsed?.paths?.installRoot ?? ''), /self-host-preview$/);
+});
+
 test('self-host config set updates auto-update schedule and env overrides', (t) => {
   const homeDir = mkdtempSync(join(tmpdir(), 'hstack-selfhost-config-set-'));
   t.after(() => rmSync(homeDir, { recursive: true, force: true }));

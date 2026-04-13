@@ -58,6 +58,27 @@ test('hstack remote server setup forwards env overrides to self-host install', (
   assert.ok(log.includes('HAPPIER_DB_PROVIDER=sqlite'), `expected forwarded db provider override\n${log}`);
 });
 
+test('hstack remote server setup forwards --server-binary for local candidate installs over ssh', (t) => {
+  const h = createRemoteServerSetupHarness(t, { prefix: 'hstack-remote-server-binary-' });
+  const res = h.runRemoteCommand([
+    'server',
+    'setup',
+    '--ssh',
+    'dev@host',
+    '--channel=preview',
+    '--server-binary',
+    '/tmp/happier-server',
+    '--json',
+  ]);
+  assert.equal(res.status, 0, res.stderr);
+
+  const log = h.readInvocationsLog();
+  assert.ok(log.includes('"bin":"happier"'), `expected delegation to happier\n${log}`);
+  assert.ok(log.includes('--server-binary'), `expected server binary arg\n${log}`);
+  assert.ok(log.includes('/tmp/happier-server'), `expected local server binary path\n${log}`);
+  assert.ok(!log.includes('--self-host-server-binary'), `expected legacy ssh flag to be absent\n${log}`);
+});
+
 test('hstack remote server setup accepts the dev release ring', (t) => {
   const h = createRemoteServerSetupHarness(t, { prefix: 'hstack-remote-server-dev-' });
   const res = h.runRemoteCommand([

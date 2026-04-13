@@ -15,7 +15,7 @@ async function sha256(path) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-async function runInstallerScenario(envOverrides = {}) {
+async function runInstallerScenario(envOverrides = {}, options = {}) {
   const root = await mkdtemp(join(tmpdir(), 'happier-installer-daemon-'));
   const homeDir = join(root, 'home');
   const binDir = join(root, 'bin');
@@ -176,6 +176,14 @@ if [[ "$1" = "service" && "$2" = "list" ]]; then
   exit 0
 fi
 if [[ "$1" = "service" && "$2" = "status" ]]; then
+  if [[ "$3" = "--json" ]]; then
+    if [[ -n "\${HAPPIER_TEST_SERVICE_STATUS_JSON:-}" ]]; then
+      printf '%s' "\${HAPPIER_TEST_SERVICE_STATUS_JSON}"
+      exit 0
+    fi
+    echo '{"ok":true,"daemon":{"running":false,"pid":null},"owner":null}'
+    exit 0
+  fi
   if [[ -n "\${HAPPIER_TEST_SERVICE_STATUS_TEXT:-}" ]]; then
     printf '%s\n' "\${HAPPIER_TEST_SERVICE_STATUS_TEXT}"
   fi
@@ -262,6 +270,8 @@ exit 0
     }
   ]
 }`;
+  const expectedFailureMessage = options.expectedFailureMessage ?? null;
+
   await writeFile(
     curlStubPath,
     `#!/usr/bin/env bash
@@ -275,6 +285,10 @@ for ((i=1; i<=$#; i++)); do
   fi
 done
 url="\${@: -1}"
+if [[ -n "\${HAPPIER_TEST_CURL_FAIL_ON_MATCH:-}" && "$url" == *"\${HAPPIER_TEST_CURL_FAIL_ON_MATCH}"* ]]; then
+  echo "\${HAPPIER_TEST_CURL_FAIL_MESSAGE:-curl failed for $url}" >&2
+  exit 17
+fi
 if [[ -n "$out" ]]; then
   case "$url" in
     *${artifactV123.artifactName}) cp ${JSON.stringify(artifactV123.tarPath)} "$out" ;;
@@ -319,6 +333,24 @@ printf '%s' '${releaseJson}'
   const res = spawnSync('bash', [installerPath], { env, encoding: 'utf8' });
   const stdout = String(res.stdout ?? '');
   const stderr = String(res.stderr ?? '');
+  if (expectedFailureMessage) {
+    assert.notEqual(res.status, 0, 'expected installer to fail');
+    assert.match(
+      `${stdout}\n${stderr}`,
+      expectedFailureMessage,
+      `installer failed for an unexpected reason:\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`,
+    );
+
+    return {
+      log: await readFile(logPath, 'utf8').catch(() => ''),
+      stdout,
+      stderr,
+      cleanup: async () => {
+        await rm(root, { recursive: true, force: true });
+      },
+    };
+  }
+
   assert.equal(res.status, 0, `installer failed:\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`);
 
   const log = await readFile(logPath, 'utf8').catch(() => '');
@@ -351,11 +383,110 @@ test('install.sh skips daemon service installation by default in noninteractive 
 test('install.sh prints download and extraction progress so large installs do not look stuck', async () => {
   const scenario = await runInstallerScenario();
   try {
-    assert.match(scenario.stdout, /Fetching cli-stable release metadata\.\.\./);
-    assert.match(scenario.stdout, /Downloading release archive\.\.\./);
-    assert.match(scenario.stdout, /Downloading checksums\.\.\./);
-    assert.match(scenario.stdout, /Downloading minisign signature\.\.\./);
-    assert.match(scenario.stdout, /Extracting payload\.\.\./);
+    assert.match(scenario.stdout, /- \[\.\.\] Fetching cli-stable release metadata/);
+    assert.match(scenario.stdout, /- \[✓\] Fetching cli-stable release metadata/);
+    assert.match(scenario.stdout, /- \[\.\.\] Downloading release archive/);
+    assert.match(scenario.stdout, /- \[✓\] Downloading release archive/);
+    assert.match(scenario.stdout, /- \[\.\.\] Downloading checksums/);
+    assert.match(scenario.stdout, /- \[✓\] Downloading minisign signature/);
+    assert.match(scenario.stdout, /- \[\.\.\] Extracting payload/);
+    assert.match(scenario.stdout, /- \[✓\] Extracting payload/);
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
+test('install.sh renders a concise background-service summary without raw system manager output', async () => {
+  const scenario = await runInstallerScenario({
+    HAPPIER_NONINTERACTIVE: '',
+    HAPPIER_TEST_SERVICE_REPAIR_JSON: JSON.stringify({
+      ok: true,
+      executed: false,
+      existingServices: [
+        { mode: 'user', targetMode: 'default-following', releaseChannel: 'stable' },
+      ],
+      actions: [
+        { kind: 'remove-service', service: { mode: 'user', targetMode: 'default-following', releaseChannel: 'stable' } },
+        { kind: 'install-default-following-service', releaseChannel: 'publicdev', mode: 'user' },
+      ],
+      manualWarnings: [],
+    }),
+    HAPPIER_TEST_SERVICE_LIST_TEXT: 'Default background service (default, stable)\n  installed: /tmp/com.happier.cli.daemon.default.plist',
+    HAPPIER_TEST_SERVICE_STATUS_JSON: JSON.stringify({
+      ok: true,
+      daemon: { running: true, pid: 28768 },
+      owner: {
+        serviceManaged: false,
+        startedWithPublicReleaseChannel: null,
+        startedWithCliVersion: '0.2.1-preview.1775503793.4227',
+        currentInvocationMatches: false,
+      },
+      system: {
+        ok: true,
+        output: 'gui/501/com.happier.cli.daemon.default = { raw launchctl dump }',
+      },
+    }),
+  });
+  try {
+    assert.match(scenario.stdout, /Background Service/);
+    assert.match(scenario.stdout, /• Running now: yes \(pid 28768\)/);
+    assert.match(scenario.stdout, /• Current owner: manual relay runtime/);
+    assert.match(scenario.stdout, /• Owner CLI: unknown • 0\.2\.1-preview\.1775503793\.4227/);
+    assert.match(scenario.stdout, /Current CLI differs from the running manual relay runtime/);
+    assert.doesNotMatch(scenario.stdout, /gui\/501\/com\.happier\.cli\.daemon\.default/);
+    assert.match(scenario.stdout, /Automatic startup still follows the current managed default release-channel/);
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
+test('install.sh does not invent a relay owner when service status reports owner null', async () => {
+  const scenario = await runInstallerScenario({
+    HAPPIER_NONINTERACTIVE: '',
+    HAPPIER_TEST_SERVICE_REPAIR_JSON: JSON.stringify({
+      ok: true,
+      executed: false,
+      existingServices: [
+        { mode: 'user', targetMode: 'default-following', releaseChannel: 'stable' },
+      ],
+      actions: [],
+      manualWarnings: [],
+    }),
+    HAPPIER_TEST_SERVICE_LIST_TEXT: 'Default background service (default, stable)\n  installed: /tmp/com.happier.cli.daemon.default.plist',
+    HAPPIER_TEST_SERVICE_STATUS_JSON: JSON.stringify({
+      ok: true,
+      daemon: { running: false, pid: null },
+      owner: null,
+      system: {
+        ok: true,
+        output: 'gui/501/com.happier.cli.daemon.default = { raw launchctl dump }',
+      },
+    }),
+  });
+  try {
+    assert.match(scenario.stdout, /Background Service/);
+    assert.match(scenario.stdout, /• Running now: no/);
+    assert.doesNotMatch(scenario.stdout, /• Current owner:/);
+    assert.doesNotMatch(scenario.stdout, /Current owner: relay owner/);
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
+test('install.sh preserves non-TTY step summaries when a download step fails', async () => {
+  const scenario = await runInstallerScenario(
+    {
+      HAPPIER_TEST_CURL_FAIL_ON_MATCH: 'checksums-happier-v1.2.4.txt',
+      HAPPIER_TEST_CURL_FAIL_MESSAGE: 'simulated checksum download failure',
+    },
+    {
+      expectedFailureMessage: /simulated checksum download failure/,
+    },
+  );
+  try {
+    assert.match(scenario.stdout, /- \[\.\.\] Downloading checksums/);
+    assert.match(scenario.stdout, /- \[x\] Downloading checksums/);
+    assert.match(scenario.stderr, /simulated checksum download failure/);
   } finally {
     await scenario.cleanup();
   }

@@ -19,6 +19,7 @@ export {
   parseReleaseChannelSwitchForSetupPromptData,
   parseReplaceLocalBackgroundServicesPromptData,
   parseReplaceRemoteBackgroundServicesPromptData,
+  parseTakeOverManualRelayRuntimeForSetupPromptData,
   parseSshPasswordPromptData,
   parseSshTrustPromptData,
   type ApproveRemoteProvisioningPromptData,
@@ -28,6 +29,7 @@ export {
   type ReleaseChannelSwitchForSetupPromptData,
   type ReplaceLocalBackgroundServicesPromptData,
   type ReplaceRemoteBackgroundServicesPromptData,
+  type TakeOverManualRelayRuntimeForSetupPromptData,
   type SshPasswordPromptData,
   type SshTrustPromptData,
 } from './promptPayloadContracts.js';

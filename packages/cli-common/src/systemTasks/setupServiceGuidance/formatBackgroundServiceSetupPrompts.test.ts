@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { BackgroundServiceSetupGuidance } from './buildBackgroundServiceSetupGuidance.js';
 import {
+  formatBackgroundServiceManualRelayTakeoverPrompt,
   formatBackgroundServiceReleaseChannelSwitchPrompt,
   formatBackgroundServiceReplacementPrompt,
 } from './formatBackgroundServiceSetupPrompts.js';
@@ -11,9 +12,11 @@ const baseGuidance: BackgroundServiceSetupGuidance = {
   targetServerUrl: 'https://relay.example.test',
   currentDefaultReleaseChannel: 'stable',
   managedReleaseChannels: [],
+  manualRelayOwner: null,
   exactDefaultServiceExists: false,
   conflictingServices: [],
   shouldOfferDefaultReleaseChannelSwitch: true,
+  shouldPromptForManualRelayTakeover: false,
   shouldPromptForServiceReplacement: true,
 };
 
@@ -41,6 +44,21 @@ describe('formatBackgroundServiceSetupPrompts', () => {
     );
     expect(formatBackgroundServiceReplacementPrompt(guidance)).toBe(
       'This computer already has conflicting Happier background services. Replace them before installing the default background service targeting the current default server?',
+    );
+  });
+
+  it('formats the manual relay takeover prompt around the default-following background service target', () => {
+    const guidance = {
+      ...baseGuidance,
+      shouldPromptForManualRelayTakeover: true,
+      manualRelayOwner: {
+        currentReleaseChannel: 'stable',
+        currentCliVersion: '0.2.0',
+      },
+    } satisfies BackgroundServiceSetupGuidance;
+
+    expect(formatBackgroundServiceManualRelayTakeoverPrompt(guidance)).toBe(
+      'A manual relay runtime is currently running for https://relay.example.test. Stop it and enable the background service for this computer?',
     );
   });
 });

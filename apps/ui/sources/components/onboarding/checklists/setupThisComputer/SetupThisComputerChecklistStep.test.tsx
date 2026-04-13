@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import type { RelayDriftBanner } from '@/components/settings/server/relayDriftTypes';
 import type { SetupThisComputerWizardPrimaryState } from './SetupThisComputerChecklistStep';
 
 const preflightMock = vi.hoisted(() => ({
@@ -21,15 +22,7 @@ const preflightMock = vi.hoisted(() => ({
         serverMismatch: false,
         accountMismatch: false,
         pairingRequired: true,
-        relayDriftBanner: null as null | {
-            kind: 'warning';
-            title: string;
-            description: string;
-            actionLabel: string;
-            isRepairStarting: boolean;
-            repairTaskSnapshot: null;
-            onPress: () => void;
-        },
+        relayDriftBanner: null as RelayDriftBanner | null,
     },
 }));
 
@@ -132,7 +125,7 @@ afterEach(() => {
 });
 
 describe('SetupThisComputerChecklistStep', () => {
-    it('renders the checklist rows and expands logs for the active execution step', async () => {
+    it('renders the checklist rows without auto-expanding the active execution stage', async () => {
         const { SetupThisComputerChecklistStep } = await import('./SetupThisComputerChecklistStep');
         taskHookMock.value.activeTaskSnapshot = {
             taskId: 'task-1',
@@ -169,6 +162,7 @@ describe('SetupThisComputerChecklistStep', () => {
         expect(screen.findByTestId('setup-this-computer-checklist-row-setup.thisComputer.stage.registerComputer')).toBeTruthy();
         expect(screen.findByTestId('setup-this-computer-checklist-row-setup.thisComputer.stage.useRelay')).toBeTruthy();
         expect(screen.findByTestId('setup-this-computer-checklist-row-setup.thisComputer.configureRelay')).toBeNull();
+        expect(screen.findByTestId('setup-this-computer-checklist-row-setup.thisComputer.stage.useRelay-details')).toBeNull();
         expect(screen.getTextContent()).toContain('setupOnboarding.thisComputerStages.registerComputerTitle');
     });
 
@@ -203,9 +197,74 @@ describe('SetupThisComputerChecklistStep', () => {
         );
 
         await screen.pressByTestIdAsync('setup-this-computer-checklist-row-setup.thisComputer.stage.installTools-details-toggle');
+        await screen.pressByTestIdAsync('setup-this-computer-checklist-row-setup.thisComputer.stage.installTools-children-row-setup.thisComputer.ensureCli');
 
         expect(screen.findByTestId('setup-this-computer-checklist-row-setup.thisComputer.stage.installTools-details')).toBeTruthy();
         expect(screen.findByTestId('setup-this-computer-checklist-row-setup.thisComputer.stage.installTools-children-row-setup.thisComputer.ensureCli')).toBeTruthy();
+        expect(screen.findByTestId('setup-this-computer-checklist-row-setup.thisComputer.stage.installTools-children-row-setup.thisComputer.ensureCli-details')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('setupOnboarding.thisComputerStages.installToolsDetails');
+    });
+
+    it('shows dynamic substep details for the sign-in check', async () => {
+        const { SetupThisComputerChecklistStep } = await import('./SetupThisComputerChecklistStep');
+
+        preflightMock.value = {
+            ...preflightMock.value,
+            needsAuth: true,
+        };
+
+        const screen = await renderScreen(
+            <SetupThisComputerChecklistStep testID="setup-this-computer" />,
+        );
+
+        await screen.pressByTestIdAsync('setup-this-computer-checklist-row-setup.thisComputer.stage.useRelay-details-toggle');
+        await screen.pressByTestIdAsync('setup-this-computer-checklist-row-setup.thisComputer.stage.useRelay-children-row-setup.thisComputer.checkAuth');
+
+        expect(screen.findByTestId('setup-this-computer-checklist-row-setup.thisComputer.stage.useRelay-children-row-setup.thisComputer.checkAuth-details')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('setupOnboarding.thisComputerStages.useRelayNeedsAuthSubtitle');
+    });
+
+    it('shows the running child step, logs, and failure details inside the expanded setup stage', async () => {
+        const { SetupThisComputerChecklistStep } = await import('./SetupThisComputerChecklistStep');
+
+        taskHookMock.value.activeTaskSnapshot = {
+            taskId: 'task-1',
+            status: 'failed',
+            currentStepId: 'setup.thisComputer.installService',
+            latestMessage: 'Installing background service',
+            awaitingInput: false,
+            cancelRequested: false,
+            events: [
+                {
+                    protocolVersion: 1,
+                    taskId: 'task-1',
+                    tsMs: 30,
+                    type: 'progress',
+                    stepId: 'setup.thisComputer.installService',
+                    message: 'Installing background service',
+                },
+            ],
+            result: {
+                ok: false,
+                protocolVersion: 1,
+                taskId: 'task-1',
+                error: {
+                    code: 'cli_command_failed',
+                    message: '',
+                },
+            },
+        };
+
+        const screen = await renderScreen(
+            <SetupThisComputerChecklistStep testID="setup-this-computer" />,
+        );
+
+        await screen.pressByTestIdAsync('setup-this-computer-checklist-row-setup.thisComputer.stage.backgroundService-details-toggle');
+        expect(screen.findByTestId('setup-this-computer-checklist-row-setup.thisComputer.stage.backgroundService')).toBeTruthy();
+        expect(screen.findByTestId('setup-this-computer-checklist-row-setup.thisComputer.stage.backgroundService-children-row-setup.thisComputer.installService')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('Installing background service');
+        expect(screen.getTextContent()).toContain('cli_command_failed');
+        expect(screen.getTextContent()).toContain('common.error');
     });
 
     it('advances without starting the system task when this computer is already ready', async () => {
@@ -253,6 +312,63 @@ describe('SetupThisComputerChecklistStep', () => {
 
         expect(taskHookMock.value.start).not.toHaveBeenCalled();
         expect(onRequestAdvance).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the checklist in setup mode when relay drift repair is still needed', async () => {
+        const { SetupThisComputerChecklistStep } = await import('./SetupThisComputerChecklistStep');
+        const onRequestAdvance = vi.fn();
+
+        preflightMock.value = {
+            ...preflightMock.value,
+            activeRelayUrl: 'https://relay.example.test',
+            localCliReady: true,
+            serviceInstalled: true,
+            daemonRunning: true,
+            machineId: 'machine-1',
+            needsAuth: false,
+            daemonServerUrl: 'https://relay.example.test',
+            daemonComparableKey: 'https://relay.example.test',
+            daemonAccountId: 'acct_ui',
+            daemonMachineRegistered: true,
+            uiAccountId: 'acct_ui',
+            serverMismatch: false,
+            accountMismatch: false,
+            pairingRequired: false,
+            relayDriftBanner: {
+                kind: 'warning',
+                title: 'Relay drift',
+                description: 'The background service is not connected to this server yet.',
+                actionLabel: 'Reconnect background service',
+                actionDisabled: true,
+                actionHint: 'settings.systemTaskBridgeUnavailable',
+                onPress: async () => undefined,
+                isRepairStarting: false,
+                repairTaskSnapshot: null,
+            },
+        };
+        taskHookMock.value.activeTaskSnapshot = null;
+        taskHookMock.value.start.mockClear();
+
+        const primaryRef: { current: SetupThisComputerWizardPrimaryState | null } = { current: null };
+        await renderScreen(
+            <SetupThisComputerChecklistStep
+                testID="setup-this-computer"
+                onRequestAdvance={onRequestAdvance}
+                onWizardPrimaryChange={(state) => {
+                    primaryRef.current = state;
+                }}
+            />,
+        );
+
+        expect(primaryRef.current?.label).toBe('common.continue');
+        expect(primaryRef.current?.disabled).toBe(false);
+
+        await act(async () => {
+            await primaryRef.current?.onPress?.();
+        });
+
+        expect(taskHookMock.value.start).toHaveBeenCalledTimes(1);
+        expect(onRequestAdvance).not.toHaveBeenCalled();
     });
 
     it('keeps the checklist in setup mode until local CLI readiness is confirmed', async () => {

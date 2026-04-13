@@ -2,20 +2,24 @@ import type { BackgroundServiceSetupGuidance } from './buildBackgroundServiceSet
 
 export type BackgroundServiceSetupGuidanceCancellationReason =
   | 'declined_release_channel_switch'
+  | 'declined_manual_relay_takeover'
   | 'declined_service_replacement';
 
 export type BackgroundServiceSetupGuidanceFlowResult = Readonly<{
   cancelled: boolean;
   cancellationReason: BackgroundServiceSetupGuidanceCancellationReason | null;
   switchedDefaultReleaseChannel: boolean;
+  tookOverManualRelayRuntime: boolean;
   replacedExistingServices: boolean;
 }>;
 
 export async function applyBackgroundServiceSetupGuidance(params: Readonly<{
   guidance: BackgroundServiceSetupGuidance;
   promptSwitchDefaultReleaseChannel: () => Promise<boolean>;
+  promptTakeOverManualRelayRuntime: () => Promise<boolean>;
   promptReplaceExistingServices: () => Promise<boolean>;
   switchDefaultReleaseChannel: () => Promise<void>;
+  takeOverManualRelayRuntime: () => Promise<void>;
   replaceExistingServices: () => Promise<void>;
 }>): Promise<BackgroundServiceSetupGuidanceFlowResult> {
   const shouldSwitchDefaultReleaseChannel = params.guidance.shouldOfferDefaultReleaseChannelSwitch
@@ -27,6 +31,21 @@ export async function applyBackgroundServiceSetupGuidance(params: Readonly<{
       cancelled: true,
       cancellationReason: 'declined_release_channel_switch',
       switchedDefaultReleaseChannel: false,
+      tookOverManualRelayRuntime: false,
+      replacedExistingServices: false,
+    };
+  }
+
+  const shouldTakeOverManualRelayRuntime = params.guidance.shouldPromptForManualRelayTakeover
+    ? await params.promptTakeOverManualRelayRuntime()
+    : false;
+
+  if (params.guidance.shouldPromptForManualRelayTakeover && !shouldTakeOverManualRelayRuntime) {
+    return {
+      cancelled: true,
+      cancellationReason: 'declined_manual_relay_takeover',
+      switchedDefaultReleaseChannel: false,
+      tookOverManualRelayRuntime: false,
       replacedExistingServices: false,
     };
   }
@@ -40,6 +59,7 @@ export async function applyBackgroundServiceSetupGuidance(params: Readonly<{
       cancelled: true,
       cancellationReason: 'declined_service_replacement',
       switchedDefaultReleaseChannel: false,
+      tookOverManualRelayRuntime: false,
       replacedExistingServices: false,
     };
   }
@@ -48,6 +68,12 @@ export async function applyBackgroundServiceSetupGuidance(params: Readonly<{
   if (shouldSwitchDefaultReleaseChannel) {
     await params.switchDefaultReleaseChannel();
     switchedDefaultReleaseChannel = true;
+  }
+
+  let tookOverManualRelayRuntime = false;
+  if (shouldTakeOverManualRelayRuntime) {
+    await params.takeOverManualRelayRuntime();
+    tookOverManualRelayRuntime = true;
   }
 
   let replacedExistingServices = false;
@@ -60,6 +86,7 @@ export async function applyBackgroundServiceSetupGuidance(params: Readonly<{
     cancelled: false,
     cancellationReason: null,
     switchedDefaultReleaseChannel,
+    tookOverManualRelayRuntime,
     replacedExistingServices,
   };
 }

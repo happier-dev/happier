@@ -17,6 +17,7 @@ export const SYSTEM_TASK_PROMPT_KINDS_V1 = [
   'ssh.password',
   'auth.approveRemoteProvisioning',
   'releaseChannel.switchDefaultForSetup',
+  'daemon.takeOverManualRelayRuntimeForSetup',
   'daemon.replaceLocalBackgroundServices',
   'daemon.replaceRemoteBackgroundServices',
 ] as const;

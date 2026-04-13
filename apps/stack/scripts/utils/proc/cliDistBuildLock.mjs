@@ -52,6 +52,7 @@ export async function withCliDistBuildLock(fn, options = {}) {
   if (!lockPath) {
     throw new Error('withCliDistBuildLock requires options.lockPath');
   }
+  const onWait = typeof options.onWait === 'function' ? options.onWait : null;
 
   mkdirSync(dirname(lockPath), { recursive: true });
 
@@ -80,6 +81,17 @@ export async function withCliDistBuildLock(fn, options = {}) {
         throw new Error(`Timed out waiting for CLI dist build lock: ${lockPath} (${describeLockOwner(lockPath, Date.now())})`);
       }
       waited = true;
+      if (onWait) {
+        try {
+          onWait({
+            lockPath,
+            owner: parseLockOwner(lockPath),
+            staleAfterMs,
+            timeoutMs,
+            waitedMs: Date.now() - startedAt,
+          });
+        } catch {}
+      }
       await delay(pollIntervalMs);
     }
   }

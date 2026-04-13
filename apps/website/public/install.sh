@@ -73,6 +73,150 @@ warn() {
   say "${COLOR_YELLOW}$*${COLOR_RESET}"
 }
 
+section() {
+  echo
+  say "${COLOR_BOLD}$*${COLOR_RESET}"
+}
+
+installer_bullet() {
+  say "  • $*"
+}
+
+installer_has_tty_output() {
+  [[ -t 1 ]] && [[ -t 2 ]]
+}
+
+installer_step_pending_symbol() {
+  printf '%s' "${COLOR_CYAN}..${COLOR_RESET}"
+}
+
+installer_step_success_symbol() {
+  printf '%s' "${COLOR_GREEN}✓${COLOR_RESET}"
+}
+
+installer_step_failure_symbol() {
+  printf '%s' "${COLOR_YELLOW}x${COLOR_RESET}"
+}
+
+run_installer_step() {
+  local label="$1"
+  shift
+
+  if ! installer_has_tty_output; then
+    local tmp_output=""
+    if [[ -n "${TMP_DIR:-}" ]]; then
+      tmp_output="${TMP_DIR}/installer-step.$$.log"
+    else
+      tmp_output="$(mktemp)"
+    fi
+
+    say "- [..] ${label}"
+    if "$@" >"${tmp_output}" 2>&1; then
+      say "- [$(installer_step_success_symbol)] ${label}"
+      rm -f "${tmp_output}" >/dev/null 2>&1 || true
+      return 0
+    fi
+
+    say "- [$(installer_step_failure_symbol)] ${label}"
+    if [[ -s "${tmp_output}" ]]; then
+      cat "${tmp_output}" >&2
+    fi
+    rm -f "${tmp_output}" >/dev/null 2>&1 || true
+    return 1
+  fi
+
+  local spinner_frames=('|' '/' '-' '\')
+  local frame_index=0
+  local tmp_output=""
+  if [[ -n "${TMP_DIR:-}" ]]; then
+    tmp_output="${TMP_DIR}/installer-step.$$.log"
+  else
+    tmp_output="$(mktemp)"
+  fi
+
+  "$@" >"${tmp_output}" 2>&1 &
+  local step_pid=$!
+
+  while kill -0 "${step_pid}" 2>/dev/null; do
+    local frame="${spinner_frames[$((frame_index % ${#spinner_frames[@]}))]}"
+    printf '\r- [%s] %s' "${COLOR_CYAN}${frame}${COLOR_RESET}" "${label}" >&2
+    frame_index=$((frame_index + 1))
+    sleep 0.12
+  done
+
+  wait "${step_pid}"
+  local status=$?
+  if [[ "${status}" -eq 0 ]]; then
+    printf '\r- [%s] %s\n' "$(installer_step_success_symbol)" "${label}" >&2
+    rm -f "${tmp_output}" >/dev/null 2>&1 || true
+    return 0
+  fi
+
+  printf '\r- [%s] %s\n' "$(installer_step_failure_symbol)" "${label}" >&2
+  if [[ -s "${tmp_output}" ]]; then
+    cat "${tmp_output}" >&2
+  fi
+  rm -f "${tmp_output}" >/dev/null 2>&1 || true
+  return "${status}"
+}
+
+capture_installer_step_output() {
+  local label="$1"
+  local __resultvar="$2"
+  shift 2
+
+  local tmp_output=""
+  local tmp_error=""
+  if [[ -n "${TMP_DIR:-}" ]]; then
+    tmp_output="${TMP_DIR}/installer-capture.$$.out"
+    tmp_error="${TMP_DIR}/installer-capture.$$.err"
+  else
+    tmp_output="$(mktemp)"
+    tmp_error="$(mktemp)"
+  fi
+
+  if ! installer_has_tty_output; then
+    say "- [..] ${label}"
+    if "$@" >"${tmp_output}" 2>"${tmp_error}"; then
+      say "- [$(installer_step_success_symbol)] ${label}"
+      printf -v "${__resultvar}" '%s' "$(cat "${tmp_output}")"
+      rm -f "${tmp_output}" "${tmp_error}" >/dev/null 2>&1 || true
+      return 0
+    fi
+    say "- [$(installer_step_failure_symbol)] ${label}" >&2
+    cat "${tmp_error}" >&2
+    rm -f "${tmp_output}" "${tmp_error}" >/dev/null 2>&1 || true
+    return 1
+  fi
+
+  local spinner_frames=('|' '/' '-' '\')
+  local frame_index=0
+
+  "$@" >"${tmp_output}" 2>"${tmp_error}" &
+  local step_pid=$!
+
+  while kill -0 "${step_pid}" 2>/dev/null; do
+    local frame="${spinner_frames[$((frame_index % ${#spinner_frames[@]}))]}"
+    printf '\r- [%s] %s' "${COLOR_CYAN}${frame}${COLOR_RESET}" "${label}" >&2
+    frame_index=$((frame_index + 1))
+    sleep 0.12
+  done
+
+  if wait "${step_pid}"; then
+    printf '\r- [%s] %s\n' "$(installer_step_success_symbol)" "${label}" >&2
+    printf -v "${__resultvar}" '%s' "$(cat "${tmp_output}")"
+    rm -f "${tmp_output}" "${tmp_error}" >/dev/null 2>&1 || true
+    return 0
+  fi
+
+  printf '\r- [%s] %s\n' "$(installer_step_failure_symbol)" "${label}" >&2
+  if [[ -s "${tmp_error}" ]]; then
+    cat "${tmp_error}" >&2
+  fi
+  rm -f "${tmp_output}" "${tmp_error}" >/dev/null 2>&1 || true
+  return 1
+}
+
 shell_command_cache_hint() {
   local shell_name
   shell_name="$(basename "${SHELL:-}")"
@@ -536,6 +680,11 @@ read_installed_background_service_inventory_json() {
   invoke_installer_command_with_daemon_service_context "${cli_bin}" service list --json 2>/dev/null || true
 }
 
+read_background_service_status_json() {
+  local cli_bin="$1"
+  invoke_installer_command_with_daemon_service_context "${cli_bin}" service status --json 2>/dev/null || true
+}
+
 read_background_service_preflight_json() {
   local cli_bin="$1"
   local repair_json=""
@@ -611,42 +760,131 @@ background_service_repair_manual_command() {
   printf '%s service repair --yes' "${cli_bin}"
 }
 
+json_first_string_value() {
+  local json="$1"
+  local key="$2"
+  printf '%s' "${json}" | sed -nE "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\\1/p" | head -n 1
+}
+
+json_first_boolean_value() {
+  local json="$1"
+  local key="$2"
+  printf '%s' "${json}" | sed -nE "s/.*\"${key}\"[[:space:]]*:[[:space:]]*(true|false|null).*/\\1/p" | head -n 1
+}
+
+json_first_integer_value() {
+  local json="$1"
+  local key="$2"
+  printf '%s' "${json}" | sed -nE "s/.*\"${key}\"[[:space:]]*:[[:space:]]*([0-9]+|null).*/\\1/p" | head -n 1
+}
+
+print_installed_background_service_status_summary() {
+  local status_json="$1"
+
+  if [[ -z "${status_json}" ]] || [[ "${status_json}" != *'"owner"'* ]]; then
+    return
+  fi
+
+  local daemon_running=""
+  daemon_running="$(json_first_boolean_value "${status_json}" 'running')"
+  local daemon_pid=""
+  daemon_pid="$(json_first_integer_value "${status_json}" 'pid')"
+  if [[ "${daemon_running}" == "true" && "${daemon_pid}" != "null" && -n "${daemon_pid}" ]]; then
+    installer_bullet "Running now: yes (pid ${daemon_pid})"
+  elif [[ "${daemon_running}" == "true" ]]; then
+    installer_bullet "Running now: yes"
+  else
+    installer_bullet "Running now: no"
+  fi
+
+  local owner_is_null=""
+  owner_is_null="$(json_first_boolean_value "${status_json}" 'owner')"
+  if [[ "${owner_is_null}" == "null" ]]; then
+    return
+  fi
+
+  local service_managed=""
+  service_managed="$(json_first_boolean_value "${status_json}" 'serviceManaged')"
+  if [[ "${service_managed}" == "true" ]]; then
+    installer_bullet "Current owner: background service"
+  elif [[ "${service_managed}" == "false" ]]; then
+    installer_bullet "Current owner: manual relay runtime"
+  else
+    installer_bullet "Current owner: relay owner"
+  fi
+
+  local owner_ring=""
+  owner_ring="$(json_first_string_value "${status_json}" 'startedWithPublicReleaseChannel')"
+  local owner_version=""
+  owner_version="$(json_first_string_value "${status_json}" 'startedWithCliVersion')"
+  if [[ -n "${owner_ring}" || -n "${owner_version}" ]]; then
+    installer_bullet "Owner CLI: ${owner_ring:-unknown} • ${owner_version:-unknown}"
+  fi
+
+  local invocation_matches=""
+  invocation_matches="$(json_first_boolean_value "${status_json}" 'currentInvocationMatches')"
+  if [[ "${invocation_matches}" == "false" ]]; then
+    if [[ "${service_managed}" == "true" ]]; then
+      warn "Current CLI differs from the running background service. Use \`happier service restart\` if you want automatic startup to switch to this installation."
+    elif [[ "${service_managed}" == "false" ]]; then
+      warn "Current CLI differs from the running manual relay runtime. Use \`happier daemon restart\` if you want the manual relay runtime to switch to this installation."
+    else
+      warn "Current CLI differs from the running relay owner. Restart the current relay owner before trying to switch this installation."
+    fi
+  fi
+}
+
+print_installed_background_service_entries() {
+  local services_text="$1"
+  if [[ -z "${services_text}" ]]; then
+    return
+  fi
+
+  while IFS= read -r line; do
+    if [[ -z "${line}" ]]; then
+      continue
+    fi
+    if [[ "${line}" == "  "* ]]; then
+      say "    ${line#"  "}"
+      continue
+    fi
+    installer_bullet "${line}"
+  done <<< "${services_text}"
+}
+
 print_installed_background_service_summary() {
   local cli_bin="$1"
   local services_json="$2"
+  local status_json="$3"
 
   if ! background_service_inventory_is_supported "${services_json}" || background_service_inventory_is_empty "${services_json}"; then
     return
   fi
 
-  info "Current background services:"
+  section "Background Service"
   local services_text=""
   services_text="$(invoke_installer_command_with_daemon_service_context "${cli_bin}" service list 2>/dev/null || true)"
-  if [[ -n "${services_text}" ]]; then
-    printf '%s\n' "${services_text}"
-  fi
-  local service_status_text=""
-  service_status_text="$(invoke_installer_command_with_daemon_service_context "${cli_bin}" service status 2>/dev/null || true)"
-  if [[ -n "${service_status_text}" ]]; then
-    printf '%s\n' "${service_status_text}"
-  fi
+  print_installed_background_service_entries "${services_text}"
+  print_installed_background_service_status_summary "${status_json}"
 
   if background_service_repair_requires_sudo "${services_json}"; then
+    echo
     warn "${COLOR_BOLD}System background services are installed.${COLOR_RESET}"
-    info "Repairing or switching automatic startup for these services requires sudo on Linux."
+    installer_bullet "Repairing or switching automatic startup for these services requires sudo on Linux."
   fi
 
+  echo
   if background_service_inventory_has_default_following "${services_json}"; then
-    warn "${COLOR_BOLD}Automatic startup follows the managed default release-channel, not the newly installed CLI lane.${COLOR_RESET}"
-    info "Switch the managed default background service to this release-channel only if you want automatic startup to follow this lane."
-    info "Keep the current default background service if you only want to use this CLI interactively. Replace it only if you also want to clean up competing services."
-    info "You can still run this CLI directly. Interactive session commands will not replace the current relay owner unless you explicitly switch or take it over."
+    warn "${COLOR_BOLD}Automatic startup still follows the current managed default release-channel.${COLOR_RESET}"
+    installer_bullet "Switch it to this release-channel only if you want automatic startup to follow this CLI."
+    installer_bullet "Keep it unchanged if you only want to use this CLI interactively."
+    installer_bullet "Interactive session commands will not replace the current relay owner unless you explicitly switch or take it over."
     return
   fi
 
   warn "${COLOR_BOLD}Pinned background services keep their current release-channels and relay targets until you replace them.${COLOR_RESET}"
-  info "Installing this CLI alone does not move automatic startup to this lane."
-  info "You can still run this CLI directly. Interactive session commands will not replace the current relay owner unless you explicitly switch or take it over."
+  installer_bullet "Installing this CLI alone does not move automatic startup to this lane."
+  installer_bullet "Interactive session commands will not replace the current relay owner unless you explicitly switch or take it over."
 }
 
 installer_has_controlling_tty() {
@@ -1408,15 +1646,9 @@ TAG="$(resolve_release_tag "${PRODUCT}" "${CHANNEL}")" || {
 }
 
 API_URL="https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${TAG}"
-info "Fetching ${TAG} release metadata..."
 curl_auth() {
   local -a curl_args
-  curl_args=(-fL)
-  if [[ -t 2 ]]; then
-    curl_args+=(--progress-bar)
-  else
-    curl_args+=(--silent)
-  fi
+  curl_args=(-fsSL --show-error)
   if [[ -n "${GITHUB_TOKEN:-}" ]]; then
     curl "${curl_args[@]}" \
       -H "Authorization: Bearer ${GITHUB_TOKEN}" \
@@ -1431,11 +1663,11 @@ download_release_asset() {
   local label="$1"
   local output_path="$2"
   local url="$3"
-  info "${label}..."
-  curl_auth -o "${output_path}" "${url}"
+  run_installer_step "${label}" curl_auth -o "${output_path}" "${url}"
 }
 
-if ! RELEASE_JSON="$(curl_auth "${API_URL}")"; then
+RELEASE_JSON=""
+if ! capture_installer_step_output "Fetching ${TAG} release metadata" RELEASE_JSON curl_auth "${API_URL}"; then
   if [[ "${CHANNEL}" == "stable" ]]; then
     echo "No stable releases found for ${INSTALL_NAME}." >&2
   elif [[ "${CHANNEL}" == "publicdev" ]]; then
@@ -1510,8 +1742,7 @@ success "Signature verified."
 
 EXTRACT_DIR="${TMP_DIR}/extract"
 mkdir -p "${EXTRACT_DIR}"
-info "Extracting payload..."
-tar_extract_gz "${ARCHIVE_PATH}" "${EXTRACT_DIR}"
+run_installer_step "Extracting payload" tar_extract_gz "${ARCHIVE_PATH}" "${EXTRACT_DIR}"
 
 PAYLOAD_ROOT="${EXTRACT_DIR}/${VERSION_PREFIX}${VERSION}-${OS}-${ARCH}"
 if [[ ! -d "${PAYLOAD_ROOT}" ]]; then
@@ -1642,10 +1873,12 @@ fi
 append_path_hint
 
 services_json=""
+status_json=""
 if [[ "${PRODUCT}" == "cli" && "${ACTION}" == "install" ]]; then
   services_json="$(read_background_service_preflight_json "${DISPLAY_SHIM_PATH}")"
+  status_json="$(read_background_service_status_json "${DISPLAY_SHIM_PATH}")"
   if [[ "${NONINTERACTIVE}" != "1" ]]; then
-    print_installed_background_service_summary "${DISPLAY_SHIM_PATH}" "${services_json}"
+    print_installed_background_service_summary "${DISPLAY_SHIM_PATH}" "${services_json}" "${status_json}"
   fi
 fi
 

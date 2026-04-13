@@ -33,19 +33,28 @@ function fixtureForSource(name) {
   return `fixture:${name}\n`;
 }
 
+function applyPowerShellChannelDefaultTransform(source, channelDefault) {
+  return source.replace(
+    /(^.*\$Channel\s*=\s*\$\(\s*if \(\$env:HAPPIER_CHANNEL\) \{\s*\$env:HAPPIER_CHANNEL\s*\} else \{\s*)"stable"(\s*\}\s*\).*$)/m,
+    `$1"${channelDefault}"$2`,
+  );
+}
+
 function expectedFixtureForTarget(target) {
   for (const spec of INSTALLER_PUBLISH_SPECS) {
     if (spec.targets.includes(target)) {
       const base = fixtureForSource(spec.source);
       if (spec.transform === 'preview-default-channel') {
-        return base
-          .replace('HAPPIER_CHANNEL:-stable', 'HAPPIER_CHANNEL:-preview')
-          .replace('else { "stable" }', 'else { "preview" }');
+        return applyPowerShellChannelDefaultTransform(
+          base.replace('HAPPIER_CHANNEL:-stable', 'HAPPIER_CHANNEL:-preview'),
+          'preview',
+        );
       }
       if (spec.transform === 'publicdev-default-channel') {
-        return base
-          .replace('HAPPIER_CHANNEL:-stable', 'HAPPIER_CHANNEL:-dev')
-          .replace('else { "stable" }', 'else { "dev" }');
+        return applyPowerShellChannelDefaultTransform(
+          base.replace('HAPPIER_CHANNEL:-stable', 'HAPPIER_CHANNEL:-dev'),
+          'dev',
+        );
       }
       return base;
     }
@@ -143,5 +152,55 @@ test('syncInstallers checkOnly mode fails when published file drifts', async () 
   await assert.rejects(
     () => syncInstallers({ sourceDir, targetDir, checkOnly: true }),
     /out of sync/i
+  );
+});
+
+test('syncInstallers only rewrites the PowerShell channel default line for preview and dev targets', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-installer-ps1-transform-'));
+  const sourceDir = join(root, 'source');
+  const targetDir = join(root, 'target');
+  await mkdir(sourceDir, { recursive: true });
+  await mkdir(targetDir, { recursive: true });
+
+  for (const name of sourceFiles()) {
+    const contents = name.endsWith('.ps1')
+      ? [
+          '# keep this exact text untouched in preview/dev outputs: else { "stable" }',
+          `fixture:${name}`,
+          'param([string] $Channel = $(if ($env:HAPPIER_CHANNEL) { $env:HAPPIER_CHANNEL } else { "stable" }))',
+          '',
+        ].join('\n')
+      : fixtureForSource(name);
+    await writeFile(join(sourceDir, name), contents, 'utf8');
+  }
+
+  await syncInstallers({
+    sourceDir,
+    targetDir,
+    checkOnly: false,
+  });
+
+  const preview = await readFile(join(targetDir, 'install-preview.ps1'), 'utf8');
+  assert.match(
+    preview,
+    /# keep this exact text untouched in preview\/dev outputs: else \{ "stable" \}/,
+    'expected syncInstallers to leave non-default channel text alone',
+  );
+  assert.match(
+    preview,
+    /param\(\[string\] \$Channel = \$\(if \(\$env:HAPPIER_CHANNEL\) \{ \$env:HAPPIER_CHANNEL \} else \{ "preview" \}\)\)/,
+    'expected syncInstallers to rewrite only the PowerShell channel default',
+  );
+
+  const dev = await readFile(join(targetDir, 'install-dev.ps1'), 'utf8');
+  assert.match(
+    dev,
+    /# keep this exact text untouched in preview\/dev outputs: else \{ "stable" \}/,
+    'expected syncInstallers to leave non-default channel text alone for dev targets',
+  );
+  assert.match(
+    dev,
+    /param\(\[string\] \$Channel = \$\(if \(\$env:HAPPIER_CHANNEL\) \{ \$env:HAPPIER_CHANNEL \} else \{ "dev" \}\)\)/,
+    'expected syncInstallers to rewrite the PowerShell channel default for dev targets',
   );
 });

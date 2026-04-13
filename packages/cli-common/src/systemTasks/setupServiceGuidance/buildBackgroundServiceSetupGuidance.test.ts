@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { ManagedReleaseChannelInventory } from '../../happierRuntime/deriveManagedReleaseChannelInventory.js';
 import type { HappierService } from '../../happierRuntime/types.js';
+import { buildBackgroundServiceSetupGuidance } from './buildBackgroundServiceSetupGuidance.js';
 
 describe('buildBackgroundServiceSetupGuidance', () => {
     it('flags default release-channel drift and conflicting background services for guided setup', async () => {
@@ -49,7 +50,6 @@ describe('buildBackgroundServiceSetupGuidance', () => {
             ],
         };
 
-        const { buildBackgroundServiceSetupGuidance } = await import('./buildBackgroundServiceSetupGuidance.js');
         expect(buildBackgroundServiceSetupGuidance({
             services,
             managedReleaseChannelInventory: managedReleaseChannels,
@@ -82,7 +82,6 @@ describe('buildBackgroundServiceSetupGuidance', () => {
             ],
         };
 
-        const { buildBackgroundServiceSetupGuidance } = await import('./buildBackgroundServiceSetupGuidance.js');
         expect(buildBackgroundServiceSetupGuidance({
             services: [],
             managedReleaseChannelInventory: managedReleaseChannels,
@@ -120,7 +119,6 @@ describe('buildBackgroundServiceSetupGuidance', () => {
             },
         ];
 
-        const { buildBackgroundServiceSetupGuidance } = await import('./buildBackgroundServiceSetupGuidance.js');
         expect(buildBackgroundServiceSetupGuidance({
             services,
             managedReleaseChannelInventory: {
@@ -140,6 +138,31 @@ describe('buildBackgroundServiceSetupGuidance', () => {
                     serverUrl: 'https://company.example.test',
                 }),
             ],
+        }));
+    });
+
+    it('flags a running manual relay owner so setup can prompt for takeover before installing the background service', async () => {
+        expect(buildBackgroundServiceSetupGuidance({
+            services: [],
+            managedReleaseChannelInventory: {
+                defaultReleaseChannel: 'stable',
+                managedReleaseChannels: [],
+            },
+            currentRelayOwner: {
+                serviceManaged: false,
+                publicReleaseChannel: 'stable',
+                cliVersion: '0.2.0',
+            },
+            platform: 'darwin',
+            mode: 'user',
+            targetReleaseChannel: 'stable',
+            targetServerUrl: 'https://relay.example.test',
+        })).toEqual(expect.objectContaining({
+            shouldPromptForManualRelayTakeover: true,
+            manualRelayOwner: {
+                currentReleaseChannel: 'stable',
+                currentCliVersion: '0.2.0',
+            },
         }));
     });
 });

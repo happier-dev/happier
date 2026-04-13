@@ -1,9 +1,10 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { installFakeTauriDesktopBridge, navigateSpa } from '../../src/testkit/uiE2e/fakeTauriDesktop';
 import {
     createAccountAndReachSetupWizardState,
     gotoCommittedWithRetries,
@@ -12,41 +13,6 @@ import {
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
-
-async function setFakeTauriInternalsInExistingDocument(page: Page) {
-    // Avoid making the app "desktop" at initial load, which can activate desktop-only runtimes.
-    // Instead, load the web app normally first, then switch setup routes into desktop mode by
-    // toggling isTauriDesktop() for subsequent renders (without a full-page reload).
-    await page.evaluate(() => {
-        (window as any).__TAURI_INTERNALS__ = {
-            invoke: async (command: string, args?: Record<string, unknown>) => {
-                switch (command) {
-                    case 'desktop_fetch_update':
-                        return null;
-                    case 'desktop_install_update':
-                        return false;
-                    case 'desktop_set_tray_state':
-                        return null;
-                    case 'desktop_get_autostart_enabled':
-                        return false;
-                    case 'desktop_set_autostart_enabled': {
-                        const enabled = Boolean(args && (args as any).enabled);
-                        return enabled;
-                    }
-                    default:
-                        return null;
-                }
-            },
-        };
-    });
-}
-
-async function navigateSpa(page: Page, path: string) {
-    await page.evaluate((nextPath) => {
-        window.history.pushState({}, '', nextPath);
-        window.dispatchEvent(new PopStateEvent('popstate'));
-    }, path);
-}
 
 test.describe('ui e2e: setup control panel flow (deterministic runner)', () => {
     test.describe.configure({ mode: 'serial' });
@@ -105,7 +71,10 @@ test.describe('ui e2e: setup control panel flow (deterministic runner)', () => {
 
         await gotoCommittedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
         await waitForInitialAppUi({ page, timeoutMs: 180_000 });
-        await setFakeTauriInternalsInExistingDocument(page);
+        // Avoid making the app "desktop" at initial load, which can activate desktop-only runtimes.
+        // Instead, load the web app normally first, then switch setup routes into desktop mode
+        // by toggling isTauriDesktop() for subsequent renders without a full-page reload.
+        await installFakeTauriDesktopBridge(page);
         await createAccountAndReachSetupWizardState({ page });
 
         await expect(page.getByTestId('setupWizard-setup-this-computer')).toHaveCount(1, { timeout: 120_000 });
@@ -133,7 +102,7 @@ test.describe('ui e2e: setup control panel flow (deterministic runner)', () => {
 
         await gotoCommittedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
         await waitForInitialAppUi({ page, timeoutMs: 180_000 });
-        await setFakeTauriInternalsInExistingDocument(page);
+        await installFakeTauriDesktopBridge(page);
         await createAccountAndReachSetupWizardState({ page });
         await navigateSpa(page, '/setup/wizard?step=setup_chooser');
 

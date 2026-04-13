@@ -1,3 +1,10 @@
+const GLOBAL_FLAG_CONTRACTS = [
+  {
+    usage: '--sandbox-dir PATH',
+    description: 'Run fully isolated under PATH (no writes to your real ~/.happier-stack or ~/.happier/stacks)',
+  },
+];
+
 export function gethstackRegistry() {
   /**
    * Command definition shape:
@@ -410,6 +417,63 @@ export function gethstackRegistry() {
   ];
 
   return { commands };
+}
+
+function collecthstackRootUsageLines() {
+  const { commands } = gethstackRegistry();
+  const usageLines = [];
+
+  for (const command of commands) {
+    if (!command.rootUsage) continue;
+    if (Array.isArray(command.rootUsage)) {
+      usageLines.push(...command.rootUsage);
+      continue;
+    }
+    usageLines.push(command.rootUsage);
+  }
+
+  return usageLines;
+}
+
+function normalizeUsageToken(token) {
+  return String(token ?? '')
+    .replace(/^[[(]+/, '')
+    .replace(/[\])]+$/g, '')
+    .replace(/\.{3}$/g, '');
+}
+
+function isLongFlagToken(token) {
+  return /^--[a-z0-9][a-z0-9-]*$/i.test(normalizeUsageToken(token));
+}
+
+function isSpaceSeparatedValuePlaceholder(token) {
+  const normalized = normalizeUsageToken(token);
+  if (!normalized) return false;
+  if (normalized.startsWith('<') && normalized.endsWith('>')) return true;
+  if (/^[A-Z][A-Z0-9_-]*$/i.test(normalized)) return true;
+  if (/^[A-Z][A-Z0-9_-]*=.+$/i.test(normalized)) return true;
+  return false;
+}
+
+export function gethstackSpaceSeparatedValueFlags() {
+  const valueFlags = new Set();
+  const usageLines = [
+    ...GLOBAL_FLAG_CONTRACTS.map((entry) => entry.usage),
+    ...collecthstackRootUsageLines(),
+  ];
+
+  for (const usageLine of usageLines) {
+    const tokens = String(usageLine ?? '').split(/\s+/).filter(Boolean);
+    for (let index = 0; index < tokens.length - 1; index += 1) {
+      const current = tokens[index];
+      const next = tokens[index + 1];
+      if (!isLongFlagToken(current)) continue;
+      if (!isSpaceSeparatedValuePlaceholder(next)) continue;
+      valueFlags.add(normalizeUsageToken(current));
+    }
+  }
+
+  return valueFlags;
 }
 
 export function resolvehstackCommand(cmd) {

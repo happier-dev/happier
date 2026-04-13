@@ -16,7 +16,6 @@ import { readLatestSystemTaskPrompt } from '@/components/systemTasks/prompts/rea
 import { buildThisComputerSetupStageModel } from '@/components/systemTasks/thisComputerSetup/buildThisComputerSetupStageModel';
 import {
     mapThisComputerSetupExecutionToStages,
-    resolveThisComputerSetupStageIdForStepId,
 } from '@/components/systemTasks/thisComputerSetup/mapThisComputerSetupExecutionToStages';
 import { resolveThisComputerSetupPrompt } from '@/components/systemTasks/thisComputerSetup/resolveThisComputerSetupPrompt';
 import { useThisComputerSetupPromptModals } from '@/components/systemTasks/thisComputerSetup/useThisComputerSetupPromptModals';
@@ -130,11 +129,6 @@ export const SetupThisComputerChecklistStep = React.memo(function SetupThisCompu
         prompt,
     }), [preflight, prompt]);
 
-    const initialExpandedStageIds = React.useMemo(() => {
-        const stageId = resolveThisComputerSetupStageIdForStepId(activeTaskSnapshot?.currentStepId);
-        return stageId ? [stageId] : [];
-    }, [activeTaskSnapshot?.currentStepId]);
-
     const buildExecutionPlan = React.useCallback((selectedIds: readonly string[]) => {
         const selected = new Set(selectedIds);
         const installService = selected.has('setup.thisComputer.installService');
@@ -159,7 +153,7 @@ export const SetupThisComputerChecklistStep = React.memo(function SetupThisCompu
         onCancelExecution: cancel,
         normalizeSelectedIds: normalizeSetupSelectedIds,
         initialPhase: activeTaskSnapshot ? 'execute' : 'select',
-        initialExpandedIds: initialExpandedStageIds,
+        initialExpandedIds: [],
     });
 
     React.useEffect(() => {
@@ -168,15 +162,6 @@ export const SetupThisComputerChecklistStep = React.memo(function SetupThisCompu
         }
         controller.publishSnapshot(activeTaskSnapshot);
     }, [activeTaskSnapshot, controller.publishSnapshot]);
-
-    const expandedStageIds = React.useMemo(() => {
-        const expanded = new Set(controller.expandedIds);
-        const currentStageId = resolveThisComputerSetupStageIdForStepId(activeTaskSnapshot?.currentStepId);
-        if (currentStageId) {
-            expanded.add(currentStageId);
-        }
-        return [...expanded];
-    }, [activeTaskSnapshot?.currentStepId, controller.expandedIds]);
 
     const executionById = controller.phase === 'execute'
         ? controller.executionById
@@ -304,7 +289,7 @@ export const SetupThisComputerChecklistStep = React.memo(function SetupThisCompu
                 selectedIds={controller.selectedIds}
                 onToggleItem={controller.toggleItem}
                 executionById={executionById}
-                expandedIds={expandedStageIds}
+                expandedIds={controller.expandedIds}
                 onToggleExpanded={controller.toggleExpanded}
                 onCopyDiagnostics={(item) => void handleCopyDiagnostics(item.id)}
             />

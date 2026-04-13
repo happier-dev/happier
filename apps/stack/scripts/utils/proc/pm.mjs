@@ -49,6 +49,62 @@ function buildStateMatchesGitSignature(buildState, gitSig) {
   return buildState.signature === gitSig.signature;
 }
 
+function parsePositiveEnvInt(envValue, fallback) {
+  const raw = Number.parseInt(String(envValue ?? '').trim(), 10);
+  return Number.isFinite(raw) && raw >= 0 ? raw : fallback;
+}
+
+function resolveWorkspaceBuildWaitNoticeAfterMs(env = process.env) {
+  return parsePositiveEnvInt(env.HAPPIER_WORKSPACE_BUILD_NOTICE_AFTER_MS, 5_000);
+}
+
+function resolveWorkspaceBuildWaitNoticeEveryMs(env = process.env) {
+  return parsePositiveEnvInt(env.HAPPIER_WORKSPACE_BUILD_NOTICE_EVERY_MS, 30_000);
+}
+
+function describeLockOwnerSnapshot(owner, nowMs = Date.now()) {
+  if (!owner || typeof owner !== 'object') {
+    return 'owner=unknown';
+  }
+  const ageMs = Math.max(0, nowMs - Number(owner.updatedAtMs ?? owner.createdAtMs ?? nowMs));
+  return `pid=${String(owner.pid ?? 'unknown')} ageMs=${ageMs}`;
+}
+
+function createWorkspaceBuildWaitNotifier({ env = process.env, label, kind }) {
+  const noticeAfterMs = resolveWorkspaceBuildWaitNoticeAfterMs(env);
+  const noticeEveryMs = resolveWorkspaceBuildWaitNoticeEveryMs(env);
+  let lastNoticeMs = null;
+
+  return (event = {}) => {
+    const waitedMs = Number(event.waitedMs ?? 0);
+    if (!Number.isFinite(waitedMs) || waitedMs < noticeAfterMs) {
+      return;
+    }
+
+    if (lastNoticeMs != null && waitedMs - lastNoticeMs < noticeEveryMs) {
+      return;
+    }
+    lastNoticeMs = waitedMs;
+
+    let message = '';
+    if (kind === 'lock') {
+      const ownerText = describeLockOwnerSnapshot(event.owner, Date.now());
+      message = `[local] waiting for ${label} lock (${Math.ceil(waitedMs / 1000)}s): ${event.lockPath} (${ownerText})`;
+    } else if (kind === 'imports') {
+      const attempt = Number(event.attempt ?? 0);
+      const attempts = Number(event.attempts ?? 0);
+      const attemptLabel = Number.isFinite(attempts) && attempts > 0 ? `${attempt + 1}/${attempts}` : `${attempt + 1}/?`;
+      message = `[local] waiting for ${label} local imports to settle (${Math.ceil(waitedMs / 1000)}s, attempt ${attemptLabel}): ${event.entryPath}`;
+    } else {
+      message = `[local] waiting for ${label} (${Math.ceil(waitedMs / 1000)}s)`;
+    }
+
+    try {
+      process.stderr.write(`${message}\n`);
+    } catch {}
+  };
+}
+
 function extractLocalImportSpecifiersFromJs(text) {
   const src = String(text ?? '');
   const out = new Set();
@@ -130,6 +186,60 @@ async function assertNoMissingLocalImports({ distDir, entryPath, label = 'dist b
         `Missing (${missing.length}):\n${preview}`,
     );
   }
+}
+
+function resolveWorkspaceDistImportValidationRetryAttempts(env = process.env) {
+  const raw = Number.parseInt(String(env.HAPPIER_WORKSPACE_DIST_IMPORT_VALIDATION_RETRY_ATTEMPTS ?? ''), 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : 24;
+}
+
+function resolveWorkspaceDistImportValidationRetryDelayMs(env = process.env) {
+  const raw = Number.parseInt(String(env.HAPPIER_WORKSPACE_DIST_IMPORT_VALIDATION_RETRY_DELAY_MS ?? ''), 10);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 250;
+}
+
+async function waitForWorkspaceDistImportValidationRetry(ms) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function assertNoMissingLocalImportsWithRetry({
+  distDir,
+  entryPath,
+  label = 'dist build',
+  env = process.env,
+  onRetry = null,
+}) {
+  const attempts = resolveWorkspaceDistImportValidationRetryAttempts(env);
+  const delayMs = resolveWorkspaceDistImportValidationRetryDelayMs(env);
+  let lastError = null;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      await assertNoMissingLocalImports({ distDir, entryPath, label });
+      return;
+    } catch (error) {
+      lastError = error;
+      if (typeof onRetry === 'function') {
+        try {
+          onRetry({
+            attempt,
+            attempts,
+            delayMs,
+            entryPath,
+            label,
+            waitedMs: attempt * delayMs,
+            error,
+          });
+        } catch {}
+      }
+      if (attempt >= attempts - 1) {
+        throw error;
+      }
+      await waitForWorkspaceDistImportValidationRetry(delayMs);
+    }
+  }
+
+  throw lastError ?? new Error(`[local] ${label} import validation failed for ${entryPath}`);
 }
 
 async function computeGitWorktreeSignature(dir) {
@@ -590,11 +700,19 @@ async function ensureWorkspacePackageBuilt(pkgDir, { quiet = false, env: envIn =
     });
 
   const label = pkgJson?.name ? `${pkgJson.name} dist build` : 'dist build';
+  const reportLockWait = createWorkspaceBuildWaitNotifier({ env, label, kind: 'lock' });
+  const reportImportRetry = createWorkspaceBuildWaitNotifier({ env, label, kind: 'imports' });
   let needsRebuildForPartialDist = false;
   if (missingBefore.length === 0 && distEntrypoints.length > 0) {
     for (const entryPath of distEntrypoints) {
       try {
-        await assertNoMissingLocalImports({ distDir, entryPath, label });
+        await assertNoMissingLocalImportsWithRetry({
+          distDir,
+          entryPath,
+          label,
+          env,
+          onRetry: reportImportRetry,
+        });
       } catch {
         needsRebuildForPartialDist = true;
         break;
@@ -642,14 +760,20 @@ async function ensureWorkspacePackageBuilt(pkgDir, { quiet = false, env: envIn =
             return abs === distRootAgain || abs.startsWith(distRootAgain + sep);
           });
         for (const entryPath of distEntrypointsAgain) {
-          await assertNoMissingLocalImports({ distDir: distDirAgain, entryPath, label });
+          await assertNoMissingLocalImportsWithRetry({
+            distDir: distDirAgain,
+            entryPath,
+            label,
+            env,
+            onRetry: reportImportRetry,
+          });
         }
         return { built: false, reason: 'concurrent_build_already_completed' };
       }
     }
     await runBuild();
     return { built: true, reason: 'rebuilt' };
-  }, { lockPath });
+  }, { lockPath, onWait: reportLockWait });
 
   const missingAfter = expectedFiles.filter((p) => !existsSync(p));
   if (missingAfter.length > 0) {
@@ -662,7 +786,13 @@ async function ensureWorkspacePackageBuilt(pkgDir, { quiet = false, env: envIn =
 
   if (distEntrypoints.length > 0) {
     for (const entryPath of distEntrypoints) {
-      await assertNoMissingLocalImports({ distDir, entryPath, label });
+      await assertNoMissingLocalImportsWithRetry({
+        distDir,
+        entryPath,
+        label,
+        env,
+        onRetry: reportImportRetry,
+      });
     }
   }
 
@@ -857,7 +987,7 @@ export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: env
       }).catch(() => {});
     }
     return { built: true, reason: mode === 'always' ? 'mode_always' : 'changed' };
-  }, { lockPath });
+  }, { lockPath, onWait: createWorkspaceBuildWaitNotifier({ env: envIn, label: 'happier-cli', kind: 'lock' }) });
 }
 
 function getPathEntries() {

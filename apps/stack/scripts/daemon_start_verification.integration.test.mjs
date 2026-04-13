@@ -385,6 +385,148 @@ try {
   }
 });
 
+test('startLocalDaemonWithAuth keeps TUI alive when daemon start reports an installed background service conflict', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-tui-service-conflict-'));
+  try {
+    const cliDir = join(tmp, 'apps', 'cli');
+    await writeStubHappyCli({ cliDir });
+
+    const cliBin = join(cliDir, 'bin', 'happier.mjs');
+    await writeFile(
+      join(cliDir, 'dist', 'index.mjs'),
+      `
+const args = process.argv.slice(2);
+if (args[0] === 'daemon' && args[1] === 'start') {
+  console.error('A background service is already installed for this relay.');
+  console.error('Use \`happier service start\` to start the installed background service instead of starting a new relay runtime.');
+  console.error('If you want to start a manual relay runtime, stop or replace the installed background service first.');
+  process.exit(1);
+}
+process.exit(0);
+`.trimStart(),
+      'utf-8'
+    );
+
+    const cliHomeDir = join(tmp, 'stack', 'cli');
+    await mkdir(cliHomeDir, { recursive: true });
+    await writeFile(join(cliHomeDir, 'access.key'), 'seed-access-key\n', 'utf-8');
+    await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
+
+    const runnerPath = join(tmp, 'runner.mjs');
+    await writeFile(
+      runnerPath,
+      `
+import { startLocalDaemonWithAuth } from ${JSON.stringify(join(rootDir, 'scripts', 'daemon.mjs'))};
+
+await startLocalDaemonWithAuth({
+  cliBin: ${JSON.stringify(cliBin)},
+  cliHomeDir: ${JSON.stringify(cliHomeDir)},
+  internalServerUrl: 'http://127.0.0.1:4301',
+  publicServerUrl: 'http://localhost:4301',
+  isShuttingDown: () => false,
+  forceRestart: true,
+  env: {
+    ...process.env,
+    HAPPIER_STACK_TUI: '1',
+    HAPPIER_STACK_AUTO_AUTH_SEED: '0',
+    HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
+    HAPPIER_STACK_CLI_BUILD: '0',
+    HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '1',
+    HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '1',
+    HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
+  },
+  stackName: 'dev',
+});
+`.trimStart(),
+      'utf-8'
+    );
+
+    const res = await runNode([runnerPath], { cwd: tmp, env: process.env });
+    assert.equal(res.code, 0, `${res.stdout}${res.stderr}`);
+    assert.match(res.stdout + res.stderr, /\[daemon\] .*keeping TUI running\./);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('startLocalDaemonWithAuth preserves installed-service ownership guidance outside TUI mode', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-service-conflict-guidance-'));
+  try {
+    const cliDir = join(tmp, 'apps', 'cli');
+    await writeStubHappyCli({ cliDir });
+
+    const cliBin = join(cliDir, 'bin', 'happier.mjs');
+    await writeFile(
+      join(cliDir, 'dist', 'index.mjs'),
+      `
+const args = process.argv.slice(2);
+if (args[0] === 'daemon' && args[1] === 'start') {
+  console.error('A background service is already installed for this relay.');
+  console.error('Use \`happier service start\` to start the installed background service instead of starting a new relay runtime.');
+  console.error('If you want to start a manual relay runtime, stop or replace the installed background service first.');
+  process.exit(1);
+}
+process.exit(0);
+`.trimStart(),
+      'utf-8'
+    );
+
+    const cliHomeDir = join(tmp, 'stack', 'cli');
+    await mkdir(cliHomeDir, { recursive: true });
+    await writeFile(join(cliHomeDir, 'access.key'), 'seed-access-key\n', 'utf-8');
+    await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
+
+    const runnerPath = join(tmp, 'runner.mjs');
+    await writeFile(
+      runnerPath,
+      `
+import { startLocalDaemonWithAuth } from ${JSON.stringify(join(rootDir, 'scripts', 'daemon.mjs'))};
+
+try {
+  await startLocalDaemonWithAuth({
+    cliBin: ${JSON.stringify(cliBin)},
+    cliHomeDir: ${JSON.stringify(cliHomeDir)},
+    internalServerUrl: 'http://127.0.0.1:4301',
+    publicServerUrl: 'http://localhost:4301',
+    isShuttingDown: () => false,
+    forceRestart: true,
+    env: {
+      ...process.env,
+      HAPPIER_STACK_AUTO_AUTH_SEED: '0',
+      HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
+      HAPPIER_STACK_CLI_BUILD: '0',
+      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '1',
+      HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '1',
+      HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
+    },
+    stackName: 'dev',
+  });
+  process.exit(0);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
+`.trimStart(),
+      'utf-8'
+    );
+
+    const res = await runNode([runnerPath], { cwd: tmp, env: process.env });
+    assert.equal(res.code, 1, `${res.stdout}${res.stderr}`);
+    assert.match(
+      res.stdout + res.stderr,
+      /Use `happier service start` to start the installed background service instead of starting a new relay runtime\./
+    );
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
 test('startLocalDaemonWithAuth surfaces already-running daemon in TUI mode', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);

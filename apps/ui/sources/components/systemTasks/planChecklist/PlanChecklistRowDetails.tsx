@@ -1,22 +1,34 @@
 import * as React from 'react';
-import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { Pressable, View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 
 import { CodeBlockViewFrame } from '@/components/ui/code/blocks/CodeBlockViewFrame';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 import type { PlanChecklistExecutionError, PlanChecklistLogEntry } from './types';
 
-function formatLogEntry(entry: PlanChecklistLogEntry): string {
-    const prefix = `${entry.ts}ms`;
-    return `${prefix} [${entry.level}] ${entry.message}`;
+function formatLogTimestamp(ts: number, firstTs: number): string {
+    const relative = Math.max(0, ts - firstTs);
+    return `+${relative}ms`;
+}
+
+function formatLogEntry(entry: PlanChecklistLogEntry, firstTs: number): string {
+    const prefix = formatLogTimestamp(entry.ts, firstTs);
+    const headline = `${prefix} [${entry.level}] ${entry.message}`;
+    const details = typeof entry.details === 'string' ? entry.details.trim() : '';
+    return details.length > 0
+        ? `${headline}\n${details}`
+        : headline;
 }
 
 function formatLogs(logs: readonly PlanChecklistLogEntry[]): string {
-    return logs.map((entry) => formatLogEntry(entry)).join('\n');
+    if (logs.length === 0) {
+        return '';
+    }
+    const firstTs = logs[0]?.ts ?? 0;
+    return logs.map((entry) => formatLogEntry(entry, firstTs)).join('\n');
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -24,7 +36,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: '100%',
         gap: 10,
         paddingHorizontal: 16,
-        paddingTop: 0,
+        paddingTop: 12,
         paddingBottom: 16,
     },
     details: {
@@ -78,6 +90,21 @@ const stylesheet = StyleSheet.create((theme) => ({
     copyButtonRow: {
         alignItems: 'flex-start',
     },
+    copyButton: {
+        paddingHorizontal: 0,
+        paddingVertical: 0,
+        alignItems: 'flex-start',
+        justifyContent: 'flex-start',
+    },
+    copyButtonPressed: {
+        opacity: 0.7,
+    },
+    copyButtonText: {
+        ...Typography.default('semiBold'),
+        color: theme.colors.text,
+        fontSize: 13,
+        lineHeight: 18,
+    },
     emptyText: {
         ...Typography.default(),
         color: theme.colors.textSecondary,
@@ -114,7 +141,7 @@ export const PlanChecklistRowDetails = React.memo(function PlanChecklistRowDetai
         ? <Text style={styles.emptyText}>{String(detailsNode)}</Text>
         : detailsNode;
 
-    if (!hasDetails && !hasLogs && !hasError && !props.onCopyDiagnostics && !hasChildrenContent) {
+    if (!hasDetails && !hasLogs && !hasError && !hasChildrenContent) {
         return null;
     }
 
@@ -170,13 +197,19 @@ export const PlanChecklistRowDetails = React.memo(function PlanChecklistRowDetai
 
             {props.onCopyDiagnostics ? (
                 <View style={styles.copyButtonRow}>
-                    <RoundButton
+                    <Pressable
                         testID={props.testID ? `${props.testID}-copy-diagnostics` : undefined}
-                        size="small"
-                        display="inverted"
-                        title={t('common.copyWithLabel', { label: t('common.details') })}
+                        accessibilityRole="button"
                         onPress={() => void props.onCopyDiagnostics?.()}
-                    />
+                        style={({ pressed }) => [
+                            styles.copyButton,
+                            pressed ? styles.copyButtonPressed : null,
+                        ]}
+                    >
+                        <Text style={styles.copyButtonText}>
+                            {t('common.copyWithLabel', { label: t('common.details') })}
+                        </Text>
+                    </Pressable>
                 </View>
             ) : null}
         </View>

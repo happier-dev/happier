@@ -78,12 +78,16 @@ describe('createSetupThisComputerInteractiveTaskKind', () => {
         targetServerUrl: 'https://relay.example.test',
         currentDefaultReleaseChannel: 'preview',
         managedReleaseChannels: [],
+        manualRelayOwner: null,
         conflictingServices: [],
         exactDefaultServiceExists: true,
         shouldOfferDefaultReleaseChannelSwitch: false,
+        shouldPromptForManualRelayTakeover: false,
         shouldPromptForServiceReplacement: false,
       }),
+      readCurrentRelayOwner: async () => null,
       switchDefaultReleaseChannel: async () => undefined,
+      stopCurrentManualRelayRuntime: async () => undefined,
       uninstallExistingDaemonServices: async () => undefined,
     });
 
@@ -111,6 +115,84 @@ describe('createSetupThisComputerInteractiveTaskKind', () => {
       'installDaemonService',
       'startDaemonService',
     ]);
+  });
+
+  it('emits command-level diagnostics on the shared step ids used by the checklist', async () => {
+    const invocations: string[] = [];
+    const kind = createSetupThisComputerInteractiveTaskKind({
+      ensureLocalHappierTools: async () => {
+        invocations.push('ensureLocalHappierTools');
+      },
+      readActiveRelayProfile: async () => ({
+        serverUrl: 'https://relay.example.test',
+        webappUrl: 'https://app.example.test',
+        localServerUrl: null,
+      }),
+      createRecipeExecutor: () => createRecipeExecutor(invocations),
+      readBackgroundServiceSetupGuidance: async () => ({
+        targetReleaseChannel: 'stable',
+        targetServerUrl: 'https://relay.example.test',
+        currentDefaultReleaseChannel: 'stable',
+        managedReleaseChannels: [],
+        manualRelayOwner: null,
+        conflictingServices: [],
+        exactDefaultServiceExists: false,
+        shouldOfferDefaultReleaseChannelSwitch: false,
+        shouldPromptForManualRelayTakeover: false,
+        shouldPromptForServiceReplacement: false,
+      }),
+      readCurrentRelayOwner: async () => null,
+      switchDefaultReleaseChannel: async () => undefined,
+      stopCurrentManualRelayRuntime: async () => undefined,
+      uninstallExistingDaemonServices: async () => undefined,
+    });
+
+    const runner = createSystemTasksRunner({
+      kinds: {
+        'setup.thisComputer.v1': kind,
+      },
+    });
+
+    await runner.start({
+      taskId: 'setup-task-diagnostics',
+      kind: 'setup.thisComputer.v1',
+      params: {
+        surface: 'desktop.ui',
+        target: 'thisComputer',
+      },
+    });
+
+    const finalPoll = await waitForResult(runner, { taskId: 'setup-task-diagnostics', cursor: 0 });
+    expect(finalPoll.result?.ok).toBe(true);
+    expect(finalPoll.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        stepId: 'setup.thisComputer.configureRelay',
+        type: 'progress',
+        message: 'Running happier server set --json',
+        data: expect.objectContaining({
+          command: 'happier',
+          args: ['server', 'set', '--server-url', 'https://relay.example.test', '--webapp-url', 'https://app.example.test', '--json'],
+        }),
+      }),
+      expect.objectContaining({
+        stepId: 'setup.thisComputer.installService',
+        type: 'progress',
+        message: 'Running happier service install --json',
+        data: expect.objectContaining({
+          command: 'happier',
+          args: ['service', 'install', '--json'],
+        }),
+      }),
+      expect.objectContaining({
+        stepId: 'setup.thisComputer.verifyService',
+        type: 'progress',
+        message: 'Polling happier daemon status --json',
+        data: expect.objectContaining({
+          command: 'happier',
+          args: ['daemon', 'status', '--json'],
+        }),
+      }),
+    ]));
   });
 
   it('prompts to switch the default release channel and replace conflicting local background services before setup completes', async () => {
@@ -148,6 +230,7 @@ describe('createSetupThisComputerInteractiveTaskKind', () => {
             onPath: true,
           },
         ],
+        manualRelayOwner: null,
         conflictingServices: [
           {
             label: 'com.happier.cli.daemon.stable.default',
@@ -159,11 +242,14 @@ describe('createSetupThisComputerInteractiveTaskKind', () => {
         ],
         exactDefaultServiceExists: true,
         shouldOfferDefaultReleaseChannelSwitch: true,
+        shouldPromptForManualRelayTakeover: false,
         shouldPromptForServiceReplacement: true,
       }),
+      readCurrentRelayOwner: async () => null,
       switchDefaultReleaseChannel: async (releaseChannel) => {
         invocations.push(`switchDefaultReleaseChannel:${releaseChannel}`);
       },
+      stopCurrentManualRelayRuntime: async () => undefined,
       uninstallExistingDaemonServices: async () => {
         invocations.push('uninstallExistingDaemonServices');
       },
@@ -261,6 +347,77 @@ describe('createSetupThisComputerInteractiveTaskKind', () => {
     ]);
   });
 
+  it('prompts to take over a manual relay runtime before installing the background service', async () => {
+    const invocations: string[] = [];
+    const kind = createSetupThisComputerInteractiveTaskKind({
+      readActiveRelayProfile: async () => ({
+        serverUrl: 'https://relay.example.test',
+        webappUrl: 'https://app.example.test',
+        localServerUrl: null,
+      }),
+      createRecipeExecutor: () => createRecipeExecutor(invocations),
+      readBackgroundServiceSetupGuidance: async () => ({
+        targetReleaseChannel: 'stable',
+        targetServerUrl: 'https://relay.example.test',
+        currentDefaultReleaseChannel: 'stable',
+        managedReleaseChannels: [],
+        manualRelayOwner: {
+          currentReleaseChannel: 'stable',
+          currentCliVersion: '0.2.0',
+        },
+        conflictingServices: [],
+        exactDefaultServiceExists: false,
+        shouldOfferDefaultReleaseChannelSwitch: false,
+        shouldPromptForManualRelayTakeover: true,
+        shouldPromptForServiceReplacement: false,
+      }),
+      readCurrentRelayOwner: async () => null,
+      stopCurrentManualRelayRuntime: async () => {
+        invocations.push('stopCurrentManualRelayRuntime');
+      },
+    });
+
+    const runner = createSystemTasksRunner({
+      kinds: {
+        'setup.thisComputer.v1': kind,
+      },
+    });
+
+    await runner.start({
+      taskId: 'setup-task-manual-owner',
+      kind: 'setup.thisComputer.v1',
+      params: {
+        surface: 'desktop.ui',
+        target: 'thisComputer',
+      },
+    });
+
+    const manualOwnerPrompt = await waitForPendingPrompt(runner, { taskId: 'setup-task-manual-owner', cursor: 0 });
+    expect(manualOwnerPrompt.pendingPrompt).toEqual({
+      kind: 'daemon.takeOverManualRelayRuntimeForSetup',
+      data: {
+        targetServerUrl: 'https://relay.example.test',
+        targetReleaseChannel: 'stable',
+        currentReleaseChannel: 'stable',
+        currentCliVersion: '0.2.0',
+      },
+    });
+
+    await runner.respond({
+      taskId: 'setup-task-manual-owner',
+      answer: { takeOverManualRelayRuntime: true },
+    });
+
+    const finalPoll = await waitForResult(runner, {
+      taskId: 'setup-task-manual-owner',
+      cursor: manualOwnerPrompt.nextCursor,
+    });
+
+    expect(finalPoll.result?.ok).toBe(true);
+    expect(invocations).toContain('stopCurrentManualRelayRuntime');
+    expect(invocations).toContain('installDaemonService');
+  });
+
   it('fails when the user keeps conflicting local background services', async () => {
     const kind = createSetupThisComputerInteractiveTaskKind({
       readActiveRelayProfile: async () => ({
@@ -274,6 +431,7 @@ describe('createSetupThisComputerInteractiveTaskKind', () => {
         targetServerUrl: 'https://relay.example.test',
         currentDefaultReleaseChannel: 'preview',
         managedReleaseChannels: [],
+        manualRelayOwner: null,
         conflictingServices: [
           {
             label: 'com.happier.cli.daemon.preview.default',
@@ -285,9 +443,12 @@ describe('createSetupThisComputerInteractiveTaskKind', () => {
         ],
         exactDefaultServiceExists: false,
         shouldOfferDefaultReleaseChannelSwitch: false,
+        shouldPromptForManualRelayTakeover: false,
         shouldPromptForServiceReplacement: true,
       }),
+      readCurrentRelayOwner: async () => null,
       switchDefaultReleaseChannel: async () => undefined,
+      stopCurrentManualRelayRuntime: async () => undefined,
       uninstallExistingDaemonServices: async () => undefined,
     });
 
@@ -360,6 +521,7 @@ describe('createSetupThisComputerInteractiveTaskKind', () => {
             onPath: true,
           },
         ],
+        manualRelayOwner: null,
         conflictingServices: [
           {
             label: 'com.happier.cli.daemon.stable.default',
@@ -371,11 +533,14 @@ describe('createSetupThisComputerInteractiveTaskKind', () => {
         ],
         exactDefaultServiceExists: true,
         shouldOfferDefaultReleaseChannelSwitch: true,
+        shouldPromptForManualRelayTakeover: false,
         shouldPromptForServiceReplacement: true,
       }),
+      readCurrentRelayOwner: async () => null,
       switchDefaultReleaseChannel: async (releaseChannel) => {
         invocations.push(`switchDefaultReleaseChannel:${releaseChannel}`);
       },
+      stopCurrentManualRelayRuntime: async () => undefined,
       uninstallExistingDaemonServices: async () => {
         invocations.push('uninstallExistingDaemonServices');
       },
@@ -446,12 +611,16 @@ describe('createSetupThisComputerInteractiveTaskKind', () => {
             onPath: true,
           },
         ],
+        manualRelayOwner: null,
         conflictingServices: [],
         exactDefaultServiceExists: false,
         shouldOfferDefaultReleaseChannelSwitch: true,
+        shouldPromptForManualRelayTakeover: false,
         shouldPromptForServiceReplacement: false,
       }),
+      readCurrentRelayOwner: async () => null,
       switchDefaultReleaseChannel: async () => undefined,
+      stopCurrentManualRelayRuntime: async () => undefined,
       uninstallExistingDaemonServices: async () => undefined,
     });
 

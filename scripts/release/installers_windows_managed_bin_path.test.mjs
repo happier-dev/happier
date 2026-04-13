@@ -32,3 +32,19 @@ test('install.ps1 makes the managed home bin directory the canonical PATH target
     'expected install.ps1 to remove the old drifting global shim copy during migration',
   );
 });
+
+test('install.ps1 prints PowerShell PATH refresh guidance after updating the user PATH', async () => {
+  const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
+  const raw = await readFile(path, 'utf8');
+
+  assert.match(
+    raw,
+    /open a new PowerShell window/i,
+    'expected install.ps1 to tell users how to pick up the updated PATH in a current PowerShell session',
+  );
+  assert.match(
+    raw,
+    /\$env:Path\s*=/i,
+    'expected install.ps1 to provide a concrete current-session PATH refresh command',
+  );
+});

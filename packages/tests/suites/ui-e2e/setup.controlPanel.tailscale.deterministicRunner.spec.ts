@@ -4,6 +4,7 @@ import { mkdir } from 'node:fs/promises';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { installFakeTauriDesktopBridge, navigateSpa } from '../../src/testkit/uiE2e/fakeTauriDesktop';
 import {
     createAccountAndReachSetupWizardState,
     gotoCommittedWithRetries,
@@ -12,38 +13,6 @@ import {
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
-
-async function setFakeTauriInternalsInExistingDocument(page: Page) {
-    await page.evaluate(() => {
-        (window as any).__TAURI_INTERNALS__ = {
-            invoke: async (command: string, args?: Record<string, unknown>) => {
-                switch (command) {
-                    case 'desktop_fetch_update':
-                        return null;
-                    case 'desktop_install_update':
-                        return false;
-                    case 'desktop_set_tray_state':
-                        return null;
-                    case 'desktop_get_autostart_enabled':
-                        return false;
-                    case 'desktop_set_autostart_enabled': {
-                        const enabled = Boolean(args && (args as any).enabled);
-                        return enabled;
-                    }
-                    default:
-                        return null;
-                }
-            },
-        };
-    });
-}
-
-async function navigateSpa(page: Page, path: string) {
-    await page.evaluate((nextPath) => {
-        window.history.pushState({}, '', nextPath);
-        window.dispatchEvent(new PopStateEvent('popstate'));
-    }, path);
-}
 
 async function setDevSystemTaskScenarios(page: Page, scenarios: Record<string, unknown>) {
     await page.addInitScript((nextScenarios) => {
@@ -106,7 +75,7 @@ test.describe('ui e2e: tailscale secure access (deterministic runner)', () => {
         await page.setViewportSize({ width: 1440, height: 900 });
         await gotoCommittedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
         await waitForInitialAppUi({ page, timeoutMs: 180_000 });
-        await setFakeTauriInternalsInExistingDocument(page);
+        await installFakeTauriDesktopBridge(page);
         await createAccountAndReachSetupWizardState({ page });
         await navigateSpa(page, '/setup/wizard?step=setup_chooser');
         await expect(page.getByTestId('setupWizard.surface')).toBeVisible({ timeout: 120_000 });

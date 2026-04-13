@@ -46,7 +46,17 @@ describe('mapThisComputerSetupExecutionToStages', () => {
                 },
             ],
             result: null,
-        });
+        }, [
+            'setup.thisComputer.ensureCli',
+            'setup.thisComputer.resolveRelay',
+            'setup.thisComputer.checkAuth',
+            'setup.thisComputer.configureRelay',
+            'setup.thisComputer.auth.request',
+            'setup.thisComputer.auth.wait',
+            'setup.thisComputer.installService',
+            'setup.thisComputer.startService',
+            'setup.thisComputer.verifyService',
+        ]);
 
         expect(execution['setup.thisComputer.stage.installTools']?.status).toBe('done');
         expect(execution['setup.thisComputer.stage.installTools']?.logs).toEqual([
@@ -56,6 +66,12 @@ describe('mapThisComputerSetupExecutionToStages', () => {
         expect(execution['setup.thisComputer.stage.useRelay']?.logs).toEqual([
             { ts: 10, level: 'info', message: 'Resolving server configuration' },
             { ts: 20, level: 'info', message: 'Checking authentication' },
+            { ts: 30, level: 'info', message: 'Connecting this computer' },
+        ]);
+        expect(execution['setup.thisComputer.resolveRelay']?.status).toBe('done');
+        expect(execution['setup.thisComputer.checkAuth']?.status).toBe('done');
+        expect(execution['setup.thisComputer.configureRelay']?.status).toBe('running');
+        expect(execution['setup.thisComputer.configureRelay']?.logs).toEqual([
             { ts: 30, level: 'info', message: 'Connecting this computer' },
         ]);
         expect(execution['setup.thisComputer.stage.registerComputer']?.status).toBe('queued');
@@ -94,6 +110,33 @@ describe('mapThisComputerSetupExecutionToStages', () => {
         expect(execution['setup.thisComputer.stage.backgroundService']?.status).toBe('running');
         expect(execution['setup.thisComputer.stage.backgroundService']?.logs).toEqual([
             { ts: 20, level: 'info', message: 'Replace background services?' },
+        ]);
+    });
+
+    it('maps manual relay takeover prompts into the service-ownership stage', () => {
+        const execution = mapThisComputerSetupExecutionToStages({
+            taskId: 'task-1',
+            status: 'running',
+            currentStepId: 'setup.thisComputer.preflight.manualRelayTakeover',
+            latestMessage: 'Take over the current manual relay runtime?',
+            awaitingInput: true,
+            cancelRequested: false,
+            events: [
+                {
+                    protocolVersion: 1,
+                    taskId: 'task-1',
+                    tsMs: 20,
+                    type: 'prompt',
+                    stepId: 'setup.thisComputer.preflight.manualRelayTakeover',
+                    message: 'Take over the current manual relay runtime?',
+                },
+            ],
+            result: null,
+        });
+
+        expect(execution['setup.thisComputer.stage.backgroundService']?.status).toBe('running');
+        expect(execution['setup.thisComputer.stage.backgroundService']?.logs).toEqual([
+            { ts: 20, level: 'warn', message: 'Take over the current manual relay runtime?' },
         ]);
     });
 
@@ -172,5 +215,52 @@ describe('mapThisComputerSetupExecutionToStages', () => {
         }, ['setup.thisComputer.installService', 'setup.thisComputer.startService', 'setup.thisComputer.verifyService']);
 
         expect(execution['setup.thisComputer.stage.backgroundService']?.status).toBe('done');
+    });
+
+    it('surfaces child-step failure details and aggregates them back to the parent stage', () => {
+        const execution = mapThisComputerSetupExecutionToStages({
+            taskId: 'task-1',
+            status: 'failed',
+            currentStepId: 'setup.thisComputer.installService',
+            latestMessage: 'Installing background service',
+            awaitingInput: false,
+            cancelRequested: false,
+            events: [
+                {
+                    protocolVersion: 1,
+                    taskId: 'task-1',
+                    tsMs: 20,
+                    type: 'progress',
+                    stepId: 'setup.thisComputer.installService',
+                    message: 'Installing background service',
+                },
+            ],
+            result: {
+                ok: false,
+                protocolVersion: 1,
+                taskId: 'task-1',
+                error: {
+                    code: 'cli_command_failed',
+                    message: '',
+                },
+            },
+        }, ['setup.thisComputer.installService', 'setup.thisComputer.startService', 'setup.thisComputer.verifyService']);
+
+        expect(execution['setup.thisComputer.installService']).toMatchObject({
+            status: 'error',
+            logs: [{ ts: 20, level: 'info', message: 'Installing background service' }],
+            error: {
+                title: 'cli_command_failed',
+                message: 'Installing background service',
+            },
+        });
+        expect(execution['setup.thisComputer.stage.backgroundService']).toMatchObject({
+            status: 'error',
+            logs: [{ ts: 20, level: 'info', message: 'Installing background service' }],
+            error: {
+                title: 'cli_command_failed',
+                message: 'Installing background service',
+            },
+        });
     });
 });

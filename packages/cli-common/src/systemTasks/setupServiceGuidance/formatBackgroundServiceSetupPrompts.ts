@@ -16,3 +16,9 @@ export function formatBackgroundServiceReplacementPrompt(
 ): string {
   return `This computer already has conflicting Happier background services. Replace them before installing the default background service targeting ${resolveBackgroundServiceTargetLabel(guidance)}?`;
 }
+
+export function formatBackgroundServiceManualRelayTakeoverPrompt(
+  guidance: BackgroundServiceSetupGuidance,
+): string {
+  return `A manual relay runtime is currently running for ${resolveBackgroundServiceTargetLabel(guidance)}. Stop it and enable the background service for this computer?`;
+}
