@@ -11,6 +11,8 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
 
+import { hasBundledWorkspacePackagesHealthy } from '@happier-dev/cli-common/workspaces'
+
 import { ensureBuildArtifactsReadyOnce } from './testSetupBuildCoordinator'
 
 export type CliTestBuildMode = 'shared-only' | 'full'
@@ -59,6 +61,10 @@ async function ensureSharedDepsBuiltOnce(projectRoot: string): Promise<void> {
     lockPath: resolveSharedDepsLockPath(projectRoot),
     markerPaths: markers,
     lockLabel: 'CLI shared deps build',
+    isReady: () => hasBundledWorkspacePackagesHealthy({
+      repoRoot: projectRoot,
+      hostPackageDir: projectRoot,
+    }),
     runBuild: () => {
       const yarnCommand = process.platform === 'win32' ? 'yarn.cmd' : 'yarn'
       const buildResult = spawnSync(yarnCommand, ['-s', 'build:shared'], {

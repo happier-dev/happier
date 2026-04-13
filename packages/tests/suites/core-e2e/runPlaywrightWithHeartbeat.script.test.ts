@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { resolve } from 'node:path';
+
+import { repoRootDir } from '../../src/testkit/paths';
 
 import {
   createPlaywrightSpawnOptions,
@@ -8,6 +11,7 @@ import {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   vi.resetModules();
 });
 
@@ -34,7 +38,7 @@ describe('runPlaywrightWithHeartbeat helpers', () => {
     });
   });
 
-  it('assigns a shared UI web export namespace when one is not provided', () => {
+  it('assigns a per-process UI web export namespace when one is not provided', () => {
     const first = createPlaywrightSpawnOptions({ TEST_FLAG: '1' });
     const second = createPlaywrightSpawnOptions({ TEST_FLAG: '1' });
 
@@ -44,8 +48,8 @@ describe('runPlaywrightWithHeartbeat helpers', () => {
     expect(second.env).toEqual(expect.objectContaining({
       TEST_FLAG: '1',
     }));
-    expect(first.env.HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE).toBe('playwright-ui-shared');
-    expect(second.env.HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE).toBe('playwright-ui-shared');
+    expect(first.env.HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE).toBe(`playwright-ui-${process.pid}`);
+    expect(second.env.HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE).toBe(`playwright-ui-${process.pid}`);
   });
 
   it('preserves an explicit UI web export namespace', () => {
@@ -54,6 +58,27 @@ describe('runPlaywrightWithHeartbeat helpers', () => {
       HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: 'uiweb-explicit',
     });
     expect(options.env.HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE).toBe('uiweb-explicit');
+  });
+
+  it('wires playwright artifacts and HTML report output into the shared namespace', async () => {
+    vi.stubEnv('CI', '1');
+    vi.stubEnv('HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE', 'uiweb-explicit');
+
+    const { default: config } = await import('../../playwright.ui.config.mjs');
+    const expectedRootDir = resolve(repoRootDir(), '.project', 'logs', 'e2e', 'ui-playwright', 'uiweb-explicit');
+    const expectedOutputDir = resolve(expectedRootDir, 'test-results');
+
+    expect(config.outputDir).toBe(expectedOutputDir);
+
+    const reporter = Array.isArray(config.reporter) ? config.reporter : [];
+    const htmlReporter = reporter.find((entry: unknown) => Array.isArray(entry) && entry[0] === 'html');
+    expect(htmlReporter).toEqual([
+      'html',
+      expect.objectContaining({
+        open: 'never',
+        outputFolder: resolve(expectedRootDir, 'html-report'),
+      }),
+    ]);
   });
 
   it('maps signals to conventional exit codes', () => {

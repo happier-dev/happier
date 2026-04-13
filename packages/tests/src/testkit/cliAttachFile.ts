@@ -8,7 +8,7 @@ export async function writeCliSessionAttachFile(opts: Readonly<{
   cliHome: string;
   sessionId: string;
   secret: Uint8Array;
-  encryptionVariant?: 'legacy';
+  encryptionVariant?: 'legacy' | 'dataKey';
 }>): Promise<string> {
   const attachDir = resolve(join(opts.cliHome, 'tmp', 'session-attach'));
   await mkdir(attachDir, { recursive: true });
@@ -25,4 +25,3 @@ export async function writeCliSessionAttachFile(opts: Readonly<{
 
   return attachFile;
 }
-

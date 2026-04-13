@@ -59,6 +59,7 @@ describe('spawnSessionFromDaemon', () => {
       environmentVariables: { FOO: 'bar' },
       directory: '/tmp/workspace',
       agent: 'codex',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
     });
   });
 });

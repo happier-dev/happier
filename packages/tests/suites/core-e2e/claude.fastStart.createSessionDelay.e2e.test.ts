@@ -6,7 +6,8 @@ import { join, resolve } from 'node:path';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
-import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
+import { ensureCliSharedDepsBuilt } from '../../src/testkit/process/cliDist';
+import { resolveCliTestLaunchSpec } from '../../src/testkit/process/cliLaunchSpec';
 import { spawnLoggedProcess, type SpawnedProcess } from '../../src/testkit/process/spawnProcess';
 import { fakeClaudeFixturePath, waitForFakeClaudeInvocation } from '../../src/testkit/fakeClaude';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
@@ -75,17 +76,22 @@ describe('core e2e: Claude fast-start', () => {
       HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${randomUUID()}`,
       // Make server session creation slow enough that we can verify local spawn happens first.
       HAPPIER_E2E_DELAY_CREATE_SESSION_MS: '30000',
+      HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
     };
 
-    const cliDistEntrypoint = await ensureCliDistBuilt(
+    await ensureCliSharedDepsBuilt(
       { testDir, env: cliEnv },
       { skipSourceFreshnessCheck: true },
     );
+    const cliLaunchSpec = await resolveCliTestLaunchSpec(
+      { testDir, env: cliEnv },
+      { snapshotDir: resolve(join(testDir, 'cli-dist')), preferSourceEntrypoint: true },
+    );
 
     proc = spawnLoggedProcess({
-      command: process.execPath,
+      command: cliLaunchSpec.command,
       args: [
-        cliDistEntrypoint,
+        ...cliLaunchSpec.args,
         'claude',
         '--started-by',
         'terminal',
@@ -93,7 +99,10 @@ describe('core e2e: Claude fast-start', () => {
         'local',
       ],
       cwd: workspaceDir,
-      env: cliEnv,
+      env: {
+        ...cliEnv,
+        ...(cliLaunchSpec.env ?? {}),
+      },
       stdoutPath: resolve(join(testDir, 'cli.stdout.log')),
       stderrPath: resolve(join(testDir, 'cli.stderr.log')),
     });
