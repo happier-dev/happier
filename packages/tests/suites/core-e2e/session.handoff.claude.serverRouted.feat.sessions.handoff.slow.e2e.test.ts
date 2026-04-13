@@ -9,6 +9,7 @@ import { createTestAuth } from '../../src/testkit/auth';
 import { seedCliDataKeyAuthForServer } from '../../src/testkit/cliAuth';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
+import { normalizeSpawnSessionRequestBody } from '../../src/testkit/daemon/normalizeSpawnSessionRequestBody';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { fetchJson } from '../../src/testkit/http';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
@@ -22,6 +23,7 @@ import {
 import { createUserScopedSocketCollector, type SocketCollector } from '../../src/testkit/socketClient';
 import { createDataKeyRpcClient, unwrapDataKeyRpcResult } from '../../src/testkit/syntheticAgent/rpcClient';
 import { waitFor } from '../../src/testkit/timing';
+import { activateLinkedDirectSession } from '../../src/testkit/directSessions/activateLinkedDirectSession';
 // @ts-expect-error - This CJS helper is consumed directly by the runtime test fixture.
 import { resolveClaudeProjectId } from '../../src/testkit/claudeProjectId.cjs';
 import { waitForDaemonSessionWebhookMarker } from '../../src/testkit/daemon/waitForDaemonSessionWebhookMarker';
@@ -346,7 +348,6 @@ describe('core e2e: session handoff via server-routed transfer', () => {
         const sourceFakeClaudeLog = resolve(join(testDir, 'fake-claude-source.jsonl'));
         const targetFakeClaudeLog = resolve(join(testDir, 'fake-claude-target.jsonl'));
         const fakeClaudePath = fakeClaudeFixturePath();
-
         await mkdir(sourceHomeDir, { recursive: true });
         await mkdir(targetHomeDir, { recursive: true });
         await mkdir(sourceWorkspaceDir, { recursive: true });
@@ -603,7 +604,7 @@ describe('core e2e: session handoff via server-routed transfer', () => {
             port: targetDaemon.state.httpPort,
             path: '/spawn-session',
             controlToken: targetDaemon.state.controlToken,
-            body: {
+            body: normalizeSpawnSessionRequestBody({
                 directory: preparedResume.directory,
                 agent: preparedResume.agent,
                 existingSessionId: sessionId,
@@ -616,7 +617,7 @@ describe('core e2e: session handoff via server-routed transfer', () => {
                     fakeClaudeLogPath: targetFakeClaudeLog,
                     extraEnvironmentVariables: preparedResume.environmentVariables,
                 }),
-            },
+            }),
             timeoutMs: 90_000,
         });
         expect(targetSpawnResult.status).toBe(200);
@@ -799,7 +800,7 @@ describe('core e2e: session handoff via server-routed transfer', () => {
             port: sourceDaemon.state.httpPort,
             path: '/spawn-session',
             controlToken: sourceDaemon.state.controlToken,
-            body: {
+            body: normalizeSpawnSessionRequestBody({
                 directory: secondPreparedResume.directory,
                 agent: secondPreparedResume.agent,
                 existingSessionId: sessionId,
@@ -812,7 +813,7 @@ describe('core e2e: session handoff via server-routed transfer', () => {
                     fakeClaudeLogPath: sourceFakeClaudeLog,
                     extraEnvironmentVariables: secondPreparedResume.environmentVariables,
                 }),
-            },
+            }),
             timeoutMs: 90_000,
         });
         expect(sourceRespawnResult.status).toBe(200);
@@ -1109,6 +1110,8 @@ describe('core e2e: session handoff via server-routed transfer', () => {
         const targetHomeDir = resolve(join(testDir, 'target-home'));
         const sourceWorkspaceDir = resolve(join(testDir, 'workspace-source'));
         const sourceClaudeConfigDir = resolve(join(testDir, 'source-claude-config'));
+        const sourceClaudeProjectDir = resolve(join(sourceClaudeConfigDir, 'projects', 'proj-handoff-server-routed-late'));
+        const sourceClaudeSessionFile = resolve(join(sourceClaudeProjectDir, 'sess-handoff-server-routed-late.jsonl'));
         const targetClaudeConfigDir = resolve(join(testDir, 'target-claude-config'));
         const sourceFakeClaudeLog = resolve(join(testDir, 'fake-claude-source.jsonl'));
         const targetFakeClaudeLog = resolve(join(testDir, 'fake-claude-target.jsonl'));
@@ -1117,11 +1120,33 @@ describe('core e2e: session handoff via server-routed transfer', () => {
         await mkdir(sourceHomeDir, { recursive: true });
         await mkdir(targetHomeDir, { recursive: true });
         await mkdir(sourceWorkspaceDir, { recursive: true });
+        await mkdir(sourceClaudeProjectDir, { recursive: true });
         await mkdir(sourceClaudeConfigDir, { recursive: true });
         await mkdir(targetClaudeConfigDir, { recursive: true });
         await mkdir(sourceDaemonDir, { recursive: true });
         await mkdir(targetDaemonDir, { recursive: true });
         await writeFile(resolve(join(sourceWorkspaceDir, 'README.md')), 'late server-routed cutover proof\n', 'utf8');
+        await writeFile(
+            sourceClaudeSessionFile,
+            [
+                JSON.stringify({
+                    type: 'user',
+                    uuid: 'handoff-server-routed-late-u1',
+                    cwd: sourceWorkspaceDir,
+                    message: { content: 'hello from source server-routed late session' },
+                }),
+                JSON.stringify({
+                    type: 'assistant',
+                    uuid: 'handoff-server-routed-late-a1',
+                    cwd: sourceWorkspaceDir,
+                    message: {
+                        model: 'claude-test',
+                        content: [{ type: 'text', text: 'source server-routed late reply' }],
+                    },
+                }),
+            ].join('\n') + '\n',
+            'utf8',
+        );
 
         server = await startServerLight({
             testDir,
@@ -1204,29 +1229,35 @@ describe('core e2e: session handoff via server-routed transfer', () => {
         });
         expect(machineIds).toEqual(expect.arrayContaining([sourceSeed.machineId, targetSeed.machineId]));
 
-        const spawned = await daemonControlPostJson<{ success?: boolean; sessionId?: string }>({
-            port: sourceDaemon.state.httpPort,
-            path: '/spawn-session',
-            controlToken: sourceDaemon.state.controlToken,
-            body: {
-                directory: sourceWorkspaceDir,
-                terminal: { mode: 'plain' },
-                environmentVariables: sessionChildEnv({
-                    homeDir: sourceHomeDir,
-                    serverBaseUrl: server.baseUrl,
-                    fakeClaudePath,
-                    fakeClaudeLogPath: sourceFakeClaudeLog,
-                }),
-            },
-            timeoutMs: 30_000,
-        });
-        expect(spawned.status).toBe(200);
-        expect(spawned.data.success).toBe(true);
-        const sessionId = spawned.data.sessionId;
+        const sourceDirectSessionSource = {
+            kind: 'claudeConfig',
+            configDir: sourceClaudeConfigDir,
+            projectId: 'proj-handoff-server-routed-late',
+        } as const;
+        const linked = unwrapDataKeyRpcResult(
+            await sourceMachineRpc.call(`${sourceSeed.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE}`, {
+                machineId: sourceSeed.machineId,
+                providerId: 'claude',
+                remoteSessionId: 'sess-handoff-server-routed-late',
+                directoryHint: sourceWorkspaceDir,
+                titleHint: 'handoff server-routed late session',
+                source: sourceDirectSessionSource,
+            }),
+            'source direct session link for late cutover server-routed handoff',
+        ) as Readonly<{ ok: true; sessionId: string }>;
+        const sessionId = linked.sessionId;
         if (typeof sessionId !== 'string' || sessionId.length === 0) {
-            throw new Error('Missing sessionId from source daemon spawn-session');
+            throw new Error('Missing linked session id from late cutover server-routed source');
         }
-
+        await activateLinkedDirectSession({
+            machineRpc: sourceMachineRpc,
+            machineId: sourceSeed.machineId,
+            sessionId,
+            providerId: 'claude',
+            remoteSessionId: 'sess-handoff-server-routed-late',
+            source: sourceDirectSessionSource,
+            context: 'late cutover server-routed source activation',
+        });
         const initialPrompt = 'before-cutover-server-routed-proof';
         await postPlainUiTextMessage({
             baseUrl: server.baseUrl,
@@ -1246,7 +1277,7 @@ describe('core e2e: session handoff via server-routed transfer', () => {
                 sessionId,
                 sourceMachineId: sourceSeed.machineId,
                 targetMachineId: targetSeed.machineId,
-                sessionStorageMode: 'persisted',
+                sessionStorageMode: 'direct',
                 preferredTransportStrategies: ['server_routed_stream'],
                 negotiatedTransportStrategy: 'server_routed_stream',
             }),
@@ -1293,7 +1324,7 @@ describe('core e2e: session handoff via server-routed transfer', () => {
                     sourceMachineId: sourceSeed.machineId,
                     targetMachineId: targetSeed.machineId,
                     negotiatedTransportStrategy: 'server_routed_stream',
-                    sourceSessionStorageMode: 'persisted',
+                    sourceSessionStorageMode: 'direct',
                     targetPath: started.targetPath,
                     handoffMetadataV2: lateCutoverMetadataV2,
                 }),
@@ -1307,7 +1338,7 @@ describe('core e2e: session handoff via server-routed transfer', () => {
             port: targetDaemon.state.httpPort,
             path: '/spawn-session',
             controlToken: targetDaemon.state.controlToken,
-            body: {
+            body: normalizeSpawnSessionRequestBody({
                 directory: lateCutoverPreparedResume.directory,
                 agent: lateCutoverPreparedResume.agent,
                 existingSessionId: sessionId,
@@ -1320,7 +1351,7 @@ describe('core e2e: session handoff via server-routed transfer', () => {
                     fakeClaudeLogPath: targetFakeClaudeLog,
                     extraEnvironmentVariables: lateCutoverPreparedResume.environmentVariables,
                 }),
-            },
+            }),
             timeoutMs: 30_000,
         });
         expect(targetSpawnResult.status).toBe(200);

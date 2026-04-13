@@ -988,8 +988,21 @@ export class ApiSessionClient extends EventEmitter {
             this.userSocketDisconnectTimer = null;
         }
         this.kickUserSocketConnect();
+        const startupCatchUpInitialAfterSeq = this.lastObservedMessageSeq;
         while (this.pendingMessages.length > 0) {
             callback(this.pendingMessages.shift()!);
+        }
+        if (!this.startupMessageCatchUpStarted) {
+            this.startupMessageCatchUpStarted = true;
+            this.startupMessageCatchUpRetryIndex = 0;
+            this.startupMessageCatchUpInitialAfterSeq = startupCatchUpInitialAfterSeq;
+            void this.catchUpSessionMessages(this.startupMessageCatchUpInitialAfterSeq)
+                .catch((error) => {
+                    logger.debug('[API] Initial transcript catch-up failed (non-fatal)', { error });
+                })
+                .finally(() => {
+                    this.scheduleNextStartupMessageCatchUpRetry();
+                });
         }
         if (!this.daemonInitialPromptSeeded && typeof this.daemonInitialPrompt === 'string') {
             this.daemonInitialPromptSeeded = true;
@@ -1006,18 +1019,6 @@ export class ApiSessionClient extends EventEmitter {
             });
         }
 
-        if (!this.startupMessageCatchUpStarted) {
-            this.startupMessageCatchUpStarted = true;
-            this.startupMessageCatchUpRetryIndex = 0;
-            this.startupMessageCatchUpInitialAfterSeq = this.lastObservedMessageSeq;
-            void this.catchUpSessionMessages(this.startupMessageCatchUpInitialAfterSeq)
-                .catch((error) => {
-                    logger.debug('[API] Initial transcript catch-up failed (non-fatal)', { error });
-                })
-                .finally(() => {
-                    this.scheduleNextStartupMessageCatchUpRetry();
-                });
-        }
     }
 
     waitForMetadataUpdate(abortSignal?: AbortSignal): Promise<boolean> {

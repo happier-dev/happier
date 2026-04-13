@@ -13,7 +13,7 @@ export const agent = {
   vendorResumeSupport: AGENTS_CORE.copilot.resume.vendorResume,
   getAcpBackendFactory: async () => {
     const { createCopilotBackend } = await import('@/backends/copilot/acp/backend');
-    return (opts) => ({ backend: createCopilotBackend(opts as any) });
+    return (opts) => ({ backend: createCopilotBackend(opts) });
   },
   checklists,
 } satisfies AgentCatalogEntry;

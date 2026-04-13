@@ -2,14 +2,17 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:net';
 
+import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
+
 import { logger } from '@/ui/logger';
 import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
+import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
 
 import { resolveOpenCodeServerAuthHeadersFromEnv } from './openCodeServerAuth';
 import { resolveOpenCodeManagedServerChildEnv } from './openCodeManagedServerEnv';
+import { resolveOpenCodeManagedServerTrackedPid } from './resolveOpenCodeManagedServerTrackedPid';
 import { terminateManagedOpenCodeServerPidBestEffort } from './terminateManagedOpenCodeServerPidBestEffort';
 import { waitForOpenCodeServerHealth } from './waitForOpenCodeServerHealth';
-import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
 
 async function resolveEphemeralPort(hostname: string): Promise<number> {
   return await new Promise<number>((resolve, reject) => {
@@ -66,12 +69,20 @@ export async function startManagedOpenCodeServer(params: Readonly<{
     xdgRootDir: xdgRootDir.length > 0 ? xdgRootDir : null,
     isolateConfig,
   });
+  const invocation = resolveWindowsCommandInvocation({
+    command: cmd,
+    args,
+    env: childEnv,
+    resolveCommandOnPath: false,
+  });
 
-  const proc = spawn(cmd, args, {
+  const proc = spawn(invocation.command, invocation.args, {
     env: childEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: true,
+    ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
   });
+  let trackedPid = proc.pid ?? -1;
 
   let closePromise: Promise<void> | null = null;
   const close = async () => {
@@ -80,9 +91,9 @@ export async function startManagedOpenCodeServer(params: Readonly<{
       return;
     }
     closePromise = (async () => {
-      if (proc.pid) {
+      if (trackedPid > 0) {
         try {
-          await terminateManagedOpenCodeServerPidBestEffort(proc.pid);
+          await terminateManagedOpenCodeServerPidBestEffort(trackedPid);
           return;
         } catch {
           // fall through to direct kill
@@ -98,14 +109,6 @@ export async function startManagedOpenCodeServer(params: Readonly<{
   };
 
   const baseUrl = `http://${hostname}:${port}`;
-
-  // Call onSpawned and ensure cleanup if it throws
-  try {
-    await params.onSpawned?.({ baseUrl, pid: proc.pid ?? -1 });
-  } catch (error) {
-    await close();
-    throw error;
-  }
 
   await new Promise<void>((resolve, reject) => {
     const tag = randomUUID();
@@ -153,6 +156,23 @@ ${output || '<no output captured>'}`));
   });
 
   try {
+    trackedPid = await resolveOpenCodeManagedServerTrackedPid({
+      spawnPid: proc.pid ?? trackedPid,
+      baseUrl,
+      invocationCommand: invocation.command,
+    });
+  } catch {
+    // keep the spawned pid best-effort
+  }
+
+  try {
+    await params.onSpawned?.({ baseUrl, pid: trackedPid });
+  } catch (error) {
+    await close();
+    throw error;
+  }
+
+  try {
     proc.stdout?.removeAllListeners('data');
     proc.stderr?.removeAllListeners('data');
     // Keep the pipe open and drain output so the managed server can keep logging without SIGPIPE/EPIPE crashes.
@@ -163,5 +183,5 @@ ${output || '<no output captured>'}`));
   }
 
   proc.unref?.();
-  return { baseUrl, pid: proc.pid ?? -1, close };
+  return { baseUrl, pid: trackedPid, close };
 }

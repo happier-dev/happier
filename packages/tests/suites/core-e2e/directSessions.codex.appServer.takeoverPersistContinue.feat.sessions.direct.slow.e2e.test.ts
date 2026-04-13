@@ -1,9 +1,10 @@
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { randomBytes } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
+import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createRunDirs } from '../../src/testkit/runDir';
@@ -14,6 +15,15 @@ import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/da
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { createDataKeyRpcClient, unwrapDataKeyRpcResult } from '../../src/testkit/syntheticAgent/rpcClient';
 import { waitFor } from '../../src/testkit/timing';
+import { ensureCliSharedDepsBuilt } from '../../src/testkit/process/cliDist';
+import { repoRootDir } from '../../src/testkit/paths';
+import { spawnLoggedProcess, type SpawnedProcess } from '../../src/testkit/process/spawnProcess';
+import { yarnCommand } from '../../src/testkit/process/commands';
+import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
+import { stopDaemonFromHomeDir } from '../../src/testkit/daemon/daemon';
+import { hasToolCall, parseToolTraceJsonl } from '../../src/testkit/toolTraceJsonl';
+import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
+import { fetchSessionsV2 } from '../../src/testkit/sessions';
 import {
   readFakeCodexAppServerRequestLog,
   writeFakeCodexAppServerScript,
@@ -28,13 +38,57 @@ async function writeFakeLocalCodexScript(params: Readonly<{ testDir: string; inv
     [
       '#!/usr/bin/env node',
       'import { appendFile } from "node:fs/promises";',
+      'import { mkdirSync, appendFileSync } from "node:fs";',
+      'import path from "node:path";',
       `const invocationLogPath = ${JSON.stringify(params.invocationLogPath)};`,
       'await appendFile(invocationLogPath, JSON.stringify({ argv: process.argv.slice(2) }) + "\\n");',
-      'process.exit(0);',
+      'const sessionsRoot = process.env.HAPPIER_CODEX_SESSIONS_DIR?.trim() ?? "";',
+      'const sessionId = process.env.HAPPIER_E2E_CODEX_SESSION_ID?.trim() ?? "";',
+      'if (!sessionsRoot || !sessionId) {',
+      '  process.exit(0);',
+      '}',
+      'mkdirSync(sessionsRoot, { recursive: true });',
+      'const rolloutPath = path.join(sessionsRoot, "rollout-test.jsonl");',
+      'function write(line) { appendFileSync(rolloutPath, line + "\\n", "utf8"); }',
+      'write(JSON.stringify({ type: "session_meta", payload: { id: sessionId, timestamp: new Date().toISOString(), cwd: process.cwd() } }));',
+      'write(JSON.stringify({ type: "response_item", payload: { type: "function_call", call_id: "call_exec", name: "exec_command", arguments: JSON.stringify({ command: "echo CODEX_DIRECT_TAKEOVER_LOCAL_OK" }) } }));',
+      'write(JSON.stringify({ type: "response_item", payload: { type: "function_call_output", call_id: "call_exec", output: JSON.stringify({ stdout: "CODEX_DIRECT_TAKEOVER_LOCAL_OK\\\\n", exit_code: 0 }) } }));',
+      'process.on("SIGTERM", () => process.exit(0));',
+      'setInterval(() => {}, 1000);',
     ].join('\n'),
-    { encoding: 'utf8', mode: 0o755 },
+    { encoding: 'utf8' },
   );
+  await chmod(scriptPath, 0o755);
   return scriptPath;
+}
+
+async function resolveSessionAttachSecret(params: Readonly<{
+  baseUrl: string;
+  token: string;
+  sessionId: string;
+  machineKey: Uint8Array;
+}>): Promise<Readonly<{
+  encryptionVariant: 'legacy' | 'dataKey';
+  secret: Uint8Array;
+}>> {
+  const sessions = await fetchSessionsV2(params.baseUrl, params.token, { limit: 100 });
+  const row = sessions.sessions.find((session) => session.id === params.sessionId) ?? null;
+  if (!row) {
+    throw new Error(`Missing v2 session row for ${params.sessionId}`);
+  }
+
+  if (typeof row.dataEncryptionKey === 'string' && row.dataEncryptionKey.trim().length > 0) {
+    const opened = openEncryptedDataKeyEnvelopeV1({
+      envelope: new Uint8Array(Buffer.from(row.dataEncryptionKey, 'base64')),
+      recipientSecretKeyOrSeed: params.machineKey,
+    });
+    if (!opened || opened.length !== 32) {
+      throw new Error(`Failed to open dataEncryptionKey for ${params.sessionId}`);
+    }
+    return { encryptionVariant: 'dataKey', secret: opened };
+  }
+
+  return { encryptionVariant: 'legacy', secret: params.machineKey };
 }
 
 describe('core e2e: direct Codex app-server sessions takeover+continue', () => {
@@ -53,17 +107,22 @@ describe('core e2e: direct Codex app-server sessions takeover+continue', () => {
     await server?.stop().catch(() => {});
   });
 
-  it('persists a linked direct Codex app-server session and resumes it through the same app-server backend', async () => {
+  it('persists a linked direct Codex app-server session and then resumes the same vendor session through local terminalRuntime mirroring', async () => {
     const testDir = run.testDir('direct-sessions-codex-app-server-takeover-persist-continue');
     const daemonHomeDir = resolve(join(testDir, 'daemon-home'));
     const codexHomeDir = resolve(join(testDir, '.codex'));
+    const codexSessionsDir = resolve(join(codexHomeDir, 'sessions'));
     const appServerRequestLogPath = resolve(join(testDir, 'fake-codex-app-server.requests.jsonl'));
     const localCodexInvocationLogPath = resolve(join(testDir, 'fake-local-codex.invocations.jsonl'));
+    const toolTraceFile = resolve(join(testDir, 'tooltrace.jsonl'));
+    const localRolloutPath = resolve(join(codexSessionsDir, 'rollout-test.jsonl'));
     const remoteSessionId = '44444444-4444-4444-4444-444444444444';
     const linkedDirectory = '/tmp/direct-codex-app-server-takeover-project';
+    let localProc: SpawnedProcess | null = null;
 
     await mkdir(daemonHomeDir, { recursive: true });
     await mkdir(codexHomeDir, { recursive: true });
+    await mkdir(codexSessionsDir, { recursive: true });
 
     const fakeAppServer = await writeFakeCodexAppServerScript({
       dir: testDir,
@@ -101,6 +160,7 @@ describe('core e2e: direct Codex app-server sessions takeover+continue', () => {
         HAPPIER_HOME_DIR: daemonHomeDir,
         HAPPIER_SERVER_URL: serverBaseUrl,
         HAPPIER_WEBAPP_URL: serverBaseUrl,
+        HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
         CODEX_HOME: codexHomeDir,
         HAPPIER_CODEX_APP_SERVER_BIN: fakeAppServer,
         HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '2000',
@@ -158,6 +218,119 @@ describe('core e2e: direct Codex app-server sessions takeover+continue', () => {
       expect(localInvocations).toEqual([]);
     }
 
+    writeTestManifestForServer({
+      testDir,
+      server,
+      startedAt: new Date().toISOString(),
+      runId: run.runId,
+      testName: 'direct-sessions-codex-app-server-takeover-persist-continue',
+      sessionIds: [sessionId],
+      env: {
+        HAPPIER_STACK_TOOL_TRACE: '1',
+      },
+    });
+
+    await daemon?.stop().catch(() => {});
+    daemon = null;
+
+    const attachSecret = await resolveSessionAttachSecret({
+      baseUrl: serverBaseUrl,
+      token: auth.token,
+      sessionId,
+      machineKey,
+    });
+    const attachFile = await writeCliSessionAttachFile({
+      cliHome: daemonHomeDir,
+      sessionId,
+      secret: attachSecret.secret,
+      encryptionVariant: attachSecret.encryptionVariant,
+    });
+
+    const cliEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      CI: '1',
+      HAPPIER_VARIANT: 'dev',
+      HAPPIER_HOME_DIR: daemonHomeDir,
+      HAPPIER_SERVER_URL: serverBaseUrl,
+      HAPPIER_WEBAPP_URL: serverBaseUrl,
+      HAPPIER_SESSION_ATTACH_FILE: attachFile,
+      HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
+      HAPPIER_STACK_TOOL_TRACE: '1',
+      HAPPIER_STACK_TOOL_TRACE_FILE: toolTraceFile,
+      CODEX_HOME: codexHomeDir,
+      HAPPIER_CODEX_TUI_BIN: fakeLocalCodex,
+      HAPPIER_CODEX_SESSIONS_DIR: codexSessionsDir,
+      HAPPIER_E2E_CODEX_SESSION_ID: remoteSessionId,
+      HAPPIER_EXPERIMENTAL_CODEX_ACP: '1',
+    };
+
+    await ensureCliSharedDepsBuilt({ testDir, env: cliEnv });
+
+    localProc = spawnLoggedProcess({
+      command: yarnCommand(),
+      args: [
+        '-s',
+        'workspace',
+        '@happier-dev/cli',
+        'dev',
+        'codex',
+        '--existing-session',
+        sessionId,
+        '--started-by',
+        'terminal',
+        '--happy-starting-mode',
+        'local',
+      ],
+      cwd: repoRootDir(),
+      env: cliEnv,
+      stdoutPath: resolve(join(testDir, 'terminal-runtime.stdout.log')),
+      stderrPath: resolve(join(testDir, 'terminal-runtime.stderr.log')),
+    });
+
+    await waitFor(async () => existsSync(localRolloutPath), {
+      timeoutMs: 30_000,
+      context: 'local terminalRuntime rollout file created for persisted direct session',
+    });
+
+    await waitFor(async () => {
+      if (!existsSync(localCodexInvocationLogPath)) return false;
+      const raw = await readFile(localCodexInvocationLogPath, 'utf8').catch(() => '');
+      return raw
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .some((line) => {
+          try {
+            const parsed = JSON.parse(line) as { argv?: unknown };
+            const argv = Array.isArray(parsed.argv) ? parsed.argv.map(String) : [];
+            const resumeIndex = argv.indexOf('resume');
+            return resumeIndex >= 0 && argv[resumeIndex + 1] === remoteSessionId;
+          } catch {
+            return false;
+          }
+        });
+    }, {
+      timeoutMs: 30_000,
+      context: 'local terminalRuntime resumes the persisted vendor session id',
+    });
+
+    await waitFor(async () => {
+      if (!existsSync(toolTraceFile)) return false;
+      const raw = await readFile(toolTraceFile, 'utf8').catch(() => '');
+      const events = parseToolTraceJsonl(raw);
+      return hasToolCall(events, {
+        protocol: 'codex',
+        name: 'Bash',
+        commandSubstring: 'echo CODEX_DIRECT_TAKEOVER_LOCAL_OK',
+      });
+    }, {
+      timeoutMs: 30_000,
+      context: 'local terminalRuntime mirroring publishes tool trace for persisted direct session',
+    });
+
     ui.close();
+    await localProc?.stop().catch(() => {});
+    localProc = null;
+    await stopDaemonFromHomeDir(daemonHomeDir).catch(() => {});
   }, 240_000);
 });

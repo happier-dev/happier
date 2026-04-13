@@ -19,7 +19,7 @@ export const agent = {
   vendorResumeSupport: AGENTS_CORE.gemini.resume.vendorResume,
   getAcpBackendFactory: async () => {
     const { createGeminiBackend } = await import('@/backends/gemini/acp/backend');
-    return (opts) => createGeminiBackend(opts as any);
+    return (opts) => createGeminiBackend(opts);
   },
   checklists,
 } satisfies AgentCatalogEntry;

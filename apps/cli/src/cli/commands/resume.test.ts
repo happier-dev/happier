@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import tweetnacl from 'tweetnacl';
-import { mkdtemp, readdir, realpath, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -13,6 +13,20 @@ import { encodeBase64, encrypt } from '@/api/encryption';
 import { readSessionAttachFromEnv } from '@/agent/runtime/sessionAttach';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import type { CommandHandler } from '@/cli/commandRegistry';
+import { createPluginStateStore } from '@/extensions/plugins/store/pluginStateStore';
+
+const { resolveMergedContributionRegistryMock } = vi.hoisted(() => ({
+  resolveMergedContributionRegistryMock: vi.fn(),
+}));
+
+vi.mock('@/extensions/registry/createResolvedContributionRegistry', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/extensions/registry/createResolvedContributionRegistry')>();
+  resolveMergedContributionRegistryMock.mockImplementation(actual.resolveMergedContributionRegistry);
+  return {
+    ...actual,
+    resolveMergedContributionRegistry: resolveMergedContributionRegistryMock,
+  };
+});
 
 import { handleResumeCommand } from './resume';
 
@@ -147,6 +161,77 @@ describe('happier resume', () => {
     }
   });
 
+  it('fails closed when merged registry resolution fails during resume', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-resume-registry-fail-'));
+    const directory = await mkdtemp(join(tmpdir(), 'happier-resume-registry-fail-dir-'));
+    const prevHome = process.env.HAPPIER_HOME_DIR;
+    const prevAttach = process.env.HAPPIER_SESSION_ATTACH_FILE;
+    const prevCwd = process.cwd();
+
+    try {
+      process.env.HAPPIER_HOME_DIR = home;
+      reloadConfiguration();
+
+      resolveMergedContributionRegistryMock.mockRejectedValueOnce(new Error('merged registry failed'));
+
+      const machineKey = new Uint8Array(32).fill(11);
+      const publicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
+      const credentials: Credentials = {
+        token: 'token-1',
+        encryption: { type: 'dataKey', machineKey, publicKey },
+      };
+
+      const sessionEncryptionKey = new Uint8Array(32).fill(5);
+      const envelope = sealEncryptedDataKeyEnvelopeV1({
+        dataKey: sessionEncryptionKey,
+        recipientPublicKey: publicKey,
+        randomBytes: deterministicRandomBytesFactory(),
+      });
+
+      const rawSession = {
+        ...createSessionRecordFixture({
+          id: 'sid_registry_fail_1',
+          dataEncryptionKey: encodeBase64(envelope),
+          metadata: encodeBase64(
+            encrypt(sessionEncryptionKey, 'dataKey', {
+              path: directory,
+              host: 'test',
+              flavor: 'codex',
+              codexSessionId: 'codex_vendor_session_1',
+            }),
+          ),
+          active: false,
+          activeAt: 0,
+        }),
+      };
+
+      const agentHandler: CommandHandler = vi.fn(async () => {});
+
+      await expect(handleResumeCommand(['sid_registry_fail_1'], {
+        readCredentialsFn: async () => credentials,
+        fetchSessionByIdFn: async () => rawSession,
+        readAccountSettingsFn: async () => accountSettingsParse({ schemaVersion: 6, codexBackendMode: 'acp' }),
+        resolveAgentHandlerFn: async () => agentHandler,
+        chdirFn: (next: string) => process.chdir(next),
+      })).rejects.toThrow('merged registry failed');
+
+      expect(agentHandler).not.toHaveBeenCalled();
+    } finally {
+      try {
+        process.chdir(prevCwd);
+      } catch {
+        // ignore
+      }
+      if (prevAttach === undefined) delete process.env.HAPPIER_SESSION_ATTACH_FILE;
+      else process.env.HAPPIER_SESSION_ATTACH_FILE = prevAttach;
+      if (prevHome === undefined) delete process.env.HAPPIER_HOME_DIR;
+      else process.env.HAPPIER_HOME_DIR = prevHome;
+      reloadConfiguration();
+      await rm(home, { recursive: true, force: true });
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('supports plaintext sessions by creating an attach payload without a data encryption key', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-resume-plain-'));
     const directory = await mkdtemp(join(tmpdir(), 'happier-resume-plain-dir-'));
@@ -219,6 +304,161 @@ describe('happier resume', () => {
       else process.env.HAPPIER_HOME_DIR = prevHome;
       reloadConfiguration();
       await rm(home, { recursive: true, force: true });
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('resumes configured ACP sessions backed by a plugin provider', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-resume-plugin-'));
+    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-resume-plugin-root-'));
+    const directory = await mkdtemp(join(tmpdir(), 'happier-resume-plugin-dir-'));
+    const prevHome = process.env.HAPPIER_HOME_DIR;
+    const prevAttach = process.env.HAPPIER_SESSION_ATTACH_FILE;
+    const prevCwd = process.cwd();
+
+    try {
+      process.env.HAPPIER_HOME_DIR = home;
+      reloadConfiguration();
+
+      await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
+      await writeFile(
+        join(pluginRoot, '.happier-plugin', 'plugin.json'),
+        JSON.stringify(
+          {
+            schemaVersion: 1,
+            id: 'acme.resume',
+            version: '1.0.0',
+            displayName: 'Acme Resume',
+            description: 'Plugin resume coverage',
+            engines: { happier: '^0.2.0' },
+            targets: {
+              daemon: {
+                entry: './daemon.js',
+              },
+            },
+            contributions: {
+              providers: [
+                {
+                  kindVersion: 1,
+                  id: 'acme.resume.provider',
+                  display: { name: 'Acme Resume Provider', tags: ['plugin'] },
+                  session: {
+                    resume: {
+                      supportLevel: 'supported',
+                      vendorResumeIdField: 'acmeResumeSessionId',
+                    },
+                  },
+                  catalogEntry: {
+                    id: 'acme.resume.provider',
+                    cliSubcommand: 'acme.resume.provider',
+                    vendorResumeSupport: 'supported',
+                  },
+                  ownedBackendIds: ['acme.resume.backend'],
+                },
+              ],
+              backends: [
+                {
+                  kindVersion: 1,
+                  id: 'acme.resume.backend',
+                  providerId: 'acme.resume.provider',
+                  runtimeKind: 'acp',
+                  capabilities: {},
+                  runtimeAdapters: [],
+                },
+              ],
+              hooks: [],
+            },
+          },
+          null,
+          2,
+        ),
+        'utf8',
+      );
+
+      const stateStore = createPluginStateStore({ happyHomeDir: home });
+      await stateStore.write({
+        t: 'happier_plugin_state_v1',
+        schemaVersion: 1,
+        plugins: {
+          'acme.resume': {
+            source: {
+              kind: 'path',
+              locator: pluginRoot,
+              trustPolicy: 'local_trusted',
+              installPolicy: 'link',
+              resolvedPath: pluginRoot,
+              manifestPath: join(pluginRoot, '.happier-plugin', 'plugin.json'),
+            },
+            compatibility: { status: 'unknown', diagnostics: [] },
+            install: { mode: 'link', manifestVersion: '1.0.0', manifestDigest: null, installedPath: null },
+            state: { enabled: true },
+          },
+        },
+      });
+
+      const credentials: Credentials = {
+        token: 'token-1',
+        encryption: { type: 'legacy', secret: new Uint8Array(32).fill(11) },
+      };
+
+      const vendorResumeId = 'plugin_vendor_resume_1';
+      const rawSession = createSessionRecordFixture({
+        id: 'sid_plugin_1',
+        encryptionMode: 'plain',
+        dataEncryptionKey: null,
+        metadata: JSON.stringify({
+          path: directory,
+          host: 'test',
+          flavor: 'acp:acme.resume.backend',
+          acpConfiguredBackendV1: {
+            v: 1,
+            updatedAt: Date.now(),
+            backendId: 'acme.resume.backend',
+            title: 'Acme Resume Backend',
+          },
+          agentRuntimeDescriptorV1: {
+            v: 1,
+            providerId: 'acme.resume.provider',
+            provider: {
+              vendorSessionId: vendorResumeId,
+            },
+          },
+          acmeResumeSessionId: vendorResumeId,
+        }),
+        active: false,
+        activeAt: 0,
+      });
+
+      const dispatched: { args: string[] }[] = [];
+      const agentHandler: CommandHandler = vi.fn(async (context) => {
+        dispatched.push({ args: [...context.args] });
+      });
+
+      await handleResumeCommand(['sid_plugin_1'], {
+        readCredentialsFn: async () => credentials,
+        fetchSessionByIdFn: async () => rawSession,
+        readAccountSettingsFn: async () => accountSettingsParse({ schemaVersion: 6 }),
+        resolveAgentHandlerFn: async () => agentHandler,
+        chdirFn: (next: string) => process.chdir(next),
+      });
+
+      expect(agentHandler).toHaveBeenCalledTimes(1);
+      expect(dispatched[0]?.args[0]).toBe('customAcp');
+      expect(dispatched[0]?.args).toContain('--resume');
+      expect(dispatched[0]?.args).toContain(vendorResumeId);
+    } finally {
+      try {
+        process.chdir(prevCwd);
+      } catch {
+        // ignore
+      }
+      if (prevAttach === undefined) delete process.env.HAPPIER_SESSION_ATTACH_FILE;
+      else process.env.HAPPIER_SESSION_ATTACH_FILE = prevAttach;
+      if (prevHome === undefined) delete process.env.HAPPIER_HOME_DIR;
+      else process.env.HAPPIER_HOME_DIR = prevHome;
+      reloadConfiguration();
+      await rm(home, { recursive: true, force: true });
+      await rm(pluginRoot, { recursive: true, force: true });
       await rm(directory, { recursive: true, force: true });
     }
   });

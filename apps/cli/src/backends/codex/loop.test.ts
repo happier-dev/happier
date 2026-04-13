@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 
 const mockCodexLocalLauncher = vi.fn();
-vi.mock('./codexLocalLauncher', () => ({
-    codexLocalLauncher: mockCodexLocalLauncher,
+vi.mock('@/backends/catalog', () => ({
+    getTerminalRuntimeOps: vi.fn(async () => ({
+        launch: (params: unknown) => mockCodexLocalLauncher(params),
+    })),
 }));
 
 vi.mock('@/ui/logger', () => ({

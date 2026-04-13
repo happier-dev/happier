@@ -1,7 +1,8 @@
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
+import { requireTerminalRuntimeLaunch } from '@/backends/terminalRuntime/requireTerminalRuntimeLaunch';
 
-import { codexLocalLauncher, type CodexLauncherResult } from './codexLocalLauncher';
+import type { CodexLauncherResult } from './codexLocalLauncher';
 
 type Mode = 'local' | 'remote';
 
@@ -38,7 +39,13 @@ export async function loop(opts: LoopOptions): Promise<number> {
   while (true) {
     switch (mode) {
       case 'local': {
-        const result: CodexLauncherResult = await codexLocalLauncher({
+        const launchLocal = await requireTerminalRuntimeLaunch<{
+          path: string;
+          api: unknown;
+          session: ApiSessionClient;
+          messageQueue: MessageQueue2<unknown>;
+        }, CodexLauncherResult>('codex');
+        const result = await launchLocal({
           path: opts.path,
           api: opts.api,
           session: opts.session,

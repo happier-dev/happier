@@ -37,7 +37,7 @@ function assertDoesNotImportModule(source: string, moduleSuffix: string, filePat
 
 describe('session handoff (import-boundary)', () => {
   it('keeps rpcHandlers.sessionHandoff from importing the frozen replication engine surface directly (must go through the adapter)', async () => {
-    const rpcHandlers = fileURLToPath(new URL('../../../api/machine/rpcHandlers.sessionHandoff.ts', import.meta.url));
+    const rpcHandlers = fileURLToPath(new URL('../../../api/machine/sessionHandoff/rpcHandlers.sessionHandoff.ts', import.meta.url));
     const content = await readFile(rpcHandlers, 'utf8');
 
     // Guard against subtle regex drift: this is the highest-value boundary to enforce.

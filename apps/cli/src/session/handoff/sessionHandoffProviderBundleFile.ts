@@ -6,27 +6,14 @@ import { join } from 'node:path';
 import type { TransferPayloadSource } from '../../machines/transfer/transferPayloadSource';
 import { createFileTransferPayloadSource } from '../../machines/transfer/transferPayloadSource';
 import type { SessionHandoffProviderBundle } from './types';
-import { SessionHandoffProviderBundleSchema } from './sessionHandoffProviderBundleSchema';
+import { parseCanonicalSessionHandoffProviderBundle } from './parseCanonicalSessionHandoffProviderBundle';
 
 const SESSION_HANDOFF_PROVIDER_BUNDLE_DIRECTORY = join(tmpdir(), 'happier-session-handoff-provider-bundles');
-
-function assertCanonicalSessionHandoffProviderBundle(
-  providerBundle: SessionHandoffProviderBundle,
-): void {
-  if (
-    providerBundle.providerId === 'codex'
-    && 'codexBackendMode' in (providerBundle as SessionHandoffProviderBundle & { codexBackendMode?: unknown })
-    && (providerBundle as SessionHandoffProviderBundle & { codexBackendMode?: unknown }).codexBackendMode !== undefined
-  ) {
-    throw new Error('Invalid session handoff transfer payload');
-  }
-}
 
 export async function createSessionHandoffProviderBundlePayloadSource(
   providerBundle: SessionHandoffProviderBundle,
 ): Promise<TransferPayloadSource> {
-  assertCanonicalSessionHandoffProviderBundle(providerBundle);
-  const normalizedProviderBundle = SessionHandoffProviderBundleSchema.parse(providerBundle);
+  const normalizedProviderBundle = parseCanonicalSessionHandoffProviderBundle(providerBundle);
   // Avoid double-buffering large provider bundles. `writeFile` accepts strings, so compute size/hash
   // from the canonical JSON string and let Node stream/encode it directly to disk.
   const payloadJson = JSON.stringify(normalizedProviderBundle);
@@ -56,12 +43,5 @@ export async function readSessionHandoffProviderBundleFile(
   } catch {
     throw new Error('Invalid session handoff transfer payload');
   }
-  let providerBundle: SessionHandoffProviderBundle;
-  try {
-    providerBundle = SessionHandoffProviderBundleSchema.parse(payload);
-  } catch {
-    throw new Error('Invalid session handoff transfer payload');
-  }
-  assertCanonicalSessionHandoffProviderBundle(providerBundle);
-  return providerBundle;
+  return parseCanonicalSessionHandoffProviderBundle(payload);
 }

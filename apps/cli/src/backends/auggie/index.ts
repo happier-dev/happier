@@ -13,7 +13,7 @@ export const agent = {
   vendorResumeSupport: AGENTS_CORE.auggie.resume.vendorResume,
   getAcpBackendFactory: async () => {
     const { createAuggieBackend } = await import('@/backends/auggie/acp/backend');
-    return (opts) => ({ backend: createAuggieBackend(opts as any) });
+    return (opts) => ({ backend: createAuggieBackend(opts) });
   },
   getPreflightSessionControlsProbeAdapter: async () => ({
     failureCacheStrategy: 'cooldown',

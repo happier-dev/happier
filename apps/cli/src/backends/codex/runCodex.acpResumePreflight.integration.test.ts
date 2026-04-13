@@ -267,20 +267,32 @@ vi.mock('./utils/diffProcessor', () => ({
   })),
 }));
 
-vi.mock('./localControl/createLocalControlSupportResolver', () => ({
-  createCodexLocalControlSupportResolver: vi.fn(() => async () => ({ ok: false as const, reason: 'test' })),
+vi.mock('./terminalRuntime/createTerminalRuntimeSupportResolver', () => ({
+  createCodexTerminalRuntimeSupportResolver: vi.fn(() => async () => ({ ok: false as const, reason: 'test' })),
 }));
 
-let codexLocalLauncherImpl: ((opts: any) => Promise<any>) | null = null;
-const codexLocalLauncherSpy = vi.fn<(...args: any[]) => Promise<any>>(async (opts: any) => {
-  if (codexLocalLauncherImpl) return await codexLocalLauncherImpl(opts);
-  throw new Error('codexLocalLauncher-called');
+let terminalRuntimeLaunchImpl: ((opts: any) => Promise<any>) | null = null;
+const terminalRuntimeLaunchSpy = vi.fn<(...args: any[]) => Promise<any>>(async (opts: any) => {
+  if (terminalRuntimeLaunchImpl) return await terminalRuntimeLaunchImpl(opts);
+  throw new Error('terminalRuntimeLaunch-called');
 });
 const registerSessionRpcHandlerMock = vi.fn();
 let lastSessionClient: Record<string, any> | null = null;
 let lastOnUserMessageHandler: ((message: any) => void) | null = null;
+const getTerminalRuntimeOpsSpy = vi.fn(async () => ({
+  launch: (opts: any) => terminalRuntimeLaunchSpy(opts),
+}));
+vi.mock('@/backends/catalog', async () => {
+  const actual = await vi.importActual<typeof import('@/backends/catalog')>('@/backends/catalog');
+  return {
+    ...actual,
+    getTerminalRuntimeOps: getTerminalRuntimeOpsSpy,
+  };
+});
 vi.mock('./codexLocalLauncher', () => ({
-  codexLocalLauncher: (opts: any) => codexLocalLauncherSpy(opts),
+  codexLocalLauncher: vi.fn(async () => {
+    throw new Error('legacy-codexLocalLauncher-called');
+  }),
 }));
 
 vi.mock('@/agent/runtime/initializeBackendApiContext', () => ({
@@ -378,8 +390,9 @@ describe('runCodex CodexACP resume behavior', () => {
     ensureRuntimeInstallablesForLaunchSpy.mockResolvedValue({ ok: true as const, installedKeys: [] });
     waitForMessagesOrPendingSpy.mockClear();
     waitForMessagesOrPendingImpl = null;
-    codexLocalLauncherSpy.mockClear();
-    codexLocalLauncherImpl = null;
+    terminalRuntimeLaunchSpy.mockClear();
+    terminalRuntimeLaunchImpl = null;
+    getTerminalRuntimeOpsSpy.mockClear();
     registerSessionRpcHandlerMock.mockReset();
     modelSyncFlushPendingAfterStartSpy.mockClear();
     sessionModeSyncFlushPendingAfterStartSpy.mockClear();
@@ -393,8 +406,8 @@ describe('runCodex CodexACP resume behavior', () => {
     (experiments.isExperimentalCodexAcpEnabled as unknown as ReturnType<typeof vi.fn>).mockReturnValue(true);
     const { resolveCodexStartingMode } = await import('./utils/resolveCodexStartingMode');
     (resolveCodexStartingMode as unknown as ReturnType<typeof vi.fn>).mockReturnValue('remote');
-    const { createCodexLocalControlSupportResolver } = await import('./localControl/createLocalControlSupportResolver');
-    (createCodexLocalControlSupportResolver as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+    const { createCodexTerminalRuntimeSupportResolver } = await import('./terminalRuntime/createTerminalRuntimeSupportResolver');
+    (createCodexTerminalRuntimeSupportResolver as unknown as ReturnType<typeof vi.fn>).mockImplementation(
       () => async () => ({ ok: false as const, reason: 'test' }),
     );
   });
@@ -1017,12 +1030,12 @@ describe('runCodex CodexACP resume behavior', () => {
       mcpServers: {},
     }));
 
-    const { createCodexLocalControlSupportResolver } = await import('./localControl/createLocalControlSupportResolver');
-    (createCodexLocalControlSupportResolver as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+    const { createCodexTerminalRuntimeSupportResolver } = await import('./terminalRuntime/createTerminalRuntimeSupportResolver');
+    (createCodexTerminalRuntimeSupportResolver as unknown as ReturnType<typeof vi.fn>).mockImplementation(
       () => async () => ({ ok: true as const, backend: 'acp' }),
     );
 
-    codexLocalLauncherImpl = async () => ({ type: 'switch', resumeId: 'resume-from-local' });
+    terminalRuntimeLaunchImpl = async () => ({ type: 'switch', resumeId: 'resume-from-local' });
 
     const { resolveCodexStartingMode } = await import('./utils/resolveCodexStartingMode');
     (resolveCodexStartingMode as unknown as ReturnType<typeof vi.fn>).mockReturnValue('local');
@@ -1048,7 +1061,7 @@ describe('runCodex CodexACP resume behavior', () => {
       .catch((error: unknown) => ({ ok: false as const, error }));
 
     expect(createCodexAcpRuntimeSpy).toHaveBeenCalled();
-    expect(codexLocalLauncherSpy).toHaveBeenCalled();
+    expect(terminalRuntimeLaunchSpy).toHaveBeenCalled();
 
     const createdRuntime = createCodexAcpRuntimeSpy.mock.results[0]?.value as any;
     const startOrLoad = createdRuntime?.startOrLoad as ReturnType<typeof vi.fn> | undefined;
@@ -1064,8 +1077,8 @@ describe('runCodex CodexACP resume behavior', () => {
     (resolveCodexStartingMode as unknown as ReturnType<typeof vi.fn>).mockReturnValue('local');
     const { resolveHasTTY } = await import('@/ui/tty/resolveHasTTY');
     (resolveHasTTY as unknown as ReturnType<typeof vi.fn>).mockReturnValue(true);
-    const { createCodexLocalControlSupportResolver } = await import('./localControl/createLocalControlSupportResolver');
-    (createCodexLocalControlSupportResolver as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+    const { createCodexTerminalRuntimeSupportResolver } = await import('./terminalRuntime/createTerminalRuntimeSupportResolver');
+    (createCodexTerminalRuntimeSupportResolver as unknown as ReturnType<typeof vi.fn>).mockImplementation(
       () => async () => ({ ok: true as const, backend: 'appServer' }),
     );
     resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
@@ -1073,7 +1086,7 @@ describe('runCodex CodexACP resume behavior', () => {
       mcpServers: {},
     }));
 
-    codexLocalLauncherImpl = async () => ({ type: 'exit', code: 0 });
+    terminalRuntimeLaunchImpl = async () => ({ type: 'exit', code: 0 });
 
     const { runCodex } = await import('./runCodex');
     const credentials = { token: 'test' } as Credentials;
@@ -1087,9 +1100,43 @@ describe('runCodex CodexACP resume behavior', () => {
       permissionModeUpdatedAt: 1,
     } as any)).resolves.toBeUndefined();
 
-    expect(codexLocalLauncherSpy).toHaveBeenCalledWith(
+    expect(terminalRuntimeLaunchSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         path: '/tmp/requested-local-dir',
+      }),
+    );
+  });
+
+  it('seeds the initial local launch from an attached persisted Codex vendor session id', async () => {
+    const { resolveCodexStartingMode } = await import('./utils/resolveCodexStartingMode');
+    (resolveCodexStartingMode as unknown as ReturnType<typeof vi.fn>).mockReturnValue('local');
+    const { resolveHasTTY } = await import('@/ui/tty/resolveHasTTY');
+    (resolveHasTTY as unknown as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    const { createCodexTerminalRuntimeSupportResolver } = await import('./terminalRuntime/createTerminalRuntimeSupportResolver');
+    (createCodexTerminalRuntimeSupportResolver as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      () => async () => ({ ok: true as const, backend: 'appServer' }),
+    );
+    resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
+      happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
+      mcpServers: {},
+    }));
+    mockAttachedSessionMetadata({ codexSessionId: 'thread-existing', codexBackendMode: 'appServer' });
+    terminalRuntimeLaunchImpl = async () => ({ type: 'exit', code: 0 });
+
+    const { runCodex } = await import('./runCodex');
+    await expect(runCodex({
+      credentials: { token: 'test' } as Credentials,
+      startedBy: 'terminal',
+      startingMode: 'local',
+      existingSessionId: 'existing-123',
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 1,
+      codexBackendMode: 'appServer',
+    } as any)).resolves.toBeUndefined();
+
+    expect(terminalRuntimeLaunchSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resumeId: 'thread-existing',
       }),
     );
   });
@@ -1097,15 +1144,15 @@ describe('runCodex CodexACP resume behavior', () => {
   it('passes the requested directory into non-fast-start local launches', async () => {
     const { resolveCodexStartingMode } = await import('./utils/resolveCodexStartingMode');
     (resolveCodexStartingMode as unknown as ReturnType<typeof vi.fn>).mockReturnValue('local');
-    const { createCodexLocalControlSupportResolver } = await import('./localControl/createLocalControlSupportResolver');
-    (createCodexLocalControlSupportResolver as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+    const { createCodexTerminalRuntimeSupportResolver } = await import('./terminalRuntime/createTerminalRuntimeSupportResolver');
+    (createCodexTerminalRuntimeSupportResolver as unknown as ReturnType<typeof vi.fn>).mockImplementation(
       () => async () => ({ ok: true as const, backend: 'appServer' }),
     );
     resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
       happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
       mcpServers: {},
     }));
-    codexLocalLauncherImpl = async () => ({ type: 'exit', code: 0 });
+    terminalRuntimeLaunchImpl = async () => ({ type: 'exit', code: 0 });
 
     const { runCodex } = await import('./runCodex');
     await expect(runCodex({
@@ -1117,7 +1164,7 @@ describe('runCodex CodexACP resume behavior', () => {
       permissionModeUpdatedAt: 1,
     } as any)).resolves.toBeUndefined();
 
-    expect(codexLocalLauncherSpy).toHaveBeenCalledWith(
+    expect(terminalRuntimeLaunchSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         path: '/tmp/requested-local-dir-daemon',
       }),
@@ -1130,8 +1177,8 @@ describe('runCodex CodexACP resume behavior', () => {
       mcpServers: {},
     }));
 
-    const { createCodexLocalControlSupportResolver } = await import('./localControl/createLocalControlSupportResolver');
-    (createCodexLocalControlSupportResolver as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+    const { createCodexTerminalRuntimeSupportResolver } = await import('./terminalRuntime/createTerminalRuntimeSupportResolver');
+    (createCodexTerminalRuntimeSupportResolver as unknown as ReturnType<typeof vi.fn>).mockImplementation(
       () => async () => ({ ok: true as const, backend: 'acp' }),
     );
 
@@ -1140,7 +1187,7 @@ describe('runCodex CodexACP resume behavior', () => {
 
     // First local pass switches to remote with a resume id, second local pass exits.
     let localLauncherCalls = 0;
-    codexLocalLauncherImpl = async () => {
+    terminalRuntimeLaunchImpl = async () => {
       localLauncherCalls += 1;
       if (localLauncherCalls === 1) return { type: 'switch', resumeId: 'resume-from-local' };
       return { type: 'exit', code: 0 };
@@ -1193,7 +1240,7 @@ describe('runCodex CodexACP resume behavior', () => {
 
     await lastOnSwitchToLocal?.();
 
-    await expect.poll(() => codexLocalLauncherSpy.mock.calls.length, { timeout: 1_000 }).toBe(2);
+    await expect.poll(() => terminalRuntimeLaunchSpy.mock.calls.length, { timeout: 1_000 }).toBe(2);
 
     await expect(runPromise).resolves.toBeUndefined();
   });
@@ -1204,12 +1251,12 @@ describe('runCodex CodexACP resume behavior', () => {
       mcpServers: {},
     }));
 
-    const { createCodexLocalControlSupportResolver } = await import('./localControl/createLocalControlSupportResolver');
-    (createCodexLocalControlSupportResolver as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+    const { createCodexTerminalRuntimeSupportResolver } = await import('./terminalRuntime/createTerminalRuntimeSupportResolver');
+    (createCodexTerminalRuntimeSupportResolver as unknown as ReturnType<typeof vi.fn>).mockImplementation(
       () => async () => ({ ok: true as const, backend: 'appServer' }),
     );
 
-    codexLocalLauncherImpl = async () => ({ type: 'switch', resumeId: 'resume-from-local' });
+    terminalRuntimeLaunchImpl = async () => ({ type: 'switch', resumeId: 'resume-from-local' });
 
     const { resolveCodexStartingMode } = await import('./utils/resolveCodexStartingMode');
     (resolveCodexStartingMode as unknown as ReturnType<typeof vi.fn>).mockReturnValue('local');
@@ -1234,7 +1281,7 @@ describe('runCodex CodexACP resume behavior', () => {
       .catch((error: unknown) => ({ ok: false as const, error }));
 
     expect(createCodexAppServerRuntimeSpy).toHaveBeenCalled();
-    expect(codexLocalLauncherSpy).toHaveBeenCalled();
+    expect(terminalRuntimeLaunchSpy).toHaveBeenCalled();
 
     const createdRuntime = createCodexAppServerRuntimeSpy.mock.results[0]?.value as any;
     const startOrLoad = createdRuntime?.startOrLoad as ReturnType<typeof vi.fn> | undefined;
@@ -1246,8 +1293,8 @@ describe('runCodex CodexACP resume behavior', () => {
   });
 
   it('can switch remote→local while app-server resume is still in progress', async () => {
-    const { createCodexLocalControlSupportResolver } = await import('./localControl/createLocalControlSupportResolver');
-    (createCodexLocalControlSupportResolver as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+    const { createCodexTerminalRuntimeSupportResolver } = await import('./terminalRuntime/createTerminalRuntimeSupportResolver');
+    (createCodexTerminalRuntimeSupportResolver as unknown as ReturnType<typeof vi.fn>).mockImplementation(
       () => async () => ({ ok: true as const, backend: 'appServer' }),
     );
     resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
@@ -1259,7 +1306,7 @@ describe('runCodex CodexACP resume behavior', () => {
     (resolveCodexStartingMode as unknown as ReturnType<typeof vi.fn>).mockReturnValue('local');
 
     let localLauncherCalls = 0;
-    codexLocalLauncherImpl = async () => {
+    terminalRuntimeLaunchImpl = async () => {
       localLauncherCalls += 1;
       if (localLauncherCalls === 1) return { type: 'switch', resumeId: 'resume-from-local' };
       return { type: 'exit', code: 0 };
@@ -1309,7 +1356,7 @@ describe('runCodex CodexACP resume behavior', () => {
 
     await lastOnSwitchToLocal?.();
 
-    await expect.poll(() => codexLocalLauncherSpy.mock.calls.length, { timeout: 1_000 }).toBe(2);
+    await expect.poll(() => terminalRuntimeLaunchSpy.mock.calls.length, { timeout: 1_000 }).toBe(2);
 
     await expect(runPromise).resolves.toBeUndefined();
   });

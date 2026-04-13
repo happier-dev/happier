@@ -8,11 +8,11 @@ export function resolveVendorResumeIdForExistingSession(params: Readonly<{
   agent: unknown;
   credentials: Credentials | null;
   rawSession: Readonly<{ metadata?: unknown; dataEncryptionKey?: unknown; encryptionMode?: unknown }>;
+  metadataRecord?: Record<string, unknown> | null;
 }>): string | null {
-  const rawMetadata = typeof params.rawSession.metadata === 'string' ? params.rawSession.metadata.trim() : '';
-  if (!rawMetadata) return null;
-
-  const metaRecord = (() => {
+  const metaRecord = params.metadataRecord ?? (() => {
+    const rawMetadata = typeof params.rawSession.metadata === 'string' ? params.rawSession.metadata.trim() : '';
+    if (!rawMetadata) return null;
     if (params.rawSession.encryptionMode === 'plain') {
       return tryParseJsonRecord(rawMetadata);
     }
@@ -27,4 +27,3 @@ export function resolveVendorResumeIdForExistingSession(params: Readonly<{
 
   return resolveVendorResumeIdFromSessionMetadata(agentId, metaRecord);
 }
-

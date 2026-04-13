@@ -32,12 +32,26 @@ async function waitFor<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
 let localStarted: Deferred<void> = createDeferred<void>();
 let localExit: Deferred<{ type: 'exit'; code: number }> = createDeferred<{ type: 'exit'; code: number }>();
 
-const codexLocalLauncherSpy = vi.fn(async (opts: any) => {
+const terminalRuntimeLaunchSpy = vi.fn(async (opts: any) => {
   void opts;
   localStarted.resolve();
   return await localExit.promise;
 });
-vi.mock('@/backends/codex/codexLocalLauncher', () => ({ codexLocalLauncher: codexLocalLauncherSpy }));
+const getTerminalRuntimeOpsSpy = vi.fn(async () => ({
+  launch: (opts: any) => terminalRuntimeLaunchSpy(opts),
+}));
+vi.mock('@/backends/catalog', async () => {
+  const actual = await vi.importActual<typeof import('@/backends/catalog')>('@/backends/catalog');
+  return {
+    ...actual,
+    getTerminalRuntimeOps: getTerminalRuntimeOpsSpy,
+  };
+});
+vi.mock('@/backends/codex/codexLocalLauncher', () => ({
+  codexLocalLauncher: vi.fn(async () => {
+    throw new Error('legacy-codexLocalLauncher-called');
+  }),
+}));
 
 let initResolved = false;
 vi.mock('@/agent/runtime/initializeBackendApiContext', () => ({
@@ -238,7 +252,8 @@ describe('runCodex fast-start', () => {
     localStarted = createDeferred<void>();
     localExit = createDeferred<{ type: 'exit'; code: number }>();
     initResolved = false;
-    codexLocalLauncherSpy.mockClear();
+    terminalRuntimeLaunchSpy.mockClear();
+    getTerminalRuntimeOpsSpy.mockClear();
     initializeBackendRunSessionSpy.mockClear();
     initializeBackendRunSessionImpl = null;
   });
@@ -320,7 +335,7 @@ describe('runCodex fast-start', () => {
       await runPromise;
     }
 
-    const firstCall = codexLocalLauncherSpy.mock.calls[0]?.[0];
+    const firstCall = terminalRuntimeLaunchSpy.mock.calls[0]?.[0];
     expect(firstCall?.resumeId).toBe('resume-123');
 
     if (testError) {
@@ -396,7 +411,7 @@ describe('runCodex fast-start', () => {
       };
     };
 
-    codexLocalLauncherSpy.mockImplementationOnce(async (opts: any) => {
+    terminalRuntimeLaunchSpy.mockImplementationOnce(async (opts: any) => {
       opts.session.sendSessionEvent({ type: 'message', message: 'buffered' });
       void opts.session.updateMetadata((current: any) => ({ ...current, codexSessionId: 'thread_1' }));
       localStarted.resolve();

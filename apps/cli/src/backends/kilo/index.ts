@@ -13,7 +13,7 @@ export const agent = {
   vendorResumeSupport: AGENTS_CORE.kilo.resume.vendorResume,
   getAcpBackendFactory: async () => {
     const { createKiloBackend } = await import('@/backends/kilo/acp/backend');
-    return (opts) => ({ backend: createKiloBackend(opts as any) });
+    return (opts) => ({ backend: createKiloBackend(opts) });
   },
   getPreflightSessionControlsProbeAdapter: async () => ({
     failureCacheStrategy: 'cooldown',

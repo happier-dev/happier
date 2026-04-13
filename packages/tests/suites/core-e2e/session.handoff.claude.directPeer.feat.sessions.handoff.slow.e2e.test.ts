@@ -9,6 +9,7 @@ import { createTestAuth } from '../../src/testkit/auth';
 import { seedCliDataKeyAuthForServer } from '../../src/testkit/cliAuth';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
+import { normalizeSpawnSessionRequestBody } from '../../src/testkit/daemon/normalizeSpawnSessionRequestBody';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { fetchJson } from '../../src/testkit/http';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
@@ -22,6 +23,7 @@ import {
 import { createUserScopedSocketCollector, type SocketCollector } from '../../src/testkit/socketClient';
 import { createDataKeyRpcClient, unwrapDataKeyRpcResult } from '../../src/testkit/syntheticAgent/rpcClient';
 import { waitFor } from '../../src/testkit/timing';
+import { activateLinkedDirectSession } from '../../src/testkit/directSessions/activateLinkedDirectSession';
 // @ts-expect-error - This CJS helper is consumed directly by the runtime test fixture.
 import { resolveClaudeProjectId } from '../../src/testkit/claudeProjectId.cjs';
 import { waitForDaemonSessionWebhookMarker } from '../../src/testkit/daemon/waitForDaemonSessionWebhookMarker';
@@ -343,7 +345,6 @@ describe('core e2e: session handoff via direct peer', () => {
     const sourceFakeClaudeLog = resolve(join(testDir, 'fake-claude-source.jsonl'));
     const targetFakeClaudeLog = resolve(join(testDir, 'fake-claude-target.jsonl'));
     const fakeClaudePath = fakeClaudeFixturePath();
-
     await mkdir(sourceHomeDir, { recursive: true });
     await mkdir(targetHomeDir, { recursive: true });
     await mkdir(sourceWorkspaceDir, { recursive: true });
@@ -564,7 +565,7 @@ describe('core e2e: session handoff via direct peer', () => {
       port: targetDaemon.state.httpPort,
       path: '/spawn-session',
       controlToken: targetDaemon.state.controlToken,
-      body: {
+      body: normalizeSpawnSessionRequestBody({
         directory: preparedResume.directory,
         agent: preparedResume.agent,
         existingSessionId: sessionId,
@@ -577,7 +578,7 @@ describe('core e2e: session handoff via direct peer', () => {
           fakeClaudeLogPath: targetFakeClaudeLog,
           extraEnvironmentVariables: preparedResume.environmentVariables,
         }),
-      },
+      }),
       timeoutMs: 90_000,
     });
     expect(targetSpawnResult.status).toBe(200);
@@ -773,7 +774,7 @@ describe('core e2e: session handoff via direct peer', () => {
       port: sourceDaemon.state.httpPort,
       path: '/spawn-session',
       controlToken: sourceDaemon.state.controlToken,
-      body: {
+      body: normalizeSpawnSessionRequestBody({
         directory: secondPreparedResume.directory,
         agent: secondPreparedResume.agent,
         existingSessionId: sessionId,
@@ -786,7 +787,7 @@ describe('core e2e: session handoff via direct peer', () => {
           fakeClaudeLogPath: sourceFakeClaudeLog,
           extraEnvironmentVariables: secondPreparedResume.environmentVariables,
         }),
-      },
+      }),
       timeoutMs: 30_000,
     });
     expect(sourceRespawnResult.status).toBe(200);
@@ -831,6 +832,10 @@ describe('core e2e: session handoff via direct peer', () => {
     const sourceHomeDir = resolve(join(testDir, 'source-home'));
     const targetHomeDir = resolve(join(testDir, 'target-home'));
     const sourceWorkspaceDir = resolve(join(testDir, 'workspace-source'));
+    const sourceClaudeConfigDir = resolve(join(testDir, 'source-claude-config'));
+    const sourceClaudeProjectDir = resolve(join(sourceClaudeConfigDir, 'projects', 'proj-handoff-direct-late'));
+    const sourceClaudeSessionFile = resolve(join(sourceClaudeProjectDir, 'sess-handoff-direct-late.jsonl'));
+    const targetClaudeConfigDir = resolve(join(targetHomeDir, '.claude'));
     const targetFakeClaudeLog = resolve(join(testDir, 'fake-claude-target.jsonl'));
     const sourceFakeClaudeLog = resolve(join(testDir, 'fake-claude-source.jsonl'));
     const fakeClaudePath = fakeClaudeFixturePath();
@@ -838,9 +843,32 @@ describe('core e2e: session handoff via direct peer', () => {
     await mkdir(sourceHomeDir, { recursive: true });
     await mkdir(targetHomeDir, { recursive: true });
     await mkdir(sourceWorkspaceDir, { recursive: true });
+    await mkdir(sourceClaudeProjectDir, { recursive: true });
+    await mkdir(targetClaudeConfigDir, { recursive: true });
     await mkdir(sourceDaemonDir, { recursive: true });
     await mkdir(targetDaemonDir, { recursive: true });
     await writeFile(resolve(join(sourceWorkspaceDir, 'README.md')), 'late cutover proof\n', 'utf8');
+    await writeFile(
+      sourceClaudeSessionFile,
+      [
+        JSON.stringify({
+          type: 'user',
+          uuid: 'handoff-direct-late-u1',
+          cwd: sourceWorkspaceDir,
+          message: { content: 'hello from source direct late session' },
+        }),
+        JSON.stringify({
+          type: 'assistant',
+          uuid: 'handoff-direct-late-a1',
+          cwd: sourceWorkspaceDir,
+          message: {
+            model: 'claude-test',
+            content: [{ type: 'text', text: 'source direct late reply' }],
+          },
+        }),
+      ].join('\n') + '\n',
+      'utf8',
+    );
 
     server = await startServerLight({
       testDir,
@@ -880,6 +908,7 @@ describe('core e2e: session handoff via direct peer', () => {
         HAPPIER_DISABLE_CAFFEINATE: '1',
         HAPPIER_VARIANT: 'dev',
         HAPPIER_CLAUDE_PATH: fakeClaudePath,
+        HAPPIER_CLAUDE_CONFIG_DIR: sourceClaudeConfigDir,
         HAPPIER_E2E_FAKE_CLAUDE_LOG: sourceFakeClaudeLog,
         HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS: '127.0.0.1',
         HAPPIER_SESSION_HANDOFF_DIRECT_PEER_BIND_HOST: '127.0.0.1',
@@ -900,6 +929,7 @@ describe('core e2e: session handoff via direct peer', () => {
         HAPPIER_DISABLE_CAFFEINATE: '1',
         HAPPIER_VARIANT: 'dev',
         HAPPIER_CLAUDE_PATH: fakeClaudePath,
+        HAPPIER_CLAUDE_CONFIG_DIR: targetClaudeConfigDir,
         HAPPIER_E2E_FAKE_CLAUDE_LOG: targetFakeClaudeLog,
         HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS: '127.0.0.1',
         HAPPIER_SESSION_HANDOFF_DIRECT_PEER_BIND_HOST: '127.0.0.1',
@@ -925,29 +955,35 @@ describe('core e2e: session handoff via direct peer', () => {
     });
     expect(machineIds).toEqual(expect.arrayContaining([sourceSeed.machineId, targetSeed.machineId]));
 
-    const spawned = await daemonControlPostJson<{ success?: boolean; sessionId?: string }>({
-      port: sourceDaemon.state.httpPort,
-      path: '/spawn-session',
-      controlToken: sourceDaemon.state.controlToken,
-      body: {
-        directory: sourceWorkspaceDir,
-        terminal: { mode: 'plain' },
-        environmentVariables: sessionChildEnv({
-          homeDir: sourceHomeDir,
-          serverBaseUrl: server.baseUrl,
-          fakeClaudePath,
-          fakeClaudeLogPath: sourceFakeClaudeLog,
-        }),
-      },
-      timeoutMs: 30_000,
-    });
-    expect(spawned.status).toBe(200);
-    expect(spawned.data.success).toBe(true);
-    const sessionId = spawned.data.sessionId;
+    const sourceDirectSessionSource = {
+      kind: 'claudeConfig',
+      configDir: sourceClaudeConfigDir,
+      projectId: 'proj-handoff-direct-late',
+    } as const;
+    const linked = unwrapDataKeyRpcResult(
+      await sourceMachineRpc.call(`${sourceSeed.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE}`, {
+        machineId: sourceSeed.machineId,
+        providerId: 'claude',
+        remoteSessionId: 'sess-handoff-direct-late',
+        directoryHint: sourceWorkspaceDir,
+        titleHint: 'handoff direct late session',
+        source: sourceDirectSessionSource,
+      }),
+      'source direct session link for late cutover direct-peer handoff',
+    ) as Readonly<{ ok: true; sessionId: string }>;
+    const sessionId = linked.sessionId;
     if (typeof sessionId !== 'string' || sessionId.length === 0) {
-      throw new Error('Missing sessionId from source daemon spawn-session');
+      throw new Error('Missing linked session id from late cutover direct session source');
     }
-
+    await activateLinkedDirectSession({
+      machineRpc: sourceMachineRpc,
+      machineId: sourceSeed.machineId,
+      sessionId,
+      providerId: 'claude',
+      remoteSessionId: 'sess-handoff-direct-late',
+      source: sourceDirectSessionSource,
+      context: 'late cutover direct-peer source activation',
+    });
     const initialPrompt = 'before-cutover-direct-peer-proof';
     await postPlainUiTextMessage({
       baseUrl: server.baseUrl,
@@ -967,7 +1003,7 @@ describe('core e2e: session handoff via direct peer', () => {
         sessionId,
         sourceMachineId: sourceSeed.machineId,
         targetMachineId: targetSeed.machineId,
-        sessionStorageMode: 'persisted',
+        sessionStorageMode: 'direct',
         preferredTransportStrategies: ['direct_peer'],
         negotiatedTransportStrategy: 'direct_peer',
       }),
@@ -1015,7 +1051,7 @@ describe('core e2e: session handoff via direct peer', () => {
           targetMachineId: targetSeed.machineId,
           negotiatedTransportStrategy: 'direct_peer',
           allowServerRoutedFallback: false,
-          sourceSessionStorageMode: 'persisted',
+          sourceSessionStorageMode: 'direct',
           targetPath: started.targetPath,
           endpointCandidates: started.endpointCandidates,
           handoffMetadataV2: lateCutoverMetadataV2,
@@ -1030,7 +1066,7 @@ describe('core e2e: session handoff via direct peer', () => {
       port: targetDaemon.state.httpPort,
       path: '/spawn-session',
       controlToken: targetDaemon.state.controlToken,
-      body: {
+      body: normalizeSpawnSessionRequestBody({
         directory: lateCutoverPreparedResume.directory,
         agent: lateCutoverPreparedResume.agent,
         existingSessionId: sessionId,
@@ -1043,7 +1079,7 @@ describe('core e2e: session handoff via direct peer', () => {
           fakeClaudeLogPath: targetFakeClaudeLog,
           extraEnvironmentVariables: lateCutoverPreparedResume.environmentVariables,
         }),
-      },
+      }),
       timeoutMs: 30_000,
     });
     expect(targetSpawnResult.status).toBe(200);

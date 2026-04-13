@@ -4,10 +4,111 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { BackendExecutionSurfaces } from '@/backends/catalog';
+import type { AnyTerminalRuntimeOps, ProviderAttachOps } from '@/backends/types';
+import type { LocalHostedDirectTranscriptBinding } from '@/agent/terminalRuntime/directTranscriptBinding';
 import type { Credentials, Settings } from '@/persistence';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
 import { handleAttachCommand } from './attach';
+
+const {
+  resolveBackendExecutionSurfaces,
+  getProviderAttachOps,
+  getTerminalRuntimeOps,
+  createMockBackendExecutionSurfaces,
+} = vi.hoisted(() => {
+  const createMockBackendExecutionSurfaces = (backendId: string | null | undefined): BackendExecutionSurfaces => {
+    const createMockTerminalRuntimeBinding = (
+      providerId: 'claude' | 'codex' | 'ohMyPi',
+    ): LocalHostedDirectTranscriptBinding => providerId === 'claude'
+      ? {
+          providerId,
+          source: {
+            kind: 'claudeConfig',
+            configDir: '/tmp/runtime-binding',
+            projectId: null,
+          },
+          remoteSessionId: 'runtime-binding',
+        }
+      : providerId === 'codex'
+        ? {
+            providerId,
+            source: {
+              kind: 'codexHome',
+              home: 'user',
+              homePath: '/tmp/runtime-binding',
+            },
+            remoteSessionId: 'runtime-binding',
+          }
+        : {
+            providerId,
+            source: {
+              kind: 'ohMyPiAgentDir',
+              agentDir: '/tmp/runtime-binding',
+            },
+            remoteSessionId: 'runtime-binding',
+          };
+
+    if (backendId === 'opencode') {
+      const attach: ProviderAttachOps = {
+        evaluateEligibility: async ({ currentMachineId, sessionMachineId, hasLocalAttachmentInfo, metadata }) => ({
+          eligible: true,
+          scope:
+            (currentMachineId && sessionMachineId && currentMachineId === sessionMachineId) || hasLocalAttachmentInfo
+              ? 'local'
+              : 'remote',
+          metadata,
+        }),
+        probeReachability: async () => ({ reachable: true }),
+        runAttach: async () => 0,
+      };
+      return {
+        terminalRuntime: null,
+        directSessions: null,
+        attach,
+        sessionHandoff: null,
+      };
+    }
+
+    if (backendId === 'claude' || backendId === 'codex' || backendId === 'ohMyPi') {
+      const terminalRuntime: AnyTerminalRuntimeOps = backendId === 'ohMyPi'
+        ? {
+            bindTranscript: async () => createMockTerminalRuntimeBinding('ohMyPi'),
+          }
+        : {
+            launch: async () => 'launched',
+            bindTranscript: async () => createMockTerminalRuntimeBinding(backendId),
+          };
+      return {
+        terminalRuntime,
+        directSessions: null,
+        attach: null,
+        sessionHandoff: null,
+      };
+    }
+
+    return {
+      terminalRuntime: null,
+      directSessions: null,
+      attach: null,
+      sessionHandoff: null,
+    };
+  };
+  const resolveBackendExecutionSurfaces = vi.fn(createMockBackendExecutionSurfaces);
+  return {
+    resolveBackendExecutionSurfaces,
+    getProviderAttachOps: vi.fn(),
+    getTerminalRuntimeOps: vi.fn(),
+    createMockBackendExecutionSurfaces,
+  };
+});
+
+vi.mock('@/backends/catalog', () => ({
+  resolveBackendExecutionSurfaces,
+  getProviderAttachOps,
+  getTerminalRuntimeOps,
+}));
 
 describe('happier attach', () => {
   const localSettings = { machineId: 'machine-local' } as Settings;
@@ -21,6 +122,9 @@ describe('happier attach', () => {
   });
 
   afterEach(() => {
+    resolveBackendExecutionSurfaces.mockReset().mockImplementation(createMockBackendExecutionSurfaces);
+    getProviderAttachOps.mockReset();
+    getTerminalRuntimeOps.mockReset();
     if (previousManagedServerStatePath === undefined) {
       delete process.env.HAPPIER_OPENCODE_SERVER_STATE_PATH;
     } else {
@@ -100,6 +204,43 @@ describe('happier attach', () => {
       agentId: 'opencode',
       sessionId: 'sid_opencode_missing_machine_1',
     }));
+  });
+
+  it('dispatches provider-native attach through the generic backend execution surface when no custom runner is supplied', async () => {
+    const credentials: Credentials = {
+      token: 'token-1',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    };
+    const rawSession = createSessionRecordFixture({
+      id: 'sid_opencode_generic_attach_1',
+      active: true,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        path: '/tmp/opencode-workspace',
+        host: 'test',
+        flavor: 'opencode',
+        opencodeSessionId: 'vendor-session-1',
+        opencodeBackendMode: 'server',
+        opencodeServerBaseUrl: 'http://127.0.0.1:4096/',
+        opencodeServerBaseUrlExplicit: true,
+      }),
+    });
+    resolveBackendExecutionSurfaces.mockImplementation(createMockBackendExecutionSurfaces);
+    getProviderAttachOps.mockImplementation(async () => {
+      throw new Error('direct provider attach getter should not be used');
+    });
+
+    await (handleAttachCommand as any)(['sid_opencode_generic_attach_1'], {
+      readCredentialsFn: async () => credentials,
+      readSettingsFn: async () => localSettings,
+      fetchSessionByIdFn: async () => rawSession,
+      readTerminalAttachmentInfoFn: async () => null,
+      createProviderAttachStatePublisherFn: () => null,
+      runTmuxAttachFn: vi.fn(async () => 0),
+    });
+
+    expect(resolveBackendExecutionSurfaces).toHaveBeenCalledWith('opencode');
+    expect(getProviderAttachOps).not.toHaveBeenCalled();
   });
 
   it('allows explicit local OpenCode attach after machine id drift when a local attachment marker exists', async () => {
@@ -276,7 +417,13 @@ describe('happier attach', () => {
       return { type: 'selected', sessionId: 'sid_attachable_1' };
     });
     const runTmuxAttachFn = vi.fn(async () => 0);
-    const runProviderAttachFn = vi.fn(async () => 0);
+    resolveBackendExecutionSurfaces.mockImplementation(createMockBackendExecutionSurfaces);
+    getProviderAttachOps.mockImplementation(async () => {
+      throw new Error('direct provider attach getter should not be used');
+    });
+    getTerminalRuntimeOps.mockImplementation(async () => {
+      throw new Error('direct terminal runtime getter should not be used');
+    });
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true })));
 
     await (handleAttachCommand as any)([], {
@@ -301,12 +448,13 @@ describe('happier attach', () => {
             },
           }
         : null,
-      runProviderAttachFn,
       runTmuxAttachFn,
     });
 
     expect(runTmuxAttachFn).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'sid_attachable_1' }));
-    expect(runProviderAttachFn).not.toHaveBeenCalled();
+    expect(resolveBackendExecutionSurfaces).toHaveBeenCalled();
+    expect(getProviderAttachOps).not.toHaveBeenCalled();
+    expect(getTerminalRuntimeOps).not.toHaveBeenCalled();
   });
 
   it('dispatches provider-native attach for provider-attach local-control sessions', async () => {

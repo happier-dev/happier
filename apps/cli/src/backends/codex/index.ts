@@ -22,11 +22,13 @@ export const agent = {
   getConnectedServicesSpawnMaterializer: async () =>
     (await import('@/backends/codex/connectedServices/createCodexConnectedServicesSpawnMaterializer'))
       .createCodexConnectedServicesSpawnMaterializer(),
+  getSessionHandoffProviderOps: async () => (await import('@/backends/codex/handoff/providerOps')).codexSessionHandoffProviderOps,
+  getTerminalRuntimeOps: async () => (await import('@/backends/codex/terminalRuntime/codexTerminalRuntimeOps')).codexTerminalRuntimeOps,
   vendorResumeSupport: AGENTS_CORE.codex.resume.vendorResume,
   getVendorResumeSupport: async () => supportsCodexVendorResume,
   getAcpBackendFactory: async () => {
     const { createCodexAcpBackend } = await import('@/backends/codex/acp/backend');
-    return (opts) => createCodexAcpBackend(opts as any);
+    return (opts) => createCodexAcpBackend(opts);
   },
   getAcpForkContinuationHandler: async () => (await import('@/backends/codex/acp/forkContinuationHandler')).codexAcpForkContinuationHandler,
   getProviderNativeForkHandler: async () => (await import('@/backends/codex/appServer/providerNativeForkHandler')).codexAppServerProviderNativeForkHandler,

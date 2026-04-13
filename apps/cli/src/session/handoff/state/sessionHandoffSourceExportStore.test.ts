@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { readWorkspaceReplicationManifestFromFile } from '@/workspace/handoff/workspaceReplicationAdapter/workspaceReplicationManifestFile';
+import type { SessionHandoffProviderBundle } from '../types';
 import { createSessionHandoffSourceExportStore } from './sessionHandoffSourceExportStore';
 
 describe('sessionHandoffSourceExportStore', () => {
@@ -91,6 +92,30 @@ describe('sessionHandoffSourceExportStore', () => {
         sizeBytes: manifest.sizeBytes,
       });
       expect(parsed.entries).toHaveLength(1);
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed with a canonical payload error when provider bundles include unknown legacy fields', async () => {
+    const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-store-bundle-shape-'));
+    try {
+      const store = createSessionHandoffSourceExportStore({ activeServerDir });
+      await expect(store.writeProviderBundleFile({
+        handoffId: 'handoff-bundle-shape-1',
+        providerBundle: {
+          providerId: 'opencode',
+          remoteSessionId: 'remote-session-1',
+          exportJsonBase64: Buffer.from('{}', 'utf8').toString('base64'),
+          affinity: {
+            backendMode: 'server',
+            serverBaseUrl: null,
+            serverBaseUrlExplicit: false,
+          },
+          // Simulate a stale/legacy field that should be rejected by canonical bundle parsing.
+          legacyField: true,
+        } as unknown as SessionHandoffProviderBundle,
+      })).rejects.toThrow('Invalid session handoff transfer payload');
     } finally {
       await rm(activeServerDir, { recursive: true, force: true });
     }

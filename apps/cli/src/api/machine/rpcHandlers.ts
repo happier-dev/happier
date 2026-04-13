@@ -11,25 +11,25 @@ import {
   type SpawnSessionOptions,
   type SpawnSessionResult,
 } from '@/rpc/handlers/registerSessionHandlers';
+import { canonicalizeSpawnBackendTargetFromTransportInput } from '@/rpc/handlers/spawnSessionOptionsContract';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import {
   AcpConfigOptionOverridesV1Schema,
   AgentRuntimeDescriptorV1Schema,
-  BackendTargetRefSchema,
+  convertBackendTargetRefV2ToV1,
   SessionContinueWithReplayRpcParamsSchema,
   SessionForkRpcParamsSchema,
   SessionMcpSelectionV1Schema,
 } from '@happier-dev/protocol';
 import { isPermissionMode } from '@/api/types';
-import { CATALOG_AGENT_IDS } from '@/backends/types';
-import type { CatalogAgentId } from '@/backends/types';
 import { readCredentials } from '@/persistence';
 import { createReplaySeededSession } from '@/session/replay/createReplaySeededSession';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import { resolveForkCutoffSeqInclusive } from '@/session/fork/resolveForkCutoffSeqInclusive';
 import { resolveForkInheritedOverridesFromMetadata } from '@/session/fork/resolveForkInheritedOverridesFromMetadata';
+import { resolveSessionForkBackendTarget } from '@/session/fork/resolveSessionForkBackendTarget';
 import type { SessionHandoffLocalMetadataSource } from '@/session/handoff/metadata/runtimeLocalSessionHandoffMetadata';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
 import { archiveSessionByIdBestEffort } from '@/session/services/setSessionArchivedState';
@@ -46,7 +46,7 @@ import { registerMachineDirectSessionsRpcHandlers } from './rpcHandlers.directSe
 import {
   registerMachineSessionHandoffRpcHandlers,
   type SessionHandoffDirectPeerTransferHandle,
-} from './rpcHandlers.sessionHandoff';
+} from './sessionHandoff/rpcHandlers.sessionHandoff';
 import { registerMachinePromptAssetsRpcHandlers } from './rpcHandlers.promptAssets';
 import { registerMachinePromptAssetTransferRpcHandlers } from './rpcHandlers.promptAssetTransfers';
 import { registerMachinePromptRegistriesRpcHandlers } from './rpcHandlers.promptRegistries';
@@ -74,13 +74,15 @@ import {
   buildOpenCodeSessionEnvironmentVariables,
   readOpenCodeSessionAffinityFromMetadata,
 } from '@/backends/opencode/utils/opencodeSessionAffinity';
-import { inferAgentIdFromSessionMetadata, resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
+import { resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
 import { getAcpForkContinuationHandler } from '@/backends/catalog';
 import { dispatchProviderNativeFork } from '@/session/fork/providerNativeForkDispatch';
 import { createPromptAssetAdapterRegistry } from '@/promptAssets/createPromptAssetAdapterRegistry';
 import { createPromptRegistryAdapterRegistry } from '@/promptRegistries/createPromptRegistryAdapterRegistry';
 import type { DirectTransferImportOpenRequest } from '@/machines/transfer/directTransferImportSession';
 import { createTransferSessionLifecycle } from '@/transfers/core/transferSessionLifecycle';
+import { continueSessionWithReplay } from '@/session/replay/continueWithReplay';
+import { resolveContinueWithReplayBackendTarget } from '@/session/replay/resolveContinueWithReplayBackendTarget';
 
 const transferRelayV2DownloadResponderCleanupByManager = new WeakMap<RpcHandlerManager, () => void>();
 const machineDirectTransferRpcMethodsToReset = [
@@ -210,10 +212,6 @@ async function toCanonicalPath(path: string): Promise<string | null> {
   }
 }
 
-function isKnownAgentId(value: string): value is CatalogAgentId {
-  return (CATALOG_AGENT_IDS as readonly string[]).includes(value);
-}
-
 function isPathInside(targetPath: string, allowedDir: string): boolean {
   const rel = relative(allowedDir, targetPath);
   return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel));
@@ -255,6 +253,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
       machineId,
       approvedNewDirectoryCreation,
       backendTarget,
+      agent,
       environmentVariables,
       profileId,
       terminal,
@@ -299,31 +298,21 @@ export function registerMachineRpcHandlers(params: Readonly<{
       || attachMetadataIdentityPolicy === 'replace_with_runtime_identity'
         ? attachMetadataIdentityPolicy
         : undefined;
-    const normalizedBackendTarget = (() => {
-      const parsed = BackendTargetRefSchema.safeParse(backendTarget);
-      if (!parsed.success) return undefined;
-      if (parsed.data.kind === 'builtInAgent') {
-        const agentId = parsed.data.agentId.trim();
-        if (!isKnownAgentId(agentId)) {
-          return null;
-        }
-        return {
-          kind: 'builtInAgent' as const,
-          agentId,
-        };
-      }
-      return {
-        kind: 'configuredAcpBackend' as const,
-        backendId: parsed.data.backendId.trim(),
-      };
-    })();
-    if (normalizedBackendTarget === null) {
+    const normalizedBackendTargetResolution = canonicalizeSpawnBackendTargetFromTransportInput({
+      backendTarget,
+      legacyAgent: agent,
+    });
+    if (normalizedBackendTargetResolution.errorMessage) {
       return {
         type: 'error',
         errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-        errorMessage: 'Unknown backend target',
+        errorMessage: normalizedBackendTargetResolution.errorMessage,
       };
     }
+    const normalizedBackendTarget = normalizedBackendTargetResolution.backendTarget;
+    const normalizedBackendTargetV1 = normalizedBackendTarget
+      ? convertBackendTargetRefV2ToV1(normalizedBackendTarget)
+      : undefined;
     const normalizedMcpSelection = (() => {
       if (mcpSelection === undefined) return undefined;
       const parsed = SessionMcpSelectionV1Schema.safeParse(mcpSelection);
@@ -377,7 +366,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
       spawnNonce: normalizedSpawnNonce,
       initialPrompt: normalizedInitialPrompt,
       machineId,
-      backendTarget: normalizedBackendTarget,
+      backendTarget: normalizedBackendTargetV1,
       environmentVariables: normalizedEnvironmentVariables,
       profileId,
       terminal,
@@ -436,6 +425,13 @@ export function registerMachineRpcHandlers(params: Readonly<{
 
     if (!directory) {
       return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST, errorMessage: 'Directory is required' };
+    }
+    if (!normalizedBackendTarget) {
+      return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: 'Backend target is required for fresh session spawn.',
+      };
     }
 
     const baseSpawnOptions = buildBaseSpawnOptions(directory);
@@ -568,151 +564,36 @@ export function registerMachineRpcHandlers(params: Readonly<{
       };
     }
 
-    const {
-      directory,
-      agent,
-      approvedNewDirectoryCreation,
-      permissionMode,
-      permissionModeUpdatedAt,
-      modelId,
-      modelUpdatedAt,
-      replay,
-    } = parsed.data;
-
-    if (!isKnownAgentId(agent)) {
+    const resolvedBackend = resolveContinueWithReplayBackendTarget({
+      agent: parsed.data.agent,
+      backendTarget: parsed.data.backendTarget,
+    });
+    if (!resolvedBackend.ok) {
       return {
         type: 'error',
         errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-        errorMessage: 'Unknown agent id',
+        errorMessage: resolvedBackend.errorMessage,
       };
     }
 
-    const maxTextChars = parseEnvBoundedInt('HAPPIER_REPLAY_MAX_TEXT_CHARS', { min: 1, max: 50_000 }, null);
-
-    const credentials = await readCredentials().catch(() => null);
-    if (!credentials) {
-      return {
-        type: 'error',
-        errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_MISSING_ENCRYPTION_KEY,
-        errorMessage: 'This daemon is not provisioned with dataKey credentials and cannot decrypt transcripts for replay.',
-      };
-    }
-
-    const replayStrategy = (replay.strategy ?? 'recent_messages') === 'summary_plus_recent' ? 'summary_plus_recent' : 'recent_messages';
-
-    const resolvedSeed = await resolveReplaySeedDraft({
-      credentials,
-      cwd: directory,
-      source: {
-        kind: 'fork_chain',
-        previousSessionId: replay.previousSessionId,
+    return await continueSessionWithReplay(
+      {
+        directory: parsed.data.directory,
+        backendTarget: resolvedBackend.backendTarget,
+        approvedNewDirectoryCreation: parsed.data.approvedNewDirectoryCreation,
+        permissionMode: parsed.data.permissionMode,
+        permissionModeUpdatedAt: parsed.data.permissionModeUpdatedAt,
+        modelId: parsed.data.modelId,
+        modelUpdatedAt: parsed.data.modelUpdatedAt,
+        replay: parsed.data.replay,
       },
-      strategy: replayStrategy,
-      recentMessagesCount: replay.recentMessagesCount ?? 250,
-      maxSeedChars: typeof replay.maxSeedChars === 'number' ? replay.maxSeedChars : configuration.replaySeedMaxChars,
-      candidateLimit: configuration.replaySeedCandidateLimit,
-      maxTextChars: maxTextChars ?? undefined,
-      summaryRunner: replay.summaryRunner ?? null,
-      deps: params.deps?.runReplaySummaryForDialog
-        ? { runReplaySummaryForDialog: params.deps.runReplaySummaryForDialog }
-        : undefined,
-    });
-    if (!resolvedSeed) {
-      return {
-        type: 'error',
-        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-        errorMessage: 'Unable to hydrate replay dialog from transcript.',
-      };
-    }
-    const seedDraft = resolvedSeed.seedDraft;
-
-    if (!seedDraft.trim()) {
-      return {
-        type: 'error',
-        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-        errorMessage: 'Replay seed draft is empty',
-      };
-    }
-
-    const normalizedModelId = typeof modelId === 'string' && modelId.trim().length > 0 ? modelId : undefined;
-    const normalizedPermissionMode =
-      typeof permissionMode === 'string' && isPermissionMode(permissionMode) ? permissionMode : undefined;
-    const normalizedPermissionModeUpdatedAt =
-      normalizedPermissionMode && typeof permissionModeUpdatedAt === 'number' ? permissionModeUpdatedAt : undefined;
-
-    logger.debug('[API MACHINE] Continuing session with replay', {
-      directory,
-      agent,
-      approvedNewDirectoryCreation,
-      permissionMode: normalizedPermissionMode,
-      permissionModeUpdatedAt: normalizedPermissionModeUpdatedAt,
-      modelId: normalizedModelId,
-      modelUpdatedAt: typeof modelUpdatedAt === 'number' ? modelUpdatedAt : undefined,
-      previousSessionId: replay.previousSessionId,
-      dialogCount: resolvedSeed.dialog.length,
-      strategy: replay.strategy ?? 'recent_messages',
-      recentMessagesCount: replay.recentMessagesCount ?? 250,
-    });
-
-    const nowMs = Date.now();
-    const created = await (async () => {
-      try {
-        return await createReplaySeededSession({
-          credentials,
-          directory,
-          agentId: agent,
-          tag: `replay:${replay.previousSessionId}:${resolvedSeed.sourceCutoffSeqInclusive}:${randomUUID()}`,
-          metadata: {
-            forkV1: {
-              v: 1,
-              parentSessionId: replay.previousSessionId,
-              parentCutoffSeqInclusive: resolvedSeed.sourceCutoffSeqInclusive,
-              createdAtMs: nowMs,
-              strategy: 'replay',
-              providerHint: { providerId: agent },
-            },
-            replaySeedV1: {
-              v: 1,
-              seedText: seedDraft,
-              sourceSessionId: replay.previousSessionId,
-              sourceCutoffSeqInclusive: resolvedSeed.sourceCutoffSeqInclusive,
-              createdAtMs: nowMs,
-            },
-          },
-        });
-      } catch (error) {
-        logger.debug('[API MACHINE] Failed to create replay-seeded session', {
-          error: error instanceof Error ? error.message : String(error),
-        });
-        return null;
-      }
-    })();
-
-    if (!created) {
-      return {
-        type: 'error',
-        errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
-        errorMessage: 'Failed to create a new session for replay',
-      };
-    }
-
-    const result = await spawnSession({
-      directory,
-      backendTarget: { kind: 'builtInAgent', agentId: agent },
-      approvedNewDirectoryCreation,
-      existingSessionId: created.sessionId,
-      permissionMode: normalizedPermissionMode,
-      permissionModeUpdatedAt: normalizedPermissionModeUpdatedAt,
-      modelId: normalizedModelId,
-      modelUpdatedAt: typeof modelUpdatedAt === 'number' ? modelUpdatedAt : undefined,
-    } satisfies SpawnSessionOptions);
-
-    if (result.type === 'success') {
-      return { type: 'success', sessionId: created.sessionId };
-    }
-
-    await archiveSessionBestEffort(credentials.token, created.sessionId);
-    return result;
+      {
+        spawnSession,
+        ...(params.deps?.runReplaySummaryForDialog
+          ? { runReplaySummaryForDialog: params.deps.runReplaySummaryForDialog }
+          : {}),
+      },
+    );
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.SESSION_FORK, async (raw: unknown) => {
@@ -791,18 +672,20 @@ export function registerMachineRpcHandlers(params: Readonly<{
       };
     }
 
-    const unknownAgentId = '__unknown__' as CatalogAgentId;
-    const agentRaw = inferAgentIdFromSessionMetadata(parentMetadata, unknownAgentId);
-    if (agentRaw === unknownAgentId || !isKnownAgentId(agentRaw)) {
+    const forkBackendResolution = await resolveSessionForkBackendTarget({
+      parentMetadata,
+      credentials,
+    });
+    if (!forkBackendResolution.ok) {
       return {
         ok: false,
         errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-        errorMessage: 'Session metadata missing agent flavor',
+        errorMessage: forkBackendResolution.errorMessage,
       };
     }
 
     const openCodeParentAffinity =
-      agentRaw === 'opencode'
+      forkBackendResolution.providerAgentId === 'opencode'
         ? readOpenCodeSessionAffinityFromMetadata(parentMetadata)
         : null;
     const inheritedForkOverrides = resolveForkInheritedOverridesFromMetadata(parentMetadata);
@@ -850,7 +733,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
       try {
         const nativeFork = await dispatchProviderNativeFork({
           credentials,
-          agentId: agentRaw,
+          agentId: forkBackendResolution.providerAgentId,
           parentSessionId,
           parentRawSession: parentSession,
           parentMetadata,
@@ -864,7 +747,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
         if (nativeFork) {
           const result = await spawnSession({
             directory,
-            backendTarget: { kind: 'builtInAgent', agentId: agentRaw },
+            backendTarget: forkBackendResolution.backendTarget,
             approvedNewDirectoryCreation: true,
             spawnNonce,
             ...nativeFork.spawn,
@@ -894,6 +777,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
                 updater: (metadata) => ({
                   ...metadata,
                   ...inheritedForkOverrides.metadata,
+                  ...forkBackendResolution.metadataOverlay,
                   ...nativeFork.metadata,
                   forkV1: {
                     v: 1,
@@ -932,36 +816,73 @@ export function registerMachineRpcHandlers(params: Readonly<{
     const shouldAttemptAcpForkLatest =
       (requestedStrategy === 'auto' || requestedStrategy === 'acp_fork_latest') &&
       (forkPoint.type === 'latest') &&
-      isAcpForkEligibleForProvider({ providerId: agentRaw, metadata: parentMetadata });
+      (
+        forkBackendResolution.configuredAcp !== null ||
+        isAcpForkEligibleForProvider({
+          providerId: forkBackendResolution.providerAgentId,
+          metadata: parentMetadata,
+        })
+      );
 
     if (shouldAttemptAcpForkLatest) {
       // Best-effort ACP fork: only applies when the parent session can be resumed as an ACP session.
       // If unsupported, fall back to replay fork below.
       try {
-        const vendorSessionIdRaw = resolveVendorResumeIdFromSessionMetadata(agentRaw as any, parentMetadata) ?? '';
+        const vendorSessionIdRaw =
+          forkBackendResolution.configuredAcp?.vendorSessionId ??
+          resolveVendorResumeIdFromSessionMetadata(forkBackendResolution.providerAgentId as any, parentMetadata) ??
+          '';
 
         if (vendorSessionIdRaw) {
-          const { createCatalogAcpBackend } = await import('@/agent/acp/createCatalogAcpBackend');
-          const created = await createCatalogAcpBackend(agentRaw as any, {
-            cwd: directory,
-            mcpServers: {},
-            permissionHandler: {
-              handleToolCall: async () => ({ decision: 'denied' as const }),
-            },
-          } as any);
+          const permissionHandler = {
+            handleToolCall: async () => ({ decision: 'denied' as const }),
+          };
+          let acpBackend: {
+            loadSession?: (sessionId: string) => Promise<unknown>;
+            forkSession?: (params: Readonly<{ sessionId: string; cwd?: string }>) => Promise<unknown>;
+            dispose: () => Promise<unknown>;
+          } | null = null;
+
+          if (forkBackendResolution.configuredAcp?.resolvedBackend && forkBackendResolution.configuredAcp.accountSettings) {
+            const { createConfiguredAcpBackend } = await import('@/agent/acp/catalog/configured/createConfiguredAcpBackend');
+            const { materializeConfiguredAcpEnvironment } = await import('@/agent/acp/catalog/configured/materializeConfiguredAcpEnvironment');
+            const launchEnv = materializeConfiguredAcpEnvironment({
+              backend: forkBackendResolution.configuredAcp.resolvedBackend,
+              accountSettings: forkBackendResolution.configuredAcp.accountSettings,
+              credentials,
+            });
+            acpBackend = createConfiguredAcpBackend({
+              cwd: directory,
+              backend: forkBackendResolution.configuredAcp.resolvedBackend,
+              launchEnv,
+              mcpServers: {},
+              permissionHandler,
+            }) as unknown as NonNullable<typeof acpBackend>;
+          } else if (!forkBackendResolution.configuredAcp) {
+            const { createCatalogAcpBackend } = await import('@/agent/acp/createCatalogAcpBackend');
+            const created = await createCatalogAcpBackend(forkBackendResolution.providerAgentId as any, {
+              cwd: directory,
+              mcpServers: {},
+              permissionHandler,
+            } as any);
+            acpBackend = created.backend;
+          }
 
           try {
-            if (typeof created.backend.loadSession === 'function' && typeof (created.backend as any).forkSession === 'function') {
-              await created.backend.loadSession(vendorSessionIdRaw as any);
-              const forked = await (created.backend as any).forkSession({
+            if (acpBackend && typeof acpBackend.loadSession === 'function' && typeof acpBackend.forkSession === 'function') {
+              await acpBackend.loadSession(vendorSessionIdRaw);
+              const forked = await acpBackend.forkSession({
                 sessionId: vendorSessionIdRaw,
               });
-              const forkedSessionId = typeof forked?.sessionId === 'string' ? String(forked.sessionId).trim() : '';
+              const forkedRecord = (forked && typeof forked === 'object') ? forked as { sessionId?: unknown } : null;
+              const forkedSessionId = typeof forkedRecord?.sessionId === 'string'
+                ? String(forkedRecord.sessionId).trim()
+                : '';
               if (forkedSessionId) {
-                const acpForkContinuation = await getAcpForkContinuationHandler(agentRaw);
+                const acpForkContinuation = await getAcpForkContinuationHandler(forkBackendResolution.providerAgentId);
                 const continuationShape = acpForkContinuation
                   ? await acpForkContinuation({
-                    agentId: agentRaw,
+                    agentId: forkBackendResolution.providerAgentId,
                     parentMetadata,
                     vendorSessionId: forkedSessionId,
                   })
@@ -969,7 +890,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
 
                 const result = await spawnSession({
                   directory,
-                  backendTarget: { kind: 'builtInAgent', agentId: agentRaw },
+                  backendTarget: forkBackendResolution.backendTarget,
                   approvedNewDirectoryCreation: true,
                   resume: forkedSessionId,
                   ...(continuationShape?.spawn ?? {}),
@@ -999,6 +920,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
                       updater: (metadata) => ({
                         ...metadata,
                         ...inheritedForkOverrides.metadata,
+                        ...forkBackendResolution.metadataOverlay,
                         ...(continuationShape?.metadata ?? {}),
                         forkV1: {
                           v: 1,
@@ -1007,7 +929,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
                           createdAtMs: Date.now(),
                           strategy: 'acp_fork_latest',
                           providerHint: continuationShape?.providerHint ?? {
-                            providerId: agentRaw,
+                            providerId: forkBackendResolution.providerHintAgentId,
                             vendorSessionId: forkedSessionId,
                           },
                         },
@@ -1028,7 +950,9 @@ export function registerMachineRpcHandlers(params: Readonly<{
               }
             }
           } finally {
-            await created.backend.dispose().catch(() => {});
+            if (acpBackend) {
+              await acpBackend.dispose().catch(() => {});
+            }
           }
         }
       } catch {
@@ -1087,11 +1011,12 @@ export function registerMachineRpcHandlers(params: Readonly<{
         return await createReplaySeededSession({
           credentials,
           directory,
-          agentId: agentRaw,
+          flavor: forkBackendResolution.replayFlavor,
           tag: `fork:${parentSessionId}:${effectiveCutoffSeqInclusive}:${randomUUID()}`,
           metadata: {
             ...inheritedForkOverrides.metadata,
-            ...(agentRaw === 'opencode'
+            ...forkBackendResolution.metadataOverlay,
+            ...(forkBackendResolution.providerAgentId === 'opencode'
               ? applyOpenCodeSessionAffinityMetadata({
                 backendMode: openCodeParentAffinity?.backendMode ?? 'server',
                 serverBaseUrl: openCodeParentAffinity?.serverBaseUrl ?? null,
@@ -1104,7 +1029,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
               parentCutoffSeqInclusive: effectiveCutoffSeqInclusive,
               createdAtMs: nowMs,
               strategy: 'replay',
-              providerHint: { providerId: agentRaw },
+              providerHint: { providerId: forkBackendResolution.providerHintAgentId },
             },
             replaySeedV1: {
               v: 1,
@@ -1133,11 +1058,11 @@ export function registerMachineRpcHandlers(params: Readonly<{
 
     const spawnResult = await spawnSession({
       directory,
-      backendTarget: { kind: 'builtInAgent', agentId: agentRaw },
+      backendTarget: forkBackendResolution.backendTarget,
       approvedNewDirectoryCreation: true,
       spawnNonce,
       existingSessionId: created.sessionId,
-      ...(agentRaw === 'opencode'
+      ...(forkBackendResolution.providerAgentId === 'opencode'
         ? {
           environmentVariables: buildOpenCodeSessionEnvironmentVariables({
             backendMode: openCodeParentAffinity?.backendMode ?? 'server',

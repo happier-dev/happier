@@ -1,18 +1,18 @@
-import type { SessionClientPort } from "@/api/session/sessionClientPort"
-import { MessageQueue2 } from "@/agent/runtime/modeMessageQueue"
-import { logger } from "@/ui/logger"
-import { Session } from "./session"
-import { claudeLocalLauncher, LauncherResult } from "./claudeLocalLauncher"
-import { claudeRemoteLauncher } from "./claudeRemoteLauncher"
-import type { JsRuntime } from "./runClaude"
-import type { PushNotificationClient } from "@/api/pushNotifications"
+import type { SessionClientPort } from '@/api/session/sessionClientPort';
+import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
+import type { PushNotificationClient } from '@/api/pushNotifications';
+import { logger } from '@/ui/logger';
 import type { AccountSettings } from '@happier-dev/protocol';
 import type { McpServerConfig } from '@/agent';
+import { claudeRemoteLauncher } from './claudeRemoteLauncher';
+import { requireTerminalRuntimeLaunch } from '@/backends/terminalRuntime/requireTerminalRuntimeLaunch';
+import type { JsRuntime } from './runClaude';
+import { Session } from './session';
 
 // Re-export permission mode type from api/types
 // Single unified type with 7 modes - Codex modes mapped at SDK boundary
-export type { PermissionMode } from "@/api/types"
-import type { PermissionMode } from "@/api/types"
+export type { PermissionMode } from '@/api/types';
+import type { PermissionMode } from '@/api/types';
 
 export interface EnhancedMode {
     permissionMode: PermissionMode;
@@ -55,35 +55,34 @@ export interface EnhancedMode {
 }
 
 interface LoopOptions {
-    path: string
-    model?: string
-    permissionMode?: PermissionMode
-    permissionModeUpdatedAt?: number
-        startingMode?: 'local' | 'remote'
-        /** Force-enable Claude Code experimental Agent Teams across local + remote starts (off = inherit). */
-        claudeCodeExperimentalAgentTeamsEnabled?: boolean
-    onModeChange: (mode: 'local' | 'remote') => void
-    session: SessionClientPort
-    pushSender?: PushNotificationClient | null
-    accountSettings?: AccountSettings | null
-    accountSettingsSecretsReadKeys?: readonly Uint8Array[]
-    claudeArgs?: string[]
-    messageQueue: MessageQueue2<EnhancedMode>
-    onSessionReady?: (session: Session) => void
+    path: string;
+    model?: string;
+    permissionMode?: PermissionMode;
+    permissionModeUpdatedAt?: number;
+    startingMode?: 'local' | 'remote';
+    /** Force-enable Claude Code experimental Agent Teams across local + remote starts (off = inherit). */
+    claudeCodeExperimentalAgentTeamsEnabled?: boolean;
+    onModeChange: (mode: 'local' | 'remote') => void;
+    session: SessionClientPort;
+    pushSender?: PushNotificationClient | null;
+    accountSettings?: AccountSettings | null;
+    accountSettingsSecretsReadKeys?: readonly Uint8Array[];
+    claudeArgs?: string[];
+    messageQueue: MessageQueue2<EnhancedMode>;
+    onSessionReady?: (session: Session) => void;
     /** Path to temporary settings file with SessionStart hook (required for session tracking) */
-    hookSettingsPath: string
+    hookSettingsPath: string;
     /** JavaScript runtime to use for spawning Claude Code (default: 'node') */
-    jsRuntime?: JsRuntime
-    startedBy?: 'daemon' | 'terminal'
-    defaultSystemPromptText?: string
-    precomputedMcpBridge?: { mcpServers: Record<string, McpServerConfig>; stop: () => void } | null
+    jsRuntime?: JsRuntime;
+    startedBy?: 'daemon' | 'terminal';
+    defaultSystemPromptText?: string;
+    precomputedMcpBridge?: { mcpServers: Record<string, McpServerConfig>; stop: () => void } | null;
 }
 
 export async function loop(opts: LoopOptions): Promise<number> {
-
     // Get log path for debug display
     const logPath = logger.logFilePath;
-    let session = new Session({
+    const session = new Session({
         client: opts.session,
         pushSender: opts.pushSender ?? null,
         accountSettings: opts.accountSettings ?? null,
@@ -114,7 +113,7 @@ export async function loop(opts: LoopOptions): Promise<number> {
         session.lastPermissionMode = opts.permissionMode ?? 'default';
         session.lastPermissionModeUpdatedAt = typeof opts.permissionModeUpdatedAt === 'number' ? opts.permissionModeUpdatedAt : 0;
     }
-    opts.onSessionReady?.(session)
+    opts.onSessionReady?.(session);
 
     let mode: 'local' | 'remote' = opts.startingMode ?? 'local';
     let localEntry: 'initial' | 'switch' = mode === 'local' ? 'initial' : 'switch';
@@ -122,7 +121,11 @@ export async function loop(opts: LoopOptions): Promise<number> {
         logger.debug(`[loop] Iteration with mode: ${mode}`);
         switch (mode) {
             case 'local': {
-                const result = await claudeLocalLauncher(session, { entry: localEntry });
+                const launchLocal = await requireTerminalRuntimeLaunch<
+                    { session: Session; options?: { entry?: 'initial' | 'switch' } },
+                    { type: 'switch' } | { type: 'exit'; code: number }
+                >('claude');
+                const result = await launchLocal({ session, options: { entry: localEntry } });
                 localEntry = 'switch';
                 switch (result.type) {
                     case 'switch':
@@ -132,7 +135,10 @@ export async function loop(opts: LoopOptions): Promise<number> {
                     case 'exit':
                         return result.code;
                     default:
-                        const _: never = result satisfies never;
+                        {
+                            const unexpectedResult: never = result;
+                            throw new Error(`Unsupported Claude terminal runtime result: ${String(unexpectedResult)}`);
+                        }
                 }
                 break;
             }
@@ -148,13 +154,17 @@ export async function loop(opts: LoopOptions): Promise<number> {
                         localEntry = 'switch';
                         break;
                     default:
-                        const _: never = reason satisfies never;
+                        {
+                            const unexpectedReason: never = reason;
+                            throw new Error(`Unsupported Claude remote launcher result: ${String(unexpectedReason)}`);
+                        }
                 }
                 break;
             }
 
             default: {
-                const _: never = mode satisfies never;
+                const unexpectedMode: never = mode;
+                throw new Error(`Unsupported Claude loop mode: ${String(unexpectedMode)}`);
             }
         }
     }

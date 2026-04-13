@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 
 import { inferAgentIdFromSessionMetadata, type AgentId } from '@happier-dev/agents';
 
-import { getProviderAttachOps } from '@/backends/catalog';
+import { resolveBackendExecutionSurfaces } from '@/backends/catalog';
 import { configuration } from '@/configuration';
 import { readCredentials, readSettings, type Credentials, type Settings } from '@/persistence';
 import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
@@ -262,7 +262,7 @@ export async function handleAttachCommand(
   const runWindowsTerminalAttachFn = deps.runWindowsTerminalAttachFn ?? defaultRunWindowsTerminalAttach;
   const runWindowsConsoleAttachFn = deps.runWindowsConsoleAttachFn ?? defaultRunWindowsConsoleAttach;
   const runProviderAttachFn = deps.runProviderAttachFn ?? (async ({ agentId, sessionId, metadata }) => {
-    const providerAttachOps = await getProviderAttachOps(agentId);
+    const providerAttachOps = (await resolveBackendExecutionSurfaces(agentId)).attach;
     if (!providerAttachOps) return 1;
     return await providerAttachOps.runAttach({ sessionId, metadata });
   });

@@ -1,6 +1,7 @@
 import { AGENTS_CORE } from '@happier-dev/agents';
 
 import { claudeDaemonSpawnHooks } from '@/backends/claude/daemon/spawnHooks';
+import { normalizeClaudeHappyCliSessionControlPermissionMode } from '@/backends/claude/utils/permissionMode';
 import type { AgentCatalogEntry } from '../types';
 
 export const agent = {
@@ -16,6 +17,9 @@ export const agent = {
   getConnectedServicesSpawnMaterializer: async () =>
     (await import('@/backends/claude/connectedServices/createClaudeConnectedServicesSpawnMaterializer'))
       .createClaudeConnectedServicesSpawnMaterializer(),
+  getSessionHandoffProviderOps: async () => (await import('@/backends/claude/handoff/providerOps')).claudeSessionHandoffProviderOps,
+  normalizeSessionControlPermissionMode: normalizeClaudeHappyCliSessionControlPermissionMode,
+  getTerminalRuntimeOps: async () => (await import('@/backends/claude/terminalRuntime/claudeTerminalRuntimeOps')).claudeTerminalRuntimeOps,
   vendorResumeSupport: AGENTS_CORE.claude.resume.vendorResume,
   getPreflightSessionControlsProbeAdapter: async () => (await import('@/backends/claude/preflight/claudePreflightModelsProbeAdapter')).claudePreflightModelsProbeAdapter,
   getHeadlessTmuxArgvTransform: async () => (await import('@/terminal/tmux/headlessTmuxArgs')).ensureRemoteStartingModeArgs,

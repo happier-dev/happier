@@ -5,8 +5,11 @@ import type { EnhancedMode } from './loop';
 import type { Session } from './session';
 
 const mockClaudeLocalLauncher = vi.fn();
-vi.mock('./claudeLocalLauncher', () => ({
-  claudeLocalLauncher: mockClaudeLocalLauncher,
+vi.mock('@/backends/catalog', () => ({
+  getTerminalRuntimeOps: vi.fn(async () => ({
+    launch: (params: { session: Session; options?: { entry?: 'initial' | 'switch' } }) =>
+      mockClaudeLocalLauncher(params.session, params.options),
+  })),
 }));
 
 const mockClaudeRemoteLauncher = vi.fn();

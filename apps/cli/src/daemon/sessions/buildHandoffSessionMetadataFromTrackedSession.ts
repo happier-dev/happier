@@ -6,6 +6,7 @@ import {
     pickSessionHandoffRuntimeLocalMetadata,
     type SessionHandoffLocalMetadataSource,
 } from '@/session/handoff/metadata/runtimeLocalSessionHandoffMetadata';
+import { buildConfiguredAcpBackendSessionMetadata } from '@/agent/acp/catalog/configured/buildConfiguredAcpBackendSessionMetadata';
 import type { TrackedSession } from '../types';
 import { resolveConfiguredClaudeConfigDir } from '@/backends/claude/directSessions/resolveClaudeConfigDir';
 import { resolveClaudeProjectId } from '@/backends/claude/utils/path';
@@ -25,6 +26,35 @@ function normalizeOptionalString(value: unknown): string | null {
     return trimmed.length > 0 ? trimmed : null;
 }
 
+function resolveFallbackFlavorFromBackendTarget(trackedSession: TrackedSession): string {
+    const backendTarget = trackedSession.spawnOptions?.backendTarget;
+    if (backendTarget?.kind === 'configuredAcpBackend') {
+        const backendId = backendTarget.backendId.trim();
+        return backendId ? `acp:${backendId}` : '';
+    }
+    if (backendTarget?.kind === 'builtInAgent') {
+        return typeof backendTarget.agentId === 'string' ? backendTarget.agentId.trim() : '';
+    }
+    return '';
+}
+
+function buildConfiguredAcpFallbackMetadata(trackedSession: TrackedSession): Record<string, unknown> | null {
+    const backendTarget = trackedSession.spawnOptions?.backendTarget;
+    if (backendTarget?.kind !== 'configuredAcpBackend') {
+        return null;
+    }
+    const backendId = backendTarget.backendId.trim();
+    if (!backendId) {
+        return null;
+    }
+    return {
+        ...buildConfiguredAcpBackendSessionMetadata({
+            backendId,
+            title: backendId,
+        }),
+    };
+}
+
 function resolveTrackedSessionFallbackMetadata(params: Readonly<{
     trackedSession: TrackedSession;
     machineId?: string;
@@ -40,21 +70,17 @@ function resolveTrackedSessionFallbackMetadata(params: Readonly<{
     const homeDir = typeof environmentVariables?.HOME === 'string' && environmentVariables.HOME.trim().length > 0
         ? environmentVariables.HOME.trim()
         : fallbackHomeDir;
-    const backendTarget = params.trackedSession.spawnOptions?.backendTarget;
-    const flavor =
-        backendTarget?.kind === 'builtInAgent'
-        && typeof backendTarget.agentId === 'string'
-        && ['claude', 'codex', 'opencode'].includes(backendTarget.agentId)
-            ? backendTarget.agentId
-            : '';
+    const flavor = resolveFallbackFlavorFromBackendTarget(params.trackedSession);
     if (!sourcePath || !machineId || !homeDir || !flavor) {
         return null;
     }
+    const configuredAcpFallbackMetadata = buildConfiguredAcpFallbackMetadata(params.trackedSession);
     return {
         machineId,
         path: sourcePath,
         homeDir,
         flavor,
+        ...(configuredAcpFallbackMetadata ?? {}),
     };
 }
 

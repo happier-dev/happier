@@ -30,6 +30,7 @@ const run = createRunDirs({ runLabel: 'core' });
 
 async function createLocalCodexStub(params: Readonly<{
   testDir: string;
+  codexSessionsDir: string;
 }>): Promise<Readonly<{
   fakeCodexPath: string;
   codexSessionId: string;
@@ -40,10 +41,10 @@ async function createLocalCodexStub(params: Readonly<{
   await mkdir(fakeBinDir, { recursive: true });
   const fakeCodexPath = resolve(join(fakeBinDir, 'codex'));
   const codexSessionId = `codex-session-${randomUUID()}`;
-  const rolloutPath = resolve(join(params.testDir, 'codex-sessions', 'rollout-test.jsonl'));
+  const rolloutPath = resolve(join(params.codexSessionsDir, 'rollout-test.jsonl'));
   const fakeCodexLog = resolve(join(params.testDir, 'fake-codex.jsonl'));
 
-  await mkdir(resolve(join(params.testDir, 'codex-sessions')), { recursive: true });
+  await mkdir(params.codexSessionsDir, { recursive: true });
   await writeFile(
     fakeCodexPath,
     `#!/usr/bin/env node
@@ -145,7 +146,9 @@ async function runRemoteToLocalMirroringScenario(): Promise<void> {
   const testName = 'codex-switch-remote-to-local';
   const testDir = run.testDir(testName);
   const toolTraceFile = resolve(join(testDir, 'tooltrace.jsonl'));
-  const localCodex = await createLocalCodexStub({ testDir });
+  const codexHomeDir = resolve(join(testDir, '.codex'));
+  const codexSessionsDir = resolve(join(codexHomeDir, 'sessions'));
+  const localCodex = await createLocalCodexStub({ testDir, codexSessionsDir });
 
   let server: StartedServer | null = null;
   let proc: SpawnedProcess | null = null;
@@ -214,8 +217,9 @@ async function runRemoteToLocalMirroringScenario(): Promise<void> {
       HAPPIER_SESSION_ATTACH_FILE: attachFile,
       HAPPIER_STACK_TOOL_TRACE: '1',
       HAPPIER_STACK_TOOL_TRACE_FILE: toolTraceFile,
+      CODEX_HOME: codexHomeDir,
       HAPPIER_CODEX_TUI_BIN: localCodex.fakeCodexPath,
-      HAPPIER_CODEX_SESSIONS_DIR: resolve(join(testDir, 'codex-sessions')),
+      HAPPIER_CODEX_SESSIONS_DIR: codexSessionsDir,
       HAPPIER_E2E_CODEX_SESSION_ID: localCodex.codexSessionId,
       HAPPIER_E2E_FAKE_CODEX_LOG: localCodex.fakeCodexLog,
       HAPPIER_EXPERIMENTAL_CODEX_ACP: '1',

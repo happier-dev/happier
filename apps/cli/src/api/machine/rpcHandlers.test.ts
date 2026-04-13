@@ -9,13 +9,14 @@ import axios from 'axios';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import { sealEncryptedDataKeyEnvelopeV1, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
+import { accountSettingsParse, sealEncryptedDataKeyEnvelopeV1, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 import { encrypt, encodeBase64 } from '@/api/encryption';
 import { collectBugReportMachineDiagnosticsSnapshot } from '@/diagnostics/bugReportMachineDiagnostics';
 import { removeExecutionRunMarker, writeExecutionRunMarker } from '@/daemon/executionRunRegistry';
 import { registerMachineRpcHandlers } from './rpcHandlers';
 import { registerMachineMemoryRpcHandlers } from './rpcHandlers.memory';
 import type { Credentials } from '@/persistence';
+import { setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 const { readCredentialsMock, psListMock } = vi.hoisted(() => ({
   readCredentialsMock: vi.fn<() => Promise<Credentials | null>>(async () => null),
@@ -35,6 +36,10 @@ const { forkOpenCodeSessionNativeMock } = vi.hoisted(() => ({
 
 const { createCatalogAcpBackendMock } = vi.hoisted(() => ({
   createCatalogAcpBackendMock: vi.fn(async () => null as any),
+}));
+
+const { createConfiguredAcpBackendMock } = vi.hoisted(() => ({
+  createConfiguredAcpBackendMock: vi.fn(() => null as any),
 }));
 
 const { createCodexAppServerClientMock } = vi.hoisted(() => ({
@@ -102,6 +107,10 @@ vi.mock('@/agent/acp/createCatalogAcpBackend', () => ({
   createCatalogAcpBackend: createCatalogAcpBackendMock,
 }));
 
+vi.mock('@/agent/acp/catalog/configured/createConfiguredAcpBackend', () => ({
+  createConfiguredAcpBackend: createConfiguredAcpBackendMock,
+}));
+
 vi.mock('@/backends/codex/appServer/client/createCodexAppServerClient', () => ({
   createCodexAppServerClient: createCodexAppServerClientMock,
 }));
@@ -120,6 +129,7 @@ describe('registerMachineRpcHandlers', () => {
     updateSessionMetadataWithRetryMock.mockClear();
     forkOpenCodeSessionNativeMock.mockReset();
     createCatalogAcpBackendMock.mockReset();
+    createConfiguredAcpBackendMock.mockReset();
     createCodexAppServerClientMock.mockReset();
     createCodexAppServerClientMock.mockResolvedValue({
       request: vi.fn(async () => ({ threadId: 'codex-thread-forked' })),
@@ -139,6 +149,13 @@ describe('registerMachineRpcHandlers', () => {
         },
       },
     } as any);
+    setActiveAccountSettingsSnapshot({
+      source: 'none',
+      settings: accountSettingsParse({}),
+      settingsVersion: 0,
+      loadedAtMs: 0,
+      settingsSecretsReadKeys: [],
+    });
   });
 
   afterEach(() => {
@@ -168,6 +185,7 @@ describe('registerMachineRpcHandlers', () => {
 
     await handler!({
       directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
       modelId: '',
       modelUpdatedAt: 123,
     });
@@ -288,7 +306,7 @@ describe('registerMachineRpcHandlers', () => {
   });
 
   it('forwards savePreparedTargetLocalMetadata into session handoff registration', async () => {
-    const sessionHandoff = await import('./rpcHandlers.sessionHandoff');
+    const sessionHandoff = await import('./sessionHandoff/rpcHandlers.sessionHandoff');
     const registerMachineSessionHandoffRpcHandlersSpy = vi
       .spyOn(sessionHandoff, 'registerMachineSessionHandoffRpcHandlers')
       .mockImplementation(() => {});
@@ -351,6 +369,146 @@ describe('registerMachineRpcHandlers', () => {
     }));
   });
 
+  it('canonicalizes legacy built-in agent field into backendTarget for fresh spawn requests', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 's1' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get(RPC_METHODS.SPAWN_HAPPY_SESSION);
+    expect(handler).toBeDefined();
+
+    await handler!({
+      directory: '/tmp',
+      agent: 'codex',
+    });
+
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+    }));
+  });
+
+  it('fails closed for fresh spawn requests with no resolvable backend identity', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 's1' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get(RPC_METHODS.SPAWN_HAPPY_SESSION);
+    expect(handler).toBeDefined();
+
+    const result = await handler!({
+      directory: '/tmp',
+    });
+
+    expect(result).toEqual({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+      errorMessage: 'Backend target is required for fresh session spawn.',
+    });
+    expect(spawnSession).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when customAcp is provided as a built-in transport identity', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 's1' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get(RPC_METHODS.SPAWN_HAPPY_SESSION);
+    expect(handler).toBeDefined();
+
+    const fromLegacyAgent = await handler!({
+      directory: '/tmp',
+      agent: 'customAcp',
+    });
+    expect(fromLegacyAgent).toEqual({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+      errorMessage: 'Unknown backend target',
+    });
+
+    const fromBuiltInTarget = await handler!({
+      directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'customAcp' },
+    });
+    expect(fromBuiltInTarget).toEqual({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+      errorMessage: 'Unknown backend target',
+    });
+    expect(spawnSession).not.toHaveBeenCalled();
+  });
+
+  it('keeps existing-session resume attach path available without backendTarget', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 's1' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get(RPC_METHODS.SPAWN_HAPPY_SESSION);
+    expect(handler).toBeDefined();
+
+    await handler!({
+      type: 'resume-session',
+      sessionId: 'sess_old',
+      directory: '/tmp',
+    });
+
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+      existingSessionId: 'sess_old',
+      backendTarget: undefined,
+    }));
+  });
+
   it('passes through mcpSelection when spawning a session', async () => {
     const registered = new Map<string, (params: any) => Promise<any>>();
     const rpcHandlerManager = {
@@ -374,6 +532,7 @@ describe('registerMachineRpcHandlers', () => {
 
     await handler!({
       directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
       mcpSelection: {
         v: 1,
         managedServersEnabled: false,
@@ -415,6 +574,7 @@ describe('registerMachineRpcHandlers', () => {
 
     await handler!({
       directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
       sessionConfigOptionOverrides: {
         v: 1,
         updatedAt: 123,
@@ -458,6 +618,7 @@ describe('registerMachineRpcHandlers', () => {
 
     await handler!({
       directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
       spawnNonce: 'spawn-nonce-1',
       initialPrompt: 'Summarize the repo',
       agentModeId: 'plan',
@@ -746,6 +907,7 @@ describe('registerMachineRpcHandlers', () => {
 
     await handler!({
       directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
       permissionMode: 'not-a-mode',
     });
 
@@ -775,6 +937,7 @@ describe('registerMachineRpcHandlers', () => {
 
     await handler!({
       directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
       permissionMode: 'yolo',
     });
 
@@ -1092,7 +1255,7 @@ describe('registerMachineRpcHandlers', () => {
 
     const result = await handler!({
       directory: '/repo',
-      agent: 'claude',
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
       approvedNewDirectoryCreation: true,
       replay: {
         previousSessionId: 'sess_prev',
@@ -1105,7 +1268,7 @@ describe('registerMachineRpcHandlers', () => {
     expect(spawnSession).toHaveBeenCalledWith(
       expect.objectContaining({
         directory: '/repo',
-        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
         approvedNewDirectoryCreation: true,
         existingSessionId: 'sess_new',
       }),
@@ -1123,7 +1286,9 @@ describe('registerMachineRpcHandlers', () => {
     const posted = (postSpy as any).mock.calls[0][1] as any;
     const createdMeta = JSON.parse(String(posted.metadata)) as any;
     expect(createdMeta.forkV1).toMatchObject({ v: 1, parentSessionId: 'sess_prev', parentCutoffSeqInclusive: 3, strategy: 'replay' });
+    expect(createdMeta.forkV1.providerHint).toMatchObject({ providerId: 'customAcp' });
     expect(createdMeta.replaySeedV1).toMatchObject({ v: 1, sourceSessionId: 'sess_prev', sourceCutoffSeqInclusive: 3 });
+    expect(createdMeta.flavor).toBe('acp:review-bot');
     expect(String(createdMeta.replaySeedV1.seedText ?? '')).toContain('User: three');
     expect(String(createdMeta.replaySeedV1.seedText ?? '')).not.toContain('User: one one one');
   });
@@ -1784,6 +1949,164 @@ describe('registerMachineRpcHandlers', () => {
     expect(createdMeta.forkV1).toMatchObject({ v: 1, parentSessionId: 'sess_parent', parentCutoffSeqInclusive: 20 });
     expect(createdMeta.replaySeedV1).toMatchObject({ v: 1, sourceSessionId: 'sess_parent', sourceCutoffSeqInclusive: 20 });
     expect(String(createdMeta.replaySeedV1.seedText ?? '')).toContain('User: first-unique');
+  });
+
+  it('forks a configured ACP session by replay while preserving the concrete backend target and configured metadata', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_child' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get((RPC_METHODS as any).SESSION_FORK);
+    expect(handler).toBeDefined();
+
+    readCredentialsMock.mockResolvedValueOnce({
+      token: 'token-1',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    });
+
+    const getSpy = vi.spyOn(axios, 'get');
+    const postSpy = vi.spyOn(axios, 'post');
+    getSpy
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_parent',
+            seq: 3,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            metadata: JSON.stringify({
+              path: '/repo',
+              flavor: 'acp:review-bot',
+              acpTransportV1: { v: 1, provider: 'acp:review-bot' },
+              acpConfiguredBackendV1: {
+                v: 1,
+                updatedAt: 1,
+                backendId: 'review-bot',
+                title: 'Review Bot',
+              },
+            }),
+            metadataVersion: 7,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_parent',
+            seq: 3,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            metadata: JSON.stringify({
+              path: '/repo',
+              flavor: 'acp:review-bot',
+              acpConfiguredBackendV1: {
+                v: 1,
+                updatedAt: 1,
+                backendId: 'review-bot',
+                title: 'Review Bot',
+              },
+            }),
+            metadataVersion: 7,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          messages: [
+            {
+              seq: 1,
+              createdAt: 1,
+              content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'msg-1' } } },
+            },
+            {
+              seq: 2,
+              createdAt: 2,
+              content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'msg-2' } } },
+            },
+            {
+              seq: 3,
+              createdAt: 3,
+              content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'msg-3' } } },
+            },
+          ],
+        },
+      } as any);
+
+    postSpy.mockResolvedValueOnce({
+      status: 200,
+      data: {
+        session: {
+          id: 'sess_child',
+          seq: 0,
+          createdAt: 10,
+          updatedAt: 10,
+          active: false,
+          activeAt: 0,
+          encryptionMode: 'plain',
+          metadata: JSON.stringify({ path: '/repo', flavor: 'acp:review-bot' }),
+          metadataVersion: 0,
+          agentState: null,
+          agentStateVersion: 0,
+          dataEncryptionKey: null,
+        },
+      },
+    } as any);
+
+    const result = await handler!({
+      v: 1,
+      parentSessionId: 'sess_parent',
+      forkPoint: { type: 'latest' },
+      strategy: 'replay',
+    });
+
+    expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+      directory: '/repo',
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      existingSessionId: 'sess_child',
+    }));
+    const posted = (postSpy as any).mock.calls[0][1] as any;
+    const createdMeta = JSON.parse(String(posted.metadata)) as any;
+    expect(createdMeta.flavor).toBe('acp:review-bot');
+    expect(createdMeta.acpConfiguredBackendV1).toMatchObject({
+      v: 1,
+      backendId: 'review-bot',
+      title: 'Review Bot',
+    });
+    expect(createdMeta.forkV1).toMatchObject({
+      v: 1,
+      parentSessionId: 'sess_parent',
+      strategy: 'replay',
+      providerHint: { providerId: 'customAcp' },
+    });
   });
 
   it('rejects message-level fork requests with an uncommitted seq (<= 0)', async () => {
@@ -2562,6 +2885,163 @@ describe('registerMachineRpcHandlers', () => {
     expect(updated.codexBackendMode).toBe('acp');
     expect(updated.forkV1).toMatchObject({ v: 1, parentSessionId: 'sess_parent', strategy: 'acp_fork_latest' });
     expect(updated.forkV1.providerHint).toMatchObject({ providerId: 'codex', backendMode: 'acp', vendorSessionId: 'codex_forked' });
+    expect(updated.replaySeedV1).toBeUndefined();
+  });
+
+  it('forks latest configured ACP sessions through the configured backend runtime and preserves configured backend identity', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_child' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get((RPC_METHODS as any).SESSION_FORK);
+    expect(handler).toBeDefined();
+
+    setActiveAccountSettingsSnapshot({
+      source: 'network',
+      settings: accountSettingsParse({
+        acpCatalogSettingsV1: {
+          v: 2,
+          backends: [
+            {
+              id: 'review-bot',
+              name: 'review-bot',
+              title: 'Review Bot',
+              command: 'review-cli',
+              args: ['acp'],
+              env: {},
+              transportProfile: 'generic',
+              capabilities: {
+                supportsLoadSession: true,
+                supportsModes: 'unknown',
+                supportsModels: 'unknown',
+                supportsConfigOptions: 'unknown',
+                promptImageSupport: 'unknown',
+              },
+              createdAt: 1,
+              updatedAt: 2,
+            },
+          ],
+        },
+      }),
+      settingsVersion: 1,
+      loadedAtMs: 1,
+      settingsSecretsReadKeys: [],
+    });
+
+    readCredentialsMock.mockResolvedValueOnce({
+      token: 'token-1',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    });
+
+    const getSpy = vi.spyOn(axios, 'get');
+    getSpy
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_parent',
+            seq: 8,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            metadata: JSON.stringify({
+              path: '/repo',
+              flavor: 'acp:review-bot',
+              acpTransportV1: { v: 1, provider: 'acp:review-bot' },
+              acpConfiguredBackendV1: {
+                v: 1,
+                updatedAt: 1,
+                backendId: 'review-bot',
+                title: 'Review Bot',
+              },
+              agentRuntimeDescriptorV1: {
+                v: 1,
+                providerId: 'acp:review-bot',
+                provider: {
+                  vendorSessionId: 'review_parent',
+                },
+              },
+            }),
+            metadataVersion: 7,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_child',
+            seq: 0,
+            createdAt: 10,
+            updatedAt: 11,
+            active: true,
+            activeAt: 11,
+            encryptionMode: 'plain',
+            metadata: JSON.stringify({ path: '/repo', flavor: 'acp:review-bot' }),
+            metadataVersion: 3,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any);
+
+    const backend = {
+      loadSession: vi.fn(async () => ({ sessionId: 'review_parent' })),
+      forkSession: vi.fn(async () => ({ sessionId: 'review_forked' })),
+      dispose: vi.fn(async () => {}),
+    };
+    createConfiguredAcpBackendMock.mockReturnValueOnce(backend as any);
+
+    const result = await handler!({
+      v: 1,
+      parentSessionId: 'sess_parent',
+      forkPoint: { type: 'latest' },
+      strategy: 'auto',
+    });
+
+    expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
+    expect(createCatalogAcpBackendMock).not.toHaveBeenCalled();
+    expect(backend.loadSession).toHaveBeenCalledWith('review_parent');
+    expect(backend.forkSession).toHaveBeenCalledWith({ sessionId: 'review_parent' });
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+      directory: '/repo',
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      approvedNewDirectoryCreation: true,
+      resume: 'review_forked',
+    }));
+    expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(1);
+    const updater = (updateSessionMetadataWithRetryMock as any).mock.calls[0][0].updater as (m: any) => any;
+    const updated = updater({ path: '/repo', flavor: 'acp:review-bot' });
+    expect(updated.acpConfiguredBackendV1).toMatchObject({
+      v: 1,
+      backendId: 'review-bot',
+      title: 'Review Bot',
+    });
+    expect(updated.forkV1).toMatchObject({
+      v: 1,
+      parentSessionId: 'sess_parent',
+      strategy: 'acp_fork_latest',
+      providerHint: { providerId: 'customAcp', vendorSessionId: 'review_forked' },
+    });
     expect(updated.replaySeedV1).toBeUndefined();
   });
 

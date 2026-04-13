@@ -16,11 +16,12 @@ export const agent = {
   getConnectedServicesSpawnMaterializer: async () =>
     (await import('@/backends/opencode/connectedServices/createOpenCodeConnectedServicesSpawnMaterializer'))
       .createOpenCodeConnectedServicesSpawnMaterializer(),
+  getSessionHandoffProviderOps: async () => (await import('@/backends/opencode/handoff/providerOps')).openCodeSessionHandoffProviderOps,
   getProviderAttachOps: async () => (await import('@/backends/opencode/attach/providerAttachOps')).openCodeProviderAttachOps,
   vendorResumeSupport: AGENTS_CORE.opencode.resume.vendorResume,
   getAcpBackendFactory: async () => {
     const { createOpenCodeBackend } = await import('@/backends/opencode/acp/backend');
-    return (opts) => ({ backend: createOpenCodeBackend(opts as any) });
+    return (opts) => ({ backend: createOpenCodeBackend(opts) });
   },
   getAcpForkContinuationHandler: async () => (await import('@/backends/opencode/acp/forkContinuationHandler')).openCodeAcpForkContinuationHandler,
   getProviderNativeForkHandler: async () => (await import('@/backends/opencode/server/providerNativeForkHandler')).openCodeProviderNativeForkHandler,

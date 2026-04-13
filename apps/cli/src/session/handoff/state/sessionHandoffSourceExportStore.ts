@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { TransferEndpointCandidateSchema } from '@happier-dev/protocol';
 
 import type { SessionHandoffProviderBundle } from '../types';
-import { SessionHandoffProviderBundleSchema } from '../sessionHandoffProviderBundleSchema';
+import { parseCanonicalSessionHandoffProviderBundle } from '../parseCanonicalSessionHandoffProviderBundle';
 import { buildSessionHandoffProviderBundleTransferId } from '../sessionHandoffProviderBundleTransferPublication';
 import {
   buildSessionHandoffWorkspaceManifestTransferId,
@@ -49,18 +49,6 @@ const SourceExportRecordSchemaV1 = z.object({
 }).strict();
 
 export type SessionHandoffSourceExportRecord = z.infer<typeof SourceExportRecordSchemaV1>;
-
-function assertCanonicalSessionHandoffProviderBundle(providerBundle: SessionHandoffProviderBundle): void {
-  // Keep this aligned with `createSessionHandoffProviderBundlePayloadSource(...)` so the durable
-  // source export path can't accidentally reintroduce legacy provider-bundle fields.
-  if (
-    providerBundle.providerId === 'codex'
-    && 'codexBackendMode' in (providerBundle as SessionHandoffProviderBundle & { codexBackendMode?: unknown })
-    && (providerBundle as SessionHandoffProviderBundle & { codexBackendMode?: unknown }).codexBackendMode !== undefined
-  ) {
-    throw new Error('Invalid session handoff transfer payload');
-  }
-}
 
 function assertSafeHandoffId(handoffIdRaw: string): string {
   const handoffId = String(handoffIdRaw ?? '').trim();
@@ -216,11 +204,10 @@ export function createSessionHandoffSourceExportStore(input: Readonly<{ activeSe
       providerBundle: SessionHandoffProviderBundle;
     }>): Promise<z.infer<typeof ProviderBundleFileSchema>> {
       const handoffId = assertSafeHandoffId(params.handoffId);
-      assertCanonicalSessionHandoffProviderBundle(params.providerBundle);
       const directory = resolveHandoffDirectory(activeServerDir, handoffId);
       await mkdir(directory, { recursive: true });
       const filePath = resolveProviderBundleFilePath(activeServerDir, handoffId);
-      const normalized = SessionHandoffProviderBundleSchema.parse(params.providerBundle);
+      const normalized = parseCanonicalSessionHandoffProviderBundle(params.providerBundle);
       await atomicWriteJson(filePath, normalized);
       const stats = await stat(filePath);
       const manifestHash = await resolveTransferPayloadManifestHash({

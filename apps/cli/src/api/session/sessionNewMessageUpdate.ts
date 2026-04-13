@@ -46,6 +46,21 @@ export function handleSessionNewMessageUpdate(params: {
         };
     }
 
+    const messageId = params.update.body.message.id;
+    const hasMessageId = typeof messageId === 'string' && messageId.length > 0;
+    const markMessageIdAsReceived = () => {
+        if (hasMessageId) {
+            params.receivedMessageIds.add(messageId);
+        }
+    };
+    if (hasMessageId && params.receivedMessageIds.has(messageId)) {
+        return {
+            handled: true,
+            lastObservedMessageSeq: params.lastObservedMessageSeq,
+            lastObservedUserMessageSeq: params.lastObservedUserMessageSeq,
+        };
+    }
+
     const parsedContent = SessionMessageContentSchema.safeParse((params.update.body as any).message?.content);
     if (!parsedContent.success) {
         const rawContent = (params.update.body as any).message?.content;
@@ -58,23 +73,12 @@ export function handleSessionNewMessageUpdate(params: {
             })),
             contentShape: summarizeValueShapeForLog(rawContent),
         });
+        markMessageIdAsReceived();
         return {
             handled: true,
             lastObservedMessageSeq: params.lastObservedMessageSeq,
             lastObservedUserMessageSeq: params.lastObservedUserMessageSeq,
         };
-    }
-
-    const messageId = params.update.body.message.id;
-    if (typeof messageId === 'string' && messageId.length > 0) {
-        if (params.receivedMessageIds.has(messageId)) {
-            return {
-                handled: true,
-                lastObservedMessageSeq: params.lastObservedMessageSeq,
-                lastObservedUserMessageSeq: params.lastObservedUserMessageSeq,
-            };
-        }
-        params.receivedMessageIds.add(messageId);
     }
 
     let nextLastObservedMessageSeq = params.lastObservedMessageSeq;
@@ -127,6 +131,7 @@ export function handleSessionNewMessageUpdate(params: {
     };
 
     params.debugLargeJson('[SOCKET] [UPDATE] Received update:', bodyWithTransportFields);
+    let shouldMarkReceivedMessageId = !hasMessageId;
 
     // Try to parse as user message first.
     const userResult = UserMessageSchema.safeParse(bodyWithTransportFields);
@@ -143,6 +148,8 @@ export function handleSessionNewMessageUpdate(params: {
             && !isSelfEchoSuppressedCliWrite
             && (params.shouldDeliverUserMessageToAgentQueue?.(userResult.data, params.update) ?? true);
         if (shouldDeliverToAgentQueue) {
+            markMessageIdAsReceived();
+            shouldMarkReceivedMessageId = false;
             if (params.pendingMessageCallback) {
                 params.pendingMessageCallback(userResult.data);
             } else {
@@ -152,6 +159,7 @@ export function handleSessionNewMessageUpdate(params: {
                 params.markAgentQueueEchoSuppressedLocalId(localId);
             }
         } else {
+            shouldMarkReceivedMessageId = false;
             params.debug('[SOCKET] [UPDATE] Skipped user-message delivery to agent queue', {
                 source: source ?? null,
                 sentFrom: sentFrom ?? null,
@@ -180,6 +188,8 @@ export function handleSessionNewMessageUpdate(params: {
             };
             const parsedCandidate = UserMessageSchema.safeParse(candidate);
             if (parsedCandidate.success) {
+                markMessageIdAsReceived();
+                shouldMarkReceivedMessageId = false;
                 if (params.pendingMessageCallback) {
                     params.pendingMessageCallback(parsedCandidate.data);
                 } else {
@@ -213,6 +223,10 @@ export function handleSessionNewMessageUpdate(params: {
             });
         }
         params.emit('message', bodyWithTransportFields);
+    }
+
+    if (shouldMarkReceivedMessageId) {
+        markMessageIdAsReceived();
     }
 
     return {

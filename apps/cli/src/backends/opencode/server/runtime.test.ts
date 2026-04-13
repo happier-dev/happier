@@ -1522,6 +1522,59 @@ describe('createOpenCodeServerRuntime', () => {
     );
   });
 
+  it('imports visible step text from live history on message.part.updated without folding reasoning into the transcript', async () => {
+    const client = createFakeClient() as any;
+    const session = createFakeSession();
+    client.sessionMessagesList = vi.fn(async () => ([
+      {
+        info: { id: 'msg_live_user_1', role: 'user', time: { created: 1 }, sessionID: 'ses_1' },
+        parts: [
+          { type: 'reasoning', text: 'internal reasoning' },
+          {
+            type: 'step',
+            content: [{ type: 'text', text: 'visible step' }],
+          },
+          { type: 'text', text: 'final answer' },
+        ],
+      },
+    ]));
+
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
+    });
+
+    await runtime.startOrLoad({});
+
+    await client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.updated', properties: { part: { id: 'part_live_1', type: 'step', sessionID: 'ses_1' } } },
+    });
+    await flushTranscriptCommitMicrotasks();
+
+    expect(
+      (session.sendUserTextMessageCommitted as any).mock.calls.map((call: any[]) => ({
+        text: call?.[0],
+        importedFrom: call?.[1]?.meta?.importedFrom,
+        remoteSessionId: call?.[1]?.meta?.remoteSessionId,
+      })),
+    ).toMatchInlineSnapshot(`
+      [
+        {
+          "importedFrom": "acp-live-sync",
+          "remoteSessionId": "ses_1",
+          "text": "visible stepfinal answer",
+        },
+      ]
+    `);
+  });
+
   it('waits until idle before importing remote assistant text for externally-originated turns', async () => {
     const client = createFakeClient() as any;
     const session = createFakeSession();

@@ -2,7 +2,8 @@ import { randomBytes } from 'node:crypto';
 import { readCredentials } from '@/persistence';
 import { ApiClient } from '@/api/api';
 import type { CloudConnectTarget, CloudConnectTargetStatus } from '@/cloud/connectTypes';
-import { AGENTS } from '@/backends/catalog';
+import { configuration } from '@/configuration';
+import { resolveMergedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';
 import { promptInput } from '@/terminal/prompts/promptInput';
 import { buildConnectedServiceCredentialRecord, sealConnectedServiceCredentialCiphertext, type ConnectedServiceId } from '@happier-dev/protocol';
 import { banner, bullets, cmd, dim, errorFrame, gray, neutral, ok, sectionTitle, warn } from '@happier-dev/cli-common/output';
@@ -10,7 +11,8 @@ import { banner, bullets, cmd, dim, errorFrame, gray, neutral, ok, sectionTitle,
 import type { CommandContext } from '@/cli/commandRegistry';
 import { parseConnectArgs, type ConnectParsedOptions } from './connect/parseConnectArgs';
 import { resolveConnectAuthIntent } from './connect/resolveConnectAuthIntent';
-import { resolveConnectTargetServiceIds } from './connect/resolveConnectTargetServiceIds';
+import { resolveConnectTargetServiceIdsFromRegistry } from './connect/resolveConnectTargetServiceIds';
+import type { ResolvedContributionRegistry } from '@/extensions/registry/types';
 
 /**
  * Handle connect subcommand.
@@ -23,7 +25,7 @@ import { resolveConnectTargetServiceIds } from './connect/resolveConnectTargetSe
 export async function handleConnectCommand(args: string[]): Promise<void> {
     const { includeExperimental, subcommand, options } = parseConnectArgs(args);
 
-    const allTargets = await loadConnectTargets({ includeExperimental: true });
+    const { targets: allTargets, registry } = await loadConnectTargetsWithRegistry({ includeExperimental: true });
     const visibleTargets = includeExperimental ? allTargets : allTargets.filter((t) => t.status === 'wired');
 
     const targetById = new Map<string, CloudConnectTarget>(allTargets.map((t) => [t.id, t] as const));
@@ -36,7 +38,7 @@ export async function handleConnectCommand(args: string[]): Promise<void> {
 
     const normalized = subcommand.toLowerCase();
     if (normalized === 'status') {
-      await handleConnectStatus(visibleTargets);
+      await handleConnectStatus(visibleTargets, registry);
       return;
     }
 
@@ -56,14 +58,20 @@ export async function handleConnectCommand(args: string[]): Promise<void> {
     await handleConnectVendor(visibleTarget, options);
 }
 
-async function loadConnectTargets(params: Readonly<{ includeExperimental: boolean }>): Promise<CloudConnectTarget[]> {
+async function loadConnectTargetsWithRegistry(
+  params: Readonly<{ includeExperimental: boolean }>,
+): Promise<Readonly<{ targets: CloudConnectTarget[]; registry: ResolvedContributionRegistry }>> {
   const targets: CloudConnectTarget[] = [];
-  for (const entry of Object.values(AGENTS)) {
+  const registry = await resolveMergedContributionRegistry({ happyHomeDir: configuration.happyHomeDir });
+  for (const entry of Object.values(registry.catalogEntriesById)) {
     if (!entry.getCloudConnectTarget) continue;
     targets.push(await entry.getCloudConnectTarget());
   }
   targets.sort((a, b) => a.id.localeCompare(b.id));
-  return params.includeExperimental ? targets : targets.filter((t) => t.status === 'wired');
+  return {
+    targets: params.includeExperimental ? targets : targets.filter((t) => t.status === 'wired'),
+    registry,
+  };
 }
 
 function showConnectHelp(targets: ReadonlyArray<CloudConnectTarget>, opts: Readonly<{ includeExperimental: boolean }>): void {
@@ -278,7 +286,10 @@ async function handleConnectVendor(target: CloudConnectTarget, options: ConnectP
 /**
  * Show connection status for all vendors
  */
-async function handleConnectStatus(targets: ReadonlyArray<CloudConnectTarget>): Promise<void> {
+async function handleConnectStatus(
+  targets: ReadonlyArray<CloudConnectTarget>,
+  registry: Pick<ResolvedContributionRegistry, 'catalogEntriesById' | 'providerDefinitionsById'>,
+): Promise<void> {
     console.log(`\n${sectionTitle('Connection status')}\n`);
 
     // Check if authenticated
@@ -294,7 +305,7 @@ async function handleConnectStatus(targets: ReadonlyArray<CloudConnectTarget>): 
 
     for (const target of targets) {
       try {
-        const serviceIds: ConnectedServiceId[] = resolveConnectTargetServiceIds(target.id);
+        const serviceIds: ConnectedServiceId[] = resolveConnectTargetServiceIdsFromRegistry(target.id, registry);
 
         if (serviceIds.length === 0) {
           console.log(`  ${neutral(`${target.vendorDisplayName}: not supported`)}`);

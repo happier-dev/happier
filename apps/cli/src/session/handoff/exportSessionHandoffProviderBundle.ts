@@ -1,8 +1,6 @@
 import type { SessionHandoffProviderBundle } from './types';
 
-import { exportClaudeSessionBundle } from '../../backends/claude/handoff/exportClaudeSessionBundle';
-import { exportCodexSessionBundle } from '../../backends/codex/handoff/exportCodexSessionBundle';
-import { exportOpenCodeSessionBundle } from '../../backends/opencode/handoff/exportOpenCodeSessionBundle';
+import { resolveBackendExecutionSurfaces } from '@/backends/catalog';
 import { resolveSessionHandoffEligibility } from './resolveSessionHandoffEligibility';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -32,41 +30,18 @@ export async function exportSessionHandoffProviderBundle(params: Readonly<{
     throw new Error('Session path is unavailable for handoff');
   }
 
-  switch (eligibility.agentId) {
-    case 'claude':
-      return {
-        providerBundle: await exportClaudeSessionBundle({
-          metadata,
-          remoteSessionId: eligibility.vendorHandoffId,
-          env: process.env,
-        }),
-        targetPath,
-      };
-    case 'codex':
-      {
-        const bundle = await exportCodexSessionBundle({
-          metadata,
-          remoteSessionId: eligibility.vendorHandoffId,
-          env: process.env,
-          activeServerDir: params.activeServerDir,
-        });
-        return {
-          providerBundle: {
-            ...bundle,
-            files: bundle.files.map((file) => ({ ...file })),
-          },
-          targetPath,
-        };
-      }
-    case 'opencode':
-      return {
-        providerBundle: await exportOpenCodeSessionBundle({
-          metadata,
-          remoteSessionId: eligibility.vendorHandoffId,
-        }),
-        targetPath,
-      };
-    default:
-      throw new Error(`Unsupported handoff provider: ${eligibility.agentId}`);
+  const providerOps = (await resolveBackendExecutionSurfaces(eligibility.agentId)).sessionHandoff;
+  if (!providerOps) {
+    throw new Error(`Unsupported handoff provider: ${eligibility.agentId}`);
   }
+
+  const providerBundle = await providerOps.exportBundle({
+    metadata,
+    remoteSessionId: eligibility.vendorHandoffId,
+    activeServerDir: params.activeServerDir,
+  });
+  return {
+    providerBundle,
+    targetPath,
+  };
 }

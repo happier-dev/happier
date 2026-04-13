@@ -1,6 +1,6 @@
 import { type AgentId, usesProviderAttachForLocalControl } from '@happier-dev/agents';
 
-import { getProviderAttachOps } from '@/backends/catalog';
+import { resolveBackendExecutionSurfaces } from '@/backends/catalog';
 import { configuration } from '@/configuration';
 import type { Credentials } from '@/persistence';
 import { buildCliSessionRowModel } from '@/cli/output/session/buildCliSessionRowModel';
@@ -113,7 +113,7 @@ export async function buildAttachSelectionModel(params: Readonly<{
         return { reachable: false, reason: 'Remote reachability probe is unavailable for this session.' };
       }
 
-      const providerAttachOps = await getProviderAttachOps(remoteProvider.agentId);
+      const providerAttachOps = (await resolveBackendExecutionSurfaces(remoteProvider.agentId)).attach;
       if (!providerAttachOps?.probeReachability) {
         return { reachable: false, reason: 'Remote reachability probe is unavailable for this provider.' };
       }

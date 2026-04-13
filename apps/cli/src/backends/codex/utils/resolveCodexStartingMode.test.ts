@@ -9,7 +9,7 @@ describe('resolveCodexStartingMode', () => {
         explicitStartingMode: 'remote',
         startedBy: 'cli',
         hasTtyForLocal: true,
-        localControlEnabled: true,
+        terminalRuntimeEnabled: true,
       }),
     ).toBe('remote');
 
@@ -18,7 +18,7 @@ describe('resolveCodexStartingMode', () => {
         explicitStartingMode: 'local',
         startedBy: 'cli',
         hasTtyForLocal: true,
-        localControlEnabled: false,
+        terminalRuntimeEnabled: false,
       }),
     ).toBe('local');
   });
@@ -29,7 +29,7 @@ describe('resolveCodexStartingMode', () => {
         explicitStartingMode: 'local',
         startedBy: 'cli',
         hasTtyForLocal: false,
-        localControlEnabled: true,
+        terminalRuntimeEnabled: true,
       }),
     ).toBe('local');
   });
@@ -40,7 +40,7 @@ describe('resolveCodexStartingMode', () => {
         explicitStartingMode: 'local',
         startedBy: 'daemon',
         hasTtyForLocal: true,
-        localControlEnabled: true,
+        terminalRuntimeEnabled: true,
       }),
     ).toBe('remote');
   });
@@ -51,7 +51,7 @@ describe('resolveCodexStartingMode', () => {
         explicitStartingMode: undefined,
         startedBy: 'daemon',
         hasTtyForLocal: true,
-        localControlEnabled: true,
+        terminalRuntimeEnabled: true,
       }),
     ).toBe('remote');
   });
@@ -62,7 +62,7 @@ describe('resolveCodexStartingMode', () => {
         explicitStartingMode: undefined,
         startedBy: 'cli',
         hasTtyForLocal: true,
-        localControlEnabled: true,
+        terminalRuntimeEnabled: true,
       }),
     ).toBe('local');
   });
@@ -73,7 +73,7 @@ describe('resolveCodexStartingMode', () => {
         explicitStartingMode: undefined,
         startedBy: 'cli',
         hasTtyForLocal: true,
-        localControlEnabled: false,
+        terminalRuntimeEnabled: false,
       }),
     ).toBe('remote');
 
@@ -82,7 +82,7 @@ describe('resolveCodexStartingMode', () => {
         explicitStartingMode: undefined,
         startedBy: 'cli',
         hasTtyForLocal: false,
-        localControlEnabled: true,
+        terminalRuntimeEnabled: true,
       }),
     ).toBe('remote');
   });

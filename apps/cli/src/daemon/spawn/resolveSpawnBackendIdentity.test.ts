@@ -1,0 +1,217 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import type { Credentials } from '@/persistence';
+import type {
+  ExistingSessionAttachContext,
+  ExistingSessionAttachContextFailure,
+} from '../sessionEncryption/resolveExistingSessionAttachContext';
+
+const {
+  readCredentialsMock,
+  resolveExistingSessionAttachContextMock,
+} = vi.hoisted(() => ({
+  readCredentialsMock: vi.fn(async (): Promise<Credentials | null> => null),
+  resolveExistingSessionAttachContextMock: vi.fn(async (): Promise<ExistingSessionAttachContext | ExistingSessionAttachContextFailure> => ({
+    ok: true,
+    attachPayload: { v: 2, encryptionMode: 'plain' },
+    vendorResumeId: null,
+    backendTarget: null,
+  })),
+}));
+
+vi.mock('@/persistence', () => ({
+  readCredentials: readCredentialsMock,
+}));
+
+vi.mock('../sessionEncryption/resolveExistingSessionAttachContext', () => ({
+  resolveExistingSessionAttachContext: resolveExistingSessionAttachContextMock,
+}));
+
+import { resolveSpawnBackendIdentity } from './resolveSpawnBackendIdentity';
+
+function createLegacyCredentials(token: string, seed: number): Credentials {
+  return {
+    token,
+    encryption: {
+      type: 'legacy',
+      secret: new Uint8Array(32).fill(seed),
+    },
+  };
+}
+
+describe('resolveSpawnBackendIdentity credential precedence', () => {
+  afterEach(() => {
+    readCredentialsMock.mockReset();
+    readCredentialsMock.mockResolvedValue(null);
+    resolveExistingSessionAttachContextMock.mockReset();
+    resolveExistingSessionAttachContextMock.mockResolvedValue({
+      ok: true,
+      attachPayload: { v: 2, encryptionMode: 'plain' },
+      vendorResumeId: null,
+      backendTarget: null,
+    });
+  });
+
+  it('prefers caller-provided credentials over persisted credentials for existing-session attach context', async () => {
+    const liveCredentials = createLegacyCredentials('live-token', 1);
+    const stalePersistedCredentials = createLegacyCredentials('stale-token', 9);
+    readCredentialsMock.mockResolvedValueOnce(stalePersistedCredentials);
+
+    const result = await resolveSpawnBackendIdentity({
+      existingSessionId: 'sess-live',
+      resume: '',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      credentials: liveCredentials,
+      loadLocalHandoffMetadataByVendorResumeId: async () => null,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(resolveExistingSessionAttachContextMock).toHaveBeenCalledTimes(1);
+    expect(resolveExistingSessionAttachContextMock).toHaveBeenCalledWith({
+      token: 'live-token',
+      sessionId: 'sess-live',
+      credentials: liveCredentials,
+    });
+    expect(readCredentialsMock).not.toHaveBeenCalled();
+  });
+
+  it('accepts canonical V2 backend targets directly on the spawn path', async () => {
+    const liveCredentials = createLegacyCredentials('live-token', 11);
+
+    const result = await resolveSpawnBackendIdentity({
+      existingSessionId: 'sess-live-v2',
+      resume: '',
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'codex',
+        sourceKind: 'built_in',
+      },
+      credentials: liveCredentials,
+      loadLocalHandoffMetadataByVendorResumeId: async () => null,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      effectiveBackendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      effectiveBackendTargetV2: {
+        kind: 'backend',
+        backendId: 'codex',
+        sourceKind: 'built_in',
+      },
+      catalogAgentId: 'codex',
+    });
+  });
+
+  it('falls back to persisted credentials only when caller credentials are null', async () => {
+    const persistedCredentials = createLegacyCredentials('persisted-token', 7);
+    readCredentialsMock.mockResolvedValueOnce(persistedCredentials);
+
+    const result = await resolveSpawnBackendIdentity({
+      existingSessionId: 'sess-persisted',
+      resume: '',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      credentials: null,
+      loadLocalHandoffMetadataByVendorResumeId: async () => null,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(readCredentialsMock).toHaveBeenCalledTimes(1);
+    expect(resolveExistingSessionAttachContextMock).toHaveBeenCalledTimes(1);
+    expect(resolveExistingSessionAttachContextMock).toHaveBeenCalledWith({
+      token: 'persisted-token',
+      sessionId: 'sess-persisted',
+      credentials: persistedCredentials,
+    });
+  });
+
+  it('backfills resume from attach context before loading local handoff overlay backend identity', async () => {
+    const liveCredentials = createLegacyCredentials('live-token', 4);
+    resolveExistingSessionAttachContextMock.mockResolvedValueOnce({
+      ok: true,
+      attachPayload: { v: 2, encryptionMode: 'plain' },
+      vendorResumeId: 'sess-handoff-direct',
+      backendTarget: null,
+    });
+    const loadLocalHandoffMetadataByVendorResumeId = vi.fn(async (vendorResumeId: string) =>
+      vendorResumeId === 'sess-handoff-direct'
+        ? {
+            handoffV1: {
+              providerId: 'claude',
+            },
+          }
+        : null,
+    );
+
+    const result = await resolveSpawnBackendIdentity({
+      existingSessionId: 'sess-handoff-source',
+      resume: '',
+      backendTarget: undefined,
+      credentials: liveCredentials,
+      loadLocalHandoffMetadataByVendorResumeId,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      effectiveResume: 'sess-handoff-direct',
+      effectiveBackendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      effectiveBackendTargetV2: {
+        kind: 'backend',
+        backendId: 'claude',
+        sourceKind: 'built_in',
+      },
+      catalogAgentId: 'claude',
+    });
+    expect(loadLocalHandoffMetadataByVendorResumeId).toHaveBeenCalledWith('sess-handoff-direct');
+  });
+
+  it('preserves configured ACP backend targets as canonical V2 and legacy V1 views', async () => {
+    const liveCredentials = createLegacyCredentials('live-token', 5);
+    resolveExistingSessionAttachContextMock.mockResolvedValueOnce({
+      ok: true,
+      attachPayload: { v: 2, encryptionMode: 'plain' },
+      vendorResumeId: null,
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+    });
+
+    const result = await resolveSpawnBackendIdentity({
+      existingSessionId: 'sess-configured',
+      resume: '',
+      backendTarget: undefined,
+      credentials: liveCredentials,
+      loadLocalHandoffMetadataByVendorResumeId: async () => null,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      effectiveBackendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      effectiveBackendTargetV2: {
+        kind: 'backend',
+        backendId: 'review-bot',
+        configuredBackendId: 'review-bot',
+        sourceKind: 'configured',
+      },
+      catalogAgentId: 'customAcp',
+    });
+  });
+
+  it('fails closed with Unknown backend target when a fresh spawn explicitly provides customAcp as a built-in backend target', async () => {
+    const liveCredentials = createLegacyCredentials('live-token', 6);
+
+    const result = await resolveSpawnBackendIdentity({
+      existingSessionId: '',
+      resume: '',
+      backendTarget: { kind: 'builtInAgent', agentId: 'customAcp' },
+      credentials: liveCredentials,
+      loadLocalHandoffMetadataByVendorResumeId: async () => null,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        type: 'error',
+        errorCode: 'INVALID_REQUEST',
+        errorMessage: 'Unknown backend target',
+      },
+    });
+  });
+});

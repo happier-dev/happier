@@ -6,9 +6,48 @@ import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 
 import { runCodexLocalModePass } from './localModePass';
 
+const mockCatalogLaunch = vi.fn();
+vi.mock('@/backends/catalog', () => ({
+    getTerminalRuntimeOps: vi.fn(async () => ({
+        launch: (params: unknown) => mockCatalogLaunch(params),
+    })),
+}));
+
 type Mode = { permissionMode: PermissionMode; localId?: string | null };
 
 describe('runCodexLocalModePass', () => {
+  it('uses the shared terminal-runtime catalog launch path when no explicit launcher override is provided', async () => {
+    const queue = new MessageQueue2<Mode>(() => 'hash');
+    const session = {
+      listPendingMessageQueueV2LocalIds: vi.fn().mockResolvedValue([]),
+      discardPendingMessageQueueV2All: vi.fn(),
+      discardCommittedMessageLocalIds: vi.fn(),
+      sendSessionEvent: vi.fn(),
+    };
+    mockCatalogLaunch.mockResolvedValueOnce({ type: 'switch', resumeId: 'resume-catalog' });
+
+    const result = await runCodexLocalModePass({
+      session: session as unknown as ApiSessionClient,
+      messageQueue: queue,
+      workspaceDir: '/tmp/project',
+      api: {},
+      permissionMode: 'default',
+      resumeId: null,
+      discardController: vi.fn(),
+      formatError: (error: unknown) => String(error),
+    });
+
+    expect(result).toEqual({ type: 'remote', resumeId: 'resume-catalog' });
+    expect(mockCatalogLaunch).toHaveBeenCalledWith({
+      path: '/tmp/project',
+      api: {},
+      session,
+      messageQueue: queue,
+      permissionMode: 'default',
+      resumeId: null,
+    });
+  });
+
   it('returns remote without launching local when discard is cancelled', async () => {
     const queue = new MessageQueue2<Mode>(() => 'hash');
     queue.push('hello', { permissionMode: 'default', localId: 'l1' });

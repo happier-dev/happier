@@ -100,7 +100,7 @@ describe('createOnChildExited', () => {
     expect(onUnexpectedExit).toHaveBeenCalledTimes(1);
   });
 
-  it('removes both wrapper and runner session markers when runner pid is known', async () => {
+  it('removes the wrapper session marker when runner pid is known', async () => {
     const wrapperPid = 123;
     const runnerPid = 456;
     const tracked = { pid: wrapperPid, startedBy: 'daemon', happySessionId: 'session-1', sessionRunnerPid: runnerPid };
@@ -122,6 +122,47 @@ describe('createOnChildExited', () => {
     onChildExited(wrapperPid, { reason: 'process-exited', code: 0, signal: null });
 
     expect(removeSessionMarkerFn).toHaveBeenCalledWith(wrapperPid);
-    expect(removeSessionMarkerFn).toHaveBeenCalledWith(runnerPid);
+    expect(removeSessionMarkerFn).not.toHaveBeenCalledWith(runnerPid);
+  });
+
+  it('promotes the tracked wrapper PID to the runner PID when the wrapper exits', () => {
+    const wrapperPid = 123;
+    const runnerPid = 456;
+    const tracked = {
+      pid: wrapperPid,
+      startedBy: 'daemon',
+      happySessionId: 'session-1',
+      sessionRunnerPid: runnerPid,
+    };
+
+    const pidToTrackedSession = new Map<number, any>([[wrapperPid, tracked]]);
+    const spawnResourceCleanupByPid = new Map<number, () => void>();
+    const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
+
+    const removeSessionMarkerFn = vi.fn(async () => {});
+    const promoteSessionMarkerFn = vi.fn(async () => {});
+
+    const onChildExited = createOnChildExited({
+      pidToTrackedSession,
+      spawnResourceCleanupByPid,
+      sessionAttachCleanupByPid,
+      getApiMachineForSessions: () => null,
+      removeSessionMarkerFn,
+      promoteSessionMarkerFn,
+    } as any);
+
+    onChildExited(wrapperPid, { reason: 'process-exited', code: 0, signal: null });
+
+    expect(pidToTrackedSession.has(wrapperPid)).toBe(false);
+    expect(pidToTrackedSession.get(runnerPid)).toMatchObject({
+      pid: runnerPid,
+      startedBy: 'daemon',
+      happySessionId: 'session-1',
+    });
+    expect(pidToTrackedSession.get(runnerPid)?.sessionRunnerPid).toBeUndefined();
+    expect(promoteSessionMarkerFn).toHaveBeenCalledWith(wrapperPid, runnerPid);
+    expect(promoteSessionMarkerFn.mock.invocationCallOrder[0]).toBeLessThan(removeSessionMarkerFn.mock.invocationCallOrder[0]);
+    expect(removeSessionMarkerFn).toHaveBeenCalledWith(wrapperPid);
+    expect(removeSessionMarkerFn).not.toHaveBeenCalledWith(runnerPid);
   });
 });

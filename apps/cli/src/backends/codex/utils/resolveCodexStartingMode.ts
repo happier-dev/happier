@@ -2,7 +2,7 @@ export function resolveCodexStartingMode(params: Readonly<{
   explicitStartingMode?: 'local' | 'remote';
   startedBy: 'daemon' | 'cli';
   hasTtyForLocal: boolean;
-  localControlEnabled: boolean;
+  terminalRuntimeEnabled: boolean;
 }>): 'local' | 'remote' {
   if (params.startedBy === 'daemon') {
     return 'remote';
@@ -12,7 +12,7 @@ export function resolveCodexStartingMode(params: Readonly<{
     return params.explicitStartingMode;
   }
 
-  if (params.localControlEnabled && params.hasTtyForLocal) {
+  if (params.terminalRuntimeEnabled && params.hasTtyForLocal) {
     return 'local';
   }
 

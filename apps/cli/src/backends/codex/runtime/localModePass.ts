@@ -3,8 +3,9 @@ import type { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 
 import { discardQueuedAndPendingForLocalSwitch } from '@/agent/localControl/discardQueuedAndPendingForLocalSwitch';
+import { requireTerminalRuntimeLaunch } from '@/backends/terminalRuntime/requireTerminalRuntimeLaunch';
 
-import { codexLocalLauncher, type CodexLauncherResult } from '../codexLocalLauncher';
+import type { CodexLauncherResult } from '../codexLocalLauncher';
 
 type QueueModeWithLocalId = { localId?: string | null };
 
@@ -67,7 +68,14 @@ export async function runCodexLocalModePass<Mode extends QueueModeWithLocalId>(o
     }
   }
 
-  const launchLocal = opts.launchLocal ?? codexLocalLauncher;
+  const launchLocal = opts.launchLocal ?? await requireTerminalRuntimeLaunch<{
+    path: string;
+    api: unknown;
+    session: ApiSessionClient;
+    messageQueue: MessageQueue2<Mode>;
+    permissionMode: PermissionMode;
+    resumeId: string | null;
+  }, CodexLauncherResult>('codex');
   const localResult = await launchLocal({
     path: opts.workspaceDir,
     api: opts.api,

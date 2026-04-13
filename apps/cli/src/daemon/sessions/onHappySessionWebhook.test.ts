@@ -232,7 +232,16 @@ describe('createOnHappySessionWebhook', () => {
     expect(markerArgs.metadata.path).toBe(expected);
   });
 
-  it('includes a safe respawn descriptor for daemon-spawned sessions with spawnOptions', async () => {
+  it('includes safe and sealed respawn env continuity for daemon-spawned sessions with spawnOptions', async () => {
+    const credentials = {
+      token: 't',
+      encryption: {
+        type: 'dataKey' as const,
+        publicKey: new Uint8Array(32).fill(3),
+        machineKey: new Uint8Array(32).fill(9),
+      },
+    };
+
     const tracked: TrackedSession = {
       pid: 555,
       startedBy: 'daemon',
@@ -244,6 +253,8 @@ describe('createOnHappySessionWebhook', () => {
         initialPrompt: 'secret prompt should not be persisted',
         resume: 'vendor-resume-id',
         environmentVariables: {
+          CLAUDE_CONFIG_DIR: '/tmp/claude-config',
+          CODEX_HOME: '/tmp/codex-home',
           ANTHROPIC_AUTH_TOKEN: 'secret-provider-token',
           FOO: 'bar',
         },
@@ -268,11 +279,12 @@ describe('createOnHappySessionWebhook', () => {
       pidToAwaiter,
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
-      writeSessionMarkerFn: async (args) => {
+      readCredentialsFn: async () => credentials,
+      writeSessionMarkerFn: async (args: Record<string, unknown>) => {
         markerArgs = args;
         resolveMarker();
       },
-    });
+    } as any);
 
     onWebhook('session-daemon-555', createMetadata(555, 'daemon', '/tmp/workspace'));
     await markerWritten;
@@ -287,9 +299,20 @@ describe('createOnHappySessionWebhook', () => {
         tmux: { sessionName: 'happy', isolated: true, tmpDir: '/tmp/tmux' },
       },
       transcriptStorage: 'direct',
+      environmentVariables: {
+        CLAUDE_CONFIG_DIR: '/tmp/claude-config',
+        CODEX_HOME: '/tmp/codex-home',
+      },
+      sealedEnvironmentVariables: {
+        format: 'account_scoped_v1',
+        ciphertext: expect.any(String),
+      },
     });
     expect(markerArgs.respawn?.token).toBeUndefined();
-    expect(markerArgs.respawn?.environmentVariables).toBeUndefined();
+    expect(markerArgs.respawn?.environmentVariables).not.toMatchObject({
+      ANTHROPIC_AUTH_TOKEN: expect.any(String),
+      FOO: expect.any(String),
+    });
     expect(markerArgs.respawn?.initialPrompt).toBeUndefined();
   });
 

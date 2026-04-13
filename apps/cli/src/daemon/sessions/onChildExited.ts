@@ -4,7 +4,7 @@ import { writeSessionExitReport } from '@/daemon/sessionExitReport';
 
 import type { TrackedSession } from '../types';
 import { reportDaemonObservedSessionExit } from '../sessionTermination';
-import { removeSessionMarker } from '../sessionRegistry';
+import { promoteSessionMarkerPid, removeSessionMarker } from '../sessionRegistry';
 import { cleanupPidSessionResources } from './cleanupPidSessionResources';
 
 export type ChildExit = { reason: string; code: number | null; signal: string | null };
@@ -17,6 +17,7 @@ export function createOnChildExited(params: Readonly<{
   onUnexpectedExit?: (trackedSession: TrackedSession, exit: ChildExit) => void;
   isExitUnexpectedOverride?: (trackedSession: TrackedSession, exit: ChildExit) => boolean | null | undefined;
   removeSessionMarkerFn?: typeof removeSessionMarker;
+  promoteSessionMarkerFn?: typeof promoteSessionMarkerPid;
 }>): (pid: number, exit: ChildExit) => void {
   const {
     pidToTrackedSession,
@@ -26,11 +27,30 @@ export function createOnChildExited(params: Readonly<{
     onUnexpectedExit,
     isExitUnexpectedOverride,
     removeSessionMarkerFn = removeSessionMarker,
+    promoteSessionMarkerFn = promoteSessionMarkerPid,
   } = params;
 
   return (pid: number, exit: ChildExit) => {
     logger.debug(`[DAEMON RUN] Removing exited process PID ${pid} from tracking`);
     const tracked = pidToTrackedSession.get(pid);
+    const runnerPid = tracked?.sessionRunnerPid;
+    if (tracked && typeof runnerPid === 'number' && runnerPid !== pid) {
+      tracked.pid = runnerPid;
+      delete tracked.sessionRunnerPid;
+      pidToTrackedSession.delete(pid);
+      pidToTrackedSession.set(runnerPid, tracked);
+      void promoteSessionMarkerFn(pid, runnerPid).catch((error) => {
+        logger.debug('[DAEMON RUN] Failed to promote session marker to runner PID', error);
+      });
+      void cleanupPidSessionResources({
+        pid,
+        spawnResourceCleanupByPid,
+        sessionAttachCleanupByPid,
+      });
+      void removeSessionMarkerFn(pid);
+      return;
+    }
+
     if (tracked) {
       const isUnexpectedBase =
         exit.reason === 'process-missing' ||
@@ -76,7 +96,6 @@ export function createOnChildExited(params: Readonly<{
     });
     pidToTrackedSession.delete(pid);
     void removeSessionMarkerFn(pid);
-    const runnerPid = tracked?.sessionRunnerPid;
     if (typeof runnerPid === 'number' && runnerPid !== pid) {
       void removeSessionMarkerFn(runnerPid);
     }

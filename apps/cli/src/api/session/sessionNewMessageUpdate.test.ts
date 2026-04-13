@@ -270,4 +270,87 @@ describe('handleSessionNewMessageUpdate', () => {
     expect(pendingMessages[0]?.content?.text).toBe('daemon initial prompt');
     expect(emitted.some((e: any) => e.event === 'user-message')).toBe(true);
   });
+
+  it('does not permanently dedupe a catch-up user prompt that was skipped before it became deliverable', () => {
+    const pendingMessages: any[] = [];
+    const emitted: any[] = [];
+    const receivedMessageIds = new Set<string>();
+    const pendingMessageCallback = vi.fn((msg: any) => pendingMessages.push(msg));
+
+    const update = {
+      id: 'u1',
+      createdAt: Date.now(),
+      body: {
+        t: 'new-message',
+        sid: 'sess_1',
+        message: {
+          id: 'm1',
+          seq: 1,
+          content: {
+            t: 'plain',
+            v: {
+              role: 'user',
+              content: { type: 'text', text: 'startup catch-up prompt' },
+              meta: { source: 'ui', sentFrom: 'web' },
+            },
+          },
+          localId: null,
+          createdAt: Date.now() - 120_000,
+          updatedAt: Date.now() - 120_000,
+        },
+      },
+    } as unknown as Update;
+
+    const skippedResult = handleSessionNewMessageUpdate({
+      update,
+      sessionId: 'sess_1',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      receivedMessageIds,
+      lastObservedMessageSeq: 0,
+      lastObservedUserMessageSeq: 0,
+      hasSelfEchoSuppressedLocalId: () => false,
+      hasAgentQueueEchoSuppressedLocalId: () => false,
+      markAgentQueueEchoSuppressedLocalId: () => void 0,
+      hasPendingQueueMaterializedLocalId: () => false,
+      deleteMaterializedLocalId: () => void 0,
+      pendingMessageCallback,
+      pendingMessages,
+      shouldDeliverUserMessageToAgentQueue: () => false,
+      emit: (event, payload) => emitted.push({ event, payload }),
+      debug: () => void 0,
+      debugLargeJson: () => void 0,
+    });
+
+    expect(skippedResult.handled).toBe(true);
+    expect(pendingMessageCallback).not.toHaveBeenCalled();
+    expect(receivedMessageIds.has('m1')).toBe(false);
+
+    const deliveredResult = handleSessionNewMessageUpdate({
+      update,
+      sessionId: 'sess_1',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      receivedMessageIds,
+      lastObservedMessageSeq: skippedResult.lastObservedMessageSeq,
+      lastObservedUserMessageSeq: skippedResult.lastObservedUserMessageSeq,
+      hasSelfEchoSuppressedLocalId: () => false,
+      hasAgentQueueEchoSuppressedLocalId: () => false,
+      markAgentQueueEchoSuppressedLocalId: () => void 0,
+      hasPendingQueueMaterializedLocalId: () => false,
+      deleteMaterializedLocalId: () => void 0,
+      pendingMessageCallback,
+      pendingMessages,
+      shouldDeliverUserMessageToAgentQueue: () => true,
+      emit: (event, payload) => emitted.push({ event, payload }),
+      debug: () => void 0,
+      debugLargeJson: () => void 0,
+    });
+
+    expect(deliveredResult.handled).toBe(true);
+    expect(pendingMessageCallback).toHaveBeenCalledTimes(1);
+    expect(pendingMessages).toHaveLength(1);
+    expect(pendingMessages[0]?.content?.text).toBe('startup catch-up prompt');
+    expect(receivedMessageIds.has('m1')).toBe(true);
+  });
 });

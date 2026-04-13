@@ -48,4 +48,36 @@ describe('buildHandoffSessionMetadataFromTrackedSession', () => {
             }),
         }));
     });
+
+    it('builds configured ACP fallback metadata when webhook metadata is missing', () => {
+        const metadata = buildHandoffSessionMetadataFromTrackedSession({
+            trackedSession: {
+                startedBy: 'daemon',
+                pid: 234,
+                happySessionId: 'sess_configured_acp_fallback',
+                spawnOptions: {
+                    directory: '/repo-acp',
+                    backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+                    environmentVariables: { HOME: '/Users/acp-home' },
+                },
+            } as never,
+            machineId: 'machine-acp-fallback',
+            fallbackHomeDir: '/Users/fallback',
+        });
+
+        expect(metadata).toEqual(expect.objectContaining({
+            exportMetadata: expect.objectContaining({
+                machineId: 'machine-acp-fallback',
+                path: '/repo-acp',
+                homeDir: '/Users/acp-home',
+                flavor: 'acp:review-bot',
+                acpConfiguredBackendV1: expect.objectContaining({
+                    v: 1,
+                    backendId: 'review-bot',
+                    title: 'review-bot',
+                    updatedAt: expect.any(Number),
+                }),
+            }),
+        }));
+    });
 });

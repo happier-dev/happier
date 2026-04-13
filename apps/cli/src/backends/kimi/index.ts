@@ -13,7 +13,7 @@ export const agent = {
   vendorResumeSupport: AGENTS_CORE.kimi.resume.vendorResume,
   getAcpBackendFactory: async () => {
     const { createKimiBackend } = await import('@/backends/kimi/acp/backend');
-    return (opts) => ({ backend: createKimiBackend(opts as any) });
+    return (opts) => ({ backend: createKimiBackend(opts) });
   },
   checklists,
 } satisfies AgentCatalogEntry;

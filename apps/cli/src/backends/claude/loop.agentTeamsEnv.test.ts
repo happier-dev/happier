@@ -4,10 +4,20 @@ import { EventEmitter } from 'node:events';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import type { SessionClientPort } from '@/api/session/sessionClientPort';
 
-const mockClaudeLocalLauncher = vi.fn(async (_session: any) => ({ type: 'exit', code: 0 } as const));
+type LaunchEntry = 'initial' | 'switch';
+type ClaudeLauncherSession = {
+  claudeCodeExperimentalAgentTeamsEnabled?: boolean;
+};
 
-vi.mock('./claudeLocalLauncher', () => ({
-  claudeLocalLauncher: mockClaudeLocalLauncher,
+const mockClaudeLocalLauncher = vi.fn(
+  async (_session: ClaudeLauncherSession, _options?: { entry?: LaunchEntry }) => ({ type: 'exit', code: 0 } as const),
+);
+
+vi.mock('@/backends/catalog', () => ({
+  getTerminalRuntimeOps: vi.fn(async () => ({
+    launch: (params: { session: ClaudeLauncherSession; options?: { entry?: LaunchEntry } }) =>
+      mockClaudeLocalLauncher(params.session, params.options),
+  })),
 }));
 
 vi.mock('./claudeRemoteLauncher', () => ({

@@ -153,7 +153,10 @@ test.describe('ui e2e: direct Codex sessions browse/open/tail', () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
     await waitForInitialAppUi({ page, timeoutMs: 180_000, browserDiagnostics });
-    await createAccountAndReachConnectMachineState({ page });
+    await createAccountAndReachConnectMachineState({
+      page,
+      requirePersistedAuthCredentials: false,
+    });
 
     const cliLogin: StartedCliTerminalConnect = await startCliAuthLoginForTerminalConnect({
       testDir,

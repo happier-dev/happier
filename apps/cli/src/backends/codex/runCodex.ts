@@ -49,15 +49,16 @@ import { publishInFlightSteerCapability } from './utils/publishInFlightSteerCapa
 import { createStartupMetadataOverrides } from '@/agent/runtime/createStartupMetadataOverrides';
 import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRunSession';
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
-import { codexLocalLauncher, type CodexLauncherResult } from './codexLocalLauncher';
+import type { CodexLauncherResult } from './codexLocalLauncher';
 import { sendReadyWithPushNotification } from '@/agent/runtime/sendReadyWithPushNotification';
 import { getLatestAssistantMessagePreview, getSessionNotificationTitle } from '@/agent/runtime/readyNotificationContext';
 import { applyLocalControlLaunchGating } from '@/agent/localControl/launchGating';
+import { requireTerminalRuntimeLaunch } from '@/backends/terminalRuntime/requireTerminalRuntimeLaunch';
 import {
-    formatCodexLocalControlLaunchFallbackMessage,
-    formatCodexLocalControlSwitchDeniedMessage,
-} from './localControl/localControlSupport';
-import { createCodexLocalControlSupportResolver } from './localControl/createLocalControlSupportResolver';
+    formatCodexTerminalRuntimeLaunchFallbackMessage,
+    formatCodexTerminalRuntimeSwitchDeniedMessage,
+} from './terminalRuntime/terminalRuntimeSupport';
+import { createCodexTerminalRuntimeSupportResolver } from './terminalRuntime/createTerminalRuntimeSupportResolver';
 import { resolveCodexMcpServerSpawn } from './mcp/resolveCodexMcpServerSpawn';
 import { resolveCodexAcpSpawn } from './acp/resolveCommand';
 import { validateCodexAcpSpawnAvailability } from './acp/spawnAvailability';
@@ -83,9 +84,9 @@ import { createLocalRemoteModeController } from '@/agent/localControl/createLoca
 import { createCodexRemoteTerminalUi } from './runtime/createCodexRemoteTerminalUi';
 import { resolveCodexStartingMode } from './utils/resolveCodexStartingMode';
 import { abortAcpRuntimeTurnIfNeeded } from '@/agent/acp/runtime/createAcpRuntime';
-import { createSwitchToLocalAbortPromise } from './localControl/createSwitchToLocalAbortPromise';
+import { createSwitchToLocalAbortPromise } from './terminalRuntime/createSwitchToLocalAbortPromise';
 import { archiveAndCloseRuntimeSession } from '@/session/services/archiveAndCloseRuntimeSession';
-import { requestSwitchToLocal as requestCodexSwitchToLocal } from './localControl/requestSwitchToLocal';
+import { requestSwitchToLocal as requestCodexSwitchToLocal } from './terminalRuntime/requestSwitchToLocal';
 import { runMetadataOverridesWatcherLoop } from './utils/metadataOverridesWatcher';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { createStartupTiming } from '@/agent/runtime/startup/startupTiming';
@@ -106,6 +107,7 @@ import { buildCodexAcpPromptForFreshSession } from './utils/buildCodexAcpPromptF
 import { ensureRuntimeInstallablesForLaunch } from '@/installables/runtime/ensureRuntimeInstallablesForLaunch';
 import { requireCatalogEntry } from '@/backends/catalog';
 import {
+    resolvePersistedCodexVendorSessionId,
     resolveCodexSessionBackendMode,
     resolveVendorResumeIdFromSessionMetadata,
     SESSION_CONFIG_OPTIONS_STATE_KEY,
@@ -249,6 +251,18 @@ export async function runCodex(opts: {
         }),
     );
     const messageBuffer = new MessageBuffer();
+    type CodexTerminalRuntimeLaunchParams = Readonly<{
+        path: string;
+        api: unknown;
+        session: ApiSessionClient;
+        messageQueue: typeof messageQueue;
+        permissionMode: PermissionMode;
+        resumeId: string | null;
+    }>;
+    const requireCodexTerminalRuntimeLaunch = async () => requireTerminalRuntimeLaunch<
+        CodexTerminalRuntimeLaunchParams,
+        CodexLauncherResult
+    >('codex');
 
     const nowMs = () => Date.now();
     const timing = createStartupTiming({ enabled: configuration.startupTimingEnabled, nowMs });
@@ -276,38 +290,38 @@ export async function runCodex(opts: {
     }
 
     const hasTtyForLocal = Boolean(process.stdin.isTTY && process.stdout.isTTY);
-    const startedByForLocalControl = opts.startedBy === 'daemon' ? 'daemon' : 'cli';
+    const startedByForTerminalRuntime = opts.startedBy === 'daemon' ? 'daemon' : 'cli';
     const codexBackendMode = resolveCodexBackendModeForRun({
         codexBackendMode: opts.codexBackendMode,
         experimentalCodexAcp: opts.experimentalCodexAcp,
         experimentalCodexAcpEnabledByDefault: isExperimentalCodexAcpEnabled(),
     });
     const experimentalCodexAcpEnabled = codexBackendMode === 'acp';
-    const localControlBackend = codexBackendMode === 'acp' || codexBackendMode === 'appServer'
+    const terminalRuntimeBackend = codexBackendMode === 'acp' || codexBackendMode === 'appServer'
         ? codexBackendMode
         : null;
-    const localControlEnabled = localControlBackend !== null;
+    const terminalRuntimeEnabled = terminalRuntimeBackend !== null;
 
-    const localControlState: {
+    const terminalRuntimeState: {
         experimentalCodexAcpEnabled: boolean;
-        localControlBackend: import('./localControl/localControlSupport').CodexLocalControlBackend | null;
+        terminalRuntimeBackend: import('./terminalRuntime/terminalRuntimeSupport').CodexTerminalRuntimeBackend | null;
     } = {
         experimentalCodexAcpEnabled,
-        localControlBackend,
+        terminalRuntimeBackend,
     };
 
-    const resolveLocalControlSupport = createCodexLocalControlSupportResolver({
-        startedBy: startedByForLocalControl,
-        experimentalCodexAcpEnabled: () => localControlState.experimentalCodexAcpEnabled,
-        localControlBackend: () => localControlState.localControlBackend,
+    const resolveTerminalRuntimeSupport = createCodexTerminalRuntimeSupportResolver({
+        startedBy: startedByForTerminalRuntime,
+        experimentalCodexAcpEnabled: () => terminalRuntimeState.experimentalCodexAcpEnabled,
+        terminalRuntimeBackend: () => terminalRuntimeState.terminalRuntimeBackend,
         hasTtyForLocal,
     });
 
     let mode: 'local' | 'remote' = resolveCodexStartingMode({
         explicitStartingMode: opts.startingMode,
-        startedBy: startedByForLocalControl,
+        startedBy: startedByForTerminalRuntime,
         hasTtyForLocal,
-        localControlEnabled,
+        terminalRuntimeEnabled,
 	    });
 	    let localModeFallbackMessage: string | null = null;
 	    let codexAcpFallbackToMcpMessage: string | null = (() => {
@@ -336,19 +350,19 @@ export async function runCodex(opts: {
 
     logger.debug('[codex] Starting mode resolved', {
         explicitStartingMode: opts.startingMode ?? null,
-        startedBy: startedByForLocalControl,
+        startedBy: startedByForTerminalRuntime,
         hasTtyForLocal,
         codexBackendMode,
         experimentalCodexAcpEnabled,
-        localControlEnabled,
+        terminalRuntimeEnabled,
         mode,
     });
 
     if (mode === 'local') {
-        const support = await resolveLocalControlSupport({ includeAcpProbe: false });
+        const support = await resolveTerminalRuntimeSupport({ includeAcpProbe: false });
         const gated = applyLocalControlLaunchGating({ startingMode: 'local', support });
         if (gated.mode === 'remote' && gated.fallback) {
-            const message = formatCodexLocalControlLaunchFallbackMessage(gated.fallback.reason);
+            const message = formatCodexTerminalRuntimeLaunchFallbackMessage(gated.fallback.reason);
             logger.debug('[codex] Local-control mode is unavailable; falling back to remote.', support);
             localModeFallbackMessage = message;
             mode = 'remote';
@@ -358,7 +372,7 @@ export async function runCodex(opts: {
     const hasExplicitPermissionMode = typeof opts.permissionMode === 'string' || permissionModeSeededFromCache;
     const shouldFastStartLocal =
         mode === 'local' &&
-        startedByForLocalControl === 'cli' &&
+        startedByForTerminalRuntime === 'cli' &&
         (typeof opts.existingSessionId !== 'string' || !opts.existingSessionId.trim()) &&
         (!resumeIdFromArgs || hasExplicitPermissionMode);
 
@@ -375,7 +389,7 @@ export async function runCodex(opts: {
             backendId: 'codex',
             sessionKind: resumeIdFromArgs ? 'resume' : 'fresh',
             startingModeIntent: 'local',
-            startedBy: startedByForLocalControl,
+            startedBy: startedByForTerminalRuntime,
             hasTty: hasTtyForLocal,
             workspaceDir: requestedDirectory,
             nowMs,
@@ -396,7 +410,8 @@ export async function runCodex(opts: {
             }),
             tasks: [],
             spawnVendor: async ({ artifacts }) => {
-                artifacts.localResult = await codexLocalLauncher<EnhancedMode>({
+                const launchLocal = await requireCodexTerminalRuntimeLaunch();
+                artifacts.localResult = await launchLocal({
                     path: requestedDirectory,
                     api: null,
                     session: artifacts.deferredSession as unknown as ApiSessionClient,
@@ -529,6 +544,19 @@ export async function runCodex(opts: {
         );
     }
 
+    const readAttachedCodexAppServerThreadId = (): string | null => {
+        const metadata = session.getMetadataSnapshot() as Record<string, unknown> | null;
+        if (resolveCodexSessionBackendMode({ metadata }) !== 'appServer') {
+            return null;
+        }
+        return resolveVendorResumeIdFromSessionMetadata('codex', metadata);
+    };
+
+    const readAttachedCodexVendorSessionId = (): string | null => {
+        const metadata = session.getMetadataSnapshot() as Record<string, unknown> | null;
+        return resolvePersistedCodexVendorSessionId(metadata);
+    };
+
     const promptArtifactBodyCache = new Map<string, string | null>();
     // Late-initialized when a remote Codex runtime is enabled; referenced by the user-message binding for in-flight steering.
     let codexAcpRuntime: ReturnType<typeof createCodexAcpRuntime> | null = null;
@@ -653,14 +681,16 @@ export async function runCodex(opts: {
 
     let resumeIdFromLocalControl: string | null = null;
     if (mode === 'local') {
+        const initialLocalResumeId = resumeIdFromArgs ?? readAttachedCodexVendorSessionId();
+        const launchLocal = await requireCodexTerminalRuntimeLaunch();
         const localResult = await (localLauncherPromise ??
-            codexLocalLauncher<EnhancedMode>({
+            launchLocal({
                 path: workspaceDirFromMetadata ?? requestedDirectory,
                 api,
                 session,
                 messageQueue,
                 permissionMode: initialPermissionMode,
-                resumeId: null,
+                resumeId: initialLocalResumeId,
             }));
         if (localResult.type === 'exit') {
             clearInterval(keepAliveInterval);
@@ -757,8 +787,8 @@ export async function runCodex(opts: {
             }
             useCodexAcp = false;
             // Ensure local-control affordances reflect the resolved remote backend (ACP has failed closed).
-            localControlState.experimentalCodexAcpEnabled = false;
-            localControlState.localControlBackend = null;
+            terminalRuntimeState.experimentalCodexAcpEnabled = false;
+            terminalRuntimeState.terminalRuntimeBackend = null;
             codexAcpFallbackToMcpMessage =
                 codexAcpFallbackToMcpMessage ??
                 `Codex ACP could not start (${reason}). Falling back to MCP for this new session.`;
@@ -919,9 +949,9 @@ export async function runCodex(opts: {
     let switchToLocalBarrier = createSwitchToLocalBarrier();
 
     const resolveLocalSwitchAvailability = async (): Promise<
-        { ok: true } | { ok: false; reason: import('./localControl/localControlSupport').CodexLocalControlUnsupportedReason }
+        { ok: true } | { ok: false; reason: import('./terminalRuntime/terminalRuntimeSupport').CodexTerminalRuntimeUnsupportedReason }
     > => {
-        const support = await resolveLocalControlSupport({ includeAcpProbe: false });
+        const support = await resolveTerminalRuntimeSupport({ includeAcpProbe: false });
         const gated = applyLocalControlLaunchGating({ startingMode: 'local', support });
         if (gated.mode === 'local') return { ok: true };
         return { ok: false, reason: gated.fallback?.reason ?? 'resume-disabled' };
@@ -942,7 +972,7 @@ export async function runCodex(opts: {
             resolveLocalSwitchAvailability,
             requestSwitch: requestSwitchToLocal,
             formatSwitchDeniedMessage: (reason) => {
-                const message = formatCodexLocalControlSwitchDeniedMessage(reason);
+                const message = formatCodexTerminalRuntimeSwitchDeniedMessage(reason);
                 messageBuffer.addMessage(message, 'status');
                 return message;
             },
@@ -1088,14 +1118,6 @@ export async function runCodex(opts: {
             activeServerDir: configuration.activeServerDir,
             lastPublished: lastCodexThreadIdPublished,
         });
-    };
-
-    const readAttachedCodexAppServerThreadId = (): string | null => {
-        const metadata = session.getMetadataSnapshot() as Record<string, unknown> | null;
-        if (resolveCodexSessionBackendMode({ metadata }) !== 'appServer') {
-            return null;
-        }
-        return resolveVendorResumeIdFromSessionMetadata('codex', metadata);
     };
 
     if (useCodexAcp) {
@@ -1302,7 +1324,6 @@ export async function runCodex(opts: {
                     permissionMode: currentPermissionMode ?? initialPermissionMode,
                     resumeId: storedSessionIdForResume,
                     formatError: formatErrorForUi,
-                    launchLocal: codexLocalLauncher,
                 });
 
                 if (localPass.type === 'exit') {

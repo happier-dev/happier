@@ -12,11 +12,11 @@ import { updateAgentStateBestEffort, updateMetadataBestEffort } from '@/api/sess
 import { killProcessTree } from '@/agent/acp/killProcessTree';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 import { configuration } from '@/configuration';
+import { requireTerminalRuntimeBindTranscript } from '@/backends/terminalRuntime/requireTerminalRuntimeBindTranscript';
 import { resolveCodexCliInvocation } from './utils/resolveCodexCliInvocation';
 import { delay } from '@/utils/time';
 
-import { CodexRolloutMirror } from './localControl/codexRolloutMirror';
-import { resolveCodexLocalHostedDirectTranscriptBinding } from './localControl/resolveCodexLocalHostedDirectTranscriptBinding';
+import { CodexTerminalRuntimeMirror } from './terminalRuntime/codexTerminalRuntimeMirror';
 import { discoverCodexRolloutFileOnce } from './rollout/discovery/rolloutDiscovery';
 import { resolveCodexMcpPolicyForPermissionMode } from './utils/permissionModePolicy';
 
@@ -166,7 +166,7 @@ export async function codexLocalLauncher<TMode>(opts: {
   let exitReason: CodexLauncherResult | null = null;
   let switchRequested = false;
   let switchNotified = false;
-  let mirror: CodexRolloutMirror | null = null;
+  let mirror: CodexTerminalRuntimeMirror | null = null;
   let child: ReturnType<typeof spawn> | null = null;
   let childStopRequested = false;
 
@@ -449,7 +449,14 @@ export async function codexLocalLauncher<TMode>(opts: {
       ? process.env.CODEX_HOME
       : null;
 
-    const directTranscriptBinding = resolveCodexLocalHostedDirectTranscriptBinding({
+    const bindTranscript = await requireTerminalRuntimeBindTranscript<{
+      activeServerDir: string;
+      candidateFilePath: string;
+      codexHome: string | null;
+      remoteSessionId: string | null;
+      sessionMetaId: string | null;
+    }>('codex');
+    const directTranscriptBinding = await bindTranscript({
       activeServerDir: configuration.activeServerDir,
       candidateFilePath: candidateFile.filePath,
       codexHome,
@@ -457,7 +464,7 @@ export async function codexLocalLauncher<TMode>(opts: {
       sessionMetaId: typeof candidateFile.sessionMeta?.id === 'string' ? candidateFile.sessionMeta.id : null,
     });
 
-    mirror = new CodexRolloutMirror({
+    mirror = new CodexTerminalRuntimeMirror({
       filePath: candidateFile.filePath,
       codexHome,
       debug,

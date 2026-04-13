@@ -2,13 +2,16 @@ import chalk from 'chalk';
 
 import { readCredentials, type Credentials } from '@/persistence';
 import { createSessionAttachFile } from '@/daemon/sessionAttachFile';
-import { AGENTS } from '@/backends/catalog';
+import { requireCatalogEntry } from '@/backends/catalog';
 import type { CatalogAgentId } from '@/backends/types';
+import { configuration } from '@/configuration';
 import { fetchSessionById, fetchSessionsPage, type RawSessionListRow, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
 import { resolveSessionEncryptionContextFromCredentials, tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import { encodeBase64 } from '@/api/encryption';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { resolveMergedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';
+import type { ResolvedContributionRegistry } from '@/extensions/registry/types';
 import type { AccountSettings } from '@happier-dev/protocol';
 import { accountSettingsParse } from '@happier-dev/protocol';
 import { canUseInkSelector, runSessionActionSelector } from '@/ui/ink/runSessionActionSelector';
@@ -25,6 +28,8 @@ type FetchSessionsPageFn = (params: { token: string; cursor?: string; limit?: nu
 }>;
 
 type ReadAccountSettingsFn = (params: { credentials: Credentials }) => Promise<AccountSettings>;
+type ResumeContributionRegistry = Pick<ResolvedContributionRegistry, 'providerDefinitionsById' | 'backendDefinitionsById'>;
+type ResolveResumeContributionRegistryFn = () => Promise<ResumeContributionRegistry | null>;
 
 type ResumableSessionSelection =
   | { type: 'selected'; sessionId: string }
@@ -32,7 +37,7 @@ type ResumableSessionSelection =
   | { type: 'none' };
 
 async function resolveAgentHandler(agentId: CatalogAgentId): Promise<CommandHandler> {
-  const entry = AGENTS[agentId];
+  const entry = requireCatalogEntry(agentId);
   if (!entry?.getCliCommandHandler) {
     throw new Error(`Agent '${agentId}' has no CLI command handler registered`);
   }
@@ -44,14 +49,24 @@ async function defaultReadAccountSettings(params: { credentials: Credentials }):
   return ctx.settings;
 }
 
+async function defaultResolveResumeContributionRegistry(): Promise<ResumeContributionRegistry | null> {
+  return await resolveMergedContributionRegistry({ happyHomeDir: configuration.happyHomeDir });
+}
+
 async function selectResumableSessionId(params: Readonly<{
   credentials: Credentials;
   accountSettings: AccountSettings;
   fetchSessionsPageFn: FetchSessionsPageFn;
+  contributionRegistry: ResumeContributionRegistry | null;
 }>): Promise<ResumableSessionSelection> {
   const page = await params.fetchSessionsPageFn({ token: params.credentials.token, limit: 200 });
   const rows = page.sessions
-    .map((raw) => buildCliSessionRowModel({ credentials: params.credentials, rawSession: raw, accountSettings: params.accountSettings }))
+    .map((raw) => buildCliSessionRowModel({
+      credentials: params.credentials,
+      rawSession: raw,
+      accountSettings: params.accountSettings,
+      contributionRegistry: params.contributionRegistry,
+    }))
     .filter((row) => row.isSystem !== true)
     .filter((row) => row.archivedAt === null && row.active !== true)
     .filter((row) => Boolean(row.path))
@@ -85,6 +100,7 @@ export async function handleResumeCommand(
     fetchSessionByIdFn?: FetchSessionByIdFn;
     fetchSessionsPageFn?: FetchSessionsPageFn;
     resolveAgentHandlerFn?: (agentId: CatalogAgentId) => Promise<CommandHandler>;
+    resolveContributionRegistryFn?: ResolveResumeContributionRegistryFn;
     chdirFn?: (nextDir: string) => void;
     canUseInkSelectorFn?: () => boolean;
     selectResumableSessionIdFn?: typeof selectResumableSessionId;
@@ -107,6 +123,7 @@ export async function handleResumeCommand(
   const fetchSessionByIdFn = deps?.fetchSessionByIdFn ?? fetchSessionById;
   const fetchSessionsPageFn = deps?.fetchSessionsPageFn ?? fetchSessionsPage;
   const resolveAgentHandlerFn = deps?.resolveAgentHandlerFn ?? resolveAgentHandler;
+  const resolveContributionRegistryFn = deps?.resolveContributionRegistryFn ?? defaultResolveResumeContributionRegistry;
   const chdirFn = deps?.chdirFn ?? ((nextDir: string) => process.chdir(nextDir));
   const canUseInkSelectorFn = deps?.canUseInkSelectorFn ?? canUseInkSelector;
   const selectResumableSessionIdFn = deps?.selectResumableSessionIdFn ?? selectResumableSessionId;
@@ -122,6 +139,7 @@ export async function handleResumeCommand(
   const isInteractive = rawInput.length === 0;
 
   const accountSettings = await readAccountSettingsFn({ credentials }).catch(() => accountSettingsParse({}));
+  const contributionRegistry = await resolveContributionRegistryFn();
 
   let sessionIdOrPrefix = rawInput;
   if (isInteractive) {
@@ -136,6 +154,7 @@ export async function handleResumeCommand(
       credentials,
       accountSettings,
       fetchSessionsPageFn,
+      contributionRegistry,
     });
     if (selected.type === 'cancelled') {
       console.log(chalk.blue('Resume cancelled'));
@@ -168,7 +187,12 @@ export async function handleResumeCommand(
   }
   if (!rawSession) throw new Error(`Session not found: ${sessionIdOrPrefix}`);
 
-  const rowModel = buildCliSessionRowModel({ credentials, rawSession, accountSettings });
+  const rowModel = buildCliSessionRowModel({
+    credentials,
+    rawSession,
+    accountSettings,
+    contributionRegistry,
+  });
 
   if (rowModel.archivedAt !== null) {
     throw new Error('Session is archived and cannot be resumed.');
@@ -187,10 +211,16 @@ export async function handleResumeCommand(
   }
 
   const inferredAgentId = rowModel.agentId;
-  if (typeof inferredAgentId !== 'string' || !Object.prototype.hasOwnProperty.call(AGENTS, inferredAgentId)) {
+  if (typeof inferredAgentId !== 'string') {
     throw new Error(`Unknown agentId: ${String(inferredAgentId)}`);
   }
-  const agentId = inferredAgentId as CatalogAgentId;
+  let agentId: CatalogAgentId;
+  try {
+    requireCatalogEntry(inferredAgentId as CatalogAgentId);
+    agentId = inferredAgentId as CatalogAgentId;
+  } catch {
+    throw new Error(`Unknown agentId: ${String(inferredAgentId)}`);
+  }
 
   const vendorResume = rowModel.vendorResume;
   if (!vendorResume.eligible) {

@@ -18,7 +18,7 @@ export const agent = {
     (await import('@/backends/pi/preflight/piPreflightModelsProbeAdapter')).piPreflightModelsProbeAdapter,
   getAcpBackendFactory: async () => {
     const { createPiBackend } = await import('@/backends/pi/acp/backend');
-    return (opts) => ({ backend: createPiBackend(opts as any) });
+    return (opts) => ({ backend: createPiBackend(opts) });
   },
   checklists,
 } satisfies AgentCatalogEntry;

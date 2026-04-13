@@ -117,6 +117,7 @@ vi.mock('@/configuration', () => ({
         privateKeyFile: '/tmp/key',
         happyHomeDir: '/tmp/home',
         currentCliVersion: '0.0.0-test',
+        publicReleaseRing: 'publicdev',
         serverUrl: 'https://api.happier.dev',
         activeServerDir: '/tmp/server',
         daemonSpawnExistingSessionWaitForExitMs: 5_000,
@@ -258,6 +259,20 @@ vi.mock('./startup/waitForAuthConfig', () => ({
 
 vi.mock('./startup/ensureSessionDirectory', () => ({
     ensureSessionDirectory: vi.fn(async () => ({ ok: true, directoryCreated: false })),
+}));
+
+vi.mock('@/daemon/ownership/evaluateCurrentDaemonOwner', () => ({
+    evaluateCurrentDaemonOwner: vi.fn(async () => ({ kind: 'none' })),
+}));
+
+vi.mock('@/daemon/ownership/resolveDaemonTakeoverDecision', () => ({
+    buildDaemonTakeoverNotice: vi.fn(() => ({ title: 'takeover', lines: [] })),
+    resolveDaemonTakeoverDecision: vi.fn(() => ({ kind: 'ok' })),
+}));
+
+vi.mock('@/daemon/ownership/daemonServiceInventory', () => ({
+    evaluateDaemonStartupServiceConflict: vi.fn(async () => ({ kind: 'ok' })),
+    renderDaemonInstalledServiceConflict: vi.fn(() => ({ title: 'service-conflict', lines: [] })),
 }));
 
 vi.mock('./startup/waitForInitialCredentials', () => ({

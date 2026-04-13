@@ -13,7 +13,7 @@ export const agent = {
   vendorResumeSupport: AGENTS_CORE.qwen.resume.vendorResume,
   getAcpBackendFactory: async () => {
     const { createQwenBackend } = await import('@/backends/qwen/acp/backend');
-    return (opts) => ({ backend: createQwenBackend(opts as any) });
+    return (opts) => ({ backend: createQwenBackend(opts) });
   },
   checklists,
 } satisfies AgentCatalogEntry;

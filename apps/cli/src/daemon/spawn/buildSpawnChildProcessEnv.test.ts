@@ -47,4 +47,28 @@ describe('buildSpawnChildProcessEnv', () => {
     expect(env.CLAUDE_CODE_SETUP_TOKEN).toBe('stale-claude-setup-token');
     expect(env.CODEX_HOME).toBe('/Users/test/.codex');
   });
+
+  it('enables cgroup self-migration for child runners spawned by a background-service daemon', () => {
+    const env = buildSpawnChildProcessEnv({
+      processEnv: {
+        PATH: '/bin',
+        HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
+      },
+      extraEnv: {},
+    });
+
+    expect(env.HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP).toBe('1');
+  });
+
+  it('does not enable cgroup self-migration for child runners spawned outside a background-service daemon', () => {
+    const env = buildSpawnChildProcessEnv({
+      processEnv: {
+        PATH: '/bin',
+        HAPPIER_DAEMON_STARTUP_SOURCE: 'manual',
+      },
+      extraEnv: {},
+    });
+
+    expect(env.HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP).toBeUndefined();
+  });
 });

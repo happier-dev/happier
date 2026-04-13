@@ -21,7 +21,7 @@ const FORBIDDEN_ENGINE_IMPORT_TOKENS = [
   'session/handoff',
   // Avoid accidental coupling to the RPC layer that serves handoff transfers.
   'rpcHandlers.sessionHandoff',
-  '@/api/machine/rpcHandlers.sessionHandoff',
+  '@/api/machine/sessionHandoff/rpcHandlers.sessionHandoff',
 ] as const;
 
 function assertDoesNotImportModule(source: string, moduleSuffix: string, filePath: string): void {

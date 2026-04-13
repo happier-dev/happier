@@ -2,7 +2,7 @@ import { logger } from '@/ui/logger';
 
 import type { TrackedSession } from '../types';
 import { findAllHappyProcesses } from '../doctor';
-import { adoptSessionsFromMarkers } from '../reattach';
+import { adoptLiveDaemonSessionsFromProcesses, adoptSessionsFromMarkers } from '../reattach';
 import { listSessionMarkers, removeSessionMarker } from '../sessionRegistry';
 
 export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
@@ -26,6 +26,8 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
     }
     const { adopted } = adoptSessionsFromMarkers({ markers: aliveMarkers, happyProcesses, pidToTrackedSession });
     if (adopted > 0) logger.debug(`[DAEMON RUN] Reattached ${adopted} sessions from disk markers`);
+    const liveRecovered = await adoptLiveDaemonSessionsFromProcesses({ happyProcesses, pidToTrackedSession });
+    if (liveRecovered > 0) logger.debug(`[DAEMON RUN] Recovered ${liveRecovered} live daemon session(s) without disk markers`);
   } catch (e) {
     logger.debug('[DAEMON RUN] Failed to reattach sessions from disk markers', e);
   }

@@ -1250,6 +1250,51 @@ describe('ApiSessionClient connection handling', () => {
         getSpy.mockRestore();
     });
 
+    it('delivers daemon-started startup catch-up plain user prompts that are still within the startup recovery window', async () => {
+        const axiosMod = await import('axios');
+        const axios = axiosMod.default as any;
+        const createdAt = Date.now() - 30_000;
+
+        const plaintext = {
+            role: 'user',
+            content: { type: 'text', text: 'plain startup prompt' },
+        };
+        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue(
+            buildMessagesListResponse([
+                {
+                    id: 'm-daemon-plain-catchup-1',
+                    seq: 1,
+                    content: {
+                        t: 'plain',
+                        v: plaintext,
+                    },
+                    createdAt,
+                },
+            ]),
+        );
+
+        mockSession.metadata = {
+            ...mockSession.metadata,
+            startedBy: 'daemon',
+        };
+        const client = createClient('fake-token', mockSession);
+        const onUserMessage = vi.fn();
+
+        client.onUserMessage(onUserMessage);
+        await waitForNextTick();
+
+        expect(getSessionMessagesGetCalls(getSpy, mockSession.id).length).toBeGreaterThanOrEqual(1);
+        expect(onUserMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                role: 'user',
+                content: { type: 'text', text: 'plain startup prompt' },
+                createdAt,
+            }),
+        );
+
+        getSpy.mockRestore();
+    });
+
     it('retries startup transcript catch-up when the first poll races before the first CLI user prompt commit', async () => {
         vi.useFakeTimers();
         try {
