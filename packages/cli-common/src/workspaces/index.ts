@@ -332,6 +332,199 @@ export function resolveWorkspaceBundlesFromPackageJson(params: Readonly<{
   });
 }
 
+function resolveBundledWorkspaceRepoRoot(params: Readonly<{
+  repoRoot: string;
+  hostPackageDir: string;
+}>): string {
+  const candidateRoots = [params.repoRoot, params.hostPackageDir];
+
+  for (const candidateRoot of candidateRoots) {
+    if (existsSync(resolve(candidateRoot, 'packages'))) {
+      return candidateRoot;
+    }
+  }
+
+  for (const candidateRoot of candidateRoots) {
+    try {
+      const resolvedRepoRoot = findRepoRoot(candidateRoot);
+      if (existsSync(resolve(resolvedRepoRoot, 'packages'))) {
+        return resolvedRepoRoot;
+      }
+    } catch {
+      // Fall back to the original input when the host is not inside a source checkout.
+    }
+  }
+
+  return params.repoRoot;
+}
+
+function collectPackageJsonRelativeFileTargets(value: unknown, result: Set<string>): void {
+  if (typeof value === 'string') {
+    if (value.startsWith('./') && !value.includes('*')) {
+      result.add(value.slice(2));
+    }
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  if (Array.isArray(value)) {
+    for (const item of value) collectPackageJsonRelativeFileTargets(item, result);
+    return;
+  }
+  for (const nested of Object.values(value)) collectPackageJsonRelativeFileTargets(nested, result);
+}
+
+function stableJsonStringify(value: unknown): string {
+  if (value === null) return 'null';
+  const type = typeof value;
+  if (type === 'string' || type === 'number' || type === 'boolean') return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJsonStringify(item)).join(',')}]`;
+  }
+  if (type !== 'object') return JSON.stringify(String(value));
+
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${stableJsonStringify(record[key])}`).join(',')}}`;
+}
+
+function readPackageJsonField(packageJsonPath: string, field: string): unknown {
+  try {
+    const parsed = readJson(packageJsonPath) as Record<string, unknown>;
+    return parsed[field];
+  } catch {
+    return undefined;
+  }
+}
+
+function hasBundledWorkspacePackageReferencedFiles(packageJsonPath: string): boolean {
+  if (!existsSync(packageJsonPath)) return false;
+
+  let pkg: any;
+  try {
+    pkg = readJson(packageJsonPath);
+  } catch {
+    return false;
+  }
+
+  const packageDir = dirname(packageJsonPath);
+  const relativeFileTargets = new Set<string>();
+  collectPackageJsonRelativeFileTargets(pkg.main, relativeFileTargets);
+  collectPackageJsonRelativeFileTargets(pkg.module, relativeFileTargets);
+  collectPackageJsonRelativeFileTargets(pkg.types, relativeFileTargets);
+  collectPackageJsonRelativeFileTargets(pkg.exports, relativeFileTargets);
+
+  for (const relPath of relativeFileTargets) {
+    if (!existsSync(resolve(packageDir, relPath))) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function hasBundledWorkspacePackageManifestParity(
+  rootDir: string,
+  hostPackageDir: string,
+  packageName: string,
+): boolean {
+  const workspacePackageJsonPath = resolve(rootDir, 'packages', packageName.split('/').at(-1) ?? '', 'package.json');
+  const bundledPackageJsonPath = resolve(hostPackageDir, 'node_modules', ...packageName.split('/'), 'package.json');
+  if (!existsSync(bundledPackageJsonPath)) return false;
+  if (!existsSync(workspacePackageJsonPath)) return true;
+
+  const workspaceExports = readPackageJsonField(workspacePackageJsonPath, 'exports');
+  const bundledExports = readPackageJsonField(bundledPackageJsonPath, 'exports');
+  return stableJsonStringify(workspaceExports) === stableJsonStringify(bundledExports);
+}
+
+function hasBundledWorkspaceRuntimeDependencyTreeHealthy(
+  packageJsonPath: string,
+  opts?: { visited?: Set<string> },
+): boolean {
+  if (!existsSync(packageJsonPath)) return false;
+
+  const visited = opts?.visited ?? new Set<string>();
+  if (visited.has(packageJsonPath)) return true;
+  visited.add(packageJsonPath);
+
+  let pkg: any;
+  try {
+    pkg = readJson(packageJsonPath);
+  } catch {
+    return false;
+  }
+
+  if (!hasBundledWorkspacePackageReferencedFiles(packageJsonPath)) {
+    return false;
+  }
+
+  const packageDir = dirname(packageJsonPath);
+  const deps = collectExternalRuntimeDepNamesFromPackageJson(pkg);
+
+  for (const dep of deps) {
+    const depPackageDir = resolve(packageDir, 'node_modules', ...dep.name.split('/'));
+    if (!existsSync(depPackageDir)) {
+      if (dep.optional) continue;
+      return false;
+    }
+
+    const depPackageJsonPath = resolve(depPackageDir, 'package.json');
+    if (!existsSync(depPackageJsonPath)) {
+      if (dep.optional) continue;
+      return false;
+    }
+
+    if (!hasBundledWorkspaceRuntimeDependencyTreeHealthy(depPackageJsonPath, { visited })) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function hasBundledWorkspacePackageHealthy(rootDir: string, hostPackageDir: string, packageName: string): boolean {
+  const packageDir = resolve(hostPackageDir, 'node_modules', ...packageName.split('/'));
+  const bundledPackageJsonPath = resolve(packageDir, 'package.json');
+  const workspacePackageJsonPath = resolve(rootDir, 'packages', packageName.split('/').at(-1) ?? '', 'package.json');
+
+  if (!hasBundledWorkspacePackageManifestParity(rootDir, hostPackageDir, packageName)) {
+    return false;
+  }
+
+  if (!existsSync(workspacePackageJsonPath)) {
+    return hasBundledWorkspaceRuntimeDependencyTreeHealthy(bundledPackageJsonPath);
+  }
+
+  const workspacePackageJson = readJson(workspacePackageJsonPath) as { main?: unknown; exports?: unknown };
+  const expectedOutputPaths = new Set<string>();
+  collectPackageJsonRelativeFileTargets(workspacePackageJson.main, expectedOutputPaths);
+  collectPackageJsonRelativeFileTargets(workspacePackageJson.exports, expectedOutputPaths);
+  if (expectedOutputPaths.size === 0) expectedOutputPaths.add('dist/index.js');
+
+  for (const relPath of expectedOutputPaths) {
+    if (!existsSync(resolve(packageDir, relPath))) {
+      return false;
+    }
+  }
+
+  return hasBundledWorkspaceRuntimeDependencyTreeHealthy(bundledPackageJsonPath);
+}
+
+export function hasBundledWorkspacePackagesHealthy(params: Readonly<{
+  repoRoot: string;
+  hostPackageDir: string;
+}>): boolean {
+  const workspaceRepoRoot = resolveBundledWorkspaceRepoRoot(params);
+  const bundles = resolveWorkspaceBundlesFromPackageJson({
+    repoRoot: workspaceRepoRoot,
+    hostPackageDir: params.hostPackageDir,
+  });
+
+  return bundles.every((bundle) =>
+    hasBundledWorkspacePackageHealthy(workspaceRepoRoot, params.hostPackageDir, bundle.packageName),
+  );
+}
+
 function collectExternalRuntimeDepNamesFromPackageJson(packageJson: any): ReadonlyArray<{ name: string; optional: boolean }> {
   const deps = packageJson?.dependencies ?? {};
   const optionalDeps = packageJson?.optionalDependencies ?? {};

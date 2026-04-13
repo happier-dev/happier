@@ -1,5 +1,6 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { unlink } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -30,14 +31,29 @@ export function daemonStatePath(happyHomeDir: string): string {
   return join(happyHomeDir, 'daemon.state.json');
 }
 
+function isPreparedPerTestCliSnapshot(snapshotDir: string): boolean {
+  const distSnapshotReady = existsSync(resolve(snapshotDir, '.cli-dist-snapshot.ready.json'))
+    && existsSync(resolve(snapshotDir, 'dist', 'index.mjs'));
+  if (distSnapshotReady) return true;
+
+  // Source-entrypoint mode does not write the dist snapshot marker.
+  const sourceSnapshotReady = existsSync(resolve(snapshotDir, 'src', 'index.ts'))
+    && existsSync(resolve(snapshotDir, 'tsconfig.json'));
+  return sourceSnapshotReady;
+}
+
 function resolveDaemonCliSnapshotDir(params: { testDir: string }): string {
   const raw = (process.env.HAPPIER_E2E_DAEMON_CLI_SNAPSHOT_MODE ?? '').toString().trim().toLowerCase();
+  const perTestSnapshotDir = resolve(params.testDir, 'cli-dist');
   if (raw === 'testdir' || raw === 'per-test' || raw === 'per_test' || raw === 'pertest') {
-    return resolve(params.testDir, 'cli-dist');
+    return perTestSnapshotDir;
   }
 
   // Default to a shared snapshot to avoid paying the node_modules snapshot cost per test (which can
   // otherwise consume most of the core slow E2E timeout budget).
+  if (isPreparedPerTestCliSnapshot(perTestSnapshotDir)) {
+    return perTestSnapshotDir;
+  }
   return resolve(repoRootDir(), '.project', 'tmp', 'cli-dist-snapshot');
 }
 
@@ -419,6 +435,17 @@ export function sanitizeDaemonEnvForSpawn(env: NodeJS.ProcessEnv): NodeJS.Proces
   return sanitized;
 }
 
+function buildIsolatedDaemonServiceEnv(
+  env: NodeJS.ProcessEnv,
+  happyHomeDir: string,
+): NodeJS.ProcessEnv {
+  return {
+    ...env,
+    HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: happyHomeDir,
+    HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: happyHomeDir,
+  };
+}
+
 function resolveDaemonSubprocessEntrypointEnv(cliLaunchSpec: Readonly<{ command: string; args: string[] }>): NodeJS.ProcessEnv {
   if (cliLaunchSpec.command !== process.execPath) return {};
   if (cliLaunchSpec.args.length !== 1) return {};
@@ -450,13 +477,12 @@ export async function startTestDaemon(params: {
   const cliLaunchSpec = await resolveCliTestLaunchSpec(
     {
       testDir: params.testDir,
-      env: {
+      env: buildIsolatedDaemonServiceEnv({
         ...params.env,
-        // Daemon-based E2E runs can start many times; copying node_modules into a snapshot is slow
-        // enough to consume most of the slow-lane timeout budget. Prefer a symlinked snapshot unless
-        // a caller explicitly opts into the heavier copy mode.
-        HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: params.env.HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE ?? 'symlink',
-      },
+        // Use an isolated snapshot node_modules copy by default. Symlink mode aliases the live
+        // workspace tree and can observe transient file gaps while shared deps are being rebuilt.
+        HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: params.env.HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE ?? 'copy',
+      }, params.happyHomeDir),
     },
     {
       snapshotDir: resolveDaemonCliSnapshotDir({ testDir: params.testDir }),
@@ -478,7 +504,7 @@ export async function startTestDaemon(params: {
     args: [...cliLaunchSpec.args, 'daemon', 'start-sync'],
     cwd: cliLaunchSpec.cwd ?? repoRootDir(),
     env: {
-      ...sanitizeDaemonEnvForSpawn(params.env),
+      ...sanitizeDaemonEnvForSpawn(buildIsolatedDaemonServiceEnv(params.env, params.happyHomeDir)),
       ...(cliLaunchSpec.env ?? {}),
       ...resolveDaemonSubprocessEntrypointEnv(cliLaunchSpec),
       CI: '1',

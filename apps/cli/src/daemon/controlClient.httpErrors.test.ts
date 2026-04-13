@@ -69,7 +69,7 @@ describe('daemon control client (HTTP error responses)', () => {
         controlToken: 'test-token',
       });
 
-      await expect(spawnDaemonSession('/tmp')).resolves.toEqual({
+      await expect(spawnDaemonSession({ directory: '/tmp' })).resolves.toEqual({
         success: false,
         requiresUserApproval: true,
         actionRequired: 'CREATE_DIRECTORY',
@@ -112,7 +112,7 @@ describe('daemon control client (HTTP error responses)', () => {
         controlToken: 'test-token',
       });
 
-      await expect(spawnDaemonSession('/tmp')).resolves.toEqual({
+      await expect(spawnDaemonSession({ directory: '/tmp' })).resolves.toEqual({
         success: false,
         error: 'Failed to spawn session: boom',
         errorCode: 'SPAWN_FAILED',

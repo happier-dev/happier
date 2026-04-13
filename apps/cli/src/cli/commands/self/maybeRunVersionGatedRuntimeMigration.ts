@@ -26,15 +26,38 @@ export async function maybeRunVersionGatedRuntimeMigration(params: Readonly<{
   toVersion: string | null | undefined;
   argv: readonly string[];
   commandPath: string;
+  installedRuntimeNodePath?: string | null;
 }>): Promise<boolean> {
   if (!hasCrossedBackgroundServiceMigrationBoundary(params)) {
     return false;
   }
 
-  const { runtime, plan } = await resolveBackgroundServiceRepairPlanForCurrentRuntime({
-    preferredMode: 'user',
-    includeAllModes: true,
-    systemUser: '',
+  const installedRuntimeNodePath = String(params.installedRuntimeNodePath ?? '').trim();
+
+  const runWithInstalledRuntimeContext = async <T>(fn: () => Promise<T>): Promise<T> => {
+    if (!installedRuntimeNodePath) {
+      return await fn();
+    }
+
+    const previousNodePath = process.env.HAPPIER_DAEMON_SERVICE_NODE_PATH;
+    process.env.HAPPIER_DAEMON_SERVICE_NODE_PATH = installedRuntimeNodePath;
+    try {
+      return await fn();
+    } finally {
+      if (previousNodePath === undefined) {
+        delete process.env.HAPPIER_DAEMON_SERVICE_NODE_PATH;
+      } else {
+        process.env.HAPPIER_DAEMON_SERVICE_NODE_PATH = previousNodePath;
+      }
+    }
+  };
+
+  const { runtime, plan } = await runWithInstalledRuntimeContext(async () => {
+    return await resolveBackgroundServiceRepairPlanForCurrentRuntime({
+      preferredMode: 'user',
+      includeAllModes: true,
+      systemUser: '',
+    });
   });
 
   if (plan.actions.length === 0 && plan.manualWarnings.length === 0) {
@@ -51,9 +74,11 @@ export async function maybeRunVersionGatedRuntimeMigration(params: Readonly<{
     return false;
   }
 
-  await handleServiceRepairCliCommand({
-    argv: [...params.argv],
-    commandPath: params.commandPath,
+  await runWithInstalledRuntimeContext(async () => {
+    await handleServiceRepairCliCommand({
+      argv: [...params.argv],
+      commandPath: params.commandPath,
+    });
   });
   return true;
 }

@@ -1,7 +1,12 @@
+import axios from 'axios';
 import type { HappierService } from '@happier-dev/cli-common/happierRuntime';
+import { resolveLoopbackHttpUrl } from '@/api/client/loopbackUrl';
+import type { CliAuthState } from '@/capabilities/cliAuth/types';
+import { readCredentials, type Credentials } from '@/persistence';
 import type { DaemonServiceListEntry } from '@/daemon/service/cli';
 
 type BackgroundServiceFollowUpMode = 'user' | 'system';
+type ServerChangeCredentialState = 'authenticated' | 'authentication-required' | 'unknown';
 
 type BackgroundServiceInventoryEntry = HappierService | DaemonServiceListEntry;
 
@@ -25,6 +30,52 @@ function resolveBackgroundServiceMode(service: BackgroundServiceInventoryEntry):
         return service.mode === 'system' ? 'system' : 'user';
     }
     return String(service.path ?? '').includes('/etc/systemd/system/') ? 'system' : 'user';
+}
+
+async function readServerChangeCredentialState(
+    credentials: Credentials | null,
+    targetServerUrl: string,
+): Promise<ServerChangeCredentialState> {
+    if (!credentials) {
+        return 'authentication-required';
+    }
+
+    try {
+        const response = await axios.get(`${resolveLoopbackHttpUrl(targetServerUrl).replace(/\/+$/, '')}/v1/account/profile`, {
+            headers: {
+                Authorization: `Bearer ${credentials.token}`,
+                'Content-Type': 'application/json',
+            },
+            timeout: 5_000,
+        });
+        void response;
+        return 'authenticated';
+    } catch (error) {
+        if (typeof axios.isAxiosError === 'function' && axios.isAxiosError(error)) {
+            if (error.response?.status === 401 || error.response?.status === 403) {
+                return 'authentication-required';
+            }
+        }
+        if (error && typeof error === 'object' && 'response' in error) {
+            const status = (error as { response?: { status?: unknown } }).response?.status;
+            if (status === 401 || status === 403) {
+                return 'authentication-required';
+            }
+        }
+        return 'unknown';
+    }
+}
+
+async function resolveServerChangeCredentialState(params: Readonly<{
+    authState: CliAuthState;
+    targetServerUrl: string;
+}>): Promise<ServerChangeCredentialState> {
+    if (params.authState === 'logged_out') {
+        return 'authentication-required';
+    }
+
+    const credentials = await readCredentials().catch(() => null);
+    return readServerChangeCredentialState(credentials, params.targetServerUrl);
 }
 
 export function resolveInstalledDefaultFollowingDaemonServiceModes(
@@ -118,9 +169,9 @@ export async function promptToAuthenticateForServerChange(params: Readonly<{
     promptInput: (prompt: string) => Promise<string>;
     runCliAction: (args: string[]) => Promise<void>;
     targetServerUrl: string;
-    hasCredentials: boolean;
+    needsAuthentication: boolean;
 }>): Promise<'not-needed' | 'authenticated' | 'declined'> {
-    if (params.hasCredentials) {
+    if (!params.needsAuthentication) {
         return 'not-needed';
     }
     if (!params.interactive) {
@@ -151,10 +202,10 @@ function renderManualRestartFollowUp(params: Readonly<{
 
 function renderManualServerChangeFollowUp(params: Readonly<{
     targetServerUrl: string;
-    hasCredentials: boolean;
+    credentialState: ServerChangeCredentialState;
     modes?: readonly BackgroundServiceFollowUpMode[];
 }>): readonly string[] {
-    if (params.hasCredentials) {
+    if (params.credentialState !== 'authentication-required') {
         return renderManualRestartFollowUp({
             subject: params.targetServerUrl,
             modes: params.modes,
@@ -212,7 +263,7 @@ export async function runDefaultFollowingBackgroundServiceServerChangeFollowUp(p
     promptInput: (prompt: string) => Promise<string>;
     runCliAction: (args: string[]) => Promise<void>;
     targetServerUrl: string;
-    hasCredentials: boolean;
+    authState: CliAuthState;
     log: (message: string) => void;
     services: readonly DaemonServiceListEntry[];
 }>): Promise<void> {
@@ -228,10 +279,15 @@ export async function runDefaultFollowingBackgroundServiceServerChangeFollowUp(p
         return;
     }
 
+    let credentialState: ServerChangeCredentialState = await resolveServerChangeCredentialState({
+        authState: params.authState,
+        targetServerUrl: params.targetServerUrl,
+    });
+
     if (!params.interactive) {
         for (const line of renderManualServerChangeFollowUp({
             targetServerUrl: params.targetServerUrl,
-            hasCredentials: params.hasCredentials,
+            credentialState,
             modes,
         })) {
             params.log(line);
@@ -240,17 +296,24 @@ export async function runDefaultFollowingBackgroundServiceServerChangeFollowUp(p
     }
 
     try {
-        const authOutcome = await promptToAuthenticateForServerChange(params);
+        const authOutcome = await promptToAuthenticateForServerChange({
+            ...params,
+            needsAuthentication: credentialState !== 'authenticated',
+        });
         if (authOutcome === 'declined') {
             params.log(`Background service was not restarted because ${params.targetServerUrl} is not authenticated yet.`);
             for (const line of renderManualServerChangeFollowUp({
                 targetServerUrl: params.targetServerUrl,
-                hasCredentials: false,
+                credentialState: 'authentication-required',
                 modes,
             })) {
                 params.log(line);
             }
             return;
+        }
+
+        if (authOutcome === 'authenticated') {
+            credentialState = 'authenticated';
         }
 
         await promptForDefaultFollowingBackgroundServiceRestart({
@@ -264,7 +327,7 @@ export async function runDefaultFollowingBackgroundServiceServerChangeFollowUp(p
         params.log('Background service follow-up failed after the primary change was already applied.');
         for (const line of renderManualServerChangeFollowUp({
             targetServerUrl: params.targetServerUrl,
-            hasCredentials: params.hasCredentials,
+            credentialState,
             modes,
         })) {
             params.log(line);

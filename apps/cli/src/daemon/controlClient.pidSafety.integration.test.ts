@@ -408,7 +408,7 @@ describe.sequential('daemon control client PID safety', () => {
 
     try {
       vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
-      const result = await spawnDaemonSession('/tmp');
+      const result = await spawnDaemonSession({ directory: '/tmp' });
       expect(result).toEqual({ success: true, sessionId: 's-1' });
       expect(timeoutSpy).toHaveBeenCalledWith(120_000);
     } finally {

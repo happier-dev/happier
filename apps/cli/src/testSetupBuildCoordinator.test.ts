@@ -80,4 +80,37 @@ describe('ensureBuildArtifactsReadyOnce', () => {
     await expect(access(lockPath)).rejects.toThrow();
     expect(buildCount).toBe(1);
   });
+
+  it('runs the build when markers exist but the readiness predicate reports stale outputs', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-cli-test-setup-build-ready-'));
+    tempDirs.push(tempDir);
+
+    const lockPath = join(tempDir, 'shared-deps.lock');
+    const markerPath = join(tempDir, 'protocol.marker');
+
+    await writeFile(markerPath, 'already-present', 'utf8');
+
+    let buildCount = 0;
+    let ready = false;
+
+    const { ensureBuildArtifactsReadyOnce } = await import('./testSetupBuildCoordinator');
+
+    await ensureBuildArtifactsReadyOnce({
+      lockPath,
+      markerPaths: [markerPath],
+      lockLabel: 'CLI shared deps build',
+      pollIntervalMs: 1,
+      timeoutMs: 5_000,
+      staleAfterMs: 5_000,
+      isReady: () => ready,
+      runBuild: async () => {
+        buildCount += 1;
+        await writeFile(markerPath, 'rebuilt', 'utf8');
+        ready = true;
+      },
+    });
+
+    await expect(access(markerPath)).resolves.toBeUndefined();
+    expect(buildCount).toBe(1);
+  });
 });

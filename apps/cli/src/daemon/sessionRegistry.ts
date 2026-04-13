@@ -40,6 +40,12 @@ function daemonSessionsDir(): string {
   );
 }
 
+function daemonSessionMarkerDirs(): string[] {
+  const primaryDir = daemonSessionsDir();
+  const legacyPreviewDir = join(configuration.happyHomeDir, 'tmp', 'daemon-sessions.preview');
+  return primaryDir === legacyPreviewDir ? [primaryDir] : [primaryDir, legacyPreviewDir];
+}
+
 async function ensureDir(dir: string): Promise<void> {
   await mkdir(dir, { recursive: true });
 }
@@ -105,38 +111,70 @@ export async function writeSessionMarker(marker: Omit<DaemonSessionMarker, 'crea
 }
 
 export async function removeSessionMarker(pid: number): Promise<void> {
-  const filePath = join(daemonSessionsDir(), `pid-${pid}.json`);
-  try {
-    await unlink(filePath);
-  } catch (e) {
-    const err = e as NodeJS.ErrnoException;
-    if (err?.code !== 'ENOENT') {
-      logger.debug(`[sessionRegistry] Failed to remove session marker pid-${pid}.json`, e);
+  for (const dir of daemonSessionMarkerDirs()) {
+    const filePath = join(dir, `pid-${pid}.json`);
+    try {
+      await unlink(filePath);
+    } catch (e) {
+      const err = e as NodeJS.ErrnoException;
+      if (err?.code !== 'ENOENT') {
+        logger.debug(`[sessionRegistry] Failed to remove session marker pid-${pid}.json`, e);
+      }
     }
   }
 }
 
+export async function promoteSessionMarkerPid(fromPid: number, toPid: number): Promise<void> {
+  if (fromPid === toPid) {
+    return;
+  }
+
+  const existingMarker = (await listSessionMarkers())
+    .filter((marker) => marker.pid === fromPid)
+    .sort((left, right) => right.updatedAt - left.updatedAt)[0];
+  if (!existingMarker) {
+    return;
+  }
+
+  const {
+    happyHomeDir: _happyHomeDir,
+    pid: _previousPid,
+    updatedAt: _updatedAt,
+    ...markerInput
+  } = existingMarker;
+  await writeSessionMarker({
+    ...markerInput,
+    pid: toPid,
+    createdAt: existingMarker.createdAt,
+  });
+}
+
 export async function listSessionMarkers(): Promise<DaemonSessionMarker[]> {
-  await ensureDir(daemonSessionsDir());
-  const entries = await readdir(daemonSessionsDir());
-  const markers: DaemonSessionMarker[] = [];
-  for (const name of entries) {
-    if (!name.startsWith('pid-') || !name.endsWith('.json')) continue;
-    const full = join(daemonSessionsDir(), name);
-    try {
-      const raw = await readFile(full, 'utf-8');
-      const parsed = DaemonSessionMarkerSchema.safeParse(JSON.parse(raw));
-      if (!parsed.success) {
-        logger.debug(`[sessionRegistry] Failed to parse session marker ${name}`, parsed.error);
-        continue;
+  const markerByPid = new Map<number, DaemonSessionMarker>();
+  for (const dir of daemonSessionMarkerDirs()) {
+    await ensureDir(dir);
+    const entries = await readdir(dir);
+    for (const name of entries) {
+      if (!name.startsWith('pid-') || !name.endsWith('.json')) continue;
+      const full = join(dir, name);
+      try {
+        const raw = await readFile(full, 'utf-8');
+        const parsed = DaemonSessionMarkerSchema.safeParse(JSON.parse(raw));
+        if (!parsed.success) {
+          logger.debug(`[sessionRegistry] Failed to parse session marker ${name}`, parsed.error);
+          continue;
+        }
+        // Extra safety: only accept markers for our home dir.
+        if (parsed.data.happyHomeDir !== configuration.happyHomeDir) continue;
+        const existing = markerByPid.get(parsed.data.pid);
+        if (!existing || parsed.data.updatedAt > existing.updatedAt) {
+          markerByPid.set(parsed.data.pid, parsed.data);
+        }
+      } catch (e) {
+        logger.debug(`[sessionRegistry] Failed to read or parse session marker ${name}`, e);
+        // ignore unreadable marker
       }
-      // Extra safety: only accept markers for our home dir.
-      if (parsed.data.happyHomeDir !== configuration.happyHomeDir) continue;
-      markers.push(parsed.data);
-    } catch (e) {
-      logger.debug(`[sessionRegistry] Failed to read or parse session marker ${name}`, e);
-      // ignore unreadable marker
     }
   }
-  return markers;
+  return Array.from(markerByPid.values());
 }

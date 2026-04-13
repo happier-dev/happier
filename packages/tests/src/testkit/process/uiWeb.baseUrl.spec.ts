@@ -933,7 +933,11 @@ describe('startUiWeb baseUrl resolution', () => {
 
     const startedPromise = startUiWeb({
       testDir,
-      env: { HAPPIER_E2E_UI_WEB_MODE: 'metro' },
+      env: {
+        HAPPIER_E2E_UI_WEB_MODE: 'metro',
+        HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: '4000',
+        HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS: '500',
+      },
       port: 43123,
     });
     try {
@@ -957,15 +961,23 @@ describe('startUiWeb baseUrl resolution', () => {
       if (pendingBundleResolver) {
         pendingBundleResolver(okText('globalThis.__HAPPIER_E2E__ = true;', 'application/javascript'));
       }
-      const started = await startedPromise.catch(() => null);
-      await started?.stop().catch(() => {});
+      const started = await Promise.race([
+        startedPromise,
+        new Promise<null>((resolve) => {
+          setTimeout(() => resolve(null), 6_000);
+        }),
+      ]).catch(() => null);
+      if (!started) {
+        throw new Error('startUiWeb did not resolve after releasing the pending primary script response');
+      }
+      await started.stop().catch(() => {});
       if (typeof originalFetch === 'function') {
         (globalThis as { fetch: typeof fetch }).fetch = originalFetch;
       } else {
         delete (globalThis as { fetch?: unknown }).fetch;
       }
     }
-  }, 10_000);
+  }, 15_000);
 
   it('re-anchors metro baseUrl to the live port once the spawned metro becomes reachable', async () => {
     const { startUiWeb } = await import('./uiWeb');
@@ -1858,7 +1870,7 @@ describe('startUiWeb baseUrl resolution', () => {
         new Promise<never>((_, reject) => {
           setTimeout(() => {
             reject(new Error(`startUiWeb did not accept later bundle-like script; runtime=${runtimeFetchCount} entry=${entryFetchCount}`));
-          }, 4_000);
+          }, 8_000);
         }),
       ]);
 
@@ -1871,7 +1883,7 @@ describe('startUiWeb baseUrl resolution', () => {
         delete (globalThis as { fetch?: unknown }).fetch;
       }
     }
-  }, 10_000);
+  }, 15_000);
 
   it('waits for the Expo entry bundle even when runtime.js is already ready', async () => {
     const { startUiWeb } = await import('./uiWeb');

@@ -6,6 +6,7 @@ import { basename, extname, dirname, relative as relativePath, resolve as resolv
 import { spawnSync } from 'node:child_process';
 import { repoRootDir } from '../paths';
 import { reserveAvailablePort } from '../network/reserveAvailablePort';
+import { ensureWorkspacePackagesBuiltForComponent } from '../../../../../apps/stack/scripts/utils/proc/pm.mjs';
 import { runLoggedCommand } from './spawnProcess';
 import { yarnCommand } from './commands';
 import { readPositiveEnvInt } from './uiWebEnv';
@@ -338,6 +339,13 @@ export function resolveUiWebExportBuildTimeoutMs(env: NodeJS.ProcessEnv): number
   return readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS, 480_000);
 }
 
+export function resolveUiWebExportWorkspacePrebuildTimeoutMs(env: NodeJS.ProcessEnv): number {
+  return readPositiveEnvInt(
+    env.HAPPIER_E2E_UI_WEB_EXPORT_WORKSPACE_PREBUILD_TIMEOUT_MS,
+    resolveUiWebExportBuildTimeoutMs(env),
+  );
+}
+
 export function resolveUiWebExportHardTimeoutMs(env: NodeJS.ProcessEnv): number | null {
   const raw = String(env.HAPPIER_E2E_UI_WEB_EXPORT_HARD_TIMEOUT_MS ?? '').trim();
   if (!raw) return null;
@@ -404,6 +412,67 @@ function buildExportEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     EXPO_PUBLIC_HAPPIER_SYNC_TUNING_JSON: '',
     HAPPIER_UI_METRO_CACHE_VERSION_BUST: metroCacheVersionBust,
   };
+}
+
+async function ensureUiWebWorkspacePrebuild(params: {
+  testDir: string;
+  env: NodeJS.ProcessEnv;
+  workspaceRootDir: string;
+}): Promise<void> {
+  const stdoutPath = resolvePath(params.testDir, 'ui.web.export.stdout.log');
+  const stderrPath = resolvePath(params.testDir, 'ui.web.export.stderr.log');
+  const timeoutMs = resolveUiWebExportWorkspacePrebuildTimeoutMs(params.env);
+
+  await mkdir(params.testDir, { recursive: true });
+  await Promise.all([
+    writeFile(stdoutPath, '', 'utf8').catch(() => {}),
+    writeFile(stderrPath, '', 'utf8').catch(() => {}),
+  ]);
+  await appendFile(
+    stderrPath,
+    `[ui-web-export] workspace build preflight started: ${params.workspaceRootDir}\n`,
+  ).catch(() => {});
+
+  let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+  const timeoutError = new Error(
+    `workspace build preflight timed out after ${timeoutMs}ms while ensuring ${params.workspaceRootDir} workspace packages were built`,
+  );
+
+  try {
+    await Promise.race([
+      ensureWorkspacePackagesBuiltForComponent(params.workspaceRootDir, {
+        quiet: true,
+        env: params.env,
+      }),
+      new Promise<never>((_, reject) => {
+        timeoutTimer = setTimeout(() => {
+          reject(timeoutError);
+        }, timeoutMs);
+        if (typeof timeoutTimer === 'object' && timeoutTimer !== null && 'unref' in timeoutTimer) {
+          timeoutTimer.unref();
+        }
+      }),
+    ]);
+    await appendFile(
+      stderrPath,
+      `[ui-web-export] workspace build preflight completed: ${params.workspaceRootDir}\n`,
+    ).catch(() => {});
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await appendFile(
+      stderrPath,
+      `[ui-web-export] workspace build preflight failed: ${message}\n`,
+    ).catch(() => {});
+    throw error;
+  } finally {
+    if (timeoutTimer != null) {
+      clearTimeout(timeoutTimer);
+    }
+  }
+}
+
+function isUiWebWorkspacePrebuildTimeoutError(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith('workspace build preflight timed out after ');
 }
 
 function parseEnvBool(raw: unknown): boolean {
@@ -564,6 +633,10 @@ async function classifyUiWebExportFailure(params: {
   const stderrLooksLikeUnresolvedModuleImport = params.stderrTail.includes('Unable to resolve module')
     || /ENOENT: no such file or directory, open '.*\/apps\/ui\/sources\/.+\.(?:ts|tsx|js|jsx|mjs|cjs)'/i.test(params.stderrTail);
 
+  if (message.includes('workspace build preflight timed out after')) {
+    return 'workspace_preflight_timeout';
+  }
+
   if (message.includes('expo export startup stalled after')) {
     return metroStarted
       ? 'startup_stalled_after_metro_startup_no_staging_progress'
@@ -723,28 +796,49 @@ async function ensureUiWebExportBuilt(params: { testDir: string; env: NodeJS.Pro
     return exportedDistDir;
   }
 
+  const workspaceRootDir = resolvePath(repoRootDir(), 'apps', 'ui');
+  try {
+    await ensureUiWebWorkspacePrebuild({
+      testDir: params.testDir,
+      env: params.env,
+      workspaceRootDir,
+    });
+  } catch (error) {
+    const stdoutTail = await readFile(resolvePath(params.testDir, 'ui.web.export.stdout.log'), 'utf8').catch(() => '');
+    const stderrTail = await readFile(resolvePath(params.testDir, 'ui.web.export.stderr.log'), 'utf8').catch(() => '');
+    const classification = isUiWebWorkspacePrebuildTimeoutError(error) ? 'workspace_preflight_timeout' : null;
+    const tailLimit = 8_000;
+    throw new Error([
+      error instanceof Error ? error.message : String(error),
+      classification ? `classification=${classification}` : null,
+      `stdoutTail=${JSON.stringify(stdoutTail.slice(Math.max(0, stdoutTail.length - tailLimit)))}`,
+      `stderrTail=${JSON.stringify(stderrTail.slice(Math.max(0, stderrTail.length - tailLimit)))}`,
+    ].filter(Boolean).join(' | '));
+  }
+
   const buildPromise = withUiWebExportLock(exportedDistLockPath, async () => {
-	    const stagingDir = resolvePath(exportedDistParent, `dist-staging-${process.pid}-${Date.now()}`);
-	    const stdoutPath = resolvePath(params.testDir, 'ui.web.export.stdout.log');
-	    const stderrPath = resolvePath(params.testDir, 'ui.web.export.stderr.log');
+    const stagingDir = resolvePath(exportedDistParent, `dist-staging-${process.pid}-${Date.now()}`);
+    const stdoutPath = resolvePath(params.testDir, 'ui.web.export.stdout.log');
+    const stderrPath = resolvePath(params.testDir, 'ui.web.export.stderr.log');
 
-	    await mkdir(exportedDistParent, { recursive: true });
-	    await removePathWithRetries(stagingDir).catch(() => {});
-      writeUiWebExportLockOwnerMetadata(exportedDistLockPath, stagingDir);
+    await mkdir(params.testDir, { recursive: true });
+    await mkdir(exportedDistParent, { recursive: true });
+    await removePathWithRetries(stagingDir).catch(() => {});
+    writeUiWebExportLockOwnerMetadata(exportedDistLockPath, stagingDir);
 
-	    for (;;) {
-	    try {
-	      const exportEnv = buildExportEnv(params.env);
-	      const shouldPinMetroPort = !exportEnv.RCT_METRO_PORT && !exportEnv.EXPO_METRO_PORT && !exportEnv.METRO_PORT;
-	      const metroPort = shouldPinMetroPort ? await reserveAvailablePort() : null;
-	      const pinnedExportEnv = shouldPinMetroPort && metroPort != null
-	        ? {
-	          ...exportEnv,
-	          RCT_METRO_PORT: String(metroPort),
-	          EXPO_METRO_PORT: String(metroPort),
-	          METRO_PORT: String(metroPort),
-	        }
-	        : exportEnv;
+    for (;;) {
+      try {
+        const exportEnv = buildExportEnv(params.env);
+        const shouldPinMetroPort = !exportEnv.RCT_METRO_PORT && !exportEnv.EXPO_METRO_PORT && !exportEnv.METRO_PORT;
+        const metroPort = shouldPinMetroPort ? await reserveAvailablePort() : null;
+        const pinnedExportEnv = shouldPinMetroPort && metroPort != null
+          ? {
+            ...exportEnv,
+            RCT_METRO_PORT: String(metroPort),
+            EXPO_METRO_PORT: String(metroPort),
+            METRO_PORT: String(metroPort),
+          }
+          : exportEnv;
 
         const runExportBuildAttempt = async (forceClear: boolean): Promise<void> => {
           const buildTimeoutMs = resolveUiWebExportBuildTimeoutMs(params.env);
@@ -793,9 +887,9 @@ async function ensureUiWebExportBuilt(params: { testDir: string; env: NodeJS.Pro
             ],
             cwd: resolvePath(repoRootDir(), 'apps', 'ui'),
             env: pinnedExportEnv,
-	          stdoutPath,
-	          stderrPath,
-	          timeoutMs: buildHardTimeoutMs ?? 2_147_483_647,
+            stdoutPath,
+            stderrPath,
+            timeoutMs: buildHardTimeoutMs ?? 2_147_483_647,
             abortSignal: abortController.signal,
           });
 
@@ -859,12 +953,14 @@ async function ensureUiWebExportBuilt(params: { testDir: string; env: NodeJS.Pro
         await removePathWithRetries(stagingDir).catch(() => {});
         continue;
       }
-      const classification = await classifyUiWebExportFailure({
-        error,
-        stdoutTail,
-        stderrTail,
-        stagingDir,
-      });
+      const classification = isUiWebWorkspacePrebuildTimeoutError(error)
+        ? 'workspace_preflight_timeout'
+        : await classifyUiWebExportFailure({
+          error,
+          stdoutTail,
+          stderrTail,
+          stagingDir,
+        });
       const tailLimit = 8_000;
       throw new Error([
         error instanceof Error ? error.message : String(error),
@@ -875,7 +971,7 @@ async function ensureUiWebExportBuilt(params: { testDir: string; env: NodeJS.Pro
     } finally {
       await removePathWithRetries(stagingDir).catch(() => {});
     }
-	    }
+  }
   }, {
         timeoutMs: resolveUiWebExportLockTimeoutMs(params.env),
         staleAfterMs: resolveUiWebExportBuildTimeoutMs(params.env),

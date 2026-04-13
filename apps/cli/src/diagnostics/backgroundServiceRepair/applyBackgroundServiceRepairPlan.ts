@@ -19,6 +19,7 @@ export async function applyBackgroundServiceRepairPlan(
         channel: action.service.releaseChannel,
         targetMode: action.service.targetMode,
         instanceId: action.service.instanceId,
+        installedPath: action.service.installedPath,
         runCommands: true,
       });
       executedActions.push(`remove:${action.service.label}`);
@@ -30,6 +31,8 @@ export async function applyBackgroundServiceRepairPlan(
       uid: runtime.uid ?? undefined,
       userHomeDir: runtime.userHomeDir,
       happierHomeDir: runtime.happierHomeDir,
+      nodePath: runtime.nodePath,
+      entryPath: runtime.entryPath,
       mode: action.mode,
       systemUser: runtime.systemUser || undefined,
       channel: action.releaseChannel,

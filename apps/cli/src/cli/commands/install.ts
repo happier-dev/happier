@@ -3,6 +3,9 @@ import chalk from 'chalk';
 import { AGENT_IDS, getProviderCliRuntimeSpec, type AgentId } from '@happier-dev/agents';
 
 import type { CommandContext } from '@/cli/commandRegistry';
+import { installPluginFromSource, type PluginInstallKind } from '@/extensions/plugins/install/installPluginFromSource';
+import { removeInstalledPlugin } from '@/extensions/plugins/install/removeInstalledPlugin';
+import { createPluginStateStore } from '@/extensions/plugins/store/pluginStateStore';
 import type {
   invokeProviderCliInstall as invokeProviderCliInstallDefault,
 } from '@/runtime/managedTools/invokeProviderCliInstall';
@@ -15,6 +18,9 @@ function usage(): string {
     `${chalk.bold('Usage:')}`,
     '  happier install doctor',
     '  happier install provider <providerId> [--dry-run] [--force]',
+    '  happier install plugin <path|archive> [--kind path|archive] [--dry-run] [--force]',
+    '  happier install plugin update <pluginId> [--dry-run]',
+    '  happier install plugin remove <pluginId> [--dry-run]',
     '',
   ].join('\n');
 }
@@ -46,6 +52,32 @@ function parseProviderInstallFlags(args: readonly string[]): Readonly<{ dryRun: 
   };
 }
 
+function readFlagValue(args: readonly string[], flag: string): string | null {
+  const index = args.indexOf(flag);
+  if (index < 0) return null;
+  const value = args[index + 1];
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function parsePluginInstallFlags(args: readonly string[]): Readonly<{
+  dryRun: boolean;
+  skipIfInstalled: boolean;
+  sourceKind: PluginInstallKind | null;
+}> {
+  const sourceKindRaw = readFlagValue(args, '--kind');
+  if (sourceKindRaw !== null && sourceKindRaw !== 'path' && sourceKindRaw !== 'archive') {
+    throw new Error(`Unknown plugin source kind: ${sourceKindRaw}`);
+  }
+
+  return {
+    dryRun: args.includes('--dry-run'),
+    skipIfInstalled: !args.includes('--force'),
+    sourceKind: (sourceKindRaw as PluginInstallKind | null) ?? null,
+  };
+}
+
 function isAgentId(value: string): value is AgentId {
   return (AGENT_IDS as readonly string[]).includes(value);
 }
@@ -71,6 +103,114 @@ function printProviderInstallResult(
   }
 }
 
+async function runPluginInstallCommand(
+  context: CommandContext,
+  deps: InstallCliDeps,
+): Promise<void> {
+  const target = context.args[2]?.trim() ?? '';
+  if (!target || target === 'help' || target === '--help' || target === '-h') {
+    deps.log(usage());
+    return;
+  }
+
+  if (target === 'update' || target === 'remove') {
+    const pluginId = context.args[3]?.trim() ?? '';
+    if (!pluginId) {
+      deps.error(chalk.red('Error:'), `Missing plugin id for ${target}.`);
+      deps.log(usage());
+      deps.exit(1);
+      return;
+    }
+
+    const flags = {
+      dryRun: context.args.slice(4).includes('--dry-run'),
+    };
+
+    const stateStore = createPluginStateStore();
+    const state = await stateStore.read();
+    const record = state.plugins[pluginId];
+    if (!record) {
+      deps.error(chalk.red('Error:'), `Unknown plugin id: ${pluginId}`);
+      deps.exit(1);
+      return;
+    }
+
+    if (target === 'remove') {
+      if (flags.dryRun) {
+        deps.log(`Dry run: would remove plugin ${pluginId}.`);
+        return;
+      }
+      const result = await removeInstalledPlugin({
+        happyHomeDir: stateStore.paths.happyHomeDir,
+        pluginId,
+      });
+      if (!result.ok) {
+        deps.error(chalk.red('Error:'), result.errorMessage);
+        deps.exit(1);
+        return;
+      }
+      deps.log(`Removed plugin ${pluginId}.`);
+      return;
+    }
+
+    if (flags.dryRun) {
+      deps.log(`Dry run: would update plugin ${pluginId} from ${record.source.kind}.`);
+      return;
+    }
+
+    const result = await installPluginFromSource({
+      happyHomeDir: stateStore.paths.happyHomeDir,
+      locator: record.source.locator,
+      sourceKind: record.source.kind === 'archive' ? 'archive' : 'path',
+      skipIfInstalled: false,
+    });
+    if (!result.ok) {
+      deps.error(chalk.red('Error:'), result.errorMessage);
+      deps.exit(1);
+      return;
+    }
+
+    if (result.alreadyInstalled) {
+      deps.log(`Plugin ${pluginId} is already installed.`);
+      return;
+    }
+
+    deps.log(`Updated plugin ${result.pluginId} from ${result.sourceKind}.`);
+    return;
+  }
+
+  const flags = parsePluginInstallFlags(context.args.slice(3));
+  const result = await installPluginFromSource({
+    happyHomeDir: createPluginStateStore().paths.happyHomeDir,
+    locator: target,
+    sourceKind: flags.sourceKind ?? undefined,
+    skipIfInstalled: flags.skipIfInstalled,
+    dryRun: flags.dryRun,
+  });
+  if (!result.ok) {
+    deps.error(chalk.red('Error:'), result.errorMessage);
+    deps.exit(1);
+    return;
+  }
+
+  if (flags.dryRun) {
+    deps.log(`Dry run: would install plugin ${result.pluginId} from ${result.sourceKind}.`);
+    return;
+  }
+
+  if (result.alreadyInstalled) {
+    deps.log(`Plugin ${result.pluginId} is already installed.`);
+    return;
+  }
+
+  if (result.sourceKind === 'archive') {
+    deps.log(`Installed plugin ${result.pluginId} from archive.`);
+    return;
+  }
+
+  deps.log(`Installed plugin ${result.pluginId}.`);
+}
+
 export async function runInstallCliCommand(
   context: CommandContext,
   deps: InstallCliDeps = {
@@ -87,6 +227,10 @@ export async function runInstallCliCommand(
     const subcommand = context.args[1] ?? 'help';
     if (subcommand === 'doctor') {
       await deps.runDoctorCommand();
+      return;
+    }
+    if (subcommand === 'plugin') {
+      await runPluginInstallCommand(context, deps);
       return;
     }
     if (subcommand === 'provider') {

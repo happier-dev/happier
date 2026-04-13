@@ -47,4 +47,19 @@ describe('daemon service legacy cleanup planning', () => {
       ignoreFailure: true,
     });
   });
+
+  it('uses the installed path when uninstalling a legacy Linux service definition', () => {
+    const plan = planDaemonServiceUninstall({
+      platform: 'linux',
+      mode: 'user',
+      channel: 'stable',
+      targetMode: 'default-following',
+      instanceId: 'cloud',
+      userHomeDir: '/home/tester',
+      installedPath: '/var/lib/happier/services/happier-daemon.legacy.service',
+    });
+
+    expect(plan.filesToRemove).toContain('/var/lib/happier/services/happier-daemon.legacy.service');
+    expect(plan.filesToRemove).toContain('/home/tester/.config/systemd/user/happier-daemon.service');
+  });
 });

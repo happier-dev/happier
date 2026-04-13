@@ -125,7 +125,27 @@ describe("startServerLight planning helpers", () => {
 
     mkdirSync(resolve(rootDir, "packages", "cli-common", "dist", "process"), { recursive: true });
     writeFileSync(resolve(rootDir, "packages", "cli-common", "dist", "process", "commandExists.js"), "export {};\n", "utf8");
+    expect(hasServerSharedDepsOutputs(rootDir)).toBe(false);
+
+    mkdirSync(resolve(rootDir, "node_modules", "@happier-dev", "cli-common", "dist", "relayAccess", "providers", "localOnly"), {
+      recursive: true,
+    });
+    writeFileSync(
+      resolve(rootDir, "node_modules", "@happier-dev", "cli-common", "dist", "relayAccess", "providers", "localOnly", "index.js"),
+      "export {};\n",
+      "utf8",
+    );
     expect(hasServerSharedDepsOutputs(rootDir)).toBe(true);
+
+    writeFileSync(
+      resolve(rootDir, "packages", "protocol", "dist", "index.js"),
+      [
+        "export const ProviderCliRuntimeV1Schema = {};",
+        "export { ProviderCliRuntimeV1Schema };",
+      ].join("\n"),
+      "utf8",
+    );
+    expect(hasServerSharedDepsOutputs(rootDir)).toBe(false);
   });
 
   it("detects when generated provider outputs are current", () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { planDaemonServiceInstall } from './plan';
+import { planDaemonServiceInstall, planDaemonServiceUninstall } from './plan';
 
 const baseInstallParams = {
   platform: 'linux',
@@ -48,6 +48,29 @@ describe('daemon service plan legacy cloud cleanup', () => {
           command.args.includes('disable') &&
           command.args.includes('--now') &&
           command.args.includes('happier-daemon.service'),
+      ),
+    ).toBe(true);
+  });
+
+  it('emits legacy channel-scoped cleanup for default-following installs from older channel-specific layouts', () => {
+    const plan = planDaemonServiceUninstall({
+      platform: 'linux',
+      mode: 'user',
+      channel: 'preview',
+      targetMode: 'default-following',
+      instanceId: 'default',
+      userHomeDir: '/home/alice',
+      happierHomeDir: '/home/alice/.happier',
+    });
+
+    expect(plan.filesToRemove).toContain('/home/alice/.config/systemd/user/happier-daemon.preview.default.service');
+    expect(
+      plan.commands.some(
+        (command) =>
+          command.cmd === 'systemctl' &&
+          command.args.includes('disable') &&
+          command.args.includes('--now') &&
+          command.args.includes('happier-daemon.preview.default.service'),
       ),
     ).toBe(true);
   });

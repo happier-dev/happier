@@ -104,4 +104,84 @@ describe('releaseAssetBundle', () => {
             rmSync(root, { recursive: true, force: true });
         }
     });
+
+    it('extracts the payload root when the archive also includes a hidden top-level directory', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'first-party-runtime-release-bundle-hidden-dir-'));
+        try {
+            const version = '9.9.10-preview.5';
+            const stem = `happier-v${version}-linux-x64`;
+            const artifactDir = join(root, stem);
+            mkdirSync(join(artifactDir, 'package-dist'), { recursive: true });
+            writeFileSync(join(artifactDir, 'happier'), 'new-binary\n', 'utf8');
+            chmodSync(join(artifactDir, 'happier'), 0o755);
+            writeFileSync(join(artifactDir, 'package-dist', 'index.mjs'), 'export default "ok";\n', 'utf8');
+
+            mkdirSync(join(root, '__MACOSX', 'nested'), { recursive: true });
+            writeFileSync(join(root, '__MACOSX', 'nested', 'metadata'), 'ignore me\n', 'utf8');
+
+            const archiveName = `${stem}.tar.gz`;
+            const archivePath = join(root, archiveName);
+            const tarRes = spawnSync('tar', ['-czf', archivePath, '-C', root, stem, '__MACOSX'], { encoding: 'utf8' });
+            expect(tarRes.status).toBe(0);
+
+            const extractedRoot = await extractReleasePayloadRootFromArchive({
+                archivePath,
+                archiveName,
+                extractDir: join(root, 'extract'),
+            });
+
+            expect(readFileSync(join(extractedRoot, 'happier'), 'utf8')).toBe('new-binary\n');
+            expect(readFileSync(join(extractedRoot, 'package-dist', 'index.mjs'), 'utf8')).toBe('export default "ok";\n');
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('extracts successfully even when the archive command writes more than the default stderr maxBuffer', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'first-party-runtime-release-bundle-noisy-extract-'));
+        const previousPath = process.env.PATH;
+        try {
+            const binDir = join(root, 'bin');
+            mkdirSync(binDir, { recursive: true });
+
+            const fakeTarPath = join(binDir, 'tar');
+            writeFileSync(
+                fakeTarPath,
+                [
+                    `#!${process.execPath}`,
+                    "const { mkdirSync, writeFileSync } = require('node:fs');",
+                    "const { join } = require('node:path');",
+                    "const args = process.argv.slice(2);",
+                    "const destIndex = args.indexOf('-C');",
+                    "if (destIndex === -1 || !args[destIndex + 1]) process.exit(2);",
+                    "const destDir = args[destIndex + 1];",
+                    "const payloadDir = join(destDir, 'happier-v9.9.12-preview.1-linux-x64');",
+                    "mkdirSync(join(payloadDir, 'package-dist'), { recursive: true });",
+                    "writeFileSync(join(payloadDir, 'happier'), 'new-binary\\n', 'utf8');",
+                    "writeFileSync(join(payloadDir, 'package-dist', 'index.mjs'), 'export default \"ok\";\\n', 'utf8');",
+                    "process.stderr.write('x'.repeat(1024 * 1024 + 512));",
+                ].join('\n'),
+                'utf8',
+            );
+            chmodSync(fakeTarPath, 0o755);
+
+            process.env.PATH = `${binDir}:${previousPath ?? ''}`;
+
+            const archiveName = 'happier-v9.9.12-preview.1-linux-x64.tar.gz';
+            const archivePath = join(root, archiveName);
+            writeFileSync(archivePath, 'placeholder\n', 'utf8');
+
+            const extractedRoot = await extractReleasePayloadRootFromArchive({
+                archivePath,
+                archiveName,
+                extractDir: join(root, 'extract'),
+            });
+
+            expect(readFileSync(join(extractedRoot, 'happier'), 'utf8')).toBe('new-binary\n');
+            expect(readFileSync(join(extractedRoot, 'package-dist', 'index.mjs'), 'utf8')).toBe('export default "ok";\n');
+        } finally {
+            process.env.PATH = previousPath;
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
 });

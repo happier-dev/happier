@@ -6,6 +6,7 @@ import {
   SessionRunnerRespawnDescriptorV1Schema,
 } from './sessionRunnerRespawnDescriptor';
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
+import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
 
 describe('sessionRunnerRespawnDescriptor', () => {
   it('round-trips mcpSelection through the respawn descriptor', () => {
@@ -262,40 +263,76 @@ describe('sessionRunnerRespawnDescriptor', () => {
     expect(restored).not.toHaveProperty('workspaceCheckoutId');
   });
 
-  it('does not persist environment variables in the respawn descriptor but keeps connected-services bindings', () => {
-    const descriptor = buildSessionRunnerRespawnDescriptorV1FromSpawnOptions({
-      directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-      environmentVariables: {
-        CODEX_HOME: '/tmp/codex-home',
-        OPENAI_API_KEY: 'test-key',
-      },
-      connectedServices: {
-        v: 1,
-        bindings: {
-          codex: { profileId: 'work' },
+  it('persists safe respawn environment variables and seals the rest for continuity', () => {
+    const credentials = {
+      type: 'dataKey' as const,
+      machineKey: new Uint8Array(32).fill(7),
+    };
+
+    const descriptor = (buildSessionRunnerRespawnDescriptorV1FromSpawnOptions as unknown as (
+      spawnOptions: SpawnSessionOptions,
+      options?: { encryptionMaterial?: typeof credentials },
+    ) => ReturnType<typeof buildSessionRunnerRespawnDescriptorV1FromSpawnOptions>)(
+      {
+        directory: '/tmp/repo',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        environmentVariables: {
+          CLAUDE_CONFIG_DIR: '/tmp/claude-config',
+          CODEX_HOME: '/tmp/codex-home',
+          OPENAI_API_KEY: 'test-key',
         },
+        connectedServices: {
+          v: 1,
+          bindings: {
+            codex: { profileId: 'work' },
+          },
+        },
+      } satisfies SpawnSessionOptions,
+      {
+        encryptionMaterial: credentials,
       },
-    } satisfies SpawnSessionOptions);
+    );
 
     expect(descriptor).toMatchObject({
+      environmentVariables: {
+        CLAUDE_CONFIG_DIR: '/tmp/claude-config',
+        CODEX_HOME: '/tmp/codex-home',
+      },
       connectedServices: {
         bindings: {
           codex: { profileId: 'work' },
         },
       },
     });
-    expect(descriptor).not.toHaveProperty('environmentVariables');
+    expect(descriptor).toMatchObject({
+      sealedEnvironmentVariables: {
+        format: 'account_scoped_v1',
+        ciphertext: expect.any(String),
+      },
+    });
+    expect(descriptor?.environmentVariables).not.toHaveProperty('OPENAI_API_KEY');
 
-    const restored = buildSpawnSessionOptionsFromRespawnDescriptorV1(descriptor!);
+    const restored = (buildSpawnSessionOptionsFromRespawnDescriptorV1 as unknown as (
+      descriptor: NonNullable<ReturnType<typeof buildSessionRunnerRespawnDescriptorV1FromSpawnOptions>>,
+      options?: { encryptionMaterial?: typeof credentials },
+    ) => SpawnSessionOptions)(descriptor!, {
+      encryptionMaterial: credentials,
+    });
     expect(restored).toMatchObject({
       connectedServices: {
         bindings: {
           codex: { profileId: 'work' },
         },
       },
+      environmentVariables: {
+        CLAUDE_CONFIG_DIR: '/tmp/claude-config',
+        CODEX_HOME: '/tmp/codex-home',
+        OPENAI_API_KEY: 'test-key',
+      },
       approvedNewDirectoryCreation: true,
     });
-    expect(restored).not.toHaveProperty('environmentVariables');
+    expect(restored.environmentVariables).toMatchObject({
+      OPENAI_API_KEY: 'test-key',
+    });
   });
 });

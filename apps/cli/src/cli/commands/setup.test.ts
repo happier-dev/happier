@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { BackgroundServiceSetupGuidance } from '@happier-dev/cli-common/systemTasks';
 import type { SyncInstalledFirstPartyShimsResult } from '@happier-dev/cli-common/firstPartyRuntime';
 import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
@@ -7,6 +8,24 @@ import { withTempDir } from '@/testkit/fs/tempDir';
 
 function stripAnsi(value: string): string {
   return value.replace(/\u001B\[[0-9;]*m/g, '');
+}
+
+function createBackgroundServiceSetupGuidance(
+  overrides: Partial<BackgroundServiceSetupGuidance> = {},
+): BackgroundServiceSetupGuidance {
+  return {
+    targetReleaseChannel: 'stable',
+    targetServerUrl: 'https://relay.example.test',
+    currentDefaultReleaseChannel: 'stable',
+    managedReleaseChannels: [],
+    manualRelayOwner: null,
+    exactDefaultServiceExists: false,
+    conflictingServices: [],
+    shouldOfferDefaultReleaseChannelSwitch: false,
+    shouldPromptForManualRelayTakeover: false,
+    shouldPromptForServiceReplacement: false,
+    ...overrides,
+  };
 }
 
 describe('happier setup', () => {
@@ -109,16 +128,7 @@ describe('happier setup', () => {
         {
           applyServerSelectionFromArgs,
           readCredentialsFn: async () => null,
-          readBackgroundServiceSetupGuidanceFn: async () => ({
-            targetReleaseChannel: 'stable',
-            targetServerUrl: 'https://relay.example.test',
-            currentDefaultReleaseChannel: 'stable',
-            managedReleaseChannels: [],
-            exactDefaultServiceExists: false,
-            conflictingServices: [],
-            shouldOfferDefaultReleaseChannelSwitch: false,
-            shouldPromptForServiceReplacement: false,
-          }),
+          readBackgroundServiceSetupGuidanceFn: async () => createBackgroundServiceSetupGuidance(),
           isInteractiveTerminalFn: () => false,
           promptInputFn: async () => {
             throw new Error('prompt should not be used');
@@ -287,6 +297,7 @@ describe('happier setup', () => {
       }));
       const promptInputFn = vi.fn<(prompt: string) => Promise<string>>()
         .mockResolvedValueOnce('y')
+        .mockResolvedValueOnce('y')
         .mockResolvedValueOnce('y');
 
       await handleSetupCommand(
@@ -297,9 +308,8 @@ describe('happier setup', () => {
           readSettingsFn: async () => ({ machineId: 'mid_123' } as any),
           isInteractiveTerminalFn: () => true,
           promptInputFn,
-          readBackgroundServiceSetupGuidanceFn: async () => ({
+          readBackgroundServiceSetupGuidanceFn: async () => createBackgroundServiceSetupGuidance({
             targetReleaseChannel: 'preview',
-            targetServerUrl: 'https://relay.example.test',
             currentDefaultReleaseChannel: 'stable',
             managedReleaseChannels: [
               {
@@ -323,6 +333,10 @@ describe('happier setup', () => {
                 onPath: true,
               },
             ],
+            manualRelayOwner: {
+              currentReleaseChannel: 'stable',
+              currentCliVersion: '0.2.0',
+            },
             exactDefaultServiceExists: false,
             conflictingServices: [
               {
@@ -334,6 +348,7 @@ describe('happier setup', () => {
               },
             ],
             shouldOfferDefaultReleaseChannelSwitch: true,
+            shouldPromptForManualRelayTakeover: true,
             shouldPromptForServiceReplacement: true,
           }),
           writeDefaultManagedReleaseChannelFn,
@@ -351,6 +366,10 @@ describe('happier setup', () => {
       );
       expect(promptInputFn).toHaveBeenNthCalledWith(
         2,
+        'A manual relay runtime is currently running for https://relay.example.test. Stop it and enable the background service for this computer? [Y/n] ',
+      );
+      expect(promptInputFn).toHaveBeenNthCalledWith(
+        3,
         'This computer already has conflicting Happier background services. Replace them before installing the default background service targeting https://relay.example.test? [Y/n] ',
       );
       expect(writeDefaultManagedReleaseChannelFn).toHaveBeenCalledWith({
@@ -363,6 +382,7 @@ describe('happier setup', () => {
         processEnv: process.env,
       });
       expect(calls).toEqual([
+        ['daemon', 'start', '--takeover'],
         ['service', 'uninstall', '--all', '--yes'],
         ['service', 'install'],
         ['providers', 'setup', '--yes'],
@@ -387,10 +407,8 @@ describe('happier setup', () => {
           promptInputFn: async () => {
             throw new Error('prompt should not be used');
           },
-          readBackgroundServiceSetupGuidanceFn: async () => ({
-            targetReleaseChannel: 'stable',
-            targetServerUrl: 'https://relay.example.test',
-            currentDefaultReleaseChannel: 'stable',
+          readBackgroundServiceSetupGuidanceFn: async () => createBackgroundServiceSetupGuidance({
+            exactDefaultServiceExists: true,
             managedReleaseChannels: [
               {
                 releaseChannel: 'stable',
@@ -403,10 +421,6 @@ describe('happier setup', () => {
                 onPath: true,
               },
             ],
-            exactDefaultServiceExists: true,
-            conflictingServices: [],
-            shouldOfferDefaultReleaseChannelSwitch: false,
-            shouldPromptForServiceReplacement: false,
           }),
           runHappyCliStepFn: async (argv) => {
             calls.push([...argv]);
@@ -447,9 +461,8 @@ describe('happier setup', () => {
           readSettingsFn: async () => ({ machineId: 'mid_123' } as any),
           isInteractiveTerminalFn: () => true,
           promptInputFn,
-          readBackgroundServiceSetupGuidanceFn: async () => ({
+          readBackgroundServiceSetupGuidanceFn: async () => createBackgroundServiceSetupGuidance({
             targetReleaseChannel: 'preview',
-            targetServerUrl: 'https://relay.example.test',
             currentDefaultReleaseChannel: 'stable',
             managedReleaseChannels: [
               {
@@ -525,9 +538,8 @@ describe('happier setup', () => {
           promptInputFn: async () => {
             throw new Error('prompt should not be used');
           },
-          readBackgroundServiceSetupGuidanceFn: async () => ({
+          readBackgroundServiceSetupGuidanceFn: async () => createBackgroundServiceSetupGuidance({
             targetReleaseChannel: 'preview',
-            targetServerUrl: 'https://relay.example.test',
             currentDefaultReleaseChannel: 'stable',
             managedReleaseChannels: [
               {
@@ -541,10 +553,7 @@ describe('happier setup', () => {
                 onPath: true,
               },
             ],
-            exactDefaultServiceExists: false,
-            conflictingServices: [],
             shouldOfferDefaultReleaseChannelSwitch: true,
-            shouldPromptForServiceReplacement: false,
           }),
           runHappyCliStepFn: async () => 0,
         },

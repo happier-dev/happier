@@ -1,11 +1,8 @@
-import { execFile } from 'node:child_process';
 import { lstat, mkdir, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { promisify } from 'node:util';
 
 import { planArchiveExtraction } from '@happier-dev/release-runtime';
-
-const execFileAsync = promisify(execFile);
+import { runCommandStreaming } from '../process/runCommandStreaming.js';
 
 export async function extractReleasePayloadRootFromArchive(params: Readonly<{
   archivePath: string;
@@ -21,8 +18,10 @@ export async function extractReleasePayloadRootFromArchive(params: Readonly<{
     os: process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'darwin' : 'linux',
   });
 
-  await execFileAsync(extractionPlan.command.cmd, extractionPlan.command.args, {
-    windowsHide: true,
+  await runCommandStreaming({
+    cmd: extractionPlan.command.cmd,
+    args: extractionPlan.command.args,
+    context: 'first-party-runtime extract',
   });
 
   const entries = (await readdir(params.extractDir)).filter((entry) => !entry.startsWith('.'));

@@ -1,6 +1,6 @@
-import { resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServiceListEntries } from '@/daemon/service/cli';
-import { isDaemonServiceModeSupported } from '@/daemon/service/assertDaemonServiceModeSupported';
-import type { DaemonServiceMode } from '@/daemon/service/plan';
+import { resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServiceListEntries } from '../../daemon/service/cli';
+import { isDaemonServiceModeSupported } from '../../daemon/service/assertDaemonServiceModeSupported';
+import type { DaemonServiceMode } from '../../daemon/service/plan';
 
 import { buildBackgroundServiceRepairPlan } from './buildBackgroundServiceRepairPlan';
 
@@ -33,6 +33,7 @@ export async function resolveBackgroundServiceRepairPlanForCurrentRuntime(params
   const services = serviceLists.flat();
   const plan = buildBackgroundServiceRepairPlan({
     currentReleaseChannel: runtime.channel,
+    currentServerId: runtime.instanceId,
     preferredMode: params.preferredMode,
     services,
   });

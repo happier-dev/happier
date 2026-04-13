@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { spawn } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
-import { appendFile, mkdir, rm, utimes, writeFile } from 'node:fs/promises';
+import { existsSync, mkdtempSync } from 'node:fs';
+import { appendFile, mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -23,9 +23,31 @@ const { runLoggedCommandMock } = vi.hoisted(() => {
     };
 });
 
+const { ensureWorkspacePackagesBuiltForComponentMock } = vi.hoisted(() => {
+  return {
+    ensureWorkspacePackagesBuiltForComponentMock: vi
+      .fn<(componentDir: string, options?: { quiet?: boolean; env?: NodeJS.ProcessEnv }) => Promise<{
+        ok: boolean;
+        built: string[];
+        skipped: string[];
+      }>>()
+      .mockResolvedValue({
+        ok: true,
+        built: ['@happier-dev/protocol'],
+        skipped: [],
+      }),
+  };
+});
+
 vi.mock('./spawnProcess', () => {
   return {
     runLoggedCommand: runLoggedCommandMock,
+  };
+});
+
+vi.mock('../../../../../apps/stack/scripts/utils/proc/pm.mjs', () => {
+  return {
+    ensureWorkspacePackagesBuiltForComponent: ensureWorkspacePackagesBuiltForComponentMock,
   };
 });
 
@@ -82,6 +104,12 @@ describe('uiWebExport (cache clearing)', () => {
     runLoggedCommandMock.mockReset();
     runLoggedCommandMock.mockImplementation(async (_params?: RunLoggedCommandMockParams) => {
       throw new Error('RUN_LOGGED_COMMAND_CALLED');
+    });
+    ensureWorkspacePackagesBuiltForComponentMock.mockReset();
+    ensureWorkspacePackagesBuiltForComponentMock.mockResolvedValue({
+      ok: true,
+      built: ['@happier-dev/protocol'],
+      skipped: [],
     });
   });
 
@@ -147,6 +175,111 @@ describe('uiWebExport (cache clearing)', () => {
         setTimeout(() => reject(new Error('startUiWebExport did not reject quickly')), 2_000);
       }),
     ])).rejects.toThrow(/classification=startup_stalled_after_metro_startup_no_staging_progress/);
+  });
+
+  it('builds apps/ui workspace packages before starting expo export', async () => {
+    const testDir = mkdtempSync(join(tmpdir(), 'happier-uiwebexport-test-'));
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      EXPO_PUBLIC_DEBUG: '1',
+      HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: `workspace-preflight-${Date.now()}`,
+    };
+
+    await expect(
+      startUiWebExport({
+        testDir,
+        env,
+      }),
+    ).rejects.toThrow(/RUN_LOGGED_COMMAND_CALLED/);
+
+    expect(ensureWorkspacePackagesBuiltForComponentMock).toHaveBeenCalledTimes(1);
+    expect(ensureWorkspacePackagesBuiltForComponentMock).toHaveBeenCalledWith(
+      expect.stringMatching(/\/apps\/ui$/),
+      expect.objectContaining({
+        quiet: true,
+        env,
+      }),
+    );
+  });
+
+  it('does not create the export lock until workspace build preflight finishes', async () => {
+    let releasePreflight!: () => void;
+    const preflightPromise = new Promise<void>((resolve) => {
+      releasePreflight = resolve;
+    });
+
+    ensureWorkspacePackagesBuiltForComponentMock.mockImplementationOnce(async () => {
+      await preflightPromise;
+      return {
+        ok: true,
+        built: ['@happier-dev/protocol'],
+        skipped: [],
+      };
+    });
+
+    const testDir = mkdtempSync(join(tmpdir(), 'happier-uiwebexport-test-'));
+    const namespace = `preflight-lock-${Date.now()}`;
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      EXPO_PUBLIC_DEBUG: '1',
+      HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: namespace,
+    };
+    const lockPath = resolve(resolveUiWebExportRootDir(env), 'build.lock');
+
+    const startPromise = startUiWebExport({
+      testDir,
+      env,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(existsSync(lockPath)).toBe(false);
+
+    releasePreflight();
+
+    await expect(startPromise).rejects.toThrow(/RUN_LOGGED_COMMAND_CALLED/);
+  });
+
+  it('times out workspace build preflight with an actionable export log before opening the export lock', async () => {
+    ensureWorkspacePackagesBuiltForComponentMock.mockImplementationOnce(async () => {
+      await new Promise<void>(() => {
+        // Simulate a workspace preflight waiting forever on an external build lock.
+      });
+      return {
+        ok: true,
+        built: ['@happier-dev/protocol'],
+        skipped: [],
+      };
+    });
+
+    const testDir = mkdtempSync(join(tmpdir(), 'happier-uiwebexport-test-'));
+    const namespace = `preflight-timeout-${Date.now()}`;
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      EXPO_PUBLIC_DEBUG: '1',
+      HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: namespace,
+      HAPPIER_E2E_UI_WEB_EXPORT_WORKSPACE_PREBUILD_TIMEOUT_MS: '50',
+    };
+    const lockPath = resolve(resolveUiWebExportRootDir(env), 'build.lock');
+    const stderrPath = resolve(testDir, 'ui.web.export.stderr.log');
+
+    const startPromise = startUiWebExport({
+      testDir,
+      env,
+    });
+    const rejection = expect(Promise.race([
+      startPromise,
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('startUiWebExport did not reject quickly for workspace preflight timeout')), 4_000);
+      }),
+    ])).rejects.toThrow(/classification=workspace_preflight_timeout/);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(existsSync(stderrPath)).toBe(true);
+    await expect(readFile(stderrPath, 'utf8')).resolves.toContain('workspace build preflight started');
+    await rejection;
+
+    expect(existsSync(lockPath)).toBe(false);
+    await expect(readFile(stderrPath, 'utf8')).resolves.toContain('workspace build preflight');
   });
 
   it('fails export startup promptly when a stalled exporter ignores the abort signal', async () => {
@@ -687,6 +820,43 @@ describe('uiWebExport (cache clearing)', () => {
       env,
     });
     await ui.stop();
+  });
+
+  it('creates a nested testDir before opening export stdout and stderr logs', async () => {
+    runLoggedCommandMock.mockImplementationOnce(async (params?: RunLoggedCommandMockParams) => {
+      if (!params?.args || !params.stderrPath) {
+        throw new Error('missing runLoggedCommand params');
+      }
+      await writeFile(params.stdoutPath, 'Expo Autolinking module resolution enabled\nStarting Metro Bundler\n', 'utf8');
+      await writeFile(params.stderrPath, '', 'utf8');
+      const outputDir = resolveOutputDirFromArgs(params.args);
+      await mkdir(resolve(outputDir, '_expo/static/js/web'), { recursive: true });
+      await writeFile(
+        resolve(outputDir, 'index.html'),
+        '<!doctype html><html><head><script src="/_expo/static/js/web/index.js"></script></head><body>nested</body></html>',
+        'utf8',
+      );
+      await writeFile(resolve(outputDir, 'metadata.json'), JSON.stringify({ version: 1 }), 'utf8');
+      await writeFile(resolve(outputDir, '_expo/static/js/web/index.js'), 'globalThis.__HAPPIER_E2E__ = true;', 'utf8');
+    });
+
+    const rootDir = mkdtempSync(join(tmpdir(), 'happier-uiwebexport-test-'));
+    const testDir = resolve(rootDir, 'nested', 'suite');
+    const ui = await startUiWebExport({
+      testDir,
+      env: {
+        ...process.env,
+        EXPO_PUBLIC_DEBUG: '1',
+        HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: `nested-testdir-${Date.now()}`,
+      },
+    });
+
+    try {
+      expect(runLoggedCommandMock).toHaveBeenCalledTimes(1);
+    } finally {
+      await ui.stop();
+      await rm(rootDir, { recursive: true, force: true }).catch(() => {});
+    }
   });
 
   it('reuses the canonical shared persisted export when an explicit namespace is requested', async () => {

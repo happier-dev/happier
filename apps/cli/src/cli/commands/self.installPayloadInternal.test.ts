@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { resolveInstalledFirstPartyComponentPaths } from '@happier-dev/cli-common/firstPartyRuntime';
+
 const { installVersionedPayloadMock } = vi.hoisted(() => ({
   installVersionedPayloadMock: vi.fn(async () => ({
     currentVersionId: '1.2.3' as string,
@@ -90,8 +92,15 @@ describe('happier self __install-payload', () => {
         terminalRuntime: null,
       });
 
+      const installedPaths = resolveInstalledFirstPartyComponentPaths({
+        componentId: 'happier-cli',
+        channel: 'stable',
+        processEnv: process.env,
+      });
+
       expect(maybeRunVersionGatedRuntimeMigrationMock).toHaveBeenCalledWith({
         fromVersion: '0.2.2',
+        installedRuntimeNodePath: installedPaths.binaryPath,
         toVersion: '0.2.3',
         argv: ['repair'],
         commandPath: 'happier self migrate',

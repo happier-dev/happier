@@ -66,19 +66,59 @@ describe('startDaemon ownership preflight', () => {
             });
 
             const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-                throw new Error(`process.exit(${code ?? ''})`);
+                return undefined as never;
             }) as typeof process.exit);
 
-            try {
-                await expect(startDaemon()).rejects.toThrow('process.exit(1)');
-            } finally {
-                exitSpy.mockRestore();
-            }
+            await expect(startDaemon()).resolves.toBeUndefined();
+            expect(exitSpy).toHaveBeenCalledTimes(1);
+            expect(exitSpy).toHaveBeenCalledWith(1);
 
             const logContent = await readFile(logger.logFilePath, 'utf8');
             expect(logContent).toContain('Relay ownership conflict prevented daemon startup');
             expect(logContent).toContain('already owns this relay');
             expect(logContent).not.toContain('[DAEMON RUN][FATAL] Failed somewhere unexpectedly');
+            exitSpy.mockRestore();
+        });
+    });
+
+    it('exits with code 0 for background-service ownership conflicts without falling through to the fatal handler', async () => {
+        await withTempDir('happier-start-daemon-owner-conflict-background-service-', async (homeDir) => {
+            envScope.patch({
+                HAPPIER_HOME_DIR: homeDir,
+                HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+                HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
+                HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
+            });
+            vi.resetModules();
+
+            const [{ writeDaemonState }, { startDaemon }, { logger }] = await Promise.all([
+                import('@/persistence'),
+                import('./startDaemon'),
+                import('@/ui/logger'),
+            ]);
+
+            writeDaemonState({
+                pid: process.pid,
+                httpPort: 43111,
+                startedAt: Date.now(),
+                startedWithCliVersion: '0.0.0-other',
+                startedWithPublicReleaseChannel: 'preview',
+                startupSource: 'background-service',
+                serviceLabel: 'com.happier.cli.daemon.default',
+            });
+
+            const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+                return undefined as never;
+            }) as typeof process.exit);
+
+            await expect(startDaemon()).resolves.toBeUndefined();
+            expect(exitSpy).toHaveBeenCalledTimes(1);
+            expect(exitSpy).toHaveBeenCalledWith(0);
+
+            const logContent = await readFile(logger.logFilePath, 'utf8');
+            expect(logContent).toContain('Relay ownership conflict prevented daemon startup');
+            expect(logContent).not.toContain('[DAEMON RUN][FATAL] Failed somewhere unexpectedly');
+            exitSpy.mockRestore();
         });
     });
 

@@ -15,6 +15,7 @@ describe('CLI command-surface manifest', () => {
       'gemini',
       'connect',
       'providers',
+      'plugins',
       'notify',
       'install',
       'service',

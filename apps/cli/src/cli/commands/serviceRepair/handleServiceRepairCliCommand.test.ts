@@ -1,60 +1,133 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { DaemonServiceListEntry } from '@/daemon/service/cli';
-import { createEnvKeyScope } from '@/testkit/env/envScope';
-import { withTempDir } from '@/testkit/fs/tempDir';
-import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
+import { captureConsoleJsonOutput } from '../../../testkit/logger/captureOutput';
+
+type RepairRuntime = Readonly<{
+  platform: 'darwin' | 'linux' | 'win32';
+  channel: 'stable' | 'preview' | 'publicdev';
+  targetMode: 'default-following' | 'pinned';
+  instanceId: string;
+  uid: number | null;
+  userHomeDir: string;
+  happierHomeDir: string;
+  serverUrl: string;
+  publicServerUrl: string;
+  webappUrl: string;
+  nodePath: string;
+  entryPath: string;
+}>;
+
+type RepairPlan = Readonly<{
+  currentReleaseChannel: string;
+  existingServices: readonly unknown[];
+  actions: readonly unknown[];
+  manualWarnings: readonly string[];
+}>;
+
+type RepairResolution = Readonly<{
+  runtime: RepairRuntime;
+  services: readonly unknown[];
+  scannedModes: readonly ('user' | 'system')[];
+  plan: RepairPlan;
+}>;
 
 const {
   applyBackgroundServiceRepairPlanMock,
-  resolveDaemonServiceCliRuntimeFromEnvMock,
-  resolveDaemonServiceListEntriesMock,
+  evaluateCurrentDaemonOwnerMock,
+  renderDaemonServiceRepairOwnershipNoteMock,
+  resolveBackgroundServiceRepairPlanForCurrentRuntimeMock,
 } = vi.hoisted(() => ({
-  applyBackgroundServiceRepairPlanMock: vi.fn(async (_plan: unknown, _runtime: unknown) => ({ executedActions: [] })),
-  resolveDaemonServiceCliRuntimeFromEnvMock: vi.fn((_params?: unknown) => ({
-    platform: 'linux',
-    channel: 'stable',
-    targetMode: 'default-following',
-    instanceId: 'default',
-    uid: 1000,
-    userHomeDir: '/tmp/user',
-    happierHomeDir: '/tmp/user/.happier',
-    serverUrl: 'https://example.test',
-    publicServerUrl: 'https://example.test',
-    webappUrl: 'https://app.example.test',
-    nodePath: '/usr/bin/node',
-    entryPath: '/opt/happier/index.mjs',
+  applyBackgroundServiceRepairPlanMock: vi.fn(async (_plan: unknown, _runtime: unknown): Promise<Readonly<{ executedActions: readonly string[] }>> => ({
+    executedActions: [],
   })),
-  resolveDaemonServiceListEntriesMock: vi.fn<(_runtime: unknown, _options?: unknown) => Promise<DaemonServiceListEntry[]>>(async () => []),
+  evaluateCurrentDaemonOwnerMock: vi.fn(async (): Promise<Readonly<{ kind: 'none' | 'manual' }>> => ({
+    kind: 'none',
+  })),
+  renderDaemonServiceRepairOwnershipNoteMock: vi.fn((_: unknown): Readonly<{ title: string; lines: readonly string[] } | null> => null),
+  resolveBackgroundServiceRepairPlanForCurrentRuntimeMock: vi.fn(async (_: unknown): Promise<RepairResolution> => ({
+    runtime: {
+      platform: 'linux',
+      channel: 'stable',
+      targetMode: 'default-following',
+      instanceId: 'default',
+      uid: 1000,
+      userHomeDir: '/tmp/user',
+      happierHomeDir: '/tmp/user/.happier',
+      serverUrl: 'https://example.test',
+      publicServerUrl: 'https://example.test',
+      webappUrl: 'https://app.example.test',
+      nodePath: '/usr/bin/node',
+      entryPath: '/opt/happier/index.mjs',
+    },
+    services: [],
+    scannedModes: ['user'],
+    plan: {
+      currentReleaseChannel: 'stable',
+      existingServices: [],
+      actions: [],
+      manualWarnings: [],
+    },
+  })),
 }));
 
-vi.mock('@/daemon/service/cli', () => ({
-  resolveDaemonServiceCliRuntimeFromEnv: (params?: unknown) => resolveDaemonServiceCliRuntimeFromEnvMock(params),
-  resolveDaemonServiceListEntries: (runtime: unknown, options?: unknown) => resolveDaemonServiceListEntriesMock(runtime, options),
+vi.mock('../../../diagnostics/backgroundServiceRepair/resolveBackgroundServiceRepairPlanForCurrentRuntime', () => ({
+  resolveBackgroundServiceRepairPlanForCurrentRuntime: (params: unknown) => resolveBackgroundServiceRepairPlanForCurrentRuntimeMock(params),
 }));
 
-vi.mock('@/diagnostics/backgroundServiceRepair', () => ({
+vi.mock('../../../diagnostics/backgroundServiceRepair', () => ({
   applyBackgroundServiceRepairPlan: (plan: unknown, runtime: unknown) => applyBackgroundServiceRepairPlanMock(plan, runtime),
+}));
+
+vi.mock('../../../daemon/ownership/evaluateCurrentDaemonOwner', () => ({
+  evaluateCurrentDaemonOwner: () => evaluateCurrentDaemonOwnerMock(),
+}));
+
+vi.mock('../../../daemon/ownership/evaluateServiceLifecycleOwnership', () => ({
+  renderDaemonServiceRepairOwnershipNote: (params: unknown) => renderDaemonServiceRepairOwnershipNoteMock(params),
+}));
+
+vi.mock('../server/commandUtilities', () => ({
+  isInteractiveTerminal: () => false,
+  promptInput: vi.fn(async () => ''),
 }));
 
 import { handleServiceRepairCliCommand } from './handleServiceRepairCliCommand';
 
 describe('happier service repair', () => {
-  const envScope = createEnvKeyScope([
-    'HAPPIER_HOME_DIR',
-    'HAPPIER_ACTIVE_SERVER_ID',
-    'HAPPIER_PUBLIC_RELEASE_CHANNEL',
-  ]);
-
   afterEach(() => {
-    envScope.restore();
     vi.restoreAllMocks();
     applyBackgroundServiceRepairPlanMock.mockClear();
-    resolveDaemonServiceCliRuntimeFromEnvMock.mockClear();
-    resolveDaemonServiceListEntriesMock.mockClear();
+    evaluateCurrentDaemonOwnerMock.mockClear();
+    renderDaemonServiceRepairOwnershipNoteMock.mockClear();
+    resolveBackgroundServiceRepairPlanForCurrentRuntimeMock.mockClear();
   });
 
   it('fails closed when executing system-scoped repair on linux without root privileges', async () => {
+    resolveBackgroundServiceRepairPlanForCurrentRuntimeMock.mockResolvedValueOnce({
+      runtime: {
+        platform: 'linux',
+        channel: 'stable',
+        targetMode: 'default-following',
+        instanceId: 'default',
+        uid: 1000,
+        userHomeDir: '/tmp/user',
+        happierHomeDir: '/tmp/user/.happier',
+        serverUrl: 'https://example.test',
+        publicServerUrl: 'https://example.test',
+        webappUrl: 'https://app.example.test',
+        nodePath: '/usr/bin/node',
+        entryPath: '/opt/happier/index.mjs',
+      },
+      services: [],
+      scannedModes: ['system'],
+      plan: {
+        currentReleaseChannel: 'stable',
+        existingServices: [],
+        actions: [],
+        manualWarnings: [],
+      },
+    });
+
     await expect(handleServiceRepairCliCommand({
       argv: ['repair', '--mode', 'system', '--yes'],
       commandPath: 'happier service',
@@ -64,6 +137,31 @@ describe('happier service repair', () => {
   });
 
   it('fails closed for system-scoped json repair on linux without root privileges', async () => {
+    resolveBackgroundServiceRepairPlanForCurrentRuntimeMock.mockResolvedValueOnce({
+      runtime: {
+        platform: 'linux',
+        channel: 'stable',
+        targetMode: 'default-following',
+        instanceId: 'default',
+        uid: 1000,
+        userHomeDir: '/tmp/user',
+        happierHomeDir: '/tmp/user/.happier',
+        serverUrl: 'https://example.test',
+        publicServerUrl: 'https://example.test',
+        webappUrl: 'https://app.example.test',
+        nodePath: '/usr/bin/node',
+        entryPath: '/opt/happier/index.mjs',
+      },
+      services: [],
+      scannedModes: ['system'],
+      plan: {
+        currentReleaseChannel: 'stable',
+        existingServices: [],
+        actions: [],
+        manualWarnings: [],
+      },
+    });
+
     await expect(handleServiceRepairCliCommand({
       argv: ['repair', '--mode', 'system', '--yes', '--json'],
       commandPath: 'happier service',
@@ -73,19 +171,29 @@ describe('happier service repair', () => {
   });
 
   it('rejects system-scoped repair on unsupported platforms', async () => {
-    resolveDaemonServiceCliRuntimeFromEnvMock.mockReturnValueOnce({
-      platform: 'darwin',
-      channel: 'stable',
-      targetMode: 'default-following',
-      instanceId: 'default',
-      uid: 501,
-      userHomeDir: '/tmp/user',
-      happierHomeDir: '/tmp/user/.happier',
-      serverUrl: 'https://example.test',
-      publicServerUrl: 'https://example.test',
-      webappUrl: 'https://app.example.test',
-      nodePath: '/usr/bin/node',
-      entryPath: '/opt/happier/index.mjs',
+    resolveBackgroundServiceRepairPlanForCurrentRuntimeMock.mockResolvedValueOnce({
+      runtime: {
+        platform: 'darwin',
+        channel: 'stable',
+        targetMode: 'default-following',
+        instanceId: 'default',
+        uid: 501,
+        userHomeDir: '/tmp/user',
+        happierHomeDir: '/tmp/user/.happier',
+        serverUrl: 'https://example.test',
+        publicServerUrl: 'https://example.test',
+        webappUrl: 'https://app.example.test',
+        nodePath: '/usr/bin/node',
+        entryPath: '/opt/happier/index.mjs',
+      },
+      services: [],
+      scannedModes: ['user'],
+      plan: {
+        currentReleaseChannel: 'stable',
+        existingServices: [],
+        actions: [],
+        manualWarnings: [],
+      },
     });
 
     await expect(handleServiceRepairCliCommand({
@@ -97,136 +205,65 @@ describe('happier service repair', () => {
   });
 
   it('reports a manual relay owner warning in JSON output', async () => {
-    await withTempDir('happier-service-repair-owner-warning-', async (homeDir) => {
-      envScope.patch({
-        HAPPIER_HOME_DIR: homeDir,
-        HAPPIER_ACTIVE_SERVER_ID: 'cloud',
-        HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
-      });
-      vi.resetModules();
-
-      const [{ writeDaemonState }, { handleServiceRepairCliCommand }] = await Promise.all([
-        import('@/persistence'),
-        import('./handleServiceRepairCliCommand'),
-      ]);
-
-      writeDaemonState({
-        pid: process.pid,
-        httpPort: 43121,
-        startedAt: Date.now(),
-        startedWithCliVersion: '0.0.0-other',
-        startedWithPublicReleaseChannel: 'preview',
-        startupSource: 'manual',
-        runtimeId: 'runtime-manual',
-      });
-
-      const output = captureConsoleJsonOutput<{ ok: boolean; warning?: string }>();
-      try {
-        await handleServiceRepairCliCommand({
-          argv: ['repair', '--json'],
-          commandPath: 'happier service',
-        });
-
-        expect(output.json()).toEqual(expect.objectContaining({
-          ok: true,
-          warning: expect.stringContaining('Repairing background services will not stop the current relay owner.'),
-        }));
-      } finally {
-        output.restore();
-      }
-    });
-  });
-
-  it('aggregates user and system services when no explicit mode is provided', async () => {
-    resolveDaemonServiceListEntriesMock.mockImplementation(async (_runtime: unknown, options?: unknown) => {
-      const normalizedOptions = options as { mode?: 'user' | 'system' } | undefined;
-      if (normalizedOptions?.mode === 'system') {
-        return [{
-          serverId: 'default',
-          name: 'Default background service',
-          installed: true,
-          path: '/etc/systemd/system/happier-daemon.default.service',
-          platform: 'linux',
-          mode: 'system',
-          releaseChannel: 'stable',
-          label: 'happier-daemon.default',
-          targetMode: 'default-following',
-        }];
-      }
-      return [{
-        serverId: 'default',
-        name: 'Default background service',
-        installed: true,
-        path: '/tmp/user/.config/systemd/user/happier-daemon.default.service',
-        platform: 'linux',
-        mode: 'user',
-        releaseChannel: 'stable',
-        label: 'happier-daemon.default',
-        targetMode: 'default-following',
-      }];
+    evaluateCurrentDaemonOwnerMock.mockResolvedValueOnce({ kind: 'manual' });
+    renderDaemonServiceRepairOwnershipNoteMock.mockReturnValueOnce({
+      title: 'Ownership note',
+      lines: ['Repairing background services will not stop the current relay owner.'],
     });
 
-    const output = captureConsoleJsonOutput<{
-      ok: boolean;
-      existingServices: Array<{ mode?: 'user' | 'system'; label: string }>;
-      actions: Array<{ kind: string; service?: { mode?: 'user' | 'system'; label: string } }>;
-    }>();
+    const output = captureConsoleJsonOutput<{ ok: boolean; warning?: string }>();
     try {
       await handleServiceRepairCliCommand({
         argv: ['repair', '--json'],
         commandPath: 'happier service',
       });
+
+      expect(output.json()).toEqual(expect.objectContaining({
+        ok: true,
+        warning: expect.stringContaining('Repairing background services will not stop the current relay owner.'),
+      }));
     } finally {
       output.restore();
     }
-
-    expect(resolveDaemonServiceListEntriesMock).toHaveBeenNthCalledWith(1, expect.anything(), { mode: 'user' });
-    expect(resolveDaemonServiceListEntriesMock).toHaveBeenNthCalledWith(2, expect.anything(), { mode: 'system' });
-    expect(output.json()).toEqual(expect.objectContaining({
-      ok: true,
-      existingServices: [
-        expect.objectContaining({ mode: 'user', label: 'happier-daemon.default' }),
-        expect.objectContaining({ mode: 'system', label: 'happier-daemon.default' }),
-      ],
-      actions: [
-        expect.objectContaining({
-          kind: 'remove-service',
-          service: expect.objectContaining({ mode: 'system', label: 'happier-daemon.default' }),
-        }),
-      ],
-    }));
   });
 
   it('fails closed when a mixed user and system repair plan would require root', async () => {
-    resolveDaemonServiceListEntriesMock.mockImplementation(async (_runtime: unknown, options?: unknown) => {
-      const normalizedOptions = options as { mode?: 'user' | 'system' } | undefined;
-      if (normalizedOptions?.mode === 'system') {
-        return [{
-          serverId: 'default',
-          name: 'Default background service',
-          installed: true,
-          path: '/etc/systemd/system/happier-daemon.default.service',
-          platform: 'linux',
-          mode: 'system',
-          releaseChannel: 'stable',
-          label: 'happier-daemon.default',
-          targetMode: 'default-following',
-        }];
-      }
-      return [{
-        serverId: 'default',
-        name: 'Default background service',
-        installed: true,
-        path: '/tmp/user/.config/systemd/user/happier-daemon.default.service',
+    resolveBackgroundServiceRepairPlanForCurrentRuntimeMock.mockResolvedValueOnce({
+      runtime: {
         platform: 'linux',
-        mode: 'user',
-        releaseChannel: 'stable',
-        label: 'happier-daemon.default',
+        channel: 'stable',
         targetMode: 'default-following',
-      }];
+        instanceId: 'default',
+        uid: 1000,
+        userHomeDir: '/tmp/user',
+        happierHomeDir: '/tmp/user/.happier',
+        serverUrl: 'https://example.test',
+        publicServerUrl: 'https://example.test',
+        webappUrl: 'https://app.example.test',
+        nodePath: '/usr/bin/node',
+        entryPath: '/opt/happier/index.mjs',
+      },
+      services: [],
+      scannedModes: ['user', 'system'],
+      plan: {
+        currentReleaseChannel: 'stable',
+        existingServices: [],
+        actions: [
+          {
+            kind: 'remove-service',
+            service: {
+              label: 'happier-daemon.default',
+              installedPath: '/etc/systemd/system/happier-daemon.default.service',
+              mode: 'system',
+              releaseChannel: 'stable',
+              targetMode: 'default-following',
+              instanceId: 'default',
+            },
+          },
+        ],
+        manualWarnings: [],
+      },
     });
-
-    const { handleServiceRepairCliCommand } = await import('./handleServiceRepairCliCommand');
 
     await expect(handleServiceRepairCliCommand({
       argv: ['repair', '--yes', '--json'],

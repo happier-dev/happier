@@ -477,7 +477,7 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
   });
 
   it('should spawn & stop a session via HTTP (not testing RPC route, but similar enough)', { timeout: 60_000 }, async () => {
-    const response = await spawnDaemonSession('/tmp', 'spawned-test-456');
+    const response = await spawnDaemonSession({ directory: '/tmp', sessionId: 'spawned-test-456' });
 
     expect(response, `spawnDaemonSession(/tmp) response=${JSON.stringify(response)}`).toHaveProperty('success', true);
     expect(response).toHaveProperty('sessionId');
@@ -533,7 +533,7 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
     });
 
     // Spawn a daemon session
-    const spawnResponse = await spawnDaemonSession('/tmp', 'daemon-session-bbb');
+    const spawnResponse = await spawnDaemonSession({ directory: '/tmp', sessionId: 'daemon-session-bbb' });
 
     // List all sessions
     await waitForSessionCount(2, {
@@ -576,7 +576,7 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
 
   it('should update session metadata when webhook is called', { timeout: 60_000 }, async () => {
     // Spawn a session
-    const spawnResponse = await spawnDaemonSession('/tmp');
+    const spawnResponse = await spawnDaemonSession({ directory: '/tmp' });
 
     // Verify webhook was processed (session ID updated)
     await waitForSessionById(spawnResponse.sessionId, {

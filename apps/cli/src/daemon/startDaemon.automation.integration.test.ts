@@ -138,7 +138,9 @@ vi.mock('@/configuration', () => ({
   configuration: {
     privateKeyFile: '/tmp/key',
     happyHomeDir: '/tmp/home',
+    activeServerDir: '/tmp/home/servers/active',
     currentCliVersion: '0.0.0-test',
+    publicReleaseRing: 'publicdev',
     daemonSpawnExistingSessionWaitForExitMs: 5_000,
     daemonSpawnExistingSessionWaitForExitPollIntervalMs: 50,
   },
@@ -268,6 +270,20 @@ vi.mock('./startup/waitForAuthConfig', () => ({
 
 vi.mock('./startup/ensureSessionDirectory', () => ({
   ensureSessionDirectory: vi.fn(async () => ({ ok: true, directoryCreated: false })),
+}));
+
+vi.mock('@/daemon/ownership/evaluateCurrentDaemonOwner', () => ({
+  evaluateCurrentDaemonOwner: vi.fn(async () => ({ kind: 'none' })),
+}));
+
+vi.mock('@/daemon/ownership/resolveDaemonTakeoverDecision', () => ({
+  buildDaemonTakeoverNotice: vi.fn(() => ({ title: 'takeover', lines: [] })),
+  resolveDaemonTakeoverDecision: vi.fn(() => ({ kind: 'ok' })),
+}));
+
+vi.mock('@/daemon/ownership/daemonServiceInventory', () => ({
+  evaluateDaemonStartupServiceConflict: vi.fn(async () => ({ kind: 'ok' })),
+  renderDaemonInstalledServiceConflict: vi.fn(() => ({ title: 'service-conflict', lines: [] })),
 }));
 
 vi.mock('./startup/waitForInitialCredentials', () => ({
@@ -408,16 +424,11 @@ describe('startDaemon automation wiring (integration)', () => {
       const { startDaemon } = await import('./startDaemon');
 
       const run = startDaemon();
-      // Allow the bootstrap retry loop (0ms delay) to tick.
-      const ensureMachineRegisteredMock = ensureMachineRegistered as unknown as { mock: { calls: unknown[][] } };
-      for (let i = 0; i < 20; i += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        if (ensureMachineRegisteredMock.mock.calls.length >= 2) break;
-      }
-
-      expect(ensureMachineRegistered).toHaveBeenCalledTimes(2);
-      expect(harness.apiMachine.connect).toHaveBeenCalledTimes(1);
-      expect(harness.startAutomationWorker).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => {
+        expect(ensureMachineRegistered).toHaveBeenCalledTimes(2);
+        expect(harness.apiMachine.connect).toHaveBeenCalledTimes(1);
+        expect(harness.startAutomationWorker).toHaveBeenCalledTimes(1);
+      });
 
       harness.requestShutdown('happier-cli');
       await run;
@@ -528,9 +539,11 @@ describe('startDaemon automation wiring (integration)', () => {
       const { startDaemon } = await import('./startDaemon');
 
       const run = startDaemon();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-
-      expect(harness.apiMachine.onConnectionStateChange).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => {
+        expect(harness.apiMachine.onConnectionStateChange).toHaveBeenCalledTimes(1);
+        expect(harness.apiMachine.connect).toHaveBeenCalledTimes(1);
+        expect(harness.startAutomationWorker).toHaveBeenCalledTimes(1);
+      });
 
       harness.emitMachineConnectionState({
         phase: 'idle',

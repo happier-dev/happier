@@ -273,11 +273,68 @@ function resolveServerSharedDepsOutputPaths(rootDir: string): string[] {
     // Server startup (and its `tsx`/ESM loader) relies on cli-common process helpers; missing outputs
     // can manifest as `ERR_MODULE_NOT_FOUND` under `node_modules/@happier-dev/cli-common/dist/process/*`.
     resolve(rootDir, 'packages', 'cli-common', 'dist', 'process', 'commandExists.js'),
+    // Server runtime imports relay-access provider modules through the workspace-linked node_modules tree.
+    // If this bundled path is absent, server-light can exit before /health is ready with ENOENT.
+    resolve(rootDir, 'node_modules', '@happier-dev', 'cli-common', 'dist', 'relayAccess', 'providers', 'localOnly', 'index.js'),
   ];
 }
 
+function listExplicitNamedExportsFromModuleSource(sourceText: string): string[] {
+  const namedExports: string[] = [];
+  const exportDeclarationPattern = /\bexport\s+(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/gu;
+  for (const match of sourceText.matchAll(exportDeclarationPattern)) {
+    const exportName = match[1];
+    if (exportName) namedExports.push(exportName);
+  }
+
+  const exportListPattern = /\bexport\s*\{([\s\S]*?)\}\s*(?:from\b[\s\S]*?)?;/gu;
+  for (const match of sourceText.matchAll(exportListPattern)) {
+    const specifierBlock = match[1];
+    if (!specifierBlock) continue;
+    const specifiers = specifierBlock.split(',');
+    for (const rawSpecifier of specifiers) {
+      const normalizedSpecifier = rawSpecifier.replace(/\/\*[\s\S]*?\*\//gu, '').trim();
+      if (!normalizedSpecifier) continue;
+      const aliasMatch = normalizedSpecifier.match(/\bas\s+([A-Za-z_$][\w$]*)$/u);
+      if (aliasMatch?.[1]) {
+        namedExports.push(aliasMatch[1]);
+        continue;
+      }
+      const directMatch = normalizedSpecifier.match(/^([A-Za-z_$][\w$]*)$/u);
+      if (directMatch?.[1]) {
+        namedExports.push(directMatch[1]);
+      }
+    }
+  }
+
+  return namedExports;
+}
+
+function hasDuplicateExplicitNamedExports(sourceText: string): boolean {
+  const seenExports = new Set<string>();
+  for (const exportName of listExplicitNamedExportsFromModuleSource(sourceText)) {
+    if (seenExports.has(exportName)) return true;
+    seenExports.add(exportName);
+  }
+  return false;
+}
+
+function hasValidProtocolDistIndexExports(rootDir: string): boolean {
+  const protocolDistIndexPath = resolve(rootDir, 'packages', 'protocol', 'dist', 'index.js');
+  try {
+    const sourceText = readFileSync(protocolDistIndexPath, 'utf8');
+    if (!sourceText.trim()) return false;
+    return !hasDuplicateExplicitNamedExports(sourceText);
+  } catch {
+    return false;
+  }
+}
+
 export function hasServerSharedDepsOutputs(rootDir: string): boolean {
-  return resolveServerSharedDepsOutputPaths(rootDir).every((outputPath) => existsSync(outputPath));
+  if (!resolveServerSharedDepsOutputPaths(rootDir).every((outputPath) => existsSync(outputPath))) {
+    return false;
+  }
+  return hasValidProtocolDistIndexExports(rootDir);
 }
 
 function parseBuildLockOwner(raw: string): BuildLockOwner {

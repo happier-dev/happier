@@ -1,17 +1,12 @@
-import { existsSync } from 'node:fs';
-import { cp, mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
+import { cp, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { CLI_BINARY_TARGETS, resolveCurrentBinaryTarget, resolveExecutableName, type BinaryTarget } from './targets.js';
 import { commandExists, compileBunBinary, ensureFileExists, execOrThrow, resolveBunCommand, resolveYarnCommand, type RunCommand } from './commands.js';
-import {
-  bundleInstalledPackageWithRuntimeDependencies,
-  bundleWorkspacePackages,
-  resolveWorkspaceBundlesFromPackageJson,
-  vendorBundledPackageRuntimeDependencies,
-} from '../workspaces/index.js';
+import { bundleInstalledPackageWithRuntimeDependencies } from '../workspaces/index.js';
 import { withCliDistBuildLock } from './withCliDistBuildLock.js';
-import { ensureBundledWorkspacePackagesBuilt } from './ensureBundledWorkspacePackagesBuilt.js';
+import { resolveCliDistSnapshotDir } from './resolveCliDistSnapshotDir.js';
+import { copyCliNodeRuntimePayload } from './copyCliNodeRuntimePayload.js';
 
 const CLI_RUNTIME_SIDECAR_ENTRIES = [
   ['childProcessOptions.cjs'],
@@ -49,65 +44,6 @@ async function copyCliRuntimeSidecars(repoRoot: string, payloadDir: string): Pro
   }
 }
 
-async function copyCliNodeRuntimePayload(
-  repoRoot: string,
-  payloadDir: string,
-  distDir: string,
-  params: Readonly<{
-    yarn: Readonly<{ cmd: string; args: string[] }>;
-    runCommand: RunCommand;
-  }>,
-): Promise<void> {
-  const cliDir = join(repoRoot, 'apps', 'cli');
-  const workspaceBundles = resolveWorkspaceBundlesFromPackageJson({
-    repoRoot,
-    hostPackageDir: cliDir,
-  });
-
-  await ensureBundledWorkspacePackagesBuilt({
-    repoRoot,
-    bundles: workspaceBundles.map(({ packageName, srcDir }) => ({ packageName, srcDir })),
-    yarn: params.yarn,
-    runCommand: params.runCommand,
-  });
-
-  await cp(distDir, join(payloadDir, 'package-dist'), { recursive: true });
-  vendorBundledPackageRuntimeDependencies({
-    srcPackageJsonPath: join(cliDir, 'package.json'),
-    destPackageDir: payloadDir,
-  });
-  bundleWorkspacePackages({
-    bundles: workspaceBundles.map(({ packageName, srcDir }) => ({
-      packageName,
-      srcDir,
-      destDir: join(payloadDir, 'node_modules', ...packageName.split('/')),
-    })),
-  });
-  for (const { packageName, srcDir } of workspaceBundles) {
-    vendorBundledPackageRuntimeDependencies({
-      srcPackageJsonPath: join(srcDir, 'package.json'),
-      destPackageDir: join(payloadDir, 'node_modules', ...packageName.split('/')),
-    });
-  }
-}
-
-async function snapshotCliDistDir(params: Readonly<{ cliDir: string; distDir: string }>): Promise<string> {
-  const snapshotDir = await mkdtemp(join(params.cliDir, '.dist.hstack-snapshot-'));
-  let liveDistRenamed = false;
-  try {
-    await rename(params.distDir, snapshotDir);
-    liveDistRenamed = true;
-    await cp(snapshotDir, params.distDir, { recursive: true });
-    return snapshotDir;
-  } catch (error) {
-    if (liveDistRenamed && !existsSync(params.distDir) && existsSync(snapshotDir)) {
-      await rename(snapshotDir, params.distDir).catch(() => {});
-    }
-    await rm(snapshotDir, { recursive: true, force: true }).catch(() => {});
-    throw error;
-  }
-}
-
 export async function buildCliBinaryArtifactPayload({
   repoRoot,
   payloadDir,
@@ -136,38 +72,23 @@ export async function buildCliBinaryArtifactPayload({
   const entrypoint = join(distDir, 'index.mjs');
   const lockPath = join(repoRoot, '.project', 'tmp', 'cli-dist-build.lock');
   const yarn = resolveYarnCommand({ commandProbe });
-  const snapshotDistDir = await withCliDistBuildLock<string>(async ({ waited }) => {
-    if (!existsSync(distDir) && existsSync(distBackupDir)) {
-      await rename(distBackupDir, distDir);
-    }
-
-    // If the CLI dist entrypoint is already present, prefer snapshotting it instead of rebuilding.
-    // Rebuilding `apps/cli` is expensive and can disrupt long-running processes in dev checkouts.
-    if (existsSync(entrypoint)) {
-      return await snapshotCliDistDir({ cliDir, distDir });
-    }
-
-    const hadDistBeforeBuild = existsSync(distDir);
-    if (hadDistBeforeBuild) {
-      await rm(distBackupDir, { recursive: true, force: true });
-      await rename(distDir, distBackupDir);
-    }
-
-    try {
-      await runCommand(yarn.cmd, [...yarn.args, '--cwd', 'apps/cli', 'build'], { cwd: repoRoot });
-      await ensureFileExists(entrypoint);
-      if (hadDistBeforeBuild) {
-        await rm(distBackupDir, { recursive: true, force: true });
-      }
-    } catch (error) {
-      if (hadDistBeforeBuild && existsSync(distBackupDir)) {
-        await rm(distDir, { recursive: true, force: true });
-        await rename(distBackupDir, distDir);
-      }
-      throw error;
-    }
-    return await snapshotCliDistDir({ cliDir, distDir });
-  }, { lockPath });
+  const snapshotDistDir = await withCliDistBuildLock<string>(
+    async () => {
+      // If the CLI dist entrypoint is already present, prefer snapshotting it instead of rebuilding.
+      // Rebuilding `apps/cli` is expensive and can disrupt long-running processes in dev checkouts.
+      return await resolveCliDistSnapshotDir({
+        cliDir,
+        distDir,
+        distBackupDir,
+        distEntrypointPath: entrypoint,
+        buildDist: async () => {
+          await runCommand(yarn.cmd, [...yarn.args, '--cwd', 'apps/cli', 'build'], { cwd: repoRoot });
+          await ensureFileExists(entrypoint);
+        },
+      });
+    },
+    { lockPath },
+  );
 
   const snapshotEntrypoint = join(snapshotDistDir, 'index.mjs');
 
@@ -187,7 +108,13 @@ export async function buildCliBinaryArtifactPayload({
       runCommand,
     });
     await rm(join(payloadDir, 'node_modules'), { recursive: true, force: true });
-    await copyCliNodeRuntimePayload(repoRoot, payloadDir, snapshotDistDir, { yarn, runCommand });
+    await copyCliNodeRuntimePayload({
+      repoRoot,
+      payloadDir,
+      distDir: snapshotDistDir,
+      yarn,
+      runCommand,
+    });
     await copyCliRuntimeSidecars(repoRoot, payloadDir);
 
     return {

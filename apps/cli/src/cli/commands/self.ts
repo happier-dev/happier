@@ -8,6 +8,7 @@ import type { CommandContext } from '@/cli/commandRegistry';
 import {
   FIRST_PARTY_COMPONENT_IDS,
   installVersionedPayload,
+  resolveInstalledFirstPartyComponentPaths,
   resolveFirstPartyComponentPublicReleaseVariant,
 } from '@happier-dev/cli-common/firstPartyRuntime';
 import type { FirstPartyComponentId } from '@happier-dev/cli-common/firstPartyRuntime';
@@ -406,10 +407,16 @@ async function cmdInternalInstallPayload(argv: string[]): Promise<void> {
   });
 
   if (componentId === 'happier-cli') {
+    const installedPaths = resolveInstalledFirstPartyComponentPaths({
+      componentId: 'happier-cli',
+      channel,
+      processEnv: process.env,
+    });
     await maybeRunVersionGatedRuntimeMigration({
       fromVersion: promotion.previousVersionId,
       toVersion: promotion.currentVersionId,
       argv: ['repair'],
+      installedRuntimeNodePath: installedPaths.binaryPath,
       commandPath: 'happier self migrate',
     });
   }

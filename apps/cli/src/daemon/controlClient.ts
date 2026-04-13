@@ -268,16 +268,8 @@ export async function stopDaemonSession(sessionId: string): Promise<boolean> {
   return result.success || false;
 }
 
-export async function spawnDaemonSession(directory: string, sessionId?: string): Promise<any>;
 export async function spawnDaemonSession(request: SpawnDaemonSessionRequest): Promise<any>;
-export async function spawnDaemonSession(
-  directoryOrRequest: string | SpawnDaemonSessionRequest,
-  sessionId?: string,
-): Promise<any> {
-  const request = typeof directoryOrRequest === 'string'
-    ? { directory: directoryOrRequest, ...(sessionId ? { sessionId } : {}) }
-    : directoryOrRequest;
-
+export async function spawnDaemonSession(request: SpawnDaemonSessionRequest): Promise<any> {
   const result = await daemonPost('/spawn-session', request);
   return result;
 }

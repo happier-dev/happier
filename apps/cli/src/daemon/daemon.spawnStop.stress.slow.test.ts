@@ -106,7 +106,7 @@ describe('daemon spawn/stop stress (slow lane)', () => {
   it('spawns and stops multiple sessions', { timeout: 10 * 60_000 }, async () => {
     const sessionCount = 20;
     const results = await Promise.all(
-      Array.from({ length: sessionCount }, () => spawnDaemonSession('/tmp')),
+      Array.from({ length: sessionCount }, () => spawnDaemonSession({ directory: '/tmp' })),
     );
 
     results.forEach((result) => {

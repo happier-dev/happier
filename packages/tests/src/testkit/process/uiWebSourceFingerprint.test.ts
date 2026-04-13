@@ -8,6 +8,37 @@ const { testState } = vi.hoisted(() => {
   return {
     testState: {
       repoRootDir: '',
+      transientStatMissingPath: '',
+      transientStatMissingTriggered: false,
+    },
+  };
+});
+
+vi.mock('node:fs', async () => {
+  const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+
+  return {
+    ...actual,
+    statSync: (...args: Parameters<typeof actual.statSync>): ReturnType<typeof actual.statSync> => {
+      const [pathLike] = args;
+      const resolvedPath = typeof pathLike === 'string'
+        ? pathLike
+        : pathLike instanceof URL
+          ? pathLike.pathname
+          : pathLike.toString();
+
+      if (
+        testState.transientStatMissingPath.length > 0
+        && resolvedPath === testState.transientStatMissingPath
+        && !testState.transientStatMissingTriggered
+      ) {
+        testState.transientStatMissingTriggered = true;
+        const error = new Error(`ENOENT: no such file or directory, stat '${resolvedPath}'`) as NodeJS.ErrnoException;
+        error.code = 'ENOENT';
+        throw error;
+      }
+
+      return actual.statSync(...args);
     },
   };
 });
@@ -22,6 +53,8 @@ describe('uiWebSourceFingerprint', () => {
   beforeEach(() => {
     vi.resetModules();
     testState.repoRootDir = '';
+    testState.transientStatMissingPath = '';
+    testState.transientStatMissingTriggered = false;
   });
 
   afterAll(() => {
@@ -230,6 +263,80 @@ describe('uiWebSourceFingerprint', () => {
     const secondFingerprint = (await import('./uiWebSourceFingerprint')).resolveUiWebSourceFingerprint();
 
     expect(secondFingerprint).not.toBe(firstFingerprint);
+
+    await rm(rootDir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it('ignores internal workspace dist outputs when computing the fingerprint', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-fingerprint-ignore-dist-'));
+    testState.repoRootDir = rootDir;
+
+    const uiDir = join(rootDir, 'apps', 'ui');
+    const sourcesDir = join(uiDir, 'sources');
+    const cliCommonDir = join(rootDir, 'packages', 'cli-common');
+    const distFile = join(cliCommonDir, 'dist', 'runtime.js');
+
+    await mkdir(sourcesDir, { recursive: true });
+    await mkdir(join(cliCommonDir, 'dist'), { recursive: true });
+
+    await writeFile(join(uiDir, 'index.ts'), 'export {};\n', 'utf8');
+    await writeFile(join(uiDir, 'metro.config.js'), 'module.exports = {};\n', 'utf8');
+    await writeFile(
+      join(uiDir, 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/ui',
+        dependencies: {
+          '@happier-dev/cli-common': '0.0.0',
+        },
+      }),
+      'utf8',
+    );
+    await writeFile(join(cliCommonDir, 'package.json'), JSON.stringify({ name: '@happier-dev/cli-common' }), 'utf8');
+    await writeFile(distFile, 'console.log("dist-before");\n', 'utf8');
+
+    const firstFingerprint = (await import('./uiWebSourceFingerprint')).resolveUiWebSourceFingerprint();
+    await writeFile(distFile, 'console.log("dist-after ");\n', 'utf8');
+
+    vi.resetModules();
+    testState.repoRootDir = rootDir;
+    const secondFingerprint = (await import('./uiWebSourceFingerprint')).resolveUiWebSourceFingerprint();
+
+    expect(secondFingerprint).toBe(firstFingerprint);
+
+    await rm(rootDir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it('ignores transient ENOENT while hashing internal workspace files', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-fingerprint-missing-file-'));
+    testState.repoRootDir = rootDir;
+
+    const uiDir = join(rootDir, 'apps', 'ui');
+    const sourcesDir = join(uiDir, 'sources');
+    const cliCommonDir = join(rootDir, 'packages', 'cli-common');
+    const flakyFile = join(cliCommonDir, 'src', 'systemTasks', 'kinds', 'sshHostTrust.ts');
+
+    await mkdir(sourcesDir, { recursive: true });
+    await mkdir(join(cliCommonDir, 'src', 'systemTasks', 'kinds'), { recursive: true });
+
+    await writeFile(join(uiDir, 'index.ts'), 'export {};\n', 'utf8');
+    await writeFile(join(uiDir, 'metro.config.js'), 'module.exports = {};\n', 'utf8');
+    await writeFile(
+      join(uiDir, 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/ui',
+        dependencies: {
+          '@happier-dev/cli-common': '0.0.0',
+        },
+      }),
+      'utf8',
+    );
+    await writeFile(join(cliCommonDir, 'package.json'), JSON.stringify({ name: '@happier-dev/cli-common' }), 'utf8');
+    await writeFile(flakyFile, 'export const trust = "placeholder";\n', 'utf8');
+
+    testState.transientStatMissingPath = flakyFile;
+    const { resolveUiWebSourceFingerprint } = await import('./uiWebSourceFingerprint');
+    expect(() => resolveUiWebSourceFingerprint()).not.toThrow();
+    expect(testState.transientStatMissingTriggered).toBe(true);
 
     await rm(rootDir, { recursive: true, force: true }).catch(() => {});
   });

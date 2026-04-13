@@ -76,7 +76,14 @@ type CliDistBuildInvocation = {
   cwd: string;
 };
 
-const CLI_SHARED_DEP_PACKAGE_NAMES = ['agents', 'cli-common', 'protocol', 'release-runtime'] as const;
+const CLI_SHARED_DEP_PACKAGE_NAMES = [
+  'agents',
+  'cli-common',
+  'connection-supervisor',
+  'protocol',
+  'transfers',
+  'release-runtime',
+] as const;
 
 type CliSharedDepPackageName = (typeof CLI_SHARED_DEP_PACKAGE_NAMES)[number];
 
@@ -632,6 +639,72 @@ function isBuildDirectoryStale(params: { sourcePaths: readonly string[]; outputD
   return newestSourceMtimeMs > newestOutputMtimeMs;
 }
 
+function listExplicitNamedExportsFromModuleSource(sourceText: string): string[] {
+  const namedExports: string[] = [];
+  const exportDeclarationPattern = /\bexport\s+(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/gu;
+  for (const match of sourceText.matchAll(exportDeclarationPattern)) {
+    const exportName = match[1];
+    if (exportName) namedExports.push(exportName);
+  }
+
+  const exportListPattern = /\bexport\s*\{([\s\S]*?)\}\s*(?:from\b[\s\S]*?)?;/gu;
+  for (const match of sourceText.matchAll(exportListPattern)) {
+    const specifierBlock = match[1];
+    if (!specifierBlock) continue;
+    const specifiers = specifierBlock.split(',');
+    for (const rawSpecifier of specifiers) {
+      const normalizedSpecifier = rawSpecifier.replace(/\/\*[\s\S]*?\*\//gu, '').trim();
+      if (!normalizedSpecifier) continue;
+      const aliasMatch = normalizedSpecifier.match(/\bas\s+([A-Za-z_$][\w$]*)$/u);
+      if (aliasMatch?.[1]) {
+        namedExports.push(aliasMatch[1]);
+        continue;
+      }
+      const directMatch = normalizedSpecifier.match(/^([A-Za-z_$][\w$]*)$/u);
+      if (directMatch?.[1]) {
+        namedExports.push(directMatch[1]);
+      }
+    }
+  }
+
+  return namedExports;
+}
+
+function hasDuplicateExplicitNamedExports(sourceText: string): boolean {
+  const seenExports = new Set<string>();
+  for (const exportName of listExplicitNamedExportsFromModuleSource(sourceText)) {
+    if (seenExports.has(exportName)) return true;
+    seenExports.add(exportName);
+  }
+  return false;
+}
+
+function hasValidProtocolDistIndexExportsAtPath(protocolDistIndexPath: string): boolean {
+  try {
+    const sourceText = readFileSync(protocolDistIndexPath, 'utf8');
+    if (!sourceText.trim()) return false;
+    return !hasDuplicateExplicitNamedExports(sourceText);
+  } catch {
+    return false;
+  }
+}
+
+function hasValidCliSharedDepsProtocolExports(rootDir: string): boolean {
+  const workspaceProtocolDistIndexPath = resolve(rootDir, 'packages', 'protocol', 'dist', 'index.js');
+  const bundledProtocolDistIndexPath = resolve(
+    rootDir,
+    'apps',
+    'cli',
+    'node_modules',
+    '@happier-dev',
+    'protocol',
+    'dist',
+    'index.js',
+  );
+  return hasValidProtocolDistIndexExportsAtPath(workspaceProtocolDistIndexPath)
+    && hasValidProtocolDistIndexExportsAtPath(bundledProtocolDistIndexPath);
+}
+
 function hasCliSharedDepsOutputs(rootDir: string, opts: { skipSourceFreshnessCheck?: boolean } = {}): boolean {
   const workspaceOutputPaths = resolveCliSharedDepsOutputPaths(rootDir);
   if (!workspaceOutputPaths.every((candidatePath) => existsSync(candidatePath))) {
@@ -640,6 +713,7 @@ function hasCliSharedDepsOutputs(rootDir: string, opts: { skipSourceFreshnessChe
 
   repairMissingCliBundledSharedDepsOutputs(rootDir);
   if (!hasCliBundledSharedDepsOutputs(rootDir)) return false;
+  if (!hasValidCliSharedDepsProtocolExports(rootDir)) return false;
   if (opts.skipSourceFreshnessCheck) return true;
 
   return !areBuildOutputsStale({

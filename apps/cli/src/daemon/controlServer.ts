@@ -9,11 +9,12 @@ import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { logger } from '@/ui/logger';
 import { Metadata } from '@/api/types';
-import { resolveCatalogAgentIdForCliSubcommand } from '@/backends/catalog';
 import { TrackedSession } from './types';
 import { SPAWN_SESSION_ERROR_CODES, SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
 import { mergeSpawnSessionOptions, SpawnDaemonSessionRequestSchema } from '@/rpc/handlers/spawnSessionOptionsContract';
 import { continueSessionWithReplay } from '@/session/replay/continueWithReplay';
+import { resolveContinueWithReplayBackendTarget } from '@/session/replay/resolveContinueWithReplayBackendTarget';
+import { SessionContinueWithReplayRpcParamsSchema } from '@happier-dev/protocol';
 
 function safeTokenEquals(provided: string, expected: string): boolean {
   const hashA = createHash('sha256').update(provided).digest();
@@ -244,22 +245,7 @@ export function createDaemonControlApp({
 
   typed.post('/continue-with-replay', {
     schema: {
-      body: z.object({
-        directory: z.string(),
-        agent: z.string(),
-        approvedNewDirectoryCreation: z.boolean().optional(),
-        permissionMode: z.string().optional(),
-        permissionModeUpdatedAt: z.number().optional(),
-        modelId: z.string().optional(),
-        modelUpdatedAt: z.number().optional(),
-        replay: z.object({
-          previousSessionId: z.string(),
-          strategy: z.string().optional(),
-          recentMessagesCount: z.number().optional(),
-          maxSeedChars: z.number().optional(),
-          seedMode: z.string().optional(),
-        }),
-      }),
+      body: z.unknown(),
       response: {
         200: z.object({
           success: z.boolean(),
@@ -287,12 +273,26 @@ export function createDaemonControlApp({
     },
     preHandler: requireAuth,
   }, async (request, reply) => {
-    const agentId = resolveCatalogAgentIdForCliSubcommand(request.body.agent);
-    if (!agentId) {
+    const parsedRequest = SessionContinueWithReplayRpcParamsSchema.safeParse(request.body);
+    if (!parsedRequest.success) {
       reply.code(400);
       return {
         success: false,
-        error: 'Unknown agent id',
+        error: 'Invalid params',
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+      };
+    }
+    const requestBody = parsedRequest.data;
+
+    const resolvedBackend = resolveContinueWithReplayBackendTarget({
+      agent: requestBody.agent,
+      backendTarget: requestBody.backendTarget,
+    });
+    if (!resolvedBackend.ok) {
+      reply.code(400);
+      return {
+        success: false,
+        error: resolvedBackend.errorMessage,
         errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
       };
     }
@@ -301,14 +301,14 @@ export function createDaemonControlApp({
     try {
       result = await continueSessionWithReplay(
         {
-          directory: request.body.directory,
-          agentId,
-          approvedNewDirectoryCreation: request.body.approvedNewDirectoryCreation,
-          permissionMode: request.body.permissionMode,
-          permissionModeUpdatedAt: request.body.permissionModeUpdatedAt,
-          modelId: request.body.modelId,
-          modelUpdatedAt: request.body.modelUpdatedAt,
-          replay: request.body.replay,
+          directory: requestBody.directory,
+          backendTarget: resolvedBackend.backendTarget,
+          approvedNewDirectoryCreation: requestBody.approvedNewDirectoryCreation,
+          permissionMode: requestBody.permissionMode,
+          permissionModeUpdatedAt: requestBody.permissionModeUpdatedAt,
+          modelId: requestBody.modelId,
+          modelUpdatedAt: requestBody.modelUpdatedAt,
+          replay: requestBody.replay,
         },
         { spawnSession },
       );

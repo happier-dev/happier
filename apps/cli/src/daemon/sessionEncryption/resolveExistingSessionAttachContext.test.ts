@@ -40,7 +40,7 @@ describe('resolveExistingSessionAttachContext', () => {
       encryption: { type: 'dataKey', publicKey: new Uint8Array(32).fill(1), machineKey: new Uint8Array(32).fill(2) },
     };
 
-    const out = await resolveExistingSessionAttachContext({ token: 't', sessionId: '   ', agent: 'codex', credentials });
+    const out = await resolveExistingSessionAttachContext({ token: 't', sessionId: '   ', credentials });
     expect(out).toEqual({ ok: false, reason: 'missingSessionId' });
     expect(vi.mocked(fetchSessionByIdCompat)).not.toHaveBeenCalled();
   });
@@ -55,13 +55,78 @@ describe('resolveExistingSessionAttachContext', () => {
       }),
     );
 
-    const out = await resolveExistingSessionAttachContext({ token: 't', sessionId: 'sess_plain', agent: 'codex', credentials: null });
+    const out = await resolveExistingSessionAttachContext({ token: 't', sessionId: 'sess_plain', credentials: null });
     expect(out).toEqual({
       ok: true,
       attachPayload: { v: 2, encryptionMode: 'plain' },
       vendorResumeId: 'vendor-plain-1',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
     });
     expect(vi.mocked(fetchSessionByIdCompat)).toHaveBeenCalledTimes(1);
+  });
+
+  it('prefers the direct-session provider id when the stored metadata has no top-level flavor', async () => {
+    vi.mocked(fetchSessionByIdCompat).mockResolvedValueOnce(
+      createSessionRecordFixture({
+        id: 'sess_direct_claude',
+        encryptionMode: 'plain',
+        metadata: JSON.stringify({
+          directSessionV1: {
+            v: 1,
+            providerId: 'claude',
+            remoteSessionId: 'sess-direct-1',
+          },
+          claudeSessionId: 'sess-direct-1',
+        }),
+        dataEncryptionKey: null,
+      }),
+    );
+
+    const out = await resolveExistingSessionAttachContext({
+      token: 't',
+      sessionId: 'sess_direct_claude',
+      credentials: null,
+    });
+
+    expect(out).toEqual({
+      ok: true,
+      attachPayload: { v: 2, encryptionMode: 'plain' },
+      vendorResumeId: 'sess-direct-1',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+    });
+  });
+
+  it('returns the configured ACP backend target from stored session metadata', async () => {
+    vi.mocked(fetchSessionByIdCompat).mockResolvedValueOnce(
+      createSessionRecordFixture({
+        id: 'sess_acp',
+        encryptionMode: 'plain',
+        metadata: JSON.stringify({
+          flavor: 'acp:review-bot',
+          path: '/tmp',
+          acpConfiguredBackendV1: {
+            v: 1,
+            updatedAt: 1,
+            backendId: 'review-bot',
+            title: 'Review Bot',
+          },
+        }),
+        dataEncryptionKey: null,
+      }),
+    );
+
+    const out = await resolveExistingSessionAttachContext({
+      token: 't',
+      sessionId: 'sess_acp',
+      credentials: null,
+    });
+
+    expect(out).toEqual({
+      ok: true,
+      attachPayload: { v: 2, encryptionMode: 'plain' },
+      vendorResumeId: null,
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+    });
   });
 
   it('returns a v2 e2ee attach payload with an opened DEK and vendorResumeId for encrypted sessions', async () => {
@@ -101,7 +166,7 @@ describe('resolveExistingSessionAttachContext', () => {
       }),
     );
 
-    const out = await resolveExistingSessionAttachContext({ token: 't', sessionId: 'sess_e2ee', agent: 'codex', credentials });
+    const out = await resolveExistingSessionAttachContext({ token: 't', sessionId: 'sess_e2ee', credentials });
     expect(out).toMatchObject({ ok: true });
 
     if (!out || !('ok' in out) || out.ok !== true) {
@@ -111,6 +176,7 @@ describe('resolveExistingSessionAttachContext', () => {
     expect(out.attachPayload.v).toBe(2);
     expect(out.attachPayload.encryptionMode).toBe('e2ee');
     expect(out.vendorResumeId).toBe('vendor-e2ee-1');
+    expect(out.backendTarget).toEqual({ kind: 'builtInAgent', agentId: 'codex' });
 
     if (out.attachPayload.encryptionMode !== 'e2ee') {
       throw new Error('Expected e2ee attach payload');
@@ -135,7 +201,6 @@ describe('resolveExistingSessionAttachContext', () => {
     const out = await resolveExistingSessionAttachContext({
       token: 't',
       sessionId: 'sess_e2ee',
-      agent: 'codex',
       credentials: null,
     });
 
@@ -150,7 +215,7 @@ describe('resolveExistingSessionAttachContext', () => {
       encryption: { type: 'dataKey', publicKey: new Uint8Array(32).fill(1), machineKey: new Uint8Array(32).fill(2) },
     };
 
-    const out = await resolveExistingSessionAttachContext({ token: 't', sessionId: 'sess_throw', agent: 'codex', credentials });
+    const out = await resolveExistingSessionAttachContext({ token: 't', sessionId: 'sess_throw', credentials });
 
     expect(out).toEqual({ ok: false, reason: 'fetchFailed' });
   });

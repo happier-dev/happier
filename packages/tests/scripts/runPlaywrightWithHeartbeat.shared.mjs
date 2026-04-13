@@ -1,5 +1,6 @@
 import { runManagedChildCommand } from './managedChildLifecycle.mjs';
 import { sweepStaleProcessOwnershipLeases } from './sweepProcessOwnershipLeases.mjs';
+import { resolvePlaywrightUiRunNamespace } from './playwrightUiArtifacts.shared.mjs';
 
 export { installParentDeathCleanupWatchdog, resolveSignalExitCode } from './managedChildLifecycle.mjs';
 
@@ -25,16 +26,10 @@ export function parseHeartbeatArgs(argv) {
   return { config, passThrough };
 }
 
-function resolveUiWebExportNamespace(env) {
-  const explicitNamespace = String(env?.HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE ?? '').trim();
-  if (explicitNamespace) return explicitNamespace;
-  return 'playwright-ui-shared';
-}
-
 export function createPlaywrightSpawnOptions(env) {
   const nextEnv = {
     ...env,
-    HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: resolveUiWebExportNamespace(env),
+    HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: resolvePlaywrightUiRunNamespace(env),
     PLAYWRIGHT_HTML_OPEN: 'never',
   };
   return {

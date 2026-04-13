@@ -8,6 +8,14 @@ import { ensureCliDistBuilt, ensureCliSharedDepsBuilt, withCliDistBuildLock } fr
 import { sleep } from '../timing';
 
 const createdDirs: string[] = [];
+const CLI_SHARED_DEP_PACKAGE_NAMES = [
+  'agents',
+  'cli-common',
+  'connection-supervisor',
+  'protocol',
+  'transfers',
+  'release-runtime',
+] as const;
 
 async function createRepoRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'happier-cli-dist-test-'));
@@ -16,7 +24,7 @@ async function createRepoRoot(): Promise<string> {
   await mkdir(join(root, 'apps', 'cli', 'src'), { recursive: true });
   await mkdir(join(root, 'apps', 'cli', 'dist'), { recursive: true });
   await mkdir(join(root, 'apps', 'cli', 'node_modules', '@happier-dev'), { recursive: true });
-  for (const pkgName of ['agents', 'cli-common', 'protocol', 'release-runtime']) {
+  for (const pkgName of CLI_SHARED_DEP_PACKAGE_NAMES) {
     await mkdir(join(root, 'packages', pkgName, 'src'), { recursive: true });
     await mkdir(join(root, 'packages', pkgName, 'dist'), { recursive: true });
     await mkdir(join(root, 'apps', 'cli', 'node_modules', '@happier-dev', pkgName, 'dist'), {
@@ -60,6 +68,12 @@ async function createRepoRoot(): Promise<string> {
     utimesSync(target, baseline, baseline);
   }
   return root;
+}
+
+function resolveCliSharedDepBundleIndexPaths(repoRoot: string): string[] {
+  return CLI_SHARED_DEP_PACKAGE_NAMES.map((pkgName) =>
+    join(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', pkgName, 'dist', 'index.js'),
+  );
 }
 
 describe('ensureCliDistBuilt', () => {
@@ -260,6 +274,47 @@ describe('ensureCliDistBuilt', () => {
     expect(rebuildCalls).toBe(1);
   });
 
+  it('rebuilds when a bundled shared dependency workspace is missing from the CLI node_modules tree', async () => {
+    const repoRoot = await createRepoRoot();
+    const bundledConnectionSupervisorDir = join(
+      repoRoot,
+      'apps',
+      'cli',
+      'node_modules',
+      '@happier-dev',
+      'connection-supervisor',
+    );
+    rmSync(
+      bundledConnectionSupervisorDir,
+      { recursive: true, force: true },
+    );
+
+    let rebuildCalls = 0;
+    await ensureCliSharedDepsBuilt(
+      { testDir: join(repoRoot, '.project'), env: process.env },
+      {
+        repoRoot,
+        skipSourceFreshnessCheck: true,
+        runCommand: async () => {
+          rebuildCalls += 1;
+          await mkdir(join(bundledConnectionSupervisorDir, 'dist'), { recursive: true });
+          await writeFile(
+            join(bundledConnectionSupervisorDir, 'package.json'),
+            JSON.stringify({ name: '@happier-dev/connection-supervisor' }, null, 2),
+            'utf8',
+          );
+          await writeFile(
+            join(bundledConnectionSupervisorDir, 'dist', 'index.js'),
+            'export const ok = true;\n',
+            'utf8',
+          );
+        },
+      },
+    );
+
+    expect(rebuildCalls).toBe(1);
+  });
+
   it('rebuilds when a vendored runtime dependency is missing an exported subpath file', async () => {
     const repoRoot = await createRepoRoot();
     const agentsPackageJsonPath = join(repoRoot, 'packages', 'agents', 'package.json');
@@ -406,6 +461,50 @@ describe('ensureCliDistBuilt', () => {
     expect(rebuildCalls).toBe(1);
   });
 
+  it('rebuilds when bundled protocol dist index contains duplicate explicit named exports', async () => {
+    const repoRoot = await createRepoRoot();
+    const bundledProtocolDistIndexPath = join(
+      repoRoot,
+      'apps',
+      'cli',
+      'node_modules',
+      '@happier-dev',
+      'protocol',
+      'dist',
+      'index.js',
+    );
+
+    await writeFile(
+      bundledProtocolDistIndexPath,
+      [
+        'export const ProviderCliRuntimeV1Schema = {};',
+        'export { ProviderCliRuntimeV1Schema };',
+        'export { ProviderCliRuntimeV1Schema };',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+
+    let rebuildCalls = 0;
+    await ensureCliSharedDepsBuilt(
+      { testDir: join(repoRoot, '.project'), env: process.env },
+      {
+        repoRoot,
+        skipSourceFreshnessCheck: true,
+        runCommand: async () => {
+          rebuildCalls += 1;
+          await writeFile(
+            bundledProtocolDistIndexPath,
+            ['export const ProviderCliRuntimeV1Schema = {};', 'export const OtherExport = {};', ''].join('\n'),
+            'utf8',
+          );
+        },
+      },
+    );
+
+    expect(rebuildCalls).toBe(1);
+  });
+
   it('repairs bundled workspace dist when an internal file is missing even though the entrypoint exists', async () => {
     const repoRoot = await createRepoRoot();
     const workspaceNestedFilePath = join(
@@ -452,12 +551,7 @@ describe('ensureCliDistBuilt', () => {
   it('retries shared dependency builds when sources change during the first build', async () => {
     const repoRoot = await createRepoRoot();
     const sourcePath = join(repoRoot, 'packages', 'agents', 'src', 'index.ts');
-    const outputPaths = [
-      join(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'agents', 'dist', 'index.js'),
-      join(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'cli-common', 'dist', 'index.js'),
-      join(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'protocol', 'dist', 'index.js'),
-      join(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'release-runtime', 'dist', 'index.js'),
-    ];
+    const outputPaths = resolveCliSharedDepBundleIndexPaths(repoRoot);
     const initialSourceTime = new Date('2030-03-09T01:18:00.000Z');
     utimesSync(sourcePath, initialSourceTime, initialSourceTime);
 
@@ -496,12 +590,7 @@ describe('ensureCliDistBuilt', () => {
     const repoRoot = await createRepoRoot();
     const sourcePath = join(repoRoot, 'packages', 'agents', 'src', 'index.ts');
     const lockPath = join(repoRoot, '.project', 'tmp', 'cli-shared-deps-build.lock');
-    const outputPaths = [
-      join(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'agents', 'dist', 'index.js'),
-      join(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'cli-common', 'dist', 'index.js'),
-      join(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'protocol', 'dist', 'index.js'),
-      join(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'release-runtime', 'dist', 'index.js'),
-    ];
+    const outputPaths = resolveCliSharedDepBundleIndexPaths(repoRoot);
 
     utimesSync(sourcePath, new Date('2030-03-09T01:18:00.000Z'), new Date('2030-03-09T01:18:00.000Z'));
 
@@ -544,12 +633,7 @@ describe('ensureCliDistBuilt', () => {
     const repoRoot = await createRepoRoot();
     const sourcePath = join(repoRoot, 'packages', 'protocol', 'src', 'index.ts');
     const workspaceOutputPath = join(repoRoot, 'packages', 'protocol', 'dist', 'index.js');
-    const bundledOutputPaths = [
-      join(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'agents', 'dist', 'index.js'),
-      join(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'cli-common', 'dist', 'index.js'),
-      join(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'protocol', 'dist', 'index.js'),
-      join(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'release-runtime', 'dist', 'index.js'),
-    ];
+    const bundledOutputPaths = resolveCliSharedDepBundleIndexPaths(repoRoot);
 
     utimesSync(sourcePath, new Date('2030-03-09T01:12:00.000Z'), new Date('2030-03-09T01:12:00.000Z'));
     utimesSync(workspaceOutputPath, new Date('2030-03-09T01:10:00.000Z'), new Date('2030-03-09T01:10:00.000Z'));

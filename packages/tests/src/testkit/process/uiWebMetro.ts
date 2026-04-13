@@ -786,7 +786,8 @@ async function startUiWebMetroSingleAttempt(params: {
     ]);
     baseUrl = resolved.baseUrl;
     let hasReadyEntryPage = resolved.hasScriptTags;
-    const requiresLivePortReanchor = resolved.stdoutAdvertisesExpectedPort && resolveUrlPort(baseUrl) !== metroPort;
+    const hasExplicitMetroPort = typeof params.port === 'number' && Number.isFinite(params.port) && params.port > 0;
+    const requiresLivePortReanchor = hasExplicitMetroPort && resolveUrlPort(baseUrl) !== metroPort;
     if (requiresLivePortReanchor || !hasReadyEntryPage) {
       await waitFor(
         async () => {

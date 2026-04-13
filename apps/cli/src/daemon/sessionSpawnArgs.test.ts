@@ -66,7 +66,23 @@ describe('buildHappySessionControlArgs', () => {
 
   it('includes backend flag when the backend target is a configured ACP backend', () => {
     expect(buildHappySessionControlArgs({
-      backendTarget: { kind: 'configuredAcpBackend', backendId: ' custom-kiro ' },
+      backendTarget: {
+        kind: 'backend',
+        backendId: ' custom-kiro ',
+        configuredBackendId: ' custom-kiro ',
+        sourceKind: 'configured',
+      } as any,
     })).toEqual(['--backend', 'custom-kiro']);
+  });
+
+  it('omits backend flag for customAcp placeholder targets', () => {
+    expect(buildHappySessionControlArgs({
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'customAcp',
+        configuredBackendId: 'customAcp',
+        sourceKind: 'configured',
+      } as any,
+    })).toEqual([]);
   });
 });

@@ -61,4 +61,22 @@ describe('daemon service plan win32 mode handling', () => {
     expect(remove).toBeTruthy();
     expect(plan.filesToRemove[0] ?? '').toMatch(/^C:\\\\ProgramData\\\\happier\\\\services\\\\/);
   });
+
+  it('uninstall targets the discovered Windows wrapper task name when installedPath is legacy-scoped', () => {
+    const plan = planDaemonServiceUninstall({
+      platform: 'win32',
+      mode: 'user',
+      channel: 'stable',
+      targetMode: 'default-following',
+      instanceId: 'cloud',
+      userHomeDir: 'C:\\\\Users\\\\Alice',
+      happierHomeDir: 'C:\\\\Users\\\\Alice\\\\.happier',
+      installedPath: 'C:\\\\Users\\\\Alice\\\\.happier\\\\services\\\\happier-daemon.preview.default.ps1',
+    });
+
+    expect(plan.commands).toContainEqual({
+      cmd: 'schtasks',
+      args: ['/Delete', '/F', '/TN', 'Happier\\happier-daemon.preview.default'],
+    });
+  });
 });

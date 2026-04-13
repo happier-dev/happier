@@ -160,6 +160,43 @@ describe('sessionRegistry', () => {
     expect(existsSync(markerPath)).toBe(true);
   });
 
+  it('reads and removes legacy preview session markers', async () => {
+    process.env.HAPPIER_RELEASE_RING = 'dev';
+    vi.resetModules();
+
+    const { configuration } = await import('@/configuration');
+    const { listSessionMarkers, removeSessionMarker } = await import('./sessionRegistry');
+
+    const legacyPreviewDir = join(configuration.happyHomeDir, 'tmp', 'daemon-sessions.preview');
+    mkdirSync(legacyPreviewDir, { recursive: true });
+    writeFileSync(
+      join(legacyPreviewDir, 'pid-404.json'),
+      JSON.stringify(
+        {
+          pid: 404,
+          happySessionId: 'sess-404',
+          happyHomeDir: configuration.happyHomeDir,
+          createdAt: 1,
+          updatedAt: 2,
+          startedBy: 'daemon',
+        },
+        null,
+        2,
+      ),
+      'utf-8',
+    );
+
+    const markers = await listSessionMarkers();
+    expect(markers).toHaveLength(1);
+    expect(markers[0]).toMatchObject({
+      pid: 404,
+      happySessionId: 'sess-404',
+    });
+
+    await removeSessionMarker(404);
+    expect(existsSync(join(legacyPreviewDir, 'pid-404.json'))).toBe(false);
+  });
+
   it('tolerates older respawn markers with experimentalCodexResume', async () => {
     const { configuration } = await import('@/configuration');
     const { listSessionMarkers } = await import('./sessionRegistry');

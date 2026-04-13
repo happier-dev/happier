@@ -670,6 +670,7 @@ type DaemonServiceInventoryEntry = Readonly<{
   label: string;
   ring: PublicReleaseRingId;
   targetMode: DaemonServiceTargetMode;
+  mode?: DaemonServiceMode;
   installed: boolean;
   running: boolean;
   definitionPath: string;
@@ -718,6 +719,7 @@ function mapDaemonServiceListEntriesToInventory(
     label: entry.label,
     ring: entry.releaseChannel,
     targetMode: entry.targetMode,
+    mode: entry.mode,
     installed: entry.installed,
     running: activeServiceLabel.length > 0 && entry.label === activeServiceLabel,
     definitionPath: entry.path,
@@ -741,6 +743,8 @@ function resolveDaemonServiceSelectableEntries(
     label: entry.label,
     platform: entry.platform,
     scope,
+    mode: entry.mode ?? mode,
+    definitionPath: entry.path,
     ring: entry.releaseChannel,
     instanceId: entry.serverId,
     targetMode: entry.targetMode,
@@ -891,6 +895,7 @@ export async function runDaemonServiceCliCommand(
       process.stdout.write(`${statusText}\n`);
       process.stdout.write(`  ${kv('Installed:', service.installed ? 'yes' : 'no')}\n`);
       process.stdout.write(`  ${kv('Running:', service.running ? 'yes' : 'no')}\n`);
+      if (service.mode) process.stdout.write(`  ${kv('Mode:', service.mode)}\n`);
       process.stdout.write(`  ${kv('Target:', describeBackgroundServiceTargetMode(service.targetMode))}\n`);
       process.stdout.write(`  ${kv('Type:', service.serviceType)}\n`);
       process.stdout.write(`  ${kv('Definition:', service.definitionPath)}\n`);
@@ -1150,6 +1155,7 @@ export async function runDaemonServiceCliCommand(
           channel: normalizePublicReleaseRingId(service.ring) || runtime.channel,
           targetMode: service.targetMode,
           instanceId: service.instanceId || runtime.instanceId,
+          installedPath: service.definitionPath,
         }))
       : [{
           platform: runtime.platform,
@@ -1157,6 +1163,7 @@ export async function runDaemonServiceCliCommand(
           channel: runtime.channel,
           targetMode: runtime.targetMode,
           instanceId: runtime.instanceId,
+          installedPath: null,
         }];
     if (hasExplicitSelection && selectedServices.length === 0) {
       const message = 'No verified background services matched the requested uninstall target.';
@@ -1179,21 +1186,23 @@ export async function runDaemonServiceCliCommand(
     const previewOnly = flags.dryRun || ((selectedServices.length > 1 || flags.all) && !flags.yes);
 
     if (previewOnly) {
-      if (flags.json) {
-        printJson({
-          ok: true,
-          platform: runtime.platform,
-          executed: false,
-          ...(plans.length === 1 ? { plan: plans[0] } : { plans }),
-          selectedServices: selectedServices.map((service) => ({
-            id: service.id,
-            label: service.label,
-            ring: service.ring,
-            instanceId: service.instanceId,
-          })),
-        });
-        return;
-      }
+    if (flags.json) {
+      printJson({
+        ok: true,
+        platform: runtime.platform,
+        executed: false,
+        ...(plans.length === 1 ? { plan: plans[0] } : { plans }),
+        selectedServices: selectedServices.map((service) => ({
+          id: service.id,
+          label: service.label,
+          ring: service.ring,
+          instanceId: service.instanceId,
+          mode: service.mode,
+          definitionPath: service.definitionPath,
+        })),
+      });
+      return;
+    }
       for (const plan of plans) {
         process.stdout.write(`[dry-run] would remove: ${plan.filesToRemove.join(', ')}\n`);
         for (const c of plan.commands) process.stdout.write(`[dry-run] would run: ${c.cmd} ${c.args.join(' ')}\n`);
@@ -1214,6 +1223,7 @@ export async function runDaemonServiceCliCommand(
         channel: target.channel,
         targetMode: target.targetMode,
         instanceId: target.instanceId,
+        installedPath: target.installedPath,
         runCommands: true,
       });
     }

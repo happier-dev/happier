@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { InstalledDaemonServiceEntry } from './discoverInstalledDaemonServiceEntries';
-import { createEnvKeyScope } from '@/testkit/env/envScope';
-import { captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
+import { createEnvKeyScope } from '../../testkit/env/envScope';
+import { captureStdoutJsonOutput } from '../../testkit/logger/captureOutput';
 
 const {
   discoverInstalledDaemonServiceEntriesMock,
@@ -19,6 +19,7 @@ function createInstalledEntry(params: Readonly<{
   label: string;
   releaseChannel: InstalledDaemonServiceEntry['releaseChannel'];
   path: string;
+  mode?: InstalledDaemonServiceEntry['mode'];
 }>): InstalledDaemonServiceEntry {
   return {
     serverId: params.serverId,
@@ -26,6 +27,7 @@ function createInstalledEntry(params: Readonly<{
     installed: true,
     path: params.path,
     platform: 'linux',
+    mode: params.mode,
     releaseChannel: params.releaseChannel,
     label: params.label,
     targetMode: 'pinned',
@@ -87,16 +89,22 @@ describe('runDaemonServiceCliCommand uninstall selection', () => {
         label: 'happier-daemon.stable.cloud',
         releaseChannel: 'stable',
         path: '/home/tester/.config/systemd/user/happier-daemon.stable.cloud.service',
+        mode: 'user',
       }),
       createInstalledEntry({
         serverId: 'company',
         label: 'happier-daemon.stable.company',
         releaseChannel: 'stable',
         path: '/home/tester/.config/systemd/user/happier-daemon.stable.company.service',
+        mode: 'user',
       }),
     ]);
 
-    const output = captureStdoutJsonOutput<{ ok: boolean; executed: boolean; selectedServices: Array<{ id: string }> }>();
+    const output = captureStdoutJsonOutput<{
+      ok: boolean;
+      executed: boolean;
+      selectedServices: Array<{ id: string; mode?: string; definitionPath?: string }>;
+    }>();
     try {
       const { runDaemonServiceCliCommand } = await import('./cli.js');
       await runDaemonServiceCliCommand({ argv: ['uninstall', '--ring', 'stable', '--all', '--json'] });
@@ -105,8 +113,16 @@ describe('runDaemonServiceCliCommand uninstall selection', () => {
         ok: true,
         executed: false,
         selectedServices: [
-          expect.objectContaining({ id: 'systemd-user:happier-daemon.stable.cloud' }),
-          expect.objectContaining({ id: 'systemd-user:happier-daemon.stable.company' }),
+          expect.objectContaining({
+            id: 'systemd-user:happier-daemon.stable.cloud',
+            mode: 'user',
+            definitionPath: '/home/tester/.config/systemd/user/happier-daemon.stable.cloud.service',
+          }),
+          expect.objectContaining({
+            id: 'systemd-user:happier-daemon.stable.company',
+            mode: 'user',
+            definitionPath: '/home/tester/.config/systemd/user/happier-daemon.stable.company.service',
+          }),
         ],
       }));
       expect(uninstallDaemonServiceMock).not.toHaveBeenCalled();
@@ -129,12 +145,14 @@ describe('runDaemonServiceCliCommand uninstall selection', () => {
         label: 'happier-daemon.stable.cloud',
         releaseChannel: 'stable',
         path: '/home/tester/.config/systemd/user/happier-daemon.stable.cloud.service',
+        mode: 'user',
       }),
       createInstalledEntry({
         serverId: 'company',
         label: 'happier-daemon.stable.company',
         releaseChannel: 'stable',
         path: '/home/tester/.config/systemd/user/happier-daemon.stable.company.service',
+        mode: 'user',
       }),
     ]);
 
@@ -150,6 +168,7 @@ describe('runDaemonServiceCliCommand uninstall selection', () => {
         mode: 'user',
         channel: 'stable',
         instanceId: 'cloud',
+        installedPath: '/home/tester/.config/systemd/user/happier-daemon.stable.cloud.service',
         runCommands: true,
       }));
       expect(uninstallDaemonServiceMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
@@ -157,6 +176,7 @@ describe('runDaemonServiceCliCommand uninstall selection', () => {
         mode: 'user',
         channel: 'stable',
         instanceId: 'company',
+        installedPath: '/home/tester/.config/systemd/user/happier-daemon.stable.company.service',
         runCommands: true,
       }));
     } finally {
@@ -178,16 +198,22 @@ describe('runDaemonServiceCliCommand uninstall selection', () => {
         label: 'happier-daemon.stable.cloud',
         releaseChannel: 'stable',
         path: '/home/tester/.config/systemd/user/happier-daemon.stable.cloud.service',
+        mode: 'user',
       }),
       createInstalledEntry({
         serverId: 'preview1',
         label: 'happier-daemon.preview.preview1',
         releaseChannel: 'preview',
         path: '/home/tester/.config/systemd/user/happier-daemon.preview.preview1.service',
+        mode: 'user',
       }),
     ]);
 
-    const output = captureStdoutJsonOutput<{ ok: boolean; executed: boolean; selectedServices: Array<{ id: string }> }>();
+    const output = captureStdoutJsonOutput<{
+      ok: boolean;
+      executed: boolean;
+      selectedServices: Array<{ id: string; mode?: string; definitionPath?: string }>;
+    }>();
     try {
       const { runDaemonServiceCliCommand } = await import('./cli.js');
       await runDaemonServiceCliCommand({ argv: ['uninstall', '--all', '--json'] });
@@ -196,8 +222,16 @@ describe('runDaemonServiceCliCommand uninstall selection', () => {
         ok: true,
         executed: false,
         selectedServices: [
-          expect.objectContaining({ id: 'systemd-user:happier-daemon.stable.cloud' }),
-          expect.objectContaining({ id: 'systemd-user:happier-daemon.preview.preview1' }),
+          expect.objectContaining({
+            id: 'systemd-user:happier-daemon.stable.cloud',
+            mode: 'user',
+            definitionPath: '/home/tester/.config/systemd/user/happier-daemon.stable.cloud.service',
+          }),
+          expect.objectContaining({
+            id: 'systemd-user:happier-daemon.preview.preview1',
+            mode: 'user',
+            definitionPath: '/home/tester/.config/systemd/user/happier-daemon.preview.preview1.service',
+          }),
         ],
       }));
       expect(uninstallDaemonServiceMock).not.toHaveBeenCalled();
@@ -220,10 +254,15 @@ describe('runDaemonServiceCliCommand uninstall selection', () => {
         label: 'happier-daemon.preview.preview1',
         releaseChannel: 'preview',
         path: '/home/tester/.config/systemd/user/happier-daemon.preview.preview1.service',
+        mode: 'user',
       }),
     ]);
 
-    const output = captureStdoutJsonOutput<{ ok: boolean; executed: boolean; selectedServices: Array<{ id: string }> }>();
+    const output = captureStdoutJsonOutput<{
+      ok: boolean;
+      executed: boolean;
+      selectedServices: Array<{ id: string; mode?: string; definitionPath?: string }>;
+    }>();
     try {
       const { runDaemonServiceCliCommand } = await import('./cli.js');
       await runDaemonServiceCliCommand({ argv: ['uninstall', '--ring', 'preview', '--all', '--json'] });
@@ -231,7 +270,11 @@ describe('runDaemonServiceCliCommand uninstall selection', () => {
       expect(output.json()).toEqual(expect.objectContaining({
         ok: true,
         executed: false,
-        selectedServices: [expect.objectContaining({ id: 'systemd-user:happier-daemon.preview.preview1' })],
+        selectedServices: [expect.objectContaining({
+          id: 'systemd-user:happier-daemon.preview.preview1',
+          mode: 'user',
+          definitionPath: '/home/tester/.config/systemd/user/happier-daemon.preview.preview1.service',
+        })],
       }));
       expect(uninstallDaemonServiceMock).not.toHaveBeenCalled();
     } finally {
@@ -253,12 +296,14 @@ describe('runDaemonServiceCliCommand uninstall selection', () => {
         label: 'happier-daemon.stable.cloud',
         releaseChannel: 'stable',
         path: '/home/tester/.config/systemd/user/happier-daemon.stable.cloud.service',
+        mode: 'user',
       }),
       createInstalledEntry({
         serverId: 'cloud',
         label: 'happier-daemon.preview.cloud',
         releaseChannel: 'preview',
         path: '/home/tester/.config/systemd/user/happier-daemon.preview.cloud.service',
+        mode: 'user',
       }),
     ]);
 

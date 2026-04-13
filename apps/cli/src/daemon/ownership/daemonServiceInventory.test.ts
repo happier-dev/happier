@@ -161,6 +161,124 @@ describe('daemonServiceInventory', () => {
         });
     });
 
+    it('treats a default-following launch agent as belonging to the current relay when the service home settings target it', async () => {
+        await withTempDir('happier-daemon-service-inventory-matching-home-', async (homeDir) => {
+            const currentCliHomeDir = join(homeDir, 'current-cli-home');
+            const serviceCliHomeDir = join(homeDir, 'service-cli-home');
+            const userHomeDir = join(homeDir, 'user-home');
+
+            envScope.patch({
+                HAPPIER_HOME_DIR: currentCliHomeDir,
+                HAPPIER_ACTIVE_SERVER_ID: 'stack_repo-dev-a1cc5e0671__id_default',
+                HAPPIER_SERVER_URL: 'http://127.0.0.1:53288',
+                HAPPIER_WEBAPP_URL: 'http://localhost:53288',
+                HAPPIER_PUBLIC_SERVER_URL: 'http://127.0.0.1:53288',
+                HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
+                HAPPIER_DAEMON_SERVICE_PLATFORM: 'darwin',
+                HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: userHomeDir,
+                HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: currentCliHomeDir,
+                HAPPIER_DAEMON_SERVICE_CHANNEL: 'stable',
+                HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
+            });
+            vi.resetModules();
+
+            const [{ writeSettings }, { resolveDaemonServiceCliRuntimeFromEnv }, { resolveInstalledDaemonServiceInventoryForCurrentRelay }] = await Promise.all([
+                import('@/persistence'),
+                import('@/daemon/service/cli'),
+                import('./daemonServiceInventory'),
+            ]);
+
+            await writeSettings({
+                schemaVersion: 6,
+                onboardingCompleted: false,
+                activeServerId: 'stack_repo-dev-a1cc5e0671__id_default',
+                servers: {
+                    'stack_repo-dev-a1cc5e0671__id_default': {
+                        id: 'stack_repo-dev-a1cc5e0671__id_default',
+                        name: 'Repo dev',
+                        serverUrl: 'http://127.0.0.1:53288',
+                        localServerUrl: 'http://127.0.0.1:53288',
+                        webappUrl: 'http://localhost:53288',
+                        createdAt: 1,
+                        updatedAt: 1,
+                        lastUsedAt: 1,
+                    },
+                },
+                machineIdByServerId: {},
+                machineIdByServerIdByAccountId: {},
+                lastTokenSubByServerId: {},
+                machineIdConfirmedByServerByServerId: {},
+                lastChangesCursorByServerIdByAccountId: {},
+            });
+
+            mkdirSync(serviceCliHomeDir, { recursive: true });
+            writeFileSync(
+                join(serviceCliHomeDir, 'settings.json'),
+                JSON.stringify(
+                    {
+                        schemaVersion: 6,
+                        onboardingCompleted: false,
+                        activeServerId: 'stack_repo-dev-a1cc5e0671__id_default',
+                        servers: {
+                            'stack_repo-dev-a1cc5e0671__id_default': {
+                                id: 'stack_repo-dev-a1cc5e0671__id_default',
+                                name: 'Repo dev',
+                                serverUrl: 'http://127.0.0.1:53288',
+                                localServerUrl: 'http://127.0.0.1:53288',
+                                webappUrl: 'http://localhost:53288',
+                                createdAt: 1,
+                                updatedAt: 1,
+                                lastUsedAt: 1,
+                            },
+                        },
+                    },
+                    null,
+                    2,
+                ) + '\n',
+                'utf-8',
+            );
+
+            const servicesDir = join(userHomeDir, 'Library', 'LaunchAgents');
+            mkdirSync(servicesDir, { recursive: true });
+            writeFileSync(
+                join(servicesDir, 'com.happier.cli.daemon.default.plist'),
+                `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.happier.cli.daemon.default</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>/usr/local/bin/happier</string>
+      <string>daemon</string>
+      <string>start-sync</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>HAPPIER_DAEMON_STARTUP_SOURCE</key>
+      <string>background-service</string>
+      <key>HAPPIER_DAEMON_SERVICE_TARGET_MODE</key>
+      <string>default-following</string>
+      <key>HAPPIER_PUBLIC_RELEASE_CHANNEL</key>
+      <string>stable</string>
+      <key>HAPPIER_HOME_DIR</key>
+      <string>${serviceCliHomeDir}</string>
+    </dict>
+  </dict>
+</plist>
+`,
+                'utf-8',
+            );
+
+            const runtime = resolveDaemonServiceCliRuntimeFromEnv({ processEnv: process.env });
+            const services = await resolveInstalledDaemonServiceInventoryForCurrentRelay(runtime);
+
+            expect(services).toHaveLength(1);
+            expect(services[0]?.label).toBe('com.happier.cli.daemon.default');
+        });
+    });
+
     it('does not treat a default-following launch agent installed for another cli home as belonging to the current relay', async () => {
         await withTempDir('happier-daemon-service-inventory-other-home-', async (homeDir) => {
             const currentCliHomeDir = join(homeDir, 'current-cli-home');
@@ -264,6 +382,96 @@ describe('daemonServiceInventory', () => {
       <string>${serviceCliHomeDir}</string>
       <key>HAPPIER_PUBLIC_RELEASE_CHANNEL</key>
       <string>stable</string>
+    </dict>
+  </dict>
+</plist>
+`,
+                'utf-8',
+            );
+
+            const runtime = resolveDaemonServiceCliRuntimeFromEnv({ processEnv: process.env });
+            const services = await resolveInstalledDaemonServiceInventoryForCurrentRelay(runtime);
+
+            expect(services).toEqual([]);
+        });
+    });
+
+    it('does not treat a stale default-following launch agent with a missing cli home as belonging to the current relay', async () => {
+        await withTempDir('happier-daemon-service-inventory-missing-home-', async (homeDir) => {
+            const currentCliHomeDir = join(homeDir, 'current-cli-home');
+            const missingServiceCliHomeDir = join(homeDir, 'missing-service-cli-home');
+            const userHomeDir = join(homeDir, 'user-home');
+
+            envScope.patch({
+                HAPPIER_HOME_DIR: currentCliHomeDir,
+                HAPPIER_ACTIVE_SERVER_ID: 'stack_repo-dev-a1cc5e0671__id_default',
+                HAPPIER_SERVER_URL: 'http://127.0.0.1:53288',
+                HAPPIER_WEBAPP_URL: 'http://localhost:53288',
+                HAPPIER_PUBLIC_SERVER_URL: 'http://127.0.0.1:53288',
+                HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
+                HAPPIER_DAEMON_SERVICE_PLATFORM: 'darwin',
+                HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: userHomeDir,
+                HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: currentCliHomeDir,
+                HAPPIER_DAEMON_SERVICE_CHANNEL: 'stable',
+                HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
+            });
+            vi.resetModules();
+
+            const [{ writeSettings }, { resolveDaemonServiceCliRuntimeFromEnv }, { resolveInstalledDaemonServiceInventoryForCurrentRelay }] = await Promise.all([
+                import('@/persistence'),
+                import('@/daemon/service/cli'),
+                import('./daemonServiceInventory'),
+            ]);
+
+            await writeSettings({
+                schemaVersion: 6,
+                onboardingCompleted: false,
+                activeServerId: 'stack_repo-dev-a1cc5e0671__id_default',
+                servers: {
+                    'stack_repo-dev-a1cc5e0671__id_default': {
+                        id: 'stack_repo-dev-a1cc5e0671__id_default',
+                        name: 'Repo dev',
+                        serverUrl: 'http://happier-repo-dev-a1cc5e0671.localhost:53288',
+                        localServerUrl: 'http://127.0.0.1:53288',
+                        webappUrl: 'http://localhost:53288',
+                        createdAt: 1,
+                        updatedAt: 1,
+                        lastUsedAt: 1,
+                    },
+                },
+                machineIdByServerId: {},
+                machineIdByServerIdByAccountId: {},
+                lastTokenSubByServerId: {},
+                machineIdConfirmedByServerByServerId: {},
+                lastChangesCursorByServerIdByAccountId: {},
+            });
+
+            const servicesDir = join(userHomeDir, 'Library', 'LaunchAgents');
+            mkdirSync(servicesDir, { recursive: true });
+            writeFileSync(
+                join(servicesDir, 'com.happier.cli.daemon.default.plist'),
+                `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.happier.cli.daemon.default</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>/usr/local/bin/happier</string>
+      <string>daemon</string>
+      <string>start-sync</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>HAPPIER_DAEMON_STARTUP_SOURCE</key>
+      <string>background-service</string>
+      <key>HAPPIER_DAEMON_SERVICE_TARGET_MODE</key>
+      <string>default-following</string>
+      <key>HAPPIER_PUBLIC_RELEASE_CHANNEL</key>
+      <string>stable</string>
+      <key>HAPPIER_HOME_DIR</key>
+      <string>${missingServiceCliHomeDir}</string>
     </dict>
   </dict>
 </plist>

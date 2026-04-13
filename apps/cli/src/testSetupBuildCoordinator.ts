@@ -6,6 +6,7 @@ type EnsureBuildArtifactsReadyOnceOptions = {
   markerPaths: readonly string[]
   lockLabel: string
   runBuild: () => Promise<void> | void
+  isReady?: () => boolean | Promise<boolean>
   timeoutMs?: number
   pollIntervalMs?: number
   staleAfterMs?: number
@@ -36,6 +37,17 @@ function readPositiveIntegerEnv(name: string, fallback: number): number {
 
 function buildMarkersExist(markerPaths: readonly string[]): boolean {
   return markerPaths.every((markerPath) => existsSync(markerPath))
+}
+
+async function buildArtifactsAreReady(
+  markerPaths: readonly string[],
+  isReady?: () => boolean | Promise<boolean>,
+): Promise<boolean> {
+  if (isReady) {
+    return await isReady();
+  }
+
+  return buildMarkersExist(markerPaths);
 }
 
 function defaultIsProcessAlive(pid: number): boolean {
@@ -162,7 +174,7 @@ export async function ensureBuildArtifactsReadyOnce(
   const startedAt = Date.now()
 
   while (true) {
-    if (buildMarkersExist(options.markerPaths)) return
+    if (await buildArtifactsAreReady(options.markerPaths, options.isReady)) return
 
     if (await tryAcquireBuildLock(options.lockPath)) {
       let heartbeatTimer: ReturnType<typeof setInterval> | null = null
@@ -175,8 +187,11 @@ export async function ensureBuildArtifactsReadyOnce(
           heartbeatTimer.unref?.()
         }
 
-        if (buildMarkersExist(options.markerPaths)) return
+        if (await buildArtifactsAreReady(options.markerPaths, options.isReady)) return
         await options.runBuild()
+        if (!(await buildArtifactsAreReady(options.markerPaths, options.isReady))) {
+          throw new Error(`CLI ${options.lockLabel} build completed, but required outputs are still not ready`)
+        }
         return
       } finally {
         if (heartbeatTimer) clearInterval(heartbeatTimer)

@@ -526,7 +526,7 @@ class Configuration {
 
     this.startupTranscriptCatchUpLookbackMs = resolveIntEnvWithBounds(
       'HAPPIER_STARTUP_TRANSCRIPT_CATCH_UP_LOOKBACK_MS',
-      { min: 0, default: 10_000 },
+      { min: 0, default: 60_000 },
     );
 
     this.claudeTaskOutputMaxPendingPerAgent = resolveIntEnvWithBounds(

@@ -45,7 +45,7 @@ function buildClaimedRun(overrides: {
 }
 
 describe('executeClaimedRun (mcpSelection)', () => {
-  it('passes mcpSelection + connectedServices + transcriptStorage through to spawnSession for new-session automations', async () => {
+  it('passes configured ACP backend state, mcpSelection, connectedServices, transcriptStorage, and session config overrides through to spawnSession for new-session automations', async () => {
     const spawnSession = vi.fn(async (): Promise<SpawnSessionResult> => ({ type: 'success', sessionId: 'sess_1' }));
     const claimClient = {
       startRun: vi.fn(async () => {}),
@@ -72,12 +72,19 @@ describe('executeClaimedRun (mcpSelection)', () => {
             kind: 'happier_automation_template_plain_v1',
             payload: {
               directory: '/tmp/project',
-              agent: 'codex',
+              backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
               mcpSelection: {
                 v: 1,
                 managedServersEnabled: false,
                 forceIncludeServerIds: ['server-portable'],
                 forceExcludeServerIds: ['server-disabled'],
+              },
+              sessionConfigOptionOverrides: {
+                v: 1,
+                updatedAt: 789,
+                overrides: {
+                  reasoning: { updatedAt: 789, value: 'high' },
+                },
               },
               connectedServices: {
                 v: 1,
@@ -94,12 +101,19 @@ describe('executeClaimedRun (mcpSelection)', () => {
 
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
       directory: '/tmp/project',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
       mcpSelection: {
         v: 1,
         managedServersEnabled: false,
         forceIncludeServerIds: ['server-portable'],
         forceExcludeServerIds: ['server-disabled'],
+      },
+      sessionConfigOptionOverrides: {
+        v: 1,
+        updatedAt: 789,
+        overrides: {
+          reasoning: { updatedAt: 789, value: 'high' },
+        },
       },
       connectedServices: {
         v: 1,

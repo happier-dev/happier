@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { InstalledDaemonServiceEntry } from './discoverInstalledDaemonServiceEntries';
+import { withTempDir } from '../../testkit/fs/tempDir';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+type TestDaemonServicePlan = Readonly<{
+  files: Array<Readonly<{ path: string; content: string; mode: number }>>;
+  commands: Array<Readonly<{ cmd: string; args: readonly string[] }>>;
+}>;
 
 const {
   planDaemonServiceInstallMock,
@@ -10,7 +18,7 @@ const {
   resolveDaemonServiceInstallRuntimeTargetMock,
   discoverInstalledDaemonServiceEntriesMock,
 } = vi.hoisted(() => ({
-  planDaemonServiceInstallMock: vi.fn(() => ({ files: [], commands: [] })),
+  planDaemonServiceInstallMock: vi.fn<() => TestDaemonServicePlan>(() => ({ files: [], commands: [] })),
   planDaemonServiceUninstallMock: vi.fn(() => ({ filesToRemove: [], commands: [] })),
   applyDaemonServiceInstallPlanMock: vi.fn(async () => undefined),
   applyDaemonServiceUninstallPlanMock: vi.fn(async () => undefined),
@@ -97,8 +105,8 @@ describe('installDaemonService conflict handling', () => {
       runCommands: false,
     });
 
-    expect(planDaemonServiceInstallMock).not.toHaveBeenCalled();
-    expect(applyDaemonServiceInstallPlanMock).not.toHaveBeenCalled();
+      expect(planDaemonServiceInstallMock).toHaveBeenCalledTimes(1);
+      expect(applyDaemonServiceInstallPlanMock).not.toHaveBeenCalled();
   });
 
   it('does not treat a same-lane default-following service from another Happier home as the exact target', async () => {
@@ -151,37 +159,131 @@ describe('installDaemonService conflict handling', () => {
     }));
   });
 
-  it('rejects conflicting installed services by default', async () => {
-    discoverInstalledDaemonServiceEntriesMock.mockResolvedValueOnce([
-      {
-        serverId: 'default',
-        name: 'Default background service',
-        installed: true,
-        path: '/home/tester/.config/systemd/user/happier-daemon.default.service',
+  it('keeps the exact target idempotent when the installed definition contents already match', async () => {
+    await withTempDir('happier-daemon-install-conflict-match-', async (root) => {
+      const installedPath = join(root, '.config', 'systemd', 'user', 'happier-daemon.default.service');
+      mkdirSync(join(root, '.config', 'systemd', 'user'), { recursive: true });
+      writeFileSync(installedPath, 'expected installed service contents\n', 'utf8');
+
+      discoverInstalledDaemonServiceEntriesMock.mockResolvedValueOnce([
+        {
+          serverId: 'default',
+          name: 'Default background service',
+          installed: true,
+          path: installedPath,
+          platform: 'linux',
+          mode: 'user',
+          happierHomeDir: '/home/tester/.happier',
+          releaseChannel: 'stable',
+          label: 'happier-daemon.default',
+          targetMode: 'default-following',
+        },
+      ]);
+      planDaemonServiceInstallMock.mockReturnValueOnce({
+        files: [{ path: installedPath, content: 'expected installed service contents\n', mode: 0o644 }],
+        commands: [],
+      });
+
+      const { installDaemonService } = await import('./installer');
+
+      await expect(installDaemonService({
         platform: 'linux',
+        uid: 123,
+        userHomeDir: '/home/tester',
         happierHomeDir: '/home/tester/.happier',
-        releaseChannel: 'stable',
-        label: 'happier-daemon.default',
+        channel: 'stable',
         targetMode: 'default-following',
-      },
-    ]);
+        instanceId: 'default',
+        runCommands: false,
+      })).resolves.toBeUndefined();
 
-    const { installDaemonService } = await import('./installer');
-
-    await expect(installDaemonService({
-      platform: 'linux',
-      uid: 123,
-      userHomeDir: '/home/tester',
-      happierHomeDir: '/home/tester/.happier',
-      channel: 'publicdev',
-      targetMode: 'default-following',
-      instanceId: 'default',
-      runCommands: false,
-    })).rejects.toMatchObject({
-      code: 'daemon_service_conflict',
+      expect(planDaemonServiceInstallMock).toHaveBeenCalledTimes(1);
+      expect(applyDaemonServiceInstallPlanMock).not.toHaveBeenCalled();
     });
+  });
 
-    expect(applyDaemonServiceInstallPlanMock).not.toHaveBeenCalled();
+  it('keeps a system install from treating a user-scoped linux service as the exact target', async () => {
+    await withTempDir('happier-daemon-install-conflict-mode-', async (root) => {
+      const installedPath = join(root, '.config', 'systemd', 'user', 'happier-daemon.default.service');
+      mkdirSync(join(root, '.config', 'systemd', 'user'), { recursive: true });
+      writeFileSync(installedPath, 'expected installed service contents\n', 'utf8');
+
+      discoverInstalledDaemonServiceEntriesMock.mockResolvedValueOnce([
+        {
+          serverId: 'default',
+          name: 'Default background service',
+          installed: true,
+          path: installedPath,
+          platform: 'linux',
+          mode: 'user',
+          happierHomeDir: '/home/tester/.happier',
+          releaseChannel: 'stable',
+          label: 'happier-daemon.default',
+          targetMode: 'default-following',
+        },
+      ]);
+      planDaemonServiceInstallMock.mockReturnValueOnce({
+        files: [{ path: '/etc/systemd/system/happier-daemon.default.service', content: 'expected installed service contents\n', mode: 0o644 }],
+        commands: [],
+      });
+
+      const { installDaemonService } = await import('./installer');
+
+      await installDaemonService({
+        platform: 'linux',
+        mode: 'system',
+        systemUser: 'happier',
+        uid: 123,
+        userHomeDir: '/home/tester',
+        happierHomeDir: '/home/tester/.happier',
+        instanceId: 'default',
+        runCommands: false,
+      });
+
+      expect(planDaemonServiceInstallMock).toHaveBeenCalledTimes(1);
+      expect(applyDaemonServiceInstallPlanMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('refreshes a stale installed definition instead of treating it as the exact target', async () => {
+    await withTempDir('happier-daemon-install-conflict-stale-', async (root) => {
+      const installedPath = join(root, '.config', 'systemd', 'user', 'happier-daemon.default.service');
+      mkdirSync(join(root, '.config', 'systemd', 'user'), { recursive: true });
+      writeFileSync(installedPath, 'stale installed service contents\n', 'utf8');
+
+      discoverInstalledDaemonServiceEntriesMock.mockResolvedValueOnce([
+        {
+          serverId: 'default',
+          name: 'Default background service',
+          installed: true,
+          path: installedPath,
+          platform: 'linux',
+          mode: 'user',
+          happierHomeDir: '/home/tester/.happier',
+          releaseChannel: 'stable',
+          label: 'happier-daemon.default',
+          targetMode: 'default-following',
+        },
+      ]);
+      planDaemonServiceInstallMock.mockReturnValueOnce({
+        files: [{ path: installedPath, content: 'fresh installed service contents\n', mode: 0o644 }],
+        commands: [],
+      });
+
+      const { installDaemonService } = await import('./installer');
+
+      await installDaemonService({
+        platform: 'linux',
+        uid: 123,
+        userHomeDir: '/home/tester',
+        happierHomeDir: '/home/tester/.happier',
+        instanceId: 'default',
+        runCommands: false,
+      });
+
+      expect(planDaemonServiceInstallMock).toHaveBeenCalledTimes(1);
+      expect(applyDaemonServiceInstallPlanMock).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('removes competing services without reinstalling the exact target when replace-all is requested', async () => {
@@ -238,7 +340,7 @@ describe('installDaemonService conflict handling', () => {
         commandFailureMode: 'strict',
       }),
     );
-    expect(planDaemonServiceInstallMock).not.toHaveBeenCalled();
+    expect(planDaemonServiceInstallMock).toHaveBeenCalledTimes(1);
     expect(applyDaemonServiceInstallPlanMock).not.toHaveBeenCalled();
   });
 });

@@ -13,6 +13,7 @@ import { handleLogoutCliCommand } from './commands/logout';
 import { handleMachineCliCommand } from './commands/machine';
 import { handleMcpCliCommand } from './commands/mcp';
 import { handleNotifyCliCommand } from './commands/notify';
+import { handlePluginsCliCommand } from './commands/plugins';
 import { handleProfilesCliCommand } from './commands/profiles';
 import { handleProvidersCliCommand } from './commands/providers';
 import { handleRelayCliCommand } from './commands/relay';
@@ -68,6 +69,7 @@ export const commandRegistry: Readonly<Record<string, CommandHandler>> = {
   notify: handleNotifyCliCommand,
   profile: handleProfilesCliCommand,
   profiles: handleProfilesCliCommand,
+  plugins: handlePluginsCliCommand,
   providers: handleProvidersCliCommand,
   relay: handleRelayCliCommand,
   resume: handleResumeCliCommand,

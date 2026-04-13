@@ -115,6 +115,11 @@ function readSettingsSnapshotForHomeDir(homeDir: string | null | undefined): Set
   }
 }
 
+function normalizeHomeDirComparableKey(homeDir: string | null | undefined): string | null {
+  const value = String(homeDir ?? '').trim().replace(/[\\/]+$/, '');
+  return value || null;
+}
+
 function resolveDefaultFollowingRelayMatchFromSettings(
   settings: SettingsSnapshot | null,
   runtime: DaemonServiceCliRuntime,
@@ -165,7 +170,9 @@ async function resolveDefaultFollowingRelayMatchForInstalledService(
 
   const serviceSettings = readSettingsSnapshotForHomeDir(serviceHomeDir);
   if (!serviceSettings) {
-    return await resolveDefaultFollowingRelayMatch(runtime);
+    return normalizeHomeDirComparableKey(serviceHomeDir) === normalizeHomeDirComparableKey(runtime.happierHomeDir)
+      ? await resolveDefaultFollowingRelayMatch(runtime)
+      : false;
   }
 
   return resolveDefaultFollowingRelayMatchFromSettings(serviceSettings, runtime);

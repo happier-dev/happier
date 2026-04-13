@@ -13,17 +13,18 @@ export type BackgroundServiceRepairPlan = Readonly<{
 export type BackgroundServiceRepairAction =
   | Readonly<{
       kind: 'remove-service';
-      service: Readonly<{
-        id?: string;
-        label: string;
-        platform?: 'darwin' | 'linux' | 'win32';
-        backend?: 'launchd' | 'systemd-user' | 'systemd-system' | 'schtasks-user' | 'schtasks-system';
-        scope?: DaemonServiceMode;
-        definitionPath?: string;
-        mode: DaemonServiceMode;
-        releaseChannel: PublicReleaseRingId;
-        targetMode: DaemonServiceTargetMode;
-        instanceId: string;
+    service: Readonly<{
+      id?: string;
+      label: string;
+      platform?: 'darwin' | 'linux' | 'win32';
+      backend?: 'launchd' | 'systemd-user' | 'systemd-system' | 'schtasks-user' | 'schtasks-system';
+      scope?: DaemonServiceMode;
+      definitionPath?: string;
+      installedPath?: string;
+      mode: DaemonServiceMode;
+      releaseChannel: PublicReleaseRingId;
+      targetMode: DaemonServiceTargetMode;
+      instanceId: string;
       }>;
     }>
   | Readonly<{
@@ -38,4 +39,6 @@ export type BackgroundServiceRepairApplyRuntime = Readonly<{
   uid: number | null;
   userHomeDir: string;
   happierHomeDir: string;
+  nodePath: string;
+  entryPath: string;
 }>;

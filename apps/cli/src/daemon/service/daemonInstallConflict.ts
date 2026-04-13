@@ -1,12 +1,15 @@
+import { readFileSync } from 'node:fs';
+
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 import type { InstalledDaemonServiceEntry } from './discoverInstalledDaemonServiceEntries';
-import type { DaemonServiceTargetMode } from './plan';
+import type { DaemonServiceMode, DaemonServiceTargetMode } from './plan';
 
 export type DaemonServiceInstallStrategy = 'require-explicit' | 'add' | 'replace-ring' | 'replace-all';
 
 export type DaemonServiceInstallTarget = Readonly<{
   platform: InstalledDaemonServiceEntry['platform'];
+  mode?: DaemonServiceMode | null;
   targetMode: DaemonServiceTargetMode;
   ring: PublicReleaseRingId | null;
   instanceId: string | null;
@@ -23,6 +26,9 @@ function matchesTarget(service: InstalledDaemonServiceEntry, target: DaemonServi
   if (service.platform !== target.platform) {
     return false;
   }
+  if (target.mode && service.mode && service.mode !== target.mode) {
+    return false;
+  }
   if (service.targetMode !== target.targetMode) {
     return false;
   }
@@ -35,6 +41,22 @@ function matchesTarget(service: InstalledDaemonServiceEntry, target: DaemonServi
   return service.releaseChannel === target.ring && service.serverId === target.instanceId;
 }
 
+function matchesInstalledDefinitionContents(params: Readonly<{
+  service: InstalledDaemonServiceEntry;
+  expectedContents: string | null | undefined;
+}>): boolean {
+  if (params.expectedContents === null || params.expectedContents === undefined) {
+    return true;
+  }
+
+  try {
+    const installedContents = readFileSync(params.service.path, 'utf8').trim();
+    return installedContents === String(params.expectedContents).trim();
+  } catch {
+    return false;
+  }
+}
+
 function normalizeHomeDir(value: string | null | undefined): string | null {
   const trimmed = String(value ?? '').trim();
   return trimmed || null;
@@ -43,6 +65,7 @@ function normalizeHomeDir(value: string | null | undefined): string | null {
 function resolveTupleKey(service: InstalledDaemonServiceEntry): string {
   return [
     service.platform,
+    service.mode ?? '',
     service.targetMode,
     service.releaseChannel,
     service.serverId,
@@ -54,6 +77,9 @@ function isCompetingService(service: InstalledDaemonServiceEntry, target: Daemon
     return false;
   }
   if (service.platform !== target.platform) {
+    return false;
+  }
+  if (target.mode && service.mode && service.mode !== target.mode) {
     return false;
   }
   if (target.targetMode === 'default-following') {
@@ -69,6 +95,7 @@ export function resolveDaemonServiceInstallConflictPlan(params: Readonly<{
   target: DaemonServiceInstallTarget;
   strategy: DaemonServiceInstallStrategy;
   services: readonly InstalledDaemonServiceEntry[];
+  expectedInstalledDefinitionContents?: string | null;
 }>): DaemonServiceInstallConflictPlan {
   const duplicateTupleKeys = new Set<string>();
   const countsByTuple = new Map<string, number>();
@@ -81,7 +108,13 @@ export function resolveDaemonServiceInstallConflictPlan(params: Readonly<{
     }
   }
 
-  const exactTargetExists = params.services.some((service) => matchesTarget(service, params.target));
+  const exactTargetExists = params.services.some((service) =>
+    matchesTarget(service, params.target)
+    && matchesInstalledDefinitionContents({
+      service,
+      expectedContents: params.expectedInstalledDefinitionContents,
+    }),
+  );
   const competingServices = params.services.filter((service) =>
     isCompetingService(service, params.target) || duplicateTupleKeys.has(resolveTupleKey(service)),
   );

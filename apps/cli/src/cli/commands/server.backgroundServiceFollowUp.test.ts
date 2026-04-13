@@ -1,7 +1,41 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { HappierService } from '@happier-dev/cli-common/happierRuntime';
 import type { DaemonServiceListEntry } from '@/daemon/service/cli';
+
+const {
+    axiosGetMock,
+    readCredentialsMock,
+} = vi.hoisted(() => ({
+    axiosGetMock: vi.fn(),
+    readCredentialsMock: vi.fn(async (): Promise<{ token: string } | null> => null),
+}));
+
+vi.mock('axios', async () => {
+    const actual = await vi.importActual<typeof import('axios')>('axios');
+    return {
+        ...actual,
+        default: {
+            ...actual.default,
+            get: (...args: unknown[]) => axiosGetMock(...args),
+        },
+        get: (...args: unknown[]) => axiosGetMock(...args),
+    };
+});
+
+vi.mock('@/api/client/loopbackUrl', () => ({
+    resolveLoopbackHttpUrl: (value: string) => value,
+}));
+
+vi.mock('@/configuration', () => ({
+    configuration: {
+        apiServerUrl: 'https://api.example.test',
+    },
+}));
+
+vi.mock('@/persistence', () => ({
+    readCredentials: () => readCredentialsMock(),
+}));
 
 import {
     resolveInstalledDefaultFollowingDaemonServiceModes,
@@ -44,7 +78,21 @@ function createDaemonServiceListEntry(overrides: Partial<DaemonServiceListEntry>
 }
 
 describe('server background service follow-up helpers', () => {
+    afterEach(() => {
+        readCredentialsMock.mockReset();
+        readCredentialsMock.mockResolvedValue(null);
+        axiosGetMock.mockReset();
+    });
+
     it('restarts a default-following background service after an authenticated interactive server change', async () => {
+        readCredentialsMock.mockResolvedValueOnce({
+            token: 'token-123',
+        });
+        axiosGetMock.mockResolvedValueOnce({
+            status: 200,
+            data: { id: 'account-123' },
+        });
+
         const promptInput = vi.fn(async () => 'y');
         const runCliAction = vi.fn(async () => undefined);
 
@@ -53,7 +101,7 @@ describe('server background service follow-up helpers', () => {
             promptInput,
             runCliAction,
             targetServerUrl: 'https://b.example.test',
-            hasCredentials: true,
+            authState: 'logged_in',
             log: vi.fn(),
             services: [createDaemonServiceListEntry()],
         });
@@ -61,10 +109,20 @@ describe('server background service follow-up helpers', () => {
         expect(promptInput).toHaveBeenCalledWith(
             'Restart the background service so it now follows https://b.example.test? [Y/n]: ',
         );
+        expect(promptInput).toHaveBeenCalledTimes(1);
+        expect(axiosGetMock).toHaveBeenCalledWith(
+            'https://b.example.test/v1/account/profile',
+            expect.objectContaining({
+                headers: expect.objectContaining({
+                    Authorization: 'Bearer token-123',
+                }),
+            }),
+        );
         expect(runCliAction).toHaveBeenCalledWith(['service', 'restart']);
     });
 
     it('logs auth + restart guidance when authentication is declined', async () => {
+        readCredentialsMock.mockResolvedValueOnce(null);
         const output: string[] = [];
 
         await runDefaultFollowingBackgroundServiceServerChangeFollowUp({
@@ -72,7 +130,7 @@ describe('server background service follow-up helpers', () => {
             promptInput: async () => 'n',
             runCliAction: vi.fn(async () => undefined),
             targetServerUrl: 'https://b.example.test',
-            hasCredentials: false,
+            authState: 'logged_out',
             log: (message) => output.push(message),
             services: [createDaemonServiceListEntry()],
         });
@@ -83,6 +141,7 @@ describe('server background service follow-up helpers', () => {
     });
 
     it('logs manual restart guidance in non-interactive mode', async () => {
+        readCredentialsMock.mockResolvedValueOnce(null);
         const output: string[] = [];
 
         await runDefaultFollowingBackgroundServiceServerChangeFollowUp({
@@ -90,7 +149,7 @@ describe('server background service follow-up helpers', () => {
             promptInput: async () => '',
             runCliAction: vi.fn(async () => undefined),
             targetServerUrl: 'https://b.example.test',
-            hasCredentials: true,
+            authState: 'logged_in',
             log: (message) => output.push(message),
             services: [createDaemonServiceListEntry()],
         });
@@ -100,6 +159,14 @@ describe('server background service follow-up helpers', () => {
     });
 
     it('renders system-mode restart commands for system inventory entries', async () => {
+        readCredentialsMock.mockResolvedValueOnce({
+            token: 'token-123',
+        });
+        axiosGetMock.mockResolvedValueOnce({
+            status: 200,
+            data: { id: 'account-123' },
+        });
+
         const output: string[] = [];
         const services: HappierService[] = [
             createServiceInventoryEntry({
@@ -114,7 +181,7 @@ describe('server background service follow-up helpers', () => {
             promptInput: async () => '',
             runCliAction: vi.fn(async () => undefined),
             targetServerUrl: 'https://b.example.test',
-            hasCredentials: true,
+            authState: 'logged_in',
             log: (message) => output.push(message),
             services: [createDaemonServiceListEntry({
                 path: '/etc/systemd/system/happier-daemon.default.service',
@@ -126,6 +193,14 @@ describe('server background service follow-up helpers', () => {
     });
 
     it('prefers explicit daemon service list entry mode over path heuristics', async () => {
+        readCredentialsMock.mockResolvedValueOnce({
+            token: 'token-123',
+        });
+        axiosGetMock.mockResolvedValueOnce({
+            status: 200,
+            data: { id: 'account-123' },
+        });
+
         const output: string[] = [];
 
         await runDefaultFollowingBackgroundServiceServerChangeFollowUp({
@@ -133,7 +208,7 @@ describe('server background service follow-up helpers', () => {
             promptInput: async () => '',
             runCliAction: vi.fn(async () => undefined),
             targetServerUrl: 'https://b.example.test',
-            hasCredentials: true,
+            authState: 'logged_in',
             log: (message) => output.push(message),
             services: [createDaemonServiceListEntry({
                 mode: 'system',
@@ -151,6 +226,14 @@ describe('server background service follow-up helpers', () => {
     });
 
     it('fails closed with repair guidance when duplicate user and system default-following services exist', async () => {
+        readCredentialsMock.mockResolvedValueOnce({
+            token: 'token-123',
+        });
+        axiosGetMock.mockResolvedValueOnce({
+            status: 200,
+            data: { id: 'account-123' },
+        });
+
         const output: string[] = [];
         const runCliAction = vi.fn(async () => undefined);
 
@@ -159,7 +242,7 @@ describe('server background service follow-up helpers', () => {
             promptInput: async () => 'y',
             runCliAction,
             targetServerUrl: 'https://b.example.test',
-            hasCredentials: true,
+            authState: 'logged_in',
             log: (message) => output.push(message),
             services: [
                 createDaemonServiceListEntry({ path: '/tmp/happier-daemon.default.service' }),
@@ -172,7 +255,86 @@ describe('server background service follow-up helpers', () => {
         expect(output.join('\n')).toContain('happier service repair --yes');
     });
 
+    it('prompts to authenticate when stored credentials are no longer accepted by the target server', async () => {
+        readCredentialsMock.mockResolvedValueOnce({
+            token: 'token-123',
+        });
+        axiosGetMock.mockRejectedValueOnce({
+            isAxiosError: true,
+            response: { status: 401 },
+        });
+
+        const promptInput = vi.fn(async () => 'y');
+        const runCliAction = vi.fn(async () => undefined);
+        const output: string[] = [];
+
+        await runDefaultFollowingBackgroundServiceServerChangeFollowUp({
+            interactive: true,
+            promptInput,
+            runCliAction,
+            targetServerUrl: 'https://b.example.test',
+            authState: 'logged_in',
+            log: (message) => output.push(message),
+            services: [createDaemonServiceListEntry()],
+        });
+
+        expect(promptInput).toHaveBeenNthCalledWith(
+            1,
+            'Authenticate Happier against https://b.example.test now? [Y/n]: ',
+        );
+        expect(promptInput).toHaveBeenNthCalledWith(
+            2,
+            'Restart the background service so it now follows https://b.example.test? [Y/n]: ',
+        );
+        expect(runCliAction).toHaveBeenCalledWith(['auth', 'login']);
+        expect(runCliAction).toHaveBeenCalledWith(['service', 'restart']);
+        expect(output.join('\n')).not.toContain('not authenticated yet');
+    });
+
+    it('trusts an explicit logged_out auth state instead of probing stored credentials again', async () => {
+        readCredentialsMock.mockResolvedValueOnce({
+            token: 'token-123',
+        });
+        axiosGetMock.mockResolvedValueOnce({
+            status: 200,
+            data: { id: 'account-123' },
+        });
+
+        const promptInput = vi.fn(async () => 'y');
+        const runCliAction = vi.fn(async () => undefined);
+
+        await runDefaultFollowingBackgroundServiceServerChangeFollowUp({
+            interactive: true,
+            promptInput,
+            runCliAction,
+            targetServerUrl: 'https://b.example.test',
+            authState: 'logged_out',
+            log: vi.fn(),
+            services: [createDaemonServiceListEntry()],
+        });
+
+        expect(axiosGetMock).not.toHaveBeenCalled();
+        expect(promptInput).toHaveBeenNthCalledWith(
+            1,
+            'Authenticate Happier against https://b.example.test now? [Y/n]: ',
+        );
+        expect(promptInput).toHaveBeenNthCalledWith(
+            2,
+            'Restart the background service so it now follows https://b.example.test? [Y/n]: ',
+        );
+        expect(runCliAction).toHaveBeenCalledWith(['auth', 'login']);
+        expect(runCliAction).toHaveBeenCalledWith(['service', 'restart']);
+    });
+
     it('warns instead of failing when restart follow-up execution fails after the primary action already applied', async () => {
+        readCredentialsMock.mockResolvedValueOnce({
+            token: 'token-123',
+        });
+        axiosGetMock.mockResolvedValueOnce({
+            status: 200,
+            data: { id: 'account-123' },
+        });
+
         const output: string[] = [];
 
         await expect(runDefaultFollowingBackgroundServiceRestartFollowUp({

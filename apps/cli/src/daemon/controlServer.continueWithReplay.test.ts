@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
 import { reloadConfiguration } from '@/configuration';
@@ -61,7 +61,7 @@ describe('daemon control server: /continue-with-replay', () => {
                 headers: { 'Content-Type': 'application/json', 'x-happier-daemon-token': 'test-token' },
                 payload: JSON.stringify({
                     directory: '/tmp',
-                    agent: 'claude',
+                    backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
                     replay: { previousSessionId: 'sess-prev' },
                 }),
             });
@@ -108,6 +108,38 @@ describe('daemon control server: /continue-with-replay', () => {
                 error: 'Unknown agent id',
                 errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
             });
+        } finally {
+            await app.close();
+        }
+    });
+
+    it('fails closed for builtIn customAcp backendTarget payloads', async () => {
+        const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 'happy-test-123' } as const));
+        const app = createDaemonControlApp({
+            getChildren: () => [],
+            machineId: 'machine_local',
+            stopSession: async () => false,
+            spawnSession,
+            requestShutdown: () => {},
+            onHappySessionWebhook: () => {},
+            controlToken: 'test-token',
+        });
+
+        try {
+            await app.ready();
+            const res = await app.inject({
+                method: 'POST',
+                url: '/continue-with-replay',
+                headers: { 'Content-Type': 'application/json', 'x-happier-daemon-token': 'test-token' },
+                payload: JSON.stringify({
+                    directory: '/tmp',
+                    backendTarget: { kind: 'builtInAgent', agentId: 'customAcp' },
+                    replay: { previousSessionId: 'sess-prev' },
+                }),
+            });
+
+            expect(res.statusCode).toBe(400);
+            expect(spawnSession).not.toHaveBeenCalled();
         } finally {
             await app.close();
         }

@@ -1,8 +1,15 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import type { Dirent } from 'node:fs';
 import { relative, resolve as resolvePath } from 'node:path';
 
 import { repoRootDir } from '../paths';
+
+function isTransientMissingPathError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === 'ENOENT' || code === 'ENOTDIR';
+}
 
 function shouldIgnoreUiWebSourceDir(name: string): boolean {
   return name === '__tests__'
@@ -16,6 +23,7 @@ function shouldIgnoreUiWebSourceDir(name: string): boolean {
 function shouldIgnoreUiWebWorkspaceDir(name: string): boolean {
   return name === '__tests__'
     || name === '__mocks__'
+    || name === 'dist'
     || name === 'node_modules'
     || name === '.git'
     || name === '.project';
@@ -30,13 +38,28 @@ function updateUiWebSourceHashForPath(
   rootDir: string,
   filePath: string,
 ): void {
-  const stats = statSync(filePath);
+  let stats: ReturnType<typeof statSync>;
+  try {
+    stats = statSync(filePath);
+  } catch (error) {
+    if (isTransientMissingPathError(error)) return;
+    throw error;
+  }
   if (!stats.isFile()) return;
+
+  let contents: ReturnType<typeof readFileSync>;
+  try {
+    contents = readFileSync(filePath);
+  } catch (error) {
+    if (isTransientMissingPathError(error)) return;
+    throw error;
+  }
+
   hash.update(relative(rootDir, filePath));
   hash.update('\0');
   hash.update(String(stats.size));
   hash.update('\0');
-  hash.update(readFileSync(filePath));
+  hash.update(contents);
   hash.update('\n');
 }
 
@@ -46,18 +69,31 @@ function walkUiWebSourceTree(
   currentPath: string,
   options?: Readonly<{ ignoreDir?: (name: string) => boolean }>,
 ): void {
-  const stats = statSync(currentPath);
+  let stats: ReturnType<typeof statSync>;
+  try {
+    stats = statSync(currentPath);
+  } catch (error) {
+    if (isTransientMissingPathError(error)) return;
+    throw error;
+  }
   if (stats.isFile()) {
     updateUiWebSourceHashForPath(hash, rootDir, currentPath);
     return;
   }
   if (!stats.isDirectory()) return;
 
-  const entries = readdirSync(currentPath, { withFileTypes: true })
+  let entries: Dirent<string>[];
+  try {
+    entries = readdirSync(currentPath, { withFileTypes: true, encoding: 'utf8' });
+  } catch (error) {
+    if (isTransientMissingPathError(error)) return;
+    throw error;
+  }
+  const sortedEntries = entries
     .filter((entry) => entry?.name)
     .sort((left, right) => left.name.localeCompare(right.name));
 
-  for (const entry of entries) {
+  for (const entry of sortedEntries) {
     if (entry.isDirectory()) {
       if (options?.ignoreDir?.(entry.name) ?? shouldIgnoreUiWebSourceDir(entry.name)) continue;
       walkUiWebSourceTree(hash, rootDir, resolvePath(currentPath, entry.name), options);

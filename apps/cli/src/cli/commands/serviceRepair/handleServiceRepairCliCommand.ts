@@ -1,10 +1,10 @@
 import chalk from 'chalk';
 
-import { evaluateCurrentDaemonOwner } from '@/daemon/ownership/evaluateCurrentDaemonOwner';
-import { renderDaemonServiceRepairOwnershipNote } from '@/daemon/ownership/evaluateServiceLifecycleOwnership';
-import { applyBackgroundServiceRepairPlan } from '@/diagnostics/backgroundServiceRepair';
-import { resolveBackgroundServiceRepairPlanForCurrentRuntime } from '@/diagnostics/backgroundServiceRepair/resolveBackgroundServiceRepairPlanForCurrentRuntime';
-import { assertDaemonServiceModeSupported } from '@/daemon/service/assertDaemonServiceModeSupported';
+import { evaluateCurrentDaemonOwner } from '../../../daemon/ownership/evaluateCurrentDaemonOwner';
+import { renderDaemonServiceRepairOwnershipNote } from '../../../daemon/ownership/evaluateServiceLifecycleOwnership';
+import { applyBackgroundServiceRepairPlan } from '../../../diagnostics/backgroundServiceRepair';
+import { resolveBackgroundServiceRepairPlanForCurrentRuntime } from '../../../diagnostics/backgroundServiceRepair/resolveBackgroundServiceRepairPlanForCurrentRuntime';
+import { assertDaemonServiceModeSupported } from '../../../daemon/service/assertDaemonServiceModeSupported';
 
 import { isInteractiveTerminal, promptInput } from '../server/commandUtilities';
 import { renderServiceRepairPlan } from './renderServiceRepairPlan';
@@ -112,6 +112,8 @@ export async function handleServiceRepairCliCommand(params: Readonly<{
       uid: runtime.uid,
       userHomeDir: runtime.userHomeDir,
       happierHomeDir: runtime.happierHomeDir,
+      nodePath: runtime.nodePath,
+      entryPath: runtime.entryPath,
     });
     console.log(JSON.stringify({
       ok: true,
@@ -155,6 +157,8 @@ export async function handleServiceRepairCliCommand(params: Readonly<{
     uid: runtime.uid,
     userHomeDir: runtime.userHomeDir,
     happierHomeDir: runtime.happierHomeDir,
+    nodePath: runtime.nodePath,
+    entryPath: runtime.entryPath,
   });
   console.log(chalk.green('✓'), `Applied ${result.executedActions.length} background-service repair action(s).`);
   if (ownershipNote) {

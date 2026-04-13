@@ -26,6 +26,7 @@ import {
     readBackgroundServiceSetupGuidance,
     type BackgroundServiceSetupGuidance,
     formatBackgroundServiceReleaseChannelSwitchPrompt,
+    formatBackgroundServiceManualRelayTakeoverPrompt,
     formatBackgroundServiceReplacementPrompt,
 } from '@happier-dev/cli-common/systemTasks';
 
@@ -389,13 +390,24 @@ export async function handleSetupCommand(args: string[], deps: SetupCommandDeps 
             targetServerUrl: relayUrl,
         });
 
-        if ((guidance.shouldOfferDefaultReleaseChannelSwitch || guidance.shouldPromptForServiceReplacement) && !isInteractiveTerminalFn()) {
+        if (
+            (
+                guidance.shouldOfferDefaultReleaseChannelSwitch
+                || guidance.shouldPromptForManualRelayTakeover
+                || guidance.shouldPromptForServiceReplacement
+            )
+            && !isInteractiveTerminalFn()
+        ) {
             throw new Error('Background service setup requires interactive guidance. Re-run in an interactive terminal or pass --skip-daemon.');
         }
 
         const guidanceResult = await applyBackgroundServiceSetupGuidance({
             guidance,
             promptSwitchDefaultReleaseChannel: async () => await promptForSetupReleaseChannelSwitch({
+                promptInputFn,
+                guidance,
+            }),
+            promptTakeOverManualRelayRuntime: async () => await promptForSetupManualRelayTakeover({
                 promptInputFn,
                 guidance,
             }),
@@ -414,6 +426,9 @@ export async function handleSetupCommand(args: string[], deps: SetupCommandDeps 
                     channel: targetReleaseChannelId,
                     processEnv: process.env,
                 });
+            },
+            takeOverManualRelayRuntime: async () => {
+                daemonSetupPreflightSteps.push(['daemon', 'start', '--takeover']);
             },
             replaceExistingServices: async () => {
                 daemonSetupPreflightSteps.push(['service', 'uninstall', '--all', '--yes']);
@@ -466,6 +481,16 @@ async function promptForSetupServiceReplacement(params: Readonly<{
 }>): Promise<boolean> {
     const answer = (await params.promptInputFn(
         `${formatBackgroundServiceReplacementPrompt(params.guidance)} [Y/n] `,
+    )).trim().toLowerCase();
+    return !answer.startsWith('n');
+}
+
+async function promptForSetupManualRelayTakeover(params: Readonly<{
+    promptInputFn: typeof promptInput;
+    guidance: BackgroundServiceSetupGuidance;
+}>): Promise<boolean> {
+    const answer = (await params.promptInputFn(
+        `${formatBackgroundServiceManualRelayTakeoverPrompt(params.guidance)} [Y/n] `,
     )).trim().toLowerCase();
     return !answer.startsWith('n');
 }

@@ -7,6 +7,8 @@ export type DaemonServiceSelectableEntry = Readonly<{
   label: string;
   platform: 'darwin' | 'linux' | 'win32';
   scope: 'user' | 'system';
+  mode: DaemonServiceMode;
+  definitionPath: string;
   ring: PublicReleaseRingId;
   instanceId: string;
   targetMode: DaemonServiceTargetMode;

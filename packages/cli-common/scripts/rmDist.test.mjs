@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { rmDistSync } from './rmDist.mjs';
+import * as buildScript from './build.mjs';
 
-describe('rmDistSync', () => {
+describe('cli-common dist cleanup contract', () => {
   it('retries transient ENOTEMPTY errors before removing dist', () => {
+    expect(typeof buildScript.cleanPackageDistSync).toBe('function');
+
     const rmSyncImpl = vi
       .fn()
       .mockImplementationOnce(() => {
@@ -12,7 +14,7 @@ describe('rmDistSync', () => {
       })
       .mockImplementationOnce(() => {});
 
-    rmDistSync({
+    buildScript.cleanPackageDistSync({
       rmSyncImpl,
       retries: 1,
       delayMs: 0,

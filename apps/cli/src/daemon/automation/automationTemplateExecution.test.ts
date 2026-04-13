@@ -197,6 +197,42 @@ describe('parseAutomationTemplateExecution', () => {
     expect(parsed.value.prompt).toBe('Use the ACP backend');
   });
 
+  it('parses session config option overrides from plaintext templates', () => {
+    const parsed = parseAutomationTemplateExecution(
+      buildClaimedRun({
+        automation: {
+          id: 'a1',
+          name: 'ACP backend overrides',
+          enabled: true,
+          targetType: 'new_session',
+          templateCiphertext: buildPlainTemplateCiphertext({
+            directory: '/tmp/project',
+            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            sessionConfigOptionOverrides: {
+              v: 1,
+              updatedAt: 789,
+              overrides: {
+                reasoning: { updatedAt: 789, value: 'high' },
+              },
+            },
+          }),
+        },
+      }),
+      undefined,
+    );
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value).toEqual(expect.objectContaining({
+      sessionConfigOptionOverrides: {
+        v: 1,
+        updatedAt: 789,
+        overrides: {
+          reasoning: { updatedAt: 789, value: 'high' },
+        },
+      },
+    }));
+  });
+
   it('parses mcpSelection from plaintext templates', () => {
     const parsed = parseAutomationTemplateExecution(
       buildClaimedRun({

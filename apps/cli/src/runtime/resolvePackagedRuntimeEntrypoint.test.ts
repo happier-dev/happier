@@ -75,6 +75,38 @@ describe('resolvePackagedRuntimeEntrypoint', () => {
         );
     });
 
+    it('prefers the installed preview cli payload root when launched from the hprev shim path', () => {
+        Object.defineProperty(process, 'execPath', {
+            value: '/Users/test/.happier/bin/hprev',
+            configurable: true,
+        });
+        process.argv = ['/Users/test/.happier/bin/hprev'];
+        vi.mocked(existsSync).mockImplementation((pathLike) => {
+            const path = String(pathLike);
+            return path === '/Users/test/.happier/cli-preview/current/package-dist/backends/codex/happyMcpStdioBridge.mjs';
+        });
+
+        expect(resolvePackagedRuntimeEntrypoint('backends/codex/happyMcpStdioBridge.mjs')).toBe(
+            '/Users/test/.happier/cli-preview/current/package-dist/backends/codex/happyMcpStdioBridge.mjs',
+        );
+    });
+
+    it('prefers the installed publicdev cli payload root when launched from the hdev shim path', () => {
+        Object.defineProperty(process, 'execPath', {
+            value: '/Users/test/.happier/bin/hdev.exe',
+            configurable: true,
+        });
+        process.argv = ['/Users/test/.happier/bin/hdev.exe'];
+        vi.mocked(existsSync).mockImplementation((pathLike) => {
+            const path = String(pathLike);
+            return path === '/Users/test/.happier/cli-dev/current/package-dist/backends/codex/happyMcpStdioBridge.mjs';
+        });
+
+        expect(resolvePackagedRuntimeEntrypoint('backends/codex/happyMcpStdioBridge.mjs')).toBe(
+            '/Users/test/.happier/cli-dev/current/package-dist/backends/codex/happyMcpStdioBridge.mjs',
+        );
+    });
+
     it('handles Windows-style stable shim and package-dist paths', () => {
         Object.defineProperty(process, 'execPath', {
             value: 'C:\\Users\\test\\.happier\\bin\\happier.exe',

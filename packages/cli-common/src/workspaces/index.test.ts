@@ -1,5 +1,18 @@
-import { atomicReplaceDirSync, bundleWorkspacePackage } from './index';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  atomicReplaceDirSync,
+  bundleWorkspacePackage,
+  hasBundledWorkspacePackagesHealthy,
+} from './index';
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -66,6 +79,235 @@ describe('bundleWorkspacePackage', () => {
     const siblingNames = readdirSync(destParent);
     expect(siblingNames.some((name) => name.startsWith('.protocol.__sync_tmp__.'))).toBe(false);
     expect(siblingNames.some((name) => name.startsWith('.protocol.__sync_backup__.'))).toBe(false);
+  });
+});
+
+describe('hasBundledWorkspacePackagesHealthy', () => {
+  let rootDir: string | undefined;
+
+  afterEach(() => {
+    if (rootDir) {
+      rmSync(rootDir, { recursive: true, force: true });
+      rootDir = undefined;
+    }
+  });
+
+  it('returns false when a bundled workspace runtime dependency tree is incomplete', () => {
+    rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-bundled-health-'));
+
+    const workspacePackageDir = resolve(rootDir, 'packages/protocol');
+    mkdirSync(resolve(workspacePackageDir, 'dist'), { recursive: true });
+    writeFileSync(
+      resolve(workspacePackageDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: '@happier-dev/protocol',
+          version: '0.0.0',
+          type: 'module',
+          exports: { '.': { default: './dist/index.js' } },
+          dependencies: {
+            depA: '^1.0.0',
+          },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    writeFileSync(resolve(workspacePackageDir, 'dist/index.js'), 'export {};\n', 'utf8');
+
+    const hostPackageDir = resolve(rootDir, 'apps/cli');
+    mkdirSync(hostPackageDir, { recursive: true });
+    writeFileSync(
+      resolve(hostPackageDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: '@happier-dev/cli',
+          version: '0.0.0',
+          bundledDependencies: ['@happier-dev/protocol'],
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+
+    bundleWorkspacePackage({
+      packageName: '@happier-dev/protocol',
+      srcDir: workspacePackageDir,
+      destDir: resolve(hostPackageDir, 'node_modules', '@happier-dev', 'protocol'),
+    });
+
+    expect(
+      hasBundledWorkspacePackagesHealthy({
+        repoRoot: rootDir,
+        hostPackageDir,
+      }),
+    ).toBe(false);
+  });
+
+  it('returns false when repoRoot points at the host app package and a bundled workspace is incomplete', () => {
+    rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-bundled-health-'));
+    writeFileSync(resolve(rootDir, 'package.json'), JSON.stringify({ name: 'repo', private: true }, null, 2), 'utf8');
+    writeFileSync(resolve(rootDir, 'yarn.lock'), '', 'utf8');
+
+    const workspacePackageDir = resolve(rootDir, 'packages/protocol');
+    mkdirSync(resolve(workspacePackageDir, 'dist'), { recursive: true });
+    writeFileSync(
+      resolve(workspacePackageDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: '@happier-dev/protocol',
+          version: '0.0.0',
+          type: 'module',
+          exports: { '.': { default: './dist/index.js' } },
+          dependencies: {
+            depA: '^1.0.0',
+          },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    writeFileSync(resolve(workspacePackageDir, 'dist/index.js'), 'export {};\n', 'utf8');
+
+    const hostPackageDir = resolve(rootDir, 'apps/cli');
+    mkdirSync(hostPackageDir, { recursive: true });
+    writeFileSync(
+      resolve(hostPackageDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: '@happier-dev/cli',
+          version: '0.0.0',
+          bundledDependencies: ['@happier-dev/protocol'],
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+
+    bundleWorkspacePackage({
+      packageName: '@happier-dev/protocol',
+      srcDir: workspacePackageDir,
+      destDir: resolve(hostPackageDir, 'node_modules', '@happier-dev', 'protocol'),
+    });
+
+    expect(
+      hasBundledWorkspacePackagesHealthy({
+        repoRoot: hostPackageDir,
+        hostPackageDir,
+      }),
+    ).toBe(false);
+  });
+
+  it('returns false when the source workspace package is unavailable but the bundled payload is incomplete', () => {
+    rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-bundled-health-'));
+    writeFileSync(resolve(rootDir, 'package.json'), JSON.stringify({ name: 'repo', private: true }, null, 2), 'utf8');
+    writeFileSync(resolve(rootDir, 'yarn.lock'), '', 'utf8');
+
+    const sourceWorkspaceDir = resolve(rootDir, 'external', 'protocol-source');
+    mkdirSync(resolve(sourceWorkspaceDir, 'dist'), { recursive: true });
+    writeFileSync(
+      resolve(sourceWorkspaceDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: '@happier-dev/protocol',
+          version: '0.0.0',
+          type: 'module',
+          exports: { '.': { default: './dist/index.js' } },
+          dependencies: {
+            depA: '^1.0.0',
+          },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    writeFileSync(resolve(sourceWorkspaceDir, 'dist/index.js'), 'export {};\n', 'utf8');
+
+    const hostPackageDir = resolve(rootDir, 'apps/cli');
+    mkdirSync(hostPackageDir, { recursive: true });
+    writeFileSync(
+      resolve(hostPackageDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: '@happier-dev/cli',
+          version: '0.0.0',
+          bundledDependencies: ['@happier-dev/protocol'],
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+
+    bundleWorkspacePackage({
+      packageName: '@happier-dev/protocol',
+      srcDir: sourceWorkspaceDir,
+      destDir: resolve(hostPackageDir, 'node_modules', '@happier-dev', 'protocol'),
+    });
+    rmSync(resolve(hostPackageDir, 'node_modules', '@happier-dev', 'protocol', 'dist', 'index.js'));
+
+    expect(
+      hasBundledWorkspacePackagesHealthy({
+        repoRoot: hostPackageDir,
+        hostPackageDir,
+      }),
+    ).toBe(false);
+  });
+
+  it('returns true when bundled workspace outputs and runtime dependencies are healthy', () => {
+    rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-bundled-health-'));
+
+    const workspacePackageDir = resolve(rootDir, 'packages/protocol');
+    mkdirSync(resolve(workspacePackageDir, 'dist'), { recursive: true });
+    writeFileSync(
+      resolve(workspacePackageDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: '@happier-dev/protocol',
+          version: '0.0.0',
+          type: 'module',
+          exports: { '.': { default: './dist/index.js' } },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    writeFileSync(resolve(workspacePackageDir, 'dist/index.js'), 'export {};\n', 'utf8');
+
+    const hostPackageDir = resolve(rootDir, 'apps/cli');
+    mkdirSync(hostPackageDir, { recursive: true });
+    writeFileSync(
+      resolve(hostPackageDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: '@happier-dev/cli',
+          version: '0.0.0',
+          bundledDependencies: ['@happier-dev/protocol'],
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+
+    bundleWorkspacePackage({
+      packageName: '@happier-dev/protocol',
+      srcDir: workspacePackageDir,
+      destDir: resolve(hostPackageDir, 'node_modules', '@happier-dev', 'protocol'),
+    });
+
+    expect(
+      hasBundledWorkspacePackagesHealthy({
+        repoRoot: rootDir,
+        hostPackageDir,
+      }),
+    ).toBe(true);
   });
 });
 

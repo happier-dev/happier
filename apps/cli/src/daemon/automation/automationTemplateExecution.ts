@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { BackendTargetRefSchema, openAccountScopedBlobCiphertext, SessionMcpSelectionV1Schema } from '@happier-dev/protocol';
+import {
+  AcpConfigOptionOverridesV1Schema,
+  BackendTargetRefSchema,
+  openAccountScopedBlobCiphertext,
+  SessionMcpSelectionV1Schema,
+} from '@happier-dev/protocol';
 import type { CodexBackendMode } from '@happier-dev/agents';
 
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
@@ -37,6 +42,7 @@ const TemplateSchema = z.object({
   permissionModeUpdatedAt: z.number().int().optional(),
   modelId: z.string().optional(),
   modelUpdatedAt: z.number().int().optional(),
+  sessionConfigOptionOverrides: AcpConfigOptionOverridesV1Schema.optional(),
   mcpSelection: SessionMcpSelectionV1Schema.optional(),
   connectedServices: z.unknown().optional(),
   transcriptStorage: z.enum(['persisted', 'direct']).optional(),
@@ -105,6 +111,7 @@ export type ParsedAutomationExecution = Readonly<{
   permissionModeUpdatedAt?: number;
   modelId?: string;
   modelUpdatedAt?: number;
+  sessionConfigOptionOverrides?: SpawnSessionOptions['sessionConfigOptionOverrides'];
   mcpSelection?: SpawnSessionOptions['mcpSelection'];
   connectedServices?: SpawnSessionOptions['connectedServices'];
   transcriptStorage?: SpawnSessionOptions['transcriptStorage'];
@@ -249,6 +256,7 @@ export function parseAutomationTemplateExecution(
       ...(typeof template.permissionModeUpdatedAt === 'number' ? { permissionModeUpdatedAt: template.permissionModeUpdatedAt } : {}),
       ...(template.modelId ? { modelId: template.modelId } : {}),
       ...(typeof template.modelUpdatedAt === 'number' ? { modelUpdatedAt: template.modelUpdatedAt } : {}),
+      ...(template.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: template.sessionConfigOptionOverrides } : {}),
       ...(template.mcpSelection ? { mcpSelection: template.mcpSelection } : {}),
       ...(template.connectedServices !== undefined ? { connectedServices: template.connectedServices } : {}),
       ...(template.transcriptStorage !== undefined ? { transcriptStorage: template.transcriptStorage } : {}),

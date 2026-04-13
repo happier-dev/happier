@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
-import { collectMissingExportTargets } from './verifyExports.mjs';
+import * as verifyExports from './verifyExports.mjs';
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const packageDir = dirname(scriptsDir);
@@ -21,10 +21,23 @@ describe('cli-common build export verification', () => {
     });
   });
 
-  it('runs export verification as part of the package build', () => {
+  it('runs export verification through the build entrypoint without duplicating a second step', () => {
     const packageJson = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8'));
 
-    expect(packageJson.scripts.build).toContain('verifyExports.mjs');
+    expect(packageJson.scripts.build).toContain('scripts/build.mjs');
+    expect(packageJson.scripts.build).not.toContain('verifyExports.mjs');
+    expect(packageJson.scripts.clean).toContain('scripts/build.mjs');
+    expect(packageJson.scripts.clean).not.toContain('rmDist.mjs');
+    expect(packageJson.scripts['build:clean']).toContain('scripts/build.mjs');
+    expect(packageJson.scripts['build:clean']).not.toContain('rmDist.mjs');
+  });
+
+  it('keeps the export verifier as a helper-only module with no standalone entrypoint', () => {
+    expect(verifyExports).toMatchObject({
+      collectMissingExportTargets: expect.any(Function),
+      verifyPackageExportTargets: expect.any(Function),
+    });
+    expect(verifyExports).not.toHaveProperty('main');
   });
 
   it('detects missing files for declared export targets', () => {
@@ -45,7 +58,7 @@ describe('cli-common build export verification', () => {
         },
       }, null, 2), 'utf8');
 
-      expect(collectMissingExportTargets({
+      expect(verifyExports.collectMissingExportTargets({
         packageDir: fixtureDir,
         packageJson: JSON.parse(readFileSync(join(fixtureDir, 'package.json'), 'utf8')),
       })).toEqual([

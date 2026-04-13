@@ -1,5 +1,12 @@
 // @ts-check
 import { defineConfig } from '@playwright/test';
+import {
+  resolvePlaywrightUiHtmlReportDir,
+  resolvePlaywrightUiTestResultsDir,
+} from './scripts/playwrightUiArtifacts.shared.mjs';
+
+const outputDir = resolvePlaywrightUiTestResultsDir(process.env);
+const htmlReportDir = resolvePlaywrightUiHtmlReportDir(process.env);
 
 export default defineConfig({
   testDir: 'suites/ui-e2e',
@@ -7,8 +14,10 @@ export default defineConfig({
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,
   workers: 1,
-  reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : [['list'], ['html']],
-  outputDir: '.project/logs/e2e/ui-playwright',
+  reporter: process.env.CI
+    ? [['list'], ['html', { open: 'never', outputFolder: htmlReportDir }]]
+    : [['list'], ['html', { outputFolder: htmlReportDir }]],
+  outputDir,
   use: {
     testIdAttribute: 'data-testid',
     // Keep UI e2e deterministic by avoiding responsive split-view layouts.

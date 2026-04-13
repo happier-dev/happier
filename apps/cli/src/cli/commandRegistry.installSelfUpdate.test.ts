@@ -15,6 +15,10 @@ describe('commandRegistry install/update aliases', () => {
     expect(commandRegistry.install).toBeTypeOf('function');
   });
 
+  it('registers plugins command namespace', () => {
+    expect(commandRegistry.plugins).toBeTypeOf('function');
+  });
+
   it('registers service command namespace and daemon compatibility alias', () => {
     expect(commandRegistry.service).toBeTypeOf('function');
     expect(commandRegistry.daemon).toBeTypeOf('function');

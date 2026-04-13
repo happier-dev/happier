@@ -1,14 +1,13 @@
-import fs from 'fs/promises';
-import os from 'os';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
-import { ApiClient, isMachineContentPublicKeyMismatchError } from '@/api/api';
+import { ApiClient } from '@/api/api';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { ensureMachineRegistered } from '@/api/machine/ensureMachineRegistered';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { TrackedSession } from './types';
-import { MachineMetadata, DaemonState, type Metadata } from '@/api/types';
+import { MachineMetadata } from '@/api/types';
+import type { DaemonState } from '@/api/types';
 import {
   resolveCanonicalCodexBackendMode,
   SpawnSessionOptions,
@@ -20,111 +19,69 @@ import { configuration } from '@/configuration';
 import { startCaffeinate, stopCaffeinate } from '@/integrations/caffeinate';
 import packageJson from '../../package.json';
 import { getEnvironmentInfo } from '@/ui/doctor';
-import { buildHappyCliSubprocessLaunchSpec, spawnHappyCLI } from '@/utils/spawnHappyCLI';
-import { getVendorResumeSupport, requireCatalogEntry, resolveAgentCliSubcommand, resolveCatalogAgentId } from '@/backends/catalog';
-import { CATALOG_AGENT_IDS } from '@/backends/types';
+import { buildHappyCliSubprocessLaunchSpec } from '@/utils/spawnHappyCLI';
+import { getVendorResumeSupport, requireCatalogEntry } from '@/backends/catalog';
+import { projectPath } from '@/projectPath';
 import {
   writeDaemonState,
-  DaemonLocallyPersistedState,
   acquireDaemonLock,
   releaseDaemonLock,
-  clearDaemonState,
   readCredentials,
   readSettings,
 } from '@/persistence';
 import { createSessionAttachFile } from './sessionAttachFile';
-import { getDaemonShutdownExitCode, getDaemonShutdownWatchdogTimeoutMs } from './shutdownPolicy';
-import { shouldRetryMachineRegistrationError } from './machineRegistrationRetryPolicy';
-import type { SessionHandoffDirectPeerTransferHandle } from '@/api/machine/rpcHandlers.sessionHandoff';
-import type { PromptAssetReadRequest, PromptRegistryFetchItemRequestV1 } from '@happier-dev/protocol';
 
 import { isDaemonRunningCurrentlyInstalledHappyVersion, stopDaemon } from './controlClient';
 import { startDaemonControlServer } from './controlServer';
-import { createDirectTransferServerLifecycle } from '@/machines/transfer/directTransferServerLifecycle';
-import { createTailscaleTransferServeLifecycle } from '@/machines/transfer/tailscaleTransferServeLifecycle';
-import { isLoopbackTransferBindHost, resolveMachineTransferRuntimeConfig } from '@/machines/transfer/transferRuntimeConfig';
 import { reattachTrackedSessionsFromMarkers } from './sessions/reattachFromMarkers';
 import { createOnHappySessionWebhook } from './sessions/onHappySessionWebhook';
-import { buildHandoffSessionMetadataFromTrackedSession } from './sessions/buildHandoffSessionMetadataFromTrackedSession';
-import { createLocalSessionHandoffMetadataStore } from '@/session/handoff/metadata/localSessionHandoffMetadataStore';
+import { createDaemonSessionHandoffMetadataBridge } from './sessions/createDaemonSessionHandoffMetadataBridge';
 import { createOnChildExited } from './sessions/onChildExited';
-import { waitForVisibleConsoleSessionWebhook } from './sessions/visibleConsoleSpawnWaiter';
 import { createStopSession } from './sessions/stopSession';
-import { waitForExistingSessionExitIfStopRequested } from './sessions/waitForExistingSessionExitIfStopRequested';
-import { resolveSpawnWebhookResult } from './sessions/resolveSpawnWebhookResult';
 import { isSessionRunnerActive as isSessionRunnerActiveInDaemon } from './sessions/isSessionRunnerActive';
 import { startDaemonHeartbeatLoop } from './lifecycle/heartbeat';
 import { createSessionRunnerRespawnManager } from './processSupervision/sessionRunnerRespawn';
-import { publishShutdownStateBestEffort } from './lifecycle/publishShutdownState';
-import { createDaemonTransferRuntimeState } from './transferRuntimeState';
-import { resolveTailscaleTransferListenerState } from './resolveTailscaleTransferListenerState';
-import { projectPath } from '@/projectPath';
-import type { SessionHandoffLocalMetadataSource } from '@/session/handoff/metadata/runtimeLocalSessionHandoffMetadata';
-import { selectPreferredTmuxSessionName, TmuxUtilities, isTmuxAvailable } from '@/integrations/tmux';
 import { resolveTerminalRequestFromSpawnOptions } from '@/terminal/runtime/terminalConfig';
 import { validateEnvVarRecordStrict } from '@/terminal/runtime/envVarSanitization';
 
 import { getPreferredHostName, initialMachineMetadata } from './machine/metadata';
 export { initialMachineMetadata } from './machine/metadata';
 import { createDaemonShutdownController } from './lifecycle/shutdown';
-import { createDaemonTransferRuntimeStatePublisher } from './transferRuntimeState';
-import { createPromptAssetAdapterRegistry } from '@/promptAssets/createPromptAssetAdapterRegistry';
-import { createPromptRegistryAdapterRegistry } from '@/promptRegistries/createPromptRegistryAdapterRegistry';
-import { resolvePromptAssetDownloadSource } from '@/transfers/targets/resolvePromptAssetDownloadSource';
-import { resolvePromptRegistryItemDownloadSource } from '@/transfers/targets/resolvePromptRegistryItemDownloadSource';
-import { resolveWorkspaceFileDownloadSource } from '@/transfers/targets/resolveWorkspaceFileDownloadSource';
-import { createFileTransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
-import { buildTmuxSpawnConfig, buildTmuxWindowEnv } from './platform/tmux/spawnConfig';
+import { cleanupAndShutdown as runCleanupAndShutdown } from './lifecycle/cleanupAndShutdown';
+import { createBeforeShutdownDrain } from './lifecycle/createBeforeShutdownDrain';
+import { startDaemonMachineRegistration } from './machine/startDaemonMachineRegistration';
+import { startDaemonRuntimeBootstrap } from './startup/startDaemonRuntimeBootstrap';
+import { migrateTrackedSessionProcessesOutOfDaemonServiceCgroup } from './platform/linux/migrateTrackedSessionProcessesOutOfDaemonServiceCgroup';
 export { buildTmuxSpawnConfig, buildTmuxWindowEnv } from './platform/tmux/spawnConfig';
-import { resolveWindowsRemoteSessionConsoleMode } from './platform/windows/windowsSessionConsoleMode';
-import { startHappySessionInVisibleWindowsConsole } from './platform/windows/spawnHappyCliVisibleConsole';
-import { startHappySessionInWindowsTerminal } from './platform/windows/spawnHappyCliWindowsTerminal';
-import {
-  buildWindowsHostedTerminalArgs,
-  buildWindowsHostedTerminalAttachment,
-  buildWindowsTerminalWindowIdentity,
-} from './platform/windows/windowsHostedSessionRuntime';
 import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
-import { buildHappySessionControlArgs } from './sessionSpawnArgs';
-import { resolveExistingSessionAttachContext } from './sessionEncryption/resolveExistingSessionAttachContext';
 import { resolveWaitForAuthConfig } from './startup/waitForAuthConfig';
 import { ensureSessionDirectory } from './startup/ensureSessionDirectory';
 import { waitForInitialCredentials } from './startup/waitForInitialCredentials';
 import { resolveDaemonDiagnosticSubsystemGates } from './startup/diagnosticSubsystemGates';
-import { waitForSessionWebhook } from './spawn/waitForSessionWebhook';
 import { resolveSpawnChildEnvironment } from './spawn/resolveSpawnChildEnvironment';
-import { buildSpawnChildProcessEnv } from './spawn/buildSpawnChildProcessEnv';
 import { resolveStackProcessKindOverrideForSessionSpawn } from './spawn/resolveStackProcessKindOverrideForSessionSpawn';
 import { createSpawnConcurrencyGate } from './spawn/createSpawnConcurrencyGate';
 import { computeDaemonSpawnRequestKey, createSpawnRequestCoalescer } from './spawn/spawnRequestCoalescer';
+import { createSpawnLifecycleCallbacks } from './spawn/createSpawnLifecycleCallbacks';
+import { resolveSpawnBackendIdentity } from './spawn/resolveSpawnBackendIdentity';
+import { resolveExistingSessionSpawnPreGate } from './spawn/resolveExistingSessionSpawnPreGate';
+import { routeSpawnModeAndWaitForWebhook } from './spawn/routeSpawnModeAndWaitForWebhook';
 import { startAutomationWorker, type AutomationWorkerHandle } from './automation/automationWorker';
 import { startMemoryWorker, type MemoryWorkerHandle } from './memory/memoryWorker';
 import { createDaemonConnectivityCoordinator } from './connection/createDaemonConnectivityCoordinator';
 import { resolveConnectedServiceAuthForSpawn } from './connectedServices/resolveConnectedServiceAuthForSpawn';
 import { shouldResolveConnectedServiceAuthForSpawn } from './connectedServices/shouldResolveConnectedServiceAuthForSpawn';
-import { ConnectedServiceRefreshCoordinator } from './connectedServices/refresh/ConnectedServiceRefreshCoordinator';
-import { createConnectedServicesAuthUpdatedRestartHandler } from './connectedServices/refresh/createConnectedServicesAuthUpdatedRestartHandler';
-import { startConnectedServiceRefreshLoop } from './connectedServices/refresh/startConnectedServiceRefreshLoop';
-import { ConnectedServiceQuotasCoordinator } from './connectedServices/quotas/ConnectedServiceQuotasCoordinator';
-import { createConnectedServiceQuotaFetchers } from './connectedServices/quotas/createConnectedServiceQuotaFetchers';
-import { resolveConnectedServiceQuotasDaemonOptions } from './connectedServices/quotas/resolveConnectedServiceQuotasDaemonOptions';
-import { resolveConnectedServicesQuotasDaemonEnabled } from './connectedServices/quotas/resolveConnectedServicesQuotasDaemonEnabled';
-import { startConnectedServiceQuotasLoop, type ConnectedServiceQuotasLoopHandle } from './connectedServices/quotas/startConnectedServiceQuotasLoop';
+import type { ConnectedServiceRefreshCoordinator } from './connectedServices/refresh/ConnectedServiceRefreshCoordinator';
+import type { ConnectedServiceQuotasCoordinator } from './connectedServices/quotas/ConnectedServiceQuotasCoordinator';
+import type { ConnectedServiceQuotasLoopHandle } from './connectedServices/quotas/startConnectedServiceQuotasLoop';
 import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import {
   HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY,
   normalizeDaemonInitialPrompt,
 } from '@/agent/runtime/daemonInitialPrompt';
-import { parseBooleanEnv, type BackendTargetRefV1 } from '@happier-dev/protocol';
+import { parseBooleanEnv } from '@happier-dev/protocol';
 import { getReleaseRingCatalogEntry } from '@happier-dev/release-runtime/releaseRings';
-import type { CatalogAgentId } from '@/backends/types';
-import { writeTerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
-import {
-  isDaemonStartupSourceServiceManaged,
-  resolveDaemonServiceLabelFromEnv,
-  resolveDaemonTakeoverRequestedFromEnv,
-  resolveDaemonStartupSourceFromEnv,
-} from '@/daemon/ownership/daemonOwnershipMetadata';
+import { resolveDaemonServiceLabelFromEnv, resolveDaemonTakeoverRequestedFromEnv, resolveDaemonStartupSourceFromEnv } from '@/daemon/ownership/daemonOwnershipMetadata';
 import { evaluateCurrentDaemonOwner } from '@/daemon/ownership/evaluateCurrentDaemonOwner';
 import { DaemonOwnershipConflictError } from '@/daemon/ownership/DaemonOwnershipConflictError';
 import {
@@ -137,6 +94,7 @@ import {
 } from '@/daemon/ownership/resolveDaemonTakeoverDecision';
 import { resolveDaemonOwnershipConflictExitCode } from '@/daemon/ownership/resolveDaemonOwnershipConflictExitCode';
 import { resolveDaemonServiceCliRuntimeFromEnv } from '@/daemon/service/cli';
+import { setRespawnDescriptorEncryptionMaterialForRestore } from './reattach';
 
 function resolvePositiveIntEnv(raw: string | undefined, fallback: number, bounds: { min: number; max: number }): number {
   const value = (raw ?? '').trim();
@@ -149,68 +107,6 @@ function resolvePositiveIntEnv(raw: string | undefined, fallback: number, bounds
 export function resolveDaemonRuntimeId(processEnv: NodeJS.ProcessEnv = process.env): string {
   const inheritedRuntimeId = String(processEnv.HAPPIER_DAEMON_RUNTIME_ID ?? '').trim();
   return inheritedRuntimeId || randomUUID();
-}
-
-function readBuiltInCatalogAgentIdFromBackendTarget(target: BackendTargetRefV1 | undefined): CatalogAgentId | null {
-  if (target?.kind !== 'builtInAgent') return null;
-  return typeof target.agentId === 'string' && (CATALOG_AGENT_IDS as readonly string[]).includes(target.agentId)
-    ? (target.agentId as CatalogAgentId)
-    : null;
-}
-
-function resolveCatalogAgentIdFromBackendTarget(target: BackendTargetRefV1 | undefined): CatalogAgentId {
-  if (target?.kind === 'configuredAcpBackend') {
-    return 'customAcp';
-  }
-  return resolveCatalogAgentId(readBuiltInCatalogAgentIdFromBackendTarget(target));
-}
-
-function resolveCliSubcommandFromBackendTarget(target: BackendTargetRefV1 | undefined): CatalogAgentId | 'acp-catalog' {
-  if (target?.kind === 'configuredAcpBackend') {
-    return 'acp-catalog';
-  }
-  return resolveAgentCliSubcommand(readBuiltInCatalogAgentIdFromBackendTarget(target));
-}
-
-function mapExistingSessionAttachFailureToSpawnError(reason: import('./sessionEncryption/resolveExistingSessionAttachContext').ExistingSessionAttachContextFailureReason): SpawnSessionResult {
-  switch (reason) {
-    case 'missingSessionId':
-      return {
-        type: 'error',
-        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-        errorMessage: 'Existing session id is required for resume attach.',
-      };
-    case 'missingToken':
-      return {
-        type: 'error',
-        errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
-        errorMessage: 'Missing auth token to fetch existing session for resume.',
-      };
-    case 'sessionNotFound':
-      return {
-        type: 'error',
-        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-        errorMessage: 'Existing session not found or access denied for resume.',
-      };
-    case 'fetchFailed':
-      return {
-        type: 'error',
-        errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
-        errorMessage: 'Failed to fetch existing session for resume.',
-      };
-    case 'missingCredentials':
-      return {
-        type: 'error',
-        errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_MISSING_ENCRYPTION_KEY,
-        errorMessage: 'Missing credentials to open the session encryption key for resume.',
-      };
-    case 'invalidEncryptionKey':
-      return {
-        type: 'error',
-        errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_MISSING_ENCRYPTION_KEY,
-        errorMessage: 'Failed to open session encryption key for resume.',
-      };
-  }
 }
 
 export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}): Promise<void> {
@@ -235,6 +131,8 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
   const startupSource = resolveDaemonStartupSourceFromEnv(process.env);
   const serviceLabel = resolveDaemonServiceLabelFromEnv(process.env);
   const takeoverRequested = options.takeover ?? resolveDaemonTakeoverRequestedFromEnv(process.env);
+  const publicReleaseChannel = getReleaseRingCatalogEntry(configuration.publicReleaseRing)
+    .publicLabel as NonNullable<DaemonState['publicReleaseChannel']>;
 
   try {
     const ownership = await evaluateCurrentDaemonOwner();
@@ -251,7 +149,8 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         title: error.title,
         lines: error.lines,
       });
-      throw error;
+      process.exit(resolveDaemonOwnershipConflictExitCode(startupSource));
+      return;
     }
     const startupServiceConflict = await evaluateDaemonStartupServiceConflict({
       startupSource,
@@ -310,6 +209,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
     const credentials = auth.credentials;
     let machineId = auth.machineId;
     logger.debug('[DAEMON RUN] Auth and machine setup complete');
+    setRespawnDescriptorEncryptionMaterialForRestore(credentials?.encryption ?? null);
 
     const api = await ApiClient.create(credentials);
     const preferredHost = await getPreferredHostName();
@@ -356,9 +256,9 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
     }
 
         // Setup state - key by PID
-        const pidToTrackedSession = new Map<number, TrackedSession>();
-        const spawnResourceCleanupByPid = new Map<number, () => void>();
-        const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
+      const pidToTrackedSession = new Map<number, TrackedSession>();
+      const spawnResourceCleanupByPid = new Map<number, () => void>();
+      const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
       const connectedServicesMaterializationBaseDir = join(configuration.happyHomeDir, 'daemon', 'connected-services', 'materialized');
       let connectedServiceRefreshCoordinator: ConnectedServiceRefreshCoordinator | null = null;
       let connectedServiceRefreshLoopHandle: Readonly<{
@@ -404,89 +304,19 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           { min: 10, max: 5_000 },
         );
 
-        let beforeShutdownOnce: Promise<void> | null = null;
-        const beforeShutdown = async (): Promise<void> => {
-          if (beforeShutdownOnce) return await beforeShutdownOnce;
-          beforeShutdownOnce = (async () => {
-            const initialInFlightSpawns = pidToAwaiter.size;
-            const hasPendingRpcRequests = apiMachineForSessions !== null;
-            if (initialInFlightSpawns === 0 && !hasPendingRpcRequests) return;
-
-            logger.debug('[DAEMON RUN] Shutdown requested with in-flight work; deferring shutdown', {
-              inFlightSpawns: initialInFlightSpawns,
-              pendingRpcDrainEnabled: hasPendingRpcRequests,
-              graceMs: shutdownSpawnDrainGraceMs,
-              pollMs: shutdownSpawnDrainPollMs,
-            });
-
-            const start = Date.now();
-            while (pidToAwaiter.size > 0 && Date.now() - start < shutdownSpawnDrainGraceMs) {
-              // eslint-disable-next-line no-await-in-loop
-              await new Promise((resolve) => setTimeout(resolve, shutdownSpawnDrainPollMs));
-            }
-
-            const remaining = pidToAwaiter.size;
-            if (remaining === 0) {
-              logger.debug('[DAEMON RUN] In-flight spawn(s) drained; checking pending RPC requests');
-            } else {
-              const errorMessage = `Daemon shutting down while ${remaining} spawn(s) still awaiting session webhook.`;
-              logger.warn('[DAEMON RUN] In-flight spawn(s) did not drain before shutdown; aborting spawn(s)', {
-                inFlight: remaining,
-                graceMs: shutdownSpawnDrainGraceMs,
-              });
-
-              for (const timeout of pidToSpawnWebhookTimeout.values()) {
-                clearTimeout(timeout);
-              }
-
-              for (const resolveSpawnResult of pidToSpawnResultResolver.values()) {
-                resolveSpawnResult({
-                  type: 'error',
-                  errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
-                  errorMessage,
-                });
-              }
-
-              pidToAwaiter.clear();
-              pidToSpawnResultResolver.clear();
-              pidToSpawnWebhookTimeout.clear();
-            }
-
-            if (!apiMachineForSessions) return;
-
-            const elapsedMs = Date.now() - start;
-            const remainingRpcGraceMs = Math.max(0, shutdownSpawnDrainGraceMs - elapsedMs);
-            if (remainingRpcGraceMs === 0) {
-              logger.warn('[DAEMON RUN] No shutdown grace budget left to drain pending RPC requests');
-              return;
-            }
-
-            let rpcRequestsDrained = false;
-            const timeoutHandle = setTimeout(() => {
-              if (!rpcRequestsDrained) {
-                logger.warn('[DAEMON RUN] Pending RPC requests did not drain before shutdown', {
-                  graceMs: remainingRpcGraceMs,
-                });
-              }
-            }, remainingRpcGraceMs);
-
-            try {
-              await Promise.race([
-                apiMachineForSessions.awaitPendingRpcRequests().then(() => {
-                  rpcRequestsDrained = true;
-                }),
-                new Promise<void>((resolve) => setTimeout(resolve, remainingRpcGraceMs)),
-              ]);
-            } finally {
-              clearTimeout(timeoutHandle);
-            }
-
-            if (rpcRequestsDrained) {
-              logger.debug('[DAEMON RUN] Pending RPC requests drained; proceeding with shutdown');
-            }
-          })();
-          return await beforeShutdownOnce;
-        };
+        const beforeShutdown = createBeforeShutdownDrain({
+          pidToAwaiter,
+          pidToSpawnResultResolver,
+          pidToSpawnWebhookTimeout,
+          shutdownSpawnDrainGraceMs,
+          shutdownSpawnDrainPollMs,
+          getApiMachineForSessions: () => apiMachineForSessions,
+          buildUnexpectedSpawnResult: (errorMessage) => ({
+            type: 'error',
+            errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+            errorMessage,
+          }),
+        });
 
         const isSessionRunnerActive = async (sessionIdRaw: string): Promise<boolean> => {
           return await isSessionRunnerActiveInDaemon({
@@ -494,53 +324,35 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             trackedSessions: pidToTrackedSession.values(),
           });
         };
-        const localSessionHandoffMetadataStore = createLocalSessionHandoffMetadataStore({
+        const {
+          loadLocalSessionMetadataForHandoff,
+          loadLocalHandoffMetadataByVendorResumeId,
+          savePreparedTargetLocalMetadata,
+        } = createDaemonSessionHandoffMetadataBridge({
+          pidToTrackedSession,
+          getMachineId: () => machineId,
           activeServerDir: configuration.activeServerDir,
         });
 
         // Helper functions
         const getCurrentChildren = () => Array.from(pidToTrackedSession.values());
-        const loadLocalSessionMetadataForHandoff = async (sessionId: string): Promise<SessionHandoffLocalMetadataSource | null> => {
-          const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
-          if (!normalizedSessionId) {
-            return null;
-          }
 
-          for (const trackedSession of pidToTrackedSession.values()) {
-            const candidateSessionIds = [
-              trackedSession.happySessionId,
-              trackedSession.vendorResumeId,
-              trackedSession.spawnOptions?.resume,
-            ]
-              .filter((candidate): candidate is string => typeof candidate === 'string')
-              .map((candidate) => candidate.trim())
-              .filter((candidate) => candidate.length > 0);
-
-            if (!candidateSessionIds.includes(normalizedSessionId)) {
-              continue;
-            }
-
-            const handoffVendorResumeId =
-              typeof trackedSession.vendorResumeId === 'string' && trackedSession.vendorResumeId.trim().length > 0
-                ? trackedSession.vendorResumeId.trim()
-                : typeof trackedSession.spawnOptions?.resume === 'string' && trackedSession.spawnOptions.resume.trim().length > 0
-                  ? trackedSession.spawnOptions.resume.trim()
-                  : '';
-            const localExportMetadataOverlay =
-              handoffVendorResumeId
-                ? await localSessionHandoffMetadataStore.loadByVendorResumeId(handoffVendorResumeId)
-                : null;
-            return buildHandoffSessionMetadataFromTrackedSession({
-              trackedSession,
-              machineId,
-              fallbackHomeDir: os.homedir(),
-              localExportMetadataOverlay,
+        try {
+          await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+          if (process.platform === 'linux' && startupSource === 'background-service') {
+            const migratedTrackedSessionProcesses = await migrateTrackedSessionProcessesOutOfDaemonServiceCgroup({
+              trackedSessions: pidToTrackedSession.values(),
+              daemonPid: process.pid,
             });
+            if (migratedTrackedSessionProcesses.length > 0) {
+              logger.debug('[DAEMON RUN] Moved reattached session runner process(es) out of the daemon service cgroup', {
+                migrations: migratedTrackedSessionProcesses,
+              });
+            }
           }
-          return null;
-        };
-
-        await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+        } finally {
+          setRespawnDescriptorEncryptionMaterialForRestore(null);
+        }
 
         // Handle webhook from happy session reporting itself
         const onHappySessionWebhook = createOnHappySessionWebhook({ pidToTrackedSession, pidToAwaiter });
@@ -554,34 +366,23 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
 
             // Spawn a new session (sessionId reserved for future Happy session resume; vendor resume uses options.resume).
                 const spawnSession = async (options: SpawnSessionOptions): Promise<SpawnSessionResult> => {
-          const key = computeDaemonSpawnRequestKey(options);
-          return await spawnRequestCoalescer.run(key, async () => {
-            const normalizedExistingSessionId = typeof options.existingSessionId === 'string' ? options.existingSessionId.trim() : '';
-            if (normalizedExistingSessionId) {
-              // Idempotency: a resume/attach request must never spawn a duplicate process.
-              // This covers both:
-              // - sessions we are tracking (including in-flight attaches), and
-              // - runners started outside this daemon (lock file check).
-              if (await isSessionRunnerActive(normalizedExistingSessionId)) {
-                // If the daemon has *just* requested the runner to stop (e.g. aborting a handoff),
-                // a best-effort "restart on source" can race and leave the session stopped. When
-                // we detect an in-flight stop marker, wait briefly for the runner to exit before
-                // applying the idempotent "already running" rule.
-                if (configuration.daemonSpawnExistingSessionWaitForExitMs > 0) {
-                  await waitForExistingSessionExitIfStopRequested({
-                    sessionId: normalizedExistingSessionId,
-                    pidToTrackedSession,
-                    isSessionRunnerActive,
-                    timeoutMs: configuration.daemonSpawnExistingSessionWaitForExitMs,
-                    pollIntervalMs: configuration.daemonSpawnExistingSessionWaitForExitPollIntervalMs,
-                  });
-                }
-
-                if (await isSessionRunnerActive(normalizedExistingSessionId)) {
-                  logger.debug(`[DAEMON RUN] Resume requested for ${normalizedExistingSessionId}, but session is already running`);
-                  return { type: 'success', sessionId: normalizedExistingSessionId };
-                }
-              }
+            try {
+              const key = computeDaemonSpawnRequestKey(options);
+              return await spawnRequestCoalescer.run(key, async () => {
+            // Idempotency: a resume/attach request must never spawn a duplicate process.
+            // This covers both:
+            // - sessions we are tracking (including in-flight attaches), and
+            // - runners started outside this daemon (lock file check).
+            const existingSessionPreGate = await resolveExistingSessionSpawnPreGate({
+              existingSessionId: options.existingSessionId,
+              pidToTrackedSession,
+              isSessionRunnerActive,
+              waitForExitTimeoutMs: configuration.daemonSpawnExistingSessionWaitForExitMs,
+              waitForExitPollIntervalMs: configuration.daemonSpawnExistingSessionWaitForExitPollIntervalMs,
+              logDebug: (message, payload) => logger.debug(message, payload),
+            });
+            if (existingSessionPreGate.shortCircuitResult) {
+              return existingSessionPreGate.shortCircuitResult;
             }
 
             return await spawnConcurrencyGate.run(async () => {
@@ -635,7 +436,6 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                     backendTarget,
                   } = options;
               const normalizedResume = typeof resume === 'string' ? resume.trim() : '';
-              const normalizedExistingSessionId = typeof existingSessionId === 'string' ? existingSessionId.trim() : '';
               const canonicalCodexBackendMode = resolveCanonicalCodexBackendMode({
                 codexBackendMode,
                 experimentalCodexAcp,
@@ -645,42 +445,32 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               const normalizedInitialPrompt = normalizeDaemonInitialPrompt(initialPrompt);
 
               // NOTE: existing-session idempotency is handled before entering the spawn concurrency gate.
-              let effectiveResume = normalizedResume;
-              const catalogAgentId = resolveCatalogAgentIdFromBackendTarget(backendTarget);
-
-              let sessionAttachPayload: import('@/agent/runtime/sessionAttachPayload').SessionAttachFilePayload | null = null;
-              if (normalizedExistingSessionId) {
-                const storedCredentials = await readCredentials().catch(() => null);
-                const effectiveCredentials = storedCredentials ?? credentials;
-                const tokenForFetch = effectiveCredentials?.token ?? '';
-
-                const attachContext = await resolveExistingSessionAttachContext({
-                  token: tokenForFetch,
-                  sessionId: normalizedExistingSessionId,
-                  agent: backendTarget?.kind === 'builtInAgent' ? backendTarget.agentId : 'customAcp',
-                  credentials: effectiveCredentials,
-                });
-
-                if (!attachContext.ok) {
-                  return mapExistingSessionAttachFailureToSpawnError(attachContext.reason);
-                }
-
-                sessionAttachPayload = attachContext.attachPayload;
-                if (!effectiveResume) {
-                  const derivedResume = typeof attachContext.vendorResumeId === 'string' ? attachContext.vendorResumeId.trim() : '';
-                  if (derivedResume) {
-                    effectiveResume = derivedResume;
-                  }
-                }
+              const backendIdentityResolution = await resolveSpawnBackendIdentity({
+                existingSessionId: typeof existingSessionId === 'string' ? existingSessionId : '',
+                resume: normalizedResume,
+                backendTarget,
+                credentials,
+                loadLocalHandoffMetadataByVendorResumeId,
+              });
+              if (!backendIdentityResolution.ok) {
+                return backendIdentityResolution.error;
               }
+              const {
+                normalizedExistingSessionId,
+                effectiveResume,
+                effectiveBackendTarget,
+                effectiveBackendTargetV2,
+                sessionAttachPayload,
+                catalogAgentId,
+              } = backendIdentityResolution;
 
               // Only gate vendor resume. Happy-session reconnect (existingSessionId) is supported for all agents.
               if (effectiveResume) {
-                if (backendTarget?.kind === 'configuredAcpBackend') {
+                if (effectiveBackendTarget?.kind === 'configuredAcpBackend') {
                   return {
                     type: 'error',
                     errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED,
-                    errorMessage: `Resume is not supported for configured ACP backend '${backendTarget.backendId}'.`,
+                    errorMessage: `Resume is not supported for configured ACP backend '${effectiveBackendTarget.backendId}'.`,
                   };
                 }
                 const vendorResumeSupport = await getVendorResumeSupport(
@@ -809,563 +599,72 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             }
 
             const stackProcessKindOverride = resolveStackProcessKindOverrideForSessionSpawn(process.env);
-            const extraEnvForChildWithMessage = {
-              ...extraEnvForChild,
-              ...(sessionAttachFilePath
-                ? { HAPPIER_SESSION_ATTACH_FILE: sessionAttachFilePath }
-                : {}),
-              ...(normalizedInitialPrompt
-                ? { [HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY]: normalizedInitialPrompt }
-                : {}),
-              ...stackProcessKindOverride,
-            };
+	            const extraEnvForChildWithMessage = {
+	              ...extraEnvForChild,
+	              ...(sessionAttachFilePath
+	                ? { HAPPIER_SESSION_ATTACH_FILE: sessionAttachFilePath }
+	                : {}),
+	              ...(normalizedInitialPrompt
+	                ? { [HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY]: normalizedInitialPrompt }
+	                : {}),
+	              ...stackProcessKindOverride,
+	            };
+	            const spawnLifecycleCallbacks = createSpawnLifecycleCallbacks({
+	              connectedServicesBindingsRaw: options.connectedServices,
+	              catalogAgentId,
+	              materializationKey,
+	              hasConnectedServiceAuth: () => connectedServiceAuth !== null,
+	              registerConnectedServiceRefreshTarget: (target) =>
+	                connectedServiceRefreshCoordinator?.registerSpawnTarget(target),
+	              registerConnectedServiceQuotaTarget: (target) =>
+	                connectedServiceQuotasCoordinator?.registerSpawnTarget({
+	                  pid: target.pid,
+	                  connectedServicesBindingsRaw: target.connectedServicesBindingsRaw as Readonly<{
+	                    v?: unknown;
+	                    bindingsByServiceId?: Record<string, unknown>;
+	                  }>,
+	                }),
+	              getSpawnResourceCleanupOnExit: () => spawnResourceCleanupOnExit,
+	              onSpawnResourceCleanupArmed: () => {
+	                spawnResourceCleanupArmed = true;
+	              },
+	              spawnResourceCleanupByPid,
+	              getSessionAttachCleanup: () => sessionAttachCleanup,
+	              setSessionAttachCleanup: (cleanup) => {
+	                sessionAttachCleanup = cleanup;
+	              },
+	              sessionAttachCleanupByPid,
+	            });
 
-            // Check if tmux is available and should be used
-            const tmuxAvailable = await isTmuxAvailable();
-            const tmuxRequested = terminalRequest.requested === 'tmux';
-            let useTmux = tmuxAvailable && tmuxRequested;
-
-            const tmuxSessionName = tmuxRequested ? terminalRequest.tmux.sessionName : undefined;
-            const tmuxTmpDir = tmuxRequested ? terminalRequest.tmux.tmpDir : null;
-            const tmuxCommandEnv: Record<string, string> = {};
-            if (tmuxTmpDir) {
-              tmuxCommandEnv.TMUX_TMPDIR = tmuxTmpDir;
-            }
-
-            let tmuxFallbackReason: string | null = null;
-
-            if (!tmuxAvailable && tmuxRequested) {
-              tmuxFallbackReason = 'tmux is not available on this machine';
-              logger.debug('[DAEMON RUN] tmux requested but tmux is not available; falling back to regular spawning');
-            }
-
-            if (useTmux && tmuxSessionName !== undefined) {
-              // Resolve empty-string session name (legacy "current/most recent") deterministically.
-              let resolvedTmuxSessionName = tmuxSessionName;
-              if (tmuxSessionName === '') {
-                try {
-                  const tmuxForDiscovery = new TmuxUtilities(undefined, tmuxCommandEnv);
-                  const listResult = await tmuxForDiscovery.executeTmuxCommand([
-                    'list-sessions',
-                    '-F',
-                    '#{session_name}\t#{session_attached}\t#{session_last_attached}',
-                  ]);
-                  resolvedTmuxSessionName =
-                    selectPreferredTmuxSessionName(listResult?.stdout ?? '') ?? TmuxUtilities.DEFAULT_SESSION_NAME;
-                } catch (error) {
-                  logger.debug('[DAEMON RUN] Failed to resolve current/most-recent tmux session; defaulting to "happy"', error);
-                  resolvedTmuxSessionName = TmuxUtilities.DEFAULT_SESSION_NAME;
-                }
-              }
-
-              // Try to spawn in tmux session
-              const sessionDesc = resolvedTmuxSessionName || 'current/most recent session';
-              logger.debug(`[DAEMON RUN] Attempting to spawn session in tmux: ${sessionDesc}`);
-
-              const agentSubcommand = resolveCliSubcommandFromBackendTarget(backendTarget);
-              const windowName = `happy-${Date.now()}-${agentSubcommand}`;
-              const tmuxTarget = `${resolvedTmuxSessionName}:${windowName}`;
-
-              const terminalRuntimeArgs = [
-                '--happy-terminal-mode',
-                'tmux',
-                '--happy-terminal-requested',
-                'tmux',
-                '--happy-tmux-target',
-                tmuxTarget,
-                ...(tmuxTmpDir ? ['--happy-tmux-tmpdir', tmuxTmpDir] : []),
-              ];
-
-                  const { commandTokens, tmuxEnv } = buildTmuxSpawnConfig({
-                    agent: agentSubcommand,
-                    directory,
-                    extraEnv: extraEnvForChildWithMessage,
-                    tmuxCommandEnv,
-                    extraArgs: [
-                      ...terminalRuntimeArgs,
-                  ...buildHappySessionControlArgs({
-                    resume: effectiveResume,
-                    existingSessionId: normalizedExistingSessionId,
-                    backendTarget,
-                    permissionMode,
-                    permissionModeUpdatedAt,
-                    agentModeId,
-                    agentModeUpdatedAt,
-                    modelId,
-                    modelUpdatedAt,
-                  }),
-                    ],
-                  });
-              const tmux = new TmuxUtilities(resolvedTmuxSessionName, tmuxCommandEnv);
-
-          // Spawn in tmux with environment variables
-          // IMPORTANT: `spawnInTmux` uses `-e KEY=VALUE` flags for the window.
-          // Use merged env so tmux mode matches regular process spawn behavior.
-          // Note: this may add many `-e` flags; if it becomes a problem we can optimize
-          // by diffing against `tmux show-environment` in a follow-up.
-              if (tmuxTmpDir) {
-                try {
-                  await fs.mkdir(tmuxTmpDir, { recursive: true });
-                } catch (error) {
-                  logger.debug('[DAEMON RUN] Failed to ensure TMUX_TMPDIR exists; tmux may fail to start', error);
-                }
-              }
-
-              const tmuxResult = await tmux.spawnInTmux(commandTokens, {
-                sessionName: resolvedTmuxSessionName,
-                windowName: windowName,
-                cwd: directory
-              }, tmuxEnv);  // Pass complete environment for tmux session
-
-          if (tmuxResult.success) {
-            logger.debug(`[DAEMON RUN] Successfully spawned in tmux session: ${tmuxResult.sessionId}, PID: ${tmuxResult.pid}`);
-
-            // Validate we got a PID from tmux
-            if (!tmuxResult.pid) {
-              throw new Error('Tmux window created but no PID returned');
-            }
-            const tmuxPid = tmuxResult.pid;
-
-            // Resolve the actual tmux session name used (important when sessionName was empty/undefined)
-            const tmuxSession = tmuxResult.sessionName ?? (resolvedTmuxSessionName || 'happy');
-
-                // Create a tracked session for tmux windows - now we have the real PID!
-                const trackedSession: TrackedSession = {
-                  startedBy: 'daemon',
-                  happySessionId: normalizedExistingSessionId || undefined,
-                  pid: tmuxPid, // Real PID from tmux -P flag
-                  spawnOptions: options,
-                  tmuxSessionId: tmuxResult.sessionId,
-                  tmuxTmpDir: typeof tmuxTmpDir === 'string' && tmuxTmpDir.trim().length > 0 ? tmuxTmpDir.trim() : undefined,
-                  vendorResumeId: effectiveResume || undefined,
-                  directoryCreated,
-                  message: directoryCreated
-                    ? `The path '${directory}' did not exist. We created a new folder and spawned a new session in tmux session '${tmuxSession}'. Use 'tmux attach -t ${tmuxSession}' to view the session.`
-                    : `Spawned new session in tmux session '${tmuxSession}'. Use 'tmux attach -t ${tmuxSession}' to view the session.`
-                };
-
-                // Add to tracking map so webhook can find it later
-                pidToTrackedSession.set(tmuxPid, trackedSession);
-              if (connectedServiceAuth && options.connectedServices) {
-                connectedServiceRefreshCoordinator?.registerSpawnTarget({
-                  pid: tmuxPid,
-                  agentId: catalogAgentId,
-                  connectedServicesBindingsRaw: options.connectedServices,
-                  materializationKey,
-                });
-                connectedServiceQuotasCoordinator?.registerSpawnTarget({
-                  pid: tmuxPid,
-                  connectedServicesBindingsRaw: options.connectedServices,
-                });
-              }
-                if (spawnResourceCleanupOnExit) {
-                  spawnResourceCleanupByPid.set(tmuxPid, spawnResourceCleanupOnExit);
-                  spawnResourceCleanupArmed = true;
-                }
-                if (sessionAttachCleanup) {
-                  sessionAttachCleanupByPid.set(tmuxPid, sessionAttachCleanup);
-                  sessionAttachCleanup = null;
-                }
-
-            // Wait for webhook to populate session with happySessionId (exact same as regular flow)
-            logger.debug(`[DAEMON RUN] Waiting for session webhook for PID ${tmuxPid} (tmux)`);
-            return waitForSessionWebhook({
-              pid: tmuxPid,
+	            return await routeSpawnModeAndWaitForWebhook({
+	              terminalRequest,
+              directory,
+              options,
+              normalizedExistingSessionId,
+              effectiveResume,
+              effectiveBackendTarget,
+              effectiveBackendTargetV2,
+              reservedSessionId: typeof sessionId === 'string' ? sessionId : undefined,
+              permissionMode,
+              permissionModeUpdatedAt,
+              agentModeId,
+              agentModeUpdatedAt,
+              modelId,
+              modelUpdatedAt,
+              directoryCreated,
+              extraEnvForChildWithMessage,
+              happyHomeDir: configuration.happyHomeDir,
+              pidToTrackedSession,
               pidToAwaiter,
               pidToSpawnResultResolver,
-              pidToSpawnWebhookTimeout,
-              timeoutErrorMessage: `Session webhook timeout for PID ${tmuxPid} (tmux)`,
-              resolveExistingSessionId: () => resolveCanonicalTrackedSessionId(tmuxPid),
-              onTimeout: () => {
-                logger.debug(`[DAEMON RUN] Session webhook timeout for PID ${tmuxPid} (tmux)`);
-              },
-              onSuccess: (completedSession) => {
-                logger.debug(`[DAEMON RUN] Session ${completedSession.happySessionId} fully spawned with webhook (tmux)`);
-              },
-            }).then((result) =>
-              resolveSpawnWebhookResult({
-                pid: tmuxPid,
-                result,
-                pidToTrackedSession,
-                warn: (message) => logger.warn(message),
-              }),
-            );
-              } else {
-                tmuxFallbackReason = tmuxResult.error ?? 'tmux spawn failed';
-                logger.debug(`[DAEMON RUN] Failed to spawn in tmux: ${tmuxResult.error}, falling back to regular spawning`);
-                useTmux = false;
-              }
-            }
-
-            // Regular process spawning (fallback or if tmux not available)
-            if (!useTmux) {
-              logger.debug(`[DAEMON RUN] Using regular process spawning`);
-
-          const agentCommand = resolveCliSubcommandFromBackendTarget(backendTarget);
-              const args = [
-                agentCommand,
-                '--happy-starting-mode', 'remote',
-                '--started-by', 'daemon'
-              ];
-
-              if (tmuxRequested) {
-                const reason = tmuxFallbackReason ?? 'tmux was not used';
-                args.push(
-                  '--happy-terminal-mode',
-                  'plain',
-              '--happy-terminal-requested',
-              'tmux',
-                  '--happy-terminal-fallback-reason',
-                  reason,
-                );
-              }
-
-              args.push(...buildHappySessionControlArgs({
-                resume: effectiveResume,
-                existingSessionId: normalizedExistingSessionId,
-                backendTarget,
-                permissionMode,
-                permissionModeUpdatedAt,
-                agentModeId,
-                agentModeUpdatedAt,
-                modelId,
-                modelUpdatedAt,
-              }));
-              const windowsLaunchMode = resolveWindowsRemoteSessionConsoleMode({
-                platform: process.platform,
-                requested: options.windowsRemoteSessionLaunchMode ?? options.windowsRemoteSessionConsole,
-                env: process.env,
-              });
-
-              const waitForWindowsHostedSession = async (params: {
-                pid: number;
-                logLabel: string;
-                terminal: NonNullable<Metadata['terminal']>;
-              }): Promise<SpawnSessionResult> => {
-                if (sessionAttachCleanup) {
-                  sessionAttachCleanupByPid.set(params.pid, sessionAttachCleanup);
-                  sessionAttachCleanup = null;
-                }
-
-                const trackedSession: TrackedSession = {
-                  startedBy: 'daemon',
-                  happySessionId: normalizedExistingSessionId || undefined,
-                  pid: params.pid,
-                  spawnOptions: options,
-                  vendorResumeId: effectiveResume || undefined,
-                  directoryCreated,
-                  message: directoryCreated ? `The path '${directory}' did not exist. We created a new folder and spawned a new session there.` : undefined,
-                };
-                pidToTrackedSession.set(params.pid, trackedSession);
-                if (connectedServiceAuth && options.connectedServices) {
-                  connectedServiceRefreshCoordinator?.registerSpawnTarget({
-                    pid: params.pid,
-                    agentId: catalogAgentId,
-                    connectedServicesBindingsRaw: options.connectedServices,
-                    materializationKey,
-                  });
-                  connectedServiceQuotasCoordinator?.registerSpawnTarget({
-                    pid: params.pid,
-                    connectedServicesBindingsRaw: options.connectedServices,
-                  });
-                }
-
-                if (spawnResourceCleanupOnExit) {
-                  spawnResourceCleanupByPid.set(params.pid, spawnResourceCleanupOnExit);
-                  spawnResourceCleanupArmed = true;
-                }
-
-                const pollMsRaw = typeof process.env.HAPPIER_DAEMON_VISIBLE_CONSOLE_EXIT_POLL_MS === 'string'
-                  ? process.env.HAPPIER_DAEMON_VISIBLE_CONSOLE_EXIT_POLL_MS.trim()
-                  : '';
-                const pollMsParsed = pollMsRaw ? Number(pollMsRaw) : NaN;
-                const pollMs = Number.isFinite(pollMsParsed) && pollMsParsed > 0 ? pollMsParsed : 5000;
-
-                logger.debug(`[DAEMON RUN] Waiting for session webhook for PID ${params.pid} (${params.logLabel})`);
-
-                return await waitForVisibleConsoleSessionWebhook({
-                  pid: params.pid,
-                  pollMs,
-                  pidToAwaiter,
-                  pidToSpawnResultResolver,
-                  pidToSpawnWebhookTimeout,
-                  onChildExited,
-                  resolveExistingSessionId: () => resolveCanonicalTrackedSessionId(params.pid),
-                }).then(async (result) => {
-                  const resolved = resolveSpawnWebhookResult({
-                    pid: params.pid,
-                    result,
-                    pidToTrackedSession,
-                    warn: (message) => logger.warn(message),
-                  });
-                  if (resolved.type === 'success') {
-                    logger.debug(
-                      `[DAEMON RUN] Session ${resolved.sessionId} fully spawned with webhook (${params.logLabel})`,
-                    );
-                    const resolvedSessionId =
-                      typeof resolved.sessionId === 'string' ? resolved.sessionId.trim() : '';
-                    if (resolvedSessionId) {
-                      try {
-                        await writeTerminalAttachmentInfo({
-                          happyHomeDir: configuration.happyHomeDir,
-                          sessionId: resolvedSessionId,
-                          terminal: params.terminal,
-                        });
-                      } catch (error) {
-                        logger.debug('[DAEMON RUN] Failed to persist Windows terminal attachment info', error);
-                      }
-                    }
-                  } else if (
-                    resolved.type === 'error' &&
-                    resolved.errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT
-                  ) {
-                    logger.debug(`[DAEMON RUN] Session webhook timeout for PID ${params.pid} (${params.logLabel})`);
-                  }
-                  return resolved;
-                });
-              };
-
-              const buildWindowsHostedLaunchEnv = (launchSpec: ReturnType<typeof buildHappyCliSubprocessLaunchSpec>) => ({
-                ...process.env,
-                ...extraEnvForChildWithMessage,
-                ...(launchSpec.env ?? {}),
-              });
-
-              if (windowsLaunchMode === 'windows_terminal' || windowsLaunchMode === 'console') {
-                const windowsTerminalIdentity = buildWindowsTerminalWindowIdentity({
-                  existingSessionId: normalizedExistingSessionId,
-                  reservedSessionId: typeof sessionId === 'string' ? sessionId : undefined,
-                  agentCommand,
-                });
-
-                const tryConsoleLaunch = async (params: {
-                  requested: 'windows_terminal' | 'console';
-                  fallbackReason?: string;
-                }): Promise<SpawnSessionResult> => {
-                  const consoleArgs = buildWindowsHostedTerminalArgs({
-                    baseArgs: args,
-                    actualMode: 'windows_console',
-                    requestedMode: params.requested,
-                    fallbackReason: params.fallbackReason,
-                  });
-                  const launchSpec = buildHappyCliSubprocessLaunchSpec(consoleArgs);
-                  const started = await startHappySessionInVisibleWindowsConsole({
-                    filePath: launchSpec.filePath,
-                    args: launchSpec.args,
-                    workingDirectory: directory,
-                    env: buildWindowsHostedLaunchEnv(launchSpec),
-                  });
-
-                  if (!started.ok) {
-                    logger.debug('[DAEMON RUN] Failed to spawn visible Windows console session', { error: started.errorMessage });
-                    cleanupSpawnResources();
-                    if (sessionAttachCleanup) {
-                      await sessionAttachCleanup();
-                      sessionAttachCleanup = null;
-                    }
-                    return {
-                      type: 'error',
-                      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
-                      errorMessage: started.errorMessage,
-                    };
-                  }
-
-                  logger.debug(`[DAEMON RUN] Spawned visible-console session with PID ${started.pid}`);
-                  return await waitForWindowsHostedSession({
-                    pid: started.pid,
-                    logLabel: params.requested === 'windows_terminal' ? 'windows console fallback' : 'visible console',
-                    terminal: buildWindowsHostedTerminalAttachment({
-                      actualMode: 'windows_console',
-                      requestedMode: params.requested,
-                      pid: started.pid,
-                      fallbackReason: params.fallbackReason,
-                    }),
-                  });
-                };
-
-                if (windowsLaunchMode === 'windows_terminal') {
-                  const windowsTerminalArgs = buildWindowsHostedTerminalArgs({
-                    baseArgs: args,
-                    actualMode: 'windows_terminal',
-                    requestedMode: 'windows_terminal',
-                    windowId: windowsTerminalIdentity.windowId,
-                  });
-                  const launchSpec = buildHappyCliSubprocessLaunchSpec(windowsTerminalArgs);
-                  const started = await startHappySessionInWindowsTerminal({
-                    filePath: launchSpec.filePath,
-                    args: launchSpec.args,
-                    workingDirectory: directory,
-                    env: buildWindowsHostedLaunchEnv(launchSpec),
-                    windowId: windowsTerminalIdentity.windowId,
-                    title: windowsTerminalIdentity.title,
-                  });
-
-                  if (started.ok) {
-                    logger.debug(`[DAEMON RUN] Spawned Windows Terminal session with PID ${started.pid}`);
-                    return await waitForWindowsHostedSession({
-                      pid: started.pid,
-                      logLabel: 'windows terminal',
-                      terminal: buildWindowsHostedTerminalAttachment({
-                        actualMode: 'windows_terminal',
-                        requestedMode: 'windows_terminal',
-                        pid: started.pid,
-                        windowId: windowsTerminalIdentity.windowId,
-                        title: windowsTerminalIdentity.title,
-                      }),
-                    });
-                  }
-
-                  logger.debug('[DAEMON RUN] Failed to spawn Windows Terminal session; falling back to console', {
-                    error: started.errorMessage,
-                  });
-                  return await tryConsoleLaunch({
-                    requested: 'windows_terminal',
-                    fallbackReason: started.errorMessage,
-                  });
-                }
-
-                return await tryConsoleLaunch({ requested: 'console' });
-              }
-
-                  // NOTE: sessionId is reserved for future Happy session resume; we currently ignore it.
-              const happyProcess = spawnHappyCLI(args, {
-                    cwd: directory,
-                    detached: true,  // Sessions stay alive when daemon stops
-                stdio: ['ignore', 'pipe', 'pipe'],  // Capture stdout/stderr for debugging
-                windowsHide: true,
-                env: buildSpawnChildProcessEnv({
-                  processEnv: process.env,
-                  extraEnv: extraEnvForChildWithMessage,
-                })
-              });
-
-              // Log output for debugging
-              if (process.env.DEBUG) {
-                happyProcess.stdout?.on('data', (data) => {
-              logger.debug(`[DAEMON RUN] Child stdout: ${data.toString()}`);
+	              pidToSpawnWebhookTimeout,
+	              resolveCanonicalTrackedSessionId,
+	              onChildExited,
+	              spawnLifecycleCallbacks,
+	              cleanupSpawnResources,
+	              logDebug: (message, payload) => logger.debug(message, payload),
+	              warn: (message) => logger.warn(message),
             });
-            happyProcess.stderr?.on('data', (data) => {
-              logger.debug(`[DAEMON RUN] Child stderr: ${data.toString()}`);
-            });
-          }
-
-              if (!happyProcess.pid) {
-                logger.debug('[DAEMON RUN] Failed to spawn process - no PID returned');
-                if (spawnResourceCleanupOnFailure && !spawnResourceCleanupArmed) {
-                  spawnResourceCleanupOnFailure();
-                  spawnResourceCleanupOnFailure = null;
-                  spawnResourceCleanupOnExit = null;
-                }
-                if (sessionAttachCleanup) {
-                  await sessionAttachCleanup();
-                  sessionAttachCleanup = null;
-                }
-                return {
-                  type: 'error',
-                errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_NO_PID,
-                  errorMessage: 'Failed to spawn Happier process - no PID returned'
-                };
-              }
-
-              logger.debug(`[DAEMON RUN] Spawned process with PID ${happyProcess.pid}`);
-              if (sessionAttachCleanup) {
-                sessionAttachCleanupByPid.set(happyProcess.pid, sessionAttachCleanup);
-                sessionAttachCleanup = null;
-              }
-
-                  const trackedSession: TrackedSession = {
-                    startedBy: 'daemon',
-                    happySessionId: normalizedExistingSessionId || undefined,
-                    pid: happyProcess.pid,
-                    childProcess: happyProcess,
-                    spawnOptions: options,
-                    vendorResumeId: effectiveResume || undefined,
-                    directoryCreated,
-                    message: directoryCreated ? `The path '${directory}' did not exist. We created a new folder and spawned a new session there.` : undefined
-                  };
-
-          pidToTrackedSession.set(happyProcess.pid, trackedSession);
-          if (connectedServiceAuth && options.connectedServices) {
-            connectedServiceRefreshCoordinator?.registerSpawnTarget({
-              pid: happyProcess.pid,
-              agentId: catalogAgentId,
-              connectedServicesBindingsRaw: options.connectedServices,
-              materializationKey,
-            });
-            connectedServiceQuotasCoordinator?.registerSpawnTarget({
-              pid: happyProcess.pid,
-              connectedServicesBindingsRaw: options.connectedServices,
-            });
-          }
-          if (spawnResourceCleanupOnExit) {
-            spawnResourceCleanupByPid.set(happyProcess.pid, spawnResourceCleanupOnExit);
-            spawnResourceCleanupArmed = true;
-          }
-
-          happyProcess.on('exit', (code, signal) => {
-            logger.debug(`[DAEMON RUN] Child PID ${happyProcess.pid} exited with code ${code}, signal ${signal}`);
-            if (happyProcess.pid) {
-              const resolveSpawn = pidToSpawnResultResolver.get(happyProcess.pid);
-              if (resolveSpawn) {
-                pidToSpawnResultResolver.delete(happyProcess.pid);
-                const timeout = pidToSpawnWebhookTimeout.get(happyProcess.pid);
-                if (timeout) clearTimeout(timeout);
-                pidToSpawnWebhookTimeout.delete(happyProcess.pid);
-                pidToAwaiter.delete(happyProcess.pid);
-                resolveSpawn({
-                  type: 'error',
-                  errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
-                  errorMessage: `Child process exited before session webhook (pid=${happyProcess.pid}, code=${code ?? 'null'}, signal=${signal ?? 'null'})`,
-                });
-              }
-              onChildExited(happyProcess.pid, { reason: 'process-exited', code, signal });
-            }
-          });
-
-          happyProcess.on('error', (error) => {
-            logger.debug(`[DAEMON RUN] Child process error:`, error);
-            if (happyProcess.pid) {
-              const resolveSpawn = pidToSpawnResultResolver.get(happyProcess.pid);
-              if (resolveSpawn) {
-                pidToSpawnResultResolver.delete(happyProcess.pid);
-                const timeout = pidToSpawnWebhookTimeout.get(happyProcess.pid);
-                if (timeout) clearTimeout(timeout);
-                pidToSpawnWebhookTimeout.delete(happyProcess.pid);
-                pidToAwaiter.delete(happyProcess.pid);
-                resolveSpawn({
-                  type: 'error',
-                  errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
-                  errorMessage: `Child process error before session webhook (pid=${happyProcess.pid})`,
-                });
-              }
-              onChildExited(happyProcess.pid, { reason: 'process-error', code: null, signal: null });
-            }
-          });
-
-          // Wait for webhook to populate session with happySessionId
-          logger.debug(`[DAEMON RUN] Waiting for session webhook for PID ${happyProcess.pid}`);
-              return waitForSessionWebhook({
-                pid: happyProcess.pid!,
-                pidToAwaiter,
-                pidToSpawnResultResolver,
-                pidToSpawnWebhookTimeout,
-                timeoutErrorMessage: `Session webhook timeout for PID ${happyProcess.pid}`,
-                resolveExistingSessionId: () => resolveCanonicalTrackedSessionId(happyProcess.pid!),
-                onTimeout: () => {
-                  logger.debug(`[DAEMON RUN] Session webhook timeout for PID ${happyProcess.pid}`);
-                },
-                onSuccess: (completedSession) => {
-                  logger.debug(`[DAEMON RUN] Session ${completedSession.happySessionId} fully spawned with webhook`);
-            },
-          }).then((result) =>
-            resolveSpawnWebhookResult({
-              pid: happyProcess.pid!,
-              result,
-              pidToTrackedSession,
-              warn: (message) => logger.warn(message),
-            }),
-          );
-        }
 
         // This should never be reached, but TypeScript requires a return statement
         return {
@@ -1392,7 +691,16 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                     };
                   }
               });
-          });
+            });
+            } catch (error) {
+              logger.warn('[DAEMON RUN] Failed before spawn session work started', {
+                error,
+                hasExistingSessionId: typeof options.existingSessionId === 'string' && options.existingSessionId.trim().length > 0,
+                hasResume: typeof options.resume === 'string' && options.resume.trim().length > 0,
+                backendTargetKind: options.backendTarget?.kind ?? null,
+              });
+              throw error;
+            }
                 };
 
             const stopSessionCore = createStopSession({ pidToTrackedSession });
@@ -1474,221 +782,40 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       onHappySessionWebhook,
       controlToken,
     });
-    const directPeerRuntimeConfig = resolveMachineTransferRuntimeConfig();
-    const directTransferPromptAssetAdapterRegistry = createPromptAssetAdapterRegistry();
-    const directTransferPromptRegistryRegistry = createPromptRegistryAdapterRegistry();
-    const directPeerFeatureEnabled = directPeerRuntimeConfig.directPeer.featureEnabled;
-    const directPeerServerEnabled = directPeerRuntimeConfig.directPeer.serverEnabled;
-    const directPeerLocalListenerClasses: readonly ('loopback_http' | 'lan_http')[] =
-      isLoopbackTransferBindHost(directPeerRuntimeConfig.directPeer.bindHost)
-      ? ['loopback_http' as const]
-      : ['lan_http' as const];
-    const directPeerTransferListenerClasses = [
-      ...directPeerLocalListenerClasses,
-      ...(directPeerRuntimeConfig.tailscaleServe.enabled ? ['tailscale_serve_https' as const] : []),
-    ] as const;
-    const directPeerAdvertisedHosts = directPeerLocalListenerClasses.includes('loopback_http')
-      ? ['127.0.0.1']
-      : directPeerRuntimeConfig.directPeer.advertisedHosts;
-    let tailscaleTransferServeLifecycle: ReturnType<typeof createTailscaleTransferServeLifecycle> | null = null;
-    const directPeerServerLifecycle = directPeerServerEnabled
-      ? createDirectTransferServerLifecycle({
-        bindPort: directPeerRuntimeConfig.directPeer.bindPort,
-        bindHost: directPeerRuntimeConfig.directPeer.bindHost,
-        listenerClasses: directPeerTransferListenerClasses,
-        advertisedHosts: directPeerAdvertisedHosts,
-        idleStopMs: directPeerRuntimeConfig.directPeer.idleStopMs,
-        promptAssetUpload: {
-          adapterRegistry: directTransferPromptAssetAdapterRegistry,
-        },
-        resolveTailscaleServeHttpsBaseUrl: () => tailscaleTransferServeLifecycle?.getHttpsBaseUrlWithServePath() ?? null,
-        onStateChange: (state) => {
-          void transferRuntimeStatePublisher?.publishDirectTransferServerLifecycleState(state);
-          void tailscaleTransferServeLifecycle?.observeDirectTransferServerLifecycleState(state);
-        },
-      })
-      : null;
-    let stopDirectPeerServer: () => Promise<void> = async () => {};
-    let stopTailscaleTransferServeLifecycle: () => Promise<void> = async () => {};
-    let transferRuntimeStatePublisher: ReturnType<typeof createDaemonTransferRuntimeStatePublisher> | null = null;
-    if (directPeerServerLifecycle) {
-      stopDirectPeerServer = async () => {
-        await directPeerServerLifecycle.stop();
-      };
-    }
-
-    // Persist daemon.state.json after the control server is available so:
-    // - `happier daemon status` can reliably detect the running process, and
-    // - callers can reach `/ping` even if machine registration is slow/unavailable.
-    //
-    // Note: the presence of daemon.state.json does NOT imply that machine sync is ready.
-    const fileState: DaemonLocallyPersistedState = {
-      pid: process.pid,
-      httpPort: controlPort,
-      startedAt: Date.now(),
-      startedWithCliVersion: packageJson.version,
-      startedWithPublicReleaseChannel: getReleaseRingCatalogEntry(configuration.publicReleaseRing).publicLabel,
+    const runtimeBootstrap = await startDaemonRuntimeBootstrap({
+      api,
+      credentials,
+      logger,
+      processEnv: process.env,
+      controlPort,
+      machineId,
+      machineIdProvider: () => machineId,
       runtimeId,
+      cliVersion: packageJson.version,
       startupSource,
       serviceLabel,
-      machineId,
       daemonLogPath: logger.logFilePath,
       controlToken,
-    };
-    let didWriteDaemonState = false;
-    const writeDaemonStateOnce = () => {
-      if (didWriteDaemonState) return;
-      didWriteDaemonState = true;
-      writeDaemonState(fileState);
-      logger.debug('[DAEMON RUN] Daemon state written');
-    };
-    writeDaemonStateOnce();
-
-        // Prepare initial daemon state
-      const initialTailscaleTransferListenerState = await resolveTailscaleTransferListenerState({
-        enabled: directPeerRuntimeConfig.tailscaleServe.enabled,
-        transferPort: directPeerRuntimeConfig.directPeer.bindPort,
-        servePath: directPeerRuntimeConfig.tailscaleServe.servePath,
-        httpsPort: directPeerRuntimeConfig.tailscaleServe.httpsPort,
-        env: process.env,
-      });
-      const initialTransferState = createDaemonTransferRuntimeState({
-        directPeer: directPeerRuntimeConfig.directPeer,
-        tailscaleServe: initialTailscaleTransferListenerState,
-      });
-      const initialDaemonState: DaemonState = {
-          status: 'offline',
-          pid: process.pid,
-          httpPort: controlPort,
-          startedAt: Date.now(),
-          runtimeId,
-          cliVersion: packageJson.version,
-          publicReleaseChannel: getReleaseRingCatalogEntry(configuration.publicReleaseRing).publicLabel,
-          startupSource,
-          serviceManaged: isDaemonStartupSourceServiceManaged(startupSource),
-          serviceLabel,
-          transfer: initialTransferState,
-      };
-      transferRuntimeStatePublisher = createDaemonTransferRuntimeStatePublisher({
-        initialTransferState,
-        warn: (message, error) => {
-          logger.warn(message, error);
-        },
-      });
-      if (directPeerServerLifecycle && directPeerRuntimeConfig.tailscaleServe.enabled) {
-        tailscaleTransferServeLifecycle = createTailscaleTransferServeLifecycle({
-          enabled: directPeerRuntimeConfig.tailscaleServe.enabled,
-          servePath: directPeerRuntimeConfig.tailscaleServe.servePath,
-          httpsPort: directPeerRuntimeConfig.tailscaleServe.httpsPort,
-          env: process.env,
-          onListenerStateChange: (state) => {
-            void transferRuntimeStatePublisher?.publishTailscaleTransferListenerState(state);
-          },
-          warn: (message, error) => {
-            logger.warn(message, error);
-          },
-        });
-        stopTailscaleTransferServeLifecycle = async () => {
-          await tailscaleTransferServeLifecycle?.stop();
-        };
-      }
-
-      const connectedServicesRefreshEnabled = parseBooleanEnv(process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED, true);
-      if (connectedServicesRefreshEnabled) {
-        const refreshTickMs = resolvePositiveIntEnv(
-          process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_TICK_MS,
-          30_000,
-          { min: 5_000, max: 5 * 60_000 },
-        );
-        const refreshWindowMs = resolvePositiveIntEnv(
-          process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_WINDOW_MS,
-          10 * 60_000,
-          { min: 10_000, max: 60 * 60_000 },
-        );
-        const refreshLeaseMs = resolvePositiveIntEnv(
-          process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_LEASE_MS,
-          2 * 60_000,
-          { min: 10_000, max: 30 * 60_000 },
-        );
-
-        const restartPiOnAuthUpdate = parseBooleanEnv(
-          process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_RESTART_PI_ENABLED,
-          true,
-        );
-        const onAuthUpdated =
-          restartPiOnAuthUpdate
-            ? createConnectedServicesAuthUpdatedRestartHandler({
-              restartRequestedPids: connectedServicesRestartRequestedPids,
-              pidToTrackedSession,
-              restartAgentIds: new Set(['pi']),
-            })
-            : undefined;
-
-        connectedServiceRefreshCoordinator = new ConnectedServiceRefreshCoordinator({
-          api,
-          credentials,
-          machineIdProvider: () => machineId,
-          activeServerDir: configuration.activeServerDir,
-          baseDir: connectedServicesMaterializationBaseDir,
-          refreshWindowMs,
-          refreshLeaseMs,
-          now: () => Date.now(),
-          ...(onAuthUpdated ? { onAuthUpdated } : {}),
-        });
-
-        connectedServiceRefreshLoopHandle = startConnectedServiceRefreshLoop({
-          enabled: true,
-          tickMs: refreshTickMs,
-          coordinator: connectedServiceRefreshCoordinator,
-          onTickError: (error) => {
-            logger.debug('[DAEMON RUN] Connected services refresh tick failed (non-fatal)', error);
-          },
-        });
-      }
-
-      const connectedServicesQuotasEnabled = await resolveConnectedServicesQuotasDaemonEnabled({
-        env: process.env,
-        serverUrl: configuration.serverUrl,
-        timeoutMs: 1500,
-      });
-      if (connectedServicesQuotasEnabled) {
-            const quotasTickMs = resolvePositiveIntEnv(
-              process.env.HAPPIER_CONNECTED_SERVICES_QUOTAS_TICK_MS,
-              60_000,
-              { min: 5_000, max: 30 * 60_000 },
-            );
-            const {
-              fetchTimeoutMs,
-              discoveryEnabled,
-              discoveryIntervalMs,
-              failureBackoffMinMs,
-              failureBackoffMaxMs,
-              failureBackoffJitterPct,
-            } = resolveConnectedServiceQuotasDaemonOptions(process.env);
-
-            connectedServiceQuotasCoordinator = new ConnectedServiceQuotasCoordinator({
-              api,
-              credentials,
-              quotaFetchers: createConnectedServiceQuotaFetchers(process.env),
-              fetchTimeoutMs,
-              discoveryEnabled,
-              discoveryIntervalMs,
-              failureBackoffMinMs,
-              failureBackoffMaxMs,
-              failureBackoffJitterPct,
-              now: () => Date.now(),
-              randomBytes: (length) => randomBytes(length),
-            });
-
-        connectedServiceQuotasLoopHandle = startConnectedServiceQuotasLoop({
-          enabled: true,
-          tickMs: quotasTickMs,
-          coordinator: connectedServiceQuotasCoordinator,
-          onTickError: (error) => {
-            logger.debug('[DAEMON RUN] Connected services quotas tick failed (non-fatal)', error);
-          },
-        });
-      }
+      happyHomeDir: configuration.happyHomeDir,
+      activeServerDir: configuration.activeServerDir,
+      publicReleaseChannel,
+      connectedServicesRestartRequestedPids,
+      pidToTrackedSession,
+    });
+    const {
+      fileState,
+      initialDaemonState,
+      directPeerServerLifecycle,
+      directTransferPromptAssetAdapterRegistry,
+      directTransferPromptRegistryRegistry,
+      transferRuntimeStatePublisher,
+      stopDirectPeerServer,
+      stopTailscaleTransferServeLifecycle,
+    } = runtimeBootstrap;
+    connectedServiceRefreshCoordinator = runtimeBootstrap.connectedServiceRefreshCoordinator;
+    connectedServiceRefreshLoopHandle = runtimeBootstrap.connectedServiceRefreshLoopHandle;
+    connectedServiceQuotasCoordinator = runtimeBootstrap.connectedServiceQuotasCoordinator;
+    connectedServiceQuotasLoopHandle = runtimeBootstrap.connectedServiceQuotasLoopHandle;
 
       const machineRegistrationTimeoutMs = resolvePositiveIntEnv(
         process.env.HAPPIER_DAEMON_MACHINE_REGISTRATION_TIMEOUT_MS,
@@ -1707,358 +834,90 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       );
 
       // Do machine registration in the background so shutdown requests are not blocked by /v1/machines latency.
-      void (async () => {
-        let attempts = 0;
-        while (!shutdownInitiated) {
-          try {
-            const ensured = preflightMachineRegistration ?? await ensureMachineRegistered({
-              api,
-              machineId,
-              metadata: metadataForRegistration,
-              daemonState: initialDaemonState,
-              timeoutMs: machineRegistrationTimeoutMs,
-              caller: 'startDaemon',
-            });
-            preflightMachineRegistration = null;
-            machineId = ensured.machineId;
-            if (fileState.machineId !== machineId) {
-              fileState.machineId = machineId;
-              writeDaemonState(fileState);
-            }
-            const machine = ensured.machine;
-            logger.debug(`[DAEMON RUN] Machine registered: ${machine.id}`);
-
-            if (shutdownInitiated) {
-              return;
-            }
-
-            // Create realtime machine session
-            const connectedApiMachine = diagnosticSubsystemGates.disableMachineSync
+      startDaemonMachineRegistration({
+        api,
+        metadataForRegistration,
+        initialDaemonState,
+        machineRegistrationTimeoutMs,
+        machineRegistrationRetryDelayMs,
+        machineRegistrationMaxAttempts,
+        initialPreflightMachineRegistration: preflightMachineRegistration,
+        resolveMachineId: () => machineId,
+        setMachineId: (resolvedMachineId) => {
+          machineId = resolvedMachineId;
+          if (fileState.machineId !== resolvedMachineId) {
+            fileState.machineId = resolvedMachineId;
+            writeDaemonState(fileState);
+          }
+        },
+        isShuttingDown: () => shutdownInitiated,
+        bootstrapRuntime: {
+          cliVersion: packageJson.version,
+          preferredHost,
+          happyHomeDir: configuration.happyHomeDir,
+          happyLibDir: projectPath(),
+          takeoverRequested,
+          isShuttingDown: () => shutdownInitiated,
+          createConnectedApiMachine: (registeredMachine) =>
+            diagnosticSubsystemGates.disableMachineSync
               ? null
-              : api.machineSyncClient(machine, {
+              : api.machineSyncClient(registeredMachine, {
                   runtimeId,
                   cliVersion: packageJson.version,
-                  publicReleaseChannel: getReleaseRingCatalogEntry(configuration.publicReleaseRing).publicLabel,
+                  publicReleaseChannel,
                   startupSource,
-                  serviceManaged: isDaemonStartupSourceServiceManaged(startupSource),
+                  serviceManaged: startupSource === 'background-service',
                   ...(serviceLabel ? { serviceLabel } : null),
-                });
-            apiMachine = connectedApiMachine;
-            apiMachineForSessions = connectedApiMachine;
-            if (connectedApiMachine && transferRuntimeStatePublisher) {
-              await transferRuntimeStatePublisher.attachApiMachine(connectedApiMachine);
-            }
-
-            // Set RPC handlers
+                }),
+          attachTransferRuntimeStatePublisher: async (connectedApiMachine) => {
+            if (!transferRuntimeStatePublisher) return;
+            await transferRuntimeStatePublisher.attachApiMachine(connectedApiMachine);
+          },
+          startAutomationWorkerForMachine: (runtimeMachineId) => {
             if (diagnosticSubsystemGates.disableAutomationWorker) {
               logger.warn('[DAEMON RUN] Diagnostic gate enabled: automation worker disabled');
-            } else {
-              automationWorker = startAutomationWorker({
-                token: credentials.token,
-                machineId,
-                encryption: credentials.encryption,
-                spawnSession,
-              });
+              return null;
             }
-
-            memoryWorker = await (async () => {
-              try {
-                return await startMemoryWorker({
-                  credentials,
-                  machineId,
-                });
-              } catch (error) {
-                logger.warn('[DAEMON RUN] Failed to start memory worker (best-effort)', error);
-                return null;
-              }
-            })();
-
-            const directPeerTransferHandlers: SessionHandoffDirectPeerTransferHandle | null = directPeerServerLifecycle
-              ? {
-                  publishTransfer: async ({ transferId, payload: _payload, payloadSource, onDemandScope }) => {
-                    if (!payloadSource) {
-                      throw new Error('Direct peer handoff publish requires a file-backed payload source');
-                    }
-                    return (await directPeerServerLifecycle.publishTransferWhenReady({
-                      transferId,
-                      payloadSource,
-                      ...(onDemandScope ? { onDemandScope } : {}),
-                    })).endpointCandidates;
-                  },
-                  requestPayloadFile: async ({ transferId, endpointCandidates, destinationPath, openBody, timeoutMs }) =>
-                    await directPeerServerLifecycle.requestPayloadFile({
-                      transferId,
-                      endpointCandidates,
-                      destinationPath,
-                      ...(openBody !== undefined ? { openBody } : {}),
-                      ...(typeof timeoutMs === 'number' ? { timeoutMs } : {}),
-                    }),
-                  clearPublishedTransfer: (transferId: string) => directPeerServerLifecycle.clearPublishedTransfer(transferId),
-                }
-                : null;
-
-            const directTransferExportHandlers = directPeerServerLifecycle
-              ? {
-                  prepareExportSession: async (
-                    input:
-                      | Readonly<{
-                        t: 'prompt_asset_download_v1';
-                        assetTypeId: string;
-                        scope: PromptAssetReadRequest['scope'];
-                        externalRef: PromptAssetReadRequest['externalRef'];
-                      }>
-                      | Readonly<{
-                        t: 'prompt_registry_download_v1';
-                        sourceId: string;
-                        itemId: string;
-                        configuredSources: PromptRegistryFetchItemRequestV1['configuredSources'];
-                      }>
-                      | Readonly<{
-                        t: 'workspace_file_download_v1';
-                        workingDirectory: string;
-                        path: string;
-                        asZip: boolean;
-                      }>,
-                  ) => {
-                    const resolvedSource = input.t === 'prompt_asset_download_v1'
-                      ? await resolvePromptAssetDownloadSource({
-                        adapterRegistry: directTransferPromptAssetAdapterRegistry,
-                        request: {
-                          assetTypeId: input.assetTypeId,
-                          scope: input.scope,
-                          externalRef: input.externalRef,
-                        },
-                      })
-                      : input.t === 'prompt_registry_download_v1'
-                        ? await resolvePromptRegistryItemDownloadSource({
-                          registry: directTransferPromptRegistryRegistry,
-                          request: {
-                            sourceId: input.sourceId,
-                            itemId: input.itemId,
-                            configuredSources: input.configuredSources,
-                          },
-                        })
-                        : input.t === 'workspace_file_download_v1'
-                          ? await resolveWorkspaceFileDownloadSource({
-                            workingDirectory: input.workingDirectory,
-                            path: input.path,
-                            asZip: input.asZip,
-                            sessionRpcTransferMaxBytes: null,
-                          })
-                        : { success: false as const, error: 'Unsupported direct transfer export request' };
-                    if (!resolvedSource.success) {
-                      throw new Error(resolvedSource.error);
-                    }
-                    const payloadSource = createFileTransferPayloadSource({
-                      filePath: resolvedSource.source.filePath,
-                      sizeBytes: resolvedSource.source.sizeBytes,
-                      name: resolvedSource.source.name,
-                      dispose: resolvedSource.source.deleteFileOnClose
-                        ? async () => {
-                          await fs.rm(resolvedSource.source.filePath, { force: true }).catch(() => undefined);
-                        }
-                        : undefined,
-                    });
-
-                    const transferId = `${
-                      input.t === 'prompt_asset_download_v1'
-                        ? 'prompt-asset-download'
-                        : input.t === 'prompt_registry_download_v1'
-                          ? 'prompt-registry-download'
-                          : 'workspace-file-download'
-                    }:${randomUUID()}`;
-                    const published = await directPeerServerLifecycle.publishTransferWhenReady({
-                        transferId,
-                        payloadSource,
-                      });
-
-                    return {
-                      transferId: published.transferId,
-                      endpointCandidates: published.endpointCandidates,
-                      expiresAt: published.expiresAt,
-                      name: resolvedSource.source.name,
-                      sizeBytes: resolvedSource.source.sizeBytes,
-                    };
-                  },
-                }
-              : null;
-
-            if (connectedApiMachine) {
-              connectedApiMachine.setRPCHandlers({
-                spawnSession,
-                stopSession,
-                isSessionActive: isSessionAlreadyRunning,
-                loadLocalSessionMetadata: loadLocalSessionMetadataForHandoff,
-                savePreparedTargetLocalMetadata: async ({ remoteSessionId, exportMetadataOverlay }) => {
-                  await localSessionHandoffMetadataStore.saveByVendorResumeId({
-                    vendorResumeId: remoteSessionId,
-                    exportMetadataOverlay,
-                  });
-                },
-                requestShutdown: () => {
-                  void beforeShutdown().finally(() => requestShutdown('happier-app'));
-                },
-                ...(memoryWorker ? { memory: memoryWorker } : {}),
-                machineTransferChannel: {
-                  onEnvelope: (listener) => connectedApiMachine.onMachineTransferEnvelope(listener),
-                  sendEnvelope: (payload) => connectedApiMachine.sendMachineTransferEnvelope(payload),
-                },
-                transferRelayV2Channel: {
-                  machineId,
-                  onEnvelope: (listener) => connectedApiMachine.onTransferRelayV2Envelope(listener),
-                  sendEnvelope: (payload) => connectedApiMachine.sendTransferRelayV2Envelope(payload),
-                },
-                ...(directPeerTransferHandlers ? { directPeerTransfer: directPeerTransferHandlers } : {}),
-                ...(directPeerServerLifecycle
-                  ? {
-                    directTransferImport: {
-                      prepareImportSession: directPeerServerLifecycle.prepareImportSession,
-                    },
-                  }
-                  : {}),
-                ...(directTransferExportHandlers
-                  ? {
-                    directTransferExport: directTransferExportHandlers,
-                  }
-                  : {}),
-              }, {
-                emitDirectSessionTranscriptUpdate: (payload) => connectedApiMachine.emitDirectSessionTranscriptUpdate(payload),
+            return startAutomationWorker({
+              token: credentials.token,
+              machineId: runtimeMachineId,
+              encryption: credentials.encryption,
+              spawnSession,
+            });
+          },
+          startMemoryWorkerForMachine: async (runtimeMachineId) => {
+            try {
+              return await startMemoryWorker({
+                credentials,
+                machineId: runtimeMachineId,
               });
-
-              connectedApiMachine.onUpdate((update) => {
-                if (!automationWorker) return false;
-                const t = (update?.body as any)?.t;
-                if (t === 'automation-assignment-updated' || t === 'automation-run-updated') {
-                  automationWorker.handleServerUpdate(update);
-                  return true;
-                }
-                return false;
-              });
-
-              daemonConnectivityCoordinator = createDaemonConnectivityCoordinator({
-                resources: [
-                  ...(automationWorker
-                    ? [{
-                      name: 'automationWorker',
-                      pause: () => automationWorker!.pause(),
-                      resume: () => automationWorker!.resume(),
-                    }]
-                    : []),
-                  ...(connectedServiceQuotasLoopHandle
-                    ? [{
-                      name: 'connectedServiceQuotasLoop',
-                      pause: () => connectedServiceQuotasLoopHandle!.pause(),
-                      resume: () => connectedServiceQuotasLoopHandle!.resume(),
-                    }]
-                    : []),
-                  ...(connectedServiceRefreshLoopHandle
-                    ? [{
-                      name: 'connectedServiceRefreshLoop',
-                      pause: () => connectedServiceRefreshLoopHandle!.pause(),
-                      resume: () => connectedServiceRefreshLoopHandle!.resume(),
-                    }]
-                    : []),
-                ],
-              });
-
-              machineConnectionStateCleanup = connectedApiMachine.onConnectionStateChange((state) => {
-                void daemonConnectivityCoordinator!.applyState(state).catch((error) => {
-                  logger.warn('[DAEMON RUN] Failed to apply daemon connectivity state', error);
-                });
-              });
-
-              let didRefreshMachineMetadata = false;
-              connectedApiMachine.connect({
-                takeover: takeoverRequested,
-                onConnect: async () => {
-                  if (shutdownInitiated) return;
-
-                  if (automationWorker) {
-                    await automationWorker.refreshAssignments().catch((error) => {
-                      logger.warn('[DAEMON RUN] Failed to refresh automation assignments on machine reconnect', error);
-                    });
-                  }
-
-                  if (didRefreshMachineMetadata) return;
-                  didRefreshMachineMetadata = true;
-                  // Keep machine metadata fresh without clobbering user-provided fields (e.g. displayName) that may exist.
-                  await connectedApiMachine.updateMachineMetadata((metadata) => {
-                    const base = (metadata ?? (machine.metadata as any) ?? {}) as any;
-                    const next: MachineMetadata = {
-                      ...base,
-                      host: preferredHost,
-                      platform: os.platform(),
-                      happyCliVersion: packageJson.version,
-                      homeDir: os.homedir(),
-                      happyHomeDir: configuration.happyHomeDir,
-                      happyLibDir: projectPath(),
-                    } as MachineMetadata;
-
-                    // If nothing changes, skip emitting an update entirely.
-                    const current = base as Partial<MachineMetadata>;
-                    const isSame =
-                      current.host === next.host &&
-                      current.platform === next.platform &&
-                      current.happyCliVersion === next.happyCliVersion &&
-                      current.homeDir === next.homeDir &&
-                      current.happyHomeDir === next.happyHomeDir &&
-                      current.happyLibDir === next.happyLibDir;
-
-                    if (isSame) {
-                      return base as MachineMetadata;
-                    }
-
-                    return next;
-                  }).catch((error) => {
-                    didRefreshMachineMetadata = false;
-                    logger.warn('[DAEMON RUN] Failed to refresh machine metadata on reconnect', error);
-                  });
-                },
-                onOwnershipConflict: (conflict) => {
-                  logger.warn('[DAEMON RUN] Relay ownership conflict prevented machine connection', conflict);
-                  requestShutdown('happier-app', 'machine-owner-conflict');
-                },
-              });
-            } else {
-              logger.warn('[DAEMON RUN] Diagnostic gate enabled: machine sync disabled');
+            } catch (error) {
+              logger.warn('[DAEMON RUN] Failed to start memory worker (best-effort)', error);
+              return null;
             }
-
-            return;
-          } catch (error) {
-            if (!shouldRetryMachineRegistrationError(error)) {
-              logger.warn('[DAEMON RUN] Machine registration rejected (non-retryable); giving up', {
-                ...(isMachineContentPublicKeyMismatchError(error) ? { reason: error.reason } : {}),
-                ...(serializeAxiosErrorForLog(error) as any),
-              });
-              return;
-            }
-
-            attempts += 1;
-            // IMPORTANT: Do not log raw Axios errors here; they can contain bearer tokens.
-            logger.warn(
-              '[DAEMON RUN] Machine registration unavailable; retrying',
-              {
-                attempt: attempts,
-                retryDelayMs: machineRegistrationRetryDelayMs,
-                ...(serializeAxiosErrorForLog(error) as any),
-              },
-            );
-
-            if (machineRegistrationMaxAttempts > 0 && attempts >= machineRegistrationMaxAttempts) {
-              logger.warn('[DAEMON RUN] Machine registration failed too many times; giving up', {
-                attempt: attempts,
-              });
-              return;
-            }
-
-            if (shutdownInitiated) {
-              return;
-            }
-
-            await new Promise((resolve) => setTimeout(resolve, machineRegistrationRetryDelayMs));
-          }
-        }
-      })();
+          },
+          spawnSession,
+          stopSession,
+          isSessionAlreadyRunning,
+          loadLocalSessionMetadataForHandoff,
+          savePreparedTargetLocalMetadata,
+          beforeShutdown,
+          requestShutdown,
+          directPeerServerLifecycle,
+          directTransferPromptAssetAdapterRegistry,
+          directTransferPromptRegistryRegistry,
+          connectedServiceRefreshLoopHandle,
+          connectedServiceQuotasLoopHandle,
+        },
+        onMachineSyncRuntime: (machineSyncRuntime) => {
+          apiMachine = machineSyncRuntime.apiMachine;
+          apiMachineForSessions = machineSyncRuntime.apiMachineForSessions;
+          automationWorker = machineSyncRuntime.automationWorker;
+          memoryWorker = machineSyncRuntime.memoryWorker;
+          daemonConnectivityCoordinator = machineSyncRuntime.daemonConnectivityCoordinator;
+          machineConnectionStateCleanup = machineSyncRuntime.machineConnectionStateCleanup;
+        },
+      });
 
     // Every 60 seconds:
     // 1. Prune stale sessions
@@ -2078,97 +937,33 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       isShuttingDown: () => shutdownInitiated,
     });
 
-            // Setup signal handlers
-                const cleanupAndShutdown = async (source: 'happier-app' | 'happier-cli' | 'os-signal' | 'exception', errorMessage?: string) => {
-          shutdownInitiated = true;
-          const exitCode = getDaemonShutdownExitCode(source);
-          const shutdownWatchdog = setTimeout(async () => {
-            logger.debug(`[DAEMON RUN] Shutdown timed out, forcing exit with code ${exitCode}`);
-            await new Promise((resolve) => setTimeout(resolve, 100));
-            process.exit(exitCode);
-          }, getDaemonShutdownWatchdogTimeoutMs());
-          shutdownWatchdog.unref?.();
-
-          logger.debug(`[DAEMON RUN] Starting proper cleanup (source: ${source}, errorMessage: ${errorMessage})...`);
-
-          // Clear health check interval
-          if (restartOnStaleVersionAndHeartbeat) {
-            clearInterval(restartOnStaleVersionAndHeartbeat);
-        logger.debug('[DAEMON RUN] Health check interval cleared');
-      }
-
-      // Clear daemon.state.json early in shutdown so callers observing "stop" don't race a later
-      // heartbeat tick or long tail cleanup work (and to satisfy daemon stop integration tests).
-      try {
-        await clearDaemonState();
-        logger.debug('[DAEMON RUN] Daemon state file removed');
-      } catch (error) {
-        logger.debug('[DAEMON RUN] Error cleaning up daemon metadata', error);
-      }
-      if (connectedServiceRefreshLoopHandle) {
-        connectedServiceRefreshLoopHandle.stop();
-        connectedServiceRefreshLoopHandle = null;
-      }
-      if (connectedServiceQuotasLoopHandle) {
-        connectedServiceQuotasLoopHandle.stop();
-        connectedServiceQuotasLoopHandle = null;
-      }
-
-      if (apiMachine) {
-        machineConnectionStateCleanup?.();
-        machineConnectionStateCleanup = null;
-          const daemonStateUpdateTimeoutMs = resolvePositiveIntEnv(
-            process.env.HAPPIER_DAEMON_SHUTDOWN_STATE_UPDATE_TIMEOUT_MS,
-            250,
-            { min: 50, max: 30_000 },
-          );
-
-          await publishShutdownStateBestEffort({
-            apiMachine,
-            source,
-            timeoutMs: daemonStateUpdateTimeoutMs,
-            warn: (message, error) => {
-              if (error !== undefined) {
-                logger.warn(message, error);
-                return;
-              }
-              logger.warn(message);
-            },
-          });
-      }
-      if (automationWorker) {
-        automationWorker.stop();
-      }
-      if (memoryWorker) {
-        memoryWorker.stop();
-      }
-
-      // Best-effort cleanup for provider-managed background processes (e.g. shared OpenCode server).
-      // Important: do not tear down shared provider background processes while session runners are still
-      // tracked by this daemon. Some harnesses stop the daemon while externally-started sessions are
-      // still live (e.g. in-flight provider tests). Killing the shared OpenCode server in that state
-      // can wedge or abort those sessions mid-turn.
-      if (pidToTrackedSession.size === 0) {
-        try {
-          const { stopSharedManagedOpenCodeServerFromEnvBestEffort } = await import('@/backends/opencode/server/sharedManagedServer');
-          await stopSharedManagedOpenCodeServerFromEnvBestEffort();
-        } catch {
-          // best-effort only
-        }
-      }
-
-      await stopDirectPeerServer();
-      await stopTailscaleTransferServeLifecycle();
-      await stopControlServer();
-          await stopCaffeinate();
-          if (daemonLockHandle) {
-            await releaseDaemonLock(daemonLockHandle);
-          }
-
-          logger.debug('[DAEMON RUN] Cleanup completed, exiting process');
-          clearTimeout(shutdownWatchdog);
-          process.exit(exitCode);
-        };
+    // Setup signal handlers
+    const cleanupAndShutdown = async (
+      source: 'happier-app' | 'happier-cli' | 'os-signal' | 'exception',
+      errorMessage?: string,
+    ) => {
+      shutdownInitiated = true;
+      await runCleanupAndShutdown({
+        source,
+        errorMessage,
+        processEnv: process.env,
+        resolvePositiveIntEnv,
+        restartOnStaleVersionAndHeartbeat,
+        connectedServiceRefreshLoopHandle,
+        connectedServiceQuotasLoopHandle,
+        apiMachine,
+        machineConnectionStateCleanup,
+        automationWorker,
+        memoryWorker,
+        trackedSessionCount: pidToTrackedSession.size,
+        stopDirectPeerServer,
+        stopTailscaleTransferServeLifecycle,
+        stopControlServer,
+        stopCaffeinate,
+        daemonLockHandle,
+        releaseDaemonLock,
+      });
+    };
 
     logger.debug('[DAEMON RUN] Daemon started successfully, waiting for shutdown request');
 

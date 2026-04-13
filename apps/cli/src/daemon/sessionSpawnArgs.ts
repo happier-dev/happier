@@ -1,15 +1,6 @@
-import type { BackendTargetRefV1 } from '@happier-dev/protocol';
-import { normalizeClaudeHappyCliSessionControlPermissionMode } from '@/backends/claude/utils/permissionMode';
-
-function normalizeDaemonSessionPermissionModeForBackend(opts: {
-  backendTarget?: BackendTargetRefV1;
-  permissionMode: string;
-}): string {
-  if (opts.backendTarget?.kind === 'builtInAgent' && opts.backendTarget.agentId === 'claude') {
-    return normalizeClaudeHappyCliSessionControlPermissionMode(opts.permissionMode);
-  }
-  return opts.permissionMode;
-}
+import type { BackendTargetRefV2Input } from '@happier-dev/protocol';
+import { resolveConcreteBackendTargetRefs } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
+import { normalizeSessionControlPermissionModeForBackendTarget } from '@/backends/catalog';
 
 export function buildHappySessionControlArgs(opts: Readonly<{
   permissionMode?: string;
@@ -20,7 +11,7 @@ export function buildHappySessionControlArgs(opts: Readonly<{
   modelUpdatedAt?: number;
   resume?: string;
   existingSessionId?: string;
-  backendTarget?: BackendTargetRefV1;
+  backendTarget?: BackendTargetRefV2Input;
 }>): string[] {
   const args: string[] = [];
 
@@ -34,8 +25,9 @@ export function buildHappySessionControlArgs(opts: Readonly<{
     args.push('--existing-session', existingSessionId);
   }
 
-  const configuredAcpBackendId = opts.backendTarget?.kind === 'configuredAcpBackend'
-    ? opts.backendTarget.backendId.trim()
+  const resolvedBackendTarget = resolveConcreteBackendTargetRefs(opts.backendTarget);
+  const configuredAcpBackendId = resolvedBackendTarget?.backendTarget.kind === 'configuredAcpBackend'
+    ? resolvedBackendTarget.backendTarget.backendId.trim()
     : '';
   if (configuredAcpBackendId) {
     args.push('--backend', configuredAcpBackendId);
@@ -43,8 +35,8 @@ export function buildHappySessionControlArgs(opts: Readonly<{
 
   const permissionMode = typeof opts.permissionMode === 'string' ? opts.permissionMode.trim() : '';
   if (permissionMode) {
-    args.push('--permission-mode', normalizeDaemonSessionPermissionModeForBackend({
-      backendTarget: opts.backendTarget,
+    args.push('--permission-mode', normalizeSessionControlPermissionModeForBackendTarget({
+      backendTarget: resolvedBackendTarget?.backendTarget ?? undefined,
       permissionMode,
     }));
     if (typeof opts.permissionModeUpdatedAt === 'number') {

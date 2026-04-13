@@ -6,6 +6,7 @@ describe('buildBackgroundServiceRepairPlan', () => {
   it('migrates a pinned current-channel service to one default background service', () => {
     const plan = buildBackgroundServiceRepairPlan({
       currentReleaseChannel: 'preview',
+      currentServerId: 'company',
       preferredMode: 'user',
       services: [{
         serverId: 'company',
@@ -41,6 +42,7 @@ describe('buildBackgroundServiceRepairPlan', () => {
   it('keeps one compatible default background service and removes extras', () => {
     const plan = buildBackgroundServiceRepairPlan({
       currentReleaseChannel: 'stable',
+      currentServerId: 'company',
       preferredMode: 'user',
       services: [{
         serverId: 'default',
@@ -80,6 +82,7 @@ describe('buildBackgroundServiceRepairPlan', () => {
   it('keeps the preferred-mode compatible default service and removes the duplicate from the other mode', () => {
     const plan = buildBackgroundServiceRepairPlan({
       currentReleaseChannel: 'stable',
+      currentServerId: 'default',
       preferredMode: 'user',
       services: [{
         serverId: 'default',
@@ -113,6 +116,51 @@ describe('buildBackgroundServiceRepairPlan', () => {
           targetMode: 'default-following',
           releaseChannel: 'stable',
         }),
+      }),
+    ]);
+  });
+
+  it('keeps pinned services for other servers when repairing the current server', () => {
+    const plan = buildBackgroundServiceRepairPlan({
+      currentReleaseChannel: 'stable',
+      currentServerId: 'company',
+      preferredMode: 'user',
+      services: [{
+        serverId: 'company',
+        name: 'Company',
+        installed: true,
+        path: '/tmp/happier-daemon.company.service',
+        platform: 'linux',
+        mode: 'user',
+        releaseChannel: 'stable',
+        label: 'happier-daemon.company',
+        targetMode: 'pinned',
+      }, {
+        serverId: 'partner',
+        name: 'Partner',
+        installed: true,
+        path: '/tmp/happier-daemon.partner.service',
+        platform: 'linux',
+        mode: 'user',
+        releaseChannel: 'stable',
+        label: 'happier-daemon.partner',
+        targetMode: 'pinned',
+      }],
+    });
+
+    expect(plan.actions).toEqual([
+      expect.objectContaining({
+        kind: 'remove-service',
+        service: expect.objectContaining({
+          label: 'happier-daemon.company',
+          mode: 'user',
+          targetMode: 'pinned',
+        }),
+      }),
+      expect.objectContaining({
+        kind: 'install-default-following-service',
+        releaseChannel: 'stable',
+        mode: 'user',
       }),
     ]);
   });

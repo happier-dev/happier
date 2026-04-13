@@ -35,6 +35,7 @@ import {
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
 import { resolveInstalledDaemonServiceInventoryForCurrentRelay } from '@/daemon/ownership/daemonServiceInventory';
 import { resolveDaemonServiceCliRuntimeFromEnv } from '@/daemon/service/cli';
+import type { CliAuthState } from '@/capabilities/cliAuth/types';
 import {
   bullets,
   cmd,
@@ -128,6 +129,11 @@ function shouldAutoInferPublicServerUrl(): boolean {
 function resolveTailscaleServeStatusTimeoutMs(): number {
   const raw = Number.parseInt(String(process.env.HAPPIER_TAILSCALE_SERVE_STATUS_TIMEOUT_MS ?? ''), 10);
   return Number.isFinite(raw) && raw > 0 ? raw : 750;
+}
+
+async function probeServerSelectionAuthState(): Promise<CliAuthState> {
+  const credentials = await readCredentials().catch(() => null);
+  return credentials ? 'logged_in' : 'logged_out';
 }
 
 async function cmdList(args: string[]): Promise<void> {
@@ -524,13 +530,13 @@ async function runServerSelectionBackgroundServiceFollowUp(params: Readonly<{
     return;
   }
 
-  const credentials = await readCredentials().catch(() => null);
+  const authState = await probeServerSelectionAuthState();
   await runDefaultFollowingBackgroundServiceServerChangeFollowUp({
     interactive: params.interactive,
     promptInput,
     runCliAction,
     targetServerUrl: params.targetServerUrl,
-    hasCredentials: credentials != null,
+    authState,
     services,
     log: console.log,
   });

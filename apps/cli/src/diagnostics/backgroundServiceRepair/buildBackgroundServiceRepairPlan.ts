@@ -33,16 +33,26 @@ function mapListEntryToHappierService(entry: DaemonServiceListEntry): HappierSer
   };
 }
 
+function isCurrentServerPinnedService(entry: DaemonServiceListEntry, currentServerId: string): boolean {
+  return entry.targetMode === 'pinned' && entry.serverId === currentServerId;
+}
+
 export function buildBackgroundServiceRepairPlan(params: Readonly<{
   currentReleaseChannel: PublicReleaseRingId;
+  currentServerId: string;
   preferredMode: DaemonServiceMode;
   services: readonly DaemonServiceListEntry[];
 }>): BackgroundServiceRepairPlan {
+  const repairableServices = params.services.filter((service) => (
+    service.targetMode === 'default-following'
+    || isCurrentServerPinnedService(service, params.currentServerId)
+  ));
   const sharedPlan = buildSharedBackgroundServiceRepairPlan({
     currentReleaseChannel: params.currentReleaseChannel,
     preferredMode: params.preferredMode,
-    services: params.services.map(mapListEntryToHappierService),
+    services: repairableServices.map(mapListEntryToHappierService),
   });
+
   return {
     currentReleaseChannel: params.currentReleaseChannel,
     existingServices: [...params.services],
@@ -56,6 +66,7 @@ export function buildBackgroundServiceRepairPlan(params: Readonly<{
           backend: action.service.backend,
           scope: action.service.scope,
           definitionPath: action.service.definitionPath,
+          installedPath: action.service.definitionPath,
           mode: action.service.scope,
           releaseChannel: action.service.releaseChannel,
           targetMode: action.service.targetMode,

@@ -1,0 +1,70 @@
+import { join } from 'node:path';
+
+import { buildHappyCliSubprocessLaunchSpec, type HappyCliSubprocessLaunchSpec } from '@/utils/spawnHappyCLI';
+import { resolveDaemonSessionScopeBaseRelativePath } from './resolveDaemonSessionScopeBaseRelativePath';
+
+function normalizePid(raw: unknown): number | null {
+  return typeof raw === 'number' && Number.isInteger(raw) && raw > 0 ? raw : null;
+}
+
+async function readUnifiedProcessCgroupRelativePath(
+  pid: number,
+  procfsRootDir: string,
+): Promise<string | null> {
+  try {
+    const { readFile } = await import('node:fs/promises');
+    const raw = await readFile(join(procfsRootDir, String(pid), 'cgroup'), 'utf8');
+    for (const line of raw.split('\n')) {
+      if (!line.startsWith('0::')) continue;
+      const relativePath = line.slice('0::'.length).trim();
+      return relativePath || null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export type ExecutableLaunchSpec = Readonly<{
+  filePath: string;
+  args: string[];
+  env?: Record<string, string>;
+}>;
+
+export async function buildCgroupSelfMigratingHappyCliLaunchSpec(params: Readonly<{
+  args: string[];
+  daemonPid?: number;
+  procfsRootDir?: string;
+  cgroupRootDir?: string;
+}>): Promise<ExecutableLaunchSpec | null> {
+  const daemonPid = normalizePid(params.daemonPid) ?? process.pid;
+  const procfsRootDir = params.procfsRootDir ?? '/proc';
+  const cgroupRootDir = params.cgroupRootDir ?? '/sys/fs/cgroup';
+  const daemonServiceRelativePath = await readUnifiedProcessCgroupRelativePath(daemonPid, procfsRootDir);
+  if (!daemonServiceRelativePath) {
+    return null;
+  }
+
+  const sessionScopeBaseRelativePath = resolveDaemonSessionScopeBaseRelativePath(daemonServiceRelativePath);
+  if (!sessionScopeBaseRelativePath || sessionScopeBaseRelativePath === '.' || sessionScopeBaseRelativePath === daemonServiceRelativePath) {
+    return null;
+  }
+
+  const baseLaunchSpec: HappyCliSubprocessLaunchSpec = buildHappyCliSubprocessLaunchSpec(params.args);
+  const appSliceAbsolutePath = join(cgroupRootDir, sessionScopeBaseRelativePath);
+
+  return {
+    filePath: '/bin/sh',
+    args: [
+      '-lc',
+      'target_dir="$HAPPIER_DAEMON_SESSION_CGROUP_BASE_DIR/happier-session-$$.scope" && mkdir -p "$target_dir" && printf "%s\\n" "$$" > "$target_dir/cgroup.procs" && exec "$@"',
+      'sh',
+      baseLaunchSpec.filePath,
+      ...baseLaunchSpec.args,
+    ],
+    env: {
+      ...(baseLaunchSpec.env ?? {}),
+      HAPPIER_DAEMON_SESSION_CGROUP_BASE_DIR: appSliceAbsolutePath,
+    },
+  };
+}

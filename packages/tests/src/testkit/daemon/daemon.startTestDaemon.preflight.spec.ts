@@ -115,6 +115,150 @@ describe('startTestDaemon', () => {
     }
   });
 
+  it('defaults daemon service inventory lookups to the requested home dir', async () => {
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-service-home-'));
+    const homeDir = resolve(testDir, 'home');
+
+    try {
+      const fakeScriptDir = resolve(testDir, 'fake-daemon', 'dist');
+      await mkdir(fakeScriptDir, { recursive: true });
+      await mkdir(homeDir, { recursive: true });
+
+      await writeFile(
+        resolve(fakeScriptDir, 'index.mjs'),
+        [
+          "import { writeFileSync } from 'node:fs';",
+          "import { resolve } from 'node:path';",
+          "const homeDir = process.env.HAPPIER_HOME_DIR;",
+          "if (!homeDir) throw new Error('Missing HAPPIER_HOME_DIR');",
+          "writeFileSync(resolve(homeDir, 'daemon.state.json'), JSON.stringify({ pid: process.pid, httpPort: 32227, controlToken: 'fresh-control-token' }), 'utf8');",
+          "process.on('SIGTERM', () => process.exit(0));",
+          "setInterval(() => {}, 1000);",
+        ].join('\n'),
+        'utf8',
+      );
+
+      cliLaunchSpecMock.resolveCliTestLaunchSpec.mockResolvedValueOnce({
+        command: process.execPath,
+        args: [resolve(fakeScriptDir, 'index.mjs')],
+        cwd: testDir,
+        env: {},
+      });
+
+      const daemon = await startTestDaemon({
+        testDir,
+        happyHomeDir: homeDir,
+        env: {},
+        startupTimeoutMs: 15_000,
+      });
+
+      const launchCall = cliLaunchSpecMock.resolveCliTestLaunchSpec.mock.calls[0]?.[0] as
+        | Readonly<{ env?: NodeJS.ProcessEnv }>
+        | undefined;
+      expect(launchCall?.env?.HAPPIER_DAEMON_SERVICE_USER_HOME_DIR).toBe(homeDir);
+      expect(launchCall?.env?.HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR).toBe(homeDir);
+      expect(launchCall?.env?.HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE).toBe('copy');
+
+      await daemon.stop();
+    } finally {
+      await rm(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it('overrides conflicting daemon service inventory home env with the requested home dir', async () => {
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-service-home-override-'));
+    const homeDir = resolve(testDir, 'home');
+
+    try {
+      const fakeScriptDir = resolve(testDir, 'fake-daemon', 'dist');
+      await mkdir(fakeScriptDir, { recursive: true });
+      await mkdir(homeDir, { recursive: true });
+
+      await writeFile(
+        resolve(fakeScriptDir, 'index.mjs'),
+        [
+          "import { writeFileSync } from 'node:fs';",
+          "import { resolve } from 'node:path';",
+          "const homeDir = process.env.HAPPIER_HOME_DIR;",
+          "if (!homeDir) throw new Error('Missing HAPPIER_HOME_DIR');",
+          "writeFileSync(resolve(homeDir, 'daemon.state.json'), JSON.stringify({ pid: process.pid, httpPort: 32228, controlToken: 'fresh-control-token' }), 'utf8');",
+          "process.on('SIGTERM', () => process.exit(0));",
+          "setInterval(() => {}, 1000);",
+        ].join('\n'),
+        'utf8',
+      );
+
+      cliLaunchSpecMock.resolveCliTestLaunchSpec.mockResolvedValueOnce({
+        command: process.execPath,
+        args: [resolve(fakeScriptDir, 'index.mjs')],
+        cwd: testDir,
+        env: {},
+      });
+
+      const conflictingHomeDir = resolve(testDir, 'conflicting-home');
+      await mkdir(conflictingHomeDir, { recursive: true });
+      const daemon = await startTestDaemon({
+        testDir,
+        happyHomeDir: homeDir,
+        env: {
+          HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: conflictingHomeDir,
+          HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: conflictingHomeDir,
+        },
+        startupTimeoutMs: 15_000,
+      });
+
+      const launchCall = cliLaunchSpecMock.resolveCliTestLaunchSpec.mock.calls[0]?.[0] as
+        | Readonly<{ env?: NodeJS.ProcessEnv }>
+        | undefined;
+      expect(launchCall?.env?.HAPPIER_DAEMON_SERVICE_USER_HOME_DIR).toBe(homeDir);
+      expect(launchCall?.env?.HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR).toBe(homeDir);
+
+      await daemon.stop();
+    } finally {
+      await rm(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it('reuses a prepared per-test CLI snapshot when available', async () => {
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-snapshot-preflight-'));
+    const homeDir = resolve(testDir, 'home');
+
+    try {
+      const fakeScriptDir = resolve(testDir, 'fake-daemon', 'dist');
+      await mkdir(fakeScriptDir, { recursive: true });
+      await mkdir(homeDir, { recursive: true });
+      await writeHoldingDaemonScript(resolve(fakeScriptDir, 'index.mjs'), { writesState: true, httpPort: 32_229 });
+
+      const perTestSnapshotDir = resolve(testDir, 'cli-dist');
+      await mkdir(resolve(perTestSnapshotDir, 'dist'), { recursive: true });
+      await writeFile(resolve(perTestSnapshotDir, '.cli-dist-snapshot.ready.json'), '{}', 'utf8');
+      await writeFile(resolve(perTestSnapshotDir, 'dist', 'index.mjs'), '// ready marker', 'utf8');
+
+      cliLaunchSpecMock.resolveCliTestLaunchSpec.mockResolvedValueOnce({
+        command: process.execPath,
+        args: [resolve(fakeScriptDir, 'index.mjs')],
+        cwd: testDir,
+        env: {},
+      });
+
+      const daemon = await startTestDaemon({
+        testDir,
+        happyHomeDir: homeDir,
+        env: {},
+        startupTimeoutMs: 15_000,
+      });
+
+      const launchOptions = cliLaunchSpecMock.resolveCliTestLaunchSpec.mock.calls[0]?.[1] as
+        | Readonly<{ snapshotDir?: string }>
+        | undefined;
+      expect(launchOptions?.snapshotDir).toBe(perTestSnapshotDir);
+
+      await daemon.stop();
+    } finally {
+      await rm(testDir, { recursive: true, force: true });
+    }
+  });
+
   it('reclaims a stale daemon ownership lease from a dead worker before starting a fresh daemon', async () => {
     if (process.platform === 'win32') {
       return;
