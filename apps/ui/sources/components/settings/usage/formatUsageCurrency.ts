@@ -8,7 +8,8 @@ export function formatUsageCurrency(
     currency: string,
     options: FormatUsageCurrencyOptions = {},
 ): string {
-    const { minimumFractionDigits = 0, maximumFractionDigits = 2 } = options;
+    const maximumFractionDigits = options.maximumFractionDigits ?? (Math.abs(value) >= 100 ? 0 : 2);
+    const minimumFractionDigits = options.minimumFractionDigits ?? 0;
 
     try {
         return new Intl.NumberFormat(undefined, {

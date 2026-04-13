@@ -1324,6 +1324,14 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
   },
 
+  settingsPlugins: {
+    title: "外掛程式目錄",
+    subtitle: "瀏覽精選的外掛程式描述項，而不在介面中執行它們。",
+    catalogUrlLabel: "目錄 URL",
+    loadCatalog: "載入目錄",
+    emptySubtitle: "此目錄沒有回傳任何描述項。",
+  },
+
   settings: {
         title: '設定',
 
@@ -3182,8 +3190,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
           commandPaletteDisabled: '快速命令存取已停用',
           hideInactiveSessions: '隱藏非活躍工作階段',
           hideInactiveSessionsSubtitle: '僅在清單中顯示活躍的聊天',
-          hiddenInactiveSessionsEmptyStateTitle: '非活躍工作階段已隱藏',
-          hiddenInactiveSessionsEmptyStateSubtitle: '此清單目前只顯示活躍聊天',
+          hiddenInactiveSessionsEmptyStateTitle: '目前沒有活躍工作階段',
+          hiddenInactiveSessionsEmptyStateSubtitle: '非活躍工作階段已在此清單中隱藏',
           hiddenInactiveSessionsSectionTitle: '非活躍工作階段',
           hiddenInactiveSessionsSectionSubtitle: '它們在主清單中被隱藏，因為那裡只顯示活躍聊天',
         sessionListActiveGrouping: '活躍工作階段分組',
@@ -5399,6 +5407,7 @@ settingsSession: {
     terminalEmbedded: {
         dockMenuA11y: '停靠終端',
         openNewTabA11y: '開啟新的終端機分頁',
+
         settings: {
             locationTitle: '嵌入式終端位置',
         },
@@ -5715,6 +5724,7 @@ settingsSession: {
             useRelayTitle: '使用這個 Relay',
             useRelayAccountMismatchSubtitle: '繼續之前，請切換到屬於此伺服器的帳戶。',
             useRelayNeedsAuthSubtitle: '登入或建立帳戶以繼續設定此伺服器。',
+            useRelaySignedInSubtitle: '目前的帳戶已登入，並已準備好使用此伺服器。',
             useRelayServerMismatchSubtitle: ({ activeRelayUrl, daemonRelayUrl }: { activeRelayUrl: string; daemonRelayUrl: string }) =>
                 `應用程式伺服器：${activeRelayUrl}。背景服務：${daemonRelayUrl}。`,
             useRelayConnectedSubtitle: ({ relayUrl }: { relayUrl: string }) => `已連線到 ${relayUrl}。`,
@@ -6106,6 +6116,9 @@ settingsSession: {
         favoriteModelChanges: 'Favorite model changes',
         busiestWindow: 'Busiest window',
         activityCalendarSubtitle: 'Calendar heatmap',
+        mostActiveMonths: 'Most active months of the selected period',
+        mostActiveWeekdays: 'Most active days of the week',
+        mostActiveHours: 'Most active hours of the day',
         events: 'events',
         source: 'Source',
                 sessionUsage: "Session usage",

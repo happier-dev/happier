@@ -6,6 +6,8 @@ import { useAuth } from '@/auth/context/AuthContext';
 import { HappyError } from '@/utils/errors/errors';
 import { t } from '@/text';
 import { getUsageForPeriod, type UsageResponse } from '@/sync/api/account/apiUsage';
+import { useConnectedServiceQuotaSummaries } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSummaries';
+import { buildConnectedServiceQuotaSummaryCards } from '@/components/settings/connectedServices/buildConnectedServiceQuotaSummaryCards';
 import {
     buildUsageAnalyticsViewModel,
     type UsageCostMode,
@@ -21,6 +23,8 @@ type UsagePanelProps = {
     initialFilters?: UsageFilterState;
     onFiltersChange?: (filters: UsageFilterState) => void;
 };
+
+type ConnectedServiceQuotaCards = ReturnType<typeof buildConnectedServiceQuotaSummaryCards>;
 
 function resolveInitialFilters(initialFilters?: UsageFilterState): UsageFilterState {
     return initialFilters ?? {
@@ -79,6 +83,11 @@ export const UsagePanel: React.FC<UsagePanelProps> = ({ sessionId, initialFilter
     const hasPublishedFiltersRef = React.useRef(false);
     const lastAppliedInitialFiltersRef = React.useRef<UsageFilterState>(resolvedInitialFilters);
     const latestOnFiltersChangeRef = React.useRef(onFiltersChange);
+    const {
+        summaries: connectedServiceQuotaSummaries,
+        isRefreshing: connectedServiceQuotaSummariesRefreshing,
+        hasConnectedProfiles: hasConnectedServiceQuotaProfiles,
+    } = useConnectedServiceQuotaSummaries();
 
     React.useEffect(() => {
         latestOnFiltersChangeRef.current = onFiltersChange;
@@ -177,6 +186,10 @@ export const UsagePanel: React.FC<UsagePanelProps> = ({ sessionId, initialFilter
             focus,
         });
     }, [usageData, period, metric, costMode, focus]);
+    const connectedServiceQuotaCards = React.useMemo<ConnectedServiceQuotaCards>(
+        () => buildConnectedServiceQuotaSummaryCards(connectedServiceQuotaSummaries),
+        [connectedServiceQuotaSummaries],
+    );
 
     if (loading && usageData == null) {
         return (
@@ -194,6 +207,9 @@ export const UsagePanel: React.FC<UsagePanelProps> = ({ sessionId, initialFilter
             ) : null}
             <UsageAnalyticsDashboard
                 viewModel={viewModel}
+                connectedServiceQuotaCards={connectedServiceQuotaCards}
+                connectedServiceQuotasRefreshing={connectedServiceQuotaSummariesRefreshing}
+                showConnectedServiceQuotaSectionWhenEmpty={hasConnectedServiceQuotaProfiles}
                 filters={{ period, metric, costMode, focus }}
                 sessionId={sessionId}
                 isRefreshing={loading && usageData != null}

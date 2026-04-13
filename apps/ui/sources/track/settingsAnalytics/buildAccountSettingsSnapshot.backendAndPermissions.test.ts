@@ -14,17 +14,17 @@ describe('buildAccountSettingsSnapshot', () => {
                 [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'claude' })]: false,
                 [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: true,
             },
-            backendCliSourcePreferenceById: {
-                codex: 'managed-first',
-                claude: 'system-first',
+            backendCliSourcePreferenceByTargetKey: {
+                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: 'managed-first',
+                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'claude' })]: 'system-first',
             },
         });
 
         expect(snapshot.properties['acct_setting__backendEnabledByTargetKey__agent:claude']).toBe(false);
         expect(snapshot.properties['acct_setting__backendEnabledByTargetKey__agent:codex']).toBe(true);
-        expect(snapshot.properties.acct_setting__backendCliSourcePreferenceById__codex).toBe('managed-first');
-        expect(snapshot.properties.acct_setting__backendCliSourcePreferenceById__claude).toBe('system-first');
-        expect(snapshot.properties.acct_setting__backendCliSourcePreferenceById__gemini).toBe('default');
+        expect(snapshot.properties['acct_setting__backendCliSourcePreferenceByTargetKey__agent:codex']).toBe('managed-first');
+        expect(snapshot.properties['acct_setting__backendCliSourcePreferenceByTargetKey__agent:claude']).toBe('system-first');
+        expect(snapshot.properties['acct_setting__backendCliSourcePreferenceByTargetKey__agent:gemini']).toBe('default');
     });
 
     it('tracks default permission modes per agent through structured canonical analytics serializers', () => {
@@ -42,4 +42,3 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties['acct_setting__sessionDefaultPermissionModeByTargetKey__agent:gemini']).toBe('default');
     });
 });
-

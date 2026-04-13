@@ -1,8 +1,8 @@
 import * as React from 'react';
-import { View, useWindowDimensions } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { CardGrid, CardGridColumn } from '@/components/ui/cards/CardGrid';
+import { CardGrid, CardGridColumn } from '@/components/ui/cards';
 import type { UsageAnalyticsViewModel, UsageFilterState } from '@/sync/api/account/usageAnalytics';
 
 import { buildUsageRecapCardModels } from './buildUsageRecapCardModels';
@@ -21,7 +21,6 @@ export function UsageRecapHighlightsSection(props: Readonly<{
     sessionId?: string;
 }>): React.ReactElement | null {
     const { viewModel, filters, sessionId } = props;
-    const { width } = useWindowDimensions();
 
     const recapCards = React.useMemo(() => buildUsageRecapCardModels({
         viewModel,
@@ -32,23 +31,11 @@ export function UsageRecapHighlightsSection(props: Readonly<{
         return null;
     }
 
-    const columns = width >= 1180 ? 4 : width >= 720 ? 2 : 1;
-
     return (
         <View testID="usage-recap-section">
-            <CardGrid
-                columns={columns as 1 | 2 | 3 | 4}
-                collapseBelow="medium"
-                columnGap={12}
-                rowGap={12}
-                style={{ overflow: 'visible' }}
-            >
+            <CardGrid columns={4} collapseBelow="medium" columnGap={12} rowGap={12}>
                 {recapCards.map((card) => (
-                    <CardGridColumn
-                        key={card.id}
-                        span={card.id === 'streak' && columns >= 4 ? 2 : 1}
-                        style={styles.recapColumn}
-                    >
+                    <CardGridColumn key={card.id} style={styles.recapColumn}>
                         <UsageRecapCard
                             card={card}
                             onShare={() => {

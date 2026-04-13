@@ -1,15 +1,17 @@
 import * as React from 'react';
 import { ScrollView, View, useWindowDimensions } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { ChartTooltip, resolveHeatmapColor } from '@/components/ui/charts';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import type {
     UsageAnalyticsActivityViewModel,
-    UsageAnalyticsInsightsViewModel,
+    UsageFilterState,
 } from '@/sync/api/account/usageAnalytics';
 import { formatUsageHourLabel } from '@/sync/api/account/formatUsageRhythmLabel';
+import { getUsagePeriodDefinition } from '@/sync/api/account/usagePeriods';
 
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
@@ -45,8 +47,19 @@ const styles = StyleSheet.create((theme) => ({
         color: theme.colors.textSecondary,
         maxWidth: 560,
     },
+    tracksStack: {
+        gap: 12,
+    },
     track: {
         gap: 10,
+        minWidth: 0,
+        borderRadius: 18,
+        paddingHorizontal: 14,
+        paddingVertical: 14,
+        backgroundColor: theme.colors.surfaceHigh,
+    },
+    trackRow: {
+        width: '100%',
     },
     trackHeader: {
         flexDirection: 'row',
@@ -94,20 +107,11 @@ const styles = StyleSheet.create((theme) => ({
         paddingHorizontal: 7,
         paddingVertical: 8,
     },
-    bucketHot: {
-        backgroundColor: theme.colors.accent.orange,
-    },
-    bucketWarm: {
-        backgroundColor: theme.colors.accent.green,
-    },
     bucketText: {
         ...Typography.default('semiBold'),
         fontSize: 12,
         lineHeight: 16,
         color: theme.colors.textSecondary,
-    },
-    bucketTextHot: {
-        color: theme.colors.surface,
     },
     bucketMetric: {
         ...Typography.default(),
@@ -115,61 +119,7 @@ const styles = StyleSheet.create((theme) => ({
         lineHeight: 14,
         color: theme.colors.textSecondary,
     },
-    bucketMetricHot: {
-        color: theme.colors.surface,
-        opacity: 0.9,
-    },
 }));
-
-function resolveMonthIndex(insights: UsageAnalyticsInsightsViewModel): number | null {
-    const key = insights.busiestMonth?.key?.trim();
-    if (key) {
-        const parsed = new Date(`${key}-01T00:00:00.000Z`);
-        if (!Number.isNaN(parsed.getTime())) {
-            return parsed.getUTCMonth();
-        }
-    }
-
-    const label = insights.busiestMonth?.label?.trim();
-    if (!label) return null;
-    const match = MONTH_LABELS.findIndex((month) => label.toLowerCase().startsWith(month.toLowerCase()));
-    return match >= 0 ? match : null;
-}
-
-function resolveWeekdayIndex(activity: UsageAnalyticsActivityViewModel, insights: UsageAnalyticsInsightsViewModel): number | null {
-    const key = insights.busiestDay?.key?.trim();
-    if (key) {
-        const parsed = new Date(`${key}T00:00:00.000Z`);
-        if (!Number.isNaN(parsed.getTime())) {
-            return parsed.getUTCDay();
-        }
-    }
-
-    const label = insights.busiestDay?.label?.trim();
-    if (label) {
-        const match = WEEKDAY_LABELS.findIndex((weekday) => label.toLowerCase().startsWith(weekday.toLowerCase()));
-        if (match >= 0) {
-            return match;
-        }
-    }
-
-    const topBucket = [...activity.weekdayHourBuckets].sort((left, right) => right.eventCount - left.eventCount)[0] ?? null;
-    return topBucket?.weekday ?? null;
-}
-
-function resolveHourBucketIndex(activity: UsageAnalyticsActivityViewModel, insights: UsageAnalyticsInsightsViewModel): number | null {
-    const rawKey = insights.busiestHour?.key?.trim();
-    if (rawKey && /^\d+$/.test(rawKey)) {
-        return Math.max(0, Math.min(11, Math.floor(Number(rawKey) / 2)));
-    }
-
-    const topBucket = [...activity.weekdayHourBuckets].sort((left, right) => right.eventCount - left.eventCount)[0] ?? null;
-    if (topBucket) {
-        return Math.max(0, Math.min(11, Math.floor(topBucket.hour / 2)));
-    }
-
-    return null;
-}
 
 function buildMonthBuckets(activity: UsageAnalyticsActivityViewModel): number[] {
     const counts = Array.from({ length: 12 }, () => 0);
@@ -197,49 +147,93 @@ function buildHourBuckets(activity: UsageAnalyticsActivityViewModel): number[] {
     return counts;
 }
 
+function resolvePeakIndex(values: readonly number[]): number | null {
+    let peakIndex: number | null = null;
+    let peakValue = 0;
+
+    values.forEach((value, index) => {
+        if (!Number.isFinite(value) || value <= peakValue) {
+            return;
+        }
+        peakValue = value;
+        peakIndex = index;
+    });
+
+    return peakIndex;
+}
+
+function formatMonthLabel(index: number): string {
+    return new Intl.DateTimeFormat(undefined, { month: 'long' }).format(new Date(Date.UTC(2026, index, 1)));
+}
+
+function formatWeekdayLabel(index: number): string {
+    return new Intl.DateTimeFormat(undefined, { weekday: 'long' }).format(new Date(Date.UTC(2026, 0, 4 + index)));
+}
+
+function formatHourBucketLabel(index: number): string {
+    const startHour = index * 2;
+    const endHour = (startHour + 2) % 24;
+    return `${formatUsageHourLabel(startHour)}\u2009–\u2009${formatUsageHourLabel(endHour)}`;
+}
+
 export function UsageActivityPoster(props: Readonly<{
     activity: UsageAnalyticsActivityViewModel;
-    insights: UsageAnalyticsInsightsViewModel;
+    period?: UsageFilterState['period'];
 }>): React.ReactElement {
-    const { activity, insights } = props;
+    const { activity, period } = props;
+    const { theme } = useUnistyles();
     const { width } = useWindowDimensions();
     const monthBuckets = React.useMemo(() => buildMonthBuckets(activity), [activity]);
     const weekdayBuckets = React.useMemo(() => buildWeekdayBuckets(activity), [activity]);
     const hourBuckets = React.useMemo(() => buildHourBuckets(activity), [activity]);
+    const peakMonthIndex = React.useMemo(() => resolvePeakIndex(monthBuckets), [monthBuckets]);
+    const peakWeekdayIndex = React.useMemo(() => resolvePeakIndex(weekdayBuckets), [weekdayBuckets]);
+    const peakHourIndex = React.useMemo(() => resolvePeakIndex(hourBuckets), [hourBuckets]);
+    const selectedPeriodLabel = t(getUsagePeriodDefinition(period ?? '30days').translationKey);
 
-    const busiestMonthIndex = resolveMonthIndex(insights);
-    const busiestWeekdayIndex = resolveWeekdayIndex(activity, insights);
-    const busiestHourBucketIndex = resolveHourBucketIndex(activity, insights);
-    const useCompactScroller = width < 820;
+    const useCompactScroller = width <= 0 || width < 820;
 
     function renderBucketRow(params: Readonly<{
         labels: readonly string[];
         counts: readonly number[];
-        hotIndex: number | null;
-        hotTone: 'hot' | 'warm';
+        accentColor: string;
         compact?: boolean;
+        tooltipValueFormatter?: (count: number) => string;
     }>) {
         const row = (
             <View style={[styles.bucketRow, useCompactScroller ? styles.bucketRowCompact : null]}>
                 {params.labels.map((label, index) => {
-                    const isHot = params.hotIndex === index;
+                    const count = params.counts[index] ?? 0;
+                    const backgroundColor = resolveHeatmapColor({
+                        value: count,
+                        values: params.counts,
+                        baseColor: params.accentColor,
+                        emptyColor: theme.colors.groupped.background,
+                    });
+                    const textColor = count > 0 ? theme.colors.surface : undefined;
                     return (
-                        <View
+                        <ChartTooltip
                             key={label}
-                            style={[
-                                styles.bucket,
-                                params.compact ? styles.bucketCompact : null,
-                                isHot
-                                    ? (params.hotTone === 'warm' ? styles.bucketWarm : styles.bucketHot)
-                                    : null,
-                                useCompactScroller ? { width: params.compact ? 72 : 88, flex: 0 } : null,
-                            ]}
+                            triggerTestID={`usage-activity-poster-${label}-${index}`}
+                            title={label}
+                            value={params.tooltipValueFormatter ? params.tooltipValueFormatter(count) : count.toLocaleString()}
+                            accentColor={params.accentColor}
+                            disabled={count <= 0}
                         >
-                            <Text style={[styles.bucketText, isHot ? styles.bucketTextHot : null]}>{label}</Text>
-                            <Text style={[styles.bucketMetric, isHot ? styles.bucketMetricHot : null]}>
-                                {params.counts[index] > 0 ? params.counts[index].toLocaleString() : ' '}
-                            </Text>
-                        </View>
+                            <View
+                                style={[
+                                    styles.bucket,
+                                    params.compact ? styles.bucketCompact : null,
+                                    useCompactScroller ? { width: params.compact ? 72 : 88, flex: 0 } : null,
+                                    { backgroundColor },
+                                ]}
+                            >
+                                <Text style={[styles.bucketText, textColor ? { color: textColor } : null]}>{label}</Text>
+                                <Text style={[styles.bucketMetric, textColor ? { color: textColor, opacity: 0.92 } : null]}>
+                                    {count > 0 ? count.toLocaleString() : ' '}
+                                </Text>
+                            </View>
+                        </ChartTooltip>
                     );
                 })}
             </View>
@@ -261,58 +255,62 @@ export function UsageActivityPoster(props: Readonly<{
             <View style={styles.header}>
                 <Text style={styles.eyebrow}>{t('usage.activity')}</Text>
                 <Text style={styles.title}>{t('usage.activityCalendarSubtitle')}</Text>
-                <Text style={styles.subtitle}>{t('usage.summary.thisWeekSubtitle')}</Text>
+                <Text style={styles.subtitle}>{selectedPeriodLabel}</Text>
             </View>
 
-            <View style={styles.track}>
-                <View style={styles.trackHeader}>
-                    <Text style={styles.trackLabel}>{t('usage.lastYear')}</Text>
-                    <Text numberOfLines={1} adjustsFontSizeToFit style={styles.trackValue}>
-                        {insights.busiestMonth?.label ?? '—'}
-                    </Text>
+            <View style={styles.tracksStack}>
+                <View testID="usage-activity-track-row-months" style={styles.trackRow}>
+                <View testID="usage-activity-track-months" style={styles.track}>
+                    <View style={styles.trackHeader}>
+                        <Text style={styles.trackLabel}>{t('usage.mostActiveMonths')}</Text>
+                        <Text numberOfLines={1} adjustsFontSizeToFit style={styles.trackValue}>
+                            {peakMonthIndex == null ? '—' : formatMonthLabel(peakMonthIndex)}
+                        </Text>
+                    </View>
+                    {renderBucketRow({
+                        labels: MONTH_LABELS,
+                        counts: monthBuckets,
+                        accentColor: theme.colors.accent.orange,
+                        compact: true,
+                        tooltipValueFormatter: (count) => `${count.toLocaleString()} ${t('usage.events')}`,
+                    })}
                 </View>
-                {renderBucketRow({
-                    labels: MONTH_LABELS,
-                    counts: monthBuckets,
-                    hotIndex: busiestMonthIndex,
-                    hotTone: 'hot',
-                    compact: true,
-                })}
-            </View>
+                </View>
 
-            <View style={styles.track}>
-                <View style={styles.trackHeader}>
-                    <Text style={styles.trackLabel}>{t('usage.activeDays')}</Text>
-                    <Text numberOfLines={1} adjustsFontSizeToFit style={styles.trackValue}>
-                        {insights.busiestDay?.label ?? '—'}
-                    </Text>
+                <View testID="usage-activity-track-row-weekdays" style={styles.trackRow}>
+                <View testID="usage-activity-track-weekdays" style={styles.track}>
+                    <View style={styles.trackHeader}>
+                        <Text style={styles.trackLabel}>{t('usage.mostActiveWeekdays')}</Text>
+                        <Text numberOfLines={1} adjustsFontSizeToFit style={styles.trackValue}>
+                            {peakWeekdayIndex == null ? '—' : formatWeekdayLabel(peakWeekdayIndex)}
+                        </Text>
+                    </View>
+                    {renderBucketRow({
+                        labels: WEEKDAY_LABELS,
+                        counts: weekdayBuckets,
+                        accentColor: theme.colors.accent.orange,
+                        tooltipValueFormatter: (count) => `${count.toLocaleString()} ${t('usage.events')}`,
+                    })}
                 </View>
-                {renderBucketRow({
-                    labels: WEEKDAY_LABELS,
-                    counts: weekdayBuckets,
-                    hotIndex: busiestWeekdayIndex,
-                    hotTone: 'hot',
-                })}
-            </View>
+                </View>
 
-            <View style={styles.track}>
-                <View style={styles.trackHeader}>
-                    <Text style={styles.trackLabel}>{t('usage.busiestWindow')}</Text>
-                    <Text numberOfLines={1} adjustsFontSizeToFit style={styles.trackValue}>
-                        {insights.busiestHour?.label ?? '—'}
-                    </Text>
+                <View testID="usage-activity-track-row-hours" style={styles.trackRow}>
+                <View testID="usage-activity-track-hours" style={styles.track}>
+                    <View style={styles.trackHeader}>
+                        <Text style={styles.trackLabel}>{t('usage.mostActiveHours')}</Text>
+                        <Text numberOfLines={1} adjustsFontSizeToFit style={styles.trackValue}>
+                            {peakHourIndex == null ? '—' : formatHourBucketLabel(peakHourIndex)}
+                        </Text>
+                    </View>
+                    {renderBucketRow({
+                        labels: hourBuckets.map((_, index) => formatHourBucketLabel(index)),
+                        counts: hourBuckets,
+                        accentColor: theme.colors.accent.green,
+                        compact: true,
+                        tooltipValueFormatter: (count) => `${count.toLocaleString()} ${t('usage.events')}`,
+                    })}
                 </View>
-                {renderBucketRow({
-                    labels: hourBuckets.map((count, index) => {
-                        const startHour = index * 2;
-                        const endHour = (startHour + 2) % 24;
-                        return `${formatUsageHourLabel(startHour)}\u2009–\u2009${formatUsageHourLabel(endHour)}`;
-                    }),
-                    counts: hourBuckets,
-                    hotIndex: busiestHourBucketIndex,
-                    hotTone: 'warm',
-                    compact: true,
-                })}
+                </View>
             </View>
         </View>
     );

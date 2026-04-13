@@ -28,8 +28,11 @@ export type UsageRecapCardVisualModel =
         ratio: number;
     }>
     | Readonly<{
-        kind: 'sparkBars';
-        activity: readonly UsageSummaryActivityPoint[];
+        kind: 'rankBars';
+        rows: readonly Readonly<{
+            label: string;
+            value: number;
+        }>[];
     }>;
 
 export type UsageRecapCardModel = Readonly<{
@@ -107,15 +110,13 @@ function buildRecentActivity(viewModel: UsageAnalyticsViewModel): UsageSummaryAc
     }));
 }
 
-function buildRhythmActivity(viewModel: UsageAnalyticsViewModel): UsageSummaryActivityPoint[] {
+function buildRhythmRows(viewModel: UsageAnalyticsViewModel): Array<{ label: string; value: number }> {
     return [...viewModel.activity.weekdayHourBuckets]
         .sort((left, right) => right.eventCount - left.eventCount)
-        .slice(0, 6)
-        .map((bucket, index) => ({
-            timestamp: index,
-            active: bucket.eventCount > 0,
-            tokens: bucket.eventCount,
-            cost: bucket.eventCount,
+        .slice(0, 3)
+        .map((bucket) => ({
+            label: formatUsageWeekdayHourLabel(bucket.weekday, bucket.hour),
+            value: bucket.eventCount,
         }));
 }
 
@@ -173,7 +174,7 @@ export function buildUsageRecapCardModels(input: Readonly<{
     const activityRatio = summary.activeDays > 0
         ? summary.activeDays / resolveRangeDayCount(filters.period)
         : 0;
-    const rhythmActivity = buildRhythmActivity(viewModel);
+    const rhythmRows = buildRhythmRows(viewModel);
 
     return [
         {
@@ -188,8 +189,8 @@ export function buildUsageRecapCardModels(input: Readonly<{
             visual: {
                 kind: 'activityMatrix',
                 activity: summary.recentActivity,
-                squareCount: 12,
-                rowSize: 6,
+                squareCount: 14,
+                rowSize: 7,
             },
         },
         {
@@ -232,8 +233,8 @@ export function buildUsageRecapCardModels(input: Readonly<{
             valueTone: 'compact',
             accentTone: 'green',
             visual: {
-                kind: 'sparkBars',
-                activity: rhythmActivity,
+                kind: 'rankBars',
+                rows: rhythmRows,
             },
         },
     ];

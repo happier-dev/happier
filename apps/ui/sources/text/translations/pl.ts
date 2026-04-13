@@ -1580,6 +1580,14 @@ export const pl: TranslationStructure = {
         },
       },
 
+        settingsPlugins: {
+          title: "Katalog wtyczek",
+          subtitle: "Przeglądaj wyselekcjonowane opisy wtyczek bez uruchamiania ich w interfejsie.",
+          catalogUrlLabel: "Adres URL katalogu",
+          loadCatalog: "Wczytaj katalog",
+          emptySubtitle: "Ten katalog nie zwrócił żadnych opisów.",
+        },
+
         settings: {
           title: "Ustawienia",
 
@@ -3636,8 +3644,8 @@ settingsDesktop: {
       commandPaletteDisabled: "Szybki dostęp do poleceń wyłączony",
       hideInactiveSessions: "Ukryj nieaktywne sesje",
       hideInactiveSessionsSubtitle: "Wyświetlaj tylko aktywne czaty na liście",
-      hiddenInactiveSessionsEmptyStateTitle: "Nieaktywne sesje są ukryte",
-      hiddenInactiveSessionsEmptyStateSubtitle: "Ta lista pokazuje teraz tylko aktywne czaty",
+      hiddenInactiveSessionsEmptyStateTitle: "Brak aktywnych sesji w tej chwili",
+      hiddenInactiveSessionsEmptyStateSubtitle: "Nieaktywne sesje są ukryte na tej liście",
       hiddenInactiveSessionsSectionTitle: "Nieaktywne sesje",
       hiddenInactiveSessionsSectionSubtitle: "Ukryte na głównej liście, ponieważ są tam pokazywane tylko aktywne czaty",
     sessionListActiveGrouping: "Grupowanie aktywnych sesji",
@@ -7191,6 +7199,7 @@ settingsSession: {
   terminalEmbedded: {
     dockMenuA11y: "Dokuj terminal",
     openNewTabA11y: "Otwórz nową kartę terminala",
+
     settings: {
       locationTitle: "Lokalizacja wbudowanego terminala",
     },
@@ -7544,6 +7553,7 @@ settingsSession: {
         useRelayTitle: 'Użyj tego Relay',
         useRelayAccountMismatchSubtitle: 'Przełącz się na konto powiązane z tym serwerem, zanim przejdziesz dalej.',
         useRelayNeedsAuthSubtitle: 'Zaloguj się lub utwórz konto, aby kontynuować konfigurację tego serwera.',
+        useRelaySignedInSubtitle: 'Bieżące konto jest już zalogowane i gotowe do użycia z tym serwerem.',
         useRelayServerMismatchSubtitle: ({ activeRelayUrl, daemonRelayUrl }: { activeRelayUrl: string; daemonRelayUrl: string }) =>
             `Serwer aplikacji: ${activeRelayUrl}. Usługa w tle: ${daemonRelayUrl}.`,
         useRelayConnectedSubtitle: ({ relayUrl }: { relayUrl: string }) => `Połączono z ${relayUrl}.`,
@@ -8036,6 +8046,9 @@ settingsSession: {
     favoriteModelChanges: "Favorite model changes",
     busiestWindow: "Busiest window",
     activityCalendarSubtitle: "Calendar heatmap",
+    mostActiveMonths: "Most active months of the selected period",
+    mostActiveWeekdays: "Most active days of the week",
+    mostActiveHours: "Most active hours of the day",
     events: "events",
     source: "Source",
             sessionUsage: "Session usage",

@@ -34,7 +34,7 @@ export type UsageRecapCardExportPayload = Readonly<{
     subtitle: string;
     valueTone: UsageRecapCardValueTone;
     accentTone: UsageRecapCardAccentTone;
-    visualKind: 'activityMatrix' | 'progress' | 'sparkBars';
+    visualKind: 'activityMatrix' | 'progress' | 'rankBars';
 }>;
 
 export type UsageRecapCardExportInput = UsageAnalyticsExportInput & Readonly<{

@@ -1482,6 +1482,14 @@ export const ca: TranslationStructure = {
         },
     },
 
+    settingsPlugins: {
+      title: "Catàleg de connectors",
+      subtitle: "Navega per descriptors de connectors seleccionats sense executar-los a la interfície.",
+      catalogUrlLabel: "URL del catàleg",
+      loadCatalog: "Carrega el catàleg",
+      emptySubtitle: "Aquest catàleg no ha retornat cap descriptor.",
+    },
+
     settings: {
         title: 'Configuració',
 
@@ -3404,8 +3412,8 @@ export const ca: TranslationStructure = {
           commandPaletteDisabled: 'Accés ràpid a comandes desactivat',
           hideInactiveSessions: 'Amaga les sessions inactives',
           hideInactiveSessionsSubtitle: 'Mostra només els xats actius a la llista',
-          hiddenInactiveSessionsEmptyStateTitle: 'Les sessions inactives estan ocultes',
-          hiddenInactiveSessionsEmptyStateSubtitle: 'Aquesta llista ara mateix només mostra xats actius',
+          hiddenInactiveSessionsEmptyStateTitle: 'No hi ha sessions actives ara mateix',
+          hiddenInactiveSessionsEmptyStateSubtitle: 'Les sessions inactives estan ocultes en aquesta llista',
           hiddenInactiveSessionsSectionTitle: 'Sessions inactives',
           hiddenInactiveSessionsSectionSubtitle: 'Ocultes a la llista principal perquè allà només es mostren els xats actius',
         sessionListActiveGrouping: 'Agrupació de sessions actives',
@@ -6584,6 +6592,7 @@ settingsSession: {
     terminalEmbedded: {
         dockMenuA11y: 'Acoblar terminal',
         openNewTabA11y: 'Obre una pestanya nova de terminal',
+
         settings: {
             locationTitle: 'Ubicació del terminal incrustat',
         },
@@ -6871,6 +6880,7 @@ settingsSession: {
             useRelayTitle: 'Fes servir aquest Relay',
             useRelayAccountMismatchSubtitle: 'Canvia al compte que pertany a aquest servidor abans de continuar.',
             useRelayNeedsAuthSubtitle: 'Inicia sessió o crea un compte per continuar la configuració d’aquest servidor.',
+            useRelaySignedInSubtitle: 'El compte actual ja ha iniciat sessió i està a punt per fer servir aquest servidor.',
             useRelayServerMismatchSubtitle: ({ activeRelayUrl, daemonRelayUrl }: { activeRelayUrl: string; daemonRelayUrl: string }) =>
                 `Servidor de l’aplicació: ${activeRelayUrl}. Servei en segon pla: ${daemonRelayUrl}.`,
             useRelayConnectedSubtitle: ({ relayUrl }: { relayUrl: string }) => `Connectat a ${relayUrl}.`,
@@ -7303,6 +7313,9 @@ settingsSession: {
         favoriteModelChanges: 'Favorite model changes',
         busiestWindow: 'Busiest window',
         activityCalendarSubtitle: 'Calendar heatmap',
+        mostActiveMonths: 'Most active months of the selected period',
+        mostActiveWeekdays: 'Most active days of the week',
+        mostActiveHours: 'Most active hours of the day',
         events: 'events',
         source: 'Source',
                 sessionUsage: "Session usage",

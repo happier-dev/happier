@@ -1,7 +1,11 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { ConnectedServiceQuotaSnapshotV1Schema, type AccountProfile } from '@happier-dev/protocol';
+import type { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
+import type { getConnectedServiceQuotaSnapshotSealed } from '@/sync/api/account/apiConnectedServicesQuotasV2';
+import type { getConnectedServiceQuotaSnapshotPlain } from '@/sync/api/account/apiConnectedServicesQuotasV3';
 
 const authState = vi.hoisted(() => ({
     credentials: { token: 'test-token', secret: 'test-secret' },
@@ -19,8 +23,52 @@ vi.mock('@/sync/api/account/apiUsage', async (importOriginal) => {
     };
 });
 
-vi.mock('@/components/settings/usage/UsageAnalyticsDashboard', () => ({
-    UsageAnalyticsDashboard: (props: Record<string, unknown>) => React.createElement('UsageAnalyticsDashboard', props),
+const useFeatureEnabledSpy = vi.fn((_featureId: string) => false);
+const useProfileSpy = vi.fn<() => Pick<AccountProfile, 'connectedServicesV2'>>(() => ({
+    connectedServicesV2: [],
+}));
+const useSettingsSpy = vi.fn(() => ({
+    connectedServicesDefaultProfileByServiceId: {},
+    connectedServicesProfileLabelByKey: {},
+    connectedServicesQuotaPinnedMeterIdsByKey: {},
+    connectedServicesQuotaSummaryStrategyByKey: {},
+}));
+
+const { fetchAccountEncryptionModeSpy, getConnectedServiceQuotaSnapshotSealedSpy, getConnectedServiceQuotaSnapshotPlainSpy } = vi.hoisted(() => ({
+    fetchAccountEncryptionModeSpy: vi.fn<
+        (...args: Parameters<typeof fetchAccountEncryptionMode>) => ReturnType<typeof fetchAccountEncryptionMode>
+    >(async () => ({ mode: 'e2ee', updatedAt: 0 })),
+    getConnectedServiceQuotaSnapshotSealedSpy: vi.fn<
+        (...args: Parameters<typeof getConnectedServiceQuotaSnapshotSealed>) => ReturnType<typeof getConnectedServiceQuotaSnapshotSealed>
+    >(async () => null),
+    getConnectedServiceQuotaSnapshotPlainSpy: vi.fn<
+        (...args: Parameters<typeof getConnectedServiceQuotaSnapshotPlain>) => ReturnType<typeof getConnectedServiceQuotaSnapshotPlain>
+    >(async () => null),
+}));
+
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: (featureId: string) => useFeatureEnabledSpy(featureId),
+}));
+
+vi.mock('@/sync/store/hooks', async () => {
+    const actual = await vi.importActual<typeof import('@/sync/store/hooks')>('@/sync/store/hooks');
+    return {
+        ...actual,
+        useProfile: () => useProfileSpy(),
+        useSettings: () => useSettingsSpy(),
+    };
+});
+
+vi.mock('@/sync/api/account/apiAccountEncryptionMode', () => ({
+    fetchAccountEncryptionMode: fetchAccountEncryptionModeSpy,
+}));
+
+vi.mock('@/sync/api/account/apiConnectedServicesQuotasV2', () => ({
+    getConnectedServiceQuotaSnapshotSealed: getConnectedServiceQuotaSnapshotSealedSpy,
+}));
+
+vi.mock('@/sync/api/account/apiConnectedServicesQuotasV3', () => ({
+    getConnectedServiceQuotaSnapshotPlain: getConnectedServiceQuotaSnapshotPlainSpy,
 }));
 
 describe('UsagePanel', () => {
@@ -32,5 +80,220 @@ describe('UsagePanel', () => {
 
         expect(screen.findByTestId('usage-session-drilldown')).toBeTruthy();
         expect(screen.getTextContent()).toContain('session-123');
+    });
+
+    it('renders connected service quota cards when quota snapshots are available', async () => {
+        useFeatureEnabledSpy.mockImplementation((featureId: string) => (
+            featureId === 'connectedServices' || featureId === 'connectedServices.quotas'
+        ));
+        useProfileSpy.mockReturnValue({
+            connectedServicesV2: [
+                {
+                    serviceId: 'openai-codex',
+                    profiles: [{
+                        profileId: 'work',
+                        status: 'connected',
+                        kind: 'oauth',
+                        providerEmail: null,
+                        providerAccountId: null,
+                        expiresAt: null,
+                        lastUsedAt: null,
+                    }],
+                },
+            ],
+        });
+        useSettingsSpy.mockReturnValue({
+            connectedServicesDefaultProfileByServiceId: { 'openai-codex': 'work' },
+            connectedServicesProfileLabelByKey: {},
+            connectedServicesQuotaPinnedMeterIdsByKey: { 'openai-codex/work': ['weekly', 'monthly'] },
+            connectedServicesQuotaSummaryStrategyByKey: { 'openai-codex/work': 'min_remaining' },
+        });
+
+        const snapshot = ConnectedServiceQuotaSnapshotV1Schema.parse({
+            v: 1,
+            serviceId: 'openai-codex',
+            profileId: 'work',
+            fetchedAt: 1,
+            staleAfterMs: 60_000,
+            planLabel: 'Pro',
+            accountLabel: null,
+            meters: [
+                {
+                    meterId: 'weekly',
+                    label: 'Weekly',
+                    used: 82,
+                    limit: 100,
+                    unit: 'count',
+                    utilizationPct: null,
+                    resetsAt: null,
+                    status: 'ok',
+                    details: {},
+                },
+                {
+                    meterId: 'monthly',
+                    label: 'Monthly',
+                    used: 44,
+                    limit: 100,
+                    unit: 'count',
+                    utilizationPct: null,
+                    resetsAt: null,
+                    status: 'ok',
+                    details: {},
+                },
+            ],
+        });
+        fetchAccountEncryptionModeSpy.mockResolvedValue({ mode: 'plain', updatedAt: 0 });
+        getConnectedServiceQuotaSnapshotPlainSpy.mockResolvedValue(snapshot);
+
+        const { UsagePanel } = await import('./UsagePanel');
+        const screen = await renderScreen(<UsagePanel />);
+
+        await flushHookEffects({ cycles: 3, turns: 2 });
+
+        expect(screen.getTextContent()).toContain('Connected services');
+        expect(screen.getTextContent()).toContain('OpenAI Codex');
+        expect(screen.getTextContent()).toContain('Weekly');
+    });
+
+    it('renders quota cards for each connected profile, not only the default profile', async () => {
+        useFeatureEnabledSpy.mockImplementation((featureId: string) => (
+            featureId === 'connectedServices' || featureId === 'connectedServices.quotas'
+        ));
+        useProfileSpy.mockReturnValue({
+            connectedServicesV2: [
+                {
+                    serviceId: 'openai-codex',
+                    profiles: [
+                        {
+                            profileId: 'work',
+                            status: 'connected',
+                            kind: 'oauth',
+                            providerEmail: null,
+                            providerAccountId: null,
+                            expiresAt: null,
+                            lastUsedAt: null,
+                        },
+                        {
+                            profileId: 'personal',
+                            status: 'connected',
+                            kind: 'oauth',
+                            providerEmail: null,
+                            providerAccountId: null,
+                            expiresAt: null,
+                            lastUsedAt: null,
+                        },
+                    ],
+                },
+            ],
+        });
+        useSettingsSpy.mockReturnValue({
+            connectedServicesDefaultProfileByServiceId: { 'openai-codex': 'work' },
+            connectedServicesProfileLabelByKey: {
+                'openai-codex/work': 'Work',
+                'openai-codex/personal': 'Personal',
+            },
+            connectedServicesQuotaPinnedMeterIdsByKey: {},
+            connectedServicesQuotaSummaryStrategyByKey: {},
+        });
+
+        fetchAccountEncryptionModeSpy.mockResolvedValue({ mode: 'plain', updatedAt: 0 });
+        getConnectedServiceQuotaSnapshotPlainSpy.mockImplementation(async (_credentials, params) => {
+            if (params.profileId === 'work') {
+                return ConnectedServiceQuotaSnapshotV1Schema.parse({
+                    v: 1,
+                    serviceId: 'openai-codex',
+                    profileId: 'work',
+                    fetchedAt: 1,
+                    staleAfterMs: 60_000,
+                    planLabel: 'Pro',
+                    accountLabel: null,
+                    meters: [
+                        {
+                            meterId: 'weekly',
+                            label: 'Weekly',
+                            used: 82,
+                            limit: 100,
+                            unit: 'count',
+                            utilizationPct: null,
+                            resetsAt: null,
+                            status: 'ok',
+                            details: {},
+                        },
+                    ],
+                });
+            }
+
+            return ConnectedServiceQuotaSnapshotV1Schema.parse({
+                v: 1,
+                serviceId: 'openai-codex',
+                profileId: 'personal',
+                fetchedAt: 2,
+                staleAfterMs: 60_000,
+                planLabel: 'Plus',
+                accountLabel: null,
+                meters: [
+                    {
+                        meterId: 'daily',
+                        label: 'Daily',
+                        used: 20,
+                        limit: 100,
+                        unit: 'count',
+                        utilizationPct: null,
+                        resetsAt: null,
+                        status: 'ok',
+                        details: {},
+                    },
+                ],
+            });
+        });
+
+        const { UsagePanel } = await import('./UsagePanel');
+        const screen = await renderScreen(<UsagePanel />);
+
+        await flushHookEffects({ cycles: 3, turns: 2 });
+
+        expect(screen.getTextContent()).toContain('Work');
+        expect(screen.getTextContent()).toContain('Personal');
+        expect(screen.getTextContent()).toContain('Weekly');
+        expect(screen.getTextContent()).toContain('Daily');
+    });
+
+    it('keeps the quota section visible when connected profiles exist but snapshots are unavailable', async () => {
+        useFeatureEnabledSpy.mockImplementation((featureId: string) => (
+            featureId === 'connectedServices' || featureId === 'connectedServices.quotas'
+        ));
+        useProfileSpy.mockReturnValue({
+            connectedServicesV2: [
+                {
+                    serviceId: 'anthropic',
+                    profiles: [{
+                        profileId: 'work',
+                        status: 'connected',
+                        kind: 'oauth',
+                        providerEmail: null,
+                        providerAccountId: null,
+                        expiresAt: null,
+                        lastUsedAt: null,
+                    }],
+                },
+            ],
+        });
+        useSettingsSpy.mockReturnValue({
+            connectedServicesDefaultProfileByServiceId: { anthropic: 'work' },
+            connectedServicesProfileLabelByKey: {},
+            connectedServicesQuotaPinnedMeterIdsByKey: {},
+            connectedServicesQuotaSummaryStrategyByKey: {},
+        });
+
+        fetchAccountEncryptionModeSpy.mockResolvedValue({ mode: 'plain', updatedAt: 0 });
+        getConnectedServiceQuotaSnapshotPlainSpy.mockResolvedValue(null);
+
+        const { UsagePanel } = await import('./UsagePanel');
+        const screen = await renderScreen(<UsagePanel />);
+
+        await flushHookEffects({ cycles: 3, turns: 2 });
+
+        expect(screen.findByTestId('usage-connected-services-quotas-section')).toBeTruthy();
+        expect(screen.findByTestId('usage-connected-services-quotas-empty')).toBeTruthy();
     });
 });

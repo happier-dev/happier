@@ -8,7 +8,7 @@ import { t } from '@/text';
 import { shadowLevelStyle } from '@/shadowElevation';
 
 import type { UsageRecapCardAccentTone, UsageRecapCardModel } from './buildUsageRecapCardModels';
-import { UsageActivitySquareMatrix, UsageProgressMeter, UsageSparkBars } from './UsageMiniVisuals';
+import { UsageActivitySquareMatrix, UsageProgressMeter, UsageRankBars } from './UsageMiniVisuals';
 
 const styles = StyleSheet.create((theme) => ({
     actionButton: {
@@ -76,8 +76,8 @@ export function UsageRecapCard(props: Readonly<{
         );
     } else {
         visual = (
-            <UsageSparkBars
-                activity={card.visual.activity}
+            <UsageRankBars
+                rows={card.visual.rows}
                 color={accentColor}
             />
         );

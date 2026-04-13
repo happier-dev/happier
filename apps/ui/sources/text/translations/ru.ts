@@ -1536,6 +1536,14 @@ export const ru: TranslationStructure = {
       },
     },
 
+  settingsPlugins: {
+    title: "Каталог плагинов",
+    subtitle: "Просматривайте отобранные дескрипторы плагинов, не выполняя их в интерфейсе.",
+    catalogUrlLabel: "URL каталога",
+    loadCatalog: "Загрузить каталог",
+    emptySubtitle: "Этот каталог не вернул дескрипторов.",
+  },
+
   settings: {
     title: "Настройки",
 
@@ -3581,8 +3589,8 @@ export const ru: TranslationStructure = {
       commandPaletteDisabled: "Быстрый доступ к командам отключён",
       hideInactiveSessions: "Скрывать неактивные сессии",
       hideInactiveSessionsSubtitle: "Показывать в списке только активные чаты",
-      hiddenInactiveSessionsEmptyStateTitle: "Неактивные сессии скрыты",
-      hiddenInactiveSessionsEmptyStateSubtitle: "Сейчас в этом списке показаны только активные чаты",
+      hiddenInactiveSessionsEmptyStateTitle: "Сейчас нет активных сессий",
+      hiddenInactiveSessionsEmptyStateSubtitle: "Неактивные сессии скрыты в этом списке",
       hiddenInactiveSessionsSectionTitle: "Неактивные сессии",
       hiddenInactiveSessionsSectionSubtitle: "Скрыты в основном списке, потому что там показываются только активные чаты",
     sessionListActiveGrouping: "Группировка активных сессий",
@@ -7147,6 +7155,7 @@ settingsSession: {
   terminalEmbedded: {
     dockMenuA11y: "Закрепить терминал",
     openNewTabA11y: "Открыть новую вкладку терминала",
+
     settings: {
       locationTitle: "Расположение встроенного терминала",
     },
@@ -7435,6 +7444,7 @@ settingsSession: {
         useRelayTitle: 'Использовать этот Relay',
         useRelayAccountMismatchSubtitle: 'Переключитесь на учетную запись, которая относится к этому серверу, прежде чем продолжить.',
         useRelayNeedsAuthSubtitle: 'Войдите или создайте учетную запись, чтобы продолжить настройку этого сервера.',
+        useRelaySignedInSubtitle: 'Текущая учетная запись уже вошла в систему и готова использовать этот сервер.',
         useRelayServerMismatchSubtitle: ({ activeRelayUrl, daemonRelayUrl }: { activeRelayUrl: string; daemonRelayUrl: string }) =>
             `Сервер приложения: ${activeRelayUrl}. Фоновая служба: ${daemonRelayUrl}.`,
         useRelayConnectedSubtitle: ({ relayUrl }: { relayUrl: string }) => `Подключено к ${relayUrl}.`,
@@ -7946,6 +7956,9 @@ settingsSession: {
     favoriteModelChanges: "Favorite model changes",
     busiestWindow: "Busiest window",
     activityCalendarSubtitle: "Calendar heatmap",
+    mostActiveMonths: "Most active months of the selected period",
+    mostActiveWeekdays: "Most active days of the week",
+    mostActiveHours: "Most active hours of the day",
     events: "events",
     source: "Source",
             sessionUsage: "Session usage",

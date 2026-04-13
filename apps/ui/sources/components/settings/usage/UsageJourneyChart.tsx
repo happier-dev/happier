@@ -1,14 +1,20 @@
 import * as React from 'react';
-import { ScrollView, View, useWindowDimensions } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import Svg, { Circle, Line, Path, Text as SvgText } from 'react-native-svg';
 
+import { ChartTooltip, HorizontalChartFrame } from '@/components/ui/charts';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import type { UsageAnalyticsTimelineBucket } from '@/sync/api/account/usageAnalytics';
+import type { UsageAnalyticsTimelineBucket, UsageMetric } from '@/sync/api/account/usageAnalytics';
+
+import { buildUsageJourneyChartModel } from './buildUsageJourneyChartModel';
+import { formatUsageCurrency } from './formatUsageCurrency';
 
 type UsageJourneyChartProps = Readonly<{
     timeline: readonly UsageAnalyticsTimelineBucket[];
+    metric: UsageMetric;
+    currency?: string;
     testID?: string;
 }>;
 
@@ -19,11 +25,11 @@ type RankPoint = Readonly<{
 }>;
 
 const CHART_HEIGHT = 188;
-const CHART_WIDTH = 680;
 const CHART_PADDING_TOP = 26;
 const CHART_PADDING_BOTTOM = 34;
 const CHART_PADDING_X = 18;
-const RANK_Y = [38, 86, 134] as const;
+const JOURNEY_BUCKET_WIDTH = 56;
+const JOURNEY_MIN_WIDTH = 596;
 
 const styles = StyleSheet.create((theme) => ({
     container: {
@@ -31,6 +37,24 @@ const styles = StyleSheet.create((theme) => ({
     },
     chartWrap: {
         overflow: 'hidden',
+    },
+    chartCanvas: {
+        width: '100%',
+        height: CHART_HEIGHT,
+        position: 'relative',
+    },
+    pointHitArea: {
+        position: 'absolute',
+        width: 24,
+        height: 24,
+        marginLeft: -12,
+        marginTop: -12,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    pointHitTarget: {
+        width: 24,
+        height: 24,
     },
     latestSummary: {
         gap: 8,
@@ -94,13 +118,22 @@ function buildSegmentPath(points: readonly RankPoint[]): string {
 
 function formatBucketLabel(timestampMs: number, bucketCount: number): string {
     const date = new Date(timestampMs);
-    return new Intl.DateTimeFormat(undefined, bucketCount > 6 ? { month: 'short' } : { month: 'short', day: 'numeric' }).format(date);
+    return new Intl.DateTimeFormat(undefined, bucketCount > 16 ? { month: 'short' } : { month: 'short', day: 'numeric' }).format(date);
+}
+
+function formatMetricValue(value: number, metric: UsageMetric, currency: string): string {
+    if (metric === 'cost') {
+        return formatUsageCurrency(value, currency);
+    }
+    if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B`;
+    if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+    if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+    return value.toFixed(0);
 }
 
 export function UsageJourneyChart(props: UsageJourneyChartProps): React.ReactElement | null {
-    const { timeline, testID } = props;
+    const { timeline, metric, currency = 'USD', testID } = props;
     const { theme } = useUnistyles();
-    const { width } = useWindowDimensions();
 
     if (timeline.length === 0) {
         return null;
@@ -115,49 +148,28 @@ export function UsageJourneyChart(props: UsageJourneyChartProps): React.ReactEle
         theme.colors.accent.yellow,
     ];
 
-    const labels = Array.from(
-        new Set(
-            timeline.flatMap((bucket) =>
-                bucket.leaders
-                    .slice(0, 3)
-                    .map((leader) => leader.label)
-                    .filter((value): value is string => typeof value === 'string' && value.length > 0)
-            )
-        )
-    ).slice(0, palette.length);
-    const colorByLabel = new Map(labels.map((label, index) => [label, palette[index % palette.length]]));
-
-    const usableWidth = CHART_WIDTH - CHART_PADDING_X * 2;
     const bucketCount = timeline.length;
-    const seriesByLabel = new Map<string, RankPoint[]>();
-
-    timeline.forEach((bucket, bucketIndex) => {
-        const x = CHART_PADDING_X + (bucketCount <= 1 ? usableWidth / 2 : (bucketIndex / (bucketCount - 1)) * usableWidth);
-        bucket.leaders.slice(0, 3).forEach((leader, rankIndex) => {
-            if (!leader.label) return;
-            const points = seriesByLabel.get(leader.label) ?? [];
-            points.push({
-                x,
-                y: RANK_Y[Math.min(rankIndex, RANK_Y.length - 1)],
-                bucketIndex,
-            });
-            seriesByLabel.set(leader.label, points);
-        });
+    const chartWidth = Math.max(JOURNEY_MIN_WIDTH, CHART_PADDING_X * 2 + Math.max(bucketCount, 8) * JOURNEY_BUCKET_WIDTH);
+    const usableWidth = chartWidth - CHART_PADDING_X * 2;
+    const chartModel = buildUsageJourneyChartModel({
+        timeline,
+        metric,
+        maxLeaders: 6,
+        usableWidth,
+        xOffset: CHART_PADDING_X,
+        chartTop: CHART_PADDING_TOP,
+        chartBottom: CHART_HEIGHT - CHART_PADDING_BOTTOM,
     });
-
-    const latestBucket = timeline[timeline.length - 1] ?? null;
-    const latestLeaders = latestBucket?.leaders.slice(0, 3).filter((leader) => typeof leader.label === 'string' && leader.label.length > 0) ?? [];
-    const renderedChartWidth = Math.max(CHART_WIDTH, Math.round(width - 96));
+    const colorByLabel = new Map(chartModel.series.map((series, index) => [series.label, palette[index % palette.length]]));
 
     return (
         <View testID={testID} style={styles.container}>
-            <View style={styles.chartWrap}>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <HorizontalChartFrame contentWidth={chartWidth} style={styles.chartWrap}>
+                <View style={[styles.chartCanvas, { width: chartWidth }]}>
                     <Svg
-                        width={renderedChartWidth}
+                        width={chartWidth}
                         height={CHART_HEIGHT}
-                        viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
-                        preserveAspectRatio="xMinYMid meet"
+                        viewBox={`0 0 ${chartWidth} ${CHART_HEIGHT}`}
                     >
                         {timeline.map((bucket, bucketIndex) => {
                             const x = CHART_PADDING_X + (bucketCount <= 1 ? usableWidth / 2 : (bucketIndex / (bucketCount - 1)) * usableWidth);
@@ -175,13 +187,13 @@ export function UsageJourneyChart(props: UsageJourneyChartProps): React.ReactEle
                             );
                         })}
 
-                        {RANK_Y.map((y, rankIndex) => (
+                        {[0.25, 0.5, 0.75].map((ratio, rankIndex) => (
                             <Line
                                 key={`rank-${rankIndex}`}
                                 x1={CHART_PADDING_X}
-                                y1={y}
-                                x2={CHART_WIDTH - CHART_PADDING_X}
-                                y2={y}
+                                y1={CHART_HEIGHT - CHART_PADDING_BOTTOM - (CHART_HEIGHT - CHART_PADDING_TOP - CHART_PADDING_BOTTOM) * ratio}
+                                x2={chartWidth - CHART_PADDING_X}
+                                y2={CHART_HEIGHT - CHART_PADDING_BOTTOM - (CHART_HEIGHT - CHART_PADDING_TOP - CHART_PADDING_BOTTOM) * ratio}
                                 stroke={theme.colors.divider}
                                 strokeOpacity={0.35}
                                 strokeWidth={1}
@@ -189,7 +201,7 @@ export function UsageJourneyChart(props: UsageJourneyChartProps): React.ReactEle
                             />
                         ))}
 
-                        {Array.from(seriesByLabel.entries()).map(([label, points]) => {
+                        {chartModel.series.map(({ label, points }) => {
                             const color = colorByLabel.get(label) ?? theme.colors.accent.blue;
                             return (
                                 <React.Fragment key={label}>
@@ -231,14 +243,36 @@ export function UsageJourneyChart(props: UsageJourneyChartProps): React.ReactEle
                             );
                         })}
                     </Svg>
-                </ScrollView>
-            </View>
+                    {chartModel.series.map(({ label, points }) => {
+                        const color = colorByLabel.get(label) ?? theme.colors.accent.blue;
+                        return points.map((point) => {
+                            const bucketTimestamp = timeline[point.bucketIndex]?.bucketStartMs ?? 0;
+                            return (
+                                <View
+                                    key={`tooltip-${label}-${point.bucketIndex}`}
+                                    style={[styles.pointHitArea, { left: point.x, top: point.y }]}
+                                >
+                                    <ChartTooltip
+                                        triggerTestID="usage-journey-point-trigger"
+                                        title={label}
+                                        subtitle={formatBucketLabel(bucketTimestamp, bucketCount)}
+                                        value={formatMetricValue(point.value, metric, currency)}
+                                        accentColor={color}
+                                    >
+                                        <View style={styles.pointHitTarget} />
+                                    </ChartTooltip>
+                                </View>
+                            );
+                        });
+                    })}
+                </View>
+            </HorizontalChartFrame>
 
-            {latestBucket ? (
+            {chartModel.latestLeaders.length > 0 ? (
                 <View style={styles.latestSummary}>
-                    <Text style={styles.latestLabel}>{formatBucketLabel(latestBucket.bucketStartMs, bucketCount)}</Text>
+                    <Text style={styles.latestLabel}>{formatBucketLabel(timeline[timeline.length - 1]?.bucketStartMs ?? 0, bucketCount)}</Text>
                     <View style={styles.latestRow}>
-                        {latestLeaders.map((leader) => (
+                        {chartModel.latestLeaders.map((leader) => (
                             <View key={leader.key} style={styles.latestPill}>
                                 <View
                                     style={[

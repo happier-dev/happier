@@ -1884,7 +1884,15 @@ export const it: TranslationStructure = {
         },
       },
 
-    settings: {
+    settingsPlugins: {
+    title: "Catalogo dei plugin",
+    subtitle: "Sfoglia i descrittori dei plugin curati senza eseguirli nell’interfaccia.",
+    catalogUrlLabel: "URL del catalogo",
+    loadCatalog: "Carica catalogo",
+    emptySubtitle: "Questo catalogo non ha restituito descrittori.",
+  },
+
+  settings: {
       title: "Impostazioni",
 
       // Main settings hub category groups
@@ -3948,8 +3956,8 @@ export const it: TranslationStructure = {
       commandPaletteDisabled: "Accesso rapido ai comandi disabilitato",
       hideInactiveSessions: "Nascondi sessioni inattive",
       hideInactiveSessionsSubtitle: "Mostra solo le chat attive nella tua lista",
-      hiddenInactiveSessionsEmptyStateTitle: "Le sessioni inattive sono nascoste",
-      hiddenInactiveSessionsEmptyStateSubtitle: "Questa lista mostra solo le chat attive in questo momento",
+      hiddenInactiveSessionsEmptyStateTitle: "Nessuna sessione attiva in questo momento",
+      hiddenInactiveSessionsEmptyStateSubtitle: "Le sessioni inattive sono nascoste in questo elenco",
       hiddenInactiveSessionsSectionTitle: "Sessioni inattive",
       hiddenInactiveSessionsSectionSubtitle: "Nascoste nell'elenco principale perché lì vengono mostrate solo le chat attive",
     sessionListActiveGrouping: "Raggruppamento sessioni attive",
@@ -7516,6 +7524,7 @@ settingsSession: {
   terminalEmbedded: {
     dockMenuA11y: "Aggancia terminale",
     openNewTabA11y: "Apri una nuova scheda del terminale",
+
     settings: {
       locationTitle: "Posizione del terminale incorporato",
     },
@@ -7876,6 +7885,7 @@ settingsSession: {
         useRelayTitle: 'Usa questo Relay',
         useRelayAccountMismatchSubtitle: 'Passa all’account associato a questo server prima di continuare.',
         useRelayNeedsAuthSubtitle: 'Accedi o crea un account per continuare la configurazione di questo server.',
+        useRelaySignedInSubtitle: 'L’account attuale ha già eseguito l’accesso ed è pronto a usare questo server.',
         useRelayServerMismatchSubtitle: ({ activeRelayUrl, daemonRelayUrl }: { activeRelayUrl: string; daemonRelayUrl: string }) =>
             `Server dell’app: ${activeRelayUrl}. Servizio in background: ${daemonRelayUrl}.`,
         useRelayConnectedSubtitle: ({ relayUrl }: { relayUrl: string }) => `Connesso a ${relayUrl}.`,
@@ -8349,6 +8359,9 @@ settingsSession: {
     favoriteModelChanges: "Favorite model changes",
     busiestWindow: "Busiest window",
     activityCalendarSubtitle: "Calendar heatmap",
+    mostActiveMonths: "Most active months of the selected period",
+    mostActiveWeekdays: "Most active days of the week",
+    mostActiveHours: "Most active hours of the day",
     events: "events",
     source: "Source",
             sessionUsage: "Session usage",

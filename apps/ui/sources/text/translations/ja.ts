@@ -1849,6 +1849,14 @@ export const ja: TranslationStructure = {
     },
   },
 
+  settingsPlugins: {
+    title: "プラグイン カタログ",
+    subtitle: "UI で実行せずに、厳選されたプラグイン記述子を確認できます。",
+    catalogUrlLabel: "カタログ URL",
+    loadCatalog: "カタログを読み込む",
+    emptySubtitle: "このカタログには記述子がありません。",
+  },
+
   settings: {
     title: "設定",
 
@@ -3877,8 +3885,8 @@ localTailscale: {
       commandPaletteDisabled: "クイックコマンドアクセスは無効",
       hideInactiveSessions: "非アクティブセッションを非表示",
       hideInactiveSessionsSubtitle: "アクティブなチャットのみをリストに表示",
-      hiddenInactiveSessionsEmptyStateTitle: "非アクティブなセッションは非表示です",
-      hiddenInactiveSessionsEmptyStateSubtitle: "このリストには現在アクティブなチャットのみ表示されています",
+      hiddenInactiveSessionsEmptyStateTitle: "現在アクティブなセッションはありません",
+      hiddenInactiveSessionsEmptyStateSubtitle: "非アクティブなセッションはこのリストで非表示になっています",
       hiddenInactiveSessionsSectionTitle: "非アクティブなセッション",
       hiddenInactiveSessionsSectionSubtitle: "メインの一覧ではアクティブなチャットだけが表示されるため、ここでは非表示になっています",
     sessionListActiveGrouping: "アクティブセッションのグループ化",
@@ -7416,6 +7424,7 @@ settingsSession: {
   terminalEmbedded: {
     dockMenuA11y: "ターミナルをドック",
     openNewTabA11y: "新しいターミナルタブを開く",
+
     settings: {
       locationTitle: "埋め込みターミナルの場所",
     },
@@ -7768,6 +7777,7 @@ settingsSession: {
         useRelayTitle: 'このRelayを使用',
         useRelayAccountMismatchSubtitle: '続行する前に、このサーバーに対応するアカウントに切り替えてください。',
         useRelayNeedsAuthSubtitle: 'このサーバーのセットアップを続けるには、サインインするかアカウントを作成してください。',
+        useRelaySignedInSubtitle: '現在のアカウントはすでにサインイン済みで、このサーバーを利用する準備ができています。',
         useRelayServerMismatchSubtitle: ({ activeRelayUrl, daemonRelayUrl }: { activeRelayUrl: string; daemonRelayUrl: string }) =>
             `アプリサーバー: ${activeRelayUrl}. バックグラウンドサービス: ${daemonRelayUrl}.`,
         useRelayConnectedSubtitle: ({ relayUrl }: { relayUrl: string }) => `${relayUrl} に接続済みです。`,
@@ -8250,6 +8260,9 @@ settingsSession: {
     favoriteModelChanges: "Favorite model changes",
     busiestWindow: "Busiest window",
     activityCalendarSubtitle: "Calendar heatmap",
+    mostActiveMonths: "Most active months of the selected period",
+    mostActiveWeekdays: "Most active days of the week",
+    mostActiveHours: "Most active hours of the day",
     events: "events",
     source: "Source",
             sessionUsage: "Session usage",

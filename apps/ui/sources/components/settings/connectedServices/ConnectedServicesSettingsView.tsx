@@ -17,8 +17,11 @@ import type { ConnectedServiceId } from '@happier-dev/protocol';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { ConnectedServiceQuotaBadgesView } from '@/components/settings/connectedServices/ConnectedServiceQuotaBadgesView';
 import { useConnectedServiceQuotaBadges } from '@/hooks/server/connectedServices/useConnectedServiceQuotaBadges';
+import { useConnectedServiceQuotaSummaries } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSummaries';
 import { connectedServiceProfileKey, resolveConnectedServiceDefaultProfileId } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 import { resolveConnectedServiceDisplayName } from './model/resolveConnectedServiceDisplayName';
+import { buildConnectedServiceQuotaSummaryCards } from './buildConnectedServiceQuotaSummaryCards';
+import { ConnectedServiceQuotaSummaryCardSection } from './ConnectedServiceQuotaSummaryCardSection';
 
 export const ConnectedServicesSettingsView = React.memo(function ConnectedServicesSettingsView() {
   const { theme } = useUnistyles();
@@ -53,6 +56,15 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
   }, [allServiceIds, services, settings.connectedServicesDefaultProfileByServiceId]);
 
   const quotaBadgesByKey = useConnectedServiceQuotaBadges(connectedServicesEnabled ? quotaRequestedProfiles : []);
+  const {
+    summaries: quotaSummaries,
+    isRefreshing: quotaSummariesRefreshing,
+    hasConnectedProfiles: hasConnectedQuotaProfiles,
+  } = useConnectedServiceQuotaSummaries();
+  const quotaCards = React.useMemo(
+    () => buildConnectedServiceQuotaSummaryCards(quotaSummaries),
+    [quotaSummaries],
+  );
 
   if (!connectedServicesEnabled) {
     return (
@@ -70,6 +82,13 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
 
   return (
     <ItemList>
+      <ConnectedServiceQuotaSummaryCardSection
+        title={t('connectedServices.title')}
+        cards={quotaCards}
+        isRefreshing={quotaSummariesRefreshing}
+        showWhenEmpty={hasConnectedQuotaProfiles}
+        testID="connected-services-quota-summary-section"
+      />
       <ItemGroup title={t('connectedServices.title')}>
         {services.length === 0 ? (
           <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>

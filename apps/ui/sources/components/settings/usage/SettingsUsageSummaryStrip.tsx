@@ -10,7 +10,7 @@ import { t } from '@/text';
 import type { UsageAnalyticsSummaryViewModel } from '@/sync/api/account/usageAnalytics';
 import { shadowLevelStyle } from '@/shadowElevation';
 
-import { UsageActivitySquareMatrix, UsageProgressMeter, UsageSparkBars } from './UsageMiniVisuals';
+import { UsageActivitySquareMatrix, UsageProgressMeter } from './UsageMiniVisuals';
 import { formatUsageCurrency } from './formatUsageCurrency';
 import { buildUsageSettingsRouteTarget } from './usageRouteParams';
 
@@ -103,6 +103,9 @@ export const SettingsUsageSummaryStrip = React.memo(function SettingsUsageSummar
         ? topModel.totalTokens / current.totalTokens
         : 0;
     const columns = width >= 1180 ? 4 : width >= 720 ? 2 : 1;
+    const topEngineShare = topEngine && current.totalTokens > 0
+        ? topEngine.totalTokens / current.totalTokens
+        : 0;
 
     return (
         <View style={styles.stripWrapper}>
@@ -204,12 +207,12 @@ export const SettingsUsageSummaryStrip = React.memo(function SettingsUsageSummar
                             <MetricCard
                                 testID="settings-usage-summary-engine-card"
                                 valueTone="compact"
-                                label={t('usage.busiestWindow')}
-                                value={current.busiestWindowLabel ?? '—'}
-                                subtitle={topEngine?.label ?? t('usage.noData')}
+                                label={t('usage.summary.engine')}
+                                value={topEngine?.label ?? '—'}
+                                subtitle={current.busiestWindowLabel ?? t('usage.noData')}
                                 visual={(
-                                    <UsageSparkBars
-                                        activity={current.recentActivity}
+                                    <UsageProgressMeter
+                                        ratio={topEngineShare}
                                         color={theme.colors.accent.green}
                                     />
                                 )}

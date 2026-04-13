@@ -114,6 +114,7 @@ describe('ConnectedServicesSettingsView quotas', () => {
 
     await flushHookEffects({ cycles: 1, turns: 1 });
 
+    expect(tree.findAll((n) => n.props?.testID === 'connected-services-quota-summary-section')).not.toHaveLength(0);
     expect(tree.findAll((n) => n.props?.children === 'Weekly 18%')).not.toHaveLength(0);
   });
 });

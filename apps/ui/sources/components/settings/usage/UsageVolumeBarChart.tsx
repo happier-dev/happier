@@ -1,21 +1,22 @@
 import * as React from 'react';
-import { ScrollView, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { ChartTooltip, HorizontalChartFrame } from '@/components/ui/charts';
 import type { UsageMetric, UsageTrendPoint } from '@/sync/api/account/usageAnalytics';
+import { formatUsageCurrency } from './formatUsageCurrency';
 
-type UsageVolumeBubbleChartProps = Readonly<{
+type UsageVolumeBarChartProps = Readonly<{
     points: readonly UsageTrendPoint[];
     metric: UsageMetric;
+    currency?: string;
     height?: number;
     testID?: string;
 }>;
 
-const MIN_BUBBLE_SIZE = 12;
-const MAX_BUBBLE_SIZE = 88;
 const MAX_POINTS = 30;
 
 const styles = StyleSheet.create((theme) => ({
@@ -31,17 +32,15 @@ const styles = StyleSheet.create((theme) => ({
         fontSize: 14,
         color: theme.colors.textSecondary,
     },
-    scroller: {
-        flexGrow: 0,
-    },
     chartCanvas: {
         flexDirection: 'row',
-        alignItems: 'stretch',
+        alignItems: 'flex-end',
         paddingHorizontal: 4,
         paddingTop: 4,
+        gap: 10,
     },
     column: {
-        width: 56,
+        width: 42,
         minHeight: 228,
         alignItems: 'center',
         position: 'relative',
@@ -52,7 +51,7 @@ const styles = StyleSheet.create((theme) => ({
         bottom: 24,
         width: 1,
         backgroundColor: theme.colors.divider,
-        opacity: 0.8,
+        opacity: 0.7,
     },
     valueLabel: {
         minHeight: 16,
@@ -61,7 +60,7 @@ const styles = StyleSheet.create((theme) => ({
         lineHeight: 14,
         color: theme.colors.textSecondary,
     },
-    bubbleWrap: {
+    barWrap: {
         flex: 1,
         width: '100%',
         justifyContent: 'flex-end',
@@ -69,12 +68,18 @@ const styles = StyleSheet.create((theme) => ({
         paddingBottom: 10,
         paddingTop: 16,
     },
-    bubble: {
+    barTrack: {
+        width: 22,
+        height: '100%',
+        maxHeight: 150,
+        justifyContent: 'flex-end',
         borderRadius: 999,
         backgroundColor: theme.colors.surfaceHigh,
+        overflow: 'hidden',
     },
-    bubbleHighlighted: {
-        borderColor: 'transparent',
+    barAnchor: {
+        width: '100%',
+        borderRadius: 999,
     },
     label: {
         marginTop: 6,
@@ -102,34 +107,18 @@ const styles = StyleSheet.create((theme) => ({
     },
 }));
 
-function formatMetricValue(value: number, metric: UsageMetric): string {
+function formatMetricValue(value: number, metric: UsageMetric, currency: string): string {
     if (metric === 'cost') {
-        if (value >= 100) {
-            return `$${value.toFixed(0)}`;
-        }
-        if (value >= 10) {
-            return `$${value.toFixed(1)}`;
-        }
-        return `$${value.toFixed(2)}`;
+        return formatUsageCurrency(value, currency);
     }
-
-    if (value >= 1_000_000_000) {
-        return `${(value / 1_000_000_000).toFixed(1)}B`;
-    }
-    if (value >= 1_000_000) {
-        return `${(value / 1_000_000).toFixed(1)}M`;
-    }
-    if (value >= 1_000) {
-        return `${(value / 1_000).toFixed(1)}K`;
-    }
+    if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B`;
+    if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+    if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
     return value.toFixed(0);
 }
 
 function formatBucketLabel(timestampSeconds: number, pointCount: number): string {
     const date = new Date(timestampSeconds * 1000);
-    if (pointCount <= 2) {
-        return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date);
-    }
     if (pointCount <= 8) {
         return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date);
     }
@@ -140,8 +129,8 @@ function getPointValue(point: UsageTrendPoint, metric: UsageMetric): number {
     return metric === 'cost' ? point.cost : point.tokens;
 }
 
-export function UsageVolumeBubbleChart(props: UsageVolumeBubbleChartProps): React.ReactElement {
-    const { points, metric, height = 240, testID } = props;
+export function UsageVolumeBarChart(props: UsageVolumeBarChartProps): React.ReactElement {
+    const { points, metric, currency = 'USD', height = 240, testID } = props;
     const { theme } = useUnistyles();
 
     if (points.length === 0) {
@@ -157,36 +146,44 @@ export function UsageVolumeBubbleChart(props: UsageVolumeBubbleChartProps): Reac
     const accentColor = metric === 'cost' ? theme.colors.accent.orange : theme.colors.accent.blue;
     const topPoint = [...displayPoints].sort((left, right) => getPointValue(right, metric) - getPointValue(left, metric))[0] ?? null;
     const total = displayPoints.reduce((sum, point) => sum + getPointValue(point, metric), 0);
+    const contentWidth = Math.max(640, displayPoints.length * 58 + 18);
 
     return (
         <View testID={testID} style={styles.container}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scroller}>
+            <HorizontalChartFrame contentWidth={contentWidth}>
                 <View style={[styles.chartCanvas, { minHeight: height }]}>
                     {displayPoints.map((point, index) => {
                         const value = getPointValue(point, metric);
                         const ratio = maxValue <= 0 ? 0 : value / maxValue;
-                        const size = value <= 0
-                            ? MIN_BUBBLE_SIZE
-                            : MIN_BUBBLE_SIZE + (MAX_BUBBLE_SIZE - MIN_BUBBLE_SIZE) * Math.sqrt(ratio);
+                        const barHeight = Math.max(10, Math.round(ratio * 150));
                         const isTopPoint = topPoint != null && point.timestamp === topPoint.timestamp && value === getPointValue(topPoint, metric);
 
                         return (
                             <View key={`${point.timestamp}-${index}`} style={[styles.column, { minHeight: height }]}>
                                 <View style={styles.guide} />
-                                <Text style={styles.valueLabel}>{isTopPoint ? formatMetricValue(value, metric) : ' '}</Text>
-                                <View style={styles.bubbleWrap}>
-                                    <View
-                                        style={[
-                                            styles.bubble,
-                                            {
-                                                width: size,
-                                                height: size,
-                                                backgroundColor: isTopPoint ? accentColor : theme.colors.surfaceHigh,
-                                                opacity: isTopPoint ? 0.92 : Math.max(0.18, ratio * 0.78),
-                                            },
-                                            isTopPoint ? styles.bubbleHighlighted : null,
-                                        ]}
-                                    />
+                                <Text style={styles.valueLabel}>{isTopPoint ? formatMetricValue(value, metric, currency) : ' '}</Text>
+                                <View style={styles.barWrap}>
+                                    <View style={styles.barTrack}>
+                                        <ChartTooltip
+                                            triggerTestID="usage-volume-point-trigger"
+                                            title={formatBucketLabel(point.timestamp, displayPoints.length)}
+                                            subtitle={metric === 'cost' ? t('usage.cost') : t('usage.tokens')}
+                                            value={formatMetricValue(value, metric, currency)}
+                                            accentColor={isTopPoint ? accentColor : theme.colors.accent.blue}
+                                        >
+                                            <View
+                                                testID={`usage-volume-point-anchor-${index}`}
+                                                style={[
+                                                    styles.barAnchor,
+                                                    {
+                                                        height: barHeight,
+                                                        backgroundColor: isTopPoint ? accentColor : theme.colors.accent.blue,
+                                                        opacity: isTopPoint ? 0.95 : Math.max(0.35, ratio * 0.88),
+                                                    },
+                                                ]}
+                                            />
+                                        </ChartTooltip>
+                                    </View>
                                 </View>
                                 <Text numberOfLines={2} style={styles.label}>
                                     {formatBucketLabel(point.timestamp, displayPoints.length)}
@@ -195,15 +192,15 @@ export function UsageVolumeBubbleChart(props: UsageVolumeBubbleChartProps): Reac
                         );
                     })}
                 </View>
-            </ScrollView>
+            </HorizontalChartFrame>
 
             <View style={styles.footer}>
                 <Text style={styles.footerMetric}>
-                    {t('usage.totalTokens')}: <Text style={styles.footerValue}>{formatMetricValue(total, metric)}</Text>
+                    {metric === 'cost' ? t('usage.totalCost') : t('usage.totalTokens')}: <Text style={styles.footerValue}>{formatMetricValue(total, metric, currency)}</Text>
                 </Text>
                 {topPoint ? (
                     <Text style={styles.footerMetric}>
-                        {formatBucketLabel(topPoint.timestamp, displayPoints.length)} · <Text style={styles.footerValue}>{formatMetricValue(getPointValue(topPoint, metric), metric)}</Text>
+                        {formatBucketLabel(topPoint.timestamp, displayPoints.length)} · <Text style={styles.footerValue}>{formatMetricValue(getPointValue(topPoint, metric), metric, currency)}</Text>
                     </Text>
                 ) : null}
             </View>

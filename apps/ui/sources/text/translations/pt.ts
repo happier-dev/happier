@@ -1673,6 +1673,14 @@ export const pt: TranslationStructure = {
     },
   },
 
+  settingsPlugins: {
+    title: "Catálogo de plugins",
+    subtitle: "Navegue por descritores de plugins curados sem executá-los na interface.",
+    catalogUrlLabel: "URL do catálogo",
+    loadCatalog: "Carregar catálogo",
+    emptySubtitle: "Este catálogo não retornou descritores.",
+  },
+
   settings: {
     title: "Configurações",
 
@@ -3727,8 +3735,8 @@ export const pt: TranslationStructure = {
       commandPaletteDisabled: "Acesso rápido a comandos desativado",
       hideInactiveSessions: "Ocultar sessões inativas",
       hideInactiveSessionsSubtitle: "Mostre apenas os chats ativos na sua lista",
-      hiddenInactiveSessionsEmptyStateTitle: "As sessões inativas estão ocultas",
-      hiddenInactiveSessionsEmptyStateSubtitle: "Esta lista mostra apenas chats ativos agora",
+      hiddenInactiveSessionsEmptyStateTitle: "Nenhuma sessão ativa no momento",
+      hiddenInactiveSessionsEmptyStateSubtitle: "As sessões inativas estão ocultas nesta lista",
       hiddenInactiveSessionsSectionTitle: "Sessões inativas",
       hiddenInactiveSessionsSectionSubtitle: "Ocultas na lista principal porque lá só são mostrados os chats ativos",
     sessionListActiveGrouping: "Agrupamento de sessões ativas",
@@ -7306,6 +7314,7 @@ settingsSession: {
   terminalEmbedded: {
     dockMenuA11y: "Ancorar terminal",
     openNewTabA11y: "Abrir uma nova aba do terminal",
+
     settings: {
       locationTitle: "Local do terminal incorporado",
     },
@@ -7659,6 +7668,7 @@ settingsSession: {
         useRelayTitle: 'Usar este Relay',
         useRelayAccountMismatchSubtitle: 'Mude para a conta que pertence a este servidor antes de continuar.',
         useRelayNeedsAuthSubtitle: 'Inicie sessão ou crie uma conta para continuar a configuração deste servidor.',
+        useRelaySignedInSubtitle: 'A conta atual já tem sessão iniciada e está pronta para usar este servidor.',
         useRelayServerMismatchSubtitle: ({ activeRelayUrl, daemonRelayUrl }: { activeRelayUrl: string; daemonRelayUrl: string }) =>
             `Servidor da aplicação: ${activeRelayUrl}. Serviço em segundo plano: ${daemonRelayUrl}.`,
         useRelayConnectedSubtitle: ({ relayUrl }: { relayUrl: string }) => `Ligado a ${relayUrl}.`,
@@ -8141,6 +8151,9 @@ settingsSession: {
     favoriteModelChanges: "Favorite model changes",
     busiestWindow: "Busiest window",
     activityCalendarSubtitle: "Calendar heatmap",
+    mostActiveMonths: "Most active months of the selected period",
+    mostActiveWeekdays: "Most active days of the week",
+    mostActiveHours: "Most active hours of the day",
     events: "events",
     source: "Source",
             sessionUsage: "Session usage",

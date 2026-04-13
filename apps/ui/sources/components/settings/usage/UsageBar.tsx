@@ -2,6 +2,7 @@ import React from 'react';
 import { Pressable, View } from 'react-native';
 import { Text } from '@/components/ui/text/Text';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { ChartTooltip } from '@/components/ui/charts';
 
 interface UsageBarProps {
     label: string;
@@ -13,6 +14,9 @@ interface UsageBarProps {
     active?: boolean;
     testID?: string;
     onPress?: () => void;
+    tooltipTitle?: string;
+    tooltipSubtitle?: string;
+    tooltipValue?: string;
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -38,9 +42,14 @@ const styles = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.divider,
         borderRadius: 4,
         overflow: 'hidden',
+        justifyContent: 'center',
     },
     barFill: {
         height: '100%',
+        borderRadius: 4,
+    },
+    barTooltipAnchor: {
+        alignSelf: 'flex-start',
         borderRadius: 4,
     },
     pressable: {
@@ -63,6 +72,9 @@ export const UsageBar: React.FC<UsageBarProps> = ({
     active = false,
     testID,
     onPress,
+    tooltipTitle,
+    tooltipSubtitle,
+    tooltipValue,
 }) => {
     const { theme } = useUnistyles();
     const percentage = maxValue > 0 ? (value / maxValue) * 100 : 0;
@@ -79,15 +91,45 @@ export const UsageBar: React.FC<UsageBarProps> = ({
                 <Text style={styles.value}>{displayValue}</Text>
             </View>
             <View style={[styles.barContainer, { height }]}>
-                <View
-                    style={[
-                        styles.barFill,
-                        {
-                            width: `${Math.min(percentage, 100)}%`,
-                            backgroundColor: fillColor
-                        }
-                    ]}
-                />
+                {tooltipTitle && tooltipValue ? (
+                    <ChartTooltip
+                        triggerTestID={testID ? `${testID}-trigger` : undefined}
+                        title={tooltipTitle}
+                        subtitle={tooltipSubtitle}
+                        value={tooltipValue}
+                        accentColor={fillColor}
+                    >
+                        <View
+                            testID={testID ? `${testID}-anchor` : undefined}
+                            style={[
+                                styles.barTooltipAnchor,
+                                {
+                                    width: `${Math.max(8, Math.min(percentage, 100))}%`,
+                                },
+                            ]}
+                        >
+                            <View
+                                style={[
+                                    styles.barFill,
+                                    {
+                                        width: '100%',
+                                        backgroundColor: fillColor,
+                                    },
+                                ]}
+                            />
+                        </View>
+                    </ChartTooltip>
+                ) : (
+                    <View
+                        style={[
+                            styles.barFill,
+                            {
+                                width: `${Math.min(percentage, 100)}%`,
+                                backgroundColor: fillColor,
+                            },
+                        ]}
+                    />
+                )}
             </View>
         </>
     );
@@ -106,9 +148,11 @@ export const UsageBar: React.FC<UsageBarProps> = ({
         );
     }
 
-    return (
+    const view = (
         <View testID={testID} style={containerStyle}>
             {content}
         </View>
     );
+
+    return view;
 };

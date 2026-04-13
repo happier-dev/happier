@@ -69,6 +69,14 @@ vi.mock('@/hooks/server/connectedServices/useConnectedServiceQuotaBadges', () =>
     useConnectedServiceQuotaBadges: () => ({}),
 }));
 
+vi.mock('@/hooks/server/connectedServices/useConnectedServiceQuotaSummaries', () => ({
+    useConnectedServiceQuotaSummaries: () => ({
+        summaries: [],
+        isRefreshing: false,
+        hasConnectedProfiles: false,
+    }),
+}));
+
 describe('ConnectedServicesSettingsView', () => {
     it('does not expose connected services when the feature is disabled', async () => {
         const { ConnectedServicesSettingsView } = await import('./ConnectedServicesSettingsView');

@@ -1486,6 +1486,14 @@ export const zhHans: TranslationStructure = {
     },
   },
 
+  settingsPlugins: {
+    title: "插件目录",
+    subtitle: "浏览精选的插件描述符，不在界面中执行它们。",
+    catalogUrlLabel: "目录 URL",
+    loadCatalog: "加载目录",
+    emptySubtitle: "此目录没有返回任何描述符。",
+  },
+
   settings: {
     title: "设置",
 
@@ -3471,8 +3479,8 @@ export const zhHans: TranslationStructure = {
       commandPaletteDisabled: "快速命令访问已禁用",
       hideInactiveSessions: "隐藏非活跃会话",
       hideInactiveSessionsSubtitle: "仅在列表中显示活跃的聊天",
-      hiddenInactiveSessionsEmptyStateTitle: "非活跃会话已隐藏",
-      hiddenInactiveSessionsEmptyStateSubtitle: "此列表当前仅显示活跃聊天",
+      hiddenInactiveSessionsEmptyStateTitle: "当前没有活跃会话",
+      hiddenInactiveSessionsEmptyStateSubtitle: "非活跃会话在此列表中已隐藏",
       hiddenInactiveSessionsSectionTitle: "非活跃会话",
       hiddenInactiveSessionsSectionSubtitle: "它们在主列表中被隐藏，因为那里只显示活跃聊天",
     sessionListActiveGrouping: "活跃会话分组",
@@ -6831,6 +6839,7 @@ settingsSession: {
   terminalEmbedded: {
     dockMenuA11y: "停靠终端",
     openNewTabA11y: "打开新的终端标签页",
+
     settings: {
       locationTitle: "嵌入式终端位置",
     },
@@ -7180,6 +7189,7 @@ settingsSession: {
         useRelayTitle: '使用此 Relay',
         useRelayAccountMismatchSubtitle: '继续之前，请切换到属于此服务器的账户。',
         useRelayNeedsAuthSubtitle: '登录或创建账户以继续为此服务器完成设置。',
+        useRelaySignedInSubtitle: '当前账户已登录，并且已准备好使用此服务器。',
         useRelayServerMismatchSubtitle: ({ activeRelayUrl, daemonRelayUrl }: { activeRelayUrl: string; daemonRelayUrl: string }) =>
             `应用服务器：${activeRelayUrl}。后台服务：${daemonRelayUrl}。`,
         useRelayConnectedSubtitle: ({ relayUrl }: { relayUrl: string }) => `已连接到 ${relayUrl}。`,
@@ -7638,6 +7648,9 @@ settingsSession: {
     favoriteModelChanges: "Favorite model changes",
     busiestWindow: "Busiest window",
     activityCalendarSubtitle: "Calendar heatmap",
+    mostActiveMonths: "Most active months of the selected period",
+    mostActiveWeekdays: "Most active days of the week",
+    mostActiveHours: "Most active hours of the day",
     events: "events",
     source: "Source",
             sessionUsage: "Session usage",

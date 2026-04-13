@@ -1,11 +1,13 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { buildUsageAnalyticsViewModel } from '@/sync/api/account/usageAnalytics';
+import * as storeHooks from '@/sync/store/hooks';
 import { UsageAnalyticsDashboard } from './UsageAnalyticsDashboard';
 import type { UsageAnalyticsQueryResponse } from '@happier-dev/protocol';
 import type { UsageDataPoint } from '@/sync/api/account/apiUsage';
+import { DropdownMenu, type DropdownMenuProps } from '@/components/ui/forms/dropdown/DropdownMenu';
 
 function getNodeTextContent(node: unknown): string {
     if (node == null) {
@@ -21,6 +23,21 @@ function getNodeTextContent(node: unknown): string {
         return getNodeTextContent((node.props as { children?: unknown }).children);
     }
     return '';
+}
+
+function findUsageFilterDropdown(
+    screen: Awaited<ReturnType<typeof renderScreen>>,
+    testID: string,
+): { props: DropdownMenuProps } {
+    const dropdown = screen
+        .findAllByType(DropdownMenu as never)
+        .find((node) => node.props?.itemTrigger?.itemProps?.testID === testID);
+
+    if (!dropdown) {
+        throw new Error(`Expected DropdownMenu with trigger testID "${testID}"`);
+    }
+
+    return dropdown as unknown as { props: DropdownMenuProps };
 }
 
 const response: UsageAnalyticsQueryResponse = {
@@ -128,7 +145,60 @@ const response: UsageAnalyticsQueryResponse = {
 };
 
 describe('UsageAnalyticsDashboard', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it('anchors the refresh indicator to the top controls without inserting a loading row below the actions', async () => {
+        const viewModel = buildUsageAnalyticsViewModel(response, {
+            period: '30days',
+            metric: 'tokens',
+            focus: null,
+            costMode: 'auto',
+        });
+
+        const props = {
+            viewModel,
+            filters: {
+                period: '30days',
+                metric: 'tokens',
+                focus: null,
+                costMode: 'auto',
+            },
+            isRefreshing: true,
+            onPeriodChange: vi.fn(),
+            onMetricChange: vi.fn(),
+            onFocusChange: vi.fn(),
+            onCostModeChange: vi.fn(),
+        } satisfies React.ComponentProps<typeof UsageAnalyticsDashboard>;
+
+        const screen = await renderScreen(React.createElement(UsageAnalyticsDashboard, props));
+        const overlay = screen.findByTestId('usage-refresh-overlay');
+        expect(overlay).toBeTruthy();
+        if (!overlay) {
+            throw new Error('Expected usage refresh overlay');
+        }
+
+        const style = Array.isArray(overlay.props.style) ? overlay.props.style : [overlay.props.style];
+        expect(style).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                position: 'absolute',
+                top: 16,
+                right: 16,
+            }),
+        ]));
+        expect(screen.findAllByTestId('usage-refresh-inline-badge')).toHaveLength(0);
+    });
+
     it('renders usage analytics controls and drilldown rows', async () => {
+        vi.spyOn(storeHooks, 'useSessionListRenderablesById').mockReturnValue({
+            'session-a': {
+                id: 'session-a',
+                metadata: {
+                    summary: { text: 'Session Alpha' },
+                },
+            } as never,
+        });
         const viewModel = buildUsageAnalyticsViewModel(response, {
             period: '7days',
             metric: 'tokens',
@@ -156,24 +226,28 @@ describe('UsageAnalyticsDashboard', () => {
 
         expect(screen.getTextContent()).toContain('Usage summary');
         expect(screen.getTextContent()).toContain('$12');
-        expect(screen.findByTestId('usage-costmode-auto')).toBeTruthy();
+        expect(screen.findByTestId('usage-filter-cost-mode')).toBeTruthy();
         expect(screen.findByTestId('usage-insights-section')).toBeTruthy();
         expect(screen.findByTestId('usage-activity-section')).toBeTruthy();
         expect(screen.findByTestId('usage-leaders-section')).toBeTruthy();
+        expect(screen.findByTestId('usage-leader-models')).toBeTruthy();
         expect(screen.findByTestId('usage-timeline-section')).toBeTruthy();
         expect(screen.findByTestId('usage-export-copy-summary')).toBeTruthy();
         expect(screen.findByTestId('usage-export-json')).toBeTruthy();
-        expect(screen.findByTestId('usage-period-7days')).toBeTruthy();
-        expect(screen.findByTestId('usage-period-year')).toBeTruthy();
-        expect(screen.findByTestId('usage-metric-cost')).toBeTruthy();
-        expect(screen.findByTestId('usage-costmode-reported')).toBeTruthy();
+        expect(screen.findByTestId('usage-filter-period')).toBeTruthy();
+        expect(screen.findByTestId('usage-filter-metric')).toBeTruthy();
         expect(screen.findByTestId('usage-breakdown-row-provider-anthropic')).toBeTruthy();
         expect(screen.findByTestId('usage-breakdown-row-model-claude-3.7-sonnet')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('Session Alpha');
 
-        screen.pressByTestId('usage-period-year');
-        screen.pressByTestId('usage-period-today');
-        screen.pressByTestId('usage-metric-cost');
-        screen.pressByTestId('usage-costmode-reported');
+        const periodDropdown = findUsageFilterDropdown(screen, 'usage-filter-period');
+        const metricDropdown = findUsageFilterDropdown(screen, 'usage-filter-metric');
+        const costModeDropdown = findUsageFilterDropdown(screen, 'usage-filter-cost-mode');
+
+        periodDropdown.props.onSelect('year');
+        periodDropdown.props.onSelect('today');
+        metricDropdown.props.onSelect('cost');
+        costModeDropdown.props.onSelect('reported');
         screen.pressByTestId('usage-breakdown-row-model-claude-3.7-sonnet');
 
         expect(onPeriodChange).toHaveBeenCalledWith('year');
@@ -184,6 +258,34 @@ describe('UsageAnalyticsDashboard', () => {
             dimension: 'model',
             key: 'claude-3.7-sonnet',
         }));
+    });
+
+    it('keeps the connected service quota section visible while quota snapshots are still loading', async () => {
+        const viewModel = buildUsageAnalyticsViewModel(response, {
+            period: '30days',
+            metric: 'tokens',
+            focus: null,
+            costMode: 'auto',
+        });
+
+        const screen = await renderScreen(React.createElement(UsageAnalyticsDashboard, {
+            viewModel,
+            connectedServiceQuotaCards: [],
+            connectedServiceQuotasRefreshing: true,
+            filters: {
+                period: '30days',
+                metric: 'tokens',
+                focus: null,
+                costMode: 'auto',
+            },
+            onPeriodChange: vi.fn(),
+            onMetricChange: vi.fn(),
+            onFocusChange: vi.fn(),
+            onCostModeChange: vi.fn(),
+        }));
+
+        expect(screen.findByTestId('usage-connected-services-quotas-section')).toBeTruthy();
+        expect(screen.findByTestId('usage-connected-services-quotas-loading')).toBeTruthy();
     });
 
     it('hides misleading reported and estimated cost modes when the legacy fallback only exposes a synthesized total', async () => {
@@ -221,9 +323,10 @@ describe('UsageAnalyticsDashboard', () => {
             onCostModeChange: vi.fn(),
         }));
 
-        expect(screen.findByTestId('usage-costmode-auto')).toBeTruthy();
-        expect(screen.findAllByTestId('usage-costmode-reported')).toHaveLength(0);
-        expect(screen.findAllByTestId('usage-costmode-estimated')).toHaveLength(0);
+        const costModeDropdown = findUsageFilterDropdown(screen, 'usage-filter-cost-mode');
+
+        expect(screen.findByTestId('usage-filter-cost-mode')).toBeTruthy();
+        expect(costModeDropdown.props.items.map((item) => item.id)).toEqual(['auto']);
     });
 
     it('renders a real timeline section for model and engine timelines', async () => {
@@ -516,6 +619,46 @@ describe('UsageAnalyticsDashboard', () => {
 
         expect(screen.findAllByTestId('usage-breakdown-row-bucket-input')).toHaveLength(0);
         expect(screen.findAllByTestId('usage-breakdown-row-bucket-output')).toHaveLength(0);
+    });
+
+    it('shows the empty state when only unsupported source breakdowns are present', async () => {
+        const viewModel = buildUsageAnalyticsViewModel(response, {
+            period: '7days',
+            metric: 'tokens',
+            focus: null,
+            costMode: 'auto',
+        });
+        const sourceOnlyViewModel = {
+            ...viewModel,
+            trend: [],
+            breakdowns: {
+                providers: [],
+                models: [],
+                sessions: [],
+                projects: [],
+                workspaces: [],
+                backendModes: [],
+                sources: viewModel.breakdowns.sources,
+                buckets: viewModel.breakdowns.buckets,
+            },
+        };
+
+        const screen = await renderScreen(React.createElement(UsageAnalyticsDashboard, {
+            viewModel: sourceOnlyViewModel,
+            filters: {
+                period: '7days',
+                metric: 'tokens',
+                focus: null,
+                costMode: 'auto',
+            },
+            onPeriodChange: vi.fn(),
+            onMetricChange: vi.fn(),
+            onFocusChange: vi.fn(),
+            onCostModeChange: vi.fn(),
+        }));
+
+        expect(screen.findByTestId('usage-empty-state')).toBeTruthy();
+        expect(screen.getTextContent()).not.toContain('Claude SDK');
     });
 
     it('formats overview cost using the response currency', async () => {
