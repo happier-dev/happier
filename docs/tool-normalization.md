@@ -80,7 +80,7 @@ Codex rollout source directory:
 
 Mapping Codex rollout tool names to canonical tools:
 
-- `apps/cli/src/backends/codex/localControl/rolloutToolNameMapping.ts`
+- `apps/cli/src/backends/codex/rollout/projection/rolloutToolNameMapping.ts`
   - Keeps a conservative allowlist of observed non-MCP tool names (drift detection via unit tests).
   - Canonicalizes known tools (`exec_command` → `Bash`, `apply_patch` → `Patch`).
   - Treats `mcp__*` tools as pass-through (they’re already handled by the V2 normalizers/renderers).

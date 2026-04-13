@@ -57,7 +57,9 @@ async function main() {
   if (argv[0] === 'login') {
     process.stdout.write('Open this URL to authenticate:\n');
     process.stdout.write('https://example.test/fake-codex-auth\n');
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    // Keep the login terminal alive long enough for the browser e2e to observe
+    // the pane before the fake CLI exits and the UI closes it.
+    await new Promise((resolve) => setTimeout(resolve, 5000));
     await writeAuthFile();
     process.stdout.write('Authentication complete\n');
     process.exit(0);

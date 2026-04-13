@@ -33,6 +33,7 @@ describe('AGENT_AUTH_PROBE_CONFIG', () => {
       statusCommand: ['login', 'status'],
       parser: 'codexLoginStatus',
       backgroundChecks: 'safe',
+      envVars: ['OPENAI_API_KEY', 'CODEX_API_KEY'],
     });
   });
 
