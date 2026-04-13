@@ -19,21 +19,21 @@ const CODEX_EXEC_SEQUENCING = trimIdent(`
   - If a dependent read runs before its prerequisite write and fails, rerun the read after the write succeeds.
 `);
 
-export function resolveCodingProviderBehaviorBlocks(args: Readonly<{
-  providerId: string | null | undefined;
+type CodingProviderBehaviorResolver = (args: Readonly<{
   disableTodos?: boolean;
-}>): PromptBlockV1[] {
-  const providerId = typeof args.providerId === 'string' ? args.providerId.trim() : '';
-  if (!providerId) return [];
+}>) => PromptBlockV1[];
+type CodingProviderBehaviorArgs = Readonly<{
+  disableTodos?: boolean;
+}>;
 
-  const blocks: PromptBlockV1[] = [];
-
-  if (providerId === 'claude') {
-    blocks.push({
+const CODING_PROVIDER_BEHAVIOR_BLOCKS_BY_PROVIDER: Readonly<Record<string, CodingProviderBehaviorResolver>> = {
+  claude: (args: CodingProviderBehaviorArgs) => {
+    const blocks: PromptBlockV1[] = [{
       id: 'provider.claude.ask_user_question_isolation',
       scope: 'provider_behavior',
       text: CLAUDE_ASK_USER_QUESTION_ISOLATION,
-    });
+    }];
+
     if (args.disableTodos === true) {
       blocks.push({
         id: 'provider.claude.disable_todos',
@@ -41,15 +41,21 @@ export function resolveCodingProviderBehaviorBlocks(args: Readonly<{
         text: CLAUDE_DISABLE_TODOS,
       });
     }
-  }
 
-  if (providerId === 'codex') {
-    blocks.push({
-      id: 'provider.codex.exec_sequencing',
-      scope: 'provider_behavior',
-      text: CODEX_EXEC_SEQUENCING,
-    });
-  }
+    return blocks;
+  },
+  codex: () => ([{
+    id: 'provider.codex.exec_sequencing',
+    scope: 'provider_behavior',
+    text: CODEX_EXEC_SEQUENCING,
+  }]),
+};
 
-  return blocks;
+export function resolveCodingProviderBehaviorBlocks(args: Readonly<{
+  providerId: string | null | undefined;
+  disableTodos?: boolean;
+}>): PromptBlockV1[] {
+  const providerId = typeof args.providerId === 'string' ? args.providerId.trim() : '';
+  if (!providerId) return [];
+  return CODING_PROVIDER_BEHAVIOR_BLOCKS_BY_PROVIDER[providerId]?.(args) ?? [];
 }
