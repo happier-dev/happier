@@ -3,7 +3,7 @@
  * Provides helper functions for path resolution and logging
  */
 
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { closeSync, existsSync, openSync, readdirSync, readSync, realpathSync, statSync } from 'node:fs'
 import { getProviderCliInstallGuideUrl, getProviderCliManualInstallSummaryLines } from '@happier-dev/agents'
 import { resolveProviderCliCommand } from '@happier-dev/cli-common/providers'
@@ -172,6 +172,30 @@ function findLatestVersionedClaudeEntrypointForAgentSdk(versionsDir: string): st
     }
 }
 
+/**
+ * Derive the npm global `cli.js` entrypoint from `process.execPath`.
+ *
+ * Intentionally independent of PATH: daemons / spawned CLI processes often inherit
+ * a minimal PATH that no longer contains the directory where `node` itself lives
+ * (Windows + nvm-windows where `C:\Program Files\nodejs` is a junction, or detached
+ * Linux daemons whose PATH is reset by systemd/launchd).
+ */
+function findClaudeInNpmGlobalModules(): string | null {
+    const execDir = dirname(process.execPath)
+    const claudePkgRelative = join('node_modules', '@anthropic-ai', 'claude-code', 'cli.js')
+
+    // Windows npm installs packages next to node.exe; Unix npm installs under ../lib/.
+    const candidates = [
+        join(execDir, claudePkgRelative),
+        join(dirname(execDir), 'lib', claudePkgRelative),
+    ]
+
+    for (const candidate of candidates) {
+        if (existsSync(candidate)) return candidate
+    }
+    return null
+}
+
 function findClaudeInNativeInstallerLocations(homeDir: string): string | null {
     if (process.platform === 'win32') {
         const localAppData = process.env.LOCALAPPDATA || join(homeDir, 'AppData', 'Local')
@@ -302,6 +326,11 @@ export function getDefaultClaudeCodePathForAgentSdk(): string {
         if (isAgentSdkCompatibleClaudeEntrypoint(resolved.command)) {
             return resolved.command;
         }
+    }
+
+    const npmGlobalPath = findClaudeInNpmGlobalModules();
+    if (npmGlobalPath && isAgentSdkCompatibleClaudeEntrypoint(npmGlobalPath)) {
+        return canonicalizeClaudeEntrypointPath(npmGlobalPath);
     }
 
     const homeDir = resolveHomeDir();
