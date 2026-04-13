@@ -68,7 +68,7 @@ describe('machines/transfer (architecture)', () => {
             assertDoesNotImportModule(source, '/session/handoff/', filePath);
             assertDoesNotImportModule(source, 'session/handoff', filePath);
             assertDoesNotImportModule(source, 'rpcHandlers.sessionHandoff', filePath);
-            assertDoesNotImportModule(source, '/api/machine/rpcHandlers.sessionHandoff', filePath);
+            assertDoesNotImportModule(source, '/api/machine/sessionHandoff/rpcHandlers.sessionHandoff', filePath);
         }
     });
 });

@@ -60,6 +60,78 @@ describe('SessionContinueWithReplayRequestSchema', () => {
 });
 
 describe('SessionContinueWithReplayRpcParamsSchema', () => {
+  it('accepts additive backendTarget input without the legacy agent field', () => {
+    const parsed = SessionContinueWithReplayRpcParamsSchema.safeParse({
+      directory: '/repo',
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      approvedNewDirectoryCreation: true,
+      replay: { previousSessionId: 'sess-prev' },
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('accepts V2 backendTarget input and preserves the canonical backend transport shape', () => {
+    const parsed = SessionContinueWithReplayRpcParamsSchema.parse({
+      directory: '/repo',
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'review-bot',
+        configuredBackendId: 'review-bot',
+        sourceKind: 'configured',
+      },
+      approvedNewDirectoryCreation: true,
+      replay: { previousSessionId: 'sess-prev' },
+    });
+
+    expect(parsed.backendTarget).toEqual({
+      kind: 'backend',
+      backendId: 'review-bot',
+      configuredBackendId: 'review-bot',
+      sourceKind: 'configured',
+    });
+  });
+
+  it('accepts legacy agent-only replay params for built-in backends', () => {
+    const parsed = SessionContinueWithReplayRpcParamsSchema.safeParse({
+      directory: '/repo',
+      agent: 'claude',
+      approvedNewDirectoryCreation: true,
+      replay: { previousSessionId: 'sess-prev' },
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('rejects ambiguous customAcp replay params without a concrete backendTarget', () => {
+    const parsed = SessionContinueWithReplayRpcParamsSchema.safeParse({
+      directory: '/repo',
+      agent: 'customAcp',
+      approvedNewDirectoryCreation: true,
+      replay: { previousSessionId: 'sess-prev' },
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('rejects mismatched legacy agent and backendTarget combinations', () => {
+    const parsed = SessionContinueWithReplayRpcParamsSchema.safeParse({
+      directory: '/repo',
+      agent: 'claude',
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      approvedNewDirectoryCreation: true,
+      replay: { previousSessionId: 'sess-prev' },
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('rejects backendTarget values that use the customAcp family placeholder as a concrete backend', () => {
+    const parsed = SessionContinueWithReplayRpcParamsSchema.safeParse({
+      directory: '/repo',
+      backendTarget: { kind: 'builtInAgent', agentId: 'customAcp' },
+      approvedNewDirectoryCreation: true,
+      replay: { previousSessionId: 'sess-prev' },
+    });
+    expect(parsed.success).toBe(false);
+  });
+
   it('rejects unknown top-level fields (no backward compatibility)', () => {
     const parsed = SessionContinueWithReplayRpcParamsSchema.safeParse({
       directory: '/repo',

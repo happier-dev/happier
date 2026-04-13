@@ -1,5 +1,9 @@
 import { z } from 'zod';
 
+import {
+  BackendTargetRefV2Schema,
+  normalizeBackendTargetRefV2InputToV2,
+} from './backendTargets/backendTargetRefV2.js';
 import { LlmTaskRunnerConfigV1Schema } from './llmTasks/llmTaskRunnerConfigV1.js';
 
 export const HappierReplayStrategySchema = z.enum(['recent_messages', 'summary_plus_recent']);
@@ -32,13 +36,53 @@ export type SessionContinueWithReplayRequest = z.infer<typeof SessionContinueWit
 export const SessionContinueWithReplayRpcParamsSchema = z
   .object({
     directory: z.string().min(1),
-    agent: z.string().min(1),
+    agent: z.string().min(1).optional(),
+    backendTarget: z.preprocess(normalizeBackendTargetRefV2InputToV2, BackendTargetRefV2Schema.optional()),
     approvedNewDirectoryCreation: z.boolean().optional(),
     permissionMode: z.string().optional(),
     permissionModeUpdatedAt: z.number().finite().optional(),
     modelId: z.string().optional(),
     modelUpdatedAt: z.number().finite().optional(),
     replay: SessionContinueWithReplayRequestSchema,
+  })
+  .superRefine((value, ctx) => {
+    if (!value.agent && !value.backendTarget) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'agent or backendTarget is required',
+        path: ['agent'],
+      });
+      return;
+    }
+
+    if (value.backendTarget && (value.backendTarget.backendId === 'customAcp' || value.backendTarget.configuredBackendId === 'customAcp')) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'backendTarget must identify a concrete backend; use kind=configuredAcpBackend for configured ACP backends',
+        path: ['backendTarget'],
+      });
+      return;
+    }
+
+    if (value.agent === 'customAcp' && !value.backendTarget) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'backendTarget is required for customAcp',
+        path: ['backendTarget'],
+      });
+      return;
+    }
+
+    if (value.agent && value.backendTarget) {
+      const expectedAgent = value.backendTarget.backendId;
+      if (value.agent !== expectedAgent) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'agent must match backendTarget when both are provided',
+          path: ['agent'],
+        });
+      }
+    }
   })
   .strict();
 export type SessionContinueWithReplayRpcParams = z.infer<typeof SessionContinueWithReplayRpcParamsSchema>;

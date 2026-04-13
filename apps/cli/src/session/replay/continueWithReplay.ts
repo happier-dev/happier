@@ -4,11 +4,11 @@ import { configuration } from '@/configuration';
 import { isPermissionMode } from '@/api/types';
 import { readCredentials } from '@/persistence';
 import { createReplaySeededSession } from '@/session/replay/createReplaySeededSession';
+import { resolveContinueWithReplayBackendTarget } from '@/session/replay/resolveContinueWithReplayBackendTarget';
 import { resolveReplaySeedDraft } from '@/session/replay/resolveReplaySeedDraft';
 import { archiveSessionByIdBestEffort } from '@/session/services/setSessionArchivedState';
-import type { CatalogAgentId } from '@/backends/types';
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionOptions, type SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
-import type { LlmTaskRunnerConfigV1 } from '@happier-dev/protocol';
+import type { BackendTargetRefV2Input, LlmTaskRunnerConfigV1 } from '@happier-dev/protocol';
 
 export type RunReplaySummaryForDialogFn = typeof import('@/session/replay/summary/runReplaySummaryForDialog').runReplaySummaryForDialog;
 
@@ -23,7 +23,7 @@ type ContinueWithReplayReplayParams = Readonly<{
 
 export type ContinueSessionWithReplayParams = Readonly<{
     directory: string;
-    agentId: CatalogAgentId;
+    backendTarget: BackendTargetRefV2Input;
     approvedNewDirectoryCreation?: boolean;
     permissionMode?: string;
     permissionModeUpdatedAt?: number;
@@ -59,7 +59,7 @@ export async function continueSessionWithReplay(
 ): Promise<SpawnSessionResult> {
     const {
         directory,
-        agentId,
+        backendTarget,
         approvedNewDirectoryCreation,
         permissionMode,
         permissionModeUpdatedAt,
@@ -67,6 +67,15 @@ export async function continueSessionWithReplay(
         modelUpdatedAt,
         replay,
   } = params;
+
+    const resolvedBackend = resolveContinueWithReplayBackendTarget({ backendTarget });
+    if (!resolvedBackend.ok) {
+        return {
+            type: 'error',
+            errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+            errorMessage: resolvedBackend.errorMessage,
+        };
+    }
 
     const maxTextCharsEnv = parseEnvBoundedInt('HAPPIER_REPLAY_MAX_TEXT_CHARS', { min: 1, max: 50_000 }, null);
     const maxTextChars = maxTextCharsEnv ?? undefined;
@@ -117,7 +126,8 @@ export async function continueSessionWithReplay(
 
     logger.debug('[SESSION REPLAY] Continuing session with replay', {
         directory,
-        agentId,
+        backendTarget: resolvedBackend.backendTarget,
+        backendTargetV2: resolvedBackend.backendTargetV2,
         approvedNewDirectoryCreation,
         previousSessionId: replay.previousSessionId,
         dialogCount: resolvedSeed.dialog.length,
@@ -131,7 +141,7 @@ export async function continueSessionWithReplay(
             return await createReplaySeededSession({
                 credentials,
                 directory,
-                agentId,
+                flavor: resolvedBackend.replayFlavor,
                 tag: `replay:${replay.previousSessionId}:${resolvedSeed.sourceCutoffSeqInclusive}:${randomUUID()}`,
                 metadata: {
                     forkV1: {
@@ -140,7 +150,7 @@ export async function continueSessionWithReplay(
                         parentCutoffSeqInclusive: resolvedSeed.sourceCutoffSeqInclusive,
                         createdAtMs: nowMs,
                         strategy: 'replay',
-                        providerHint: { providerId: agentId },
+                        providerHint: { providerId: resolvedBackend.providerHintAgentId },
                     },
                     replaySeedV1: {
                         v: 1,
@@ -175,7 +185,7 @@ export async function continueSessionWithReplay(
 
     const result = await deps.spawnSession({
         directory,
-        backendTarget: { kind: 'builtInAgent', agentId },
+        backendTarget: resolvedBackend.backendTarget,
         approvedNewDirectoryCreation,
         existingSessionId: created.sessionId,
         permissionMode: normalizedPermissionMode,
