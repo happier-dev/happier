@@ -1,18 +1,18 @@
 import type { AgentId } from '@/agents/catalog/catalog';
-import type { ProviderSettingsPlugin, ProviderSubagentSettingsSectionDef } from '@/agents/providers/shared/providerSettingsPlugin';
+import type { ProviderSettingsDescriptor, ProviderSubagentSettingsSectionDef } from '@/agents/providers/shared/providerSettingsPlugin';
 
-import { PROVIDER_SETTINGS_PLUGINS } from './providerSettingsRegistry';
+import { PROVIDER_SETTINGS_DESCRIPTORS } from './providerSettingsRegistry';
 
 export type ProviderSubagentSettingsSectionDescriptor = Readonly<{
     providerId: AgentId;
-    provider: ProviderSettingsPlugin;
+    provider: ProviderSettingsDescriptor;
     section: ProviderSubagentSettingsSectionDef;
 }>;
 
 export function listProviderSubagentSettingsSections(): readonly ProviderSubagentSettingsSectionDescriptor[] {
     const sections: ProviderSubagentSettingsSectionDescriptor[] = [];
 
-    for (const provider of PROVIDER_SETTINGS_PLUGINS) {
+    for (const provider of PROVIDER_SETTINGS_DESCRIPTORS) {
         for (const section of provider.subagentSettingsSections ?? []) {
             sections.push({
                 providerId: provider.providerId,

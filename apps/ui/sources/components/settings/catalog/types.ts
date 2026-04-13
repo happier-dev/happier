@@ -29,6 +29,7 @@ export const SETTINGS_PAGE_IDS = {
     profiles: 'profiles',
     connectedServices: 'connectedServices',
     mcp: 'mcp',
+    plugins: 'plugins',
     prompts: 'prompts',
     promptsTemplates: 'promptsTemplates',
     promptsFolders: 'promptsFolders',

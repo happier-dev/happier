@@ -3,10 +3,20 @@ import { describe, expect, it } from 'vitest';
 import type { SettingDefinitionMap } from '@happier-dev/protocol';
 import { getAllProviderSettingsDefinitions } from '@happier-dev/agents';
 
-import { AGENT_IDS } from '@/agents/catalog/catalog';
-import type { ProviderSettingsPlugin } from '@/agents/providers/shared/providerSettingsPlugin';
+import type { ProviderSettingsBehavior, ProviderSettingsDescriptor, ProviderSettingsPlugin } from '@/agents/providers/shared/providerSettingsPlugin';
 import { PROVIDER_SETTINGS_DEFAULTS, PROVIDER_SETTINGS_SHAPE } from '@/agents/providers/registry/providerSettingArtifacts';
-import { PROVIDER_SETTINGS_PLUGINS, assertProviderSettingsPluginsValid, getProviderSettingsPlugin } from '@/agents/providers/registry/providerSettingsRegistry';
+import * as providerSettingsRegistry from '@/agents/providers/registry/providerSettingsRegistry';
+import {
+    PROVIDER_SETTINGS_BEHAVIORS,
+    PROVIDER_SETTINGS_DESCRIPTORS,
+    PROVIDER_SETTINGS_PLUGINS,
+    assertProviderSettingsDescriptorsValid,
+    assertProviderSettingsPluginsValid,
+    getProviderSettingsBehavior,
+    getProviderSettingsDescriptor,
+    getProviderSettingsPlugin,
+    getProviderSettingsRuntime,
+} from '@/agents/providers/registry/providerSettingsRegistry';
 import { assertProviderSettingKeysCompatible } from '@/sync/domains/settings/registry/provider/assertProviderSettingKeysCompatible';
 
 function makePlugin(overrides: Partial<ProviderSettingsPlugin>): ProviderSettingsPlugin {
@@ -133,6 +143,53 @@ describe('assertProviderSettingsPluginsValid', () => {
     });
 });
 
+describe('provider settings descriptor/runtime accessors', () => {
+    it('splits descriptor data from runtime behavior', () => {
+        const descriptor = getProviderSettingsDescriptor('claude' as any);
+        const behavior = getProviderSettingsBehavior('claude' as any);
+
+        expect(descriptor).toBeTruthy();
+        expect(behavior).toBeTruthy();
+        expect(descriptor).toMatchObject({
+            providerId: 'claude',
+            title: expect.anything(),
+            icon: expect.any(Object),
+            settings: expect.any(Object),
+            uiSections: expect.any(Array),
+        } satisfies Partial<ProviderSettingsDescriptor>);
+        expect('buildOutgoingMessageMetaExtras' in (descriptor ?? {})).toBe(false);
+        expect('ExtraSectionsComponent' in (descriptor ?? {})).toBe(false);
+
+        expect(behavior).toMatchObject({
+            providerId: 'claude',
+            buildOutgoingMessageMetaExtras: expect.any(Function),
+        } satisfies Partial<ProviderSettingsBehavior>);
+        expect('title' in (behavior ?? {})).toBe(false);
+        expect('uiSections' in (behavior ?? {})).toBe(false);
+        expect(getProviderSettingsRuntime('claude')).toBe(behavior);
+    });
+
+    it('exports descriptor-only plugin data for all registry entries', () => {
+        expect(PROVIDER_SETTINGS_DESCRIPTORS).toHaveLength(PROVIDER_SETTINGS_PLUGINS.length);
+        expect(PROVIDER_SETTINGS_BEHAVIORS).toHaveLength(PROVIDER_SETTINGS_PLUGINS.length);
+        for (const descriptor of PROVIDER_SETTINGS_DESCRIPTORS) {
+            expect(descriptor).toMatchObject({
+                providerId: expect.any(String),
+                title: expect.anything(),
+                icon: expect.any(Object),
+                settings: expect.any(Object),
+                uiSections: expect.any(Array),
+            });
+            expect('buildOutgoingMessageMetaExtras' in descriptor).toBe(false);
+            expect('ExtraSectionsComponent' in descriptor).toBe(false);
+        }
+    });
+
+    it('does not expose a separate runtime registry surface alias', () => {
+        expect('PROVIDER_SETTINGS_RUNTIMES' in providerSettingsRegistry).toBe(false);
+    });
+});
+
 describe('getProviderSettingsPlugin', () => {
     it('resolves plugins case-insensitively', () => {
         expect(getProviderSettingsPlugin('CLAUDE' as any)).not.toBeNull();
@@ -151,9 +208,11 @@ describe('getProviderSettingsPlugin', () => {
         }
     });
 
-    it('has a plugin entry for every registered backend', () => {
-        for (const agentId of AGENT_IDS) {
-            expect(getProviderSettingsPlugin(agentId)).not.toBeNull();
+    it('has a runtime entry for every provider settings descriptor', () => {
+        for (const descriptor of PROVIDER_SETTINGS_DESCRIPTORS) {
+            expect(getProviderSettingsPlugin(descriptor.providerId)).not.toBeNull();
+            expect(getProviderSettingsBehavior(descriptor.providerId)).not.toBeNull();
+            expect(getProviderSettingsRuntime(descriptor.providerId)).not.toBeNull();
         }
     });
 
@@ -195,6 +254,13 @@ describe('getProviderSettingsPlugin', () => {
     it('exposes provider setting artifacts without a registry initialization cycle', () => {
         expect(PROVIDER_SETTINGS_SHAPE).toBeTruthy();
         expect(PROVIDER_SETTINGS_DEFAULTS).toBeTruthy();
+    });
+});
+
+describe('assertProviderSettingsDescriptorsValid', () => {
+    it('rejects duplicate descriptor provider ids', () => {
+        const descriptor: ProviderSettingsDescriptor = makePlugin({ providerId: 'claude' as any });
+        expect(() => assertProviderSettingsDescriptorsValid([descriptor, descriptor])).toThrow(/duplicate providerId/i);
     });
 });
 

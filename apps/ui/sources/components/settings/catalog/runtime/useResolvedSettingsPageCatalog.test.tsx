@@ -133,6 +133,17 @@ describe('useResolvedSettingsPageCatalog', () => {
         await hook.unmount();
     });
 
+    it('includes the plugin marketplace page in the visible tree and search results', async () => {
+        const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
+        const hook = await renderHook(() => useResolvedSettingsPageCatalog());
+
+        const current = hook.getCurrent();
+        expect(flattenIds(current.tree)).toContain('plugins');
+        expect(current.search('plugin').some((result: any) => result.id === 'plugins')).toBe(true);
+
+        await hook.unmount();
+    });
+
     it('supports fuzzy search for minor typos', async () => {
         const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
         const hook = await renderHook(() => useResolvedSettingsPageCatalog());

@@ -18,7 +18,10 @@ import { useAllMachines, useMachineListByServerId, useSettings } from '@/sync/do
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useApplySettings } from '@/sync/store/settingsWriters';
 import { isAgentId, getAgentCore, type AgentId } from '@/agents/catalog/catalog';
-import { getProviderSettingsPlugin } from '@/agents/providers/registry/providerSettingsRegistry';
+import {
+    getProviderSettingsDescriptor,
+    getProviderSettingsRuntime,
+} from '@/agents/providers/registry/providerSettingsRegistry';
 import { getProviderLocalAuthPlugin } from '@/agents/providers/registry/providerLocalAuthRegistry';
 import type { ProviderSettingFieldDef, TranslatableText } from '@/agents/providers/shared/providerSettingsPlugin';
 import { t } from '@/text';
@@ -225,12 +228,13 @@ const ProviderSettingsNotFound = React.memo(function ProviderSettingsNotFound(pr
 const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenInner(props: Readonly<{
     providerId: AgentId;
     core: ProviderSettingsCore;
-    plugin: ReturnType<typeof getProviderSettingsPlugin>;
+    descriptor: ReturnType<typeof getProviderSettingsDescriptor>;
+    runtime: ReturnType<typeof getProviderSettingsRuntime>;
     authPlugin: ReturnType<typeof getProviderLocalAuthPlugin>;
 }>) {
     const { theme } = useUnistyles();
     const supportsDesktopControls = isTauriDesktop();
-    const { providerId, core, plugin, authPlugin } = props;
+    const { providerId, core, descriptor, runtime, authPlugin } = props;
     const settings = useSettings();
     const paneScopeId = React.useMemo(
         () => `settings:provider:${providerId}`,
@@ -272,14 +276,14 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
         });
     };
 
-    const backendCliSourcePreferenceById = settings.backendCliSourcePreferenceById;
+    const backendCliSourcePreferenceByTargetKey = settings.backendCliSourcePreferenceByTargetKey;
     const providerCliSourcePreference =
-        backendCliSourcePreferenceById?.[providerId] ?? providerCliRuntimeSpec.sourcePreferenceDefault;
+        backendCliSourcePreferenceByTargetKey?.[providerTargetKey] ?? providerCliRuntimeSpec.sourcePreferenceDefault;
     const setProviderCliSourcePreference = (next: 'system-first' | 'managed-first') => {
         applySettings({
-            backendCliSourcePreferenceById: {
-                ...(backendCliSourcePreferenceById ?? {}),
-                [providerId]: next,
+            backendCliSourcePreferenceByTargetKey: {
+                ...(backendCliSourcePreferenceByTargetKey ?? {}),
+                [providerTargetKey]: next,
             },
         });
     };
@@ -418,9 +422,7 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
         capabilityId: `cli.${core.cli.detectKey}` as any,
         timeoutMs: 5000,
     });
-    const ExtraSectionsComponent = plugin && 'ExtraSectionsComponent' in plugin
-        ? plugin.ExtraSectionsComponent ?? null
-        : null;
+    const ExtraSectionsComponent = runtime?.ExtraSectionsComponent ?? null;
     const primaryMachineLabel = primaryMachine?.metadata?.displayName ?? primaryMachine?.metadata?.host ?? primaryMachine?.id ?? null;
     const detectedCliStatus = providerCliAvailable === true
         ? t('machine.detectedCliDetected')
@@ -597,7 +599,7 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
                         }}
                     />
 
-                {(plugin?.uiSections ?? []).map((section) => (
+                {(descriptor?.uiSections ?? []).map((section) => (
                     <ItemGroup
                         key={section.id}
 	                        title={resolveProviderSettingsText(section.title)}
@@ -1048,7 +1050,8 @@ export default React.memo(function ProviderSettingsScreen() {
     }
 
     const core = providerId ? getAgentCore(providerId) : null;
-    const plugin = providerId ? getProviderSettingsPlugin(providerId) : null;
+    const descriptor = providerId ? getProviderSettingsDescriptor(providerId) : null;
+    const runtime = providerId ? getProviderSettingsRuntime(providerId) : null;
     const authPlugin = providerId ? getProviderLocalAuthPlugin(providerId) : null;
 
     if (!providerId || !core) {
@@ -1059,7 +1062,8 @@ export default React.memo(function ProviderSettingsScreen() {
         <ProviderSettingsScreenInner
             providerId={providerId}
             core={core}
-            plugin={plugin}
+            descriptor={descriptor}
+            runtime={runtime}
             authPlugin={authPlugin}
         />
     );

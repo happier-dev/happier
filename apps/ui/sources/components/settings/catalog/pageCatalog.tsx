@@ -162,6 +162,14 @@ export const SETTINGS_PAGE_CATALOG: readonly SettingsPageNode[] = [
                         icon: ({ theme }) => <Ionicons name="extension-puzzle-outline" size={18} color={theme.colors.textSecondary} />,
                     },
                     {
+                        id: 'plugins',
+                        titleKey: 'settingsPlugins.title',
+                        subtitleKey: 'settingsPlugins.subtitle',
+                        route: SETTINGS_ROUTES.plugins,
+                        keywords: ['plugins', 'marketplace', 'catalog', 'descriptor', 'discovery'],
+                        icon: ({ theme }) => <Ionicons name="grid-outline" size={18} color={theme.colors.textSecondary} />,
+                    },
+                    {
                         id: 'prompts',
                         titleKey: 'settings.prompts',
                         subtitleKey: 'settings.promptsSubtitle',

@@ -439,6 +439,13 @@ export const SettingsView = React.memo(function SettingsView() {
                         onPress={() => router.push('/settings/mcp')}
                     />
                 )}
+                <Item
+                    testID="settings-plugin-marketplace-item"
+                    title={t('settingsPlugins.title')}
+                    subtitle={t('settingsPlugins.subtitle')}
+                    icon={<Ionicons name="grid-outline" size={29} color={theme.colors.accent.purple} />}
+                    onPress={() => router.push('/(app)/settings/plugins')}
+                />
                 {promptsLibraryEnabled ? (
                     <Item
                         title={t('settings.prompts')}

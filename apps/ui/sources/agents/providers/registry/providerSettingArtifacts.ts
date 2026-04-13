@@ -1,16 +1,16 @@
 import type { SettingArtifacts, SettingDefinitionMap } from '@happier-dev/protocol';
 
-import { PROVIDER_SETTINGS_PLUGINS } from './providerSettingsRegistry';
+import { PROVIDER_SETTINGS_DESCRIPTORS } from './providerSettingsRegistry';
 import { buildProviderSettingArtifactEntries } from './buildProviderSettingArtifactEntries';
 
-export const PROVIDER_SETTING_ARTIFACT_ENTRIES = buildProviderSettingArtifactEntries(PROVIDER_SETTINGS_PLUGINS);
+export const PROVIDER_SETTING_ARTIFACT_ENTRIES = buildProviderSettingArtifactEntries(PROVIDER_SETTINGS_DESCRIPTORS);
 
 type UnionToIntersection<TValue> =
     (TValue extends unknown ? (value: TValue) => void : never) extends ((value: infer TIntersection) => void)
         ? TIntersection
         : never;
 
-type ProviderSettingDefinitionsUnion = (typeof PROVIDER_SETTINGS_PLUGINS)[number]['settings'];
+type ProviderSettingDefinitionsUnion = (typeof PROVIDER_SETTINGS_DESCRIPTORS)[number]['settings'];
 type ProviderSettingDefinitions = UnionToIntersection<ProviderSettingDefinitionsUnion> extends infer TDefinitions
     ? TDefinitions extends SettingDefinitionMap
         ? TDefinitions

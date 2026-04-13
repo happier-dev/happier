@@ -17,6 +17,7 @@ export const SETTINGS_ROUTES = {
     notifications: '/settings/notifications',
     notificationsPush: '/settings/notifications/push',
     mcp: '/settings/mcp',
+    plugins: '/settings/plugins',
     prompts: '/settings/prompts',
     promptsTemplates: '/settings/prompts/templates',
     promptsFolders: '/settings/prompts/folders',

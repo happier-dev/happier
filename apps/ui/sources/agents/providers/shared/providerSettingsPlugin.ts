@@ -69,11 +69,10 @@ export type ProviderSubagentSettingsSectionDef = Readonly<{
     items: readonly ProviderSubagentSettingsItemDef[];
 }>;
 
-export type ProviderSettingsPlugin = Readonly<{
+export type ProviderSettingsDescriptor = Readonly<{
     providerId: AgentId;
     title: TranslatableText;
     icon: Readonly<{ ionName: string; color: ProviderSettingsIconColor }>;
-    ExtraSectionsComponent?: React.ComponentType<Readonly<{ providerId: AgentId }>>;
     /**
      * Provider-owned setting definitions (flat keys only).
      * Keys must be globally unique across all settings.
@@ -88,6 +87,11 @@ export type ProviderSettingsPlugin = Readonly<{
      * These are navigational entries only; the owning provider screen remains the source of truth.
      */
     subagentSettingsSections?: readonly ProviderSubagentSettingsSectionDef[];
+}>;
+
+export type ProviderSettingsBehavior = Readonly<{
+    providerId: AgentId;
+    ExtraSectionsComponent?: React.ComponentType<Readonly<{ providerId: AgentId }>>;
     /**
      * Provider-specific outgoing message metadata enrichment.
      *
@@ -100,3 +104,7 @@ export type ProviderSettingsPlugin = Readonly<{
         agentId: AgentId;
     }) => Record<string, unknown>;
 }>;
+
+export type ProviderSettingsRuntime = ProviderSettingsBehavior;
+
+export type ProviderSettingsPlugin = ProviderSettingsDescriptor & ProviderSettingsBehavior;
