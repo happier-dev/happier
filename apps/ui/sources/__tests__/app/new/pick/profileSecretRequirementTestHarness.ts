@@ -15,7 +15,7 @@ export const PROFILE_SECRET_REQUIREMENT_ENV_VAR = 'DEESEEK_AUTH_TOKEN';
 
 export const profileSecretRequirementModalMock = createModalModuleMock();
 
-export type CapturedProfilesListProps = Pick<ProfilesListProps, 'onPressProfile'>;
+export type CapturedProfilesListProps = Pick<ProfilesListProps, 'onPressProfile' | 'onEditProfile' | 'onAddProfilePress' | 'onDuplicateProfile'>;
 
 let capturedProfilesListProps: CapturedProfilesListProps | null = null;
 
@@ -37,6 +37,22 @@ export function getCapturedProfilePressHandler() {
         throw new Error('Expected ProfilesList onPressProfile handler');
     }
     return onPressProfile;
+}
+
+export function getCapturedProfileEditHandler() {
+    const onEditProfile = capturedProfilesListProps?.onEditProfile;
+    if (!onEditProfile) {
+        throw new Error('Expected ProfilesList onEditProfile handler');
+    }
+    return onEditProfile;
+}
+
+export function getCapturedAddProfileHandler() {
+    const onAddProfilePress = capturedProfilesListProps?.onAddProfilePress;
+    if (!onAddProfilePress) {
+        throw new Error('Expected ProfilesList onAddProfilePress handler');
+    }
+    return onAddProfilePress;
 }
 
 export function getProfileSecretRequirementSetting<K extends keyof Settings>(key: K): Settings[K] {

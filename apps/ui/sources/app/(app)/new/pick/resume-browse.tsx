@@ -3,16 +3,21 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useNavigation } from '@react-navigation/native';
 import { View } from 'react-native';
 
-import { DEFAULT_AGENT_ID, isAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { type AgentId } from '@/agents/catalog/catalog';
+import { getEnabledAgentIds } from '@/agents/catalog/enabled';
+import { buildBackendTargetRouteParams, resolveBackendTargetFromRouteParams } from '@/agents/backendCatalog/backendTargetRouteParams';
+import { getResolvedBackendCatalogEntries, resolveBuiltInAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { DirectSessionsBrowseScreen } from '@/components/sessions/directSessions/browse/DirectSessionsBrowseScreen';
 import { canBrowseDirectSessions, resolveDirectBrowseLockedSource } from '@/components/sessions/directSessions/browse/resolveDirectBrowseLockedSourceOption';
 import { NewSessionScreenPortalScope, createNewSessionContainedModalScreenOptions } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
-import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { resolveResumePickerBackendTarget } from '@/components/sessions/new/navigation/resolveResumePickerBackendTarget';
+import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { readBackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
 import { peekTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
 import { useSettings } from '@/sync/domains/state/storage';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { useProfile as useAccountProfile } from '@/sync/store/hooks';
-import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { buildBackendTargetKey, type BackendTargetRefV1 } from '@happier-dev/protocol';
 import { t } from '@/text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 
@@ -23,16 +28,51 @@ export default function ResumeBrowsePickerScreen() {
     const accountProfile = useAccountProfile();
     const params = useLocalSearchParams<{
         agentType?: AgentId;
+        backendTarget?: string;
+        backendTargetKey?: string;
         machineId?: string;
         spawnServerId?: string;
         dataId?: string;
     }>();
 
-    const agentType: AgentId = isAgentId(params.agentType) ? params.agentType : DEFAULT_AGENT_ID;
     const tempSessionData = React.useMemo(() => {
         const dataId = typeof params.dataId === 'string' ? params.dataId.trim() : '';
         return dataId ? peekTempData<NewSessionData>(dataId) : null;
     }, [params.dataId]);
+    const resolvedBackendEntries = React.useMemo(() => {
+        return getResolvedBackendCatalogEntries({
+            enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey: settings.backendEnabledByTargetKey }),
+            acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+            backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+            collapseConfiguredBackendProviderSentinels: true,
+        });
+    }, [settings.acpCatalogSettingsV1, settings.backendEnabledByTargetKey]);
+    const routeBackendTarget = React.useMemo(() => {
+        return resolveBackendTargetFromRouteParams({
+            backendTarget: params.backendTarget,
+            backendTargetKey: params.backendTargetKey,
+            agentType: params.agentType,
+        });
+    }, [params.agentType, params.backendTarget, params.backendTargetKey]);
+    const effectiveBackendTarget = React.useMemo<BackendTargetRefV1>(() => {
+        return resolveResumePickerBackendTarget({
+            tempBackendTarget: tempSessionData?.backendTarget ?? null,
+            routeBackendTarget,
+            availableBackendTargets: resolvedBackendEntries.map((entry) => entry.target),
+            lastUsedAgent: settings.lastUsedAgent,
+            lastUsedBackendTarget: settings.lastUsedBackendTarget,
+        });
+    }, [resolvedBackendEntries, routeBackendTarget, settings.lastUsedAgent, settings.lastUsedBackendTarget, tempSessionData?.backendTarget]);
+    const effectiveBackendTargetKey = React.useMemo(() => {
+        return buildBackendTargetKey(effectiveBackendTarget);
+    }, [effectiveBackendTarget]);
+    const selectedBackendEntry = React.useMemo(() => {
+        return resolvedBackendEntries.find((entry) => entry.targetKey === effectiveBackendTargetKey) ?? null;
+    }, [effectiveBackendTargetKey, resolvedBackendEntries]);
+    const agentType = React.useMemo<AgentId>(() => {
+        return selectedBackendEntry?.builtInAgentId
+            ?? resolveBuiltInAgentIdForBackendTarget(effectiveBackendTarget);
+    }, [effectiveBackendTarget, selectedBackendEntry?.builtInAgentId]);
     const effectiveMachineId = React.useMemo(() => {
         const directParam = typeof params.machineId === 'string' ? params.machineId.trim() : '';
         if (directParam) return directParam;
@@ -44,12 +84,20 @@ export default function ResumeBrowsePickerScreen() {
         return directParam || null;
     }, [params.spawnServerId]);
     const agentOptionState = React.useMemo(() => {
-        const backendTarget = tempSessionData?.backendTarget;
-        if (!backendTarget) return null;
-        const key = buildBackendTargetKey(backendTarget);
-        const map = tempSessionData?.agentNewSessionOptionStateByAgentId ?? {};
-        return map && typeof map === 'object' ? (map as Record<string, Record<string, unknown>>)[key] ?? null : null;
-    }, [tempSessionData?.agentNewSessionOptionStateByAgentId, tempSessionData?.backendTarget]);
+        const map = readBackendNewSessionOptionStateByTargetKey(tempSessionData);
+        return map?.[effectiveBackendTargetKey] ?? null;
+    }, [effectiveBackendTargetKey, tempSessionData]);
+    const roundTripBackendParams = React.useMemo(() => {
+        return buildBackendTargetRouteParams({
+            backendTarget: params.backendTarget,
+            backendTargetKey: params.backendTargetKey,
+            agentType: params.agentType,
+            fallbackTarget: effectiveBackendTarget,
+        });
+    }, [effectiveBackendTarget, params.agentType, params.backendTarget, params.backendTargetKey]);
+    const currentRouteParams = React.useMemo(() => {
+        return pickNewSessionRouteParams(params);
+    }, [params]);
 
     const lockScope = React.useMemo(() => {
         if (!effectiveMachineId) return null;
@@ -95,9 +143,13 @@ export default function ResumeBrowsePickerScreen() {
                             const returnMode = setNewSessionPickerReturnParams({
                                 navigation,
                                 router,
-                                routeParams: { resumeSessionId: remoteSessionId },
+                                routeParams: {
+                                    ...roundTripBackendParams,
+                                    resumeSessionId: remoteSessionId,
+                                },
+                                currentParams: currentRouteParams,
                                 replaceParams: {
-                                    ...(typeof params.agentType === 'string' && params.agentType.trim().length > 0 ? { agentType: params.agentType } : {}),
+                                    ...roundTripBackendParams,
                                     ...(typeof params.dataId === 'string' && params.dataId.trim().length > 0 ? { dataId: params.dataId } : {}),
                                     ...(typeof params.machineId === 'string' && params.machineId.trim().length > 0 ? { machineId: params.machineId } : {}),
                                     ...(typeof params.spawnServerId === 'string' && params.spawnServerId.trim().length > 0 ? { spawnServerId: params.spawnServerId } : {}),

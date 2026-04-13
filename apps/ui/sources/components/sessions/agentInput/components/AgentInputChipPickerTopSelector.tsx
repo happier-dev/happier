@@ -46,6 +46,7 @@ export function AgentInputChipPickerTopSelector(props: AgentInputChipPickerTopSe
             props.sections.flatMap((section) =>
                 section.options.map((option) => ({
                     id: option.id,
+                    testID: `agent-input-chip-picker.option:${option.id}`,
                     title: option.label,
                     subtitle: option.subtitle,
                     category: section.label,

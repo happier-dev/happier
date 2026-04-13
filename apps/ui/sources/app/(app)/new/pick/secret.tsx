@@ -3,12 +3,15 @@ import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-rout
 import { Platform, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-import { useSettingMutable } from '@/sync/domains/state/storage';
+import { useSettingMutable, useSettings } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { SecretsList } from '@/components/secrets/SecretsList';
 import { useUnistyles } from 'react-native-unistyles';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
-import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
+import { resolvePreferredBackendTargetFromSettings } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromSettings';
+import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 
 export default React.memo(function SecretPickerScreen() {
     const { theme } = useUnistyles();
@@ -16,12 +19,47 @@ export default React.memo(function SecretPickerScreen() {
     const navigation = useNavigation();
     const params = useLocalSearchParams<{
         agentType?: string;
+        backendTarget?: string;
+        backendTargetKey?: string;
         dataId?: string;
         machineId?: string;
         selectedId?: string;
         spawnServerId?: string;
     }>();
     const selectedId = typeof params.selectedId === 'string' ? params.selectedId : '';
+    const settings = useSettings() ?? settingsDefaults;
+    const preferredBackendTarget = React.useMemo(() => {
+        return resolvePreferredBackendTargetFromSettings({
+            lastUsedAgent: settings.lastUsedAgent,
+            lastUsedBackendTarget: settings.lastUsedBackendTarget,
+            backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
+            acpCatalogSettingsV1: settings.acpCatalogSettingsV1 ?? undefined,
+        });
+    }, [
+        settings.lastUsedAgent,
+        settings.lastUsedBackendTarget,
+        settings.backendEnabledByTargetKey,
+        settings.acpCatalogSettingsV1,
+    ]);
+    const roundTripFallbackTarget = React.useMemo(() => {
+        return resolveRouteCloseoutFallbackTarget({
+            agentType: params.agentType,
+            backendTarget: params.backendTarget,
+            backendTargetKey: params.backendTargetKey,
+            preferredBackendTarget,
+        });
+    }, [params.agentType, params.backendTarget, params.backendTargetKey, preferredBackendTarget]);
+    const roundTripBackendParams = React.useMemo(() => {
+        return buildBackendTargetRouteParams({
+            agentType: params.agentType,
+            backendTarget: params.backendTarget,
+            backendTargetKey: params.backendTargetKey,
+            fallbackTarget: roundTripFallbackTarget,
+        });
+    }, [params.agentType, params.backendTarget, params.backendTargetKey, roundTripFallbackTarget]);
+    const currentRouteParams = React.useMemo(() => {
+        return pickNewSessionRouteParams(params);
+    }, [params]);
 
     const [secrets, setSecrets] = useSettingMutable('secrets');
 
@@ -29,9 +67,13 @@ export default React.memo(function SecretPickerScreen() {
         const returnMode = setNewSessionPickerReturnParams({
             navigation: navigation as any,
             router,
-            routeParams: { secretId },
+            routeParams: {
+                ...roundTripBackendParams,
+                secretId,
+            },
+            currentParams: currentRouteParams,
             replaceParams: {
-                ...(typeof params.agentType === 'string' && params.agentType.trim().length > 0 ? { agentType: params.agentType } : {}),
+                ...roundTripBackendParams,
                 ...(typeof params.dataId === 'string' && params.dataId.trim().length > 0 ? { dataId: params.dataId } : {}),
                 ...(typeof params.machineId === 'string' && params.machineId.trim().length > 0 ? { machineId: params.machineId } : {}),
                 ...(typeof params.spawnServerId === 'string' && params.spawnServerId.trim().length > 0 ? { spawnServerId: params.spawnServerId } : {}),
@@ -41,7 +83,7 @@ export default React.memo(function SecretPickerScreen() {
         if (returnMode === 'dispatch') {
             safeRouterBack({ router, navigation, fallbackHref: '/new' });
         }
-    }, [navigation, router]);
+    }, [currentRouteParams, navigation, params.dataId, params.machineId, params.spawnServerId, roundTripBackendParams, router]);
 
     const handleBackPress = React.useCallback(() => {
         safeRouterBack({ router, navigation, fallbackHref: '/new' });

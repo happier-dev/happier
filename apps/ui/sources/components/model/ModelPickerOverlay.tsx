@@ -207,6 +207,7 @@ export function ModelPickerOverlay(props: {
                                 ) : (
                                     <ActivityIndicator
                                         size="small"
+                                        color={theme.colors.textSecondary}
                                         accessibilityLabel={probe.phase === 'loading'
                                             ? (probe.loadingAccessibilityLabel ?? t('modelPickerOverlay.loadingModelsA11y'))
                                             : (probe.refreshingAccessibilityLabel ?? t('modelPickerOverlay.refreshingModelsA11y'))}
@@ -217,6 +218,7 @@ export function ModelPickerOverlay(props: {
                             <View style={styles.refreshIconButton}>
                                 <ActivityIndicator
                                     size="small"
+                                    color={theme.colors.textSecondary}
                                     accessibilityLabel={probe.phase === 'loading'
                                         ? (probe.loadingAccessibilityLabel ?? t('modelPickerOverlay.loadingModelsA11y'))
                                         : (probe.refreshingAccessibilityLabel ?? t('modelPickerOverlay.refreshingModelsA11y'))}

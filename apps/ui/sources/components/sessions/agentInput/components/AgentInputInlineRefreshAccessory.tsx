@@ -48,7 +48,7 @@ export function AgentInputInlineRefreshAccessory(props: AgentInputInlineRefreshA
                 {probe.phase === 'idle' ? (
                     <Ionicons name="refresh-outline" size={18} color={theme.colors.textSecondary} />
                 ) : (
-                    <ActivityIndicator size="small" />
+                    <ActivityIndicator size="small" color={theme.colors.textSecondary} />
                 )}
             </Pressable>
         );
@@ -60,7 +60,7 @@ export function AgentInputInlineRefreshAccessory(props: AgentInputInlineRefreshA
 
     return (
         <View style={styles.button}>
-            <ActivityIndicator size="small" />
+            <ActivityIndicator size="small" color={theme.colors.textSecondary} />
         </View>
     );
 }

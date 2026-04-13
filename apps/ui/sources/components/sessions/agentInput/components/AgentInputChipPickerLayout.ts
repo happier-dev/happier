@@ -6,5 +6,5 @@ export function shouldShowAgentInputChipPickerRail(
     options: ReadonlyArray<AgentInputChipPickerOption>,
     windowWidth: number,
 ): boolean {
-    return agentInputChipPickerHasDetailPane(options) && options.length > 1 && windowWidth >= AGENT_INPUT_CHIP_PICKER_STACKED_WIDTH;
+    return agentInputChipPickerHasDetailPane(options) && windowWidth >= AGENT_INPUT_CHIP_PICKER_STACKED_WIDTH;
 }

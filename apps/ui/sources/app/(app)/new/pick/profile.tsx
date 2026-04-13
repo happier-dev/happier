@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Platform, Pressable } from 'react-native';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { useSetting, useSettingMutable } from '@/sync/domains/state/storage';
+import { useSetting, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { getProfileEnvironmentVariables, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
@@ -21,13 +21,21 @@ import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { PopoverScope } from '@/components/ui/popover';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
-import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { buildSecretRequirementRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
+import { buildProfileEditPickerRouteParams } from '@/components/sessions/new/navigation/buildProfileEditPickerRouteParams';
+import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
+import { resolvePreferredBackendTargetFromSettings } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromSettings';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 
 export default React.memo(function ProfilePickerScreen() {
     const { theme } = useUnistyles();
     const router = useRouter();
     const navigation = useNavigation();
     const params = useLocalSearchParams<{
+        agentType?: string;
+        backendTarget?: string;
+        backendTargetKey?: string;
         dataId?: string;
         selectedId?: string;
         machineId?: string;
@@ -40,6 +48,7 @@ export default React.memo(function ProfilePickerScreen() {
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useSettingMutable('secretBindingsByProfileId');
     const [profiles, setProfiles] = useSettingMutable('profiles');
     const [favoriteProfileIds, setFavoriteProfileIds] = useSettingMutable('favoriteProfiles');
+    const settings = useSettings() ?? settingsDefaults;
 
     const selectedId = typeof params.selectedId === 'string' ? params.selectedId : '';
     const dataId = typeof params.dataId === 'string' ? params.dataId : undefined;
@@ -47,12 +56,46 @@ export default React.memo(function ProfilePickerScreen() {
     const profileId = Array.isArray(params.profileId) ? params.profileId[0] : params.profileId;
     const secretRequirementResultId = typeof params.secretRequirementResultId === 'string' ? params.secretRequirementResultId : '';
     const spawnServerId = resolveSpawnServerRouteParam(params.spawnServerId);
+    const preferredBackendTarget = React.useMemo(() => {
+        return resolvePreferredBackendTargetFromSettings({
+            lastUsedAgent: settings.lastUsedAgent,
+            lastUsedBackendTarget: settings.lastUsedBackendTarget,
+            backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
+            acpCatalogSettingsV1: settings.acpCatalogSettingsV1 ?? undefined,
+        });
+    }, [
+        settings.lastUsedAgent,
+        settings.lastUsedBackendTarget,
+        settings.backendEnabledByTargetKey,
+        settings.acpCatalogSettingsV1,
+    ]);
+    const roundTripFallbackTarget = React.useMemo(() => {
+        return resolveRouteCloseoutFallbackTarget({
+            agentType: params.agentType,
+            backendTarget: params.backendTarget,
+            backendTargetKey: params.backendTargetKey,
+            preferredBackendTarget,
+        });
+    }, [params.agentType, params.backendTarget, params.backendTargetKey, preferredBackendTarget]);
+    const roundTripBackendParams = React.useMemo(() => {
+        return buildBackendTargetRouteParams({
+            backendTarget: params.backendTarget,
+            backendTargetKey: params.backendTargetKey,
+            agentType: params.agentType,
+            fallbackTarget: roundTripFallbackTarget,
+        });
+    }, [params.agentType, params.backendTarget, params.backendTargetKey, roundTripFallbackTarget]);
+    const currentRouteParams = React.useMemo(() => {
+        return pickNewSessionRouteParams(params);
+    }, [params]);
     const setParamsOnPreviousAndClose = React.useCallback((next: { profileId: string; secretId?: string; secretSessionOnlyId?: string }) => {
         const returnMode = setNewSessionPickerReturnParams({
             navigation,
             router,
             routeParams: next,
+            currentParams: currentRouteParams,
             replaceParams: {
+                ...roundTripBackendParams,
                 ...(dataId ? { dataId } : {}),
                 ...(machineId ? { machineId } : {}),
                 ...(spawnServerId ? { spawnServerId } : {}),
@@ -62,7 +105,7 @@ export default React.memo(function ProfilePickerScreen() {
         if (returnMode === 'dispatch') {
             safeRouterBack({ router, navigation, fallbackHref: '/new' });
         }
-    }, [dataId, machineId, navigation, router, spawnServerId]);
+    }, [currentRouteParams, dataId, machineId, navigation, roundTripBackendParams, router, spawnServerId]);
 
     // When the secret requirement screen is used (native), it returns a temp id via params.
     // We handle it here and then return to the previous route with the correct selection.
@@ -141,9 +184,13 @@ export default React.memo(function ProfilePickerScreen() {
             router.push({
                 pathname: '/new/pick/secret-requirement',
                 params: {
+                    ...roundTripBackendParams,
+                    ...buildSecretRequirementRouteParams({
+                        dataId: dataId ?? null,
+                        selectedMachineId: machineId ?? null,
+                        targetServerId: spawnServerId ?? null,
+                    }),
                     profileId: profile.id,
-                    machineId: machineId ?? undefined,
-                    spawnServerId: spawnServerId ?? undefined,
                     secretEnvVarName: requiredSecretName,
                     secretEnvVarNames: requiredSecretNames.join(','),
                     revertOnCancel: '0',
@@ -201,7 +248,7 @@ export default React.memo(function ProfilePickerScreen() {
             onRequestClose: () => handleResolve({ action: 'cancel' }),
             closeOnBackdrop: true,
         });
-    }, [machineId, router, secretBindingsByProfileId, secrets, setParamsOnPreviousAndClose, setSecretBindingsByProfileId, setSecrets, spawnServerId]);
+    }, [dataId, machineId, roundTripBackendParams, router, secretBindingsByProfileId, secrets, setParamsOnPreviousAndClose, setSecretBindingsByProfileId, setSecrets, spawnServerId]);
 
     const handleProfilePress = React.useCallback(async (profile: AIBackendProfile) => {
         const profileId = profile.id;
@@ -292,37 +339,30 @@ export default React.memo(function ProfilePickerScreen() {
         }
     }, [profileId, setParamsOnPreviousAndClose]);
 
-    const openProfileCreate = React.useCallback(() => {
+    const pushProfileEdit = React.useCallback((nextParams: Readonly<Record<string, string>>) => {
         router.push({
             pathname: '/new/pick/profile-edit',
-            params: {
-                ...(machineId ? { machineId } : {}),
-                ...(spawnServerId ? { spawnServerId } : {}),
-            },
+            params: buildProfileEditPickerRouteParams({
+                backendTargetRouteParams: roundTripBackendParams,
+                dataId,
+                machineId,
+                spawnServerId: spawnServerId ?? undefined,
+                nextParams,
+            }),
         });
-    }, [machineId, router, spawnServerId]);
+    }, [dataId, machineId, roundTripBackendParams, router, spawnServerId]);
+
+    const openProfileCreate = React.useCallback(() => {
+        pushProfileEdit({});
+    }, [pushProfileEdit]);
 
     const openProfileEdit = React.useCallback((profileId: string) => {
-        router.push({
-            pathname: '/new/pick/profile-edit',
-            params: {
-                profileId,
-                ...(machineId ? { machineId } : {}),
-                ...(spawnServerId ? { spawnServerId } : {}),
-            },
-        });
-    }, [machineId, router, spawnServerId]);
+        pushProfileEdit({ profileId });
+    }, [pushProfileEdit]);
 
     const openProfileDuplicate = React.useCallback((cloneFromProfileId: string) => {
-        router.push({
-            pathname: '/new/pick/profile-edit',
-            params: {
-                cloneFromProfileId,
-                ...(machineId ? { machineId } : {}),
-                ...(spawnServerId ? { spawnServerId } : {}),
-            },
-        });
-    }, [machineId, router, spawnServerId]);
+        pushProfileEdit({ cloneFromProfileId });
+    }, [pushProfileEdit]);
 
     const handleAddProfile = React.useCallback(() => {
         openProfileCreate();

@@ -114,6 +114,7 @@ export type NewSessionResumeSelectionContentProps = Readonly<{
     onClear: () => void;
     onClose: () => void;
     agentType?: AgentId | string | null;
+    agentLabel?: string | null;
     resumeBrowse?: Readonly<{
         enabled: boolean;
         onBrowse: () => Promise<string | null> | string | null;
@@ -126,7 +127,7 @@ export function NewSessionResumeSelectionContent(props: NewSessionResumeSelectio
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const agentType = isAgentId(props.agentType) ? props.agentType : DEFAULT_AGENT_ID;
-    const agentLabel = t(getAgentCore(agentType).displayNameKey);
+    const agentLabel = props.agentLabel?.trim() || t(getAgentCore(agentType).displayNameKey);
 
     const handlePaste = React.useCallback(async () => {
         const text = await getClipboardStringTrimmedSafe();

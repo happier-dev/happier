@@ -99,6 +99,6 @@ describe('PathPickerScreen (iOS presentation)', () => {
         const backButton = options?.headerLeft?.();
         expect(typeof backButton?.props?.onPress).toBe('function');
         backButton?.props?.onPress?.();
-        expect(routerMock.back).toHaveBeenCalledTimes(1);
+        expect(navigationMock.goBack).toHaveBeenCalledTimes(1);
     });
 });

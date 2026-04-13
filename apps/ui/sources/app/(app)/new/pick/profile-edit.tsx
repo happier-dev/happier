@@ -9,7 +9,7 @@ import { t } from '@/text';
 import { ProfileEditForm } from '@/components/profiles/edit';
 import { type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { layout } from '@/components/ui/layout/layout';
-import { useSettingMutable } from '@/sync/domains/state/storage';
+import { useSettingMutable, useSettings } from '@/sync/domains/state/storage';
 import { DEFAULT_PROFILES, getBuiltInProfile, getBuiltInProfileNameKey, resolveProfileById } from '@/sync/domains/profiles/profileUtils';
 import { convertBuiltInProfileToCustom, createEmptyCustomProfile, duplicateProfileForEdit } from '@/sync/domains/profiles/profileMutations';
 import { Modal } from '@/modal';
@@ -19,18 +19,59 @@ import { PopoverScope } from '@/components/ui/popover';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
-import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
+import { resolvePreferredBackendTargetFromSettings } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromSettings';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 
 export default React.memo(function ProfileEditScreen() {
     const { theme } = useUnistyles();
     const router = useRouter();
     const navigation = useNavigation();
     const params = useLocalSearchParams<{
+        agentType?: string;
+        backendTarget?: string;
+        backendTargetKey?: string;
+        dataId?: string | string[];
         profileId?: string | string[];
         cloneFromProfileId?: string | string[];
         profileData?: string | string[];
         machineId?: string | string[];
+        spawnServerId?: string | string[];
     }>();
+    const settings = useSettings() ?? settingsDefaults;
+    const preferredBackendTarget = React.useMemo(() => {
+        return resolvePreferredBackendTargetFromSettings({
+            lastUsedAgent: settings.lastUsedAgent,
+            lastUsedBackendTarget: settings.lastUsedBackendTarget,
+            backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
+            acpCatalogSettingsV1: settings.acpCatalogSettingsV1 ?? undefined,
+        });
+    }, [
+        settings.lastUsedAgent,
+        settings.lastUsedBackendTarget,
+        settings.backendEnabledByTargetKey,
+        settings.acpCatalogSettingsV1,
+    ]);
+    const roundTripFallbackTarget = React.useMemo(() => {
+        return resolveRouteCloseoutFallbackTarget({
+            agentType: params.agentType,
+            backendTarget: params.backendTarget,
+            backendTargetKey: params.backendTargetKey,
+            preferredBackendTarget,
+        });
+    }, [params.agentType, params.backendTarget, params.backendTargetKey, preferredBackendTarget]);
+    const roundTripBackendParams = React.useMemo(() => {
+        return buildBackendTargetRouteParams({
+            agentType: params.agentType,
+            backendTarget: params.backendTarget,
+            backendTargetKey: params.backendTargetKey,
+            fallbackTarget: roundTripFallbackTarget,
+        });
+    }, [params.agentType, params.backendTarget, params.backendTargetKey, roundTripFallbackTarget]);
+    const currentRouteParams = React.useMemo(() => {
+        return pickNewSessionRouteParams(params);
+    }, [params]);
     const profileIdParam = Array.isArray(params.profileId) ? params.profileId[0] : params.profileId;
     const cloneFromProfileIdParam = Array.isArray(params.cloneFromProfileId) ? params.cloneFromProfileId[0] : params.cloneFromProfileId;
     const profileDataParam = Array.isArray(params.profileData) ? params.profileData[0] : params.profileData;
@@ -185,7 +226,11 @@ export default React.memo(function ProfileEditScreen() {
             const returnMode = setNewSessionPickerReturnParams({
                 navigation: navigation as any,
                 router,
-                routeParams: { profileId: profileToSave.id },
+                routeParams: {
+                    ...roundTripBackendParams,
+                    profileId: profileToSave.id,
+                },
+                currentParams: currentRouteParams,
             });
             if (returnMode === 'dispatch') {
                 safeRouterBack({ router, navigation, fallbackHref: '/new' });
@@ -197,7 +242,11 @@ export default React.memo(function ProfileEditScreen() {
         const returnMode = setNewSessionPickerReturnParams({
             navigation: navigation as any,
             router,
-            routeParams: { profileId: profileToSave.id },
+            routeParams: {
+                ...roundTripBackendParams,
+                profileId: profileToSave.id,
+            },
+            currentParams: currentRouteParams,
         });
         if (returnMode === 'dispatch') {
             safeRouterBack({ router, navigation, fallbackHref: '/new' });

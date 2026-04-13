@@ -298,7 +298,8 @@ describe('new-session server picker targeting', () => {
             },
         }));
         expect(state.settings).toEqual(before);
-        expect(routerMock.back).toHaveBeenCalledTimes(1);
+        expect(navigationMock.goBack).toHaveBeenCalledTimes(1);
+        expect(routerMock.back).not.toHaveBeenCalled();
     });
 
     it('does not change settings or route params when cancelling a signed-out server selection', async () => {

@@ -8,22 +8,21 @@ import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { useHeaderHeight } from '@/utils/platform/responsive';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Modal } from '@/modal';
-import { useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { sync } from '@/sync/sync';
 import { getTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
+import { readBackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { tryShowDaemonUnavailableAlertForRpcError } from '@/utils/errors/daemonUnavailableAlert';
 import { type PermissionMode, type ModelMode } from '@/sync/domains/permissions/permissionTypes';
-import { normalizePermissionModeForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import {
     getProfileEnvironmentVariables,
     isProfileCompatibleWithBackendTarget,
     type AIBackendProfile,
 } from '@/sync/domains/profiles/profileCompatibility';
 import { getBuiltInProfile, DEFAULT_PROFILES, getProfilePrimaryCli } from '@/sync/domains/profiles/profileUtils';
-import { DEFAULT_AGENT_ID, getAgentCore, isAgentId, resolveAgentIdFromCliDetectKey, type AgentId } from '@/agents/catalog/catalog';
+import { DEFAULT_AGENT_ID, getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
+import { buildBackendTargetRouteParams, resolveBackendTargetFromRouteParams } from '@/agents/backendCatalog/backendTargetRouteParams';
 import {
     getResolvedBackendCatalogEntries,
     resolveBuiltInAgentIdForBackendTarget,
@@ -31,39 +30,24 @@ import {
 
 import { loadNewSessionDraft } from '@/sync/domains/state/persistence';
 import { NewSessionEngineOptionDetail } from '@/components/sessions/new/components/NewSessionEngineOptionDetail';
-import { consumeProfileIdParam } from '@/profileRouteParams';
 import { normalizeOptionalParam } from '@/profileRouteParams';
 import { useFocusEffect } from '@react-navigation/native';
 import { useMachineEnvPresence } from '@/hooks/machine/useMachineEnvPresence';
 import { normalizeSessionAuthoringConnectedServices } from '@/sync/domains/sessionAuthoring/sessionAuthoringNormalization';
 import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
-import {
-    buildNewSessionOptionsFromUiState,
-} from '@/agents/catalog/catalog';
 import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
 import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 import { computeNewSessionInputMaxHeight } from '@/components/sessions/agentInput/inputMaxHeight';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 import { useProfileMap } from '@/components/sessions/new/modules/profileHelpers';
 import { newSessionScreenStyles } from '@/components/sessions/new/newSessionScreenStyles';
-import { coerceNewSessionModelMode } from '@/components/sessions/new/hooks/newSessionModelModePolicy';
-import { useCreateNewSession } from '@/components/sessions/new/hooks/useCreateNewSession';
-import { useNewSessionSimplePanelProps } from '@/components/sessions/new/hooks/useNewSessionSimplePanelProps';
-import { useNewSessionWizardProps } from '@/components/sessions/new/hooks/useNewSessionWizardProps';
-import { buildNewSessionProfileSelectionPopover } from '@/components/sessions/new/components/buildNewSessionProfileSelectionPopover';
-import { useNewSessionAgentPickerControls } from '@/components/sessions/new/hooks/screenModel/useNewSessionAgentPickerControls';
 import { resolveNewSessionCapabilityServerId } from '@/components/sessions/new/modules/resolveNewSessionCapabilityServerId';
-import { resolveNewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { buildCliAvailabilityProbeState } from '@/components/sessions/new/modules/buildCliAvailabilityProbeState';
 import type { NewSessionTranscriptStorage } from '@/components/sessions/new/modules/newSessionTranscriptStorage';
-import {
-    resolveNextSelectableBackendEntryForNewSession,
-} from '@/components/sessions/new/modules/newSessionAgentSelection';
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { useNewSessionConnectedServices } from '@/components/sessions/new/modules/useNewSessionConnectedServices';
 import {
     buildNewSessionAuthoringDraftFromPersistedDraft,
     buildNewSessionAuthoringDraftFromTempData,
@@ -71,9 +55,6 @@ import {
 import { useNewSessionServerTargetState } from '@/components/sessions/new/hooks/serverTarget/useNewSessionServerTargetState';
 import { useNewSessionBackendTargetState } from '@/components/sessions/new/hooks/screenModel/useNewSessionBackendTargetState';
 import { useNewSessionMachinePathState } from '@/components/sessions/new/hooks/screenModel/useNewSessionMachinePathState';
-import { useNewSessionPreflightModelsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState';
-import { useNewSessionPreflightConfigOptionsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightConfigOptionsState';
-import { useNewSessionPreflightSessionModesState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightSessionModesState';
 import { useNewSessionRepoScmSnapshot } from '@/components/sessions/new/hooks/screenModel/useNewSessionRepoScmSnapshot';
 import {
     buildBackendTargetKey,
@@ -84,27 +65,32 @@ import { useNewSessionMcpSelection } from '@/components/sessions/new/hooks/useNe
 import { resolveEffectiveWindowsRemoteSessionLaunchMode } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode';
 import { useNewSessionAvailabilityState } from '@/components/sessions/new/hooks/screenModel/useNewSessionAvailabilityState';
 import { useNewSessionMachineRefreshState } from '@/components/sessions/new/hooks/screenModel/useNewSessionMachineRefreshState';
-import { useNewSessionAuthoringState } from '@/components/sessions/new/hooks/screenModel/useNewSessionAuthoringState';
 import { useNewSessionCheckoutSelectionState } from '@/components/sessions/new/hooks/screenModel/useNewSessionCheckoutSelectionState';
 import { useNewSessionProfileEditPersistence } from '@/components/sessions/new/hooks/screenModel/useNewSessionProfileEditPersistence';
 import { buildNewSessionScreenVariantModel } from '@/components/sessions/new/hooks/screenModel/buildNewSessionScreenVariantModel';
-import { useNewSessionAgentInputPresentation } from '@/components/sessions/new/hooks/screenModel/useNewSessionAgentInputPresentation';
 import { useNewSessionTranscriptStorageState } from '@/components/sessions/new/hooks/screenModel/useNewSessionTranscriptStorageState';
 import { useNewSessionAgentAuthoringOptionsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionAgentAuthoringOptionsState';
 import { useNewSessionPermissionModeState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPermissionModeState';
 import { useNewSessionPromptAutomationState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPromptAutomationState';
 import { useNewSessionSecretSelectionState } from '@/components/sessions/new/hooks/screenModel/useNewSessionSecretSelectionState';
+import { buildSecretRequirementRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { useNewSessionHappyRouteFlag } from '@/components/sessions/new/hooks/screenModel/useNewSessionHappyRouteFlag';
+import { useRouteBackendTargetSelectionSync } from '@/components/sessions/new/hooks/screenModel/useRouteBackendTargetSelectionSync';
+import { useNewSessionInputPopovers } from '@/components/sessions/new/hooks/screenModel/useNewSessionInputPopovers';
+import { useNewSessionAgentSelectionModelModeReconciliation } from '@/components/sessions/new/hooks/screenModel/useNewSessionAgentSelectionModelModeReconciliation';
+import { useNewSessionProfileBackendReconciliation } from '@/components/sessions/new/hooks/screenModel/useNewSessionProfileBackendReconciliation';
+import { useNewSessionProfileSelectionPresentation } from '@/components/sessions/new/hooks/screenModel/useNewSessionProfileSelectionPresentation';
+import { useNewSessionProfileActions } from '@/components/sessions/new/hooks/screenModel/useNewSessionProfileActions';
+import { useNewSessionProfilePopover } from '@/components/sessions/new/hooks/screenModel/useNewSessionProfilePopover';
+import { useNewSessionCreateSessionAction } from '@/components/sessions/new/hooks/screenModel/useNewSessionCreateSessionAction';
+import { useNewSessionScreenAgentInputPresentation } from '@/components/sessions/new/hooks/screenModel/useNewSessionScreenAgentInputPresentation';
+import { useNewSessionScreenAuthoringState } from '@/components/sessions/new/hooks/screenModel/useNewSessionScreenAuthoringState';
+import { useNewSessionScreenSimplePanelProps } from '@/components/sessions/new/hooks/screenModel/useNewSessionScreenSimplePanelProps';
+import { useNewSessionScreenWizardProps } from '@/components/sessions/new/hooks/screenModel/useNewSessionScreenWizardProps';
+import { useNewSessionConnectedServicesAgentOptions } from '@/components/sessions/new/hooks/screenModel/useNewSessionConnectedServicesAgentOptions';
+import { useNewSessionScreenPreflightState } from '@/components/sessions/new/hooks/screenModel/useNewSessionScreenPreflightState';
 import type { NewSessionScreenModel } from '@/components/sessions/new/hooks/newSessionScreenModelTypes';
 import { randomUUID } from '@/platform/randomUUID';
-import { NewSessionPathSelectionContent } from '@/components/sessions/new/components/NewSessionPathSelectionContent';
-import { NewSessionMachineSelectionContent } from '@/components/sessions/new/components/NewSessionMachineSelectionContent';
-import { NewSessionResumeSelectionContent } from '@/components/sessions/new/components/NewSessionResumeSelectionContent';
-import type { AgentInputContentPopoverConfig } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
-import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
-import { useProfile as useAccountProfile } from '@/sync/store/hooks';
-import { openDirectSessionsResumeIdPickerModal } from '@/components/sessions/directSessions/browse/openDirectSessionsResumeIdPickerModal';
-import { canBrowseDirectSessions, resolveDirectBrowseLockedSource } from '@/components/sessions/directSessions/browse/resolveDirectBrowseLockedSourceOption';
 
 
 // Configuration constants
@@ -154,6 +140,9 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         secretId: secretIdParam,
         secretSessionOnlyId,
         secretRequirementResultId,
+        agentType: agentTypeParam,
+        backendTarget: backendTargetParam,
+        backendTargetKey: backendTargetKeyParam,
     } = useLocalSearchParams<{
         prompt?: string;
         dataId?: string;
@@ -176,6 +165,9 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         secretId?: string;
         secretSessionOnlyId?: string;
         secretRequirementResultId?: string;
+        agentType?: string;
+        backendTarget?: string;
+        backendTargetKey?: string;
     }>();
     const generatedDataIdRef = React.useRef<string>(randomUUID());
     const effectiveDataId = React.useMemo(() => {
@@ -210,7 +202,6 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useSettingMutable('secretBindingsByProfileId');
     const sessionDefaultPermissionModeByTargetKey = useSetting('sessionDefaultPermissionModeByTargetKey');
     const settings = useSettings() ?? settingsDefaults;
-    const accountProfile = useAccountProfile();
     const [activeServerSnapshot, setActiveServerSnapshot] = React.useState(() => getActiveServerSnapshot());
     React.useEffect(() => {
         return subscribeActiveServer((snapshot) => {
@@ -285,15 +276,12 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     }, [hydratedPersistedAuthoringDraft?.resumeSessionId, hydratedTempAuthoringDraft?.resumeSessionId, resumeSessionIdParam]);
     const [resumeSessionId, setResumeSessionId] = React.useState(hydratedResumeSessionId);
 
-    const [agentNewSessionOptionStateByAgentId, setAgentNewSessionOptionStateByAgentId] = React.useState<
+    const [backendNewSessionOptionStateByTargetKey, setBackendNewSessionOptionStateByTargetKey] = React.useState<
         Record<string, Record<string, unknown>>
     >(() => {
-        const temp = tempSessionData?.agentNewSessionOptionStateByAgentId;
-        if (temp && typeof temp === 'object') {
-            return temp as Record<string, Record<string, unknown>>;
-        }
-        const raw = (persistedDraft as any)?.agentNewSessionOptionStateByAgentId;
-        return raw && typeof raw === 'object' ? (raw as Record<string, Record<string, unknown>>) : {};
+        return readBackendNewSessionOptionStateByTargetKey(tempSessionData)
+            ?? readBackendNewSessionOptionStateByTargetKey(persistedDraft)
+            ?? {};
     });
     const enabledAgentIds = useEnabledAgentIds();
     const resolvedBackendEntries = React.useMemo(() => {
@@ -304,6 +292,13 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             collapseConfiguredBackendProviderSentinels: true,
         });
     }, [enabledAgentIds, settings.acpCatalogSettingsV1, settings.backendEnabledByTargetKey]);
+    const routeBackendTarget = React.useMemo(() => {
+        return resolveBackendTargetFromRouteParams({
+            backendTarget: backendTargetParam,
+            backendTargetKey: backendTargetKeyParam,
+            agentType: agentTypeParam,
+        });
+    }, [agentTypeParam, backendTargetKeyParam, backendTargetParam]);
 
     useFocusEffect(
         React.useCallback(() => {
@@ -450,8 +445,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         lastUsedAgent,
         lastUsedBackendTarget,
         persistedBackendTarget: hydratedPersistedAuthoringDraft?.backendTarget,
-        tempBackendTarget: hydratedTempAuthoringDraft?.backendTarget ?? tempSessionData?.backendTarget,
-        tempAgentType: hydratedTempAuthoringDraft?.agentId ?? hydratedPersistedAuthoringDraft?.agentId,
+        tempBackendTarget: hydratedTempAuthoringDraft?.backendTarget ?? tempSessionData?.backendTarget ?? routeBackendTarget,
+        tempAgentType: hydratedTempAuthoringDraft?.agentId ?? agentTypeParam ?? hydratedPersistedAuthoringDraft?.agentId,
     });
     const setAgentType = React.useCallback((next: React.SetStateAction<AgentId>) => {
         setBackendTarget((prevTarget) => {
@@ -461,10 +456,17 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         });
     }, [setBackendTarget]);
     const selectedBackendTargetKey = React.useMemo(() => buildBackendTargetKey(backendTarget), [backendTarget]);
+    const agentOptionState = backendNewSessionOptionStateByTargetKey[selectedBackendTargetKey] ?? null;
     const selectedBackendEntry = React.useMemo(() => {
         return resolvedBackendEntries.find((entry) => entry.targetKey === selectedBackendTargetKey) ?? null;
     }, [resolvedBackendEntries, selectedBackendTargetKey]);
     const agentLabel = selectedBackendEntry?.title ?? t(getAgentCore(agentType).displayNameKey);
+    useRouteBackendTargetSelectionSync({
+        routeBackendTarget,
+        resolvedBackendEntries,
+        selectedBackendTargetKey,
+        setBackendTarget,
+    });
 
     const {
         modelMode,
@@ -552,7 +554,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         agentType,
         resumeSessionId,
         enabledAgentIds,
-        agentNewSessionOptionStateByAgentId,
+        backendNewSessionOptionStateByTargetKey,
         resolvedBackendEntries,
         selectedBackendEntry,
         setBackendTarget,
@@ -584,28 +586,20 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         }
         setSelectedProfileId(nextProfileId);
     }, [initialImplicitProfileId, selectedProfileId, useProfiles]);
-    const { preflightModels, modelOptions, probe: modelOptionsProbeState } = useNewSessionPreflightModelsState({
+    const {
+        preflightModels,
+        modelOptions,
+        modelOptionsProbeState,
+        acpSessionModeOptions,
+        acpSessionModeProbeState,
+        acpConfigOptions,
+        acpConfigOptionsProbeState,
+    } = useNewSessionScreenPreflightState({
         backendTarget,
+        settings,
         selectedMachineId,
         capabilityServerId,
         cwd: selectedPath,
-        probeContext: resolveNewSessionCapabilityProbeContext({ backendTarget, settings }),
-    });
-
-    const { preflightModes: preflightSessionModes, modeOptions: acpSessionModeOptions, probe: acpSessionModeProbeState } =
-        useNewSessionPreflightSessionModesState({
-            backendTarget,
-            selectedMachineId,
-            capabilityServerId,
-            cwd: selectedPath,
-            probeContext: resolveNewSessionCapabilityProbeContext({ backendTarget, settings }),
-        });
-    const { configOptions: acpConfigOptions, probe: acpConfigOptionsProbeState } = useNewSessionPreflightConfigOptionsState({
-        backendTarget,
-        selectedMachineId,
-        capabilityServerId,
-        cwd: selectedPath,
-        probeContext: resolveNewSessionCapabilityProbeContext({ backendTarget, settings }),
     });
 
     const allProfilesRequirementNames = React.useMemo(() => {
@@ -742,6 +736,17 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         setSelectedProfileId,
         router,
         navigation: navigation as any,
+        routeBackendParams: buildBackendTargetRouteParams({
+            agentType: agentTypeParam,
+            backendTarget: backendTargetParam,
+            backendTargetKey: backendTargetKeyParam,
+            fallbackTarget: backendTarget,
+        }),
+        routeContextParams: buildSecretRequirementRouteParams({
+            dataId: typeof dataId === 'string' ? dataId : undefined,
+            selectedMachineId,
+            targetServerId,
+        }),
         secretIdParam: typeof secretIdParam === 'string' ? secretIdParam : undefined,
         secretSessionOnlyId: typeof secretSessionOnlyId === 'string' ? secretSessionOnlyId : undefined,
         secretRequirementResultId: typeof secretRequirementResultId === 'string' ? secretRequirementResultId : undefined,
@@ -749,23 +754,6 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
 
     // NOTE: we intentionally do NOT clear per-profile secret overrides when profile changes.
     // Users may resolve secrets for multiple profiles and then switch between them before creating a session.
-
-    // On iOS, keep tap handlers extremely light so selection state can commit instantly.
-    // We defer any follow-up adjustments (agent/session-type/permission defaults) until after interactions.
-    const pendingProfileSelectionRef = React.useRef<{ profileId: string; prevProfileId: string | null } | null>(null);
-
-    const selectProfile = React.useCallback((profileId: string) => {
-        prepareSecretPromptForProfileSelection(selectedProfileId);
-        const prevSelectedProfileId = selectedProfileId;
-        hasUserTouchedProfileSelectionRef.current = true;
-        pendingProfileSelectionRef.current = { profileId, prevProfileId: prevSelectedProfileId };
-        setSelectedProfileId(profileId);
-    }, [prepareSecretPromptForProfileSelection, selectedProfileId]);
-
-    const onPressDefaultEnvironment = React.useCallback(() => {
-        hasUserTouchedProfileSelectionRef.current = true;
-        setSelectedProfileId(null);
-    }, []);
 
     const {
         transcriptStorage,
@@ -803,30 +791,37 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         sessionDefaultPermissionModeByTargetKey,
     });
 
-    // NOTE: Permission mode reset on agentType change is handled by the validation useEffect below (lines ~670-681)
-    // which intelligently resets only when the current mode is invalid for the new agent type.
-    // A duplicate unconditional reset here was removed to prevent race conditions.
+    // Profile/backend reconciliation and permission-mode fallback logic is owned by the
+    // extracted hook so this screen model can keep route-specific profile param handling local.
+    const { selectProfile } = useNewSessionProfileBackendReconciliation({
+        useProfiles,
+        selectedProfileId,
+        setSelectedProfileId,
+        profileMap,
+        getCompatibleProfileBackendEntries,
+        selectedBackendTargetKey,
+        setBackendTarget,
+        cliAvailabilityTimestamp: cliAvailability.timestamp,
+        cliAvailabilityByAgentId: cliAvailability.available,
+        cliAuthStatusByAgentId: cliAvailability.authStatus,
+        installableDepKeyCountByAgentId,
+        selectableWithoutCliByAgentId,
+        hasUserSelectedPermissionModeRef,
+        permissionModeRef,
+        applyPermissionMode,
+        resolveDefaultPermissionMode,
+        prepareSecretPromptForProfileSelection,
+        hasUserTouchedProfileSelectionRef,
+        agentType,
+    });
 
-    const handleDeleteProfile = React.useCallback((profile: AIBackendProfile) => {
-        Modal.alert(
-            t('profiles.delete.title'),
-            t('profiles.delete.message', { name: profile.name }),
-            [
-                { text: t('profiles.delete.cancel'), style: 'cancel' },
-                {
-                    text: t('profiles.delete.confirm'),
-                    style: 'destructive',
-                    onPress: () => {
-                        const updatedProfiles = profiles.filter((p: AIBackendProfile) => p.id !== profile.id);
-                        setProfiles(updatedProfiles);
-                        if (selectedProfileId === profile.id) {
-                            setSelectedProfileId(null);
-                        }
-                    },
-                },
-            ],
-        );
-    }, [profiles, selectedProfileId, setProfiles]);
+    const { onPressDefaultEnvironment, handleDeleteProfile } = useNewSessionProfileActions({
+        hasUserTouchedProfileSelectionRef,
+        setSelectedProfileId,
+        profiles,
+        selectedProfileId,
+        setProfiles,
+    });
 
     const {
         refreshMachineData,
@@ -844,298 +839,72 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     });
 
     const selectedServerId = targetServerId;
-    const modalPortalTarget = useModalPortalTarget();
-    const machinePopoverServerIds = allowedTargetServerIds.length > 0
-        ? allowedTargetServerIds
-        : resolvedSettingsTarget.allowedServerIds;
-    const machinePopoverGroups = useServerScopedMachineOptions({
-        allowedServerIds: machinePopoverServerIds,
+    const { pathPopover, machinePopover, resumePopover } = useNewSessionInputPopovers({
+        selectedMachine,
+        selectedMachineId,
+        selectedPath,
+        setSelectedPath,
+        setDraftSelectedPath,
+        recentPaths,
+        usePathPickerSearch,
+        pathPickerSearchQuery,
+        setPathPickerSearchQuery,
+        favoriteDirectories,
+        setFavoriteDirectories,
+        allowedTargetServerIds,
+        resolvedSettingsAllowedServerIds: resolvedSettingsTarget.allowedServerIds,
         activeServerId: activeServerSnapshot.serverId,
+        activeServerGeneration: activeServerSnapshot.generation,
         activeMachines,
-        refreshToken: activeServerSnapshot.generation,
+        selectedServerId,
+        recentMachines,
+        favoriteMachineItems,
+        setSelectedMachineId,
+        getBestPathForMachine,
+        useMachinePickerSearch,
+        targetServerId,
+        resumeSessionId,
+        setResumeSessionId,
+        agentType,
+        agentLabel,
+        agentOptionState,
+        settings,
     });
 
-    const pathPopover = React.useMemo<AgentInputContentPopoverConfig>(() => ({
-        renderContent: ({ requestClose }) => (
-            <NewSessionPathSelectionContent
-                machineHomeDir={selectedMachine?.metadata?.homeDir || '/home'}
-                selectedPath={selectedPath}
-                onChangeSelectedPath={setSelectedPath}
-                onChangeDraftSelectedPath={setDraftSelectedPath}
-                onBeforeBrowseMachinePath={requestClose}
-                submitBehavior="confirm"
-                commitDraftOnBlur={true}
-                onSubmitSelectedPath={(nextPath) => {
-                    setSelectedPath(nextPath);
-                    requestClose();
-                }}
-                recentPaths={recentPaths}
-                usePickerSearch={usePathPickerSearch}
-                searchQuery={pathPickerSearchQuery}
-                onChangeSearchQuery={setPathPickerSearchQuery}
-                favoriteDirectories={favoriteDirectories}
-                onChangeFavoriteDirectories={setFavoriteDirectories}
-                focusInputOnSelect={false}
-                machineBrowse={{
-                    enabled: true,
-                    machineId: selectedMachine?.id ?? null,
-                    serverId: targetServerId ?? null,
-                    webPortalTarget: modalPortalTarget,
-                }}
-            />
-        ),
-        maxHeightCap: 560,
-        maxWidthCap: 560,
-        keyboardShouldPersistTaps: 'handled',
-        edgeFades: { top: true, bottom: true, size: 28 },
-        edgeIndicators: true,
-        initialVisibility: { top: true, bottom: true },
-    }), [
-        favoriteDirectories,
-        pathPickerSearchQuery,
-        recentPaths,
-        selectedMachine?.id,
-        selectedMachine?.metadata?.homeDir,
-        selectedPath,
-        setFavoriteDirectories,
-        setDraftSelectedPath,
-        setSelectedPath,
-        modalPortalTarget,
-        targetServerId,
-        usePathPickerSearch,
-    ]);
+    const clearProfileRouteParam = React.useCallback(() => {
+        const setParams = (navigation as any)?.setParams;
+        if (typeof setParams === 'function') {
+            setParams({ profileId: undefined });
+            return;
+        }
+        navigation.dispatch({
+            type: 'SET_PARAMS',
+            payload: { params: { profileId: undefined } },
+        } as never);
+    }, [navigation]);
 
-    const machinePopover = React.useMemo<AgentInputContentPopoverConfig>(() => ({
-        renderContent: ({ requestClose }) => (
-            <NewSessionMachineSelectionContent
-                groups={machinePopoverGroups}
-                selectedMachine={selectedMachine ?? null}
-                selectedServerId={selectedServerId}
-                recentMachines={recentMachines}
-                favoriteMachines={favoriteMachineItems}
-                serverId={selectedServerId}
-                onSelectMachine={(machine) => {
-                    setSelectedMachineId(machine.id);
-                    setSelectedPath(getBestPathForMachine(machine.id));
-                    requestClose();
-                }}
-                onSelectScopedMachine={(machine) => {
-                    setSelectedMachineId(machine.id);
-                    setSelectedPath(getBestPathForMachine(machine.id));
-                    requestClose();
-                }}
-                showSearch={useMachinePickerSearch}
-                searchPlacement="header"
-                testIdPrefix="new-session-machine"
-            />
-        ),
-        maxHeightCap: 560,
-        maxWidthCap: 560,
-        keyboardShouldPersistTaps: 'handled',
-        edgeFades: { top: true, bottom: true, size: 28 },
-        edgeIndicators: true,
-        initialVisibility: { top: true, bottom: true },
-    }), [
-        favoriteMachineItems,
-        getBestPathForMachine,
-        machinePopoverGroups,
-        recentMachines,
-        selectedMachine,
-        selectedServerId,
-        setSelectedMachineId,
-        setSelectedPath,
-        useMachinePickerSearch,
-    ]);
-
-    React.useEffect(() => {
-        if (!selectedProfileId) return;
-        const pending = pendingProfileSelectionRef.current;
-        if (!pending || pending.profileId !== selectedProfileId) return;
-        pendingProfileSelectionRef.current = null;
-
-        InteractionManager.runAfterInteractions(() => {
-            // Ensure nothing changed while we waited.
-            if (selectedProfileId !== pending.profileId) return;
-
-            const profile = profileMap.get(pending.profileId) || getBuiltInProfile(pending.profileId);
-            if (!profile) return;
-
-            const compatibleBackendEntries = getCompatibleProfileBackendEntries(profile);
-            const currentCompatible = compatibleBackendEntries.some((entry) => entry.targetKey === selectedBackendTargetKey);
-
-            if (compatibleBackendEntries.length > 0 && !currentCompatible) {
-                const nextEntry = resolveNextSelectableBackendEntryForNewSession({
-                    candidateBackendEntries: compatibleBackendEntries,
-                    currentTargetKey: selectedBackendTargetKey,
-                    detectionTimestamp: cliAvailability.timestamp,
-                    availabilityById: cliAvailability.available,
-                    installableDepKeyCountByAgentId,
-                    selectableWithoutCliByAgentId,
-                });
-                if (nextEntry) {
-                    setBackendTarget(nextEntry.target);
-                }
-            }
-
-            if (!hasUserSelectedPermissionModeRef.current) {
-                applyPermissionMode(resolveDefaultPermissionMode(profile), 'auto');
-            }
-        });
-    }, [
-        agentType,
-        applyPermissionMode,
-        resolveDefaultPermissionMode,
-        cliAvailability.available,
-        cliAvailability.timestamp,
-        installableDepKeyCountByAgentId,
-        selectableWithoutCliByAgentId,
-        getCompatibleProfileBackendEntries,
-        profileMap,
+    const {
+        profilesGroupTitles,
+        getProfileDisabled,
+        getProfileSubtitleExtra,
+        onPressProfile,
+    } = useNewSessionProfileSelectionPresentation({
+        useProfiles,
+        profileIdParam,
         selectedProfileId,
-        selectedBackendTargetKey,
-        setBackendTarget,
-    ]);
-
-    // Keep ProfilesList props stable to avoid rerendering the whole list on
-    // unrelated state updates (iOS perf).
-    const profilesGroupTitles = React.useMemo(() => {
-        return {
-            favorites: t('profiles.groups.favorites'),
-            custom: t('profiles.groups.custom'),
-            builtIn: t('profiles.groups.builtIn'),
-        };
-    }, []);
-
-    const getProfileDisabled = React.useCallback((profile: { id: string }) => {
-        return !(profileAvailabilityById.get(profile.id) ?? { available: true }).available;
-    }, [profileAvailabilityById]);
-
-    const getProfileSubtitleExtra = React.useCallback((profile: { id: string }) => {
-        const availability = profileAvailabilityById.get(profile.id) ?? { available: true };
-        if (availability.available || !availability.reason) return null;
-        if (availability.reason.startsWith('requires-agent:')) {
-            const required = availability.reason.split(':')[1];
-            const agentLabel = isAgentId(required) ? t(getAgentCore(required).displayNameKey) : required;
-            return t('newSession.profileAvailability.requiresAgent', { agent: agentLabel });
-        }
-        if (availability.reason.startsWith('cli-not-detected:')) {
-            const cli = availability.reason.split(':')[1];
-            const agentFromCli = resolveAgentIdFromCliDetectKey(cli);
-            const cliLabel = agentFromCli ? t(getAgentCore(agentFromCli).displayNameKey) : cli;
-            return t('newSession.profileAvailability.cliNotDetected', { cli: cliLabel });
-        }
-        return availability.reason;
-    }, [profileAvailabilityById]);
-
-    const onPressProfile = React.useCallback((profile: { id: string }) => {
-        const availability = profileAvailabilityById.get(profile.id) ?? { available: true };
-        if (!availability.available) return;
-        selectProfile(profile.id);
-    }, [profileAvailabilityById, selectProfile]);
-
-    // Handle profile route param from picker screens
-    React.useEffect(() => {
-        if (!useProfiles) {
-            return;
-        }
-
-        const { nextSelectedProfileId, shouldClearParam } = consumeProfileIdParam({
-            profileIdParam,
-            selectedProfileId,
-        });
-
-        if (nextSelectedProfileId === null) {
-            if (selectedProfileId !== null) {
-                setSelectedProfileId(null);
-            }
-        } else if (typeof nextSelectedProfileId === 'string') {
-            selectProfile(nextSelectedProfileId);
-        }
-
-        if (shouldClearParam) {
-            const setParams = (navigation as any)?.setParams;
-            if (typeof setParams === 'function') {
-                setParams({ profileId: undefined });
-            } else {
-                navigation.dispatch({
-                    type: 'SET_PARAMS',
-                    payload: { params: { profileId: undefined } },
-                } as never);
-            }
-        }
-    }, [navigation, profileIdParam, selectedProfileId, selectProfile, setSelectedProfileId, useProfiles]);
-
-    // Keep agentType compatible with the currently selected profile.
-    React.useEffect(() => {
-        if (!useProfiles || selectedProfileId === null) {
-            return;
-        }
-
-        const profile = profileMap.get(selectedProfileId) || getBuiltInProfile(selectedProfileId);
-        if (!profile) {
-            return;
-        }
-
-        const compatibleBackendEntries = getCompatibleProfileBackendEntries(profile);
-        const currentCompatible = compatibleBackendEntries.some((entry) => entry.targetKey === selectedBackendTargetKey);
-
-        if (compatibleBackendEntries.length > 0 && !currentCompatible) {
-            setBackendTarget(compatibleBackendEntries[0]!.target);
-        }
-    }, [getCompatibleProfileBackendEntries, profileMap, selectedBackendTargetKey, selectedProfileId, setBackendTarget, useProfiles]);
-
-    const prevAgentTypeRef = React.useRef(agentType);
-
-    // When agent type changes, keep the "permission level" consistent by mapping modes across backends.
-    React.useEffect(() => {
-        const prev = prevAgentTypeRef.current;
-        if (prev === agentType) {
-            return;
-        }
-        prevAgentTypeRef.current = agentType;
-
-        // Defaults should only apply in the new-session flow (not in existing sessions),
-        // and only if the user hasn't explicitly chosen a mode on this screen.
-        if (!hasUserSelectedPermissionModeRef.current) {
-            const profile = selectedProfileId ? (profileMap.get(selectedProfileId) || getBuiltInProfile(selectedProfileId)) : null;
-            applyPermissionMode(resolveDefaultPermissionMode(profile), 'auto');
-            return;
-        }
-
-        const current = permissionModeRef.current;
-        const mapped = normalizePermissionModeForAgentType(current, agentType);
-        applyPermissionMode(mapped, 'auto');
-    }, [
-        agentType,
-        applyPermissionMode,
-        profileMap,
-        resolveDefaultPermissionMode,
-        selectedProfileId,
-    ]);
-
-    // Reset model mode when agent type changes to appropriate default
-    React.useEffect(() => {
-        const core = getAgentCore(agentType);
-        const next = coerceNewSessionModelMode({
-            modelMode: String(modelMode),
-            modelConfig: { defaultMode: core.model.defaultMode, allowedModes: core.model.allowedModes, supportsFreeform: core.model.supportsFreeform },
-            preflight: preflightModels
-                ? {
-                    availableModels: preflightModels.availableModels.map((m) => ({ id: m.id })),
-                    supportsFreeform: preflightModels.supportsFreeform === true,
-                }
-                : null,
-        });
-        if (next !== modelMode) {
-            setModelMode(next as ModelMode);
-        }
-    }, [agentType, modelMode, preflightModels]);
+        setSelectedProfileId,
+        selectProfile,
+        profileAvailabilityById,
+        clearProfileRouteParam,
+    });
 
     const {
         agentPickerOptions,
         handleAgentPickerSelect,
         handleAgentClick,
-    } = useNewSessionAgentPickerControls({
+    } = useNewSessionAgentSelectionModelModeReconciliation({
+        agentType,
+        preflightModels,
         useProfiles,
         selectedProfileId,
         profileMap,
@@ -1158,100 +927,18 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         refreshProbe: cliAvailabilityProbe ?? null,
     });
 
-    const agentOptionState = agentNewSessionOptionStateByAgentId[selectedBackendTargetKey] ?? null;
-    const agentCore = React.useMemo(() => getAgentCore(agentType), [agentType]);
-
-    const setAgentOptionStateForCurrentAgent = React.useCallback((key: string, value: unknown) => {
-        setAgentNewSessionOptionStateByAgentId((prev) => {
-            const current = prev[selectedBackendTargetKey] ?? {};
-            const nextForTarget = { ...current, [key]: value };
-            return { ...prev, [selectedBackendTargetKey]: nextForTarget };
-        });
-    }, [selectedBackendTargetKey]);
-
-    const { connectedServicesBindingsPayload, connectedServicesAuthChip } = useNewSessionConnectedServices({
-        agentCore,
+    const {
+        setAgentOptionStateForCurrentAgent,
+        connectedServicesAuthChip,
+        agentNewSessionOptions,
+    } = useNewSessionConnectedServicesAgentOptions({
+        agentType,
+        selectedBackendTargetKey,
+        setBackendNewSessionOptionStateByTargetKey,
         agentOptionState,
         settings,
         router,
-        setAgentOptionStateForCurrentAgent,
     });
-
-    const agentNewSessionOptions = React.useMemo(() => {
-        const base = buildNewSessionOptionsFromUiState({ agentId: agentType, agentOptionState }) ?? {};
-        const merged: Record<string, unknown> = { ...base };
-        if (connectedServicesBindingsPayload) {
-            merged.connectedServices = connectedServicesBindingsPayload;
-        }
-        return Object.keys(merged).length > 0 ? merged : null;
-    }, [agentOptionState, agentType, connectedServicesBindingsPayload]);
-
-    const resumePopover = React.useMemo<AgentInputContentPopoverConfig>(() => {
-        const browseEnabled = Boolean(selectedMachineId) && canBrowseDirectSessions(agentType);
-
-        return {
-            renderContent: ({ requestClose }) => (
-                <NewSessionResumeSelectionContent
-                    value={resumeSessionId}
-                    onChangeValue={setResumeSessionId}
-                    onSave={(nextValue) => {
-                        setResumeSessionId(nextValue);
-                        requestClose();
-                    }}
-                    onClear={() => {
-                        setResumeSessionId('');
-                        requestClose();
-                    }}
-                    onClose={requestClose}
-                    agentType={agentType}
-                    maxHeight={460}
-                    showInlineHeader={false}
-                    resumeBrowse={browseEnabled ? {
-                        enabled: true,
-                        onBrowse: async () => {
-                            if (!selectedMachineId) return null;
-                            const source = resolveDirectBrowseLockedSource({
-                                providerId: agentType as any,
-                                agentOptionState,
-                                profile: accountProfile,
-                                settings,
-                            });
-                            if (!source) return null;
-                            requestClose();
-                            const nextResumeSessionId = await openDirectSessionsResumeIdPickerModal({
-                                title: t('directSessions.browseTitle'),
-                                webPortalTarget: modalPortalTarget,
-                                lockScope: {
-                                    machineId: selectedMachineId,
-                                    serverId: targetServerId ?? null,
-                                    providerId: agentType as any,
-                                    source,
-                                },
-                            });
-                            if (typeof nextResumeSessionId === 'string') {
-                                const trimmedResumeSessionId = nextResumeSessionId.trim();
-                                if (trimmedResumeSessionId.length > 0) {
-                                    setResumeSessionId(trimmedResumeSessionId);
-                                }
-                            }
-                            return null;
-                        },
-                    } : null}
-                />
-            ),
-            maxHeightCap: 460,
-            maxWidthCap: 460,
-        };
-    }, [
-        accountProfile,
-        agentOptionState,
-        agentType,
-        modalPortalTarget,
-        resumeSessionId,
-        selectedMachineId,
-        settings,
-        targetServerId,
-    ]);
 
     const {
         authoringContext: newSessionAuthoringContext,
@@ -1263,7 +950,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         disableDraftPersistence,
         draftPersistenceEnabled,
         draftPersistenceGenerationRef,
-    } = useNewSessionAuthoringState({
+    } = useNewSessionScreenAuthoringState({
         automationDraft,
         automationFeatureEnabled,
         selectedMachineId,
@@ -1282,18 +969,18 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         mcpSelection,
         agentNewSessionOptions,
         settings,
-        effectiveWindowsRemoteSessionLaunchMode: effectiveWindowsRemoteSessionLaunchMode ?? null,
+        effectiveWindowsRemoteSessionLaunchMode,
         acpSessionModeId,
         sessionConfigOptionOverrides,
         automationEditId,
         automationRequestedByRoute,
         selectedSecretId,
         selectedSecretIdByProfileIdByEnvVarName,
-        getSessionOnlySecretValueEncByProfileIdByEnvVarName: () => getSessionOnlySecretValueEncByProfileIdByEnvVarName() ?? {},
-        agentNewSessionOptionStateByAgentId,
+        getSessionOnlySecretValueEncByProfileIdByEnvVarName,
+        backendNewSessionOptionStateByTargetKey,
     });
 
-    const { handleCreateSession } = useCreateNewSession({
+    const { handleCreateSession } = useNewSessionCreateSessionAction({
         router,
         selectedMachineId,
         selectedPath,
@@ -1318,7 +1005,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         automationEditId,
         resumeSessionId,
         agentNewSessionOptions,
-        authoringDraft: currentAuthoringDraft,
+        currentAuthoringDraft,
         mcpSelection,
         windowsRemoteSessionLaunchModeOverride,
         machineEnvPresence,
@@ -1328,14 +1015,15 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         sessionOnlySecretValueByProfileIdByEnvVarName,
         selectedMachineCapabilities,
         targetServerId,
-        allowedTargetServerIds: allowedTargetServerIds.length > 0 ? allowedTargetServerIds : resolvedSettingsTarget.allowedServerIds,
+        allowedTargetServerIds,
+        resolvedSettingsAllowedServerIds: resolvedSettingsTarget.allowedServerIds,
         disableDraftPersistence,
     });
 
     const {
         connectionStatus,
         agentInputExtraActionChips,
-    } = useNewSessionAgentInputPresentation({
+    } = useNewSessionScreenAgentInputPresentation({
         theme,
         selectedMachine,
         automationFeatureEnabled,
@@ -1363,7 +1051,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         agentOptionState,
         setAgentOptionStateForCurrentAgent,
         connectedServicesAuthChip,
-        showAutomationActionChips: newSessionAuthoringContext.showAutomationActionChips,
+        showAutomationActionChipsFromAuthoringContext: newSessionAuthoringContext.showAutomationActionChips,
         showServerPickerChip,
         targetServerId,
         targetServerName,
@@ -1374,7 +1062,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         hasUserSelectedTranscriptStorageRef,
         setTranscriptStorage,
         selectedMachineIsWindows,
-        effectiveWindowsRemoteSessionLaunchMode: effectiveWindowsRemoteSessionLaunchMode ?? null,
+        effectiveWindowsRemoteSessionLaunchMode,
         windowsTerminalAvailable,
         setWindowsRemoteSessionLaunchModeOverride,
     });
@@ -1386,6 +1074,12 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     } = useNewSessionProfileEditPersistence({
         router,
         selectedMachineId,
+        backendTargetRouteParams: buildBackendTargetRouteParams({
+            agentType: agentTypeParam,
+            backendTarget: backendTargetParam,
+            backendTargetKey: backendTargetKeyParam,
+            fallbackTarget: backendTarget,
+        }),
         buildCurrentPersistedDraft,
         persistDraftIfEnabled,
         draftPersistenceEnabled,
@@ -1402,200 +1096,216 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         agent: wizardAgentProps,
         machine: wizardMachineProps,
         footer: wizardFooterProps,
-    } = useNewSessionWizardProps({
-        theme,
-        styles,
-        safeAreaTop: safeArea.top,
-        safeAreaBottom: safeArea.bottom,
-        headerHeight,
-        newSessionTopPadding: simpleNewSessionTopPadding,
-        newSessionSidePadding,
-        newSessionBottomPadding,
-        shouldBottomAnchor,
-
-        useProfiles,
-        profiles,
-        favoriteProfileIds,
-        setFavoriteProfileIds,
-        selectedProfileId,
-        onPressDefaultEnvironment,
-        onPressProfile,
-        selectedMachineId,
-        getProfileDisabled,
-        getProfileSubtitleExtra,
-        handleAddProfile,
-        openProfileEdit,
-        handleDuplicateProfile,
-        handleDeleteProfile,
-        suppressNextSecretAutoPromptKeyRef,
-        openSecretRequirementModal,
-        profilesGroupTitles,
-
-        machineEnvPresence,
-        secrets,
-        secretBindingsByProfileId,
-        selectedSecretIdByProfileIdByEnvVarName,
-        sessionOnlySecretValueByProfileIdByEnvVarName,
-
-        wizardInstallableDeps,
-        selectedMachineCapabilities,
-        targetServerId,
-
-        cliAvailability,
-        tmuxRequested,
-        enabledAgentIds,
-        isAgentSelectable,
-        isCliBannerDismissed,
-        dismissCliBanner,
-        agentType,
-        agentLabel,
-        setAgentType,
-        agentPickerOptions,
-        agentPickerSelectedOptionId: selectedBackendEntry?.targetKey ?? selectedBackendTargetKey,
-        onAgentPickerSelect: handleAgentPickerSelect,
-        modelOptions,
-        modelOptionsProbe: {
-            phase: modelOptionsProbeState.phase,
-            onRefresh: modelOptionsProbeState.onRefresh,
+    } = useNewSessionScreenWizardProps({
+        layout: {
+            theme,
+            styles,
+            safeAreaTop: safeArea.top,
+            safeAreaBottom: safeArea.bottom,
+            headerHeight,
+            newSessionTopPadding: simpleNewSessionTopPadding,
+            newSessionSidePadding,
+            newSessionBottomPadding,
+            shouldBottomAnchor,
         },
-        acpSessionModeOptions,
-        acpSessionModeProbe: {
-            phase: acpSessionModeProbeState.phase,
-            onRefresh: acpSessionModeProbeState.onRefresh,
+        profiles: {
+            useProfiles,
+            profiles,
+            favoriteProfileIds,
+            setFavoriteProfileIds,
+            selectedProfileId,
+            onPressDefaultEnvironment,
+            onPressProfile,
+            selectedMachineId,
+            getProfileDisabled,
+            getProfileSubtitleExtra,
+            handleAddProfile,
+            openProfileEdit,
+            handleDuplicateProfile,
+            handleDeleteProfile,
+            suppressNextSecretAutoPromptKeyRef,
+            openSecretRequirementModal,
+            profilesGroupTitles,
         },
-        acpSessionModeId,
-        setAcpSessionModeId,
-        acpConfigOptions: acpConfigOptions ?? undefined,
-        acpConfigOptionsProbe: {
-            phase: acpConfigOptionsProbeState.phase,
-            onRefresh: acpConfigOptionsProbeState.onRefresh,
+        profileSecrets: {
+            machineEnvPresence,
+            secrets,
+            secretBindingsByProfileId,
+            selectedSecretIdByProfileIdByEnvVarName,
+            sessionOnlySecretValueByProfileIdByEnvVarName,
         },
-        acpConfigOptionOverrides: sessionConfigOptionOverrides,
-        setAcpConfigOptionOverride,
-        modelMode,
-        setModelMode,
-        selectedIndicatorColor,
-        profileMap,
-        permissionMode,
-        handlePermissionModeChange,
-
-        machines,
-        selectedMachine: selectedMachine ?? null,
-        recentMachines,
-        favoriteMachineItems,
-        useMachinePickerSearch,
-        refreshMachineData,
-        setSelectedMachineId,
-        getBestPathForMachine,
-        setSelectedPath,
-        setDraftSelectedPath,
-        pathPopover,
-        favoriteMachines,
-        setFavoriteMachines,
-        selectedPath,
-        recentPaths,
-        usePathPickerSearch,
-        favoriteDirectories,
-        setFavoriteDirectories,
-
-        sessionPrompt,
-        setSessionPrompt,
-        handleCreateSession,
-        canCreate,
-        isCreating,
-        submitAccessibilityLabel,
-        emptyAutocompletePrefixes,
-        emptyAutocompleteSuggestions,
-        connectionStatus,
-        machinePopover,
-        resumeSessionId,
-        resumePopover,
-        isResumeSupportChecking,
-        sessionPromptInputMaxHeight,
-        agentInputExtraActionChips,
-        attachmentFlowId: effectiveDataId,
+        installables: {
+            wizardInstallableDeps,
+            selectedMachineCapabilities,
+        },
+        agent: {
+            cliAvailability,
+            tmuxRequested,
+            enabledAgentIds,
+            isAgentSelectable,
+            isCliBannerDismissed,
+            dismissCliBanner,
+            agentType,
+            agentLabel,
+            setAgentType,
+            agentPickerOptions,
+            selectedBackendTargetKey,
+            selectedBackendEntryTargetKey: selectedBackendEntry?.targetKey,
+            onAgentPickerSelect: handleAgentPickerSelect,
+            modelOptions,
+            modelOptionsProbeState: {
+                phase: modelOptionsProbeState.phase,
+                onRefresh: modelOptionsProbeState.onRefresh,
+            },
+            acpSessionModeOptions,
+            acpSessionModeProbeState: {
+                phase: acpSessionModeProbeState.phase,
+                onRefresh: acpSessionModeProbeState.onRefresh,
+            },
+            acpSessionModeId,
+            setAcpSessionModeId,
+            acpConfigOptions: acpConfigOptions ?? undefined,
+            acpConfigOptionsProbeState: {
+                phase: acpConfigOptionsProbeState.phase,
+                onRefresh: acpConfigOptionsProbeState.onRefresh,
+            },
+            acpConfigOptionOverrides: sessionConfigOptionOverrides,
+            setAcpConfigOptionOverride,
+            modelMode,
+            setModelMode,
+            selectedIndicatorColor,
+            profileMap,
+            permissionMode,
+            handlePermissionModeChange,
+        },
+        machine: {
+            machines,
+            targetServerId,
+            selectedMachine: selectedMachine ?? null,
+            recentMachines,
+            favoriteMachineItems,
+            useMachinePickerSearch,
+            refreshMachineData,
+            setSelectedMachineId,
+            getBestPathForMachine,
+            setSelectedPath,
+            setDraftSelectedPath,
+            favoriteMachines,
+            setFavoriteMachines,
+            selectedPath,
+            recentPaths,
+            usePathPickerSearch,
+            favoriteDirectories,
+            setFavoriteDirectories,
+        },
+        footer: {
+            sessionPrompt,
+            setSessionPrompt,
+            handleCreateSession,
+            canCreate,
+            isCreating,
+            submitAccessibilityLabel,
+            emptyAutocompletePrefixes,
+            emptyAutocompleteSuggestions,
+            connectionStatus,
+            machinePopover,
+            pathPopover,
+            resumeSessionId,
+            resumePopover,
+            isResumeSupportChecking,
+            sessionPromptInputMaxHeight,
+            agentInputExtraActionChips,
+            attachmentFlowId: effectiveDataId,
+        },
     });
 
-    const { profilePopover } = React.useMemo(() => {
-        return buildNewSessionProfileSelectionPopover({
-            useProfiles,
-            profilesProps: wizardProfilesProps,
-            serverId: targetServerId,
-            machineName: selectedMachine?.metadata?.displayName || selectedMachine?.metadata?.host,
-            popoverBoundaryRef,
-        });
-    }, [
-        popoverBoundaryRef,
-        selectedMachine?.metadata?.displayName,
-        selectedMachine?.metadata?.host,
-        targetServerId,
+    const { profilePopover } = useNewSessionProfilePopover({
         useProfiles,
-        wizardProfilesProps,
-    ]);
-
-    const simplePanelProps = useNewSessionSimplePanelProps({
-        popoverBoundaryRef,
-        headerHeight,
-        safeAreaTop: safeArea.top,
-        safeAreaBottom: safeArea.bottom,
-        newSessionTopPadding: simpleNewSessionTopPadding,
-        newSessionSidePadding: simpleNewSessionSidePadding,
-        newSessionBottomPadding: simpleNewSessionBottomPadding,
-        shouldBottomAnchor,
-        containerStyle: styles.container as any,
-        sessionPrompt,
-        setSessionPrompt,
-        handleCreateSession,
-        canCreate,
-        isCreating,
-        submitAccessibilityLabel,
-        emptyAutocompletePrefixes,
-        emptyAutocompleteSuggestions,
-        sessionPromptInputMaxHeight,
-        agentType,
-        agentLabel,
-        handleAgentClick,
-        agentPickerOptions,
-        agentPickerSelectedOptionId: selectedBackendEntry?.targetKey ?? selectedBackendTargetKey,
-        onAgentPickerSelect: handleAgentPickerSelect,
-        agentPickerProbe: cliAvailabilityProbe,
-        permissionMode,
-        handlePermissionModeChange,
-        modelMode,
-        setModelMode,
-        modelOptions,
-        modelOptionsProbe: {
-            phase: modelOptionsProbeState.phase,
-            onRefresh: modelOptionsProbeState.onRefresh,
-        },
-        acpSessionModeOptions,
-        acpSessionModeProbe: {
-            phase: acpSessionModeProbeState.phase,
-            onRefresh: acpSessionModeProbeState.onRefresh,
-        },
-        acpSessionModeId,
-        setAcpSessionModeId,
-        acpConfigOptions: acpConfigOptions ?? undefined,
-        acpConfigOptionsProbe: {
-            phase: acpConfigOptionsProbeState.phase,
-            onRefresh: acpConfigOptionsProbeState.onRefresh,
-        },
-        acpConfigOptionOverrides: sessionConfigOptionOverrides,
-        setAcpConfigOptionOverride,
-        connectionStatus,
+        profilesProps: wizardProfilesProps,
+        serverId: targetServerId,
         machineName: selectedMachine?.metadata?.displayName || selectedMachine?.metadata?.host,
-        machinePopover,
-        selectedPath,
-        pathPopover,
-        showResumePicker,
-        resumeSessionId,
-        resumePopover,
-        isResumeSupportChecking,
-        useProfiles,
-        selectedProfileId,
-        selectedMachineId,
-        profilePopover,
-        agentInputExtraActionChips,
+        popoverBoundaryRef,
+    });
+
+    const simplePanelProps = useNewSessionScreenSimplePanelProps({
+        layout: {
+            popoverBoundaryRef,
+            headerHeight,
+            safeAreaTop: safeArea.top,
+            safeAreaBottom: safeArea.bottom,
+            newSessionTopPadding: simpleNewSessionTopPadding,
+            newSessionSidePadding: simpleNewSessionSidePadding,
+            newSessionBottomPadding: simpleNewSessionBottomPadding,
+            shouldBottomAnchor,
+            containerStyle: styles.container as any,
+        },
+        creation: {
+            sessionPrompt,
+            setSessionPrompt,
+            handleCreateSession,
+            canCreate,
+            isCreating,
+            submitAccessibilityLabel,
+            emptyAutocompletePrefixes,
+            emptyAutocompleteSuggestions,
+            sessionPromptInputMaxHeight,
+        },
+        agent: {
+            agentInputExtraActionChips,
+            agentType,
+            agentLabel,
+            handleAgentClick,
+            agentPickerOptions,
+            onAgentPickerSelect: handleAgentPickerSelect,
+            agentPickerProbe: cliAvailabilityProbe,
+            selectedBackendTargetKey,
+            selectedBackendEntryTargetKey: selectedBackendEntry?.targetKey,
+        },
+        model: {
+            permissionMode,
+            handlePermissionModeChange,
+            modelMode,
+            setModelMode,
+            modelOptions,
+            modelOptionsProbeState: {
+                phase: modelOptionsProbeState.phase,
+                onRefresh: modelOptionsProbeState.onRefresh,
+            },
+        },
+        acp: {
+            acpSessionModeOptions,
+            acpSessionModeId,
+            setAcpSessionModeId,
+            acpConfigOptions: acpConfigOptions ?? undefined,
+            acpConfigOptionOverrides: sessionConfigOptionOverrides,
+            setAcpConfigOptionOverride,
+            acpSessionModeProbeState: {
+                phase: acpSessionModeProbeState.phase,
+                onRefresh: acpSessionModeProbeState.onRefresh,
+            },
+            acpConfigOptionsProbeState: {
+                phase: acpConfigOptionsProbeState.phase,
+                onRefresh: acpConfigOptionsProbeState.onRefresh,
+            },
+        },
+        machineAndResume: {
+            connectionStatus,
+            machineDisplayName: selectedMachine?.metadata?.displayName,
+            machineHost: selectedMachine?.metadata?.host,
+            machinePopover,
+            selectedPath,
+            pathPopover,
+            showResumePicker,
+            resumeSessionId,
+            resumePopover,
+            isResumeSupportChecking,
+        },
+        profile: {
+            useProfiles,
+            selectedProfileId,
+            selectedMachineId,
+            profilePopover,
+        },
         targetServerId,
         attachmentFlowId: effectiveDataId,
     });

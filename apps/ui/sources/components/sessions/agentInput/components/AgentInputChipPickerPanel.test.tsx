@@ -95,6 +95,25 @@ describe('AgentInputChipPickerPanel', () => {
         expect(screen.findByTestId('agent-input-chip-picker.detail-pane')).toBeTruthy();
     });
 
+    it('keeps the selector rail visible for a single detailed option', async () => {
+        const { AgentInputChipPickerPanel } = await import('./AgentInputChipPickerPanel');
+
+        const screen = await renderScreen(<AgentInputChipPickerPanel
+            title="Pick"
+            options={[
+                { id: 'one', label: 'One', detailDescription: 'Primary checkout' } as any,
+            ]}
+            selectedOptionId="one"
+            onSelect={() => {}}
+            onRequestClose={() => {}}
+        />);
+
+        expect(screen.findByTestId('agent-input-chip-picker')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-chip-picker.option-rail')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-chip-picker.option:one')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-chip-picker.detail-pane')).toBeTruthy();
+    });
+
     it('omits the title row when the title is empty', async () => {
         const { AgentInputChipPickerPanel } = await import('./AgentInputChipPickerPanel');
 

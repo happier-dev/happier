@@ -101,6 +101,8 @@ import type {
 } from './agentInputContracts';
 import type { AgentInputChipPickerOption } from './components/AgentInputChipPickerTypes';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
+import { insertTextAtSelection } from './insertTextAtSelection';
+import { subscribeToIosHardwareShiftEnter } from './subscribeToIosHardwareShiftEnter';
 
 const NATIVE_ACTION_CHIP_GAP_Y = 1;
 const NATIVE_ACTION_BAR_SECTION_GAP_Y = 6;
@@ -878,6 +880,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const [isAborting, setIsAborting] = React.useState(false);
     const shakerRef = React.useRef<ShakeInstance>(null);
     const inputRef = React.useRef<MultiTextInputHandle>(null);
+    const [isInputFocused, setIsInputFocused] = React.useState(false);
 
     // Forward ref to the MultiTextInput
     React.useImperativeHandle(ref, () => inputRef.current!, []);
@@ -885,13 +888,46 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     // Autocomplete state - track text and selection together
     const [inputState, setInputState] = React.useState<TextInputState>({
         text: props.value,
-        selection: { start: 0, end: 0 }
+        selection: { start: props.value.length, end: props.value.length }
     });
+    const inputStateRef = React.useRef(inputState);
 
     // Handle combined text and selection state changes
     const handleInputStateChange = React.useCallback((newState: TextInputState) => {
         setInputState(newState);
     }, []);
+
+    React.useEffect(() => {
+        inputStateRef.current = inputState;
+    }, [inputState]);
+
+    const handleComposerFocus = React.useCallback(() => {
+        setIsInputFocused(true);
+    }, []);
+
+    const handleComposerBlur = React.useCallback(() => {
+        setIsInputFocused(false);
+    }, []);
+
+    React.useEffect(() => {
+        if (Platform.OS !== 'ios' || !enterToSendEnabled || !isInputFocused || props.disabled) {
+            return;
+        }
+
+        const subscription = subscribeToIosHardwareShiftEnter(() => {
+            const nextState = insertTextAtSelection({
+                text: inputStateRef.current.text,
+                selection: inputStateRef.current.selection,
+                insertedText: '\n',
+            });
+
+            inputRef.current?.setTextAndSelection(nextState.text, nextState.selection);
+        });
+
+        return () => {
+            subscription?.remove();
+        };
+    }, [enterToSendEnabled, isInputFocused, props.disabled]);
 
     // Use the tracked selection from inputState
     const activeWord = useActiveWord(inputState.text, inputState.selection, props.autocompletePrefixes);
@@ -1904,6 +1940,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                     placeholder={props.placeholder}
                                     onKeyPress={handleKeyPress}
                                     onStateChange={handleInputStateChange}
+                                    onFocus={handleComposerFocus}
+                                    onBlur={handleComposerBlur}
                                     submitBehavior={submitBehavior}
                                     onSubmitEditing={handleSubmitEditing}
                                     maxHeight={props.inputMaxHeight ?? defaultInputMaxHeight}
@@ -2077,6 +2115,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         placeholder={props.placeholder}
                                         onKeyPress={handleKeyPress}
                                         onStateChange={handleInputStateChange}
+                                        onFocus={handleComposerFocus}
+                                        onBlur={handleComposerBlur}
                                         submitBehavior={submitBehavior}
                                         onSubmitEditing={handleSubmitEditing}
                                         maxHeight={props.inputMaxHeight ?? defaultInputMaxHeight}

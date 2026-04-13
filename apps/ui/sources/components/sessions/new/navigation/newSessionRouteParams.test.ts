@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
     buildMachinePickerRouteParams,
     buildProfilePickerRouteParams,
+    buildSecretRequirementRouteParams,
     buildServerPickerRouteParams,
 } from '@/components/sessions/new/navigation/newSessionRouteParams';
 
@@ -78,6 +79,32 @@ describe('buildProfilePickerRouteParams', () => {
             buildProfilePickerRouteParams({
                 dataId: null,
                 selectedProfileId: null,
+                selectedMachineId: null,
+                targetServerId: null,
+            }),
+        ).toEqual({});
+    });
+});
+
+describe('buildSecretRequirementRouteParams', () => {
+    it('includes new-session context, machine, and spawn target server params when provided', () => {
+        expect(
+            buildSecretRequirementRouteParams({
+                dataId: 'draft-1',
+                selectedMachineId: 'machine-1',
+                targetServerId: 'server-2',
+            }),
+        ).toEqual({
+            dataId: 'draft-1',
+            machineId: 'machine-1',
+            spawnServerId: 'server-2',
+        });
+    });
+
+    it('omits optional params when missing', () => {
+        expect(
+            buildSecretRequirementRouteParams({
+                dataId: null,
                 selectedMachineId: null,
                 targetServerId: null,
             }),

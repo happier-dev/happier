@@ -197,6 +197,15 @@ vi.mock('@/sync/domains/server/selection/serverSelectionResolver', () => ({
     })),
 }));
 
+vi.mock('@/sync/domains/server/serverRuntime', () => ({
+    getActiveServerSnapshot: vi.fn(() => ({
+        serverId: 'server-a',
+        serverUrl: 'https://server-a.example.test',
+        kind: 'custom',
+        generation: 1,
+    })),
+}));
+
 vi.mock('@/sync/domains/features/featureLocalPolicy', () => ({
     resolveLocalFeaturePolicyEnabled: vi.fn((featureId: string, settings: { featureToggles?: Record<string, boolean> }) => settings.featureToggles?.[featureId] === true),
 }));
@@ -704,7 +713,7 @@ describe('useCreateNewSession (worktree gating)', () => {
         expect(detachWorkspaceLocationMock).not.toHaveBeenCalled();
         expect(disableDraftPersistence).toHaveBeenCalledTimes(1);
         expect(clearNewSessionDraftMock).toHaveBeenCalledTimes(1);
-        expect(routerReplace).toHaveBeenCalledWith('/session/session-created', expect.anything());
+        expect(routerReplace).toHaveBeenCalledWith('/session/session-created?serverId=server-a', expect.anything());
         expect(setIsCreating).not.toHaveBeenCalledWith(false);
     });
 
@@ -1266,7 +1275,8 @@ describe('useCreateNewSession (worktree gating)', () => {
         expect(spawnedOptions?.workspaceCheckoutId).toBeUndefined();
         expect(updateSessionDraftMock).not.toHaveBeenCalled();
         expect(ensureSessionVisibleForMessageRouteMock).toHaveBeenCalledWith('session-created', { forceRefresh: true });
-        expect(routerReplace).not.toHaveBeenCalled();
+        expect(routerReplace).toHaveBeenCalledWith('/session/session-created?serverId=server-a', expect.anything());
+        expect(routerReplace).toHaveBeenCalledTimes(1);
         expect(disableDraftPersistence).not.toHaveBeenCalled();
         expect(clearNewSessionDraftMock).not.toHaveBeenCalled();
         expect(setIsCreating).toHaveBeenCalledWith(false);
@@ -1390,7 +1400,7 @@ describe('useCreateNewSession (worktree gating)', () => {
         });
         expect(disableDraftPersistence).toHaveBeenCalledTimes(1);
         expect(clearNewSessionDraftMock).toHaveBeenCalledTimes(1);
-        expect(routerReplace).toHaveBeenCalledWith('/session/session-created?recoveryDataId=temp-recovery-1', expect.anything());
+        expect(routerReplace).toHaveBeenCalledWith('/session/session-created?serverId=server-a&recoveryDataId=temp-recovery-1', expect.anything());
         expect(vi.mocked(Modal.alert)).toHaveBeenCalledWith('common.error', 'afterCreated failed');
     });
 

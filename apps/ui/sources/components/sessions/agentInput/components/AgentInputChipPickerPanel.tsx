@@ -37,7 +37,7 @@ export function AgentInputChipPickerPanel(
     () => agentInputChipPickerHasDetailPane(props.options),
     [props.options],
   );
-  const showDetailedSelector = detailed && props.options.length > 1;
+  const showDetailedSelector = detailed;
   const [focusedOptionId, setFocusedOptionId] = React.useState<string | null>(
     props.selectedOptionId ?? props.options[0]?.id ?? null,
   );

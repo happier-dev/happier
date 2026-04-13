@@ -17,12 +17,20 @@ installNewSessionScreenModelCommonModuleMocks({
 const cliRefreshA = vi.fn();
 const cliRefreshB = vi.fn();
 let cliRefreshCurrent = cliRefreshA;
+const resolveProfileAvailabilityForNewSessionSpy = vi.fn<(params: unknown) => { available: boolean; reason?: string }>(() => ({ available: true }));
+const useCLIDetectionSpy = vi.hoisted(() => vi.fn());
+const probeSafeAgents = vi.hoisted(() => new Set<string>(['claude']));
 
 vi.mock('@/hooks/auth/useCLIDetection', () => ({
-    useCLIDetection: () => ({
+    useCLIDetection: (...args: unknown[]) => {
+        useCLIDetectionSpy(...args);
+        return {
         available: { claude: false, codex: true },
         login: {},
-        authStatus: {},
+        authStatus: {
+            claude: { state: 'logged_out', checkedAt: 1 },
+            codex: { state: 'logged_in', checkedAt: 1 },
+        },
         resolvedPath: {},
         resolvedCommand: {},
         resolutionSource: {},
@@ -30,8 +38,17 @@ vi.mock('@/hooks/auth/useCLIDetection', () => ({
         isDetecting: false,
         timestamp: 123,
         refresh: cliRefreshCurrent,
-    }),
+        };
+    },
 }));
+
+vi.mock('@happier-dev/agents', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@happier-dev/agents')>();
+    return {
+        ...actual,
+        isAgentAuthProbeSafeForBackgroundChecks: (agentId: string) => probeSafeAgents.has(agentId),
+    };
+});
 
 const capabilitiesRefreshA = vi.fn();
 const capabilitiesRefreshB = vi.fn();
@@ -46,7 +63,7 @@ vi.mock('@/hooks/server/useDaemonScopedMachineCapabilitiesCache', () => ({
 
 vi.mock('@/components/sessions/new/modules/newSessionAgentSelection', () => ({
     isAgentSelectableForNewSession: ({ agentId, availabilityById }: any) => availabilityById?.[agentId] !== false,
-    resolveProfileAvailabilityForNewSession: () => ({ available: true }),
+    resolveProfileAvailabilityForNewSession: (params: unknown) => resolveProfileAvailabilityForNewSessionSpy(params),
 }));
 
 vi.mock('@/utils/timing/runAfterInteractionsWithFallback', () => ({
@@ -60,6 +77,8 @@ describe('useNewSessionAvailabilityState', () => {
     beforeEach(() => {
         cliRefreshA.mockClear();
         cliRefreshB.mockClear();
+        resolveProfileAvailabilityForNewSessionSpy.mockClear();
+        useCLIDetectionSpy.mockClear();
         capabilitiesRefreshA.mockClear();
         capabilitiesRefreshB.mockClear();
         cliRefreshCurrent = cliRefreshA;
@@ -81,7 +100,7 @@ describe('useNewSessionAvailabilityState', () => {
             agentType: 'claude' as any,
             resumeSessionId: null,
             enabledAgentIds: ['claude', 'codex'] as any,
-            agentNewSessionOptionStateByAgentId: {},
+            backendNewSessionOptionStateByTargetKey: {},
             resolvedBackendEntries: [
                 {
                     family: 'builtInAgent',
@@ -143,7 +162,7 @@ describe('useNewSessionAvailabilityState', () => {
             agentType: 'claude' as any,
             resumeSessionId: null,
             enabledAgentIds: ['claude', 'codex'] as any,
-            agentNewSessionOptionStateByAgentId: {},
+            backendNewSessionOptionStateByTargetKey: {},
             resolvedBackendEntries: [],
             selectedBackendEntry: null,
             setBackendTarget,
@@ -196,7 +215,7 @@ describe('useNewSessionAvailabilityState', () => {
             agentType: 'claude' as any,
             resumeSessionId: null,
             enabledAgentIds: ['claude', 'codex'] as any,
-            agentNewSessionOptionStateByAgentId: {},
+            backendNewSessionOptionStateByTargetKey: {},
             resolvedBackendEntries: [],
             selectedBackendEntry: null,
             setBackendTarget: vi.fn(),
@@ -219,6 +238,52 @@ describe('useNewSessionAvailabilityState', () => {
         expect(cliRefreshA).toHaveBeenCalledTimes(2);
         expect(cliRefreshA.mock.calls[1]?.[0]).toEqual({ bypassCache: true });
         expect(capabilitiesRefreshA).toHaveBeenCalledTimes(2);
+    });
+
+    it('passes CLI auth status into profile availability resolution', async () => {
+        vi.resetModules();
+
+        const { useNewSessionAvailabilityState } = await import('./useNewSessionAvailabilityState');
+
+        await renderHook(() => useNewSessionAvailabilityState({
+            selectedMachineId: null,
+            selectedMachine: null,
+            capabilityServerId: 'server-1',
+            settings: {} as any,
+            agentType: 'claude' as any,
+            resumeSessionId: null,
+            enabledAgentIds: ['claude', 'codex'] as any,
+            backendNewSessionOptionStateByTargetKey: {},
+            resolvedBackendEntries: [
+                {
+                    family: 'builtInAgent',
+                    builtInAgentId: 'claude',
+                    target: { kind: 'builtInAgent', agentId: 'claude' },
+                    targetKey: 'agent:claude',
+                    title: 'Claude',
+                } as any,
+            ],
+            selectedBackendEntry: null,
+            setBackendTarget: vi.fn(),
+            machines: [],
+            dismissedCliWarnings: null,
+            setDismissedCliWarnings: vi.fn(),
+            allProfiles: [{ id: 'profile-1' }] as any,
+        }));
+
+        expect(resolveProfileAvailabilityForNewSessionSpy).toHaveBeenCalled();
+        expect((resolveProfileAvailabilityForNewSessionSpy.mock.calls[0]?.[0] as any)).toEqual(expect.objectContaining({
+            authStatusById: expect.objectContaining({
+                claude: { state: 'logged_out', checkedAt: 1 },
+                codex: { state: 'logged_in', checkedAt: 1 },
+            }),
+        }));
+        expect(useCLIDetectionSpy).toHaveBeenCalledWith(null, expect.objectContaining({
+            autoDetect: false,
+            includeLoginStatus: true,
+            includeLoginStatusForAgentIds: ['claude'],
+            serverId: 'server-1',
+        }));
     });
 
     it('keeps temporary CLI banner dismissals across hook remounts (same app session)', async () => {
@@ -249,7 +314,7 @@ describe('useNewSessionAvailabilityState', () => {
             agentType: 'claude' as any,
             resumeSessionId: null,
             enabledAgentIds: ['claude', 'codex'] as any,
-            agentNewSessionOptionStateByAgentId: {},
+            backendNewSessionOptionStateByTargetKey: {},
             resolvedBackendEntries: [],
             selectedBackendEntry: null,
             setBackendTarget: vi.fn(),
@@ -279,7 +344,7 @@ describe('useNewSessionAvailabilityState', () => {
             agentType: 'claude' as any,
             resumeSessionId: null,
             enabledAgentIds: ['claude', 'codex'] as any,
-            agentNewSessionOptionStateByAgentId: {},
+            backendNewSessionOptionStateByTargetKey: {},
             resolvedBackendEntries: [],
             selectedBackendEntry: null,
             setBackendTarget: vi.fn(),
@@ -320,7 +385,7 @@ describe('useNewSessionAvailabilityState', () => {
             agentType: 'claude' as any,
             resumeSessionId: null,
             enabledAgentIds: ['claude', 'codex'] as any,
-            agentNewSessionOptionStateByAgentId: {},
+            backendNewSessionOptionStateByTargetKey: {},
             resolvedBackendEntries: [],
             selectedBackendEntry: null,
             setBackendTarget: vi.fn(),
@@ -347,7 +412,7 @@ describe('useNewSessionAvailabilityState', () => {
             agentType: 'claude' as any,
             resumeSessionId: null,
             enabledAgentIds: ['claude', 'codex'] as any,
-            agentNewSessionOptionStateByAgentId: {},
+            backendNewSessionOptionStateByTargetKey: {},
             resolvedBackendEntries: [],
             selectedBackendEntry: null,
             setBackendTarget: vi.fn(),

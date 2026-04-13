@@ -22,12 +22,32 @@ import {
     useProfileSecretRequirementSettingMutable,
 } from './profileSecretRequirementTestHarness';
 import type { ProfilesListProps } from '@/components/profiles/ProfilesList';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 
 enableReactActEnvironment();
 
 const missingRequiredSecretScenario = createMissingRequiredSecretScenario();
 const routerMock = createRouterMock();
 const navigationMock = createNavigationMock();
+const routeParamsState = vi.hoisted(() => ({
+    value: {
+        selectedId: '',
+        dataId: 'draft-1',
+        machineId: 'm1',
+        agentType: 'customAcp',
+        backendTarget: JSON.stringify({ kind: 'configuredAcpBackend', backendId: 'review-bot' }),
+        backendTargetKey: 'acpBackend:review-bot',
+        spawnServerId: 'server-2',
+    } as Record<string, string>,
+}));
+const settingsState = vi.hoisted(() => ({
+    current: {
+        lastUsedAgent: 'customAcp',
+        lastUsedBackendTarget: null as { kind: 'configuredAcpBackend'; backendId: string } | null,
+        backendEnabledByTargetKey: null as Record<string, boolean> | null,
+        acpCatalogSettingsV1: null as unknown,
+    },
+}));
 
 async function installProfileSecretRequirementModuleMocks() {
     vi.doMock('@expo/vector-icons', async () =>
@@ -54,7 +74,7 @@ async function installProfileSecretRequirementModuleMocks() {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         const module = createExpoRouterMock({
             navigation: navigationMock,
-            params: { selectedId: '', machineId: 'm1' },
+            params: () => routeParamsState.value,
             router: {
                 push: routerMock.push,
                 back: routerMock.back,
@@ -66,7 +86,7 @@ async function installProfileSecretRequirementModuleMocks() {
         return {
             ...module,
             useNavigation: () => navigationMock,
-            useLocalSearchParams: () => ({ selectedId: '', machineId: 'm1' }),
+            useLocalSearchParams: () => routeParamsState.value,
         };
     });
 
@@ -76,6 +96,15 @@ async function installProfileSecretRequirementModuleMocks() {
         (await import('@/dev/testkit/mocks/storage')).createStorageModuleStub({
             useSetting: getProfileSecretRequirementSetting,
             useSettingMutable: useProfileSecretRequirementSettingMutable,
+            useSettings: () => ({
+                ...settingsDefaults,
+                lastUsedAgent: settingsState.current.lastUsedAgent,
+                lastUsedBackendTarget: settingsState.current.lastUsedBackendTarget,
+                backendEnabledByTargetKey:
+                    settingsState.current.backendEnabledByTargetKey as typeof settingsDefaults.backendEnabledByTargetKey,
+                acpCatalogSettingsV1:
+                    settingsState.current.acpCatalogSettingsV1 as typeof settingsDefaults.acpCatalogSettingsV1,
+            }),
         }));
 
     vi.doMock('@/components/ui/lists/ItemGroup', () => ({
@@ -89,7 +118,12 @@ async function installProfileSecretRequirementModuleMocks() {
 
     vi.doMock('@/components/profiles/ProfilesList', () => ({
         ProfilesList: (props: ProfilesListProps) => {
-            captureProfilesListProps({ onPressProfile: props.onPressProfile });
+            captureProfilesListProps({
+                onPressProfile: props.onPressProfile,
+                onEditProfile: props.onEditProfile,
+                onAddProfilePress: props.onAddProfilePress,
+                onDuplicateProfile: props.onDuplicateProfile,
+            });
             return null;
         },
     }));
@@ -144,6 +178,22 @@ describe('ProfilePickerScreen (native secret requirement)', () => {
     });
 
     it('navigates to the secret requirement screen when required secrets are missing', async () => {
+        routeParamsState.value = {
+            selectedId: '',
+            dataId: 'draft-1',
+            machineId: 'm1',
+            agentType: 'customAcp',
+            backendTarget: JSON.stringify({ kind: 'configuredAcpBackend', backendId: 'review-bot' }),
+            backendTargetKey: 'acpBackend:review-bot',
+            spawnServerId: 'server-2',
+        };
+        settingsState.current = {
+            lastUsedAgent: 'customAcp',
+            lastUsedBackendTarget: null,
+            backendEnabledByTargetKey: null,
+            acpCatalogSettingsV1: null,
+        };
+
         resetProfileSecretRequirementHarness();
         routerMock.push.mockClear();
         navigationMock.getState = () => ({
@@ -167,11 +217,82 @@ describe('ProfilePickerScreen (native secret requirement)', () => {
         expect(routerMock.push).toHaveBeenCalledWith({
             pathname: '/new/pick/secret-requirement',
             params: expect.objectContaining({
+                backendTarget: expect.stringContaining('"review-bot"'),
+                backendTargetKey: expect.stringContaining('review-bot'),
+                dataId: 'draft-1',
                 profileId: 'deepseek',
                 machineId: 'm1',
                 secretEnvVarName: missingRequiredSecretScenario.secretEnvVarName,
                 secretEnvVarNames: missingRequiredSecretScenario.secretEnvVarNames.join(','),
                 revertOnCancel: '0',
+                spawnServerId: 'server-2',
+            }),
+        });
+    });
+
+    it('rehydrates configured backend params for secret requirement navigation when the route only carries legacy customAcp', async () => {
+        routeParamsState.value = {
+            selectedId: '',
+            dataId: 'draft-1',
+            machineId: 'm1',
+            agentType: 'customAcp',
+            spawnServerId: 'server-2',
+        };
+        settingsState.current = {
+            lastUsedAgent: 'customAcp',
+            lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            backendEnabledByTargetKey: null,
+            acpCatalogSettingsV1: {
+                v: 2,
+                backends: [
+                    {
+                        id: 'review-bot',
+                        name: 'review-bot',
+                        title: 'Review Bot',
+                        command: 'custom-acp',
+                        args: ['serve'],
+                        env: {},
+                        transportProfile: 'generic',
+                        capabilities: {
+                            supportsLoadSession: false,
+                            supportsModes: 'unknown',
+                            supportsModels: 'unknown',
+                            supportsConfigOptions: 'unknown',
+                            promptImageSupport: 'unknown',
+                        },
+                        createdAt: 1,
+                        updatedAt: 1,
+                    },
+                ],
+            },
+        };
+
+        resetProfileSecretRequirementHarness();
+        routerMock.push.mockClear();
+        navigationMock.getState = () => ({
+            index: PICKER_NAV_STATE.index,
+            routes: PICKER_NAV_STATE.routes.map((route) => ({ key: route.key })),
+        });
+
+        await installProfileSecretRequirementModuleMocks();
+
+        const ProfilePickerScreen = (await import('@/app/(app)/new/pick/profile')).default;
+        await renderScreen(React.createElement(ProfilePickerScreen));
+
+        const onPressProfile = getCapturedProfilePressHandler();
+
+        await act(async () => {
+            await onPressProfile(missingRequiredSecretScenario.profile);
+        });
+
+        expect(routerMock.push).toHaveBeenCalledWith({
+            pathname: '/new/pick/secret-requirement',
+            params: expect.objectContaining({
+                backendTarget: expect.stringContaining('"configuredBackendId":"review-bot"'),
+                backendTargetKey: 'backend:review-bot:configured:review-bot',
+                dataId: 'draft-1',
+                machineId: 'm1',
+                spawnServerId: 'server-2',
             }),
         });
     });

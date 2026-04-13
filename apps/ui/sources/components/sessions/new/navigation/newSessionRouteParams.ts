@@ -11,6 +11,21 @@ function buildNewSessionContextRouteParams(params: Readonly<{
     };
 }
 
+export function buildSecretRequirementRouteParams(params: Readonly<{
+    dataId?: string | null;
+    selectedMachineId: string | null;
+    targetServerId: string | null;
+}>): Readonly<{
+    dataId?: string;
+    machineId?: string;
+    spawnServerId?: string;
+}> {
+    return {
+        ...buildNewSessionContextRouteParams(params),
+        ...(params.selectedMachineId ? { machineId: params.selectedMachineId } : {}),
+    };
+}
+
 export function buildMachinePickerRouteParams(params: Readonly<{
     dataId?: string | null;
     selectedMachineId: string | null;

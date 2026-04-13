@@ -3,7 +3,7 @@ import { Pressable, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 
-import { useAllMachines, useAllSessionListRenderables, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
+import { useAllMachines, useAllSessionListRenderables, useSetting, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { getRecentMachinesFromSessions } from '@/utils/sessions/recentMachines';
@@ -13,14 +13,14 @@ import { prefetchMachineCapabilities } from '@/hooks/server/useMachineCapabiliti
 import { invalidateMachineEnvPresence } from '@/hooks/machine/useMachineEnvPresence';
 import { CAPABILITIES_REQUEST_NEW_SESSION } from '@/capabilities/requests';
 import { HeaderTitleWithAction } from '@/components/navigation/HeaderTitleWithAction';
-import { getActiveServerId, listServerProfiles } from '@/sync/domains/server/serverProfiles';
-import { resolveActiveServerSelectionFromRawSettings } from '@/sync/domains/server/selection/serverSelectionResolution';
 import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
-import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { NewSessionMachineSelectionContent } from '@/components/sessions/new/components/NewSessionMachineSelectionContent';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
+import { useNewSessionServerTargetState } from '@/components/sessions/new/hooks/serverTarget/useNewSessionServerTargetState';
 
 function useMachinePickerScreenOptions(params: Readonly<{
     title: string;
@@ -69,65 +69,67 @@ export function useMachinePickerScreenModel() {
     const router = useRouter();
     const navigation = useNavigation();
     const params = useLocalSearchParams<{
+        agentType?: string;
+        backendTarget?: string;
+        backendTargetKey?: string;
         dataId?: string;
         selectedId?: string;
         spawnServerId?: string;
     }>();
+    const currentRouteParams = React.useMemo(() => {
+        return pickNewSessionRouteParams(params);
+    }, [params]);
+    const settings = useSettings();
+    const activeServerSnapshot = useActiveServerSnapshot();
     const machines = useAllMachines();
     const sessions = useAllSessionListRenderables();
     const useMachinePickerSearch = useSetting('useMachinePickerSearch');
-    const serverSelectionGroups = useSetting('serverSelectionGroups');
-    const serverSelectionActiveTargetKind = useSetting('serverSelectionActiveTargetKind');
-    const serverSelectionActiveTargetId = useSetting('serverSelectionActiveTargetId');
     const [favoriteMachines, setFavoriteMachines] = useSettingMutable('favoriteMachines');
 
     const [isRefreshing, setIsRefreshing] = React.useState(false);
     const [refreshToken, setRefreshToken] = React.useState(0);
     const autoSelectedSingleMachineRef = React.useRef(false);
     const selectedMachineId = typeof params.selectedId === 'string' ? params.selectedId : null;
-    const requestedServerId = typeof params.spawnServerId === 'string' ? params.spawnServerId.trim() : '';
-    const activeServerId = getActiveServerId();
-    const serverProfiles = React.useMemo(() => {
-        return listServerProfiles();
-    }, [activeServerId, refreshToken]);
-    const resolvedTarget = React.useMemo(() => {
-        return resolveActiveServerSelectionFromRawSettings({
-            activeServerId,
-            availableServerIds: serverProfiles.map((profile) => profile.id),
-            settings: {
-                serverSelectionGroups,
-                serverSelectionActiveTargetKind,
-                serverSelectionActiveTargetId,
-            },
-        });
-    }, [
-        activeServerId,
-        serverProfiles,
-        serverSelectionActiveTargetId,
-        serverSelectionActiveTargetKind,
-        serverSelectionGroups,
-    ]);
+    const requestedServerId = typeof params.spawnServerId === 'string' ? params.spawnServerId.trim() : null;
+    const activeServerId = activeServerSnapshot.serverId;
+    const {
+        allowedTargetServerIds,
+        targetServerId,
+    } = useNewSessionServerTargetState({
+        settings,
+        activeServerSnapshot,
+        request: {
+            spawnServerIdParam: requestedServerId,
+        },
+    });
     const allowedServerIds = React.useMemo(() => {
-        const fromTarget = Array.isArray(resolvedTarget.allowedServerIds)
-            ? resolvedTarget.allowedServerIds.map((id) => String(id ?? '').trim()).filter(Boolean)
+        const fromTarget = Array.isArray(allowedTargetServerIds)
+            ? allowedTargetServerIds.map((id) => String(id ?? '').trim()).filter(Boolean)
             : [];
         if (fromTarget.length > 0) return fromTarget;
         return activeServerId ? [activeServerId] : [];
-    }, [activeServerId, resolvedTarget.allowedServerIds]);
+    }, [activeServerId, allowedTargetServerIds]);
     const selectedServerId = React.useMemo(() => {
-        if (requestedServerId && allowedServerIds.includes(requestedServerId)) {
-            return requestedServerId;
+        const normalizedTargetServerId = typeof targetServerId === 'string' ? targetServerId.trim() : '';
+        if (normalizedTargetServerId && allowedServerIds.includes(normalizedTargetServerId)) {
+            return normalizedTargetServerId;
         }
         if (activeServerId && allowedServerIds.includes(activeServerId)) {
             return activeServerId;
         }
+        if (normalizedTargetServerId) {
+            return normalizedTargetServerId;
+        }
         return allowedServerIds[0] ?? activeServerId;
-    }, [activeServerId, allowedServerIds, requestedServerId]);
+    }, [activeServerId, allowedServerIds, targetServerId]);
+    const serverScopeRefreshToken = React.useMemo(() => {
+        return activeServerSnapshot.generation + refreshToken;
+    }, [activeServerSnapshot.generation, refreshToken]);
     const serverScopedMachineGroups = useServerScopedMachineOptions({
         allowedServerIds,
         activeServerId,
         activeMachines: machines,
-        refreshToken,
+        refreshToken: serverScopeRefreshToken,
     });
     const machinesForSelectedServer = React.useMemo(() => {
         return serverScopedMachineGroups.find((group) => group.serverId === selectedServerId)?.machines ?? [];
@@ -188,6 +190,7 @@ export function useMachinePickerScreenModel() {
                 machineId,
                 spawnServerId: resolvedServerId,
             },
+            currentParams: currentRouteParams,
             replaceParams: {
                 ...(dataId ? { dataId } : {}),
                 machineId,
@@ -197,7 +200,7 @@ export function useMachinePickerScreenModel() {
         if (returnMode === 'dispatch') {
             safeRouterBack({ router, navigation, fallbackHref: '/new' });
         }
-    }, [activeServerId, navigation, params.dataId, router, selectedServerId]);
+    }, [activeServerId, currentRouteParams, navigation, params.dataId, router, selectedServerId]);
 
     React.useEffect(() => {
         if (autoSelectedSingleMachineRef.current) return;

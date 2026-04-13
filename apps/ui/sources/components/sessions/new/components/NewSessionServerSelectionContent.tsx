@@ -17,9 +17,12 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { promptSignedOutServerSwitchConfirmation } from '@/components/settings/server/modals/ServerSwitchAuthPrompt';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
-import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 
 type ServerSelectionParams = Readonly<{
+    agentType?: string;
+    backendTarget?: string;
+    backendTargetKey?: string;
     dataId?: string;
     selectedId?: string;
 }>;
@@ -97,6 +100,9 @@ export function NewSessionServerSelectionContent(props: NewSessionServerSelectio
     const router = useRouter();
     const navigation = useNavigation();
     const params = useLocalSearchParams<ServerSelectionParams>();
+    const currentRouteParams = React.useMemo(() => {
+        return pickNewSessionRouteParams(params);
+    }, [params]);
     const serverSelectionGroups = useSetting('serverSelectionGroups');
     const serverSelectionActiveTargetKind = useSetting('serverSelectionActiveTargetKind');
     const serverSelectionActiveTargetId = useSetting('serverSelectionActiveTargetId');
@@ -154,7 +160,7 @@ export function NewSessionServerSelectionContent(props: NewSessionServerSelectio
         if (!profile) return { allowed: true, signedOut: false };
 
         try {
-            const creds = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl);
+            const creds = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl, { serverId: profile.id });
             if (creds) return { allowed: true, signedOut: false };
         } catch {
             return { allowed: true, signedOut: false };
@@ -172,6 +178,7 @@ export function NewSessionServerSelectionContent(props: NewSessionServerSelectio
             routeParams: {
                 spawnServerId: serverId,
             },
+            currentParams: currentRouteParams,
             replaceParams: {
                 ...(dataId ? { dataId } : {}),
                 spawnServerId: serverId,
@@ -183,7 +190,7 @@ export function NewSessionServerSelectionContent(props: NewSessionServerSelectio
         if (dismissOnSelection) {
             onClose();
         }
-    }, [dismissOnSelection, navigation, onClose, params.dataId, router]);
+    }, [currentRouteParams, dismissOnSelection, navigation, onClose, params.dataId, router]);
 
     const handleServerPress = React.useCallback((serverId: string) => {
         fireAndForget((async () => {

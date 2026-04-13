@@ -1124,10 +1124,7 @@ describe('useCreateNewSession permission seeding', () => {
         expect(updateSessionDraftSpy).toHaveBeenCalledWith('sess_target', 'Ship the scoped follow-up fix');
         expect(disableDraftPersistence).toHaveBeenCalledTimes(1);
         expect(clearNewSessionDraftSpy).toHaveBeenCalledTimes(1);
-        expect(routerReplace).toHaveBeenCalledWith({
-            pathname: '/session/sess_target',
-            params: { server: 'http://localhost:3014' },
-        }, expect.anything());
+        expect(routerReplace).toHaveBeenCalledWith('/session/sess_target?serverId=server-b', expect.anything());
     });
 
     it('creates an automation instead of spawning immediately when automation mode is enabled', async () => {
@@ -1813,7 +1810,7 @@ describe('useCreateNewSession permission seeding', () => {
         });
 
         expect(syncSendMessageSpy).toHaveBeenCalledTimes(0);
-        expect(routerReplace).toHaveBeenCalledWith('/session/sess_new', expect.anything());
+        expect(routerReplace).toHaveBeenCalledWith('/session/sess_new?serverId=server-a', expect.anything());
     });
 
     it('passes the per-session Windows launch-mode override into machineSpawnNewSession', async () => {

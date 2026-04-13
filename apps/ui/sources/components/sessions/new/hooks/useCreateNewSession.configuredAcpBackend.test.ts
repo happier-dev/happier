@@ -16,10 +16,18 @@ type SpawnPayloadCapture = {
 } | null;
 
 const applySettingsMock = vi.hoisted(() => vi.fn());
+const clearNewSessionDraftMock = vi.hoisted(() => vi.fn());
 
-async function setupHarness() {
+async function setupHarness(options?: Readonly<{ deferFollowUp?: boolean; spawnSuccess?: boolean }>) {
     const captured: { value: SpawnPayloadCapture } = { value: null };
     const createdAutomationTemplate: { value: Record<string, unknown> | null } = { value: null };
+    const routerReplaceSpy = vi.fn();
+    let resolveFollowUp: (() => void) | null = null;
+    const followUpPending = options?.deferFollowUp
+        ? new Promise<void>((resolve) => {
+            resolveFollowUp = resolve;
+        })
+        : Promise.resolve();
 
     installNewSessionScreenModelCommonModuleMocks({
         text: async () => {
@@ -94,7 +102,7 @@ async function setupHarness() {
         saveSessionActionDrafts: vi.fn(),
         loadNewSessionDraft: () => null,
         saveNewSessionDraft: vi.fn(),
-        clearNewSessionDraft: vi.fn(),
+        clearNewSessionDraft: clearNewSessionDraftMock,
         loadSessionPermissionModes: () => ({}),
         saveSessionPermissionModes: vi.fn(),
         loadSessionPermissionModeUpdatedAts: () => ({}),
@@ -198,18 +206,30 @@ async function setupHarness() {
     vi.doMock('@/sync/ops', () => ({
         machineSpawnNewSession: vi.fn(async (opts: SpawnPayloadCapture) => {
             captured.value = opts;
-            return { type: 'error', errorCode: 'unexpected', errorMessage: 'stop' };
+            return options?.spawnSuccess
+                ? { type: 'success', sessionId: 'session-created' }
+                : { type: 'error', errorCode: 'unexpected', errorMessage: 'stop' };
         }),
+    }));
+    vi.doMock('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession', () => ({
+        followUpSpawnedSessionWithServerScope: vi.fn(async () => followUpPending),
     }));
 
     const { useCreateNewSession } = await import('./useCreateNewSession');
-    return { useCreateNewSession, captured, createdAutomationTemplate };
+    return {
+        useCreateNewSession,
+        captured,
+        createdAutomationTemplate,
+        routerReplaceSpy,
+        resolveFollowUp: () => resolveFollowUp?.(),
+    };
 }
 
 describe('useCreateNewSession configured ACP backend spawning', () => {
     beforeEach(() => {
         vi.resetModules();
         applySettingsMock.mockReset();
+        clearNewSessionDraftMock.mockClear();
     });
 
     afterEach(() => {
@@ -220,7 +240,10 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
         const { useCreateNewSession, captured } = await setupHarness();
 
         let handleCreateSession: null | (() => Promise<void>) = null;
-        const settings = { experiments: false } as unknown as Settings;
+        const settings = {
+            experiments: false,
+            lastUsedAgent: 'codex',
+        } as unknown as Settings;
         const machineEnvPresence: UseMachineEnvPresenceResult = {
             isPreviewEnvSupported: false,
             isLoading: false,
@@ -274,7 +297,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
         expect(captured.value).not.toBeNull();
         expect(applySettingsMock).toHaveBeenCalledWith({
             recentMachinePaths: [{ machineId: 'm1', path: '/tmp' }],
-            lastUsedAgent: 'customAcp',
+            lastUsedAgent: 'codex',
             lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-kiro-preset' },
         });
         expect(captured.value?.backendTarget).toEqual({ kind: 'configuredAcpBackend', backendId: 'custom-kiro-preset' });
@@ -284,7 +307,10 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
         const { useCreateNewSession, createdAutomationTemplate } = await setupHarness();
 
         let handleCreateSession: null | (() => Promise<void>) = null;
-        const settings = { experiments: false } as unknown as Settings;
+        const settings = {
+            experiments: false,
+            lastUsedAgent: 'codex',
+        } as unknown as Settings;
         const machineEnvPresence: UseMachineEnvPresenceResult = {
             isPreviewEnvSupported: false,
             isLoading: false,
@@ -372,8 +398,86 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
         await handleCreateSession!();
 
         expect(createdAutomationTemplate.value).toEqual(expect.objectContaining({
+            agent: 'codex',
             backendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-kiro-preset' },
         }));
+    });
+
+    it('replaces the route to the created session before the follow-up send resolves', async () => {
+        const { useCreateNewSession, routerReplaceSpy, resolveFollowUp } = await setupHarness({
+            deferFollowUp: true,
+            spawnSuccess: true,
+        });
+
+        let handleCreateSession: null | (() => Promise<void>) = null;
+        const disableDraftPersistence = vi.fn();
+        const settings = {
+            experiments: false,
+            lastUsedAgent: 'codex',
+        } as unknown as Settings;
+        const machineEnvPresence: UseMachineEnvPresenceResult = {
+            isPreviewEnvSupported: false,
+            isLoading: false,
+            meta: {},
+            refreshedAt: null,
+            refresh: () => {},
+        };
+
+        function Test() {
+            const hook = useCreateNewSession({
+                router: { push: vi.fn(), replace: routerReplaceSpy },
+                selectedMachineId: 'm1',
+                selectedPath: '/tmp',
+                selectedMachine: { metadata: {} },
+                setIsCreating: vi.fn(),
+                setIsResumeSupportChecking: vi.fn(),
+                settings,
+                useProfiles: false,
+                selectedProfileId: null,
+                profileMap: new Map(),
+                recentMachinePaths: [],
+                agentType: 'customAcp',
+                backendTarget: {
+                    kind: 'configuredAcpBackend',
+                    backendId: 'custom-kiro-preset',
+                },
+                permissionMode: 'default' as PermissionMode,
+                modelMode: 'default' as ModelMode,
+                sessionPrompt: 'launch the session',
+                resumeSessionId: '',
+                agentNewSessionOptions: null,
+                machineEnvPresence,
+                secrets: [],
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueByProfileIdByEnvVarName: {},
+                selectedMachineCapabilities: null,
+                targetServerId: null,
+                allowedTargetServerIds: ['server-a'],
+                disableDraftPersistence,
+            } as any);
+
+            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
+            return React.createElement('View');
+        }
+
+        await renderScreen(React.createElement(Test));
+
+        expect(handleCreateSession).toBeTruthy();
+        const createPromise = handleCreateSession!();
+        for (let attempt = 0; attempt < 40 && routerReplaceSpy.mock.calls.length === 0; attempt += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/session/session-created?serverId=server-a', expect.anything());
+        expect(clearNewSessionDraftMock).not.toHaveBeenCalled();
+        expect(disableDraftPersistence).not.toHaveBeenCalled();
+
+        resolveFollowUp();
+        await createPromise;
+
+        expect(clearNewSessionDraftMock).toHaveBeenCalledTimes(1);
+        expect(disableDraftPersistence).toHaveBeenCalledTimes(1);
     });
 
     it('writes codex backend mode into automation templates without the experimental shadow flag', async () => {

@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { View, Pressable } from 'react-native';
 import { Stack, useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { Typography } from '@/constants/Typography';
-import { useAllMachines, useAllSessionListRenderables, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
+import { useAllMachines, useAllSessionListRenderables, useSetting, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
@@ -10,9 +10,12 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { getRecentPathsForMachine } from '@/utils/sessions/recentPaths';
 import { Text } from '@/components/ui/text/Text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
+import { resolvePreferredBackendTargetFromSettings } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromSettings';
 import { NewSessionScreenPortalScope, createNewSessionContainedModalScreenOptions } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
-import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { NewSessionPathSelectionContent } from '@/components/sessions/new/components/NewSessionPathSelectionContent';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 
 
 export default React.memo(function PathPickerScreen() {
@@ -21,6 +24,9 @@ export default React.memo(function PathPickerScreen() {
     const router = useRouter();
     const navigation = useNavigation();
     const params = useLocalSearchParams<{
+        agentType?: string;
+        backendTarget?: string;
+        backendTargetKey?: string;
         dataId?: string;
         machineId?: string;
         selectedPath?: string;
@@ -33,7 +39,40 @@ export default React.memo(function PathPickerScreen() {
     const recentMachinePaths = useSetting('recentMachinePaths');
     const usePathPickerSearch = useSetting('usePathPickerSearch');
     const [favoriteDirectoriesRaw, setFavoriteDirectories] = useSettingMutable('favoriteDirectories');
+    const settings = useSettings() ?? settingsDefaults;
     const favoriteDirectories = favoriteDirectoriesRaw ?? [];
+    const preferredBackendTarget = React.useMemo(() => {
+        return resolvePreferredBackendTargetFromSettings({
+            lastUsedAgent: settings.lastUsedAgent,
+            lastUsedBackendTarget: settings.lastUsedBackendTarget,
+            backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
+            acpCatalogSettingsV1: settings.acpCatalogSettingsV1 ?? undefined,
+        });
+    }, [
+        settings.lastUsedAgent,
+        settings.lastUsedBackendTarget,
+        settings.backendEnabledByTargetKey,
+        settings.acpCatalogSettingsV1,
+    ]);
+    const roundTripFallbackTarget = React.useMemo(() => {
+        return resolveRouteCloseoutFallbackTarget({
+            agentType: params.agentType,
+            backendTarget: params.backendTarget,
+            backendTargetKey: params.backendTargetKey,
+            preferredBackendTarget,
+        });
+    }, [params.agentType, params.backendTarget, params.backendTargetKey, preferredBackendTarget]);
+    const roundTripBackendParams = React.useMemo(() => {
+        return buildBackendTargetRouteParams({
+            agentType: params.agentType,
+            backendTarget: params.backendTarget,
+            backendTargetKey: params.backendTargetKey,
+            fallbackTarget: roundTripFallbackTarget,
+        });
+    }, [params.agentType, params.backendTarget, params.backendTargetKey, roundTripFallbackTarget]);
+    const currentRouteParams = React.useMemo(() => {
+        return pickNewSessionRouteParams(params);
+    }, [params]);
 
     const initialPath = typeof params.selectedPath === 'string' && params.selectedPath.length > 0
         ? params.selectedPath
@@ -80,8 +119,13 @@ export default React.memo(function PathPickerScreen() {
         const returnMode = setNewSessionPickerReturnParams({
             navigation,
             router,
-            routeParams: { directory: pathToUse },
+            routeParams: {
+                ...roundTripBackendParams,
+                directory: pathToUse,
+            },
+            currentParams: currentRouteParams,
             replaceParams: {
+                ...roundTripBackendParams,
                 ...(dataId ? { dataId } : {}),
                 machineId: params.machineId,
                 directory: pathToUse,
@@ -91,7 +135,7 @@ export default React.memo(function PathPickerScreen() {
         if (returnMode === 'dispatch') {
             safeRouterBack({ router, navigation, fallbackHref: '/new' });
         }
-    }, [machineHomeDir, navigation, params.dataId, params.machineId, params.spawnServerId, router]);
+    }, [currentRouteParams, machineHomeDir, navigation, params.dataId, params.machineId, params.spawnServerId, roundTripBackendParams, router]);
 
     const handleBackPress = React.useCallback(() => {
         safeRouterBack({ router, navigation, fallbackHref: '/new' });

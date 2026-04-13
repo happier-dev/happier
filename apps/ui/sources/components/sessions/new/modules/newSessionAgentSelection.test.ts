@@ -39,6 +39,18 @@ describe('newSessionAgentSelection', () => {
         })).toBe(true);
     });
 
+    it('treats logged-out agents as unavailable when authentication has been checked', () => {
+        expect(isAgentSelectableForNewSession({
+            agentId: 'codex',
+            detectionTimestamp: 1,
+            availabilityById: { codex: true },
+            authStatusById: {
+                codex: { state: 'logged_out', checkedAt: 1 },
+            },
+            installableDepKeyCountByAgentId: { codex: 0 },
+        } as any)).toBe(false);
+    });
+
     it('treats missing availability as unavailable after detection completes unless another path keeps it selectable', () => {
         expect(isAgentSelectableForNewSession({
             agentId: 'codex',
@@ -77,6 +89,25 @@ describe('newSessionAgentSelection', () => {
             availabilityById: { claude: false, codex: false },
             installableDepKeyCountByAgentId: { codex: 1 },
         })).toEqual({ available: true });
+    });
+
+    it('marks a single-cli profile unavailable with a logged-out reason when that agent is logged out', () => {
+        expect(resolveProfileAvailabilityForNewSession({
+            candidateBackendEntries: [
+                {
+                    target: { kind: 'builtInAgent', agentId: 'codex' },
+                    targetKey: 'agent:codex',
+                    builtInAgentId: 'codex',
+                    family: 'builtInAgent',
+                },
+            ],
+            detectionTimestamp: 1,
+            availabilityById: { codex: true },
+            authStatusById: {
+                codex: { state: 'logged_out', checkedAt: 1 },
+            },
+            installableDepKeyCountByAgentId: { codex: 0 },
+        } as any)).toEqual({ available: false, reason: 'logged-out:codex' });
     });
 
     it('treats configured ACP backend entries as selectable without built-in CLI detection', () => {

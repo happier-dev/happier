@@ -5,12 +5,15 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
-import { useAllMachines, useSettingMutable } from '@/sync/domains/state/storage';
+import { useAllMachines, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
 import { useUnistyles } from 'react-native-unistyles';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
-import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
+import { resolvePreferredBackendTargetFromSettings } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromSettings';
+import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 
 export default React.memo(function PreviewMachinePickerScreen() {
     const { theme } = useUnistyles();
@@ -18,6 +21,8 @@ export default React.memo(function PreviewMachinePickerScreen() {
     const navigation = useNavigation();
     const params = useLocalSearchParams<{
         agentType?: string;
+        backendTarget?: string;
+        backendTargetKey?: string;
         dataId?: string;
         machineId?: string;
         selectedId?: string;
@@ -25,10 +30,43 @@ export default React.memo(function PreviewMachinePickerScreen() {
     }>();
     const machines = useAllMachines();
     const [favoriteMachines, setFavoriteMachines] = useSettingMutable('favoriteMachines');
+    const settings = useSettings() ?? settingsDefaults;
 
     const selectedMachineId = typeof params.selectedId === 'string' ? params.selectedId : null;
     const selectedMachine = machines.find((m) => m.id === selectedMachineId) ?? null;
     const activeServerId = getActiveServerId();
+    const preferredBackendTarget = React.useMemo(() => {
+        return resolvePreferredBackendTargetFromSettings({
+            lastUsedAgent: settings.lastUsedAgent,
+            lastUsedBackendTarget: settings.lastUsedBackendTarget,
+            backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
+            acpCatalogSettingsV1: settings.acpCatalogSettingsV1 ?? undefined,
+        });
+    }, [
+        settings.lastUsedAgent,
+        settings.lastUsedBackendTarget,
+        settings.backendEnabledByTargetKey,
+        settings.acpCatalogSettingsV1,
+    ]);
+    const roundTripFallbackTarget = React.useMemo(() => {
+        return resolveRouteCloseoutFallbackTarget({
+            agentType: params.agentType,
+            backendTarget: params.backendTarget,
+            backendTargetKey: params.backendTargetKey,
+            preferredBackendTarget,
+        });
+    }, [params.agentType, params.backendTarget, params.backendTargetKey, preferredBackendTarget]);
+    const roundTripBackendParams = React.useMemo(() => {
+        return buildBackendTargetRouteParams({
+            agentType: params.agentType,
+            backendTarget: params.backendTarget,
+            backendTargetKey: params.backendTargetKey,
+            fallbackTarget: roundTripFallbackTarget,
+        });
+    }, [params.agentType, params.backendTarget, params.backendTargetKey, roundTripFallbackTarget]);
+    const currentRouteParams = React.useMemo(() => {
+        return pickNewSessionRouteParams(params);
+    }, [params]);
 
     const headerLeft = React.useCallback(() => (
         <Pressable
@@ -69,16 +107,20 @@ export default React.memo(function PreviewMachinePickerScreen() {
         return setNewSessionPickerReturnParams({
             navigation: navigation as any,
             router,
-            routeParams: { previewMachineId },
+            routeParams: {
+                ...roundTripBackendParams,
+                previewMachineId,
+            },
+            currentParams: currentRouteParams,
             replaceParams: {
-                ...(typeof params.agentType === 'string' && params.agentType.trim().length > 0 ? { agentType: params.agentType } : {}),
+                ...roundTripBackendParams,
                 ...(typeof params.dataId === 'string' && params.dataId.trim().length > 0 ? { dataId: params.dataId } : {}),
                 ...(typeof params.machineId === 'string' && params.machineId.trim().length > 0 ? { machineId: params.machineId } : {}),
                 ...(typeof params.spawnServerId === 'string' && params.spawnServerId.trim().length > 0 ? { spawnServerId: params.spawnServerId } : {}),
                 previewMachineId,
             },
         });
-    }, [navigation, router]);
+    }, [currentRouteParams, navigation, params.dataId, params.machineId, params.spawnServerId, roundTripBackendParams, router]);
 
     return (
         <>

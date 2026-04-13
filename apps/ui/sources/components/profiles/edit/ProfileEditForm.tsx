@@ -28,6 +28,7 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { DEFAULT_AGENT_ID, getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { getResolvedBackendCatalogEntries, type ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { buildBackendTargetRouteParams } from '@/agents/backendCatalog/backendTargetRouteParams';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { buildBackendTargetKey } from '@happier-dev/protocol';
 import { supportsDirectTranscriptStorageForNewSession } from '@/components/sessions/new/modules/newSessionTranscriptStorage';
@@ -79,8 +80,24 @@ export function ProfileEditForm({
 }: ProfileEditFormProps) {
     const { theme, rt } = useUnistyles();
     const router = useRouter();
-    const routeParams = useLocalSearchParams<{ previewMachineId?: string | string[] }>();
+    const routeParams = useLocalSearchParams<{
+        agentType?: string | string[];
+        backendTarget?: string | string[];
+        backendTargetKey?: string | string[];
+        previewMachineId?: string | string[];
+    }>();
     const previewMachineIdParam = Array.isArray(routeParams.previewMachineId) ? routeParams.previewMachineId[0] : routeParams.previewMachineId;
+    const previewMachineRouteParams = React.useMemo(() => {
+        const agentType = Array.isArray(routeParams.agentType) ? routeParams.agentType[0] : routeParams.agentType;
+        const backendTarget = Array.isArray(routeParams.backendTarget) ? routeParams.backendTarget[0] : routeParams.backendTarget;
+        const backendTargetKey = Array.isArray(routeParams.backendTargetKey) ? routeParams.backendTargetKey[0] : routeParams.backendTargetKey;
+        return buildBackendTargetRouteParams({
+            agentType,
+            backendTarget,
+            backendTargetKey,
+            fallbackTarget: null,
+        });
+    }, [routeParams.agentType, routeParams.backendTarget, routeParams.backendTargetKey]);
     const selectedIndicatorColor = rt.themeName === 'dark' ? theme.colors.text : theme.colors.button.primary.background;
     const styles = stylesheet;
     const popoverBoundaryRef = React.useRef<any>(null);
@@ -152,7 +169,10 @@ export function ProfileEditForm({
 
     const showMachinePreviewPicker = React.useCallback(() => {
         if (Platform.OS !== 'web') {
-            const params = previewMachineId ? { selectedId: previewMachineId } : {};
+            const params = {
+                ...previewMachineRouteParams,
+                ...(previewMachineId ? { selectedId: previewMachineId } : {}),
+            };
             router.push({ pathname: '/new/pick/preview-machine', params } as any);
             return;
         }
@@ -165,7 +185,7 @@ export function ProfileEditForm({
                 dimensions: { width: 560, maxHeightRatio: 0.85, size: 'md' as const },
             },
         });
-    }, [MachinePreviewModalWrapper, previewMachineId, router]);
+    }, [MachinePreviewModalWrapper, previewMachineId, previewMachineRouteParams, router]);
 
     const profileDocs = React.useMemo(() => {
         if (!profile.isBuiltIn) return null;

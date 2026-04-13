@@ -56,6 +56,17 @@ describe('resolveNewSessionPickerReturnRouteKey', () => {
             ],
         })).toBe('new-route');
     });
+
+    it('treats canonical backend target params as a new-session return target', () => {
+        expect(resolveNewSessionPickerReturnRouteKey({
+            index: 2,
+            routes: [
+                { key: 'session-route', name: '(app)/session/[id]', path: '/session/s1', params: { id: 's1' } },
+                { key: 'new-route', name: '(app)/new/index', path: '/new', params: { backendTargetKey: 'backend:review-bot:configured:review-bot' } },
+                { key: 'path-picker', name: '(app)/new/pick/path', path: '/new/pick/path' },
+            ],
+        })).toBe('new-route');
+    });
 });
 
 describe('setNewSessionPickerReturnParams', () => {
@@ -220,6 +231,59 @@ describe('setNewSessionPickerReturnParams', () => {
                 dataId: 'draft-1',
                 machineId: 'm1',
                 spawnServerId: 'server-b',
+                path: '/repo/selected',
+            },
+        });
+    });
+
+    it('preserves canonical backend target params from the current picker route during replace fallback', () => {
+        const dispatch = vi.fn();
+        const replace = vi.fn();
+        const serializedBackendTarget = JSON.stringify({
+            kind: 'backend',
+            backendId: 'review-bot',
+            configuredBackendId: 'review-bot',
+            sourceKind: 'configured',
+        });
+
+        const mode = setNewSessionPickerReturnParams({
+            navigation: {
+                dispatch,
+                getState: () => ({
+                    index: 1,
+                    routes: [
+                        { key: 'session-route', name: '(app)/session/[id]', path: '/session/s1', params: { id: 's1' } },
+                        {
+                            key: 'picker-route',
+                            name: '(app)/new/pick/path',
+                            path: '/new/pick/path',
+                            params: {
+                                agentType: 'customAcp',
+                                backendTarget: serializedBackendTarget,
+                                backendTargetKey: 'acpBackend:review-bot',
+                                dataId: 'draft-1',
+                            },
+                        },
+                    ],
+                }),
+            },
+            router: { replace },
+            routeParams: { path: '/repo/selected' },
+            replaceParams: {
+                machineId: 'm1',
+                path: '/repo/selected',
+            },
+        });
+
+        expect(mode).toBe('replace');
+        expect(dispatch).not.toHaveBeenCalled();
+        expect(replace).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                backendTarget: serializedBackendTarget,
+                backendTargetKey: 'backend:review-bot:configured:review-bot',
+                dataId: 'draft-1',
+                machineId: 'm1',
                 path: '/repo/selected',
             },
         });

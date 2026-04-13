@@ -3,6 +3,7 @@ import { InteractionManager } from 'react-native';
 
 import type { Href, Router } from 'expo-router';
 
+import { buildBackendTargetRouteParams, type SerializedBackendTargetRouteParams } from '@/agents/backendCatalog/backendTargetRouteParams';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import type { NewSessionDraft } from '@/sync/domains/state/persistence';
 import { useNewSessionDraftAutoPersist } from '@/components/sessions/new/hooks/useNewSessionDraftAutoPersist';
@@ -10,6 +11,7 @@ import { useNewSessionDraftAutoPersist } from '@/components/sessions/new/hooks/u
 export function useNewSessionProfileEditPersistence(params: Readonly<{
     router: Router;
     selectedMachineId: string | null;
+    backendTargetRouteParams: SerializedBackendTargetRouteParams;
     buildCurrentPersistedDraft: () => NewSessionDraft;
     persistDraftIfEnabled: (draft: NewSessionDraft) => void;
     draftPersistenceEnabled: boolean;
@@ -22,11 +24,19 @@ export function useNewSessionProfileEditPersistence(params: Readonly<{
     const openProfileEdit = React.useCallback((next: Readonly<{ profileId?: string; cloneFromProfileId?: string }>) => {
         const draft = params.buildCurrentPersistedDraft();
         const persistenceGeneration = params.draftPersistenceGenerationRef.current;
+        const draftBackendTargetRouteParams = buildBackendTargetRouteParams({
+            agentType: draft.agentType,
+            backendTarget: draft.backendTarget,
+            backendTargetKey: undefined,
+            fallbackTarget: draft.backendTarget ?? null,
+        });
 
         params.router.push({
             pathname: '/new/pick/profile-edit',
             params: {
                 ...next,
+                ...params.backendTargetRouteParams,
+                ...draftBackendTargetRouteParams,
                 ...(params.selectedMachineId ? { machineId: params.selectedMachineId } : {}),
             },
         } as Href);
@@ -41,6 +51,7 @@ export function useNewSessionProfileEditPersistence(params: Readonly<{
     }, [
         params.buildCurrentPersistedDraft,
         params.draftPersistenceGenerationRef,
+        params.backendTargetRouteParams,
         params.persistDraftIfEnabled,
         params.router,
         params.selectedMachineId,

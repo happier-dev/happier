@@ -18,6 +18,18 @@ enableReactActEnvironment();
 const routerMock = createRouterMock();
 const navigationMock = createNavigationMock();
 const openDirectSessionsResumeIdPickerModalMock = vi.hoisted(() => vi.fn<(args: unknown) => Promise<string | null>>(async () => 'session-picked'));
+const routeParamsState = vi.hoisted(() => ({
+    value: {
+        agentType: 'claude',
+        dataId: 'draft-1',
+        currentResumeId: '',
+        machineId: 'machine-2',
+        spawnServerId: 'server-2',
+    } as Record<string, string>,
+}));
+const settingsState = vi.hoisted(() => ({
+    value: {} as Record<string, unknown>,
+}));
 
 const resumeSelectionContentPropsRef = { current: null as NewSessionResumeSelectionContentProps | null };
 
@@ -38,13 +50,7 @@ installPickerCommonModuleMocks({
         ({
             ...(await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
                 navigation: navigationMock,
-                params: {
-                    agentType: 'claude',
-                    dataId: 'draft-1',
-                    currentResumeId: '',
-                    machineId: 'machine-2',
-                    spawnServerId: 'server-2',
-                },
+                params: () => routeParamsState.value,
                 router: {
                     push: routerMock.push,
                     back: routerMock.back,
@@ -58,7 +64,7 @@ installPickerCommonModuleMocks({
         (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSettings: () => ({}) as any,
+                useSettings: () => settingsState.value as any,
             },
         }),
 });
@@ -80,6 +86,14 @@ vi.mock('@/utils/sessions/tempDataStore', () => ({
 
 describe('ResumePickerScreen browse modal', () => {
     beforeEach(() => {
+        routeParamsState.value = {
+            agentType: 'claude',
+            dataId: 'draft-1',
+            currentResumeId: '',
+            machineId: 'machine-2',
+            spawnServerId: 'server-2',
+        };
+        settingsState.value = {};
         resumeSelectionContentPropsRef.current = null;
         routerMock.push.mockClear();
         routerMock.back.mockClear();
@@ -122,6 +136,49 @@ describe('ResumePickerScreen browse modal', () => {
         }));
     });
 
+    it('resolves configured ACP backend labels and provider fallback from backendTargetKey params', async () => {
+        routeParamsState.value = {
+            backendTargetKey: 'acpBackend:review-bot',
+            currentResumeId: '',
+            machineId: 'machine-2',
+            spawnServerId: 'server-2',
+        };
+        settingsState.value = {
+            acpCatalogSettingsV1: {
+                v: 2,
+                backends: [
+                    {
+                        id: 'review-bot',
+                        name: 'review-bot',
+                        title: 'Review Bot',
+                        command: 'custom-acp',
+                        args: ['serve'],
+                        env: {},
+                        transportProfile: 'generic',
+                        capabilities: {
+                            supportsLoadSession: false,
+                            supportsModes: 'unknown',
+                            supportsModels: 'unknown',
+                            supportsConfigOptions: 'unknown',
+                            promptImageSupport: 'unknown',
+                        },
+                        createdAt: 1,
+                        updatedAt: 1,
+                    },
+                ],
+                backendEnabledByTargetKey: {},
+            },
+        };
+
+        const ResumePickerScreen = (await import('@/app/(app)/new/pick/resume')).default;
+
+        await renderScreen(React.createElement(ResumePickerScreen));
+
+        const props = resumeSelectionContentPropsRef.current;
+        expect(props?.agentType).toBe('customAcp');
+        expect(props?.agentLabel).toBe('Review Bot');
+    });
+
     it('preserves the new-session context when it has to replace back to /new', async () => {
         navigationMock.getState = () => ({
             index: 0,
@@ -155,5 +212,75 @@ describe('ResumePickerScreen browse modal', () => {
         });
         expect(routerMock.setParams).not.toHaveBeenCalled();
         expect(routerMock.back).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the settings-backed configured backend when route context is missing', async () => {
+        navigationMock.getState = () => ({
+            index: 0,
+            routes: [
+                {
+                    key: 'resume-picker-route',
+                    name: '(app)/new/pick/resume',
+                    path: '/new/pick/resume',
+                },
+            ],
+        });
+        routeParamsState.value = {
+            currentResumeId: '',
+            dataId: 'draft-1',
+            machineId: 'machine-2',
+            spawnServerId: 'server-2',
+        };
+        settingsState.value = {
+            lastUsedAgent: 'codex',
+            lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            acpCatalogSettingsV1: {
+                v: 2,
+                backends: [
+                    {
+                        id: 'review-bot',
+                        name: 'review-bot',
+                        title: 'Review Bot',
+                        command: 'custom-acp',
+                        args: ['serve'],
+                        env: {},
+                        transportProfile: 'generic',
+                        capabilities: {
+                            supportsLoadSession: false,
+                            supportsModes: 'unknown',
+                            supportsModels: 'unknown',
+                            supportsConfigOptions: 'unknown',
+                            promptImageSupport: 'unknown',
+                        },
+                        createdAt: 1,
+                        updatedAt: 1,
+                    },
+                ],
+                backendEnabledByTargetKey: {},
+            },
+        };
+
+        const ResumePickerScreen = (await import('@/app/(app)/new/pick/resume')).default;
+
+        await renderScreen(React.createElement(ResumePickerScreen));
+
+        const props = resumeSelectionContentPropsRef.current;
+        expect(props?.agentType).toBe('customAcp');
+        expect(props?.agentLabel).toBe('Review Bot');
+
+        await props?.onSave?.('session-picked');
+
+        expect(routerMock.replace).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                agentType: 'customAcp',
+                backendTarget: JSON.stringify({ kind: 'configuredAcpBackend', backendId: 'review-bot' }),
+                backendTargetKey: 'acpBackend:review-bot',
+                dataId: 'draft-1',
+                machineId: 'machine-2',
+                spawnServerId: 'server-2',
+                resumeSessionId: 'session-picked',
+            },
+        });
     });
 });

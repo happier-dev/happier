@@ -1,11 +1,14 @@
 import React from 'react';
 import { vi } from 'vitest';
 
+import type { ExpoRouterParams } from '@/dev/testkit/mocks/router';
+
 type ModuleFactory = () => unknown | Promise<unknown>;
 
 type InstallProfileEditFormModuleMocksOptions = Readonly<{
     reactNative?: ModuleFactory;
     storageModule?: ModuleFactory;
+    routeParams?: ExpoRouterParams;
 }>;
 
 const profileEditFormTestState = vi.hoisted(() => ({
@@ -19,6 +22,7 @@ const profileEditFormTestState = vi.hoisted(() => ({
     options: {
         reactNative: undefined as ModuleFactory | undefined,
         storageModule: undefined as ModuleFactory | undefined,
+        routeParams: {} as ExpoRouterParams,
     },
 }));
 
@@ -33,6 +37,7 @@ export function resetProfileEditFormTestState() {
     profileEditFormTestState.options = {
         reactNative: undefined,
         storageModule: undefined,
+        routeParams: {},
     };
 }
 
@@ -42,6 +47,7 @@ export function installProfileEditFormModuleMocks(
     profileEditFormTestState.options = {
         reactNative: options.reactNative,
         storageModule: options.storageModule,
+        routeParams: options.routeParams ?? {},
     };
 
     vi.mock('@/text', async () => {
@@ -69,7 +75,7 @@ export function installProfileEditFormModuleMocks(
             navigation: {
                 setOptions: profileEditFormTestState.navigationSetOptionsSpy,
             },
-            params: {},
+            params: profileEditFormTestState.options.routeParams,
         }).module;
     });
 

@@ -16,11 +16,24 @@ const routerReplaceSpy = vi.hoisted(() => vi.fn());
 const setActiveServerAndSwitchSpy = vi.hoisted(() => vi.fn(async (_params: any) => false));
 const refreshMachinesThrottledSpy = vi.hoisted(() => vi.fn(async () => {}));
 const prefetchMachineCapabilitiesSpy = vi.hoisted(() => vi.fn(async () => {}));
+const activeServerListeners = vi.hoisted(() => new Set<(snapshot: {
+    serverId: string;
+    serverUrl: string;
+    generation: number;
+}) => void>());
+const activeServerSnapshotState = vi.hoisted(() => ({
+    serverId: 'server-a',
+    serverUrl: 'https://stack-a.example.test',
+    generation: 1,
+}));
 
 const state = vi.hoisted(() => ({
     localSearchParams: {
         selectedId: 'machine-1',
         spawnServerId: 'server-b',
+    } as {
+        selectedId?: string;
+        spawnServerId?: string;
     },
     settings: {
         serverSelectionGroups: [] as Array<{ id: string; name: string; serverIds: string[]; presentation?: 'grouped' | 'flat-with-badge' }>,
@@ -146,6 +159,10 @@ installNewPickRouteCommonModuleMocks({
                 if (key === 'useMachinePickerSearch') return false;
                 return (state.settings as any)[key];
             },
+            useSettings: () => ({
+                ...state.settings,
+                useMachinePickerSearch: false,
+            } as any),
             useSettingMutable: (key: string) => (key === 'favoriteMachines' ? [[], vi.fn()] : [undefined, vi.fn()]),
         },
     }),
@@ -198,6 +215,18 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
     ]),
 }));
 
+vi.mock('@/sync/domains/server/serverRuntime', () => ({
+    getActiveServerSnapshot: () => ({
+        ...activeServerSnapshotState,
+    }),
+    subscribeActiveServer: (listener: (snapshot: { serverId: string; serverUrl: string; generation: number }) => void) => {
+        activeServerListeners.add(listener);
+        return () => {
+            activeServerListeners.delete(listener);
+        };
+    },
+}));
+
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
     setActiveServerAndSwitch: async (params: any) => {
         setActiveServerAndSwitchSpy(params);
@@ -217,6 +246,10 @@ describe('machine picker server scope', () => {
 
     beforeEach(() => {
         activeServerId = 'server-a';
+        activeServerSnapshotState.serverId = 'server-a';
+        activeServerSnapshotState.serverUrl = 'https://stack-a.example.test';
+        activeServerSnapshotState.generation = 1;
+        activeServerListeners.clear();
         state.localSearchParams = {
             selectedId: 'machine-1',
             spawnServerId: 'server-b',
@@ -250,6 +283,19 @@ describe('machine picker server scope', () => {
             },
         ] as any;
     });
+
+    function emitActiveServerSnapshot(serverId: string) {
+        activeServerId = serverId;
+        activeServerSnapshotState.serverId = serverId;
+        activeServerSnapshotState.serverUrl = `https://${serverId}.example.test`;
+        activeServerSnapshotState.generation += 1;
+        const nextSnapshot = {
+            ...activeServerSnapshotState,
+        };
+        for (const listener of activeServerListeners) {
+            listener(nextSnapshot);
+        }
+    }
 
     it('propagates selected machine and server params back to new session route without switching global active server', async () => {
         setActiveServerAndSwitchSpy.mockReset();
@@ -513,5 +559,58 @@ describe('machine picker server scope', () => {
         expect(capturedMachineSelectionContentProps).toBeTruthy();
         expect(capturedMachineSelectionContentProps.groups).toHaveLength(2);
         expect(capturedMachineSelectionContentProps.onSelectScopedMachine).toEqual(expect.any(Function));
+    });
+
+    it('tracks active server snapshot changes so machine scope does not stay on a stale server', async () => {
+        capturedMachineSelectionContentProps = null;
+        state.localSearchParams = {
+            selectedId: '',
+        };
+        state.settings.serverSelectionGroups = [];
+        state.settings.serverSelectionActiveTargetKind = null;
+        state.settings.serverSelectionActiveTargetId = null;
+        scopedMachinesState.groups = [
+            {
+                serverId: 'server-a',
+                serverName: 'Server A',
+                loading: false,
+                signedOut: false,
+                machines: [],
+            },
+            {
+                serverId: 'server-b',
+                serverName: 'Server B',
+                loading: false,
+                signedOut: false,
+                machines: [
+                    {
+                        id: 'machine-b',
+                        serverId: 'server-b',
+                        metadata: { host: 'host-b', displayName: 'Machine B', homeDir: '/home/me' },
+                        active: true,
+                        createdAt: 1,
+                        updatedAt: 1,
+                        activeAt: Date.now(),
+                        seq: 1,
+                        metadataVersion: 1,
+                        daemonState: null,
+                        daemonStateVersion: 0,
+                    },
+                ],
+            },
+        ] as any;
+
+        const Screen = (await import('@/app/(app)/new/pick/machine')).default;
+        await renderScreen(React.createElement(Screen));
+
+        expect(capturedMachineSelectionContentProps).toBeTruthy();
+        expect(capturedMachineSelectionContentProps.selectedServerId).toBe('server-a');
+
+        await act(async () => {
+            emitActiveServerSnapshot('server-b');
+            await flushHookEffects();
+        });
+
+        expect(capturedMachineSelectionContentProps.selectedServerId).toBe('server-b');
     });
 });

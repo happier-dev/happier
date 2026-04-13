@@ -1,18 +1,23 @@
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import type { AgentId } from '@/agents/catalog/catalog';
+import type { CliAuthStatusData } from '@/sync/api/capabilities/capabilitiesProtocol';
 
 type AgentAvailabilityById = Readonly<Partial<Record<AgentId, boolean | null>>>;
+type AgentAuthStatusById = Readonly<Partial<Record<AgentId, CliAuthStatusData | null>>>;
 type InstallableDepKeyCountByAgentId = Readonly<Partial<Record<AgentId, number>>>;
 type SelectableWithoutCliByAgentId = Readonly<Partial<Record<AgentId, boolean>>>;
+
 export type NewSessionSelectableBackendEntry = Readonly<{
     target: BackendTargetRefV1;
     targetKey: string;
     builtInAgentId: AgentId | null;
     family: 'builtInAgent' | 'configuredAcpBackend';
 }>;
+
 type BaseSelectionParams = Readonly<{
     detectionTimestamp: number;
     availabilityById: AgentAvailabilityById;
+    authStatusById?: AgentAuthStatusById;
     installableDepKeyCountByAgentId: InstallableDepKeyCountByAgentId;
     selectableWithoutCliByAgentId?: SelectableWithoutCliByAgentId;
 }>;
@@ -20,25 +25,70 @@ type BaseSelectionParams = Readonly<{
 export type NewSessionProfileAvailabilityReason =
     | 'no-supported-cli'
     | 'cli-not-detected:any'
-    | `cli-not-detected:${AgentId}`;
+    | `cli-not-detected:${AgentId}`
+    | 'logged-out:any'
+    | `logged-out:${AgentId}`;
+
+function resolveAgentUnavailabilityReasonForNewSession(params: Readonly<{
+    agentId: AgentId;
+    detectionTimestamp: number;
+    availabilityById: AgentAvailabilityById;
+    authStatusById?: AgentAuthStatusById;
+    installableDepKeyCountByAgentId: InstallableDepKeyCountByAgentId;
+    selectableWithoutCliByAgentId?: SelectableWithoutCliByAgentId;
+}>): Exclude<NewSessionProfileAvailabilityReason, 'no-supported-cli' | 'cli-not-detected:any' | 'logged-out:any'> | null {
+    if (params.detectionTimestamp <= 0) return null;
+    if (params.authStatusById?.[params.agentId]?.state === 'logged_out') {
+        return params.selectableWithoutCliByAgentId?.[params.agentId] === true
+            ? null
+            : `logged-out:${params.agentId}`;
+    }
+    if (params.availabilityById[params.agentId] === true) return null;
+    if (params.selectableWithoutCliByAgentId?.[params.agentId] === true) return null;
+    if ((params.installableDepKeyCountByAgentId[params.agentId] ?? 0) > 0) return null;
+    return `cli-not-detected:${params.agentId}`;
+}
+
+function resolveBackendEntryUnavailabilityReasonForNewSession(params: Readonly<{
+    entry: NewSessionSelectableBackendEntry;
+    detectionTimestamp: number;
+    availabilityById: AgentAvailabilityById;
+    authStatusById?: AgentAuthStatusById;
+    installableDepKeyCountByAgentId: InstallableDepKeyCountByAgentId;
+    selectableWithoutCliByAgentId?: SelectableWithoutCliByAgentId;
+}>): Exclude<NewSessionProfileAvailabilityReason, 'no-supported-cli' | 'cli-not-detected:any' | 'logged-out:any'> | null {
+    if (params.entry.family === 'configuredAcpBackend') {
+        return null;
+    }
+    if (!params.entry.builtInAgentId) {
+        return null;
+    }
+    return resolveAgentUnavailabilityReasonForNewSession({
+        agentId: params.entry.builtInAgentId,
+        detectionTimestamp: params.detectionTimestamp,
+        availabilityById: params.availabilityById,
+        authStatusById: params.authStatusById,
+        installableDepKeyCountByAgentId: params.installableDepKeyCountByAgentId,
+        selectableWithoutCliByAgentId: params.selectableWithoutCliByAgentId,
+    });
+}
 
 export function isAgentSelectableForNewSession(params: Readonly<{
     agentId: AgentId;
     detectionTimestamp: number;
     availabilityById: AgentAvailabilityById;
+    authStatusById?: AgentAuthStatusById;
     installableDepKeyCountByAgentId: InstallableDepKeyCountByAgentId;
     selectableWithoutCliByAgentId?: SelectableWithoutCliByAgentId;
 }>): boolean {
-    if (params.detectionTimestamp <= 0) return true;
-    if (params.availabilityById[params.agentId] === true) return true;
-    if (params.selectableWithoutCliByAgentId?.[params.agentId] === true) return true;
-    return (params.installableDepKeyCountByAgentId[params.agentId] ?? 0) > 0;
+    return resolveAgentUnavailabilityReasonForNewSession(params) === null;
 }
 
 export function getSelectableAgentIdsForNewSession(params: Readonly<{
     candidateAgentIds: ReadonlyArray<AgentId>;
     detectionTimestamp: number;
     availabilityById: AgentAvailabilityById;
+    authStatusById?: AgentAuthStatusById;
     installableDepKeyCountByAgentId: InstallableDepKeyCountByAgentId;
     selectableWithoutCliByAgentId?: SelectableWithoutCliByAgentId;
 }>): AgentId[] {
@@ -46,6 +96,7 @@ export function getSelectableAgentIdsForNewSession(params: Readonly<{
         agentId,
         detectionTimestamp: params.detectionTimestamp,
         availabilityById: params.availabilityById,
+        authStatusById: params.authStatusById,
         installableDepKeyCountByAgentId: params.installableDepKeyCountByAgentId,
         selectableWithoutCliByAgentId: params.selectableWithoutCliByAgentId,
     }));
@@ -55,28 +106,18 @@ export function isBackendEntrySelectableForNewSession(params: Readonly<{
     entry: NewSessionSelectableBackendEntry;
     detectionTimestamp: number;
     availabilityById: AgentAvailabilityById;
+    authStatusById?: AgentAuthStatusById;
     installableDepKeyCountByAgentId: InstallableDepKeyCountByAgentId;
     selectableWithoutCliByAgentId?: SelectableWithoutCliByAgentId;
 }>): boolean {
-    if (params.entry.family === 'configuredAcpBackend') {
-        return true;
-    }
-    if (!params.entry.builtInAgentId) {
-        return true;
-    }
-    return isAgentSelectableForNewSession({
-        agentId: params.entry.builtInAgentId,
-        detectionTimestamp: params.detectionTimestamp,
-        availabilityById: params.availabilityById,
-        installableDepKeyCountByAgentId: params.installableDepKeyCountByAgentId,
-        selectableWithoutCliByAgentId: params.selectableWithoutCliByAgentId,
-    });
+    return resolveBackendEntryUnavailabilityReasonForNewSession(params) === null;
 }
 
 export function getSelectableBackendEntriesForNewSession(params: Readonly<{
     candidateBackendEntries: ReadonlyArray<NewSessionSelectableBackendEntry>;
     detectionTimestamp: number;
     availabilityById: AgentAvailabilityById;
+    authStatusById?: AgentAuthStatusById;
     installableDepKeyCountByAgentId: InstallableDepKeyCountByAgentId;
     selectableWithoutCliByAgentId?: SelectableWithoutCliByAgentId;
 }>): NewSessionSelectableBackendEntry[] {
@@ -84,6 +125,7 @@ export function getSelectableBackendEntriesForNewSession(params: Readonly<{
         entry,
         detectionTimestamp: params.detectionTimestamp,
         availabilityById: params.availabilityById,
+        authStatusById: params.authStatusById,
         installableDepKeyCountByAgentId: params.installableDepKeyCountByAgentId,
         selectableWithoutCliByAgentId: params.selectableWithoutCliByAgentId,
     }));
@@ -93,6 +135,7 @@ export function resolveProfileAvailabilityForNewSession(params: Readonly<{
     candidateBackendEntries: ReadonlyArray<NewSessionSelectableBackendEntry>;
     detectionTimestamp: number;
     availabilityById: AgentAvailabilityById;
+    authStatusById?: AgentAuthStatusById;
     installableDepKeyCountByAgentId: InstallableDepKeyCountByAgentId;
     selectableWithoutCliByAgentId?: SelectableWithoutCliByAgentId;
 }>): { available: boolean; reason?: NewSessionProfileAvailabilityReason } {
@@ -101,31 +144,33 @@ export function resolveProfileAvailabilityForNewSession(params: Readonly<{
     }
     if (params.candidateBackendEntries.length === 1) {
         const requiredEntry = params.candidateBackendEntries[0];
-        const selectable = isBackendEntrySelectableForNewSession({
+        const unavailabilityReason = resolveBackendEntryUnavailabilityReasonForNewSession({
             entry: requiredEntry,
             detectionTimestamp: params.detectionTimestamp,
             availabilityById: params.availabilityById,
+            authStatusById: params.authStatusById,
             installableDepKeyCountByAgentId: params.installableDepKeyCountByAgentId,
             selectableWithoutCliByAgentId: params.selectableWithoutCliByAgentId,
         });
-        if (!selectable) {
-            return {
-                available: false,
-                reason: requiredEntry.builtInAgentId ? `cli-not-detected:${requiredEntry.builtInAgentId}` : 'cli-not-detected:any',
-            };
+        if (unavailabilityReason) {
+            return { available: false, reason: unavailabilityReason };
         }
         return { available: true };
     }
 
-    const selectableEntries = getSelectableBackendEntriesForNewSession({
-        candidateBackendEntries: params.candidateBackendEntries,
-        detectionTimestamp: params.detectionTimestamp,
-        availabilityById: params.availabilityById,
-        installableDepKeyCountByAgentId: params.installableDepKeyCountByAgentId,
-        selectableWithoutCliByAgentId: params.selectableWithoutCliByAgentId,
-    });
-    if (selectableEntries.length === 0) {
-        return { available: false, reason: 'cli-not-detected:any' };
+    const unavailabilityReasons = params.candidateBackendEntries
+        .map((entry) => resolveBackendEntryUnavailabilityReasonForNewSession({
+            entry,
+            detectionTimestamp: params.detectionTimestamp,
+            availabilityById: params.availabilityById,
+            authStatusById: params.authStatusById,
+            installableDepKeyCountByAgentId: params.installableDepKeyCountByAgentId,
+            selectableWithoutCliByAgentId: params.selectableWithoutCliByAgentId,
+        }))
+        .filter((reason): reason is Exclude<NewSessionProfileAvailabilityReason, 'no-supported-cli' | 'cli-not-detected:any' | 'logged-out:any'> => reason !== null);
+    if (unavailabilityReasons.length === params.candidateBackendEntries.length) {
+        const hasCliNotDetected = unavailabilityReasons.some((reason) => reason.startsWith('cli-not-detected:'));
+        return { available: false, reason: hasCliNotDetected ? 'cli-not-detected:any' : 'logged-out:any' };
     }
     return { available: true };
 }
@@ -135,6 +180,7 @@ export function resolveNextSelectableBackendEntryForNewSession(params: Readonly<
     currentTargetKey: string;
     detectionTimestamp: number;
     availabilityById: AgentAvailabilityById;
+    authStatusById?: AgentAuthStatusById;
     installableDepKeyCountByAgentId: InstallableDepKeyCountByAgentId;
     selectableWithoutCliByAgentId?: SelectableWithoutCliByAgentId;
 }>): NewSessionSelectableBackendEntry | null {
@@ -145,6 +191,7 @@ export function resolveNextSelectableBackendEntryForNewSession(params: Readonly<
         candidateBackendEntries: candidates,
         detectionTimestamp: params.detectionTimestamp,
         availabilityById: params.availabilityById,
+        authStatusById: params.authStatusById,
         installableDepKeyCountByAgentId: params.installableDepKeyCountByAgentId,
         selectableWithoutCliByAgentId: params.selectableWithoutCliByAgentId,
     });
@@ -162,6 +209,7 @@ export function resolveNextSelectableAgentForNewSession(params: Readonly<{
     currentAgentId: AgentId;
     detectionTimestamp: number;
     availabilityById: AgentAvailabilityById;
+    authStatusById?: AgentAuthStatusById;
     installableDepKeyCountByAgentId: InstallableDepKeyCountByAgentId;
     selectableWithoutCliByAgentId?: SelectableWithoutCliByAgentId;
 }>): AgentId | null {
@@ -170,6 +218,7 @@ export function resolveNextSelectableAgentForNewSession(params: Readonly<{
     const baseParams: BaseSelectionParams = {
         detectionTimestamp: params.detectionTimestamp,
         availabilityById: params.availabilityById,
+        authStatusById: params.authStatusById,
         installableDepKeyCountByAgentId: params.installableDepKeyCountByAgentId,
         selectableWithoutCliByAgentId: params.selectableWithoutCliByAgentId,
     };

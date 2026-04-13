@@ -1,0 +1,56 @@
+import * as React from 'react';
+
+import { getAgentCore, buildNewSessionOptionsFromUiState, type AgentId } from '@/agents/catalog/catalog';
+import {
+    useNewSessionConnectedServices,
+    type NewSessionConnectedServicesResult,
+} from '@/components/sessions/new/modules/useNewSessionConnectedServices';
+
+type BackendNewSessionOptionStateByTargetKey = Record<string, Record<string, unknown>>;
+type ConnectedServicesParams = Parameters<typeof useNewSessionConnectedServices>[0];
+
+export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
+    agentType: AgentId;
+    selectedBackendTargetKey: string;
+    setBackendNewSessionOptionStateByTargetKey: React.Dispatch<React.SetStateAction<BackendNewSessionOptionStateByTargetKey>>;
+    agentOptionState: Record<string, unknown> | null;
+    settings: ConnectedServicesParams['settings'];
+    router: ConnectedServicesParams['router'];
+}>): Readonly<{
+    setAgentOptionStateForCurrentAgent: (key: string, value: unknown) => void;
+    connectedServicesAuthChip: NewSessionConnectedServicesResult['connectedServicesAuthChip'];
+    agentNewSessionOptions: Record<string, unknown> | null;
+}> {
+    const agentCore = React.useMemo(() => getAgentCore(params.agentType), [params.agentType]);
+
+    const setAgentOptionStateForCurrentAgent = React.useCallback((key: string, value: unknown) => {
+        params.setBackendNewSessionOptionStateByTargetKey((prev) => {
+            const current = prev[params.selectedBackendTargetKey] ?? {};
+            const nextForTarget = { ...current, [key]: value };
+            return { ...prev, [params.selectedBackendTargetKey]: nextForTarget };
+        });
+    }, [params.selectedBackendTargetKey]);
+
+    const { connectedServicesBindingsPayload, connectedServicesAuthChip } = useNewSessionConnectedServices({
+        agentCore,
+        agentOptionState: params.agentOptionState,
+        settings: params.settings,
+        router: params.router,
+        setAgentOptionStateForCurrentAgent,
+    });
+
+    const agentNewSessionOptions = React.useMemo(() => {
+        const base = buildNewSessionOptionsFromUiState({ agentId: params.agentType, agentOptionState: params.agentOptionState }) ?? {};
+        const merged: Record<string, unknown> = { ...base };
+        if (connectedServicesBindingsPayload) {
+            merged.connectedServices = connectedServicesBindingsPayload;
+        }
+        return Object.keys(merged).length > 0 ? merged : null;
+    }, [params.agentOptionState, params.agentType, connectedServicesBindingsPayload]);
+
+    return {
+        setAgentOptionStateForCurrentAgent,
+        connectedServicesAuthChip,
+        agentNewSessionOptions,
+    };
+}

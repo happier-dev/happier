@@ -59,13 +59,13 @@ describe('useNewSessionBackendTargetState', () => {
         expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.backendTarget).toEqual({ kind: 'configuredAcpBackend', backendId: 'review-bot' });
     });
 
-    it('persists the exact configured ACP backend target when selection changes', async () => {
+    it('preserves the last real built-in agent while persisting the exact configured ACP backend target', async () => {
         let observed: ReturnType<typeof useNewSessionBackendTargetState> | null = null;
 
         function Probe() {
             observed = useNewSessionBackendTargetState({
                 entries,
-                lastUsedAgent: 'customAcp',
+                lastUsedAgent: 'codex',
                 lastUsedBackendTarget: null,
             } as any);
             return null;
@@ -81,12 +81,55 @@ describe('useNewSessionBackendTargetState', () => {
         });
 
         expect(applySettingsMock).toHaveBeenCalledWith({
-            lastUsedAgent: 'customAcp',
+            lastUsedAgent: 'codex',
             lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
         });
 
         act(() => {
             tree?.unmount();
+        });
+    });
+
+    it('falls back to an available last-used built-in target when temp agent params point to an unavailable built-in agent', async () => {
+        const fallbackEntries: ReadonlyArray<ResolvedBackendCatalogEntry> = [
+            {
+                target: { kind: 'builtInAgent', agentId: 'customAcp' },
+                targetKey: 'agent:customAcp',
+                family: 'builtInAgent',
+                providerAgentId: 'customAcp',
+                builtInAgentId: 'customAcp',
+                iconAgentId: 'customAcp',
+                title: 'Custom ACP',
+                subtitle: 'customAcp',
+            },
+            {
+                target: { kind: 'builtInAgent', agentId: 'codex' },
+                targetKey: 'agent:codex',
+                family: 'builtInAgent',
+                providerAgentId: 'codex',
+                builtInAgentId: 'codex',
+                iconAgentId: 'codex',
+                title: 'Codex',
+                subtitle: 'codex',
+            },
+        ];
+        let observed: ReturnType<typeof useNewSessionBackendTargetState> | null = null;
+
+        function Probe() {
+            observed = useNewSessionBackendTargetState({
+                entries: fallbackEntries,
+                tempAgentType: 'claude',
+                lastUsedAgent: 'codex',
+                lastUsedBackendTarget: null,
+            } as any);
+            return null;
+        }
+
+        await renderScreen(React.createElement(Probe));
+
+        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.backendTarget).toEqual({
+            kind: 'builtInAgent',
+            agentId: 'codex',
         });
     });
 });

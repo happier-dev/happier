@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
@@ -40,6 +40,17 @@ vi.mock('@/auth/encryption/createEncryptionFromAuthCredentials', () => ({
 vi.mock('@/sync/engine/machines/syncMachines', () => ({
     fetchAndApplyMachines: fetchAndApplyMachinesMock,
 }));
+
+afterEach(() => {
+    vi.restoreAllMocks();
+    act(() => {
+        storage.setState((state) => ({
+            ...state,
+            machineListByServerId: {},
+            machineListStatusByServerId: {},
+        }));
+    });
+});
 
 type ProbeProps = Readonly<{
     allowedServerIds: string[];
@@ -127,6 +138,40 @@ describe('useServerScopedMachineOptions', () => {
         expect(activeGroup?.machines.map((m) => m.id)).toEqual(['machine-a']);
         expect(remoteGroup?.machines.map((m) => m.id)).toEqual(['machine-cache']);
         expect(remoteGroup?.loading).toBe(false);
+        expect(fetchAndApplyMachinesMock).not.toHaveBeenCalled();
+    });
+
+    it('uses the active server cache when the active machine array has not hydrated yet', async () => {
+        const captured: Array<ReturnType<typeof useServerScopedMachineOptions>> = [];
+        const cachedActiveMachine = createMachine('machine-a');
+
+        fetchAndApplyMachinesMock.mockReset();
+
+        act(() => {
+            storage.setState((state) => ({
+                ...state,
+                machineListByServerId: {
+                    ...state.machineListByServerId,
+                    'server-a': [cachedActiveMachine],
+                },
+                machineListStatusByServerId: {
+                    ...state.machineListStatusByServerId,
+                    'server-a': 'idle',
+                },
+            }));
+        });
+
+        await renderScreen(<Probe
+                    allowedServerIds={['server-a']}
+                    activeServerId="server-a"
+                    activeMachines={[]}
+                    onGroups={(groups) => captured.push(groups)}
+                />);
+
+        const latest = captured.at(-1) ?? [];
+        const activeGroup = latest.find((group) => group.serverId === 'server-a');
+        expect(activeGroup?.machines.map((m) => m.id)).toEqual(['machine-a']);
+        expect(activeGroup?.loading).toBe(false);
         expect(fetchAndApplyMachinesMock).not.toHaveBeenCalled();
     });
 

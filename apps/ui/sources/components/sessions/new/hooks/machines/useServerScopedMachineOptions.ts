@@ -3,6 +3,7 @@ import * as React from 'react';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { listServerProfiles, type ServerProfile } from '@/sync/domains/server/serverProfiles';
 import { useMachineListByServerId, useMachineListStatusByServerId } from '@/sync/domains/state/storage';
+import { resolveServerScopedMachines } from '@/sync/domains/machines/resolveServerScopedMachines';
 
 export type ServerScopedMachine = Machine & Readonly<{
     serverId: string;
@@ -70,9 +71,12 @@ export function useServerScopedMachineOptions(params: UseServerScopedMachineOpti
             const signedOut = status === 'signedOut';
             const loading = !isActive && !signedOut && (status === 'loading' || !hasCachedRemote);
 
-            const baseMachines = isActive
-                ? params.activeMachines
-                : (machineListByServerId[serverId] ?? []);
+            const baseMachines = resolveServerScopedMachines({
+                serverId,
+                activeServerId,
+                activeMachines: params.activeMachines,
+                machineListByServerId,
+            }) ?? [];
             const machines = (baseMachines ?? [])
                 .filter((machine) => !machine.revokedAt)
                 .map((machine) => buildServerScopedMachine(machine, { serverId, serverName }));

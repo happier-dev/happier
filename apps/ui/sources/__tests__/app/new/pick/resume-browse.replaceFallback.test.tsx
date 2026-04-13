@@ -17,6 +17,17 @@ enableReactActEnvironment();
 
 const routerMock = createRouterMock();
 const navigationMock = createNavigationMock();
+const routeParamsState = vi.hoisted(() => ({
+    value: {
+        agentType: 'claude',
+        dataId: 'draft-1',
+        machineId: 'machine-2',
+        spawnServerId: 'server-2',
+    } as Record<string, string>,
+}));
+const settingsState = vi.hoisted(() => ({
+    value: {} as Record<string, unknown>,
+}));
 type DirectSessionsBrowseScreenProps = Readonly<{
     interaction?: DirectSessionsBrowseInteraction;
     lockScope?: DirectSessionsBrowseScopeLock | null;
@@ -42,12 +53,7 @@ installPickerCommonModuleMocks({
         ({
             ...(await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
                 navigation: navigationMock,
-                params: {
-                    agentType: 'claude',
-                    dataId: 'draft-1',
-                    machineId: 'machine-2',
-                    spawnServerId: 'server-2',
-                },
+                params: () => routeParamsState.value,
                 router: {
                     push: routerMock.push,
                     back: routerMock.back,
@@ -61,7 +67,7 @@ installPickerCommonModuleMocks({
         (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSettings: () => ({}) as any,
+                useSettings: () => settingsState.value as any,
             },
         }),
 });
@@ -83,11 +89,18 @@ vi.mock('@/sync/store/hooks', () => ({
 }));
 
 vi.mock('@/utils/sessions/tempDataStore', () => ({
-    peekTempData: () => ({ machineId: 'machine-2', backendTarget: null, agentNewSessionOptionStateByAgentId: {} }),
+    peekTempData: () => ({ machineId: 'machine-2', backendTarget: null, backendNewSessionOptionStateByTargetKey: {} }),
 }));
 
 describe('ResumeBrowsePickerScreen replace fallback', () => {
     beforeEach(() => {
+        routeParamsState.value = {
+            agentType: 'claude',
+            dataId: 'draft-1',
+            machineId: 'machine-2',
+            spawnServerId: 'server-2',
+        };
+        settingsState.value = {};
         browseScreenPropsRef.current = null;
         routerMock.push.mockClear();
         routerMock.back.mockClear();
@@ -134,5 +147,115 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
         });
         expect(routerMock.setParams).not.toHaveBeenCalled();
         expect(routerMock.back).not.toHaveBeenCalled();
+    });
+
+    it('round-trips a serialized backendTarget without reserializing the legacy customAcp agentType', async () => {
+        routeParamsState.value = {
+            backendTarget: JSON.stringify({ kind: 'configuredAcpBackend', backendId: 'review-bot' }),
+            dataId: 'draft-1',
+            machineId: 'machine-2',
+            spawnServerId: 'server-2',
+        };
+        settingsState.value = {
+            acpCatalogSettingsV1: {
+                v: 2,
+                backends: [
+                    {
+                        id: 'review-bot',
+                        name: 'review-bot',
+                        title: 'Review Bot',
+                        command: 'custom-acp',
+                        args: ['serve'],
+                        env: {},
+                        transportProfile: 'generic',
+                        capabilities: {
+                            supportsLoadSession: false,
+                            supportsModes: 'unknown',
+                            supportsModels: 'unknown',
+                            supportsConfigOptions: 'unknown',
+                            promptImageSupport: 'unknown',
+                        },
+                        createdAt: 1,
+                        updatedAt: 1,
+                    },
+                ],
+            },
+        };
+
+        const ResumeBrowsePickerScreen = (await import('@/app/(app)/new/pick/resume-browse')).default;
+
+        await renderScreen(React.createElement(ResumeBrowsePickerScreen));
+
+        const props = browseScreenPropsRef.current;
+        expect(props?.lockScope?.providerId).toBe('customAcp');
+        await props?.onPickRemoteSessionId?.('session-picked');
+
+        expect(routerMock.replace).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                backendTarget: JSON.stringify({ kind: 'configuredAcpBackend', backendId: 'review-bot' }),
+                backendTargetKey: 'acpBackend:review-bot',
+                dataId: 'draft-1',
+                machineId: 'machine-2',
+                spawnServerId: 'server-2',
+                resumeSessionId: 'session-picked',
+            },
+        });
+    });
+
+    it('falls back to the settings-backed configured backend when route context is missing', async () => {
+        routeParamsState.value = {
+            dataId: 'draft-1',
+            machineId: 'machine-2',
+            spawnServerId: 'server-2',
+        };
+        settingsState.value = {
+            lastUsedAgent: 'codex',
+            lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            acpCatalogSettingsV1: {
+                v: 2,
+                backends: [
+                    {
+                        id: 'review-bot',
+                        name: 'review-bot',
+                        title: 'Review Bot',
+                        command: 'custom-acp',
+                        args: ['serve'],
+                        env: {},
+                        transportProfile: 'generic',
+                        capabilities: {
+                            supportsLoadSession: false,
+                            supportsModes: 'unknown',
+                            supportsModels: 'unknown',
+                            supportsConfigOptions: 'unknown',
+                            promptImageSupport: 'unknown',
+                        },
+                        createdAt: 1,
+                        updatedAt: 1,
+                    },
+                ],
+            },
+        };
+
+        const ResumeBrowsePickerScreen = (await import('@/app/(app)/new/pick/resume-browse')).default;
+
+        await renderScreen(React.createElement(ResumeBrowsePickerScreen));
+
+        const props = browseScreenPropsRef.current;
+        expect(props?.lockScope?.providerId).toBe('customAcp');
+
+        await props?.onPickRemoteSessionId?.('session-picked');
+
+        expect(routerMock.replace).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                backendTarget: JSON.stringify({ kind: 'configuredAcpBackend', backendId: 'review-bot' }),
+                backendTargetKey: 'acpBackend:review-bot',
+                dataId: 'draft-1',
+                machineId: 'machine-2',
+                spawnServerId: 'server-2',
+                resumeSessionId: 'session-picked',
+            },
+        });
     });
 });

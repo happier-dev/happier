@@ -6,6 +6,7 @@ import {
     buildPersistedNewSessionDraftFromAuthoringDraft,
 } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
+import { resolvePersistedAgentIdForBackendTarget } from '@/agents/backendCatalog/resolvePersistedAgentIdForBackendTarget';
 import { saveNewSessionDraft } from '@/sync/domains/state/persistence';
 import { resolveTerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
 import { normalizeSessionAuthoringConnectedServices } from '@/sync/domains/sessionAuthoring/sessionAuthoringNormalization';
@@ -16,6 +17,7 @@ import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permi
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import type { AgentId } from '@/agents/catalog/catalog';
 import type { Settings } from '@/sync/domains/settings/settings';
+import type { BackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
 
 type PersistedDraft = ReturnType<typeof buildPersistedNewSessionDraftFromAuthoringDraft>;
 type BuildResolvedInputs = Parameters<typeof buildNewSessionAuthoringDraftFromResolvedInputs>[0];
@@ -48,7 +50,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
     selectedSecretId: string | null;
     selectedSecretIdByProfileIdByEnvVarName: BuildPersistedInputs['selectedSecretIdByProfileIdByEnvVarName'];
     getSessionOnlySecretValueEncByProfileIdByEnvVarName: () => BuildPersistedInputs['sessionOnlySecretValueEncByProfileIdByEnvVarName'];
-    agentNewSessionOptionStateByAgentId: Record<string, Record<string, unknown>>;
+    backendNewSessionOptionStateByTargetKey: BackendNewSessionOptionStateByTargetKey;
 }>): Readonly<{
     authoringContext: ReturnType<typeof buildNewSessionAuthoringContext>;
     currentAuthoringDraft: SessionAuthoringDraft;
@@ -63,13 +65,18 @@ export function useNewSessionAuthoringState(params: Readonly<{
     const [draftPersistenceEnabled, setDraftPersistenceEnabled] = React.useState(true);
     const draftPersistenceEnabledRef = React.useRef(true);
     const draftPersistenceGenerationRef = React.useRef(0);
+    const draftAgentId = React.useMemo(() => resolvePersistedAgentIdForBackendTarget({
+        backendTarget: params.backendTarget,
+        persistedAgentId: params.settings.lastUsedAgent,
+        selectedBuiltInAgentId: params.agentType,
+    }), [params.agentType, params.backendTarget, params.settings.lastUsedAgent]);
 
     const buildCurrentAuthoringDraft = React.useCallback((effectiveAutomationDraft: NewSessionAutomationDraft) => buildNewSessionAuthoringDraftFromResolvedInputs({
         directory: params.selectedPath,
         checkoutCreationDraft: params.checkoutCreationDraft,
         prompt: params.sessionPrompt,
         displayText: params.sessionPrompt,
-        agentId: params.agentType,
+        agentId: draftAgentId,
         backendTarget: params.backendTarget,
         transcriptStorage: params.transcriptStorage ?? null,
         profileId: params.useProfiles ? (params.selectedProfileId ?? null) : null,
@@ -94,10 +101,11 @@ export function useNewSessionAuthoringState(params: Readonly<{
         automation: effectiveAutomationDraft.enabled ? effectiveAutomationDraft : null,
     }), [
         params.acpSessionModeId,
-        params.agentNewSessionOptions,
         params.agentType,
+        params.agentNewSessionOptions,
         params.backendTarget,
         params.checkoutCreationDraft,
+        draftAgentId,
         params.effectiveWindowsRemoteSessionLaunchMode,
         params.mcpSelection,
         params.modelMode,
@@ -142,12 +150,14 @@ export function useNewSessionAuthoringState(params: Readonly<{
         selectedSecretId: params.selectedSecretId,
         selectedSecretIdByProfileIdByEnvVarName: params.selectedSecretIdByProfileIdByEnvVarName,
         sessionOnlySecretValueEncByProfileIdByEnvVarName: params.getSessionOnlySecretValueEncByProfileIdByEnvVarName(),
-        agentNewSessionOptionStateByAgentId: params.agentNewSessionOptionStateByAgentId,
+        backendNewSessionOptionStateByTargetKey: params.backendNewSessionOptionStateByTargetKey,
+        preferredPersistedAgentId: draftAgentId,
         updatedAt: Date.now(),
     }), [
         currentAuthoringDraft,
-        params.agentNewSessionOptionStateByAgentId,
+        params.backendNewSessionOptionStateByTargetKey,
         params.automationRequestedByRoute,
+        draftAgentId,
         params.getSessionOnlySecretValueEncByProfileIdByEnvVarName,
         params.selectedMachineId,
         params.selectedSecretId,

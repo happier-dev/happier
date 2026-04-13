@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { useLocalSearchParams } from 'expo-router';
 
 import { t } from '@/text';
 import { Modal } from '@/modal';
@@ -21,6 +20,7 @@ import type { Settings } from '@/sync/domains/settings/settings';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import { resolveEffectiveWindowsRemoteSessionLaunchMode } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode';
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
+import { resolvePersistedAgentIdForBackendTarget } from '@/agents/backendCatalog/resolvePersistedAgentIdForBackendTarget';
 import { buildSpawnEnvironmentVariablesFromUiState, buildSpawnSessionExtrasFromUiState, getAgentResumeExperimentsFromSettings, getNewSessionPreflightIssues } from '@/agents/catalog/catalog';
 import { transformProfileToEnvironmentVars } from '@/components/sessions/new/modules/profileHelpers';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
@@ -44,6 +44,7 @@ import { delay } from '@/utils/timing/time';
 import { showDaemonUnavailableAlert } from '@/utils/errors/daemonUnavailableAlert';
 import { captureExceptionIfEnabled } from '@/utils/system/sentry';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
+import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import type { SessionMcpSelectionV1 } from '@happier-dev/protocol';
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 import { materializeNewSessionCheckout } from '@/components/sessions/new/modules/materializeNewSessionCheckout';
@@ -74,12 +75,6 @@ function buildRecoveryDataIdFromError(error: unknown): string | null {
     return storeTempData({
         attachmentDrafts: attachmentDrafts as AttachmentDraft[],
     });
-}
-
-function readSingleSearchParam(value: string | string[] | undefined): string | null {
-    const candidate = Array.isArray(value) ? value[0] : value;
-    const normalized = typeof candidate === 'string' ? candidate.trim() : '';
-    return normalized.length > 0 ? normalized : null;
 }
 
 export type CreatedSessionFollowUpContext = Readonly<{
@@ -150,8 +145,6 @@ export function useCreateNewSession(params: Readonly<{
 }> {
     const mountedRef = useMountedRef();
     const applySettings = useApplySettings();
-    const localSearchParams = useLocalSearchParams<{ server?: string | string[] }>();
-    const currentServerOverride = readSingleSearchParam(localSearchParams.server);
     const latestParamsRef = React.useRef(params);
     // Keep the latest params available synchronously so event handlers can't observe
     // a stale snapshot in the window between rerender and effect flush.
@@ -199,10 +192,15 @@ export function useCreateNewSession(params: Readonly<{
 
             const updatedPaths = [{ machineId: current.selectedMachineId, path: effectiveSelectedPath }, ...current.recentMachinePaths.filter((rp) => rp.machineId !== current.selectedMachineId)].slice(0, 10);
             const profilesActive = current.useProfiles;
+            const nextLastUsedAgent = resolvePersistedAgentIdForBackendTarget({
+                backendTarget: current.backendTarget ?? null,
+                persistedAgentId: current.settings.lastUsedAgent,
+                selectedBuiltInAgentId: current.agentType,
+            });
 
             const settingsUpdate: MutableSettingsDelta = {
                 recentMachinePaths: updatedPaths,
-                lastUsedAgent: current.agentType,
+                lastUsedAgent: nextLastUsedAgent,
                 lastUsedBackendTarget: current.backendTarget,
             };
             if (profilesActive) {
@@ -343,7 +341,7 @@ export function useCreateNewSession(params: Readonly<{
                 checkoutCreationDraft: current.checkoutCreationDraft ?? null,
                 prompt: normalizedSessionPrompt,
                 displayText: normalizedSessionPrompt,
-                agentId: current.agentType,
+                agentId: nextLastUsedAgent,
                 backendTarget,
                 transcriptStorage: current.transcriptStorage ?? null,
                 profileId: profilesActive ? (current.selectedProfileId ?? '') : null,
@@ -470,54 +468,56 @@ export function useCreateNewSession(params: Readonly<{
                 let initialMessageText = '';
                 let recoverableCreatedSessionDraft = '';
 
-                try {
-                    const shouldSendInitialMessage = (opts?.initialMessage ?? 'send') !== 'skip';
-                    const shouldPrepareInitialMessage = shouldSendInitialMessage && current.sessionPrompt.trim();
-                    if (shouldPrepareInitialMessage) {
-                        const promptInvocationsV1 = storage.getState().settings.promptInvocationsV1;
-                        const resolvedInitialMessage = resolveSessionComposerSend({
-                            input: current.sessionPrompt,
-                            executionRunsEnabled: false,
-                            promptInvocationsV1,
-                        });
-
-                        initialMessageText = current.sessionPrompt;
-                        if (resolvedInitialMessage.kind === 'template') {
-                            initialMessageText = await expandPromptTemplateInvocation({
-                                targetArtifactId: resolvedInitialMessage.targetArtifactId,
-                                argsText: resolvedInitialMessage.rest,
+                if (opts?.afterCreated) {
+                    try {
+                        const shouldSendInitialMessage = (opts?.initialMessage ?? 'send') !== 'skip';
+                        const shouldPrepareInitialMessage = shouldSendInitialMessage && current.sessionPrompt.trim();
+                        if (shouldPrepareInitialMessage) {
+                            const promptInvocationsV1 = storage.getState().settings.promptInvocationsV1;
+                            const resolvedInitialMessage = resolveSessionComposerSend({
+                                input: current.sessionPrompt,
+                                executionRunsEnabled: false,
+                                promptInvocationsV1,
                             });
-                        } else if (resolvedInitialMessage.kind === 'send') {
-                            initialMessageText = resolvedInitialMessage.text;
-                        } else if (resolvedInitialMessage.kind === 'noop') {
-                            initialMessageText = '';
-                        }
-                    }
 
-                    await followUpSpawnedSessionWithServerScope({
-                        sessionId: result.sessionId,
-                        targetServerId: resolvedTargetServerId,
-                        initialMessageText,
-                        metaOverrides: (() => {
-                            const agentCore = getAgentCore(current.agentType);
-                            if (
-                                agentCore.model.supportsSelection
-                                && agentCore.model.nonAcpApplyScope === 'next_prompt'
-                                && current.modelMode
-                                && current.modelMode !== 'default'
-                            ) {
-                                // Some providers only apply model overrides when processing a user prompt.
-                                // Seed the initial message so the first turn uses the selected model.
-                                return { model: current.modelMode };
+                            initialMessageText = current.sessionPrompt;
+                            if (resolvedInitialMessage.kind === 'template') {
+                                initialMessageText = await expandPromptTemplateInvocation({
+                                    targetArtifactId: resolvedInitialMessage.targetArtifactId,
+                                    argsText: resolvedInitialMessage.rest,
+                                });
+                            } else if (resolvedInitialMessage.kind === 'send') {
+                                initialMessageText = resolvedInitialMessage.text;
+                            } else if (resolvedInitialMessage.kind === 'noop') {
+                                initialMessageText = '';
                             }
+                        }
 
-                            return null;
-                        })(),
-                        profileId: profilesActive ? (current.selectedProfileId ?? '') : null,
-                    });
-                } catch (error) {
-                    postSpawnFollowUpError = error;
-                    recoverableCreatedSessionDraft = initialMessageText;
+                        await followUpSpawnedSessionWithServerScope({
+                            sessionId: result.sessionId,
+                            targetServerId: resolvedTargetServerId,
+                            initialMessageText,
+                            metaOverrides: (() => {
+                                const agentCore = getAgentCore(current.agentType);
+                                if (
+                                    agentCore.model.supportsSelection
+                                    && agentCore.model.nonAcpApplyScope === 'next_prompt'
+                                    && current.modelMode
+                                    && current.modelMode !== 'default'
+                                ) {
+                                    // Some providers only apply model overrides when processing a user prompt.
+                                    // Seed the initial message so the first turn uses the selected model.
+                                    return { model: current.modelMode };
+                                }
+
+                                return null;
+                            })(),
+                            profileId: profilesActive ? (current.selectedProfileId ?? '') : null,
+                        });
+                    } catch (error) {
+                        postSpawnFollowUpError = error;
+                        recoverableCreatedSessionDraft = initialMessageText;
+                    }
                 }
 
                 storage.getState().updateSessionPermissionMode(result.sessionId, current.permissionMode);
@@ -559,7 +559,73 @@ export function useCreateNewSession(params: Readonly<{
                     return Boolean(storage.getState().sessions[createdSessionId]);
                 };
 
-                if (!postSpawnFollowUpError && opts?.afterCreated) {
+                if (!opts?.afterCreated) {
+                    try {
+                        const shouldSendInitialMessage = (opts?.initialMessage ?? 'send') !== 'skip';
+                        let initialMessageText = '';
+
+                        if (shouldSendInitialMessage && current.sessionPrompt.trim()) {
+                            const promptInvocationsV1 = storage.getState().settings.promptInvocationsV1;
+                            const resolvedInitialMessage = resolveSessionComposerSend({
+                                input: current.sessionPrompt,
+                                executionRunsEnabled: false,
+                                promptInvocationsV1,
+                            });
+
+                            initialMessageText = current.sessionPrompt;
+                            if (resolvedInitialMessage.kind === 'template') {
+                                initialMessageText = await expandPromptTemplateInvocation({
+                                    targetArtifactId: resolvedInitialMessage.targetArtifactId,
+                                    argsText: resolvedInitialMessage.rest,
+                                });
+                            } else if (resolvedInitialMessage.kind === 'send') {
+                                initialMessageText = resolvedInitialMessage.text;
+                            } else if (resolvedInitialMessage.kind === 'noop') {
+                                initialMessageText = '';
+                            }
+                        }
+
+                        const followUpTask = followUpSpawnedSessionWithServerScope({
+                            sessionId: result.sessionId,
+                            targetServerId: resolvedTargetServerId,
+                            initialMessageText,
+                            metaOverrides: (() => {
+                                const agentCore = getAgentCore(current.agentType);
+                                if (
+                                    agentCore.model.supportsSelection
+                                    && agentCore.model.nonAcpApplyScope === 'next_prompt'
+                                    && current.modelMode
+                                    && current.modelMode !== 'default'
+                                ) {
+                                    // Some providers only apply model overrides when processing a user prompt.
+                                    // Seed the initial message so the first turn uses the selected model.
+                                    return { model: current.modelMode };
+                                }
+
+                                return null;
+                            })(),
+                            profileId: profilesActive ? (current.selectedProfileId ?? '') : null,
+                        });
+
+                        const recoveryDataId = null;
+                        const sessionRoute = buildScopedSessionRouteHref({
+                            sessionId: result.sessionId,
+                            serverId: resolvedTargetServerId,
+                            query: recoveryDataId ? { recoveryDataId } : undefined,
+                        });
+
+                        current.router.replace(sessionRoute, {
+                            dangerouslySingular() {
+                                return 'session';
+                            },
+                        });
+
+                        await followUpTask;
+                    } catch (error) {
+                        postSpawnFollowUpError = error;
+                        recoverableCreatedSessionDraft = initialMessageText;
+                    }
+                } else if (!postSpawnFollowUpError && opts?.afterCreated) {
                     try {
                         await opts.afterCreated({
                             sessionId: result.sessionId,
@@ -619,20 +685,11 @@ export function useCreateNewSession(params: Readonly<{
                 }
 
                 const recoveryDataId = postSpawnFollowUpError ? buildRecoveryDataIdFromError(postSpawnFollowUpError) : null;
-                const sessionPathname = `/session/${result.sessionId}`;
-                const sessionRoute = currentServerOverride
-                    ? {
-                        pathname: sessionPathname,
-                        params: {
-                            server: currentServerOverride,
-                            ...(recoveryDataId ? { recoveryDataId } : {}),
-                        },
-                    }
-                    : (
-                        recoveryDataId
-                            ? `${sessionPathname}?recoveryDataId=${encodeURIComponent(recoveryDataId)}`
-                            : sessionPathname
-                    );
+                const sessionRoute = buildScopedSessionRouteHref({
+                    sessionId: result.sessionId,
+                    serverId: resolvedTargetServerId,
+                    query: recoveryDataId ? { recoveryDataId } : undefined,
+                });
 
                 current.router.replace(sessionRoute, {
                     dangerouslySingular() {
@@ -729,7 +786,7 @@ export function useCreateNewSession(params: Readonly<{
             Modal.alert(t('common.error'), errorMessage);
             latestParamsRef.current.setIsCreating(false);
         }
-    }, [applySettings, currentServerOverride, mountedRef]);
+    }, [applySettings, mountedRef]);
 
     return { handleCreateSession };
 }

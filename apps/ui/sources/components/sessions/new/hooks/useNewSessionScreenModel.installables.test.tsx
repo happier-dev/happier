@@ -183,7 +183,7 @@ const persistedDraft = vi.hoisted(() => ({
     permissionMode: 'default',
     modelMode: 'default',
     acpSessionModeId: 'plan',
-    agentNewSessionOptionStateByAgentId: {},
+    backendNewSessionOptionStateByTargetKey: {},
     updatedAt: 123,
 }));
 
@@ -606,7 +606,7 @@ describe('useNewSessionScreenModel (installables)', () => {
         persistedDraft.permissionMode = 'default';
         persistedDraft.modelMode = 'default';
         persistedDraft.acpSessionModeId = 'plan';
-        persistedDraft.agentNewSessionOptionStateByAgentId = {};
+        persistedDraft.backendNewSessionOptionStateByTargetKey = {};
         delete (persistedDraft as any).backendTarget;
         delete (persistedDraft as any).transcriptStorage;
         enabledAgentIdsState.value = ['codex', 'claude'];
@@ -1180,7 +1180,7 @@ describe('useNewSessionScreenModel (installables)', () => {
         persistedDraft.agentType = 'customAcp';
         delete (persistedDraft as { permissionMode?: string }).permissionMode;
         (persistedDraft as any).backendTarget = { kind: 'configuredAcpBackend', backendId: 'custom-preset' };
-        persistedDraft.agentNewSessionOptionStateByAgentId = {};
+        persistedDraft.backendNewSessionOptionStateByTargetKey = {};
         enabledAgentIdsState.value = ['customAcp', 'claude'];
         cliAvailabilityState.value = {
             timestamp: 1,

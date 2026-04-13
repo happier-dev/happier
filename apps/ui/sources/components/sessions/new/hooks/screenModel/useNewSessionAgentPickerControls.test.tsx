@@ -156,6 +156,104 @@ describe('useNewSessionAgentPickerControls', () => {
         expect(setBackendTarget).toHaveBeenCalledWith({ kind: 'builtInAgent', agentId: 'codex' });
     });
 
+    it('exposes a configured ACP backend even when it is the only resolved backend entry', async () => {
+        const setBackendTarget = vi.fn();
+
+        const hook = await renderHook(() => useNewSessionAgentPickerControls({
+            useProfiles: false,
+            selectedProfileId: null,
+            profileMap: new Map(),
+            resolvedBackendEntries: [
+                {
+                    target: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+                    targetKey: 'acpBackend:review-bot',
+                    family: 'configuredAcpBackend',
+                    providerAgentId: 'customAcp',
+                    builtInAgentId: null,
+                    iconAgentId: 'customAcp',
+                    title: 'Review Bot',
+                    subtitle: 'review-bot',
+                } as any,
+            ],
+            getCompatibleProfileBackendEntries: () => [],
+            isBackendEntrySelectable: () => true,
+            selectedBackendEntry: {
+                target: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+                targetKey: 'acpBackend:review-bot',
+                family: 'configuredAcpBackend',
+                providerAgentId: 'customAcp',
+                builtInAgentId: null,
+                iconAgentId: 'customAcp',
+                title: 'Review Bot',
+                subtitle: 'review-bot',
+            } as any,
+            selectedBackendTargetKey: 'acpBackend:review-bot',
+            setBackendTarget,
+            modelMode: 'default',
+            setModelMode: vi.fn() as any,
+            acpSessionModeId: null,
+            setAcpSessionModeId: vi.fn() as any,
+            sessionConfigOptionOverrides: null,
+            setSessionConfigOptionOverrides: vi.fn() as any,
+            selectedMachineId: 'machine-1',
+            capabilityServerId: 'server-1',
+            selectedPath: '/repo',
+            settings: {} as any,
+        }));
+
+        expect(hook.getCurrent().agentPickerOptions?.map((option) => option.id)).toEqual(['acpBackend:review-bot']);
+        hook.getCurrent().handleAgentPickerSelect('acpBackend:review-bot');
+        expect(setBackendTarget).toHaveBeenCalledWith({ kind: 'configuredAcpBackend', backendId: 'review-bot' });
+    });
+
+    it('uses the single selectable backend when clicking the agent input', async () => {
+        const setBackendTarget = vi.fn();
+
+        const hook = await renderHook(() => useNewSessionAgentPickerControls({
+            useProfiles: false,
+            selectedProfileId: null,
+            profileMap: new Map(),
+            resolvedBackendEntries: [
+                {
+                    target: { kind: 'builtInAgent', agentId: 'claude' },
+                    targetKey: 'agent:claude',
+                    title: 'Claude',
+                    subtitle: null,
+                } as any,
+                {
+                    target: { kind: 'builtInAgent', agentId: 'codex' },
+                    targetKey: 'agent:codex',
+                    title: 'Codex',
+                    subtitle: null,
+                } as any,
+            ],
+            getCompatibleProfileBackendEntries: () => [],
+            isBackendEntrySelectable: (entry: any) => entry.targetKey === 'agent:codex',
+            selectedBackendEntry: {
+                target: { kind: 'builtInAgent', agentId: 'claude' },
+                targetKey: 'agent:claude',
+                title: 'Claude',
+                subtitle: null,
+            } as any,
+            selectedBackendTargetKey: 'agent:claude',
+            setBackendTarget,
+            modelMode: 'default',
+            setModelMode: vi.fn() as any,
+            acpSessionModeId: null,
+            setAcpSessionModeId: vi.fn() as any,
+            sessionConfigOptionOverrides: null,
+            setSessionConfigOptionOverrides: vi.fn() as any,
+            selectedMachineId: 'machine-1',
+            capabilityServerId: 'server-1',
+            selectedPath: '/repo',
+            settings: {} as any,
+        }));
+
+        hook.getCurrent().handleAgentClick();
+
+        expect(setBackendTarget).toHaveBeenCalledWith({ kind: 'builtInAgent', agentId: 'codex' });
+    });
+
     it('publishes engine detail selection changes immediately for the focused backend option', async () => {
         const setBackendTarget = vi.fn();
         const setModelMode = vi.fn();

@@ -39,7 +39,14 @@ installNewSessionComponentsCommonModuleMocks({
             },
         });
     },
-    text: () => createTextModuleMock({ translate: (key) => key }),
+    text: () => createTextModuleMock({
+        translate: (key, params) => {
+            if (params && typeof params === 'object' && 'agent' in params) {
+                return `${key}:${String((params as { agent?: unknown }).agent ?? '')}`;
+            }
+            return key;
+        },
+    }),
     unistyles: async () => await createUnistylesMock({
         theme: {
             colors: {
@@ -83,8 +90,8 @@ vi.mock('@/components/ui/text/Text', () => ({
 
 vi.mock('@/agents/catalog/catalog', () => ({
     DEFAULT_AGENT_ID: 'claude',
-    getAgentCore: () => ({
-        displayNameKey: 'agents.claude.displayName',
+    getAgentCore: (agentId: string) => ({
+        displayNameKey: `agents.${agentId}.displayName`,
     }),
     isAgentId: () => true,
 }));
@@ -280,5 +287,24 @@ describe('NewSessionResumeSelectionContent', () => {
 
         expect(onBrowse).toHaveBeenCalledTimes(1);
         expect(onSave).not.toHaveBeenCalled();
+    });
+
+    it('uses the resolved backend label in the placeholder when provided', async () => {
+        const { NewSessionResumeSelectionContent } = await import('./NewSessionResumeSelectionContent');
+
+        const screen = await renderScreen(
+            <NewSessionResumeSelectionContent
+                value=""
+                onChangeValue={() => {}}
+                onSave={() => {}}
+                onClear={() => {}}
+                onClose={() => {}}
+                agentType="customAcp"
+                agentLabel="Review Bot"
+            />,
+        );
+
+        const input = screen.findByTestId('resume-id-input');
+        expect(input?.props?.placeholder).toBe('newSession.resume.placeholder:Review Bot');
     });
 });

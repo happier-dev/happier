@@ -363,7 +363,7 @@ const settingsState = {
     useEnhancedSessionWizard: false,
     useProfiles: false,
     sessionDefaultPermissionModeByTargetKey: {},
-    actionsSettingsV1: {},
+    actionsSettingsV1: settingsDefaults.actionsSettingsV1,
     experiments: false,
     featureToggles: {},
     dismissedCLIWarnings: settingsDefaults.dismissedCLIWarnings,
@@ -380,7 +380,7 @@ const settingsState = {
     serverSelectionActiveTargetId: null,
     acpCatalogSettingsV1: {
         v: 2 as const,
-        backends: [],
+        backends: [] as Array<Record<string, unknown>>,
     },
 };
 
@@ -686,7 +686,10 @@ vi.mock('@/components/sessions/new/hooks/useNewSessionWizardProps', () => ({
             openProfileEdit: params.openProfileEdit,
             handleDuplicateProfile: params.handleDuplicateProfile,
         },
-        agent: {},
+        agent: {
+            setAgentType: params.setAgentType,
+            onAgentPickerSelect: params.onAgentPickerSelect,
+        },
         machine: {},
         footer: {},
     }),
@@ -1463,6 +1466,99 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         }));
     });
 
+    it('persists configured ACP autosave drafts with the preserved built-in fallback agent id', async () => {
+        settingsState.lastUsedAgent = 'codex';
+        settingsState.acpCatalogSettingsV1 = {
+            v: 2,
+            backends: [
+                {
+                    id: 'review-bot',
+                    name: 'review-bot',
+                    title: 'Review Bot',
+                    command: 'custom-acp',
+                    args: ['serve'],
+                    env: {},
+                    transportProfile: 'generic',
+                    capabilities: {
+                        supportsLoadSession: false,
+                        supportsModes: 'unknown',
+                        supportsModels: 'unknown',
+                        supportsConfigOptions: 'unknown',
+                        promptImageSupport: 'unknown',
+                    },
+                    createdAt: 1,
+                    updatedAt: 1,
+                },
+            ],
+        };
+        persistedDraft.agentType = 'customAcp';
+        (persistedDraft as any).backendTarget = { kind: 'configuredAcpBackend', backendId: 'review-bot' };
+
+        let model: any = null;
+        await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
+        });
+
+        expect(model?.simpleProps?.agentType).toBe('customAcp');
+        expect(model?.simpleProps?.agentLabel).toBe('Review Bot');
+        await settleNewSessionScreenModel();
+        expect(useCreateNewSessionArgsRef.current).toEqual(expect.objectContaining({
+            authoringDraft: expect.objectContaining({
+                agentId: 'codex',
+                backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            }),
+        }));
+
+        await act(async () => {
+            persistDraftNowRef.current?.();
+        });
+
+        expect(saveNewSessionDraftMock.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
+            agentType: 'codex',
+            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+        }));
+    });
+
+    it('hydrates the selected backend from backendTargetKey route params while keeping the configured backend label', async () => {
+        settingsState.lastUsedAgent = 'claude';
+        settingsState.acpCatalogSettingsV1 = {
+            v: 2,
+            backends: [
+                {
+                    id: 'review-bot',
+                    name: 'review-bot',
+                    title: 'Review Bot',
+                    command: 'custom-acp',
+                    args: ['serve'],
+                    env: {},
+                    transportProfile: 'generic',
+                    capabilities: {
+                        supportsLoadSession: false,
+                        supportsModes: 'unknown',
+                        supportsModels: 'unknown',
+                        supportsConfigOptions: 'unknown',
+                        promptImageSupport: 'unknown',
+                    },
+                    createdAt: 1,
+                    updatedAt: 1,
+                },
+            ],
+        };
+        persistedDraft.agentType = 'claude';
+        delete (persistedDraft as any).backendTarget;
+        searchParamsState.value = {
+            backendTargetKey: 'acpBackend:review-bot',
+        };
+
+        let model: any = null;
+        await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
+        });
+
+        expect(model?.simpleProps?.agentType).toBe('customAcp');
+        expect(model?.simpleProps?.agentLabel).toBe('Review Bot');
+    });
+
     it('re-hydrates the worktree checkout selection when a newer draft is loaded on focus', async () => {
         persistedDraft.selectedWorkspaceId = null as any;
         persistedDraft.selectedWorkspaceLocationId = null as any;
@@ -1670,6 +1766,110 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         }));
     });
 
+    it('round-trips the canonical configured backend target when opening profile edit', async () => {
+        settingsState.useProfiles = true;
+        settingsState.useEnhancedSessionWizard = true;
+        settingsState.acpCatalogSettingsV1 = {
+            v: 2,
+            backends: [
+                {
+                    id: 'review-bot',
+                    name: 'review-bot',
+                    title: 'Review Bot',
+                    command: 'custom-acp',
+                    args: ['serve'],
+                    env: {},
+                    transportProfile: 'generic',
+                    capabilities: {
+                        supportsLoadSession: false,
+                        supportsModes: 'unknown',
+                        supportsModels: 'unknown',
+                        supportsConfigOptions: 'unknown',
+                        promptImageSupport: 'unknown',
+                    },
+                    createdAt: 1,
+                    updatedAt: 1,
+                },
+            ],
+        };
+        persistedDraft.agentType = 'customAcp';
+        (persistedDraft as any).backendTarget = { kind: 'configuredAcpBackend', backendId: 'review-bot' };
+
+        const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
+
+        let model: any = null;
+        function Probe() {
+            model = useNewSessionScreenModel();
+            return null;
+        }
+
+        await renderScreen(React.createElement(Probe));
+
+        expect(model?.variant).toBe('wizard');
+        expect(typeof model?.wizardProps?.profiles?.openProfileEdit).toBe('function');
+
+        await act(async () => {
+            model?.wizardProps?.profiles?.openProfileEdit?.({});
+            await flushInteractionQueue();
+        });
+
+        expect(routerPushMock).toHaveBeenCalledWith(expect.objectContaining({
+            pathname: '/new/pick/profile-edit',
+            params: expect.objectContaining({
+                machineId: 'machine-2',
+                backendTargetKey: 'backend:review-bot:configured:review-bot',
+            }),
+        }));
+        expect(routerPushMock.mock.calls.at(-1)?.[0]?.params?.backendTarget).toContain('"configuredBackendId":"review-bot"');
+    });
+
+    it('drops stale configured backend route params after switching to a built-in backend before opening profile edit', async () => {
+        settingsState.useProfiles = true;
+        settingsState.useEnhancedSessionWizard = true;
+        persistedDraft.agentType = 'claude';
+        (persistedDraft as any).backendTarget = { kind: 'builtInAgent', agentId: 'claude' };
+        searchParamsState.value = {
+            agentType: 'customAcp',
+            backendTargetKey: 'acpBackend:stale-review-bot',
+            backendTarget: JSON.stringify({ kind: 'configuredAcpBackend', backendId: 'stale-review-bot' }),
+        };
+
+        const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
+
+        let model: any = null;
+        function Probe() {
+            model = useNewSessionScreenModel();
+            return null;
+        }
+
+        await renderScreen(React.createElement(Probe));
+
+        expect(model?.variant).toBe('wizard');
+        expect(typeof model?.wizardProps?.profiles?.openProfileEdit).toBe('function');
+        expect(typeof model?.wizardProps?.agent?.setAgentType).toBe('function');
+
+        await act(async () => {
+            model?.wizardProps?.agent?.setAgentType?.('codex');
+        });
+
+        await act(async () => {
+            model?.wizardProps?.profiles?.openProfileEdit?.({});
+            await flushInteractionQueue();
+        });
+
+        const pushPayload = routerPushMock.mock.calls.at(-1)?.[0];
+        expect(pushPayload).toEqual(expect.objectContaining({
+            pathname: '/new/pick/profile-edit',
+            params: expect.objectContaining({
+                agentType: 'codex',
+                machineId: 'machine-2',
+            }),
+        }));
+        expect(pushPayload?.params?.backendTarget).toContain('"backendId":"codex"');
+        expect(pushPayload?.params?.backendTarget).not.toContain('stale-review-bot');
+        expect(pushPayload?.params?.backendTargetKey).toBe('backend:codex');
+    });
+
     it('keeps the current route stable and exposes a shared path popover when the new-session route starts without a dataId', async () => {
         const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
 
@@ -1807,10 +2007,19 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         settingsState.useEnhancedSessionWizard = true;
         settingsState.profiles = [{
             id: 'profile_workspace',
-            title: 'Workspace profile',
+            name: 'Workspace profile',
+            environmentVariables: [],
+            defaultPermissionModeByAgent: {},
+            defaultPermissionModeByTargetKey: {},
+            defaultPersistenceModeByAgent: {},
+            defaultPersistenceModeByTargetKey: {},
             isBuiltIn: false,
             compatibility: { claude: true },
+            compatibilityByTargetKey: {},
             envVarRequirements: [],
+            createdAt: 0,
+            updatedAt: 0,
+            version: '1.0.0',
         }];
         const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
 
@@ -1841,17 +2050,35 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         settingsState.profiles = [
             {
                 id: 'profile_workspace',
-                title: 'Workspace profile',
+                name: 'Workspace profile',
+                environmentVariables: [],
+                defaultPermissionModeByAgent: {},
+                defaultPermissionModeByTargetKey: {},
+                defaultPersistenceModeByAgent: {},
+                defaultPersistenceModeByTargetKey: {},
                 isBuiltIn: false,
                 compatibility: { claude: true },
+                compatibilityByTargetKey: {},
                 envVarRequirements: [],
+                createdAt: 0,
+                updatedAt: 0,
+                version: '1.0.0',
             },
             {
                 id: 'profile_docs',
-                title: 'Docs profile',
+                name: 'Docs profile',
+                environmentVariables: [],
+                defaultPermissionModeByAgent: {},
+                defaultPermissionModeByTargetKey: {},
+                defaultPersistenceModeByAgent: {},
+                defaultPersistenceModeByTargetKey: {},
                 isBuiltIn: false,
                 compatibility: { claude: true },
+                compatibilityByTargetKey: {},
                 envVarRequirements: [],
+                createdAt: 0,
+                updatedAt: 0,
+                version: '1.0.0',
             },
         ];
         workspaceGraphState.workspacesByServerId['server-a'] = [

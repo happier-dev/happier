@@ -15,6 +15,9 @@ import { renderScreen } from '@/dev/testkit';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const capturedItems: Array<Record<string, unknown>> = [];
+const getCredentialsForServerUrlMock = vi.hoisted(() =>
+    vi.fn(async () => ({ token: 'token', secret: 'secret' } as { token: string; secret: string } | null)),
+);
 const expoRouterMock = createExpoRouterMock({
     params: { selectedId: 'server-a' },
     navigation: { dispatch: vi.fn(), getState: () => undefined },
@@ -82,7 +85,7 @@ vi.mock('@/sync/domains/server/selection/serverSelectionResolution', () => ({
 
 vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: {
-        getCredentialsForServerUrl: vi.fn(async () => ({ accessToken: 'token' })),
+        getCredentialsForServerUrl: getCredentialsForServerUrlMock,
     },
 }));
 
@@ -98,13 +101,18 @@ vi.mock('@/utils/navigation/safeRouterBack', () => ({
     safeRouterBack: vi.fn(),
 }));
 
-vi.mock('@/components/sessions/new/navigation/setNewSessionPickerReturnParams', () => ({
-    setNewSessionPickerReturnParams: vi.fn(() => 'dispatch'),
-}));
+vi.mock('@/components/sessions/new/navigation/setNewSessionPickerReturnParams', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/components/sessions/new/navigation/setNewSessionPickerReturnParams')>();
+    return {
+        ...actual,
+        setNewSessionPickerReturnParams: vi.fn(() => 'dispatch'),
+    };
+});
 
 describe('NewSessionServerSelectionContent', () => {
     it('prefers the explicit selected server over stale route params in popover mode', async () => {
         capturedItems.length = 0;
+        getCredentialsForServerUrlMock.mockClear();
         const { NewSessionServerSelectionContent } = await import('./NewSessionServerSelectionContent');
 
         await renderScreen(<NewSessionServerSelectionContent
@@ -120,5 +128,27 @@ describe('NewSessionServerSelectionContent', () => {
             { title: 'Server A', selected: false },
             { title: 'Server B', selected: true },
         ]);
+    });
+
+    it('looks up credentials using the selected server id when deciding whether to prompt on switch', async () => {
+        capturedItems.length = 0;
+        getCredentialsForServerUrlMock.mockClear();
+        getCredentialsForServerUrlMock.mockResolvedValueOnce(null);
+        const { NewSessionServerSelectionContent } = await import('./NewSessionServerSelectionContent');
+
+        await renderScreen(<NewSessionServerSelectionContent
+                    maxHeight={520}
+                    onClose={() => {}}
+                    selectedServerId="server-b"
+                />);
+
+        const serverBItem = capturedItems.find((item) => item.title === 'Server B');
+        if (!serverBItem || typeof serverBItem.onPress !== 'function') {
+            throw new Error('Expected Server B item with onPress handler');
+        }
+
+        await serverBItem.onPress();
+
+        expect(getCredentialsForServerUrlMock).toHaveBeenCalledWith('http://server-b.local', { serverId: 'server-b' });
     });
 });

@@ -7,6 +7,8 @@ import {
     standardCleanup,
 } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import {
     cloneNavigationState,
@@ -23,6 +25,14 @@ enableReactActEnvironment();
 const routerMock = createRouterMock();
 const navigationMock = createNavigationMock();
 const safeRouterBack = vi.fn();
+const settingsState = vi.hoisted(() => ({
+    current: {
+        lastUsedAgent: 'claude',
+        lastUsedBackendTarget: null as BackendTargetRefV1 | null,
+        backendEnabledByTargetKey: null as Record<string, boolean> | null,
+        acpCatalogSettingsV1: null as unknown,
+    },
+}));
 const pickerMachineMetadata = {
     host: 'tester.local',
     platform: 'darwin',
@@ -107,6 +117,15 @@ installPickerCommonModuleMocks({
                     return null;
                 },
                 useSettingMutable: () => [[], vi.fn()],
+                useSettings: () => ({
+                    ...settingsDefaults,
+                    lastUsedAgent: settingsState.current.lastUsedAgent,
+                    lastUsedBackendTarget: settingsState.current.lastUsedBackendTarget,
+                    backendEnabledByTargetKey:
+                        settingsState.current.backendEnabledByTargetKey as unknown as typeof settingsDefaults.backendEnabledByTargetKey,
+                    acpCatalogSettingsV1:
+                        settingsState.current.acpCatalogSettingsV1 as unknown as typeof settingsDefaults.acpCatalogSettingsV1,
+                }),
             },
         }),
     text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
@@ -165,6 +184,12 @@ describe('PathPickerScreen', () => {
         localSearchParams = {
             machineId: 'machine-1',
             selectedPath: '/repo/current',
+        };
+        settingsState.current = {
+            lastUsedAgent: 'claude',
+            lastUsedBackendTarget: null,
+            backendEnabledByTargetKey: null,
+            acpCatalogSettingsV1: null,
         };
         paramListeners.clear();
         routerMock.setParams.mockReset();
@@ -236,6 +261,166 @@ describe('PathPickerScreen', () => {
             },
         });
         expect(safeRouterBack).not.toHaveBeenCalled();
+    });
+
+    it('preserves configured backend route params on replace fallback without reserializing the legacy customAcp agentType', async () => {
+        localSearchParams = {
+            agentType: 'customAcp',
+            backendTarget: JSON.stringify({ kind: 'configuredAcpBackend', backendId: 'review-bot' }),
+            backendTargetKey: 'acpBackend:review-bot',
+            machineId: 'machine-1',
+            selectedPath: '/repo/current',
+            spawnServerId: 'server-2',
+        };
+        navigationState = {
+            index: 1,
+            routes: [
+                {
+                    key: 'session-route',
+                    name: '(app)/session/[id]',
+                    path: '/session/s1',
+                    params: { id: 's1' },
+                },
+                {
+                    key: 'path-picker',
+                    name: '(app)/new/pick/path',
+                    path: '/new/pick/path',
+                },
+            ],
+        };
+
+        await renderPathPicker();
+
+        expect(capturedPathSelectorProps).toBeTruthy();
+
+        capturedPathSelectorProps?.onSubmitSelectedPath('/repo/selected');
+
+        expect(routerMock.replace).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                backendTarget: JSON.stringify({ kind: 'configuredAcpBackend', backendId: 'review-bot' }),
+                backendTargetKey: 'acpBackend:review-bot',
+                machineId: 'machine-1',
+                directory: '/repo/selected',
+                spawnServerId: 'server-2',
+            },
+        });
+    });
+
+    it('rehydrates canonical configured backend params from settings when route params only carry legacy customAcp', async () => {
+        settingsState.current = {
+            lastUsedAgent: 'customAcp',
+            lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            backendEnabledByTargetKey: null,
+            acpCatalogSettingsV1: null,
+        };
+        localSearchParams = {
+            agentType: 'customAcp',
+            machineId: 'machine-1',
+            selectedPath: '/repo/current',
+            spawnServerId: 'server-2',
+        };
+        navigationState = {
+            index: 1,
+            routes: [
+                {
+                    key: 'session-route',
+                    name: '(app)/session/[id]',
+                    path: '/session/s1',
+                    params: { id: 's1' },
+                },
+                {
+                    key: 'path-picker',
+                    name: '(app)/new/pick/path',
+                    path: '/new/pick/path',
+                },
+            ],
+        };
+
+        await renderPathPicker();
+
+        expect(capturedPathSelectorProps).toBeTruthy();
+
+        capturedPathSelectorProps?.onSubmitSelectedPath('/repo/selected');
+
+        expect(routerMock.replace).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                agentType: 'customAcp',
+                backendTarget: JSON.stringify({ kind: 'configuredAcpBackend', backendId: 'review-bot' }),
+                backendTargetKey: 'acpBackend:review-bot',
+                machineId: 'machine-1',
+                directory: '/repo/selected',
+                spawnServerId: 'server-2',
+            },
+        });
+    });
+
+    it('falls back to the preferred built-in target when the stored configured backend is stale', async () => {
+        settingsState.current = {
+            lastUsedAgent: 'codex',
+            lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'stale-review-bot' },
+            backendEnabledByTargetKey: { 'agent:codex': true },
+            acpCatalogSettingsV1: {
+                v: 2,
+                backends: [{
+                id: 'review-bot',
+                name: 'review-bot',
+                title: 'Review Bot',
+                command: 'review-bot',
+                args: [],
+                env: {},
+                transportProfile: 'generic',
+                capabilities: {
+                    supportsLoadSession: false,
+                    supportsModes: 'unknown',
+                    supportsModels: 'unknown',
+                    supportsConfigOptions: 'unknown',
+                    promptImageSupport: 'unknown',
+                },
+                createdAt: 1,
+                updatedAt: 1,
+                }],
+            },
+        };
+        localSearchParams = {
+            agentType: 'customAcp',
+            machineId: 'machine-1',
+            selectedPath: '/repo/current',
+            spawnServerId: 'server-2',
+        };
+        navigationState = {
+            index: 1,
+            routes: [
+                {
+                    key: 'session-route',
+                    name: '(app)/session/[id]',
+                    path: '/session/s1',
+                    params: { id: 's1' },
+                },
+                {
+                    key: 'path-picker',
+                    name: '(app)/new/pick/path',
+                    path: '/new/pick/path',
+                },
+            ],
+        };
+
+        await renderPathPicker();
+
+        expect(capturedPathSelectorProps).toBeTruthy();
+
+        capturedPathSelectorProps?.onSubmitSelectedPath('/repo/selected');
+
+        expect(routerMock.replace).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                agentType: 'codex',
+                machineId: 'machine-1',
+                directory: '/repo/selected',
+                spawnServerId: 'server-2',
+            },
+        });
     });
 
     it('returns path updates to the actual /new screen instead of an intermediate picker route', async () => {

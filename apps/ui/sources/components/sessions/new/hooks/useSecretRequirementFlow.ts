@@ -5,6 +5,7 @@ import { shouldAutoPromptSecretRequirement } from '@/utils/secrets/secretRequire
 import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
 import { Modal } from '@/modal';
 import { SecretRequirementModal, type SecretRequirementModalResult } from '@/components/secrets/requirements';
+import type { SerializedBackendTargetRouteParams } from '@/agents/backendCatalog/backendTargetRouteParams';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
@@ -13,6 +14,12 @@ import { getTempData } from '@/utils/sessions/tempDataStore';
 export function useSecretRequirementFlow(params: Readonly<{
     router: { push: (options: any) => void };
     navigation: any;
+    routeBackendParams: SerializedBackendTargetRouteParams;
+    routeContextParams: Readonly<{
+        dataId?: string;
+        machineId?: string;
+        spawnServerId?: string;
+    }>;
     useProfiles: boolean;
     selectedProfileId: string | null;
     selectedProfile: AIBackendProfile | null;
@@ -69,8 +76,9 @@ export function useSecretRequirementFlow(params: Readonly<{
             params.router.push({
                 pathname: '/new/pick/secret-requirement',
                 params: {
+                    ...params.routeBackendParams,
+                    ...params.routeContextParams,
                     profileId: profile.id,
-                    machineId: params.selectedMachineId ?? '',
                     secretEnvVarName: targetEnvVarName,
                     secretEnvVarNames: secretEnvVarNames.join(','),
                     revertOnCancel: options.revertOnCancel ? '1' : '0',
@@ -203,6 +211,8 @@ export function useSecretRequirementFlow(params: Readonly<{
         params.selectedProfileId,
         params.sessionOnlySecretValueByProfileIdByEnvVarName,
         params.setSecretBindingsByProfileId,
+        params.routeContextParams,
+        params.routeBackendParams,
         params.router,
     ]);
 

@@ -53,6 +53,9 @@ installProfileEditFormModuleMocks({
                 return [[], vi.fn()] as const;
             },
         }),
+    routeParams: {
+        backendTargetKey: 'acpBackend:review-bot',
+    },
 });
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
@@ -131,7 +134,10 @@ describe('ProfileEditForm (native preview machine picker)', () => {
         expect(profileEditFormTestState.routerPushSpy).toHaveBeenCalledTimes(1);
         expect(profileEditFormTestState.routerPushSpy).toHaveBeenCalledWith({
             pathname: '/new/pick/preview-machine',
-            params: {},
+            params: {
+                agentType: 'customAcp',
+                backendTargetKey: 'acpBackend:review-bot',
+            },
         });
     });
 });

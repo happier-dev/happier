@@ -1,0 +1,24 @@
+import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+
+export function resolveNewSessionAgentPickerEntryByTargetKey(params: Readonly<{
+    resolvedBackendEntries: readonly ResolvedBackendCatalogEntry[];
+    selectedId: string;
+}>): ResolvedBackendCatalogEntry | null {
+    return params.resolvedBackendEntries.find((entry) => entry.targetKey === params.selectedId) ?? null;
+}
+
+export function resolveNewSessionAgentPickerSingleSelectFallbackEntry(params: Readonly<{
+    selectableBackendEntries: readonly ResolvedBackendCatalogEntry[];
+    selectedBackendTargetKey: string;
+}>): ResolvedBackendCatalogEntry | null {
+    if (params.selectableBackendEntries.length !== 1) {
+        return null;
+    }
+
+    const nextEntry = params.selectableBackendEntries[0] ?? null;
+    if (nextEntry === null || nextEntry.targetKey === params.selectedBackendTargetKey) {
+        return null;
+    }
+
+    return nextEntry;
+}

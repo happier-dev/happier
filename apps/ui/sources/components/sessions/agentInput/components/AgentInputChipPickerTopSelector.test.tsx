@@ -99,6 +99,7 @@ describe('AgentInputChipPickerTopSelector', () => {
         expect(dropdownMenuProps.itemTrigger.subtitleFormatter()).toBe('OpenAI');
         expect(dropdownMenuProps.items[0]).toEqual(expect.objectContaining({
             icon: expect.any(Object),
+            testID: 'agent-input-chip-picker.option:codex',
         }));
 
         const triggerIconChild = (dropdownMenuProps.itemTrigger.icon as any).props.children;

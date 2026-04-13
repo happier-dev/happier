@@ -1,5 +1,6 @@
 import * as React from 'react';
 
+import type { SerializedBackendTargetRouteParams } from '@/agents/backendCatalog/backendTargetRouteParams';
 import { consumeSecretIdParam } from '@/profileRouteParams';
 import { useSecretRequirementFlow } from '@/components/sessions/new/hooks/useSecretRequirementFlow';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
@@ -40,6 +41,12 @@ export function useNewSessionSecretSelectionState(params: Readonly<{
     setSelectedProfileId: (id: string | null) => void;
     router: { push: (options: any) => void };
     navigation: NavigationParamController;
+    routeBackendParams: SerializedBackendTargetRouteParams;
+    routeContextParams: Readonly<{
+        dataId?: string;
+        machineId?: string;
+        spawnServerId?: string;
+    }>;
     secretIdParam: string | undefined;
     secretSessionOnlyId: string | undefined;
     secretRequirementResultId: string | undefined;
@@ -134,6 +141,8 @@ export function useNewSessionSecretSelectionState(params: Readonly<{
     const { openSecretRequirementModal } = useSecretRequirementFlow({
         router: params.router,
         navigation: params.navigation,
+        routeBackendParams: params.routeBackendParams,
+        routeContextParams: params.routeContextParams,
         useProfiles: params.useProfiles,
         selectedProfileId: params.selectedProfileId,
         selectedProfile: params.selectedProfile,

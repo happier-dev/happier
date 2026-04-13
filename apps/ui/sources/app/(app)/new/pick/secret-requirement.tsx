@@ -2,14 +2,17 @@ import React from 'react';
 import { Platform } from 'react-native';
 import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 
-import { useSetting, useSettingMutable } from '@/sync/domains/state/storage';
+import { useSetting, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
 import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { SecretRequirementScreen, type SecretRequirementModalResult } from '@/components/secrets/requirements';
 import { storeTempData } from '@/utils/sessions/tempDataStore';
 import { PopoverScope } from '@/components/ui/popover';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
-import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
+import { resolvePreferredBackendTargetFromSettings } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromSettings';
+import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 
 type SecretRequirementRoutePayload = Readonly<{
     profileId: string;
@@ -42,6 +45,8 @@ export default React.memo(function SecretRequirementPickerScreen() {
     const navigation = useNavigation();
     const params = useLocalSearchParams<{
         agentType?: string;
+        backendTarget?: string;
+        backendTargetKey?: string;
         dataId?: string;
         profileId?: string;
         secretEnvVarName?: string;
@@ -59,6 +64,7 @@ export default React.memo(function SecretRequirementPickerScreen() {
     const profiles = useSetting('profiles');
     const [secrets, setSecrets] = useSettingMutable('secrets');
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useSettingMutable('secretBindingsByProfileId');
+    const settings = useSettings() ?? settingsDefaults;
 
     const profile =
         profiles.find((p: AIBackendProfile) => p.id === profileId) ??
@@ -72,6 +78,38 @@ export default React.memo(function SecretRequirementPickerScreen() {
     const selectedSecretIdByEnvVarName = React.useMemo(() => {
         return parseJsonRecord(params.selectedSecretIdByEnvVarName);
     }, [params.selectedSecretIdByEnvVarName]);
+    const preferredBackendTarget = React.useMemo(() => {
+        return resolvePreferredBackendTargetFromSettings({
+            lastUsedAgent: settings.lastUsedAgent,
+            lastUsedBackendTarget: settings.lastUsedBackendTarget,
+            backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
+            acpCatalogSettingsV1: settings.acpCatalogSettingsV1 ?? undefined,
+        });
+    }, [
+        settings.lastUsedAgent,
+        settings.lastUsedBackendTarget,
+        settings.backendEnabledByTargetKey,
+        settings.acpCatalogSettingsV1,
+    ]);
+    const roundTripFallbackTarget = React.useMemo(() => {
+        return resolveRouteCloseoutFallbackTarget({
+            agentType: params.agentType,
+            backendTarget: params.backendTarget,
+            backendTargetKey: params.backendTargetKey,
+            preferredBackendTarget,
+        });
+    }, [params.agentType, params.backendTarget, params.backendTargetKey, preferredBackendTarget]);
+    const roundTripBackendParams = React.useMemo(() => {
+        return buildBackendTargetRouteParams({
+            agentType: params.agentType,
+            backendTarget: params.backendTarget,
+            backendTargetKey: params.backendTargetKey,
+            fallbackTarget: roundTripFallbackTarget,
+        });
+    }, [params.agentType, params.backendTarget, params.backendTargetKey, roundTripFallbackTarget]);
+    const currentRouteParams = React.useMemo(() => {
+        return pickNewSessionRouteParams(params);
+    }, [params]);
 
     const screenOptions = React.useMemo(() => {
         return {
@@ -97,9 +135,13 @@ export default React.memo(function SecretRequirementPickerScreen() {
         const returnMode = setNewSessionPickerReturnParams({
             navigation: navigation as any,
             router,
-            routeParams: { secretRequirementResultId: id },
+            routeParams: {
+                ...roundTripBackendParams,
+                secretRequirementResultId: id,
+            },
+            currentParams: currentRouteParams,
             replaceParams: {
-                ...(typeof params.agentType === 'string' && params.agentType.trim().length > 0 ? { agentType: params.agentType } : {}),
+                ...roundTripBackendParams,
                 ...(typeof params.dataId === 'string' && params.dataId.trim().length > 0 ? { dataId: params.dataId } : {}),
                 ...(typeof params.machineId === 'string' && params.machineId.trim().length > 0 ? { machineId: params.machineId } : {}),
                 ...(typeof params.profileId === 'string' && params.profileId.trim().length > 0 ? { profileId: params.profileId } : {}),
@@ -110,7 +152,7 @@ export default React.memo(function SecretRequirementPickerScreen() {
         if (returnMode === 'dispatch') {
             safeRouterBack({ router, navigation, fallbackHref: '/new' });
         }
-    }, [navigation, profileId, revertOnCancel, router]);
+    }, [currentRouteParams, navigation, params.dataId, params.machineId, params.profileId, params.spawnServerId, profileId, revertOnCancel, roundTripBackendParams, router]);
 
     const handleCancel = React.useCallback(() => {
         sendResultToNewSession({ action: 'cancel' });

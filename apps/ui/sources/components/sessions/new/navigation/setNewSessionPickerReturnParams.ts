@@ -1,3 +1,8 @@
+import {
+    buildBackendTargetRouteParams,
+    resolveBackendTargetFromRouteParams,
+} from '@/agents/backendCatalog/backendTargetRouteParams';
+
 type RouteLike = Readonly<{
     key?: string;
     name?: string;
@@ -13,6 +18,7 @@ type NavigationStateLike = Readonly<{
 type RouteParamValue = string | number | null | undefined | Array<string | number>;
 
 type RouteParams = Record<string, RouteParamValue>;
+type UnknownRouteParams = Record<string, unknown>;
 
 // Expo Router / React Navigation expose wide generic surface areas here.
 // Keep this helper boundary loose and validate only the fields we actually read/write.
@@ -36,6 +42,8 @@ const NEW_SESSION_PARAM_KEYS = new Set([
     'automationName',
     'automationScheduleKind',
     'automationTimezone',
+    'backendTarget',
+    'backendTargetKey',
     'dataId',
     'directory',
     'machineId',
@@ -50,6 +58,17 @@ const NEW_SESSION_PARAM_KEYS = new Set([
 
 function isNonEmptyString(value: unknown): value is string {
     return typeof value === 'string' && value.trim().length > 0;
+}
+
+function isRouteParamArray(value: unknown): value is Array<string | number> {
+    return Array.isArray(value) && value.every((entry) => typeof entry === 'string' || typeof entry === 'number');
+}
+
+function isRouteParamValue(value: unknown): value is RouteParamValue {
+    return value == null
+        || typeof value === 'string'
+        || typeof value === 'number'
+        || isRouteParamArray(value);
 }
 
 function routeIsNestedNewSessionPicker(routeName: string, routePath: string): boolean {
@@ -80,6 +99,40 @@ function routeLooksLikeNewSession(route: RouteLike | null | undefined): boolean 
     return false;
 }
 
+export function pickNewSessionRouteParams(params: Readonly<UnknownRouteParams> | null | undefined): RouteParams {
+    if (!params) {
+        return {};
+    }
+
+    const nextParams: RouteParams = {};
+    for (const [key, value] of Object.entries(params)) {
+        if (!NEW_SESSION_PARAM_KEYS.has(key)) {
+            continue;
+        }
+        if (!isRouteParamValue(value)) {
+            continue;
+        }
+        nextParams[key] = value;
+    }
+
+    const backendTargetRouteParams = buildBackendTargetRouteParams({
+        agentType: nextParams.agentType,
+        backendTarget: nextParams.backendTarget,
+        backendTargetKey: nextParams.backendTargetKey,
+        fallbackTarget: null,
+    });
+
+    const resolvedBackendTarget = resolveBackendTargetFromRouteParams(backendTargetRouteParams);
+    if (resolvedBackendTarget?.kind === 'configuredAcpBackend') {
+        delete nextParams.agentType;
+    }
+
+    return {
+        ...nextParams,
+        ...backendTargetRouteParams,
+    };
+}
+
 export function resolveNewSessionPickerReturnRouteKey(state: NavigationStateLike | null | undefined): string | null {
     if (!state || !Array.isArray(state.routes) || state.routes.length === 0) return null;
     const currentIndex = typeof state.index === 'number' ? state.index : state.routes.length - 1;
@@ -107,9 +160,11 @@ export function setNewSessionPickerReturnParams(params: Readonly<{
     navigation: NavigationLike;
     router: RouterLike;
     routeParams: RouteParams;
+    currentParams?: RouteParams;
     replaceParams?: RouteParams;
 }>): 'dispatch' | 'replace' {
-    const targetRouteKey = resolveNewSessionPickerReturnRouteKey(params.navigation.getState());
+    const navigationState = params.navigation.getState();
+    const targetRouteKey = resolveNewSessionPickerReturnRouteKey(navigationState);
     if (targetRouteKey) {
         params.navigation.dispatch({
             type: 'SET_PARAMS',
@@ -119,9 +174,23 @@ export function setNewSessionPickerReturnParams(params: Readonly<{
         return 'dispatch';
     }
 
+    const currentIndex = typeof navigationState?.index === 'number'
+        ? navigationState.index
+        : (navigationState?.routes?.length ?? 1) - 1;
+    const currentRouteParams = Array.isArray(navigationState?.routes)
+        && typeof currentIndex === 'number'
+        && currentIndex >= 0
+        ? navigationState.routes[currentIndex]?.params as RouteParams | undefined
+        : undefined;
+
     params.router.replace({
         pathname: '/new',
-        params: params.replaceParams ?? params.routeParams,
+        params: {
+            ...pickNewSessionRouteParams(currentRouteParams),
+            ...pickNewSessionRouteParams(params.currentParams),
+            ...(params.replaceParams ?? {}),
+            ...params.routeParams,
+        },
     });
     return 'replace';
 }
