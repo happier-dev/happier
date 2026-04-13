@@ -5,10 +5,9 @@ import {
   ExecutionRunTurnStreamReadResponseSchema,
   ExecutionRunTurnStreamStartResponseSchema,
 } from '../executionRuns.js';
-import { ActionIdSchema, ActionInputHintsSchema, ActionSafetySchema, ActionSurfaceSchema } from '../actions/index.js';
-import { ActionUiPlacementSchema } from '../actions/actionUiPlacements.js';
 import { SubAgentRunResultV2Schema } from '../tools/v2/index.js';
 import { AccountEncryptionModeSchema } from '../features/payload/capabilities/encryptionCapabilities.js';
+import { ActionDefinitionIdV1Schema, ActionDefinitionSummaryV1Schema } from '../extensions/actionDefinitionV1.js';
 
 export const SessionControlErrorCodeSchema = z.enum([
   'not_authenticated',
@@ -530,49 +529,7 @@ export const AuthStatusEnvelopeSchema = SessionControlEnvelopeSuccessSchema.exte
   data: AuthStatusResultSchema,
 });
 
-export const SessionControlActionSpecSummarySchema = z
-  .object({
-    id: ActionIdSchema,
-    title: z.string().min(1),
-    description: z.string().min(1).nullable(),
-    safety: ActionSafetySchema,
-    placements: z.array(ActionUiPlacementSchema),
-    slash: z
-      .object({
-        tokens: z.array(z.string().min(1)),
-      })
-      .passthrough()
-      .nullable(),
-    bindings: z
-      .object({
-        voiceClientToolName: z.string().min(1).optional(),
-        mcpToolName: z.string().min(1).optional(),
-      })
-      .passthrough()
-      .nullable(),
-    examples: z
-      .object({
-        voice: z
-          .object({
-            argsExample: z.string().min(1).optional(),
-          })
-          .passthrough()
-          .nullable()
-          .optional(),
-        mcp: z
-          .object({
-            argsExample: z.string().min(1).optional(),
-          })
-          .passthrough()
-          .nullable()
-          .optional(),
-      })
-      .passthrough()
-      .nullable(),
-    surfaces: ActionSurfaceSchema,
-    inputHints: ActionInputHintsSchema.nullable(),
-  })
-  .passthrough();
+export const SessionControlActionSpecSummarySchema = ActionDefinitionSummaryV1Schema;
 export type SessionControlActionSpecSummary = z.infer<typeof SessionControlActionSpecSummarySchema>;
 
 export const SessionActionsListResultSchema = z
@@ -592,7 +549,7 @@ export type SessionActionsDescribeResult = z.infer<typeof SessionActionsDescribe
 export const SessionActionsExecuteResultSchema = z
   .object({
     sessionId: z.string().min(1),
-    actionId: z.string().min(1),
+    actionId: ActionDefinitionIdV1Schema,
     result: z.unknown(),
   })
   .passthrough();

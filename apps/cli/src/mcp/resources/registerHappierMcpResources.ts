@@ -1,5 +1,5 @@
-import type { ActionId } from '@happier-dev/protocol';
-import { isActionSpecSurfacedOn, listActionSpecs, serializeActionSpec } from '@happier-dev/protocol';
+import type { ActionId, ActionSurfaces } from '@happier-dev/protocol';
+import { listActionSpecsForCatalogSurface, serializeActionSpec } from '@happier-dev/protocol';
 
 export const HAPPIER_MCP_ACTION_SPECS_RESOURCE_URI = 'happier://action-specs/catalog';
 
@@ -25,7 +25,7 @@ type ResourceRegistrar = Readonly<{
 export function registerHappierMcpResources(
   server: ResourceRegistrar,
   opts?: Readonly<{
-    surface?: Parameters<typeof isActionSpecSurfacedOn>[1];
+    surface?: keyof ActionSurfaces;
     isActionEnabled?: (id: ActionId) => boolean;
   }>,
 ): void {
@@ -46,8 +46,10 @@ export function registerHappierMcpResources(
           uri: HAPPIER_MCP_ACTION_SPECS_RESOURCE_URI,
           mimeType: 'application/json',
           text: JSON.stringify({
-            actionSpecs: listActionSpecs()
-              .filter((spec) => isActionSpecSurfacedOn(spec, surface) && isActionEnabled(spec.id))
+            actionSpecs: listActionSpecsForCatalogSurface({
+              surface,
+              isActionEnabled,
+            })
               .map(serializeActionSpec),
           }),
         },

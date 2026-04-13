@@ -115,6 +115,40 @@ describe('sessionControl contract exports', () => {
     expect(parsed.success).toBe(true);
   });
 
+  it('accepts plugin-defined action ids in action discovery envelopes', () => {
+    const schema = (protocol as any).SessionActionsDescribeEnvelopeSchema;
+    const parsed = schema.safeParse({
+      v: 1,
+      ok: true,
+      kind: 'session_actions_describe',
+      data: {
+        actionSpec: {
+          id: 'acme.plugin.review.start',
+          title: 'Plugin Review',
+          description: 'Runs a plugin-defined review action',
+          safety: 'safe',
+          placements: [],
+          slash: null,
+          bindings: {
+            mcpToolName: 'acme_plugin_review_start',
+          },
+          examples: null,
+          surfaces: {
+            ui_button: false,
+            ui_slash_command: false,
+            voice_tool: false,
+            voice_action_block: false,
+            session_agent: true,
+            mcp: true,
+            cli: true,
+          },
+          inputHints: null,
+        },
+      },
+    });
+    expect(parsed.success).toBe(true);
+  });
+
   it('validates a session_actions_execute envelope shape', () => {
     const schema = (protocol as any).SessionActionsExecuteEnvelopeSchema;
     const parsed = schema.safeParse({
