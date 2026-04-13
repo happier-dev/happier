@@ -7,9 +7,10 @@ import { Text, TextInput } from '@/components/ui/text/Text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { resolveSubagentStructuredSend } from '@/sync/domains/input/subagents/resolveSubagentStructuredSend';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
+import type { Theme } from '@/theme';
 import { t } from '@/text';
 
-const stylesheet = StyleSheet.create((theme) => ({
+const stylesheet = StyleSheet.create((theme: Theme) => ({
     section: {
         gap: 8,
     },

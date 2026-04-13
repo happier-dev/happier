@@ -18,9 +18,13 @@ const refreshSessions = vi.fn();
 const patchSessionMetadataWithRetry = vi.fn();
 const ensureSessionVisibleForMessageRoute = vi.fn();
 
-vi.mock('@/agents/registry/registryCore', () => ({
-  isAgentId: (value: unknown) => typeof value === 'string' && value.trim().length > 0,
-}));
+vi.mock('@/agents/registry/registryCore', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/agents/registry/registryCore')>();
+  return {
+    ...actual,
+    isAgentId: (value: unknown) => typeof value === 'string' && value.trim().length > 0,
+  };
+});
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
@@ -147,6 +151,46 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     state.settings.lastUsedAgent = 'claude';
     state.settings.voice.adapters.local_conversation.agent.agentSource = ' agent ';
     state.settings.voice.adapters.local_conversation.agent.agentId = 'codex';
+
+    const { ensureVoiceConversationSessionForVoiceHome } = await import('./voiceConversationSession');
+
+    await expect(ensureVoiceConversationSessionForVoiceHome()).resolves.toBe('voice-home-session');
+
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      backendTarget: {
+        kind: 'builtInAgent',
+        agentId: 'codex',
+      },
+    }));
+  });
+
+  it('prefers the configured last-used backend target for voice-home spawning when agentSource stays on session', async () => {
+    state.settings.lastUsedAgent = 'codex';
+    state.settings.lastUsedBackendTarget = { kind: 'configuredAcpBackend', backendId: 'review-bot' };
+    state.settings.acpCatalogSettingsV1 = {
+      v: 2,
+      backends: [{ id: 'review-bot', name: 'review-bot', title: 'Review Bot' }],
+    };
+
+    const { ensureVoiceConversationSessionForVoiceHome } = await import('./voiceConversationSession');
+
+    await expect(ensureVoiceConversationSessionForVoiceHome()).resolves.toBe('voice-home-session');
+
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      backendTarget: {
+        kind: 'configuredAcpBackend',
+        backendId: 'review-bot',
+      },
+    }));
+  });
+
+  it('falls back to the built-in last-used backend target when the stored configured backend is stale', async () => {
+    state.settings.lastUsedAgent = 'codex';
+    state.settings.lastUsedBackendTarget = { kind: 'configuredAcpBackend', backendId: 'stale-review-bot' };
+    state.settings.acpCatalogSettingsV1 = {
+      v: 2,
+      backends: [{ id: 'review-bot', name: 'review-bot', title: 'Review Bot' }],
+    };
 
     const { ensureVoiceConversationSessionForVoiceHome } = await import('./voiceConversationSession');
 

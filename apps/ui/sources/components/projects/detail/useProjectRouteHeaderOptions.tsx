@@ -42,6 +42,14 @@ export function useProjectRouteHeaderOptions(params: Readonly<{
             : t('projects.detail.groupTitle'),
         headerBackTitle: t('common.back'),
         headerBackVisible: false,
+        headerStyle: {
+            backgroundColor: theme.colors.header.background,
+        },
+        headerTintColor: theme.colors.header.tint,
+        headerTitleStyle: {
+            color: theme.colors.header.tint,
+        },
+        headerShadowVisible: false,
         headerLeft: () => (
             <Pressable
                 testID={`${params.testIdPrefix}-back`}
@@ -76,6 +84,7 @@ export function useProjectRouteHeaderOptions(params: Readonly<{
         params.testIdPrefix,
         params.workspaceRef,
         params.workspaceExperienceToggleA11yLabel,
+        theme.colors.header.background,
         theme.colors.header.tint,
     ]);
 }

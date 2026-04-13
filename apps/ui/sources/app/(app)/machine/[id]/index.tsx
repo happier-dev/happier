@@ -52,7 +52,7 @@ import { Text, TextInput } from '@/components/ui/text/Text';
 import { useMountedShouldContinue } from '@/hooks/ui/useMountedShouldContinue';
 import { PathInputBrowseButton } from '@/components/ui/pathBrowser/PathInputBrowseButton';
 import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
-import { DEFAULT_AGENT_ID, isAgentId } from '@/agents/catalog/catalog';
+import { resolvePreferredBackendTargetFromSettings } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromSettings';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { WINDOWS_REMOTE_SESSION_LAUNCH_MODE_OPTIONS } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchModeOptions';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
@@ -664,12 +664,17 @@ export default function MachineDetailScreen() {
                 settings: storage.getState().settings,
                 machineId,
             });
-            const preferredAgentId = isAgentId(settings.lastUsedAgent) ? settings.lastUsedAgent : DEFAULT_AGENT_ID;
+            const preferredBackendTarget = resolvePreferredBackendTargetFromSettings({
+                lastUsedAgent: settings.lastUsedAgent,
+                lastUsedBackendTarget: settings.lastUsedBackendTarget,
+                backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
+                acpCatalogSettingsV1: settings.acpCatalogSettingsV1 ?? undefined,
+            });
             const result = await machineSpawnNewSession({
                 machineId: machineId!,
                 directory: absolutePath,
                 approvedNewDirectoryCreation,
-                backendTarget: { kind: 'builtInAgent', agentId: preferredAgentId },
+                backendTarget: preferredBackendTarget,
                 terminal,
                 ...(effectiveWindowsRemoteSessionLaunchMode ? { windowsRemoteSessionLaunchMode: effectiveWindowsRemoteSessionLaunchMode } : {}),
             });

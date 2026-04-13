@@ -1,15 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ProviderSettingsPlugin } from '@/agents/providers/shared/providerSettingsPlugin';
-import { getProviderSettingsPlugin } from '@/agents/providers/registry/providerSettingsRegistry';
+import type { ProviderSettingsRuntime } from '@/agents/providers/shared/providerSettingsPlugin';
+import { getProviderSettingsRuntime } from '@/agents/providers/registry/providerSettingsRegistry';
 import type { MessageMeta } from '@/sync/domains/messages/messageMetaTypes';
 import { addProviderMessageMetaExtras } from '@/sync/domains/messages/messageMetaProviders';
 
 vi.mock('@/agents/providers/registry/providerSettingsRegistry', () => ({
-    getProviderSettingsPlugin: vi.fn(),
+    getProviderSettingsRuntime: vi.fn(),
 }));
 
-const getProviderSettingsPluginMock = vi.mocked(getProviderSettingsPlugin);
+const getProviderSettingsRuntimeMock = vi.mocked(getProviderSettingsRuntime);
 
 function buildBaseMeta(): MessageMeta {
     return {
@@ -21,25 +21,21 @@ function buildBaseMeta(): MessageMeta {
 }
 
 function buildPlugin(
-    buildOutgoingMessageMetaExtras: ProviderSettingsPlugin['buildOutgoingMessageMetaExtras'],
-): ProviderSettingsPlugin {
+    buildOutgoingMessageMetaExtras: ProviderSettingsRuntime['buildOutgoingMessageMetaExtras'],
+): ProviderSettingsRuntime {
     return {
         providerId: 'claude',
-        title: 'Fake plugin',
-        icon: { ionName: 'bug-outline', color: '#000' },
-        settings: {},
-        uiSections: [],
         buildOutgoingMessageMetaExtras,
     };
 }
 
 describe('addProviderMessageMetaExtras', () => {
     beforeEach(() => {
-        getProviderSettingsPluginMock.mockReset();
+        getProviderSettingsRuntimeMock.mockReset();
     });
 
     it('drops non-primitive extras returned by provider plugins', () => {
-        getProviderSettingsPluginMock.mockReturnValue(
+        getProviderSettingsRuntimeMock.mockReturnValue(
             buildPlugin(() => ({
                 ok: true,
                 nested: { a: 1 },
@@ -62,7 +58,7 @@ describe('addProviderMessageMetaExtras', () => {
     });
 
     it('ignores unsafe keys and does not override existing meta fields', () => {
-        getProviderSettingsPluginMock.mockReturnValue(
+        getProviderSettingsRuntimeMock.mockReturnValue(
             buildPlugin(() => ({
                 __proto__: 'unsafe',
                 constructor: 'unsafe',
@@ -86,7 +82,7 @@ describe('addProviderMessageMetaExtras', () => {
     });
 
     it('returns base meta when plugin extra generation throws', () => {
-        getProviderSettingsPluginMock.mockReturnValue(
+        getProviderSettingsRuntimeMock.mockReturnValue(
             buildPlugin(() => {
                 throw new Error('boom');
             }),

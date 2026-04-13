@@ -5,8 +5,12 @@ import { join } from 'node:path';
 
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 
-const { mockSessionRPC } = vi.hoisted(() => ({
+const { mockSessionRPC, readMachineTargetForSession } = vi.hoisted(() => ({
     mockSessionRPC: vi.fn(),
+    readMachineTargetForSession: vi.fn(() => ({
+        machineId: 'machine-1',
+        basePath: '.',
+    })),
 }));
 
 vi.mock('../api/session/apiSocket', () => ({
@@ -14,6 +18,25 @@ vi.mock('../api/session/apiSocket', () => ({
         sessionRPC: mockSessionRPC,
     },
 }));
+
+vi.mock('./sessionMachineTarget', () => ({
+    readMachineTargetForSession,
+}));
+
+vi.mock('../domains/fileSystem/resolveMachineAbsolutePath', () => ({
+    resolveMachineAbsolutePath: ({ requestPath }: { requestPath?: string }) => requestPath ?? '.',
+}));
+
+vi.mock('./scm/machineScm', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('./scm/machineScm')>();
+    return {
+        ...actual,
+        runMachineScmRpc: async (_machineId: string, method: string, request: unknown) => {
+            const requestWithPreference = actual.withScmBackendPreference(request as { backendPreference?: unknown });
+            return await mockSessionRPC('session-1', method, requestWithPreference);
+        },
+    };
+});
 
 vi.mock('../sync', () => ({
     sync: {
@@ -43,6 +66,11 @@ import { git, initBareRemote } from './__tests__/gitRepoHarness';
 describe('session scm ops integration (sapling)', () => {
     beforeEach(() => {
         mockSessionRPC.mockReset();
+        readMachineTargetForSession.mockReset();
+        readMachineTargetForSession.mockReturnValue({
+            machineId: 'machine-1',
+            basePath: '.',
+        });
     });
 
     it('returns sapling snapshots and file/commit diffs for .sl repositories', async () => {

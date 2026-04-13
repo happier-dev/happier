@@ -1,5 +1,6 @@
 import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilities';
 import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables';
+import { normalizeCodexBackendMode } from '@happier-dev/protocol';
 import { resolveCodexSpawnExtrasFromSettings, resolvePersistedCodexRuntimeIdentity } from '@happier-dev/agents';
 import { resolveCodexBrowseSourceOptions } from '@/agents/providers/codex/directSessions/resolveCodexBrowseSourceOptions';
 import { resolveCodexLinkEnsureRequestExtras } from '@/agents/providers/codex/directSessions/resolveCodexLinkEnsureRequestExtras';
@@ -20,6 +21,10 @@ function getSwitch(experiments: AgentResumeExperiments, id: string): boolean {
     return experiments.switches[id] === true;
 }
 
+function normalizeCodexUiBackendMode(value: unknown): CodexSpawnSessionExtras['codexBackendMode'] | null {
+    return normalizeCodexBackendMode(value);
+}
+
 export type CodexSpawnSessionExtras = Readonly<{
     codexBackendMode: 'mcp' | 'acp' | 'appServer';
 }>;
@@ -36,8 +41,9 @@ function resolveCodexResumeExtras(opts: {
     const extras = resolveCodexSpawnExtrasFromSettings(
         persistedMode ? { ...opts.settings, codexBackendMode: persistedMode } : opts.settings,
     );
-    return extras.codexBackendMode ? {
-        codexBackendMode: extras.codexBackendMode,
+    const codexBackendMode = normalizeCodexUiBackendMode(extras.codexBackendMode);
+    return codexBackendMode ? {
+        codexBackendMode,
     } : null;
 }
 
@@ -47,8 +53,9 @@ export function computeCodexSpawnSessionExtras(opts: {
 }): CodexSpawnSessionExtras | null {
     if (opts.agentId !== 'codex') return null;
     const extras = resolveCodexSpawnExtrasFromSettings(opts.settings);
-    return extras.codexBackendMode ? {
-        codexBackendMode: extras.codexBackendMode,
+    const codexBackendMode = normalizeCodexUiBackendMode(extras.codexBackendMode);
+    return codexBackendMode ? {
+        codexBackendMode,
     } : null;
 }
 

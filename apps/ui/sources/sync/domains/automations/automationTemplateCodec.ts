@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { BackendTargetRefSchema, SessionMcpSelectionV1Schema, WindowsRemoteSessionLaunchModeSchema } from '@happier-dev/protocol';
+import {
+    AcpConfigOptionOverridesV1Schema,
+    BackendTargetRefSchema,
+    SessionMcpSelectionV1Schema,
+    WindowsRemoteSessionLaunchModeSchema,
+} from '@happier-dev/protocol';
 
 import type { AutomationTemplate } from './automationTypes';
 
@@ -42,6 +47,7 @@ const AutomationTemplateSchema: z.ZodType<AutomationTemplate> = z.object({
     permissionModeUpdatedAt: z.number().int().optional(),
     modelId: z.string().optional(),
     modelUpdatedAt: z.number().int().optional(),
+    sessionConfigOptionOverrides: AcpConfigOptionOverridesV1Schema.optional(),
     mcpSelection: SessionMcpSelectionV1Schema.optional(),
     terminal: z.unknown().optional(),
     windowsRemoteSessionLaunchMode: WindowsRemoteSessionLaunchModeSchema.optional(),
@@ -86,6 +92,7 @@ function normalizeTemplate(template: AutomationTemplate): AutomationTemplate {
         ...(normalizeOptionalString(template.resume) ? { resume: normalizeOptionalString(template.resume) } : {}),
         ...(normalizeOptionalString(template.permissionMode) ? { permissionMode: normalizeOptionalString(template.permissionMode) } : {}),
         ...(normalizeOptionalString(template.modelId) ? { modelId: normalizeOptionalString(template.modelId) } : {}),
+        ...(template.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: template.sessionConfigOptionOverrides } : {}),
         ...(normalizeOptionalString(template.agentModeId) ? { agentModeId: normalizeOptionalString(template.agentModeId) } : {}),
         ...(normalizeOptionalString(template.existingSessionId)
             ? { existingSessionId: normalizeOptionalString(template.existingSessionId) }

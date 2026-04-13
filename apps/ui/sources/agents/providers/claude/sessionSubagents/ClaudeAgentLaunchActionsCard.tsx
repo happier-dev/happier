@@ -6,9 +6,10 @@ import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneSco
 import { SessionSubagentLaunchCardShell } from '@/components/sessions/agents/launch/SessionSubagentLaunchCardShell';
 import { createClaudeSubagentLauncherDetailsTab } from '@/agents/providers/claude/sessionSubagents/createClaudeSubagentLauncherDetailsTab';
 import { Text } from '@/components/ui/text/Text';
+import type { Theme } from '@/theme';
 import { t } from '@/text';
 
-const stylesheet = StyleSheet.create((theme) => ({
+const stylesheet = StyleSheet.create((theme: Theme) => ({
     row: {
         flexDirection: 'row',
         flexWrap: 'wrap',

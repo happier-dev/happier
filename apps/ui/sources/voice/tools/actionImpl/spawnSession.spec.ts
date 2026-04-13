@@ -5,7 +5,6 @@ const machineSpawnNewSession = vi.fn(async (_params: any) => ({ type: 'success',
 const getActiveServerSnapshot = vi.fn(() => ({ serverId: 'server-a' }));
 const resolveEffectiveWindowsRemoteSessionLaunchMode = vi.fn((_params: any) => ({ mode: null }));
 const postprocessSpawnedSession = vi.fn(async (_params: any) => {});
-const resolveSpawnAgentIdFromState = vi.fn((_value: any) => 'claude');
 const voiceTargetState = {
   primaryActionSessionId: null as string | null,
   lastFocusedSessionId: null as string | null,
@@ -71,10 +70,6 @@ vi.mock('./spawnSessionPostProcess', () => ({
   postprocessSpawnedSession: (params: any) => postprocessSpawnedSession(params),
 }));
 
-vi.mock('./spawnSessionAgent', () => ({
-  resolveSpawnAgentIdFromState: (value: any) => resolveSpawnAgentIdFromState(value),
-}));
-
 describe('spawnSessionForVoiceTool', () => {
   beforeEach(() => {
     state = createBaseState();
@@ -82,7 +77,6 @@ describe('spawnSessionForVoiceTool', () => {
     postprocessSpawnedSession.mockClear();
     getActiveServerSnapshot.mockClear();
     resolveEffectiveWindowsRemoteSessionLaunchMode.mockClear();
-    resolveSpawnAgentIdFromState.mockClear();
     voiceTargetState.primaryActionSessionId = null;
     voiceTargetState.lastFocusedSessionId = null;
   });
@@ -137,6 +131,68 @@ describe('spawnSessionForVoiceTool', () => {
     expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'm1',
       directory: 'C:/Repo/.worktrees/Feature-Auth',
+    }));
+  });
+
+  it('prefers the configured last-used backend target when no explicit agent override is provided', async () => {
+    state.settings.lastUsedAgent = 'codex';
+    state.settings.lastUsedBackendTarget = { kind: 'configuredAcpBackend', backendId: 'review-bot' };
+    state.settings.acpCatalogSettingsV1 = {
+      v: 2,
+      backends: [{ id: 'review-bot', name: 'review-bot', title: 'Review Bot' }],
+    };
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    await spawnSessionForVoiceTool({});
+
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+    }));
+  });
+
+  it('falls back to the last-used built-in target when the stored configured backend is stale', async () => {
+    state.settings.lastUsedAgent = 'codex';
+    state.settings.lastUsedBackendTarget = { kind: 'configuredAcpBackend', backendId: 'stale-review-bot' };
+    state.settings.acpCatalogSettingsV1 = {
+      v: 2,
+      backends: [{ id: 'review-bot', name: 'review-bot', title: 'Review Bot' }],
+    };
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    await spawnSessionForVoiceTool({});
+
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+    }));
+  });
+
+  it('uses an explicit backendTargetKey for configured ACP backends instead of falling back to settings', async () => {
+    state.settings.lastUsedAgent = 'claude';
+    state.settings.lastUsedBackendTarget = { kind: 'builtInAgent', agentId: 'claude' };
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    await spawnSessionForVoiceTool({
+      backendTargetKey: 'acpBackend:review-bot',
+      path: '/Users/leeroy/projects/happier',
+    } as any);
+
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+    }));
+  });
+
+  it('uses the canonical V2 backendTargetKey for configured ACP backends instead of falling back to settings', async () => {
+    state.settings.lastUsedAgent = 'claude';
+    state.settings.lastUsedBackendTarget = { kind: 'builtInAgent', agentId: 'claude' };
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    await spawnSessionForVoiceTool({
+      backendTargetKey: 'backend:review-bot:configured:review-bot',
+      path: '/Users/leeroy/projects/happier',
+    } as any);
+
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
     }));
   });
 

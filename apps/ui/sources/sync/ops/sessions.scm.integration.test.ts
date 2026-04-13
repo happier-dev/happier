@@ -5,8 +5,12 @@ import { join } from 'node:path';
 
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 
-const { mockSessionRPC } = vi.hoisted(() => ({
+const { mockSessionRPC, readMachineTargetForSession } = vi.hoisted(() => ({
     mockSessionRPC: vi.fn(),
+    readMachineTargetForSession: vi.fn(() => ({
+        machineId: 'machine-1',
+        basePath: '.',
+    })),
 }));
 
 vi.mock('../api/session/apiSocket', () => ({
@@ -14,6 +18,25 @@ vi.mock('../api/session/apiSocket', () => ({
         sessionRPC: mockSessionRPC,
     },
 }));
+
+vi.mock('./sessionMachineTarget', () => ({
+    readMachineTargetForSession,
+}));
+
+vi.mock('../domains/fileSystem/resolveMachineAbsolutePath', () => ({
+    resolveMachineAbsolutePath: ({ requestPath }: { requestPath?: string }) => requestPath ?? '.',
+}));
+
+vi.mock('./scm/machineScm', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('./scm/machineScm')>();
+    return {
+        ...actual,
+        runMachineScmRpc: async (_machineId: string, method: string, request: unknown) => {
+            const requestWithPreference = actual.withScmBackendPreference(request as { backendPreference?: unknown });
+            return await mockSessionRPC('session-1', method, requestWithPreference);
+        },
+    };
+});
 
 // sessions ops import sync for non-SCM helpers; keep this test node-safe.
 vi.mock('../sync', () => ({
@@ -42,6 +65,11 @@ import { storage } from '../domains/state/storage';
 describe('session scm ops integration (git backend)', () => {
     beforeEach(() => {
         mockSessionRPC.mockReset();
+        readMachineTargetForSession.mockReset();
+        readMachineTargetForSession.mockReturnValue({
+            machineId: 'machine-1',
+            basePath: '.',
+        });
         storage.getState().applySettingsLocal({ scmGitRepoPreferredBackend: 'git' } as any);
     });
 

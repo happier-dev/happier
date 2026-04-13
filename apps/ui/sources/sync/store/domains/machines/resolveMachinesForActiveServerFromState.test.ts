@@ -64,4 +64,22 @@ describe('resolveMachinesForActiveServerFromState', () => {
         expect(selectors.resolveMachineForActiveServerFromState(state, 'machine-a')).toBeNull();
         expect(selectors.resolveMachineForActiveServerFromState(state, 'missing')).toBeNull();
     });
+
+    it('does not leak a stale global machine when the active server cache is empty during bootstrap', async () => {
+        const selectors = await import('./resolveMachinesForActiveServerFromState');
+        const state = {
+            machines: {
+                'machine-stale': createMachine({ id: 'machine-stale', createdAt: 99 }),
+            },
+            machineListByServerId: {
+                'server-a': [],
+                'server-b': [
+                    createMachine({ id: 'machine-b', createdAt: 20 }),
+                ],
+            },
+        };
+
+        expect(selectors.resolveMachineForActiveServerFromState(state, 'machine-stale')).toBeNull();
+        expect(selectors.resolveVisibleMachinesForActiveServerFromState(state)).toEqual([]);
+    });
 });

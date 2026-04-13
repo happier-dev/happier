@@ -1,5 +1,5 @@
 import type { AgentId } from '@/agents/catalog/catalog';
-import { getProviderSettingsPlugin } from '@/agents/providers/registry/providerSettingsRegistry';
+import { getProviderSettingsRuntime } from '@/agents/providers/registry/providerSettingsRegistry';
 
 import type { MessageMeta } from '@/sync/domains/messages/messageMetaTypes';
 
@@ -11,12 +11,12 @@ export function addProviderMessageMetaExtras(args: {
 }): MessageMeta {
     if (!args.agentId) return args.meta;
 
-    const plugin = getProviderSettingsPlugin(args.agentId);
-    if (!plugin) return args.meta;
+    const runtime = getProviderSettingsRuntime(args.agentId);
+    if (!runtime) return args.meta;
 
     let extras: unknown;
     try {
-        extras = plugin.buildOutgoingMessageMetaExtras({
+        extras = runtime.buildOutgoingMessageMetaExtras({
             settings: args.settings,
             session: args.session,
             agentId: args.agentId,

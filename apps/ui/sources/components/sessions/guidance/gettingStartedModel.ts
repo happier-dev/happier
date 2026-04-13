@@ -100,7 +100,14 @@ export function buildSessionGettingStartedViewModel(input: SessionGettingStarted
     const activeProfile = input.activeServerProfile;
     const targetLabel = resolveTargetLabel(input, activeProfile.name);
 
-    const perServer = input.selection.allowedServerIds.map((serverId) => {
+    const selectedServerIds = input.selection.allowedServerIds;
+    const activeServerMachines = resolveServerScopedMachines({
+        serverId: input.selection.activeServerId,
+        activeServerId: input.selection.activeServerId,
+        activeMachines: input.activeMachines,
+        machineListByServerId: input.machineListByServerId,
+    });
+    const perServer = selectedServerIds.map((serverId) => {
         const machines = resolveServerScopedMachines({
             serverId,
             activeServerId: input.selection.activeServerId,
@@ -113,7 +120,16 @@ export function buildSessionGettingStartedViewModel(input: SessionGettingStarted
         const online = machines.filter((m) => m.active === true).length;
         return { machineCount: machines.length, onlineCount: online };
     });
-    const machines = computeMachinesSummary(perServer);
+    const selectedMachines = computeMachinesSummary(perServer);
+    const machines = selectedMachines.machineCount > 0
+        ? selectedMachines
+        : !selectedMachines.hasUnknownServers && activeServerMachines && activeServerMachines.length > 0
+            ? {
+                hasUnknownServers: false,
+                machineCount: activeServerMachines.length,
+                onlineCount: activeServerMachines.filter((machine) => machine.active === true).length,
+            }
+            : selectedMachines;
 
     const kind = computeSessionGettingStartedDecision({
         sessionsReady: input.sessionsReady,

@@ -1,5 +1,5 @@
 import { redactVoicePathLikeString } from '@/voice/shared/redactVoicePathLikeData';
-import { parseBackendTargetKey } from '@happier-dev/protocol';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol';
 
 function asObject(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -28,11 +28,11 @@ function resolveAgentModelsSummaryLabel(input: Record<string, unknown> | null, r
     const backendTargetKey = normalizeText(input?.backendTargetKey);
     if (backendTargetKey) {
         try {
-            const target = parseBackendTargetKey(backendTargetKey);
-            if (target.kind === 'configuredAcpBackend') {
-                return humanizeIdentifier(target.backendId);
+            const target = readBackendTargetRefV2(backendTargetKey);
+            if (target.sourceKind === 'configured') {
+                return humanizeIdentifier(target.configuredBackendId ?? target.backendId);
             }
-            return humanizeIdentifier(target.agentId);
+            return humanizeIdentifier(target.backendId);
         } catch {
             // Fall back to legacy agent-id labeling when the input is malformed.
         }

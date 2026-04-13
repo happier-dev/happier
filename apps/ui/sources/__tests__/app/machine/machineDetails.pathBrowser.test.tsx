@@ -28,8 +28,10 @@ const mockState = vi.hoisted(() => ({
     machinesState: { 'machine-1': createMachineRecord() } as Record<string, unknown>,
     machineTargetSessionsState: {} as Record<string, unknown>,
     multiTextInputSpy: vi.fn(),
+    machineSpawnNewSessionMock: vi.fn(async () => ({ type: 'error', errorCode: 'unexpected', errorMessage: 'noop' })),
     openMachinePathBrowserModalMock: vi.fn<(params: unknown) => Promise<string | null>>(async () => '/Users/test/project'),
     projectForSession: {} as Record<string, { key?: { machineId?: string; rootPath?: string } } | null>,
+    settingsState: {} as Record<string, unknown>,
     sessionsState: [] as Array<unknown>,
 }));
 
@@ -42,7 +44,7 @@ installMachineDetailsCommonModuleMocks({
             useMachine: () => createMachineRecord(),
             storage: {
                 getState: () => ({
-                    settings: {},
+                    settings: mockState.settingsState,
                     sessions: mockState.machineTargetSessionsState,
                     machines: mockState.machinesState,
                     getProjectForSession: (sessionId: string) => mockState.projectForSession[sessionId] ?? null,
@@ -50,7 +52,7 @@ installMachineDetailsCommonModuleMocks({
             },
             useSetting: () => false,
             useSettingMutable: () => [null, vi.fn()],
-            useSettings: () => ({}),
+            useSettings: () => mockState.settingsState,
         });
     },
 });
@@ -90,7 +92,7 @@ vi.mock('@/components/ui/pathBrowser/openMachinePathBrowserModal', () => ({
 }));
 
 vi.mock('@/sync/ops', () => ({
-    machineSpawnNewSession: vi.fn(async () => ({ type: 'error', errorCode: 'unexpected', errorMessage: 'noop' })),
+    machineSpawnNewSession: (...args: Parameters<typeof mockState.machineSpawnNewSessionMock>) => mockState.machineSpawnNewSessionMock(...args),
     machineStopDaemon: vi.fn(async () => ({ message: 'noop' })),
     machineStopSession: vi.fn(async () => ({ ok: true })),
     machineUpdateMetadata: vi.fn(async () => ({})),
@@ -172,6 +174,7 @@ vi.mock('@/sync/ops/sessionMachineTarget', () => ({
 
 describe('MachineDetailScreen path browser', () => {
     beforeEach(() => {
+        mockState.machineSpawnNewSessionMock.mockClear();
         mockState.openMachinePathBrowserModalMock.mockClear();
         mockState.multiTextInputSpy.mockClear();
         mockState.itemSpy.mockClear();
@@ -181,6 +184,7 @@ describe('MachineDetailScreen path browser', () => {
             'machine-1': createMachineRecord(),
         };
         mockState.projectForSession = {};
+        mockState.settingsState = {};
     });
 
     it('opens the shared path browser with the current absolute path preselected and writes the chosen folder relative to the machine home', async () => {
@@ -268,5 +272,62 @@ describe('MachineDetailScreen path browser', () => {
                 title: '~/workspace/rebound',
             }),
         );
+    });
+
+    it('spawns using the persisted configured backend target instead of rebuilding a built-in target from lastUsedAgent', async () => {
+        mockState.settingsState = {
+            lastUsedAgent: 'codex',
+            lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+        };
+
+        const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
+        const screen = await renderScreen(React.createElement(MachineDetailScreen));
+
+        const startButtons = screen.findAll((node) =>
+            String(node.type) === 'Pressable'
+            && typeof node.props?.onPress === 'function'
+            && typeof node.props?.disabled === 'boolean',
+        );
+
+        expect(startButtons[0]).toBeTruthy();
+
+        await act(async () => {
+            await startButtons[0].props.onPress();
+        });
+
+        expect(mockState.machineSpawnNewSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+        }));
+    });
+
+    it('falls back to the preferred built-in target when the stored configured backend is stale', async () => {
+        mockState.settingsState = {
+            lastUsedAgent: 'codex',
+            lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'stale-review-bot' },
+            backendEnabledByTargetKey: { 'agent:codex': true },
+            acpCatalogSettingsV1: {
+                v: 2,
+                backends: [{ id: 'review-bot', name: 'review-bot', title: 'Review Bot' }],
+            },
+        };
+
+        const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
+        const screen = await renderScreen(React.createElement(MachineDetailScreen));
+
+        const startButtons = screen.findAll((node) =>
+            String(node.type) === 'Pressable'
+            && typeof node.props?.onPress === 'function'
+            && typeof node.props?.disabled === 'boolean',
+        );
+
+        expect(startButtons[0]).toBeTruthy();
+
+        await act(async () => {
+            await startButtons[0].props.onPress();
+        });
+
+        expect(mockState.machineSpawnNewSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        }));
     });
 });

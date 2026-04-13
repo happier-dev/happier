@@ -4,12 +4,11 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveEffectiveWindowsRemoteSessionLaunchMode } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode';
 
 import { openVoiceSessionSpawnPicker } from '@/voice/pickers/openVoiceSessionSpawnPicker';
-import { resolveSpawnAgentIdFromState } from './spawnSessionAgent';
+import { resolveVoiceToolSpawnBackendTarget } from './spawnSessionAgent';
 import { postprocessSpawnedSession } from './spawnSessionPostProcess';
 import { normalizeNonEmptyString } from './shared';
-import { isAgentId } from '@/agents/registry/registryCore';
 
-export async function spawnSessionWithPickerForVoiceTool(params: Readonly<{ tag?: string; agentId?: string; modelId?: string; initialMessage?: string }>): Promise<unknown> {
+export async function spawnSessionWithPickerForVoiceTool(params: Readonly<{ tag?: string; agentId?: string; modelId?: string; backendTargetKey?: string; initialMessage?: string }>): Promise<unknown> {
   const picked = await openVoiceSessionSpawnPicker();
   if (!picked) {
     return { ok: false, errorCode: 'user_cancelled', errorMessage: 'user_cancelled' };
@@ -17,11 +16,15 @@ export async function spawnSessionWithPickerForVoiceTool(params: Readonly<{ tag?
 
   const state: any = storage.getState();
   const serverId = getActiveServerSnapshot().serverId;
-  const requestedAgentId = normalizeNonEmptyString(params.agentId);
-  if (requestedAgentId && !isAgentId(requestedAgentId)) {
-    return { ok: false, errorCode: 'agent_not_found', errorMessage: 'agent_not_found' };
+  const resolvedBackendTarget = resolveVoiceToolSpawnBackendTarget({
+    state,
+    agentId: normalizeNonEmptyString(params.agentId),
+    backendTargetKey: normalizeNonEmptyString(params.backendTargetKey),
+  });
+  if (!resolvedBackendTarget.ok) {
+    return { ok: false, errorCode: resolvedBackendTarget.errorCode, errorMessage: resolvedBackendTarget.errorMessage };
   }
-  const agent = requestedAgentId ? (requestedAgentId as any) : resolveSpawnAgentIdFromState(state);
+  const backendTarget = resolvedBackendTarget.backendTarget;
   const requestedModelId = normalizeNonEmptyString(params.modelId);
   const modelId = requestedModelId && requestedModelId !== 'default' ? requestedModelId : null;
   const modelUpdatedAt = modelId ? Date.now() : null;
@@ -34,7 +37,7 @@ export async function spawnSessionWithPickerForVoiceTool(params: Readonly<{ tag?
   const spawned = await machineSpawnNewSession({
     machineId: picked.machineId,
     directory: picked.directory,
-    backendTarget: { kind: 'builtInAgent', agentId: agent },
+    backendTarget,
     serverId,
     ...(windowsRemoteSessionLaunchMode ? { windowsRemoteSessionLaunchMode } : {}),
     ...(modelId ? { modelId, modelUpdatedAt: modelUpdatedAt ?? Date.now() } : {}),

@@ -140,4 +140,63 @@ describe('buildSessionGettingStartedViewModel', () => {
 
         expect(model.kind).toBe('create_session');
     });
+
+    it('falls back to the active machine list when no visible server ids are selected', () => {
+        const model = buildSessionGettingStartedViewModel({
+            sessionsReady: true,
+            sessionCount: 0,
+            activeMachines: [{ active: true }],
+            selection: {
+                activeTarget: { kind: 'server', id: 'srv-a' },
+                activeServerId: 'srv-a',
+                allowedServerIds: [],
+            },
+            serverSelectionGroups: [],
+            activeServerProfile: { id: 'srv-a', name: 'A', serverUrl: 'https://api.a.example' },
+            machineListByServerId: {},
+        });
+
+        expect(model.kind).toBe('create_session');
+    });
+
+    it('falls back to the active server machines when the selected scope points elsewhere and is empty', () => {
+        const model = buildSessionGettingStartedViewModel({
+            sessionsReady: true,
+            sessionCount: 0,
+            activeMachines: [{ active: true }],
+            selection: {
+                activeTarget: { kind: 'server', id: 'srv-b' },
+                activeServerId: 'srv-a',
+                allowedServerIds: ['srv-b'],
+            },
+            serverSelectionGroups: [],
+            activeServerProfile: { id: 'srv-a', name: 'A', serverUrl: 'https://api.a.example' },
+            machineListByServerId: {
+                'srv-a': [{ active: true }],
+                'srv-b': [],
+            },
+        });
+
+        expect(model.kind).toBe('create_session');
+    });
+
+    it('keeps loading when the selected scope machine cache is still unknown even if the active server has machines', () => {
+        const model = buildSessionGettingStartedViewModel({
+            sessionsReady: true,
+            sessionCount: 0,
+            activeMachines: [{ active: true }],
+            selection: {
+                activeTarget: { kind: 'server', id: 'srv-b' },
+                activeServerId: 'srv-a',
+                allowedServerIds: ['srv-b'],
+            },
+            serverSelectionGroups: [],
+            activeServerProfile: { id: 'srv-a', name: 'A', serverUrl: 'https://api.a.example' },
+            machineListByServerId: {
+                'srv-a': [{ active: true }],
+            },
+        });
+
+        expect(model.kind).toBe('loading');
+    });
 });

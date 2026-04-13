@@ -8,8 +8,7 @@ import { buildSafeWorkspaceLabel } from '@/utils/worktree/workspaceHandles';
 
 import { normalizeNonEmptyString, resolveVoiceMachineLabel } from './shared';
 import { postprocessSpawnedSession } from './spawnSessionPostProcess';
-import { resolveSpawnAgentIdFromState } from './spawnSessionAgent';
-import { isAgentId } from '@/agents/registry/registryCore';
+import { resolveVoiceToolSpawnBackendTarget } from './spawnSessionAgent';
 import { resolveVoiceSessionRef } from './sessionReference';
 
 function resolveSpawnTarget(state: any): { machineId: string; directory: string } | null {
@@ -45,6 +44,7 @@ export async function spawnSessionForVoiceTool(params: Readonly<{
   tag?: string;
   agentId?: string;
   modelId?: string;
+  backendTargetKey?: string;
   path?: string;
   host?: string;
   initialMessage?: string;
@@ -69,11 +69,15 @@ export async function spawnSessionForVoiceTool(params: Readonly<{
   }
 
   const serverId = getActiveServerSnapshot().serverId;
-  const requestedAgentId = normalizeNonEmptyString(params.agentId);
-  if (requestedAgentId && !isAgentId(requestedAgentId)) {
-    return { type: 'error', errorCode: 'agent_not_found', errorMessage: 'agent_not_found' };
+  const resolvedBackendTarget = resolveVoiceToolSpawnBackendTarget({
+    state,
+    agentId: normalizeNonEmptyString(params.agentId),
+    backendTargetKey: normalizeNonEmptyString(params.backendTargetKey),
+  });
+  if (!resolvedBackendTarget.ok) {
+    return { type: 'error', errorCode: resolvedBackendTarget.errorCode, errorMessage: resolvedBackendTarget.errorMessage };
   }
-  const agent = requestedAgentId ? (requestedAgentId as any) : resolveSpawnAgentIdFromState(state);
+  const backendTarget = resolvedBackendTarget.backendTarget;
   const requestedModelId = normalizeNonEmptyString(params.modelId);
   const modelId = requestedModelId && requestedModelId !== 'default' ? requestedModelId : null;
   const modelUpdatedAt = modelId ? Date.now() : null;
@@ -91,7 +95,7 @@ export async function spawnSessionForVoiceTool(params: Readonly<{
   const spawned = await machineSpawnNewSession({
     machineId,
     directory,
-    backendTarget: { kind: 'builtInAgent', agentId: agent },
+    backendTarget,
     serverId,
     ...(windowsRemoteSessionLaunchMode ? { windowsRemoteSessionLaunchMode } : {}),
     ...(modelId ? { modelId, modelUpdatedAt: modelUpdatedAt ?? Date.now() } : {}),

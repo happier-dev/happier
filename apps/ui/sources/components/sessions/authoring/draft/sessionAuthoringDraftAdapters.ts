@@ -6,6 +6,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { DEFAULT_AGENT_ID, isAgentId } from '@/agents/catalog/catalog';
+import { resolvePersistedAgentIdForBackendTarget } from '@/agents/backendCatalog/resolvePersistedAgentIdForBackendTarget';
 import {
     sanitizeNewSessionAutomationDraft,
     type NewSessionAutomationDraft,
@@ -26,6 +27,10 @@ import {
 } from '@/sync/domains/sessionAuthoring/sessionAuthoringNormalization';
 import type { AutomationTemplate } from '@/sync/domains/automations/automationTypes';
 import type { NewSessionData } from '@/utils/sessions/tempDataStore';
+import {
+    normalizeBackendNewSessionOptionStateByTargetKey,
+    readBackendNewSessionOptionStateByTargetKey,
+} from '@/utils/sessions/backendNewSessionOptionState';
 import { parseCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 import type { NewSessionDraft } from '@/sync/domains/state/persistence';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -204,13 +209,13 @@ function resolveNewSessionDraftAgentId(params: Readonly<{
 
 function resolveConnectedServicesFromAgentOptionState(params: Readonly<{
     backendTarget: BackendTargetRefV1 | null;
-    agentOptionStateByAgentId?: Record<string, Record<string, unknown>> | null;
+    backendNewSessionOptionStateByTargetKey?: Record<string, Record<string, unknown>> | null;
 }>): unknown {
-    if (!params.backendTarget || !params.agentOptionStateByAgentId) {
+    if (!params.backendTarget || !params.backendNewSessionOptionStateByTargetKey) {
         return null;
     }
     const targetKey = buildBackendTargetKey(params.backendTarget);
-    const targetOptions = params.agentOptionStateByAgentId[targetKey];
+    const targetOptions = params.backendNewSessionOptionStateByTargetKey[targetKey];
     if (!targetOptions || typeof targetOptions !== 'object' || Array.isArray(targetOptions)) {
         return null;
     }
@@ -359,6 +364,7 @@ function buildNewSessionAuthoringDraftFromSource(source: NewSessionAuthoringDraf
         agentId: source.source.agentType,
         backendTarget,
     });
+    const backendNewSessionOptionStateByTargetKey = readBackendNewSessionOptionStateByTargetKey(source.source);
 
     return buildNewSessionAuthoringDraft({
         directory: resolveNewSessionSourceDirectory(source) ?? '/',
@@ -378,7 +384,7 @@ function buildNewSessionAuthoringDraftFromSource(source: NewSessionAuthoringDraf
         mcpSelection: source.source.mcpSelection ?? null,
         connectedServices: normalizeSessionAuthoringConnectedServices(resolveConnectedServicesFromAgentOptionState({
             backendTarget,
-            agentOptionStateByAgentId: source.source.agentNewSessionOptionStateByAgentId ?? null,
+            backendNewSessionOptionStateByTargetKey,
         })),
         terminal: null,
         windowsRemoteSessionLaunchMode: null,
@@ -498,6 +504,7 @@ export function hydrateSessionAuthoringDraftFromAutomationTemplate(params: Reado
         permissionModeUpdatedAt: normalizeOptionalNumber(params.template.permissionModeUpdatedAt),
         modelId: normalizeOptionalString(params.template.modelId),
         modelUpdatedAt: normalizeOptionalNumber(params.template.modelUpdatedAt),
+        sessionConfigOptionOverrides: normalizeSessionConfigOptionOverrides(params.template.sessionConfigOptionOverrides),
         mcpSelection: params.template.mcpSelection ?? null,
         connectedServices: normalizeSessionAuthoringConnectedServices(params.template.connectedServices),
         terminal: normalizeSessionAuthoringTerminal(params.template.terminal),
@@ -506,7 +513,6 @@ export function hydrateSessionAuthoringDraftFromAutomationTemplate(params: Reado
         experimentalCodexAcp: null,
         codexBackendMode,
         acpSessionModeId: normalizeOptionalString(params.template.agentModeId),
-        sessionConfigOptionOverrides: null,
         existingSessionId: params.targetType === 'existing_session'
             ? normalizeOptionalString(params.template.existingSessionId)
             : null,
@@ -609,6 +615,7 @@ export function buildAutomationTemplateFromSessionAuthoringDraft(draft: SessionA
         ...(typeof draft.permissionModeUpdatedAt === 'number' ? { permissionModeUpdatedAt: draft.permissionModeUpdatedAt } : {}),
         ...(normalizeOptionalString(draft.modelId) ? { modelId: draft.modelId!.trim() } : {}),
         ...(typeof draft.modelUpdatedAt === 'number' ? { modelUpdatedAt: draft.modelUpdatedAt } : {}),
+        ...(draft.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: draft.sessionConfigOptionOverrides } : {}),
         ...(draft.mcpSelection ? { mcpSelection: draft.mcpSelection } : {}),
         ...(draft.connectedServices !== undefined && draft.connectedServices !== null ? { connectedServices: draft.connectedServices } : {}),
         ...(draft.terminal !== undefined && draft.terminal !== null ? { terminal: draft.terminal } : {}),
@@ -707,7 +714,7 @@ export function buildNewSessionTempDataFromAuthoringDraft(params: Readonly<{
             ? { kind: 'builtInAgent', agentId: normalizedAgentId } satisfies BackendTargetRefV1
             : null);
     const targetKey = backendTarget ? buildBackendTargetKey(backendTarget) : null;
-    const agentOptionStateByAgentId = targetKey && (
+    const backendOptionStateByTargetKey = targetKey && (
         params.draft.connectedServices != null
     )
         ? {
@@ -736,7 +743,7 @@ export function buildNewSessionTempDataFromAuthoringDraft(params: Readonly<{
         codexBackendMode,
         mcpSelection: params.draft.mcpSelection,
         ...(params.draft.automation ? { automationDraft: params.draft.automation } : {}),
-        agentNewSessionOptionStateByAgentId: agentOptionStateByAgentId,
+        backendNewSessionOptionStateByTargetKey: backendOptionStateByTargetKey,
         resumeSessionId: params.draft.resumeSessionId ?? undefined,
     };
 }
@@ -748,18 +755,26 @@ export function buildPersistedNewSessionDraftFromAuthoringDraft(params: Readonly
     selectedSecretId: string | null;
     selectedSecretIdByProfileIdByEnvVarName: NewSessionDraft['selectedSecretIdByProfileIdByEnvVarName'];
     sessionOnlySecretValueEncByProfileIdByEnvVarName: NewSessionDraft['sessionOnlySecretValueEncByProfileIdByEnvVarName'];
-    agentNewSessionOptionStateByAgentId: NewSessionDraft['agentNewSessionOptionStateByAgentId'];
+    backendNewSessionOptionStateByTargetKey: NewSessionDraft['backendNewSessionOptionStateByTargetKey'];
+    preferredPersistedAgentId?: unknown;
     updatedAt: number;
 }>): NewSessionDraft {
     const normalizedAgentId = isAgentId(params.draft.agentId) ? params.draft.agentId : null;
     const builtInBackendAgentId = params.draft.backendTarget && isBuiltInAgentTarget(params.draft.backendTarget) && isAgentId(params.draft.backendTarget.agentId)
         ? params.draft.backendTarget.agentId
         : null;
-    const agentType = normalizedAgentId ?? builtInBackendAgentId ?? DEFAULT_AGENT_ID;
+    const agentType = resolvePersistedAgentIdForBackendTarget({
+        backendTarget: params.draft.backendTarget ?? null,
+        persistedAgentId: params.preferredPersistedAgentId,
+        selectedBuiltInAgentId: normalizedAgentId ?? builtInBackendAgentId ?? DEFAULT_AGENT_ID,
+    });
     const codexBackendMode = resolveCanonicalCodexBackendMode({
         codexBackendMode: params.draft.codexBackendMode,
         experimentalCodexAcp: params.draft.experimentalCodexAcp,
     });
+    const normalizedBackendNewSessionOptionStateByTargetKey = normalizeBackendNewSessionOptionStateByTargetKey(
+        params.backendNewSessionOptionStateByTargetKey,
+    );
 
     return {
         input: params.draft.displayText || params.draft.prompt,
@@ -785,8 +800,8 @@ export function buildPersistedNewSessionDraftFromAuthoringDraft(params: Readonly
         ...(codexBackendMode ? { codexBackendMode } : {}),
         ...(params.draft.mcpSelection ? { mcpSelection: params.draft.mcpSelection } : {}),
         ...(normalizeOptionalString(params.draft.resumeSessionId) ? { resumeSessionId: normalizeOptionalString(params.draft.resumeSessionId)! } : {}),
-        ...(params.agentNewSessionOptionStateByAgentId ? {
-            agentNewSessionOptionStateByAgentId: params.agentNewSessionOptionStateByAgentId,
+        ...(normalizedBackendNewSessionOptionStateByTargetKey ? {
+            backendNewSessionOptionStateByTargetKey: normalizedBackendNewSessionOptionStateByTargetKey,
         } : {}),
         ...(params.draft.automation ? { automationDraft: params.draft.automation } : {}),
         updatedAt: params.updatedAt,

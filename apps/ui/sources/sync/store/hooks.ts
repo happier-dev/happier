@@ -493,18 +493,7 @@ export function useLocalSettings(): LocalSettings {
 export function useAllMachines(): Machine[] {
   return getStorage()(
     useShallow((state) => {
-      const machines = resolveVisibleMachinesForActiveServerFromState(
-        state.isDataReady
-          ? state
-          : {
-              ...state,
-              machineListByServerId: {},
-            }
-      );
-      if (machines.length > 0) {
-        return machines;
-      }
-      return state.isDataReady ? machines : [];
+      return resolveVisibleMachinesForActiveServerFromState(state);
     })
   );
 }

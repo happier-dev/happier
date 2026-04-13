@@ -215,11 +215,11 @@ export function createDefaultActionExecutor(opts?: Readonly<{
       });
     },
 
-    sessionSpawnNew: async ({ tag, agentId, modelId, path, host, initialMessage }) =>
-      await spawnSessionForVoiceTool({ tag, agentId, modelId, path, host, initialMessage }),
+    sessionSpawnNew: async ({ tag, agentId, modelId, backendTargetKey, path, host, initialMessage }) =>
+      await spawnSessionForVoiceTool({ tag, agentId, modelId, backendTargetKey, path, host, initialMessage }),
 
-    sessionSpawnPicker: async ({ tag, agentId, modelId, initialMessage }) =>
-      await spawnSessionWithPickerForVoiceTool({ tag, agentId, modelId, initialMessage }),
+    sessionSpawnPicker: async ({ tag, agentId, modelId, backendTargetKey, initialMessage }) =>
+      await spawnSessionWithPickerForVoiceTool({ tag, agentId, modelId, backendTargetKey, initialMessage }),
 
     pathsListRecent: async ({ machineId, limit }) => await listRecentPathsForVoiceTool({ machineId, limit }),
     machinesList: async ({ limit }) => await listMachinesForVoiceTool({ limit }),

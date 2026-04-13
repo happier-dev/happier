@@ -1,4 +1,9 @@
-import type { BackendTargetRefV1, SessionMcpSelectionV1, WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
+import type {
+    AcpConfigOptionOverridesV1,
+    BackendTargetRefV1,
+    SessionMcpSelectionV1,
+    WindowsRemoteSessionLaunchMode,
+} from '@happier-dev/protocol';
 import type { CodexBackendMode } from '@happier-dev/agents';
 
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
@@ -80,6 +85,7 @@ export type AutomationTemplate = Readonly<{
     permissionModeUpdatedAt?: number;
     modelId?: string;
     modelUpdatedAt?: number;
+    sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     mcpSelection?: SessionMcpSelectionV1;
     terminal?: unknown;
     windowsRemoteSessionLaunchMode?: WindowsRemoteSessionLaunchMode;

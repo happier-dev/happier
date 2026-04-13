@@ -1,9 +1,11 @@
 import {
   buildSystemSessionMetadataV1,
   SPAWN_SESSION_ERROR_CODES,
+  type BackendTargetRefV1,
 } from '@happier-dev/protocol';
-import { DEFAULT_AGENT_ID, type AgentId } from '@happier-dev/agents';
+import type { AgentId } from '@happier-dev/agents';
 
+import { resolvePreferredBackendTargetFromSettings } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromSettings';
 import { isAgentId } from '@/agents/registry/registryCore';
 import { listPreferredMachineIds } from '@/components/settings/pickers/resolvePreferredMachineId';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -186,18 +188,22 @@ function resolveVoiceHomeSpawnTarget(state: any): { machineId: string; directory
   return null;
 }
 
-function resolveVoiceConversationAgentId(state: any): AgentId {
-  const agentCfg = state?.settings?.voice?.adapters?.local_conversation?.agent ?? {};
+function resolveVoiceConversationBackendTarget(state: any): BackendTargetRefV1 {
+  const settings = state?.settings ?? {};
+  const agentCfg = settings?.voice?.adapters?.local_conversation?.agent ?? {};
   const agentSource = normalizeNonEmptyString(agentCfg?.agentSource) ?? 'session';
   const requestedAgentId = normalizeNonEmptyString(agentCfg?.agentId);
-  const lastUsedAgent = normalizeNonEmptyString(state?.settings?.lastUsedAgent);
-  const fallback = isAgentId(lastUsedAgent) ? lastUsedAgent : DEFAULT_AGENT_ID;
 
   if (agentSource === 'agent' && isAgentId(requestedAgentId)) {
-    return requestedAgentId;
+    return { kind: 'builtInAgent', agentId: requestedAgentId as AgentId };
   }
 
-  return fallback;
+  return resolvePreferredBackendTargetFromSettings({
+    lastUsedAgent: settings.lastUsedAgent,
+    lastUsedBackendTarget: settings.lastUsedBackendTarget,
+    backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
+    acpCatalogSettingsV1: settings.acpCatalogSettingsV1 ?? undefined,
+  });
 }
 
 async function waitForVoiceHomeSpawnTarget(timeoutMs: number): Promise<{ machineId: string; directory: string } | null> {
@@ -470,7 +476,7 @@ export async function ensureVoiceConversationSessionForVoiceHome(): Promise<stri
     return bestExisting.id;
   }
 
-  const agent = resolveVoiceConversationAgentId(state);
+  const backendTarget = resolveVoiceConversationBackendTarget(state);
   const serverId = getActiveServerSnapshot().serverId;
   const knownSessionIds = new Set(Object.keys(state.sessions ?? {}));
   const spawned = await machineSpawnNewSession({
@@ -478,7 +484,7 @@ export async function ensureVoiceConversationSessionForVoiceHome(): Promise<stri
     directory: target.directory,
     transcriptStorage: 'persisted',
     approvedNewDirectoryCreation: true,
-    backendTarget: { kind: 'builtInAgent', agentId: agent },
+    backendTarget,
     serverId,
   });
 
@@ -569,14 +575,14 @@ export async function ensureVoiceConversationSessionForSessionRoot(params: Reado
     return bestExisting.id;
   }
 
-  const agent = resolveVoiceConversationAgentId(state);
+  const backendTarget = resolveVoiceConversationBackendTarget(state);
   const serverId = getActiveServerSnapshot().serverId;
   const knownSessionIds = new Set(Object.keys(state.sessions ?? {}));
   const spawned = await machineSpawnNewSession({
     machineId,
     directory,
     transcriptStorage: 'persisted',
-    backendTarget: { kind: 'builtInAgent', agentId: agent },
+    backendTarget,
     serverId,
   });
 

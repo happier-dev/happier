@@ -206,6 +206,41 @@ describe('createDefaultActionExecutor plan mode integration', () => {
     });
   });
 
+  it('forwards backendTargetKey to session.spawn_new voice-tool routing', async () => {
+    const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+    const { spawnSessionForVoiceTool } = await import('@/voice/tools/actionImpl/spawnSession');
+
+    const executor = createDefaultActionExecutor();
+    const result = await executor.execute(
+      'session.spawn_new',
+      { backendTargetKey: 'acpBackend:review-bot', path: '/tmp/project' },
+      { defaultSessionId: 's1', surface: 'voice_tool', placement: 'voice_panel' },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(spawnSessionForVoiceTool).toHaveBeenCalledWith({
+      backendTargetKey: 'acpBackend:review-bot',
+      path: '/tmp/project',
+    });
+  });
+
+  it('forwards backendTargetKey to session.spawn_picker voice-tool routing', async () => {
+    const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+    const { spawnSessionWithPickerForVoiceTool } = await import('@/voice/tools/actionImpl/spawnSessionPicker');
+
+    const executor = createDefaultActionExecutor();
+    const result = await executor.execute(
+      'session.spawn_picker',
+      { backendTargetKey: 'acpBackend:review-bot' },
+      { defaultSessionId: 's1', surface: 'voice_tool', placement: 'voice_panel' },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(spawnSessionWithPickerForVoiceTool).toHaveBeenCalledWith({
+      backendTargetKey: 'acpBackend:review-bot',
+    });
+  });
+
   it('does not publish a session-mode override when starting a planner subagent run', async () => {
     const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
 

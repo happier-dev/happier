@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { installVoiceToolActionImplCommonModuleMocks } from './voiceToolActionImplTestHelpers';
 
@@ -55,6 +55,18 @@ vi.mock('@/sync/sync', () => ({
 }));
 
 describe('spawnSessionWithPickerForVoiceTool', () => {
+  beforeEach(() => {
+    state.settings = {
+      ...settingsDefaults,
+      lastUsedAgent: 'claude',
+    };
+    modalShow.mockReset();
+    machineSpawnNewSession.mockReset();
+    refreshSessions.mockClear();
+    patchSessionMetadataWithRetry.mockClear();
+    sendMessage.mockClear();
+  });
+
   it('opens a picker and spawns a session from the user-selected machine + directory', async () => {
     modalShow.mockImplementationOnce((cfg: any) => {
       cfg?.props?.onResolve?.({ machineId: 'm2', directory: '/tmp/s2' });
@@ -75,5 +87,64 @@ describe('spawnSessionWithPickerForVoiceTool', () => {
     expect(refreshSessions).toHaveBeenCalled();
     expect(patchSessionMetadataWithRetry).toHaveBeenCalledWith('s_new', expect.any(Function));
     expect(sendMessage).toHaveBeenCalledWith('s_new', 'Hi');
+  });
+
+  it('uses the configured last-used backend target when there is no explicit voice tool agent override', async () => {
+    state.settings.lastUsedAgent = 'codex';
+    state.settings.lastUsedBackendTarget = { kind: 'configuredAcpBackend', backendId: 'review-bot' };
+    state.settings.acpCatalogSettingsV1 = {
+      v: 2,
+      backends: [{ id: 'review-bot', name: 'review-bot', title: 'Review Bot' }],
+    };
+    modalShow.mockImplementationOnce((cfg: any) => {
+      cfg?.props?.onResolve?.({ machineId: 'm2', directory: '/tmp/s2' });
+      return 'modal_1';
+    });
+    machineSpawnNewSession.mockResolvedValue({ type: 'success', sessionId: 's_new' });
+
+    const { spawnSessionWithPickerForVoiceTool } = await import('./spawnSessionPicker');
+    await spawnSessionWithPickerForVoiceTool({});
+
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+    }));
+  });
+
+  it('falls back to the built-in last-used target when the stored configured backend is stale', async () => {
+    state.settings.lastUsedAgent = 'codex';
+    state.settings.lastUsedBackendTarget = { kind: 'configuredAcpBackend', backendId: 'stale-review-bot' };
+    state.settings.acpCatalogSettingsV1 = {
+      v: 2,
+      backends: [{ id: 'review-bot', name: 'review-bot', title: 'Review Bot' }],
+    };
+    modalShow.mockImplementationOnce((cfg: any) => {
+      cfg?.props?.onResolve?.({ machineId: 'm2', directory: '/tmp/s2' });
+      return 'modal_1';
+    });
+    machineSpawnNewSession.mockResolvedValue({ type: 'success', sessionId: 's_new' });
+
+    const { spawnSessionWithPickerForVoiceTool } = await import('./spawnSessionPicker');
+    await spawnSessionWithPickerForVoiceTool({});
+
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+    }));
+  });
+
+  it('uses an explicit backendTargetKey for configured ACP backends instead of falling back to settings', async () => {
+    state.settings.lastUsedAgent = 'claude';
+    state.settings.lastUsedBackendTarget = { kind: 'builtInAgent', agentId: 'claude' };
+    modalShow.mockImplementationOnce((cfg: any) => {
+      cfg?.props?.onResolve?.({ machineId: 'm2', directory: '/tmp/s2' });
+      return 'modal_1';
+    });
+    machineSpawnNewSession.mockResolvedValue({ type: 'success', sessionId: 's_new' });
+
+    const { spawnSessionWithPickerForVoiceTool } = await import('./spawnSessionPicker');
+    await spawnSessionWithPickerForVoiceTool({ backendTargetKey: 'acpBackend:review-bot' } as any);
+
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+    }));
   });
 });

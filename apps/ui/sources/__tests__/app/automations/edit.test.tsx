@@ -417,7 +417,7 @@ describe('AutomationEditScreen route', () => {
         }));
     });
 
-    it('preserves configured ACP backend targets when redirecting new-session automations into the shared composer', async () => {
+    it('preserves configured ACP automation temp-data fields when redirecting new-session automations into the shared composer', async () => {
         const transport = await import('@/sync/domains/automations/automationTemplateTransport');
         const codec = await import('@/sync/domains/automations/automationTemplateCodec');
         vi.mocked(transport.tryDecodeAutomationTemplateEnvelope).mockReturnValue({
@@ -429,6 +429,13 @@ describe('AutomationEditScreen route', () => {
             prompt: 'Run nightly checks',
             displayText: 'Run nightly checks',
             backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            sessionConfigOptionOverrides: {
+                v: 1,
+                updatedAt: 456,
+                overrides: {
+                    speed: { updatedAt: 456, value: 'fast' },
+                },
+            },
             transcriptStorage: 'direct',
             permissionMode: 'acceptEdits',
             modelId: 'gpt-5',
@@ -441,6 +448,13 @@ describe('AutomationEditScreen route', () => {
 
         expect(storeTempDataSpy).toHaveBeenCalledWith(expect.objectContaining({
             backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            sessionConfigOptionOverrides: {
+                v: 1,
+                updatedAt: 456,
+                overrides: {
+                    speed: { updatedAt: 456, value: 'fast' },
+                },
+            },
         }));
     });
 

@@ -45,12 +45,105 @@ describe('useAllMachines', () => {
         }
     });
 
+    it('keeps the active-server machine cache visible while bootstrap is still hydrating', async () => {
+        const previousState = storage.getState();
+        try {
+            const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim() || 'server-active';
+            storage.setState((state) => ({
+                ...state,
+                isDataReady: false,
+                machines: {},
+                machineListByServerId: {
+                    [activeServerId]: [
+                        {
+                            id: 'm-scoped',
+                            seq: 1,
+                            createdAt: 1000,
+                            updatedAt: 1000,
+                            active: true,
+                            activeAt: 1000,
+                            metadata: { host: 'scoped', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '.happy', homeDir: '/home' },
+                            metadataVersion: 1,
+                            daemonState: null,
+                            daemonStateVersion: 0,
+                            revokedAt: null,
+                        } as any,
+                    ],
+                },
+            }));
+
+            const hook = await renderHook(() => useAllMachines(), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+
+            expect(hook.getCurrent().map((machine) => machine.id)).toEqual(['m-scoped']);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
+    it('does not fall back to another server cached machine list while the active server cache is empty during bootstrap', async () => {
+        const previousState = storage.getState();
+        try {
+            const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim() || 'server-active';
+            storage.setState((state) => ({
+                ...state,
+                isDataReady: false,
+                machines: {
+                    'm-stale-global': {
+                        id: 'm-stale-global',
+                        seq: 1,
+                        createdAt: 900,
+                        updatedAt: 900,
+                        active: true,
+                        activeAt: 900,
+                        metadata: { host: 'stale-global', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '.happy', homeDir: '/home' },
+                        metadataVersion: 1,
+                        daemonState: null,
+                        daemonStateVersion: 0,
+                    } as any,
+                },
+                machineListByServerId: {
+                    [activeServerId]: [],
+                    'server-cached': [
+                        {
+                            id: 'm-cached-server',
+                            seq: 1,
+                            createdAt: 1000,
+                            updatedAt: 1000,
+                            active: true,
+                            activeAt: 1000,
+                            metadata: { host: 'cached-server', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '.happy', homeDir: '/home' },
+                            metadataVersion: 1,
+                            daemonState: null,
+                            daemonStateVersion: 0,
+                        } as any,
+                    ],
+                },
+            }));
+
+            const hook = await renderHook(() => useAllMachines(), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+
+            expect(hook.getCurrent()).toEqual([]);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
     it('includes offline machines and sorts online machines first', async () => {
         const previousState = storage.getState();
         try {
             storage.setState((state) => ({
                 ...state,
                 isDataReady: true,
+                machineListByServerId: {},
+                machineListStatusByServerId: {},
                 machines: {
                     'm-online': {
                         id: 'm-online',
@@ -94,6 +187,7 @@ describe('useAllMachines', () => {
     it('excludes revoked machines from visible machine lists', async () => {
         const previousState = storage.getState();
         try {
+            const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim() || 'server-active';
             storage.setState((state) => ({
                 ...state,
                 isDataReady: true,
@@ -126,7 +220,7 @@ describe('useAllMachines', () => {
                     },
                 },
                 machineListByServerId: {
-                    'server-a': [
+                    [activeServerId]: [
                         { id: 'm-online', active: true, activeAt: 1000, createdAt: 1000, updatedAt: 1000, metadata: { host: 'online' }, revokedAt: null } as any,
                         { id: 'm-revoked', active: false, activeAt: 1200, createdAt: 1200, updatedAt: 1200, metadata: { host: 'revoked' }, revokedAt: 1700000000000 } as any,
                     ],
@@ -141,7 +235,7 @@ describe('useAllMachines', () => {
             });
 
             expect(allMachinesHook.getCurrent().map((machine) => machine.id)).toEqual(['m-online']);
-            expect((byServerHook.getCurrent()['server-a'] ?? []).map((machine) => machine.id)).toEqual(['m-online']);
+            expect((byServerHook.getCurrent()[activeServerId] ?? []).map((machine) => machine.id)).toEqual(['m-online']);
 
             await allMachinesHook.unmount();
             await byServerHook.unmount();

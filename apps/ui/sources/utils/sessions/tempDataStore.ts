@@ -5,6 +5,7 @@ import type { AcpConfigOptionOverridesV1, BackendTargetRefV1, SessionMcpSelectio
 import type { CodexBackendMode } from '@happier-dev/agents';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
+import type { BackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
 
 export interface TempDataEntry {
     data: any;
@@ -28,7 +29,8 @@ export interface NewSessionData {
     codexBackendMode?: CodexBackendMode | null;
     mcpSelection?: SessionMcpSelectionV1 | null;
     automationDraft?: NewSessionAutomationDraft | null;
-    agentNewSessionOptionStateByAgentId?: Record<string, Record<string, unknown>>;
+    backendNewSessionOptionStateByTargetKey?: BackendNewSessionOptionStateByTargetKey;
+    agentNewSessionOptionStateByAgentId?: BackendNewSessionOptionStateByTargetKey;
     resumeSessionId?: string;
     taskId?: string;
     taskTitle?: string;

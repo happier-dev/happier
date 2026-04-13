@@ -786,7 +786,7 @@ describe('sessionAuthoringDraftAdapters', () => {
         expect(draft.codexBackendMode).toBe('acp');
         expect(draft.experimentalCodexAcp).toBeNull();
         expect(tempData.codexBackendMode).toBe('acp');
-        expect(tempData.agentNewSessionOptionStateByAgentId).toBeUndefined();
+        expect(tempData.backendNewSessionOptionStateByTargetKey).toBeUndefined();
         expect(tempData.automationDraft).toEqual({
             enabled: true,
             name: 'Nightly',
@@ -1087,7 +1087,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                     GITHUB_TOKEN: { _isSecretValue: true, value: 'enc::token' },
                 },
             },
-            agentNewSessionOptionStateByAgentId: {
+            backendNewSessionOptionStateByTargetKey: {
                 codex: {
                     experimentalCodexAcp: true,
                 },
@@ -1130,8 +1130,8 @@ describe('sessionAuthoringDraftAdapters', () => {
                 forceExcludeServerIds: ['disabled'],
             },
             resumeSessionId: 'resume-1',
-            agentNewSessionOptionStateByAgentId: {
-                codex: {
+            backendNewSessionOptionStateByTargetKey: {
+                'agent:codex': {
                     experimentalCodexAcp: true,
                 },
             },
@@ -1283,7 +1283,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             selectedSecretId: 'secret-1',
             selectedSecretIdByProfileIdByEnvVarName: null,
             sessionOnlySecretValueEncByProfileIdByEnvVarName: null,
-            agentNewSessionOptionStateByAgentId: {
+            backendNewSessionOptionStateByTargetKey: {
                 [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'review-bot' })]: {
                     connectedServices: { v: 1, bindingsByServiceId: { github: { source: 'connected' } } },
                 },
@@ -1321,7 +1321,55 @@ describe('sessionAuthoringDraftAdapters', () => {
         }));
     });
 
-    it('round-trips configured ACP backend targets through the shared new-session authoring draft', () => {
+    it('persists the draft agent id as the built-in fallback for configured ACP backend drafts', () => {
+        const draft = buildNewSessionAuthoringDraft({
+            directory: '/tmp/project',
+            checkoutCreationDraft: null,
+            prompt: 'Review the queued invoices',
+            displayText: 'Review the queued invoices',
+            agentId: 'codex',
+            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            transcriptStorage: 'direct',
+            profileId: null,
+            environmentVariables: null,
+            resumeSessionId: null,
+            permissionMode: 'safe-yolo',
+            permissionModeUpdatedAt: 123,
+            modelId: null,
+            modelUpdatedAt: null,
+            mcpSelection: null,
+            connectedServices: null,
+            terminal: null,
+            windowsRemoteSessionLaunchMode: null,
+            windowsRemoteSessionConsole: null,
+            experimentalCodexAcp: null,
+            codexBackendMode: null,
+            acpSessionModeId: null,
+            sessionConfigOptionOverrides: null,
+            automation: null,
+        });
+
+        const persistedDraft = buildPersistedNewSessionDraftFromAuthoringDraft({
+            draft,
+            machineId: 'machine-1',
+            selectedSecretId: null,
+            selectedSecretIdByProfileIdByEnvVarName: null,
+            sessionOnlySecretValueEncByProfileIdByEnvVarName: null,
+            backendNewSessionOptionStateByTargetKey: null,
+            updatedAt: 987,
+        });
+
+        expect(persistedDraft).toEqual(expect.objectContaining({
+            agentType: 'codex',
+            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+        }));
+        expect(buildNewSessionAuthoringDraftFromPersistedDraft(persistedDraft)).toEqual(expect.objectContaining({
+            agentId: 'codex',
+            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+        }));
+    });
+
+    it('round-trips configured ACP backend targets and session config overrides through the shared new-session authoring draft', () => {
         const draft = {
             targetType: 'new_session',
             directory: '/tmp/project',
@@ -1345,7 +1393,13 @@ describe('sessionAuthoringDraftAdapters', () => {
             windowsRemoteSessionConsole: null,
             experimentalCodexAcp: null,
             acpSessionModeId: null,
-            sessionConfigOptionOverrides: null,
+            sessionConfigOptionOverrides: {
+                v: 1,
+                updatedAt: 789,
+                overrides: {
+                    reasoning: { updatedAt: 789, value: 'high' },
+                },
+            },
             existingSessionId: null,
             sessionEncryptionMode: null,
             sessionEncryptionKeyBase64: null,
@@ -1373,13 +1427,34 @@ describe('sessionAuthoringDraftAdapters', () => {
 
         expect(template).toEqual(expect.objectContaining({
             backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            sessionConfigOptionOverrides: {
+                v: 1,
+                updatedAt: 789,
+                overrides: {
+                    reasoning: { updatedAt: 789, value: 'high' },
+                },
+            },
         }));
         expect(hydrated).toEqual(expect.objectContaining({
             backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            sessionConfigOptionOverrides: {
+                v: 1,
+                updatedAt: 789,
+                overrides: {
+                    reasoning: { updatedAt: 789, value: 'high' },
+                },
+            },
             automation: null,
         }));
         expect(tempData).toEqual(expect.objectContaining({
             backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            sessionConfigOptionOverrides: {
+                v: 1,
+                updatedAt: 789,
+                overrides: {
+                    reasoning: { updatedAt: 789, value: 'high' },
+                },
+            },
         }));
         expect(tempData.automationDraft).toBeUndefined();
     });

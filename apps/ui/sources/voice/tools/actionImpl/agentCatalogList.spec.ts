@@ -268,6 +268,52 @@ describe('agent catalog voice tools', () => {
     });
   });
 
+  it('probes configured ACP backend models through the canonical V2 backendTargetKey', async () => {
+    machineCapabilitiesInvoke.mockResolvedValue({
+      supported: true,
+      response: {
+        ok: true,
+        result: {
+          availableModels: [
+            { id: 'default', name: 'Default' },
+            { id: 'model-review', name: 'Review Model' },
+          ],
+          supportsFreeform: true,
+        },
+      },
+    });
+
+    const { listAgentModelsForVoiceTool } = await import('./agentCatalogList');
+    const res: any = await listAgentModelsForVoiceTool({
+      backendTargetKey: 'backend:team-review:configured:team-review',
+      machineId: 'm1',
+      limit: 2,
+    } as any);
+
+    expect(machineCapabilitiesInvoke).toHaveBeenCalledWith(
+      'm1',
+      {
+        id: 'cli.customAcp',
+        method: 'probeModels',
+        params: {
+          timeoutMs: 15_000,
+          backendTarget: { kind: 'configuredAcpBackend', backendId: 'team-review' },
+        },
+      },
+      { serverId: 'server-a' },
+    );
+    expect(res).toMatchObject({
+      agentId: 'customAcp',
+      machineId: 'm1',
+      source: 'preflight',
+      supportsFreeform: true,
+      items: [
+        { modelId: 'default', label: 'Default' },
+        { modelId: 'model-review', label: 'Review Model' },
+      ],
+    });
+  });
+
   it('rejects ambiguous customAcp model lookup without backendTargetKey', async () => {
     const { listAgentModelsForVoiceTool } = await import('./agentCatalogList');
 

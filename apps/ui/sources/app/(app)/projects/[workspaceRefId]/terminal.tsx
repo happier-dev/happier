@@ -2,6 +2,7 @@ import * as React from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import { Stack, useLocalSearchParams } from 'expo-router';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { ProjectDetailScreen } from '@/components/projects/ProjectDetailScreen';
 import { buildProjectPaneScopeId } from '@/components/projects/detail/projectPaneScope';
@@ -20,6 +21,7 @@ import { resolveProjectRoutePathForSurface } from '@/components/workspaceCockpit
 import { t } from '@/text';
 
 export default function ProjectTerminalScreenRoute() {
+    const { theme } = useUnistyles();
     const isFocused = useIsFocused();
     const params = useLocalSearchParams<{
         workspaceRefId?: string | string[];
@@ -107,7 +109,7 @@ export default function ProjectTerminalScreenRoute() {
             <Stack.Screen options={screenOptions} />
             <React.Suspense fallback={(
                 <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                    <ActivityIndicator />
+                    <ActivityIndicator color={theme.colors.textSecondary} />
                 </View>
             )}>
                 {cockpitEnabled ? (

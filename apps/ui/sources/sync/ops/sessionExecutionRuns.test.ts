@@ -82,7 +82,7 @@ describe('sessionExecutionRuns', () => {
 
         const response = await sessionExecutionRuns.sessionExecutionRunStart('session-1', {
             intent: 'review',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
             instructions: 'Review this repo.',
             permissionMode: 'read_only',
             retentionPolicy: 'ephemeral',
@@ -95,7 +95,7 @@ describe('sessionExecutionRuns', () => {
             SESSION_RPC_METHODS.EXECUTION_RUN_START,
             {
                 intent: 'review',
-                backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
                 instructions: 'Review this repo.',
                 permissionMode: 'read_only',
                 retentionPolicy: 'ephemeral',
@@ -112,7 +112,7 @@ describe('sessionExecutionRuns', () => {
 
         const response = await sessionExecutionRuns.sessionExecutionRunStart('session-1', {
             intent: 'review',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
             instructions: 'Review this repo.',
             permissionMode: 'full',
             retentionPolicy: 'ephemeral',
@@ -129,7 +129,7 @@ describe('sessionExecutionRuns', () => {
 
         const response = await sessionExecutionRuns.sessionExecutionRunStart('session-1', {
             intent: 'review',
-            backendTarget: { kind: 'builtInAgent', agentId: 'coderabbit' },
+            backendTarget: { kind: 'backend', backendId: 'coderabbit', sourceKind: 'built_in' },
             instructions: 'Review this repo.',
             permissionMode: 'read_only',
             retentionPolicy: 'ephemeral',
@@ -146,7 +146,7 @@ describe('sessionExecutionRuns', () => {
 
         const response = await sessionExecutionRuns.sessionExecutionRunStart('session-inactive', {
             intent: 'review',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
             instructions: 'Review this repo.',
             permissionMode: 'read_only',
             retentionPolicy: 'ephemeral',
@@ -277,7 +277,7 @@ describe('sessionExecutionRuns', () => {
                 callId: 'call_1',
                 sidechainId: 'call_1',
                 intent: 'review',
-                backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
                 status: 'succeeded',
                 startedAtMs: 1,
                 finishedAtMs: 2,

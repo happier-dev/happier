@@ -1,5 +1,5 @@
 import { AGENT_IDS, getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
-import { buildBackendTargetKey, parseBackendTargetKey } from '@happier-dev/protocol';
+import { buildBackendTargetKey, readBackendTargetRefV2, type BackendTargetRefV1 } from '@happier-dev/protocol';
 import { getAgentStaticModels } from '@happier-dev/agents';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { storage } from '@/sync/domains/state/storage';
@@ -118,10 +118,13 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
   backendTargetKey?: string;
 }>): Promise<unknown> {
   const backendTargetKey = normalizeId(params.backendTargetKey);
-  let backendTarget: ReturnType<typeof parseBackendTargetKey> | null = null;
+  let backendTarget: BackendTargetRefV1 | null = null;
   if (backendTargetKey) {
     try {
-      backendTarget = parseBackendTargetKey(backendTargetKey);
+      const canonicalBackendTarget = readBackendTargetRefV2(backendTargetKey);
+      backendTarget = canonicalBackendTarget.sourceKind === 'configured'
+        ? { kind: 'configuredAcpBackend', backendId: canonicalBackendTarget.configuredBackendId ?? canonicalBackendTarget.backendId }
+        : { kind: 'builtInAgent', agentId: canonicalBackendTarget.backendId };
     } catch {
       return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
     }

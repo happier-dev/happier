@@ -2,6 +2,7 @@ import * as React from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
@@ -24,6 +25,7 @@ import { resolveProjectRoutePathForSurface } from '@/components/workspaceCockpit
 import { t } from '@/text';
 
 export default function ProjectDetailsScreenRoute() {
+    const { theme } = useUnistyles();
     const router = useRouter();
     const navigation = useNavigation();
     const isFocused = useIsFocused();
@@ -172,7 +174,7 @@ export default function ProjectDetailsScreenRoute() {
             <Stack.Screen options={screenOptions} />
             <React.Suspense fallback={(
                 <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                    <ActivityIndicator />
+                    <ActivityIndicator color={theme.colors.textSecondary} />
                 </View>
             )}>
                 {cockpitEnabled ? (

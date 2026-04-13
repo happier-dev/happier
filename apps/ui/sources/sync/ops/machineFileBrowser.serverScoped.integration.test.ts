@@ -91,7 +91,8 @@ describe('machineFileBrowser ops', () => {
             machineId: 'machine-1',
             serverId: 'server-1',
             method: 'daemon.filesystem.listRoots',
-            preferScoped: true,
+            payload: undefined,
+            skipTransferPolicyEvaluation: false,
         }));
     });
 

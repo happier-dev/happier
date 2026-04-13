@@ -39,6 +39,10 @@ vi.mock('@/components/projects/ProjectDetailScreen', () => ({
     ProjectDetailScreen: (props: any) => React.createElement('ProjectDetailScreenStub', props),
 }));
 
+vi.mock('@/components/ui/code/editor/CodeEditor', () => ({
+    CodeEditor: () => null,
+}));
+
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     useAppPaneScope: () => ({
         scopeState: appPaneScopeMock.scopeState,
@@ -114,9 +118,14 @@ describe('project index route', () => {
         });
         expect(openDetailsTabSpy).toHaveBeenCalledWith(
             expect.objectContaining({
-                key: 'terminal:project-terminal-1',
+                key: 'terminal:project:wr_1:terminal',
                 kind: 'terminal',
-                resource: { kind: 'terminal', terminalInstanceId: 'project-terminal-1' },
+                title: 'settings.terminal',
+                resource: {
+                    kind: 'terminal',
+                    terminalInstanceId: 'project:wr_1:terminal',
+                    cwd: '/repo',
+                },
             }),
             expect.objectContaining({ intent: 'pinned' }),
         );

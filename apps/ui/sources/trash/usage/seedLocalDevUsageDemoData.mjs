@@ -11,217 +11,13 @@ const DEMO_SESSIONS = Object.freeze([
     { key: 'acp-research', tag: 'usage-demo-acp-research', title: 'ACP research lane' },
     { key: 'mixed-launch', tag: 'usage-demo-mixed-launch', title: 'Launch readiness' },
     { key: 'mixed-polish', tag: 'usage-demo-mixed-polish', title: 'Polish and fixes' },
+    { key: 'claude-product', tag: 'usage-demo-claude-product', title: 'Claude product planning' },
+    { key: 'codex-refactor', tag: 'usage-demo-codex-refactor', title: 'Codex refactor lane' },
+    { key: 'opencode-support', tag: 'usage-demo-opencode-support', title: 'OpenCode support triage' },
+    { key: 'acp-evals', tag: 'usage-demo-acp-evals', title: 'ACP evaluation sweep' },
 ]);
 
-const DEMO_EVENTS = Object.freeze([
-    createEvent('claude-ops', '2025-11-14T09:00:00.000Z', {
-        providerId: 'anthropic',
-        backendMode: 'claude-sdk',
-        modelId: 'claude-3.5-sonnet',
-        projectKey: 'workspace-sync',
-        workspaceId: 'workspace-core',
-        tokens: 920_000,
-        reportedUsd: 14.2,
-    }),
-    createEvent('codex-build', '2025-12-03T08:00:00.000Z', {
-        providerId: 'openai',
-        backendMode: 'codex-app-server',
-        modelId: 'gpt-5.4',
-        projectKey: 'build-automation',
-        workspaceId: 'workspace-release',
-        tokens: 1_450_000,
-        estimatedUsd: 24.8,
-    }),
-    createEvent('claude-ops', '2026-01-17T10:00:00.000Z', {
-        providerId: 'anthropic',
-        backendMode: 'claude-sdk',
-        modelId: 'claude-3.7-sonnet',
-        projectKey: 'workspace-sync',
-        workspaceId: 'workspace-core',
-        tokens: 1_180_000,
-        reportedUsd: 19.6,
-    }),
-    createEvent('acp-research', '2026-02-09T14:00:00.000Z', {
-        providerId: 'google',
-        backendMode: 'acp-remote',
-        modelId: 'gemini-2.5-pro',
-        projectKey: 'agent-research',
-        workspaceId: 'workspace-labs',
-        tokens: 760_000,
-        estimatedUsd: 8.1,
-    }),
-    createEvent('opencode-docs', '2026-02-27T07:00:00.000Z', {
-        providerId: 'opencode',
-        backendMode: 'opencode-server',
-        modelId: 'gpt-4.1',
-        projectKey: 'docs-rewrite',
-        workspaceId: 'workspace-docs',
-        tokens: 580_000,
-        reportedUsd: 6.4,
-    }),
-    createEvent('codex-build', '2026-03-10T08:00:00.000Z', {
-        providerId: 'openai',
-        backendMode: 'codex-app-server',
-        modelId: 'gpt-5.4',
-        projectKey: 'build-automation',
-        workspaceId: 'workspace-release',
-        tokens: 4_400_000,
-        estimatedUsd: 61.4,
-    }),
-    createEvent('claude-ops', '2026-03-12T08:00:00.000Z', {
-        providerId: 'anthropic',
-        backendMode: 'claude-sdk',
-        modelId: 'claude-3.7-sonnet',
-        projectKey: 'workspace-sync',
-        workspaceId: 'workspace-core',
-        tokens: 2_980_000,
-        reportedUsd: 39.2,
-    }),
-    createEvent('acp-research', '2026-03-15T09:00:00.000Z', {
-        providerId: 'google',
-        backendMode: 'acp-remote',
-        modelId: 'gemini-2.5-pro',
-        projectKey: 'agent-research',
-        workspaceId: 'workspace-labs',
-        tokens: 1_950_000,
-        estimatedUsd: 17.3,
-    }),
-    createEvent('opencode-docs', '2026-03-18T15:00:00.000Z', {
-        providerId: 'opencode',
-        backendMode: 'opencode-server',
-        modelId: 'gpt-4.1',
-        projectKey: 'docs-rewrite',
-        workspaceId: 'workspace-docs',
-        tokens: 1_160_000,
-        reportedUsd: 11.8,
-    }),
-    createEvent('mixed-launch', '2026-03-22T08:00:00.000Z', {
-        providerId: 'openai',
-        backendMode: 'codex-app-server',
-        modelId: 'o3',
-        projectKey: 'launch-readiness',
-        workspaceId: 'workspace-release',
-        tokens: 1_220_000,
-        estimatedUsd: 26.4,
-    }),
-    createEvent('mixed-polish', '2026-03-25T07:00:00.000Z', {
-        providerId: 'anthropic',
-        backendMode: 'claude-sdk',
-        modelId: 'claude-3.7-sonnet',
-        projectKey: 'desktop-polish',
-        workspaceId: 'workspace-product',
-        tokens: 1_540_000,
-        reportedUsd: 18.9,
-    }),
-    createEvent('mixed-polish', '2026-03-27T07:00:00.000Z', {
-        providerId: 'openai',
-        backendMode: 'codex-app-server',
-        modelId: 'gpt-5.4',
-        projectKey: 'desktop-polish',
-        workspaceId: 'workspace-product',
-        tokens: 2_240_000,
-        estimatedUsd: 31.2,
-    }),
-    createEvent('codex-build', '2026-03-31T08:00:00.000Z', {
-        providerId: 'openai',
-        backendMode: 'codex-app-server',
-        modelId: 'gpt-5.4',
-        projectKey: 'build-automation',
-        workspaceId: 'workspace-release',
-        tokens: 3_820_000,
-        estimatedUsd: 54.1,
-    }),
-    createEvent('codex-build', '2026-04-02T08:00:00.000Z', {
-        providerId: 'openai',
-        backendMode: 'codex-app-server',
-        modelId: 'gpt-5.4',
-        projectKey: 'build-automation',
-        workspaceId: 'workspace-release',
-        tokens: 8_420_000,
-        estimatedUsd: 117.3,
-    }),
-    createEvent('claude-ops', '2026-04-03T09:00:00.000Z', {
-        providerId: 'anthropic',
-        backendMode: 'claude-sdk',
-        modelId: 'claude-3.7-sonnet',
-        projectKey: 'workspace-sync',
-        workspaceId: 'workspace-core',
-        tokens: 4_880_000,
-        reportedUsd: 62.7,
-    }),
-    createEvent('opencode-docs', '2026-04-05T07:00:00.000Z', {
-        providerId: 'opencode',
-        backendMode: 'opencode-server',
-        modelId: 'gpt-4.1',
-        projectKey: 'docs-rewrite',
-        workspaceId: 'workspace-docs',
-        tokens: 1_980_000,
-        reportedUsd: 20.9,
-    }),
-    createEvent('mixed-polish', '2026-04-08T07:00:00.000Z', {
-        providerId: 'openai',
-        backendMode: 'codex-app-server',
-        modelId: 'gpt-5.4',
-        projectKey: 'desktop-polish',
-        workspaceId: 'workspace-product',
-        tokens: 12_300_000,
-        estimatedUsd: 171.2,
-    }),
-    createEvent('acp-research', '2026-04-09T08:00:00.000Z', {
-        providerId: 'google',
-        backendMode: 'acp-remote',
-        modelId: 'gemini-2.5-pro',
-        projectKey: 'agent-research',
-        workspaceId: 'workspace-labs',
-        tokens: 6_920_000,
-        estimatedUsd: 64.8,
-    }),
-    createEvent('mixed-launch', '2026-04-10T08:00:00.000Z', {
-        providerId: 'openai',
-        backendMode: 'codex-app-server',
-        modelId: 'gpt-5.4',
-        projectKey: 'launch-readiness',
-        workspaceId: 'workspace-release',
-        tokens: 28_600_000,
-        estimatedUsd: 398.6,
-    }),
-    createEvent('mixed-launch', '2026-04-10T15:00:00.000Z', {
-        providerId: 'anthropic',
-        backendMode: 'claude-sdk',
-        modelId: 'claude-3.7-sonnet',
-        projectKey: 'launch-readiness',
-        workspaceId: 'workspace-release',
-        tokens: 5_220_000,
-        reportedUsd: 68.4,
-    }),
-    createEvent('codex-build', '2026-04-11T07:00:00.000Z', {
-        providerId: 'openai',
-        backendMode: 'codex-app-server',
-        modelId: 'gpt-5.4',
-        projectKey: 'build-automation',
-        workspaceId: 'workspace-release',
-        tokens: 111_900_000,
-        estimatedUsd: 1_557.4,
-    }),
-    createEvent('opencode-docs', '2026-04-11T08:00:00.000Z', {
-        providerId: 'opencode',
-        backendMode: 'opencode-server',
-        modelId: 'gpt-4.1',
-        projectKey: 'docs-rewrite',
-        workspaceId: 'workspace-docs',
-        tokens: 3_120_000,
-        reportedUsd: 32.1,
-    }),
-    createEvent('claude-ops', '2026-04-11T09:00:00.000Z', {
-        providerId: 'anthropic',
-        backendMode: 'claude-sdk',
-        modelId: 'claude-3.7-sonnet',
-        projectKey: 'workspace-sync',
-        workspaceId: 'workspace-core',
-        tokens: 7_880_000,
-        reportedUsd: 104.7,
-    }),
-]);
+const DEMO_EVENTS = Object.freeze(buildDemoEvents());
 
 function createEvent(sessionKey, iso, input) {
     const observedAt = Date.parse(iso);
@@ -254,6 +50,364 @@ function createEvent(sessionKey, iso, input) {
             costSource: input.reportedUsd != null && input.reportedUsd > 0 ? 'provider_reported' : 'pricing_estimate',
         },
     };
+}
+
+function buildDemoEvents() {
+    const events = [];
+
+    addRecurringSeries(events, {
+        sessionKey: 'claude-ops',
+        startDate: '2025-11-10',
+        weeks: 22,
+        weekdayOffset: 1,
+        hourUtc: 9,
+        providerId: 'anthropic',
+        backendMode: 'claude-sdk',
+        modelIds: ['claude-3.5-sonnet', 'claude-3.7-sonnet', 'claude-4.5-opus'],
+        projectKey: 'workspace-sync',
+        workspaceId: 'workspace-core',
+        tokenBase: 920_000,
+        tokenStep: 170_000,
+        costMode: 'reported',
+        costFactor: 0.0000156,
+        cadence: 1,
+    });
+
+    addRecurringSeries(events, {
+        sessionKey: 'claude-product',
+        startDate: '2025-11-12',
+        weeks: 18,
+        weekdayOffset: 3,
+        hourUtc: 14,
+        providerId: 'anthropic',
+        backendMode: 'claude-sdk',
+        modelIds: ['claude-3.7-sonnet', 'claude-4.5-opus'],
+        projectKey: 'product-strategy',
+        workspaceId: 'workspace-product',
+        tokenBase: 780_000,
+        tokenStep: 120_000,
+        costMode: 'reported',
+        costFactor: 0.0000142,
+        cadence: 2,
+    });
+
+    addRecurringSeries(events, {
+        sessionKey: 'codex-build',
+        startDate: '2025-11-11',
+        weeks: 22,
+        weekdayOffset: 2,
+        hourUtc: 8,
+        providerId: 'openai',
+        backendMode: 'codex-app-server',
+        modelIds: ['gpt-5.4', 'gpt-5.4', 'o3'],
+        projectKey: 'build-automation',
+        workspaceId: 'workspace-release',
+        tokenBase: 1_260_000,
+        tokenStep: 260_000,
+        costMode: 'estimated',
+        costFactor: 0.0000132,
+        cadence: 1,
+    });
+
+    addRecurringSeries(events, {
+        sessionKey: 'codex-refactor',
+        startDate: '2025-12-01',
+        weeks: 18,
+        weekdayOffset: 4,
+        hourUtc: 11,
+        providerId: 'openai',
+        backendMode: 'codex-app-server',
+        modelIds: ['gpt-5.4', 'o3', 'gpt-5.4'],
+        projectKey: 'core-refactor',
+        workspaceId: 'workspace-platform',
+        tokenBase: 980_000,
+        tokenStep: 180_000,
+        costMode: 'estimated',
+        costFactor: 0.0000127,
+        cadence: 1,
+    });
+
+    addRecurringSeries(events, {
+        sessionKey: 'opencode-docs',
+        startDate: '2025-11-13',
+        weeks: 20,
+        weekdayOffset: 4,
+        hourUtc: 7,
+        providerId: 'opencode',
+        backendMode: 'opencode-server',
+        modelIds: ['gpt-4.1', 'gpt-4.1', 'gpt-5.4-mini'],
+        projectKey: 'docs-rewrite',
+        workspaceId: 'workspace-docs',
+        tokenBase: 540_000,
+        tokenStep: 110_000,
+        costMode: 'reported',
+        costFactor: 0.0000106,
+        cadence: 1,
+    });
+
+    addRecurringSeries(events, {
+        sessionKey: 'opencode-support',
+        startDate: '2025-12-08',
+        weeks: 16,
+        weekdayOffset: 0,
+        hourUtc: 16,
+        providerId: 'opencode',
+        backendMode: 'opencode-server',
+        modelIds: ['gpt-4.1', 'gpt-5.4-mini'],
+        projectKey: 'support-triage',
+        workspaceId: 'workspace-support',
+        tokenBase: 420_000,
+        tokenStep: 95_000,
+        costMode: 'reported',
+        costFactor: 0.0000108,
+        cadence: 1,
+    });
+
+    addRecurringSeries(events, {
+        sessionKey: 'acp-research',
+        startDate: '2025-11-14',
+        weeks: 20,
+        weekdayOffset: 5,
+        hourUtc: 10,
+        providerId: 'google',
+        backendMode: 'acp-remote',
+        modelIds: ['gemini-2.5-pro', 'gemini-2.5-flash'],
+        projectKey: 'agent-research',
+        workspaceId: 'workspace-labs',
+        tokenBase: 660_000,
+        tokenStep: 150_000,
+        costMode: 'estimated',
+        costFactor: 0.0000098,
+        cadence: 1,
+    });
+
+    addRecurringSeries(events, {
+        sessionKey: 'acp-evals',
+        startDate: '2025-12-02',
+        weeks: 16,
+        weekdayOffset: 1,
+        hourUtc: 18,
+        providerId: 'google',
+        backendMode: 'acp-remote',
+        modelIds: ['gemini-2.5-pro', 'gemini-2.5-pro', 'gemini-2.5-flash'],
+        projectKey: 'evaluation-sweeps',
+        workspaceId: 'workspace-labs',
+        tokenBase: 510_000,
+        tokenStep: 90_000,
+        costMode: 'estimated',
+        costFactor: 0.0000094,
+        cadence: 1,
+    });
+
+    addRecurringSeries(events, {
+        sessionKey: 'mixed-polish',
+        startDate: '2026-01-06',
+        weeks: 14,
+        weekdayOffset: 2,
+        hourUtc: 7,
+        providerId: 'openai',
+        backendMode: 'codex-app-server',
+        modelIds: ['gpt-5.4', 'claude-3.7-sonnet'],
+        projectKey: 'desktop-polish',
+        workspaceId: 'workspace-product',
+        tokenBase: 1_200_000,
+        tokenStep: 240_000,
+        costMode: 'estimated',
+        costFactor: 0.0000129,
+        cadence: 1,
+    });
+
+    addRecurringSeries(events, {
+        sessionKey: 'mixed-launch',
+        startDate: '2026-02-03',
+        weeks: 10,
+        weekdayOffset: 4,
+        hourUtc: 8,
+        providerId: 'openai',
+        backendMode: 'codex-app-server',
+        modelIds: ['gpt-5.4', 'o3', 'gpt-5.4'],
+        projectKey: 'launch-readiness',
+        workspaceId: 'workspace-release',
+        tokenBase: 1_900_000,
+        tokenStep: 420_000,
+        costMode: 'estimated',
+        costFactor: 0.0000139,
+        cadence: 1,
+    });
+
+    addBurst(events, '2026-04-07T08:00:00.000Z', [
+        {
+            sessionKey: 'codex-build',
+            providerId: 'openai',
+            backendMode: 'codex-app-server',
+            modelId: 'gpt-5.4',
+            projectKey: 'build-automation',
+            workspaceId: 'workspace-release',
+            tokens: 18_400_000,
+            estimatedUsd: 258.6,
+        },
+        {
+            sessionKey: 'claude-ops',
+            providerId: 'anthropic',
+            backendMode: 'claude-sdk',
+            modelId: 'claude-4.5-opus',
+            projectKey: 'workspace-sync',
+            workspaceId: 'workspace-core',
+            tokens: 8_820_000,
+            reportedUsd: 126.4,
+        },
+    ]);
+
+    addBurst(events, '2026-04-08T07:00:00.000Z', [
+        {
+            sessionKey: 'opencode-support',
+            providerId: 'opencode',
+            backendMode: 'opencode-server',
+            modelId: 'gpt-5.4-mini',
+            projectKey: 'support-triage',
+            workspaceId: 'workspace-support',
+            tokens: 9_420_000,
+            reportedUsd: 88.1,
+        },
+        {
+            sessionKey: 'acp-evals',
+            providerId: 'google',
+            backendMode: 'acp-remote',
+            modelId: 'gemini-2.5-pro',
+            projectKey: 'evaluation-sweeps',
+            workspaceId: 'workspace-labs',
+            tokens: 7_680_000,
+            estimatedUsd: 72.2,
+        },
+    ]);
+
+    addBurst(events, '2026-04-10T08:00:00.000Z', [
+        {
+            sessionKey: 'mixed-launch',
+            providerId: 'openai',
+            backendMode: 'codex-app-server',
+            modelId: 'gpt-5.4',
+            projectKey: 'launch-readiness',
+            workspaceId: 'workspace-release',
+            tokens: 28_600_000,
+            estimatedUsd: 398.6,
+        },
+        {
+            sessionKey: 'mixed-launch',
+            providerId: 'anthropic',
+            backendMode: 'claude-sdk',
+            modelId: 'claude-3.7-sonnet',
+            projectKey: 'launch-readiness',
+            workspaceId: 'workspace-release',
+            tokens: 5_220_000,
+            reportedUsd: 68.4,
+        },
+    ]);
+
+    addBurst(events, '2026-04-11T07:00:00.000Z', [
+        {
+            sessionKey: 'codex-build',
+            providerId: 'openai',
+            backendMode: 'codex-app-server',
+            modelId: 'gpt-5.4',
+            projectKey: 'build-automation',
+            workspaceId: 'workspace-release',
+            tokens: 111_900_000,
+            estimatedUsd: 1_557.4,
+        },
+        {
+            sessionKey: 'opencode-docs',
+            providerId: 'opencode',
+            backendMode: 'opencode-server',
+            modelId: 'gpt-4.1',
+            projectKey: 'docs-rewrite',
+            workspaceId: 'workspace-docs',
+            tokens: 3_120_000,
+            reportedUsd: 32.1,
+        },
+        {
+            sessionKey: 'claude-ops',
+            providerId: 'anthropic',
+            backendMode: 'claude-sdk',
+            modelId: 'claude-3.7-sonnet',
+            projectKey: 'workspace-sync',
+            workspaceId: 'workspace-core',
+            tokens: 7_880_000,
+            reportedUsd: 104.7,
+        },
+    ]);
+
+    addBurst(events, '2026-04-12T09:00:00.000Z', [
+        {
+            sessionKey: 'acp-research',
+            providerId: 'google',
+            backendMode: 'acp-remote',
+            modelId: 'gemini-2.5-flash',
+            projectKey: 'agent-research',
+            workspaceId: 'workspace-labs',
+            tokens: 6_840_000,
+            estimatedUsd: 61.3,
+        },
+        {
+            sessionKey: 'opencode-docs',
+            providerId: 'opencode',
+            backendMode: 'opencode-server',
+            modelId: 'gpt-5.4-mini',
+            projectKey: 'docs-rewrite',
+            workspaceId: 'workspace-docs',
+            tokens: 5_260_000,
+            reportedUsd: 51.4,
+        },
+        {
+            sessionKey: 'codex-refactor',
+            providerId: 'openai',
+            backendMode: 'codex-app-server',
+            modelId: 'o3',
+            projectKey: 'core-refactor',
+            workspaceId: 'workspace-platform',
+            tokens: 13_200_000,
+            estimatedUsd: 174.2,
+        },
+    ]);
+
+    return events.sort((left, right) => left.observedAt - right.observedAt);
+}
+
+function addRecurringSeries(target, input) {
+    const start = new Date(`${input.startDate}T00:00:00.000Z`);
+
+    for (let weekIndex = 0; weekIndex < input.weeks; weekIndex += input.cadence ?? 1) {
+        const observedAt = new Date(start.getTime());
+        observedAt.setUTCDate(observedAt.getUTCDate() + weekIndex * 7 + input.weekdayOffset);
+        observedAt.setUTCHours(input.hourUtc, 0, 0, 0);
+
+        const modelId = input.modelIds[weekIndex % input.modelIds.length];
+        const tokens = Math.round(input.tokenBase + weekIndex * input.tokenStep + (weekIndex % 3) * input.tokenStep * 0.55);
+        const usd = roundUsd(tokens * input.costFactor);
+
+        target.push(createEvent(input.sessionKey, observedAt.toISOString(), {
+            providerId: input.providerId,
+            backendMode: input.backendMode,
+            modelId,
+            projectKey: input.projectKey,
+            workspaceId: input.workspaceId,
+            tokens,
+            reportedUsd: input.costMode === 'reported' ? usd : undefined,
+            estimatedUsd: input.costMode === 'estimated' ? usd : undefined,
+        }));
+    }
+}
+
+function addBurst(target, baseIso, events) {
+    const baseObservedAt = Date.parse(baseIso);
+    for (let index = 0; index < events.length; index += 1) {
+        const event = events[index];
+        target.push(createEvent(event.sessionKey, new Date(baseObservedAt + index * 60 * 60 * 1000).toISOString(), event));
+    }
+}
+
+function roundUsd(value) {
+    return Math.round(value * 10_000) / 10_000;
 }
 
 function parseArgs(argv) {
@@ -420,6 +574,12 @@ async function querySnapshot(serverUrl, token, request) {
     return await res.json();
 }
 
+function buildRelativeDateRange(days) {
+    const endMs = Date.now();
+    const startMs = endMs - days * 24 * 60 * 60 * 1000;
+    return { startMs, endMs };
+}
+
 async function main() {
     const args = parseArgs(process.argv.slice(2));
     const serverUrl = (args.get('--server-url') ?? DEFAULT_SERVER_URL).trim().replace(/\/$/, '');
@@ -445,6 +605,7 @@ async function main() {
     }
 
     const thirtyDay = await querySnapshot(serverUrl, token, {
+        dateRange: buildRelativeDateRange(30),
         granularity: 'day',
         includeInsights: true,
         includeActivity: true,
@@ -452,6 +613,7 @@ async function main() {
         includeSeries: true,
     });
     const yearly = await querySnapshot(serverUrl, token, {
+        dateRange: buildRelativeDateRange(365),
         granularity: 'month',
         includeInsights: true,
         includeActivity: true,
