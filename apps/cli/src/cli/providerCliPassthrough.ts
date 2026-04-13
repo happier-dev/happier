@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 
 import type { AgentId } from '@happier-dev/agents';
+import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
 import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
 
@@ -22,10 +23,17 @@ export function maybePassthroughProviderCliInfoRequest(params: Readonly<{
   if (!flag) return false;
 
   const launch = requireProviderCliLaunchSpec(params.agentId, { processEnv: params.processEnv });
-  const result = spawnSync(launch.command, [...launch.args, flag], {
+  const invocation = resolveWindowsCommandInvocation({
+    command: launch.command,
+    args: [...launch.args, flag],
+    env: params.processEnv ?? process.env,
+    resolveCommandOnPath: false,
+  });
+  const result = spawnSync(invocation.command, invocation.args, {
     env: params.processEnv ?? process.env,
     stdio: 'inherit',
     windowsHide: true,
+    ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
   });
 
   if (result.error) {

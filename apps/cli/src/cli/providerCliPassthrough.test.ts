@@ -1,7 +1,41 @@
 import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { resolveWindowsCommandInvocationMock, spawnSyncMock } = vi.hoisted(() => ({
+  resolveWindowsCommandInvocationMock: vi.fn((
+    { command, args }: { command: string; args: readonly string[] },
+  ): { command: string; args: string[]; windowsVerbatimArguments?: boolean } => ({
+    command,
+    args: [...args],
+  })),
+  spawnSyncMock: vi.fn(),
+}));
+
+vi.mock('@happier-dev/cli-common/process', () => ({
+  resolveWindowsCommandInvocation: resolveWindowsCommandInvocationMock,
+}));
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const original = await importOriginal<typeof import('node:child_process')>();
+  return {
+    ...original,
+    spawnSync: spawnSyncMock,
+  };
+});
+
+const { requireProviderCliLaunchSpecMock } = vi.hoisted(() => ({
+  requireProviderCliLaunchSpecMock: vi.fn(),
+}));
+
+vi.mock('@/runtime/managedTools/requireProviderCliLaunchSpec', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/runtime/managedTools/requireProviderCliLaunchSpec')>();
+  return {
+    ...original,
+    requireProviderCliLaunchSpec: requireProviderCliLaunchSpecMock,
+  };
+});
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { writeExecutableShim } from '@/testkit/fs/executableShim';
@@ -19,6 +53,16 @@ const envKeys = [
 const tempDirs = new Set<string>();
 let envScope = createEnvKeyScope(envKeys);
 
+beforeEach(async () => {
+  const actualLaunch = await vi.importActual<typeof import('@/runtime/managedTools/requireProviderCliLaunchSpec')>('@/runtime/managedTools/requireProviderCliLaunchSpec');
+  requireProviderCliLaunchSpecMock.mockReset();
+  requireProviderCliLaunchSpecMock.mockImplementation(actualLaunch.requireProviderCliLaunchSpec);
+
+  const actualChildProcess = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+  spawnSyncMock.mockReset();
+  spawnSyncMock.mockImplementation(actualChildProcess.spawnSync as any);
+});
+
 async function createExecutable(dir: string, name: string, contents: string): Promise<string> {
   return await writeExecutableShim({
     dir,
@@ -29,6 +73,14 @@ async function createExecutable(dir: string, name: string, contents: string): Pr
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  resolveWindowsCommandInvocationMock.mockReset();
+  resolveWindowsCommandInvocationMock.mockImplementation((
+    { command, args }: { command: string; args: readonly string[] },
+  ): { command: string; args: string[]; windowsVerbatimArguments?: boolean } => ({
+    command,
+    args: [...args],
+  }));
+  spawnSyncMock.mockReset();
   envScope.restore();
   envScope = createEnvKeyScope(envKeys);
   for (const dir of tempDirs) {
@@ -68,5 +120,48 @@ describe('maybePassthroughProviderCliInfoRequest', () => {
 
     expect(handled).toBe(true);
     await expect(readFile(markerPath, 'utf8')).resolves.toContain(providerPath);
+  });
+
+  it('wraps Windows shell shims before passthrough invocations', () => {
+    spawnSyncMock.mockReturnValue({
+      pid: 1,
+      output: [],
+      stdout: null,
+      stderr: null,
+      status: 0,
+      signal: null,
+    } as any);
+    resolveWindowsCommandInvocationMock.mockReturnValueOnce({
+      command: 'C:\\Windows\\System32\\cmd.exe',
+      args: ['/d', '/s', '/c', '"C:\\Users\\natan\\AppData\\Roaming\\npm\\opencode.CMD --help"'],
+      windowsVerbatimArguments: true,
+    });
+    requireProviderCliLaunchSpecMock.mockReturnValueOnce({
+      source: 'override',
+      resolvedPath: 'C:\\Users\\natan\\AppData\\Roaming\\npm\\opencode.CMD',
+      command: 'C:\\Users\\natan\\AppData\\Roaming\\npm\\opencode.CMD',
+      args: [],
+    });
+
+    const handled = maybePassthroughProviderCliInfoRequest({
+      agentId: 'opencode',
+      args: ['--help'],
+      processEnv: {
+        ...process.env,
+        HAPPIER_OPENCODE_PATH: 'C:\\Users\\natan\\AppData\\Roaming\\npm\\opencode.CMD',
+        ComSpec: 'C:\\Windows\\System32\\cmd.exe',
+      },
+    });
+
+    expect(handled).toBe(true);
+    expect(resolveWindowsCommandInvocationMock).toHaveBeenCalledWith(expect.objectContaining({
+      command: 'C:\\Users\\natan\\AppData\\Roaming\\npm\\opencode.CMD',
+      args: ['--help'],
+    }));
+    expect(spawnSyncMock).toHaveBeenCalledWith(
+      'C:\\Windows\\System32\\cmd.exe',
+      ['/d', '/s', '/c', '"C:\\Users\\natan\\AppData\\Roaming\\npm\\opencode.CMD --help"'],
+      expect.objectContaining({ windowsHide: true, windowsVerbatimArguments: true }),
+    );
   });
 });

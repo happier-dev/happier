@@ -12,6 +12,6 @@ export async function validateProviderCliSpawn(params: Readonly<{ agentId: Agent
 
   return {
     ok: false,
-    errorMessage: `${buildMissingProviderCliCommandErrorMessage(params.agentId)} Then restart the daemon.`,
+    errorMessage: buildMissingProviderCliCommandErrorMessage(params.agentId),
   };
 }

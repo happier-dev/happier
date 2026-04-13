@@ -822,7 +822,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
   }
 
   if (op === 'install') {
-    const localServerPayloadOverride = ssh && serverBinaryOverride
+    const localServerPayloadOverride = serverBinaryOverride
       ? resolveLocalServerPayloadOverrideFromBinaryPath(serverBinaryOverride)
       : null;
     const installParams: RelayRuntimeTaskParams = {
@@ -907,7 +907,9 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
 
             const engine = createLocalRelayHostEngine({
               resolveLocalInstallVersion: async ({ serverBinaryPath: candidate }) => {
-                if (prepared && candidate === serverBinaryPath) return prepared.versionId || null;
+                if (candidate === serverBinaryPath) {
+                  return localServerPayloadOverride?.versionId || prepared?.versionId || null;
+                }
                 return null;
               },
             });

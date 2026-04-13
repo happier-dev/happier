@@ -56,6 +56,7 @@ describe('validateProviderCliSpawn', () => {
     expect(result.errorMessage.toLowerCase()).toContain('managed install');
     expect(result.errorMessage.toLowerCase()).toContain('system install');
     expect(result.errorMessage.toLowerCase()).not.toContain('daemon path');
+    expect(result.errorMessage.match(/restart the daemon/gi)).toHaveLength(1);
   });
 
   it('fails closed when an explicit override is set but invalid', async () => {
