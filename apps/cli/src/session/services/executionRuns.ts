@@ -23,6 +23,7 @@ import {
     listExecutionRunPublicStatesFromHistoryRows,
 } from './deriveExecutionRunPublicStatesFromHistory';
 import { readRawSessionHistoryRows } from './getSessionHistory';
+import { normalizeExecutionRunPublicStateBackendTarget } from './normalizeExecutionRunPublicStateBackendTarget';
 
 type ExecutionRunRpcContext = Readonly<{
     token: string;
@@ -83,13 +84,17 @@ function toExecutionRunPublicState(marker: ExecutionRunMarkerRecord): ExecutionR
     if (!permissionMode) {
         return null;
     }
+    const backendTarget = normalizeExecutionRunPublicStateBackendTarget(marker.backendTarget);
+    if (!backendTarget) {
+        return null;
+    }
 
     const payload: Record<string, unknown> = {
         runId: marker.runId,
         callId: marker.callId,
         sidechainId: marker.sidechainId,
         intent: marker.intent,
-        backendTarget: marker.backendTarget,
+        backendTarget,
         ...(marker.display !== undefined ? { display: marker.display } : {}),
         permissionMode,
         retentionPolicy: marker.retentionPolicy,

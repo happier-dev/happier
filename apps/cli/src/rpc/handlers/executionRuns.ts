@@ -16,6 +16,7 @@ import {
   ExecutionRunTurnStreamStartRequestSchema,
   ExecutionRunTurnStreamReadRequestSchema,
   ExecutionRunTurnStreamCancelRequestSchema,
+  convertBackendTargetRefV2ToV1,
 } from '@happier-dev/protocol';
 
 import { ExecutionRunManager } from '@/agent/executionRuns/runtime/ExecutionRunManager';
@@ -167,7 +168,8 @@ export function registerExecutionRunHandlers(
     if (!isSafePermissionModeForIntent(parsed.data.intent, parsed.data.permissionMode)) {
       return { ok: false, error: 'Permission denied', errorCode: 'permission_denied' };
     }
-    const backendId = resolveExecutionRunRuntimeBackendId(parsed.data.backendTarget);
+    const backendTarget = convertBackendTargetRefV2ToV1(parsed.data.backendTarget);
+    const backendId = resolveExecutionRunRuntimeBackendId(backendTarget);
     if (parsed.data.intent === 'review' && backendId === 'coderabbit') {
       const codeRabbitConfig = readCodeRabbitReviewConfigFromEnv(process.env);
       let preflight;
@@ -213,7 +215,7 @@ export function registerExecutionRunHandlers(
     }
     try {
       const accountSettings = await ctx.resolveAccountSettings?.() ?? null;
-      const startParams: any = { ...(parsed.data as any) };
+      const startParams: any = { ...(parsed.data as any), backendTarget };
       if (parsed.data.intent === 'voice_agent' && parsed.data.replay?.kind === 'voice_session.v1') {
         const credentials = await readCredentials().catch(() => null);
         if (credentials) {

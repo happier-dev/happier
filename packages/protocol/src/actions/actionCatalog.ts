@@ -8,19 +8,13 @@ import {
   type ActionSpec,
   type ActionSurfaces,
 } from './actionSpecs.js';
+import {
+  type ActionDefinitionSummaryV1,
+  type ActionDefinitionV1,
+} from '../extensions/actionDefinitionV1.js';
+import { zodSchemaToJsonSchemaObject } from './actionInputJsonSchema.js';
 
-export type SerializedActionSpec = Readonly<{
-  id: string;
-  title: string;
-  description: string | null;
-  safety: ActionSpec['safety'];
-  placements: readonly string[];
-  slash: ActionSpec['slash'] | null;
-  bindings: ActionSpec['bindings'] | null;
-  examples: ActionSpec['examples'] | null;
-  surfaces: ActionSpec['surfaces'];
-  inputHints: ActionSpec['inputHints'] | null;
-}>;
+export type SerializedActionSpec = ActionDefinitionSummaryV1;
 
 export type ResolvedActionOption = Readonly<{
   value: string;
@@ -105,6 +99,14 @@ export function serializeActionSpec(spec: ActionSpec): SerializedActionSpec {
   };
 }
 
+export function actionSpecToActionDefinitionV1(spec: ActionSpec): ActionDefinitionV1 {
+  return {
+    kindVersion: 1,
+    ...serializeActionSpec(spec),
+    inputSchema: zodSchemaToJsonSchemaObject(spec.inputSchema),
+  };
+}
+
 export function searchSerializedActionSpecs(
   specs: readonly ActionSpec[],
   params?: Readonly<{ query?: string | null; limit?: number | null }>,
@@ -166,6 +168,22 @@ export function getSerializedActionSpecForSurface(params: Readonly<{
 }>): SerializedActionSpec | null {
   const spec = getActionSpecForCatalogSurface(params);
   return spec ? serializeActionSpec(spec) : null;
+}
+
+export function listActionDefinitionsForCatalogSurface(params: Readonly<{
+  surface?: keyof ActionSurfaces | null;
+  isActionEnabled?: (id: ActionId) => boolean;
+}>): readonly ActionDefinitionV1[] {
+  return listActionSpecsForCatalogSurface(params).map(actionSpecToActionDefinitionV1);
+}
+
+export function getActionDefinitionForCatalogSurface(params: Readonly<{
+  id: ActionId;
+  surface?: keyof ActionSurfaces | null;
+  isActionEnabled?: (id: ActionId) => boolean;
+}>): ActionDefinitionV1 | null {
+  const spec = getActionSpecForCatalogSurface(params);
+  return spec ? actionSpecToActionDefinitionV1(spec) : null;
 }
 
 export function findActionInputFieldHint(spec: ActionSpec, fieldPath: string): ActionInputFieldHint | null {

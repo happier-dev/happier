@@ -2,6 +2,7 @@ import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import type { AgentBackend, SessionId } from '@/agent/core/AgentBackend';
 import { createExecutionRunBackend } from '@/agent/executionRuns/runtime/createExecutionRunBackend';
+import { resolveExecutionRunPublicBackendId } from '@/agent/executionRuns/runtime/backendTargets';
 import type { Credentials } from '@/persistence';
 import { readCredentials } from '@/persistence';
 import { bootstrapAccountSettingsContext, type AccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
@@ -47,9 +48,7 @@ export async function createExecutionRunTextPromptBackendForTarget(params: Reado
     accountSettingsContext: params.accountSettingsContext,
   });
 
-  const backendId = params.backendTarget.kind === 'builtInAgent'
-    ? params.backendTarget.agentId
-    : 'customAcp';
+  const backendId = resolveExecutionRunPublicBackendId(params.backendTarget);
 
   return {
     backendId,

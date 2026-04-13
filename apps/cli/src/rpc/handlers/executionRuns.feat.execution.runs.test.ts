@@ -518,6 +518,136 @@ describe('executionRuns session RPC handlers', () => {
     );
   });
 
+  it('applies execution.run.list legacy customAcp filtering to configured ACP runs on the canonical handler path', async () => {
+    const client = createEncryptedRpcTestClient({
+      scopePrefix: 'sess_1',
+      registerHandlers: (rpc) => {
+        registerExecutionRunHandlers(rpc, {
+          sessionId: 'sess_1',
+          cwd: process.cwd(),
+          parentProvider: 'claude',
+          createBackend: ({ backendId, backendTarget }) => {
+            if (backendId === 'customAcp') {
+              if (backendTarget?.kind !== 'configuredAcpBackend' || backendTarget.backendId !== 'review-bot') {
+                throw new Error('Missing configured ACP backend target');
+              }
+              return createDelayedBackend('running later', 50_000);
+            }
+            return createStaticBackend(JSON.stringify({ findings: [], summary: 'done' }));
+          },
+          sendAcp: () => {},
+        });
+      },
+    });
+
+    const running = await client.call<ExecutionRunStartResponse, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      intent: 'review',
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      instructions: 'Review.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    });
+    const succeeded = await client.call<ExecutionRunStartResponse, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      instructions: 'Review.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const listed = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_LIST, {
+      status: 'running',
+      backendId: 'customAcp',
+      limit: 1,
+    });
+
+    expect(listed.runs).toEqual([
+      expect.objectContaining({
+        runId: running.runId,
+        status: 'running',
+        backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      }),
+    ]);
+    expect(listed.runs).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          runId: succeeded.runId,
+        }),
+      ]),
+    );
+  });
+
+  it('applies execution.run.list concrete configured-backend filtering to configured ACP runs on the canonical handler path', async () => {
+    const client = createEncryptedRpcTestClient({
+      scopePrefix: 'sess_1',
+      registerHandlers: (rpc) => {
+        registerExecutionRunHandlers(rpc, {
+          sessionId: 'sess_1',
+          cwd: process.cwd(),
+          parentProvider: 'claude',
+          createBackend: ({ backendId, backendTarget }) => {
+            if (backendId === 'customAcp') {
+              if (backendTarget?.kind !== 'configuredAcpBackend' || backendTarget.backendId !== 'review-bot') {
+                throw new Error('Missing configured ACP backend target');
+              }
+              return createDelayedBackend('running later', 50_000);
+            }
+            return createStaticBackend(JSON.stringify({ findings: [], summary: 'done' }));
+          },
+          sendAcp: () => {},
+        });
+      },
+    });
+
+    const running = await client.call<ExecutionRunStartResponse, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      intent: 'review',
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      instructions: 'Review.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    });
+    const succeeded = await client.call<ExecutionRunStartResponse, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      instructions: 'Review.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const listed = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_LIST, {
+      status: 'running',
+      backendId: 'review-bot',
+      limit: 1,
+    });
+
+    expect(listed.runs).toEqual([
+      expect.objectContaining({
+        runId: running.runId,
+        status: 'running',
+        backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      }),
+    ]);
+    expect(listed.runs).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          runId: succeeded.runId,
+        }),
+      ]),
+    );
+  });
+
   it('returns structured review meta when includeStructured is true and supports review actions', async () => {
     const sent: Array<{ body: unknown; meta?: Record<string, unknown> }> = [];
 

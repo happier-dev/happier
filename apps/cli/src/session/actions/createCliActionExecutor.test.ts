@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const { mockAxiosGet, mockAxiosPost } = vi.hoisted(() => ({
   mockAxiosGet: vi.fn(),
@@ -55,6 +58,10 @@ const {
   executeExecutionRunAction: vi.fn(),
 }));
 
+const { bootstrapAccountSettingsContext } = vi.hoisted(() => ({
+  bootstrapAccountSettingsContext: vi.fn(),
+}));
+
 vi.mock('@/daemon/controlClient', () => ({
   spawnDaemonSession,
 }));
@@ -93,6 +100,10 @@ vi.mock('@/session/services/executionRuns', () => ({
   executeExecutionRunAction,
 }));
 
+vi.mock('@/settings/accountSettings/bootstrapAccountSettingsContext', () => ({
+  bootstrapAccountSettingsContext,
+}));
+
 const { callSessionRpc } = vi.hoisted(() => ({
   callSessionRpc: vi.fn(),
 }));
@@ -103,8 +114,84 @@ vi.mock('@/session/transport/rpc/sessionRpc', () => ({
 
 import { createCliActionExecutor } from './createCliActionExecutor';
 import { deriveBoxPublicKeyFromSeed, encodeBase64, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
+import { createPluginStateStore } from '@/extensions/plugins/store/pluginStateStore';
+import { configuration } from '@/configuration';
 
 const env = process.env;
+
+async function writePluginBackendFixture(rootDir: string): Promise<void> {
+  const manifestDir = join(rootDir, '.happier-plugin');
+  await mkdir(manifestDir, { recursive: true });
+  await writeFile(
+    join(manifestDir, 'plugin.json'),
+    JSON.stringify(
+      {
+        schemaVersion: 1,
+        id: 'acme.cli-action.plugin',
+        version: '1.0.0',
+        displayName: 'CLI Action Plugin',
+        description: 'Contributes ACP backends for action discovery',
+        engines: {
+          happier: `^${configuration.currentCliVersion}`,
+        },
+        targets: {
+          daemon: {
+            entry: './daemon.mjs',
+          },
+        },
+        contributions: {
+          providers: [
+            {
+              kindVersion: 1,
+              id: 'acme.cli-action.provider',
+              display: {
+                name: 'CLI Action Provider',
+              },
+              ownedBackendIds: ['acme.cli-action.backend'],
+            },
+          ],
+          backends: [
+            {
+              kindVersion: 1,
+              id: 'acme.cli-action.backend',
+              providerId: 'acme.cli-action.provider',
+              runtimeKind: 'acp',
+              launch: {
+                command: 'ignored-launch-command',
+                args: ['--ignored'],
+                env: {},
+              },
+              acp: {
+                title: 'Plugin Review Bot',
+                description: 'Plugin-sourced ACP backend',
+                command: 'plugin-review-bot',
+                args: ['acp'],
+                env: {},
+                transportProfile: 'generic',
+                capabilities: {
+                  supportsLoadSession: false,
+                  supportsModes: 'unknown',
+                  supportsModels: 'unknown',
+                  supportsConfigOptions: 'unknown',
+                  promptImageSupport: 'unknown',
+                },
+              },
+              capabilities: {
+                supportsModels: true,
+                supportsModes: true,
+                supportsConfigOptions: true,
+              },
+            },
+          ],
+          hooks: [],
+        },
+      },
+      null,
+      2,
+    ),
+    'utf8',
+  );
+}
 
 function createPlainExecutor(extra: Partial<Parameters<typeof createCliActionExecutor>[0]> = {}) {
   return createCliActionExecutor({
@@ -165,6 +252,7 @@ describe('createCliActionExecutor', () => {
     startExecutionRun.mockReset();
     stopExecutionRun.mockReset();
     executeExecutionRunAction.mockReset();
+    bootstrapAccountSettingsContext.mockReset();
     callSessionRpc.mockReset();
     mockAxiosGet.mockReset();
     mockAxiosPost.mockReset();
@@ -173,6 +261,61 @@ describe('createCliActionExecutor', () => {
   });
 
   it('resolves execution backend options on the MCP surface', async () => {
+    bootstrapAccountSettingsContext.mockResolvedValueOnce({
+      source: 'network',
+      settingsVersion: 1,
+      loadedAtMs: 1,
+      settingsSecretsReadKeys: [],
+      whenRefreshed: null,
+      settings: {
+        schemaVersion: 2,
+        backendEnabledByTargetKey: {
+          'acpBackend:review-bot': true,
+          'acpBackend:disabled-bot': false,
+        },
+        acpCatalogSettingsV1: {
+          v: 2,
+          backends: [
+            {
+              id: 'review-bot',
+              name: 'review-bot',
+              title: 'Review Bot',
+              command: 'review-bot',
+              args: [],
+              env: {},
+              transportProfile: 'generic',
+              capabilities: {
+                supportsLoadSession: false,
+                supportsModes: 'unknown',
+                supportsModels: 'unknown',
+                supportsConfigOptions: 'unknown',
+                promptImageSupport: 'unknown',
+              },
+              createdAt: 1,
+              updatedAt: 1,
+            },
+            {
+              id: 'disabled-bot',
+              name: 'disabled-bot',
+              title: 'Disabled Bot',
+              command: 'disabled-bot',
+              args: [],
+              env: {},
+              transportProfile: 'generic',
+              capabilities: {
+                supportsLoadSession: false,
+                supportsModes: 'unknown',
+                supportsModels: 'unknown',
+                supportsConfigOptions: 'unknown',
+                promptImageSupport: 'unknown',
+              },
+              createdAt: 2,
+              updatedAt: 2,
+            },
+          ],
+        },
+      },
+    });
     const executor = createPlainExecutor();
 
     const result = await executor.execute(
@@ -198,6 +341,227 @@ describe('createCliActionExecutor', () => {
         expect.objectContaining({
           value: 'agent:claude',
           label: expect.any(String),
+        }),
+        expect.objectContaining({
+          value: 'acpBackend:review-bot',
+          label: 'Review Bot',
+        }),
+      ]),
+    );
+    expect((result as any).result.options).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          value: 'agent:customAcp',
+        }),
+        expect.objectContaining({
+          value: 'acpBackend:disabled-bot',
+        }),
+      ]),
+    );
+  });
+
+  it('includes plugin-contributed ACP backends in execution backend options', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-action-plugin-home-'));
+    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-cli-action-plugin-root-'));
+    const store = createPluginStateStore({ happyHomeDir });
+
+    await writePluginBackendFixture(pluginRoot);
+    await store.write({
+      t: 'happier_plugin_state_v1',
+      schemaVersion: 1,
+      plugins: {
+        'acme.cli-action.plugin': {
+          source: {
+            kind: 'path',
+            locator: pluginRoot,
+            trustPolicy: 'local_trusted',
+            installPolicy: 'link',
+            resolvedPath: pluginRoot,
+            manifestPath: join(pluginRoot, '.happier-plugin', 'plugin.json'),
+          },
+          compatibility: {
+            status: 'unknown',
+            diagnostics: [],
+          },
+          install: {
+            mode: 'link',
+            manifestVersion: '1.0.0',
+            manifestDigest: null,
+            installedPath: null,
+          },
+          state: {
+            enabled: true,
+          },
+        },
+      },
+    });
+    bootstrapAccountSettingsContext.mockResolvedValueOnce({
+      source: 'network',
+      settingsVersion: 1,
+      loadedAtMs: 1,
+      settingsSecretsReadKeys: [],
+      whenRefreshed: null,
+      settings: {
+        schemaVersion: 2,
+        acpCatalogSettingsV1: {
+          v: 2,
+          backends: [],
+        },
+      },
+    });
+    const executor = createPlainExecutor({ happyHomeDir });
+
+    const result = await executor.execute(
+      'action.options.resolve',
+      {
+        actionId: 'subagents.plan.start',
+        fieldPath: 'backendTargetKeys',
+        sessionId: 'sess-1',
+      },
+      { surface: 'mcp', defaultSessionId: 'sess-1' },
+    );
+
+    expect((result as any).result.options).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          value: 'acpBackend:acme.cli-action.backend',
+          label: 'Plugin Review Bot',
+        }),
+      ]),
+    );
+  });
+
+  it('returns configured ACP backends from agents.backends.list when disabled entries are requested', async () => {
+    bootstrapAccountSettingsContext.mockResolvedValueOnce({
+      source: 'cache',
+      settingsVersion: 2,
+      loadedAtMs: 2,
+      settingsSecretsReadKeys: [],
+      whenRefreshed: null,
+      settings: {
+        schemaVersion: 2,
+        backendEnabledByTargetKey: {
+          'acpBackend:review-bot': true,
+          'acpBackend:disabled-bot': false,
+        },
+        acpCatalogSettingsV1: {
+          v: 2,
+          backends: [
+            {
+              id: 'review-bot',
+              name: 'review-bot',
+              title: 'Review Bot',
+              description: 'Primary review backend',
+              command: 'review-bot',
+              args: [],
+              env: {},
+              transportProfile: 'generic',
+              capabilities: {
+                supportsLoadSession: false,
+                supportsModes: 'unknown',
+                supportsModels: 'unknown',
+                supportsConfigOptions: 'unknown',
+                promptImageSupport: 'unknown',
+              },
+              createdAt: 1,
+              updatedAt: 1,
+            },
+            {
+              id: 'disabled-bot',
+              name: 'disabled-bot',
+              title: 'Disabled Bot',
+              description: 'Disabled review backend',
+              command: 'disabled-bot',
+              args: [],
+              env: {},
+              transportProfile: 'generic',
+              capabilities: {
+                supportsLoadSession: false,
+                supportsModes: 'unknown',
+                supportsModels: 'unknown',
+                supportsConfigOptions: 'unknown',
+                promptImageSupport: 'unknown',
+              },
+              createdAt: 2,
+              updatedAt: 2,
+            },
+          ],
+        },
+      },
+    });
+    const executor = createPlainExecutor();
+
+    const result = await executor.execute(
+      'agents.backends.list',
+      {
+        includeDisabled: true,
+        limit: 20,
+      },
+      { surface: 'mcp', defaultSessionId: 'sess-1' },
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      result: {
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            targetKey: 'acpBackend:review-bot',
+            label: 'Review Bot',
+            enabled: true,
+          }),
+          expect.objectContaining({
+            targetKey: 'acpBackend:disabled-bot',
+            label: 'Disabled Bot',
+            description: 'Disabled review backend',
+            enabled: false,
+          }),
+        ]),
+      },
+    });
+  });
+
+  it('omits account-settings-disabled built-in backends from execution backend options by default', async () => {
+    bootstrapAccountSettingsContext.mockResolvedValueOnce({
+      source: 'network',
+      settingsVersion: 3,
+      loadedAtMs: 3,
+      settingsSecretsReadKeys: [],
+      whenRefreshed: null,
+      settings: {
+        schemaVersion: 2,
+        backendEnabledByTargetKey: {
+          'agent:claude': false,
+        },
+        acpCatalogSettingsV1: {
+          v: 2,
+          backends: [],
+        },
+      },
+    });
+    const executor = createPlainExecutor();
+
+    const result = await executor.execute(
+      'action.options.resolve',
+      {
+        actionId: 'subagents.plan.start',
+        fieldPath: 'backendTargetKeys',
+        sessionId: 'sess-1',
+      },
+      { surface: 'mcp', defaultSessionId: 'sess-1' },
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      result: {
+        actionId: 'subagents.plan.start',
+        fieldPath: 'backendTargetKeys',
+        optionsSourceId: 'execution.backends.enabled',
+      },
+    });
+    expect((result as any).result.options).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          value: 'agent:claude',
         }),
       ]),
     );

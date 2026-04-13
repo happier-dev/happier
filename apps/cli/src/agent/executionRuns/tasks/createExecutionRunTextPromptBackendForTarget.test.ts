@@ -56,7 +56,7 @@ describe('createExecutionRunTextPromptBackendForTarget', () => {
     });
 
     expect(createExecutionRunBackendMock).toHaveBeenCalledWith(expect.objectContaining({
-      backendId: 'customAcp',
+      backendId: 'review-bot',
       backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
       accountSettings: { backendEnabledByTargetKey: { 'acpBackend:review-bot': true } },
     }));

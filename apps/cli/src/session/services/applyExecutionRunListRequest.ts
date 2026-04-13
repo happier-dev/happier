@@ -4,6 +4,8 @@ import {
     type ExecutionRunPublicState,
 } from '@happier-dev/protocol';
 
+import { matchesExecutionRunLegacyBackendId } from '@/agent/executionRuns/runtime/backendTargets';
+
 function compareExecutionRunPublicStates(left: ExecutionRunPublicState, right: ExecutionRunPublicState): number {
     if (left.startedAtMs !== right.startedAtMs) {
         return left.startedAtMs - right.startedAtMs;
@@ -28,12 +30,7 @@ export function applyExecutionRunListRequest(
 
     let filtered = [...runs].sort(compareExecutionRunPublicStates);
     if (requestedBackendId) {
-        filtered = filtered.filter((run) => {
-            if (run.backendTarget.kind === 'builtInAgent') {
-                return run.backendTarget.agentId === requestedBackendId;
-            }
-            return run.backendTarget.backendId === requestedBackendId;
-        });
+        filtered = filtered.filter((run) => matchesExecutionRunLegacyBackendId(run.backendTarget, requestedBackendId));
     }
     if (requestedBackendTargetKey) {
         filtered = filtered.filter((run) => buildBackendTargetKey(run.backendTarget) === requestedBackendTargetKey);

@@ -52,10 +52,13 @@ export {
 export type { VoiceGuidanceAvailability } from './actionInputVoiceGuidance.js';
 export { describeActionForVoiceTool } from './actionVoiceToolSummary.js';
 export {
+  actionSpecToActionDefinitionV1,
   findActionInputFieldHint,
   filterResolvedActionOptions,
+  getActionDefinitionForCatalogSurface,
   getActionSpecForCatalogSurface,
   getSerializedActionSpecForSurface,
+  listActionDefinitionsForCatalogSurface,
   listActionSpecsForCatalogSurface,
   searchSerializedActionSpecsForSurface,
   serializeActionFieldOptions,

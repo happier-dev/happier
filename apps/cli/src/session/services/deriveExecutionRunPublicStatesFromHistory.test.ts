@@ -195,4 +195,144 @@ describe('listExecutionRunPublicStatesFromHistoryRows', () => {
             },
         ]);
     });
+
+    it('normalizes BackendTargetRefV2 payloads back into the public V1 history contract', () => {
+        const runs = listExecutionRunPublicStatesFromHistoryRows([
+            {
+                id: 'result-row',
+                createdAt: 20,
+                role: 'agent',
+                raw: {
+                    role: 'agent',
+                    content: {
+                        type: 'acp',
+                        provider: 'claude',
+                        data: {
+                            type: 'tool-result',
+                            callId: 'call_hist_v2_acp',
+                            output: {
+                                _happier: {
+                                    canonicalToolName: 'SubAgentRun',
+                                },
+                                runId: 'run_hist_v2_acp',
+                                callId: 'call_hist_v2_acp',
+                                sidechainId: 'call_hist_v2_acp',
+                                intent: 'review',
+                                backendTarget: {
+                                    kind: 'backend',
+                                    backendId: 'review-bot',
+                                    configuredBackendId: 'review-bot',
+                                    sourceKind: 'configured',
+                                },
+                                permissionMode: 'workspace_write',
+                                retentionPolicy: 'ephemeral',
+                                runClass: 'bounded',
+                                ioMode: 'request_response',
+                                status: 'succeeded',
+                                startedAtMs: 10,
+                                finishedAtMs: 20,
+                            },
+                        },
+                    },
+                },
+            },
+        ]);
+
+        expect(runs).toEqual([
+            {
+                runId: 'run_hist_v2_acp',
+                callId: 'call_hist_v2_acp',
+                sidechainId: 'call_hist_v2_acp',
+                intent: 'review',
+                backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+                permissionMode: 'workspace_write',
+                retentionPolicy: 'ephemeral',
+                runClass: 'bounded',
+                ioMode: 'request_response',
+                status: 'succeeded',
+                startedAtMs: 10,
+                finishedAtMs: 20,
+            },
+        ]);
+    });
+
+    it('does not reconstruct backendTarget from an ambiguous legacy customAcp backendId', () => {
+        const runs = listExecutionRunPublicStatesFromHistoryRows([
+            {
+                id: 'result-row',
+                createdAt: 20,
+                role: 'agent',
+                raw: {
+                    role: 'agent',
+                    content: {
+                        type: 'acp',
+                        provider: 'claude',
+                        data: {
+                            type: 'tool-result',
+                            callId: 'call_hist_legacy_custom_acp',
+                            output: {
+                                _happier: {
+                                    canonicalToolName: 'SubAgentRun',
+                                },
+                                runId: 'run_hist_legacy_custom_acp',
+                                callId: 'call_hist_legacy_custom_acp',
+                                sidechainId: 'call_hist_legacy_custom_acp',
+                                intent: 'review',
+                                backendId: 'customAcp',
+                                permissionMode: 'workspace_write',
+                                retentionPolicy: 'ephemeral',
+                                runClass: 'bounded',
+                                ioMode: 'request_response',
+                                status: 'succeeded',
+                                startedAtMs: 10,
+                                finishedAtMs: 20,
+                            },
+                        },
+                    },
+                },
+            },
+        ]);
+
+        expect(runs).toEqual([]);
+    });
+
+    it('does not accept an explicit builtIn customAcp backendTarget from history rows', () => {
+        const runs = listExecutionRunPublicStatesFromHistoryRows([
+            {
+                id: 'result-row',
+                createdAt: 20,
+                role: 'agent',
+                raw: {
+                    role: 'agent',
+                    content: {
+                        type: 'acp',
+                        provider: 'claude',
+                        data: {
+                            type: 'tool-result',
+                            callId: 'call_hist_explicit_custom_acp',
+                            output: {
+                                _happier: {
+                                    canonicalToolName: 'SubAgentRun',
+                                },
+                                runId: 'run_hist_explicit_custom_acp',
+                                callId: 'call_hist_explicit_custom_acp',
+                                sidechainId: 'call_hist_explicit_custom_acp',
+                                intent: 'review',
+                                backendTarget: { kind: 'builtInAgent', agentId: 'customAcp' },
+                                permissionMode: 'workspace_write',
+                                retentionPolicy: 'ephemeral',
+                                runClass: 'bounded',
+                                ioMode: 'request_response',
+                                status: 'succeeded',
+                                startedAtMs: 10,
+                                finishedAtMs: 20,
+                            },
+                        },
+                    },
+                },
+            },
+        ]);
+
+        expect(runs).toEqual([]);
+    });
 });

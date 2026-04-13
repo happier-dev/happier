@@ -4,6 +4,8 @@ import {
   AgentRuntimeDescriptorV1Schema,
   SessionAttachMetadataIdentityPolicySchema,
   SessionMcpSelectionV1Schema,
+  normalizeBackendTargetRefV2InputToV2,
+  BackendTargetRefV2Schema,
 } from '@happier-dev/protocol';
 
 import { PERMISSION_MODES } from '@/api/types';
@@ -20,16 +22,74 @@ function asNonEmptyStringTuple<T extends string>(values: readonly T[]): [T, ...T
 }
 
 export const SpawnSessionPermissionModeSchema = z.enum(asNonEmptyStringTuple(PERMISSION_MODES));
-const SpawnBackendTargetSchema = z.union([
-  z.object({
-    kind: z.literal('builtInAgent'),
-    agentId: z.enum(asNonEmptyStringTuple(CATALOG_AGENT_IDS as readonly CatalogAgentId[])),
-  }),
-  z.object({
-    kind: z.literal('configuredAcpBackend'),
-    backendId: z.string().trim().min(1),
-  }),
-]);
+const RESOLVABLE_BUILT_IN_AGENT_IDS = (CATALOG_AGENT_IDS as readonly CatalogAgentId[]).filter(
+  (agentId): agentId is CatalogAgentId => agentId !== 'customAcp',
+);
+function parseSpawnBackendTargetCandidate(value: unknown): CanonicalSpawnBackendTarget | null {
+  try {
+    const normalizedValue = normalizeBackendTargetRefV2InputToV2(value);
+    const parsedBackendTarget = BackendTargetRefV2Schema.safeParse(normalizedValue);
+    if (!parsedBackendTarget.success) {
+      return null;
+    }
+
+    const backendTarget = parsedBackendTarget.data;
+    if (!isSupportedSpawnBackendTarget(backendTarget)) {
+      return null;
+    }
+
+    return backendTarget;
+  } catch {
+    return null;
+  }
+}
+
+function isSupportedSpawnBackendTarget(backendTarget: CanonicalSpawnBackendTarget): boolean {
+  if (backendTarget.backendId === 'customAcp' || backendTarget.configuredBackendId === 'customAcp') {
+    return false;
+  }
+
+  if (backendTarget.sourceKind === 'built_in' && !RESOLVABLE_BUILT_IN_AGENT_IDS.includes(backendTarget.backendId as CatalogAgentId)) {
+    return false;
+  }
+
+  return true;
+}
+
+function isKnownCatalogAgentId(value: string): value is CatalogAgentId {
+  return (RESOLVABLE_BUILT_IN_AGENT_IDS as readonly string[]).includes(value);
+}
+
+type CanonicalSpawnBackendTarget = z.infer<typeof BackendTargetRefV2Schema>;
+
+export function canonicalizeSpawnBackendTargetFromTransportInput(params: Readonly<{
+  backendTarget?: unknown;
+  legacyAgent?: unknown;
+}>): Readonly<{ backendTarget?: CanonicalSpawnBackendTarget; errorMessage?: string }> {
+  if (params.backendTarget !== undefined) {
+    const parsedBackendTarget = parseSpawnBackendTargetCandidate(params.backendTarget);
+    if (!parsedBackendTarget) {
+      return { errorMessage: 'Unknown backend target' };
+    }
+    return { backendTarget: parsedBackendTarget };
+  }
+
+  const normalizedLegacyAgent = typeof params.legacyAgent === 'string' ? params.legacyAgent.trim() : '';
+  if (!normalizedLegacyAgent) {
+    return {};
+  }
+  if (!isKnownCatalogAgentId(normalizedLegacyAgent)) {
+    return { errorMessage: 'Unknown backend target' };
+  }
+  return {
+    backendTarget: {
+      kind: 'backend',
+      backendId: normalizedLegacyAgent,
+      sourceKind: 'built_in',
+    },
+  };
+}
+
 export const SpawnSessionTerminalSchema = z.object({
   mode: z.enum(['plain', 'tmux', 'windows_terminal', 'windows_console']).optional(),
   tmux: z.object({
@@ -58,7 +118,8 @@ const SpawnDaemonSessionRequestCompatSchema = z.object({
   modelId: z.string().optional(),
   modelUpdatedAt: z.number().int().optional(),
   sessionConfigOptionOverrides: AcpConfigOptionOverridesV1Schema.optional(),
-  backendTarget: SpawnBackendTargetSchema.optional(),
+  backendTarget: z.any().optional(),
+  agent: z.string().trim().min(1).optional(),
   terminal: SpawnSessionTerminalSchema.optional(),
   windowsRemoteSessionLaunchMode: z.enum(['hidden', 'windows_terminal', 'console']).optional(),
   windowsRemoteSessionConsole: z.enum(['hidden', 'visible']).optional(),
@@ -70,7 +131,38 @@ const SpawnDaemonSessionRequestCompatSchema = z.object({
 });
 
 export const SpawnDaemonSessionRequestSchema = SpawnDaemonSessionRequestCompatSchema.transform((request) => {
-  const { experimentalCodexAcp: _experimentalCodexAcp, codexBackendMode, ...rest } = request;
+  const {
+    experimentalCodexAcp: _experimentalCodexAcp,
+    codexBackendMode,
+    agent,
+    ...rest
+  } = request;
+  const canonicalBackendTarget = rest.backendTarget !== undefined
+    ? canonicalizeSpawnBackendTargetFromTransportInput({
+      backendTarget: rest.backendTarget,
+    }).backendTarget
+    : canonicalizeSpawnBackendTargetFromTransportInput({
+      legacyAgent: agent,
+    }).backendTarget;
+  const hasBackendTargetInput = rest.backendTarget !== undefined || Boolean(typeof agent === 'string' && agent.trim().length > 0);
+  if (hasBackendTargetInput && !canonicalBackendTarget) {
+    throw new z.ZodError([
+      {
+        code: 'custom',
+        message: 'Unknown backend target',
+        path: ['backendTarget'],
+      },
+    ]);
+  }
+  if (canonicalBackendTarget && !isSupportedSpawnBackendTarget(canonicalBackendTarget)) {
+    throw new z.ZodError([
+      {
+        code: 'custom',
+        message: 'Unknown backend target',
+        path: ['backendTarget'],
+      },
+    ]);
+  }
   const canonicalCodexBackendMode = resolveCanonicalCodexBackendMode({
     codexBackendMode,
     experimentalCodexAcp: _experimentalCodexAcp,
@@ -79,6 +171,7 @@ export const SpawnDaemonSessionRequestSchema = SpawnDaemonSessionRequestCompatSc
 
   return {
     ...rest,
+    ...(canonicalBackendTarget ? { backendTarget: canonicalBackendTarget } : {}),
     ...(canonicalCodexBackendMode ? { codexBackendMode: canonicalCodexBackendMode } : {}),
   };
 });

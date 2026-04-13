@@ -1,11 +1,9 @@
 import {
-  getAgentLocalControlCapability,
   inferAgentIdFromSessionMetadata,
-  usesTerminalHostedLocalControl,
   type AgentId,
 } from '@happier-dev/agents';
 
-import { getProviderAttachOps } from '@/backends/catalog';
+import { resolveBackendExecutionSurfaces } from '@/backends/catalog';
 import type { Credentials } from '@/persistence';
 import type { TerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 import { createTerminalAttachPlan, type TerminalAttachPlan } from '@/terminal/attachment/terminalAttachPlan';
@@ -175,30 +173,11 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
     };
   }
 
-  const localControl = agentId ? getAgentLocalControlCapability(agentId) : null;
   const sessionMachineId = readMachineId(metadata);
-  if (!localControl) {
-    return {
-      eligible: false,
-      agentId,
-      reasonCode: 'local_control_unsupported',
-      reason: 'This session does not support terminal attach.',
-      metadata,
-    };
-  }
-
-  if (localControl.attachStrategy === 'provider_attach') {
+  const backendExecutionSurfaces = agentId ? await resolveBackendExecutionSurfaces(agentId) : null;
+  const providerAttachOps = backendExecutionSurfaces?.attach ?? null;
+  if (providerAttachOps) {
     if (!agentId) {
-      return {
-        eligible: false,
-        agentId,
-        reasonCode: 'provider_attach_unavailable',
-        reason: 'Provider attach is not available for this session.',
-        metadata,
-      };
-    }
-    const providerAttachOps = await getProviderAttachOps(agentId);
-    if (!providerAttachOps) {
       return {
         eligible: false,
         agentId,
@@ -233,6 +212,17 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
     };
   }
 
+  const terminalRuntimeOps = backendExecutionSurfaces?.terminalRuntime ?? null;
+  if (!terminalRuntimeOps) {
+    return {
+      eligible: false,
+      agentId,
+      reasonCode: 'local_control_unsupported',
+      reason: 'This session does not support terminal attach.',
+      metadata,
+    };
+  }
+
   if (!params.currentMachineId && !params.localAttachmentInfo) {
     return {
       eligible: false,
@@ -257,16 +247,6 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
       agentId,
       reasonCode: 'not_current_machine',
       reason: 'Session belongs to another machine and cannot be attached from this computer.',
-      metadata,
-    };
-  }
-
-  if (!agentId || !usesTerminalHostedLocalControl(agentId)) {
-    return {
-      eligible: false,
-      agentId,
-      reasonCode: 'local_control_unsupported',
-      reason: 'This session does not support terminal attach.',
       metadata,
     };
   }

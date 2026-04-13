@@ -21,6 +21,7 @@ import {
   type SessionHandoffWorkspaceTransfer,
 } from '../sessionControl/handoff/handoffSchemas.js';
 import { SessionControlErrorCodeSchema } from '../sessionControl/contract.js';
+import { resolveActionBackendTargetSelection } from './resolveActionBackendTargetSelection.js';
 
 export type ActionExecuteResult =
   | Readonly<{ ok: true; result: unknown }>
@@ -92,7 +93,7 @@ export type ActionExecutorDeps = Readonly<{
     host?: string;
     initialMessage?: string;
   }>) => Promise<unknown>;
-  sessionSpawnPicker: (args: Readonly<{ tag?: string; agentId?: string; modelId?: string; initialMessage?: string }>) => Promise<unknown>;
+  sessionSpawnPicker: (args: Readonly<{ tag?: string; agentId?: string; modelId?: string; backendTargetKey?: string; initialMessage?: string }>) => Promise<unknown>;
 
   // Local inventory + discovery (voice)
   pathsListRecent: (args: Readonly<{ machineId?: string; limit?: number }>) => Promise<unknown>;
@@ -371,10 +372,21 @@ function normalizeResolvedOptions(value: unknown): readonly Readonly<{ value: st
     .filter(Boolean) as readonly Readonly<{ value: string; label: string; description?: string; disabled?: boolean }>[];
 }
 
-function normalizeExecutionBackendOptionValue(value: string): string {
+function tryNormalizeExecutionBackendOptionValue(value: string): string | null {
   const parsed = BackendTargetKeySchema.safeParse(value);
-  if (parsed.success) return parsed.data;
-  return buildBackendTargetKey({ kind: 'builtInAgent', agentId: value });
+  const candidateKey = parsed.success
+    ? parsed.data
+    : buildBackendTargetKey({ kind: 'builtInAgent', agentId: value });
+  const resolved = resolveActionBackendTargetSelection({ backendTargetKey: candidateKey });
+  return resolved.ok ? resolved.selection.backendTargetKey : null;
+}
+
+function normalizeExecutionBackendOptionValue(value: string): string {
+  const normalized = tryNormalizeExecutionBackendOptionValue(value);
+  if (!normalized) {
+    throw new Error('invalid_backend_target_option');
+  }
+  return normalized;
 }
 
 async function resolveDynamicActionOptions(params: Readonly<{
@@ -392,10 +404,18 @@ async function resolveDynamicActionOptions(params: Readonly<{
     });
     return {
       ok: true,
-      result: normalizeResolvedOptions(result).map((option) => ({
-        ...option,
-        value: normalizeExecutionBackendOptionValue(option.value),
-      })),
+      result: normalizeResolvedOptions(result)
+        .map((option) => {
+          const normalizedValue = tryNormalizeExecutionBackendOptionValue(option.value);
+          if (!normalizedValue) {
+            return null;
+          }
+          return {
+            ...option,
+            value: normalizedValue,
+          };
+        })
+        .filter((option): option is NonNullable<typeof option> => Boolean(option)),
     };
   }
 
@@ -930,6 +950,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             ...(((parsed.data as any).tag) ? { tag: String((parsed.data as any).tag) } : {}),
             ...(((parsed.data as any).agentId) ? { agentId: String((parsed.data as any).agentId) } : {}),
             ...(((parsed.data as any).modelId) ? { modelId: String((parsed.data as any).modelId) } : {}),
+            ...(((parsed.data as any).backendTargetKey) ? { backendTargetKey: String((parsed.data as any).backendTargetKey) } : {}),
             ...(((parsed.data as any).initialMessage) ? { initialMessage: String((parsed.data as any).initialMessage) } : {}),
           });
           return { ok: true, result: res };
@@ -976,19 +997,15 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
 
         if (actionId === 'agents.models.list') {
-          const backendTargetKey = normalizeId((parsed.data as any).backendTargetKey);
-          let resolvedAgentId = normalizeId((parsed.data as any).agentId);
-          if (backendTargetKey) {
-            const parsedTarget = parseBackendTargetKey(backendTargetKey);
-            const derivedAgentId = parsedTarget.kind === 'builtInAgent' ? parsedTarget.agentId : 'customAcp';
-            if (resolvedAgentId && resolvedAgentId !== derivedAgentId) {
-              return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-            }
-            resolvedAgentId = derivedAgentId;
-          }
-          if (resolvedAgentId === 'customAcp' && !backendTargetKey) {
+          const resolvedSelection = resolveActionBackendTargetSelection({
+            agentId: (parsed.data as any).agentId,
+            backendTargetKey: (parsed.data as any).backendTargetKey,
+          });
+          if (!resolvedSelection.ok) {
             return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           }
+          const resolvedAgentId = resolvedSelection.selection.agentId;
+          const backendTargetKey = resolvedSelection.selection.backendTargetKey;
           if (!resolvedAgentId) {
             return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           }

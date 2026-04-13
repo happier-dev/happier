@@ -48,7 +48,15 @@ const DaemonExecutionRunMarkerSchemaCore = z.object({
   summary: z.string().max(20_000).optional(),
   errorCode: z.string().max(200).optional(),
   resumeHandle: ExecutionRunResumeHandleSchema.nullable().optional(),
-}).passthrough();
+}).passthrough().superRefine((value, ctx) => {
+  if (value.backendTarget.kind === 'builtInAgent' && value.backendTarget.agentId === 'customAcp') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'backendTarget must identify a concrete backend',
+      path: ['backendTarget'],
+    });
+  }
+});
 export const DaemonExecutionRunMarkerSchema = z.preprocess(
   normalizeLegacyExecutionRunBackendTargetInput,
   DaemonExecutionRunMarkerSchemaCore,

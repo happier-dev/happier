@@ -8,11 +8,12 @@ import { MemorySearchQueryV1Schema } from '../memory/memorySearch.js';
 import { ApprovalRequestCreatedBySchema } from '../approvals/approvalRequestV1.js';
 import { PromptRegistryConfiguredSourceV1Schema } from '../promptLibrary/promptRegistriesV1.js';
 import { PromptAssetInstallModeV1Schema, PromptAssetScopeV1Schema } from '../promptLibrary/promptAssetsV1.js';
-import { BackendTargetKeySchema, BackendTargetRefSchema, parseBackendTargetKey } from '../backendTargets/backendTargetRef.js';
+import { BackendTargetKeySchema, BackendTargetRefSchema } from '../backendTargets/backendTargetRef.js';
 import { ExecutionRunListRequestSchema } from '../executionRunListRequest.js';
 import { ExecutionRunStartRequestSchema } from '../executionRunStartRequest.js';
 import { SessionRollbackTargetSchema } from '../sessionRollback.js';
 import { SessionHandoffWorkspaceTransferSchema } from '../sessionControl/handoff/handoffSchemas.js';
+import { resolveActionBackendTargetSelection } from './resolveActionBackendTargetSelection.js';
 
 const ZodSchemaLike = z.custom<z.ZodTypeAny>((value) => {
   if (!value || typeof value !== 'object') return false;
@@ -312,19 +313,38 @@ const SessionSpawnNewInputSchema = z.object({
   tag: z.string().min(1).optional(),
   agentId: z.string().min(1).optional(),
   modelId: z.string().min(1).optional(),
-  backendTargetKey: z.string().min(1).optional(),
+  backendTargetKey: BackendTargetKeySchema.optional(),
   title: z.string().min(1).optional(),
   path: z.string().min(1).optional(),
   host: z.string().min(1).optional(),
   initialMessage: z.string().min(1).optional(),
-}).passthrough();
+}).passthrough().superRefine((value, ctx) => {
+  validateAgentIdAndBackendTargetKeySelection(value, ctx);
+});
 
 const SessionSpawnPickerInputSchema = z.object({
   tag: z.string().min(1).optional(),
   agentId: z.string().min(1).optional(),
   modelId: z.string().min(1).optional(),
+  backendTargetKey: BackendTargetKeySchema.optional(),
   initialMessage: z.string().min(1).optional(),
-}).passthrough();
+}).passthrough().superRefine((value, ctx) => {
+  validateAgentIdAndBackendTargetKeySelection(value, ctx);
+});
+
+function validateAgentIdAndBackendTargetKeySelection(
+  value: Readonly<{ agentId?: string; backendTargetKey?: string }>,
+  ctx: z.RefinementCtx,
+): void {
+  const resolved = resolveActionBackendTargetSelection(value);
+  if (!resolved.ok) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: resolved.message,
+      path: [resolved.path],
+    });
+  }
+}
 
 const PathsListRecentInputSchema = z.object({
   machineId: z.string().min(1).optional(),
@@ -362,24 +382,7 @@ const AgentsModelsListInputSchema = z.object({
       path: ['agentId'],
     });
   }
-  if (value.agentId === 'customAcp' && !value.backendTargetKey) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'backendTargetKey is required for customAcp',
-      path: ['backendTargetKey'],
-    });
-  }
-  if (value.agentId && value.backendTargetKey) {
-    const parsedTarget = parseBackendTargetKey(value.backendTargetKey);
-    const derivedAgentId = parsedTarget.kind === 'builtInAgent' ? parsedTarget.agentId : 'customAcp';
-    if (value.agentId !== derivedAgentId) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'agentId must match backendTargetKey when both are provided',
-        path: ['agentId'],
-      });
-    }
-  }
+  validateAgentIdAndBackendTargetKeySelection(value, ctx);
 });
 
 const ActionSpecSearchInputSchema = z.object({
@@ -1286,6 +1289,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'tag', title: 'Tag', widget: 'text' },
         { path: 'agentId', title: 'Agent id', widget: 'text' },
         { path: 'modelId', title: 'Model id', widget: 'text' },
+        { path: 'backendTargetKey', title: 'Backend target key', widget: 'text' },
         { path: 'initialMessage', title: 'Initial message', widget: 'textarea' },
       ],
     },

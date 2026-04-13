@@ -3,6 +3,65 @@ import { describe, expect, it } from 'vitest';
 import { SpawnDaemonSessionRequestSchema } from './spawnSessionOptionsContract';
 
 describe('SpawnDaemonSessionRequestSchema', () => {
+  it('canonicalizes legacy built-in agent field into backendTarget when backendTarget is missing', () => {
+    const parsed = SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp',
+      agent: 'codex',
+    });
+
+    expect(parsed.backendTarget).toEqual({
+      kind: 'backend',
+      backendId: 'codex',
+      sourceKind: 'built_in',
+    });
+  });
+
+  it('rejects unknown legacy built-in agent field when backendTarget is missing', () => {
+    expect(() =>
+      SpawnDaemonSessionRequestSchema.parse({
+        directory: '/tmp',
+        agent: 'not-a-real-agent',
+      }),
+    ).toThrow();
+  });
+
+  it('rejects legacy customAcp built-in agent field when backendTarget is missing', () => {
+    expect(() =>
+      SpawnDaemonSessionRequestSchema.parse({
+        directory: '/tmp',
+        agent: 'customAcp',
+      }),
+    ).toThrow();
+  });
+
+  it('rejects built-in backendTarget when agentId is customAcp', () => {
+    expect(() =>
+      SpawnDaemonSessionRequestSchema.parse({
+        directory: '/tmp',
+        backendTarget: { kind: 'builtInAgent', agentId: 'customAcp' },
+      }),
+    ).toThrow();
+  });
+
+  it('accepts V2 backendTarget input and preserves the canonical backend transport shape', () => {
+    const parsed = SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp',
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'review-bot',
+        configuredBackendId: 'review-bot',
+        sourceKind: 'configured',
+      },
+    });
+
+    expect(parsed.backendTarget).toEqual({
+      kind: 'backend',
+      backendId: 'review-bot',
+      configuredBackendId: 'review-bot',
+      sourceKind: 'configured',
+    });
+  });
+
   it('accepts Windows terminal modes in the terminal payload', () => {
     const parsed = SpawnDaemonSessionRequestSchema.parse({
       directory: '/tmp',

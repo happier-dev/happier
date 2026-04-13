@@ -73,6 +73,70 @@ describe('executionRuns protocol', () => {
     expect(parsed.intent).toBe('review');
   });
 
+  it('accepts V2 backendTarget input on start requests and preserves the canonical backend transport shape', () => {
+    const parsed = ExecutionRunStartRequestSchema.parse({
+      intent: 'review',
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'claude',
+        sourceKind: 'built_in',
+      },
+      instructions: 'Review.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    });
+
+    expect(parsed.backendTarget).toEqual({
+      kind: 'backend',
+      backendId: 'claude',
+      sourceKind: 'built_in',
+    });
+  });
+
+  it('rejects start requests that use builtIn customAcp as a concrete backend target', () => {
+    expect(() =>
+      ExecutionRunStartRequestSchema.parse({
+        intent: 'review',
+        backendTarget: { kind: 'builtInAgent', agentId: 'customAcp' },
+        instructions: 'Review.',
+        permissionMode: 'read_only',
+        retentionPolicy: 'ephemeral',
+        runClass: 'bounded',
+        ioMode: 'request_response',
+      }),
+    ).toThrow();
+  });
+
+  it('accepts V2 configured backend targets in resume handles and normalizes them to the legacy transport shape', () => {
+    const parsed = ExecutionRunStartRequestSchema.parse({
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      instructions: 'Review.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'resumable',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      resumeHandle: {
+        kind: 'vendor_session.v1',
+        backendTarget: {
+          kind: 'backend',
+          backendId: 'review-bot',
+          configuredBackendId: 'review-bot',
+          sourceKind: 'configured',
+        },
+        vendorSessionId: 'vendor_1',
+      },
+    }) as any;
+
+    expect(parsed.resumeHandle).toMatchObject({
+      kind: 'vendor_session.v1',
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      vendorSessionId: 'vendor_1',
+    });
+  });
+
   it('validates optional voice replay seed requests on start requests', () => {
     const parsed = ExecutionRunStartRequestSchema.parse({
       intent: 'voice_agent',
@@ -161,6 +225,69 @@ describe('executionRuns protocol', () => {
       backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
       vendorSessionId: 'vendor_1',
     });
+  });
+
+  it('accepts legacy configured backend provenance in resume handles', () => {
+    const parsed = ExecutionRunStartRequestSchema.parse({
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      instructions: 'Review.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'resumable',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      resumeHandle: {
+        kind: 'vendor_session.v1',
+        backendId: 'review-bot',
+        sourceKind: 'configured',
+        configuredBackendId: 'review-bot',
+        vendorSessionId: 'vendor_1',
+      },
+    }) as any;
+
+    expect(parsed.resumeHandle).toMatchObject({
+      kind: 'vendor_session.v1',
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      vendorSessionId: 'vendor_1',
+    });
+  });
+
+  it('rejects ambiguous customAcp legacy backendId fields in resume handles', () => {
+    expect(() =>
+      ExecutionRunStartRequestSchema.parse({
+        intent: 'review',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        instructions: 'Review.',
+        permissionMode: 'read_only',
+        retentionPolicy: 'resumable',
+        runClass: 'bounded',
+        ioMode: 'request_response',
+        resumeHandle: {
+          kind: 'vendor_session.v1',
+          backendId: 'customAcp',
+          vendorSessionId: 'vendor_1',
+        },
+      }),
+    ).toThrow();
+  });
+
+  it('rejects resume handles that use builtIn customAcp as a concrete backend target', () => {
+    expect(() =>
+      ExecutionRunStartRequestSchema.parse({
+        intent: 'review',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        instructions: 'Review.',
+        permissionMode: 'read_only',
+        retentionPolicy: 'resumable',
+        runClass: 'bounded',
+        ioMode: 'request_response',
+        resumeHandle: {
+          kind: 'vendor_session.v1',
+          backendTarget: { kind: 'builtInAgent', agentId: 'customAcp' },
+          vendorSessionId: 'vendor_1',
+        },
+      }),
+    ).toThrow();
   });
 
   it('validates optional display fields for group-chat future-proofing', () => {

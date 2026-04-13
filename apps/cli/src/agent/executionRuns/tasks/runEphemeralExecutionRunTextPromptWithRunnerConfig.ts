@@ -1,4 +1,5 @@
 import { runEphemeralExecutionRunTextPrompt, type EphemeralExecutionRunTextPromptBackendFactory } from '../runtime/runEphemeralExecutionRunTextPrompt';
+import { resolveExecutionRunPublicBackendId } from '../runtime/backendTargets';
 import { createExecutionRunTextPromptBackendForTarget } from './createExecutionRunTextPromptBackendForTarget';
 
 function normalizeNonEmptyString(value: unknown): string | null {
@@ -31,12 +32,12 @@ export async function runEphemeralExecutionRunTextPromptWithRunnerConfig(params:
   const modelId = normalizeNonEmptyString(params.runner?.modelId) ?? undefined;
   const permissionMode = normalizeNonEmptyString(params.runner?.permissionMode) ?? 'no_tools';
   const resolved = params.createBackend
-    ? {
-        backendId: backendTarget.kind === 'builtInAgent' ? backendTarget.agentId : 'customAcp',
+      ? {
+        backendId: resolveExecutionRunPublicBackendId(backendTarget),
         backend: params.createBackend({
           cwd: params.cwd,
           runId: `${params.intent}_${Date.now()}`,
-          backendId: backendTarget.kind === 'builtInAgent' ? backendTarget.agentId : 'customAcp',
+          backendId: resolveExecutionRunPublicBackendId(backendTarget),
           backendTarget,
           modelId,
           permissionMode,

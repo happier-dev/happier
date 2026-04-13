@@ -1,8 +1,9 @@
 import chalk from 'chalk';
 
-import { getActionSpec, serializeActionSpec } from '@happier-dev/protocol';
+import { getSerializedActionSpecForSurface } from '@happier-dev/protocol';
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { isActionEnabledByEnv } from '@/settings/actionsSettings';
 
 export async function cmdSessionActionsDescribe(argv: string[]): Promise<void> {
   const json = wantsJson(argv);
@@ -11,8 +12,24 @@ export async function cmdSessionActionsDescribe(argv: string[]): Promise<void> {
     throw new Error('Usage: happier session actions describe <action-id> [--json]');
   }
 
-  const spec = getActionSpec(id as any);
-  const serialized = serializeActionSpec(spec);
+  let serialized = null;
+  try {
+    serialized = getSerializedActionSpecForSurface({
+      id: id as any,
+      surface: 'cli',
+      isActionEnabled: (actionId) => isActionEnabledByEnv(actionId, { surface: 'cli', placement: null }),
+    });
+  } catch {
+    serialized = null;
+  }
+
+  if (!serialized) {
+    if (json) {
+      printJsonEnvelope({ ok: false, kind: 'session_actions_describe', error: { code: 'unsupported' } });
+      return;
+    }
+    throw new Error(`Unknown or disabled action: ${id}`);
+  }
 
   if (json) {
     printJsonEnvelope({ ok: true, kind: 'session_actions_describe', data: { actionSpec: serialized } });

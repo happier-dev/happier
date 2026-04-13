@@ -1,5 +1,4 @@
 import {
-  buildBackendTargetKey,
   getActionSpec,
   listNativeReviewEngines,
   parseBackendTargetKey,
@@ -12,7 +11,6 @@ import {
   LEGACY_ACP_SESSION_MODES_STATE_KEY,
   SESSION_MODELS_STATE_KEY,
   SESSION_MODES_STATE_KEY,
-  getProviderCliRuntimeSpec,
   parsePermissionIntentAlias,
   readMetadataAliasValue,
   type AgentId,
@@ -56,6 +54,13 @@ import { resolveSessionTransportContext } from '@/session/services/resolveSessio
 import { fetchSessionById, fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import type { HookEventEnvelopeV1 } from '@happier-dev/protocol';
+import { buildAgentBackendInventoryItems } from '@/session/actions/inventory/buildAgentBackendInventoryItems';
+import { resolveAvailableAccountSettings } from '@/settings/accountSettings/resolveAvailableAccountSettings';
+import { isLegacyCustomAcpId } from '@/agent/runtime/compat/isLegacyCustomAcpId';
+import { dispatchPluginHookEvent } from '@/extensions/hooks/execution/dispatchPluginHookEvent';
+import { resolveExecutablePluginRuntimeRegistry } from '@/extensions/runtime/resolveExecutablePluginRuntimeRegistry';
+import type { ResolvedExecutablePluginRuntimeRegistry } from '@/extensions/runtime/resolveExecutablePluginRuntimeRegistry';
 
 function notSupported(): never {
   throw new Error('action_not_supported_in_cli');
@@ -124,22 +129,6 @@ function readSessionModelsState(metadata: Record<string, unknown> | null): Reado
   }> | null;
 }
 
-function buildAgentBackendItems(params: Readonly<{ limit?: unknown }>): readonly Readonly<{
-  targetKey: string;
-  label: string;
-  enabled: true;
-  agentId: AgentId;
-}>[] {
-  const limit = normalizeLimit(params.limit);
-  const items = AGENT_IDS.map((agentId) => ({
-    targetKey: buildBackendTargetKey({ kind: 'builtInAgent', agentId }),
-    label: getProviderCliRuntimeSpec(agentId).title,
-    enabled: true as const,
-    agentId,
-  }));
-  return limit ? items.slice(0, limit) : items;
-}
-
 export function createCliActionInventoryDeps(params: Readonly<{
   token: string;
   credentials?: Credentials;
@@ -147,8 +136,10 @@ export function createCliActionInventoryDeps(params: Readonly<{
   ctx: SessionEncryptionContext;
   mode?: SessionStoredContentEncryptionMode;
   rawSession?: Readonly<{ metadata?: unknown }> | null;
+  happyHomeDir?: string;
 }>): Pick<ActionExecutorDeps, 'reviewEnginesList' | 'agentsBackendsList' | 'agentsModelsList' | 'sessionModesList'> {
   const metadataCache = new Map<string, Record<string, unknown> | null>();
+  let accountSettingsPromise: Promise<import('@happier-dev/protocol').AccountSettings | null> | null = null;
   const seededMetadata = readSessionMetadata({
     rawSession: params.rawSession,
     mode: params.mode,
@@ -185,6 +176,15 @@ export function createCliActionInventoryDeps(params: Readonly<{
     }
   };
 
+  const readAccountSettings = async (): Promise<import('@happier-dev/protocol').AccountSettings | null> => {
+    if (!accountSettingsPromise) {
+      accountSettingsPromise = resolveAvailableAccountSettings({
+        credentials: params.credentials ?? null,
+      });
+    }
+    return await accountSettingsPromise;
+  };
+
   return {
     reviewEnginesList: async ({ sessionId }) => ({
       sessionId,
@@ -195,7 +195,12 @@ export function createCliActionInventoryDeps(params: Readonly<{
       })),
     }),
     agentsBackendsList: async (args) => ({
-      items: buildAgentBackendItems({ limit: (args as { limit?: unknown }).limit }),
+      items: await buildAgentBackendInventoryItems({
+        limit: (args as { limit?: unknown }).limit,
+        includeDisabled: (args as { includeDisabled?: boolean }).includeDisabled === true,
+        accountSettings: await readAccountSettings(),
+        happyHomeDir: params.happyHomeDir,
+      }),
     }),
     agentsModelsList: async (args) => {
       const agentId = args.agentId;
@@ -274,6 +279,7 @@ export function createCliActionDeps(params: Readonly<{
     host?: unknown;
     machineId?: unknown;
   }> | null;
+  happyHomeDir?: string;
 }>): ActionExecutorDeps {
   const inventoryDeps = createCliActionInventoryDeps(params);
   const approvalsStore = params.credentials ? createCliApprovalsArtifactStore({ credentials: params.credentials }) : null;
@@ -282,6 +288,7 @@ export function createCliActionDeps(params: Readonly<{
     mode: params.mode,
     ctx: params.ctx,
   });
+  let pluginRuntimeRegistryPromise: Promise<ResolvedExecutablePluginRuntimeRegistry> | null = null;
   const sessionTransportCache = new Map<string, Readonly<{
     sessionId: string;
     rawSession: any;
@@ -361,6 +368,46 @@ export function createCliActionDeps(params: Readonly<{
     // If the input is already a full id, also cache by that literal.
     sessionTransportCache.set(normalized, cached);
     return { ok: true, ...cached };
+  };
+
+  const dispatchSessionLifecycleHookEvent = async (event: Readonly<{
+    eventId: string;
+    happySessionId: string;
+    backendTarget?: string;
+    payload: Record<string, unknown>;
+  }>): Promise<void> => {
+    if (!pluginRuntimeRegistryPromise) {
+      pluginRuntimeRegistryPromise = resolveExecutablePluginRuntimeRegistry({
+        happyHomeDir: params.happyHomeDir,
+      });
+    }
+
+    const runtimeRegistry = await pluginRuntimeRegistryPromise;
+    const machineId = await resolveCurrentSessionValue('machineId');
+    const cwd = await resolveCurrentSessionValue('path');
+    const metadata = await readCurrentSessionMetadata();
+    const workspaceId = typeof metadata?.workspaceId === 'string' && metadata.workspaceId.trim().length > 0
+      ? metadata.workspaceId.trim()
+      : undefined;
+
+    const hookEvent = {
+      hookVersion: 1,
+      eventId: event.eventId,
+      category: 'lifecycle',
+      scope: 'session',
+      happySessionId: event.happySessionId,
+      ...(machineId ? { machineId } : {}),
+      ...(cwd ? { cwd } : {}),
+      ...(workspaceId ? { workspaceId } : {}),
+      ...(event.backendTarget ? { backendTarget: event.backendTarget } : {}),
+      timestampMs: Date.now(),
+      payload: event.payload,
+    } satisfies HookEventEnvelopeV1;
+
+    await dispatchPluginHookEvent({
+      runtimeRegistry,
+      event: hookEvent,
+    });
   };
 
   return {
@@ -506,11 +553,18 @@ export function createCliActionDeps(params: Readonly<{
 
       const rawBackendTargetKey = typeof backendTargetKey === 'string' ? backendTargetKey.trim() : '';
       const normalizedAgentId = typeof agentId === 'string' ? agentId.trim() : '';
+      const normalizedModelId = typeof modelId === 'string' ? modelId.trim() : '';
+      const normalizedTag = typeof tag === 'string' ? tag.trim() : '';
+      const normalizedTitle = typeof title === 'string' ? title.trim() : '';
+      const normalizedInitialMessage = typeof initialMessage === 'string' ? initialMessage.trim() : '';
+      const hookBackendTarget = rawBackendTargetKey || (normalizedAgentId ? `agent:${normalizedAgentId}` : `agent:${DEFAULT_AGENT_ID}`);
 
       const backendTarget = (() => {
         if (rawBackendTargetKey) {
           const parsed = parseBackendTargetKey(rawBackendTargetKey);
-          if (!parsed) return null;
+          if (parsed.kind === 'builtInAgent' && isLegacyCustomAcpId(parsed.agentId)) {
+            return null;
+          }
           return parsed;
         }
         if (normalizedAgentId) {
@@ -525,20 +579,40 @@ export function createCliActionDeps(params: Readonly<{
       if (backendTarget.kind === 'builtInAgent' && normalizedAgentId && !AGENT_IDS.includes(normalizedAgentId as AgentId)) {
         return { type: 'error', errorCode: 'agent_not_found', errorMessage: 'agent_not_found' };
       }
-      const normalizedTitle = typeof title === 'string' ? title.trim() : '';
 
       const created = await createSpawnedSession({
         credentials: params.credentials,
         directory,
         ...(currentMachineId ? { machineId: currentMachineId } : {}),
         backendTarget,
-        ...(typeof tag === 'string' && tag.trim().length > 0 ? { tag: tag.trim() } : {}),
+        ...(normalizedTag ? { tag: normalizedTag } : {}),
         ...(normalizedTitle ? { title: normalizedTitle } : {}),
-        ...(typeof initialMessage === 'string' && initialMessage.trim().length > 0 ? { initialMessage: initialMessage.trim() } : {}),
-        ...(typeof modelId === 'string' && modelId.trim().length > 0 && modelId.trim() !== 'default'
-          ? { modelId: modelId.trim() }
+        ...(normalizedInitialMessage ? { initialMessage: normalizedInitialMessage } : {}),
+        ...(normalizedModelId.length > 0 && normalizedModelId !== 'default'
+          ? { modelId: normalizedModelId }
           : {}),
       });
+
+      try {
+        await dispatchSessionLifecycleHookEvent({
+          eventId: 'session.spawn_new',
+          happySessionId: created.sessionId,
+          backendTarget: hookBackendTarget,
+          payload: {
+            sessionId: created.sessionId,
+            path: directory,
+            ...(requestedHost ? { host: requestedHost } : {}),
+            ...(normalizedTag ? { tag: normalizedTag } : {}),
+            ...(normalizedTitle ? { title: normalizedTitle } : {}),
+            ...(normalizedAgentId ? { agentId: normalizedAgentId } : {}),
+            ...(rawBackendTargetKey ? { backendTargetKey: rawBackendTargetKey } : {}),
+            ...(normalizedModelId.length > 0 ? { modelId: normalizedModelId } : {}),
+            ...(normalizedInitialMessage ? { initialMessageLength: normalizedInitialMessage.length } : {}),
+          },
+        });
+      } catch {
+        // Hook dispatch is best-effort so a misbehaving plugin cannot break session creation.
+      }
 
       return {
         type: 'success',
@@ -553,32 +627,32 @@ export function createCliActionDeps(params: Readonly<{
     serversList: async () => notSupported(),
     ...(approvalsStore ?? {}),
     ...inventoryDeps,
-	    sessionSendMessage: async ({ sessionId, message, wait, timeoutSeconds, permissionModeOverride, modelOverride }) => {
-	      if (!params.credentials) {
-	        return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
-	      }
+    sessionSendMessage: async ({ sessionId, message, wait, timeoutSeconds, permissionModeOverride, modelOverride }) => {
+      if (!params.credentials) {
+        return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      }
 
-	      const normalizedWait = typeof wait === 'boolean' ? wait : false;
-	      const normalizedTimeoutSeconds =
-	        typeof timeoutSeconds === 'number' && Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
-	          ? Math.min(3600, timeoutSeconds)
-	          : 300;
+      const normalizedWait = typeof wait === 'boolean' ? wait : false;
+      const normalizedTimeoutSeconds =
+        typeof timeoutSeconds === 'number' && Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
+          ? Math.min(3600, timeoutSeconds)
+          : 300;
 
-	      const res = await sendSessionMessage({
-	        credentials: params.credentials,
-	        idOrPrefix: sessionId,
-	        message: String(message ?? ''),
-	        wait: normalizedWait,
-	        timeoutMs: normalizedTimeoutSeconds * 1000,
-	        ...(typeof permissionModeOverride === 'string' && permissionModeOverride.trim().length > 0
-	          ? { permissionModeOverride: permissionModeOverride.trim() }
-	          : {}),
-	        ...(modelOverride === null
-	          ? { modelOverride: null }
-	          : typeof modelOverride === 'string' && modelOverride.trim().length > 0
-	            ? { modelOverride: modelOverride.trim() }
-	            : {}),
-	      });
+      const res = await sendSessionMessage({
+        credentials: params.credentials,
+        idOrPrefix: sessionId,
+        message: String(message ?? ''),
+        wait: normalizedWait,
+        timeoutMs: normalizedTimeoutSeconds * 1000,
+        ...(typeof permissionModeOverride === 'string' && permissionModeOverride.trim().length > 0
+          ? { permissionModeOverride: permissionModeOverride.trim() }
+          : {}),
+        ...(modelOverride === null
+          ? { modelOverride: null }
+          : typeof modelOverride === 'string' && modelOverride.trim().length > 0
+            ? { modelOverride: modelOverride.trim() }
+            : {}),
+      });
       if (!res.ok) {
         return {
           ok: false,
@@ -587,6 +661,31 @@ export function createCliActionDeps(params: Readonly<{
           ...(res.candidates ? { candidates: res.candidates } : {}),
           ...(res.message ? { message: res.message } : {}),
         };
+      }
+      const canonicalSessionId = typeof res.sessionId === 'string' && res.sessionId.trim().length > 0
+        ? res.sessionId
+        : sessionId;
+      try {
+        await dispatchSessionLifecycleHookEvent({
+          eventId: 'session.message.send',
+          happySessionId: canonicalSessionId,
+          payload: {
+            sessionId: canonicalSessionId,
+            messageLength: String(message ?? '').length,
+            wait: normalizedWait,
+            timeoutSeconds: normalizedTimeoutSeconds,
+            ...(typeof permissionModeOverride === 'string' && permissionModeOverride.trim().length > 0
+              ? { permissionModeOverride: permissionModeOverride.trim() }
+              : {}),
+            ...(modelOverride === null
+              ? { modelOverride: null }
+              : typeof modelOverride === 'string' && modelOverride.trim().length > 0
+                ? { modelOverride: modelOverride.trim() }
+                : {}),
+          },
+        });
+      } catch {
+        // Hook dispatch is best-effort so a misbehaving plugin cannot break message send.
       }
       return res;
     },

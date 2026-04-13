@@ -133,4 +133,38 @@ describe('ExecutionRunManager execution-run registry integration', () => {
     expect(marker?.lastActivityAtMs).toBe(nowMs);
     expect(marker?.updatedAtMs).toBe(nowMs);
   });
+
+  it('passes the concrete configured ACP backend id through execution-run state instead of customAcp', async () => {
+    const { ExecutionRunManager } = await import('./ExecutionRunManager');
+
+    const observedBackendIds: string[] = [];
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude',
+      cwd: process.cwd(),
+      createBackend: (opts) => {
+        observedBackendIds.push(opts.backendId);
+        return createStaticBackend('ok');
+      },
+      sendAcp: () => {},
+      getNowMs: () => 1_700_000_000_000,
+    });
+
+    const started = await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'review',
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      instructions: 'Review this repo.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    });
+
+    expect(observedBackendIds).toEqual(['review-bot']);
+    expect(manager.get(started.runId)?.backendId).toBe('review-bot');
+    expect(manager.get(started.runId)?.backendTarget).toEqual({
+      kind: 'configuredAcpBackend',
+      backendId: 'review-bot',
+    });
+  });
 });

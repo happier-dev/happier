@@ -1,6 +1,11 @@
 import { z } from 'zod';
 
 import { BackendTargetRefSchema } from './backendTargets/backendTargetRef.js';
+import {
+  BackendTargetRefV2Schema,
+  normalizeBackendTargetRefV2InputToV1,
+  normalizeBackendTargetRefV2InputToV2,
+} from './backendTargets/backendTargetRefV2.js';
 import { HappierReplayStrategySchema } from './sessionContinueWithReplay.js';
 import { LlmTaskRunnerConfigV1Schema } from './llmTasks/llmTaskRunnerConfigV1.js';
 
@@ -34,6 +39,21 @@ export function normalizeLegacyExecutionRunBackendTargetInput(value: unknown): u
   if (!legacyBackendId) {
     return value;
   }
+  const legacyConfiguredBackendId = typeof record.configuredBackendId === 'string'
+    ? record.configuredBackendId.trim()
+    : '';
+  if (record.sourceKind === 'configured' || legacyConfiguredBackendId) {
+    return {
+      ...record,
+      backendTarget: {
+        kind: 'configuredAcpBackend',
+        backendId: legacyConfiguredBackendId || legacyBackendId,
+      },
+    };
+  }
+  if (legacyBackendId === 'customAcp') {
+    return value;
+  }
   return {
     ...record,
     backendTarget: {
@@ -45,9 +65,17 @@ export function normalizeLegacyExecutionRunBackendTargetInput(value: unknown): u
 
 const ExecutionRunResumeHandleVendorSessionV1SchemaCore = z.object({
   kind: z.literal('vendor_session.v1'),
-  backendTarget: BackendTargetRefSchema,
+  backendTarget: z.preprocess(normalizeBackendTargetRefV2InputToV1, BackendTargetRefSchema),
   vendorSessionId: z.string().min(1),
-}).passthrough();
+}).passthrough().superRefine((value, ctx) => {
+  if (value.backendTarget.kind === 'builtInAgent' && value.backendTarget.agentId === 'customAcp') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'backendTarget must identify a concrete backend',
+      path: ['backendTarget'],
+    });
+  }
+});
 export const ExecutionRunResumeHandleVendorSessionV1Schema = z.preprocess(
   normalizeLegacyExecutionRunBackendTargetInput,
   ExecutionRunResumeHandleVendorSessionV1SchemaCore,
@@ -56,10 +84,18 @@ export type ExecutionRunResumeHandleVendorSessionV1 = z.infer<typeof ExecutionRu
 
 const ExecutionRunResumeHandleVoiceAgentSessionsV1SchemaCore = z.object({
   kind: z.literal('voice_agent_sessions.v1'),
-  backendTarget: BackendTargetRefSchema,
+  backendTarget: z.preprocess(normalizeBackendTargetRefV2InputToV1, BackendTargetRefSchema),
   chatVendorSessionId: z.string().min(1),
   commitVendorSessionId: z.string().min(1),
-}).passthrough();
+}).passthrough().superRefine((value, ctx) => {
+  if (value.backendTarget.kind === 'builtInAgent' && value.backendTarget.agentId === 'customAcp') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'backendTarget must identify a concrete backend',
+      path: ['backendTarget'],
+    });
+  }
+});
 export const ExecutionRunResumeHandleVoiceAgentSessionsV1Schema = z.preprocess(
   normalizeLegacyExecutionRunBackendTargetInput,
   ExecutionRunResumeHandleVoiceAgentSessionsV1SchemaCore,
@@ -107,7 +143,7 @@ export type ExecutionRunReplaySeedRequest = z.infer<typeof ExecutionRunReplaySee
 
 export const ExecutionRunStartRequestSchema = z.object({
   intent: ExecutionRunIntentSchema,
-  backendTarget: BackendTargetRefSchema,
+  backendTarget: z.preprocess(normalizeBackendTargetRefV2InputToV2, BackendTargetRefV2Schema),
   instructions: z.string().optional(),
   display: ExecutionRunDisplaySchema.optional(),
   permissionMode: z.string().min(1),
@@ -117,7 +153,15 @@ export const ExecutionRunStartRequestSchema = z.object({
   initialContextMode: z.enum(['bootstrap', 'first_turn']).optional(),
   resumeHandle: ExecutionRunResumeHandleSchema.nullable().optional(),
   replay: ExecutionRunReplaySeedRequestSchema.optional(),
-}).passthrough();
+}).passthrough().superRefine((value, ctx) => {
+  if (value.backendTarget.backendId === 'customAcp' || value.backendTarget.configuredBackendId === 'customAcp') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'backendTarget must identify a concrete backend',
+      path: ['backendTarget'],
+    });
+  }
+});
 export type ExecutionRunStartRequest = z.infer<typeof ExecutionRunStartRequestSchema>;
 
 export const ExecutionRunStartResponseSchema = z.object({

@@ -120,6 +120,17 @@ describe('Action Spec Registry', () => {
     ).toThrow();
   });
 
+  it('rejects agent:customAcp as a backendTargetKey when listing models', () => {
+    const spec = getActionSpec('agents.models.list');
+
+    expect(() =>
+      spec.inputSchema.parse({
+        backendTargetKey: 'agent:customAcp',
+        machineId: 'machine-1',
+      }),
+    ).toThrow();
+  });
+
   it('registers both friendly and namespaced slash aliases for review.start', () => {
     const spec = getActionSpec('review.start');
     expect(spec.slash?.tokens).toEqual(['/review', '/h.review']);
@@ -142,6 +153,65 @@ describe('Action Spec Registry', () => {
     const spec = getActionSpec('session.spawn_new');
     expect(spec.surfaces.mcp).toBe(true);
     expect(spec.bindings?.mcpToolName).toBe('session_spawn_new');
+  });
+
+  it('requires backendTargetKey when spawning a customAcp session directly', () => {
+    const spec = getActionSpec('session.spawn_new');
+    const parsed = spec.inputSchema.safeParse({
+      agentId: 'customAcp',
+      path: '/tmp/project',
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it('rejects mismatched agentId and backendTargetKey when spawning a session directly', () => {
+    const spec = getActionSpec('session.spawn_new');
+    const parsed = spec.inputSchema.safeParse({
+      agentId: 'claude',
+      backendTargetKey: 'acpBackend:review-bot',
+      path: '/tmp/project',
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it('rejects agent:customAcp as a backendTargetKey when spawning a session directly', () => {
+    const spec = getActionSpec('session.spawn_new');
+    const parsed = spec.inputSchema.safeParse({
+      backendTargetKey: 'agent:customAcp',
+      path: '/tmp/project',
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it('requires backendTargetKey when spawning a customAcp picker session directly', () => {
+    const spec = getActionSpec('session.spawn_picker');
+    const parsed = spec.inputSchema.safeParse({
+      agentId: 'customAcp',
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it('rejects mismatched agentId and backendTargetKey when spawning through the picker', () => {
+    const spec = getActionSpec('session.spawn_picker');
+    const parsed = spec.inputSchema.safeParse({
+      agentId: 'claude',
+      backendTargetKey: 'acpBackend:review-bot',
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it('rejects agent:customAcp as a backendTargetKey when spawning through the picker', () => {
+    const spec = getActionSpec('session.spawn_picker');
+    const parsed = spec.inputSchema.safeParse({
+      backendTargetKey: 'agent:customAcp',
+    });
+
+    expect(parsed.success).toBe(false);
   });
 
   it('does not expose legacy voice_mediator intent in ExecutionRunIntentSchema', () => {

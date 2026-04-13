@@ -3,6 +3,8 @@ import {
     ExecutionRunPublicStateSchema,
     type ExecutionRunPublicState,
 } from '@happier-dev/protocol';
+import { isLegacyCustomAcpId } from '@/agent/runtime/compat/isLegacyCustomAcpId';
+import { normalizeExecutionRunPublicStateBackendTarget } from './normalizeExecutionRunPublicStateBackendTarget';
 
 import type { RawHistoryRow } from './getSessionHistory';
 
@@ -76,12 +78,15 @@ function isSubAgentRunEvent(row: RawHistoryRow): Readonly<{
 }
 
 function readBackendTarget(input: Record<string, unknown> | null, output: Record<string, unknown> | null): Record<string, unknown> | null {
-    const fromInput = asRecord(input?.backendTarget);
+    const fromInput = normalizeExecutionRunPublicStateBackendTarget(input?.backendTarget);
     if (fromInput) return fromInput;
-    const fromOutput = asRecord(output?.backendTarget);
+    const fromOutput = normalizeExecutionRunPublicStateBackendTarget(output?.backendTarget);
     if (fromOutput) return fromOutput;
     const legacyBackendId = readString(input, 'backendId') ?? readString(output, 'backendId');
     if (legacyBackendId) {
+        if (isLegacyCustomAcpId(legacyBackendId)) {
+            return null;
+        }
         return AGENT_IDS.includes(legacyBackendId as (typeof AGENT_IDS)[number])
             ? { kind: 'builtInAgent', agentId: legacyBackendId }
             : { kind: 'configuredAcpBackend', backendId: legacyBackendId };

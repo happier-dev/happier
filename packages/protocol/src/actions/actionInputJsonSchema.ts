@@ -59,12 +59,14 @@ function schemaToJson(schema: z.ZodTypeAny): JsonSchema {
 
       const catchall = (core as any)._def?.catchall;
       const passthrough = catchall instanceof z.ZodUnknown;
+      const strict = catchall instanceof z.ZodNever;
 
       return {
         type: 'object',
         properties,
         ...(required.length > 0 ? { required } : {}),
         ...(passthrough ? { additionalProperties: true } : {}),
+        ...(strict ? { additionalProperties: false } : {}),
       };
     }
 

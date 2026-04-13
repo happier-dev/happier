@@ -1,4 +1,5 @@
 import type { Credentials } from '@/persistence';
+import type { CatalogAgentId } from '@/backends/types';
 import { getProviderNativeForkHandler } from '@/backends/catalog';
 import {
   type ProviderNativeForkDispatchResult,
@@ -15,6 +16,6 @@ export async function dispatchProviderNativeFork(params: Readonly<{
   forkPoint: ProviderNativeForkPoint;
   targetSeqInclusive: number;
 }>): Promise<ProviderNativeForkDispatchResult | null> {
-  const handler = await getProviderNativeForkHandler(params.agentId as any);
+  const handler = await getProviderNativeForkHandler(params.agentId as CatalogAgentId);
   return handler ? await handler(params) : null;
 }

@@ -4,15 +4,17 @@ import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import { createConfiguredAcpBackend } from '@/agent/acp/catalog/configured/createConfiguredAcpBackend';
 import { materializeConfiguredAcpEnvironment } from '@/agent/acp/catalog/configured/materializeConfiguredAcpEnvironment';
-import { resolveConfiguredAcpBackendFromAccountSettings } from '@/agent/acp/catalog/configured/resolveConfiguredAcpBackendFromAccountSettings';
+import { resolveConfiguredAcpBackendFromAccountSettingsOrPlugins } from '@/agent/acp/catalog/configured/resolveConfiguredAcpBackendFromAccountSettings';
 import { createExecutionRunPermissionHandler } from '@/agent/executionRuns/policy/executionRunPermissionDecision';
 import { getExecutionRunBackendDescriptor } from '@/agent/executionRuns/registry/executionRunBackendRegistry';
 import { resolveCustomHappierToolsContext } from '@/agent/tools/happierTools/customMcp/resolveCustomHappierToolsContext';
+import { configuration } from '@/configuration';
 import { resolveBackendIsolationBundle } from '@/runtime/isolation/resolveBackendIsolationBundle';
 import { readCredentials, readSettings } from '@/persistence';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { assertBackendEnabledByAccountSettings } from '@/settings/backendEnabled';
+import { resolveExecutionRunPublicBackendId } from './backendTargets';
 
 export { createExecutionRunPermissionHandler } from '@/agent/executionRuns/policy/executionRunPermissionDecision';
 
@@ -47,11 +49,8 @@ function createLazyConfiguredAcpExecutionRunBackend(opts: Readonly<{
   credentials?: Awaited<ReturnType<typeof readCredentials>> | null;
   accountSettings?: Readonly<Record<string, unknown>> | null;
 }>): AgentBackend {
-  const configuredBackendId = opts.backendTarget.kind === 'configuredAcpBackend'
-    ? opts.backendTarget.backendId
-    : '';
   const permissionHandler = createExecutionRunPermissionHandler({
-    backendId: configuredBackendId || 'customAcp',
+    backendId: resolveExecutionRunPublicBackendId(opts.backendTarget),
     permissionMode: opts.permissionMode,
   });
   const handlers = new Set<Parameters<AgentBackend['onMessage']>[0]>();
@@ -74,7 +73,11 @@ function createLazyConfiguredAcpExecutionRunBackend(opts: Readonly<{
         credentials,
         backendTarget: opts.backendTarget,
       })).settings;
-      const backendDefinition = resolveConfiguredAcpBackendFromAccountSettings(settings, opts.backendTarget.backendId);
+      const backendDefinition = await resolveConfiguredAcpBackendFromAccountSettingsOrPlugins({
+        settings,
+        backendId: opts.backendTarget.backendId,
+        happyHomeDir: configuration.happyHomeDir,
+      });
       if (!backendDefinition) {
         throw new Error(`Unknown configured ACP backend: ${opts.backendTarget.backendId}`);
       }
@@ -204,7 +207,7 @@ export function createExecutionRunBackend(opts: Readonly<{
       settings: accountSettings,
     });
   }
-  if (backendId === 'customAcp' && opts.backendTarget?.kind === 'configuredAcpBackend') {
+  if (opts.backendTarget?.kind === 'configuredAcpBackend') {
     return createLazyConfiguredAcpExecutionRunBackend({
       cwd: opts.cwd,
       backendTarget: opts.backendTarget,

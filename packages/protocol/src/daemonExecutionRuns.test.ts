@@ -89,4 +89,85 @@ describe('DaemonExecutionRunMarkerSchema', () => {
       vendorSessionId: 'vendor-session-123',
     });
   });
+
+  it('accepts legacy configured backend provenance in markers and resume handles', () => {
+    const parsed = DaemonExecutionRunMarkerSchema.safeParse({
+      happyHomeDir: '/tmp/happy',
+      pid: 123,
+      happySessionId: 'session_1',
+      runId: 'run_1',
+      callId: 'call_1',
+      sidechainId: 'side_1',
+      intent: 'plan',
+      backendId: 'review-bot',
+      sourceKind: 'configured',
+      configuredBackendId: 'review-bot',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      retentionPolicy: 'resumable',
+      status: 'succeeded',
+      startedAtMs: 0,
+      updatedAtMs: 1,
+      resumeHandle: {
+        kind: 'vendor_session.v1',
+        backendId: 'review-bot',
+        sourceKind: 'configured',
+        configuredBackendId: 'review-bot',
+        vendorSessionId: 'vendor-session-123',
+      },
+    });
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) {
+      throw parsed.error;
+    }
+    expect(parsed.data.backendTarget).toEqual({ kind: 'configuredAcpBackend', backendId: 'review-bot' });
+    expect(parsed.data.resumeHandle).toMatchObject({
+      kind: 'vendor_session.v1',
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      vendorSessionId: 'vendor-session-123',
+    });
+  });
+
+  it('rejects ambiguous customAcp legacy backendId fields in markers', () => {
+    const parsed = DaemonExecutionRunMarkerSchema.safeParse({
+      happyHomeDir: '/tmp/happy',
+      pid: 123,
+      happySessionId: 'session_1',
+      runId: 'run_1',
+      callId: 'call_1',
+      sidechainId: 'side_1',
+      intent: 'plan',
+      backendId: 'customAcp',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      retentionPolicy: 'resumable',
+      status: 'succeeded',
+      startedAtMs: 0,
+      updatedAtMs: 1,
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it('rejects marker entries that use builtIn customAcp as a concrete backend target', () => {
+    const parsed = DaemonExecutionRunMarkerSchema.safeParse({
+      happyHomeDir: '/tmp/happy',
+      pid: 123,
+      happySessionId: 'session_1',
+      runId: 'run_1',
+      callId: 'call_1',
+      sidechainId: 'side_1',
+      intent: 'plan',
+      backendTarget: { kind: 'builtInAgent', agentId: 'customAcp' },
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      retentionPolicy: 'resumable',
+      status: 'succeeded',
+      startedAtMs: 0,
+      updatedAtMs: 1,
+    });
+
+    expect(parsed.success).toBe(false);
+  });
 });

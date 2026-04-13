@@ -120,6 +120,38 @@ describe('happier session create (action executor)', () => {
     }
   });
 
+  it('rejects --backend customAcp because a concrete configured ACP backend is required', async () => {
+    execute.mockClear();
+
+    const { handleSessionCommand } = await import('./handleSessionCommand');
+    const output = captureConsoleJsonOutput();
+
+    try {
+      await handleSessionCommand(
+        ['create', '--path', '/tmp', '--backend', 'customAcp', '--json'],
+        {
+          readCredentialsFn: async () => ({
+            token: 'token_test',
+            encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+          }),
+        },
+      );
+
+      expect(output.json()).toEqual({
+        v: 1,
+        ok: false,
+        kind: 'session_create',
+        error: {
+          code: 'invalid_arguments',
+          message: 'Usage: happier session create [--path <path>] [--backend <backend-target>] [--title <text>] [--tag <tag>] [--prompt <text>|--message <text>] [--json]',
+        },
+      });
+      expect(execute).not.toHaveBeenCalled();
+    } finally {
+      output.restore();
+    }
+  });
+
   it('prints approval_request_created as the JSON envelope data', async () => {
     execute.mockResolvedValueOnce({
       ok: true,

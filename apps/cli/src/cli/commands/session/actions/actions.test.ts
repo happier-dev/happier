@@ -90,4 +90,62 @@ describe('happier session actions (unit)', () => {
       output.restore();
     }
   });
+
+  it('filters disabled actions from actions list on the cli surface', async () => {
+    const previous = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
+      v: 1,
+      actions: {
+        'review.start': {
+          disabledSurfaces: ['cli'],
+        },
+      },
+    });
+
+    const { handleSessionCommand } = await import('../handleSessionCommand');
+
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(['actions', 'list', '--json'], {
+        readCredentialsFn: async () => null,
+      });
+      const parsed = output.json();
+      expect(parsed.ok).toBe(true);
+      expect(parsed.kind).toBe('session_actions_list');
+      expect(parsed.data.actionSpecs.some((spec: { id: string }) => spec.id === 'review.start')).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+      else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = previous;
+      output.restore();
+    }
+  });
+
+  it('returns a JSON error envelope when actions describe targets a cli-disabled action', async () => {
+    const previous = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
+      v: 1,
+      actions: {
+        'review.start': {
+          disabledSurfaces: ['cli'],
+        },
+      },
+    });
+
+    const { handleSessionCommand } = await import('../handleSessionCommand');
+
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(['actions', 'describe', 'review.start', '--json'], {
+        readCredentialsFn: async () => null,
+      });
+      const parsed = output.json();
+      expect(parsed.ok).toBe(false);
+      expect(parsed.kind).toBe('session_actions_describe');
+      expect(parsed.error?.code).toBe('unsupported');
+    } finally {
+      if (previous === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+      else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = previous;
+      output.restore();
+    }
+  });
 });

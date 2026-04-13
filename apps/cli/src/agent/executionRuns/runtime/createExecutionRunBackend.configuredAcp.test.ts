@@ -5,6 +5,7 @@ import type { AgentBackend, AgentMessageHandler, SessionId } from '@/agent/core/
 const createConfiguredAcpBackendMock = vi.fn();
 const materializeConfiguredAcpEnvironmentMock = vi.fn();
 const resolveConfiguredAcpBackendFromAccountSettingsMock = vi.fn();
+const resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock = vi.fn();
 const readCredentialsMock = vi.fn();
 const readSettingsMock = vi.fn();
 const bootstrapAccountSettingsContextMock = vi.fn();
@@ -20,6 +21,7 @@ vi.mock('@/agent/acp/catalog/configured/materializeConfiguredAcpEnvironment', ()
 
 vi.mock('@/agent/acp/catalog/configured/resolveConfiguredAcpBackendFromAccountSettings', () => ({
   resolveConfiguredAcpBackendFromAccountSettings: resolveConfiguredAcpBackendFromAccountSettingsMock,
+  resolveConfiguredAcpBackendFromAccountSettingsOrPlugins: resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock,
 }));
 
 vi.mock('@/persistence', () => ({
@@ -58,6 +60,7 @@ describe('createExecutionRunBackend (configured ACP)', () => {
     createConfiguredAcpBackendMock.mockReset();
     materializeConfiguredAcpEnvironmentMock.mockReset();
     resolveConfiguredAcpBackendFromAccountSettingsMock.mockReset();
+    resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock.mockReset();
     readCredentialsMock.mockReset();
     readSettingsMock.mockReset();
     bootstrapAccountSettingsContextMock.mockReset();
@@ -69,6 +72,17 @@ describe('createExecutionRunBackend (configured ACP)', () => {
     createConfiguredAcpBackendMock.mockReturnValue(backend);
     materializeConfiguredAcpEnvironmentMock.mockReturnValue({ ACP_TOKEN: 'token-1' });
     resolveConfiguredAcpBackendFromAccountSettingsMock.mockReturnValue({
+      backendId: 'review-bot',
+      name: 'review-bot',
+      title: 'Review Bot',
+      command: 'review-bot',
+      args: ['--stdio'],
+      env: {},
+      transportProfile: { kind: 'stdio' },
+      capabilities: {},
+      defaultModel: 'review-model',
+    });
+    resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock.mockResolvedValue({
       backendId: 'review-bot',
       name: 'review-bot',
       title: 'Review Bot',
@@ -109,7 +123,7 @@ describe('createExecutionRunBackend (configured ACP)', () => {
 
     const configuredBackend = createExecutionRunBackend({
       cwd: '/tmp/workspace',
-      backendId: 'customAcp',
+      backendId: 'review-bot',
       backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
       permissionMode: 'read_only',
       modelId: 'override-model',
@@ -121,8 +135,8 @@ describe('createExecutionRunBackend (configured ACP)', () => {
       credentials: { token: 'cred-1' },
       backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
     });
-    expect(resolveConfiguredAcpBackendFromAccountSettingsMock).toHaveBeenCalledWith(
-      {
+    expect(resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock).toHaveBeenCalledWith({
+      settings: {
         acpCatalog: {
           backends: [
             {
@@ -138,8 +152,9 @@ describe('createExecutionRunBackend (configured ACP)', () => {
           ],
         },
       },
-      'review-bot',
-    );
+      backendId: 'review-bot',
+      happyHomeDir: expect.any(String),
+    });
     expect(materializeConfiguredAcpEnvironmentMock).toHaveBeenCalledWith({
       backend: expect.objectContaining({ backendId: 'review-bot' }),
       accountSettings: {
@@ -192,11 +207,64 @@ describe('createExecutionRunBackend (configured ACP)', () => {
     });
   });
 
+  it('materializes plugin-contributed configured ACP backends through the shared resolver', async () => {
+    const backend = createStubBackend();
+    createConfiguredAcpBackendMock.mockReturnValue(backend);
+    materializeConfiguredAcpEnvironmentMock.mockReturnValue({ ACP_TOKEN: 'token-plugin' });
+    resolveConfiguredAcpBackendFromAccountSettingsMock.mockReturnValue(null);
+    resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock.mockResolvedValue({
+      backendId: 'plugin-review-bot',
+      name: 'plugin-review-bot',
+      title: 'Plugin Review Bot',
+      command: 'plugin-review-bot',
+      args: ['--stdio'],
+      env: {},
+      transportProfile: { kind: 'stdio' },
+      capabilities: {},
+      defaultModel: 'plugin-review-model',
+    });
+    readCredentialsMock.mockResolvedValue({ token: 'cred-1' });
+    readSettingsMock.mockResolvedValue({ machineId: 'machine-1' });
+    bootstrapAccountSettingsContextMock.mockResolvedValue({ settings: {} });
+    resolveCustomHappierToolsContextMock.mockResolvedValue({ mcpServers: {} });
+
+    const { createExecutionRunBackend } = await import('./createExecutionRunBackend');
+
+    const configuredBackend = createExecutionRunBackend({
+      cwd: '/tmp/workspace',
+      backendId: 'plugin-review-bot',
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'plugin-review-bot' },
+      permissionMode: 'read_only',
+    });
+
+    await expect(configuredBackend.startSession()).resolves.toEqual({ sessionId: 'configured-session-1' });
+    expect(resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock).toHaveBeenCalledWith({
+      settings: {},
+      backendId: 'plugin-review-bot',
+      happyHomeDir: expect.any(String),
+    });
+    expect(createConfiguredAcpBackendMock).toHaveBeenCalledWith(expect.objectContaining({
+      cwd: '/tmp/workspace',
+      backend: expect.objectContaining({ backendId: 'plugin-review-bot', title: 'Plugin Review Bot' }),
+      launchEnv: { ACP_TOKEN: 'token-plugin' },
+    }));
+  });
+
   it('does not advertise resumability before the configured ACP backend proves it', async () => {
     const backend = createStubBackend();
     createConfiguredAcpBackendMock.mockReturnValue(backend);
     materializeConfiguredAcpEnvironmentMock.mockReturnValue({ ACP_TOKEN: 'token-1' });
     resolveConfiguredAcpBackendFromAccountSettingsMock.mockReturnValue({
+      backendId: 'review-bot',
+      name: 'review-bot',
+      title: 'Review Bot',
+      command: 'review-bot',
+      args: ['--stdio'],
+      env: {},
+      transportProfile: { kind: 'stdio' },
+      capabilities: {},
+    });
+    resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock.mockResolvedValue({
       backendId: 'review-bot',
       name: 'review-bot',
       title: 'Review Bot',
@@ -267,6 +335,16 @@ describe('createExecutionRunBackend (configured ACP)', () => {
     createConfiguredAcpBackendMock.mockReturnValue(backend);
     materializeConfiguredAcpEnvironmentMock.mockReturnValue({ ACP_TOKEN: 'token-1' });
     resolveConfiguredAcpBackendFromAccountSettingsMock.mockReturnValue({
+      backendId: 'review-bot',
+      name: 'review-bot',
+      title: 'Review Bot',
+      command: 'review-bot',
+      args: ['--stdio'],
+      env: {},
+      transportProfile: { kind: 'stdio' },
+      capabilities: {},
+    });
+    resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock.mockResolvedValue({
       backendId: 'review-bot',
       name: 'review-bot',
       title: 'Review Bot',

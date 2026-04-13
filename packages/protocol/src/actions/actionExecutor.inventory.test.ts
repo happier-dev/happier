@@ -328,13 +328,34 @@ describe('createActionExecutor (inventory/discovery)', () => {
     expect(deps.agentsModelsList).not.toHaveBeenCalled();
   });
 
+  it('rejects agent:customAcp as a concrete backend target for agents.models.list', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+
+    const res = await executor.execute('agents.models.list', {
+      backendTargetKey: 'agent:customAcp',
+      machineId: 'm1',
+    });
+
+    expect(res).toEqual({ ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' });
+    expect(deps.agentsModelsList).not.toHaveBeenCalled();
+  });
+
   it('routes session.spawn_picker to deps.sessionSpawnPicker', async () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
 
-    const res = await executor.execute('session.spawn_picker', { tag: 'x', initialMessage: 'hello' });
+    const res = await executor.execute('session.spawn_picker', {
+      tag: 'x',
+      initialMessage: 'hello',
+      backendTargetKey: 'acpBackend:review-bot',
+    });
     expect(res.ok).toBe(true);
-    expect(deps.sessionSpawnPicker).toHaveBeenCalledWith({ tag: 'x', initialMessage: 'hello' });
+    expect(deps.sessionSpawnPicker).toHaveBeenCalledWith({
+      tag: 'x',
+      initialMessage: 'hello',
+      backendTargetKey: 'acpBackend:review-bot',
+    });
   });
 
   it('opens a session by exact title when sessionId is omitted', async () => {

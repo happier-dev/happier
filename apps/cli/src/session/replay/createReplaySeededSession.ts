@@ -6,7 +6,7 @@ import { getOrCreateSessionByTag } from '@/session/transport/http/sessionsHttp';
 export async function createReplaySeededSession(params: Readonly<{
   credentials: Credentials;
   directory: string;
-  agentId: string;
+  flavor: string;
   tag: string;
   /**
    * Additional metadata to persist at session creation time.
@@ -26,7 +26,7 @@ export async function createReplaySeededSession(params: Readonly<{
       tag,
       path: params.directory,
       host: os.hostname(),
-      flavor: params.agentId,
+      flavor: params.flavor,
       ...params.metadata,
     },
     agentState: null,
