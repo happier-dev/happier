@@ -11,5 +11,7 @@ export const BUILT_IN_CATALOG_DEFINED_ACP_AGENTS = {
     getConnectedServicesSpawnMaterializer: async () =>
       (await import('@/backends/ohMyPi/connectedServices/createOhMyPiConnectedServicesSpawnMaterializer'))
         .createOhMyPiConnectedServicesSpawnMaterializer(),
+    getTerminalRuntimeOps: async () =>
+      (await import('@/backends/ohMyPi/terminalRuntime/ohMyPiTerminalRuntimeOps')).ohMyPiTerminalRuntimeOps,
   }),
 } as const satisfies Record<'customAcp' | 'kiro' | 'ohMyPi', AgentCatalogEntry>;

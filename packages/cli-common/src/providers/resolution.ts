@@ -2,12 +2,14 @@ import { accessSync, constants as fsConstants, existsSync, readFileSync } from '
 import { delimiter, dirname, join } from 'node:path';
 
 import {
+  AGENT_IDS,
   getProviderCliRuntimeSpec,
   type AgentId,
+  type ProviderCliRuntimeSpec,
   type ProviderCliManagedInstallSpec,
   type ProviderCliSourcePreference,
 } from '@happier-dev/agents';
-import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { buildBackendTargetKey, buildBackendTargetKeyV2 } from '@happier-dev/protocol';
 
 import { expandHomeDirPath } from '../path/expandHomeDirPath.js';
 import { resolveWindowsCommandOnPath, resolveWindowsCommandPath } from '../process/index.js';
@@ -24,6 +26,12 @@ export type ProviderCliCommandResolution = Readonly<{
   command: string;
 }>;
 
+export type ProviderCliRuntimeDescriptor = Readonly<
+  Omit<ProviderCliRuntimeSpec, 'id'> & {
+    id: string;
+  }
+>;
+
 type RuntimeResolutionOptions = Readonly<{
   isBunRuntime?: boolean;
   currentExecPath?: string | null;
@@ -34,7 +42,7 @@ export type ProviderCliJavaScriptRuntimeKind = 'none' | 'node' | 'bun';
 const PROVIDER_CLI_SOURCE_OVERRIDE_FILE_EXTENSIONS = /\.(?:[cm]?[jt]sx?)$/i;
 const PROVIDER_CLI_SHEBANG_RUNTIME_FILE_EXTENSIONS = /\.(?:[cm]?tsx?|jsx)$/i;
 
-function readBackendCliSourcePreferenceMap(processEnv: NodeJS.ProcessEnv): Partial<Record<AgentId, ProviderCliSourcePreference>> {
+function readBackendCliSourcePreferenceMap(processEnv: NodeJS.ProcessEnv): Partial<Record<string, ProviderCliSourcePreference>> {
   const raw = typeof processEnv.HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON === 'string'
     ? processEnv.HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON.trim()
     : '';
@@ -44,19 +52,38 @@ function readBackendCliSourcePreferenceMap(processEnv: NodeJS.ProcessEnv): Parti
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
     return Object.fromEntries(
       Object.entries(parsed).filter(([, value]) => value === 'system-first' || value === 'managed-first'),
-    ) as Partial<Record<AgentId, ProviderCliSourcePreference>>;
+    ) as Partial<Record<string, ProviderCliSourcePreference>>;
   } catch {
     return {};
   }
+}
+
+function isBuiltInAgentId(value: string): value is AgentId {
+  return (AGENT_IDS as readonly string[]).includes(value);
+}
+
+export function readBackendCliSourcePreferenceForProvider(
+  providerId: string,
+  sourcePreferenceDefault: ProviderCliSourcePreference,
+  processEnv: NodeJS.ProcessEnv = process.env,
+): ProviderCliSourcePreference {
+  const preferences = readBackendCliSourcePreferenceMap(processEnv);
+  const targetKeyV2 = buildBackendTargetKeyV2({ kind: 'backend', backendId: providerId });
+  const targetKey = isBuiltInAgentId(providerId)
+    ? buildBackendTargetKey({ kind: 'builtInAgent', agentId: providerId })
+    : null;
+  return preferences[targetKeyV2] ?? (targetKey ? preferences[targetKey] : undefined) ?? preferences[providerId] ?? sourcePreferenceDefault;
 }
 
 export function readBackendCliSourcePreference(
   agentId: AgentId,
   processEnv: NodeJS.ProcessEnv = process.env,
 ): ProviderCliSourcePreference {
-  const preferences = readBackendCliSourcePreferenceMap(processEnv);
-  const targetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId });
-  return preferences[targetKey as AgentId] ?? preferences[agentId] ?? getProviderCliRuntimeSpec(agentId).sourcePreferenceDefault;
+  return readBackendCliSourcePreferenceForProvider(
+    agentId,
+    getProviderCliRuntimeSpec(agentId).sourcePreferenceDefault,
+    processEnv,
+  );
 }
 
 function resolveManagedCommandBasename(spec: ProviderCliManagedInstallSpec): string {
@@ -64,8 +91,16 @@ function resolveManagedCommandBasename(spec: ProviderCliManagedInstallSpec): str
   return spec.kind === 'github_release_binary' ? `${spec.binaryName}.exe` : `${spec.binaryName}.cmd`;
 }
 
-export function readProviderCliOverride(agentId: AgentId, processEnv: NodeJS.ProcessEnv = process.env): string | null {
-  const envKey = `HAPPIER_${agentId.toUpperCase()}_PATH`;
+function resolveProviderCliOverrideEnvKey(providerId: string): string {
+  const normalized = providerId.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').toUpperCase();
+  return `HAPPIER_${normalized || providerId.toUpperCase()}_PATH`;
+}
+
+export function readProviderCliOverrideForRuntime(
+  runtimeSpec: ProviderCliRuntimeDescriptor,
+  processEnv: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const envKey = resolveProviderCliOverrideEnvKey(runtimeSpec.id);
   const override = expandHomeDirPath(
     typeof processEnv[envKey] === 'string' ? String(processEnv[envKey]).trim() : '',
     processEnv,
@@ -73,8 +108,11 @@ export function readProviderCliOverride(agentId: AgentId, processEnv: NodeJS.Pro
   return override || null;
 }
 
-function providerCliCandidatePathExists(agentId: AgentId, candidatePath: string): boolean {
-  const runtimeSpec = getProviderCliRuntimeSpec(agentId);
+export function readProviderCliOverride(agentId: AgentId, processEnv: NodeJS.ProcessEnv = process.env): string | null {
+  return readProviderCliOverrideForRuntime(getProviderCliRuntimeSpec(agentId), processEnv);
+}
+
+function providerCliCandidatePathExists(runtimeSpec: ProviderCliRuntimeDescriptor, candidatePath: string): boolean {
   const accessMode = process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK;
   try {
     accessSync(candidatePath, accessMode);
@@ -91,8 +129,8 @@ function providerCliCandidatePathExists(agentId: AgentId, candidatePath: string)
   }
 }
 
-function resolveProviderCliOverride(agentId: AgentId, processEnv: NodeJS.ProcessEnv): string | null {
-  const override = readProviderCliOverride(agentId, processEnv);
+function resolveProviderCliOverride(runtimeSpec: ProviderCliRuntimeDescriptor, processEnv: NodeJS.ProcessEnv): string | null {
+  const override = readProviderCliOverrideForRuntime(runtimeSpec, processEnv);
   if (!override) return null;
   if (process.platform === 'win32') {
     const normalizedOverride =
@@ -101,23 +139,29 @@ function resolveProviderCliOverride(agentId: AgentId, processEnv: NodeJS.Process
         : resolveWindowsCommandOnPath(override, processEnv);
     if (normalizedOverride) return normalizedOverride;
   }
-  return providerCliCandidatePathExists(agentId, override) ? override : null;
+  return providerCliCandidatePathExists(runtimeSpec, override) ? override : null;
+}
+
+export function resolveProviderCliManagedCommandPathForRuntime(
+  runtimeSpec: ProviderCliRuntimeDescriptor,
+  opts: Readonly<{ happyHomeDir?: string | null; processEnv?: NodeJS.ProcessEnv }> = {},
+): string {
+  const managedInstall = runtimeSpec.managedInstall;
+  if (!managedInstall) {
+    throw new Error(`Provider ${runtimeSpec.id} does not define a managed CLI install path`);
+  }
+  const processEnv = opts.processEnv ?? process.env;
+  const happyHomeDir = typeof opts.happyHomeDir === 'string' && opts.happyHomeDir.trim().length > 0
+    ? opts.happyHomeDir.trim()
+    : resolveHappyHomeDirFromEnvironment(processEnv);
+  return join(happyHomeDir, 'tools', 'providers', runtimeSpec.id, 'current', 'bin', resolveManagedCommandBasename(managedInstall));
 }
 
 export function resolveProviderCliManagedCommandPath(
   agentId: AgentId,
   opts: Readonly<{ happyHomeDir?: string | null; processEnv?: NodeJS.ProcessEnv }> = {},
 ): string {
-  const runtimeSpec = getProviderCliRuntimeSpec(agentId);
-  const managedInstall = runtimeSpec.managedInstall;
-  if (!managedInstall) {
-    throw new Error(`Provider ${agentId} does not define a managed CLI install path`);
-  }
-  const processEnv = opts.processEnv ?? process.env;
-  const happyHomeDir = typeof opts.happyHomeDir === 'string' && opts.happyHomeDir.trim().length > 0
-    ? opts.happyHomeDir.trim()
-    : resolveHappyHomeDirFromEnvironment(processEnv);
-  return join(happyHomeDir, 'tools', 'providers', agentId, 'current', 'bin', resolveManagedCommandBasename(managedInstall));
+  return resolveProviderCliManagedCommandPathForRuntime(getProviderCliRuntimeSpec(agentId), opts);
 }
 
 function resolveCommandOnPath(command: string, processEnv: NodeJS.ProcessEnv): string | null {
@@ -278,12 +322,15 @@ export function resolveProviderCliJavaScriptRuntimeCommand(
   });
 }
 
-function resolveCommandInKnownUserDirs(agentId: AgentId, command: string, processEnv: NodeJS.ProcessEnv): string | null {
+function resolveCommandInKnownUserDirs(
+  runtimeSpec: ProviderCliRuntimeDescriptor,
+  command: string,
+  processEnv: NodeJS.ProcessEnv,
+): string | null {
   if (process.platform === 'win32') return null;
   const homeDir = typeof processEnv.HOME === 'string' ? processEnv.HOME.trim() : '';
   if (!homeDir) return null;
 
-  const runtimeSpec = getProviderCliRuntimeSpec(agentId);
   const suffixes = runtimeSpec.knownUserBinDirSuffixes ?? [];
   for (const suffix of suffixes) {
     const candidate = join(homeDir, suffix, command);
@@ -298,15 +345,14 @@ function resolveCommandInKnownUserDirs(agentId: AgentId, command: string, proces
   return null;
 }
 
-function resolveProviderCliSystemCommand(agentId: AgentId, processEnv: NodeJS.ProcessEnv): string | null {
-  const runtimeSpec = getProviderCliRuntimeSpec(agentId);
-  return resolveCommandOnPath(runtimeSpec.binaryName, processEnv) ?? resolveCommandInKnownUserDirs(agentId, runtimeSpec.binaryName, processEnv);
+function resolveProviderCliSystemCommand(runtimeSpec: ProviderCliRuntimeDescriptor, processEnv: NodeJS.ProcessEnv): string | null {
+  return resolveCommandOnPath(runtimeSpec.binaryName, processEnv)
+    ?? resolveCommandInKnownUserDirs(runtimeSpec, runtimeSpec.binaryName, processEnv);
 }
 
-function resolveProviderCliManagedCommand(agentId: AgentId, processEnv: NodeJS.ProcessEnv): string | null {
-  const runtimeSpec = getProviderCliRuntimeSpec(agentId);
+function resolveProviderCliManagedCommand(runtimeSpec: ProviderCliRuntimeDescriptor, processEnv: NodeJS.ProcessEnv): string | null {
   if (!runtimeSpec.managedInstall) return null;
-  const managedPath = resolveProviderCliManagedCommandPath(agentId, { processEnv });
+  const managedPath = resolveProviderCliManagedCommandPathForRuntime(runtimeSpec, { processEnv });
   const accessMode = process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK;
   try {
     accessSync(managedPath, accessMode);
@@ -332,18 +378,29 @@ export function resolveProviderCliCommand(
   agentId: AgentId,
   opts: Readonly<{ processEnv?: NodeJS.ProcessEnv } & RuntimeResolutionOptions> = {},
 ): ProviderCliCommandResolution | null {
+  return resolveProviderCliCommandForRuntime(getProviderCliRuntimeSpec(agentId), opts);
+}
+
+export function resolveProviderCliCommandForRuntime(
+  runtimeSpec: ProviderCliRuntimeDescriptor,
+  opts: Readonly<{ processEnv?: NodeJS.ProcessEnv } & RuntimeResolutionOptions> = {},
+): ProviderCliCommandResolution | null {
   const processEnv = opts.processEnv ?? process.env;
-  const rawOverride = readProviderCliOverride(agentId, processEnv);
+  const rawOverride = readProviderCliOverrideForRuntime(runtimeSpec, processEnv);
   if (rawOverride) {
-    const override = resolveProviderCliOverride(agentId, processEnv);
+    const override = resolveProviderCliOverride(runtimeSpec, processEnv);
     if (!override) return null;
     if (!isProviderCliPathRunnable(override, processEnv, opts)) return null;
     return { source: 'override', command: override };
   }
 
-  const systemCommand = resolveProviderCliSystemCommand(agentId, processEnv);
-  const managedCommand = resolveProviderCliManagedCommand(agentId, processEnv);
-  const sourcePreference = readBackendCliSourcePreference(agentId, processEnv);
+  const systemCommand = resolveProviderCliSystemCommand(runtimeSpec, processEnv);
+  const managedCommand = resolveProviderCliManagedCommand(runtimeSpec, processEnv);
+  const sourcePreference = readBackendCliSourcePreferenceForProvider(
+    runtimeSpec.id,
+    runtimeSpec.sourcePreferenceDefault,
+    processEnv,
+  );
 
   if (sourcePreference === 'managed-first') {
     if (managedCommand && isProviderCliPathRunnable(managedCommand, processEnv, opts)) {

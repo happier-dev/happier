@@ -4,9 +4,9 @@ import { z } from 'zod';
 import type { SettingDefinitionMap } from '@happier-dev/protocol';
 
 import { assertProviderSettingsRegistryValid, getProviderSettingsDefinition } from './registry.js';
-import type { ProviderSettingsDefinition } from './types.js';
+import type { ProviderSettingsDescriptor } from './types.js';
 
-function makeDefinition(overrides: Partial<ProviderSettingsDefinition>): ProviderSettingsDefinition {
+function makeDefinition(overrides: Partial<ProviderSettingsDescriptor>): ProviderSettingsDescriptor {
   const baseFields = {
     foo: {
       schema: z.string(),

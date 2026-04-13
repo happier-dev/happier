@@ -100,6 +100,14 @@ export type AgentCoreRuntimeControlSurface = Readonly<{
 export type AgentCore = Readonly<{
     id: AgentId;
     /**
+     * Whether this agent contributes a concrete backend definition.
+     *
+     * Compatibility-only agent ids such as `customAcp` keep this false so backend
+     * definition assembly can derive its concrete id set from canonical metadata
+     * instead of a hard-coded denylist.
+     */
+    backendDefinition?: boolean;
+    /**
      * CLI subcommand used to spawn/select the agent.
      * For now this matches the canonical id.
      */

@@ -1,4 +1,4 @@
-import { readSessionMetadataRuntimeDescriptor } from '../../sessionControls/agentRuntimeDescriptor.js';
+import { readSessionMetadataRuntimeDescriptor } from '../readSessionMetadataRuntimeDescriptor.js';
 
 export const PI_SESSION_CONTROL_ADAPTER = Object.freeze({
   resolveVendorResumeId(metadata: unknown): string | null {

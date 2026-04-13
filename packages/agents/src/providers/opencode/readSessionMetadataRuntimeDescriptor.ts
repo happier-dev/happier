@@ -5,7 +5,7 @@ import {
   normalizeOpenCodeServerBaseUrl,
   normalizeOpenCodeServerBaseUrlExplicit,
 } from '../../providerSettings/definitions/opencode.js';
-import { readOpenCodeRuntimeDescriptorProviderExtra } from '../../sessionControls/opencodeRuntimeDescriptorExtra.js';
+import { readOpenCodeRuntimeDescriptorProviderExtra } from './runtimeDescriptorExtra.js';
 import { asRecord, normalizeTrimmedString } from '../../sessionControls/runtimeDescriptorShared.js';
 import type { SharedRuntimeDescriptorByProviderId } from '../../sessionControls/runtimeDescriptorTypes.js';
 

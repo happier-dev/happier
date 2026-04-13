@@ -1,11 +1,8 @@
-import { execFile } from 'node:child_process';
 import { chmod, mkdir, readdir, rename } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
-import { promisify } from 'node:util';
 
 import { planArchiveExtraction } from '@happier-dev/release-runtime';
-
-const execFileAsync = promisify(execFile);
+import { runCommandStreaming } from '../process/runCommandStreaming.js';
 
 async function moveExtractedEntryIntoPlace(params: Readonly<{
   extractDir: string;
@@ -36,8 +33,10 @@ export async function extractGitHubReleaseAsset(params: Readonly<{
       destDir: params.extractDir,
       os: process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'darwin' : 'linux',
     });
-    await execFileAsync(extractionPlan.command.cmd, extractionPlan.command.args, {
-      windowsHide: true,
+    await runCommandStreaming({
+      cmd: extractionPlan.command.cmd,
+      args: extractionPlan.command.args,
+      context: 'github-release extract',
     });
     await moveExtractedEntryIntoPlace({ extractDir: params.extractDir, outputPath: params.outputPath });
     if (process.platform !== 'win32') {

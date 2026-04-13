@@ -1,4 +1,5 @@
 import { resolvePersistedCodexRuntimeIdentity } from '@happier-dev/agents';
+import { readAgentRuntimeDescriptorV1 } from '@happier-dev/protocol';
 
 const ALWAYS_ACP_PROVIDERS = new Set(['auggie', 'qwen', 'kimi', 'kilo', 'gemini', 'copilot']);
 
@@ -11,6 +12,15 @@ function readProviderIdFromMetadataEntry(metadata: Record<string, unknown>, key:
   if (!isRecord(entry)) return null;
   const provider = entry.provider;
   return typeof provider === 'string' ? provider : null;
+}
+
+function resolveAcpRuntimeDescriptorEligibility(metadata: Record<string, unknown>, providerId: string): boolean | null {
+  const descriptor = readAgentRuntimeDescriptorV1(metadata.agentRuntimeDescriptorV1);
+  if (!descriptor || descriptor.providerId !== providerId) return null;
+  const provider = isRecord(descriptor.provider) ? descriptor.provider : null;
+  const backendMode = typeof provider?.backendMode === 'string' ? provider.backendMode.trim() : '';
+  if (!backendMode) return null;
+  return backendMode === 'acp';
 }
 
 export function isAcpForkEligibleForProvider(params: Readonly<{ providerId: string; metadata: unknown }>): boolean {
@@ -29,6 +39,9 @@ export function isAcpForkEligibleForProvider(params: Readonly<{ providerId: stri
       return runtimeIdentity.backendMode === 'acp';
     }
   }
+
+  const runtimeDescriptorEligibility = resolveAcpRuntimeDescriptorEligibility(metadata, providerId);
+  if (runtimeDescriptorEligibility !== null) return runtimeDescriptorEligibility;
 
   const eligible = (
     readProviderIdFromMetadataEntry(metadata, 'acpTransportV1') === providerId ||

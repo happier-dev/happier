@@ -1,4 +1,4 @@
-import type { AgentBackend } from '@/agent/core';
+import type { AgentFactoryOptions } from '@/agent/core';
 import { requireCatalogEntry, type CatalogAgentId } from '@/backends/catalog';
 import type { CatalogAcpBackendCreateResult, CatalogAcpBackendFactory } from '@/backends/types';
 
@@ -22,12 +22,12 @@ async function getCatalogAcpFactory(agentId: CatalogAgentId): Promise<CatalogAcp
 }
 
 export async function createCatalogAcpBackend<
-  TOptions,
+  TOptions extends AgentFactoryOptions,
   TResult extends CatalogAcpBackendCreateResult = CatalogAcpBackendCreateResult,
 >(
   agentId: CatalogAgentId,
   opts: TOptions,
 ): Promise<TResult> {
   const factory = await getCatalogAcpFactory(agentId);
-  return factory(opts as unknown) as TResult;
+  return factory(opts) as TResult;
 }

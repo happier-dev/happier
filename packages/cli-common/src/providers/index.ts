@@ -5,21 +5,32 @@ export type {
   ProviderCliInstallPlan,
   ProviderCliInstallPlanResult,
 } from './install.js';
-export { installProviderCli, planProviderCliInstall, resolvePlatformFromNodePlatform } from './install.js';
+export {
+  installProviderCli,
+  installProviderCliForRuntime,
+  planProviderCliInstall,
+  planProviderCliInstallForRuntime,
+  resolvePlatformFromNodePlatform,
+} from './install.js';
 export type {
   ProviderCliJavaScriptRuntimeKind,
   ProviderCliCommandResolution,
   ProviderCliResolutionSource,
+  ProviderCliRuntimeDescriptor,
 } from './resolution.js';
 export {
   isProviderCliPathRunnable,
+  readBackendCliSourcePreferenceForProvider,
   providerCliPathRequiresJavaScriptRuntime,
   readBackendCliSourcePreference,
   readProviderCliOverride,
+  readProviderCliOverrideForRuntime,
   resolveProviderCliJavaScriptRuntimeCommand,
   resolveProviderCliJavaScriptRuntimeKind,
   resolveProviderCliCommand,
+  resolveProviderCliCommandForRuntime,
   resolveProviderCliManagedCommandPath,
+  resolveProviderCliManagedCommandPathForRuntime,
 } from './resolution.js';
 export {
   ensureManagedJavaScriptRuntimeCommand,

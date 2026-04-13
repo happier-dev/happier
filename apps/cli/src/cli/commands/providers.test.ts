@@ -1,9 +1,21 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { reloadConfiguration } from '@/configuration';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
+
+const { resolveMergedContributionRegistryMock } = vi.hoisted(() => ({
+  resolveMergedContributionRegistryMock: vi.fn(),
+}));
+
+vi.mock('@/extensions/registry/createResolvedContributionRegistry', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/extensions/registry/createResolvedContributionRegistry')>();
+  return {
+    ...actual,
+    resolveMergedContributionRegistry: resolveMergedContributionRegistryMock,
+  };
+});
 
 import { handleProvidersCommand } from './providers';
 
@@ -12,10 +24,45 @@ describe('happier providers --json', () => {
   let envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
 
   beforeEach(async () => {
+    resolveMergedContributionRegistryMock.mockReset();
     envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
     home = await createTempDir('happier-providers-json-');
     envScope.patch({ HAPPIER_HOME_DIR: home, PATH: '' });
     reloadConfiguration();
+
+    resolveMergedContributionRegistryMock.mockResolvedValue({
+      providers: [
+        {
+          id: 'acme.providers.list',
+          source: 'built-in',
+          definition: {
+            id: 'acme.providers.list',
+            providerCliRuntime: {
+              kindVersion: 1,
+              id: 'acme.providers.list',
+              title: 'Acme Providers List',
+              binaryName: 'acme-providers-list',
+              sourcePreferenceDefault: 'system-first',
+              managedInstall: {
+                kind: 'managed_package',
+                packageName: '@acme/providers-list',
+                binaryName: 'acme-providers-list',
+              },
+              manualInstallKind: 'command',
+              manualInstallRecipes: null,
+              acceptsJavaScriptFileOverride: false,
+            },
+          },
+        },
+      ],
+      backends: [],
+      hookRegistrations: [],
+      runtimeAdaptersByBackendId: new Map(),
+      catalogEntriesById: {},
+      providerDefinitionsById: new Map(),
+      backendDefinitionsById: new Map(),
+      pluginDiagnosticsByPluginId: {},
+    });
   });
 
   afterEach(async () => {
@@ -36,12 +83,33 @@ describe('happier providers --json', () => {
       expect(parsed.data.providers.length).toBeGreaterThan(0);
       const first = parsed.data.providers[0];
       expect(first).toEqual(expect.objectContaining({
-        id: expect.any(String),
-        title: expect.any(String),
+        id: 'acme.providers.list',
+        title: 'Acme Providers List',
         installed: expect.any(Boolean),
       }));
       expect(first.source === null || typeof first.source === 'string').toBe(true);
       expect(first.command === null || typeof first.command === 'string').toBe(true);
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('prints a providers_status JSON envelope', async () => {
+    const output = captureConsoleLogAndMuteStdout();
+    try {
+      await handleProvidersCommand(['status', '--json']);
+      const parsed = JSON.parse(output.logs.join('\n').trim());
+      expect(parsed.v).toBe(1);
+      expect(parsed.ok).toBe(true);
+      expect(parsed.kind).toBe('providers_status');
+      expect(parsed.data.providers).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: 'acme.providers.list',
+            title: 'Acme Providers List',
+          }),
+        ]),
+      );
     } finally {
       output.restore();
     }

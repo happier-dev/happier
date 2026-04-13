@@ -2,7 +2,7 @@ import { createCatalogAcpBackend } from '@/agent/acp';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import { createAcpRuntime } from '@/agent/acp/runtime/createAcpRuntime';
 import type { McpServerConfig } from '@/agent';
-import type { AgentBackend } from '@/agent/core';
+import type { AgentBackend, AgentFactoryOptions } from '@/agent/core';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
 import type { PermissionMode } from '@/api/types';
@@ -13,7 +13,7 @@ import {
   type PermissionRequestPushSender,
 } from '@/settings/notifications/permissionRequestPush';
 
-type CatalogAcpProviderRuntimeParams<TBackendOptions extends object> = {
+type CatalogAcpProviderRuntimeParams<TBackendOptions extends AgentFactoryOptions> = {
   provider: Parameters<typeof createCatalogAcpBackend>[0];
   loggerLabel: string;
   directory: string;
@@ -36,7 +36,7 @@ type CatalogAcpProviderRuntimeParams<TBackendOptions extends object> = {
   memoryRecallGuidance?: Parameters<typeof createAcpRuntime>[0]['memoryRecallGuidance'];
 };
 
-export function createCatalogProviderAcpRuntime<TBackendOptions extends object = Record<string, never>>(
+export function createCatalogProviderAcpRuntime<TBackendOptions extends AgentFactoryOptions = AgentFactoryOptions>(
   params: CatalogAcpProviderRuntimeParams<TBackendOptions>,
 ) {
   const sendPermissionPush = (evt: { permissionId: string; toolName: string }): void => {

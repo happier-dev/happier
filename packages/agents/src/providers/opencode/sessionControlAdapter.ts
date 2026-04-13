@@ -1,7 +1,7 @@
 import type { AgentRuntimeKind } from '../../runtimeKinds.js';
 import { normalizeOpenCodeBackendMode } from '../../providerSettings/definitions/opencode.js';
-import { readSessionMetadataRuntimeDescriptor } from '../../sessionControls/agentRuntimeDescriptor.js';
-import { readOpenCodeSessionAffinityFromMetadata } from '../../sessionControls/opencodeSessionRuntimeHandle.js';
+import { readSessionMetadataRuntimeDescriptor } from '../readSessionMetadataRuntimeDescriptor.js';
+import { readOpenCodeSessionAffinityFromMetadata } from './sessionRuntimeHandle.js';
 
 export const OPENCODE_SESSION_CONTROL_ADAPTER = Object.freeze({
   normalizeRuntimeKindOverride(value: unknown): AgentRuntimeKind | null {

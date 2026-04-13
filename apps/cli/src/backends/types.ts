@@ -1,4 +1,4 @@
-import type { AgentBackend } from '@/agent/core';
+import type { AgentBackend, AgentFactoryOptions } from '@/agent/core';
 import type { ChecklistId } from '@/capabilities/checklistIds';
 import type { Capability } from '@/capabilities/service';
 import type { CommandHandler } from '@/cli/commandRegistry';
@@ -9,6 +9,8 @@ import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import type { DirectSessionProviderOps } from './directSessions/providerOps';
 import type { AcpForkContinuationHandler } from './forking/acpForkContinuationHandler';
 import type { ProviderNativeForkHandler } from './forking/providerNativeForkHandler';
+import type { AnyTerminalRuntimeOps } from './terminalRuntime/types';
+import type { ImportedSessionHandoffBundle, SessionHandoffProviderBundle } from '@/session/handoff/types';
 
 export { AGENT_IDS as CATALOG_AGENT_IDS, DEFAULT_AGENT_ID as DEFAULT_CATALOG_AGENT_ID } from '@happier-dev/agents';
 import type { AgentId as CatalogAgentId, VendorResumeSupportLevel } from '@happier-dev/agents';
@@ -38,7 +40,7 @@ export type {
 };
 
 export type CatalogAcpBackendCreateResult = Readonly<{ backend: AgentBackend }>;
-export type CatalogAcpBackendFactory = (opts: unknown) => CatalogAcpBackendCreateResult;
+export type CatalogAcpBackendFactory = (opts: AgentFactoryOptions) => CatalogAcpBackendCreateResult;
 
 export type VendorResumeSupportParams = Readonly<{
   experimentalCodexAcp?: boolean;
@@ -80,6 +82,19 @@ export type ProviderAttachOps = Readonly<{
     sessionId: string;
     metadata: Record<string, unknown>;
   }>) => Promise<number | false>;
+}>;
+
+export type SessionHandoffProviderOps = Readonly<{
+  exportBundle: (params: Readonly<{
+    metadata: Record<string, unknown>;
+    remoteSessionId: string;
+    activeServerDir: string;
+  }>) => Promise<SessionHandoffProviderBundle>;
+  importBundle: (params: Readonly<{
+    bundle: SessionHandoffProviderBundle;
+    targetPath: string;
+    sessionStorageMode?: 'direct' | 'persisted';
+  }>) => Promise<ImportedSessionHandoffBundle>;
 }>;
 
 export type AgentChecklistContributions = Partial<
@@ -149,6 +164,13 @@ export type AgentCatalogEntry = Readonly<{
    */
   getProviderAttachOps?: () => Promise<ProviderAttachOps>;
   /**
+   * Optional provider-owned terminal-runtime adapter surface.
+   *
+   * This keeps terminal-hosted runtime discovery/binding logic in backend-owned modules
+   * instead of branching in shared catalog consumers.
+   */
+  getTerminalRuntimeOps?: () => Promise<AnyTerminalRuntimeOps | null>;
+  /**
    * Whether this agent supports vendor-level resume (NOT Happy session resume).
    *
    * Used by the daemon to decide whether it may pass `--resume <vendorSessionId>`.
@@ -188,6 +210,18 @@ export type AgentCatalogEntry = Readonly<{
    */
   getProviderNativeForkHandler?: () => Promise<ProviderNativeForkHandler>;
   /**
+   * Optional provider-owned session handoff bundle export/import operations.
+   *
+   * This keeps provider-specific handoff bundle logic out of shared session handoff core.
+   */
+  getSessionHandoffProviderOps?: () => Promise<SessionHandoffProviderOps | null>;
+  /**
+   * Optional provider-owned permission-mode normalization for daemon `happy session` forwarding.
+   *
+   * Use this to keep provider-specific permission-mode alias handling out of shared daemon core.
+   */
+  normalizeSessionControlPermissionMode?: (permissionMode: string) => string;
+  /**
    * Whether probe RPC handlers should load account settings before invoking probe methods.
    *
    * This is used for providers whose probe behavior depends on account settings even when the
@@ -223,4 +257,10 @@ export type AgentCatalogEntry = Readonly<{
   runtimeInstallableKeys?: readonly InstallableKey[];
 }>;
 
-export type { AcpForkContinuationHandler, DirectSessionProviderOps, DirectSessionsProviderId, ProviderNativeForkHandler };
+export type {
+  AcpForkContinuationHandler,
+  DirectSessionProviderOps,
+  DirectSessionsProviderId,
+  ProviderNativeForkHandler,
+};
+export type { AnyTerminalRuntimeOps, TerminalRuntimeOps } from './terminalRuntime/types';

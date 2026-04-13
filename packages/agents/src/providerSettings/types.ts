@@ -13,9 +13,14 @@ export type ProviderSettingsResolveSpawnExtras = (args: Readonly<{
   settings: Readonly<Record<string, unknown>>;
 }>) => Readonly<Record<string, unknown>>;
 
-export type ProviderSettingsDefinition = Readonly<{
+export type ProviderSettingsDescriptor = Readonly<{
   providerId: AgentId;
   fields: SettingDefinitionMap;
+}>;
+
+export type ProviderSettingsBehavior = Readonly<{
   buildOutgoingMessageMetaExtras?: ProviderSettingsBuildMessageMetaExtras;
   resolveSpawnExtras?: ProviderSettingsResolveSpawnExtras;
 }>;
+
+export type ProviderSettingsDefinition = ProviderSettingsDescriptor & ProviderSettingsBehavior;

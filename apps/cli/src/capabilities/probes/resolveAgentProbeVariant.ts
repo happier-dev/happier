@@ -1,18 +1,20 @@
 import { AGENTS } from '@/backends/catalog';
 import type { CatalogAgentId } from '@/backends/types';
+import { configuration } from '@/configuration';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import { resolveConfiguredAcpProbeCacheVariant } from './configuredAcpProbeCacheVariant';
 
-export function resolveAgentProbeVariant(params: Readonly<{
+export async function resolveAgentProbeVariant(params: Readonly<{
   agentId: CatalogAgentId;
   backendTarget?: BackendTargetRefV1;
   accountSettings?: Readonly<Record<string, unknown>> | null;
-}>): string {
-  const configuredAcpVariant = resolveConfiguredAcpProbeCacheVariant({
+}>): Promise<string> {
+  const configuredAcpVariant = await resolveConfiguredAcpProbeCacheVariant({
     agentId: params.agentId,
     backendTarget: params.backendTarget,
     accountSettings: params.accountSettings,
+    happyHomeDir: configuration.happyHomeDir,
   });
   if (configuredAcpVariant) return configuredAcpVariant;
 

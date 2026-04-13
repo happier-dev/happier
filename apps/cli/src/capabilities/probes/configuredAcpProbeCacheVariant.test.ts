@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import { createPluginStateStore } from '@/extensions/plugins/store/pluginStateStore';
 
 import { resolveConfiguredAcpProbeCacheVariant } from './configuredAcpProbeCacheVariant';
 
@@ -29,8 +33,83 @@ function buildAccountSettingsWithConfiguredBackend(params: Readonly<{
   };
 }
 
+async function writePluginFixture(rootDir: string): Promise<void> {
+  const manifestDir = join(rootDir, '.happier-plugin');
+  await mkdir(manifestDir, { recursive: true });
+  await writeFile(
+    join(manifestDir, 'plugin.json'),
+    JSON.stringify(
+      {
+        schemaVersion: 1,
+        id: 'acme.probe.variant.plugin',
+        version: '1.0.0',
+        displayName: 'Probe Variant Plugin',
+        description: 'Contributes an ACP backend used for probe cache variants',
+        engines: {
+          happier: '^0.2.0',
+        },
+        targets: {
+          daemon: {
+            entry: './daemon.mjs',
+          },
+        },
+        contributions: {
+          providers: [
+            {
+              kindVersion: 1,
+              id: 'acme.probe.variant.provider',
+              display: {
+                name: 'Probe Variant Provider',
+              },
+              ownedBackendIds: ['acme.probe.variant.backend'],
+            },
+          ],
+          backends: [
+            {
+              kindVersion: 1,
+              id: 'acme.probe.variant.backend',
+              providerId: 'acme.probe.variant.provider',
+              runtimeKind: 'acp',
+              launch: {
+                command: 'plugin-variant-launch',
+                args: ['--ignored'],
+                env: {},
+              },
+              acp: {
+                title: 'Plugin Variant Backend',
+                command: 'plugin-variant-cli',
+                args: ['acp'],
+                env: {
+                  REGION: { t: 'literal', v: 'eu' },
+                },
+                transportProfile: 'generic',
+                capabilities: {
+                  supportsLoadSession: false,
+                  supportsModes: 'yes',
+                  supportsModels: 'yes',
+                  supportsConfigOptions: 'unknown',
+                  promptImageSupport: 'unknown',
+                },
+              },
+              capabilities: {
+                supportsModels: true,
+                supportsModes: true,
+                supportsConfigOptions: true,
+              },
+            },
+          ],
+          hooks: [],
+        },
+      },
+      null,
+      2,
+    ),
+    'utf8',
+  );
+}
+
 describe('resolveConfiguredAcpProbeCacheVariant', () => {
-  it('does not leak secret env/auth values into the cache variant (uses a digest)', () => {
+  it('does not leak secret env/auth values into the cache variant (uses a digest)', async () => {
     const backendTarget: BackendTargetRefV1 = { kind: 'configuredAcpBackend', backendId: 'b1' };
     const accountSettings = buildAccountSettingsWithConfiguredBackend({
       backendId: 'b1',
@@ -39,7 +118,7 @@ describe('resolveConfiguredAcpProbeCacheVariant', () => {
       },
     });
 
-    const variant = resolveConfiguredAcpProbeCacheVariant({
+    const variant = await resolveConfiguredAcpProbeCacheVariant({
       agentId: 'customAcp',
       backendTarget,
       accountSettings,
@@ -50,7 +129,7 @@ describe('resolveConfiguredAcpProbeCacheVariant', () => {
     expect(variant).not.toContain('TOKEN');
   });
 
-  it('is stable across key ordering (env keys are sorted before hashing)', () => {
+  it('is stable across key ordering (env keys are sorted before hashing)', async () => {
     const backendTarget: BackendTargetRefV1 = { kind: 'configuredAcpBackend', backendId: 'b2' };
     const left = buildAccountSettingsWithConfiguredBackend({
       backendId: 'b2',
@@ -67,14 +146,60 @@ describe('resolveConfiguredAcpProbeCacheVariant', () => {
       },
     });
 
-    expect(resolveConfiguredAcpProbeCacheVariant({
+    await expect(resolveConfiguredAcpProbeCacheVariant({
       agentId: 'customAcp',
       backendTarget,
       accountSettings: left,
-    })).toEqual(resolveConfiguredAcpProbeCacheVariant({
+    })).resolves.toEqual(await resolveConfiguredAcpProbeCacheVariant({
       agentId: 'customAcp',
       backendTarget,
       accountSettings: right,
     }));
+  });
+
+  it('derives a digest variant for plugin-contributed configured ACP backends', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-configured-acp-variant-home-'));
+    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-configured-acp-variant-plugin-'));
+    const store = createPluginStateStore({ happyHomeDir });
+
+    await writePluginFixture(pluginRoot);
+    await store.write({
+      t: 'happier_plugin_state_v1',
+      schemaVersion: 1,
+      plugins: {
+        'acme.probe.variant.plugin': {
+          source: {
+            kind: 'path',
+            locator: pluginRoot,
+            trustPolicy: 'local_trusted',
+            installPolicy: 'link',
+            resolvedPath: pluginRoot,
+            manifestPath: join(pluginRoot, '.happier-plugin', 'plugin.json'),
+          },
+          compatibility: {
+            status: 'unknown',
+            diagnostics: [],
+          },
+          install: {
+            mode: 'link',
+            manifestVersion: '1.0.0',
+            manifestDigest: null,
+            installedPath: null,
+          },
+          state: {
+            enabled: true,
+          },
+        },
+      },
+    });
+    const variant = await resolveConfiguredAcpProbeCacheVariant({
+      agentId: 'customAcp',
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'acme.probe.variant.backend' },
+      accountSettings: {},
+      happyHomeDir,
+    });
+
+    expect(variant).toMatch(/^configuredAcp:acme\.probe\.variant\.backend:[A-Za-z0-9_-]+$/);
+    expect(variant).not.toContain('missing-backend');
   });
 });

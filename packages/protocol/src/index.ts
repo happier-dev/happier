@@ -53,6 +53,146 @@ export {
   type BackendTargetKind,
   type BackendTargetRefV1,
 } from './backendTargets/backendTargetRef.js';
+export {
+  BackendTargetKeyV2Schema,
+  BackendTargetRefV2InputSchema,
+  BackendTargetRefV2Schema,
+  BackendTargetSourceKindV2Schema,
+  buildBackendTargetKeyV2,
+  convertBackendTargetRefV2ToV1,
+  parseBackendTargetKeyV2,
+  normalizeBackendTargetRefV2InputToV1,
+  normalizeBackendTargetRefV2InputToV2,
+  readBackendTargetRefV2,
+  type BackendTargetKeyV2,
+  type BackendTargetRefV2,
+  type BackendTargetRefV2Input,
+  type BackendTargetSourceKindV2,
+} from './backendTargets/backendTargetRefV2.js';
+export {
+  ActionDefinitionBindingsV1Schema,
+  ActionDefinitionExamplesV1Schema,
+  ActionExecutionDescriptorV1Schema,
+  ActionDefinitionIdV1Schema,
+  ActionDefinitionSlashV1Schema,
+  ActionDefinitionSummaryV1Schema,
+  ActionDefinitionV1Schema,
+  SerializedActionDefinitionV1Schema,
+  type ActionDefinitionBindingsV1,
+  type ActionDefinitionExamplesV1,
+  type ActionExecutionDescriptorV1,
+  type ActionDefinitionIdV1,
+  type ActionDefinitionSlashV1,
+  type ActionDefinitionSummaryV1,
+  type ActionDefinitionV1,
+  type SerializedActionDefinitionV1,
+} from './extensions/actionDefinitionV1.js';
+export {
+  BackendDefinitionV1Schema,
+  type BackendDefinitionV1,
+} from './extensions/backendDefinitionV1.js';
+export {
+  ExtensionSourceInstallPolicyV1Schema,
+  ExtensionSourceKindV1Schema,
+  ExtensionSourceSpecV1Schema,
+  ExtensionSourceTrustPolicyV1Schema,
+  type ExtensionSourceInstallPolicyV1,
+  type ExtensionSourceKindV1,
+  type ExtensionSourceSpecV1,
+  type ExtensionSourceTrustPolicyV1,
+} from './extensions/extensionSourceSpecV1.js';
+export {
+  BackendRuntimeAdapterHandlerRefV1Schema,
+  BackendRuntimeAdapterKindV1Schema,
+  BackendRuntimeAdapterV1Schema,
+  type BackendRuntimeAdapterHandlerRefV1,
+  type BackendRuntimeAdapterKindV1,
+  type BackendRuntimeAdapterV1,
+} from './extensions/backendRuntimeAdapterV1.js';
+export {
+  HookEventEnvelopeV1Schema,
+  readHookEventEnvelopeV1,
+  type HookEventEnvelopeV1,
+} from './extensions/hookEventEnvelopeV1.js';
+export {
+  HookHandlerTargetV1Schema,
+  HookHandlerTargetsV1,
+  HookHandlerRefV1Schema,
+  HookRegistrationFilterV1Schema,
+  HookRegistrationV1Schema,
+  isHookHandlerTargetV1,
+  readHookRegistrationV1,
+  type HookHandlerTargetV1,
+  type HookHandlerRefV1,
+  type HookRegistrationFilterV1,
+  type HookRegistrationV1,
+} from './extensions/hookRegistrationV1.js';
+export {
+  PluginContributionsV1Schema,
+  PluginManifestV1Schema,
+  PluginTargetDescriptorV1Schema,
+  PluginTargetsV1Schema,
+  type PluginContributionsV1,
+  type PluginManifestV1,
+  type PluginTargetDescriptorV1,
+  type PluginTargetsV1,
+} from './extensions/pluginManifestV1.js';
+export {
+  ProviderAuthV1Schema,
+  ProviderDefinitionV1Schema,
+  ProviderDisplayV1Schema,
+  ProviderInstallV1Schema,
+  ProviderSessionHandoffV1Schema,
+  ProviderSessionResumeV1Schema,
+  ProviderSessionV1Schema,
+  ProviderTerminalRuntimeV1Schema,
+  ProviderUiV1Schema,
+  type ProviderAuthV1,
+  type ProviderDefinitionV1,
+  type ProviderDisplayV1,
+  type ProviderInstallV1,
+  type ProviderSessionHandoffV1,
+  type ProviderSessionResumeV1,
+  type ProviderSessionV1,
+  type ProviderTerminalRuntimeV1,
+  type ProviderUiV1,
+} from './extensions/providerDefinitionV1.js';
+export {
+  ProviderCliInstallCommandV1Schema as ProviderCliRuntimeInstallCommandV1Schema,
+  ProviderCliInstallPlatformV1Schema as ProviderCliRuntimeInstallPlatformV1Schema,
+  ProviderCliManagedInstallSpecV1Schema as ProviderCliRuntimeManagedInstallSpecV1Schema,
+  ProviderCliManualInstallKindV1Schema as ProviderCliRuntimeManualInstallKindV1Schema,
+  ProviderCliManualInstallRecipesV1Schema as ProviderCliRuntimeManualInstallRecipesV1Schema,
+  ProviderCliRuntimeV1Schema,
+  ProviderCliSourcePreferenceV1Schema as ProviderCliRuntimeSourcePreferenceV1Schema,
+  type ProviderCliInstallCommandV1 as ProviderCliRuntimeInstallCommandV1,
+  type ProviderCliInstallPlatformV1 as ProviderCliRuntimeInstallPlatformV1,
+  type ProviderCliManagedInstallSpecV1 as ProviderCliRuntimeManagedInstallSpecV1,
+  type ProviderCliManualInstallKindV1 as ProviderCliRuntimeManualInstallKindV1,
+  type ProviderCliManualInstallRecipesV1 as ProviderCliRuntimeManualInstallRecipesV1,
+  type ProviderCliRuntimeV1,
+  type ProviderCliSourcePreferenceV1 as ProviderCliRuntimeSourcePreferenceV1,
+} from './extensions/providerCliRuntimeV1.js';
+export {
+  HookCategoryV1Schema,
+  type HookCategoryV1,
+} from './hooks/hookCategories.js';
+export {
+  HOOK_CATEGORY_TO_EXECUTION_KIND_V1,
+  HOOK_EXECUTION_KIND_V1_VALUES,
+  HookExecutionKindV1Schema,
+  isHookExecutionKindCompatibleWithCategoryV1,
+  resolveHookExecutionKindForCategoryV1,
+  type HookExecutionKindV1,
+} from './hooks/hookExecutionSemantics.js';
+export {
+  HookIdV1Schema,
+  type HookIdV1,
+} from './hooks/hookIds.js';
+export {
+  HookScopeV1Schema,
+  type HookScopeV1,
+} from './hooks/hookScopes.js';
 
 export {
   AcpBackendAuthConfigV1Schema,
@@ -1292,6 +1432,7 @@ export {
   parseReleaseChannelSwitchForSetupPromptData,
   parseReplaceLocalBackgroundServicesPromptData,
   parseReplaceRemoteBackgroundServicesPromptData,
+  parseTakeOverManualRelayRuntimeForSetupPromptData,
   parseSshPasswordPromptData,
   parseSshTrustPromptData,
   type ApproveRemoteProvisioningPromptData,
@@ -1301,6 +1442,7 @@ export {
   type ReleaseChannelSwitchForSetupPromptData,
   type ReplaceLocalBackgroundServicesPromptData,
   type ReplaceRemoteBackgroundServicesPromptData,
+  type TakeOverManualRelayRuntimeForSetupPromptData,
   type SshPasswordPromptData,
   type SshTrustPromptData,
   type SystemTaskEvent,

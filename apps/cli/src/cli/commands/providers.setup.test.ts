@@ -4,18 +4,44 @@ import { reloadConfiguration } from '@/configuration';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
-import { getProviderCliSetupRecommendedIds } from '@happier-dev/agents';
 
-const invokeProviderCliInstall = vi.fn(async (_params: Readonly<{ agentId: string }>) => ({
-  ok: true as const,
-  alreadyInstalled: false,
-  plan: { installMode: 'managed_package' } as any,
-  logPath: null,
+const { installProviderCliForRuntime } = vi.hoisted(() => ({
+  installProviderCliForRuntime: vi.fn(async (_params: Readonly<{ runtimeSpec: { id: string } }>) => ({
+    ok: true as const,
+    alreadyInstalled: false,
+    plan: { installMode: 'managed_package' } as any,
+    logPath: null,
+  })),
 }));
 
-vi.mock('@/runtime/managedTools/invokeProviderCliInstall', () => ({
-  invokeProviderCliInstall,
+const { resolveMergedContributionRegistryMock, getProviderCliSetupRecommendedIdsMock } = vi.hoisted(() => ({
+  resolveMergedContributionRegistryMock: vi.fn(),
+  getProviderCliSetupRecommendedIdsMock: vi.fn(() => ['claude', 'codex']),
 }));
+
+vi.mock('@happier-dev/cli-common/providers', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@happier-dev/cli-common/providers')>();
+  return {
+    ...actual,
+    installProviderCliForRuntime,
+  };
+});
+
+vi.mock('@happier-dev/agents', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@happier-dev/agents')>();
+  return {
+    ...actual,
+    getProviderCliSetupRecommendedIds: getProviderCliSetupRecommendedIdsMock,
+  };
+});
+
+vi.mock('@/extensions/registry/createResolvedContributionRegistry', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/extensions/registry/createResolvedContributionRegistry')>();
+  return {
+    ...actual,
+    resolveMergedContributionRegistry: resolveMergedContributionRegistryMock,
+  };
+});
 
 import { handleProvidersCommand } from './providers';
 
@@ -24,11 +50,71 @@ describe('happier providers setup --yes --json', () => {
   let envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
 
   beforeEach(async () => {
-    invokeProviderCliInstall.mockReset();
+    installProviderCliForRuntime.mockReset();
+    resolveMergedContributionRegistryMock.mockReset();
+    getProviderCliSetupRecommendedIdsMock.mockClear();
     envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
     home = await createTempDir('happier-providers-setup-');
     envScope.patch({ HAPPIER_HOME_DIR: home, PATH: '' });
     reloadConfiguration();
+
+    const providerContributions = [
+      {
+        id: 'claude',
+        source: 'built-in' as const,
+        definition: {
+          id: 'claude',
+          providerCliRuntime: {
+            kindVersion: 1,
+            id: 'claude',
+            title: 'Claude CLI',
+            binaryName: 'claude',
+            sourcePreferenceDefault: 'system-first',
+            managedInstall: {
+              kind: 'managed_package',
+              packageName: '@happier-dev/claude',
+              binaryName: 'claude',
+            },
+            manualInstallKind: 'command',
+            manualInstallRecipes: null,
+            acceptsJavaScriptFileOverride: false,
+          },
+        },
+      },
+      {
+        id: 'codex',
+        source: 'built-in' as const,
+        definition: {
+          id: 'codex',
+          providerCliRuntime: {
+            kindVersion: 1,
+            id: 'codex',
+            title: 'Codex CLI',
+            binaryName: 'codex',
+            sourcePreferenceDefault: 'system-first',
+            managedInstall: {
+              kind: 'managed_package',
+              packageName: '@happier-dev/codex',
+              binaryName: 'codex',
+            },
+            manualInstallKind: 'command',
+            manualInstallRecipes: null,
+            acceptsJavaScriptFileOverride: false,
+          },
+        },
+      },
+    ];
+
+    resolveMergedContributionRegistryMock.mockResolvedValue({
+      providers: providerContributions,
+      backends: [],
+      hookRegistrations: [],
+      runtimeAdaptersByBackendId: new Map(),
+      catalogEntriesById: {},
+      providerDefinitionsById: new Map(providerContributions.map((provider) => [provider.id, provider] as const)),
+      backendDefinitionsById: new Map(),
+      pluginDiagnosticsByPluginId: {},
+    });
   });
 
   afterEach(async () => {
@@ -47,8 +133,8 @@ describe('happier providers setup --yes --json', () => {
       expect(Array.isArray(parsed.data?.providers)).toBe(true);
       expect(parsed.data.providers.length).toBeGreaterThan(0);
 
-      const installedIds = invokeProviderCliInstall.mock.calls.map((call) => call[0].agentId);
-      expect(installedIds).toEqual([...getProviderCliSetupRecommendedIds()]);
+      const installedIds = installProviderCliForRuntime.mock.calls.map((call) => call[0].runtimeSpec.id);
+      expect(installedIds).toEqual([...getProviderCliSetupRecommendedIdsMock()]);
     } finally {
       output.restore();
     }
@@ -61,7 +147,7 @@ describe('happier providers setup --yes --json', () => {
       const parsed = JSON.parse(output.logs.join('\n').trim());
       expect(parsed.ok).toBe(true);
 
-      const installedIds = invokeProviderCliInstall.mock.calls.map((call) => call[0].agentId);
+      const installedIds = installProviderCliForRuntime.mock.calls.map((call) => call[0].runtimeSpec.id);
       expect(installedIds).toEqual(['claude', 'codex']);
     } finally {
       output.restore();

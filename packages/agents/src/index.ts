@@ -30,6 +30,20 @@ export {
 } from './types.js';
 export { AGENTS_CORE, DEFAULT_AGENT_ID } from './manifest.js';
 export {
+  getAllProviderDefinitions,
+  getAllProviderDefinitionContracts,
+  getAllBackendDefinitions,
+  getAllBackendDefinitionContracts,
+  getProviderDefinition,
+  getProviderDefinitionContract,
+  getBackendDefinition,
+  getBackendDefinitionContract,
+  type ProviderDefinition,
+  type BackendDefinition,
+  type ProviderDefinitionContractV1,
+  type BackendDefinitionContractV1,
+} from './definitions/index.js';
+export {
   getAgentToolsCapability,
   isAgentToolsUnsupported,
   usesNativeMcpTools,
@@ -98,6 +112,8 @@ export {
 export {
   normalizeCodexBackendMode,
   type CodexBackendMode,
+  type ProviderSettingsBehavior,
+  type ProviderSettingsDescriptor,
   getAllProviderSettingsDefinitions,
   getProviderSettingsDefinition,
   type ProviderSettingsDefinition,
@@ -156,29 +172,33 @@ export {
   resolvePersistedCodexVendorSessionId,
   type CodexSpawnRuntimeAffinityCompatFields,
   type PersistedCodexRuntimeIdentity,
-} from './sessionControls/codexRuntimeIdentity.js';
+} from './providers/codex/runtimeIdentity.js';
 export {
   buildCodexRuntimeDescriptorProviderExtra,
   readCodexRuntimeDescriptorProviderExtra,
   type CodexRuntimeDescriptorProviderExtra,
-} from './sessionControls/codexRuntimeDescriptorExtra.js';
+} from './providers/codex/runtimeDescriptorExtra.js';
 export {
   buildCodexAgentRuntimeDescriptor,
+} from './providers/codex/buildAgentRuntimeDescriptor.js';
+export {
   buildOpenCodeAgentRuntimeDescriptor,
+} from './providers/opencode/buildAgentRuntimeDescriptor.js';
+export {
   readSessionMetadataRuntimeDescriptor,
-} from './sessionControls/agentRuntimeDescriptor.js';
+} from './providers/readSessionMetadataRuntimeDescriptor.js';
 export {
   readOpenCodeSessionAffinityFromMetadata,
   readOpenCodeSessionRuntimeHandleFromMetadata,
   type OpenCodeSessionAffinity,
   type OpenCodeSessionRuntimeHandle,
-} from './sessionControls/opencodeSessionRuntimeHandle.js';
+} from './providers/opencode/sessionRuntimeHandle.js';
 export {
   buildOpenCodeRuntimeDescriptorProviderExtra,
   readOpenCodeRuntimeDescriptorProviderExtra,
   type OpenCodeRuntimeDescriptorProviderExtra,
   type OpenCodeRuntimeDescriptorProviderExtraRuntimeHandle,
-} from './sessionControls/opencodeRuntimeDescriptorExtra.js';
+} from './providers/opencode/runtimeDescriptorExtra.js';
 export {
   applyAgentRuntimeKindOverrideToAccountSettings,
   normalizeAgentRuntimeKindOverride,

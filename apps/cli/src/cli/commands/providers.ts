@@ -1,18 +1,22 @@
 import {
-    AGENT_IDS,
-    getProviderCliRuntimeSpec,
     getProviderCliSetupRecommendedIds,
-    getProviderCliSetupSupportedIds,
-    type AgentId,
 } from '@happier-dev/agents';
+import {
+    installProviderCliForRuntime,
+    resolvePlatformFromNodePlatform,
+    resolveProviderCliCommandForRuntime,
+    type InstallProviderCliResult,
+    type ProviderCliCommandResolution,
+    type ProviderCliRuntimeDescriptor,
+} from '@happier-dev/cli-common/providers';
 
 import type { CommandContext } from '@/cli/commandRegistry';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { resolveMergedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';
+import type { ResolvedContributionRegistry, ResolvedProviderContribution } from '@/extensions/registry/types';
 import { isInteractiveTerminal, promptInput } from '@/terminal/prompts/promptInput';
-import type { invokeProviderCliInstall as invokeProviderCliInstallDefault } from '@/runtime/managedTools/invokeProviderCliInstall';
-import { resolveProviderCliCommand, type ProviderCliCommandResolution } from '@/runtime/managedTools/providerCliResolution';
-import { AGENTS } from '@/backends/catalog';
-import { bullets, cmd, createOutputBuilder, definitionList, dim, errorFrame, fail, kv, neutral, ok, renderHelpPage, sectionTitle } from '@happier-dev/cli-common/output';
+import { bullets, cmd, createOutputBuilder, dim, errorFrame, fail, kv, neutral, ok, renderHelpPage, sectionTitle } from '@happier-dev/cli-common/output';
+import { resolveConnectTargetServiceIds } from './connect/resolveConnectTargetServiceIds';
 
 function usage(): string {
     return renderHelpPage({
@@ -31,14 +35,6 @@ function usage(): string {
             `Non-interactive defaults: ${cmd('happier providers setup --yes')} installs the recommended providers.`,
         ],
     });
-}
-
-function isAgentId(value: string): value is AgentId {
-    return (AGENT_IDS as readonly string[]).includes(value);
-}
-
-function isSetupSupportedAgentId(value: string): value is AgentId {
-    return (getProviderCliSetupSupportedIds() as readonly string[]).includes(value);
 }
 
 function readRepeatedFlagValues(argv: readonly string[], flag: string): string[] {
@@ -71,33 +67,41 @@ function parseInstallFlags(args: readonly string[]): Readonly<{ dryRun: boolean;
 }
 
 type ProviderStatusRow = Readonly<{
-    id: AgentId;
+    id: string;
     title: string;
+    runtimeSpec: ProviderCliRuntimeDescriptor;
     installed: boolean;
     resolution: ProviderCliCommandResolution | null;
 }>;
 
-function listProviderStatus(processEnv: NodeJS.ProcessEnv): ProviderStatusRow[] {
-    return (AGENT_IDS as readonly AgentId[])
-        .slice()
-        .sort((a, b) => a.localeCompare(b))
-        .map((id) => {
-            const spec = getProviderCliRuntimeSpec(id);
-            const resolution = resolveProviderCliCommand(id, { processEnv });
-            return {
-                id,
-                title: spec.title,
-                installed: resolution !== null,
-                resolution,
-            };
-        });
+function readProviderCliRuntimeDescriptor(contribution: ResolvedProviderContribution): ProviderCliRuntimeDescriptor | null {
+    if (contribution.runtimeSpec) return contribution.runtimeSpec;
+    const runtime = (contribution.definition as { providerCliRuntime?: ProviderCliRuntimeDescriptor | null }).providerCliRuntime;
+    if (!runtime || typeof runtime !== 'object') return null;
+    if (typeof runtime.id !== 'string' || runtime.id.trim().length === 0) return null;
+    if (runtime.id !== contribution.id) return null;
+    return runtime;
 }
 
-async function invokeProviderCliInstallLazy(
-    ...args: Parameters<typeof invokeProviderCliInstallDefault>
-): Promise<Awaited<ReturnType<typeof invokeProviderCliInstallDefault>>> {
-    const { invokeProviderCliInstall } = await import('@/runtime/managedTools/invokeProviderCliInstall');
-    return await invokeProviderCliInstall(...args);
+function listProviderStatus(
+    registry: Pick<ResolvedContributionRegistry, 'providers'>,
+    processEnv: NodeJS.ProcessEnv,
+): ProviderStatusRow[] {
+    return registry.providers
+        .map((contribution) => {
+            const runtimeSpec = readProviderCliRuntimeDescriptor(contribution);
+            if (!runtimeSpec) return null;
+            const resolution = resolveProviderCliCommandForRuntime(runtimeSpec, { processEnv });
+            return {
+                id: contribution.id,
+                title: runtimeSpec.title,
+                runtimeSpec,
+                installed: resolution !== null,
+                resolution,
+            } satisfies ProviderStatusRow;
+        })
+        .filter((row): row is ProviderStatusRow => row !== null)
+        .sort((a, b) => a.id.localeCompare(b.id));
 }
 
 function printHumanStatus(rows: readonly ProviderStatusRow[]): void {
@@ -119,18 +123,36 @@ function printHumanStatus(rows: readonly ProviderStatusRow[]): void {
 }
 
 async function runProvidersInstall(
-    providerId: AgentId,
+    runtimeSpec: ProviderCliRuntimeDescriptor,
     flags: Readonly<{ dryRun: boolean; skipIfInstalled: boolean }>,
-): Promise<Awaited<ReturnType<typeof invokeProviderCliInstallDefault>>> {
-    return await invokeProviderCliInstallLazy({
-        agentId: providerId,
-        params: flags,
+): Promise<InstallProviderCliResult> {
+    const platform = resolvePlatformFromNodePlatform(process.platform);
+    if (!platform) {
+        return {
+            ok: false,
+            errorCode: 'no-recipe',
+            errorMessage: `Unsupported platform: ${process.platform}`,
+            plan: null,
+            logPath: null,
+        };
+    }
+    return await installProviderCliForRuntime({
+        runtimeSpec,
+        platform,
         env: process.env,
-        nodePlatform: process.platform,
+        dryRun: flags.dryRun,
+        skipIfInstalled: flags.skipIfInstalled,
+        allowVendorRecipeExecution: !flags.dryRun,
     });
 }
 
-async function resolveProvidersSetupSelection(args: readonly string[]): Promise<AgentId[]> {
+function isSetupSupportedProviderRow(row: ProviderStatusRow): boolean {
+    return row.runtimeSpec.manualInstallKind !== 'none';
+}
+
+async function resolveProvidersSetupSelection(args: readonly string[], rows: readonly ProviderStatusRow[]): Promise<string[]> {
+    const supportedRows = rows.filter(isSetupSupportedProviderRow);
+    const supportedById = new Map(supportedRows.map((row) => [row.id, row] as const));
     const explicit = readRepeatedFlagValues(args, '--provider');
     const csv = (() => {
         const raw = readSingleFlagValue(args, '--providers');
@@ -142,32 +164,32 @@ async function resolveProvidersSetupSelection(args: readonly string[]): Promise<
     })();
     const combined = [...explicit, ...csv];
     if (combined.length > 0) {
-        const invalid = combined.filter((value) => !isSetupSupportedAgentId(value));
+        const invalid = combined.filter((value) => !supportedById.has(value));
         if (invalid.length > 0) {
             throw new Error(`Unsupported provider id(s) for setup: ${invalid.join(', ')}`);
         }
-        return combined as AgentId[];
+        return combined;
     }
 
     if (!isInteractiveTerminal()) {
         if (!args.includes('--yes')) {
             throw new Error('Non-interactive mode: pass one or more --provider <id> flags (or --yes to install the recommended defaults).');
         }
-        return [...getProviderCliSetupRecommendedIds()];
+        return getProviderCliSetupRecommendedIds().filter((id) => supportedById.has(id));
     }
 
-    const rows = listProviderStatus(process.env);
-    const supported = new Set(getProviderCliSetupSupportedIds());
-    const recommended = rows.filter((row) => supported.has(row.id) && !row.installed).map((row) => row.id);
+    const recommended = getProviderCliSetupRecommendedIds().filter(
+        (id) => supportedById.has(id) && !supportedById.get(id)?.installed,
+    );
     const hint = recommended.length > 0 ? ` (suggested: ${recommended.join(', ')})` : '';
     const raw = (await promptInput(`Providers to install (comma-separated ids)${hint}: `)).trim();
     if (!raw) return [];
     const ids = raw.split(',').map((value) => value.trim()).filter(Boolean);
-    const invalid = ids.filter((value) => !isSetupSupportedAgentId(value));
+    const invalid = ids.filter((value) => !supportedById.has(value));
     if (invalid.length > 0) {
         throw new Error(`Unsupported provider id(s) for setup: ${invalid.join(', ')}`);
     }
-    return ids as AgentId[];
+    return ids;
 }
 
 export async function handleProvidersCommand(args: string[]): Promise<void> {
@@ -187,14 +209,23 @@ export async function handleProvidersCommand(args: string[]): Promise<void> {
         return;
     }
 
+    const needsProviderRegistry =
+        subcommand === 'list'
+        || subcommand === 'status'
+        || subcommand === 'install'
+        || subcommand === 'setup';
+    const providerRows = needsProviderRegistry
+        ? listProviderStatus(await resolveMergedContributionRegistry(), process.env)
+        : [];
+    const providerRowsById = new Map(providerRows.map((row) => [row.id, row] as const));
+
     if (subcommand === 'list' || subcommand === 'status') {
-        const rows = listProviderStatus(process.env);
         if (json) {
             printJsonEnvelope({
                 ok: true,
                 kind: subcommand === 'list' ? 'providers_list' : 'providers_status',
                 data: {
-                    providers: rows.map((row) => ({
+                    providers: providerRows.map((row) => ({
                         id: row.id,
                         title: row.title,
                         installed: row.installed,
@@ -205,7 +236,7 @@ export async function handleProvidersCommand(args: string[]): Promise<void> {
             });
             return;
         }
-        printHumanStatus(rows);
+        printHumanStatus(providerRows);
         return;
     }
 
@@ -215,11 +246,12 @@ export async function handleProvidersCommand(args: string[]): Promise<void> {
             console.log(usage());
             return;
         }
-        if (!isAgentId(providerIdRaw)) {
+        const providerRow = providerRowsById.get(providerIdRaw);
+        if (!providerRow) {
             throw new Error(`Unknown provider id: ${providerIdRaw}`);
         }
         const flags = parseInstallFlags(args.slice(2));
-        const result = await runProvidersInstall(providerIdRaw, flags);
+        const result = await runProvidersInstall(providerRow.runtimeSpec, flags);
         if (json) {
             if (result.ok) {
                 printJsonEnvelope(
@@ -258,14 +290,13 @@ export async function handleProvidersCommand(args: string[]): Promise<void> {
             return;
         }
 
-        const runtimeSpec = getProviderCliRuntimeSpec(providerIdRaw);
         const out = createOutputBuilder();
         if (flags.dryRun) {
-            out.line(`Dry run: would install ${runtimeSpec.title} via ${result.plan.installMode}.`);
+            out.line(`Dry run: would install ${providerRow.title} via ${result.plan.installMode}.`);
         } else if (result.alreadyInstalled) {
-            out.line(ok(`${runtimeSpec.title} is already installed.`));
+            out.line(ok(`${providerRow.title} is already installed.`));
         } else {
-            out.line(ok(`Installed ${runtimeSpec.title}.`));
+            out.line(ok(`Installed ${providerRow.title}.`));
         }
         if (result.logPath) out.line(`  ${kv('Install log:', result.logPath)}`);
         console.log(out.render());
@@ -274,8 +305,8 @@ export async function handleProvidersCommand(args: string[]): Promise<void> {
 
     if (subcommand === 'setup') {
         const flags = parseInstallFlags(args.slice(1));
-        const providers = await resolveProvidersSetupSelection(args.slice(1));
-        if (providers.length === 0) {
+        const providerIds = await resolveProvidersSetupSelection(args.slice(1), providerRows);
+        if (providerIds.length === 0) {
             if (json) {
                 printJsonEnvelope({ ok: true, kind, data: { providers: [] } });
                 return;
@@ -286,9 +317,13 @@ export async function handleProvidersCommand(args: string[]): Promise<void> {
 
         const results = [];
         let allOk = true;
-        for (const providerId of providers) {
-            const result = await runProvidersInstall(providerId, flags);
-            results.push({ providerId, result });
+        for (const providerId of providerIds) {
+            const providerRow = providerRowsById.get(providerId);
+            if (!providerRow) {
+                throw new Error(`Unknown provider id: ${providerId}`);
+            }
+            const result = await runProvidersInstall(providerRow.runtimeSpec, flags);
+            results.push({ providerId, title: providerRow.title, result });
             if (!result.ok) allOk = false;
         }
 
@@ -337,13 +372,12 @@ export async function handleProvidersCommand(args: string[]): Promise<void> {
         for (const entry of results) {
             const out = createOutputBuilder();
             if (entry.result.ok) {
-                const runtimeSpec = getProviderCliRuntimeSpec(entry.providerId);
                 if (flags.dryRun) {
-                    out.line(`Dry run: would install ${runtimeSpec.title} via ${entry.result.plan.installMode}.`);
+                    out.line(`Dry run: would install ${entry.title} via ${entry.result.plan.installMode}.`);
                 } else if (entry.result.alreadyInstalled) {
-                    out.line(ok(`${runtimeSpec.title} is already installed.`));
+                    out.line(ok(`${entry.title} is already installed.`));
                 } else {
-                    out.line(ok(`Installed ${runtimeSpec.title}.`));
+                    out.line(ok(`Installed ${entry.title}.`));
                 }
                 if (entry.result.logPath) out.line(`  ${kv('Install log:', entry.result.logPath)}`);
                 console.log(out.render());
@@ -356,13 +390,7 @@ export async function handleProvidersCommand(args: string[]): Promise<void> {
         }
 
         if (!json && !flags.dryRun) {
-            const connectable = providers.filter((id) => {
-                const entry = (AGENTS as Partial<Record<string, unknown>>)[id];
-                const getCloudConnectTarget = entry && typeof entry === 'object' && !Array.isArray(entry)
-                    ? (entry as { getCloudConnectTarget?: unknown }).getCloudConnectTarget
-                    : undefined;
-                return typeof getCloudConnectTarget === 'function';
-            });
+            const connectable = providerIds.filter((id) => resolveConnectTargetServiceIds(id).length > 0);
             if (connectable.length > 0) {
                 const out = createOutputBuilder();
                 out.blank();

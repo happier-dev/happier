@@ -23,12 +23,30 @@ export type ProviderSessionControlAdapter = Readonly<{
   }>) => boolean;
 }>;
 
-const PROVIDER_SESSION_CONTROL_ADAPTERS: Readonly<Partial<Record<AgentId, ProviderSessionControlAdapter>>> = Object.freeze({
+export const PROVIDER_SESSION_CONTROL_ADAPTER_PROVIDER_IDS = [
+  'codex',
+  'opencode',
+  'pi',
+] as const satisfies readonly AgentId[];
+
+type SupportedProviderSessionControlAdapterProviderId =
+  (typeof PROVIDER_SESSION_CONTROL_ADAPTER_PROVIDER_IDS)[number];
+
+const PROVIDER_SESSION_CONTROL_ADAPTERS = Object.freeze({
   codex: CODEX_SESSION_CONTROL_ADAPTER,
   opencode: OPENCODE_SESSION_CONTROL_ADAPTER,
   pi: PI_SESSION_CONTROL_ADAPTER,
-});
+} satisfies Readonly<Record<SupportedProviderSessionControlAdapterProviderId, ProviderSessionControlAdapter>>);
+
+function isSupportedProviderSessionControlAdapterProviderId(
+  agentId: AgentId,
+): agentId is SupportedProviderSessionControlAdapterProviderId {
+  return (PROVIDER_SESSION_CONTROL_ADAPTER_PROVIDER_IDS as readonly string[]).includes(agentId);
+}
 
 export function getProviderSessionControlAdapter(agentId: AgentId): ProviderSessionControlAdapter | null {
-  return PROVIDER_SESSION_CONTROL_ADAPTERS[agentId] ?? null;
+  if (!isSupportedProviderSessionControlAdapterProviderId(agentId)) {
+    return null;
+  }
+  return PROVIDER_SESSION_CONTROL_ADAPTERS[agentId];
 }

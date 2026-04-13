@@ -2,6 +2,7 @@ import React from 'react';
 
 import type { Credentials } from '@/persistence';
 import type { PermissionMode } from '@/api/types';
+import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { initialMachineMetadata } from '@/daemon/startDaemon';
 import { formatProviderPromptErrorMessage } from '@/agent/runtime/formatProviderPromptErrorMessage';
@@ -10,7 +11,7 @@ import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 
 import { CatalogDefinedAcpTerminalDisplay } from '../ui/CatalogDefinedAcpTerminalDisplay';
 import { materializeConfiguredAcpEnvironment } from './materializeConfiguredAcpEnvironment';
-import { resolveConfiguredAcpBackendFromAccountSettings } from './resolveConfiguredAcpBackendFromAccountSettings';
+import { resolveConfiguredAcpBackendFromAccountSettingsOrPlugins } from './resolveConfiguredAcpBackendFromAccountSettings';
 import { resolveConfiguredAcpBackendStartupOverrides } from './resolveConfiguredAcpBackendStartupOverrides';
 import { createConfiguredAcpRuntime } from './createConfiguredAcpRuntime';
 import { buildConfiguredAcpBackendSessionMetadata } from './buildConfiguredAcpBackendSessionMetadata';
@@ -27,7 +28,11 @@ export async function runConfiguredAcpBackend(
     throw new Error('Configured ACP backends require account settings to be loaded');
   }
 
-  const backend = resolveConfiguredAcpBackendFromAccountSettings(accountSettings, opts.configuredAcpBackendId);
+  const backend = await resolveConfiguredAcpBackendFromAccountSettingsOrPlugins({
+    settings: accountSettings,
+    backendId: opts.configuredAcpBackendId,
+    happyHomeDir: configuration.happyHomeDir,
+  });
   if (!backend) {
     throw new Error(`Configured ACP backend not found: ${opts.configuredAcpBackendId}`);
   }

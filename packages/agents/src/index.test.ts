@@ -5,6 +5,14 @@ import {
   isClaudeLocalPermissionBridgeAgentStateRequest,
   getProviderCliSetupRecommendedIds,
   getProviderCliSetupSupportedIds,
+  getAllProviderDefinitions,
+  getAllProviderDefinitionContracts,
+  getAllBackendDefinitions,
+  getAllBackendDefinitionContracts,
+  getProviderDefinition,
+  getProviderDefinitionContract,
+  getBackendDefinition,
+  getBackendDefinitionContract,
 } from './index.js';
 import {
   CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE as CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE_FROM_CLAUDE_INDEX,
@@ -33,5 +41,16 @@ describe('agents package exports', () => {
   it('re-exports the provider setup helper lists from the package root', () => {
     expect(getProviderCliSetupSupportedIds()).toEqual(getProviderCliSetupSupportedIdsFromProviderRuntime());
     expect(getProviderCliSetupRecommendedIds()).toEqual(getProviderCliSetupRecommendedIdsFromProviderRuntime());
+  });
+
+  it('re-exports the canonical provider and backend definition registry helpers from the package root', () => {
+    expect(typeof getAllProviderDefinitions).toBe('function');
+    expect(typeof getAllProviderDefinitionContracts).toBe('function');
+    expect(typeof getAllBackendDefinitions).toBe('function');
+    expect(typeof getAllBackendDefinitionContracts).toBe('function');
+    expect(typeof getProviderDefinition).toBe('function');
+    expect(typeof getProviderDefinitionContract).toBe('function');
+    expect(typeof getBackendDefinition).toBe('function');
+    expect(typeof getBackendDefinitionContract).toBe('function');
   });
 });

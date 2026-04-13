@@ -111,7 +111,7 @@ export async function probeAgentConfigOptionsBestEffort(params: {
 }): Promise<ProbedAgentConfigOptionsResult> {
   const nowMs = Date.now();
   const cwd = typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : process.cwd();
-  const probeVariant = resolveAgentProbeVariant({
+  const probeVariant = await resolveAgentProbeVariant({
     agentId: params.agentId,
     backendTarget: params.backendTarget,
     accountSettings: params.accountSettings,

@@ -157,4 +157,11 @@ describe('protocol package root exports', () => {
         expect(typeof (protocol as any).buildBackendTargetKey).toBe('function');
         expect((protocol as any).buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'review' })).toBe('acpBackend:review');
     });
+
+    it('exports the supported v1 hook handler target contract', () => {
+        expect(Array.isArray(protocol.HookHandlerTargetsV1)).toBe(true);
+        expect(protocol.HookHandlerTargetsV1).toEqual(['plugin']);
+        expect(typeof (protocol as any).HookHandlerTargetV1Schema?.safeParse).toBe('function');
+        expect(typeof protocol.isHookHandlerTargetV1).toBe('function');
+    });
 });

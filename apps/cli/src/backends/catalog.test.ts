@@ -7,8 +7,12 @@ import {
   AGENTS,
   getAcpForkContinuationHandler,
   getDirectSessionProviderOps,
+  resolveBackendExecutionSurfaces,
+  normalizeSessionControlPermissionModeForBackendTarget,
   getProviderAttachOps,
   getProviderNativeForkHandler,
+  getSessionHandoffProviderOps,
+  getTerminalRuntimeOps,
   getVendorResumeSupport,
   requireCatalogEntry,
 } from './catalog';
@@ -140,15 +144,82 @@ describe('AGENTS', () => {
     await expect(getProviderAttachOps('claude')).resolves.toBeNull();
   });
 
+  it('loads terminal-runtime ops through backend catalog hooks only for supporting providers', async () => {
+    await expect(getTerminalRuntimeOps('codex')).resolves.toMatchObject({
+      launch: expect.any(Function),
+      bindTranscript: expect.any(Function),
+    });
+    await expect(getTerminalRuntimeOps('ohMyPi')).resolves.toMatchObject({
+      bindTranscript: expect.any(Function),
+    });
+    await expect(getTerminalRuntimeOps('claude')).resolves.toMatchObject({
+      launch: expect.any(Function),
+    });
+  });
+
+  it('resolves built-in backend execution surfaces through the existing backend catalog hooks', async () => {
+    const surfaces = await resolveBackendExecutionSurfaces('codex');
+
+    expect(surfaces.terminalRuntime).toMatchObject({
+      launch: expect.any(Function),
+      bindTranscript: expect.any(Function),
+    });
+    expect(surfaces.directSessions).toMatchObject({
+      validateSource: expect.any(Function),
+      listCandidates: expect.any(Function),
+      getActivity: expect.any(Function),
+      pageTranscript: expect.any(Function),
+      readAfterTranscript: expect.any(Function),
+      resolveTakeoverSpawnOptions: expect.any(Function),
+    });
+    expect(surfaces.attach).toBeNull();
+    expect(surfaces.sessionHandoff).toMatchObject({
+      exportBundle: expect.any(Function),
+      importBundle: expect.any(Function),
+    });
+  });
+
   it('loads provider-native fork handlers through backend catalog hooks only for supporting providers', async () => {
     await expect(getProviderNativeForkHandler('codex')).resolves.toBeTypeOf('function');
     await expect(getProviderNativeForkHandler('opencode')).resolves.toBeTypeOf('function');
     await expect(getProviderNativeForkHandler('claude')).resolves.toBeNull();
   });
 
+  it('loads session-handoff provider ops through backend catalog hooks only for supporting providers', async () => {
+    await expect(getSessionHandoffProviderOps('claude')).resolves.toMatchObject({
+      exportBundle: expect.any(Function),
+      importBundle: expect.any(Function),
+    });
+    await expect(getSessionHandoffProviderOps('codex')).resolves.toMatchObject({
+      exportBundle: expect.any(Function),
+      importBundle: expect.any(Function),
+    });
+    await expect(getSessionHandoffProviderOps('opencode')).resolves.toMatchObject({
+      exportBundle: expect.any(Function),
+      importBundle: expect.any(Function),
+    });
+    await expect(getSessionHandoffProviderOps('ohMyPi')).resolves.toBeNull();
+  });
+
   it('loads ACP fork continuation handlers through backend catalog hooks only for supporting providers', async () => {
     await expect(getAcpForkContinuationHandler('codex')).resolves.toBeTypeOf('function');
     await expect(getAcpForkContinuationHandler('opencode')).resolves.toBeTypeOf('function');
     await expect(getAcpForkContinuationHandler('claude')).resolves.toBeNull();
+  });
+
+  it('normalizes session-control permission modes through provider-owned catalog seams', () => {
+    expect(
+      normalizeSessionControlPermissionModeForBackendTarget({
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        permissionMode: 'safe-yolo',
+      }),
+    ).toBe('acceptEdits');
+
+    expect(
+      normalizeSessionControlPermissionModeForBackendTarget({
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        permissionMode: 'safe-yolo',
+      }),
+    ).toBe('safe-yolo');
   });
 });

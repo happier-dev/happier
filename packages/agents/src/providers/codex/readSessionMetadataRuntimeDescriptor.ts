@@ -1,7 +1,7 @@
 import { readAgentRuntimeDescriptorV1ForProvider } from '@happier-dev/protocol';
 
 import { normalizeCodexBackendMode } from '../../providerSettings/definitions/codex.js';
-import { readCodexRuntimeDescriptorProviderExtra } from '../../sessionControls/codexRuntimeDescriptorExtra.js';
+import { readCodexRuntimeDescriptorProviderExtra } from './runtimeDescriptorExtra.js';
 import {
   asRecord,
   normalizeCodexConnectedServiceFields,

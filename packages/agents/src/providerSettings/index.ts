@@ -1,4 +1,6 @@
 export type {
+  ProviderSettingsBehavior,
+  ProviderSettingsDescriptor,
   ProviderSettingsDefinition,
   ProviderSettingsBuildMessageMetaExtras,
   ProviderSettingsResolveSpawnExtras,

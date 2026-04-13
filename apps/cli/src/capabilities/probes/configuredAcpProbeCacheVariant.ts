@@ -2,8 +2,9 @@ import { createHash } from 'node:crypto';
 
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
-import { resolveConfiguredAcpBackendFromAccountSettings } from '@/agent/acp/catalog/configured/resolveConfiguredAcpBackendFromAccountSettings';
+import { resolveConfiguredAcpBackendFromAccountSettingsOrPlugins } from '@/agent/acp/catalog/configured/resolveConfiguredAcpBackendFromAccountSettings';
 import type { CatalogAgentId } from '@/backends/types';
+import { isConfiguredAcpProbeTarget } from './isConfiguredAcpProbeTarget';
 
 function sortJsonValue(value: unknown): unknown {
   if (Array.isArray(value)) {
@@ -19,12 +20,13 @@ function sortJsonValue(value: unknown): unknown {
   return value;
 }
 
-export function resolveConfiguredAcpProbeCacheVariant(params: Readonly<{
+export async function resolveConfiguredAcpProbeCacheVariant(params: Readonly<{
   agentId: CatalogAgentId;
   backendTarget?: BackendTargetRefV1;
   accountSettings?: Readonly<Record<string, unknown>> | null;
-}>): string | null {
-  if (params.agentId !== 'customAcp' || params.backendTarget?.kind !== 'configuredAcpBackend') {
+  happyHomeDir?: string;
+}>): Promise<string | null> {
+  if (!isConfiguredAcpProbeTarget(params)) {
     return null;
   }
 
@@ -32,12 +34,15 @@ export function resolveConfiguredAcpProbeCacheVariant(params: Readonly<{
   if (!backendId) {
     return 'configuredAcp:missing-backend-id';
   }
-  if (!params.accountSettings) {
-    return `configuredAcp:${backendId}:missing-account-settings`;
-  }
-
-  const backend = resolveConfiguredAcpBackendFromAccountSettings(params.accountSettings, backendId);
+  const backend = await resolveConfiguredAcpBackendFromAccountSettingsOrPlugins({
+    settings: params.accountSettings ?? {},
+    backendId,
+    happyHomeDir: params.happyHomeDir,
+  });
   if (!backend) {
+    if (!params.accountSettings) {
+      return `configuredAcp:${backendId}:missing-account-settings`;
+    }
     return `configuredAcp:${backendId}:missing-backend`;
   }
 

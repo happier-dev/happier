@@ -19,6 +19,49 @@ describe('isAcpForkEligibleForProvider', () => {
     ).toBe(true);
   });
 
+  it('preserves legacy codexRuntimeDescriptorV1 ACP compatibility for codex', () => {
+    expect(
+      isAcpForkEligibleForProvider({
+        providerId: 'codex',
+        metadata: {
+          codexRuntimeDescriptorV1: {
+            v: 1,
+            backendMode: 'acp',
+          },
+          codexSessionId: 'codex_parent',
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it('preserves legacy affinity.backendMode ACP compatibility for codex', () => {
+    expect(
+      isAcpForkEligibleForProvider({
+        providerId: 'codex',
+        metadata: {
+          affinity: {
+            backendMode: 'acp',
+          },
+          codexSessionId: 'codex_parent',
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it('preserves nested directSessionV1.codexBackendMode ACP compatibility for codex', () => {
+    expect(
+      isAcpForkEligibleForProvider({
+        providerId: 'codex',
+        metadata: {
+          directSessionV1: {
+            codexBackendMode: 'acp',
+          },
+          codexSessionId: 'codex_parent',
+        },
+      }),
+    ).toBe(true);
+  });
+
   it('does not treat stale ACP breadcrumbs as eligible when codex runtime metadata proves a non-ACP backend', () => {
     expect(
       isAcpForkEligibleForProvider({
@@ -42,6 +85,23 @@ describe('isAcpForkEligibleForProvider', () => {
         providerId: 'opencode',
         metadata: {
           acpTransportV1: { v: 1, provider: 'opencode' },
+          opencodeBackendMode: 'server',
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it('falls back to legacy ACP breadcrumbs when runtime metadata omits backendMode', () => {
+    expect(
+      isAcpForkEligibleForProvider({
+        providerId: 'opencode',
+        metadata: {
+          acpTransportV1: { v: 1, provider: 'opencode' },
+          agentRuntimeDescriptorV1: {
+            v: 1,
+            providerId: 'opencode',
+            provider: { vendorSessionId: 'opencode_parent' },
+          },
           opencodeBackendMode: 'server',
         },
       }),

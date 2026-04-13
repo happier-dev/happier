@@ -29,6 +29,14 @@ describe('readBackendCliSourcePreference', () => {
       }),
     } as NodeJS.ProcessEnv)).toBe('managed-first');
   });
+
+  it('accepts additive v2 backend target keys from the env map', () => {
+    expect(readBackendCliSourcePreference('codex', {
+      HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON: JSON.stringify({
+        'backend:codex': 'managed-first',
+      }),
+    } as NodeJS.ProcessEnv)).toBe('managed-first');
+  });
 });
 
 describe('resolveProviderCliCommand', () => {

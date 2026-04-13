@@ -3,12 +3,16 @@ import { AGENTS_CORE, hasBuiltInAcpConfig, type AgentId } from '@happier-dev/age
 import type { AgentCatalogEntry } from '@/backends/types';
 
 import { createCatalogDefinedCliAuthSpec } from './auth/createCatalogDefinedCliAuthSpec';
-import { createCatalogDefinedAcpBackend } from './createCatalogDefinedAcpBackend';
 import { createCatalogDefinedCliDetect } from './createCatalogDefinedCliDetect';
 
 type CatalogDefinedAcpEntryOverrides = Readonly<{
   getDirectSessionProviderOps?: AgentCatalogEntry['getDirectSessionProviderOps'];
   getConnectedServicesSpawnMaterializer?: AgentCatalogEntry['getConnectedServicesSpawnMaterializer'];
+  getProviderAttachOps?: AgentCatalogEntry['getProviderAttachOps'];
+  getTerminalRuntimeOps?: AgentCatalogEntry['getTerminalRuntimeOps'];
+  getSessionHandoffProviderOps?: AgentCatalogEntry['getSessionHandoffProviderOps'];
+  normalizeSessionControlPermissionMode?: AgentCatalogEntry['normalizeSessionControlPermissionMode'];
+  getPreflightSessionControlsProbeAdapter?: AgentCatalogEntry['getPreflightSessionControlsProbeAdapter'];
 }>;
 
 export function createCatalogDefinedAcpEntry(
@@ -38,9 +42,23 @@ export function createCatalogDefinedAcpEntry(
     ...(overrides.getConnectedServicesSpawnMaterializer
       ? { getConnectedServicesSpawnMaterializer: overrides.getConnectedServicesSpawnMaterializer }
       : {}),
+    ...(overrides.getProviderAttachOps ? { getProviderAttachOps: overrides.getProviderAttachOps } : {}),
+    ...(overrides.getTerminalRuntimeOps
+      ? { getTerminalRuntimeOps: overrides.getTerminalRuntimeOps }
+      : {}),
+    ...(overrides.getSessionHandoffProviderOps
+      ? { getSessionHandoffProviderOps: overrides.getSessionHandoffProviderOps }
+      : {}),
+    ...(overrides.normalizeSessionControlPermissionMode
+      ? { normalizeSessionControlPermissionMode: overrides.normalizeSessionControlPermissionMode }
+      : {}),
+    ...(overrides.getPreflightSessionControlsProbeAdapter
+      ? { getPreflightSessionControlsProbeAdapter: overrides.getPreflightSessionControlsProbeAdapter }
+      : {}),
     vendorResumeSupport: core.resume.vendorResume,
     getAcpBackendFactory: async () => {
-      return (opts) => ({ backend: createCatalogDefinedAcpBackend(agentId, opts as never) });
+      const { createCatalogDefinedAcpBackend } = await import('./createCatalogDefinedAcpBackend');
+      return (opts) => ({ backend: createCatalogDefinedAcpBackend(agentId, opts) });
     },
   };
 }

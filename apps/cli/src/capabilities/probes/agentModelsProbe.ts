@@ -11,9 +11,9 @@ import { getAgentModelConfig, getAgentStaticModels } from '@happier-dev/agents';
 import { AsyncTtlCache, type BackendTargetRefV1 } from '@happier-dev/protocol';
 import type { Credentials } from '@/persistence';
 import { validateCatalogAcpProbeSpawn } from './validateCatalogAcpProbeSpawn';
-import { createConfiguredAcpProbeBackend } from './createConfiguredAcpProbeBackend';
 import { buildAgentProbeCacheKey } from './buildAgentProbeCacheKey';
 import { resolveAgentProbeVariant } from './resolveAgentProbeVariant';
+import { probeConfiguredAcpBackend } from './probeConfiguredAcpBackend';
 import { spawn } from 'node:child_process';
 import { z } from 'zod';
 
@@ -395,7 +395,7 @@ export async function probeAgentModelsBestEffort(params: {
 }): Promise<ProbedAgentModelsResult> {
   const nowMs = Date.now();
   const cwd = typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : process.cwd();
-  const probeVariant = resolveAgentProbeVariant({
+  const probeVariant = await resolveAgentProbeVariant({
     agentId: params.agentId,
     backendTarget: params.backendTarget,
     accountSettings: params.accountSettings,
@@ -425,17 +425,17 @@ export async function probeAgentModelsBestEffort(params: {
 
     const timeoutMs = typeof params.timeoutMs === 'number' ? params.timeoutMs : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
 
-    let configuredBackend: AgentBackend | null = null;
     try {
-      configuredBackend = await createConfiguredAcpProbeBackend({
+      const configuredAcpProbe = await probeConfiguredAcpBackend({
         agentId: params.agentId,
         backendTarget: params.backendTarget,
         cwd,
         accountSettings: params.accountSettings,
         credentials: params.credentials,
+        onBackend: async (backend) => await probeModelsFromAcpBackend({ backend, timeoutMs }).catch(() => null),
       });
-      if (configuredBackend) {
-        const models = await probeModelsFromAcpBackend({ backend: configuredBackend, timeoutMs }).catch(() => null);
+      if (configuredAcpProbe.kind === 'present') {
+        const models = configuredAcpProbe.result;
         if (models) {
           const res: ProbedAgentModelsResult = { ...fallback, availableModels: models, source: 'dynamic' };
           agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
@@ -444,106 +444,108 @@ export async function probeAgentModelsBestEffort(params: {
         agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
         return fallback;
       }
-    } catch {
-      agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
-      return fallback;
-    } finally {
-      if (configuredBackend) {
-        await configuredBackend.dispose().catch(() => {});
+
+      const getPreflightSessionControlsProbeAdapter = entry?.getPreflightSessionControlsProbeAdapter;
+      const preflightModelsAdapter = getPreflightSessionControlsProbeAdapter
+        ? await getPreflightSessionControlsProbeAdapter().catch(() => null)
+        : null;
+      const probeModelsRaw = preflightModelsAdapter?.probeModelsRaw;
+      if (probeModelsRaw) {
+        const probePreflightModelsOnce = async (): Promise<ProbedAgentModel[] | null> => {
+          const modelsRaw = await probeModelsRaw({
+            backendTarget: params.backendTarget,
+            cwd,
+            timeoutMs,
+            accountSettings: params.accountSettings ?? null,
+          }).catch(() => null);
+          return normalizeDynamicModels(modelsRaw);
+        };
+
+        let models = await probePreflightModelsOnce();
+        // If the provider marks the preflight probe as authoritative, retry once immediately to
+        // avoid sticky "static fallback" UI states that require an explicit user refresh.
+        if (!models && preflightModelsAdapter.failureCacheStrategy === 'retry') {
+          models = await probePreflightModelsOnce();
+        }
+        if (models) {
+          const res: ProbedAgentModelsResult = { ...fallback, availableModels: models, source: 'dynamic' };
+          agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
+          return res;
+        }
+        if (preflightModelsAdapter.failureCacheStrategy === 'retry') {
+          // For providers where this probe is the primary/authoritative source (e.g. Codex app-server),
+          // cache an error so subsequent calls retry instead of freezing the static fallback.
+          agentModelsProbeCache.setError(cacheKey, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+          return fallback;
+        }
       }
-    }
 
-    const preflightModelsAdapter = entry?.getPreflightSessionControlsProbeAdapter
-      ? await entry.getPreflightSessionControlsProbeAdapter().catch(() => null)
-      : null;
-    if (preflightModelsAdapter?.probeModelsRaw) {
-      const probePreflightModelsOnce = async (): Promise<ProbedAgentModel[] | null> => {
-        const modelsRaw = await preflightModelsAdapter.probeModelsRaw!({
-          backendTarget: params.backendTarget,
-          cwd,
-          timeoutMs,
-          accountSettings: params.accountSettings ?? null,
-        }).catch(() => null);
-        return normalizeDynamicModels(modelsRaw);
-      };
-
-      let models = await probePreflightModelsOnce();
-      // If the provider marks the preflight probe as authoritative, retry once immediately to
-      // avoid sticky "static fallback" UI states that require an explicit user refresh.
-      if (!models && preflightModelsAdapter.failureCacheStrategy === 'retry') {
-        models = await probePreflightModelsOnce();
+      // Prefer lightweight CLI preflight probes when the provider offers a `models` command.
+      // This avoids needing to start a full ACP session just to populate a menu.
+      const cliProbeArgs = preflightModelsAdapter?.cliModelsCommandArgs ?? null;
+      if (Array.isArray(cliProbeArgs) && cliProbeArgs.length > 0) {
+        const command =
+          resolveProviderCliCommand(params.agentId)?.command
+          ?? resolveCliPathOverride({ agentId: params.agentId })
+          ?? params.agentId;
+        const models = await probeModelsFromCliModelsCommand({ command, args: cliProbeArgs, cwd, timeoutMs }).catch(() => null);
+        if (models) {
+          const res: ProbedAgentModelsResult = { ...fallback, availableModels: models, source: 'dynamic' };
+          agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
+          return res;
+        }
       }
-      if (models) {
-        const res: ProbedAgentModelsResult = { ...fallback, availableModels: models, source: 'dynamic' };
-        agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
-        return res;
-      }
-      if (preflightModelsAdapter.failureCacheStrategy === 'retry') {
-        // For providers where this probe is the primary/authoritative source (e.g. Codex app-server),
-        // cache an error so subsequent calls retry instead of freezing the static fallback.
-        agentModelsProbeCache.setError(cacheKey, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
-        return fallback;
-      }
-    }
 
-    // Prefer lightweight CLI preflight probes when the provider offers a `models` command.
-    // This avoids needing to start a full ACP session just to populate a menu.
-    const cliProbeArgs = preflightModelsAdapter?.cliModelsCommandArgs ?? null;
-    if (Array.isArray(cliProbeArgs) && cliProbeArgs.length > 0) {
-      const command =
-        resolveProviderCliCommand(params.agentId)?.command
-        ?? resolveCliPathOverride({ agentId: params.agentId })
-        ?? params.agentId;
-      const models = await probeModelsFromCliModelsCommand({ command, args: cliProbeArgs, cwd, timeoutMs }).catch(() => null);
-      if (models) {
-        const res: ProbedAgentModelsResult = { ...fallback, availableModels: models, source: 'dynamic' };
-        agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
-        return res;
-      }
-    }
-
-    if (!entry?.getAcpBackendFactory) {
-      agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
-      return fallback;
-    }
-
-    const spawnValidation = await validateCatalogAcpProbeSpawn(params.agentId);
-    if (!spawnValidation.ok) {
-      agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
-      return fallback;
-    }
-
-    const permissionHandler: AcpPermissionHandler = {
-      handleToolCall: async () => ({ decision: 'abort' }),
-    };
-
-    let backend: AgentBackend | null = null;
-    try {
-      const created = await createCatalogAcpBackend<any>(params.agentId, {
-        cwd,
-        env: {},
-        mcpServers: {},
-        permissionHandler,
-        permissionMode: 'default',
-      });
-      backend = created.backend;
-
-      const models = await probeModelsFromAcpBackend({ backend, timeoutMs }).catch(() => null);
-      if (!models) {
+      if (!entry?.getAcpBackendFactory) {
         agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
         return fallback;
       }
 
-      const res: ProbedAgentModelsResult = { ...fallback, availableModels: models, source: 'dynamic' };
-      agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
-      return res;
+      const spawnValidation = await validateCatalogAcpProbeSpawn(params.agentId);
+      if (!spawnValidation.ok) {
+        agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+        return fallback;
+      }
+
+      const permissionHandler: AcpPermissionHandler = {
+        handleToolCall: async () => ({ decision: 'abort' }),
+      };
+
+      let backend: AgentBackend | null = null;
+      try {
+        const created = await createCatalogAcpBackend<any>(params.agentId, {
+          cwd,
+          env: {},
+          mcpServers: {},
+          permissionHandler,
+          permissionMode: 'default',
+        });
+        backend = created.backend;
+        if (!backend) {
+          agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+          return fallback;
+        }
+
+        const models = await probeModelsFromAcpBackend({ backend, timeoutMs }).catch(() => null);
+        if (!models) {
+          agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+          return fallback;
+        }
+
+        const res: ProbedAgentModelsResult = { ...fallback, availableModels: models, source: 'dynamic' };
+        agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
+        return res;
+      } catch {
+        agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+        return fallback;
+      } finally {
+        if (backend) {
+          await backend.dispose().catch(() => {});
+        }
+      }
     } catch {
       agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
       return fallback;
-    } finally {
-      if (backend) {
-        await backend.dispose().catch(() => {});
-      }
     }
   });
 }

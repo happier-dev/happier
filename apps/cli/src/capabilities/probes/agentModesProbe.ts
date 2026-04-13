@@ -7,9 +7,9 @@ import { getAgentSessionModesKind } from '@happier-dev/agents';
 import { AsyncTtlCache, type BackendTargetRefV1 } from '@happier-dev/protocol';
 import type { Credentials } from '@/persistence';
 import { validateCatalogAcpProbeSpawn } from './validateCatalogAcpProbeSpawn';
-import { createConfiguredAcpProbeBackend } from './createConfiguredAcpProbeBackend';
 import { buildAgentProbeCacheKey } from './buildAgentProbeCacheKey';
 import { resolveAgentProbeVariant } from './resolveAgentProbeVariant';
+import { probeConfiguredAcpBackend } from './probeConfiguredAcpBackend';
 import { z } from 'zod';
 
 export type ProbedAgentMode = Readonly<{ id: string; name: string; description?: string }>;
@@ -162,7 +162,7 @@ export async function probeAgentModesBestEffort(params: {
 }): Promise<ProbedAgentModesResult> {
   const nowMs = Date.now();
   const cwd = typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : process.cwd();
-  const probeVariant = resolveAgentProbeVariant({
+  const probeVariant = await resolveAgentProbeVariant({
     agentId: params.agentId,
     backendTarget: params.backendTarget,
     accountSettings: params.accountSettings,
@@ -227,17 +227,17 @@ export async function probeAgentModesBestEffort(params: {
       return fallback;
     }
 
-    let configuredBackend: AgentBackend | null = null;
     try {
-      configuredBackend = await createConfiguredAcpProbeBackend({
+      const configuredAcpProbe = await probeConfiguredAcpBackend({
         agentId: params.agentId,
         backendTarget: params.backendTarget,
         cwd,
         accountSettings: params.accountSettings,
         credentials: params.credentials,
+        onBackend: async (backend) => await probeModesFromAcpBackend({ backend, timeoutMs }).catch(() => null),
       });
-      if (configuredBackend) {
-        const modes = await probeModesFromAcpBackend({ backend: configuredBackend, timeoutMs }).catch(() => null);
+      if (configuredAcpProbe.kind === 'present') {
+        const modes = configuredAcpProbe.result;
         if (modes) {
           const res: ProbedAgentModesResult = { ...fallback, availableModes: modes, source: 'dynamic' };
           agentModesProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODES_SUCCESS_TTL_MS });
@@ -246,52 +246,52 @@ export async function probeAgentModesBestEffort(params: {
         agentModesProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODES_FAILURE_TTL_MS });
         return fallback;
       }
-    } catch {
-      agentModesProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODES_FAILURE_TTL_MS });
-      return fallback;
-    } finally {
-      if (configuredBackend) {
-        await configuredBackend.dispose().catch(() => {});
-      }
-    }
 
-    const spawnValidation = await validateCatalogAcpProbeSpawn(params.agentId);
-    if (!spawnValidation.ok) {
-      agentModesProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODES_FAILURE_TTL_MS });
-      return fallback;
-    }
-
-    const permissionHandler: AcpPermissionHandler = {
-      handleToolCall: async () => ({ decision: 'abort' }),
-    };
-
-    let backend: AgentBackend | null = null;
-    try {
-      const created = await createCatalogAcpBackend<any>(params.agentId, {
-        cwd,
-        env: {},
-        mcpServers: {},
-        permissionHandler,
-        permissionMode: 'default',
-      });
-      backend = created.backend;
-
-      const modes = await probeModesFromAcpBackend({ backend, timeoutMs }).catch(() => null);
-      if (!modes) {
+      const spawnValidation = await validateCatalogAcpProbeSpawn(params.agentId);
+      if (!spawnValidation.ok) {
         agentModesProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODES_FAILURE_TTL_MS });
         return fallback;
       }
 
-      const res: ProbedAgentModesResult = { ...fallback, availableModes: modes, source: 'dynamic' };
-      agentModesProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODES_SUCCESS_TTL_MS });
-      return res;
+      const permissionHandler: AcpPermissionHandler = {
+        handleToolCall: async () => ({ decision: 'abort' }),
+      };
+
+      let backend: AgentBackend | null = null;
+      try {
+        const created = await createCatalogAcpBackend<any>(params.agentId, {
+          cwd,
+          env: {},
+          mcpServers: {},
+          permissionHandler,
+          permissionMode: 'default',
+        });
+        backend = created.backend;
+        if (!backend) {
+          agentModesProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODES_FAILURE_TTL_MS });
+          return fallback;
+        }
+
+        const modes = await probeModesFromAcpBackend({ backend, timeoutMs }).catch(() => null);
+        if (!modes) {
+          agentModesProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODES_FAILURE_TTL_MS });
+          return fallback;
+        }
+
+        const res: ProbedAgentModesResult = { ...fallback, availableModes: modes, source: 'dynamic' };
+        agentModesProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODES_SUCCESS_TTL_MS });
+        return res;
+      } catch {
+        agentModesProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODES_FAILURE_TTL_MS });
+        return fallback;
+      } finally {
+        if (backend) {
+          await backend.dispose().catch(() => {});
+        }
+      }
     } catch {
       agentModesProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODES_FAILURE_TTL_MS });
       return fallback;
-    } finally {
-      if (backend) {
-        await backend.dispose().catch(() => {});
-      }
     }
   });
 }
