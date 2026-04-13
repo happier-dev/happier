@@ -46,6 +46,8 @@ interface MultiTextInputProps {
     onKeyPress?: OnKeyPressCallback;
     onSelectionChange?: (selection: { start: number; end: number }) => void;
     onStateChange?: (state: TextInputState) => void;
+    onFocus?: () => void;
+    onBlur?: () => void;
     submitBehavior?: MultiTextInputSubmitBehavior;
     onSubmitEditing?: () => void;
     // Web-only: file attachments via paste.
@@ -65,7 +67,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
 
     const { theme } = useUnistyles();
     // Track latest selection in a ref
-    const selectionRef = React.useRef({ start: 0, end: 0 });
+    const selectionRef = React.useRef({ start: value.length, end: value.length });
     const inputRef = React.useRef<React.ElementRef<typeof TextInput> | null>(null);
 
     const handleKeyPress = React.useCallback((e: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
@@ -156,23 +158,21 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
     React.useImperativeHandle(ref, () => ({
         setTextAndSelection: (text: string, selection: { start: number; end: number }) => {
             if (inputRef.current) {
-                // Use setNativeProps for direct manipulation
+                // Use setNativeProps for direct native manipulation when the host ref is available.
                 inputRef.current.setNativeProps({
                     text: text,
                     selection: selection
                 });
-                
-                // Update our ref
-                selectionRef.current = selection;
-                
-                // Notify through callbacks
-                onChangeText(text);
-                if (onStateChange) {
-                    onStateChange({ text, selection });
-                }
-                if (onSelectionChange) {
-                    onSelectionChange(selection);
-                }
+            }
+
+            selectionRef.current = selection;
+
+            onChangeText(text);
+            if (onStateChange) {
+                onStateChange({ text, selection });
+            }
+            if (onSelectionChange) {
+                onSelectionChange(selection);
             }
         },
         focus: () => {
@@ -219,6 +219,8 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
                 textContentType="none"
                 submitBehavior={props.submitBehavior ?? 'newline'}
                 onSubmitEditing={props.onSubmitEditing ? () => props.onSubmitEditing?.() : undefined}
+                onFocus={props.onFocus}
+                onBlur={props.onBlur}
             />
         </View>
     );

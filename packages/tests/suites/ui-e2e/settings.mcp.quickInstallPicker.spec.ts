@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
@@ -32,7 +32,13 @@ test.describe('ui e2e: MCP settings quick install and new-session picker', () =>
     let daemon: StartedDaemon | null = null;
 
     test.beforeAll(async () => {
-        test.setTimeout(900_000);
+        const uiWebEnv = {
+            ...process.env,
+            EXPO_PUBLIC_DEBUG: '1',
+            EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
+        };
+
+        test.setTimeout(resolveUiWebBeforeAllTimeoutMs(uiWebEnv));
         await mkdir(cliHomeDir, { recursive: true });
         await mkdir(codexHomeDir, { recursive: true });
         await writeFile(
@@ -62,10 +68,8 @@ test.describe('ui e2e: MCP settings quick install and new-session picker', () =>
         ui = await startUiWeb({
             testDir: suiteDir,
             env: {
-                ...process.env,
-                EXPO_PUBLIC_DEBUG: '1',
+                ...uiWebEnv,
                 EXPO_PUBLIC_HAPPY_SERVER_URL: server.baseUrl,
-                EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
             },
         });
 
@@ -159,15 +163,15 @@ test.describe('ui e2e: MCP settings quick install and new-session picker', () =>
         await enableEnhancedSessionWizardInSettings(page, uiBaseUrl);
 
         await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/mcp`);
-        await expect(page.getByTestId('settings.mcpServers.segment.configured')).toHaveCount(1, { timeout: 180_000 });
+        await expect(page.getByTestId('settings.mcpServers.segment:configured')).toHaveCount(1, { timeout: 180_000 });
         await page.getByTestId('settings.mcpServers.addServer').click();
-        await expect(page.getByTestId('mcp.server.addFlow.tab.quickInstall')).toHaveCount(1, { timeout: 60_000 });
-        await page.getByTestId('mcp.server.addFlow.tab.quickInstall').click();
+        await expect(page.getByTestId('mcp.server.addFlow.tab:quickInstall')).toHaveCount(1, { timeout: 60_000 });
+        await page.getByTestId('mcp.server.addFlow.tab:quickInstall').click();
         await page.getByTestId('mcp.server.quickInstall.preset.playwright').click();
         await page.getByTestId('mcp.server.quickInstall.install').click();
-        await expect(page.getByText('playwright', { exact: true })).toHaveCount(1, { timeout: 60_000 });
+        await expect(page.getByText('npx -y @playwright/mcp@latest', { exact: true }).last()).toBeVisible({ timeout: 60_000 });
 
-        await page.getByTestId('settings.mcpServers.segment.detected').click();
+        await page.getByRole('tab', { name: 'Detected', exact: true }).last().click();
         await expect(page.getByTestId('settings.mcpServers.detect.refresh')).toHaveCount(1, { timeout: 60_000 });
         await page.getByTestId('settings.mcpServers.detect.refresh').click();
         await expect(page.getByText('context7', { exact: true })).toHaveCount(1, { timeout: 60_000 });
@@ -176,13 +180,18 @@ test.describe('ui e2e: MCP settings quick install and new-session picker', () =>
         await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 180_000 });
 
         const mcpChip = page.getByTestId('new-session-mcp-chip');
-        await expect(mcpChip).toContainText('MCP 2', { timeout: 120_000 });
+        await expect(mcpChip).toBeVisible({ timeout: 120_000 });
         await mcpChip.click();
 
-        await expect(page.getByTestId('new-session.mcp.built-in.happier')).toHaveCount(1, { timeout: 60_000 });
-        await expect(page.getByText('playwright', { exact: true })).toHaveCount(1, { timeout: 60_000 });
+        await expect(page.getByTestId('new-session.mcp.managed-enabled')).toHaveCount(1, { timeout: 60_000 });
+        const managedEnabledSwitch = page.getByTestId('new-session.mcp.managed-enabled').getByRole('switch');
+        await expect(managedEnabledSwitch).toBeChecked({ timeout: 60_000 });
+        await expect(page.getByText('playwright', { exact: true }).last()).toBeVisible({ timeout: 60_000 });
 
         await page.getByTestId('new-session.mcp.managed-enabled').click();
-        await expect(mcpChip).toContainText('MCP 1', { timeout: 60_000 });
+        await expect(managedEnabledSwitch).not.toBeChecked({ timeout: 60_000 });
+
+        await page.getByTestId('new-session.mcp.managed-enabled').click();
+        await expect(managedEnabledSwitch).toBeChecked({ timeout: 60_000 });
     });
 });

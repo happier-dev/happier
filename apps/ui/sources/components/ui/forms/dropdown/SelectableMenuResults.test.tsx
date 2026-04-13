@@ -76,6 +76,25 @@ describe('SelectableMenuResults', () => {
         expect(screen.tree.toJSON()).toBe(null);
     });
 
+    it('prefers an explicit item testID over the generated dropdown id', async () => {
+        const { SelectableMenuResults } = await import('./SelectableMenuResults');
+
+        const screen = await renderScreen(<SelectableMenuResults
+                    categories={[
+                        { id: 'c1', title: '', items: [{ id: 'a', title: 'Alpha', testID: 'agent-input-chip-picker.option:a' } as any] },
+                    ]}
+                    selectedIndex={0}
+                    onSelectionChange={() => {}}
+                    onPressItem={() => {}}
+                    rowVariant="slim"
+                    rowKind="item"
+                    itemProps={{ density: 'compact' }}
+                />);
+
+        const item = screen.findByType('Item');
+        expect(item.props.testID).toBe('agent-input-chip-picker.option:a');
+    });
+
     it('forwards compact item props to item rows', async () => {
         const { SelectableMenuResults } = await import('./SelectableMenuResults');
 

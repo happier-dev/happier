@@ -249,6 +249,102 @@ describe('buildUsageAnalyticsViewModel', () => {
         expect(summary.busiestWindowLabel).toBe('Thu · 2 PM');
     });
 
+    it('deduplicates repeated engine label tokens when backend and provider names overlap', () => {
+        const response: UsageAnalyticsQueryResponse = {
+            v: 1,
+            totals: {
+                eventCount: 1,
+                tokens: { input: 20, output: 10, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 30 },
+                cost: { reportedUsd: 4, estimatedUsd: 3, currency: 'USD', costSource: 'provider_reported', billingContext: 'api_usage' },
+            },
+            series: [],
+            breakdowns: {
+                provider: [],
+                model: [],
+                session: [],
+                project: [],
+                workspace: [],
+                backendMode: [
+                    {
+                        key: 'codex:codex-app-server',
+                        label: 'codex:codex-app-server',
+                        eventCount: 1,
+                        tokens: { input: 20, output: 10, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 30 },
+                        cost: { reportedUsd: 4, estimatedUsd: 3, currency: 'USD' },
+                    },
+                ],
+                source: [],
+            },
+            insights: {
+                activeDays: 1,
+                longestStreakDays: 1,
+                sessionsUsed: 1,
+                messagesUsed: 1,
+                modelsTried: 1,
+                favoriteModel: undefined,
+                favoriteModelChangeCount: 0,
+                busiestMonth: undefined,
+                busiestDay: undefined,
+                busiestHour: undefined,
+            },
+            activity: {
+                calendarDays: [],
+                weekdayHourBuckets: [],
+            },
+            leaders: {
+                providers: [],
+                models: [],
+                sessions: [],
+                projects: [],
+                workspaces: [],
+                engines: [
+                    {
+                        key: 'codex:codex-app-server',
+                        label: 'codex:codex-app-server',
+                        eventCount: 1,
+                    },
+                ],
+            },
+            modelTimeline: [],
+            engineTimeline: [
+                {
+                    bucketStartMs: 1_700_000_000_000,
+                    bucketEndMs: 1_700_086_400_000,
+                    leaders: [
+                        {
+                            key: 'codex:codex-app-server',
+                            label: 'codex:codex-app-server',
+                            eventCount: 1,
+                            tokens: { input: 20, output: 10, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 30 },
+                            cost: { reportedUsd: 4, estimatedUsd: 3, currency: 'USD' },
+                        },
+                    ],
+                },
+            ],
+            messageStats: {
+                sessionCount: 1,
+                messageCount: 1,
+            },
+            costPresentation: {
+                mode: 'reported',
+                effectiveUsd: 4,
+                currency: 'USD',
+                source: 'provider_reported',
+            },
+        };
+
+        const viewModel = buildUsageAnalyticsViewModel(response, {
+            period: '30days',
+            metric: 'tokens',
+            focus: null,
+            costMode: 'auto',
+        });
+
+        expect(viewModel.breakdowns.backendModes[0]?.label).toBe('Codex App Server');
+        expect(viewModel.leaders.engines[0]?.label).toBe('Codex App Server');
+        expect(viewModel.engineTimeline[0]?.leaders[0]?.label).toBe('Codex App Server');
+    });
+
     it('falls back to derived cost presentation fields when an older server returns a partial costPresentation object', () => {
         const response: UsageAnalyticsQueryResponse = {
             v: 1,

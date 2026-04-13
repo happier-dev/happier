@@ -110,6 +110,7 @@ async function countAuthenticatedShellSurfaces(page: CreateAccountAndReachConnec
     + (await page.getByTestId('session-getting-started-kind-start_daemon').count())
     + (await page.getByTestId('session-getting-started-kind-create_session').count())
     + (await page.getByTestId('session-getting-started-kind-select_session').count())
+    + (await page.getByTestId('sessions-empty-state-open-setup').count())
     + (await page.getByTestId('main-header-start-new-session').count())
   );
 }
@@ -126,6 +127,9 @@ async function isAuthenticatedSessionHomeVisible(page: CreateAccountAndReachConn
 
   const selectSession = page.getByTestId('session-getting-started-kind-select_session');
   if (await isVisible(selectSession)) return true;
+
+  const openSetup = page.getByTestId('sessions-empty-state-open-setup');
+  if (await isVisible(openSetup)) return true;
 
   const startNewSession = page.getByTestId('main-header-start-new-session');
   if (await isVisible(startNewSession)) return true;
@@ -178,6 +182,7 @@ export async function dismissSetupWizardIfVisible(params: Readonly<{
 export async function createAccountAndReachConnectMachineState(params: Readonly<{
   page: CreateAccountAndReachConnectMachineStatePage;
   useFirstCreateButton?: boolean | undefined;
+  requirePersistedAuthCredentials?: boolean | undefined;
 }>): Promise<void> {
   const createAccount = params.page.getByTestId('welcome-create-account');
   const createButton = params.useFirstCreateButton === true ? createAccount.first() : createAccount;
@@ -226,9 +231,12 @@ export async function createAccountAndReachConnectMachineState(params: Readonly<
     .toBe(true);
 
   await dismissSetupWizardIfVisible({ page: params.page });
+  const requirePersistedAuthCredentials = params.requirePersistedAuthCredentials !== false;
+
   await expect.poll(async () => {
     if (await isVisible(createButton)) return 0;
     if (!(await isAuthenticatedSessionHomeVisible(params.page))) return 0;
+    if (!requirePersistedAuthCredentials) return 1;
     if (await hasDurableAuthenticatedSessionHomeVisible(params.page)) return 1;
     return (await hasPersistedAuthCredentials(params.page)) ? 1 : 0;
   }, { timeout: 120_000 }).toBe(1);

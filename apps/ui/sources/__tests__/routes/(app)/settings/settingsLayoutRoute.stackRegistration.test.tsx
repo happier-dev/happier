@@ -126,5 +126,6 @@ describe('SettingsLayoutRoute stack registration', () => {
         expect(screenNames).toContain('providers');
         expect(screenNames).not.toContain('providers/index');
         expect(screenNames).toContain('providers/[providerId]');
+        expect(screenNames).toContain('plugins');
     });
 });

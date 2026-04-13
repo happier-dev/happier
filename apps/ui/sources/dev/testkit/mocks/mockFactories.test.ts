@@ -466,6 +466,7 @@ describe('UI testkit mock factories', () => {
 
         expect(mockStore((state) => state.sessionMessages['session-1']?.messagesById ?? null)).toEqual({});
         expect(mockStore.getState().sessionMessages['session-1']?.messagesMap).toEqual({});
+        expect(mockStore.getState().localSettings.mobileWorkspaceExperienceV1).toBeDefined();
     });
 
     it('creates a useSetting mock from a keyed settings map with optional fallback', async () => {

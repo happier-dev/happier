@@ -22,6 +22,7 @@ import {
     stopServerReachabilitySupervisor,
     subscribeServerReachabilityState,
 } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
+import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 
 function readSessionEncryptionModeFromLocalState(sessionId: string): 'plain' | 'e2ee' | null {
     const sid = String(sessionId ?? '').trim();
@@ -429,8 +430,17 @@ class ApiSocket {
             throw new Error('SyncSocket not initialized');
         }
         const snapshot = getActiveServerSnapshot();
+        const endpointComparableKey = createServerUrlComparableKey(this.config.endpoint);
+        const activeServerComparableKey = createServerUrlComparableKey(snapshot.serverUrl);
+        const serverLookupOptions =
+            endpointComparableKey
+            && activeServerComparableKey
+            && endpointComparableKey === activeServerComparableKey
+            && snapshot.serverId
+                ? { serverId: snapshot.serverId }
+                : undefined;
 
-        const credentials = await TokenStorage.getCredentialsForServerUrl(this.config.endpoint);
+        const credentials = await TokenStorage.getCredentialsForServerUrl(this.config.endpoint, serverLookupOptions);
         if (!credentials) {
             throw new Error('No authentication credentials');
         }

@@ -7,6 +7,22 @@ describe('settingsDefaults provider plugin default guards', () => {
         vi.resetModules();
 
         vi.doMock('@/agents/providers/registry/providerSettingsRegistry', () => ({
+            PROVIDER_SETTINGS_DESCRIPTORS: [
+                {
+                    providerId: 'mock-provider',
+                    title: 'Mock provider',
+                    icon: { ionName: 'terminal-outline', color: '#000' },
+                    settings: defineSettingDefinitions({
+                        attachmentsUploadsUploadLocation: {
+                            schema: z.string(),
+                            default: 'provider-owned',
+                            description: 'Invalid provider-owned override',
+                            storageScope: 'account',
+                        },
+                    }),
+                    uiSections: [],
+                },
+            ],
             PROVIDER_SETTINGS_PLUGINS: [
                 {
                     providerId: 'mock-provider',

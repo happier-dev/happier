@@ -54,7 +54,7 @@ const stylesheet = StyleSheet.create(() => ({
     },
 }));
 
-function resolveActiveColumns(params: Readonly<{
+export function resolveItemGroupActiveColumns(params: Readonly<{
     viewportClass: ViewportClass;
     columns: number;
     collapseBelow: ViewportClass;
@@ -68,7 +68,7 @@ export const ItemGroupColumns = React.memo<ItemGroupColumnsProps>((props) => {
     const { width, height } = useWindowDimensions();
     const styles = stylesheet;
     const viewportClass = resolveViewportClass({ width, height });
-    const activeColumns = resolveActiveColumns({
+    const activeColumns = resolveItemGroupActiveColumns({
         viewportClass,
         columns: props.columns ?? 2,
         collapseBelow: props.collapseBelow ?? 'medium',

@@ -110,7 +110,7 @@ export function SelectableMenuResults(props: {
                     const isSelected = itemIndex === props.selectedIndex;
                     currentIndex++;
                     const testIdSafeItemId = String(item.id).replace(/[^a-zA-Z0-9_-]/g, '_');
-                    const optionTestID = `dropdown-option-${testIdSafeItemId}`;
+                    const optionTestID = item.testID ?? `dropdown-option-${testIdSafeItemId}`;
                     const handleOptionMouseDownCapture =
                         Platform.OS === 'web'
                             ? ((event: unknown) => {

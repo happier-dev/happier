@@ -1,7 +1,7 @@
 import type { ImageSourcePropType } from 'react-native';
-import type { UnistylesThemes } from 'react-native-unistyles';
 
 import type { AgentId } from './registryCore';
+import type { Theme } from '@/theme';
 
 import { CLAUDE_UI } from '@/agents/providers/claude/ui';
 import { CODEX_UI } from '@/agents/providers/codex/ui';
@@ -18,7 +18,7 @@ import { OH_MY_PI_UI } from '@/agents/providers/ohMyPi/ui';
 import { COPILOT_UI } from '@/agents/providers/copilot/ui';
 
 export type AgentIconSvgXmlResolver = (
-    theme: UnistylesThemes[keyof UnistylesThemes],
+    theme: Theme,
 ) => string;
 
 export type AgentUiConfig = Readonly<{
@@ -33,7 +33,7 @@ export type AgentUiConfig = Readonly<{
     /**
      * Optional tint for the icon (Codex icon is monochrome and should match text color).
      */
-    tintColor: ((theme: UnistylesThemes[keyof UnistylesThemes]) => string) | null;
+    tintColor: ((theme: Theme) => string) | null;
     /**
      * Avatar overlay sizing tweaks.
      */
@@ -69,13 +69,13 @@ export function getAgentIconSource(agentId: AgentId): ImageSourcePropType | null
 
 export function getAgentIconSvgXml(
     agentId: AgentId,
-    theme: UnistylesThemes[keyof UnistylesThemes],
+    theme: Theme,
 ): string | null {
     const resolveSvgXml = AGENTS_UI[agentId].svgIconXml;
     return resolveSvgXml ? resolveSvgXml(theme) : null;
 }
 
-export function getAgentIconTintColor(agentId: AgentId, theme: UnistylesThemes[keyof UnistylesThemes]): string | undefined {
+export function getAgentIconTintColor(agentId: AgentId, theme: Theme): string | undefined {
     const tint = AGENTS_UI[agentId].tintColor;
     if (!tint) return undefined;
     return tint(theme);

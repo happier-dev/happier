@@ -46,7 +46,7 @@ export function getModelDropdownMenuItems(params: {
         })
         : (
             <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                <ActivityIndicator />
+                <ActivityIndicator color={params.iconColor} />
             </View>
         );
 

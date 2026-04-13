@@ -19,6 +19,7 @@ import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dro
 
 export type DropdownMenuItem = Readonly<{
     id: string;
+    testID?: string;
     title: string;
     subtitle?: string;
     category?: string;
@@ -216,6 +217,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
     const selectableItems = React.useMemo((): SelectableMenuItem[] => {
         return props.items.map((item) => ({
             id: item.id,
+            testID: item.testID,
             title: item.title,
             subtitle: item.subtitle,
             category: item.category,

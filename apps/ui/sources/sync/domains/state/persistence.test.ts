@@ -649,7 +649,7 @@ describe('persistence', () => {
             expect((draft as any)?.sessionType).toBeUndefined();
         });
 
-        it('migrates legacy auggieAllowIndexing into agentNewSessionOptionStateByAgentId', () => {
+        it('migrates legacy auggieAllowIndexing into backend-target keyed new-session option state', () => {
             store.set(
                 'new-session-draft-v1',
                 JSON.stringify({
@@ -667,7 +667,7 @@ describe('persistence', () => {
             );
 
             const draft = loadNewSessionDraft();
-            expect((draft as any)?.agentNewSessionOptionStateByAgentId?.auggie?.allowIndexing).toBe(true);
+            expect((draft as any)?.backendNewSessionOptionStateByTargetKey?.['agent:auggie']?.allowIndexing).toBe(true);
         });
 
         it('clamps invalid permissionMode to default', () => {

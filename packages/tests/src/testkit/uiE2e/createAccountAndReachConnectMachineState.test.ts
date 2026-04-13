@@ -239,6 +239,21 @@ describe('createAccountAndReachConnectMachineState', () => {
     expect(page.evaluate).toHaveBeenCalledTimes(3);
   });
 
+  it('can stop at connect-machine without waiting for persisted auth credentials when requested', async () => {
+    const page = createFakePage({
+      testIdCounts: {
+        'welcome-create-account': [1, 0, 0, 0],
+        'sessions-empty-state-open-setup': [0, 1, 1, 1],
+        'setupWizard.surface': [0, 0, 0, 0],
+      },
+      evaluateResults: Array.from({ length: 128 }, () => false),
+    });
+
+    await expect(
+      createAccountAndReachConnectMachineState({ page, requirePersistedAuthCredentials: false }),
+    ).resolves.toBeUndefined();
+  });
+
   it('switches to the sessions tab when the mobile shell hides session actions off-tab', async () => {
     const page = createFakePage({
       testIdCounts: {

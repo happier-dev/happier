@@ -30,7 +30,13 @@ describe('apiSocket.request server-scoped credentials', () => {
         tokenStorageMock.getCredentials.mockReset();
         tokenStorageMock.getCredentialsForServerUrl.mockReset();
         serverRuntimeMock.generation = 1;
-        serverRuntimeMock.getActiveServerSnapshot.mockClear();
+        serverRuntimeMock.getActiveServerSnapshot.mockReset();
+        serverRuntimeMock.getActiveServerSnapshot.mockImplementation(() => ({
+            serverId: 'stack',
+            serverUrl: 'https://stack.example.test',
+            kind: 'custom',
+            generation: serverRuntimeMock.generation,
+        }));
 
         try {
             const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
@@ -89,12 +95,36 @@ describe('apiSocket.request server-scoped credentials', () => {
 
         await apiSocket.request('/v1/ping');
 
-        expect(tokenStorageMock.getCredentialsForServerUrl).toHaveBeenCalledWith('https://stack.example.test');
+        expect(tokenStorageMock.getCredentialsForServerUrl).toHaveBeenCalledWith('https://stack.example.test', {
+            serverId: 'stack',
+        });
         const pingCalls = fetchMock.mock.calls.filter(([input]) => String(input).includes('/v1/ping'));
         expect(pingCalls).toHaveLength(1);
         const init = pingCalls[0]?.[1] as RequestInit | undefined;
         expect(new Headers(init?.headers).get('authorization')).toBe('Bearer scoped-token');
     }, longTimeoutMs);
+
+    it('does not force the active serverId when the configured endpoint is a different origin', async () => {
+        const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response('ok', { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+        serverRuntimeMock.getActiveServerSnapshot.mockReturnValue({
+            serverId: 'server-a',
+            serverUrl: 'https://server-a.example.test',
+            kind: 'custom',
+            generation: 1,
+        });
+        tokenStorageMock.getCredentialsForServerUrl.mockResolvedValue({ token: 'scoped-token', secret: 's' });
+
+        const { apiSocket } = await import('./apiSocket');
+        (apiSocket as any).config = { endpoint: 'https://server-b.example.test', token: 'unused' };
+
+        await expect(apiSocket.request('/v1/ping')).rejects.toThrow(
+            'Refused authenticated request to https://server-b.example.test',
+        );
+
+        expect(tokenStorageMock.getCredentialsForServerUrl).toHaveBeenCalledWith('https://server-b.example.test', undefined);
+    });
 
     it('does not allow request option headers to override the Authorization header', async () => {
         const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response('ok', { status: 200 }));

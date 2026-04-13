@@ -211,7 +211,9 @@ export async function registerPushTokenIfAvailable(params: {
         for (const profile of profiles) {
             let serverCredentials: AuthCredentials | null = null;
             try {
-                serverCredentials = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl);
+                serverCredentials = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl, {
+                    serverId: profile.id,
+                });
             } catch {
                 serverCredentials = null;
             }
@@ -260,7 +262,9 @@ export async function registerPushTokenIfAvailable(params: {
             for (const profile of profiles) {
                 let serverCredentials: AuthCredentials | null = null;
                 try {
-                    serverCredentials = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl);
+                    serverCredentials = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl, {
+                        serverId: profile.id,
+                    });
                 } catch {
                     serverCredentials = null;
                 }

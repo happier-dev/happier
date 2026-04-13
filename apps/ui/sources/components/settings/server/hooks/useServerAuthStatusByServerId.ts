@@ -15,7 +15,7 @@ export function useServerAuthStatusByServerId(servers: ReadonlyArray<ServerProfi
         fireAndForget((async () => {
             const entries = await Promise.all(servers.map(async (profile) => {
                 try {
-                    const creds = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl);
+                    const creds = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl, { serverId: profile.id });
                     return [profile.id, creds ? 'signedIn' : 'signedOut'] as const;
                 } catch {
                     return [profile.id, 'unknown'] as const;

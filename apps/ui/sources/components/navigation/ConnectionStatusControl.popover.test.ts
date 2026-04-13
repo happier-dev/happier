@@ -381,6 +381,11 @@ describe('ConnectionStatusControl (native popover config)', () => {
             const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
             tree = screen.tree;
 
+            await vi.waitFor(() => {
+                expect(tokenStorageMock.getCredentialsForServerUrl).toHaveBeenCalledWith('https://local.example.test', { serverId: local.id });
+                expect(tokenStorageMock.getCredentialsForServerUrl).toHaveBeenCalledWith('https://company.example.test', { serverId: company.id });
+            });
+
             const trigger = screen.findByProps({ accessibilityRole: 'button' });
             await act(async () => {
                 await pressTestInstanceAsync(trigger);

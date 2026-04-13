@@ -1,9 +1,6 @@
-import type { UnistylesThemes } from 'react-native-unistyles';
-
 import type { AgentId } from './registryCore';
 import type { AgentIconSvgXmlResolver } from './registryUi';
-
-type Theme = UnistylesThemes[keyof UnistylesThemes];
+import type { Theme } from '@/theme';
 
 function svg(xml: string): string {
     return xml.replace(/\s{2,}/g, ' ').trim();

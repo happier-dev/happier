@@ -6,6 +6,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 
 import { createOkFetchResponse, createRootLayoutFeaturesResponse, flushHookEffects, renderScreen } from '@/dev/testkit';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
@@ -23,8 +24,23 @@ type LinkedProvider = {
 };
 
 let friendsIdentityReady = false;
+const routerMockState = vi.hoisted(() => ({
+    push: vi.fn(),
+    back: vi.fn(),
+    replace: vi.fn(),
+    setParams: vi.fn(),
+}));
 
 vi.mock('react-native-reanimated', () => ({}));
+
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({
+        pathname: '/',
+        segments: ['(app)'],
+        router: routerMockState,
+    }).module;
+});
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ isAuthenticated: false }),
@@ -36,6 +52,14 @@ vi.mock('@/auth/routing/authRouting', () => ({
 
 vi.mock('@/hooks/server/useFriendsIdentityReadiness', () => ({
     useFriendsIdentityReadiness: () => ({ isReady: friendsIdentityReady }),
+}));
+
+vi.mock('@/activity/badges/ActivityBadgeRuntime', () => ({
+    ActivityBadgeRuntime: () => null,
+}));
+
+vi.mock('@/components/navigation/mobile/chrome/MobileBottomChromeHost', () => ({
+    MobileBottomChromeHost: () => null,
 }));
 
 function createGithubLinkedProvider(): LinkedProvider {

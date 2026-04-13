@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 
-export type InitialAppUiPage = Pick<Page, 'getByTestId' | 'getByRole' | 'waitForTimeout' | 'reload'>;
+export type InitialAppUiPage = Pick<Page, 'getByTestId' | 'waitForTimeout' | 'reload'>;
 
 async function countVisible(page: InitialAppUiPage): Promise<number> {
   return (
@@ -14,7 +14,6 @@ async function countVisible(page: InitialAppUiPage): Promise<number> {
     + (await page.getByTestId('welcome-signup-provider').count())
     + (await page.getByTestId('welcome-restore').count())
     + (await page.getByTestId('welcome-mtls-login').count())
-    + (await page.getByRole('button', { name: 'Create account' }).count())
     // Use stable shell test ids for authenticated readiness so copy/localization changes do not affect e2e.
     + (await page.getByTestId('sidebar-expand-button').count())
     + (await page.getByTestId('session-composer-input').count())

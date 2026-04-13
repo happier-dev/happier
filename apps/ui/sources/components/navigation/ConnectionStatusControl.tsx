@@ -362,7 +362,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
         fireAndForget((async () => {
             const entries = await Promise.all(servers.map(async (profile) => {
                 try {
-                    const creds = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl);
+                    const creds = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl, { serverId: profile.id });
                     return [profile.id, creds ? 'signedIn' : 'signedOut'] as const;
                 } catch {
                     return [profile.id, 'unknown'] as const;
@@ -429,7 +429,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                 const profile = serverById.get(serverId);
                 if (profile) {
                     try {
-                        const creds = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl);
+                        const creds = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl, { serverId: profile.id });
                         status = creds ? 'signedIn' : 'signedOut';
                     } catch {
                         status = 'unknown';

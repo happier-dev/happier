@@ -9,8 +9,8 @@ export function assertProviderSettingKeysCompatible(params: {
     const coreSettingKeys = new Set([...params.coreSettingKeys, 'schemaVersion']);
     const errors: string[] = [];
 
-    for (const { plugin, artifacts } of buildProviderSettingArtifactEntries(params.plugins)) {
-        const providerId = String(plugin.providerId ?? '').trim().toLowerCase() || '<unknown>';
+    for (const { descriptor, artifacts } of buildProviderSettingArtifactEntries(params.plugins)) {
+        const providerId = String(descriptor.providerId ?? '').trim().toLowerCase() || '<unknown>';
         const providerSettingKeys = Object.keys(artifacts.shape);
 
         for (const key of providerSettingKeys) {

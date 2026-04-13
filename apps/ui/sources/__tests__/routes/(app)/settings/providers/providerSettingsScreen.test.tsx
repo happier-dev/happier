@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CliAuthStatusData } from '@/sync/api/capabilities/capabilitiesProtocol';
 import type { ActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import type { ProviderSettingsPlugin } from '@/agents/providers/shared/providerSettingsPlugin';
+import type { ProviderSettingsDescriptor, ProviderSettingsRuntime } from '@/agents/providers/shared/providerSettingsPlugin';
 import { createPassThroughModule } from '@/dev/testkit/mocks/components';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
@@ -23,8 +23,11 @@ import { installSessionSettingsEntryModuleMocks } from '../sessionSettingsEntryT
 let mockProviderId: string | null = 'codex';
 let shouldThrowOnAppPaneScope = false;
 const routerPushSpy = vi.fn();
-const mockProviderSettingsPlugin = vi.hoisted(
-    () => vi.fn<(providerId: string) => ProviderSettingsPlugin | null>(() => null),
+const mockProviderSettingsDescriptor = vi.hoisted(
+    () => vi.fn<(providerId: string) => ProviderSettingsDescriptor | null>(() => null),
+);
+const mockProviderSettingsRuntime = vi.hoisted(
+    () => vi.fn<(providerId: string) => ProviderSettingsRuntime | null>(() => null),
 );
 
 const machineCapabilitiesInvokeMock = vi.fn(async () => ({
@@ -330,8 +333,15 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
 });
 
 vi.mock('@/agents/providers/registry/providerSettingsRegistry', () => ({
+    PROVIDER_SETTINGS_DESCRIPTORS: [],
     PROVIDER_SETTINGS_PLUGINS: [],
-    getProviderSettingsPlugin: (providerId: string) => mockProviderSettingsPlugin(providerId),
+    getProviderSettingsDescriptor: (providerId: string) => mockProviderSettingsDescriptor(providerId),
+    getProviderSettingsRuntime: (providerId: string) => mockProviderSettingsRuntime(providerId),
+    getProviderSettingsPlugin: (providerId: string) => {
+        const descriptor = mockProviderSettingsDescriptor(providerId);
+        const runtime = mockProviderSettingsRuntime(providerId);
+        return descriptor && runtime ? { ...descriptor, ...runtime } : null;
+    },
 }));
 
 vi.mock('@/agents/providers/registry/providerLocalAuthRegistry', () => ({
@@ -454,7 +464,7 @@ describe('ProviderSettingsScreen', () => {
         paneApi.setActiveDetailsTab.mockReset();
         settingsState.backendEnabledByTargetKey = {};
         settingsState.sessionDefaultPermissionModeByTargetKey = {};
-        settingsState.backendCliSourcePreferenceById = {};
+        settingsState.backendCliSourcePreferenceByTargetKey = {};
         settingsState.contextSelectionsV1 = undefined;
         settingsState.opencodeServerBaseUrl = '';
         settingsState.opencodeServerBaseUrlByServerIdV1 = {};
@@ -487,8 +497,10 @@ describe('ProviderSettingsScreen', () => {
         useCapabilityInstallabilityMock.mockReset();
         useCapabilityInstallabilityMock.mockReturnValue({ kind: 'installable' });
         routerPushSpy.mockReset();
-        mockProviderSettingsPlugin.mockReset();
-        mockProviderSettingsPlugin.mockReturnValue(null);
+        mockProviderSettingsDescriptor.mockReset();
+        mockProviderSettingsDescriptor.mockReturnValue(null);
+        mockProviderSettingsRuntime.mockReset();
+        mockProviderSettingsRuntime.mockReturnValue(null);
     });
 
     it('surfaces provider CLI install via capability installer item', async () => {
@@ -789,8 +801,8 @@ describe('ProviderSettingsScreen', () => {
         await flushHookEffects();
 
         expect(applySettingsMock).toHaveBeenCalledWith({
-            backendCliSourcePreferenceById: {
-                codex: 'managed-first',
+            backendCliSourcePreferenceByTargetKey: {
+                'agent:codex': 'managed-first',
             },
         });
     });
@@ -823,7 +835,7 @@ describe('ProviderSettingsScreen', () => {
             server1: 'http://127.0.0.1:4096/',
             server2: 'http://127.0.0.1:4097/',
         };
-        mockProviderSettingsPlugin.mockReturnValue({
+        mockProviderSettingsDescriptor.mockReturnValue({
             providerId: 'opencode',
             title: 'OpenCode',
             icon: { ionName: 'code-slash-outline', color: '#5AC8FA' },
@@ -844,6 +856,10 @@ describe('ProviderSettingsScreen', () => {
                     }],
                 },
             ],
+        });
+        mockProviderSettingsRuntime.mockReturnValue({
+            providerId: 'opencode',
+            ExtraSectionsComponent: passThrough('RuntimeSections').RuntimeSections,
             buildOutgoingMessageMetaExtras: () => ({}),
         });
 
@@ -880,7 +896,7 @@ describe('ProviderSettingsScreen', () => {
 
     it('renders translated number placeholders for provider settings fields', async () => {
         mockProviderId = 'opencode';
-        mockProviderSettingsPlugin.mockReturnValue({
+        mockProviderSettingsDescriptor.mockReturnValue({
             providerId: 'opencode',
             title: { key: 'settingsProviders.plugins.opencode.title' },
             icon: { ionName: 'code-slash-outline', color: '#5AC8FA' },
@@ -899,6 +915,9 @@ describe('ProviderSettingsScreen', () => {
                     }],
                 },
             ],
+        });
+        mockProviderSettingsRuntime.mockReturnValue({
+            providerId: 'opencode',
             buildOutgoingMessageMetaExtras: () => ({}),
         });
 
@@ -915,11 +934,30 @@ describe('ProviderSettingsScreen', () => {
         const groups = screen.findAllByType('ItemGroup' as any);
         expect(groups.length).toBeGreaterThan(0);
     });
+
+    it('renders provider-specific extra sections from runtime behavior separately from settings descriptors', async () => {
+        mockProviderId = 'opencode';
+        mockProviderSettingsDescriptor.mockReturnValue({
+            providerId: 'opencode',
+            title: 'OpenCode',
+            icon: { ionName: 'code-slash-outline', color: '#5AC8FA' },
+            settings: {},
+            uiSections: [],
+        });
+        mockProviderSettingsRuntime.mockReturnValue({
+            providerId: 'opencode',
+            ExtraSectionsComponent: passThrough('RuntimeSections').RuntimeSections,
+            buildOutgoingMessageMetaExtras: () => ({}),
+        });
+
+        const screen = await renderProviderSettingsScreen();
+        expect(screen.findByType('RuntimeSections' as any)).toBeTruthy();
+    });
 });
 const settingsState = {
     backendEnabledByTargetKey: {},
     sessionDefaultPermissionModeByTargetKey: {},
-    backendCliSourcePreferenceById: {},
+    backendCliSourcePreferenceByTargetKey: {},
     contextSelectionsV1: undefined as any,
     acpCatalogSettingsV1: { v: 2, backends: [] },
     opencodeServerBaseUrl: '',

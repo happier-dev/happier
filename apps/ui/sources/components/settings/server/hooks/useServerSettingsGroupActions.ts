@@ -45,7 +45,7 @@ export function useServerSettingsGroupActions(params: Readonly<{
             const nextProfile = params.servers.find((server) => server.id === nextServerId) ?? null;
             if (nextProfile) {
                 try {
-                    const creds = await TokenStorage.getCredentialsForServerUrl(nextProfile.serverUrl);
+                    const creds = await TokenStorage.getCredentialsForServerUrl(nextProfile.serverUrl, { serverId: nextProfile.id });
                     authStatus = creds ? 'signedIn' : 'signedOut';
                 } catch {
                     authStatus = 'unknown';
@@ -121,7 +121,7 @@ export function useServerSettingsGroupActions(params: Readonly<{
         let authStatus: ServerAuthStatus = params.authStatusByServerId[nextServerId] ?? 'unknown';
         if (authStatus === 'unknown' && nextProfile) {
             try {
-                const creds = await TokenStorage.getCredentialsForServerUrl(nextProfile.serverUrl);
+                const creds = await TokenStorage.getCredentialsForServerUrl(nextProfile.serverUrl, { serverId: nextProfile.id });
                 authStatus = creds ? 'signedIn' : 'signedOut';
             } catch {
                 authStatus = 'unknown';

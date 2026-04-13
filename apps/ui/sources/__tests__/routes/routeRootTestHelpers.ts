@@ -68,6 +68,16 @@ export function installRouteRootCommonModuleMocks(
         return createExpoRouterMock().module;
     });
 
+    vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
+        useAppPaneScope: () => ({
+            scopeState: {
+                right: { activeTabId: null },
+                details: { isOpen: false, tabs: [] },
+            },
+            openDetailsTab: vi.fn(),
+        }),
+    }));
+
     vi.mock('@/text', async () => {
         const activeOptions = routeRootModuleState.options;
         if (activeOptions.text) {

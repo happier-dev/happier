@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 
@@ -32,7 +32,7 @@ test.describe('ui e2e: settings sidebar', () => {
     let uiBaseUrl: string | null = null;
 
     test.beforeAll(async () => {
-        test.setTimeout(540_000);
+        test.setTimeout(resolveUiWebBeforeAllTimeoutMs(process.env));
         await mkdir(suiteDir, { recursive: true });
 
         server = await startServerLight({
@@ -106,6 +106,14 @@ test.describe('ui e2e: settings sidebar', () => {
 
                 await expect(page).toHaveURL(/\/settings\/notifications/);
                 await expect(page.getByTestId('settings-notifications-screen')).toHaveCount(1, { timeout: 60_000 });
+
+                await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings?happier_hmr=0`, 180_000);
+                await page.getByTestId('settings-sidebar.searchInput').fill('plugin');
+                await expect(page.getByTestId('settings-sidebar.searchResult.plugins')).toHaveCount(1, { timeout: 60_000 });
+                await page.getByTestId('settings-sidebar.searchResult.plugins').click();
+
+                await expect(page).toHaveURL(/\/settings\/plugins/);
+                await expect(page.getByTestId('settings.plugins.marketplace.catalogUrl')).toHaveCount(1, { timeout: 60_000 });
 
                 if (wantsScreenshots()) {
                     await page.screenshot({ path: join(screenshotDir, `settings-sidebar.${viewport.label}.notifications.png`), fullPage: true });

@@ -21,7 +21,12 @@ import { ReviewCommentDraftSchema } from '@/sync/domains/input/reviewComments/re
 import { SessionActionDraftSchema } from '@/sync/domains/sessionActions/sessionActionDraftMeta';
 import { PROVIDER_SETTINGS_SHAPE } from '@/agents/providers/registry/providerSettingArtifacts';
 import {
+    normalizeBackendNewSessionOptionStateByTargetKey,
+    type BackendNewSessionOptionStateByTargetKey,
+} from '@/utils/sessions/backendNewSessionOptionState';
+import {
     AcpConfigOptionOverridesV1Schema,
+    buildBackendTargetKey,
     BackendTargetRefSchema,
     SessionMcpSelectionV1Schema,
     normalizeCodexBackendMode,
@@ -139,10 +144,15 @@ export interface NewSessionDraft {
     mcpSelection?: SessionMcpSelectionV1 | null;
     resumeSessionId?: string;
     /**
-     * Provider-specific new-session option state keyed by agent id.
+     * Provider-specific new-session option state keyed by backend target key.
      * This is UI-only draft state (not sent to server).
      */
-    agentNewSessionOptionStateByAgentId?: Record<string, Record<string, unknown>> | null;
+    backendNewSessionOptionStateByTargetKey?: BackendNewSessionOptionStateByTargetKey | null;
+    /**
+     * Legacy alias for older persisted drafts.
+     * New code should read and write `backendNewSessionOptionStateByTargetKey`.
+     */
+    agentNewSessionOptionStateByAgentId?: BackendNewSessionOptionStateByTargetKey | null;
     automationDraft?: NewSessionAutomationDraft | null;
     updatedAt: number;
 }
@@ -196,11 +206,11 @@ function parseDraftSecretStringOrNull(value: unknown): SecretString | null | und
     return undefined;
 }
 
-function parseDraftAgentNewSessionOptionStateByAgentId(
+function parseDraftBackendNewSessionOptionStateByTargetKey(
     input: unknown,
-): Record<string, Record<string, unknown>> | null {
+): BackendNewSessionOptionStateByTargetKey | null {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
-    const out: Record<string, Record<string, unknown>> = {};
+    const out: BackendNewSessionOptionStateByTargetKey = {};
 
     for (const [rawTargetKey, rawOptions] of Object.entries(input as Record<string, unknown>)) {
         const targetKey = typeof rawTargetKey === 'string' ? rawTargetKey.trim() : '';
@@ -221,7 +231,7 @@ function parseDraftAgentNewSessionOptionStateByAgentId(
         if (Object.keys(options).length > 0) out[targetKey] = options;
     }
 
-    return Object.keys(out).length > 0 ? out : null;
+    return normalizeBackendNewSessionOptionStateByTargetKey(out);
 }
 
 function parseDraftCodexBackendMode(value: unknown): CodexBackendMode | null {
@@ -575,8 +585,9 @@ export function loadNewSessionDraft(): NewSessionDraft | null {
             : null;
         const transcriptStorage = (parsed as any).transcriptStorage === 'direct' ? 'direct' : (parsed as any).transcriptStorage === 'persisted' ? 'persisted' : undefined;
         const resumeSessionId = typeof parsed.resumeSessionId === 'string' ? parsed.resumeSessionId : undefined;
-        const agentNewSessionOptionStateByAgentId = parseDraftAgentNewSessionOptionStateByAgentId(
-            (parsed as any).agentNewSessionOptionStateByAgentId,
+        const backendNewSessionOptionStateByTargetKey = parseDraftBackendNewSessionOptionStateByTargetKey(
+            (parsed as any).backendNewSessionOptionStateByTargetKey
+            ?? (parsed as any).agentNewSessionOptionStateByAgentId,
         );
         const legacyAuggieAllowIndexing = typeof (parsed as any).auggieAllowIndexing === 'boolean'
             ? (parsed as any).auggieAllowIndexing
@@ -585,14 +596,15 @@ export function loadNewSessionDraft(): NewSessionDraft | null {
         const codexBackendMode = parseDraftCodexBackendMode((parsed as any).codexBackendMode);
         const updatedAt = typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now();
 
-        const migratedAgentOptions: Record<string, Record<string, unknown>> = {
-            ...(agentNewSessionOptionStateByAgentId ?? {}),
+        const migratedAgentOptions: BackendNewSessionOptionStateByTargetKey = {
+            ...(backendNewSessionOptionStateByTargetKey ?? {}),
         };
         // Legacy migration: older drafts stored `auggieAllowIndexing` at top-level.
         // Keep reading it so users don't lose their local draft state.
         if (typeof legacyAuggieAllowIndexing === 'boolean') {
-            migratedAgentOptions.auggie = {
-                ...(migratedAgentOptions.auggie ?? {}),
+            const auggieTargetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'auggie' });
+            migratedAgentOptions[auggieTargetKey] = {
+                ...(migratedAgentOptions[auggieTargetKey] ?? {}),
                 allowIndexing: legacyAuggieAllowIndexing,
             };
         }
@@ -617,7 +629,7 @@ export function loadNewSessionDraft(): NewSessionDraft | null {
             ...(codexBackendMode ? { codexBackendMode } : {}),
             ...(mcpSelection ? { mcpSelection } : {}),
             ...(resumeSessionId ? { resumeSessionId } : {}),
-            ...(Object.keys(migratedAgentOptions).length > 0 ? { agentNewSessionOptionStateByAgentId: migratedAgentOptions } : {}),
+            ...(Object.keys(migratedAgentOptions).length > 0 ? { backendNewSessionOptionStateByTargetKey: migratedAgentOptions } : {}),
             ...(automationDraft.enabled ? { automationDraft } : {}),
             updatedAt,
         };

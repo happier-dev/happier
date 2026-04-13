@@ -46,7 +46,10 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 
 vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: {
-        getCredentialsForServerUrl: (serverUrl: string) => mocks.getCredentialsForServerUrl(serverUrl),
+        getCredentialsForServerUrl: (
+            serverUrl: string,
+            options?: Readonly<{ serverId?: string | null }>,
+        ) => mocks.getCredentialsForServerUrl(serverUrl, options),
     },
 }));
 
@@ -82,5 +85,65 @@ describe('registerPushTokenIfAvailable rotation cleanup', () => {
 
         expect(mocks.deletePushToken).toHaveBeenCalledWith({ token: 't:https://api.happier.dev', secret: 's' }, 'ExponentPushToken[old]', { apiEndpoint: 'https://api.happier.dev' });
         expect(mocks.deletePushToken).toHaveBeenCalledWith({ token: 't:https://company.example.test', secret: 's' }, 'ExponentPushToken[old]', { apiEndpoint: 'https://company.example.test' });
+    });
+
+    it('uses serverId-scoped credentials when profiles share the same server URL', async () => {
+        const { saveLastRegisteredExpoPushToken, loadLastRegisteredExpoPushToken } = await import('@/sync/domains/state/pushTokenRegistration');
+        saveLastRegisteredExpoPushToken('ExponentPushToken[old]');
+
+        mocks.listServerProfiles.mockReturnValue([
+            { id: 'server-a', serverUrl: 'https://shared.example.test' },
+            { id: 'server-b', serverUrl: 'https://shared.example.test' },
+        ]);
+        mocks.getActiveServerSnapshot.mockReturnValue({
+            serverId: 'server-b',
+            serverUrl: 'https://shared.example.test',
+            generation: 1,
+        });
+        mocks.getCredentialsForServerUrl.mockImplementation(async (_serverUrl: string, options?: Readonly<{ serverId?: string | null }>) => {
+            if (options?.serverId === 'server-a') {
+                return { token: 'token-a', secret: 'secret-a' };
+            }
+            if (options?.serverId === 'server-b') {
+                return { token: 'token-b', secret: 'secret-b' };
+            }
+            return { token: 'token-b', secret: 'secret-b' };
+        });
+        mocks.registerPushToken.mockResolvedValue(undefined);
+        mocks.deletePushToken.mockResolvedValue(undefined);
+
+        const { registerPushTokenIfAvailable } = await import('./syncAccount');
+        await registerPushTokenIfAvailable({
+            credentials: { token: 'token-b', secret: 'secret-b' } satisfies AuthCredentials,
+            log: { log: () => {} },
+        });
+
+        expect(loadLastRegisteredExpoPushToken()).toBe('ExponentPushToken[new]');
+        expect(mocks.getCredentialsForServerUrl).toHaveBeenCalledWith('https://shared.example.test', {
+            serverId: 'server-a',
+        });
+        expect(mocks.getCredentialsForServerUrl).toHaveBeenCalledWith('https://shared.example.test', {
+            serverId: 'server-b',
+        });
+        expect(mocks.registerPushToken).toHaveBeenCalledWith(
+            { token: 'token-a', secret: 'secret-a' },
+            'ExponentPushToken[new]',
+            expect.objectContaining({ clientServerUrl: 'https://shared.example.test' }),
+        );
+        expect(mocks.registerPushToken).toHaveBeenCalledWith(
+            { token: 'token-b', secret: 'secret-b' },
+            'ExponentPushToken[new]',
+            expect.objectContaining({ clientServerUrl: 'https://shared.example.test' }),
+        );
+        expect(mocks.deletePushToken).toHaveBeenCalledWith(
+            { token: 'token-a', secret: 'secret-a' },
+            'ExponentPushToken[old]',
+            { apiEndpoint: 'https://shared.example.test' },
+        );
+        expect(mocks.deletePushToken).toHaveBeenCalledWith(
+            { token: 'token-b', secret: 'secret-b' },
+            'ExponentPushToken[old]',
+            { apiEndpoint: 'https://shared.example.test' },
+        );
     });
 });

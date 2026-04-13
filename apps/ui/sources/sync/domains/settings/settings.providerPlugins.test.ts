@@ -19,7 +19,7 @@ describe('settingsParse provider plugin defaults', () => {
         expect((settings as any).claudeRemoteAdvancedOptionsJson).toBe('');
         expect((settings as any).claudeCodeExperimentalAgentTeamsEnabled).toBe(false);
         expect((settings as any).codexBackendMode).toBe('appServer');
-        expect((settings as any).backendCliSourcePreferenceById).toEqual({});
+        expect((settings as any).backendCliSourcePreferenceByTargetKey).toEqual({});
     });
 
     it('preserves legacy Codex backend mode when migrating settings from schema v5', () => {
@@ -57,9 +57,9 @@ describe('settingsParse provider plugin defaults', () => {
             },
         } as any);
 
-        expect((settings as any).backendCliSourcePreferenceById).toEqual({
-            codex: 'managed-first',
-            gemini: 'system-first',
+        expect((settings as any).backendCliSourcePreferenceByTargetKey).toEqual({
+            'agent:codex': 'managed-first',
+            'agent:gemini': 'system-first',
         });
     });
 });

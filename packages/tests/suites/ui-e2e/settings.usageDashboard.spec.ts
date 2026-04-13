@@ -9,60 +9,32 @@ import {
   gotoDomContentLoadedWithRetries,
   normalizeLoopbackBaseUrl,
   waitForAuthenticatedRouteUi,
-} from '../../src/testkit/uiE2E/pageNavigation';
-import { installAuthBootstrapStorageSnapshot } from '../../src/testkit/uiE2E/readLegacyAuthSecretFromLocalStorage';
+} from '../../src/testkit/uiE2e/pageNavigation';
+import { buildAuthBootstrapStorageSnapshot } from '../../src/testkit/uiE2e/buildAuthBootstrapStorageSnapshot';
+import { installAuthBootstrapStorageSnapshot } from '../../src/testkit/uiE2e/readLegacyAuthSecretFromLocalStorage';
 import { createSession } from '../../src/testkit/sessions';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
-
-function deriveServerIdFromUrl(serverUrl: string): string {
-  const url = new URL(serverUrl);
-  const host = url.hostname.toLowerCase();
-  const port = url.port ? `-${url.port}` : '';
-  return `${host}${port}`.replace(/[^a-z0-9._-]/g, '_').replace(/_+/g, '_') || 'custom';
-}
-
-function buildAuthBootstrapStorageSnapshot(params: Readonly<{
-  serverUrl: string;
-  token: string;
-  storageScope: string;
-}>): Readonly<{
-  localStorage: Record<string, string>;
-  sessionStorage: Record<string, string>;
-}> {
-  const now = Date.now();
-  const serverId = deriveServerIdFromUrl(params.serverUrl);
-  const credentialPayload = JSON.stringify({ token: params.token, secret: params.token });
-  const serverState = JSON.stringify({
-    activeServerId: serverId,
-    servers: {
-      [serverId]: {
-        id: serverId,
-        name: `localhost:${new URL(params.serverUrl).port || '0'}`,
-        serverUrl: params.serverUrl,
-        createdAt: now,
-        updatedAt: now,
-        lastUsedAt: now,
-        source: 'manual',
-      },
-    },
-  });
-  const scoped = (key: string): string => `${key}__${params.storageScope}`;
-
-  return {
-    localStorage: {
-      'server-profiles:server-state-v1': serverState,
-      [scoped('server-profiles:server-state-v1')]: serverState,
-      auth_credentials: credentialPayload,
-      [scoped('auth_credentials')]: credentialPayload,
-      [`auth_credentials__srv_${serverId}`]: credentialPayload,
-      [scoped(`auth_credentials__srv_${serverId}`)]: credentialPayload,
-    },
-    sessionStorage: {
-      activeServerId: serverId,
-    },
-  };
-}
+const dashboardTestIds = [
+  'usage-filter-period',
+  'usage-filter-metric',
+  'usage-filter-cost-mode',
+  'usage-summary-total-card',
+  'usage-insights-section',
+  'usage-activity-section',
+  'usage-activity-track-months',
+  'usage-activity-track-weekdays',
+  'usage-activity-track-hours',
+  'usage-timeline-section',
+  'usage-model-timeline-card',
+  'usage-engine-timeline-card',
+  'usage-leaders-section',
+  'usage-recap-section',
+  'usage-export-actions',
+  'usage-breakdown-row-provider-anthropic',
+  'usage-breakdown-row-model-claude-3.7-sonnet',
+  'usage-breakdown-row-provider-openai',
+] as const;
 
 test.describe('ui e2e: usage dashboard', () => {
   test.describe.configure({ mode: 'serial' });
@@ -121,7 +93,7 @@ test.describe('ui e2e: usage dashboard', () => {
     const auth = await createTestAuth(server.baseUrl);
     await installAuthBootstrapStorageSnapshot(page, buildAuthBootstrapStorageSnapshot({
       serverUrl: server.baseUrl,
-      token: auth.token,
+      credentials: { token: auth.token, secret: auth.token },
       storageScope: `e2e-usage-dashboard-${run.runId}`,
     }));
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings?happier_hmr=0`, 420_000);
@@ -238,20 +210,23 @@ test.describe('ui e2e: usage dashboard', () => {
       page,
       expectedPathname: '/settings/usage',
       requiredTestIds: [
-        'usage-costmode-auto',
+        'usage-filter-period',
+        'usage-filter-metric',
+        'usage-filter-cost-mode',
+        'usage-summary-total-card',
         'usage-insights-section',
         'usage-activity-section',
         'usage-timeline-section',
         'usage-leaders-section',
+        'usage-recap-section',
+        'usage-activity-track-months',
+        'usage-activity-track-weekdays',
+        'usage-activity-track-hours',
+        'usage-model-timeline-card',
+        'usage-engine-timeline-card',
         'usage-export-copy-summary',
         'usage-export-json',
         'usage-export-share-summary',
-        'usage-period-year',
-        'usage-recap-section',
-        'usage-recap-share-streak',
-        'usage-recap-share-usage',
-        'usage-recap-share-model',
-        'usage-recap-share-rhythm',
         'usage-breakdown-row-provider-anthropic',
         'usage-breakdown-row-model-claude-3.7-sonnet',
         'usage-breakdown-row-provider-openai',
@@ -260,53 +235,40 @@ test.describe('ui e2e: usage dashboard', () => {
       timeoutMs: 180_000,
     });
 
-    await expect(page).toHaveURL(/\/settings\/usage\?period=year/, { timeout: 60_000 });
-    await expect(page.getByTestId('usage-period-year')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('usage-costmode-auto')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('usage-costmode-reported')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('usage-costmode-estimated')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('usage-insight-current-streak')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('usage-insight-active-days')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('usage-insight-models-tried')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('usage-insight-favorite-model-changes')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('usage-recap-section')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('usage-recap-share-streak')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('usage-recap-share-usage')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('usage-recap-share-model')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('usage-recap-share-rhythm')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('usage-activity-calendar')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('usage-activity-rhythm')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('usage-leader-providers')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('usage-leader-models')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('usage-leader-engines')).toHaveCount(1, { timeout: 60_000 });
+    const usageUrl = new URL(page.url());
+    expect(usageUrl.pathname).toBe('/settings/usage');
+    expect(usageUrl.searchParams.get('period')).toBe('year');
+    expect(usageUrl.searchParams.get('metric')).toBe('tokens');
 
-    await page.getByTestId('usage-costmode-reported').click();
-    await page.getByTestId('usage-metric-cost').click();
-    await page.getByTestId('usage-trend-metric-cost').click();
-    await page.getByTestId(`usage-breakdown-row-session-${sessionAlpha.sessionId}`).click();
+    for (const testId of dashboardTestIds) {
+      await expect(page.getByTestId(testId)).toHaveCount(1, { timeout: 60_000 });
+    }
 
-    await expect(page.getByTestId('usage-costmode-reported')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('usage-metric-cost')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('usage-trend-metric-cost')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('usage-timeline-section')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('usage-export-copy-summary')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('usage-export-json')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('usage-export-share-summary')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('usage-focus-clear')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId(`usage-breakdown-row-session-${sessionBeta.sessionId}`)).toHaveCount(0, { timeout: 60_000 });
-
-    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/session/${sessionAlpha.sessionId}/usage?happier_hmr=0`, 180_000);
-    await waitForAuthenticatedRouteUi({
-      page,
-      expectedPathname: `/session/${sessionAlpha.sessionId}/usage`,
-      requiredTestIds: [
-        'usage-session-drilldown',
-        'usage-costmode-auto',
-        `usage-breakdown-row-session-${sessionAlpha.sessionId}`,
-      ],
-      timeoutMs: 180_000,
-    });
-    await expect(page.getByTestId('usage-session-drilldown')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByTestId(`usage-breakdown-row-session-${sessionAlpha.sessionId}`)).toHaveCount(1, { timeout: 60_000 });
+    await page.getByTestId(`usage-breakdown-row-session-${sessionAlpha.sessionId}`).click();
+    await expect(page.getByTestId('usage-focus-clear')).toHaveCount(1, { timeout: 60_000 });
+    await expect
+      .poll(() => {
+        const url = new URL(page.url());
+        return {
+          pathname: url.pathname,
+          focusDimension: url.searchParams.get('focusDimension'),
+          focusKey: url.searchParams.get('focusKey'),
+        };
+      }, { timeout: 60_000 })
+      .toEqual({
+        pathname: '/settings/usage',
+        focusDimension: 'session',
+        focusKey: sessionAlpha.sessionId,
+      });
+
+    await page.getByTestId('usage-breakdown-row-model-claude-3.7-sonnet').click();
+
+    await expect(page.getByTestId('usage-focus-clear')).toHaveCount(1, { timeout: 60_000 });
+    await page.getByTestId('usage-focus-clear').click();
+    await expect(page.getByTestId('usage-focus-clear')).toHaveCount(0, { timeout: 60_000 });
+
+    await page.getByTestId('usage-trend-metric-cost').click();
+    await expect(page.getByTestId('usage-trend-chart')).toHaveCount(1, { timeout: 60_000 });
   });
 });

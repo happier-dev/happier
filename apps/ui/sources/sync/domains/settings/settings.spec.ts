@@ -878,7 +878,7 @@ describe('settings', () => {
                 [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'kimi' })]: true,
                 [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'kilo' })]: true,
             });
-            expect((settingsDefaults as any).backendCliSourcePreferenceById).toEqual({});
+            expect((settingsDefaults as any).backendCliSourcePreferenceByTargetKey).toEqual({});
             expect(settingsDefaults.codexBackendMode).toBe('appServer');
             expect(settingsDefaults.sessionReplayMaxSeedChars).toBe(120_000);
             expect(settingsDefaults.sessionDefaultPermissionModeByTargetKey).toMatchObject({
@@ -1004,9 +1004,9 @@ describe('settings', () => {
                 },
             } as any);
 
-            expect((parsed as any).backendCliSourcePreferenceById).toEqual({
-                codex: 'managed-first',
-                gemini: 'system-first',
+            expect((parsed as any).backendCliSourcePreferenceByTargetKey).toEqual({
+                'agent:codex': 'managed-first',
+                'agent:gemini': 'system-first',
             });
         });
 

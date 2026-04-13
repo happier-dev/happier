@@ -7,7 +7,7 @@ function createFakePage(params: Readonly<{
   testIdCounts?: Record<string, number[]>;
   roleCounts?: Record<string, number[]>;
   throwOnRoleNames?: readonly string[];
-}>): InitialAppUiPage & { reloadCalls: number } {
+}>): InitialAppUiPage & { reloadCalls: number; getByRole: Page['getByRole'] } {
   const testIdCalls = new Map<string, number>();
   const roleCalls = new Map<string, number>();
   const testIdCounts = params.testIdCounts ?? {};
@@ -25,7 +25,7 @@ function createFakePage(params: Readonly<{
     count: async () => nextCount(calls, source, key),
   } as unknown as Locator);
 
-  const page: InitialAppUiPage & { reloadCalls: number } = {
+  const page: InitialAppUiPage & { reloadCalls: number; getByRole: Page['getByRole'] } = {
     reloadCalls: 0,
     getByTestId: ((testId) => makeLocator(String(testId), testIdCounts, testIdCalls)) as Page['getByTestId'],
     getByRole: ((_role, options) => {
@@ -53,6 +53,16 @@ describe('waitForInitialAppUi', () => {
   it('returns when welcome UI is already visible', async () => {
     const page = createFakePage({
       testIdCounts: { 'welcome-create-account': [1] },
+    });
+
+    await expect(waitForInitialAppUi({ page, timeoutMs: 50, reloadOnFailure: false })).resolves.toBeUndefined();
+    expect(page.reloadCalls).toBe(0);
+  });
+
+  it('does not need a copy-based role fallback when the stable welcome test id is visible', async () => {
+    const page = createFakePage({
+      testIdCounts: { 'welcome-create-account': [1] },
+      throwOnRoleNames: ['Create account'],
     });
 
     await expect(waitForInitialAppUi({ page, timeoutMs: 50, reloadOnFailure: false })).resolves.toBeUndefined();

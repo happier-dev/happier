@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -300,7 +301,7 @@ describe('ProviderSettingsScreen desktop render', () => {
         settingsState = {
             backendEnabledByTargetKey: {},
             sessionDefaultPermissionModeByTargetKey: {},
-            backendCliSourcePreferenceById: {},
+            backendCliSourcePreferenceByTargetKey: {},
             contextSelectionsV1: undefined,
         };
         localSettingsState = {
@@ -329,6 +330,30 @@ describe('ProviderSettingsScreen desktop render', () => {
         );
 
         expect(screen.findByTestId('settings-provider-field-codexBackendMode')).toBeTruthy();
+    });
+
+    it('writes codex backend mode through the real declarative provider settings field', async () => {
+        const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+        const { default: ProviderSettingsScreen } = await import('@/app/(app)/settings/providers/[providerId]');
+
+        const screen = await renderScreen(
+            <AppPaneProvider>
+                <ProviderSettingsScreen />
+            </AppPaneProvider>,
+        );
+
+        const backendModeDropdown = screen.find((node) => (
+            node.props?.itemTrigger?.itemProps?.testID === 'settings-provider-field-codexBackendMode'
+            && typeof node.props?.onSelect === 'function'
+        ));
+
+        await act(async () => {
+            backendModeDropdown.props.onSelect('mcp');
+        });
+
+        expect(applySettingsMock).toHaveBeenCalledWith({
+            codexBackendMode: 'mcp',
+        });
     });
 
     it('renders the codex provider route inside the desktop settings shell without crashing', async () => {

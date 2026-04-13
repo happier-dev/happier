@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
@@ -7,7 +7,11 @@ import { startServerLight, type StartedServer } from '../../src/testkit/process/
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
-import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl, waitForAuthenticatedHomeUi } from '../../src/testkit/uiE2e/pageNavigation';
+import { approveTerminalConnect } from '../../src/testkit/uiE2e/approveTerminalConnect';
+import { installFakeTauriDesktopBridge, navigateSpa } from '../../src/testkit/uiE2e/fakeTauriDesktop';
+import { resolveTerminalConnectUrlForBrowser } from '../../src/testkit/uiE2e/resolveTerminalConnectUrlForBrowser';
+import { ensurePendingTerminalConnectReadyForApproval } from '../../src/testkit/uiE2e/terminalConnectApprovalFlow';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 const fakeCodexPath = resolve(new URL('../../src/fixtures/fake-codex-auth-cli.js', import.meta.url).pathname);
@@ -91,6 +95,7 @@ test.describe('ui e2e: provider settings auth terminal', () => {
     });
 
     let cliLogin: StartedCliTerminalConnect | null = null;
+    let settingsPage: Page | null = null;
     try {
       await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
       await createAccountAndReachConnectMachineState({ page });
@@ -109,9 +114,24 @@ test.describe('ui e2e: provider settings auth terminal', () => {
         },
       });
 
-      await page.goto(cliLogin.connectUrl, { waitUntil: 'domcontentloaded' });
+      const connectUrlForBrowser = resolveTerminalConnectUrlForBrowser({
+        connectUrl: cliLogin.connectUrl,
+        uiBaseUrl,
+        serverUrl: server.baseUrl,
+      });
+      await gotoDomContentLoadedWithRetries(page, connectUrlForBrowser);
+      await ensurePendingTerminalConnectReadyForApproval({
+        page,
+        connectUrlForBrowser,
+        gotoConnectUrl: async (url) => {
+          await gotoDomContentLoadedWithRetries(page, url);
+        },
+        restoreAccount: async () => {
+          await createAccountAndReachConnectMachineState({ page });
+        },
+      });
       await expect(page.getByTestId('terminal-connect-approve')).toHaveCount(1, { timeout: 60_000 });
-      await page.getByTestId('terminal-connect-approve').click();
+      await approveTerminalConnect({ page });
       await cliLogin.waitForSuccess();
 
       daemon = await startTestDaemon({
@@ -132,44 +152,41 @@ test.describe('ui e2e: provider settings auth terminal', () => {
       });
 
       await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
-      await expect(page.getByTestId('session-getting-started-kind-start_daemon')).toHaveCount(0, { timeout: 120_000 });
-      await expect
-        .poll(
-          async () => {
-            const createCount = await page.getByTestId('session-getting-started-kind-create_session').count();
-            const selectCount = await page.getByTestId('session-getting-started-kind-select_session').count();
-            return createCount > 0 || selectCount > 0;
-          },
-          { timeout: 180_000 },
-        )
-        .toBe(true);
+      await waitForAuthenticatedHomeUi({ page, timeoutMs: 120_000 });
 
-      await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/providers/codex`);
-      await expect(page.getByTestId('settings-provider-detected-cli')).not.toContainText('Unknown', { timeout: 120_000 });
-      const authStatus = page.getByTestId('settings-provider-auth-status');
-      await expect(page.getByTestId('settings-provider-auth-check-now')).toHaveCount(1, { timeout: 60_000 });
-      await expect
-        .poll(async () => (await authStatus.textContent()) ?? '', { timeout: 120_000 })
-        .toMatch(/Unknown|Logged out/);
-      await expect(page.getByTestId('settings-provider-auth-login')).toHaveCount(1, { timeout: 60_000 });
+      settingsPage = await page.context().newPage();
+      await gotoDomContentLoadedWithRetries(settingsPage, uiBaseUrl);
+      await waitForAuthenticatedHomeUi({ page: settingsPage, timeoutMs: 120_000 });
+      await installFakeTauriDesktopBridge(settingsPage);
+      await navigateSpa(settingsPage, '/settings/providers/codex');
+      await settingsPage.waitForURL((url: URL) => url.pathname.endsWith('/settings/providers/codex'), { timeout: 60_000 });
+      const authStatus = settingsPage.getByTestId('settings-provider-auth-status');
+      const checkNow = settingsPage.getByTestId('settings-provider-auth-check-now');
+      await expect(checkNow).toHaveCount(1, { timeout: 60_000 });
+      await expect(checkNow).toBeEnabled({ timeout: 60_000 });
+      await checkNow.click();
+      await expect(settingsPage.getByTestId('settings-provider-detected-cli')).not.toContainText('Unknown', { timeout: 120_000 });
+      await expect(authStatus).toContainText(/Unknown|Logged out/, { timeout: 120_000 });
+      await expect(settingsPage.getByTestId('settings-provider-auth-login')).toHaveCount(1, { timeout: 60_000 });
 
-      await page.getByTestId('settings-provider-auth-login').click();
-      await expect(page.getByTestId('provider-auth-terminal-root')).toHaveCount(1, { timeout: 60_000 });
+      await settingsPage.getByTestId('settings-provider-auth-login').click();
+      await expect(settingsPage.getByTestId('provider-auth-terminal-root')).toHaveCount(1, { timeout: 60_000 });
       await expect
         .poll(
           async () => ((await authStatus.textContent()) ?? '').includes('Logged in'),
           { timeout: 120_000 },
         )
         .toBe(true);
-      await expect(page.getByTestId('provider-auth-terminal-root')).toHaveCount(0, { timeout: 120_000 });
+      await expect(settingsPage.getByTestId('provider-auth-terminal-root')).toHaveCount(0, { timeout: 120_000 });
 
       await expect(authStatus).toContainText('Logged in', { timeout: 120_000 });
-      await expect(page.getByTestId('settings-provider-auth-login')).toContainText('Reauthenticate', { timeout: 60_000 });
-      const accountRow = page.getByTestId('settings-provider-auth-account');
+      await expect(settingsPage.getByTestId('settings-provider-auth-login')).toContainText('Reauthenticate', { timeout: 60_000 });
+      const accountRow = settingsPage.getByTestId('settings-provider-auth-account');
       if (await accountRow.count()) {
         await expect(accountRow).toContainText('fake-codex@example.test', { timeout: 60_000 });
       }
     } finally {
+      await settingsPage?.close().catch(() => {});
       await cliLogin?.stop().catch(() => {});
     }
   });

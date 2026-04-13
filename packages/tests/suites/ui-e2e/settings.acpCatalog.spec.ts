@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { repoRootDir } from '../../src/testkit/paths';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { acknowledgeTerminalConnectSuccessIfPresent } from '../../src/testkit/uiE2e/acknowledgeTerminalConnectSuccessIfPresent';
@@ -90,8 +90,13 @@ async function createConfiguredAcpBackend(params: Readonly<{
 async function selectMachineForNewSession(params: Readonly<{
   page: Page;
   uiBaseUrl: string;
+  backendTargetKey?: string;
 }>): Promise<void> {
-  await gotoDomContentLoadedWithRetries(params.page, `${params.uiBaseUrl}/new`);
+  const backendTargetKeyQuery = typeof params.backendTargetKey === 'string' && params.backendTargetKey.trim().length > 0
+    ? `?backendTargetKey=${encodeURIComponent(params.backendTargetKey.trim())}`
+    : '';
+
+  await gotoDomContentLoadedWithRetries(params.page, `${params.uiBaseUrl}/new${backendTargetKeyQuery}`);
   await expect(params.page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 120_000 });
   await openNewSessionMachineSelection({ page: params.page, uiBaseUrl: params.uiBaseUrl });
   const anyMachine = params.page.locator('[data-testid^="new-session-machine:"]').first();
@@ -114,7 +119,14 @@ test.describe('ui e2e: ACP catalog settings', () => {
   let uiBaseUrl: string | null = null;
 
   test.beforeAll(async () => {
-    test.setTimeout(900_000);
+    const uiWebEnv = {
+      ...process.env,
+      EXPO_PUBLIC_DEBUG: '1',
+      EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-acp-catalog-${run.runId}`,
+      HAPPIER_E2E_UI_WEB_MODE: 'export',
+    };
+
+    test.setTimeout(resolveUiWebBeforeAllTimeoutMs(uiWebEnv));
     await mkdir(cliHomeDir, { recursive: true });
 
     server = await startServerLight({
@@ -129,11 +141,8 @@ test.describe('ui e2e: ACP catalog settings', () => {
     ui = await startUiWeb({
       testDir: suiteDir,
       env: {
-        ...process.env,
-        EXPO_PUBLIC_DEBUG: '1',
+        ...uiWebEnv,
         EXPO_PUBLIC_HAPPY_SERVER_URL: server.baseUrl,
-        EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-acp-catalog-${run.runId}`,
-        HAPPIER_E2E_UI_WEB_MODE: 'export',
       },
     });
 
@@ -171,7 +180,7 @@ test.describe('ui e2e: ACP catalog settings', () => {
     await expect(page.getByTestId('settings.acpCatalog.addBackend')).toHaveCount(1, { timeout: 60_000 });
   });
 
-  test('creates and launches a configured ACP backend from the new-session flow', async ({ page }) => {
+  test('shows the configured ACP backend in provider settings and launches it from the new-session flow', async ({ page }) => {
     test.setTimeout(540_000);
     if (!server || !uiBaseUrl) throw new Error('missing fixtures');
 
@@ -195,19 +204,24 @@ test.describe('ui e2e: ACP catalog settings', () => {
       backendId,
     });
 
-    await selectMachineForNewSession({ page, uiBaseUrl });
-    await expect(page.getByTestId('agent-input-agent-chip')).toHaveCount(1, { timeout: 60_000 });
-    await page.getByTestId('agent-input-agent-chip').click();
-    await expect(page.getByTestId('chip-option-picker')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId(`chip-option-picker.option:acpBackend:${backendId}`)).toHaveCount(1, { timeout: 60_000 });
-    await page.getByTestId(`chip-option-picker.option:acpBackend:${backendId}`).click();
+    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/providers`);
+    await expect(page.getByTestId('settings.acpCatalog.addBackend')).toHaveCount(1, { timeout: 60_000 });
+    await expect(page.getByTestId(`settings.acpCatalog.backend.${backendId}`)).toHaveCount(1, { timeout: 60_000 });
+
+    await selectMachineForNewSession({
+      page,
+      uiBaseUrl,
+      backendTargetKey: `acpBackend:${backendId}`,
+    });
+    await expect(page).toHaveURL(new RegExp(`backendTargetKey=acpBackend%3A${backendId}`));
+    await expect(page.getByText('UI ACP Stub Backend')).toHaveCount(1, { timeout: 60_000 });
 
     await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
     await page.getByTestId('new-session-composer-input').fill(`ACP_STUB_USAGE_UPDATE=${sentinel}`);
     await page.getByTestId('new-session-composer-input').press('Enter');
-
-    const transcript = page.getByTestId('transcript-chat-list');
     await expect(page.locator('textarea[data-testid="session-composer-input"]:visible')).toHaveCount(1, { timeout: 180_000 });
+    const transcript = page.getByTestId('transcript-chat-list');
+    await expect(transcript).toHaveCount(1, { timeout: 120_000 });
     await expect(transcript.getByText(`ACP_STUB_USAGE_UPDATE_DONE ${sentinel}`)).toHaveCount(1, { timeout: 120_000 });
   });
 });

@@ -54,6 +54,7 @@ function humanizeUsageMachineLabel(value: string): string {
 
     return tokens
         .map((token) => titleCaseUsageToken(token))
+        .filter((token, index, items) => index === 0 || token.toLowerCase() !== items[index - 1]?.toLowerCase())
         .join(' ')
         .replace(/\s+/g, ' ')
         .trim();

@@ -23,7 +23,7 @@ export function useServerSettingsServerProfileActions(params: Readonly<{
         let authStatus = params.authStatusByServerId[profile.id] ?? 'unknown';
         if (authStatus === 'unknown') {
             try {
-                const creds = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl);
+                const creds = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl, { serverId: profile.id });
                 authStatus = creds ? 'signedIn' : 'signedOut';
             } catch {
                 authStatus = 'unknown';

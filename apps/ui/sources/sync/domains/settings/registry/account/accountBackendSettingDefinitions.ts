@@ -1,7 +1,7 @@
 import { buildBackendTargetKey, buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
 import { z } from 'zod';
 
-import { AGENT_IDS, type AgentId } from '@/agents/registry/registryCore';
+import { AGENT_IDS } from '@/agents/registry/registryCore';
 
 const DEFAULT_BACKEND_ENABLED_BY_TARGET_KEY: Record<string, boolean> = Object.fromEntries(
     AGENT_IDS.map((id) => [buildBackendTargetKey({ kind: 'builtInAgent', agentId: id }), true]),
@@ -33,17 +33,17 @@ function buildBackendCliSourcePreferenceAnalyticsProperties(
 
     return Object.fromEntries(
         AGENT_IDS.map((agentId) => {
-            const raw = record[agentId];
+            const raw = record[buildBackendTargetKey({ kind: 'builtInAgent', agentId })];
             const normalized = raw === 'system-first' || raw === 'managed-first'
                 ? raw
                 : 'default';
-            return [agentId, normalized];
+            return [buildBackendTargetKey({ kind: 'builtInAgent', agentId }), normalized];
         }),
     );
 }
 
 export const BackendCliSourcePreferenceSchema = z.enum(BACKEND_CLI_SOURCE_PREFERENCE_VALUES);
-export const BackendCliSourcePreferenceByIdSchema = z.preprocess((raw) => {
+export const BackendCliSourcePreferenceByTargetKeySchema = z.preprocess((raw) => {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
     return Object.fromEntries(
         Object.entries(raw as Record<string, unknown>).filter(
@@ -67,8 +67,8 @@ export const ACCOUNT_BACKEND_SETTING_DEFINITIONS = defineSettingDefinitions({
             serializeCurrentProperties: buildBackendEnabledAnalyticsProperties,
         },
     },
-    backendCliSourcePreferenceById: {
-        schema: BackendCliSourcePreferenceByIdSchema,
+    backendCliSourcePreferenceByTargetKey: {
+        schema: BackendCliSourcePreferenceByTargetKeySchema,
         default: {},
         description: 'Per-backend CLI source preference (system-first or managed-first)',
         storageScope: 'account',

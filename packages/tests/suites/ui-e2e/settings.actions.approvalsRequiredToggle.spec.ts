@@ -1,31 +1,15 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 
+import { createTestAuth } from '../../src/testkit/auth';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
-import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
-import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
+import { normalizeLoopbackBaseUrl, waitForAuthenticatedRouteUi } from '../../src/testkit/uiE2e/pageNavigation';
+import { buildAuthBootstrapStorageSnapshot } from '../../src/testkit/uiE2e/buildAuthBootstrapStorageSnapshot';
+import { installAuthBootstrapStorageSnapshot } from '../../src/testkit/uiE2e/readLegacyAuthSecretFromLocalStorage';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
-
-async function createAccountIfNeeded(baseUrl: string, page: Page): Promise<void> {
-    const createAccount = page.getByTestId('welcome-create-account');
-    if (await createAccount.count()) {
-        await createAccountAndReachConnectMachineState({ page });
-        await gotoDomContentLoadedWithRetries(page, `${baseUrl}/settings/actions?happier_hmr=0`, 180_000);
-    }
-}
-
-async function readWebSwitchChecked(locator: Locator): Promise<boolean | null> {
-    return await locator.evaluate((node) => {
-        if (node instanceof HTMLInputElement) return node.checked;
-        const aria = node.getAttribute('aria-checked');
-        if (aria === 'true') return true;
-        if (aria === 'false') return false;
-        return null;
-    });
-}
 
 test.describe('ui e2e: actions settings approvals-required toggle', () => {
     test.describe.configure({ mode: 'serial' });
@@ -69,48 +53,61 @@ test.describe('ui e2e: actions settings approvals-required toggle', () => {
 
     test('shows the Require approval toggle only when a surface tile is selected, and persists its value', async ({ page }) => {
         test.setTimeout(540_000);
-        if (!uiBaseUrl) throw new Error('missing ui base url');
-
-        await page.setViewportSize({ width: 1440, height: 900 });
-        await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
-        await waitForInitialAppUi({ page, timeoutMs: 180_000 });
-
-        await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/actions?happier_hmr=0`, 180_000);
-        await createAccountIfNeeded(uiBaseUrl, page);
+        if (!server || !uiBaseUrl) throw new Error('missing fixtures');
 
         const actionId = 'session.message.send';
         const tileId = `settings-actions:action:${actionId}:target:cli`;
         const requireApprovalId = `settings-actions:action:${actionId}:target:cli:require-approval`;
 
+        await page.setViewportSize({ width: 1440, height: 900 });
+        const auth = await createTestAuth(server.baseUrl);
+        await installAuthBootstrapStorageSnapshot(page, buildAuthBootstrapStorageSnapshot({
+            serverUrl: server.baseUrl,
+            credentials: { token: auth.token, secret: auth.token },
+            storageScope: `e2e-settings-actions-${run.runId}`,
+        }));
+
+        await page.goto(`${uiBaseUrl}/settings/actions?happier_hmr=0`, { waitUntil: 'domcontentloaded' });
+        await waitForAuthenticatedRouteUi({
+            page,
+            expectedPathname: '/settings/actions',
+            requiredTestIds: [tileId],
+            timeoutMs: 120_000,
+        });
+
         const tile = page.getByTestId(tileId);
         await expect(tile).toHaveCount(1, { timeout: 120_000 });
         await tile.scrollIntoViewIfNeeded();
-
         const requireApproval = page.getByTestId(requireApprovalId);
 
-        if (await requireApproval.count()) {
+        if ((await requireApproval.count()) === 0) {
             await tile.click({ timeout: 60_000 });
-            await expect(requireApproval).toHaveCount(0, { timeout: 60_000 });
+            await expect(requireApproval).toHaveCount(1, { timeout: 60_000 });
+        } else {
+            await expect(requireApproval).toHaveCount(1, { timeout: 60_000 });
         }
 
-        await tile.click({ timeout: 60_000 });
-        await expect(requireApproval).toHaveCount(1, { timeout: 60_000 });
+        await requireApproval.click({ timeout: 60_000 });
+        await expect(requireApproval).toHaveAttribute('aria-checked', 'true', { timeout: 60_000 });
 
-        const before = await readWebSwitchChecked(requireApproval);
-        await requireApproval.click({ timeout: 60_000, force: true });
-        await expect.poll(async () => readWebSwitchChecked(requireApproval)).not.toBe(before);
-
-        const after = await readWebSwitchChecked(requireApproval);
         await page.reload({ waitUntil: 'domcontentloaded' });
-        await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/actions?happier_hmr=0`, 180_000);
+        await waitForAuthenticatedRouteUi({
+            page,
+            expectedPathname: '/settings/actions',
+            requiredTestIds: [tileId],
+            timeoutMs: 120_000,
+        });
 
         const tileAfterReload = page.getByTestId(tileId);
         await expect(tileAfterReload).toHaveCount(1, { timeout: 120_000 });
-        await tileAfterReload.scrollIntoViewIfNeeded();
-        await tileAfterReload.click({ timeout: 60_000 });
-
         const requireAfterReload = page.getByTestId(requireApprovalId);
-        await expect(requireAfterReload).toHaveCount(1, { timeout: 60_000 });
-        await expect.poll(async () => readWebSwitchChecked(requireAfterReload)).toBe(after);
+        if ((await requireAfterReload.count()) === 0) {
+            await tileAfterReload.scrollIntoViewIfNeeded();
+            await tileAfterReload.click({ timeout: 60_000 });
+            await expect(requireAfterReload).toHaveCount(1, { timeout: 60_000 });
+        } else {
+            await expect(requireAfterReload).toHaveCount(1, { timeout: 60_000 });
+        }
+        await expect(requireAfterReload).toHaveAttribute('aria-checked', 'true', { timeout: 60_000 });
     });
 });

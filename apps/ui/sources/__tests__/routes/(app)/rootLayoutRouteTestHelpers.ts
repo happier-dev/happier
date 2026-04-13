@@ -9,6 +9,7 @@ type RootLayoutRouteStorageModuleFactory = (
 type InstallRootLayoutRouteCommonModuleMocksOptions = Readonly<{
     activityBadgeRuntime?: RootLayoutRouteModuleFactory;
     desktopActivityOverlayRuntime?: RootLayoutRouteModuleFactory;
+    mainAppTabState?: RootLayoutRouteModuleFactory;
     reactNative?: RootLayoutRouteModuleFactory;
     router?: RootLayoutRouteModuleFactory;
     storage?: RootLayoutRouteStorageModuleFactory;
@@ -23,6 +24,7 @@ const rootLayoutRouteModuleState = vi.hoisted(() => ({
         storage: undefined as RootLayoutRouteStorageModuleFactory | undefined,
         activityBadgeRuntime: undefined as RootLayoutRouteModuleFactory | undefined,
         desktopActivityOverlayRuntime: undefined as RootLayoutRouteModuleFactory | undefined,
+        mainAppTabState: undefined as RootLayoutRouteModuleFactory | undefined,
         unistyles: undefined as RootLayoutRouteModuleFactory | undefined,
         text: undefined as RootLayoutRouteModuleFactory | undefined,
     },
@@ -37,6 +39,7 @@ export function installRootLayoutRouteCommonModuleMocks(
         storage: options.storage,
         activityBadgeRuntime: options.activityBadgeRuntime,
         desktopActivityOverlayRuntime: options.desktopActivityOverlayRuntime,
+        mainAppTabState: options.mainAppTabState,
         unistyles: options.unistyles,
         text: options.text,
     };
@@ -96,6 +99,16 @@ export function installRootLayoutRouteCommonModuleMocks(
     vi.mock('@/activity/notifications/runtime/ActivityLocalNotificationRuntime', () => ({
         ActivityLocalNotificationRuntime: () => null,
     }));
+
+    vi.mock('@/components/navigation/mobile/chrome/MainAppTabStateProvider', async () => {
+        const activeOptions = rootLayoutRouteModuleState.options;
+        if (activeOptions.mainAppTabState) {
+            return await activeOptions.mainAppTabState();
+        }
+
+        const { createMainAppTabStateProviderMock } = await import('@/dev/testkit/mocks/mainAppTabState');
+        return createMainAppTabStateProviderMock().module;
+    });
 
     vi.mock('@/activity/adapters/desktop/runtime/DesktopActivityOverlayRuntime', async () => {
         const activeOptions = rootLayoutRouteModuleState.options;

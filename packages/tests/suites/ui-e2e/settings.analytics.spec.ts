@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 
@@ -173,7 +173,15 @@ test.describe('ui e2e: settings analytics', () => {
   let uiBaseUrl: string | null = null;
 
   test.beforeAll(async () => {
-    test.setTimeout(900_000);
+    const uiWebEnv = {
+      ...process.env,
+      EXPO_PUBLIC_DEBUG: '1',
+      EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-settings-analytics-${run.runId}`,
+      EXPO_PUBLIC_POSTHOG_KEY: 'phc_test_key',
+      EXPO_PUBLIC_POSTHOG_HOST: POSTHOG_HOST,
+    };
+
+    test.setTimeout(resolveUiWebBeforeAllTimeoutMs(uiWebEnv));
     await mkdir(suiteDir, { recursive: true });
 
     server = await startServerLight({
@@ -188,12 +196,8 @@ test.describe('ui e2e: settings analytics', () => {
     ui = await startUiWeb({
       testDir: suiteDir,
       env: {
-        ...process.env,
-        EXPO_PUBLIC_DEBUG: '1',
+        ...uiWebEnv,
         EXPO_PUBLIC_HAPPY_SERVER_URL: server.baseUrl,
-        EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-settings-analytics-${run.runId}`,
-        EXPO_PUBLIC_POSTHOG_KEY: 'phc_test_key',
-        EXPO_PUBLIC_POSTHOG_HOST: POSTHOG_HOST,
       },
     });
 

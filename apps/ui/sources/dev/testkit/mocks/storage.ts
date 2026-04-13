@@ -163,7 +163,10 @@ export function installPartialStorageModuleMock(overrides: object) {
 }
 
 export function createStorageStoreMock(state: Partial<StorageState>): UseBoundStore<StoreApi<StorageState>> {
-    const snapshot = state as StorageState;
+    const snapshot = {
+        ...state,
+        localSettings: state.localSettings ?? localSettingsDefaults,
+    } as StorageState;
 
     return Object.assign(
         ((selector?: (value: StorageState) => unknown) =>
