@@ -66,5 +66,35 @@ describe("migrations (provider completeness)", () => {
             ]),
         ).toBe(true);
     });
-});
 
+    it("includes AccountPushToken.clientServerUrl across providers", () => {
+        const root = process.cwd();
+        expect(readText(join(root, "prisma", "schema.prisma"))).toContain("clientServerUrl String?");
+        expect(readText(join(root, "prisma", "sqlite", "schema.prisma"))).toContain("clientServerUrl String?");
+        expect(readText(join(root, "prisma", "mysql", "schema.prisma"))).toContain("clientServerUrl String?");
+
+        const pgFiles = listMigrationSqlFiles(join(root, "prisma", "migrations"));
+        expect(
+            anyFileContains(pgFiles, [
+                'ALTER TABLE "AccountPushToken" ADD COLUMN',
+                '"clientServerUrl"',
+            ]),
+        ).toBe(true);
+
+        const sqliteFiles = listMigrationSqlFiles(join(root, "prisma", "sqlite", "migrations"));
+        expect(
+            anyFileContains(sqliteFiles, [
+                'ALTER TABLE "AccountPushToken" ADD COLUMN',
+                '"clientServerUrl"',
+            ]),
+        ).toBe(true);
+
+        const mysqlFiles = listMigrationSqlFiles(join(root, "prisma", "mysql", "migrations"));
+        expect(
+            anyFileContains(mysqlFiles, [
+                "ALTER TABLE `AccountPushToken` ADD COLUMN",
+                "`clientServerUrl`",
+            ]),
+        ).toBe(true);
+    });
+});
