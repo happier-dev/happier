@@ -114,6 +114,27 @@ describe('accountScopedCipher', () => {
     expect(opened?.value).toEqual(payload);
   });
 
+  it('seals and opens v1 ciphertext for session respawn environment continuity', () => {
+    const kind: AccountScopedBlobKind = 'session_respawn_environment';
+    const machineKey = new Uint8Array(32).fill(6);
+    const material: AccountScopedCryptoMaterial = { type: 'dataKey', machineKey };
+    const payload = {
+      CLAUDE_CONFIG_DIR: '/tmp/claude-config',
+      CODEX_HOME: '/tmp/codex-home',
+    };
+
+    const ciphertext = sealAccountScopedBlobCiphertext({
+      kind,
+      material,
+      payload,
+      randomBytes: deterministicRandomBytesFactory(),
+    });
+
+    const opened = openAccountScopedBlobCiphertext({ kind, material, ciphertext });
+    expect(opened?.format).toBe('account_scoped_v1');
+    expect(opened?.value).toEqual(payload);
+  });
+
   it('allows legacy and dataKey devices to read the same v1 ciphertext', () => {
     const kind: AccountScopedBlobKind = 'account_settings';
     const recoverySecret = new Uint8Array(32).fill(7);

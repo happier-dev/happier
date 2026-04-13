@@ -10,7 +10,8 @@ export type AccountScopedBlobKind =
   | 'account_settings'
   | 'automation_template_payload'
   | 'connected_service_credential'
-  | 'connected_service_quota_snapshot';
+  | 'connected_service_quota_snapshot'
+  | 'session_respawn_environment';
 
 export type AccountScopedCryptoMaterial =
   | Readonly<{ type: 'legacy'; secret: Uint8Array }>
@@ -29,6 +30,7 @@ const ACCOUNT_SCOPED_KIND_BYTE: Record<AccountScopedBlobKind, number> = {
   automation_template_payload: 2,
   connected_service_credential: 3,
   connected_service_quota_snapshot: 4,
+  session_respawn_environment: 5,
 };
 
 function encodeUtf8(value: string): Uint8Array {
