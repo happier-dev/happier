@@ -129,6 +129,7 @@ import {
 } from '@/sync/domains/session/directSessions/directSessionAttentionMetadata';
 import { normalizeDirectTranscriptMessages } from '@/sync/runtime/directSessions/normalizeDirectTranscriptMessages';
 import { readStoredSessionRawRecord } from '@/sync/runtime/readStoredSessionContent';
+import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { emitSessionMetadataUpdateWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/emitSessionMetadataUpdateWithServerScope';
 import { fetchSessionByIdWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/fetchSessionByIdWithServerScope';
@@ -852,7 +853,7 @@ class Sync {
          */
         ensureSessionVisibleForMessageRoute = async (
             sessionId: string,
-            options?: Readonly<{ forceRefresh?: boolean }>,
+            options?: Readonly<{ forceRefresh?: boolean; serverId?: string }>,
         ): Promise<boolean> => {
             const normalized = String(sessionId ?? '').trim();
             if (!normalized) return true;
@@ -870,7 +871,9 @@ class Sync {
                         }
                     })()
                 );
-            const preferredServerId = resolvePreferredServerIdForSessionId(normalized);
+            const explicitServerId = String(options?.serverId ?? '').trim();
+            const cachedServerId = resolveServerIdForSessionIdFromLocalCache(normalized);
+            const preferredServerId = explicitServerId || cachedServerId || resolvePreferredServerIdForSessionId(normalized);
             const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
             const prefersActiveServer = !preferredServerId || preferredServerId === activeServerId;
 

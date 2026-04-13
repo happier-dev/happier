@@ -1,14 +1,14 @@
 import { buildBackendTargetKey, type AcpCatalogSettingsV1, type BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import { getAgentCore } from '@/agents/catalog/catalog';
-import { getResolvedBackendCatalogEntries, resolveBuiltInAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { buildAvailableReviewEngineOptions, type ExecutionRunsBackendSnapshotEntry } from '@/sync/domains/reviews/reviewEngineCatalog';
 import { resolveExecutionRunAvailableBackends } from '@/sync/domains/executionRuns/resolveExecutionRunAvailableBackends';
 
 export type ExecutionRunLauncherBackendChoice = Readonly<{
     target: BackendTargetRefV1;
     targetKey: string;
-    builtInAgentId: string;
+    backendId: string;
     title: string;
     disabled: boolean;
 }>;
@@ -34,7 +34,7 @@ export function resolveExecutionRunLauncherBackendChoices(params: Readonly<{
             ...Object.keys(params.executionRunsBackends ?? {}),
         ]),
     ).filter((id) => isResolvableBuiltInCatalogAgent(id));
-    const availableBuiltInBackendIds = new Set(
+    const availableBackendIds = new Set(
         resolveExecutionRunAvailableBackends(params.executionRunsBackends, params.intent),
     );
 
@@ -48,7 +48,7 @@ export function resolveExecutionRunLauncherBackendChoices(params: Readonly<{
             return {
                 target,
                 targetKey: buildBackendTargetKey(target),
-                builtInAgentId: option.id,
+                backendId: option.id,
                 title: option.id,
                 disabled: option.disabled === true,
             };
@@ -59,13 +59,18 @@ export function resolveExecutionRunLauncherBackendChoices(params: Readonly<{
         enabledAgentIds: catalogAgentIds as any,
         acpCatalogSettingsV1: params.acpCatalogSettingsV1,
     }).map((entry) => {
-        const builtInAgentId = resolveBuiltInAgentIdForBackendTarget(entry.target);
+        const backendId = entry.target.kind === 'configuredAcpBackend'
+            ? entry.target.backendId
+            : entry.target.agentId;
+        const isAvailable = entry.family === 'configuredAcpBackend'
+            ? availableBackendIds.has(backendId) || availableBackendIds.has(entry.providerAgentId)
+            : availableBackendIds.has(backendId);
         return {
             target: entry.target,
             targetKey: entry.targetKey,
-            builtInAgentId,
-            title: entry.family === 'configuredAcpBackend' ? entry.title : builtInAgentId,
-            disabled: !availableBuiltInBackendIds.has(builtInAgentId),
+            backendId,
+            title: entry.family === 'configuredAcpBackend' ? entry.title : backendId,
+            disabled: !isAvailable,
         };
     });
 }

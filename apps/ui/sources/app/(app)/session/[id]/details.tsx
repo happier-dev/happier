@@ -10,6 +10,7 @@ import { applySessionPaneUrlState, parseSessionPaneUrlState } from '@/components
 import { SessionCockpitShell } from '@/components/workspaceCockpit/session/SessionCockpitShell';
 import { usePersistSessionMobileSurface } from '@/components/workspaceCockpit/session/usePersistSessionMobileSurface';
 import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit/useMobileWorkspaceExperienceState';
+import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
@@ -18,10 +19,15 @@ export default function SessionDetailsScreenRoute() {
     const router = useRouter();
     const navigation = useNavigation();
     const isFocused = useIsFocused();
-    const params = useLocalSearchParams<{ id: string; details?: string; path?: string; sha?: string }>();
+    const params = useLocalSearchParams<{ id: string; serverId?: string; details?: string; path?: string; sha?: string }>();
+    const routeScope = React.useMemo(() => createSessionRouteServerScope(params), [params]);
     const { id: sessionIdParam } = params;
     const sessionId = normalizeSessionId(sessionIdParam);
-    const sessionHydrated = useHydrateSessionForRoute(sessionId, 'SessionDetailsRoute.ensureSessionVisible');
+    const sessionHydrated = useHydrateSessionForRoute(
+        sessionId,
+        'SessionDetailsRoute.ensureSessionVisible',
+        routeScope.hydrationOptions,
+    );
     const { cockpitEnabled } = useMobileWorkspaceExperienceState();
     const scopeId = `session:${sessionId}`;
     const pane = useAppPaneScope(scopeId);
@@ -34,8 +40,8 @@ export default function SessionDetailsScreenRoute() {
     const hasMountedRef = React.useRef(false);
     const prevDetailsIsOpenRef = React.useRef(detailsIsOpen);
     const returnToSession = React.useCallback(() => {
-        safeRouterBack({ router, navigation, fallbackHref: `/session/${sessionId}` });
-    }, [navigation, router, sessionId]);
+        safeRouterBack({ router, navigation, fallbackHref: routeScope.buildHref(sessionId) });
+    }, [navigation, routeScope, router, sessionId]);
 
     React.useEffect(() => {
         hasMountedRef.current = true;

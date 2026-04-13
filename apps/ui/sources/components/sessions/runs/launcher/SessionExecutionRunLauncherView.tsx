@@ -2,7 +2,7 @@ import * as React from 'react';
 import { ActivityIndicator, Pressable, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { getActionSpec, resolveEffectiveActionInputFields } from '@happier-dev/protocol';
+import { buildBackendTargetKey, getActionSpec, resolveEffectiveActionInputFields } from '@happier-dev/protocol';
 
 import { buildResumeSessionExtrasFromUiState, DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
@@ -30,6 +30,7 @@ import { resolveExecutionRunLauncherBackendChoices } from './resolveExecutionRun
 import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
 import { resolveExecutionRunActionDefaultPermissionMode } from '@/sync/domains/actions/resolveExecutionRunActionDefaultPermissionMode';
 import { resolveExecutionRunActionAllowedPermissionModes } from '@/sync/domains/actions/resolveExecutionRunActionAllowedPermissionModes';
+import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { ActionInputFields, getValueAtPath, setValueAtTopLevelPatch, type ActionFieldOption } from '@/components/sessions/actions/ActionInputFields';
 
 import {
@@ -131,11 +132,20 @@ export const SessionExecutionRunLauncherView = React.memo((props: Readonly<{
     });
 
     const initialIntent = props.initialIntent ?? 'review';
+    const sessionActionDefaultBackend = React.useMemo(
+        () => resolveSessionActionDefaultBackend({
+            session,
+            enabledAgentIds,
+            fallbackAgentId: agentId ?? undefined,
+        }),
+        [agentId, enabledAgentIds, session],
+    );
     const [intent, setIntent] = React.useState<ExecutionRunIntent>(initialIntent);
     const initialBackendTarget = React.useMemo(
-        () => (agentId ? { kind: 'builtInAgent', agentId } as const : null),
-        [agentId],
+        () => sessionActionDefaultBackend?.backendTarget ?? (agentId ? { kind: 'builtInAgent', agentId } as const : null),
+        [agentId, sessionActionDefaultBackend],
     );
+    const initialDefaultBackendId = sessionActionDefaultBackend?.defaultBackendId ?? agentId ?? null;
     const [isStarting, setIsStarting] = React.useState(false);
     const [startError, setStartError] = React.useState<string | null>(null);
 
@@ -150,14 +160,10 @@ export const SessionExecutionRunLauncherView = React.memo((props: Readonly<{
     }, [enabledAgentIds, executionRunsBackends, intent, settings]);
 
     const initialBackendTargetKey = React.useMemo(() => {
-        const sessionAgent = (session as any)?.metadata?.agent;
-        if (typeof sessionAgent !== 'string') return null;
-        const matchingChoice = backendChoices.find((choice) => choice.builtInAgentId === sessionAgent && choice.disabled !== true);
-        if (matchingChoice) {
-            return matchingChoice.targetKey;
-        }
-        return null;
-    }, [backendChoices, session]);
+        if (!initialBackendTarget) return null;
+        const targetKey = buildBackendTargetKey(initialBackendTarget);
+        return backendChoices.some((choice) => choice.targetKey === targetKey && choice.disabled !== true) ? targetKey : null;
+    }, [backendChoices, initialBackendTarget]);
 
     const buildSeedInput = React.useCallback((nextIntent: ExecutionRunIntent, previousInput?: Record<string, unknown> | null) => {
         const actionId = resolveExecutionRunLauncherActionId(nextIntent);
@@ -168,10 +174,10 @@ export const SessionExecutionRunLauncherView = React.memo((props: Readonly<{
             actionId: actionId as any,
             sessionId: props.sessionId,
             defaultBackendTarget: nextIntent === 'review' ? null : initialBackendTarget,
-            defaultBackendId: agentId,
+            defaultBackendId: initialDefaultBackendId,
             instructions: previousInstructions,
         });
-    }, [agentId, initialBackendTarget, props.sessionId]);
+    }, [initialBackendTarget, initialDefaultBackendId, props.sessionId]);
 
     const [actionInput, setActionInput] = React.useState<Record<string, unknown>>(() => buildSeedInput(initialIntent));
     const actionId = resolveExecutionRunLauncherActionId(intent);
@@ -221,18 +227,20 @@ export const SessionExecutionRunLauncherView = React.memo((props: Readonly<{
         const selectedValues = Array.isArray(getValueAtPath(actionInput, fieldPath))
             ? (getValueAtPath(actionInput, fieldPath) as unknown[]).map(String)
             : [];
-        return backendChoices.filter((choice) => selectedValues.includes(choice.targetKey) || selectedValues.includes(choice.builtInAgentId));
+        return backendChoices.filter((choice) => selectedValues.includes(choice.targetKey) || selectedValues.includes(choice.backendId));
     }, [actionInput, backendChoices, intent]);
 
     const permissionModeOptions = React.useMemo(() => {
         const rawAgentType =
-            selectedBackendChoices[0]?.builtInAgentId
+            selectedBackendChoices[0]?.target.kind === 'builtInAgent'
+                ? selectedBackendChoices[0].backendId
+                : sessionActionDefaultBackend?.defaultBackendId
             ?? (session as any)?.metadata?.agent
             ?? enabledAgentIds[0]
             ?? null;
         const agentType = typeof rawAgentType === 'string' ? rawAgentType : DEFAULT_AGENT_ID;
         return getPermissionModeOptionsForAgentType(agentType as any);
-    }, [enabledAgentIds, selectedBackendChoices, session]);
+    }, [enabledAgentIds, selectedBackendChoices, session, sessionActionDefaultBackend]);
     const selectedPermissionMode = React.useMemo(() => {
         const value = getValueAtPath(actionInput, 'permissionMode');
         return typeof value === 'string' ? value : '';

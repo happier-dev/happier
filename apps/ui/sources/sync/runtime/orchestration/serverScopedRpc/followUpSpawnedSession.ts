@@ -62,11 +62,16 @@ export function readRecoverableFollowUpPayload(error: unknown): RecoverableFollo
 
 async function ensureSessionHydratedForNavigation(params: Readonly<{
     sessionId: string;
+    serverId?: string | null;
     getStoredSession: (sessionId: string) => Session | null;
-    ensureSessionVisibleForMessageRoute?: (sessionId: string, options?: Readonly<{ forceRefresh?: boolean }>) => Promise<unknown>;
+    ensureSessionVisibleForMessageRoute?: (sessionId: string, options?: Readonly<{ forceRefresh?: boolean; serverId?: string }>) => Promise<unknown>;
 }>): Promise<void> {
     if (typeof params.ensureSessionVisibleForMessageRoute === 'function') {
-        await params.ensureSessionVisibleForMessageRoute(params.sessionId, { forceRefresh: true });
+        const serverId = String(params.serverId ?? '').trim();
+        await params.ensureSessionVisibleForMessageRoute(
+            params.sessionId,
+            serverId ? { forceRefresh: true, serverId } : { forceRefresh: true },
+        );
     }
 
     if (!params.getStoredSession(params.sessionId)) {
@@ -76,7 +81,7 @@ async function ensureSessionHydratedForNavigation(params: Readonly<{
 
 function getDefaultActiveSync() {
     return {
-        ensureSessionVisibleForMessageRoute: async (sessionId: string, options?: Readonly<{ forceRefresh?: boolean }>) => {
+        ensureSessionVisibleForMessageRoute: async (sessionId: string, options?: Readonly<{ forceRefresh?: boolean; serverId?: string }>) => {
             if (typeof sync.ensureSessionVisibleForMessageRoute === 'function') {
                 await sync.ensureSessionVisibleForMessageRoute(sessionId, options);
             }
@@ -127,7 +132,7 @@ export function createFollowUpSpawnedSessionWithServerScope(deps?: Readonly<{
     activeSync?: Readonly<Omit<ActiveSyncLike, 'ensureSessionVisibleForMessageRoute'>> & {
         ensureSessionVisibleForMessageRoute?: ActiveSyncLike['ensureSessionVisibleForMessageRoute'];
     };
-    ensureSessionVisibleForMessageRoute?: (sessionId: string, options?: Readonly<{ forceRefresh?: boolean }>) => Promise<unknown>;
+    ensureSessionVisibleForMessageRoute?: (sessionId: string, options?: Readonly<{ forceRefresh?: boolean; serverId?: string }>) => Promise<unknown>;
     getStoredSession?: (sessionId: string) => Session | null;
     applySessions?: (sessions: AppliedSession[]) => void;
 }>): Readonly<{
@@ -183,6 +188,7 @@ export function createFollowUpSpawnedSessionWithServerScope(deps?: Readonly<{
                 await activeSync.refreshSessions();
                 await ensureSessionHydratedForNavigation({
                     sessionId,
+                    serverId: params.targetServerId ?? null,
                     getStoredSession,
                     ensureSessionVisibleForMessageRoute,
                 });

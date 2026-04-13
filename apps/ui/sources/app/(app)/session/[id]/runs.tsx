@@ -7,6 +7,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import type { ExecutionRunPublicState } from '@happier-dev/protocol';
 import { isRpcMethodNotAvailableError } from '@happier-dev/protocol/rpcErrors';
 import { sessionExecutionRunList } from '@/sync/ops/sessionExecutionRuns';
+import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { useSessionExecutionRunLaunchability } from '@/hooks/session/useSessionExecutionRunLaunchability';
 import type { ExecutionRunBackendCapabilityMap } from '@/sync/domains/executionRuns/resolveExecutionRunAvailableBackends';
@@ -35,13 +36,14 @@ function readExecutionRunsErrorMessage(result: Readonly<{ error?: string; errorC
 
 export default function SessionRunsScreen() {
   const { theme } = useUnistyles();
-  const params = useLocalSearchParams<{ id?: string | string[] }>();
+  const params = useLocalSearchParams<{ id?: string | string[]; serverId?: string | string[] }>();
+  const routeScope = React.useMemo(() => createSessionRouteServerScope(params as Record<string, unknown>), [params]);
   const sessionId = normalizeSessionId(params.id);
   const headerTitle = t('runs.title');
   const screenOptions = React.useMemo(() => {
     return { headerShown: true, headerTitle };
   }, [headerTitle]);
-  const hydrateReady = useHydrateSessionForRoute(sessionId, 'SessionRunsScreen.hydrate');
+  const hydrateReady = useHydrateSessionForRoute(sessionId, 'SessionRunsScreen.hydrate', routeScope.hydrationOptions);
   if (!hydrateReady) {
     return (
       <View testID="session-runs-screen" style={{ flex: 1, backgroundColor: theme.colors.groupped?.background ?? theme.colors.surface }}>
@@ -69,10 +71,13 @@ export default function SessionRunsScreen() {
     );
   }
 
-  return <SessionRunsScreenContent sessionId={sessionId} />;
+  return <SessionRunsScreenContent routeScope={routeScope} sessionId={sessionId} />;
 }
 
-function SessionRunsScreenContent(props: Readonly<{ sessionId: string }>) {
+function SessionRunsScreenContent(props: Readonly<{
+  sessionId: string;
+  routeScope: ReturnType<typeof createSessionRouteServerScope>;
+}>) {
   const { theme } = useUnistyles();
   const router = useRouter();
   const session = useSession(props.sessionId);
@@ -148,7 +153,10 @@ function SessionRunsScreenContent(props: Readonly<{ sessionId: string }>) {
                   accessibilityLabel={t(`executionRuns.newRun.intents.${nextIntent}`)}
                   onPress={() => {
                     if (!props.sessionId) return;
-                    router.push(`/session/${props.sessionId}/runs/new?intent=${nextIntent}` as any);
+                    router.push(props.routeScope.buildHref(props.sessionId, {
+                      suffix: '/runs/new',
+                      query: { intent: nextIntent },
+                    }) as any);
                   }}
                   hitSlop={10}
                   style={({ pressed }) => ({ padding: 4, opacity: pressed ? 0.7 : 1 })}
@@ -170,7 +178,7 @@ function SessionRunsScreenContent(props: Readonly<{ sessionId: string }>) {
         </Pressable>
       </View>
     );
-  }, [canShowLaunchButtons, headerTint, launchIntents, load, props.sessionId, router]);
+  }, [canShowLaunchButtons, headerTint, launchIntents, load, props.routeScope, props.sessionId, router]);
 
   const screenOptions = React.useMemo(() => ({
     headerShown: true,
@@ -198,7 +206,9 @@ function SessionRunsScreenContent(props: Readonly<{ sessionId: string }>) {
           <ExecutionRunList
             runs={state.runs}
             onPressRun={(run) => {
-              router.push(`/session/${props.sessionId}/runs/${run.runId}` as any);
+              router.push(props.routeScope.buildHref(props.sessionId, {
+                suffix: `/runs/${encodeURIComponent(run.runId)}`,
+              }) as any);
             }}
           />
         )}

@@ -1,4 +1,4 @@
-import type { AcpCatalogSettingsV1, BackendTargetRefV1 } from '@happier-dev/protocol';
+import { readBackendTargetRefV2, type AcpCatalogSettingsV1, type BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import { normalizeAcpCatalogSettingsV1 } from '@/sync/domains/acpCatalog/normalizeAcpCatalogSettingsV1';
 import { storage } from '@/sync/domains/state/storage';
@@ -15,9 +15,14 @@ export function resolveExecutionRunBackendLabel(
     catalog?: AcpCatalogSettingsV1 | null,
 ): string | null {
     if (!backendTarget) return null;
-    if (backendTarget.kind === 'builtInAgent') return backendTarget.agentId;
+    const canonicalBackendTarget = readBackendTargetRefV2(backendTarget as any);
+    if (canonicalBackendTarget.kind === 'backend' && canonicalBackendTarget.sourceKind !== 'configured') {
+        return canonicalBackendTarget.backendId;
+    }
     return resolveConfiguredBackendLabel(
-        backendTarget,
+        backendTarget.kind === 'configuredAcpBackend'
+            ? backendTarget
+            : { kind: 'configuredAcpBackend', backendId: canonicalBackendTarget.configuredBackendId ?? canonicalBackendTarget.backendId },
         catalog
             ?? storage.getState()?.settings?.acpCatalogSettingsV1
             ?? { v: 2, backends: [] },

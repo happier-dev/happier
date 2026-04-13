@@ -11,6 +11,7 @@ import { SessionCockpitShell } from '@/components/workspaceCockpit/session/Sessi
 import { usePersistSessionMobileSurface } from '@/components/workspaceCockpit/session/usePersistSessionMobileSurface';
 import { useLegacyDetailsRouteRedirect } from '@/components/workspaceCockpit/useLegacyDetailsRouteRedirect';
 import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit/useMobileWorkspaceExperienceState';
+import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
@@ -20,9 +21,15 @@ export default function TerminalScreenRoute() {
     const router = useRouter();
     const navigation = useNavigation();
     const isFocused = useIsFocused();
-    const { id: sessionIdParam } = useLocalSearchParams<{ id: string }>();
+    const params = useLocalSearchParams<{ id: string; serverId?: string }>();
+    const routeScope = React.useMemo(() => createSessionRouteServerScope(params), [params]);
+    const { id: sessionIdParam } = params;
     const sessionId = normalizeSessionId(sessionIdParam);
-    const sessionHydrated = useHydrateSessionForRoute(sessionId, 'SessionTerminalRoute.ensureSessionVisible');
+    const sessionHydrated = useHydrateSessionForRoute(
+        sessionId,
+        'SessionTerminalRoute.ensureSessionVisible',
+        routeScope.hydrationOptions,
+    );
     const scopeId = `session:${sessionId}`;
     const pane = useAppPaneScope(scopeId);
     const openRight = pane.openRight;
@@ -42,9 +49,9 @@ export default function TerminalScreenRoute() {
         if (!sessionId) return;
         if (!sessionHydrated) return;
         if (!terminalTabAvailable) {
-            safeRouterBack({ router, navigation, fallbackHref: `/session/${sessionId}` });
+            safeRouterBack({ router, navigation, fallbackHref: routeScope.buildHref(sessionId) });
         }
-    }, [isFocused, navigation, router, sessionId, sessionHydrated, terminalTabAvailable]);
+    }, [isFocused, navigation, routeScope, router, sessionId, sessionHydrated, terminalTabAvailable]);
 
     React.useEffect(() => {
         if (!isFocused) return;
@@ -57,12 +64,12 @@ export default function TerminalScreenRoute() {
     const handleNavigateToDetails = React.useCallback((key: string) => {
         router.push({
             pathname: '/session/[id]/details',
-            params: {
+            params: routeScope.withParams({
                 id: sessionId,
                 ...buildActiveDetailsRouteParams(detailsTabs, key),
-            },
+            }),
         } as any);
-    }, [detailsTabs, router, sessionId]);
+    }, [detailsTabs, routeScope, router, sessionId]);
 
     useLegacyDetailsRouteRedirect({
         resetKey: sessionId,
@@ -81,8 +88,8 @@ export default function TerminalScreenRoute() {
 
     const onRequestClose = React.useCallback(() => {
         closeRight();
-        safeRouterBack({ router, navigation, fallbackHref: `/session/${sessionId}` });
-    }, [closeRight, navigation, router, sessionId]);
+        safeRouterBack({ router, navigation, fallbackHref: routeScope.buildHref(sessionId) });
+    }, [closeRight, navigation, routeScope, router, sessionId]);
 
     if (!sessionId) {
         return <SessionInvalidLinkFallback />;

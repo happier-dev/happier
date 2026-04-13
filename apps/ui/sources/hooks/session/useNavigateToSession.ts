@@ -5,6 +5,7 @@ import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwit
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { useAuth } from '@/auth/context/AuthContext';
+import { buildScopedSessionRouteHref } from './sessionRouteServerScope';
 
 export function useNavigateToSession() {
     const router = useRouter();
@@ -24,7 +25,10 @@ export function useNavigateToSession() {
             });
         }
 
-        router.navigate(`/session/${normalizedSessionId}`, {
+        router.navigate(buildScopedSessionRouteHref({
+            sessionId: normalizedSessionId,
+            serverId: targetServerId || null,
+        }), {
             dangerouslySingular(name, params) {
                 return 'session';
             },

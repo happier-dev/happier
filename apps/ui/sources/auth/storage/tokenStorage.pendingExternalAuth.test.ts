@@ -23,6 +23,14 @@ describe('TokenStorage pending external auth (web)', () => {
     });
 
     it('round-trips pending external auth state', async () => {
+        vi.doMock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>();
+            return {
+                ...actual,
+                getActiveServerUrl: () => 'https://relay.example.test',
+            };
+        });
+
         const { TokenStorage } = await import('./tokenStorage');
 
         expect(typeof TokenStorage.setPendingExternalAuth).toBe('function');
@@ -31,10 +39,18 @@ describe('TokenStorage pending external auth (web)', () => {
 
         await expect(TokenStorage.getPendingExternalAuth()).resolves.toBeNull();
 
-        const ok = await TokenStorage.setPendingExternalAuth({ provider: 'github', proof: 'p' });
+        const ok = await TokenStorage.setPendingExternalAuth({
+            provider: 'github',
+            proof: 'p',
+            serverUrl: 'https://relay.example.test',
+        });
         expect(ok).toBe(true);
 
-        await expect(TokenStorage.getPendingExternalAuth()).resolves.toEqual({ provider: 'github', proof: 'p' });
+        await expect(TokenStorage.getPendingExternalAuth()).resolves.toEqual({
+            provider: 'github',
+            proof: 'p',
+            serverUrl: 'https://relay.example.test',
+        });
 
         if (!localStorageHandle) {
             throw new Error('Expected localStorage mock handle');
@@ -51,11 +67,91 @@ describe('TokenStorage pending external auth (web)', () => {
                 localStorageHandle.store.delete(key);
             }
         }
-        await expect(TokenStorage.getPendingExternalAuth()).resolves.toEqual({ provider: 'github', proof: 'p' });
+        await expect(TokenStorage.getPendingExternalAuth()).resolves.toEqual({
+            provider: 'github',
+            proof: 'p',
+            serverUrl: 'https://relay.example.test',
+        });
 
         const cleared = await TokenStorage.clearPendingExternalAuth();
         expect(cleared).toBe(true);
         await expect(TokenStorage.getPendingExternalAuth()).resolves.toBeNull();
+        vi.doUnmock('@/sync/domains/server/serverProfiles');
+    });
+
+    it('rejects global fallback pending external auth when the active server changed', async () => {
+        vi.doMock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>();
+            return {
+                ...actual,
+                getActiveServerUrl: () => 'https://relay-b.example.test',
+            };
+        });
+
+        const { TokenStorage } = await import('./tokenStorage');
+
+        const ok = await TokenStorage.setPendingExternalAuth({
+            provider: 'github',
+            proof: 'p',
+            serverUrl: 'https://relay-a.example.test',
+        });
+        expect(ok).toBe(true);
+
+        if (!localStorageHandle) {
+            throw new Error('Expected localStorage mock handle');
+        }
+        for (const key of [...localStorageHandle.store.keys()]) {
+            if (key.includes('pending_external_auth') && key.includes('__srv_')) {
+                localStorageHandle.store.delete(key);
+            }
+        }
+
+        await expect(TokenStorage.getPendingExternalAuth()).resolves.toBeNull();
+        vi.doUnmock('@/sync/domains/server/serverProfiles');
+    });
+
+    it('rejects global fallback pending external auth when the active same-origin server profile changed', async () => {
+        const state = {
+            activeServerId: 'server-a',
+            activeServerUrl: 'https://shared.example.test',
+            profiles: [
+                { id: 'server-a', serverUrl: 'https://shared.example.test', name: 'Server A' },
+                { id: 'server-b', serverUrl: 'https://shared.example.test', name: 'Server B' },
+            ],
+        };
+
+        vi.doMock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>();
+            return {
+                ...actual,
+                getActiveServerId: () => state.activeServerId,
+                getActiveServerUrl: () => state.activeServerUrl,
+                listServerProfiles: () => state.profiles,
+            };
+        });
+
+        const { TokenStorage } = await import('./tokenStorage');
+
+        const ok = await TokenStorage.setPendingExternalAuth({
+            provider: 'github',
+            proof: 'p',
+            serverUrl: state.activeServerUrl,
+        });
+        expect(ok).toBe(true);
+
+        if (!localStorageHandle) {
+            throw new Error('Expected localStorage mock handle');
+        }
+        for (const key of [...localStorageHandle.store.keys()]) {
+            if (key.includes('pending_external_auth') && key.includes('__srv_')) {
+                localStorageHandle.store.delete(key);
+            }
+        }
+
+        state.activeServerId = 'server-b';
+
+        await expect(TokenStorage.getPendingExternalAuth()).resolves.toBeNull();
+        vi.doUnmock('@/sync/domains/server/serverProfiles');
     });
 
     it('round-trips pending external auth state with both proof and secret', async () => {

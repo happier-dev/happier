@@ -19,6 +19,8 @@ import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverSc
 import { createEphemeralServerSocketClient } from '@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient';
 import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
 import type {
+    BackendTargetRefV2Input,
+    BackendTargetRefV1,
     LlmTaskRunnerConfigV1,
     SessionAttachMetadataIdentityPolicy,
     SessionContinueWithReplayRpcResult,
@@ -30,6 +32,7 @@ import type {
     SessionRollbackTarget,
     SpawnSessionResult,
 } from '@happier-dev/protocol';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol';
 import type { AgentId } from '@/agents/catalog/catalog';
 import {
     SessionContinueWithReplayRpcResultSchema,
@@ -165,7 +168,7 @@ export interface ResumeSessionOptions {
     /** The directory where the session was running */
     directory: string;
     /** The backend target to resume */
-    backendTarget: import('@happier-dev/protocol').BackendTargetRefV1;
+    backendTarget: import('@happier-dev/protocol').BackendTargetRefV2Input;
     /** Optional vendor resume id (e.g. Claude/Codex session id). */
     resume?: string;
     environmentVariables?: Record<string, string>;
@@ -310,6 +313,7 @@ export type ContinueSessionWithReplayOptions = Readonly<{
     serverId?: string | null;
     directory: string;
     agent: AgentId;
+    backendTarget?: BackendTargetRefV2Input;
     approvedNewDirectoryCreation?: boolean;
     permissionMode?: PermissionMode;
     permissionModeUpdatedAt?: number;
@@ -327,13 +331,26 @@ export type ContinueSessionWithReplayOptions = Readonly<{
 
 export async function continueSessionWithReplay(options: ContinueSessionWithReplayOptions): Promise<SessionContinueWithReplayRpcResult> {
     const serverId = typeof options.serverId === 'string' ? options.serverId.trim() : null;
+    const backendTarget = options.backendTarget
+        ? readBackendTargetRefV2(options.backendTarget)
+        : (options.agent !== 'customAcp'
+            ? readBackendTargetRefV2({ kind: 'builtInAgent', agentId: options.agent } as const)
+            : undefined);
+    const legacyAgent = backendTarget?.kind === 'backend'
+        ? backendTarget.sourceKind === 'configured'
+            ? (options.agent !== 'customAcp' ? options.agent : undefined)
+            : backendTarget.backendId
+        : options.agent !== 'customAcp'
+            ? options.agent
+            : undefined;
     try {
         const raw = await machineRpcWithServerScope<unknown, unknown>({
             machineId: options.machineId,
             method: RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY,
             payload: {
                 directory: options.directory,
-                agent: options.agent,
+                ...(legacyAgent ? { agent: legacyAgent } : {}),
+                ...(backendTarget ? { backendTarget } : {}),
                 approvedNewDirectoryCreation: options.approvedNewDirectoryCreation,
                 permissionMode: options.permissionMode,
                 permissionModeUpdatedAt: options.permissionModeUpdatedAt,

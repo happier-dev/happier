@@ -11,6 +11,7 @@ import {
     waitForServerReachable,
 } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 import { readServerReachabilityWaitTimeoutMs } from '@/sync/runtime/connectivity/serverReachabilityTuning';
+import { notifyAuthCredentialsInvalidated } from '@/sync/runtime/orchestration/authCredentialsInvalidation';
 
 export { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
@@ -330,10 +331,20 @@ export async function serverFetch(
             // If the active token is rejected, clear it to prevent the UI from getting stuck in a persistent 401 loop.
             // The follow-up request (if any) will re-read credentials and may pick up a refreshed token, or allow the
             // UI to present a clean sign-in state for that server scope.
+            let invalidatedStoredCredentials = false;
             try {
-                await TokenStorage.invalidateCredentialsTokenForServerUrl(snapshot.serverUrl, usedToken);
+                invalidatedStoredCredentials = await TokenStorage.invalidateCredentialsTokenForServerUrl(snapshot.serverUrl, usedToken, {
+                    serverId: snapshot.serverId,
+                });
             } catch {
                 // ignore
+            }
+            if (invalidatedStoredCredentials) {
+                notifyAuthCredentialsInvalidated({
+                    serverId: snapshot.serverId,
+                    serverUrl: snapshot.serverUrl,
+                    token: usedToken,
+                });
             }
 
             // Only retry idempotent requests to avoid surprising duplication.

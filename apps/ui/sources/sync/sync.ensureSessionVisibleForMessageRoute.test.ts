@@ -649,6 +649,78 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         expect(initializeSessions).toHaveBeenCalled();
     });
 
+    it('hydrates through an explicit serverId override even when the active server differs', async () => {
+        const sessionId = 'deep_link_explicit_server';
+        const activeServer = upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
+        const ownerServer = upsertServerProfile({ serverUrl: 'https://scoped.example', name: 'Owner' });
+        setActiveServerId(activeServer.id, { scope: 'device' });
+
+        storage.getState().applySessions([
+            {
+                ...createSession({ sessionId }),
+                encryptionMode: 'plain',
+            },
+        ]);
+        storage.getState().resetSessionMessages(sessionId);
+
+        const { sync } = await import('./sync');
+        const initializeSessions = vi.fn(async () => {});
+
+        (sync as any).credentials = { token: 'active-token', secret: 'active-secret' };
+        (sync as any).activeServerSessionIds = new Set<string>();
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = false;
+        (sync as any).encryption = {
+            decryptEncryptionKey: async () => null,
+            initializeSessions,
+            getSessionEncryption: () => null,
+        };
+
+        requestMock.mockRejectedValue(new Error('active request should not be used'));
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: 'scoped-token', secret: 'scoped-secret' });
+        createEncryptionFromAuthCredentialsMock.mockResolvedValue({
+            decryptEncryptionKey: async () => null,
+            initializeSessions: async () => {},
+            getSessionEncryption: () => null,
+        });
+        runtimeFetchMock.mockResolvedValue(
+            new Response(
+                JSON.stringify({
+                    session: {
+                        id: sessionId,
+                        createdAt: 1,
+                        updatedAt: 2,
+                        seq: 3,
+                        active: true,
+                        activeAt: 2,
+                        encryptionMode: 'plain',
+                        dataEncryptionKey: null,
+                        metadataVersion: 0,
+                        metadata: 'null',
+                        agentStateVersion: 0,
+                        agentState: null,
+                        share: null,
+                    },
+                }),
+                { status: 200, headers: { 'Content-Type': 'application/json' } },
+            ),
+        );
+
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true, serverId: ownerServer.id })).resolves.toBe(true);
+
+        expect(requestMock).not.toHaveBeenCalled();
+        expect(runtimeFetchMock).toHaveBeenCalledWith(
+            `https://scoped.example/v2/sessions/${sessionId}`,
+            expect.objectContaining({
+                method: 'GET',
+                headers: expect.objectContaining({
+                    Authorization: 'Bearer scoped-token',
+                }),
+            }),
+        );
+        expect((sync as any).activeServerSessionIds.has(sessionId)).toBe(true);
+        expect(initializeSessions).toHaveBeenCalled();
+    });
+
     it('ignores localStorage read errors while evaluating debug hydration logging', async () => {
         const sessionId = 'deep_link_local_storage_error';
         storage.getState().applySessions([

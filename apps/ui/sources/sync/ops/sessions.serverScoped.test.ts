@@ -161,7 +161,12 @@ describe('sessions ops server-scoped routing', () => {
             sessionId: 'session-1',
             machineId: 'machine-1',
             directory: '/tmp',
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-kiro' },
+            backendTarget: {
+                kind: 'backend',
+                backendId: 'custom-kiro',
+                configuredBackendId: 'custom-kiro',
+                sourceKind: 'configured',
+            },
             serverId: 'server-b',
         } as any);
 
@@ -307,7 +312,57 @@ describe('sessions ops server-scoped routing', () => {
             method: 'session.continueWithReplay',
             serverId: 'server-b',
             payload: expect.objectContaining({
+                agent: 'claude',
+                backendTarget: {
+                    kind: 'backend',
+                    backendId: 'claude',
+                    sourceKind: 'built_in',
+                },
                 replay: expect.objectContaining({ summaryRunner, maxSeedChars: 12_345 }),
+            }),
+        }));
+    });
+
+    it('routes configured ACP continue-with-replay through server-scoped machine rpc with canonical backendTarget only', async () => {
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess-3' });
+        const { continueSessionWithReplay } = await sessionsModulePromise;
+
+        const result = await continueSessionWithReplay({
+            machineId: 'machine-1',
+            directory: '/tmp',
+            agent: 'customAcp',
+            backendTarget: {
+                kind: 'backend',
+                backendId: 'review-bot',
+                configuredBackendId: 'review-bot',
+                sourceKind: 'configured',
+            },
+            approvedNewDirectoryCreation: true,
+            replay: {
+                previousSessionId: 'sess-prev',
+                strategy: 'recent_messages',
+                recentMessagesCount: 2,
+            },
+            serverId: 'server-b',
+        } as any);
+
+        expect(result).toEqual({ type: 'success', sessionId: 'sess-3' });
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-1',
+            method: 'session.continueWithReplay',
+            serverId: 'server-b',
+            payload: expect.objectContaining({
+                backendTarget: {
+                    kind: 'backend',
+                    backendId: 'review-bot',
+                    configuredBackendId: 'review-bot',
+                    sourceKind: 'configured',
+                },
+            }),
+        }));
+        expect(machineRpcWithServerScopeMock.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
+            payload: expect.not.objectContaining({
+                agent: 'customAcp',
             }),
         }));
     });

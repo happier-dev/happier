@@ -3,11 +3,14 @@ import { buildCodexAgentRuntimeDescriptor, type CodexBackendMode } from '@happie
 import {
     AgentRuntimeDescriptorV1Schema,
     BackendTargetRefSchema,
+    normalizeBackendTargetRefV2InputToV1,
+    readBackendTargetRefV2,
     SessionAttachMetadataIdentityPolicySchema,
     SessionAuthoringValueV1Schema,
     type SessionAttachMetadataIdentityPolicy,
     type AgentRuntimeDescriptorV1,
     type BackendTargetRefV1,
+    type BackendTargetRefV2Input,
     type SessionAuthoringValueV1,
 } from '@happier-dev/protocol';
 import { isPermissionMode, type PermissionMode } from '../../permissions/permissionTypes';
@@ -31,7 +34,8 @@ export type ResumeHappySessionRpcParams = CodexBackendTransportFields & {
     modelUpdatedAt?: number;
 };
 
-type BuildResumeHappySessionRpcInput = Omit<ResumeHappySessionRpcParams, 'type' | keyof CodexBackendTransportFields> & {
+type BuildResumeHappySessionRpcInput = Omit<ResumeHappySessionRpcParams, 'type' | 'backendTarget' | keyof CodexBackendTransportFields> & {
+    backendTarget: BackendTargetRefV2Input;
     codexBackendMode?: CodexBackendMode;
     experimentalCodexAcp?: boolean;
 };
@@ -40,7 +44,7 @@ const ResumeHappySessionRpcParamsSchema = z.object({
     type: z.literal('resume-session'),
     sessionId: z.string().min(1),
     directory: z.string().min(1),
-    backendTarget: BackendTargetRefSchema,
+    backendTarget: z.preprocess(normalizeBackendTargetRefV2InputToV1, BackendTargetRefSchema),
     resume: z.string().min(1).optional(),
     agentRuntimeDescriptorV1: AgentRuntimeDescriptorV1Schema.optional(),
     environmentVariables: z.record(z.string(), z.string()).optional(),
@@ -73,10 +77,12 @@ export function buildResumeHappySessionRpcParams(input: BuildResumeHappySessionR
         Number.isFinite(modelUpdatedAt);
     const codexTransportFields = buildCodexBackendTransportFields({ codexBackendMode, experimentalCodexAcp, agentRuntimeDescriptorV1 });
     const canonicalCodexBackendMode = codexTransportFields.codexBackendMode;
+    const canonicalBackendTarget = readBackendTargetRefV2(rest.backendTarget);
 
     const params: ResumeHappySessionRpcParams = {
         type: 'resume-session',
         ...rest,
+        backendTarget: rest.backendTarget as unknown as BackendTargetRefV1,
         ...codexTransportFields,
         ...(connectedServices === undefined || connectedServices === null ? {} : { connectedServices }),
         ...(() => {
@@ -84,7 +90,7 @@ export function buildResumeHappySessionRpcParams(input: BuildResumeHappySessionR
                 return { agentRuntimeDescriptorV1 };
             }
 
-            if (rest.backendTarget.kind === 'builtInAgent' && rest.backendTarget.agentId === 'codex' && canonicalCodexBackendMode) {
+            if (canonicalBackendTarget.kind === 'backend' && canonicalBackendTarget.sourceKind !== 'configured' && canonicalBackendTarget.backendId === 'codex' && canonicalCodexBackendMode) {
                 return {
                     agentRuntimeDescriptorV1: buildCodexAgentRuntimeDescriptor({
                         backendMode: canonicalCodexBackendMode,
@@ -98,6 +104,5 @@ export function buildResumeHappySessionRpcParams(input: BuildResumeHappySessionR
         ...(includeModelOverride ? { modelId: normalizedModelId, modelUpdatedAt } : {}),
     };
     // Validate shape early to avoid accidentally sending secrets in wrong fields.
-    ResumeHappySessionRpcParamsSchema.parse(params);
-    return params;
+    return ResumeHappySessionRpcParamsSchema.parse(params);
 }

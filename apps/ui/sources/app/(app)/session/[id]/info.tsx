@@ -42,8 +42,9 @@ import { resolveSessionHandoffSourceMachineId } from '@/sync/domains/sessionHand
 import {
     resolveSessionHandoffUiAvailability,
 } from '@/sync/domains/sessionHandoff/resolveSessionHandoffUiAvailability';
-import { getActionSpec } from '@happier-dev/protocol';
+import { buildBackendTargetKey, getActionSpec } from '@happier-dev/protocol';
 import { SessionRetentionNotice } from '@/components/sessions/info/SessionRetentionNotice';
+import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
 import { useSessionHandoffSourceReachability, type SessionHandoffRuntimeAvailability } from '@/sync/domains/sessionHandoff/useSessionHandoffSourceReachability';
 import { useSessionReachableMachineTarget } from '@/components/sessions/model/useSessionMachineReachability';
@@ -51,6 +52,10 @@ import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { resolveSessionListPreferredServerIdFromState } from '@/sync/domains/session/listing/sessionListLookupState';
+import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
+import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
+import { resolveSessionActionDefaultBackendTitle } from '@/sync/domains/session/resolveSessionActionDefaultBackendTitle';
 
 
 // Animated status dot component
@@ -92,11 +97,12 @@ function StatusDot({ color, isPulsing, size = 8 }: { color: string; isPulsing?: 
     );
 }
 
-function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandoff, runtimeAvailability }: Readonly<{
+function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandoff, runtimeAvailability, routeScope }: Readonly<{
     session: Session;
     sessionServerId: string | null;
     sourceMachineIdForHandoff: string | null;
     runtimeAvailability: SessionHandoffRuntimeAvailability;
+    routeScope: ReturnType<typeof createSessionRouteServerScope>;
 }>) {
     const { theme } = useUnistyles();
     const router = useRouter();
@@ -104,12 +110,15 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     const devModeEnabled = __DEV__ || localDevModeEnabled === true;
     const sessionName = getSessionName(session);
     const sessionStatus = useSessionStatus(session);
+    const enabledAgentIds = useEnabledAgentIds();
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const sessionHandoffEnabled = useFeatureEnabled('sessions.handoff');
     const sessionExecutionRunsSupported = useSessionExecutionRunsSupported(session.id, sessionServerId);
     const serverSnapshot = useServerFeaturesSnapshotForServerId(sessionServerId, { enabled: Boolean(sessionServerId) });
     const useProfiles = useSetting('useProfiles') === true;
     const profilesSetting = useSetting('profiles');
+    const acpCatalogSettingsV1 = useSetting('acpCatalogSettingsV1');
+    const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
     const profiles = Array.isArray(profilesSetting) ? profilesSetting : [];
     const actionsSettingsV1 = useSetting('actionsSettingsV1');
     const sessionReplayEnabled = useSetting('sessionReplayEnabled') === true;
@@ -123,6 +132,23 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     const canManageSharing = !session.accessLevel || session.accessLevel === 'admin';
     const agentId = resolveAgentIdFromSessionMetadata(session.metadata) ?? resolveAgentIdFromFlavor(session.metadata?.flavor) ?? DEFAULT_AGENT_ID;
     const core = getAgentCore(agentId);
+    const sessionActionDefaultBackend = React.useMemo(
+        () => resolveSessionActionDefaultBackend({
+            session,
+            enabledAgentIds,
+            fallbackAgentId: agentId,
+        }),
+        [agentId, enabledAgentIds, session],
+    );
+    const sessionActionDefaultBackendEntry = React.useMemo(() => {
+        if (!sessionActionDefaultBackend) return null;
+        const selectedTargetKey = buildBackendTargetKey(sessionActionDefaultBackend.backendTarget);
+        return getResolvedBackendCatalogEntries({
+            enabledAgentIds,
+            acpCatalogSettingsV1: (acpCatalogSettingsV1 as any) ?? { v: 2, backends: [] },
+            backendEnabledByTargetKey: (backendEnabledByTargetKey as any) ?? null,
+        }).find((entry) => entry.targetKey === selectedTargetKey) ?? null;
+    }, [acpCatalogSettingsV1, backendEnabledByTargetKey, enabledAgentIds, sessionActionDefaultBackend]);
     const executor = React.useMemo(
         () => createDefaultActionExecutor({
             resolveServerIdForSessionId: (childSessionId) => {
@@ -132,10 +158,10 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                 return normalizedServerId || null;
             },
             openSession: (childSessionId) => {
-                router.push((`/session/${childSessionId}`) as any);
+                router.push(routeScope.buildHref(childSessionId) as any);
             },
         }),
-        [router, sessionServerId],
+        [routeScope, router, sessionServerId],
     );
 
     const forkActionEnabled = React.useMemo(() => {
@@ -248,13 +274,13 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     const handleExitAfterSessionMutation = useCallback(() => {
         safeRouterBack({
             router,
-            fallbackHref: `/session/${session.id}`,
+            fallbackHref: routeScope.buildHref(session.id),
         });
         safeRouterBack({
             router,
             fallbackHref: '/',
         });
-    }, [router, session.id]);
+    }, [routeScope, router, session.id]);
 
     const canStopSession = !session.accessLevel;
     const isArchivedSession = session.archivedAt != null;
@@ -535,7 +561,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                             title={t('runs.title')}
                             subtitle={t('sessionInfo.executionRunsSubtitle')}
                             icon={<Ionicons name="play-outline" size={29} color={theme.colors.accent.blue} />}
-                            onPress={() => router.push(`/session/${session.id}/runs`)}
+                            onPress={() => router.push(routeScope.buildHref(session.id, { suffix: '/runs' }))}
                         />
                     ) : null}
                     {showAutomations ? (
@@ -543,7 +569,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                             title={t('sessionInfo.automationsTitle')}
                             subtitle={t('sessionInfo.automationsSubtitle')}
                             icon={<Ionicons name="timer-outline" size={29} color={theme.colors.accent.blue} />}
-                            onPress={() => router.push(`/session/${session.id}/automations`)}
+                            onPress={() => router.push(routeScope.buildHref(session.id, { suffix: '/automations' }))}
                         />
                     ) : null}
                         {!session.active && Boolean(vendorResumeId) && (
@@ -559,7 +585,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                         title={t('sessionInfo.viewSessionLogTitle')}
                         subtitle={t('sessionInfo.viewSessionLogSubtitle')}
                         icon={<Ionicons name="document-text-outline" size={29} color={theme.colors.accent.blue} />}
-                        onPress={() => router.push(`/session/${session.id}/log`)}
+                        onPress={() => router.push(routeScope.buildHref(session.id, { suffix: '/log' }))}
                     />
                     {reachableMachineId && (
                         <Item
@@ -582,7 +608,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                             title={t('sessionInfo.manageSharing')}
                             subtitle={t('sessionInfo.manageSharingSubtitle')}
                             icon={<Ionicons name="share-outline" size={29} color={theme.colors.accent.blue} />}
-                            onPress={() => router.push(`/session/${session.id}/sharing`)}
+                            onPress={() => router.push(routeScope.buildHref(session.id, { suffix: '/sharing' }))}
                         />
                     )}
                     {sessionStatus.isConnected && canStopSession && (
@@ -645,13 +671,12 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                         )}
                             <Item
                                 title={t('sessionInfo.aiProvider')}
-                                subtitle={(() => {
-                                    if (agentId) return t(getAgentCore(agentId).displayNameKey);
-                                    const flavor = session.metadata.flavor;
-                                    return typeof flavor === 'string' && flavor.length > 0
-                                        ? flavor
-                                        : t(getAgentCore(DEFAULT_AGENT_ID).displayNameKey);
-                                })()}
+                                subtitle={resolveSessionActionDefaultBackendTitle({
+                                    session,
+                                    agentId,
+                                    sessionActionDefaultBackendEntryTitle: sessionActionDefaultBackendEntry?.title ?? null,
+                                    fallbackTitle: t(getAgentCore(agentId).displayNameKey),
+                                })}
                                 icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.indigo} />}
                                 showChevron={false}
                             />
@@ -834,9 +859,15 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
 
 export default () => {
     const { theme } = useUnistyles();
-    const { id } = useLocalSearchParams<{ id: string }>();
+    const params = useLocalSearchParams<{ id: string; serverId?: string }>();
+    const routeScope = React.useMemo(() => createSessionRouteServerScope(params), [params]);
+    const { id } = params;
     const sessionId = normalizeSessionId(id);
-    const sessionHydrated = useHydrateSessionForRoute(sessionId, 'SessionInfoRoute.ensureSessionVisible');
+    const sessionHydrated = useHydrateSessionForRoute(
+        sessionId,
+        'SessionInfoRoute.ensureSessionVisible',
+        routeScope.hydrationOptions,
+    );
     const session = useSession(sessionId);
     const isDataReady = useIsDataReady();
     const sessionServerId = React.useMemo(() => {
@@ -895,6 +926,7 @@ export default () => {
                 sessionServerId={sessionServerId}
                 sourceMachineIdForHandoff={sourceMachineIdForHandoff}
                 runtimeAvailability={runtimeAvailability}
+                routeScope={routeScope}
             />
         </View>
     );

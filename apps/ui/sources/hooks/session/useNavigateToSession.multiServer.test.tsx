@@ -76,7 +76,7 @@ describe('useNavigateToSession (multi-server)', () => {
             refreshAuth: expect.any(Function),
         });
         expect(routerNavigateSpy).toHaveBeenCalledTimes(1);
-        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/sess_123', expect.any(Object));
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/sess_123?serverId=other', expect.any(Object));
         expect(routerNavigateSpy.mock.calls[0]?.[1]?.dangerouslySingular?.()).toBe('session');
 
         if (!resolveSwitch) {
@@ -145,7 +145,7 @@ describe('useNavigateToSession (multi-server)', () => {
             scope: 'device',
             refreshAuth: expect.any(Function),
         });
-        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/sess_789', expect.any(Object));
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/sess_789?serverId=preferred-server', expect.any(Object));
     });
 
     it('recomputes the preferred server id after rerender before navigating', async () => {
@@ -177,7 +177,7 @@ describe('useNavigateToSession (multi-server)', () => {
             scope: 'device',
             refreshAuth: expect.any(Function),
         });
-        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/sess_999', expect.any(Object));
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/sess_999?serverId=preferred-server', expect.any(Object));
 
         preferredServerIdState.current = 'preferred-updated';
         await act(async () => {
@@ -192,7 +192,7 @@ describe('useNavigateToSession (multi-server)', () => {
             scope: 'device',
             refreshAuth: expect.any(Function),
         });
-        expect(routerNavigateSpy).toHaveBeenLastCalledWith('/session/sess_999', expect.any(Object));
+        expect(routerNavigateSpy).toHaveBeenLastCalledWith('/session/sess_999?serverId=preferred-updated', expect.any(Object));
     });
 
     it('normalizes whitespace around the session id before resolving and navigating', async () => {
@@ -219,6 +219,6 @@ describe('useNavigateToSession (multi-server)', () => {
         });
 
         expect(resolveSessionTargetServerIdSpy).not.toHaveBeenCalled();
-        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/sess_whitespace', expect.any(Object));
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/sess_whitespace?serverId=preferred-server', expect.any(Object));
     });
 });

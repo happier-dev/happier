@@ -101,6 +101,22 @@ describe('resolvePreferredServerIdForSessionId', () => {
         expect(resolvePreferredServerIdForSessionId('session-1')).toBe('active-server');
     });
 
+    it('falls back to the active server when the session is only present in the renderable cache', async () => {
+        storage.setState((state) => ({
+            ...state,
+            sessions: {},
+            sessionListRenderables: {
+                'session-1': createRenderableSession('session-1', 'active-server'),
+            },
+            sessionListIndexByServerId: {},
+            concurrentSessionListCacheByServerId: {},
+        }), true);
+
+        const { resolvePreferredServerIdForSessionId } = await import('./resolvePreferredServerIdForSessionId');
+
+        expect(resolvePreferredServerIdForSessionId('session-1')).toBe('active-server');
+    });
+
     it('prefers the cached owner server when the stored session scope still mirrors the active server', async () => {
         storage.setState((state) => ({
             ...state,

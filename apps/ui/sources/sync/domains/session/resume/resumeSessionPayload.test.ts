@@ -149,6 +149,24 @@ describe('buildResumeHappySessionRpcParams', () => {
         });
     });
 
+    test('normalizes V2 backend target input onto the legacy V1 payload shape', () => {
+        expect(buildResumeHappySessionRpcParams({
+            sessionId: 's1',
+            directory: '/tmp',
+            backendTarget: {
+                kind: 'backend',
+                backendId: 'review-bot',
+                configuredBackendId: 'review-bot',
+                sourceKind: 'configured',
+            },
+        } as any)).toEqual({
+            type: 'resume-session',
+            sessionId: 's1',
+            directory: '/tmp',
+            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+        });
+    });
+
     test('prefers codexBackendMode over legacy experimentalCodexAcp when provided together', () => {
         expect(buildResumeHappySessionRpcParams({
             sessionId: 's1',

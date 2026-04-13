@@ -24,6 +24,7 @@ import { storage, useAutomations, useIsDataReady, useLocalSetting, useRealtimeSt
 import { resolveWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 import { canResumeSessionWithOptions } from '@/agents/runtime/resumeCapabilities';
 import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor, buildResumeSessionExtrasFromUiState } from '@/agents/catalog/catalog';
+import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { useResumeCapabilityOptions } from '@/agents/hooks/useResumeCapabilityOptions';
 import { useSession } from '@/sync/domains/state/storage';
@@ -92,6 +93,7 @@ import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { executeSessionComposerResolution } from '@/sync/domains/input/slashCommands/executeSessionComposerResolution';
 import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
+import { resolveSessionActionDefaultBackendTitle } from '@/sync/domains/session/resolveSessionActionDefaultBackendTitle';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { useAttachmentsUploadConfig } from '@/components/sessions/attachments/useAttachmentsUploadConfig';
@@ -116,7 +118,7 @@ import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
-import { isHiddenSystemSession } from '@happier-dev/protocol';
+import { buildBackendTargetKey, isHiddenSystemSession } from '@happier-dev/protocol';
 import { useSessionViewBootstrap } from './view/useSessionViewBootstrap';
 import {
     resolveMobileWorkspaceExperienceToggleActionId,
@@ -466,6 +468,20 @@ function SessionViewLoaded({
     const voiceProviderId = voice?.providerId ?? 'off';
     const voiceSnap = useVoiceSessionSnapshot();
     const settings = useSettings();
+    const sessionActionDefaultBackendEntry = React.useMemo(() => {
+        if (!sessionActionDefaultBackend) return null;
+        const selectedTargetKey = buildBackendTargetKey(sessionActionDefaultBackend.backendTarget);
+        return getResolvedBackendCatalogEntries({
+            enabledAgentIds,
+            acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+            backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+        }).find((entry) => entry.targetKey === selectedTargetKey) ?? null;
+    }, [
+        enabledAgentIds,
+        sessionActionDefaultBackend,
+        settings.acpCatalogSettingsV1,
+        settings.backendEnabledByTargetKey,
+    ]);
     const voiceEnabled = useFeatureEnabled('voice');
     const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments');
     const attachmentsUploadsFeatureEnabled = useFeatureEnabled('attachments.uploads');
@@ -645,6 +661,7 @@ function SessionViewLoaded({
                             directory: resumeDirectory,
                             approvedNewDirectoryCreation: true,
                             agent: agentId,
+                            backendTarget: sessionActionDefaultBackend?.backendTarget ?? { kind: 'builtInAgent', agentId },
                             ...(permissionOverride ? permissionOverride : {}),
                             ...(modelOverride ? modelOverride : {}),
                             replay: {
@@ -735,7 +752,7 @@ function SessionViewLoaded({
         } finally {
             setIsResuming(false);
         }
-    }, [agentId, capabilityServerId, executionRunsEnabled, isMachineReachable, reachableMachineTarget, resumeCapabilityOptions, router, session, sessionId, settings]);
+    }, [agentId, capabilityServerId, executionRunsEnabled, isMachineReachable, reachableMachineTarget, resumeCapabilityOptions, router, session, sessionActionDefaultBackend, sessionId, settings]);
 
     useSessionResumeRequestListener(React.useCallback((requestedSessionId) => {
         if (requestedSessionId !== sessionId) return;
@@ -767,7 +784,14 @@ function SessionViewLoaded({
                 : undefined,
     });
 
-    const providerName = getAgentCore(agentId).connectedService?.name ?? t('status.unknown');
+    const providerName = sessionActionDefaultBackendEntry?.title
+        ?? resolveSessionActionDefaultBackendTitle({
+            session,
+            agentId,
+            sessionActionDefaultBackendEntryTitle: sessionActionDefaultBackendEntry?.title ?? null,
+            fallbackTitle: getAgentCore(agentId).connectedService?.name ?? t('status.unknown'),
+        })
+        ?? t('status.unknown');
     const machineName = session.metadata?.host ?? t('status.unknown');
 
     const runtimeDisplayState = resolveSessionViewRuntimeDisplayState({
@@ -1098,6 +1122,11 @@ function SessionViewLoaded({
                 onChangeText={setMessage}
                 sessionId={sessionId}
                 agentType={liveComposerState.agentId}
+                agentLabel={resolveSessionActionDefaultBackendTitle({
+                    session,
+                    agentId,
+                    sessionActionDefaultBackendEntryTitle: sessionActionDefaultBackendEntry?.title ?? null,
+                }) || undefined}
                 attachments={attachmentsUploadsEnabled ? agentInputAttachments : undefined}
                 onAttachmentsAdded={attachmentsUploadsEnabled ? addAttachments : undefined}
                 hasSendableAttachments={hasReviewCommentDrafts || (attachmentsUploadsEnabled && attachmentDrafts.length > 0)}

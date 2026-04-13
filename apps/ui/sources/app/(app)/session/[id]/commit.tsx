@@ -7,6 +7,7 @@ import { useLocalSetting } from '@/sync/domains/state/storage';
 import { shouldRedirectDetailsRouteToPanes } from '@/components/ui/panels/shouldRedirectDetailsRouteToPanes';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { serializeSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 
@@ -20,7 +21,9 @@ function decodeSha(value: string): string {
 
 export default function CommitScreen() {
     const router = useRouter();
-    const { id: sessionIdParam } = useLocalSearchParams<{ id: string }>();
+    const params = useLocalSearchParams<{ id: string; serverId?: string }>();
+    const routeScope = React.useMemo(() => createSessionRouteServerScope(params), [params]);
+    const { id: sessionIdParam } = params;
     const sessionId = normalizeSessionId(sessionIdParam);
     const { sha: shaParam } = useLocalSearchParams<{ sha: string }>();
     // Commit refs cannot contain whitespace; accept accidental "oneline" strings by taking the first token.
@@ -51,8 +54,8 @@ export default function CommitScreen() {
             title: sha.slice(0, 7),
             resource: { kind: 'commit', commitHash: sha },
         }, { intent: 'preview' });
-        router.replace({ pathname: '/session/[id]', params: { id: sessionId } } as any);
-    }, [pane, router, sessionId, sha, shouldRedirect]);
+        router.replace({ pathname: '/session/[id]', params: routeScope.withParams({ id: sessionId }) } as any);
+    }, [pane, routeScope, router, sessionId, sha, shouldRedirect]);
 
     React.useEffect(() => {
         if (shouldRedirect) return;
@@ -72,12 +75,12 @@ export default function CommitScreen() {
         );
         router.replace({
             pathname: '/session/[id]/details',
-            params: {
+            params: routeScope.withParams({
                 id: sessionId,
                 ...serializeSessionPaneUrlState({ details: { kind: 'commit', sha } }),
-            },
+            }),
         } as any);
-    }, [pane, router, sessionId, sha, shouldRedirect, shouldUseDetailsScreen]);
+    }, [pane, routeScope, router, sessionId, sha, shouldRedirect, shouldUseDetailsScreen]);
 
     if (!sessionId || !sha) {
         return <SessionInvalidLinkFallback />;

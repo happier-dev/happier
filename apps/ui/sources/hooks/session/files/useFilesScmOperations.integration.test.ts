@@ -14,6 +14,7 @@ const {
 	    invalidateFromMutationAndAwait,
     trackingCapture,
     mockMachineRPC,
+    machineRpcWithServerScopeMock,
     readMachineTargetForSession,
     resolvePreferredServerIdForSessionId,
 	} = vi.hoisted(() => ({
@@ -29,7 +30,11 @@ const {
 	        (err as Error & { rpcErrorCode?: string }).rpcErrorCode = 'RPC_METHOD_NOT_AVAILABLE';
 	        throw err;
 	    }),
-        readMachineTargetForSession: vi.fn(() => null),
+        machineRpcWithServerScopeMock: vi.fn(async (_params: unknown) => ({})),
+        readMachineTargetForSession: vi.fn(() => ({
+            machineId: 'machine-1',
+            basePath: '.',
+        })),
         resolvePreferredServerIdForSessionId: vi.fn(() => undefined),
 	}));
 
@@ -39,6 +44,25 @@ const {
 	        machineRPC: mockMachineRPC,
 	    },
 	}));
+
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+    machineRpcWithServerScope: (params: unknown) => machineRpcWithServerScopeMock(params),
+}));
+
+vi.mock('@/sync/domains/fileSystem/resolveMachineAbsolutePath', () => ({
+    resolveMachineAbsolutePath: ({ requestPath }: { requestPath?: string }) => requestPath ?? '.',
+}));
+
+vi.mock('@/sync/ops/scm/machineScm', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/ops/scm/machineScm')>();
+    return {
+        ...actual,
+        runMachineScmRpc: async (_machineId: string, method: string, request: unknown) => {
+            const requestWithPreference = actual.withScmBackendPreference(request as { backendPreference?: unknown });
+            return await mockSessionRPC('session-1', method, requestWithPreference);
+        },
+    };
+});
 
 // sessions ops import sync for non-git helpers; keep this test node-safe.
 vi.mock('@/sync/sync', () => ({
@@ -145,6 +169,7 @@ describe('useFilesScmOperations integration', () => {
 
 	        mockSessionRPC.mockReset();
 	        mockMachineRPC.mockReset();
+        machineRpcWithServerScopeMock.mockReset();
 	        modalAlert.mockReset();
 	        modalConfirm.mockReset();
 	        modalPrompt.mockReset();
@@ -153,7 +178,10 @@ describe('useFilesScmOperations integration', () => {
         invalidateFromMutationAndAwait.mockImplementation(async () => {});
         trackingCapture.mockReset();
         readMachineTargetForSession.mockReset();
-        readMachineTargetForSession.mockReturnValue(null);
+        readMachineTargetForSession.mockReturnValue({
+            machineId: 'machine-1',
+            basePath: '.',
+        });
         resolvePreferredServerIdForSessionId.mockReset();
         resolvePreferredServerIdForSessionId.mockReturnValue(undefined);
 
@@ -162,6 +190,10 @@ describe('useFilesScmOperations integration', () => {
 	            (err as Error & { rpcErrorCode?: string }).rpcErrorCode = 'RPC_METHOD_NOT_AVAILABLE';
 	            throw err;
 	        });
+        machineRpcWithServerScopeMock.mockImplementation(async (params: unknown) => {
+            const scopedParams = params as { machineId: string; method: string; payload: unknown };
+            return await mockSessionRPC(scopedParams.machineId, scopedParams.method, scopedParams.payload);
+        });
 
 	        modalConfirm.mockResolvedValue(true);
 	        modalPrompt.mockResolvedValue('feat: hook integration commit');

@@ -39,6 +39,8 @@ const modalConfirmSpy = vi.fn(async () => true);
 const applySessionListRenderablePatchesSpy = vi.fn();
 let hideInactiveSessions = false;
 let pinnedSessionKeysV1: unknown = null;
+let acpCatalogSettingsV1: unknown = null;
+let backendEnabledByTargetKey: unknown = null;
 let resolvedServerId = 'server-1';
 let sessionHandoffFeatureEnabled = false;
 let serverFeaturesSnapshot: any = {
@@ -155,6 +157,12 @@ installSessionRouteCommonModuleMocks({
                     }
                     if (key === 'pinnedSessionKeysV1') {
                         return pinnedSessionKeysV1;
+                    }
+                    if (key === 'acpCatalogSettingsV1') {
+                        return acpCatalogSettingsV1;
+                    }
+                    if (key === 'backendEnabledByTargetKey') {
+                        return backendEnabledByTargetKey;
                     }
                     return null;
                 },
@@ -299,6 +307,8 @@ describe('/session/[id]/info', () => {
         machineRpcWithServerScopeSpy.mockRejectedValue(new Error('unreachable'));
         hideInactiveSessions = false;
         pinnedSessionKeysV1 = null;
+        acpCatalogSettingsV1 = null;
+        backendEnabledByTargetKey = null;
         resolvedServerId = 'server-1';
         sessionHandoffFeatureEnabled = false;
         allSessionsState.current = [];
@@ -658,6 +668,62 @@ describe('/session/[id]/info', () => {
         expect(handoffItems).toHaveLength(1);
     });
 
+    it('shows the configured ACP backend title in AI provider metadata when a concrete backend target is stored on the session', async () => {
+        mockResolveAgentIdFromFlavor.mockReturnValue('customAcp');
+        mockAgentCore = {
+            resume: {},
+            displayNameKey: 'agents.customAcp.displayName',
+            ui: { agentPickerIconName: 'code-slash-outline' },
+        };
+        acpCatalogSettingsV1 = {
+            v: 2,
+            backends: [{
+                id: 'qa-acp-stub',
+                name: 'qa-acp-stub',
+                title: 'QA ACP Stub Backend',
+                command: 'qa-acp-stub',
+                args: [],
+                env: {},
+                auth: { support: 'unsupported' },
+                transportProfile: 'generic',
+                capabilities: {
+                    supportsLoadSession: false,
+                    supportsModes: 'unknown',
+                    supportsModels: 'unknown',
+                    supportsConfigOptions: 'unknown',
+                    promptImageSupport: 'unknown',
+                },
+                createdAt: 1,
+                updatedAt: 1,
+            }],
+        };
+        backendEnabledByTargetKey = {
+            'acpBackend:qa-acp-stub': false,
+        };
+        mockSession = {
+            id: 'session-1234567890abcdef',
+            active: false,
+            accessLevel: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            seq: 1,
+            metadata: {
+                flavor: 'customAcp',
+                agent: 'customAcp',
+                acpConfiguredBackendV1: {
+                    v: 1,
+                    updatedAt: 1,
+                    backendId: 'qa-acp-stub',
+                    title: 'QA ACP Stub Backend',
+                },
+            },
+        };
+
+        const screen = await renderInfoScreen();
+        const providerItem = screen.findByTestId('sessionInfo.aiProvider');
+        expect(providerItem?.props.subtitle).toBe('QA ACP Stub Backend');
+    });
+
     it('shows the provider resume surfaces when the vendor resume id only exists in agentRuntimeDescriptorV1', async () => {
         mockResolveAgentIdFromFlavor.mockReturnValue('opencode');
         mockAgentCore = {
@@ -725,7 +791,6 @@ describe('/session/[id]/info', () => {
 
         const screen = await renderInfoScreen();
         expect(screen.findByTestId('sessionInfo.openCodeSessionId')).toBeTruthy();
-        expect(mockResolveAgentIdFromFlavor).not.toHaveBeenCalled();
         const avatar = screen.findByTestId('session-info-avatar');
         if (!avatar) {
             throw new Error('expected session info avatar');

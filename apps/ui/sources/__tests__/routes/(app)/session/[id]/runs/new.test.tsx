@@ -1007,14 +1007,14 @@ describe('Session New Run Screen', () => {
         expect(togglePi!.props.disabled).toBe(true);
     });
 
-    it('surfaces configured ACP backends as first-class delegate backends and submits their backend target key', async () => {
+    it('surfaces configured ACP backends as first-class delegate backends when the machine reports the concrete backend id', async () => {
         startRunSpy.mockClear();
         enabledAgentIdsMock = ['claude', 'customAcp'];
         sessionMock = { id: 'session-1', metadata: { agent: 'claude', permissionMode: 'default', machineId: 'machine-1' } };
         localSearchParamsMock = { id: 'session-1', intent: 'delegate' };
         executionRunsBackendsMock = {
             claude: { available: true, intents: ['review', 'plan', 'delegate', 'voice_agent'] },
-            customAcp: { available: true, intents: ['plan', 'delegate'] },
+            'review-bot': { available: true, intents: ['plan', 'delegate'] },
         };
         settingsMock = {
             ...settingsMock,
@@ -1055,6 +1055,77 @@ describe('Session New Run Screen', () => {
         });
 
         findStartButton(screen);
+        await screen.pressByTestIdAsync('execution-run-new-start-button');
+
+        expect(startRunSpy).toHaveBeenCalledWith(
+            'session-1',
+            expect.objectContaining({
+                intent: 'delegate',
+                backendTargetKeys: ['acpBackend:review-bot'],
+                backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+                backendId: 'review-bot',
+            }),
+        );
+    });
+
+    it('prefers the session configured ACP backend when seeding a delegate run', async () => {
+        startRunSpy.mockClear();
+        enabledAgentIdsMock = ['claude', 'customAcp'];
+        sessionMock = {
+            id: 'session-1',
+            metadata: {
+                flavor: 'customAcp',
+                agent: 'claude',
+                permissionMode: 'default',
+                machineId: 'machine-1',
+                acpConfiguredBackendV1: {
+                    v: 1,
+                    updatedAt: 1,
+                    backendId: 'review-bot',
+                    title: 'Review Bot',
+                },
+            },
+        };
+        localSearchParamsMock = { id: 'session-1', intent: 'delegate' };
+        executionRunsBackendsMock = {
+            claude: { available: true, intents: ['review', 'plan', 'delegate', 'voice_agent'] },
+            'review-bot': { available: true, intents: ['plan', 'delegate'] },
+        };
+        settingsMock = {
+            ...settingsMock,
+            acpCatalogSettingsV1: {
+                v: 2,
+                backends: [
+                    {
+                        id: 'review-bot',
+                        name: 'review-bot',
+                        title: 'Review Bot',
+                        command: 'acp',
+                        args: [],
+                        env: {},
+                        transportProfile: 'generic',
+                        capabilities: {
+                            supportsLoadSession: false,
+                            supportsModes: 'unknown',
+                            supportsModels: 'unknown',
+                            supportsConfigOptions: 'unknown',
+                            promptImageSupport: 'unknown',
+                        },
+                        createdAt: 1,
+                        updatedAt: 1,
+                    },
+                ],
+            },
+        };
+
+        const screen = await renderNewRunScreen();
+        findInstructionsInput(screen);
+        await act(async () => {
+            screen.changeTextByTestId('execution-run-new-instructions-input', 'delegate to the current configured ACP backend');
+        });
+
+        const startButton = findStartButton(screen);
+        expect(startButton.props.disabled).toBe(false);
         await screen.pressByTestIdAsync('execution-run-new-start-button');
 
         expect(startRunSpy).toHaveBeenCalledWith(

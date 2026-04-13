@@ -9,13 +9,15 @@ import { useLocalSetting } from '@/sync/domains/state/storage';
 import { shouldRedirectDetailsRouteToPanes } from '@/components/ui/panels/shouldRedirectDetailsRouteToPanes';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { serializeSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 
 export default function FileScreen() {
     const router = useRouter();
-    const params = useLocalSearchParams<{ id: string; path: string }>();
+    const params = useLocalSearchParams<{ id: string; serverId?: string; path: string }>();
+    const routeScope = React.useMemo(() => createSessionRouteServerScope(params), [params]);
     const sessionId = normalizeSessionId(params.id);
     const decodedFilePath = decodeSessionFilePathParam(params.path as string);
     const filePath = isSafeWorkspaceRelativePath(decodedFilePath) ? decodedFilePath.trim() : '';
@@ -45,8 +47,8 @@ export default function FileScreen() {
     React.useEffect(() => {
         if (!isUnsafeFilePath) return;
         if (!sessionId) return;
-        router.replace({ pathname: '/session/[id]', params: { id: sessionId } } as any);
-    }, [isUnsafeFilePath, router, sessionId]);
+        router.replace({ pathname: '/session/[id]', params: routeScope.withParams({ id: sessionId }) } as any);
+    }, [isUnsafeFilePath, routeScope, router, sessionId]);
 
     React.useEffect(() => {
         if (!shouldRedirect) return;
@@ -57,8 +59,8 @@ export default function FileScreen() {
             title: fileName,
             resource: { kind: 'file', path: filePath, deepLinkAnchor },
         }, { intent: 'preview' });
-        router.replace({ pathname: '/session/[id]', params: { id: sessionId } } as any);
-    }, [deepLinkAnchor, filePath, pane, router, sessionId, shouldRedirect]);
+        router.replace({ pathname: '/session/[id]', params: routeScope.withParams({ id: sessionId }) } as any);
+    }, [deepLinkAnchor, filePath, pane, routeScope, router, sessionId, shouldRedirect]);
 
     React.useEffect(() => {
         if (!shouldUseDetailsScreen) return;
@@ -80,12 +82,12 @@ export default function FileScreen() {
         );
         router.replace({
             pathname: '/session/[id]/details',
-            params: {
+            params: routeScope.withParams({
                 id: sessionId,
                 ...serializeSessionPaneUrlState({ details: { kind: 'file', path: filePath } }),
-            },
+            }),
         } as any);
-    }, [deepLinkAnchor, filePath, isUnsafeFilePath, pane, router, sessionId, shouldRedirect, shouldUseDetailsScreen]);
+    }, [deepLinkAnchor, filePath, isUnsafeFilePath, pane, routeScope, router, sessionId, shouldRedirect, shouldUseDetailsScreen]);
 
     if (!sessionId || (!filePath && !isUnsafeFilePath)) {
         return <SessionInvalidLinkFallback />;

@@ -51,6 +51,16 @@ vi.mock('@/components/sessions/shell/SessionView', () => ({
     SessionView: (props: any) => React.createElement('SessionView', props),
 }));
 
+vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
+    useAppPaneScope: () => ({
+        scopeState: {
+            right: { activeTabId: null },
+            details: { isOpen: false, tabs: [] },
+        },
+        openDetailsTab: vi.fn(),
+    }),
+}));
+
 vi.mock('@/components/sessions/panes/url/sessionPaneUrlState', () => ({
     parseSessionPaneUrlState: () => null,
 }));

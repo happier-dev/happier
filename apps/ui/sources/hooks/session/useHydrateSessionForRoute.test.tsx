@@ -7,12 +7,15 @@ import { storage } from '@/sync/domains/state/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const ensureSessionVisibleForMessageRouteSpy = vi.hoisted(() => vi.fn<(sessionId: string) => Promise<boolean>>());
+const ensureSessionVisibleForMessageRouteSpy = vi.hoisted(() =>
+    vi.fn<(sessionId: string, options?: Readonly<{ serverId?: string; forceRefresh?: boolean }>) => Promise<boolean>>(),
+);
 const getSessionEncryptionSpy = vi.hoisted(() => vi.fn<(sessionId: string) => unknown>());
 
 vi.mock('@/sync/sync', () => ({
   sync: {
-    ensureSessionVisibleForMessageRoute: (sessionId: string) => ensureSessionVisibleForMessageRouteSpy(sessionId),
+    ensureSessionVisibleForMessageRoute: (sessionId: string, options?: Readonly<{ serverId?: string; forceRefresh?: boolean }>) =>
+      ensureSessionVisibleForMessageRouteSpy(sessionId, options),
     encryption: {
       getSessionEncryption: (sessionId: string) => getSessionEncryptionSpy(sessionId),
     },
@@ -97,11 +100,11 @@ describe('useHydrateSessionForRoute', () => {
     expect(ensureSessionVisibleForMessageRouteSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('is ready immediately and skips hydration when the session is already authoritatively hydrated', async () => {
-    storage.setState((state) => ({
-      ...state,
-      sessions: {
-        ...state.sessions,
+    it('is ready immediately and skips hydration when the session is already authoritatively hydrated', async () => {
+        storage.setState((state) => ({
+            ...state,
+            sessions: {
+                ...state.sessions,
         'session-1': {
           id: 'session-1',
           metadata: { path: '/tmp/demo' },
@@ -114,7 +117,18 @@ describe('useHydrateSessionForRoute', () => {
 
     const hook = await renderHook(() => useHydrateSessionForRoute('session-1', 'route.hydrate'));
 
-    expect(hook.getCurrent()).toBe(true);
-    expect(ensureSessionVisibleForMessageRouteSpy).not.toHaveBeenCalled();
-  });
+        expect(hook.getCurrent()).toBe(true);
+        expect(ensureSessionVisibleForMessageRouteSpy).not.toHaveBeenCalled();
+    });
+
+    it('passes an explicit serverId override through to hydration', async () => {
+        ensureSessionVisibleForMessageRouteSpy.mockResolvedValueOnce(true);
+
+        const hook = await renderHook(() => useHydrateSessionForRoute('session-1', 'route.hydrate', { serverId: 'server-b' }));
+
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(hook.getCurrent()).toBe(true);
+        expect(ensureSessionVisibleForMessageRouteSpy).toHaveBeenCalledWith('session-1', { serverId: 'server-b' });
+    });
 });

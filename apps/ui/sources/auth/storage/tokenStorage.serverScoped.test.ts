@@ -151,6 +151,10 @@ describe('TokenStorage (web) server-scoped credentials', () => {
                     serverUrl: string,
                     options?: Readonly<{ serverId?: string | null }>,
                 ) => Promise<{ token: string; secret: string } | null>;
+                removeCredentialsForServerUrl: (
+                    serverUrl: string,
+                    options?: Readonly<{ serverId?: string | null }>,
+                ) => Promise<boolean>;
             };
 
             await expect(TokenStorage.setCredentials({ token: 'token-a', secret: 'secret-a' })).resolves.toBe(true);
@@ -166,6 +170,15 @@ describe('TokenStorage (web) server-scoped credentials', () => {
                 token: 'token-b',
                 secret: 'secret-b',
             });
+
+            state.activeServerId = 'server-a';
+            await expect(exactLookup.removeCredentialsForServerUrl(state.activeServerUrl, { serverId: 'server-b' })).resolves.toBe(true);
+
+            await expect(exactLookup.getCredentialsForServerUrl(state.activeServerUrl, { serverId: 'server-a' })).resolves.toEqual({
+                token: 'token-a',
+                secret: 'secret-a',
+            });
+            await expect(exactLookup.getCredentialsForServerUrl(state.activeServerUrl, { serverId: 'server-b' })).resolves.toBeNull();
         } finally {
             vi.doUnmock('@/sync/domains/server/serverProfiles');
         }

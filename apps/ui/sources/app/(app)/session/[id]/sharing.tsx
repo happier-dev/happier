@@ -36,6 +36,7 @@ import { Text } from '@/components/ui/text/Text';
 import { mergePublicShareWithCachedToken } from '@/sync/domains/social/mergePublicShareWithCachedToken';
 import { createPublicShareWithClientToken } from '@/sync/domains/social/createPublicShareWithClientToken';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
+import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 
 
 function SharingManagementContent({ sessionId }: { sessionId: string }) {
@@ -367,10 +368,16 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
 
 export default memo(() => {
     const { theme } = useUnistyles();
-    const { id } = useLocalSearchParams<{ id: string }>();
+    const params = useLocalSearchParams<{ id: string; serverId?: string }>();
+    const routeScope = React.useMemo(() => createSessionRouteServerScope(params), [params]);
+    const { id } = params;
     const isDataReady = useIsDataReady();
     const sessionId = normalizeSessionId(id);
-    const sessionHydrated = useHydrateSessionForRoute(sessionId, 'SessionSharingRoute.ensureSessionVisible');
+    const sessionHydrated = useHydrateSessionForRoute(
+        sessionId,
+        'SessionSharingRoute.ensureSessionVisible',
+        routeScope.hydrationOptions,
+    );
     const headerTitle = t('session.sharing.title');
     const screenOptions = React.useMemo(() => ({ headerTitle }), [headerTitle]);
 

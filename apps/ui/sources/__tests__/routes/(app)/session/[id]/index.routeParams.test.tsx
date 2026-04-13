@@ -6,12 +6,13 @@ import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const hydrateSessionSpy = vi.hoisted(() => vi.fn((sessionId: string, reason: string) => true));
+const hydrateSessionSpy = vi.hoisted(() => vi.fn((sessionId: string, reason: string, options?: { serverId?: string }) => true));
 const sessionViewSpy = vi.hoisted(() => vi.fn((props: { id: string }) => React.createElement('SessionView', props)));
 
 const routerMock = createExpoRouterMock({
     params: {
         id: ['', 's1'],
+        serverId: ['server-1'],
         jumpSeq: '',
         right: '',
         bottom: '',
@@ -44,6 +45,16 @@ vi.mock('react-native-unistyles', async () => {
     return createUnistylesMock();
 });
 
+vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
+    useAppPaneScope: () => ({
+        scopeState: {
+            right: { activeTabId: null },
+            details: { isOpen: false, tabs: [] },
+        },
+        openDetailsTab: vi.fn(),
+    }),
+}));
+
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key: string) => key });
@@ -58,7 +69,8 @@ vi.mock('@/components/sessions/shell/SessionInvalidLinkFallback', () => ({
 }));
 
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
-    useHydrateSessionForRoute: (sessionId: string, reason: string) => hydrateSessionSpy(sessionId, reason),
+    useHydrateSessionForRoute: (sessionId: string, reason: string, options?: { serverId?: string }) =>
+        hydrateSessionSpy(sessionId, reason, options),
 }));
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
@@ -89,7 +101,11 @@ describe('session index route', () => {
 
         await renderScreen(<SessionRoute />);
 
-        expect(hydrateSessionSpy).toHaveBeenCalledWith('s1', 'SessionRoute.ensureSessionVisible gen=1');
+        expect(hydrateSessionSpy).toHaveBeenCalledWith(
+            's1',
+            'SessionRoute.ensureSessionVisible gen=1',
+            { serverId: 'server-1' },
+        );
         expect(sessionViewSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 id: 's1',

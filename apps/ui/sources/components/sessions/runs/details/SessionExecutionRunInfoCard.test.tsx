@@ -93,4 +93,34 @@ describe('SessionExecutionRunInfoCard', () => {
         expect(text).toContain('Mode: bounded · streaming');
         expect(text).toContain('Status: running');
     });
+
+    it('labels canonical V2 backend targets in the same user-facing way', async () => {
+        const { SessionExecutionRunInfoCard } = await import('./SessionExecutionRunInfoCard');
+        const tree = (await renderScreen(
+            <SessionExecutionRunInfoCard
+                run={{
+                    runId: 'run_2',
+                    callId: 'toolu_2',
+                    sidechainId: 'toolu_2',
+                    intent: 'review',
+                    backendTarget: {
+                        kind: 'backend',
+                        backendId: 'review-bot',
+                        configuredBackendId: 'review-bot',
+                        sourceKind: 'configured',
+                    } as any,
+                    permissionMode: 'safe_yolo',
+                    runClass: 'bounded',
+                    ioMode: 'streaming',
+                    status: 'running',
+                    startedAtMs: 1,
+                } as any}
+                daemonProcessLine="pid 123"
+            />,
+        )).tree;
+
+        const text = JSON.stringify(tree!.toJSON());
+        expect(text).toContain('Review Subagent');
+        expect(text).toContain('Backend: review-bot');
+    });
 });

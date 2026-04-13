@@ -241,7 +241,7 @@ describe('followUpSpawnedSessionWithServerScope', () => {
 
     it('forces active-scope hydration when the stored session already exists but is only partially hydrated', async () => {
         const refreshSessions = vi.fn(async () => {});
-        const ensureSessionVisibleForMessageRoute = vi.fn(async (_sessionId: string, _options?: Readonly<{ forceRefresh?: boolean }>) => {});
+        const ensureSessionVisibleForMessageRoute = vi.fn(async (_sessionId: string, _options?: Readonly<{ forceRefresh?: boolean; serverId?: string }>) => {});
         let storedSession: Session | null = {
             id: 'sess_target',
             createdAt: 1,
@@ -266,7 +266,7 @@ describe('followUpSpawnedSessionWithServerScope', () => {
                 refreshSessions,
                 sendMessage: async () => {},
             },
-            ensureSessionVisibleForMessageRoute: async (sessionId: string, options?: Readonly<{ forceRefresh?: boolean }>) => {
+            ensureSessionVisibleForMessageRoute: async (sessionId: string, options?: Readonly<{ forceRefresh?: boolean; serverId?: string }>) => {
                 await ensureSessionVisibleForMessageRoute(sessionId, options);
                 storedSession = {
                     ...storedSession!,
@@ -290,10 +290,14 @@ describe('followUpSpawnedSessionWithServerScope', () => {
 
         await followUpSpawnedSessionWithServerScope({
             sessionId: 'sess_target',
+            targetServerId: 'server-b',
         });
 
         expect(refreshSessions).toHaveBeenCalledTimes(1);
-        expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith('sess_target', { forceRefresh: true });
+        expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith('sess_target', {
+            forceRefresh: true,
+            serverId: 'server-b',
+        });
         expect(storedSession?.metadata).toMatchObject({
             hydrated: true,
         });
@@ -304,7 +308,7 @@ describe('followUpSpawnedSessionWithServerScope', () => {
         const { sync } = await import('@/sync/sync');
         const refreshSessions = vi.spyOn(sync, 'refreshSessions').mockImplementation(async () => {});
         const sendMessage = vi.spyOn(sync, 'sendMessage').mockImplementation(async () => {});
-        const ensureSessionVisibleForMessageRoute = vi.fn(async (_sessionId: string, _options?: Readonly<{ forceRefresh?: boolean }>) => {});
+        const ensureSessionVisibleForMessageRoute = vi.fn(async (_sessionId: string, _options?: Readonly<{ forceRefresh?: boolean; serverId?: string }>) => {});
 
         const { createFollowUpSpawnedSessionWithServerScope } = await import('./followUpSpawnedSession');
         const { followUpSpawnedSessionWithServerScope } = createFollowUpSpawnedSessionWithServerScope({
@@ -312,7 +316,7 @@ describe('followUpSpawnedSessionWithServerScope', () => {
                 scope: 'active',
                 timeoutMs: 5_000,
             }),
-            ensureSessionVisibleForMessageRoute: async (sessionId: string, options?: Readonly<{ forceRefresh?: boolean }>) => {
+            ensureSessionVisibleForMessageRoute: async (sessionId: string, options?: Readonly<{ forceRefresh?: boolean; serverId?: string }>) => {
                 await ensureSessionVisibleForMessageRoute(sessionId, options);
                 storedSession = {
                     id: 'sess_target',

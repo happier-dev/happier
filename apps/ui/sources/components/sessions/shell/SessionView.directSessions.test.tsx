@@ -30,6 +30,14 @@ const voiceSurfacePropsSpy = vi.hoisted(() => vi.fn());
 const showDirectSessionTakeoverDialogSpy = vi.hoisted(() =>
   vi.fn<() => Promise<{ action: 'direct' | 'persisted' | null; forceStop: boolean }>>(async () => ({ action: null, forceStop: false })),
 );
+const resolveSessionViewRuntimeDisplayStateSpy = vi.hoisted(() =>
+  vi.fn((_input: any) => ({
+    localControlState: { canAttach: false },
+    transcriptInteraction: { canApprovePermissions: true, permissionDisabledReason: null },
+    inactiveUi: { noticeKind: 'none', inactiveStatusTextKey: null, shouldShowInput: true },
+    bottomNotice: null,
+  })),
+);
 const preferredServerIdState = vi.hoisted(() => ({
   current: 'server-canonical' as string | null,
 }));
@@ -216,7 +224,13 @@ installSessionShellCommonModuleMocks({
         useLocalSetting: readLocalSetting,
         useLocalSettingMutable: <K extends keyof LocalSettings>(key: K) => [readLocalSetting(key), vi.fn<(value: LocalSettings[K]) => void>()],
         useSetting: readSetting,
-        useSettings: () => ({ ...settingsDefaults, experiments: true, featureToggles: {}, codexBackendMode: 'acp' }),
+        useSettings: () => ({
+          ...settingsDefaults,
+          experiments: true,
+          featureToggles: {},
+          codexBackendMode: 'acp',
+          ...settingsState.current,
+        }),
         useAutomations: () => [],
         useMachine: () => null,
       },
@@ -309,6 +323,9 @@ vi.mock('@/hooks/session/useDraft', () => ({
 }));
 vi.mock('@/components/sessions/model/inactiveSessionUi', () => ({
   getInactiveSessionUiState: () => ({ noticeKind: 'none', inactiveStatusTextKey: null, shouldShowInput: true }),
+}));
+vi.mock('@/components/sessions/shell/view/resolveSessionViewRuntimeDisplayState', () => ({
+  resolveSessionViewRuntimeDisplayState: (input: any) => resolveSessionViewRuntimeDisplayStateSpy(input),
 }));
 vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => ({
   resolveSessionMachineReachability: () => true,
@@ -462,6 +479,7 @@ describe('SessionView (direct sessions)', () => {
     resolveVoiceSessionComposerRoutingSpy.mockReset();
     resolveVoiceSessionComposerRoutingSpy.mockReturnValue(null);
     resolvePreferredServerIdForSessionIdSpy.mockReset();
+    resolveSessionViewRuntimeDisplayStateSpy.mockReset();
     participantTargetsState.current = [];
     sessionUsageState.current = null;
     reviewCommentDraftsState.current = [];
@@ -698,6 +716,64 @@ describe('SessionView (direct sessions)', () => {
       sessionId: 's1',
       configId: 'thinking',
       value: 'high',
+    }));
+  });
+
+  it('surfaces configured ACP backend titles on the live session agent chip', async () => {
+    settingsState.current = {
+      acpCatalogSettingsV1: {
+        v: 2,
+        backends: [{
+          id: 'review-bot',
+          name: 'review-bot',
+          title: 'Review Bot',
+          command: 'node',
+          args: ['/tmp/review-bot.mjs'],
+          env: {},
+          auth: { support: 'unsupported' },
+          transportProfile: 'generic',
+          capabilities: {
+            supportsLoadSession: false,
+            supportsModes: 'unknown',
+            supportsModels: 'unknown',
+            supportsConfigOptions: 'unknown',
+            promptImageSupport: 'unknown',
+          },
+          createdAt: 1,
+          updatedAt: 1,
+        }],
+      },
+      backendEnabledByTargetKey: {
+        'acpBackend:review-bot': false,
+      },
+    };
+    storageState.settings = settingsState.current;
+    storageState.sessions.s1.metadata = {
+      ...storageState.sessions.s1.metadata,
+      flavor: 'customAcp',
+      agent: 'customAcp',
+      acpConfiguredBackendV1: {
+        v: 1,
+        updatedAt: 1,
+        backendId: 'review-bot',
+        title: 'Review Bot',
+      },
+      directSessionV1: {
+        v: 1,
+        providerId: 'customAcp',
+        machineId: 'machine-1',
+        remoteSessionId: 'vendor-session-1',
+        source: { kind: 'customAcpRuntime', cwd: '/tmp' },
+      },
+    };
+
+    const screen = await renderSessionViewAndSettle();
+
+    const agentInput = findAgentInput(screen);
+    expect(agentInput.props.agentType).toBe('customAcp');
+    expect(agentInput.props.agentLabel).toBe('Review Bot');
+    expect(resolveSessionViewRuntimeDisplayStateSpy).toHaveBeenCalledWith(expect.objectContaining({
+      providerName: 'Review Bot',
     }));
   });
 

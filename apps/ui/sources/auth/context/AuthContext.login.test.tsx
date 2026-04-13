@@ -10,6 +10,20 @@ import { renderScreen } from '@/dev/testkit';
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 const secureStore = vi.hoisted(() => new Map<string, string>());
+const syncSwitchServerSpy = vi.hoisted(() =>
+    vi.fn((credentials: { token: string; secret: string } | null) => {
+        if (!credentials) return Promise.resolve();
+        return new Promise<void>(() => {});
+    }),
+);
+const switchConnectionToActiveServerSpy = vi.hoisted(() => vi.fn(async () => null));
+const activeServerSnapshotState = vi.hoisted(() => ({
+    serverId: '',
+    serverUrl: '',
+    generation: 0,
+}));
+const nextServerSequenceState = vi.hoisted(() => ({ value: 0 }));
+let activeServerListener: ((snapshot: { serverId: string; serverUrl: string; generation: number }) => void) | null = null;
 vi.mock('expo-secure-store', () => ({
     getItemAsync: async (key: string) => secureStore.get(key) ?? null,
     setItemAsync: async (key: string, value: string) => {
@@ -40,6 +54,36 @@ vi.mock('@/track', () => ({
     tracking: null,
 }));
 
+vi.mock('@/sync/sync', () => ({
+    syncSwitchServer: syncSwitchServerSpy,
+}));
+
+vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
+    switchConnectionToActiveServer: switchConnectionToActiveServerSpy,
+}));
+
+vi.mock('@/sync/domains/server/serverRuntime', () => ({
+    getActiveServerSnapshot: () => ({ ...activeServerSnapshotState }),
+    upsertAndActivateServer: ({ serverUrl }: { serverUrl: string }) => {
+        nextServerSequenceState.value += 1;
+        activeServerSnapshotState.serverId = `server-${nextServerSequenceState.value}`;
+        activeServerSnapshotState.serverUrl = serverUrl;
+        activeServerSnapshotState.generation += 1;
+        return {
+            id: activeServerSnapshotState.serverId,
+            serverUrl,
+        };
+    },
+    subscribeActiveServer: (listener: unknown) => {
+        activeServerListener = listener as (snapshot: { serverId: string; serverUrl: string; generation: number }) => void;
+        return () => {
+            if (activeServerListener === listener) {
+                activeServerListener = null;
+            }
+        };
+    },
+}));
+
 function buildTokenWithSub(sub: string): string {
     const payload = Buffer.from(JSON.stringify({ sub })).toString('base64');
     return `hdr.${payload}.sig`;
@@ -49,6 +93,13 @@ describe('AuthContext.login', () => {
     beforeEach(() => {
         vi.useFakeTimers();
         secureStore.clear();
+        activeServerListener = null;
+        activeServerSnapshotState.serverId = '';
+        activeServerSnapshotState.serverUrl = '';
+        activeServerSnapshotState.generation = 0;
+        nextServerSequenceState.value = 0;
+        syncSwitchServerSpy.mockClear();
+        switchConnectionToActiveServerSpy.mockClear();
     });
 
     afterEach(() => {
@@ -80,6 +131,86 @@ describe('AuthContext.login', () => {
                 await auth.login(buildTokenWithSub('server-test'), 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
             });
             await vi.advanceTimersByTimeAsync(1);
+        } finally {
+            await screen.unmount();
+        }
+    });
+
+    it('keeps the session authenticated while a login-triggered server refresh is still rebinding credentials', async () => {
+        const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+        upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
+
+        const { AuthProvider, getCurrentAuth } = await import('./AuthContext');
+
+        const screen = await renderScreen(
+            React.createElement(AuthProvider, {
+                initialCredentials: null,
+                children: React.createElement(React.Fragment, null),
+            }),
+        );
+
+        try {
+            const auth = getCurrentAuth();
+            if (!auth) throw new Error('Expected current auth to be set');
+            await vi.waitFor(() => {
+                expect(activeServerListener).toBeTypeOf('function');
+            });
+
+            const loginPromise = act(async () => {
+                await auth.login(buildTokenWithSub('server-test'), 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
+            });
+            await loginPromise;
+
+            expect(getCurrentAuth()?.isAuthenticated).toBe(true);
+
+            await act(async () => {
+                activeServerListener?.({
+                    serverId: 'server-test',
+                    serverUrl: 'http://localhost:53288',
+                    generation: 1,
+                });
+            });
+
+            expect(getCurrentAuth()?.isAuthenticated).toBe(true);
+        } finally {
+            await screen.unmount();
+        }
+    });
+
+    it('clears stale auth state when the active server changes during a login-triggered rebind', async () => {
+        const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+        upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
+
+        const { AuthProvider, getCurrentAuth } = await import('./AuthContext');
+
+        const screen = await renderScreen(
+            React.createElement(AuthProvider, {
+                initialCredentials: null,
+                children: React.createElement(React.Fragment, null),
+            }),
+        );
+
+        try {
+            const auth = getCurrentAuth();
+            if (!auth) throw new Error('Expected current auth to be set');
+            await vi.waitFor(() => {
+                expect(activeServerListener).toBeTypeOf('function');
+            });
+
+            await act(async () => {
+                await auth.login(buildTokenWithSub('server-test'), 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
+            });
+
+            expect(getCurrentAuth()?.isAuthenticated).toBe(true);
+
+            upsertAndActivateServer({ serverUrl: 'http://localhost:59876', scope: 'tab' });
+            await act(async () => {
+                await auth.refreshFromActiveServer();
+            });
+
+            expect(syncSwitchServerSpy).toHaveBeenCalledWith(null);
+            expect(getCurrentAuth()?.isAuthenticated).toBe(false);
+            expect(getCurrentAuth()?.credentials).toBeNull();
         } finally {
             await screen.unmount();
         }

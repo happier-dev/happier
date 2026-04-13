@@ -10,6 +10,7 @@ import { SessionCockpitShell } from '@/components/workspaceCockpit/session/Sessi
 import { resolveSessionMobileSurfaceIntent } from '@/components/workspaceCockpit/session/sessionCockpitState';
 import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit/useMobileWorkspaceExperienceState';
 import { getTempData } from '@/utils/sessions/tempDataStore';
+import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
@@ -20,6 +21,7 @@ import { useSessionTerminalAvailability } from '@/components/sessions/terminal/u
 export default function SessionRouteIndex() {
     const params = useLocalSearchParams<{
         id?: string | string[];
+        serverId?: string | string[];
         mobileSurface?: string | string[];
         jumpSeq?: string | string[];
         right?: string | string[];
@@ -29,6 +31,7 @@ export default function SessionRouteIndex() {
         sha?: string | string[];
         recoveryDataId?: string | string[];
     }>();
+    const routeScope = React.useMemo(() => createSessionRouteServerScope(params as Record<string, unknown>), [params]);
     const {
         id: sessionIdParam,
         mobileSurface: mobileSurfaceParam,
@@ -80,6 +83,7 @@ export default function SessionRouteIndex() {
     const sessionHydrated = useHydrateSessionForRoute(
         sessionId,
         `SessionRoute.ensureSessionVisible gen=${activeServerGeneration}`,
+        routeScope.hydrationOptions,
     );
     const sessionCached = Boolean(storage.getState().sessions[sessionId] ?? null);
 

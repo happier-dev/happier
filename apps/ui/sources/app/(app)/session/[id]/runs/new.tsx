@@ -7,6 +7,7 @@ import { ConstrainedScreenContent } from '@/components/ui/layout/ConstrainedScre
 import { Text } from '@/components/ui/text/Text';
 import { SessionExecutionRunLauncherView } from '@/components/sessions/runs/launcher/SessionExecutionRunLauncherView';
 import { resolveExecutionRunLauncherIntent } from '@/components/sessions/runs/launcher/executionRunLauncherModel';
+import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { t } from '@/text';
@@ -16,14 +17,15 @@ export default function SessionNewRunScreen() {
     const { theme } = useUnistyles();
     const router = useRouter();
     const navigation = useNavigation();
-    const params = useLocalSearchParams<{ id?: string | string[]; intent?: string | string[] }>();
+    const params = useLocalSearchParams<{ id?: string | string[]; serverId?: string | string[]; intent?: string | string[] }>();
+    const routeScope = React.useMemo(() => createSessionRouteServerScope(params as Record<string, unknown>), [params]);
     const sessionId = normalizeSessionId(params.id);
-    const hydrateReady = useHydrateSessionForRoute(sessionId, 'SessionNewRunScreen.hydrate');
+    const hydrateReady = useHydrateSessionForRoute(sessionId, 'SessionNewRunScreen.hydrate', routeScope.hydrationOptions);
     const rawIntent = params.intent;
     const hasIntentParam = rawIntent !== undefined;
     const initialIntent = resolveExecutionRunLauncherIntent(rawIntent);
     const launcherIntent = initialIntent ?? 'review';
-    const parentSessionHref = sessionId ? `/session/${encodeURIComponent(sessionId)}` : '/session';
+    const parentSessionHref = sessionId ? routeScope.buildHref(sessionId) : '/session';
 
     const screenOptions = React.useMemo(() => ({
         headerShown: true,

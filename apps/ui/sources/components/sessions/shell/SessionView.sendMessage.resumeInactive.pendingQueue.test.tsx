@@ -606,6 +606,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             expect.objectContaining({
                 machineId: 'm-target',
                 directory: '/tmp/target',
+                backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
             }),
         );
         expect(modalMockState.current?.spies.alert).not.toHaveBeenCalled();

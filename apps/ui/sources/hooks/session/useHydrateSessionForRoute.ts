@@ -5,9 +5,12 @@ import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
-function hasAuthoritativeHydratedSessionForRoute(sessionId: string): boolean {
+function hasAuthoritativeHydratedSessionForRoute(sessionId: string, serverId?: string | null): boolean {
     const session = storage.getState().sessions[sessionId] ?? null;
     if (!session || session.metadata == null || session.agentState == null) {
+        return false;
+    }
+    if (serverId && String(session.serverId ?? '').trim() !== serverId) {
         return false;
     }
     if (session.encryptionMode === 'plain') {
@@ -31,13 +34,18 @@ function hasAuthoritativeHydratedSessionForRoute(sessionId: string): boolean {
  * On failure, this hook retries with exponential backoff to handle transient errors
  * (server switch in flight, temporary RPC failure, stale encryption state, etc.).
  */
-export function useHydrateSessionForRoute(sessionId: string, tag: string): boolean {
+export function useHydrateSessionForRoute(
+    sessionId: string,
+    tag: string,
+    options?: Readonly<{ serverId?: string }>,
+): boolean {
     const normalizedSessionId = normalizeSessionId(sessionId);
+    const normalizedServerId = String(options?.serverId ?? '').trim();
     const [ready, setReady] = React.useState(() => {
         if (!normalizedSessionId) {
             return true;
         }
-        return hasAuthoritativeHydratedSessionForRoute(normalizedSessionId);
+        return hasAuthoritativeHydratedSessionForRoute(normalizedSessionId, normalizedServerId || null);
     });
 
     React.useEffect(() => {
@@ -49,7 +57,7 @@ export function useHydrateSessionForRoute(sessionId: string, tag: string): boole
             setReady(true);
             return;
         }
-        const alreadyHydrated = hasAuthoritativeHydratedSessionForRoute(normalizedSessionId);
+        const alreadyHydrated = hasAuthoritativeHydratedSessionForRoute(normalizedSessionId, normalizedServerId || null);
         setReady(alreadyHydrated);
         if (alreadyHydrated) {
             return;
@@ -59,7 +67,11 @@ export function useHydrateSessionForRoute(sessionId: string, tag: string): boole
             if (canceled) return;
 
             attemptCount++;
-            const promise = sync.ensureSessionVisibleForMessageRoute(normalizedSessionId);
+            const hydrationOptions = normalizedServerId ? { serverId: normalizedServerId } : undefined;
+            const promise = (sync.ensureSessionVisibleForMessageRoute as (
+                sessionId: string,
+                options?: Readonly<{ forceRefresh?: boolean; serverId?: string }>,
+            ) => Promise<boolean>)(normalizedSessionId, hydrationOptions);
             fireAndForget(promise, { tag });
 
             void promise
@@ -97,7 +109,7 @@ export function useHydrateSessionForRoute(sessionId: string, tag: string): boole
                 clearTimeout(retryTimeoutId);
             }
         };
-    }, [normalizedSessionId, tag]);
+    }, [normalizedServerId, normalizedSessionId, tag]);
 
     return ready;
 }
