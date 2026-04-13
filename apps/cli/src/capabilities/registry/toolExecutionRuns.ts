@@ -98,7 +98,8 @@ export const executionRunsCapability: Capability = {
     const backends = Object.fromEntries(
       [
         ...catalogBackendIds.map((backendId) => {
-          const available = backendId === 'claude' || backendId === 'customAcp' ? true : isCliAvailable(context, backendId);
+          const entry = AGENTS[backendId];
+          const available = entry?.getAcpBackendFactory ? true : isCliAvailable(context, backendId);
           return [
             backendId,
             {

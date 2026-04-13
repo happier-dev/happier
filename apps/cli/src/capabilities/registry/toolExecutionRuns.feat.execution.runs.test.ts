@@ -72,6 +72,23 @@ describe('executionRunsCapability', () => {
     expect(res.backends.copilot).toBeTruthy();
   });
 
+  it('marks catalog-defined ACP backends available even when the CLI snapshot does not report them', async () => {
+    const res = await executionRunsCapability.detect({
+      context: {
+        cliSnapshot: makeCliSnapshot({}),
+      },
+      request: { id: 'tool.executionRuns' },
+    }) as {
+      available: boolean;
+      backends: Record<string, { available?: boolean; supportsVendorResume?: boolean }>;
+    };
+
+    expect(res.available).toBe(true);
+    expect(res.backends.customAcp).toMatchObject({ available: true });
+    expect(res.backends.kiro).toMatchObject({ available: true });
+    expect(res.backends.ohMyPi).toMatchObject({ available: true });
+  });
+
   it('detects native coderabbit availability from process PATH even when cliSnapshot.path is empty', async () => {
     // Ensure we test PATH detection (not the override).
     await withTempDir('happier-coderabbit-path-test-', async (dir) => {

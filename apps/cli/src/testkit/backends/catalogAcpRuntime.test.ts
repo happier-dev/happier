@@ -13,6 +13,8 @@ describe('catalog ACP runtime testkit', () => {
         createCatalogAcpBackendSpy(createCalls);
 
         const result = await acpModule.createCatalogAcpBackend('kimi', {
+            cwd: '/tmp',
+            env: {},
             permissionMode: 'read-only',
         });
 

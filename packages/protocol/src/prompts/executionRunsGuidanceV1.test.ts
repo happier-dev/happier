@@ -32,7 +32,7 @@ describe('executionRunsGuidanceV1', () => {
     const builtIn = normalizeExecutionRunsGuidanceFingerprintV1({
       id: '1',
       description: 'Use the review preset',
-      suggestedBackendTarget: { kind: 'builtInAgent', agentId: 'customAcp' },
+      suggestedBackendTarget: { kind: 'builtInAgent', agentId: 'claude' },
     });
     const configured = normalizeExecutionRunsGuidanceFingerprintV1({
       id: '2',

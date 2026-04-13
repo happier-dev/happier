@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
 const { callSessionRpc, listExecutionRunMarkers, readRawSessionHistoryRows } = vi.hoisted(() => ({
     callSessionRpc: vi.fn(),
@@ -46,6 +47,7 @@ function createMarker(params: Readonly<{
     status: 'running' | 'succeeded';
     startedAtMs: number;
     agentId?: 'claude' | 'opencode';
+    backendTarget?: BackendTargetRefV1;
 }>) {
     return {
         happySessionId: 'sess-1',
@@ -53,7 +55,7 @@ function createMarker(params: Readonly<{
         callId: `${params.runId}-call`,
         sidechainId: `${params.runId}-sidechain`,
         intent: 'plan',
-        backendTarget: { kind: 'builtInAgent', agentId: params.agentId ?? 'claude' },
+        backendTarget: params.backendTarget ?? { kind: 'builtInAgent', agentId: params.agentId ?? 'claude' },
         permissionMode: 'workspace_write',
         retentionPolicy: 'ephemeral',
         runClass: 'bounded',
@@ -229,6 +231,134 @@ describe('listExecutionRuns', () => {
             ok: true,
             data: {
                 runs: [createRun({ runId: 'run-marker-succeeded', status: 'succeeded', startedAtMs: 30 })],
+            },
+        });
+    });
+
+    it('matches configured ACP marker-backed runs when filtering by the legacy customAcp backend id', async () => {
+        callSessionRpc.mockRejectedValueOnce(new Error('RPC method not available'));
+        listExecutionRunMarkers.mockResolvedValueOnce([
+            createMarker({
+                runId: 'run-marker-configured',
+                status: 'running',
+                startedAtMs: 20,
+                backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            }),
+            createMarker({ runId: 'run-marker-built-in', status: 'succeeded', startedAtMs: 30 }),
+        ]);
+
+        const result = await listExecutionRuns({
+            token: 'token',
+            sessionId: 'sess-1',
+            ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
+            request: { backendId: 'customAcp', limit: 1 },
+        });
+
+        expect(result).toEqual({
+            ok: true,
+            data: {
+                runs: [
+                    expect.objectContaining({
+                        runId: 'run-marker-configured',
+                        backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+                    }),
+                ],
+            },
+        });
+    });
+
+    it('drops marker-backed runs that still encode backendTarget as builtIn customAcp', async () => {
+        callSessionRpc.mockRejectedValueOnce(new Error('RPC method not available'));
+        listExecutionRunMarkers.mockResolvedValueOnce([
+            createMarker({
+                runId: 'run-marker-legacy-custom-acp',
+                status: 'running',
+                startedAtMs: 20,
+                backendTarget: { kind: 'builtInAgent', agentId: 'customAcp' },
+            }),
+        ]);
+        readRawSessionHistoryRows.mockResolvedValueOnce([]);
+
+        const result = await listExecutionRuns({
+            token: 'token',
+            sessionId: 'sess-1',
+            ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
+            request: {},
+        });
+
+        expect(result).toEqual({
+            ok: true,
+            data: {
+                runs: [],
+            },
+        });
+    });
+
+    it('matches configured ACP marker-backed runs when filtering by the concrete configured backend id', async () => {
+        callSessionRpc.mockRejectedValueOnce(new Error('RPC method not available'));
+        listExecutionRunMarkers.mockResolvedValueOnce([
+            createMarker({
+                runId: 'run-marker-configured',
+                status: 'running',
+                startedAtMs: 20,
+                backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            }),
+            createMarker({ runId: 'run-marker-built-in', status: 'succeeded', startedAtMs: 30 }),
+        ]);
+
+        const result = await listExecutionRuns({
+            token: 'token',
+            sessionId: 'sess-1',
+            ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
+            request: { backendId: 'review-bot', limit: 1 },
+        });
+
+        expect(result).toEqual({
+            ok: true,
+            data: {
+                runs: [
+                    expect.objectContaining({
+                        runId: 'run-marker-configured',
+                        backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+                    }),
+                ],
+            },
+        });
+    });
+
+    it('does not match a configured ACP backend id that collides with a built-in provider id', async () => {
+        callSessionRpc.mockRejectedValueOnce(new Error('RPC method not available'));
+        listExecutionRunMarkers.mockResolvedValueOnce([
+            createMarker({
+                runId: 'run-marker-configured-codex',
+                status: 'running',
+                startedAtMs: 20,
+                backendTarget: { kind: 'configuredAcpBackend', backendId: 'codex' },
+            }),
+            createMarker({
+                runId: 'run-marker-built-in-codex',
+                status: 'succeeded',
+                startedAtMs: 30,
+                backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            }),
+        ]);
+
+        const result = await listExecutionRuns({
+            token: 'token',
+            sessionId: 'sess-1',
+            ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
+            request: { backendId: 'codex' },
+        });
+
+        expect(result).toEqual({
+            ok: true,
+            data: {
+                runs: [
+                    expect.objectContaining({
+                        runId: 'run-marker-built-in-codex',
+                        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                    }),
+                ],
             },
         });
     });

@@ -234,6 +234,7 @@ export const AGENTS_CORE = {
     },
     customAcp: {
         id: 'customAcp',
+        backendDefinition: false,
         cliSubcommand: 'customAcp',
         detectKey: providerDetectKey('customAcp'),
         flavorAliases: ['custom-acp'],
