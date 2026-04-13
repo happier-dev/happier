@@ -184,7 +184,10 @@ function findClaudeInNpmGlobalModules(): string | null {
     const execDir = dirname(process.execPath)
     const claudePkgRelative = join('node_modules', '@anthropic-ai', 'claude-code', 'cli.js')
 
-    // Windows npm installs packages next to node.exe; Unix npm installs under ../lib/.
+    // Windows npm installs packages next to node.exe (`<execDir>/node_modules/...`).
+    // Unix npm installs one level up under `<prefix>/lib/node_modules/...`.
+    // The Windows candidate is checked first on all platforms; on Unix it is simply
+    // a no-op because that path layout does not exist there.
     const candidates = [
         join(execDir, claudePkgRelative),
         join(dirname(execDir), 'lib', claudePkgRelative),
@@ -328,11 +331,6 @@ export function getDefaultClaudeCodePathForAgentSdk(): string {
         }
     }
 
-    const npmGlobalPath = findClaudeInNpmGlobalModules();
-    if (npmGlobalPath && isAgentSdkCompatibleClaudeEntrypoint(npmGlobalPath)) {
-        return canonicalizeClaudeEntrypointPath(npmGlobalPath);
-    }
-
     const homeDir = resolveHomeDir();
     if (process.platform !== 'win32') {
         const versionsDir = join(homeDir, '.local', 'share', 'claude', 'versions');
@@ -340,6 +338,17 @@ export function getDefaultClaudeCodePathForAgentSdk(): string {
         if (versioned && isAgentSdkCompatibleClaudeEntrypoint(versioned)) {
             return canonicalizeClaudeEntrypointPath(versioned);
         }
+    }
+
+    // Placed after the Unix versioned-install probe so that a user with both a
+    // newer `~/.local/share/claude/versions/` install and an older npm-global
+    // install still gets the versioned one. Intentionally NOT canonicalized —
+    // we want to preserve the symlink/junction target (e.g. nvm-windows
+    // `C:\Program Files\nodejs`) so that Claude auto-updates and nvm version
+    // switches can retarget the same path without pinning to an old version.
+    const npmGlobalPath = findClaudeInNpmGlobalModules();
+    if (npmGlobalPath && isAgentSdkCompatibleClaudeEntrypoint(npmGlobalPath)) {
+        return npmGlobalPath;
     }
 
     const nativeInstallPath = findClaudeInNativeInstallerLocations(homeDir);
