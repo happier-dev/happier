@@ -21,6 +21,7 @@ const envKeys = [
 ] as const;
 const TEMP_DIRS = new Set<string>();
 const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+const originalExecPathDescriptor = Object.getOwnPropertyDescriptor(process, 'execPath');
 let envScope = createEnvKeyScope(envKeys);
 
 function createTempRoot(prefix: string): string {
@@ -45,9 +46,20 @@ function createWindowsCommand(params: { dir: string; name: string; stdout: strin
   });
 }
 
+function stubExecPathToEmptySandbox(workDir: string): void {
+  const sandboxNodeDir = join(workDir, 'sandbox-node');
+  mkdirSync(sandboxNodeDir, { recursive: true });
+  const sandboxNode = join(sandboxNodeDir, process.platform === 'win32' ? 'node.exe' : 'node');
+  writeTextFileSync(sandboxNode, '');
+  Object.defineProperty(process, 'execPath', { value: sandboxNode, configurable: true });
+}
+
 afterEach(() => {
   if (originalPlatformDescriptor) {
     Object.defineProperty(process, 'platform', originalPlatformDescriptor);
+  }
+  if (originalExecPathDescriptor) {
+    Object.defineProperty(process, 'execPath', originalExecPathDescriptor);
   }
   envScope.restore();
   envScope = createEnvKeyScope(envKeys);
@@ -66,6 +78,8 @@ describe('Claude SDK utils - getDefaultClaudeCodePath', () => {
     binDir = join(workDir, 'bin');
     mkdirSync(homeDir, { recursive: true });
     mkdirSync(binDir, { recursive: true });
+
+    stubExecPathToEmptySandbox(workDir);
 
     process.env.HOME = homeDir;
     process.env.USERPROFILE = homeDir;
@@ -163,7 +177,8 @@ describe('Claude SDK utils - getDefaultClaudeCodePath', () => {
     const nativeClaudePath = join(localBin, 'claude.exe');
     writeTextFileSync(nativeClaudePath, 'MZ');
 
-    expect(getDefaultClaudeCodePath()).toBe(nativeClaudePath);
+    // Windows is case-insensitive; our discovery may normalize to `.EXE`.
+    expect(getDefaultClaudeCodePath().toLowerCase()).toBe(nativeClaudePath.toLowerCase());
   });
 
   it('prefers HAPPIER_CLAUDE_PATH when set', () => {
@@ -195,6 +210,8 @@ describe('Claude SDK utils - getDefaultClaudeCodePathForAgentSdk', () => {
     binDir = join(workDir, 'bin');
     mkdirSync(homeDir, { recursive: true });
     mkdirSync(binDir, { recursive: true });
+
+    stubExecPathToEmptySandbox(workDir);
 
     process.env.HOME = homeDir;
     process.env.USERPROFILE = homeDir;
@@ -296,5 +313,53 @@ describe('Claude SDK utils - getDefaultClaudeCodePathForAgentSdk', () => {
     } finally {
       process.chdir(originalCwd);
     }
+  });
+
+  it('resolves the npm global cli.js entrypoint from process.execPath on Unix when PATH is empty', () => {
+    if (process.platform === 'win32') {
+      return;
+    }
+
+    process.env.PATH = join(workDir, 'empty-path-npm-global-unix');
+    mkdirSync(process.env.PATH, { recursive: true });
+
+    const prefixDir = join(workDir, 'npm-prefix');
+    const nodeBinDir = join(prefixDir, 'bin');
+    mkdirSync(nodeBinDir, { recursive: true });
+    const fakeNode = createUnixExecutable({
+      dir: nodeBinDir,
+      name: 'node',
+      body: 'exit 0',
+    });
+
+    const globalCliDir = join(prefixDir, 'lib', 'node_modules', '@anthropic-ai', 'claude-code');
+    mkdirSync(globalCliDir, { recursive: true });
+    const globalCliJs = join(globalCliDir, 'cli.js');
+    writeTextFileSync(globalCliJs, 'console.log("claude");\n');
+
+    Object.defineProperty(process, 'execPath', { value: fakeNode, configurable: true });
+
+    expect(getDefaultClaudeCodePathForAgentSdk()).toBe(globalCliJs);
+  });
+
+  it('resolves the npm global cli.js entrypoint from process.execPath on Windows when PATH is empty', () => {
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+
+    process.env.PATH = join(workDir, 'empty-path-npm-global-win');
+    mkdirSync(process.env.PATH, { recursive: true });
+
+    const nodeDir = join(workDir, 'nodejs');
+    mkdirSync(nodeDir, { recursive: true });
+    const fakeNode = join(nodeDir, 'node.exe');
+    writeTextFileSync(fakeNode, 'MZ');
+
+    const globalCliDir = join(nodeDir, 'node_modules', '@anthropic-ai', 'claude-code');
+    mkdirSync(globalCliDir, { recursive: true });
+    const globalCliJs = join(globalCliDir, 'cli.js');
+    writeTextFileSync(globalCliJs, 'console.log("claude");\n');
+
+    Object.defineProperty(process, 'execPath', { value: fakeNode, configurable: true });
+
+    expect(getDefaultClaudeCodePathForAgentSdk()).toBe(globalCliJs);
   });
 });

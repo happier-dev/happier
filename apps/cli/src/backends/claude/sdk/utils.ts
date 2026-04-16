@@ -3,7 +3,7 @@
  * Provides helper functions for path resolution and logging
  */
 
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { closeSync, existsSync, openSync, readdirSync, readSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { getProviderCliInstallGuideUrl, getProviderCliManualInstallSummaryLines } from '@happier-dev/agents'
@@ -179,6 +179,29 @@ function findLatestVersionedClaudeEntrypointForAgentSdk(versionsDir: string): st
     }
 }
 
+/**
+ * Derive the npm global `cli.js` entrypoint from `process.execPath`.
+ *
+ * Intentionally independent of PATH: daemons / spawned CLI processes often inherit
+ * a minimal PATH that no longer contains the directory where `node` itself lives
+ * (Windows + nvm-windows where `C:\Program Files\nodejs` is a junction, or detached
+ * Linux daemons whose PATH is reset by systemd/launchd).
+ */
+function findClaudeInNpmGlobalModules(): string | null {
+    const execDir = dirname(process.execPath)
+    const claudePkgRelative = join('node_modules', '@anthropic-ai', 'claude-code', 'cli.js')
+
+    const candidates = [
+        join(execDir, claudePkgRelative),
+        join(dirname(execDir), 'lib', claudePkgRelative),
+    ]
+
+    for (const candidate of candidates) {
+        if (existsSync(candidate)) return candidate
+    }
+    return null
+}
+
 function findClaudeInNativeInstallerLocations(homeDir: string): string | null {
     if (process.platform === 'win32') {
         const localAppData = process.env.LOCALAPPDATA || join(homeDir, 'AppData', 'Local')
@@ -306,6 +329,15 @@ export function getDefaultClaudeCodePathForAgentSdk(): string {
         const versionsDir = join(homeDir, '.local', 'share', 'claude', 'versions');
         const versioned = findLatestVersionedClaudeEntrypointForAgentSdk(versionsDir);
         if (versioned && isAgentSdkCompatibleClaudeEntrypoint(versioned)) return versioned;
+    }
+
+    // Placed after the Unix versioned-install probe so that a user with both a
+    // newer `~/.local/share/claude/versions/` install and an older npm-global
+    // install still gets the versioned one. Intentionally not canonicalized so
+    // symlink/junction-based Node installs can keep retargeting the same path.
+    const npmGlobalPath = findClaudeInNpmGlobalModules()
+    if (npmGlobalPath && isAgentSdkCompatibleClaudeEntrypoint(npmGlobalPath)) {
+        return npmGlobalPath
     }
 
     const nativeInstallPath = findClaudeInNativeInstallerLocations(homeDir);
